@@ -15,8 +15,8 @@
 
 use super::{
     GosMap, GosVec, gos_rt_map_insert_i64_i64, gos_rt_map_new, gos_rt_result_disc,
-    gos_rt_result_new, gos_rt_result_payload, gos_rt_vec_get_i64, gos_rt_vec_len, gos_rt_vec_new,
-    gos_rt_vec_push_i64,
+    gos_rt_result_new, gos_rt_result_payload, gos_rt_vec_get_i64, gos_rt_vec_get_ptr,
+    gos_rt_vec_len, gos_rt_vec_new, gos_rt_vec_push_i64,
 };
 
 type MapFn = unsafe extern "C" fn(env: *const u8, x: i64) -> i64;
@@ -30,14 +30,21 @@ type VecFn = unsafe extern "C" fn(env: *const u8, x: i64) -> *mut GosVec;
 const NONE: i128 = 1;
 
 /// Callable address stored at `env[0]`, or `None` for null/zero envs.
-fn env_fn_addr(env: *const u8) -> Option<usize> {
+fn env_fn_addr(env: *const u8) -> Option<*const ()> {
     if env.is_null() {
         return None;
     }
     // SAFETY: `env` is a live closure blob whose first word is the
     // callable address (codegen invariant shared with `gos_rt_iter_*`).
     let addr = unsafe { (env.cast::<usize>()).read() };
-    if addr == 0 { None } else { Some(addr) }
+    if addr == 0 {
+        None
+    } else {
+        // Recover the address's exposed provenance so the pointer is
+        // sound to call under strict provenance; a bare integer
+        // transmute at the call site would carry none.
+        Some(std::ptr::with_exposed_provenance::<()>(addr))
+    }
 }
 
 fn some_of(payload: i64) -> i128 {
@@ -521,6 +528,30 @@ pub unsafe extern "C" fn gos_rt_iter_partition_i64(env: *const u8, v: *const Gos
             }
         }
         alloc_pair(vec_from(&yes) as i64, vec_from(&no) as i64)
+    })
+}
+
+/// `iter::unzip(pairs) -> ([i64], [i64])` — split a `Vec<(i64, i64)>`
+/// into the vec of first components and the vec of seconds. Each
+/// input element is a 16-byte 2-slot tuple; the result is the
+/// by-value `(Vec, Vec)` pair returned as a 16-byte heap blob.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_iter_unzip_i64(v: *const GosVec) -> *mut u8 {
+    ffi_entry!(std::ptr::null_mut(), {
+        let mut a = Vec::new();
+        let mut b = Vec::new();
+        if !v.is_null() {
+            let len = unsafe { gos_rt_vec_len(v) };
+            for i in 0..len {
+                let slot = unsafe { gos_rt_vec_get_ptr(v, i) }.cast::<i64>();
+                if slot.is_null() {
+                    continue;
+                }
+                a.push(unsafe { *slot });
+                b.push(unsafe { *slot.add(1) });
+            }
+        }
+        alloc_pair(vec_from(&a) as i64, vec_from(&b) as i64)
     })
 }
 

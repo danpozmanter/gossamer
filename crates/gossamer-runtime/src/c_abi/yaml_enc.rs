@@ -95,6 +95,34 @@ fn json_to_serde_yaml(v: &serde_json::Value) -> serde_yaml::Value {
     }
 }
 
+/// `encoding::yaml::parse(text) -> Result<json::Value, Error>`.
+/// YAML is parsed and re-projected onto the JSON value tree so the
+/// dynamic document path reuses the fully-supported `json::Value`
+/// runtime type (`json::get` / `as_str` / …) on every tier — the VM's
+/// `yaml::parse` routes through the same yaml->json projection. Err
+/// payload is a c-string, matching `gos_rt_json_parse`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_yaml_parse(s: *const c_char) -> i128 {
+    ffi_entry!(0i128, {
+        let text = if s.is_null() {
+            ""
+        } else {
+            unsafe { CStr::from_ptr(s).to_str().unwrap_or("") }
+        };
+        match serde_yaml::from_str::<serde_yaml::Value>(text) {
+            Ok(yaml_val) => {
+                let json_val = serde_yaml_to_json(yaml_val);
+                let ptr = crate::c_abi::json::GosJson::into_raw(json_val);
+                unsafe { gos_rt_result_new(0, ptr as i64) }
+            }
+            Err(e) => {
+                let cs = alloc_cstring(format!("yaml::parse: {e}").as_bytes());
+                unsafe { gos_rt_result_new(1, cs as i64) }
+            }
+        }
+    })
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_yaml_to_json(s: *const c_char) -> i128 {
     ffi_entry!(0i128, {

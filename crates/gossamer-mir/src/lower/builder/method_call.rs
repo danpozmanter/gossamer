@@ -101,6 +101,73 @@ impl<'a> Builder<'a> {
             self.set_current(next);
             return Some(dest);
         }
+        // `d.as_millis()` / `d.as_secs()` / `d.as_micros()` — method
+        // form of the `time::Duration` accessors. The receiver's static
+        // type carries the transparent Duration tag (its runtime value is
+        // a bare `i64`), so route to the same `gos_rt_duration_*` helper
+        // the qualified `time::Duration::as_millis(d)` free call uses.
+        if matches!(method.name.as_str(), "as_millis" | "as_secs" | "as_micros")
+            && args.is_empty()
+        {
+            let mut recv_kind = self.tcx.kind_of(receiver.ty).clone();
+            while let TyKind::Ref { inner, .. } = recv_kind {
+                recv_kind = self.tcx.kind_of(inner).clone();
+            }
+            // A `flag::Set` duration cell carries no Duration tag on its
+            // HIR type (the typechecker leaves it an inference var); its
+            // MIR binding is tagged `flag::Cell::Duration`. Auto-deref it
+            // to the transparent i64-of-ms Duration local so the accessor
+            // routes exactly like a plain `time::Duration` receiver.
+            let is_duration_cell = self
+                .receiver_local_from_path(receiver)
+                .and_then(|l| self.local_runtime_kind.get(&l).copied())
+                == Some("flag::Cell::Duration");
+            if matches!(recv_kind, TyKind::Duration) || is_duration_cell {
+                let sym = match method.name.as_str() {
+                    "as_secs" => "gos_rt_duration_as_secs",
+                    "as_micros" => "gos_rt_duration_as_micros",
+                    _ => "gos_rt_duration_as_millis",
+                };
+                let recv_local = self.lower_expr(receiver)?;
+                let recv_local = self.auto_deref_cell(recv_local, span);
+                let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+                let dest = self.fresh(i64_ty);
+                let next = self.new_block(span);
+                self.terminate(Terminator::Call {
+                    callee: Operand::Const(ConstValue::Str(sym.to_string())),
+                    args: vec![Operand::Copy(Place::local(recv_local))],
+                    destination: Place::local(dest),
+                    target: Some(next),
+                });
+                self.set_current(next);
+                return Some(dest);
+            }
+        }
+        // `inst.elapsed_ms()` — method form of the `time::Instant`
+        // accessor. The receiver's static type carries the transparent
+        // Instant tag (its runtime value is a bare `i64` of monotonic ms),
+        // so route to `gos_rt_time_since_ms`, the same helper the
+        // qualified `time::Instant::elapsed_ms(inst)` free call uses.
+        if method.name.as_str() == "elapsed_ms" && args.is_empty() {
+            let mut recv_kind = self.tcx.kind_of(receiver.ty).clone();
+            while let TyKind::Ref { inner, .. } = recv_kind {
+                recv_kind = self.tcx.kind_of(inner).clone();
+            }
+            if matches!(recv_kind, TyKind::Instant) {
+                let recv_local = self.lower_expr(receiver)?;
+                let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+                let dest = self.fresh(i64_ty);
+                let next = self.new_block(span);
+                self.terminate(Terminator::Call {
+                    callee: Operand::Const(ConstValue::Str("gos_rt_time_since_ms".to_string())),
+                    args: vec![Operand::Copy(Place::local(recv_local))],
+                    destination: Place::local(dest),
+                    target: Some(next),
+                });
+                self.set_current(next);
+                return Some(dest);
+            }
+        }
         // `h.join()` — block on a spawned goroutine's outcome.
         // `gos_rt_join` recvs the SpawnOutcome over the handle's
         // one-shot channel and packs it into `Result<T, String>` (Ok
@@ -412,6 +479,44 @@ impl<'a> Builder<'a> {
         // original empty bytes (the `release_owned_string_push_str`
         // gauge entry).
         if method.name.as_str() == "push_str"
+            && args.len() == 1
+            && let Some(recv_local) = self.receiver_local_from_path(receiver)
+        {
+            let recv_ty = self.locals[recv_local.0 as usize].ty;
+            let mut peeled = recv_ty;
+            while let TyKind::Ref { inner, .. } = self.tcx.kind_of(peeled) {
+                peeled = *inner;
+            }
+            if matches!(self.tcx.kind_of(peeled), TyKind::String) {
+                let arg_local = self.lower_expr(&args[0])?;
+                let concat_dest = self.fresh(recv_ty);
+                let next = self.new_block(span);
+                self.terminate(Terminator::Call {
+                    callee: Operand::Const(ConstValue::Str("__concat".to_string())),
+                    args: vec![
+                        Operand::Copy(Place::local(recv_local)),
+                        Operand::Copy(Place::local(arg_local)),
+                    ],
+                    destination: Place::local(concat_dest),
+                    target: Some(next),
+                });
+                self.set_current(next);
+                self.emit_assign(
+                    Place::local(recv_local),
+                    Rvalue::Use(Operand::Copy(Place::local(concat_dest))),
+                    span,
+                );
+                return Some(self.lower_unit(span));
+            }
+        }
+        // `s.push(ch)` on an owned `String` receiver. Gos `String` is
+        // the runtime's immutable C-string, so true in-place mutation
+        // isn't representable. Rewrite as `s = __concat(s, ch)`: the
+        // `__concat` lowerer appends the char's UTF-8 form (via
+        // `gos_rt_concat_char`) and the receiver local is updated in
+        // place. The unqualified `push` arm below routes Vec receivers
+        // to `gos_rt_vec_push`; this block claims only String ones.
+        if method.name.as_str() == "push"
             && args.len() == 1
             && let Some(recv_local) = self.receiver_local_from_path(receiver)
         {
@@ -831,18 +936,66 @@ impl<'a> Builder<'a> {
                 Some("gos_rt_str_rsplit_once")
             }
             "count" if matches!(&receiver_kind_flat, TyKind::String) => Some("gos_rt_str_count"),
-            "strip_chars" if matches!(&receiver_kind_flat, TyKind::String) => {
-                Some("gos_rt_str_strip_chars")
-            }
-            "lstrip_chars" if matches!(&receiver_kind_flat, TyKind::String) => {
+            "trim_start_matches" if matches!(&receiver_kind_flat, TyKind::String) => {
                 Some("gos_rt_str_lstrip_chars")
             }
-            "rstrip_chars" if matches!(&receiver_kind_flat, TyKind::String) => {
+            "trim_end_matches" if matches!(&receiver_kind_flat, TyKind::String) => {
                 Some("gos_rt_str_rstrip_chars")
             }
-            "zfill" if matches!(&receiver_kind_flat, TyKind::String) => Some("gos_rt_str_zfill"),
             "center" if matches!(&receiver_kind_flat, TyKind::String) => Some("gos_rt_str_center"),
             "slice" if matches!(&receiver_kind_flat, TyKind::String) => Some("gos_rt_str_slice"),
+            "substring" if matches!(&receiver_kind_flat, TyKind::String) => {
+                Some("gos_rt_str_substring")
+            }
+            // 0.14.0 — the remaining canonical String method surface.
+            // Each already exists as a `strings::*` free fn (see
+            // `stdlib_free.rs`); wiring the method form here lets
+            // `s.method(...)` and the `_.method` pipe placeholder dispatch
+            // on the compiled tiers the same way the VM does, instead of
+            // emitting an undefined `@method` symbol.
+            "split_whitespace" if matches!(&receiver_kind_flat, TyKind::String) => {
+                Some("gos_rt_str_split_whitespace")
+            }
+            "splitn" if matches!(&receiver_kind_flat, TyKind::String) => Some("gos_rt_str_splitn"),
+            "to_title" if matches!(&receiver_kind_flat, TyKind::String) => {
+                Some("gos_rt_str_to_title")
+            }
+            "trim_matches" if matches!(&receiver_kind_flat, TyKind::String) => {
+                Some("gos_rt_str_trim_matches")
+            }
+            "replacen" if matches!(&receiver_kind_flat, TyKind::String) => {
+                Some("gos_rt_str_replacen")
+            }
+            "pad_left" if matches!(&receiver_kind_flat, TyKind::String) => {
+                Some("gos_rt_str_pad_left")
+            }
+            "pad_right" if matches!(&receiver_kind_flat, TyKind::String) => {
+                Some("gos_rt_str_pad_right")
+            }
+            "contains_any" if matches!(&receiver_kind_flat, TyKind::String) => {
+                Some("gos_rt_str_contains_any")
+            }
+            "contains_rune" if matches!(&receiver_kind_flat, TyKind::String) => {
+                Some("gos_rt_str_contains_rune")
+            }
+            "equal_fold" if matches!(&receiver_kind_flat, TyKind::String) => {
+                Some("gos_rt_str_equal_fold")
+            }
+            "find_any" if matches!(&receiver_kind_flat, TyKind::String) => {
+                Some("gos_rt_str_index_any")
+            }
+            "index_rune" if matches!(&receiver_kind_flat, TyKind::String) => {
+                Some("gos_rt_str_index_rune")
+            }
+            "rfind_any" if matches!(&receiver_kind_flat, TyKind::String) => {
+                Some("gos_rt_str_last_index_any")
+            }
+            "strip_prefix" if matches!(&receiver_kind_flat, TyKind::String) => {
+                Some("gos_rt_str_strip_prefix")
+            }
+            "strip_suffix" if matches!(&receiver_kind_flat, TyKind::String) => {
+                Some("gos_rt_str_strip_suffix")
+            }
             // 0.7.0 Vec method surface. `xs.slice(a, b)?` returns a
             // Result<Vec<T>, errors::Error>; `xs.first()` / `xs.last()`
             // return Option<T>; `xs.reversed()` returns a fresh Vec;
@@ -891,6 +1044,21 @@ impl<'a> Builder<'a> {
                 ) =>
             {
                 Some("gos_rt_vec_reversed")
+            }
+            // `parts.join(sep)` on a `Vec<String>` — the method form of
+            // `strings::join(parts, sep)`, routed to the same shim so the
+            // compiled tiers match the VM. Guarded on a String element so it
+            // never shadows `JoinHandle::join` (handled above, zero args) or a
+            // numeric vec.
+            "join"
+                if args.len() == 1
+                    && matches!(
+                        &receiver_kind_flat,
+                        TyKind::Vec(_) | TyKind::Slice(_) | TyKind::Array { .. }
+                    )
+                    && vec_element_kind(self.tcx, receiver_ty) == VecElemKind::Str =>
+            {
+                Some("gos_rt_strings_join")
             }
             "contains"
                 if matches!(
@@ -950,16 +1118,13 @@ impl<'a> Builder<'a> {
             "lines" => Some("gos_rt_str_lines"),
             "repeat" => Some("gos_rt_str_repeat"),
             "byte_at" => Some("gos_rt_str_byte_at"),
-            // `s.substring(start, end)` for String receivers.
-            // Without this dispatch the call falls through to a
-            // bare-name free-fn lookup; user code that defines a
-            // `pub fn substring(s: &String, a: i64, b: i64)`
-            // wrapper (askq's `util::substring`) then resolves
-            // its own `s.substring(a, b)` body to itself and
-            // stack-overflows in compiled mode.
-            "substring" if matches!(&receiver_kind_flat, TyKind::String) => {
-                Some("gos_rt_str_substring")
-            }
+            // `s.chars()` — materialise the Unicode scalars as a
+            // `Vec<char>` (one i64 codepoint per slot) so the
+            // for-loop reads each via `gos_rt_vec_get_i64` and binds
+            // a `char`. Gated on a String receiver: a user struct
+            // with its own `chars` method falls through to user
+            // dispatch.
+            "chars" if matches!(&receiver_kind_flat, TyKind::String) => Some("gos_rt_str_chars"),
             // `is_empty` collapses to `len(self) == 0`. Route to
             // a small helper that delegates to the right `len`
             // backend for the receiver kind.
@@ -1039,8 +1204,8 @@ impl<'a> Builder<'a> {
                     Some("")
                 }
             }
-            "to_lowercase" | "to_lower" => Some("gos_rt_str_to_lower"),
-            "to_uppercase" | "to_upper" => Some("gos_rt_str_to_upper"),
+            "to_lower" => Some("gos_rt_str_to_lower"),
+            "to_upper" => Some("gos_rt_str_to_upper"),
             "push" => Some("gos_rt_vec_push"),
             "pop" => Some("gos_rt_vec_pop_opt"),
             "sort" => Some("gos_rt_vec_sort_i64"),
@@ -1148,7 +1313,14 @@ impl<'a> Builder<'a> {
                         Some(MapKeyKind::String) => Some("gos_rt_map_insert_str_str"),
                         _ => Some("gos_rt_map_insert_i64_str"),
                     },
-                    _ => Some("gos_rt_map_insert_i64_i64"),
+                    // Aggregate value (Vec / struct): stored as an
+                    // 8-byte handle word, so route by KEY kind — a
+                    // String key must still use the str path, not the
+                    // i64/i64 path that reinterprets the key pointer.
+                    _ => match self.hash_map_key_kind(receiver_ty) {
+                        Some(MapKeyKind::String) => Some("gos_rt_map_insert_str_i64"),
+                        _ => Some("gos_rt_map_insert_i64_i64"),
+                    },
                 },
                 _ => None,
             },
@@ -1182,13 +1354,15 @@ impl<'a> Builder<'a> {
                 },
                 _ => None,
             },
+            // `or_insert` stores an 8-byte value word (i64 scalar or
+            // an aggregate handle: Vec / struct), so route purely by
+            // KEY kind — a String-keyed, Vec-valued map needs the str
+            // path, not the absent value-kind branch that emitted an
+            // undefined `@or_insert` call.
             "or_insert" => match &receiver_kind_flat {
-                TyKind::HashMap { .. } => match self.hash_map_value_kind(receiver_ty) {
-                    Some(MapValueKind::I64) => match self.hash_map_key_kind(receiver_ty) {
-                        Some(MapKeyKind::String) => Some("gos_rt_map_or_insert_str_i64"),
-                        _ => Some("gos_rt_map_or_insert_i64_i64"),
-                    },
-                    _ => None,
+                TyKind::HashMap { .. } => match self.hash_map_key_kind(receiver_ty) {
+                    Some(MapKeyKind::String) => Some("gos_rt_map_or_insert_str_i64"),
+                    _ => Some("gos_rt_map_or_insert_i64_i64"),
                 },
                 _ => None,
             },
@@ -1275,16 +1449,24 @@ impl<'a> Builder<'a> {
         };
         let _ = receiver_kind;
 
-        // Char→String coercion for `s.split(c)` and `s.contains(c)`-
-        // style calls where the user passes a `char` literal but
-        // the underlying runtime helper expects a c-string ptr.
-        // Lower the char arg through `gos_rt_char_to_str` before
-        // it reaches the runtime call.
-        let needs_char_to_str = matches!(
-            method.name.as_str(),
-            "split" | "contains" | "starts_with" | "ends_with" | "find" | "replace"
-        );
-        let _ = needs_char_to_str;
+        // A user struct's own `impl` method always wins over a bare-name
+        // runtime builtin of the same name. The table above resolves
+        // several names (`load` / `store` / `add` / `lock` / `wait` /
+        // ...) with no receiver-type guard, so `store.load(req)` on a
+        // user `Store` with `fn load(&self, ...)` would otherwise hijack
+        // to `gos_rt_atomic_i64_load`. Generalises the `close` guard: a
+        // pure runtime handle (`AtomicI64`, `Mutex`, `WaitGroup`) carries
+        // no `impl` block, so this only fires for genuine user methods.
+        if runtime_symbol.is_some()
+            && let Some(sname) = self
+                .struct_name_of(receiver_ty)
+                .or_else(|| self.struct_name_from_expr(receiver))
+            && self
+                .impl_methods
+                .contains_key(&format!("{sname}::{}", method.name.as_str()))
+        {
+            runtime_symbol = None;
+        }
 
         // Receiver-shape-aware dispatch. Reads the kind tag from
         // a path-bound receiver, or inspects a chained method
@@ -1293,7 +1475,8 @@ impl<'a> Builder<'a> {
         let receiver_runtime_kind = self
             .receiver_local_from_path(receiver)
             .and_then(|l| self.local_runtime_kind.get(&l).copied())
-            .or_else(|| self.expr_runtime_kind(receiver));
+            .or_else(|| self.expr_runtime_kind(receiver))
+            .or_else(|| self.runtime_kind_from_ty(receiver.ty));
         let kind_dispatch: Option<&'static str> =
             match (receiver_runtime_kind, method.name.as_str()) {
                 (Some("flag::Set"), "string") => Some("gos_rt_flag_set_string"),
@@ -1333,12 +1516,23 @@ impl<'a> Builder<'a> {
                 (Some("http::ClientBuilder"), "timeout_ms") => {
                     Some("gos_rt_http_client_builder_timeout_ms")
                 }
+                (Some("http::ClientBuilder"), "cookie_jar") => {
+                    Some("gos_rt_http_client_builder_cookie_jar")
+                }
+                (Some("http::ClientBuilder"), "proxy") => Some("gos_rt_http_client_builder_proxy"),
                 (Some("http::ClientBuilder"), "build") => Some("gos_rt_http_client_builder_build"),
                 (Some("http::Request"), "header") => Some("gos_rt_http_request_header"),
                 (Some("http::Request"), "body") => Some("gos_rt_http_request_body"),
                 (Some("http::Request"), "send") => Some("gos_rt_http_request_send"),
                 (Some("http::Request"), "path") => Some("gos_rt_http_request_path"),
+                (Some("http::Request"), "path_value") => Some("gos_rt_http_request_path_value"),
+                (Some("http::Request"), "path_int") => Some("gos_rt_http_request_path_int"),
+                (Some("http::Request"), "path_float") => Some("gos_rt_http_request_path_float"),
                 (Some("http::Request"), "method") => Some("gos_rt_http_request_method"),
+                (Some("http::Request"), "value") => Some("gos_rt_http_request_value"),
+                (Some("http::Request"), "set_value") => Some("gos_rt_http_request_set_value"),
+                (Some("http::Request"), "form_value") => Some("gos_rt_http_request_form_value"),
+                (Some("http::Request"), "basic_auth") => Some("gos_rt_http_request_basic_auth"),
                 (Some("http::Response"), "with_header") => Some("gos_rt_http_response_with_header"),
                 (Some("http::Response"), "status") => Some("gos_rt_http_response_status"),
                 (Some("http::Response"), "body") => Some("gos_rt_http_response_body"),
@@ -1357,6 +1551,15 @@ impl<'a> Builder<'a> {
                 (Some("collections::HashSet"), "contains") => Some("gos_rt_set_contains"),
                 (Some("collections::HashSet"), "remove") => Some("gos_rt_set_remove"),
                 (Some("collections::HashSet"), "len") => Some("gos_rt_set_len"),
+                (Some("collections::HashSet"), "union") => Some("gos_rt_set_union"),
+                (Some("collections::HashSet"), "intersection") => Some("gos_rt_set_intersection"),
+                (Some("collections::HashSet"), "difference") => Some("gos_rt_set_difference"),
+                (Some("collections::HashSet"), "symmetric_difference") => {
+                    Some("gos_rt_set_symmetric_difference")
+                }
+                (Some("collections::HashSet"), "is_subset") => Some("gos_rt_set_is_subset"),
+                (Some("collections::HashSet"), "is_superset") => Some("gos_rt_set_is_superset"),
+                (Some("collections::HashSet"), "is_disjoint") => Some("gos_rt_set_is_disjoint"),
                 (Some("collections::BTreeMap"), "insert") => Some("gos_rt_btmap_insert"),
                 (Some("collections::BTreeMap"), "get") => Some("gos_rt_btmap_get"),
                 (Some("collections::BTreeMap"), "get_or") => Some("gos_rt_btmap_get_or"),
@@ -1364,6 +1567,7 @@ impl<'a> Builder<'a> {
                     Some("gos_rt_btmap_contains")
                 }
                 (Some("collections::BTreeMap"), "len") => Some("gos_rt_btmap_len"),
+                (Some("collections::BTreeMap"), "keys") => Some("gos_rt_btmap_keys"),
                 (Some("sync::Map"), "set" | "insert") => Some("gos_rt_sync_map_set"),
                 (Some("sync::Map"), "get") => Some("gos_rt_sync_map_get"),
                 (Some("sync::Map"), "delete" | "remove") => Some("gos_rt_sync_map_delete"),
@@ -1372,6 +1576,72 @@ impl<'a> Builder<'a> {
                     Some("gos_rt_sync_map_contains")
                 }
                 (Some("sync::Map"), "keys") => Some("gos_rt_sync_map_keys"),
+                (Some("math::rand::Rng"), "next_u64") => Some("gos_rt_math_rng_next_u64"),
+                (Some("math::rand::Rng"), "next_u32") => Some("gos_rt_math_rng_next_u32"),
+                (Some("math::rand::Rng"), "range_u64") => Some("gos_rt_math_rng_range_u64"),
+                (Some("math::rand::Rng"), "next_f64") => Some("gos_rt_math_rng_next_f64"),
+                (Some("validate::FieldError"), "path") => Some("gos_rt_field_error_path"),
+                (Some("validate::FieldError"), "message") => Some("gos_rt_field_error_message"),
+                (Some("validate::FieldError"), "code") => Some("gos_rt_field_error_code"),
+                (Some("validate::Errors"), "add") => Some("gos_rt_validate_errors_add"),
+                (Some("validate::Errors"), "is_empty") => Some("gos_rt_validate_errors_is_empty"),
+                (Some("validate::Errors"), "len") => Some("gos_rt_validate_errors_len"),
+                (Some("validate::Errors"), "count") => Some("gos_rt_validate_errors_count"),
+                (Some("validate::Errors"), "get") => Some("gos_rt_validate_errors_get"),
+                (Some("validate::Errors"), "collect") => Some("gos_rt_validate_errors_collect"),
+                (Some("sync::RwLock"), "get") => Some("gos_rt_rwlock_get"),
+                (Some("sync::RwLock"), "set") => Some("gos_rt_rwlock_set"),
+                // AtomicBool load/store route to the bool-typed shims so
+                // the load result renders `true` / `false`; the name-only
+                // table below keeps AtomicI64 on the i64 path.
+                (Some("sync::AtomicBool"), "load") => Some("gos_rt_atomic_bool_load"),
+                (Some("sync::AtomicBool"), "store") => Some("gos_rt_atomic_bool_store"),
+                (Some("context::Context"), "is_cancelled") => Some("gos_rt_ctx_is_cancelled"),
+                (Some("context::Context"), "cancel") => Some("gos_rt_ctx_cancel"),
+                (Some("context::Context"), "done") => Some("gos_rt_ctx_done"),
+                (Some("context::Context"), "done_chan") => Some("gos_rt_ctx_cancelled"),
+                (Some("metrics::Counter"), "inc") => Some("gos_rt_metrics_counter_inc"),
+                (Some("metrics::Counter"), "value") => Some("gos_rt_metrics_counter_value"),
+                (Some("metrics::Gauge"), "set") => Some("gos_rt_metrics_gauge_set"),
+                (Some("metrics::Gauge"), "inc") => Some("gos_rt_metrics_gauge_inc"),
+                (Some("metrics::Gauge"), "dec") => Some("gos_rt_metrics_gauge_dec"),
+                (Some("metrics::Gauge"), "value") => Some("gos_rt_metrics_gauge_value"),
+                (Some("metrics::Histogram"), "observe") => Some("gos_rt_metrics_histogram_observe"),
+                (Some("metrics::Histogram"), "sum") => Some("gos_rt_metrics_histogram_sum"),
+                (Some("metrics::Histogram"), "count") => Some("gos_rt_metrics_histogram_count"),
+                (Some("metrics::Registry"), "register") => Some("gos_rt_metrics_registry_register"),
+                (Some("metrics::Registry"), "render") => Some("gos_rt_metrics_registry_render"),
+                (Some("trace::Tracer"), "start_span") => Some("gos_rt_trace_tracer_start_span"),
+                (Some("trace::Span"), "set_attribute") => Some("gos_rt_trace_span_set_attribute"),
+                (Some("trace::Span"), "set_status") => Some("gos_rt_trace_span_set_status"),
+                (Some("trace::Span"), "end") => Some("gos_rt_trace_span_end"),
+                (Some("trace::EndedSpan"), "to_otlp_json") => {
+                    Some("gos_rt_trace_ended_to_otlp_json")
+                }
+                (Some("bytes::Builder"), "write") => Some("gos_rt_bytes_builder_write"),
+                (Some("bytes::Builder"), "write_char") => Some("gos_rt_bytes_builder_write_char"),
+                (Some("bytes::Builder"), "build") => Some("gos_rt_bytes_builder_build"),
+                (Some("bytes::Builder"), "as_str") => Some("gos_rt_bytes_builder_as_str"),
+                (Some("bytes::Builder"), "len") => Some("gos_rt_bytes_builder_len"),
+                (Some("bytes::Buffer"), "write_str") => Some("gos_rt_bytes_buffer_write_str"),
+                (Some("bytes::Buffer"), "push") => Some("gos_rt_bytes_buffer_push"),
+                (Some("bytes::Buffer"), "len") => Some("gos_rt_bytes_buffer_len"),
+                (Some("bytes::Buffer"), "is_empty") => Some("gos_rt_bytes_buffer_is_empty"),
+                (Some("bytes::Buffer"), "clear") => Some("gos_rt_bytes_buffer_clear"),
+                (Some("bytes::Buffer"), "to_string") => Some("gos_rt_bytes_buffer_to_string"),
+                (Some("net::TcpListener"), "accept") => Some("gos_rt_tcp_listener_accept"),
+                (Some("net::TcpListener"), "local_addr") => Some("gos_rt_tcp_listener_local_addr"),
+                (Some("net::TcpListener"), "close") => Some("gos_rt_tcp_listener_close"),
+                (Some("net::TcpStream"), "read") => Some("gos_rt_tcp_stream_read"),
+                (Some("net::TcpStream"), "read_to_string") => {
+                    Some("gos_rt_tcp_stream_read_to_string")
+                }
+                (Some("net::TcpStream"), "write" | "write_all") => Some("gos_rt_tcp_stream_write"),
+                (Some("net::TcpStream"), "close") => Some("gos_rt_tcp_stream_close"),
+                (Some("net::UdpSocket"), "send_to") => Some("gos_rt_udp_send_to"),
+                (Some("net::UdpSocket"), "recv_from") => Some("gos_rt_udp_recv_from"),
+                (Some("net::UdpSocket"), "local_addr") => Some("gos_rt_udp_local_addr"),
+                (Some("net::UdpSocket"), "close") => Some("gos_rt_udp_close"),
                 _ => None,
             };
         if let Some(rt) = kind_dispatch {
@@ -1431,7 +1701,11 @@ impl<'a> Builder<'a> {
                 // treatment as the free `http::request` lowering).
                 let coerce_vec_args = matches!(
                     rt,
-                    "gos_rt_http_client_request" | "gos_rt_http_client_request_bytes"
+                    "gos_rt_http_client_request"
+                        | "gos_rt_http_client_request_bytes"
+                        | "gos_rt_tcp_stream_write"
+                        | "gos_rt_udp_send_to"
+                        | "gos_rt_flag_set_parse"
                 );
                 for arg in args {
                     let a = self.lower_expr(arg)?;
@@ -1446,6 +1720,12 @@ impl<'a> Builder<'a> {
                     } else {
                         a
                     };
+                    // A value sent on a channel escapes to the receiving
+                    // goroutine: switch any RC-managed value to atomic
+                    // reference counting before it is enqueued.
+                    if rt == "gos_rt_chan_send" {
+                        self.emit_mark_shared_if_rc(a, span);
+                    }
                     arg_operands.push(Operand::Copy(Place::local(a)));
                 }
             }
@@ -1454,10 +1734,14 @@ impl<'a> Builder<'a> {
                 | "gos_rt_bufio_scanner_text"
                 | "gos_rt_http_response_body"
                 | "gos_rt_http_request_path"
+                | "gos_rt_http_request_path_value"
+                | "gos_rt_http_request_value"
+                | "gos_rt_http_request_form_value"
                 | "gos_rt_http_request_method"
                 | "gos_rt_regex_find"
                 | "gos_rt_regex_replace"
                 | "gos_rt_regex_replace_all"
+                | "gos_rt_strings_join"
                 | "gos_rt_flag_set_usage" => self.tcx.string_ty(),
                 "gos_rt_error_is"
                 | "gos_rt_regex_is_match"
@@ -1465,6 +1749,9 @@ impl<'a> Builder<'a> {
                 | "gos_rt_set_insert"
                 | "gos_rt_set_contains"
                 | "gos_rt_set_remove"
+                | "gos_rt_set_is_subset"
+                | "gos_rt_set_is_superset"
+                | "gos_rt_set_is_disjoint"
                 | "gos_rt_btmap_contains" => self.tcx.bool_ty(),
                 "gos_rt_http_response_status"
                 | "gos_rt_set_len"
@@ -1501,7 +1788,7 @@ impl<'a> Builder<'a> {
                 }
                 "gos_rt_error_cause" => self.option_adt_ty(),
                 "gos_rt_sync_map_get" => self.option_string_adt_ty(),
-                "gos_rt_sync_map_keys" => {
+                "gos_rt_sync_map_keys" | "gos_rt_btmap_keys" => {
                     let s = self.tcx.string_ty();
                     self.tcx.intern(gossamer_types::TyKind::Vec(s))
                 }
@@ -1511,6 +1798,80 @@ impl<'a> Builder<'a> {
                 "gos_rt_http_request_send"
                 | "gos_rt_http_client_request"
                 | "gos_rt_http_client_request_bytes" => self.result_response_error_adt_ty(),
+                "gos_rt_http_request_path_int" => self.option_i64_adt_ty(),
+                "gos_rt_http_request_path_float" => self.option_f64_adt_ty(),
+                "gos_rt_http_request_basic_auth" => self.option_pair_string_adt_ty(),
+                "gos_rt_math_rng_next_f64" => self.tcx.float_ty(gossamer_types::FloatTy::F64),
+                "gos_rt_field_error_path"
+                | "gos_rt_field_error_message"
+                | "gos_rt_field_error_code"
+                | "gos_rt_validate_errors_get"
+                | "gos_rt_validate_errors_collect"
+                | "gos_rt_metrics_registry_render"
+                | "gos_rt_trace_ended_to_otlp_json" => self.tcx.string_ty(),
+                "gos_rt_validate_errors_is_empty"
+                | "gos_rt_ctx_is_cancelled"
+                | "gos_rt_atomic_bool_load"
+                | "gos_rt_ctx_done" => self.tcx.bool_ty(),
+                "gos_rt_ctx_cancelled" => {
+                    let i = self.tcx.int_ty(gossamer_types::IntTy::I64);
+                    self.tcx.intern(gossamer_types::TyKind::Receiver(i))
+                }
+                "gos_rt_atomic_bool_store" => self.tcx.unit(),
+                "gos_rt_validate_errors_len"
+                | "gos_rt_validate_errors_count"
+                | "gos_rt_rwlock_get"
+                | "gos_rt_metrics_counter_value"
+                | "gos_rt_metrics_histogram_count" => self.tcx.int_ty(gossamer_types::IntTy::I64),
+                "gos_rt_metrics_gauge_value" | "gos_rt_metrics_histogram_sum" => {
+                    self.tcx.float_ty(gossamer_types::FloatTy::F64)
+                }
+                "gos_rt_validate_errors_add"
+                | "gos_rt_rwlock_set"
+                | "gos_rt_ctx_cancel"
+                | "gos_rt_metrics_counter_inc"
+                | "gos_rt_metrics_gauge_set"
+                | "gos_rt_metrics_gauge_inc"
+                | "gos_rt_metrics_gauge_dec"
+                | "gos_rt_metrics_histogram_observe"
+                | "gos_rt_metrics_registry_register"
+                | "gos_rt_trace_span_set_attribute"
+                | "gos_rt_trace_span_set_status" => self.tcx.unit(),
+                "gos_rt_bytes_builder_build"
+                | "gos_rt_bytes_builder_as_str"
+                | "gos_rt_bytes_buffer_to_string" => self.tcx.string_ty(),
+                "gos_rt_bytes_builder_len" | "gos_rt_bytes_buffer_len" => {
+                    self.tcx.int_ty(gossamer_types::IntTy::I64)
+                }
+                "gos_rt_bytes_buffer_is_empty" => self.tcx.bool_ty(),
+                "gos_rt_bytes_builder_write"
+                | "gos_rt_bytes_builder_write_char"
+                | "gos_rt_bytes_buffer_write_str"
+                | "gos_rt_bytes_buffer_push"
+                | "gos_rt_bytes_buffer_clear" => self.tcx.unit(),
+                "gos_rt_tcp_listener_local_addr"
+                | "gos_rt_tcp_stream_read_to_string"
+                | "gos_rt_udp_local_addr" => self.result_string_error_adt_ty(),
+                "gos_rt_tcp_stream_write" | "gos_rt_udp_send_to" => self.result_i64_error_adt_ty(),
+                "gos_rt_tcp_stream_read" => self.result_vec_u8_error_ty(),
+                "gos_rt_tcp_listener_accept" => {
+                    let i = self.tcx.int_ty(gossamer_types::IntTy::I64);
+                    let s = self.tcx.string_ty();
+                    let tup = self.tcx.intern(gossamer_types::TyKind::Tuple(vec![i, s]));
+                    self.result_of(tup)
+                }
+                "gos_rt_udp_recv_from" => {
+                    let u8_ty = self.tcx.int_ty(gossamer_types::IntTy::U8);
+                    let vec_u8 = self.tcx.intern(gossamer_types::TyKind::Vec(u8_ty));
+                    let s = self.tcx.string_ty();
+                    let tup = self
+                        .tcx
+                        .intern(gossamer_types::TyKind::Tuple(vec![vec_u8, s]));
+                    self.result_of(tup)
+                }
+                "gos_rt_tcp_listener_close" | "gos_rt_tcp_stream_close" | "gos_rt_udp_close" => {
+                    self.tcx.unit()
+                }
                 _ => self.tcx.int_ty(gossamer_types::IntTy::I64),
             };
             let dest = self.fresh(pinned);
@@ -1527,9 +1888,13 @@ impl<'a> Builder<'a> {
                 | "gos_rt_http_client_options"
                 | "gos_rt_http_client_delete"
                 | "gos_rt_http_client_head" => Some("http::Request"),
-                "gos_rt_http_request_header" | "gos_rt_http_request_body" => Some("http::Request"),
+                "gos_rt_http_request_header"
+                | "gos_rt_http_request_body"
+                | "gos_rt_http_request_set_value" => Some("http::Request"),
                 "gos_rt_http_client_builder_max_redirects"
-                | "gos_rt_http_client_builder_timeout_ms" => Some("http::ClientBuilder"),
+                | "gos_rt_http_client_builder_timeout_ms"
+                | "gos_rt_http_client_builder_cookie_jar"
+                | "gos_rt_http_client_builder_proxy" => Some("http::ClientBuilder"),
                 "gos_rt_http_client_builder_build" => Some("http::Client"),
                 "gos_rt_http_response_with_header" => Some("http::Response"),
                 "gos_rt_flag_set_string" => Some("flag::Cell::String"),
@@ -1539,6 +1904,13 @@ impl<'a> Builder<'a> {
                 "gos_rt_flag_set_bool" => Some("flag::Cell::Bool"),
                 "gos_rt_flag_set_duration" => Some("flag::Cell::Duration"),
                 "gos_rt_flag_set_string_list" => Some("flag::Cell::StringList"),
+                "gos_rt_set_union"
+                | "gos_rt_set_intersection"
+                | "gos_rt_set_difference"
+                | "gos_rt_set_symmetric_difference" => Some("collections::HashSet"),
+                "gos_rt_tcp_listener_accept" => Some("net::accept_pair"),
+                "gos_rt_trace_tracer_start_span" => Some("trace::Span"),
+                "gos_rt_trace_span_end" => Some("trace::EndedSpan"),
                 _ => None,
             };
             if let Some(k) = dest_kind {
@@ -1640,12 +2012,23 @@ impl<'a> Builder<'a> {
             (Some("http::ClientBuilder"), "timeout_ms") => {
                 Some("gos_rt_http_client_builder_timeout_ms")
             }
+            (Some("http::ClientBuilder"), "cookie_jar") => {
+                Some("gos_rt_http_client_builder_cookie_jar")
+            }
+            (Some("http::ClientBuilder"), "proxy") => Some("gos_rt_http_client_builder_proxy"),
             (Some("http::ClientBuilder"), "build") => Some("gos_rt_http_client_builder_build"),
             (Some("http::Request"), "header") => Some("gos_rt_http_request_header"),
             (Some("http::Request"), "body") => Some("gos_rt_http_request_body"),
             (Some("http::Request"), "send") => Some("gos_rt_http_request_send"),
             (Some("http::Request"), "path") => Some("gos_rt_http_request_path"),
+            (Some("http::Request"), "path_value") => Some("gos_rt_http_request_path_value"),
+            (Some("http::Request"), "path_int") => Some("gos_rt_http_request_path_int"),
+            (Some("http::Request"), "path_float") => Some("gos_rt_http_request_path_float"),
             (Some("http::Request"), "method") => Some("gos_rt_http_request_method"),
+            (Some("http::Request"), "value") => Some("gos_rt_http_request_value"),
+            (Some("http::Request"), "set_value") => Some("gos_rt_http_request_set_value"),
+            (Some("http::Request"), "form_value") => Some("gos_rt_http_request_form_value"),
+            (Some("http::Request"), "basic_auth") => Some("gos_rt_http_request_basic_auth"),
             (Some("http::Response"), "with_header") => Some("gos_rt_http_response_with_header"),
             (Some("http::Response"), "status") => Some("gos_rt_http_response_status"),
             (Some("http::Response"), "body") => Some("gos_rt_http_response_body"),
@@ -1664,6 +2047,15 @@ impl<'a> Builder<'a> {
             (Some("collections::HashSet"), "contains") => Some("gos_rt_set_contains"),
             (Some("collections::HashSet"), "remove") => Some("gos_rt_set_remove"),
             (Some("collections::HashSet"), "len") => Some("gos_rt_set_len"),
+            (Some("collections::HashSet"), "union") => Some("gos_rt_set_union"),
+            (Some("collections::HashSet"), "intersection") => Some("gos_rt_set_intersection"),
+            (Some("collections::HashSet"), "difference") => Some("gos_rt_set_difference"),
+            (Some("collections::HashSet"), "symmetric_difference") => {
+                Some("gos_rt_set_symmetric_difference")
+            }
+            (Some("collections::HashSet"), "is_subset") => Some("gos_rt_set_is_subset"),
+            (Some("collections::HashSet"), "is_superset") => Some("gos_rt_set_is_superset"),
+            (Some("collections::HashSet"), "is_disjoint") => Some("gos_rt_set_is_disjoint"),
             (Some("collections::BTreeMap"), "insert") => Some("gos_rt_btmap_insert"),
             (Some("collections::BTreeMap"), "get") => Some("gos_rt_btmap_get"),
             (Some("collections::BTreeMap"), "get_or") => Some("gos_rt_btmap_get_or"),
@@ -1671,12 +2063,72 @@ impl<'a> Builder<'a> {
                 Some("gos_rt_btmap_contains")
             }
             (Some("collections::BTreeMap"), "len") => Some("gos_rt_btmap_len"),
+            (Some("collections::BTreeMap"), "keys") => Some("gos_rt_btmap_keys"),
             (Some("sync::Map"), "set" | "insert") => Some("gos_rt_sync_map_set"),
             (Some("sync::Map"), "get") => Some("gos_rt_sync_map_get"),
             (Some("sync::Map"), "delete" | "remove") => Some("gos_rt_sync_map_delete"),
             (Some("sync::Map"), "len") => Some("gos_rt_sync_map_len"),
             (Some("sync::Map"), "contains" | "contains_key") => Some("gos_rt_sync_map_contains"),
             (Some("sync::Map"), "keys") => Some("gos_rt_sync_map_keys"),
+            (Some("math::rand::Rng"), "next_u64") => Some("gos_rt_math_rng_next_u64"),
+            (Some("math::rand::Rng"), "next_u32") => Some("gos_rt_math_rng_next_u32"),
+            (Some("math::rand::Rng"), "range_u64") => Some("gos_rt_math_rng_range_u64"),
+            (Some("math::rand::Rng"), "next_f64") => Some("gos_rt_math_rng_next_f64"),
+            (Some("validate::FieldError"), "path") => Some("gos_rt_field_error_path"),
+            (Some("validate::FieldError"), "message") => Some("gos_rt_field_error_message"),
+            (Some("validate::FieldError"), "code") => Some("gos_rt_field_error_code"),
+            (Some("validate::Errors"), "add") => Some("gos_rt_validate_errors_add"),
+            (Some("validate::Errors"), "is_empty") => Some("gos_rt_validate_errors_is_empty"),
+            (Some("validate::Errors"), "len") => Some("gos_rt_validate_errors_len"),
+            (Some("validate::Errors"), "count") => Some("gos_rt_validate_errors_count"),
+            (Some("validate::Errors"), "get") => Some("gos_rt_validate_errors_get"),
+            (Some("validate::Errors"), "collect") => Some("gos_rt_validate_errors_collect"),
+            (Some("sync::RwLock"), "get") => Some("gos_rt_rwlock_get"),
+            (Some("sync::RwLock"), "set") => Some("gos_rt_rwlock_set"),
+            (Some("sync::AtomicBool"), "load") => Some("gos_rt_atomic_bool_load"),
+            (Some("sync::AtomicBool"), "store") => Some("gos_rt_atomic_bool_store"),
+            (Some("context::Context"), "is_cancelled") => Some("gos_rt_ctx_is_cancelled"),
+            (Some("context::Context"), "cancel") => Some("gos_rt_ctx_cancel"),
+            (Some("context::Context"), "done") => Some("gos_rt_ctx_done"),
+            (Some("context::Context"), "done_chan") => Some("gos_rt_ctx_cancelled"),
+            (Some("metrics::Counter"), "inc") => Some("gos_rt_metrics_counter_inc"),
+            (Some("metrics::Counter"), "value") => Some("gos_rt_metrics_counter_value"),
+            (Some("metrics::Gauge"), "set") => Some("gos_rt_metrics_gauge_set"),
+            (Some("metrics::Gauge"), "inc") => Some("gos_rt_metrics_gauge_inc"),
+            (Some("metrics::Gauge"), "dec") => Some("gos_rt_metrics_gauge_dec"),
+            (Some("metrics::Gauge"), "value") => Some("gos_rt_metrics_gauge_value"),
+            (Some("metrics::Histogram"), "observe") => Some("gos_rt_metrics_histogram_observe"),
+            (Some("metrics::Histogram"), "sum") => Some("gos_rt_metrics_histogram_sum"),
+            (Some("metrics::Histogram"), "count") => Some("gos_rt_metrics_histogram_count"),
+            (Some("metrics::Registry"), "register") => Some("gos_rt_metrics_registry_register"),
+            (Some("metrics::Registry"), "render") => Some("gos_rt_metrics_registry_render"),
+            (Some("trace::Tracer"), "start_span") => Some("gos_rt_trace_tracer_start_span"),
+            (Some("trace::Span"), "set_attribute") => Some("gos_rt_trace_span_set_attribute"),
+            (Some("trace::Span"), "set_status") => Some("gos_rt_trace_span_set_status"),
+            (Some("trace::Span"), "end") => Some("gos_rt_trace_span_end"),
+            (Some("trace::EndedSpan"), "to_otlp_json") => Some("gos_rt_trace_ended_to_otlp_json"),
+            (Some("bytes::Builder"), "write") => Some("gos_rt_bytes_builder_write"),
+            (Some("bytes::Builder"), "write_char") => Some("gos_rt_bytes_builder_write_char"),
+            (Some("bytes::Builder"), "build") => Some("gos_rt_bytes_builder_build"),
+            (Some("bytes::Builder"), "as_str") => Some("gos_rt_bytes_builder_as_str"),
+            (Some("bytes::Builder"), "len") => Some("gos_rt_bytes_builder_len"),
+            (Some("bytes::Buffer"), "write_str") => Some("gos_rt_bytes_buffer_write_str"),
+            (Some("bytes::Buffer"), "push") => Some("gos_rt_bytes_buffer_push"),
+            (Some("bytes::Buffer"), "len") => Some("gos_rt_bytes_buffer_len"),
+            (Some("bytes::Buffer"), "is_empty") => Some("gos_rt_bytes_buffer_is_empty"),
+            (Some("bytes::Buffer"), "clear") => Some("gos_rt_bytes_buffer_clear"),
+            (Some("bytes::Buffer"), "to_string") => Some("gos_rt_bytes_buffer_to_string"),
+            (Some("net::TcpListener"), "accept") => Some("gos_rt_tcp_listener_accept"),
+            (Some("net::TcpListener"), "local_addr") => Some("gos_rt_tcp_listener_local_addr"),
+            (Some("net::TcpListener"), "close") => Some("gos_rt_tcp_listener_close"),
+            (Some("net::TcpStream"), "read") => Some("gos_rt_tcp_stream_read"),
+            (Some("net::TcpStream"), "read_to_string") => Some("gos_rt_tcp_stream_read_to_string"),
+            (Some("net::TcpStream"), "write" | "write_all") => Some("gos_rt_tcp_stream_write"),
+            (Some("net::TcpStream"), "close") => Some("gos_rt_tcp_stream_close"),
+            (Some("net::UdpSocket"), "send_to") => Some("gos_rt_udp_send_to"),
+            (Some("net::UdpSocket"), "recv_from") => Some("gos_rt_udp_recv_from"),
+            (Some("net::UdpSocket"), "local_addr") => Some("gos_rt_udp_local_addr"),
+            (Some("net::UdpSocket"), "close") => Some("gos_rt_udp_close"),
             (Some("vec::Iter"), "next") => Some("gos_rt_arr_iter_next"),
             _ => None,
         };
@@ -1728,7 +2180,11 @@ impl<'a> Builder<'a> {
                 // treatment as the free `http::request` lowering).
                 let coerce_vec_args = matches!(
                     rt,
-                    "gos_rt_http_client_request" | "gos_rt_http_client_request_bytes"
+                    "gos_rt_http_client_request"
+                        | "gos_rt_http_client_request_bytes"
+                        | "gos_rt_tcp_stream_write"
+                        | "gos_rt_udp_send_to"
+                        | "gos_rt_flag_set_parse"
                 );
                 for arg in args {
                     let a = self.lower_expr(arg)?;
@@ -1743,6 +2199,12 @@ impl<'a> Builder<'a> {
                     } else {
                         a
                     };
+                    // A value sent on a channel escapes to the receiving
+                    // goroutine: switch any RC-managed value to atomic
+                    // reference counting before it is enqueued.
+                    if rt == "gos_rt_chan_send" {
+                        self.emit_mark_shared_if_rc(a, span);
+                    }
                     arg_operands.push(Operand::Copy(Place::local(a)));
                 }
             }
@@ -1751,10 +2213,14 @@ impl<'a> Builder<'a> {
                 | "gos_rt_bufio_scanner_text"
                 | "gos_rt_http_response_body"
                 | "gos_rt_http_request_path"
+                | "gos_rt_http_request_path_value"
+                | "gos_rt_http_request_value"
+                | "gos_rt_http_request_form_value"
                 | "gos_rt_http_request_method"
                 | "gos_rt_regex_find"
                 | "gos_rt_regex_replace"
                 | "gos_rt_regex_replace_all"
+                | "gos_rt_strings_join"
                 | "gos_rt_flag_set_usage" => self.tcx.string_ty(),
                 "gos_rt_error_is"
                 | "gos_rt_regex_is_match"
@@ -1762,6 +2228,9 @@ impl<'a> Builder<'a> {
                 | "gos_rt_set_insert"
                 | "gos_rt_set_contains"
                 | "gos_rt_set_remove"
+                | "gos_rt_set_is_subset"
+                | "gos_rt_set_is_superset"
+                | "gos_rt_set_is_disjoint"
                 | "gos_rt_btmap_contains" => self.tcx.bool_ty(),
                 "gos_rt_http_response_status"
                 | "gos_rt_set_len"
@@ -1823,7 +2292,7 @@ impl<'a> Builder<'a> {
                     }
                 }
                 "gos_rt_sync_map_get" => self.option_string_adt_ty(),
-                "gos_rt_sync_map_keys" => {
+                "gos_rt_sync_map_keys" | "gos_rt_btmap_keys" => {
                     let s = self.tcx.string_ty();
                     self.tcx.intern(gossamer_types::TyKind::Vec(s))
                 }
@@ -1833,6 +2302,80 @@ impl<'a> Builder<'a> {
                 "gos_rt_http_request_send"
                 | "gos_rt_http_client_request"
                 | "gos_rt_http_client_request_bytes" => self.result_response_error_adt_ty(),
+                "gos_rt_http_request_path_int" => self.option_i64_adt_ty(),
+                "gos_rt_http_request_path_float" => self.option_f64_adt_ty(),
+                "gos_rt_http_request_basic_auth" => self.option_pair_string_adt_ty(),
+                "gos_rt_math_rng_next_f64" => self.tcx.float_ty(gossamer_types::FloatTy::F64),
+                "gos_rt_field_error_path"
+                | "gos_rt_field_error_message"
+                | "gos_rt_field_error_code"
+                | "gos_rt_validate_errors_get"
+                | "gos_rt_validate_errors_collect"
+                | "gos_rt_metrics_registry_render"
+                | "gos_rt_trace_ended_to_otlp_json" => self.tcx.string_ty(),
+                "gos_rt_validate_errors_is_empty"
+                | "gos_rt_ctx_is_cancelled"
+                | "gos_rt_atomic_bool_load"
+                | "gos_rt_ctx_done" => self.tcx.bool_ty(),
+                "gos_rt_ctx_cancelled" => {
+                    let i = self.tcx.int_ty(gossamer_types::IntTy::I64);
+                    self.tcx.intern(gossamer_types::TyKind::Receiver(i))
+                }
+                "gos_rt_atomic_bool_store" => self.tcx.unit(),
+                "gos_rt_validate_errors_len"
+                | "gos_rt_validate_errors_count"
+                | "gos_rt_rwlock_get"
+                | "gos_rt_metrics_counter_value"
+                | "gos_rt_metrics_histogram_count" => self.tcx.int_ty(gossamer_types::IntTy::I64),
+                "gos_rt_metrics_gauge_value" | "gos_rt_metrics_histogram_sum" => {
+                    self.tcx.float_ty(gossamer_types::FloatTy::F64)
+                }
+                "gos_rt_validate_errors_add"
+                | "gos_rt_rwlock_set"
+                | "gos_rt_ctx_cancel"
+                | "gos_rt_metrics_counter_inc"
+                | "gos_rt_metrics_gauge_set"
+                | "gos_rt_metrics_gauge_inc"
+                | "gos_rt_metrics_gauge_dec"
+                | "gos_rt_metrics_histogram_observe"
+                | "gos_rt_metrics_registry_register"
+                | "gos_rt_trace_span_set_attribute"
+                | "gos_rt_trace_span_set_status" => self.tcx.unit(),
+                "gos_rt_bytes_builder_build"
+                | "gos_rt_bytes_builder_as_str"
+                | "gos_rt_bytes_buffer_to_string" => self.tcx.string_ty(),
+                "gos_rt_bytes_builder_len" | "gos_rt_bytes_buffer_len" => {
+                    self.tcx.int_ty(gossamer_types::IntTy::I64)
+                }
+                "gos_rt_bytes_buffer_is_empty" => self.tcx.bool_ty(),
+                "gos_rt_bytes_builder_write"
+                | "gos_rt_bytes_builder_write_char"
+                | "gos_rt_bytes_buffer_write_str"
+                | "gos_rt_bytes_buffer_push"
+                | "gos_rt_bytes_buffer_clear" => self.tcx.unit(),
+                "gos_rt_tcp_listener_local_addr"
+                | "gos_rt_tcp_stream_read_to_string"
+                | "gos_rt_udp_local_addr" => self.result_string_error_adt_ty(),
+                "gos_rt_tcp_stream_write" | "gos_rt_udp_send_to" => self.result_i64_error_adt_ty(),
+                "gos_rt_tcp_stream_read" => self.result_vec_u8_error_ty(),
+                "gos_rt_tcp_listener_accept" => {
+                    let i = self.tcx.int_ty(gossamer_types::IntTy::I64);
+                    let s = self.tcx.string_ty();
+                    let tup = self.tcx.intern(gossamer_types::TyKind::Tuple(vec![i, s]));
+                    self.result_of(tup)
+                }
+                "gos_rt_udp_recv_from" => {
+                    let u8_ty = self.tcx.int_ty(gossamer_types::IntTy::U8);
+                    let vec_u8 = self.tcx.intern(gossamer_types::TyKind::Vec(u8_ty));
+                    let s = self.tcx.string_ty();
+                    let tup = self
+                        .tcx
+                        .intern(gossamer_types::TyKind::Tuple(vec![vec_u8, s]));
+                    self.result_of(tup)
+                }
+                "gos_rt_tcp_listener_close" | "gos_rt_tcp_stream_close" | "gos_rt_udp_close" => {
+                    self.tcx.unit()
+                }
                 _ => self.tcx.int_ty(gossamer_types::IntTy::I64),
             };
             let dest = self.fresh(pinned);
@@ -1843,9 +2386,13 @@ impl<'a> Builder<'a> {
                 | "gos_rt_http_client_options"
                 | "gos_rt_http_client_delete"
                 | "gos_rt_http_client_head" => Some("http::Request"),
-                "gos_rt_http_request_header" | "gos_rt_http_request_body" => Some("http::Request"),
+                "gos_rt_http_request_header"
+                | "gos_rt_http_request_body"
+                | "gos_rt_http_request_set_value" => Some("http::Request"),
                 "gos_rt_http_client_builder_max_redirects"
-                | "gos_rt_http_client_builder_timeout_ms" => Some("http::ClientBuilder"),
+                | "gos_rt_http_client_builder_timeout_ms"
+                | "gos_rt_http_client_builder_cookie_jar"
+                | "gos_rt_http_client_builder_proxy" => Some("http::ClientBuilder"),
                 "gos_rt_http_client_builder_build" => Some("http::Client"),
                 "gos_rt_http_response_with_header" => Some("http::Response"),
                 "gos_rt_flag_set_string" => Some("flag::Cell::String"),
@@ -1855,6 +2402,13 @@ impl<'a> Builder<'a> {
                 "gos_rt_flag_set_bool" => Some("flag::Cell::Bool"),
                 "gos_rt_flag_set_duration" => Some("flag::Cell::Duration"),
                 "gos_rt_flag_set_string_list" => Some("flag::Cell::StringList"),
+                "gos_rt_set_union"
+                | "gos_rt_set_intersection"
+                | "gos_rt_set_difference"
+                | "gos_rt_set_symmetric_difference" => Some("collections::HashSet"),
+                "gos_rt_tcp_listener_accept" => Some("net::accept_pair"),
+                "gos_rt_trace_tracer_start_span" => Some("trace::Span"),
+                "gos_rt_trace_span_end" => Some("trace::EndedSpan"),
                 _ => None,
             };
             if let Some(k) = dest_kind {
@@ -1870,6 +2424,27 @@ impl<'a> Builder<'a> {
             self.set_current(next);
             return Some(dest);
         }
+        // A `gos_rt_vec_*` / strings-join shim reads a `GosVec` header, but a
+        // `[T; N]` array-literal receiver (`["a", "b"].contains(..)` /
+        // `.join(..)`) is a flat, header-less buffer. Coerce it to a heap
+        // `GosVec` first so the shim doesn't read past the inline storage (a
+        // native-tier segfault). The flat-array-aware `gos_rt_intarr_*` /
+        // `gos_rt_floatarr_*` slice shims keep the raw array.
+        let receiver_local = match runtime_symbol {
+            Some(sym) if sym.starts_with("gos_rt_vec_") || sym == "gos_rt_strings_join" => {
+                match self
+                    .tcx
+                    .kind_of(self.locals[receiver_local.0 as usize].ty)
+                    .clone()
+                {
+                    TyKind::Array { elem, len } => {
+                        self.coerce_array_to_vec(receiver_local, elem, len, span)
+                    }
+                    _ => receiver_local,
+                }
+            }
+            _ => receiver_local,
+        };
         let mut arg_operands = Vec::with_capacity(args.len() + 1);
         arg_operands.push(Operand::Copy(Place::local(receiver_local)));
         // `xs.slice(a, b)` on a `[T; N]` literal receiver: splice
@@ -1892,12 +2467,70 @@ impl<'a> Builder<'a> {
                 arg_operands.push(Operand::Const(ConstValue::Int(n)));
             }
         }
+        // A `HashMap<_, Vec<_>>` insert / or_insert whose value is an
+        // inline `[a, b, c]` array literal must marshal a real heap
+        // `GosVec` (with the RC header the map's blob ownership and the
+        // later `.len()` / index reads depend on), not the header-less
+        // stack `[T; N]` buffer the literal lowers to. The key arg is a
+        // String / i64 (never an Array) so it is left untouched.
+        let coerce_map_value = matches!(
+            runtime_symbol,
+            Some(
+                "gos_rt_map_insert_i64_i64"
+                    | "gos_rt_map_insert_str_i64"
+                    | "gos_rt_map_or_insert_i64_i64"
+                    | "gos_rt_map_or_insert_str_i64"
+            )
+        );
+        // String methods whose needle / pattern argument is a `&str`
+        // the runtime helper reads as a `*const c_char`. A `char`
+        // literal (`s.contains('e')`, `s.replace('l', "L")`) lowers to
+        // an i32 codepoint, so it must be converted to a one-char
+        // String via `gos_rt_char_to_str` before the call — otherwise
+        // the helper dereferences the codepoint as a pointer. Mirrors
+        // the front-end coercion the free-function form already gets.
+        let coerce_char_needle = matches!(
+            runtime_symbol,
+            Some(
+                "gos_rt_str_contains"
+                    | "gos_rt_str_find_opt"
+                    | "gos_rt_str_rfind_opt"
+                    | "gos_rt_str_replace"
+                    | "gos_rt_str_replacen"
+                    | "gos_rt_str_starts_with"
+                    | "gos_rt_str_ends_with"
+                    | "gos_rt_str_trim_matches"
+                    | "gos_rt_str_lstrip_chars"
+                    | "gos_rt_str_rstrip_chars"
+                    | "gos_rt_str_split_once"
+                    | "gos_rt_str_rsplit_once"
+                    | "gos_rt_str_count"
+                    | "gos_rt_str_strip_prefix"
+                    | "gos_rt_str_strip_suffix"
+                    | "gos_rt_str_split"
+            )
+        );
         for arg in args {
             let a = self.lower_expr(arg)?;
             // 0.7.0 flag::Cell auto-deref at the call boundary —
             // mirrors the bytecode VM's auto-unwrap shape so
             // `get_comic(flags.number)` works without `*`.
             let a = self.auto_deref_cell(a, span);
+            let a = if coerce_map_value {
+                let lt = self.locals[a.0 as usize].ty;
+                if let TyKind::Array { elem, len } = self.tcx.kind_of(lt).clone() {
+                    self.coerce_array_to_vec(a, elem, len, span)
+                } else {
+                    a
+                }
+            } else {
+                a
+            };
+            let a = if coerce_char_needle {
+                self.coerce_char_arg_to_str(a, span)
+            } else {
+                a
+            };
             arg_operands.push(Operand::Copy(Place::local(a)));
         }
 
@@ -2074,6 +2707,26 @@ impl<'a> Builder<'a> {
             )
         {
             runtime_symbol = Some("gos_rt_vec_clone");
+        }
+        // `.len()` on an inline `gos_rt_*` runtime-call temporary: the
+        // HIR receiver type is an unresolved `Var`, so the top-of-method
+        // dispatch defaulted to `gos_rt_len` (a GosVec-header read) even
+        // when the lowered value is a c-string / map / json handle. Bind
+        // to a local first always worked because that pins a real type;
+        // re-key off the resolved `lowered_recv_ty` so the inline
+        // temporary path matches. `sha256::hex(x).len()` must reach
+        // `gos_rt_str_len` (strlen), not `gos_rt_len`.
+        if runtime_symbol == Some("gos_rt_len") {
+            let mut k = self.tcx.kind_of(lowered_recv_ty);
+            while let TyKind::Ref { inner, .. } = k {
+                k = self.tcx.kind_of(*inner);
+            }
+            runtime_symbol = match k {
+                TyKind::String => Some("gos_rt_str_len"),
+                TyKind::HashMap { .. } => Some("gos_rt_map_len"),
+                TyKind::JsonValue => Some("gos_rt_json_len"),
+                _ => runtime_symbol,
+            };
         }
 
         if let Some(sym) = runtime_symbol {

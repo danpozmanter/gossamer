@@ -487,6 +487,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[cfg_attr(miri, ignore)] // spawns goroutines on the mmap-stack scheduler; Miri can't
     fn sleep_until_returns_promptly() {
         let start = Instant::now();
         sleep_until(start + Duration::from_millis(20));
@@ -496,6 +497,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)] // spawns goroutines on the mmap-stack scheduler; Miri can't
     fn spawn_runs_on_pool() {
         use std::sync::atomic::AtomicUsize;
         let counter = std::sync::Arc::new(AtomicUsize::new(0));
@@ -513,6 +515,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)] // spawns goroutines on the mmap-stack scheduler; Miri can't
     fn goroutine_can_sleep_via_park() {
         use std::sync::atomic::AtomicUsize;
         let counter = std::sync::Arc::new(AtomicUsize::new(0));

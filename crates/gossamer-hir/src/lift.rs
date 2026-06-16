@@ -52,10 +52,32 @@ pub fn lift_closures(mut program: HirProgram, tcx: &mut gossamer_types::TyCtxt) 
         scalar_tys,
     };
     for item in &mut program.items {
-        if let HirItemKind::Fn(decl) = &mut item.kind {
-            if let Some(body) = &mut decl.body {
-                lifter.visit_block(&mut body.block);
+        match &mut item.kind {
+            HirItemKind::Fn(decl) => {
+                if let Some(body) = &mut decl.body {
+                    lifter.visit_block(&mut body.block);
+                }
             }
+            // Impl methods and trait default methods are still nested
+            // here at lift time (they are flattened into top-level `Fn`
+            // items only during MIR lowering), so descend into them too
+            // — otherwise a closure inside `impl Handler { fn serve }`
+            // never lifts and the compiled tier lowers it to a null env.
+            HirItemKind::Impl(imp) => {
+                for method in &mut imp.methods {
+                    if let Some(body) = &mut method.body {
+                        lifter.visit_block(&mut body.block);
+                    }
+                }
+            }
+            HirItemKind::Trait(tr) => {
+                for method in &mut tr.methods {
+                    if let Some(body) = &mut method.body {
+                        lifter.visit_block(&mut body.block);
+                    }
+                }
+            }
+            HirItemKind::Const(_) | HirItemKind::Static(_) | HirItemKind::Adt(_) => {}
         }
     }
     // Post-lift: pin every lifted closure param whose type is still
@@ -129,6 +151,19 @@ pub fn lift_closures(mut program: HirProgram, tcx: &mut gossamer_types::TyCtxt) 
 /// closure params that hold aggregates (tuples / structs / arrays)
 /// stay pointer-shaped — the runtime sort / iter comparators hand
 /// the body raw element pointers and the projections walk off them.
+/// True when `go <inner>` is the MIR builder's direct named-function
+/// spawn fast path (`gos_rt_go_spawn_call_N`): a call whose callee is
+/// a resolved path (`def: Some`) with at most six arguments. Must stay
+/// in lockstep with the predicate the MIR `Go` lowering uses.
+fn is_go_call_fast_path(inner: &HirExpr) -> bool {
+    if let HirExprKind::Call { callee, args } = &inner.kind {
+        if let HirExprKind::Path { def: Some(_), .. } = &callee.kind {
+            return args.len() <= 6;
+        }
+    }
+    false
+}
+
 fn collect_aggregate_param_uses(block: &HirBlock, out: &mut std::collections::HashSet<String>) {
     for stmt in &block.stmts {
         match &stmt.kind {
@@ -258,7 +293,7 @@ impl Lifter {
             } => self.visit_expr(expr),
             HirStmtKind::Let { init: None, .. } => {}
             HirStmtKind::Expr { expr, .. } => self.visit_expr(expr),
-            HirStmtKind::Go(inner) => self.visit_expr(inner),
+            HirStmtKind::Go(inner) => self.lift_go_inner(inner),
             HirStmtKind::Defer(inner) => self.visit_expr(inner),
             HirStmtKind::Item(_) => {}
         }
@@ -327,8 +362,8 @@ impl Lifter {
             HirExprKind::Block(block) => self.visit_block(block),
             HirExprKind::Return(Some(inner))
             | HirExprKind::Break(Some(inner))
-            | HirExprKind::Cast { value: inner, .. }
-            | HirExprKind::Go(inner) => self.visit_expr(inner),
+            | HirExprKind::Cast { value: inner, .. } => self.visit_expr(inner),
+            HirExprKind::Go(inner) => self.lift_go_inner(inner),
             HirExprKind::Return(None) | HirExprKind::Break(None) => {}
             HirExprKind::Tuple(elems) => {
                 for e in elems {
@@ -417,6 +452,46 @@ impl Lifter {
                 }
             }
         }
+    }
+
+    /// Prepares the spawned expression of a `go` for MIR lowering.
+    ///
+    /// `go f(args)` where `f` is a resolved named function with at
+    /// most six arguments is the MIR builder's direct fast path
+    /// (`gos_rt_go_spawn_call_N`); it is left as a call and only its
+    /// arguments are walked for nested closures. Every other shape — a
+    /// stdlib free call (`go http::get(url)`), a method call, a call
+    /// with more than six arguments, a block — cannot ride that fast
+    /// path, so it is wrapped in a zero-argument closure that the
+    /// closure-lift below turns into a real top-level body. The MIR
+    /// builder spawns that closure fire-and-forget, so the wrapped
+    /// call runs on its own goroutine with its own calling convention,
+    /// matching the bytecode VM's `compile_non_call_go`.
+    fn lift_go_inner(&mut self, inner: &mut HirExpr) {
+        if is_go_call_fast_path(inner) {
+            self.visit_expr(inner);
+            return;
+        }
+        let placeholder = HirExpr {
+            id: inner.id,
+            span: inner.span,
+            ty: inner.ty,
+            kind: HirExprKind::Placeholder,
+        };
+        let body = std::mem::replace(inner, placeholder);
+        let body_ty = body.ty;
+        let body_span = body.span;
+        *inner = HirExpr {
+            id: self.ids.next(),
+            span: body_span,
+            ty: self.env_ty,
+            kind: HirExprKind::Closure {
+                params: Vec::new(),
+                ret: Some(body_ty),
+                body: Box::new(body),
+            },
+        };
+        self.visit_expr(inner);
     }
 
     /// Ty for a binding-declared parameter / return. Scalars map to

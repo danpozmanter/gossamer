@@ -1,4 +1,4 @@
-//! Interpreter hooks for the legacy builder-style `flag::Set` API
+//! VM hooks for the legacy builder-style `flag::Set` API
 //! exercised by `examples/cli_args.gos` and `examples/grep.gos`.
 //! Backed by a thread-local cell registry so `Set::parse` can
 //! mutate values that are later read via `*cell` (deref).

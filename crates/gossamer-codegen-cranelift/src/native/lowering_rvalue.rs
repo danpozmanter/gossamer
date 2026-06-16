@@ -806,6 +806,12 @@ pub(super) fn lower_rvalue(
         Rvalue::CallIntrinsic { .. } => {
             unreachable!("CallIntrinsic must be routed through the statement path")
         }
+        // `static mut` access has no Cranelift JIT lowering; declining
+        // the body keeps it on the bytecode VM, which handles the
+        // shared cell correctly.
+        Rvalue::StaticLoad(_) => {
+            bail!("native codegen: static mut load unsupported; running on VM")
+        }
     })
 }
 

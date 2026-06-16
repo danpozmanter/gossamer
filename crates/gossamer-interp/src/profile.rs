@@ -368,18 +368,11 @@ fn op_label(tag: usize) -> &'static str {
             (O::LoadConst { dst: 0, idx: 0 }, "LoadConst"),
             (O::LoadGlobal { dst: 0, idx: 0 }, "LoadGlobal"),
             (
-                O::StaticGet {
-                    dst: 0,
-                    name_idx: 0,
-                },
-                "StaticGet",
-            ),
-            (
-                O::StaticSet {
+                O::StoreStatic {
                     name_idx: 0,
                     src: 0,
                 },
-                "StaticSet",
+                "StoreStatic",
             ),
             (O::Move { dst: 0, src: 0 }, "Move"),
             (O::Deref { dst: 0, src: 0 }, "Deref"),
@@ -488,18 +481,9 @@ fn op_label(tag: usize) -> &'static str {
                     args: 0,
                     argc: 0,
                     cache_idx: 0,
+                    may_have_cells: false,
                 },
                 "Call",
-            ),
-            (
-                O::CallI64 {
-                    dst_i: 0,
-                    name_idx: 0,
-                    args_i: 0,
-                    argc: 0,
-                    cache_idx: 0,
-                },
-                "CallI64",
             ),
             (O::Return { value: 0 }, "Return"),
             (O::ReturnUnit, "ReturnUnit"),
@@ -556,14 +540,6 @@ fn op_label(tag: usize) -> &'static str {
                     count: 0,
                 },
                 "BuildIntArray",
-            ),
-            (
-                O::BuildArray {
-                    dst: 0,
-                    first: 0,
-                    count: 0,
-                },
-                "BuildArray",
             ),
             (
                 O::BuildTuple {
@@ -959,7 +935,6 @@ fn op_label(tag: usize) -> &'static str {
             ),
             (O::UnboxI64 { dst_i: 0, src_v: 0 }, "UnboxI64"),
             (O::BoxI64 { dst_v: 0, src_i: 0 }, "BoxI64"),
-            (O::BoxU64 { dst_v: 0, src_i: 0 }, "BoxU64"),
             (O::MoveF64 { dst_f: 0, src_f: 0 }, "MoveF64"),
             (O::MoveI64 { dst_i: 0, src_i: 0 }, "MoveI64"),
             (
@@ -1064,30 +1039,6 @@ fn op_label(tag: usize) -> &'static str {
                 "FieldGetF64ByOffset",
             ),
             (
-                O::IsVariant {
-                    dst: 0,
-                    value: 0,
-                    name_idx: 0,
-                },
-                "IsVariant",
-            ),
-            (
-                O::VariantField {
-                    dst: 0,
-                    value: 0,
-                    index: 0,
-                },
-                "VariantField",
-            ),
-            (
-                O::IsStruct {
-                    dst: 0,
-                    value: 0,
-                    name_idx: 0,
-                },
-                "IsStruct",
-            ),
-            (
                 O::FlatGetF64 {
                     dst_f: 0,
                     base: 0,
@@ -1106,14 +1057,6 @@ fn op_label(tag: usize) -> &'static str {
                     value_f: 0,
                 },
                 "FlatSetF64",
-            ),
-            (
-                O::TryRecv {
-                    dst: 0,
-                    chan: 0,
-                    on_empty: 0,
-                },
-                "TryRecv",
             ),
         ];
         let _ = zero;

@@ -10,7 +10,7 @@ use anyhow::{Result, anyhow};
 
 use crate::cmd::attr_walk::{collect_selected_fn_names, item_has_attr};
 use crate::loaders::{load_and_check, load_and_check_with_sf};
-use crate::paths::{collect_lint_targets, default_test_root, read_source};
+use crate::paths::{collect_lint_targets, default_test_root, read_entry_source, read_source};
 
 /// ANSI styling shared by the test-runner output. Disabled when
 /// stdout isn't a TTY (CI captures, pipes), or when the user
@@ -139,6 +139,12 @@ pub(crate) fn run_with_opts(opts: TestOpts) -> Result<()> {
         return tier_parity::run(&opts);
     }
     gossamer_resolve::set_test_cfg(true);
+    // Run tests on pure bytecode. The per-test assertion tally and the
+    // coverage counters are interp-side mechanisms the whole-program
+    // JIT bypasses (a JIT-promoted `#[test]` would record neither), so
+    // a prior test warming up the JIT must not silently drop a later
+    // test's assertions. Determinism over throughput here.
+    gossamer_interp::set_jit_disabled();
     if opts.race {
         gossamer_runtime::race::enable();
         gossamer_codegen_llvm::set_race_instrumentation(true);
@@ -418,18 +424,27 @@ fn run_tests_filtered(
     style: &TestStyle,
     quiet: bool,
 ) -> Vec<TestRecord> {
-    let Ok(source) = read_source(&file.to_path_buf()) else {
+    // Bundle sibling `*.gos` modules into the compilation, exactly as
+    // `gos run` / `gos build` do, so a `#[test]` can reach a sibling
+    // module (`super::helper::triple` where `src/helper.gos` is declared
+    // `mod helper;`). Test-name collection stays unbundled so sibling
+    // tests are not double-counted against this file.
+    let Ok(source) = read_entry_source(&file.to_path_buf()) else {
         return Vec::new();
     };
     let augmented = gossamer_parse::autoderive::augment_source(&source);
     let mut map = gossamer_lex::SourceMap::new();
     let file_id = map.add_file(file.to_string_lossy().into_owned(), augmented.clone());
-    let Ok((program, _sf, _tcx)) = load_and_check_with_sf(&augmented, file_id, &map) else {
+    let Ok((program, _sf, tcx)) = load_and_check_with_sf(&augmented, file_id, &map) else {
         return Vec::new();
     };
-    let mut interp = gossamer_interp::Interpreter::new();
-    interp.set_source_map(std::sync::Arc::new(map));
-    interp.load(&program);
+    let mut vm = gossamer_interp::Vm::new();
+    // Publish the source map before `load` so the VM compiler can emit
+    // per-statement coverage hits when `gos test --coverage` is active.
+    vm.set_source_map(std::sync::Arc::new(map));
+    if vm.load(&program, tcx).is_err() {
+        return Vec::new();
+    }
     let mut records = Vec::new();
     if !quiet && !names.is_empty() {
         let header = format!("=== {} ===", file.display());
@@ -438,8 +453,15 @@ fn run_tests_filtered(
     for name in names {
         gossamer_interp::reset_test_tally();
         let started = std::time::Instant::now();
-        let outcome = interp.call(name, Vec::new());
+        let outcome = vm.call(name, Vec::new());
         let elapsed = started.elapsed();
+        // Snapshot the VM call chain immediately: a failing test
+        // preserves its frames, and the next `vm.call` clears them.
+        let call_trace = if outcome.is_err() {
+            crate::cmd::traceback::render_call_stack(&vm.call_stack_snapshot())
+        } else {
+            String::new()
+        };
         let tally = gossamer_interp::take_test_tally();
         let panicked = outcome.as_ref().err().map(ToString::to_string);
         let assertion_failure = tally.failures > 0;
@@ -491,6 +513,11 @@ fn run_tests_filtered(
                     style.dim(&elapsed_str),
                     style.red(&failure_message.clone().unwrap_or_default())
                 );
+                // The call-chain traceback is additional context — the
+                // failure message above stays byte-identical to before.
+                if !call_trace.is_empty() {
+                    println!("{}", style.dim(&call_trace));
+                }
             }
         }
     }
@@ -623,15 +650,19 @@ fn run_doc_tests_in_file(file: &std::path::Path, style: &TestStyle) -> DocTestFi
         };
         let mut map = gossamer_lex::SourceMap::new();
         let file_id = map.add_file(doc.name.clone(), body.clone());
-        let Ok((program, _tcx)) = load_and_check(&body, file_id, &map) else {
+        let Ok((program, tcx)) = load_and_check(&body, file_id, &map) else {
             println!("  {} doc-test {} (compile)", style.fail(), doc.name);
             failures += 1;
             continue;
         };
-        let mut interp = gossamer_interp::Interpreter::new();
-        interp.set_source_map(std::sync::Arc::new(map));
-        interp.load(&program);
-        match interp.call("main", Vec::new()) {
+        let mut vm = gossamer_interp::Vm::new();
+        vm.set_source_map(std::sync::Arc::new(map));
+        if vm.load(&program, tcx).is_err() {
+            println!("  {} doc-test {} (compile)", style.fail(), doc.name);
+            failures += 1;
+            continue;
+        }
+        match vm.call("main", Vec::new()) {
             Ok(_) => {
                 println!("  {} doc-test {}", style.pass(), doc.name);
                 passes += 1;

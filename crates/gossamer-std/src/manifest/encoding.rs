@@ -122,6 +122,26 @@ pub const ENCODING_YAML: StdModule = StdModule {
             kind: StdItemKind::Function,
             doc: "Encodes a Value as a YAML document.",
         },
+        StdItem {
+            name: "parse_all",
+            kind: StdItemKind::Function,
+            doc: "Parses a multi-document YAML stream into a Vec<Value>.",
+        },
+        StdItem {
+            name: "to_json",
+            kind: StdItemKind::Function,
+            doc: "Converts a YAML document to JSON text.",
+        },
+        StdItem {
+            name: "from_json",
+            kind: StdItemKind::Function,
+            doc: "Converts JSON text to a YAML document.",
+        },
+        StdItem {
+            name: "is_valid",
+            kind: StdItemKind::Function,
+            doc: "Reports whether the text is well-formed YAML.",
+        },
     ],
 };
 
@@ -158,6 +178,81 @@ pub const ENCODING_JSON: StdModule = StdModule {
             name: "Error",
             kind: StdItemKind::Type,
             doc: "Error raised by encoding/decoding operations.",
+        },
+        StdItem {
+            name: "parse",
+            kind: StdItemKind::Function,
+            doc: "Parses JSON text into a dynamic Value.",
+        },
+        StdItem {
+            name: "render",
+            kind: StdItemKind::Function,
+            doc: "Renders a dynamic Value as compact JSON text.",
+        },
+        StdItem {
+            name: "encode_pretty",
+            kind: StdItemKind::Function,
+            doc: "Renders a value as indented JSON text.",
+        },
+        StdItem {
+            name: "valid",
+            kind: StdItemKind::Function,
+            doc: "Reports whether the text is well-formed JSON.",
+        },
+        StdItem {
+            name: "get",
+            kind: StdItemKind::Function,
+            doc: "Looks up an object field on a dynamic Value.",
+        },
+        StdItem {
+            name: "set",
+            kind: StdItemKind::Function,
+            doc: "Sets an object field on a dynamic Value.",
+        },
+        StdItem {
+            name: "at",
+            kind: StdItemKind::Function,
+            doc: "Indexes an array element on a dynamic Value.",
+        },
+        StdItem {
+            name: "keys",
+            kind: StdItemKind::Function,
+            doc: "Object field names of a dynamic Value.",
+        },
+        StdItem {
+            name: "len",
+            kind: StdItemKind::Function,
+            doc: "Element / field count of a dynamic Value.",
+        },
+        StdItem {
+            name: "is_null",
+            kind: StdItemKind::Function,
+            doc: "Reports whether a dynamic Value is null.",
+        },
+        StdItem {
+            name: "as_str",
+            kind: StdItemKind::Function,
+            doc: "Reads a dynamic Value as Option<String>.",
+        },
+        StdItem {
+            name: "as_i64",
+            kind: StdItemKind::Function,
+            doc: "Reads a dynamic Value as Option<i64>.",
+        },
+        StdItem {
+            name: "as_f64",
+            kind: StdItemKind::Function,
+            doc: "Reads a dynamic Value as Option<f64>.",
+        },
+        StdItem {
+            name: "as_bool",
+            kind: StdItemKind::Function,
+            doc: "Reads a dynamic Value as Option<bool>.",
+        },
+        StdItem {
+            name: "as_array",
+            kind: StdItemKind::Function,
+            doc: "Reads a dynamic Value as an array of Values.",
         },
     ],
 };
@@ -327,6 +422,21 @@ pub const ENCODING_XML: StdModule = StdModule {
             kind: StdItemKind::Type,
             doc: "Start / End / Text / CData / Comment / Eof.",
         },
+        StdItem {
+            name: "parse",
+            kind: StdItemKind::Function,
+            doc: "Parses an XML document into a Vec of events.",
+        },
+        StdItem {
+            name: "encode",
+            kind: StdItemKind::Function,
+            doc: "Serialises a sequence of events to XML text.",
+        },
+        StdItem {
+            name: "escape",
+            kind: StdItemKind::Function,
+            doc: "Escapes XML metacharacters in text.",
+        },
     ],
 };
 
@@ -348,6 +458,26 @@ pub const ENCODING_BASE32: StdModule = StdModule {
             name: "decode",
             kind: StdItemKind::Function,
             doc: "Base32 string -> bytes.",
+        },
+        StdItem {
+            name: "encode_string",
+            kind: StdItemKind::Function,
+            doc: "Encodes a String as standard base32 text.",
+        },
+        StdItem {
+            name: "decode_string",
+            kind: StdItemKind::Function,
+            doc: "Decodes standard base32 text into a String.",
+        },
+        StdItem {
+            name: "encode_hex",
+            kind: StdItemKind::Function,
+            doc: "Encodes a String as extended-hex base32 text.",
+        },
+        StdItem {
+            name: "decode_hex",
+            kind: StdItemKind::Function,
+            doc: "Decodes extended-hex base32 text into a String.",
         },
     ],
 };

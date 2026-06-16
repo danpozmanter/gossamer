@@ -60,8 +60,8 @@ fn main() {
   produces a working binary.
 - **`concurrency.gos`** — goroutines plus a `(Sender, Receiver)`
   channel, producer / consumer shape. Runs under `gos run`
-  (tree-walker and VM); native codegen for channel operations
-  is still pending.
+  (bytecode VM) and `gos build` (native), with channel operations
+  lowered natively on every tier.
 - **`line_count.gos`** — walks a directory via `os::read_dir`,
   counts plain-text lines per file, fans out through a channel.
   Uses goroutines and `select`.

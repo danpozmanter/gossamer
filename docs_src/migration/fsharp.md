@@ -64,7 +64,7 @@ left-to-right visual shape.
 | `type Point = { X: int; Y: int }` | `struct Point { x: i64, y: i64 }` | |
 | `type Shape = Circle of float \| Rect of float * float` | `enum Shape { Circle(f64), Rect(f64, f64) }` | |
 | `printfn "%d" n` | `println!("{n}")` | |
-| `sprintf "%s world" "hello"` | `format!("{s} world", s="hello")` or `format!("hello world")` | |
+| `sprintf "%s world" "hello"` | `format!("{} world", "hello")` or `format!("hello world")` | |
 | `[1; 2; 3]` | `[1, 2, 3]` | Growable `Vec<i64>`. |
 | `Map.ofList [("a", 1)]` | `HashMap::from([("a", 1)])` | |
 | `async { … }` | `go fn() { … }()` | Goroutine. |
@@ -102,7 +102,7 @@ fn sum(t: &Tree) -> i64 {
 ```
 
 `Box<Tree>` spells out what F# infers for recursive variants.
-The GC owns every allocation; `Box` is a naming convention, not
+The runtime owns every allocation; `Box` is a naming convention, not
 a distinct heap strategy.
 
 ## Records → structs
@@ -156,7 +156,7 @@ Gossamer:
 ```gos
 let parsed = input
     |> option::and_then(try_parse)
-    |> option::unwrap_or(0)
+    |> option::default(0)
 ```
 
 `?` works for `Result` propagation exactly as in Rust.
@@ -315,7 +315,6 @@ Gossamer:
 ```gos
 let evens = iter::range_inclusive(0, 100)
     |> iter::filter(|n: i64| n % 2 == 0)
-    |> iter::collect()
 ```
 
 ## What F# has that Gossamer doesn't

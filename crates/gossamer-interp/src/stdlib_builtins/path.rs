@@ -266,15 +266,21 @@ pub(crate) fn builtin_utf8_count_runes(args: &[Value]) -> RuntimeResult<Value> {
 }
 
 pub(crate) fn builtin_utf8_rune_len(args: &[Value]) -> RuntimeResult<Value> {
-    let c = match args.first() {
-        Some(Value::Char(c)) => *c,
+    // Mirror the compiled `gos_rt_utf8_rune_len(c: u32)` shim: a rune is
+    // a Unicode scalar (passed as a char or its codepoint int); invalid
+    // scalars yield -1, matching Go's `utf8.RuneLen`.
+    let scalar: u32 = match args.first() {
+        Some(Value::Char(c)) => *c as u32,
+        Some(Value::Int(n)) => *n as u32,
         Some(Value::String(s)) => match s.as_str().chars().next() {
-            Some(c) => c,
-            None => return Ok(Value::Int(0)),
+            Some(c) => c as u32,
+            None => return Ok(Value::Int(-1)),
         },
-        _ => return Ok(Value::Int(0)),
+        _ => return Ok(Value::Int(-1)),
     };
-    Ok(Value::Int(c.len_utf8() as i64))
+    Ok(Value::Int(
+        char::from_u32(scalar).map_or(-1, |c| c.len_utf8() as i64),
+    ))
 }
 
 pub(crate) fn builtin_utf8_is_valid(args: &[Value]) -> RuntimeResult<Value> {

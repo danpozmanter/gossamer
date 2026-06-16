@@ -121,9 +121,54 @@ pub(crate) fn install_strconv(globals: &mut Vec<(&'static str, Value)>) {
             ("format_f64", builtin_strconv_format_f64),
             ("itoa", builtin_strconv_format_i64),
             ("atoi", builtin_strconv_parse_i64),
+            ("parse_i64_radix", builtin_strconv_parse_i64_radix),
+            ("format_i64_radix", builtin_strconv_format_i64_radix),
+            ("quote", builtin_strconv_quote),
+            ("unquote", builtin_strconv_unquote),
         ],
         globals,
     );
+}
+
+pub(crate) fn builtin_strconv_parse_i64_radix(args: &[Value]) -> RuntimeResult<Value> {
+    let text = match arg_str_at(args, 0, "strconv::parse_i64_radix", "argument") {
+        Ok(s) => s,
+        Err(v) => return Ok(v),
+    };
+    let base = args.get(1).and_then(value_to_int).unwrap_or(10);
+    let radix = u32::try_from(base).unwrap_or(0);
+    match strconv_std::parse_i64_radix(&text, radix) {
+        Ok(n) => Ok(ok_variant(Value::Int(n))),
+        Err(e) => Ok(err_variant(format!("{e}"))),
+    }
+}
+
+pub(crate) fn builtin_strconv_format_i64_radix(args: &[Value]) -> RuntimeResult<Value> {
+    let n = args.first().and_then(value_to_int).unwrap_or(0);
+    let base = args.get(1).and_then(value_to_int).unwrap_or(10);
+    let radix = u32::try_from(base).unwrap_or(10);
+    Ok(Value::String(
+        strconv_std::format_i64_radix(n, radix).into(),
+    ))
+}
+
+pub(crate) fn builtin_strconv_quote(args: &[Value]) -> RuntimeResult<Value> {
+    let text = match arg_str_at(args, 0, "strconv::quote", "argument") {
+        Ok(s) => s,
+        Err(v) => return Ok(v),
+    };
+    Ok(Value::String(strconv_std::quote(&text).into()))
+}
+
+pub(crate) fn builtin_strconv_unquote(args: &[Value]) -> RuntimeResult<Value> {
+    let text = match arg_str_at(args, 0, "strconv::unquote", "argument") {
+        Ok(s) => s,
+        Err(v) => return Ok(v),
+    };
+    match strconv_std::unquote(&text) {
+        Ok(s) => Ok(ok_variant(Value::String(s.into()))),
+        Err(e) => Ok(err_variant(format!("{e}"))),
+    }
 }
 
 pub(crate) fn builtin_strconv_parse_i64(args: &[Value]) -> RuntimeResult<Value> {

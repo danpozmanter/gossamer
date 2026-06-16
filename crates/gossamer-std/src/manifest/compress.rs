@@ -105,6 +105,16 @@ pub const COMPRESS_FLATE: StdModule = StdModule {
             kind: StdItemKind::Function,
             doc: "One-shot DEFLATE decompress.",
         },
+        StdItem {
+            name: "compress",
+            kind: StdItemKind::Function,
+            doc: "One-shot DEFLATE compress (alias of encode).",
+        },
+        StdItem {
+            name: "decompress",
+            kind: StdItemKind::Function,
+            doc: "One-shot DEFLATE decompress (alias of decode).",
+        },
     ],
 };
 
@@ -122,6 +132,16 @@ pub const COMPRESS_ZLIB: StdModule = StdModule {
             kind: StdItemKind::Function,
             doc: "One-shot zlib decompress.",
         },
+        StdItem {
+            name: "compress",
+            kind: StdItemKind::Function,
+            doc: "One-shot zlib compress (alias of encode).",
+        },
+        StdItem {
+            name: "decompress",
+            kind: StdItemKind::Function,
+            doc: "One-shot zlib decompress (alias of decode).",
+        },
     ],
 };
 
@@ -138,6 +158,16 @@ pub const COMPRESS_BZIP2: StdModule = StdModule {
             name: "decode",
             kind: StdItemKind::Function,
             doc: "One-shot bzip2 decompress.",
+        },
+        StdItem {
+            name: "compress",
+            kind: StdItemKind::Function,
+            doc: "One-shot bzip2 compress (alias of encode).",
+        },
+        StdItem {
+            name: "decompress",
+            kind: StdItemKind::Function,
+            doc: "One-shot bzip2 decompress (alias of decode).",
         },
     ],
 };

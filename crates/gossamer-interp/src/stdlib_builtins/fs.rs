@@ -119,6 +119,35 @@ pub(crate) fn install_fs_extras(globals: &mut Vec<(&'static str, Value)>) {
         ],
         globals,
     );
+    // Leaf intrinsic for the injected real-struct `Metadata` wrapper
+    // (gossamer-parse autoderive): returns the fields as a 6-tuple the
+    // wrapper folds into a struct. Same field order as `builtin_fs_metadata`.
+    {
+        let q = "__gos_fs_metadata_raw";
+        globals.push((q, crate::builtins::builtin_pub(q, builtin_fs_metadata_raw)));
+    }
+}
+
+pub(crate) fn builtin_fs_metadata_raw(args: &[Value]) -> RuntimeResult<Value> {
+    let path = args.first().and_then(as_str).unwrap_or("");
+    match std::fs::metadata(path) {
+        Ok(meta) => {
+            let modified = meta
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX));
+            Ok(ok_variant(Value::Tuple(Arc::new(vec![
+                Value::Int(i64::try_from(meta.len()).unwrap_or(i64::MAX)),
+                Value::Bool(meta.is_file()),
+                Value::Bool(meta.is_dir()),
+                Value::Bool(meta.file_type().is_symlink()),
+                Value::Bool(meta.permissions().readonly()),
+                Value::Int(modified),
+            ]))))
+        }
+        Err(e) => Ok(err_variant(format!("metadata: {e}"))),
+    }
 }
 
 pub(crate) fn builtin_fs_metadata(args: &[Value]) -> RuntimeResult<Value> {

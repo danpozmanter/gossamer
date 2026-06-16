@@ -63,6 +63,10 @@ pub(crate) struct Builder<'a> {
     pub(crate) fn_returns: &'a HashMap<gossamer_resolve::DefId, Ty>,
     pub(crate) fn_inputs: &'a HashMap<gossamer_resolve::DefId, Vec<Ty>>,
     pub(crate) consts: &'a HashMap<gossamer_resolve::DefId, ConstValue>,
+    /// Scalar `static mut` items promoted to real mutable module globals,
+    /// keyed by `DefId`. A path reading one lowers to a [`Rvalue::StaticLoad`]
+    /// and an assignment writing one to a [`StatementKind::StaticStore`].
+    pub(crate) mut_statics: &'a HashMap<gossamer_resolve::DefId, crate::ir::StaticRef>,
     /// Free functions that may let a value escape (spawn / channel / static
     /// write / param-stash). A loop calling any of these is never
     /// auto-regioned. See `collect_region_unsafe_fns`.

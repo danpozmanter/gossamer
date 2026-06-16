@@ -1,0 +1,34 @@
+// Cross-tier regression for cross-goroutine shared sync primitives.
+// A `sync::AtomicI64` handle minted on the main goroutine must be
+// visible to goroutines running on the scheduler's worker threads.
+// The VM previously kept its atomic/mutex/once/map registries in
+// `thread_local!` storage, so a handle created on one thread resolved
+// to nothing on another and every `fetch_add` silently no-op'd
+// (VM `count=0`, compiled `count=1600`). The registries are now
+// process-global, so all tiers agree. WaitGroup makes completion
+// deterministic without sleeps.
+
+use std::sync
+use std::sync::WaitGroup
+
+fn bump(c: sync::AtomicI64, wg: WaitGroup) {
+    let mut i = 0
+    while i < 100 {
+        c.fetch_add(1)
+        i += 1
+    }
+    wg.done()
+}
+
+fn main() {
+    let c = sync::AtomicI64::new(0)
+    let wg = WaitGroup::new()
+    let mut w = 0
+    while w < 16 {
+        wg.add(1)
+        go bump(c, wg)
+        w += 1
+    }
+    wg.wait()
+    println!("count={}", c.load())
+}

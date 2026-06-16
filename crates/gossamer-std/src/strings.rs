@@ -193,13 +193,6 @@ pub fn last_index_any(text: &str, chars: &str) -> Option<usize> {
         .map(|(i, _)| i)
 }
 
-/// Splits `text` on runs of Unicode whitespace, returning non-empty fields.
-/// Equivalent to Go's `strings.Fields`.
-#[must_use]
-pub fn fields(text: &str) -> Vec<String> {
-    text.split_whitespace().map(str::to_string).collect()
-}
-
 /// Returns `true` if `a` and `b` are equal under Unicode simple case folding.
 #[must_use]
 pub fn equal_fold(a: &str, b: &str) -> bool {

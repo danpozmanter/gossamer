@@ -8,8 +8,8 @@ into a handful of rules.
 
 | Rust | Gossamer |
 |------|----------|
-| Manual lifetimes (`'a`, `'static`) on references. | No explicit lifetimes. The GC owns every heap aggregate; `&T` is a plain shared reference with lifetime inferred from scope. |
-| Ownership-by-move, `Copy` marker trait. | No move semantics. Non-trivial values are GC-heap and shared; primitives are copied the same as Rust. |
+| Manual lifetimes (`'a`, `'static`) on references. | No explicit lifetimes. The runtime owns every heap aggregate (reference-counted); `&T` is a plain shared reference whose validity the runtime guarantees, not a tracked borrow. |
+| Ownership-by-move, `Copy` marker trait. | No move semantics. Non-trivial values are heap-allocated, reference-counted, and shared by reference; primitives are copied the same as Rust. |
 | Procedural and declarative macros. | **No user macros at all.** Six fixed `format!` / `println!`-family macros expand at parse time. |
 | `async fn`, `Future`, `await`. | `go expr` spawns a goroutine. No futures, no awaits — blocking IO is fine. |
 | Multiple separate compilation units, workspace member graph. | Same workspace idea (`gos new --template workspace`). Individual crates are called *packages* and resolve through `project.toml`. |
@@ -59,7 +59,7 @@ struct Server { handler: fn(http::Request) -> http::Response }
 ```
 
 (Trait objects stay available but rarely needed — concrete closure
-types are preferred and the GC keeps their captures alive.)
+types are preferred and the runtime keeps their captures alive.)
 
 ## Collection combinators (one obvious way)
 

@@ -170,33 +170,15 @@ pub(crate) fn builtin_time_since_ms(args: &[Value]) -> RuntimeResult<Value> {
 }
 
 pub(crate) fn builtin_time_instant_now(_args: &[Value]) -> RuntimeResult<Value> {
+    // `time::Instant` is a transparent `i64` of monotonic ms, matching
+    // the compiled tier's `gos_rt_monotonic_ms`; the distinct
+    // `TyKind::Instant` only steers method-form `elapsed_ms` dispatch.
     let ms = i64::try_from(monotonic_base().elapsed().as_millis()).unwrap_or(i64::MAX);
-    Ok(Value::struct_(
-        "time::Instant",
-        Arc::unwrap_or_clone(Arc::new(vec![(Ident::new("__ms"), Value::Int(ms))])),
-    ))
+    Ok(Value::Int(ms))
 }
 
 pub(crate) fn builtin_time_instant_elapsed_ms(args: &[Value]) -> RuntimeResult<Value> {
-    let start_ms = match args.first() {
-        Some(Value::Struct(s)) => s
-            .fields
-            .iter()
-            .find_map(|(i, v)| {
-                if i.name == "__ms" {
-                    if let Value::Int(n) = v {
-                        Some(*n)
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            })
-            .unwrap_or(0),
-        Some(Value::Int(n)) => *n,
-        _ => 0,
-    };
+    let start_ms = args.first().and_then(value_to_int).unwrap_or(0);
     let now = i64::try_from(monotonic_base().elapsed().as_millis()).unwrap_or(i64::MAX);
     Ok(Value::Int(now.saturating_sub(start_ms)))
 }

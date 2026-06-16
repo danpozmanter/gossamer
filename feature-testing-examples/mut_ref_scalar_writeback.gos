@@ -1,0 +1,55 @@
+// Regression coverage for `*p = v` write-back through a scalar
+// `&mut T` parameter. The compiled tiers pass `&mut <scalar>` by
+// pointer, so a deref-assign reaches the caller; the bytecode VM /
+// tree-walker must match via the write-back cell protocol (broadened
+// from `&mut Vec`/`&mut [T]` to scalar primitives). Output must be
+// bit-identical across the VM, Cranelift JIT, and LLVM AOT tiers.
+
+fn incr(p: &mut i64) {
+    *p = *p + 1
+}
+
+fn set_f(p: &mut f64, v: f64) {
+    *p = v
+}
+
+fn flip(b: &mut bool) {
+    *b = !*b
+}
+
+fn swap_i64(a: &mut i64, b: &mut i64) {
+    let t = *a
+    *a = *b
+    *b = t
+}
+
+// A `&mut` argument read but never written leaves the caller untouched.
+fn doubled(p: &mut i64) -> i64 {
+    *p * 2
+}
+
+fn main() {
+    let mut n = 10
+    incr(&mut n)
+    incr(&mut n)
+    println!("n = {}", n)
+
+    let mut f = 1.5
+    set_f(&mut f, 3.25)
+    println!("f = {}", f)
+
+    let mut flag = true
+    flip(&mut flag)
+    flip(&mut flag)
+    flip(&mut flag)
+    println!("flag = {}", flag)
+
+    let mut a = 1
+    let mut b = 2
+    swap_i64(&mut a, &mut b)
+    println!("a = {}, b = {}", a, b)
+
+    let mut keep = 21
+    let d = doubled(&mut keep)
+    println!("d = {}, keep = {}", d, keep)
+}

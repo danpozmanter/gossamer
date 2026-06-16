@@ -1,0 +1,92 @@
+// Borrowing a 2-word by-value enum (`&Option` / `&Result`) must
+// round-trip BOTH the discriminant and the payload word on every
+// compiled tier. The reference is transparent: it carries the i128
+// value, so matching through it dispatches on the real discriminant
+// and reads the real payload — never the truncated low word.
+
+struct Holder { o: Option<i64>, label: Option<String> }
+
+// fn taking `&Option<T>` and reading the payload by reference.
+fn read_opt(o: &Option<i64>) -> i64 {
+    match o {
+        Some(x) => *x,
+        None => -1,
+    }
+}
+
+// fn taking `&Result<T, E>`, reading both the Ok and Err payloads.
+fn read_res(r: &Result<i64, i64>) -> i64 {
+    match r {
+        Ok(x) => *x + 100,
+        Err(e) => -e,
+    }
+}
+
+// fn taking `&Option<String>` to exercise an RC (String) payload
+// flowing through the borrow.
+fn read_name(o: &Option<String>) -> String {
+    match o {
+        Some(s) => s,
+        None => "none",
+    }
+}
+
+// Returns a borrowed field; the caller matches through the borrow.
+fn first_field(h: &Holder) -> &Option<i64> {
+    &h.o
+}
+
+// Recursion blocks inlining, forcing a real call across the ABI.
+fn deep_read(o: &Option<i64>, n: i64) -> i64 {
+    if n == 0 {
+        return read_opt(o)
+    }
+    deep_read(o, n - 1)
+}
+
+fn main() {
+    let opt: Option<i64> = Some(42)
+    let res: Result<i64, i64> = Ok(7)
+    let err: Result<i64, i64> = Err(9)
+
+    // match &opt / match &res inline.
+    let m_opt = match &opt {
+        Some(x) => *x,
+        None => -1,
+    }
+    let m_res = match &res {
+        Ok(x) => *x,
+        Err(e) => -e,
+    }
+    println!("inline opt={} res={}", m_opt, m_res)
+
+    // fn taking &Option / &Result.
+    println!("call opt={} res={} err={}", read_opt(&opt), read_res(&res), read_res(&err))
+
+    // struct field of Option matched + returned by reference.
+    let h = Holder { o: Some(99), label: Some("ada") }
+    let field_inline = match &h.o {
+        Some(x) => *x,
+        None => -1,
+    }
+    let field_returned = match first_field(&h) {
+        Some(x) => *x,
+        None => -1,
+    }
+    println!("field inline={} returned={}", field_inline, field_returned)
+    println!("name {}", read_name(&h.label))
+
+    // &Option in a vec: borrow each element and read its payload.
+    let xs: [Option<i64>] = [Some(1), None, Some(3), Some(4)]
+    let mut sum = 0
+    for e in &xs {
+        sum += match e {
+            Some(x) => *x,
+            None => 0,
+        }
+    }
+    println!("vec_sum {}", sum)
+
+    // Borrow crossing a non-inlined recursive boundary.
+    println!("deep {}", deep_read(&opt, 4))
+}

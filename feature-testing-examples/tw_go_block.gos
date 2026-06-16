@@ -1,0 +1,33 @@
+// Non-call `go { block }`: the block is lifted into a zero-argument
+// closure capturing its free variables and spawned on the goroutine
+// pool on every tier (the bytecode VM, the Cranelift JIT, and the
+// LLVM AOT backend). A single producer sends an ordered sequence and
+// closes the channel, so the `while let` drain observes the values in
+// send order — byte-identical across all three tiers.
+
+use std::sync::channel
+
+fn square(n: i64) -> i64 {
+    n * n
+}
+
+fn main() {
+    let (tx, rx) = channel()
+    let base = 10
+
+    go {
+        let mut i = 0
+        while i < 5 {
+            tx.send(base + square(i))
+            i += 1
+        }
+        tx.close()
+    }
+
+    let mut total = 0
+    while let Some(v) = rx.recv() {
+        total += 1
+        println!("got {}", v)
+    }
+    println!("total = {}", total)
+}

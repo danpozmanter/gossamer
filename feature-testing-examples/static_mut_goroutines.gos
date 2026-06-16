@@ -1,0 +1,30 @@
+// Mutable static shared across goroutines.
+// Two goroutines each bump a `static mut` counter; they are joined in
+// sequence so they never overlap on the non-atomic read-modify-write,
+// which keeps the total deterministic. Each goroutine runs on the
+// scheduler and shares the one backing cell, so goroutine 2 observes
+// goroutine 1's writes and `main` observes both — identical on every
+// tier (bytecode VM, JIT, LLVM AOT).
+
+static mut COUNTER: i64 = 0
+
+fn bump_n(n: i64) -> i64 {
+    let mut i = 0
+    while i < n {
+        COUNTER += 1
+        i += 1
+    }
+    COUNTER
+}
+
+fn main() {
+    let h1 = spawn(|| bump_n(1000))
+    let mid = h1.join()
+    let h2 = spawn(|| bump_n(1000))
+    let _ = h2.join()
+    match mid {
+        Ok(v) => println!("mid = {}", v),
+        Err(e) => println!("err = {}", e),
+    }
+    println!("counter = {}", COUNTER)
+}

@@ -97,6 +97,9 @@ impl ConnScratch {
                 headers: Vec::with_capacity(16),
                 body: Vec::with_capacity(0),
                 body_offset: 0,
+                params: Vec::new(),
+                values: Vec::new(),
+                agent: None,
             },
             response_buf: Vec::with_capacity(512),
         }
@@ -1089,6 +1092,7 @@ const fn status_reason(status: i64) -> &'static str {
         201 => "Created",
         202 => "Accepted",
         204 => "No Content",
+        206 => "Partial Content",
         301 => "Moved Permanently",
         302 => "Found",
         304 => "Not Modified",
@@ -1103,6 +1107,7 @@ const fn status_reason(status: i64) -> &'static str {
         409 => "Conflict",
         413 => "Payload Too Large",
         414 => "URI Too Long",
+        416 => "Range Not Satisfiable",
         429 => "Too Many Requests",
         500 => "Internal Server Error",
         501 => "Not Implemented",
@@ -1262,6 +1267,9 @@ mod tests {
             headers: Vec::new(),
             body: Vec::new(),
             body_offset: 0,
+            params: Vec::new(),
+            values: Vec::new(),
+            agent: None,
         };
         assert!(parse_request_into(&raw, header_end, &mut request));
         assert_eq!(request.method, "POST");
@@ -1296,6 +1304,9 @@ mod tests {
             headers: Vec::new(),
             body: Vec::new(),
             body_offset: 0,
+            params: Vec::new(),
+            values: Vec::new(),
+            agent: None,
         };
         assert!(parse_request_into(raw, header_end, &mut request));
         // Interp `Headers` map view: lowercase names, trimmed
@@ -1332,6 +1343,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)] // network round-trip: Miri has no socket syscalls
     fn streamed_response_drains_chunked_frames_to_loopback() {
         use std::io::Read;
 
@@ -1418,6 +1430,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)] // network round-trip: Miri has no socket syscalls
     fn streamed_response_mid_stream_error_closes_without_terminal_frame() {
         use std::io::Read;
 
@@ -1458,6 +1471,9 @@ mod tests {
             headers: Vec::new(),
             body: Vec::new(),
             body_offset: 0,
+            params: Vec::new(),
+            values: Vec::new(),
+            agent: None,
         }
     }
 
@@ -1688,6 +1704,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)] // network round-trip: Miri has no socket syscalls
     fn chunked_request_dechunks_for_handler_and_preserves_pipelined_boundary() {
         let mut wire: Vec<u8> =
             b"POST /up HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n".to_vec();
@@ -1716,6 +1733,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)] // network round-trip: Miri has no socket syscalls
     fn chunked_with_content_length_rejected_400_on_wire() {
         let wire = b"POST /up HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\nContent-Length: 4\r\n\r\n4\r\nWiki\r\n0\r\n\r\n";
         let raw = roundtrip_raw_bytes(wire, echo_fn_addr());
@@ -1728,6 +1746,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)] // network round-trip: Miri has no socket syscalls
     fn content_length_over_cap_rejected_413_on_wire() {
         let wire = format!(
             "POST /up HTTP/1.1\r\nHost: x\r\nContent-Length: {}\r\n\r\n",
@@ -1742,6 +1761,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)] // network round-trip: Miri has no socket syscalls
     fn declared_chunk_over_cap_rejected_413_mid_stream() {
         // The hostile size line alone triggers the reject — the
         // server must not wait for (or buffer) the declared body.
@@ -1766,6 +1786,9 @@ mod tests {
             headers: Vec::new(),
             body: Vec::new(),
             body_offset: 0,
+            params: Vec::new(),
+            values: Vec::new(),
+            agent: None,
         };
         assert!(parse_request_into(&raw, header_end, &mut request));
         assert_eq!(request.body_offset, header_end);

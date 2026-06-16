@@ -1,0 +1,20 @@
+// Cross-tier check that std::os::signal subscription + a non-blocking
+// poll resolve, lower, and run identically on the bytecode VM, the
+// Cranelift JIT, and the LLVM AOT tier.
+//
+// A real delivery needs an OS signal, which is non-deterministic in a
+// test, so this asserts the deterministic half of the surface: `on`
+// returns a valid notifier handle and `try_wait` on a freshly created
+// notifier reports "not fired yet". Blocking `wait` is exercised by
+// the graceful-shutdown coordinator in
+// examples/projects/web_service_full.
+
+use std::os::signal
+
+fn main() {
+    // 2 is SIGINT on POSIX; on Windows the console-control bridge maps
+    // Ctrl-C onto the same notifier.
+    let n = signal::on(2)
+    println!("subscribed: {}", n >= 0)
+    println!("fired: {}", signal::try_wait(n))
+}

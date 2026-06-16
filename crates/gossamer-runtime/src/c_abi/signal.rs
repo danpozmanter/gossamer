@@ -26,6 +26,10 @@ use super::*;
 // ---------------------------------------------------------------
 
 struct SignalNotifier {
+    // Read only by the Windows console-control bridge; on unix
+    // delivery is owned by the per-signal relay thread.
+    #[cfg_attr(not(windows), allow(dead_code))]
+    sig: i32,
     flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
     waiter: std::sync::Arc<SignalWaiter>,
 }
@@ -71,6 +75,54 @@ fn install_signal_relay(
         .ok();
 }
 
+// On Windows there is no POSIX signal delivery; the console
+// control handler is the closest equivalent. Ctrl-C raises
+// CTRL_C_EVENT and Ctrl-Break raises CTRL_BREAK_EVENT — both are
+// mapped onto notifiers subscribed to SIGINT (2), SIGTERM (15),
+// or SIGBREAK (21) so graceful-shutdown code is portable. The
+// handler is installed once on the first `signal::on` call.
+#[cfg(windows)]
+fn install_console_ctrl_handler() {
+    use std::sync::Once;
+    static INSTALL: Once = Once::new();
+    INSTALL.call_once(|| {
+        use windows_sys::Win32::System::Console::SetConsoleCtrlHandler;
+        // SAFETY: `console_ctrl_handler` is a valid `extern "system"`
+        // routine and SetConsoleCtrlHandler only stores the pointer.
+        unsafe {
+            SetConsoleCtrlHandler(Some(console_ctrl_handler), 1);
+        }
+    });
+}
+
+// Fired by the OS on a console control event. Wakes every notifier
+// whose subscribed signal is the Windows analogue of the event,
+// then returns TRUE so the default terminate-the-process behaviour
+// is suppressed (graceful shutdown owns the exit).
+#[cfg(windows)]
+unsafe extern "system" fn console_ctrl_handler(ctrl_type: u32) -> i32 {
+    use windows_sys::Win32::System::Console::{CTRL_BREAK_EVENT, CTRL_C_EVENT};
+    // SIGINT for Ctrl-C; SIGBREAK + SIGTERM for Ctrl-Break.
+    let want: &[i32] = match ctrl_type {
+        CTRL_C_EVENT => &[2, 15],
+        CTRL_BREAK_EVENT => &[21, 15],
+        _ => return 0,
+    };
+    let notifiers = signal_registry().notifiers.lock();
+    let mut handled = false;
+    for slot in notifiers.iter() {
+        if let Some(n) = slot
+            && want.contains(&n.sig)
+        {
+            n.flag.store(true, Ordering::Release);
+            let _g = n.waiter.mu.lock();
+            n.waiter.cv.notify_all();
+            handled = true;
+        }
+    }
+    i32::from(handled)
+}
+
 /// `signal::on(sig_raw) -> i64` — registers a notifier for the
 /// given raw signal number and returns an opaque handle.
 #[unsafe(no_mangle)]
@@ -84,10 +136,15 @@ pub unsafe extern "C" fn gos_rt_signal_on(sig_raw: i32) -> i64 {
             std::sync::Arc::clone(&flag),
             std::sync::Arc::clone(&waiter),
         );
-        // On non-unix platforms the signal number is unused.
-        #[cfg(not(unix))]
-        let _ = sig_raw;
-        let notifier = SignalNotifier { flag, waiter };
+        // On Windows the console-control bridge maps Ctrl-C /
+        // Ctrl-Break onto SIGINT / SIGTERM / SIGBREAK notifiers.
+        #[cfg(windows)]
+        install_console_ctrl_handler();
+        let notifier = SignalNotifier {
+            sig: sig_raw,
+            flag,
+            waiter,
+        };
         let mut notifiers = signal_registry().notifiers.lock();
         notifiers.push(Some(notifier));
         i64::try_from(notifiers.len() - 1).unwrap_or(-1)
@@ -641,7 +698,9 @@ pub unsafe extern "C" fn gos_rt_vec_index_of_str(v: *const GosVec, needle: *cons
         let vec = unsafe { &*v };
         for i in 0..vec.len {
             let p = unsafe { vec.ptr.add((i as usize) * (vec.elem_bytes as usize)) };
-            let elem = unsafe { (p as *const *const c_char).read_unaligned() };
+            let elem = unsafe {
+                std::ptr::with_exposed_provenance::<c_char>((p as *const usize).read_unaligned())
+            };
             if !elem.is_null() && unsafe { CStr::from_ptr(elem) == CStr::from_ptr(needle) } {
                 return unsafe { gos_rt_result_new(0, i) };
             }
@@ -679,7 +738,9 @@ pub unsafe extern "C" fn gos_rt_vec_count_of_str(v: *const GosVec, needle: *cons
         let mut count: i64 = 0;
         for i in 0..vec.len {
             let p = unsafe { vec.ptr.add((i as usize) * (vec.elem_bytes as usize)) };
-            let elem = unsafe { (p as *const *const c_char).read_unaligned() };
+            let elem = unsafe {
+                std::ptr::with_exposed_provenance::<c_char>((p as *const usize).read_unaligned())
+            };
             if !elem.is_null() && unsafe { CStr::from_ptr(elem) == CStr::from_ptr(needle) } {
                 count += 1;
             }
@@ -715,7 +776,9 @@ pub unsafe extern "C" fn gos_rt_vec_contains_str(v: *const GosVec, needle: *cons
         let vec = unsafe { &*v };
         for i in 0..vec.len {
             let p = unsafe { vec.ptr.add((i as usize) * (vec.elem_bytes as usize)) };
-            let elem = unsafe { (p as *const *const c_char).read_unaligned() };
+            let elem = unsafe {
+                std::ptr::with_exposed_provenance::<c_char>((p as *const usize).read_unaligned())
+            };
             if !elem.is_null() && unsafe { CStr::from_ptr(elem) == CStr::from_ptr(needle) } {
                 return 1;
             }

@@ -44,6 +44,8 @@ fn write_kind(tcx: &TyCtxt, kind: &TyKind, out: &mut String) {
         TyKind::Sender(elem) => write_named(tcx, "Sender", &[*elem], out),
         TyKind::Receiver(elem) => write_named(tcx, "Receiver", &[*elem], out),
         TyKind::JoinHandle(elem) => write_named(tcx, "JoinHandle", &[*elem], out),
+        TyKind::Duration => out.push_str("time::Duration"),
+        TyKind::Instant => out.push_str("time::Instant"),
         TyKind::JsonValue => out.push_str("json::Value"),
         TyKind::DynError => out.push_str("errors::Error"),
         TyKind::Ref { mutability, inner } => {

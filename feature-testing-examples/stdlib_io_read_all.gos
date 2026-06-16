@@ -1,0 +1,11 @@
+// io::ReadAll(reader) drains a reader to EOF and returns the bytes as
+// a String, mirroring Go's io.ReadAll. Cross-tier fixture: stdin is
+// fed a fixed payload, the byte count is derived (deterministic), and
+// the content is echoed back so VM / Cranelift / LLVM must agree.
+use std::io
+
+fn main() {
+    let content = io::ReadAll(io::stdin())
+    println!("[bytes {}]", content.len())
+    print!("{}", content)
+}

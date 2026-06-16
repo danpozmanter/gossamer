@@ -189,7 +189,7 @@ pub const FEATURE_STATUS: &[FeatureStatus] = &[
     FeatureStatus {
         path: "std::html::template",
         status: Status::Experimental,
-        doc: "Context-aware HTML template engine — auto-escape works, pipeline operator set still expanding.",
+        doc: "Context-aware HTML template engine — auto-escape works (text/attr/URL/JS), pipeline operator set still expanding. Heuristic classifier, NOT a content-security-policy substitute; the `html::escape` primitive (wired on every tier) is the supported cross-tier escape.",
     },
     FeatureStatus {
         path: "std::text::template",

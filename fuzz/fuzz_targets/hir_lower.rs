@@ -17,6 +17,10 @@ use gossamer_resolve::resolve_source_file;
 use gossamer_types::{TyCtxt, typecheck_source_file};
 
 fuzz_target!(|data: &[u8]| {
+    // The symbol interner is process-global and never evicts; reset it
+    // each iteration so a long fuzz run does not accumulate every random
+    // identifier ever seen (otherwise RSS grows unbounded -> OOM).
+    gossamer_lex::reset_interner();
     // Grammar-aware input
     let source = grammar::render_source(data);
     if source.len() > 32 * 1024 {

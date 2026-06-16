@@ -166,7 +166,14 @@ pub fn lower_program(program: &HirProgram, tcx: &mut TyCtxt) -> Vec<Body> {
     let fn_ret_names = collect_fn_ret_names(program);
     let fn_returns = collect_fn_returns(program);
     let fn_inputs = collect_fn_inputs(program);
-    let consts = collect_const_values(program);
+    let mut consts = collect_const_values(program);
+    // Scalar `static mut` items become real mutable module globals;
+    // remove them from the const-inline map so their reads load the
+    // live cell instead of freezing at the declaration value.
+    let mut_statics = collect_mut_static_defs(program, &consts);
+    for def in mut_statics.keys() {
+        consts.remove(def);
+    }
     // Conservative escape summary driving automatic arena regions.
     let region_unsafe = collect_region_unsafe_fns(program, tcx);
     let mut bodies = Vec::new();
@@ -182,6 +189,7 @@ pub fn lower_program(program: &HirProgram, tcx: &mut TyCtxt) -> Vec<Body> {
             &fn_returns,
             &fn_inputs,
             &consts,
+            &mut_statics,
             &region_unsafe,
             &mut bodies,
         );

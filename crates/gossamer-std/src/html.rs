@@ -2,11 +2,22 @@
 
 #![forbid(unsafe_code)]
 
-pub mod template;
+// The context-aware template engine lives in the leaf crate
+// `gossamer-template` (below `gossamer-runtime`) so the compiled tier
+// can render templates without a dependency cycle; re-exported here so
+// `html::template::*` keeps its path.
+pub use gossamer_template::html as template;
 
 /// Escapes `s` for safe insertion into HTML text or attribute values.
 ///
-/// Replaces `&`, `<`, `>`, `"`, and `'` with their named entity equivalents.
+/// HTML-escapes `s` to the OWASP "CSP-grade" defensive set: `&`, `<`,
+/// `>`, `"`, `'`, `/`, and backtick. Escaping `/` (`&#x2F;`) closes the
+/// closing-tag / attribute-context parser edge cases, and backtick
+/// (`&#x60;`) defuses IE's attribute delimiter — so the result is safe
+/// in HTML element content AND quoted/unquoted attribute values without
+/// the caller needing to know the context. (Context-specific escaping
+/// for URL / JS / CSS sinks still requires the `html::template`
+/// engine — a single escaper cannot be context-aware.)
 #[must_use]
 pub fn escape(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
@@ -17,6 +28,8 @@ pub fn escape(s: &str) -> String {
             '>' => out.push_str("&gt;"),
             '"' => out.push_str("&quot;"),
             '\'' => out.push_str("&#39;"),
+            '/' => out.push_str("&#x2F;"),
+            '`' => out.push_str("&#x60;"),
             c => out.push(c),
         }
     }
@@ -103,10 +116,21 @@ mod tests {
 
     #[test]
     fn escape_special_chars() {
+        // `/` is escaped to `&#x2F;` (OWASP CSP-grade set), so the
+        // closing tag's slash becomes a numeric entity.
         assert_eq!(
             escape("<b>Hello & 'World'</b>"),
-            "&lt;b&gt;Hello &amp; &#39;World&#39;&lt;/b&gt;"
+            "&lt;b&gt;Hello &amp; &#39;World&#39;&lt;&#x2F;b&gt;"
         );
+    }
+
+    #[test]
+    fn escape_csp_grade_set() {
+        // Forward slash and backtick are escaped to defuse closing-tag
+        // and IE attribute-delimiter edge cases.
+        assert_eq!(escape("a/b`c"), "a&#x2F;b&#x60;c");
+        // Round-trips through unescape (hex numeric references).
+        assert_eq!(unescape(&escape("</script>`")), "</script>`");
     }
 
     #[test]

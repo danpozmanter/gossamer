@@ -1,6 +1,6 @@
 //! Stream A.2 — end-to-end test that a Gossamer handler is actually
 //! dispatched when a real HTTP request lands on `http::serve`.
-//! The test drives the interpreter on a small source program. It
+//! The test drives the VM on a small source program. It
 //! picks a free port, launches the server in a background thread via
 //! `GOSSAMER_HTTP_MAX_REQUESTS=1`, fires a real HTTP GET, and asserts
 //! that the handler closure was invoked by inspecting the response.
@@ -13,7 +13,7 @@ use std::thread;
 use std::time::Duration;
 
 use gossamer_hir::lower_source_file;
-use gossamer_interp::Interpreter;
+use gossamer_interp::Vm;
 use gossamer_lex::SourceMap;
 use gossamer_parse::parse_source_file;
 use gossamer_resolve::resolve_source_file;
@@ -30,8 +30,8 @@ fn run_interp(source: &str) -> Result<(), String> {
     let mut tcx = TyCtxt::new();
     let (table, _) = typecheck_source_file(&sf, &resolutions, &mut tcx);
     let program = lower_source_file(&sf, &resolutions, &table, &mut tcx);
-    let mut interp = Interpreter::new();
-    interp.load(&program);
+    let mut interp = Vm::new();
+    interp.load(&program, tcx).expect("vm load");
     interp
         .call("main", Vec::new())
         .map(|_| ())
@@ -76,19 +76,20 @@ fn native_http_serve_dispatches_user_handler() {
     while !ready.load(Ordering::Relaxed) {
         thread::sleep(Duration::from_millis(5));
     }
-    thread::sleep(Duration::from_millis(100));
-
-    let mut stream = None;
-    for _ in 0..40 {
+    // Poll for the listener to actually bind rather than guessing with a
+    // fixed sleep: the `ready` flag only marks "about to serve", so retry
+    // connect until it succeeds or a generous deadline elapses (robust
+    // under CPU contention, where a fixed-count retry could exhaust).
+    let deadline = std::time::Instant::now() + Duration::from_secs(15);
+    let mut stream = loop {
         match TcpStream::connect(addr) {
-            Ok(s) => {
-                stream = Some(s);
-                break;
+            Ok(s) => break s,
+            Err(_) if std::time::Instant::now() < deadline => {
+                thread::sleep(Duration::from_millis(20));
             }
-            Err(_) => thread::sleep(Duration::from_millis(25)),
+            Err(e) => panic!("connect to interpreter-hosted server: {e}"),
         }
-    }
-    let mut stream = stream.expect("connect to interpreter-hosted server");
+    };
     stream
         .set_read_timeout(Some(Duration::from_secs(2)))
         .unwrap();
@@ -374,19 +375,20 @@ fn server_request_raw_body_preserves_binary_post_bytes() {
     while !ready.load(Ordering::Relaxed) {
         thread::sleep(Duration::from_millis(5));
     }
-    thread::sleep(Duration::from_millis(100));
-
-    let mut stream = None;
-    for _ in 0..40 {
+    // Poll for the listener to actually bind rather than guessing with a
+    // fixed sleep: the `ready` flag only marks "about to serve", so retry
+    // connect until it succeeds or a generous deadline elapses (robust
+    // under CPU contention, where a fixed-count retry could exhaust).
+    let deadline = std::time::Instant::now() + Duration::from_secs(15);
+    let mut stream = loop {
         match TcpStream::connect(addr) {
-            Ok(s) => {
-                stream = Some(s);
-                break;
+            Ok(s) => break s,
+            Err(_) if std::time::Instant::now() < deadline => {
+                thread::sleep(Duration::from_millis(20));
             }
-            Err(_) => thread::sleep(Duration::from_millis(25)),
+            Err(e) => panic!("connect to interpreter-hosted server: {e}"),
         }
-    }
-    let mut stream = stream.expect("connect to interpreter-hosted server");
+    };
     stream
         .set_read_timeout(Some(Duration::from_secs(2)))
         .unwrap();
@@ -452,19 +454,20 @@ fn handler_with_header_chain_reaches_the_wire_with_replace_semantics() {
     while !ready.load(Ordering::Relaxed) {
         thread::sleep(Duration::from_millis(5));
     }
-    thread::sleep(Duration::from_millis(100));
-
-    let mut stream = None;
-    for _ in 0..40 {
+    // Poll for the listener to actually bind rather than guessing with a
+    // fixed sleep: the `ready` flag only marks "about to serve", so retry
+    // connect until it succeeds or a generous deadline elapses (robust
+    // under CPU contention, where a fixed-count retry could exhaust).
+    let deadline = std::time::Instant::now() + Duration::from_secs(15);
+    let mut stream = loop {
         match TcpStream::connect(addr) {
-            Ok(s) => {
-                stream = Some(s);
-                break;
+            Ok(s) => break s,
+            Err(_) if std::time::Instant::now() < deadline => {
+                thread::sleep(Duration::from_millis(20));
             }
-            Err(_) => thread::sleep(Duration::from_millis(25)),
+            Err(e) => panic!("connect to interpreter-hosted server: {e}"),
         }
-    }
-    let mut stream = stream.expect("connect to interpreter-hosted server");
+    };
     stream
         .set_read_timeout(Some(Duration::from_secs(2)))
         .unwrap();
@@ -508,17 +511,16 @@ fn handler_with_header_chain_reaches_the_wire_with_replace_semantics() {
 /// Connects to `addr`, GETs `/`, and returns (status line, header
 /// section lowercased, raw body bytes after the blank line).
 fn raw_get(addr: std::net::SocketAddr) -> (String, String, Vec<u8>) {
-    let mut stream = None;
-    for _ in 0..40 {
+    let deadline = std::time::Instant::now() + Duration::from_secs(15);
+    let mut stream = loop {
         match TcpStream::connect(addr) {
-            Ok(s) => {
-                stream = Some(s);
-                break;
+            Ok(s) => break s,
+            Err(_) if std::time::Instant::now() < deadline => {
+                thread::sleep(Duration::from_millis(20));
             }
-            Err(_) => thread::sleep(Duration::from_millis(25)),
+            Err(e) => panic!("connect to interpreter-hosted server: {e}"),
         }
-    }
-    let mut stream = stream.expect("connect to interpreter-hosted server");
+    };
     stream
         .set_read_timeout(Some(Duration::from_secs(5)))
         .unwrap();
@@ -572,8 +574,6 @@ fn proxy_handler_streams_upstream_body_as_chunked_passthrough() {
     while !ready.load(Ordering::Relaxed) {
         thread::sleep(Duration::from_millis(5));
     }
-    thread::sleep(Duration::from_millis(100));
-
     let (status_line, headers, body) = raw_get(addr);
     assert!(
         status_line.starts_with("HTTP/1.1 200"),
@@ -641,8 +641,6 @@ fn response_stream_construction_consumes_the_client_stream() {
     while !ready.load(Ordering::Relaxed) {
         thread::sleep(Duration::from_millis(5));
     }
-    thread::sleep(Duration::from_millis(100));
-
     let (status_line, headers, body) = raw_get(addr);
     assert!(
         status_line.starts_with("HTTP/1.1 200"),

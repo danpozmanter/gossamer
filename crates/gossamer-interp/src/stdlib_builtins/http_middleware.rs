@@ -110,6 +110,7 @@ pub(crate) fn install_http_middleware(globals: &mut Vec<(&'static str, Value)>) 
         ("new_request_id", builtin_mw_new_request_id as BuiltinFnPub),
         ("decode_basic_auth", builtin_mw_decode_basic_auth),
         ("accepts_gzip", builtin_mw_accepts_gzip),
+        ("tag", builtin_mw_tag),
     ] {
         let qualified: &'static str =
             Box::leak(format!("http::middleware::{name}").into_boxed_str());
@@ -129,29 +130,103 @@ pub(crate) fn builtin_mw_new_request_id(_args: &[Value]) -> RuntimeResult<Value>
     Ok(Value::String(format!("{nanos:x}-{n:x}").into()))
 }
 
+/// `http::middleware::decode_basic_auth(header) -> Option<(String, String)>`.
+/// Decodes a `Basic <base64(user:pass)>` Authorization header value (the
+/// `Basic ` scheme prefix is optional) into `(user, password)`, or `None`
+/// for malformed / non-decodable input. Mirrors the compiled-tier
+/// `gos_rt_mw_decode_basic_auth` shim so both tiers classify identically.
 pub(crate) fn builtin_mw_decode_basic_auth(args: &[Value]) -> RuntimeResult<Value> {
     let header = arg_str(args.first());
     let token = header.strip_prefix("Basic ").unwrap_or(&header);
     let Ok(decoded) = gossamer_std::encoding::base64::decode(token.trim()) else {
-        return Ok(err_variant("invalid base64"));
+        return Ok(none_variant());
     };
     let Ok(decoded) = String::from_utf8(decoded) else {
-        return Ok(err_variant("non-utf8 credentials"));
+        return Ok(none_variant());
     };
     let Some((user, pass)) = decoded.split_once(':') else {
-        return Ok(err_variant("missing colon separator"));
+        return Ok(none_variant());
     };
-    let fields = vec![
-        (Ident::new("user"), Value::String(user.to_string().into())),
-        (
-            Ident::new("password"),
-            Value::String(pass.to_string().into()),
-        ),
-    ];
-    Ok(ok_variant(Value::struct_(
-        "BasicAuth",
-        Arc::unwrap_or_clone(Arc::new(fields)),
-    )))
+    let pair = Value::Tuple(Arc::new(vec![
+        Value::String(user.to_string().into()),
+        Value::String(pass.to_string().into()),
+    ]));
+    Ok(some_variant(pair))
+}
+
+/// `http::middleware::tag(inner) -> Handler` — wraps a handler into a
+/// `Middleware` value carrying the inner handler; `Middleware::serve`
+/// runs the inner serve and prepends `mw:` to the response body. The
+/// deterministic interp twin of the compiled `gos_rt_middleware_new` /
+/// `gos_rt_middleware_serve` composition.
+pub(crate) fn builtin_mw_tag(args: &[Value]) -> RuntimeResult<Value> {
+    let inner = args.first().cloned().unwrap_or(Value::Unit);
+    Ok(Value::struct_(
+        "Middleware",
+        vec![(Ident::new("__mw_inner"), inner)],
+    ))
+}
+
+/// Prepends `mw:` to a response body Value, preserving its String /
+/// byte-array shape so chained middleware compose byte-identically with
+/// the compiled tier.
+fn prepend_mw(body: &Value) -> Value {
+    match body {
+        Value::String(s) => Value::String(SmolStr::from(format!("mw:{}", s.as_str()))),
+        Value::Array(items) => {
+            let mut bytes: Vec<Value> = b"mw:".iter().map(|b| Value::Int(i64::from(*b))).collect();
+            bytes.extend(items.iter().cloned());
+            Value::Array(Arc::new(bytes))
+        }
+        other => other.clone(),
+    }
+}
+
+/// `Middleware::serve(mw, request)` — invoked by `http::serve`'s dispatch
+/// when the handler is a composed `Middleware`. Runs the wrapped handler
+/// (a struct handler's `{T}::serve` or a nested `Middleware::serve`) then
+/// applies the `mw:` body transform.
+pub(crate) fn native_middleware_serve(
+    dispatch: &mut dyn NativeDispatch,
+    args: &[Value],
+) -> RuntimeResult<Value> {
+    let inner = match args.first() {
+        Some(Value::Struct(s)) => s
+            .fields
+            .iter()
+            .find(|(f, _)| f.name == "__mw_inner")
+            .map(|(_, v)| v.clone()),
+        _ => None,
+    };
+    let Some(inner) = inner else {
+        return Ok(err_variant("middleware: missing inner handler"));
+    };
+    let request = args.get(1).cloned().unwrap_or(Value::Unit);
+    let inner_serve = match &inner {
+        Value::Struct(s) => format!("{}::serve", s.name),
+        _ => "serve".to_string(),
+    };
+    let result = dispatch.call_fn(&inner_serve, vec![inner, request])?;
+    // The wrapped serve returns `Ok(Response)` or a bare `Response`.
+    let response = match &result {
+        Value::Variant(v) if v.name == "Ok" && !v.fields.is_empty() => &v.fields[0],
+        other => other,
+    };
+    let Value::Struct(resp_inner) = response else {
+        return Ok(result);
+    };
+    let new_fields: Vec<(Ident, Value)> = resp_inner
+        .fields
+        .iter()
+        .map(|(f, v)| {
+            if f.name == "body" {
+                (f.clone(), prepend_mw(v))
+            } else {
+                (f.clone(), v.clone())
+            }
+        })
+        .collect();
+    Ok(ok_variant(Value::struct_("Response", new_fields)))
 }
 
 pub(crate) fn builtin_mw_accepts_gzip(args: &[Value]) -> RuntimeResult<Value> {

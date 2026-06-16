@@ -373,6 +373,33 @@ impl<'a> Lowerer<'a> {
             .unwrap();
             return Ok(());
         }
+        // `vec_set_slot_children` likewise takes the vec POINTER VALUE plus
+        // the static slot-children layout blob.
+        if name == "gos_rt_vec_set_slot_children" {
+            if !p.projection.is_empty() {
+                return Ok(());
+            }
+            let v = self.fresh();
+            writeln!(
+                self.out,
+                "  {v} = load ptr, ptr {slot}",
+                slot = local_slot(p.local)
+            )
+            .unwrap();
+            let meta = match args.get(1) {
+                Some(Operand::Const(ConstValue::Str(sym))) if !sym.is_empty() => {
+                    format!("@\"{sym}\"")
+                }
+                _ => "null".to_string(),
+            };
+            declare_rt(&mut self.runtime_refs, name);
+            writeln!(
+                self.out,
+                "  call void @gos_rt_vec_set_slot_children(ptr {v}, ptr {meta})"
+            )
+            .unwrap();
+            return Ok(());
+        }
         let base = if p.projection.is_empty() {
             local_slot(p.local)
         } else {
@@ -500,7 +527,11 @@ impl<'a> Lowerer<'a> {
                             ConcatKind::Int
                         }
                     }
-                    Some(TyKind::Unit | TyKind::Never) => ConcatKind::Int,
+                    // `time::Duration` / `time::Instant` are transparent
+                    // `i64`s; print them as the integer they carry.
+                    Some(TyKind::Unit | TyKind::Never | TyKind::Duration | TyKind::Instant) => {
+                        ConcatKind::Int
+                    }
                     // Unresolved inference variable: the dominant
                     // producer that flows into println is
                     // `__concat`, which returns a String pointer
@@ -797,6 +828,8 @@ impl<'a> Lowerer<'a> {
             // CallIntrinsic ABIs vary; coercion is handled
             // per-intrinsic inside lower_raw_intrinsic.
             Rvalue::CallIntrinsic { .. } => String::new(),
+            // A static load produces the static's declared scalar type.
+            Rvalue::StaticLoad(sref) => render_ty(self.tcx, sref.ty),
         }
     }
 

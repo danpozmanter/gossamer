@@ -1,0 +1,14 @@
+// slog::info/warn/error/debug must carry their structured key/value
+// fields across the FFI on the compiled tier (it previously emitted
+// only `{"level":..,"msg":..}` and dropped every field). slog writes
+// JSON-line records to stderr.
+
+use std::slog
+
+fn main() {
+    slog::info("served", "status", 200, "path", "/")
+    slog::warn("slow request", "ms", 1500, "ok", false)
+    slog::error("failed", "code", "E42", "retry", true)
+    slog::debug("measure", "ratio", 1.5)
+    slog::info("plain message")
+}

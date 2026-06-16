@@ -31,15 +31,9 @@ fn scratch(tag: &str) -> PathBuf {
     dir
 }
 
-fn run_gos(src: &Path) -> (String, String, Option<i32>) {
-    let mut child = Command::new(gos_bin())
-        .arg("run")
-        .arg(src)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("spawn gos run");
+/// Drives a spawned child to completion under [`TIMEOUT`], returning
+/// `(stdout, stderr, exit_code)` with CRLF normalised.
+fn drive(mut child: std::process::Child) -> (String, String, Option<i32>) {
     let deadline = Instant::now() + TIMEOUT;
     loop {
         match child.try_wait() {
@@ -60,7 +54,105 @@ fn run_gos(src: &Path) -> (String, String, Option<i32>) {
     )
 }
 
+fn run_gos(src: &Path) -> (String, String, Option<i32>) {
+    let child = Command::new(gos_bin())
+        .arg("run")
+        .arg(src)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn gos run");
+    drive(child)
+}
+
+#[cfg(unix)]
+fn is_executable(p: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    fs::metadata(p).is_ok_and(|m| m.permissions().mode() & 0o111 != 0)
+}
+
+#[cfg(not(unix))]
+fn is_executable(p: &Path) -> bool {
+    p.extension()
+        .and_then(|s| s.to_str())
+        .map(|e| e.eq_ignore_ascii_case("exe"))
+        .unwrap_or(false)
+}
+
+/// Compiles `main.gos` (already written under `dir`) to a native
+/// binary via `gos build` and runs it, returning
+/// `(stdout, stderr, exit_code)` or a build/link error message.
+fn build_and_run_native(dir: &Path) -> Result<(String, String, Option<i32>), String> {
+    let path = dir.join("main.gos");
+    let out_dir = dir.join("out");
+    fs::create_dir_all(&out_dir).map_err(|e| format!("mkdir out: {e}"))?;
+    let build = Command::new(gos_bin())
+        .arg("build")
+        .arg("--out-dir")
+        .arg(&out_dir)
+        .arg(&path)
+        .output()
+        .map_err(|e| format!("spawn gos build: {e}"))?;
+    if !build.status.success() {
+        return Err(format!(
+            "gos build failed:\n  stdout: {}\n  stderr: {}",
+            String::from_utf8_lossy(&build.stdout),
+            String::from_utf8_lossy(&build.stderr),
+        ));
+    }
+    let bin = fs::read_dir(&out_dir)
+        .map_err(|e| format!("read_dir out: {e}"))?
+        .flatten()
+        .map(|e| e.path())
+        .find(|p| p.is_file() && is_executable(p))
+        .ok_or_else(|| format!("no executable produced in {}", out_dir.display()))?;
+    let child = Command::new(&bin)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("spawn native binary: {e}"))?;
+    Ok(drive(child))
+}
+
+/// Runs `src` under the bytecode VM **and** the native LLVM AOT tier,
+/// asserting both produce `expected` on stdout (so the compiled tiers
+/// can never silently drift from the VM). A `gos build` failure or a
+/// compiled-output mismatch fails the test — VM-only gaps surface here
+/// rather than going uncaught.
 fn assert_vm_output(tag: &str, src: &str, expected: &str) {
+    let dir = scratch(tag);
+    let path = dir.join("main.gos");
+    fs::File::create(&path)
+        .unwrap()
+        .write_all(src.as_bytes())
+        .unwrap();
+    let (vm_stdout, vm_stderr, vm_code) = run_gos(&path);
+    assert_eq!(
+        vm_stdout.trim_end(),
+        expected,
+        "[{tag}/vm] stdout mismatch\nstderr: {vm_stderr}\ncode: {vm_code:?}"
+    );
+    match build_and_run_native(&dir) {
+        Ok((nat_stdout, nat_stderr, nat_code)) => {
+            assert_eq!(
+                nat_stdout.trim_end(),
+                expected,
+                "[{tag}/compiled] stdout mismatch (VM was correct)\n\
+                 stderr: {nat_stderr}\ncode: {nat_code:?}"
+            );
+        }
+        Err(e) => panic!("[{tag}/compiled] {e}"),
+    }
+}
+
+/// VM-only probe with a mandatory documented reason. Use only when a
+/// surface genuinely cannot run on the compiled tiers and the reason
+/// is recorded inline; everything else must go through
+/// [`assert_vm_output`] so the compiled tiers stay covered.
+#[allow(dead_code)]
+fn assert_vm_only(tag: &str, src: &str, expected: &str, _reason: &str) {
     let dir = scratch(tag);
     let path = dir.join("main.gos");
     fs::File::create(&path)
@@ -73,6 +165,51 @@ fn assert_vm_output(tag: &str, src: &str, expected: &str) {
         expected,
         "[{tag}/vm] stdout mismatch\nstderr: {stderr}\ncode: {code:?}"
     );
+}
+
+// -----------------------------------------------------------------------
+// std::slog — structured fields must survive the FFI on the compiled
+// tier. slog writes JSON-line records to stderr (not stdout), so this
+// compares stderr across the VM and the native build rather than going
+// through `assert_vm_output`.
+
+#[test]
+fn slog_carries_fields_across_tiers() {
+    let src = r#"
+use std::slog
+fn main() {
+    slog::info("served", "status", 200, "path", "/")
+    slog::warn("slow", "ms", 1500, "ok", false)
+    slog::error("failed", "code", "E42")
+    slog::debug("measure", "ratio", 1.5)
+}
+"#;
+    let expected = "{\"level\":\"INFO\",\"msg\":\"served\",\"status\":\"200\",\"path\":\"/\"}\n\
+{\"level\":\"WARN\",\"msg\":\"slow\",\"ms\":\"1500\",\"ok\":\"false\"}\n\
+{\"level\":\"ERROR\",\"msg\":\"failed\",\"code\":\"E42\"}\n\
+{\"level\":\"DEBUG\",\"msg\":\"measure\",\"ratio\":\"1.5\"}";
+    let dir = scratch("slog_fields");
+    let path = dir.join("main.gos");
+    fs::File::create(&path)
+        .unwrap()
+        .write_all(src.as_bytes())
+        .unwrap();
+    let (_vm_stdout, vm_stderr, vm_code) = run_gos(&path);
+    assert_eq!(
+        vm_stderr.trim_end(),
+        expected,
+        "[slog/vm] stderr mismatch (code {vm_code:?})"
+    );
+    match build_and_run_native(&dir) {
+        Ok((_nat_stdout, nat_stderr, nat_code)) => {
+            assert_eq!(
+                nat_stderr.trim_end(),
+                expected,
+                "[slog/compiled] stderr mismatch (VM was correct); code {nat_code:?}"
+            );
+        }
+        Err(e) => panic!("[slog/compiled] {e}"),
+    }
 }
 
 // -----------------------------------------------------------------------
@@ -191,14 +328,14 @@ fn main() {
 // std::strings (Unicode-sensitive additions)
 
 #[test]
-fn strings_contains_rune_and_fields() {
+fn strings_contains_rune_and_split_whitespace() {
     assert_vm_output(
         "strings_unicode",
         r#"
 use std::strings
 fn main() {
     println!("{}", strings::contains_rune("café", 'é'))
-    let fs = strings::fields("  hello   world  ")
+    let fs = strings::split_whitespace("  hello   world  ")
     println!("{}", fs.len())
 }
 "#,
@@ -911,7 +1048,7 @@ fn main() {
     println!("{}", back)
 }
 "#,
-        "&lt;b&gt;Hello &amp; &#39;World&#39;&lt;/b&gt;\n<b>Hello & 'World'</b>",
+        "&lt;b&gt;Hello &amp; &#39;World&#39;&lt;&#x2F;b&gt;\n<b>Hello & 'World'</b>",
     );
 }
 

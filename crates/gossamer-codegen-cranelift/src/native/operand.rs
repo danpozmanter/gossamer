@@ -252,7 +252,11 @@ pub(super) fn operand_print_kind(body: &Body, tcx: &TyCtxt, operand: &Operand) -
                         PrintKind::Int
                     }
                 }
-                TyKind::Unit | TyKind::Never => PrintKind::Int,
+                // `time::Duration` / `time::Instant` are transparent
+                // `i64`s; print the millisecond count they carry.
+                TyKind::Unit | TyKind::Never | TyKind::Duration | TyKind::Instant => {
+                    PrintKind::Int
+                }
                 TyKind::Float(_) => PrintKind::Float,
                 TyKind::String | TyKind::Ref { .. } => PrintKind::StrPtr,
                 // `Var(_)` means the typechecker did not resolve

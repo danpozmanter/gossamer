@@ -1,0 +1,78 @@
+// String methods with a `char` needle / pattern argument.
+// `s.contains('e')` and friends take a `&str` pattern the runtime
+// reads as a c-string; a bare `char` must be coerced to a one-char
+// String before the call, on every tier. Exercises the method forms
+// across contains / find / replace / starts_with / ends_with /
+// trim_matches / split / strip_* so all three tiers agree.
+
+fn main() {
+    println!("{}", "hello".contains('e'))
+    println!("{}", "hello".contains('z'))
+    println!("{}", "hello".starts_with('h'))
+    println!("{}", "hello".ends_with('o'))
+    println!("{}", "hello".replace('l', "L"))
+    println!("{}", "aaabbb".replacen('a', "X", 2))
+    println!("{}", "xxhelloxx".trim_matches('x'))
+    println!("{}", "xxhello".trim_start_matches('x'))
+    println!("{}", "helloxx".trim_end_matches('x'))
+    println!("{}", "hello".count('l'))
+
+    let idx = match "hello".find('l') {
+        Some(i) => i,
+        None => -1,
+    }
+    println!("{}", idx)
+
+    let ridx = match "hello".rfind('l') {
+        Some(i) => i,
+        None => -1,
+    }
+    println!("{}", ridx)
+
+    let (head, tail) = match "key:value".split_once(':') {
+        Some(parts) => parts,
+        None => (String::new(), String::new()),
+    }
+    println!("{}/{}", head, tail)
+
+    let (rh, rt) = match "a:b:c".rsplit_once(':') {
+        Some(parts) => parts,
+        None => (String::new(), String::new()),
+    }
+    println!("{}/{}", rh, rt)
+
+    let stripped = match "hello".strip_prefix('h') {
+        Some(s) => s,
+        None => String::new(),
+    }
+    println!("{}", stripped)
+
+    let suffixed = match "hello".strip_suffix('o') {
+        Some(s) => s,
+        None => String::new(),
+    }
+    println!("{}", suffixed)
+
+    println!("{}", "a,b,c".split(',').len())
+}
+
+#[cfg(test)]
+mod string_char_needle_tests {
+    use std::testing
+
+    #[test]
+    fn contains_char_needle() {
+        testing::check(&"hello".contains('e'), "contains e")
+        testing::check(&!"hello".contains('z'), "not contains z")
+    }
+
+    #[test]
+    fn replace_char_needle() {
+        testing::check_eq(&"hello".replace('l', "L"), &"heLLo", "replace l")
+    }
+
+    #[test]
+    fn trim_matches_char_needle() {
+        testing::check_eq(&"xxhixx".trim_matches('x'), &"hi", "trim x")
+    }
+}

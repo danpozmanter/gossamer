@@ -40,10 +40,10 @@ fn main() {
     let replaced = text.replace("at", "og")
     println!("replace 'at' with 'og' = {}", replaced)
 
-    // to_uppercase / to_lowercase
+    // to_upper / to_lower
     let mixed = "Hello World"
-    println!("upper = {}", mixed.to_uppercase())
-    println!("lower = {}", mixed.to_lowercase())
+    println!("upper = {}", mixed.to_upper())
+    println!("lower = {}", mixed.to_lower())
 
     // as_bytes length vs char semantics
     let ascii_str = "abcdef"

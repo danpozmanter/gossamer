@@ -1,0 +1,16 @@
+// Locks the time module's Duration accessors across tiers. A Duration
+// is an i64 of milliseconds with no runtime type tag, so its accessors
+// use the qualified `time::Duration::as_*` free-call form on every tier;
+// the `d.as_millis()` method form needs a typed Duration representation
+// and is tracked as a separate task rather than shipped VM-only.
+use std::time
+
+fn main() {
+    let d = time::Duration::from_millis(2500)
+    println!("{}", time::Duration::as_millis(d))
+    println!("{}", time::Duration::as_secs(d))
+    let s = time::Duration::from_secs(3)
+    println!("{}", time::Duration::as_millis(s))
+    let u = time::Duration::from_micros(4000)
+    println!("{}", time::Duration::as_millis(u))
+}

@@ -53,8 +53,11 @@ One page per module. Source is `crates/gossamer-std/src/`; this index is regener
 | [`std::flag`](flag.md) | Batteries-included CLI argument parsing. |
 | [`std::fmt`](fmt.md) | Formatted printing and string interpolation. |
 | [`std::fs`](fs.md) | Filesystem reading, writing, and traversal (Rust std::fs shape). |
+| [`std::hash::adler32`](hash_adler32.md) | Adler-32 checksums. |
+| [`std::hash::crc32`](hash_crc32.md) | CRC-32 (IEEE) checksums. |
 | [`std::hash::fnv`](hash_fnv.md) | FNV-1a non-cryptographic hash (32-bit, 64-bit). |
-| [`std::html::template`](html_template.md) | Context-aware HTML templates with auto-escape. |
+| [`std::html`](html.md) | HTML text escaping and unescaping. |
+| [`std::html::template`](html_template.md) | Context-aware HTML templates with auto-escape (text/attr/URL/JS). The context classifier is heuristic — sound for typical server-rendered responses but NOT a content-security-policy substitute; sanitize untrusted HTML fragments with a dedicated sanitizer. |
 | [`std::http`](http.md) | HTTP/1.1 and HTTP/2 client and server. HTTP/2 negotiates via ALPN over TLS automatically (Go-style); h2c entry points are explicit. |
 | [`std::http::chunked`](http_chunked.md) | RFC 7230 §4.1 chunked transfer-encoding reader and writer. |
 | [`std::http::cookie`](http_cookie.md) | RFC 6265 cookie parser and Set-Cookie builder. |
@@ -85,6 +88,7 @@ One page per module. Source is `crates/gossamer-std/src/`; this index is regener
 | [`std::metrics`](metrics.md) | Prometheus-compatible primitives (Counter, Gauge, Histogram) and a Registry rendering the standard text-exposition format. |
 | [`std::mime`](mime.md) | RFC 2045 media type parsing, parameter extraction, and extension lookup. |
 | [`std::net`](net.md) | TCP/UDP networking primitives. |
+| [`std::net::ip`](net_ip.md) | String-level IPv4 / IPv6 parsing and classification helpers. |
 | [`std::net::netip`](net_netip.md) | Typed IP-address parsing, classification, and addr:port helpers (Go's net/netip shape). |
 | [`std::net::url`](net_url.md) | URL parsing, rendering, and query escaping. |
 | [`std::option`](option.md) | Data-last Option combinators for pipeline chaining: map, filter, default, and_then, etc. |

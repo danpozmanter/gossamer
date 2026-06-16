@@ -86,23 +86,19 @@ pub unsafe extern "C" fn gos_rt_hmac_sha256_hex(
 }
 
 /// `crypto::hmac::sha256_mac(key, message) -> [u8]` — the raw 32-byte
-/// MAC as a byte vector (vs the hex string from `sha256_hex`).
+/// MAC as a byte vector (vs the hex string from `sha256_hex`). Both
+/// arguments are Gossamer `[u8]` values (`GosVec`), not c-strings:
+/// the MAC must cover arbitrary binary key / message bytes, including
+/// embedded NUL, exactly as the interp builtin's `value_to_bytes`
+/// extraction does.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_crypto_hmac_sha256_mac(
-    key: *const c_char,
-    message: *const c_char,
+    key: *const GosVec,
+    message: *const GosVec,
 ) -> *mut GosVec {
-    let key_bytes: &[u8] = if key.is_null() {
-        &[]
-    } else {
-        unsafe { CStr::from_ptr(key).to_bytes() }
-    };
-    let msg_bytes: &[u8] = if message.is_null() {
-        &[]
-    } else {
-        unsafe { CStr::from_ptr(message).to_bytes() }
-    };
-    let mac = hmac_sha256(key_bytes, msg_bytes);
+    let key_bytes = unsafe { super::encoding::gosvec_u8(key) };
+    let msg_bytes = unsafe { super::encoding::gosvec_u8(message) };
+    let mac = hmac_sha256(&key_bytes, &msg_bytes);
     super::encoding::bytes_to_gosvec(&mac)
 }
 
@@ -176,4 +172,107 @@ pub unsafe extern "C" fn gos_rt_crypto_rand_bytes(n: i64) -> *mut GosVec {
     }
     vref.len = len;
     v
+}
+
+/// Packs an `Err(errors::Error)` for the `crypto::password` Result-
+/// returning shims.
+fn password_err(msg: &str) -> i128 {
+    let cs = std::ffi::CString::new(msg)
+        .unwrap_or_else(|_| std::ffi::CString::new("crypto::password error").expect("static"));
+    let err = unsafe { super::errors::gos_rt_error_new(cs.as_ptr()) };
+    super::vec::gos_rt_result_new(1, err as i64)
+}
+
+/// `crypto::password::hash(plaintext) -> Result<String, errors::Error>`
+/// — Argon2id PHC hash. Same defaults as `kdf::argon2id_hash`
+/// (Argon2id, V0x13, `Params::default()`), so a hash minted on one
+/// tier verifies on another.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_crypto_password_hash(plaintext: *const c_char) -> i128 {
+    ffi_entry!(0i128, {
+        use argon2::password_hash::{PasswordHasher, SaltString};
+        use argon2::{Algorithm, Argon2, Params, Version};
+        let pw = if plaintext.is_null() {
+            Vec::new()
+        } else {
+            unsafe { CStr::from_ptr(plaintext).to_bytes().to_vec() }
+        };
+        let mut salt_bytes = [0u8; 16];
+        if getrandom::getrandom(&mut salt_bytes).is_err() {
+            return password_err("crypto::password: rng failure");
+        }
+        let salt = match SaltString::encode_b64(&salt_bytes) {
+            Ok(s) => s,
+            Err(e) => return password_err(&format!("crypto::password: {e}")),
+        };
+        let argon = Argon2::new(Algorithm::Argon2id, Version::V0x13, Params::default());
+        match argon.hash_password(&pw, &salt) {
+            Ok(h) => super::vec::gos_rt_result_new(
+                0,
+                super::string::alloc_cstring(h.to_string().as_bytes()) as i64,
+            ),
+            Err(e) => password_err(&format!("crypto::password: {e}")),
+        }
+    })
+}
+
+/// `crypto::password::verify(plaintext, phc) -> Result<bool, errors::Error>`
+/// — constant-time-ish verify using the parameters embedded in the
+/// PHC string.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_crypto_password_verify(
+    plaintext: *const c_char,
+    phc: *const c_char,
+) -> i128 {
+    ffi_entry!(0i128, {
+        use argon2::Argon2;
+        use argon2::password_hash::{PasswordHash, PasswordVerifier};
+        let pw = if plaintext.is_null() {
+            Vec::new()
+        } else {
+            unsafe { CStr::from_ptr(plaintext).to_bytes().to_vec() }
+        };
+        let phc_s = if phc.is_null() {
+            String::new()
+        } else {
+            unsafe { CStr::from_ptr(phc).to_string_lossy().into_owned() }
+        };
+        let parsed = match PasswordHash::new(&phc_s) {
+            Ok(p) => p,
+            Err(e) => return password_err(&format!("crypto::password: {e}")),
+        };
+        let ok = Argon2::default().verify_password(&pw, &parsed).is_ok();
+        super::vec::gos_rt_result_new(0, i64::from(ok))
+    })
+}
+
+/// `crypto::password::needs_rehash(phc) -> bool` — replicates
+/// `kdf::needs_rehash` exactly (non-argon2id or weaker-than-default
+/// params → true).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_crypto_password_needs_rehash(phc: *const c_char) -> i8 {
+    ffi_entry!(0, {
+        use argon2::Params;
+        use argon2::password_hash::PasswordHash;
+        let phc_s = if phc.is_null() {
+            String::new()
+        } else {
+            unsafe { CStr::from_ptr(phc).to_string_lossy().into_owned() }
+        };
+        let Ok(parsed) = PasswordHash::new(&phc_s) else {
+            return 0;
+        };
+        if !matches!(parsed.algorithm.as_str(), "argon2id") {
+            return 1;
+        }
+        let target = Params::default();
+        let Ok(current) = Params::try_from(&parsed) else {
+            return 1;
+        };
+        i8::from(
+            current.m_cost() < target.m_cost()
+                || current.t_cost() < target.t_cost()
+                || current.p_cost() < target.p_cost(),
+        )
+    })
 }

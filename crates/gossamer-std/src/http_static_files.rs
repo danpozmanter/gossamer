@@ -139,14 +139,11 @@ impl FileServer {
         // Conditional GET: If-Modified-Since.
         if self.last_modified
             && let (Some(t), Some(ims)) = (&mtime, request.headers.get("if-modified-since"))
-            && let Ok(client) = crate::time::parse_rfc3339(ims).or_else(|_| {
-                // Fallback: best-effort RFC 1123 parse via the
-                // simple format guard. A real RFC 1123 parser
-                // is part of the time-module gap-fill (P1).
-                Err(crate::time::FormatError::BadInput(
-                    "RFC 1123 parse not yet supported".to_string(),
-                ))
-            })
+            // Browsers send the RFC 1123 (HTTP-date) form they got back
+            // in `Last-Modified`; accept that first, falling back to
+            // RFC 3339 for non-browser clients.
+            && let Ok(client) =
+                crate::time::parse_rfc1123_gmt(ims).or_else(|_| crate::time::parse_rfc3339(ims))
             && let Ok(d) = t.duration_since(std::time::UNIX_EPOCH)
             && client.unix_seconds() >= d.as_secs() as i64
         {
@@ -408,6 +405,36 @@ mod tests {
         let second = fs.serve_path("a.txt", &r);
         assert_eq!(second.status, StatusCode(304));
         assert!(second.body.is_empty());
+    }
+
+    #[test]
+    fn returns_304_on_if_modified_since_rfc1123() {
+        let dir = tmpdir();
+        std::fs::write(dir.path().join("a.txt"), b"hello").unwrap();
+        let fs = FileServer::new(dir.path());
+        // The server emits Last-Modified in RFC 1123; a browser echoes
+        // that exact wire format in If-Modified-Since.
+        let first = fs.serve_path("a.txt", &req("/x"));
+        let last_modified = first.headers.get("last-modified").unwrap().to_string();
+        let mut r = req("/x");
+        r.headers.insert("if-modified-since", &last_modified);
+        let second = fs.serve_path("a.txt", &r);
+        assert_eq!(second.status, StatusCode(304));
+        assert!(second.body.is_empty());
+    }
+
+    #[test]
+    fn rfc1123_is_modified_returns_200_for_older_client_copy() {
+        let dir = tmpdir();
+        std::fs::write(dir.path().join("a.txt"), b"hello").unwrap();
+        let fs = FileServer::new(dir.path());
+        let mut r = req("/x");
+        // A timestamp well in the past: the file is newer, so serve it.
+        r.headers
+            .insert("if-modified-since", "Sun, 06 Nov 1994 08:49:37 GMT");
+        let resp = fs.serve_path("a.txt", &r);
+        assert_eq!(resp.status, StatusCode(200));
+        assert_eq!(resp.body, b"hello");
     }
 
     #[test]

@@ -99,8 +99,8 @@ fn check_subcommand_reports_type_mismatch() {
 }
 
 #[test]
-fn run_subcommand_executes_via_tree_walker() {
-    let fixture = write_fixture("run", "fn main() { println(\"cli-tree-walker\") }\n");
+fn run_subcommand_executes_via_vm() {
+    let fixture = write_fixture("run", "fn main() { println(\"cli-vm-run\") }\n");
     let out = Command::new(gos_bin())
         .args(["run"])
         .arg(&fixture)
@@ -112,7 +112,7 @@ fn run_subcommand_executes_via_tree_walker() {
         String::from_utf8_lossy(&out.stderr)
     );
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("cli-tree-walker"));
+    assert!(stdout.contains("cli-vm-run"));
     let _ = std::fs::remove_file(&fixture);
 }
 
@@ -1389,7 +1389,7 @@ fn tidy_canonicalises_existing_manifest() {
 
 #[test]
 fn run_refuses_type_invalid_program_with_diagnostic() {
-    // Interpreter must not execute programs that fail static checks
+    // The VM must not execute programs that fail static checks
     // (error_handling.md invariant #2). The CLI should print a
     // typed diagnostic and exit non-zero.
     let fixture = write_fixture(

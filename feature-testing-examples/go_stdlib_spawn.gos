@@ -1,0 +1,38 @@
+// Tier-divergence regression: `go <stdlib-free-call>` must spawn a
+// goroutine on every tier (bytecode VM, Cranelift JIT, LLVM AOT),
+// never run inline. The compiled tiers previously lowered a stdlib
+// free call under `go` (e.g. `go time::sleep(ms)`, `go http::get(url)`)
+// to a synchronous inline call, while the VM spawned it — a parity
+// bug.
+//
+// The async proof is a two-party barrier rendezvous, deterministic and
+// sleep-free. The spawned `go Barrier::wait(gate)` is one party; main
+// is the other. Running asynchronously, the spawned party parks on the
+// barrier while main reaches its own `Barrier::wait`; both release and
+// the program prints two lines. If the spawned call ran synchronously
+// instead, main would block on the barrier as the only party — the
+// second party (main itself) could never arrive — and the program
+// would print nothing and deadlock. So the two-line output is only
+// reachable when the spawned stdlib free call is asynchronous.
+
+use std::sync::Barrier
+use std::strings
+use std::time
+
+fn main() {
+    // Non-blocking stdlib free calls under `go` of differing shapes:
+    // each must spawn (its result is discarded) on every tier. Their
+    // asynchronous execution leaves main's output untouched.
+    go time::sleep(1)
+    go strings::to_upper(&"async")
+
+    // Blocking stdlib free call under `go`: the deterministic async
+    // proof. `gate` is shared by value through the process-global
+    // barrier registry, so the spawned goroutine and main meet at the
+    // same barrier.
+    let gate = Barrier::new(2)
+    go Barrier::wait(gate)
+    println!("main reached barrier")
+    Barrier::wait(gate)
+    println!("released")
+}

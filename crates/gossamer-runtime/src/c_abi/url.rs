@@ -47,7 +47,7 @@ fn percent_encode(input: &str, query_mode: bool) -> String {
     out
 }
 
-fn percent_decode(input: &str, query_mode: bool) -> String {
+pub(crate) fn percent_decode(input: &str, query_mode: bool) -> String {
     let bytes = input.as_bytes();
     let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
     let mut i = 0;

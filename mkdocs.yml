@@ -1,37 +1,56 @@
 site_name: Gossamer
 site_url: https://danpozmanter.github.io/gossamer/docs/
-site_description: A garbage-collected, goroutine-powered, fast-compiling systems language with Rust-flavoured syntax.
+site_description: A goroutine-powered, fast-compiling systems language with Rust-flavoured syntax and automatic, pause-free memory management.
 site_author: Gossamer contributors
 repo_url: https://github.com/danpozmanter/gossamer
 repo_name: danpozmanter/gossamer
-# `edit_uri` intentionally unset — readthedocs theme suppresses the
-# "Edit on …" link when it is empty. Repo discoverability is handled
-# by the prominent top-right button injected from
-# `js/repo_button.js`.
+# `edit_uri` intentionally unset — the Material theme already surfaces
+# the repository via the top-right repo link injected from `repo_url`.
 edit_uri: ""
 
 docs_dir: docs_src
 site_dir: docs
 
 theme:
-  name: readthedocs
+  name: material
   logo: img/GossamerLogo.png
-  navigation_depth: 3
-  highlightjs: true
-  hljs_languages:
-    - rust
-    - go
-    - python
-    - bash
-    - toml
+  favicon: img/GossamerLogo.png
+  font:
+    text: Inter
+    code: JetBrains Mono
+  icon:
+    repo: fontawesome/brands/github
+  palette:
+    - scheme: slate
+      primary: black
+      accent: cyan
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+    - scheme: default
+      primary: black
+      accent: cyan
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.top
+    - navigation.sections
+    - navigation.indexes
+    - toc.follow
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.code.annotate
+    - content.tabs.link
 
 extra_css:
   - stylesheets/extra.css
 
-extra_javascript:
-  - js/hljs_gossamer.js
-  - js/repo_button.js
-  - js/scroll_top.js
+hooks:
+  - mkdocs_hooks.py
 
 nav:
   - Home: index.md
@@ -69,8 +88,22 @@ nav:
 
 markdown_extensions:
   - admonition
-  - tables
-  - fenced_code
   - footnotes
+  - attr_list
+  - md_in_html
+  - tables
   - toc:
       permalink: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets:
+      base_path:
+        - .
+        - docs_src
+      check_paths: true
+  - pymdownx.superfences
+  - pymdownx.details
+  - pymdownx.tabbed:
+      alternate_style: true

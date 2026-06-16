@@ -110,6 +110,38 @@ impl From<&String> for Symbol {
     }
 }
 
+/// Clears the global interner, freeing every interned spelling.
+///
+/// The interner hands out `&'static str` slices into a leak-on-purpose
+/// arena, so without this its footprint grows for the life of the
+/// process — unbounded in a host that compiles many independent
+/// programs in one process (the fuzz harnesses). Such a host calls
+/// this at each program boundary to bound the growth.
+///
+/// # Safety contract
+/// Every outstanding [`Symbol`] indexes the spellings table by
+/// position, and the freed slices are dangling afterward. The caller
+/// must guarantee no `Symbol` handle or `as_str` slice from a prior
+/// interning round is read after this returns. The fuzz harnesses
+/// satisfy this by resetting before each independent input, when no
+/// handle from the previous input is live.
+// Reclaiming a leaked allocation is the one operation in this crate that
+// genuinely requires `unsafe`; it is contained to this function and its
+// safety contract is documented above.
+#[allow(unsafe_code)]
+pub fn reset_interner() {
+    let mut inner = global().write();
+    for s in inner.spellings.drain(..) {
+        // SAFETY: each spelling came from `Box::leak(Box<str>)` in
+        // `intern`; reconstructing the `Box` from the same fat pointer
+        // and dropping it frees exactly that allocation.
+        unsafe {
+            drop(Box::from_raw(std::ptr::from_ref(s).cast_mut()));
+        }
+    }
+    inner.lookup.clear();
+}
+
 struct Inner {
     spellings: Vec<&'static str>,
     lookup: HashMap<String, Symbol>,

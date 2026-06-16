@@ -1,0 +1,25 @@
+enum Token { Op(char), Num(i64), End }
+
+fn classify(c: i64) -> Token {
+    if c == 0 { Token::End }
+    else if c < 10 { Token::Num(c) }
+    else { Token::Op('+') }
+}
+
+fn weight(t: Token) -> i64 {
+    match t {
+        Token::Op(_) => 1,
+        Token::Num(n) => n,
+        Token::End => 0,
+    }
+}
+
+fn main() {
+    let mut total = 0
+    let mut i = 0
+    while i < 3000 {
+        total += weight(classify(i % 12))
+        i += 1
+    }
+    println!("{}", total)
+}

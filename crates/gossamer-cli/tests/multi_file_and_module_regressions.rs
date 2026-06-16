@@ -1231,3 +1231,71 @@ fn main() {
         "peephole dropped a const-load feeding a call:\n{stdout}",
     );
 }
+
+#[test]
+fn test_runner_failed_test_prints_call_chain_traceback() {
+    // A `#[test]` that panics deep in a nested call chain must report
+    // not only the panic message (byte-identical to before the VM
+    // switch) but also the VM's preserved call stack, so a failure
+    // points at the path that reached it rather than just the leaf.
+    let src = r#"
+fn deepest(n: i64) -> i64 {
+    if n == 0 {
+        panic!("boom at the bottom")
+    }
+    n
+}
+
+fn middle(n: i64) -> i64 {
+    deepest(n - 1)
+}
+
+fn top() -> i64 {
+    middle(1)
+}
+
+#[cfg(test)]
+mod tb_tests {
+    #[test]
+    fn panics_in_nested_call() {
+        let _ = super::top()
+    }
+}
+
+fn main() {}
+"#;
+    let dir = fresh_dir("test-runner-traceback");
+    let path = write_source(&dir, "runner_tb", src);
+    let out = Command::new(gos_bin())
+        .arg("test")
+        .arg(&path)
+        .env("NO_COLOR", "1")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .expect("gos test");
+    let _ = fs::remove_dir_all(&dir);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    // A failing test makes the runner exit non-zero.
+    assert!(
+        !out.status.success(),
+        "expected non-zero exit for a failing test:\n{stdout}",
+    );
+    // Message text is unchanged by the traceback addition.
+    assert!(
+        stdout.contains("FAIL panics_in_nested_call") && stdout.contains("boom at the bottom"),
+        "panic message regressed:\n{stdout}",
+    );
+    // The call chain is rendered outermost-first, one frame per call.
+    assert!(
+        stdout.contains("call stack (outermost first):"),
+        "no traceback header:\n{stdout}",
+    );
+    for frame in ["panics_in_nested_call", "top", "middle", "deepest"] {
+        assert!(
+            stdout.contains(&format!("at {frame}")),
+            "traceback missing frame `{frame}`:\n{stdout}",
+        );
+    }
+}

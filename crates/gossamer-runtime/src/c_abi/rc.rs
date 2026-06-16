@@ -15,9 +15,9 @@
 #![allow(unused_unsafe)]
 #![allow(clippy::wildcard_imports)]
 
-#[cfg(tsan)]
+#[cfg(any(tsan, miri, fuzzing))]
 use std::alloc::{Layout, alloc_zeroed, dealloc};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering, fence};
 
 // ---------------------------------------------------------------
 // Intrusive reference counting for compiled-tier heap objects.
@@ -185,8 +185,24 @@ fn rc_live_dec() {
 // only on the cold release-to-non-zero path and during collection, so the
 // acyclic fast path pays only a mask.
 
-/// Low 28 bits of `strong`: the actual strong reference count.
-const STRONG_COUNT_MASK: u32 = 0x0FFF_FFFF;
+/// Low 27 bits of `strong`: the actual strong reference count (134M
+/// live refs is unreachable). Bit 27 is [`SHARED_BIT`]; bits 28-31 are
+/// the collector flags.
+const STRONG_COUNT_MASK: u32 = 0x07FF_FFFF;
+
+/// Bit 27: the object has escaped to another goroutine (sent on a
+/// channel, captured by a spawned goroutine, or passed to `go f(...)`).
+/// Its strong count is then mutated with **atomic** retain/release so
+/// concurrent workers can't tear the count (lost decrement → UAF /
+/// double-free). Shared objects are excluded from the per-thread cycle
+/// collector — their cycles leak, exactly like Rust's `Arc` (break with
+/// weak refs). Set transitively over the reachable RC subgraph at the
+/// escape point by [`gos_rt_rc_mark_shared`], before the value is
+/// published, and never cleared. Because shared objects skip the
+/// collector, the non-atomic accessors (`color_of`, `set_strong_count`,
+/// …) only ever run on thread-local (non-shared) objects, so they need
+/// no atomics.
+const SHARED_BIT: u32 = 1 << 27;
 
 /// Pinned strong count for process-immortal objects (unit-variant
 /// singletons). Retain and release skip the count entirely: inside an
@@ -206,6 +222,10 @@ const COLOR_MASK: u32 = 0b11 << COLOR_SHIFT;
 /// reclamation cost on short-lived allocation churn.
 const REGION_BIT: u32 = 1 << 30;
 
+// Only the test asserts read this now — the hot retain/release paths
+// check `REGION_BIT` inline off their single atomic `strong` load
+// (`inc_strong` / `dec_strong`) to avoid a second read.
+#[cfg(test)]
 #[inline]
 unsafe fn is_region(h: *const RcHeader) -> bool {
     (unsafe { (*h).strong }) & REGION_BIT != 0
@@ -237,6 +257,139 @@ unsafe fn set_strong_count(h: *mut RcHeader, count: u32) {
     }
     let flags = cur & !STRONG_COUNT_MASK;
     unsafe { (*h).strong = flags | (count & STRONG_COUNT_MASK) };
+}
+
+// ---------------------------------------------------------------
+// Escape-aware (atomic-on-share) strong-count operations.
+// ---------------------------------------------------------------
+//
+// An RC object shared across goroutines (see `SHARED_BIT`) must have
+// its strong count mutated atomically, or two workers releasing it
+// concurrently tear the count and double-free / leak. Thread-local
+// objects keep the cheap non-atomic path. Every read/write below that
+// can run on a *shared* object goes through these helpers; the
+// non-atomic accessors only ever see thread-local objects (shared ones
+// are excluded from the cycle collector, the only other writer).
+
+/// Relaxed atomic load of `strong` — safe to call on shared objects.
+#[inline]
+unsafe fn load_strong(h: *const RcHeader) -> u32 {
+    let a = unsafe { AtomicU32::from_ptr(std::ptr::addr_of!((*h).strong).cast_mut()) };
+    a.load(Ordering::Relaxed)
+}
+
+/// Whether the object has escaped to another goroutine.
+#[inline]
+unsafe fn is_shared(h: *const RcHeader) -> bool {
+    (unsafe { load_strong(h) }) & SHARED_BIT != 0
+}
+
+/// Escape-aware strong increment (the `retain` core). Atomic for shared
+/// objects, a plain RMW otherwise. Region / immortal objects untouched.
+#[inline]
+unsafe fn inc_strong(h: *mut RcHeader) {
+    let s = unsafe { load_strong(h) };
+    if s & REGION_BIT != 0 || s & STRONG_COUNT_MASK == STRONG_IMMORTAL {
+        return;
+    }
+    if s & SHARED_BIT != 0 {
+        // Count is the low 27 bits; +1 cannot reach SHARED_BIT before
+        // 134M live refs (unreachable). Relaxed: a retain needs
+        // atomicity, not ordering.
+        let a = unsafe { AtomicU32::from_ptr(std::ptr::addr_of_mut!((*h).strong)) };
+        a.fetch_add(1, Ordering::Relaxed);
+        return;
+    }
+    let bumped = (s & STRONG_COUNT_MASK)
+        .saturating_add(1)
+        .min(STRONG_COUNT_MASK);
+    unsafe { (*h).strong = (s & BUFFERED_BIT) | bumped };
+}
+
+/// Result of [`dec_strong`].
+struct DecOutcome {
+    /// Strong count after the decrement.
+    next: u32,
+    /// The object had escaped to another goroutine.
+    shared: bool,
+    /// Region / immortal object — no accounting happened, never reclaim.
+    skip: bool,
+}
+
+/// Escape-aware strong decrement (the `release` core). Atomic (Release)
+/// for shared objects so the worker that drops the last reference
+/// synchronises with the others before reclaiming; plain RMW otherwise.
+#[inline]
+unsafe fn dec_strong(h: *mut RcHeader) -> DecOutcome {
+    let s = unsafe { load_strong(h) };
+    if s & REGION_BIT != 0 || s & STRONG_COUNT_MASK == STRONG_IMMORTAL {
+        return DecOutcome {
+            next: 1,
+            shared: false,
+            skip: true,
+        };
+    }
+    if s & SHARED_BIT != 0 {
+        let a = unsafe { AtomicU32::from_ptr(std::ptr::addr_of_mut!((*h).strong)) };
+        let prev = a.fetch_sub(1, Ordering::Release);
+        return DecOutcome {
+            next: (prev & STRONG_COUNT_MASK).saturating_sub(1),
+            shared: true,
+            skip: false,
+        };
+    }
+    let next = (s & STRONG_COUNT_MASK).saturating_sub(1);
+    unsafe { (*h).strong = (s & !STRONG_COUNT_MASK) | (next & STRONG_COUNT_MASK) };
+    DecOutcome {
+        next,
+        shared: false,
+        skip: false,
+    }
+}
+
+/// Marks `payload` and its reachable RC subgraph as shared (escaped to
+/// another goroutine), so subsequent retains/releases use atomics and
+/// the cycle collector leaves them alone. Idempotent and cycle-safe
+/// (stops at already-shared nodes). Called at escape points on the
+/// owning thread *before* the value is published, so the walk here
+/// races with no one.
+unsafe fn mark_shared(payload: *mut u8) {
+    let base = untag_rc(payload);
+    if base.is_null() || unsafe { in_region_arena(base) } {
+        return;
+    }
+    if unsafe { crate::c_abi::string::is_gos_string(base.cast()) } {
+        return;
+    }
+    let mut work: Vec<*mut u8> = vec![base];
+    while let Some(p) = work.pop() {
+        if p.is_null() || unsafe { in_region_arena(p) } {
+            continue;
+        }
+        if unsafe { crate::c_abi::string::is_gos_string(p.cast()) } {
+            continue;
+        }
+        let h = unsafe { header_ptr(p) };
+        let s = unsafe { load_strong(h) };
+        if s & SHARED_BIT != 0 || s & REGION_BIT != 0 || s & STRONG_COUNT_MASK == STRONG_IMMORTAL {
+            continue;
+        }
+        let a = unsafe { AtomicU32::from_ptr(std::ptr::addr_of_mut!((*h).strong)) };
+        a.fetch_or(SHARED_BIT, Ordering::Relaxed);
+        unsafe {
+            visit_children_raw(p, |c| work.push(c));
+        }
+    }
+}
+
+/// Marks the reachable RC subgraph of `payload` as shared across
+/// goroutines. Called from the channel-send / goroutine-spawn lowering
+/// so escaped objects switch to atomic reference counting. The codegen
+/// gates the call on the static type (RC-managed only), so scalars
+/// never reach here.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_rc_mark_shared(payload: *mut u8) {
+    unsafe { mark_shared(payload) };
 }
 
 #[inline]
@@ -306,6 +459,13 @@ unsafe fn possible_root(payload: *mut u8) {
         return;
     }
     let h = unsafe { header_ptr(payload) };
+    // Objects that have escaped to another goroutine are excluded from
+    // the per-thread cycle collector — touching their flag bits here is a
+    // non-atomic write that would race a concurrent worker's atomic
+    // retain/release. Their cycles leak (like `Arc`); break with weak refs.
+    if unsafe { is_shared(h) } {
+        return;
+    }
     // Color purple marks a candidate; skip if already a tracked root.
     if unsafe { color_of(h) } == COLOR_PURPLE {
         return;
@@ -365,11 +525,11 @@ unsafe fn possible_root(payload: *mut u8) {
 /// allocators).
 #[inline]
 fn rc_block_alloc_zeroed(total: usize) -> *mut u8 {
-    #[cfg(not(tsan))]
+    #[cfg(not(any(tsan, miri, fuzzing)))]
     {
         unsafe { libmimalloc_sys::mi_zalloc(total).cast() }
     }
-    #[cfg(tsan)]
+    #[cfg(any(tsan, miri, fuzzing))]
     {
         let Ok(layout) = Layout::from_size_align(total, RC_ALIGN) else {
             return std::ptr::null_mut();
@@ -386,11 +546,11 @@ fn rc_block_alloc_zeroed(total: usize) -> *mut u8 {
 /// that provably write every byte.
 #[inline]
 fn rc_block_alloc_unzeroed(total: usize) -> *mut u8 {
-    #[cfg(not(tsan))]
+    #[cfg(not(any(tsan, miri, fuzzing)))]
     {
         unsafe { libmimalloc_sys::mi_malloc(total).cast() }
     }
-    #[cfg(tsan)]
+    #[cfg(any(tsan, miri, fuzzing))]
     {
         rc_block_alloc_zeroed(total)
     }
@@ -399,11 +559,11 @@ fn rc_block_alloc_unzeroed(total: usize) -> *mut u8 {
 /// Free an RC block allocated by [`rc_block_alloc_zeroed`].
 #[inline]
 unsafe fn rc_block_free(base: *mut u8) {
-    #[cfg(not(tsan))]
+    #[cfg(not(any(tsan, miri, fuzzing)))]
     {
         unsafe { libmimalloc_sys::mi_free(base.cast()) };
     }
-    #[cfg(tsan)]
+    #[cfg(any(tsan, miri, fuzzing))]
     {
         // The system allocator needs the original layout back; recover
         // the size from the tsan-only side map populated at allocation.
@@ -420,7 +580,7 @@ unsafe fn rc_block_free(base: *mut u8) {
 /// Byte sizes of live RC blocks, ThreadSanitizer builds only (the
 /// system allocator's `dealloc` needs the original layout; production
 /// builds free through `mi_free`, which doesn't).
-#[cfg(tsan)]
+#[cfg(any(tsan, miri, fuzzing))]
 fn tsan_sizes() -> &'static parking_lot::Mutex<std::collections::HashMap<usize, usize>> {
     static SIZES: std::sync::OnceLock<parking_lot::Mutex<std::collections::HashMap<usize, usize>>> =
         std::sync::OnceLock::new();
@@ -1163,26 +1323,11 @@ pub unsafe extern "C" fn gos_rt_rc_retain(payload: *mut u8) {
         return;
     }
     let h = unsafe { header_ptr(payload) };
-    // Region objects are owned by their arena and freed wholesale at pop;
-    // their count is meaningless, so retain is a no-op (and must not run
-    // the mask below, which would clobber REGION_BIT).
-    if unsafe { is_region(h) } {
-        return;
-    }
-    // Process-immortal objects (unit-variant singletons) are never
-    // counted: their balancing releases may legitimately never run.
-    if unsafe { strong_count(h) } == STRONG_IMMORTAL {
-        return;
-    }
-    // Bump the count in the low 28 bits, leaving the collector flag bits
-    // intact; a new reference also colors the object black ("in use"),
-    // cancelling any pending purple/gray mark from a prior decrement.
-    let s = unsafe { (*h).strong };
-    let bumped = (s & STRONG_COUNT_MASK)
-        .saturating_add(1)
-        .min(STRONG_COUNT_MASK);
-    // Preserve the buffered bit, clear the color to black, set the new count.
-    unsafe { (*h).strong = (s & BUFFERED_BIT) | bumped };
+    // `inc_strong` reads `strong` atomically and dispatches: region /
+    // immortal objects are no-ops; escaped (shared) objects bump the
+    // count atomically; thread-local objects take the cheap non-atomic
+    // bump (count up, color back to black, buffered bit preserved).
+    unsafe { inc_strong(h) };
 }
 
 /// Decrement the strong count; at zero, release RC-pointer children
@@ -1341,20 +1486,28 @@ unsafe fn rc_release_impl(root: *mut u8) {
     // Region objects are freed wholesale at region pop — never individually.
     // Skipping the decrement-and-walk here is exactly what eliminates the
     // per-node teardown cost for `region { … }` allocations.
-    if unsafe { is_region(h) } {
+    // `dec_strong` reads `strong` atomically and dispatches: region /
+    // immortal objects are no-ops; escaped (shared) objects decrement
+    // atomically (Release); thread-local objects take the cheap
+    // non-atomic decrement.
+    let d = unsafe { dec_strong(h) };
+    if d.skip {
         return;
     }
-    let count = unsafe { strong_count(h) };
-    if count == STRONG_IMMORTAL {
-        // Process-immortal singleton: never counted, never reclaimed.
+    if d.next != 0 {
+        // Survived the decrement. Thread-local objects become cycle
+        // candidates; shared objects are excluded from the per-thread
+        // collector (their cycles leak, like `Arc` — break with weak refs).
+        if !d.shared {
+            unsafe { possible_root(root) };
+        }
         return;
     }
-    let next = count.saturating_sub(1);
-    unsafe { set_strong_count(h, next) };
-    if next != 0 {
-        // Survived the decrement: a possible cycle root.
-        unsafe { possible_root(root) };
-        return;
+    // Last reference. For a shared object an Acquire fence pairs with the
+    // other workers' Release decrements so this thread sees all their
+    // writes before tearing it down (now exclusively owned — count 0).
+    if d.shared {
+        fence(Ordering::Acquire);
     }
     unsafe { set_color(h, COLOR_BLACK) };
     let meta = unsafe { meta_of(h) };
@@ -1393,12 +1546,18 @@ unsafe fn rc_release_impl(root: *mut u8) {
                 continue;
             }
             let h = unsafe { header_ptr(payload) };
-            let count = unsafe { strong_count(h) };
-            let next = count.saturating_sub(1);
-            unsafe { set_strong_count(h, next) };
-            if next != 0 {
-                unsafe { possible_root(payload) };
+            let d = unsafe { dec_strong(h) };
+            if d.skip {
                 continue;
+            }
+            if d.next != 0 {
+                if !d.shared {
+                    unsafe { possible_root(payload) };
+                }
+                continue;
+            }
+            if d.shared {
+                fence(Ordering::Acquire);
             }
             unsafe { set_color(h, COLOR_BLACK) };
             unsafe {
@@ -1815,6 +1974,13 @@ unsafe fn collect_cycles() {
     let mut dead: Vec<*mut u8> = Vec::new();
     for s in roots {
         let h = unsafe { header_ptr(s) };
+        // A candidate that escaped to another goroutine after being
+        // buffered: drop it without touching its flag bits (a concurrent
+        // worker may be mutating them atomically). Shared objects never
+        // re-enter the collector, so the stale buffered bit is harmless.
+        if unsafe { is_shared(h) } {
+            continue;
+        }
         if unsafe { color_of(h) } == COLOR_PURPLE {
             unsafe { mark_gray(s) };
             scan_roots.push(s);
@@ -1862,6 +2028,7 @@ mod tests {
     use std::sync::{Mutex, PoisonError};
 
     #[test]
+    #[cfg_attr(miri, ignore)] // arena uses mmap with non-RW protections; Miri can't model it
     fn region_arena_rejects_every_pointer_when_no_arena_reserved() {
         // Regression: with the uninitialised base (0) the range test must
         // report NO pointer as region memory — even ones below the 64 GiB
@@ -1877,6 +2044,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)] // arena uses mmap with non-RW protections; Miri can't model it
     fn region_arena_matches_only_the_reserved_window() {
         let base = 0x7000_0000_0000usize;
         assert!(addr_in_region_arena(base, base));
@@ -2024,6 +2192,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)] // arena uses mmap with non-RW protections; Miri can't model it
     fn region_allocs_are_freed_wholesale_at_pop() {
         let _g = count_guard();
         let base = rc_live_count();
@@ -2056,6 +2225,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)] // arena uses mmap with non-RW protections; Miri can't model it
     fn region_tree_freed_without_per_node_teardown() {
         let _g = count_guard();
         fresh_cycle_state();
@@ -2084,6 +2254,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)] // arena uses mmap with non-RW protections; Miri can't model it
     fn region_oversized_alloc_gets_its_own_slab() {
         let _g = count_guard();
         let base = rc_live_count();
@@ -2417,7 +2588,14 @@ mod tests {
 
         let _g = count_guard();
         let base = rc_live_count();
-        let depth = 1_000_000usize;
+        // Miri interprets every node alloc/release, so the 1M-node
+        // native stress would take hours; a shallower list still
+        // exercises the iterative (non-recursive) release path there.
+        let depth = if cfg!(miri) {
+            10_000usize
+        } else {
+            1_000_000usize
+        };
         unsafe {
             let mut head = std::ptr::null_mut::<u8>();
             for _ in 0..depth {

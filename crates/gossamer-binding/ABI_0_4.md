@@ -3,7 +3,7 @@
 Status: shipped in `gossamer-binding` 0.4.0.
 
 This document specifies the four new ABI shapes added in 0.4 and
-defines their ownership, lifetime, GC, FFI, and threading
+defines their ownership, lifetime, reclamation, FFI, and threading
 guarantees. Earlier shapes (`Unit`, `Bool`, `I64`, `F64`, `Char`,
 `String`, `Tuple`, `Vec`, `Option`, `Result`, `Opaque`, `Any`)
 are unchanged.
@@ -51,8 +51,10 @@ data buffer is heap-owned (via `Vec::into_boxed_slice` +
 
 - Returned `Bytes` survives the binding call. Storing it in a
   goroutine-shared `Arc<Mutex<...>>` is safe; the underlying
-  buffer is heap-owned and the GC tracks the resulting
-  `Value::IntArray` (interp) or `GosBytes*` (compiled).
+  buffer is heap-owned. On the interp tier the resulting
+  `Value::IntArray(Arc<Vec<i64>>)` is reference counted by its
+  `Arc`; on the compiled tier the `GosBytes*` header is heap-owned
+  and reclaimed by `gos_rt_bytes_free`.
 - Input `Bytes` materialised by `from_input` is a fresh `Vec<u8>`
   owned by the binding. The wire pointer becomes invalid the
   moment the binding fn returns.
@@ -63,16 +65,17 @@ Bytes do not pin. The buffer is heap-allocated; address stability
 across calls is not guaranteed. Bindings that need stable
 addresses (FFI consumers, `mmap` payloads, etc.) must copy.
 
-### GC interaction
+### Reclamation
 
 Interp tier: stored as `Value::IntArray(Arc<Vec<i64>>)` with each
-byte widened to `i64`. Memory cost is 8× the byte length. The
-GC scans the `Arc` and reclaims when the last reference drops.
+byte widened to `i64`. Memory cost is 8× the byte length. The `Arc`
+reference count reclaims the buffer when the last reference drops.
 
 Compiled tier: stored as `*mut GosBytes`. The runtime's
 `gos_rt_bytes_free` reclaims the header (`Box::from_raw`) and the
-data buffer (`Vec::from_raw_parts`). Calls happen at the next
-GC-reset boundary.
+data buffer (`Vec::from_raw_parts`), the same way `GosVec` is freed —
+emitted deterministically by the compiler's drop pass, not by a
+collector tick.
 
 ### Coroutine / async safety
 
@@ -100,7 +103,7 @@ struct GosMap {
 `keys[i]` pairs with `values[i]`. Order is not significant; for
 duplicate keys, the first entry wins.
 
-### Ownership / lifetime / GC
+### Ownership / lifetime / reclamation
 
 Both `keys` and `values` are independent `GosVec` headers with
 the same lifetime as a returned `Vec<T>`. The outer
@@ -164,12 +167,14 @@ pub enum DynValue {
 }
 ```
 
-### Ownership / lifetime / GC
+### Ownership / lifetime / reclamation
 
-Same model as the existing `GosVariant`. Header + payload buffer
-live on the runtime arena; reclamation is at the next
-`gos_rt_gc_reset` tick. Arm-name strings are arena-allocated and
-escape with the variant.
+Same model as the existing `GosVariant`. Header + payload buffer are
+heap-allocated. The tracing collector and its `gos_rt_gc_reset` tick
+were removed (`gos_rt_gc_reset` is now a no-op), so these are reclaimed
+deterministically by the compiler's drop pass — or persist until
+process exit if they escape that analysis. Arm-name strings are
+arena-allocated and escape with the variant.
 
 ### Dispatch model
 

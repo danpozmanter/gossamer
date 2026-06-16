@@ -1,0 +1,36 @@
+// os::rename / fs::rename and env::set_current_dir had no
+// compiled-tier dispatch. The fixture prints derived booleans and
+// the renamed file's contents, never the temp path, so the output
+// is identical across tiers and machines.
+
+use std::env
+use std::fs
+use std::os
+use std::path
+
+fn main() {
+    let dir = path::join(&env::temp_dir(), &"gossamer-fs-rename-demo")
+    let _ = fs::remove_all(&dir)
+    let _ = fs::create_dir_all(&dir)
+
+    let src = path::join(&dir, &"src.txt")
+    let dst = path::join(&dir, &"dst.txt")
+    let _ = fs::write(&src, &"payload\n")
+
+    match os::rename(&src, &dst) {
+        Ok(_) => println!("rename_ok=true"),
+        Err(e) => println!("rename_err={}", e),
+    }
+    println!("src_exists={}", fs::exists(&src))
+    println!("dst_exists={}", fs::exists(&dst))
+    let body = fs::read_to_string(&dst).unwrap()
+    println!("dst_body={}", body.trim())
+
+    // env::set_current_dir into the temp dir, then back.
+    match env::set_current_dir(&dir) {
+        Ok(_) => println!("chdir_ok=true"),
+        Err(e) => println!("chdir_err={}", e),
+    }
+
+    let _ = fs::remove_all(&dir)
+}

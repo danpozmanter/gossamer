@@ -1,0 +1,54 @@
+// A bare `None` / `Some` / `Ok` / `Err` pattern resolves the variant
+// through a program-global name map. The injected `std::http`
+// request-security bundle defines `enum RouteAuth { BearerOnly,
+// CookieSession, None }`, whose `None` sits at variant index 2. A
+// `match` on a real `Option` must still dispatch on the option's own
+// discriminant, not the colliding user-enum index — otherwise the
+// `None` arm compares the whole option value to `2`, never matches,
+// and the arm falls through to a stale local.
+//
+// `http::form::parse` pulls the bundle (with its `RouteAuth::None`)
+// into the program; the field extractor returns `""` through an
+// `Option::None` arm twice, and the two results are stored side by
+// side in a `Vec` element so a mis-dispatched `None` would alias the
+// first field into the second. Output must be bit-identical on the
+// bytecode VM, Cranelift JIT, and LLVM AOT (incl. `--release`).
+
+use std::http
+
+struct Field {
+    name: String,
+    filename: String,
+}
+
+fn attr(disp: &String, key: &String) -> String {
+    let needle = key.clone() + "=\""
+    match disp.split_once(&needle) {
+        Some((_, rest)) => match rest.split_once("\"") {
+            Some((value, _)) => value,
+            None => "",
+        },
+        None => "",
+    }
+}
+
+fn main() {
+    // Pull the request-security bundle (and its `RouteAuth::None`) in.
+    let form = http::form::parse(&"a=1&b=2")
+    println!("form_count={}", http::form::count(&form))
+
+    let dispositions: [String] = [
+        "form-data; name=\"alpha\"",
+        "form-data; name=\"file\"; filename=\"data.bin\"",
+    ]
+    let mut fields: [Field] = []
+    for disp in dispositions {
+        let d: String = disp
+        let name = attr(&d, &"name")
+        let filename = attr(&d, &"filename")
+        fields.push(Field { name: name, filename: filename })
+    }
+    for f in fields {
+        println!("name=[{}] filename=[{}]", f.name, f.filename)
+    }
+}

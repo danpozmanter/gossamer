@@ -113,6 +113,9 @@ pub(crate) fn install_compress(globals: &mut Vec<(&'static str, Value)>) {
         ("flate::decompress", builtin_compress_flate_decompress),
         ("zlib::compress", builtin_compress_zlib_compress),
         ("zlib::decompress", builtin_compress_zlib_decompress),
+        ("zstd::encode", builtin_compress_zstd_encode),
+        ("zstd::encode_level", builtin_compress_zstd_encode_level),
+        ("zstd::decode", builtin_compress_zstd_decode),
     ] {
         let q: &'static str = Box::leak(format!("compress::{short}").into_boxed_str());
         globals.push((q, crate::builtins::builtin_pub(q, call)));
@@ -133,6 +136,31 @@ pub(crate) fn builtin_compress_gzip_encode(args: &[Value]) -> RuntimeResult<Valu
 pub(crate) fn builtin_compress_gzip_decode(args: &[Value]) -> RuntimeResult<Value> {
     let input = bytes_from_value(args.first().unwrap_or(&Value::Unit));
     match gossamer_std::compress::gzip::decode(&input) {
+        Ok(out) => Ok(ok_variant(bytes_to_array(out))),
+        Err(e) => Ok(err_variant(format!("{e}"))),
+    }
+}
+
+pub(crate) fn builtin_compress_zstd_encode(args: &[Value]) -> RuntimeResult<Value> {
+    let input = bytes_from_value(args.first().unwrap_or(&Value::Unit));
+    match gossamer_std::compress::zstd::encode(&input) {
+        Ok(out) => Ok(ok_variant(bytes_to_array(out))),
+        Err(e) => Ok(err_variant(format!("{e}"))),
+    }
+}
+
+pub(crate) fn builtin_compress_zstd_encode_level(args: &[Value]) -> RuntimeResult<Value> {
+    let input = bytes_from_value(args.first().unwrap_or(&Value::Unit));
+    let level = args.get(1).and_then(value_to_int).unwrap_or(3) as i32;
+    match gossamer_std::compress::zstd::encode_level(&input, level) {
+        Ok(out) => Ok(ok_variant(bytes_to_array(out))),
+        Err(e) => Ok(err_variant(format!("{e}"))),
+    }
+}
+
+pub(crate) fn builtin_compress_zstd_decode(args: &[Value]) -> RuntimeResult<Value> {
+    let input = bytes_from_value(args.first().unwrap_or(&Value::Unit));
+    match gossamer_std::compress::zstd::decode(&input) {
         Ok(out) => Ok(ok_variant(bytes_to_array(out))),
         Err(e) => Ok(err_variant(format!("{e}"))),
     }

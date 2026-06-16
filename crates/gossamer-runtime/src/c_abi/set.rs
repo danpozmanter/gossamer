@@ -84,3 +84,94 @@ pub unsafe extern "C" fn gos_rt_set_len(s: *const GosSet) -> i64 {
         unsafe { (*s).inner.len() as i64 }
     })
 }
+
+/// Borrows the two operand sets, or returns empty borrows for null
+/// pointers so the algebra shims never deref a null handle.
+unsafe fn set_pair<'a>(
+    a: *const GosSet,
+    b: *const GosSet,
+) -> (
+    &'a std::collections::HashSet<String>,
+    &'a std::collections::HashSet<String>,
+) {
+    static EMPTY: std::sync::OnceLock<std::collections::HashSet<String>> =
+        std::sync::OnceLock::new();
+    let empty = EMPTY.get_or_init(std::collections::HashSet::new);
+    let a = if a.is_null() {
+        empty
+    } else {
+        unsafe { &(*a).inner }
+    };
+    let b = if b.is_null() {
+        empty
+    } else {
+        unsafe { &(*b).inner }
+    };
+    (a, b)
+}
+
+unsafe fn set_from(inner: std::collections::HashSet<String>) -> *mut GosSet {
+    Box::into_raw(Box::new(GosSet { inner }))
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_set_union(a: *const GosSet, b: *const GosSet) -> *mut GosSet {
+    ffi_entry!(std::ptr::null_mut(), {
+        let (a, b) = unsafe { set_pair(a, b) };
+        unsafe { set_from(a.union(b).cloned().collect()) }
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_set_intersection(
+    a: *const GosSet,
+    b: *const GosSet,
+) -> *mut GosSet {
+    ffi_entry!(std::ptr::null_mut(), {
+        let (a, b) = unsafe { set_pair(a, b) };
+        unsafe { set_from(a.intersection(b).cloned().collect()) }
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_set_difference(a: *const GosSet, b: *const GosSet) -> *mut GosSet {
+    ffi_entry!(std::ptr::null_mut(), {
+        let (a, b) = unsafe { set_pair(a, b) };
+        unsafe { set_from(a.difference(b).cloned().collect()) }
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_set_symmetric_difference(
+    a: *const GosSet,
+    b: *const GosSet,
+) -> *mut GosSet {
+    ffi_entry!(std::ptr::null_mut(), {
+        let (a, b) = unsafe { set_pair(a, b) };
+        unsafe { set_from(a.symmetric_difference(b).cloned().collect()) }
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_set_is_subset(a: *const GosSet, b: *const GosSet) -> i64 {
+    ffi_entry!(-1, {
+        let (a, b) = unsafe { set_pair(a, b) };
+        i64::from(a.is_subset(b))
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_set_is_superset(a: *const GosSet, b: *const GosSet) -> i64 {
+    ffi_entry!(-1, {
+        let (a, b) = unsafe { set_pair(a, b) };
+        i64::from(a.is_superset(b))
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_set_is_disjoint(a: *const GosSet, b: *const GosSet) -> i64 {
+    ffi_entry!(-1, {
+        let (a, b) = unsafe { set_pair(a, b) };
+        i64::from(a.is_disjoint(b))
+    })
+}

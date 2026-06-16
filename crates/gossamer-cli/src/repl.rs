@@ -136,8 +136,8 @@ pub(crate) fn cmd_repl() -> Result<()> {
 
         if is_declaration {
             declarations.push(trimmed.to_string());
-            match rebuild_interpreter(&declarations) {
-                Ok(_) => {
+            match rebuild_session(&declarations) {
+                Ok(()) => {
                     println!("    added {} declarations", declarations.len());
                 }
                 Err(msg) => {
@@ -202,9 +202,12 @@ pub(crate) fn cmd_repl() -> Result<()> {
     }
 }
 
-fn rebuild_interpreter(
-    declarations: &[String],
-) -> std::result::Result<gossamer_interp::Interpreter, String> {
+/// Validates that the accumulated declarations parse, resolve, and
+/// compile onto the VM. The built `Vm` is discarded — the REPL keeps
+/// declarations as source strings and full-recompiles each input — so
+/// this is purely a probe: `Ok(())` means the declaration set is
+/// loadable, `Err` rolls back the just-added declaration.
+fn rebuild_session(declarations: &[String]) -> std::result::Result<(), String> {
     let source = declarations.join("\n") + "\nfn __irepl_probe() { }\n";
     let mut map = gossamer_lex::SourceMap::new();
     let file = map.add_file("irepl".to_string(), source.clone());
@@ -216,9 +219,9 @@ fn rebuild_interpreter(
     let mut tcx = gossamer_types::TyCtxt::new();
     let (tbl, _) = gossamer_types::typecheck_source_file(&sf, &res, &mut tcx);
     let program = gossamer_hir::lower_source_file(&sf, &res, &tbl, &mut tcx);
-    let mut interp = gossamer_interp::Interpreter::new();
-    interp.load(&program);
-    Ok(interp)
+    let mut vm = gossamer_interp::Vm::new();
+    vm.load(&program, tcx).map_err(|e| format!("{e}"))?;
+    Ok(())
 }
 
 fn build_and_call(
@@ -235,9 +238,9 @@ fn build_and_call(
     let mut tcx = gossamer_types::TyCtxt::new();
     let (tbl, _) = gossamer_types::typecheck_source_file(&sf, &res, &mut tcx);
     let program = gossamer_hir::lower_source_file(&sf, &res, &tbl, &mut tcx);
-    let mut interp = gossamer_interp::Interpreter::new();
-    interp.load(&program);
-    interp.call(entry, Vec::new()).map_err(|e| format!("{e}"))
+    let mut vm = gossamer_interp::Vm::new();
+    vm.load(&program, tcx).map_err(|e| format!("{e}"))?;
+    vm.call(entry, Vec::new()).map_err(|e| format!("{e}"))
 }
 
 /// Renders a parse-diagnostic batch as one human-readable line per

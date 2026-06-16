@@ -19,4 +19,8 @@ Spawn child processes, exit the current process (Rust std::process shape).
 | `exit` | fn | Exits the current process with the given status code. |
 | `id` | fn | Returns the current process ID. |
 | `abort` | fn | Aborts the current process without unwinding. |
+| `signal` | fn | Sends a signal to a process by PID (POSIX). |
+| `kill_group` | fn | Sends a signal to a process group (POSIX). |
+| `wait_timeout` | fn | Waits for a child with a timeout (POSIX). |
+| `pipeline_run` | fn | Runs a shell-tokenised pipeline, returning the final Output. |
 

@@ -1,0 +1,13 @@
+// Locks unicode normalization, case folding, and grapheme segmentation
+// across tiers. These had zero cross-tier coverage before; the suite
+// advertises full Unicode 16, so this pins the compiled tier to the VM.
+use std::unicode
+
+fn main() {
+    let decomposed = "cafe\u{0301}"
+    println!("{}", unicode::nfc(&decomposed))
+    println!("{}", unicode::nfkc(&decomposed))
+    println!("{}", unicode::fold_case(&"GROSSE"))
+    println!("{}", unicode::to_upper_str(&"caf\u{e9}"))
+    println!("{}", unicode::grapheme_count(&"a\u{0301}b\u{0301}c"))
+}

@@ -1,0 +1,14 @@
+// Negating `i64::MIN` wraps to itself rather than overflowing, and the
+// result is bit-identical across the bytecode VM (`gos run` / `gos test`),
+// the Cranelift JIT, and the LLVM AOT tier (`gos build`). `2^63` wraps to
+// `i64::MIN`; negating it wraps back to `i64::MIN`.
+fn main() {
+    let mut n = 1
+    for _ in 0..63 {
+        n = n * 2
+    }
+    let m = -n
+    println!("min={}", n)
+    println!("neg_min={}", m)
+    println!("eq={}", n == m)
+}

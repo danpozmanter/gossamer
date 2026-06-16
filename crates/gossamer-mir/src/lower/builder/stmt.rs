@@ -467,10 +467,12 @@ impl<'a> Builder<'a> {
                 // helper. Mirrors the expression-position
                 // lowering below so a goroutine spawned at
                 // statement level fans out the same way as
-                // one used as an expression. Falls back to
-                // synchronous execution when the inner shape
-                // doesn't match a direct `f(args)` call with
-                // ≤ 4 scalar arguments.
+                // one used as an expression. Any shape that is
+                // not a direct named-function call with ≤ 6
+                // arguments has been wrapped by the front-end
+                // (`lift_go_inner`) into a zero-argument
+                // closure, which spawns fire-and-forget through
+                // `lower_go_spawn_closure`.
                 let mut handled = false;
                 if let HirExprKind::Call { callee, args } = &expr.kind {
                     if let HirExprKind::Path { def: Some(def), .. } = &callee.kind {
@@ -525,7 +527,7 @@ impl<'a> Builder<'a> {
                     }
                 }
                 if !handled {
-                    let _ = self.lower_expr(expr);
+                    let _ = self.lower_go_spawn_closure(expr, stmt.span);
                 }
             }
             HirStmtKind::Item(_) => {

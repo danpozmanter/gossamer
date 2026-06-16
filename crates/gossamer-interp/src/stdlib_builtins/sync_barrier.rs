@@ -156,8 +156,18 @@ pub(crate) fn builtin_barrier_new(args: &[Value]) -> RuntimeResult<Value> {
 }
 
 pub(crate) fn builtin_barrier_wait(args: &[Value]) -> RuntimeResult<Value> {
+    // Clone the `Arc<Barrier>` out and drop the registry lock BEFORE
+    // blocking on the rendezvous. Calling `wait()` inside the registry
+    // `with` closure would hold the global lock across the block, so the
+    // first participant to arrive would never release it and every other
+    // participant would deadlock trying to look up the same barrier.
     if let Some(handle) = args.first() {
-        let _ = with_barrier(handle, |b| b.wait());
+        if let Some(id) = barrier_id_of(handle) {
+            let arc = BARRIER_REGISTRY.with(|r| r.borrow().get(&id).cloned());
+            if let Some(b) = arc {
+                b.wait();
+            }
+        }
     }
     Ok(Value::Unit)
 }

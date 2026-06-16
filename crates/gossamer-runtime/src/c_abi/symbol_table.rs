@@ -68,6 +68,18 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_arr_sort_by_i64 as *const u8,
         ),
         (
+            "gos_rt_atomic_bool_load",
+            crate::c_abi::gos_rt_atomic_bool_load as *const u8,
+        ),
+        (
+            "gos_rt_atomic_bool_new",
+            crate::c_abi::gos_rt_atomic_bool_new as *const u8,
+        ),
+        (
+            "gos_rt_atomic_bool_store",
+            crate::c_abi::gos_rt_atomic_bool_store as *const u8,
+        ),
+        (
             "gos_rt_atomic_i64_cas",
             crate::c_abi::gos_rt_atomic_i64_cas as *const u8,
         ),
@@ -114,6 +126,14 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
         (
             "gos_rt_atomic_i64_swap",
             crate::c_abi::gos_rt_atomic_i64_swap as *const u8,
+        ),
+        (
+            "gos_rt_barrier_new",
+            crate::c_abi::gos_rt_barrier_new as *const u8,
+        ),
+        (
+            "gos_rt_barrier_wait",
+            crate::c_abi::gos_rt_barrier_wait as *const u8,
         ),
         (
             "gos_rt_bheap_len",
@@ -308,6 +328,78 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_bufio_scanner_text as *const u8,
         ),
         (
+            "gos_rt_bytes_buffer_clear",
+            crate::c_abi::gos_rt_bytes_buffer_clear as *const u8,
+        ),
+        (
+            "gos_rt_bytes_buffer_is_empty",
+            crate::c_abi::gos_rt_bytes_buffer_is_empty as *const u8,
+        ),
+        (
+            "gos_rt_bytes_buffer_len",
+            crate::c_abi::gos_rt_bytes_buffer_len as *const u8,
+        ),
+        (
+            "gos_rt_bytes_buffer_new",
+            crate::c_abi::gos_rt_bytes_buffer_new as *const u8,
+        ),
+        (
+            "gos_rt_bytes_buffer_push",
+            crate::c_abi::gos_rt_bytes_buffer_push as *const u8,
+        ),
+        (
+            "gos_rt_bytes_buffer_to_string",
+            crate::c_abi::gos_rt_bytes_buffer_to_string as *const u8,
+        ),
+        (
+            "gos_rt_bytes_buffer_with_capacity",
+            crate::c_abi::gos_rt_bytes_buffer_with_capacity as *const u8,
+        ),
+        (
+            "gos_rt_bytes_buffer_write_str",
+            crate::c_abi::gos_rt_bytes_buffer_write_str as *const u8,
+        ),
+        (
+            "gos_rt_bytes_builder_as_str",
+            crate::c_abi::gos_rt_bytes_builder_as_str as *const u8,
+        ),
+        (
+            "gos_rt_bytes_builder_build",
+            crate::c_abi::gos_rt_bytes_builder_build as *const u8,
+        ),
+        (
+            "gos_rt_bytes_builder_len",
+            crate::c_abi::gos_rt_bytes_builder_len as *const u8,
+        ),
+        (
+            "gos_rt_bytes_builder_new",
+            crate::c_abi::gos_rt_bytes_builder_new as *const u8,
+        ),
+        (
+            "gos_rt_bytes_builder_with_capacity",
+            crate::c_abi::gos_rt_bytes_builder_with_capacity as *const u8,
+        ),
+        (
+            "gos_rt_bytes_builder_write",
+            crate::c_abi::gos_rt_bytes_builder_write as *const u8,
+        ),
+        (
+            "gos_rt_bytes_builder_write_char",
+            crate::c_abi::gos_rt_bytes_builder_write_char as *const u8,
+        ),
+        (
+            "gos_rt_bytes_index_of",
+            crate::c_abi::gos_rt_bytes_index_of as *const u8,
+        ),
+        (
+            "gos_rt_bytes_replace",
+            crate::c_abi::gos_rt_bytes_replace as *const u8,
+        ),
+        (
+            "gos_rt_bytes_split",
+            crate::c_abi::gos_rt_bytes_split as *const u8,
+        ),
+        (
             "gos_rt_callback_invoke",
             crate::c_abi::gos_rt_callback_invoke as *const u8,
         ),
@@ -384,6 +476,14 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_collect_cycles as *const u8,
         ),
         (
+            "gos_rt_compress_bzip2_compress",
+            crate::c_abi::gos_rt_compress_bzip2_compress as *const u8,
+        ),
+        (
+            "gos_rt_compress_bzip2_decompress",
+            crate::c_abi::gos_rt_compress_bzip2_decompress as *const u8,
+        ),
+        (
             "gos_rt_compress_flate_compress",
             crate::c_abi::gos_rt_compress_flate_compress as *const u8,
         ),
@@ -406,6 +506,18 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
         (
             "gos_rt_compress_zlib_decompress",
             crate::c_abi::gos_rt_compress_zlib_decompress as *const u8,
+        ),
+        (
+            "gos_rt_compress_zstd_decode",
+            crate::c_abi::gos_rt_compress_zstd_decode as *const u8,
+        ),
+        (
+            "gos_rt_compress_zstd_encode",
+            crate::c_abi::gos_rt_compress_zstd_encode as *const u8,
+        ),
+        (
+            "gos_rt_compress_zstd_encode_level",
+            crate::c_abi::gos_rt_compress_zstd_encode_level as *const u8,
         ),
         (
             "gos_rt_concat_bool",
@@ -460,12 +572,88 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_cov_set_enabled as *const u8,
         ),
         (
+            "gos_rt_crypto_aes256gcm_open",
+            crate::c_abi::gos_rt_crypto_aes256gcm_open as *const u8,
+        ),
+        (
+            "gos_rt_crypto_aes256gcm_seal",
+            crate::c_abi::gos_rt_crypto_aes256gcm_seal as *const u8,
+        ),
+        (
+            "gos_rt_crypto_argon2id_hash",
+            crate::c_abi::gos_rt_crypto_argon2id_hash as *const u8,
+        ),
+        (
+            "gos_rt_crypto_argon2id_verify",
+            crate::c_abi::gos_rt_crypto_argon2id_verify as *const u8,
+        ),
+        (
+            "gos_rt_crypto_chacha20poly1305_open",
+            crate::c_abi::gos_rt_crypto_chacha20poly1305_open as *const u8,
+        ),
+        (
+            "gos_rt_crypto_chacha20poly1305_seal",
+            crate::c_abi::gos_rt_crypto_chacha20poly1305_seal as *const u8,
+        ),
+        (
+            "gos_rt_crypto_ecdsa_keypair_pem",
+            crate::c_abi::gos_rt_crypto_ecdsa_keypair_pem as *const u8,
+        ),
+        (
+            "gos_rt_crypto_ecdsa_sign_pem",
+            crate::c_abi::gos_rt_crypto_ecdsa_sign_pem as *const u8,
+        ),
+        (
+            "gos_rt_crypto_ecdsa_verify_pem",
+            crate::c_abi::gos_rt_crypto_ecdsa_verify_pem as *const u8,
+        ),
+        (
+            "gos_rt_crypto_ed25519_keypair",
+            crate::c_abi::gos_rt_crypto_ed25519_keypair as *const u8,
+        ),
+        (
+            "gos_rt_crypto_ed25519_sign",
+            crate::c_abi::gos_rt_crypto_ed25519_sign as *const u8,
+        ),
+        (
+            "gos_rt_crypto_ed25519_verify",
+            crate::c_abi::gos_rt_crypto_ed25519_verify as *const u8,
+        ),
+        (
             "gos_rt_crypto_hmac_sha256_mac",
             crate::c_abi::gos_rt_crypto_hmac_sha256_mac as *const u8,
         ),
         (
+            "gos_rt_crypto_md5_hex",
+            crate::c_abi::gos_rt_crypto_md5_hex as *const u8,
+        ),
+        (
+            "gos_rt_crypto_password_hash",
+            crate::c_abi::gos_rt_crypto_password_hash as *const u8,
+        ),
+        (
+            "gos_rt_crypto_password_needs_rehash",
+            crate::c_abi::gos_rt_crypto_password_needs_rehash as *const u8,
+        ),
+        (
+            "gos_rt_crypto_password_verify",
+            crate::c_abi::gos_rt_crypto_password_verify as *const u8,
+        ),
+        (
+            "gos_rt_crypto_pbkdf2_sha256",
+            crate::c_abi::gos_rt_crypto_pbkdf2_sha256 as *const u8,
+        ),
+        (
             "gos_rt_crypto_rand_bytes",
             crate::c_abi::gos_rt_crypto_rand_bytes as *const u8,
+        ),
+        (
+            "gos_rt_crypto_scrypt_interactive",
+            crate::c_abi::gos_rt_crypto_scrypt_interactive as *const u8,
+        ),
+        (
+            "gos_rt_crypto_sha1_hex",
+            crate::c_abi::gos_rt_crypto_sha1_hex as *const u8,
         ),
         (
             "gos_rt_crypto_subtle_ct_eq",
@@ -482,6 +670,34 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
         (
             "gos_rt_csv_write",
             crate::c_abi::gos_rt_csv_write as *const u8,
+        ),
+        (
+            "gos_rt_ctx_background",
+            crate::c_abi::gos_rt_ctx_background as *const u8,
+        ),
+        (
+            "gos_rt_ctx_cancel",
+            crate::c_abi::gos_rt_ctx_cancel as *const u8,
+        ),
+        (
+            "gos_rt_ctx_cancelled",
+            crate::c_abi::gos_rt_ctx_cancelled as *const u8,
+        ),
+        (
+            "gos_rt_ctx_done",
+            crate::c_abi::gos_rt_ctx_done as *const u8,
+        ),
+        (
+            "gos_rt_ctx_is_cancelled",
+            crate::c_abi::gos_rt_ctx_is_cancelled as *const u8,
+        ),
+        (
+            "gos_rt_ctx_with_cancel",
+            crate::c_abi::gos_rt_ctx_with_cancel as *const u8,
+        ),
+        (
+            "gos_rt_ctx_with_timeout",
+            crate::c_abi::gos_rt_ctx_with_timeout as *const u8,
         ),
         (
             "gos_rt_duration_as_micros",
@@ -554,6 +770,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
         (
             "gos_rt_env_home_dir",
             crate::c_abi::gos_rt_env_home_dir as *const u8,
+        ),
+        (
+            "gos_rt_env_set_current_dir",
+            crate::c_abi::gos_rt_env_set_current_dir as *const u8,
         ),
         (
             "gos_rt_env_temp_dir",
@@ -639,6 +859,22 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
         (
             "gos_rt_f64_to_str",
             crate::c_abi::gos_rt_f64_to_str as *const u8,
+        ),
+        (
+            "gos_rt_field_error_code",
+            crate::c_abi::gos_rt_field_error_code as *const u8,
+        ),
+        (
+            "gos_rt_field_error_message",
+            crate::c_abi::gos_rt_field_error_message as *const u8,
+        ),
+        (
+            "gos_rt_field_error_new",
+            crate::c_abi::gos_rt_field_error_new as *const u8,
+        ),
+        (
+            "gos_rt_field_error_path",
+            crate::c_abi::gos_rt_field_error_path as *const u8,
         ),
         (
             "gos_rt_file_server_new",
@@ -746,12 +982,20 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_fs_metadata as *const u8,
         ),
         (
+            "gos_rt_fs_metadata_raw",
+            crate::c_abi::gos_rt_fs_metadata_raw as *const u8,
+        ),
+        (
             "gos_rt_fs_read_bytes_result",
             crate::c_abi::gos_rt_fs_read_bytes_result as *const u8,
         ),
         (
             "gos_rt_fs_read_to_string",
             crate::c_abi::gos_rt_fs_read_to_string as *const u8,
+        ),
+        (
+            "gos_rt_fs_rename",
+            crate::c_abi::gos_rt_fs_rename as *const u8,
         ),
         (
             "gos_rt_fs_walk_dir",
@@ -934,6 +1178,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_html_escape as *const u8,
         ),
         (
+            "gos_rt_html_template_render_json",
+            crate::c_abi::gos_rt_html_template_render_json as *const u8,
+        ),
+        (
             "gos_rt_html_unescape",
             crate::c_abi::gos_rt_html_unescape as *const u8,
         ),
@@ -942,8 +1190,16 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_http2_bind_and_run_h2c as *const u8,
         ),
         (
+            "gos_rt_http_bearer_ok",
+            crate::c_abi::gos_rt_http_bearer_ok as *const u8,
+        ),
+        (
             "gos_rt_http_client_builder_build",
             crate::c_abi::gos_rt_http_client_builder_build as *const u8,
+        ),
+        (
+            "gos_rt_http_client_builder_cookie_jar",
+            crate::c_abi::gos_rt_http_client_builder_cookie_jar as *const u8,
         ),
         (
             "gos_rt_http_client_builder_max_redirects",
@@ -952,6 +1208,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
         (
             "gos_rt_http_client_builder_new",
             crate::c_abi::gos_rt_http_client_builder_new as *const u8,
+        ),
+        (
+            "gos_rt_http_client_builder_proxy",
+            crate::c_abi::gos_rt_http_client_builder_proxy as *const u8,
         ),
         (
             "gos_rt_http_client_builder_timeout_ms",
@@ -994,8 +1254,44 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_http_client_request_bytes as *const u8,
         ),
         (
+            "gos_rt_http_cookie_parse_header",
+            crate::c_abi::gos_rt_http_cookie_parse_header as *const u8,
+        ),
+        (
+            "gos_rt_http_cookie_serialize",
+            crate::c_abi::gos_rt_http_cookie_serialize as *const u8,
+        ),
+        (
+            "gos_rt_http_csrf_issue_token",
+            crate::c_abi::gos_rt_http_csrf_issue_token as *const u8,
+        ),
+        (
+            "gos_rt_http_csrf_verify_token",
+            crate::c_abi::gos_rt_http_csrf_verify_token as *const u8,
+        ),
+        (
+            "gos_rt_http_delete",
+            crate::c_abi::gos_rt_http_delete as *const u8,
+        ),
+        (
             "gos_rt_http_get",
             crate::c_abi::gos_rt_http_get as *const u8,
+        ),
+        (
+            "gos_rt_http_head",
+            crate::c_abi::gos_rt_http_head as *const u8,
+        ),
+        (
+            "gos_rt_http_options",
+            crate::c_abi::gos_rt_http_options as *const u8,
+        ),
+        (
+            "gos_rt_http_post",
+            crate::c_abi::gos_rt_http_post as *const u8,
+        ),
+        (
+            "gos_rt_http_put",
+            crate::c_abi::gos_rt_http_put as *const u8,
         ),
         (
             "gos_rt_http_request",
@@ -1034,6 +1330,18 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_http_request_path as *const u8,
         ),
         (
+            "gos_rt_http_request_path_float",
+            crate::c_abi::gos_rt_http_request_path_float as *const u8,
+        ),
+        (
+            "gos_rt_http_request_path_int",
+            crate::c_abi::gos_rt_http_request_path_int as *const u8,
+        ),
+        (
+            "gos_rt_http_request_path_value",
+            crate::c_abi::gos_rt_http_request_path_value as *const u8,
+        ),
+        (
             "gos_rt_http_request_query",
             crate::c_abi::gos_rt_http_request_query as *const u8,
         ),
@@ -1048,6 +1356,22 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
         (
             "gos_rt_http_request_set_header",
             crate::c_abi::gos_rt_http_request_set_header as *const u8,
+        ),
+        (
+            "gos_rt_http_request_set_value",
+            crate::c_abi::gos_rt_http_request_set_value as *const u8,
+        ),
+        (
+            "gos_rt_http_request_value",
+            crate::c_abi::gos_rt_http_request_value as *const u8,
+        ),
+        (
+            "gos_rt_http_request_form_value",
+            crate::c_abi::gos_rt_http_request_form_value as *const u8,
+        ),
+        (
+            "gos_rt_http_request_basic_auth",
+            crate::c_abi::gos_rt_http_request_basic_auth as *const u8,
         ),
         (
             "gos_rt_http_response_body",
@@ -1110,6 +1434,14 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_http_serve as *const u8,
         ),
         (
+            "gos_rt_http_session_sign",
+            crate::c_abi::gos_rt_http_session_sign as *const u8,
+        ),
+        (
+            "gos_rt_http_session_verify",
+            crate::c_abi::gos_rt_http_session_verify as *const u8,
+        ),
+        (
             "gos_rt_http_stream",
             crate::c_abi::gos_rt_http_stream as *const u8,
         ),
@@ -1128,6 +1460,11 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
         (
             "gos_rt_intarr_slice_result",
             crate::c_abi::gos_rt_intarr_slice_result as *const u8,
+        ),
+        ("gos_rt_io_copy", crate::c_abi::gos_rt_io_copy as *const u8),
+        (
+            "gos_rt_io_read_all",
+            crate::c_abi::gos_rt_io_read_all as *const u8,
         ),
         (
             "gos_rt_io_stderr",
@@ -1237,6 +1574,38 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             "gos_rt_iter_take_i64",
             crate::c_abi::gos_rt_iter_take_i64 as *const u8,
         ),
+        (
+            "gos_rt_iter_chunk_by_size_i64",
+            crate::c_abi::gos_rt_iter_chunk_by_size_i64 as *const u8,
+        ),
+        (
+            "gos_rt_iter_dedup_i64",
+            crate::c_abi::gos_rt_iter_dedup_i64 as *const u8,
+        ),
+        (
+            "gos_rt_iter_enumerate_i64",
+            crate::c_abi::gos_rt_iter_enumerate_i64 as *const u8,
+        ),
+        (
+            "gos_rt_iter_flatten_i64",
+            crate::c_abi::gos_rt_iter_flatten_i64 as *const u8,
+        ),
+        (
+            "gos_rt_iter_pairwise_i64",
+            crate::c_abi::gos_rt_iter_pairwise_i64 as *const u8,
+        ),
+        (
+            "gos_rt_iter_unzip_i64",
+            crate::c_abi::gos_rt_iter_unzip_i64 as *const u8,
+        ),
+        (
+            "gos_rt_iter_windowed_i64",
+            crate::c_abi::gos_rt_iter_windowed_i64 as *const u8,
+        ),
+        (
+            "gos_rt_iter_zip_i64",
+            crate::c_abi::gos_rt_iter_zip_i64 as *const u8,
+        ),
         ("gos_rt_join", crate::c_abi::gos_rt_join as *const u8),
         (
             "gos_rt_json_array_from_scalar_vec",
@@ -1249,6 +1618,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
         (
             "gos_rt_json_as_bool",
             crate::c_abi::gos_rt_json_as_bool as *const u8,
+        ),
+        (
+            "gos_rt_json_as_bool_opt",
+            crate::c_abi::gos_rt_json_as_bool_opt as *const u8,
         ),
         (
             "gos_rt_json_as_f64",
@@ -1312,6 +1685,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_json_parse as *const u8,
         ),
         (
+            "gos_rt_json_valid",
+            crate::c_abi::gos_rt_json_valid as *const u8,
+        ),
+        (
             "gos_rt_json_render",
             crate::c_abi::gos_rt_json_render as *const u8,
         ),
@@ -1350,6 +1727,30 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
         (
             "gos_rt_json_value_string",
             crate::c_abi::gos_rt_json_value_string as *const u8,
+        ),
+        (
+            "gos_rt_jwt_sign_eddsa",
+            crate::c_abi::gos_rt_jwt_sign_eddsa as *const u8,
+        ),
+        (
+            "gos_rt_jwt_sign_es256",
+            crate::c_abi::gos_rt_jwt_sign_es256 as *const u8,
+        ),
+        (
+            "gos_rt_jwt_sign_hs",
+            crate::c_abi::gos_rt_jwt_sign_hs as *const u8,
+        ),
+        (
+            "gos_rt_jwt_verify_eddsa",
+            crate::c_abi::gos_rt_jwt_verify_eddsa as *const u8,
+        ),
+        (
+            "gos_rt_jwt_verify_es256",
+            crate::c_abi::gos_rt_jwt_verify_es256 as *const u8,
+        ),
+        (
+            "gos_rt_jwt_verify_hs",
+            crate::c_abi::gos_rt_jwt_verify_hs as *const u8,
         ),
         (
             "gos_rt_lcg_jump",
@@ -1526,6 +1927,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
         (
             "gos_rt_math_abs",
             crate::c_abi::gos_rt_math_abs as *const u8,
+        ),
+        (
+            "gos_rt_math_abs_i64",
+            crate::c_abi::gos_rt_math_abs_i64 as *const u8,
         ),
         (
             "gos_rt_math_acos",
@@ -1712,6 +2117,18 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_math_hypot as *const u8,
         ),
         (
+            "gos_rt_math_inf",
+            crate::c_abi::gos_rt_math_inf as *const u8,
+        ),
+        (
+            "gos_rt_math_is_inf",
+            crate::c_abi::gos_rt_math_is_inf as *const u8,
+        ),
+        (
+            "gos_rt_math_is_nan",
+            crate::c_abi::gos_rt_math_is_nan as *const u8,
+        ),
+        (
             "gos_rt_math_log",
             crate::c_abi::gos_rt_math_log as *const u8,
         ),
@@ -1724,8 +2141,32 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_math_log2 as *const u8,
         ),
         (
+            "gos_rt_math_nan",
+            crate::c_abi::gos_rt_math_nan as *const u8,
+        ),
+        (
             "gos_rt_math_pow",
             crate::c_abi::gos_rt_math_pow as *const u8,
+        ),
+        (
+            "gos_rt_math_rng_new",
+            crate::c_abi::gos_rt_math_rng_new as *const u8,
+        ),
+        (
+            "gos_rt_math_rng_next_f64",
+            crate::c_abi::gos_rt_math_rng_next_f64 as *const u8,
+        ),
+        (
+            "gos_rt_math_rng_next_u32",
+            crate::c_abi::gos_rt_math_rng_next_u32 as *const u8,
+        ),
+        (
+            "gos_rt_math_rng_next_u64",
+            crate::c_abi::gos_rt_math_rng_next_u64 as *const u8,
+        ),
+        (
+            "gos_rt_math_rng_range_u64",
+            crate::c_abi::gos_rt_math_rng_range_u64 as *const u8,
         ),
         (
             "gos_rt_math_round",
@@ -1751,8 +2192,84 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             "gos_rt_math_tanh",
             crate::c_abi::gos_rt_math_tanh as *const u8,
         ),
+        (
+            "gos_rt_math_trunc",
+            crate::c_abi::gos_rt_math_trunc as *const u8,
+        ),
         ("gos_rt_max_f64", crate::c_abi::gos_rt_max_f64 as *const u8),
         ("gos_rt_max_i64", crate::c_abi::gos_rt_max_i64 as *const u8),
+        (
+            "gos_rt_metrics_counter_inc",
+            crate::c_abi::gos_rt_metrics_counter_inc as *const u8,
+        ),
+        (
+            "gos_rt_metrics_counter_new",
+            crate::c_abi::gos_rt_metrics_counter_new as *const u8,
+        ),
+        (
+            "gos_rt_metrics_counter_value",
+            crate::c_abi::gos_rt_metrics_counter_value as *const u8,
+        ),
+        (
+            "gos_rt_metrics_gauge_dec",
+            crate::c_abi::gos_rt_metrics_gauge_dec as *const u8,
+        ),
+        (
+            "gos_rt_metrics_gauge_inc",
+            crate::c_abi::gos_rt_metrics_gauge_inc as *const u8,
+        ),
+        (
+            "gos_rt_metrics_gauge_new",
+            crate::c_abi::gos_rt_metrics_gauge_new as *const u8,
+        ),
+        (
+            "gos_rt_metrics_gauge_set",
+            crate::c_abi::gos_rt_metrics_gauge_set as *const u8,
+        ),
+        (
+            "gos_rt_metrics_gauge_value",
+            crate::c_abi::gos_rt_metrics_gauge_value as *const u8,
+        ),
+        (
+            "gos_rt_metrics_histogram_count",
+            crate::c_abi::gos_rt_metrics_histogram_count as *const u8,
+        ),
+        (
+            "gos_rt_metrics_histogram_new",
+            crate::c_abi::gos_rt_metrics_histogram_new as *const u8,
+        ),
+        (
+            "gos_rt_metrics_histogram_observe",
+            crate::c_abi::gos_rt_metrics_histogram_observe as *const u8,
+        ),
+        (
+            "gos_rt_metrics_histogram_sum",
+            crate::c_abi::gos_rt_metrics_histogram_sum as *const u8,
+        ),
+        (
+            "gos_rt_metrics_registry_new",
+            crate::c_abi::gos_rt_metrics_registry_new as *const u8,
+        ),
+        (
+            "gos_rt_metrics_registry_register",
+            crate::c_abi::gos_rt_metrics_registry_register as *const u8,
+        ),
+        (
+            "gos_rt_metrics_registry_render",
+            crate::c_abi::gos_rt_metrics_registry_render as *const u8,
+        ),
+        (
+            "gos_rt_metrics_serve",
+            crate::c_abi::gos_rt_metrics_serve as *const u8,
+        ),
+        (
+            "gos_rt_middleware_new",
+            crate::c_abi::gos_rt_middleware_new as *const u8,
+        ),
+        (
+            "gos_rt_middleware_serve",
+            crate::c_abi::gos_rt_middleware_serve as *const u8,
+        ),
         (
             "gos_rt_mime_boundary",
             crate::c_abi::gos_rt_mime_boundary as *const u8,
@@ -1816,6 +2333,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_mw_accepts_gzip as *const u8,
         ),
         (
+            "gos_rt_mw_decode_basic_auth",
+            crate::c_abi::gos_rt_mw_decode_basic_auth as *const u8,
+        ),
+        (
             "gos_rt_mw_new_request_id",
             crate::c_abi::gos_rt_mw_new_request_id as *const u8,
         ),
@@ -1827,6 +2348,13 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             "gos_rt_native_client_new",
             crate::c_abi::gos_rt_native_client_new as *const u8,
         ),
+        (
+            "gos_rt_nc_delete",
+            crate::c_abi::gos_rt_nc_delete as *const u8,
+        ),
+        ("gos_rt_nc_get", crate::c_abi::gos_rt_nc_get as *const u8),
+        ("gos_rt_nc_post", crate::c_abi::gos_rt_nc_post as *const u8),
+        ("gos_rt_nc_put", crate::c_abi::gos_rt_nc_put as *const u8),
         (
             "gos_rt_nested_arr_to_vec",
             crate::c_abi::gos_rt_nested_arr_to_vec as *const u8,
@@ -1876,6 +2404,14 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_netip_port_of as *const u8,
         ),
         (
+            "gos_rt_net_ip_octets",
+            crate::c_abi::gos_rt_net_ip_octets as *const u8,
+        ),
+        (
+            "gos_rt_net_ip_parse",
+            crate::c_abi::gos_rt_net_ip_parse as *const u8,
+        ),
+        (
             "gos_rt_net_resolve",
             crate::c_abi::gos_rt_net_resolve as *const u8,
         ),
@@ -1901,6 +2437,14 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_omap_remove_i64 as *const u8,
         ),
         (
+            "gos_rt_once_call",
+            crate::c_abi::gos_rt_once_call as *const u8,
+        ),
+        (
+            "gos_rt_once_new",
+            crate::c_abi::gos_rt_once_new as *const u8,
+        ),
+        (
             "gos_rt_option_default_f64",
             crate::c_abi::gos_rt_option_default_f64 as *const u8,
         ),
@@ -1920,6 +2464,7 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             "gos_rt_option_map_i64",
             crate::c_abi::gos_rt_option_map_i64 as *const u8,
         ),
+        ("gos_rt_os_arch", crate::c_abi::gos_rt_os_arch as *const u8),
         ("gos_rt_os_args", crate::c_abi::gos_rt_os_args as *const u8),
         ("gos_rt_os_cwd", crate::c_abi::gos_rt_os_cwd as *const u8),
         ("gos_rt_os_env", crate::c_abi::gos_rt_os_env as *const u8),
@@ -1938,6 +2483,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
         (
             "gos_rt_os_exists",
             crate::c_abi::gos_rt_os_exists as *const u8,
+        ),
+        (
+            "gos_rt_os_family",
+            crate::c_abi::gos_rt_os_family as *const u8,
         ),
         (
             "gos_rt_os_file_size",
@@ -2150,6 +2699,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_proxy_forward as *const u8,
         ),
         (
+            "gos_rt_proxy_forward_url",
+            crate::c_abi::gos_rt_proxy_forward_url as *const u8,
+        ),
+        (
             "gos_rt_proxy_new",
             crate::c_abi::gos_rt_proxy_new as *const u8,
         ),
@@ -2186,6 +2739,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::vec::gos_rt_vec_set_elem_meta as *const u8,
         ),
         (
+            "gos_rt_vec_set_slot_children",
+            crate::c_abi::vec::gos_rt_vec_set_slot_children as *const u8,
+        ),
+        (
             "gos_rt_map_set_blob_values",
             crate::c_abi::map::gos_rt_map_set_blob_values as *const u8,
         ),
@@ -2204,6 +2761,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
         (
             "gos_rt_rc_downgrade",
             crate::c_abi::gos_rt_rc_downgrade as *const u8,
+        ),
+        (
+            "gos_rt_rc_mark_shared",
+            crate::c_abi::gos_rt_rc_mark_shared as *const u8,
         ),
         (
             "gos_rt_rc_release",
@@ -2502,6 +3063,14 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_router_add_fn as *const u8,
         ),
         (
+            "gos_rt_router_add_pattern",
+            crate::c_abi::gos_rt_router_add_pattern as *const u8,
+        ),
+        (
+            "gos_rt_router_lookup",
+            crate::c_abi::gos_rt_router_lookup as *const u8,
+        ),
+        (
             "gos_rt_router_delete",
             crate::c_abi::gos_rt_router_delete as *const u8,
         ),
@@ -2566,6 +3135,26 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_router_serve as *const u8,
         ),
         (
+            "gos_rt_rwlock_get",
+            crate::c_abi::gos_rt_rwlock_get as *const u8,
+        ),
+        (
+            "gos_rt_rwlock_new",
+            crate::c_abi::gos_rt_rwlock_new as *const u8,
+        ),
+        (
+            "gos_rt_rwlock_set",
+            crate::c_abi::gos_rt_rwlock_set as *const u8,
+        ),
+        (
+            "gos_rt_rwlock_with_read",
+            crate::c_abi::gos_rt_rwlock_with_read as *const u8,
+        ),
+        (
+            "gos_rt_rwlock_with_write",
+            crate::c_abi::gos_rt_rwlock_with_write as *const u8,
+        ),
+        (
             "gos_rt_select_arm_default",
             crate::c_abi::gos_rt_select_arm_default as *const u8,
         ),
@@ -2614,6 +3203,34 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
         (
             "gos_rt_set_remove",
             crate::c_abi::gos_rt_set_remove as *const u8,
+        ),
+        (
+            "gos_rt_set_union",
+            crate::c_abi::gos_rt_set_union as *const u8,
+        ),
+        (
+            "gos_rt_set_intersection",
+            crate::c_abi::gos_rt_set_intersection as *const u8,
+        ),
+        (
+            "gos_rt_set_difference",
+            crate::c_abi::gos_rt_set_difference as *const u8,
+        ),
+        (
+            "gos_rt_set_symmetric_difference",
+            crate::c_abi::gos_rt_set_symmetric_difference as *const u8,
+        ),
+        (
+            "gos_rt_set_is_subset",
+            crate::c_abi::gos_rt_set_is_subset as *const u8,
+        ),
+        (
+            "gos_rt_set_is_superset",
+            crate::c_abi::gos_rt_set_is_superset as *const u8,
+        ),
+        (
+            "gos_rt_set_is_disjoint",
+            crate::c_abi::gos_rt_set_is_disjoint as *const u8,
         ),
         (
             "gos_rt_sha256_hex",
@@ -2965,6 +3582,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_static_mime_for_path as *const u8,
         ),
         (
+            "gos_rt_static_serve_file",
+            crate::c_abi::gos_rt_static_serve_file as *const u8,
+        ),
+        (
             "gos_rt_stdout_acquire",
             crate::c_abi::gos_rt_stdout_acquire as *const u8,
         ),
@@ -2995,6 +3616,14 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
         (
             "gos_rt_str_concat_drop_a",
             crate::c_abi::gos_rt_str_concat_drop_a as *const u8,
+        ),
+        (
+            "gos_rt_str_append_i64",
+            crate::c_abi::gos_rt_str_append_i64 as *const u8,
+        ),
+        (
+            "gos_rt_str_append_f64",
+            crate::c_abi::gos_rt_str_append_f64 as *const u8,
         ),
         (
             "gos_rt_str_contains",
@@ -3041,8 +3670,28 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_strconv_parse_i64 as *const u8,
         ),
         (
+            "gos_rt_strconv_parse_i64_radix",
+            crate::c_abi::gos_rt_strconv_parse_i64_radix as *const u8,
+        ),
+        (
+            "gos_rt_strconv_format_i64_radix",
+            crate::c_abi::gos_rt_strconv_format_i64_radix as *const u8,
+        ),
+        (
+            "gos_rt_strconv_quote",
+            crate::c_abi::gos_rt_strconv_quote as *const u8,
+        ),
+        (
+            "gos_rt_strconv_unquote",
+            crate::c_abi::gos_rt_strconv_unquote as *const u8,
+        ),
+        (
             "gos_rt_str_count",
             crate::c_abi::gos_rt_str_count as *const u8,
+        ),
+        (
+            "gos_rt_str_chars",
+            crate::c_abi::gos_rt_str_chars as *const u8,
         ),
         (
             "gos_rt_stream_flush",
@@ -3090,6 +3739,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_str_find_opt as *const u8,
         ),
         (
+            "gos_rt_str_first_codepoint",
+            crate::c_abi::gos_rt_str_first_codepoint as *const u8,
+        ),
+        (
             "gos_rt_str_free",
             crate::c_abi::gos_rt_str_free as *const u8,
         ),
@@ -3126,6 +3779,7 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             "gos_rt_str_pad_left",
             crate::c_abi::gos_rt_str_pad_left as *const u8,
         ),
+        ("gos_rt_fmt_pad", crate::c_abi::gos_rt_fmt_pad as *const u8),
         (
             "gos_rt_str_pad_right",
             crate::c_abi::gos_rt_str_pad_right as *const u8,
@@ -3315,12 +3969,52 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_tar_write as *const u8,
         ),
         (
+            "gos_rt_tcp_listener_accept",
+            crate::c_abi::gos_rt_tcp_listener_accept as *const u8,
+        ),
+        (
+            "gos_rt_tcp_listener_bind",
+            crate::c_abi::gos_rt_tcp_listener_bind as *const u8,
+        ),
+        (
+            "gos_rt_tcp_listener_close",
+            crate::c_abi::gos_rt_tcp_listener_close as *const u8,
+        ),
+        (
+            "gos_rt_tcp_listener_local_addr",
+            crate::c_abi::gos_rt_tcp_listener_local_addr as *const u8,
+        ),
+        (
+            "gos_rt_tcp_stream_close",
+            crate::c_abi::gos_rt_tcp_stream_close as *const u8,
+        ),
+        (
+            "gos_rt_tcp_stream_connect",
+            crate::c_abi::gos_rt_tcp_stream_connect as *const u8,
+        ),
+        (
+            "gos_rt_tcp_stream_read",
+            crate::c_abi::gos_rt_tcp_stream_read as *const u8,
+        ),
+        (
+            "gos_rt_tcp_stream_read_to_string",
+            crate::c_abi::gos_rt_tcp_stream_read_to_string as *const u8,
+        ),
+        (
+            "gos_rt_tcp_stream_write",
+            crate::c_abi::gos_rt_tcp_stream_write as *const u8,
+        ),
+        (
             "gos_rt_testing_check",
             crate::c_abi::gos_rt_testing_check as *const u8,
         ),
         (
             "gos_rt_testing_check_eq_i64",
             crate::c_abi::gos_rt_testing_check_eq_i64 as *const u8,
+        ),
+        (
+            "gos_rt_thread_num_cpus",
+            crate::c_abi::gos_rt_thread_num_cpus as *const u8,
         ),
         (
             "gos_rt_time_format_rfc3339",
@@ -3363,8 +4057,52 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_toml_to_json as *const u8,
         ),
         (
+            "gos_rt_trace_ended_to_otlp_json",
+            crate::c_abi::gos_rt_trace_ended_to_otlp_json as *const u8,
+        ),
+        (
+            "gos_rt_trace_span_end",
+            crate::c_abi::gos_rt_trace_span_end as *const u8,
+        ),
+        (
+            "gos_rt_trace_span_set_attribute",
+            crate::c_abi::gos_rt_trace_span_set_attribute as *const u8,
+        ),
+        (
+            "gos_rt_trace_span_set_status",
+            crate::c_abi::gos_rt_trace_span_set_status as *const u8,
+        ),
+        (
+            "gos_rt_trace_tracer_new",
+            crate::c_abi::gos_rt_trace_tracer_new as *const u8,
+        ),
+        (
+            "gos_rt_trace_tracer_start_span",
+            crate::c_abi::gos_rt_trace_tracer_start_span as *const u8,
+        ),
+        (
             "gos_rt_u64_to_str",
             crate::c_abi::gos_rt_u64_to_str as *const u8,
+        ),
+        (
+            "gos_rt_udp_bind",
+            crate::c_abi::gos_rt_udp_bind as *const u8,
+        ),
+        (
+            "gos_rt_udp_close",
+            crate::c_abi::gos_rt_udp_close as *const u8,
+        ),
+        (
+            "gos_rt_udp_local_addr",
+            crate::c_abi::gos_rt_udp_local_addr as *const u8,
+        ),
+        (
+            "gos_rt_udp_recv_from",
+            crate::c_abi::gos_rt_udp_recv_from as *const u8,
+        ),
+        (
+            "gos_rt_udp_send_to",
+            crate::c_abi::gos_rt_udp_send_to as *const u8,
         ),
         (
             "gos_rt_unicode_combining_class",
@@ -3621,6 +4359,34 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
         ("gos_rt_uuid_v4", crate::c_abi::gos_rt_uuid_v4 as *const u8),
         ("gos_rt_uuid_v7", crate::c_abi::gos_rt_uuid_v7 as *const u8),
         (
+            "gos_rt_validate_errors_add",
+            crate::c_abi::gos_rt_validate_errors_add as *const u8,
+        ),
+        (
+            "gos_rt_validate_errors_collect",
+            crate::c_abi::gos_rt_validate_errors_collect as *const u8,
+        ),
+        (
+            "gos_rt_validate_errors_count",
+            crate::c_abi::gos_rt_validate_errors_count as *const u8,
+        ),
+        (
+            "gos_rt_validate_errors_get",
+            crate::c_abi::gos_rt_validate_errors_get as *const u8,
+        ),
+        (
+            "gos_rt_validate_errors_is_empty",
+            crate::c_abi::gos_rt_validate_errors_is_empty as *const u8,
+        ),
+        (
+            "gos_rt_validate_errors_len",
+            crate::c_abi::gos_rt_validate_errors_len as *const u8,
+        ),
+        (
+            "gos_rt_validate_errors_new",
+            crate::c_abi::gos_rt_validate_errors_new as *const u8,
+        ),
+        (
             "gos_rt_vec_clone",
             crate::c_abi::gos_rt_vec_clone as *const u8,
         ),
@@ -3804,6 +4570,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
         ("gos_rt_wg_new", crate::c_abi::gos_rt_wg_new as *const u8),
         ("gos_rt_wg_wait", crate::c_abi::gos_rt_wg_wait as *const u8),
         (
+            "gos_rt_ws_accept",
+            crate::c_abi::gos_rt_ws_accept as *const u8,
+        ),
+        (
             "gos_rt_ws_accept_key",
             crate::c_abi::gos_rt_ws_accept_key as *const u8,
         ),
@@ -3812,8 +4582,20 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_ws_frame_text as *const u8,
         ),
         (
+            "gos_rt_ws_is_upgrade",
+            crate::c_abi::gos_rt_ws_is_upgrade as *const u8,
+        ),
+        (
             "gos_rt_x509_parse_pem_raw",
             crate::c_abi::gos_rt_x509_parse_pem_raw as *const u8,
+        ),
+        (
+            "gos_rt_xml_encode",
+            crate::c_abi::gos_rt_xml_encode as *const u8,
+        ),
+        (
+            "gos_rt_xml_parse",
+            crate::c_abi::gos_rt_xml_parse as *const u8,
         ),
         (
             "gos_rt_yaml_from_json",
@@ -3822,6 +4604,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
         (
             "gos_rt_yaml_is_valid",
             crate::c_abi::gos_rt_yaml_is_valid as *const u8,
+        ),
+        (
+            "gos_rt_yaml_parse",
+            crate::c_abi::gos_rt_yaml_parse as *const u8,
         ),
         (
             "gos_rt_yaml_to_json",

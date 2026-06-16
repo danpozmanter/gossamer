@@ -1,0 +1,18 @@
+// Manual smoke test for the JIT panic exclusion (not registered in
+// tier_parity SPECS because it panics). `risky` references `panic!`,
+// so the VM keeps it on bytecode; the panic must surface identically
+// (exit 101) whether or not the JIT is forced.
+fn risky(n: i64) -> i64 {
+    if n == 7 { panic!("boom at {}", n) }
+    n * 2
+}
+
+fn main() {
+    let mut total = 0
+    let mut i = 0
+    while i < 100 {
+        total += risky(i)
+        i += 1
+    }
+    println!("{}", total)
+}

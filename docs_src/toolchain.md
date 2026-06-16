@@ -10,7 +10,7 @@ the implementation by a rev.
 |---------|---------|
 | `gos parse FILE` | Print the AST. |
 | `gos check [--timings] FILE` | Parse + resolve + typecheck + exhaustiveness. With `--timings`, prints per-stage wall-clock times. Parse output is cached by source hash — re-invocations on an unchanged file reuse the parsed AST. Set `GOSSAMER_CACHE_TRACE=1` to log cache hits. |
-| `gos run [--vm] FILE` | Execute via the tree-walker (or VM). |
+| `gos run FILE` | Execute via the register-based bytecode VM (with in-process Cranelift JIT). |
 | `gos build [--target TRIPLE] FILE` | Produce a native binary (ELF/Mach-O/PE) by lowering through MIR + Cranelift and linking the user's `.o` against `libgossamer_runtime.a`. Every legal program compiles; a build error means a compiler bug. |
 
 ## Formatting + linting + docs

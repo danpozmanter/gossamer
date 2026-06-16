@@ -1,0 +1,34 @@
+// std::context — cancellation + deadlines.
+//
+// Covers: background, with_cancel, with_timeout constructors and the
+// cancel / is_cancelled / done methods. Cancellation is eager down the
+// child tree and is_cancelled walks up the parent chain. A 0 ms
+// timeout is already expired; a 600 s timeout is not — both decided by
+// a monotonic clock comparison, so stdout is bit-identical across the
+// bytecode VM (`gos run` / `gos test`), the Cranelift JIT, and the
+// LLVM AOT tier (`gos build`). No sleeps: every assertion is decided
+// at the instant it runs.
+
+use std::context
+
+fn main() {
+    let root = context::Context::background()
+    println!("root cancelled: {}", root.is_cancelled())
+
+    let child = context::Context::with_cancel(root)
+    let grandchild = context::Context::with_cancel(child)
+    println!("child cancelled: {}", child.is_cancelled())
+    println!("grandchild cancelled: {}", grandchild.is_cancelled())
+
+    child.cancel()
+    println!("child after cancel: {}", child.is_cancelled())
+    println!("grandchild after cancel: {}", grandchild.is_cancelled())
+    println!("root after cancel: {}", root.is_cancelled())
+
+    let expired = context::Context::with_timeout(root, 0)
+    println!("expired cancelled: {}", expired.is_cancelled())
+    println!("expired done: {}", expired.done())
+
+    let long = context::Context::with_timeout(root, 600000)
+    println!("long cancelled: {}", long.is_cancelled())
+}

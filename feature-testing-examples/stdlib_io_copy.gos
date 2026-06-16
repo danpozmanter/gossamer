@@ -1,0 +1,10 @@
+// io::Copy(dst, src) drains src into dst and returns the byte count,
+// mirroring Go's io.Copy. Cross-tier fixture: stdin is fed a fixed
+// payload, echoed to stdout, and the derived count follows so VM /
+// Cranelift / LLVM must agree on both the bytes and the tally.
+use std::io
+
+fn main() {
+    let n = io::Copy(io::stdout(), io::stdin())
+    println!("[copied {}]", n)
+}

@@ -1,0 +1,48 @@
+// Vec methods on a bare `[T; N]` array literal. The literal is a flat,
+// header-less stack buffer; the `gos_rt_vec_*` shims (and `strings::join`)
+// read a `GosVec` header, so the receiver is coerced to a heap `GosVec`
+// at the call site. Without the coercion these read past the inline
+// storage and segfaulted on the compiled tiers. Runs bit-identically on
+// the VM, Cranelift, and LLVM.
+
+fn main() {
+    let words = ["alpha", "beta", "gamma", "beta"]
+    println!("{}", words.contains("beta"))
+    println!("{}", match words.index_of("gamma") { Some(i) => i, None => -1 })
+    println!("{}", words.count_of("beta"))
+    println!("{}", match words.first() { Some(x) => x, None => "?" })
+    println!("{}", match words.last() { Some(x) => x, None => "?" })
+    println!("{}", words.join("-"))
+    let rev = words.reversed()
+    println!("{}|{}", rev[0], rev[3])
+
+    let nums = [10, 20, 30, 20]
+    println!("{}", nums.contains(20))
+    println!("{}", match nums.index_of(30) { Some(i) => i, None => -1 })
+    println!("{}", nums.count_of(20))
+    let nrev = nums.reversed()
+    println!("{}|{}", nrev[0], nrev[3])
+}
+
+#[cfg(test)]
+mod tests {
+    use std::testing
+
+    #[test]
+    fn string_array_literal_methods() {
+        let w = ["a", "b", "c", "b"]
+        testing::check(w.contains("b"), "contains on array literal")
+        testing::check(w.count_of("b") == 2, "count_of on array literal")
+        testing::check(w.join("+") == "a+b+c+b", "join on array literal")
+        let r = w.reversed()
+        testing::check(r[0] == "b" && r[3] == "a", "reversed on array literal")
+    }
+
+    #[test]
+    fn int_array_literal_methods() {
+        let n = [10, 20, 30]
+        testing::check(n.contains(20), "contains i64 array literal")
+        let idx = match n.index_of(30) { Some(i) => i, None => -1 }
+        testing::check(idx == 2, "index_of i64 array literal")
+    }
+}

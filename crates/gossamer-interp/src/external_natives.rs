@@ -1,11 +1,10 @@
 //! Process-wide registry of binding-installed native functions.
 //!
 //! `gossamer-binding::install_all` populates this table once at
-//! startup; both [`crate::Interpreter::new`] and [`crate::Vm::new`]
-//! merge the snapshot into their per-instance globals so qualified
-//! binding paths (e.g. `tuigoose::layout::rect`) resolve through
-//! the same `Value::Native` lookup the interpreter uses for
-//! built-in stdlib entries.
+//! startup; [`crate::Vm::new`] merges the snapshot into its
+//! per-instance globals so qualified binding paths (e.g.
+//! `tuigoose::layout::rect`) resolve through the same `Value::Native`
+//! lookup the VM uses for built-in stdlib entries.
 
 use parking_lot::Mutex;
 

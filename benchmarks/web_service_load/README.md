@@ -10,9 +10,11 @@ synthetic load generator, asserts:
 2. **No goroutine leak** across a 30-minute soak — proves
    parked goroutines on I/O wake correctly when the kernel
    reports readiness.
-3. **GC pause p99 under 10 ms** with concurrent GC enabled —
-   proves the write-barrier + safepoint plumbing scales under
-   continuous allocation pressure.
+3. **Resident memory stays bounded** under continuous
+   allocation pressure — proves deterministic reference counting
+   reclaims request-scoped allocations promptly, with no
+   unbounded growth and no collector pauses (there is no
+   tracing GC).
 
 If any assertion fails, file the regression back to Track A — this
 is the proof their work composes with Track B's HTTP/sqlite stack.
@@ -47,11 +49,13 @@ vegeta and want richer percentile output.
 The run script fails non-zero if:
 
 - Number of OS threads in the service process exceeds
-  `GOMAXPROCS * 2 + 4` (allowing for poller / GC / signal-relay
+  `GOMAXPROCS * 2 + 4` (allowing for poller / signal-relay
   threads).
 - Goroutine count after the soak is more than `1.5x` the
   steady-state midpoint.
-- p99 GC pause exceeds 10 ms (read from `runtime.mem_stats`).
+- Resident memory after the soak keeps growing instead of
+  tracking the steady-state working set (deterministic
+  reclamation should keep RSS flat).
 
 Pass thresholds are conservative; tighten them as Track A's
-GC matures.
+runtime matures.

@@ -290,6 +290,62 @@ pub unsafe extern "C" fn gos_rt_os_remove_file_result(path: *const c_char) -> i1
     })
 }
 
+/// `os::rename(from, to)` / `fs::rename(from, to)` -> Result<(), Error>.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_fs_rename(from: *const c_char, to: *const c_char) -> i128 {
+    ffi_entry!(0i128, {
+        if from.is_null() || to.is_null() {
+            let cs = std::ffi::CString::new("rename: null path").unwrap_or_default();
+            let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+            return unsafe { gos_rt_result_new(1, err as i64) };
+        }
+        let f = unsafe { CStr::from_ptr(from).to_string_lossy().into_owned() };
+        let t = unsafe { CStr::from_ptr(to).to_string_lossy().into_owned() };
+        match std::fs::rename(&f, &t) {
+            Ok(()) => unsafe { gos_rt_result_new(0, 0) },
+            Err(e) => {
+                let msg = classify_io_error(&e, &f);
+                let cs = std::ffi::CString::new(msg).unwrap_or_default();
+                let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+                unsafe { gos_rt_result_new(1, err as i64) }
+            }
+        }
+    })
+}
+
+/// `env::set_current_dir(path) -> Result<(), Error>`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_env_set_current_dir(path: *const c_char) -> i128 {
+    ffi_entry!(0i128, {
+        let p = if path.is_null() {
+            String::new()
+        } else {
+            unsafe { CStr::from_ptr(path).to_string_lossy().into_owned() }
+        };
+        match std::env::set_current_dir(&p) {
+            Ok(()) => unsafe { gos_rt_result_new(0, 0) },
+            Err(e) => {
+                let msg = classify_io_error(&e, &p);
+                let cs = std::ffi::CString::new(msg).unwrap_or_default();
+                let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+                unsafe { gos_rt_result_new(1, err as i64) }
+            }
+        }
+    })
+}
+
+/// `os::arch() -> String` — target CPU architecture (e.g. `"x86_64"`).
+#[unsafe(no_mangle)]
+pub extern "C" fn gos_rt_os_arch() -> *const c_char {
+    alloc_cstring(std::env::consts::ARCH.as_bytes()).cast_const()
+}
+
+/// `os::family() -> String` — target OS family (e.g. `"unix"`).
+#[unsafe(no_mangle)]
+pub extern "C" fn gos_rt_os_family() -> *const c_char {
+    alloc_cstring(std::env::consts::FAMILY.as_bytes()).cast_const()
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_path_join(a: *const c_char, b: *const c_char) -> *mut c_char {
     ffi_entry!(std::ptr::null_mut(), {

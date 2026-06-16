@@ -1,6 +1,65 @@
 #![allow(clippy::too_many_lines, clippy::wildcard_imports)]
 use super::*;
 
+/// Peels any `&expr` / `&mut expr` borrow wrappers off an expression,
+/// returning the underlying place. The for-loop desugar emits
+/// `(&mut __for_iter).next()`, so the `&mut self` writeback target is
+/// the value behind the borrow, not the borrow itself.
+fn peel_ref_wrappers_expr(expr: &HirExpr) -> &HirExpr {
+    let mut cur = expr;
+    while let HirExprKind::Unary {
+        op: HirUnaryOp::RefShared | HirUnaryOp::RefMut,
+        operand,
+    } = &cur.kind
+    {
+        cur = operand;
+    }
+    cur
+}
+
+/// Collects, in source order, the distinct names a pattern binds.
+/// The or-pattern lowering uses this to allocate one shared register
+/// per name so every alternative writes the same destinations. For
+/// nested or-patterns only the first alternative is walked, since all
+/// alternatives bind the same set of names by typecheck invariant.
+fn collect_pattern_binding_names(pat: &HirPat, out: &mut Vec<String>) {
+    fn push_unique(out: &mut Vec<String>, name: &str) {
+        if !out.iter().any(|n| n == name) {
+            out.push(name.to_string());
+        }
+    }
+    match &pat.kind {
+        HirPatKind::Binding { name, .. } => push_unique(out, &name.name),
+        HirPatKind::At { name, sub, .. } => {
+            push_unique(out, &name.name);
+            collect_pattern_binding_names(sub, out);
+        }
+        HirPatKind::Tuple(ps) | HirPatKind::Variant { fields: ps, .. } => {
+            for p in ps {
+                collect_pattern_binding_names(p, out);
+            }
+        }
+        HirPatKind::Struct { fields, .. } => {
+            for f in fields {
+                match &f.pattern {
+                    Some(p) => collect_pattern_binding_names(p, out),
+                    None => push_unique(out, &f.name.name),
+                }
+            }
+        }
+        HirPatKind::Ref { inner, .. } => collect_pattern_binding_names(inner, out),
+        HirPatKind::Or(alts) => {
+            if let Some(first) = alts.first() {
+                collect_pattern_binding_names(first, out);
+            }
+        }
+        HirPatKind::Wildcard
+        | HirPatKind::Rest
+        | HirPatKind::Literal(_)
+        | HirPatKind::Range { .. } => {}
+    }
+}
+
 impl<'tcx> FnBuilder<'tcx> {
     /// Typed counterpart to [`Self::compile_expr`]. Returns
     /// whatever kind the expression naturally produces,
@@ -31,13 +90,6 @@ impl<'tcx> FnBuilder<'tcx> {
             HirExprKind::Call { callee, args } => {
                 if let Some(tr) = self.try_intrinsic_call(callee, args)? {
                     return Ok(tr);
-                }
-                if self.call_has_nonlocal_mut_ref_arg(args) {
-                    let reg = self.compile_deferred(expr)?;
-                    return Ok(TypedReg {
-                        reg,
-                        kind: RegKind::Value,
-                    });
                 }
                 let reg = self.compile_call_ex(callee, args, expr.ty)?;
                 Ok(TypedReg {
@@ -137,27 +189,27 @@ impl<'tcx> FnBuilder<'tcx> {
                     _ => {
                         // Remaining whitelisted combos — f32 / bool /
                         // char sources, `char` / `f32` targets — lower
-                        // to the generic scalar-cast op so no
-                        // GT0005-whitelisted cast ever reaches the
-                        // walker's legacy no-op. Only unresolved
-                        // target types still defer.
-                        if let Some(target) = self
+                        // to the generic scalar-cast op so every
+                        // GT0005-whitelisted cast is handled natively.
+                        let target = self
                             .tcx
                             .kind(*target_ty)
                             .and_then(crate::cast::CastTarget::of)
-                        {
-                            let src_tr = self.compile_expr_ex(value)?;
-                            let src = self.as_value(src_tr);
-                            let dst = self.alloc_reg();
-                            self.emit(Op::CastScalar { dst, src, target });
-                            return Ok(TypedReg {
-                                reg: dst,
-                                kind: RegKind::Value,
-                            });
-                        }
-                        let reg = self.compile_deferred(expr)?;
+                            // `as` only typechecks (passes the GT0005
+                            // whitelist) for scalar targets, so a resolved
+                            // cast always maps to a `CastTarget`. Reaching
+                            // here means the target type never resolved — a
+                            // frontend invariant violation, surfaced as a
+                            // compile error.
+                            .ok_or(RuntimeError::Unsupported(
+                                "cast target type did not resolve to a scalar",
+                            ))?;
+                        let src_tr = self.compile_expr_ex(value)?;
+                        let src = self.as_value(src_tr);
+                        let dst = self.alloc_reg();
+                        self.emit(Op::CastScalar { dst, src, target });
                         Ok(TypedReg {
-                            reg,
+                            reg: dst,
                             kind: RegKind::Value,
                         })
                     }
@@ -245,7 +297,7 @@ impl<'tcx> FnBuilder<'tcx> {
                 if let Some(tr) = self.try_build_float_vec(expr.ty, elems.as_slice())? {
                     return Ok(tr);
                 }
-                let reg = self.compile_expr(expr)?;
+                let reg = self.compile_array_list(elems)?;
                 Ok(TypedReg {
                     reg,
                     kind: RegKind::Value,
@@ -258,7 +310,7 @@ impl<'tcx> FnBuilder<'tcx> {
                 if let Some(tr) = self.try_build_int_array_repeat(expr.ty, value, count)? {
                     return Ok(tr);
                 }
-                let reg = self.compile_expr(expr)?;
+                let reg = self.compile_array_repeat(value, count)?;
                 Ok(TypedReg {
                     reg,
                     kind: RegKind::Value,
@@ -293,12 +345,6 @@ impl<'tcx> FnBuilder<'tcx> {
                     let intr = self.try_intrinsic_call(callee, args)?;
                     if let Some(tr) = intr {
                         tr
-                    } else if self.call_has_nonlocal_mut_ref_arg(args) {
-                        let reg = self.compile_deferred(expr)?;
-                        TypedReg {
-                            reg,
-                            kind: RegKind::Value,
-                        }
                     } else {
                         let reg = self.compile_call_ex(callee, args, expr.ty)?;
                         TypedReg {
@@ -315,32 +361,23 @@ impl<'tcx> FnBuilder<'tcx> {
                 else_branch,
             } => self.compile_if(condition, then_branch, else_branch.as_deref()),
             HirExprKind::While { condition, body } => self.compile_while(condition, body),
-            // `Loop { body }` — native-compile only when the body
-            // stays inside VM-handleable expression shapes.
-            // Anything with an embedded Match (typically the
-            // for-loop desugaring `loop { match iter.next() { ...
-            // None => break } }`) defers the whole loop so the
-            // walker can handle Break propagation correctly.
+            // `Loop { body }` — native register-VM lowering. The typed
+            // for-loop fast paths (`for i in a..b`, `for x in xs.iter()`,
+            // `for (k, v) in map.iter()`) are tried first as an
+            // allocation-free index walk; otherwise the generic loop
+            // emitter runs. A `for x in <custom iterator>` desugar
+            // (`loop { match (&mut __for_iter).next() { … } }`) compiles
+            // through the generic emitter: its `next()` call rides the
+            // `&mut self` write-back path in `compile_method_call`, so
+            // the iterator's state advances natively each iteration.
             HirExprKind::Loop { body } => {
-                // Try the typed-i64 for-range fast path *before* the
-                // generic-unsupported check. A `for i in 0..n { ... }`
-                // desugar contains a `Match` (Some/None on `next()`),
-                // which the unsupported check would otherwise route
-                // to `compile_deferred` — sending every iteration of
-                // every range loop through the tree-walker. The
-                // fast-path emit handles the desugar shape directly,
-                // so the walker fallback isn't needed.
                 if let Some(reg) = self.try_compile_for_loop_range(body)? {
                     return Ok(reg);
                 }
                 if let Some(reg) = self.try_compile_for_loop_vec_iter(body)? {
                     return Ok(reg);
                 }
-                if body_contains_unsupported(body) {
-                    self.compile_deferred(expr)
-                } else {
-                    self.compile_loop(body)
-                }
+                self.compile_loop(body)
             }
             HirExprKind::Block(block) => {
                 let result = self.compile_block(block)?;
@@ -361,9 +398,15 @@ impl<'tcx> FnBuilder<'tcx> {
             // increment that lives at the bottom of the body and
             // produces a livelock.
             HirExprKind::Continue => {
-                if self.loop_stack.last().is_none() {
-                    return Err(RuntimeError::Unsupported("continue outside of loop"));
-                }
+                let defer_depth = self
+                    .loop_stack
+                    .last()
+                    .ok_or(RuntimeError::Unsupported("continue outside of loop"))?
+                    .defer_depth;
+                // Run the defers of the blocks nested inside the loop body
+                // before jumping to the next iteration; the loop's own
+                // enclosing frames stay pending.
+                self.emit_defers_above(defer_depth)?;
                 let patch = self.emit(Op::Jump { target: 0 });
                 self.loop_stack
                     .last_mut()
@@ -372,8 +415,8 @@ impl<'tcx> FnBuilder<'tcx> {
                     .push(patch);
                 Ok(self.load_unit())
             }
-            // Native method dispatch — avoids the `EvalDeferred`
-            // env-rebuild cost that dominated tight loops
+            // Native method dispatch — emits an `Op::MethodCall`
+            // for the most common hot-path shape
             // (fasta's inner `out.write_byte(…)` etc.).
             HirExprKind::MethodCall {
                 receiver,
@@ -430,7 +473,7 @@ impl<'tcx> FnBuilder<'tcx> {
             }
             // Native tuple literal — `(a, b, c)` lands in
             // `count` consecutive value registers, then
-            // `Op::BuildTuple` packs them. No walker re-entry.
+            // `Op::BuildTuple` packs them.
             HirExprKind::Tuple(elems) => {
                 let n = elems.len();
                 if n == 0 {
@@ -470,108 +513,153 @@ impl<'tcx> FnBuilder<'tcx> {
                 self.emit(Op::BuildTuple { dst, first, count });
                 Ok(dst)
             }
-            // Native `match` — test-and-branch chain per arm.
-            // Or-patterns that bind fall back to the walker inside
-            // `compile_match`.
+            // Native `match` — test-and-branch chain per arm, including
+            // or-patterns that bind (shared binding registers).
             HirExprKind::Match { scrutinee, arms } => self.compile_match(scrutinee, arms, expr),
-            // Anything the VM's native lowering doesn't handle
-            // yet — closures, `go expr`, `select`, and the rest —
-            // falls through to `Op::EvalDeferred`.
-            // The VM hands the expression + captured local
-            // environment to a bundled tree-walker which
-            // returns a Value. Result: the VM never fails at
-            // compile time; it just does slower work for these
-            // nodes until a native opcode is wired.
-            _ => self.compile_deferred(expr),
+            // Native closure: compile the body to its own `FnChunk`
+            // with the captured upvalues as leading parameters and
+            // emit `Op::MakeClosure`.
+            HirExprKind::Closure { params, body, .. } => self.compile_closure(params, body),
+            // Native `select`: evaluate each arm's channel/value into
+            // registers, dispatch via `Op::Select`, and run the winning
+            // arm's body block.
+            HirExprKind::Select { arms } => self.compile_select(arms),
+            // Native `go` in expression position. Call shapes
+            // (`go f(args)` / `go obj.method(args)`) lower to
+            // `Op::Spawn` / `Op::SpawnMethod`; non-call shapes lift
+            // the spawned expression into a zero-arg closure and spawn
+            // that. The expression yields `()`.
+            HirExprKind::Go(inner) => {
+                if !self.try_compile_go_native(inner)? {
+                    self.compile_non_call_go(inner)?;
+                }
+                Ok(self.load_unit())
+            }
+            // Native array literal. In a `Value` context assemble a
+            // generic `Value::Array` (or `[v; n]` repeat) directly. The
+            // typed-storage specialisations (`Value::IntArray` /
+            // `Value::FloatVec`) are reserved for the typed `_ex` entry,
+            // where a known flat-storage consumer asks for them; a plain
+            // `Value` consumer (a call argument, a struct field) gets the
+            // uniform `Value::Array` the runtime builtins expect.
+            HirExprKind::Array(gossamer_hir::HirArrayExpr::List(elems)) => {
+                self.compile_array_list(elems)
+            }
+            HirExprKind::Array(gossamer_hir::HirArrayExpr::Repeat { value, count }) => {
+                self.compile_array_repeat(value, count)
+            }
+            // Native standalone range value (`a..b` / `a..=b`): an eager
+            // `Value::Array` of `Value::Int`. For-range loops never reach
+            // here — they ride the desugar fast paths above.
+            HirExprKind::Range {
+                start,
+                end,
+                inclusive,
+            } => self.compile_range_value(start.as_deref(), end.as_deref(), *inclusive),
+            // `Placeholder` is the resolver's sentinel for forms it could
+            // not rewrite; a well-typed program never carries one to
+            // lowering. `LiftedClosure` exists only on the MIR-bound
+            // build path (the `lift_closures` pass), which `gos run`
+            // never runs. Either reaching here is a frontend invariant
+            // violation, surfaced as a compile error.
+            HirExprKind::Placeholder => Err(RuntimeError::Unsupported(
+                "placeholder expression reached bytecode lowering",
+            )),
+            HirExprKind::LiftedClosure { .. } => Err(RuntimeError::Unsupported(
+                "lifted closure reached the bytecode VM (lift runs only on the MIR path)",
+            )),
         }
     }
 
-    /// Captures the current locally-visible bindings (name → reg)
-    /// and emits an `Op::EvalDeferred` that hands `expr` plus
-    /// those values off to the bundled tree-walker. The reg
-    /// list is stored in `deferred_env_regs` so the VM can both
-    /// pass the values in and sync mutations back out.
-    pub(crate) fn compile_deferred(&mut self, expr: &HirExpr) -> RuntimeResult<Reg> {
-        // GOS_VM_FALLBACK=1 surfaces every walker-fallback emit point
-        // so users hunting an interp perf cliff can see which HIR
-        // shapes are routing iterations through the slow path.
-        // Stop-gap until every `EvalDeferred` site has a native
-        // opcode (closures with captures, complex method receivers,
-        // and a few other tails noted in the H2 audit).
-        if std::env::var("GOS_VM_FALLBACK").is_ok() {
-            eprintln!(
-                "vm: deferred-walker fallback for HirExprKind::{:?}",
-                std::mem::discriminant(&expr.kind),
-            );
+    /// Lowers a generic array literal `[a, b, c]` to `Op::BuildArray`.
+    /// Each element compiles into a pre-reserved contiguous value-register
+    /// slot, then the op `Arc`-wraps them into a `Value::Array`. The
+    /// typed-storage specialisations (`Value::IntArray` / `Value::FloatVec`)
+    /// are tried first by the callers; this is the fallback for every
+    /// other element type.
+    pub(crate) fn compile_array_list(&mut self, elems: &[HirExpr]) -> RuntimeResult<Reg> {
+        let n = elems.len();
+        if n == 0 {
+            let dst = self.alloc_reg();
+            self.emit(Op::BuildArray {
+                dst,
+                first: 0,
+                count: 0,
+            });
+            return Ok(dst);
         }
-        // Snapshot the visible locals (inner scopes shadow
-        // outer ones — overwrite slot for already-seen names).
-        let mut entries: Vec<(String, TypedReg)> = Vec::new();
-        for scope in &self.scopes {
-            for (name, tr) in &scope.locals {
-                if let Some(i) = entries.iter().position(|(n, _)| n == name) {
-                    entries[i].1 = *tr;
-                } else {
-                    entries.push((name.clone(), *tr));
-                }
+        // Reserve a contiguous block of value registers before compiling
+        // any element, so an element whose compile allocates fresh
+        // registers can't land inside the not-yet-populated span and
+        // clobber an earlier element. Mirrors the `BuildTuple` lowering.
+        let first = self.alloc_reg();
+        for _ in 1..n {
+            let _ = self.alloc_reg();
+        }
+        for (i, elem) in elems.iter().enumerate() {
+            let r = self.compile_expr(elem)?;
+            let slot = first + i as u16;
+            if r != slot {
+                self.emit(Op::Move { dst: slot, src: r });
             }
         }
-        // Typed locals must cross the walker boundary as boxed
-        // `Value`s. Box before the call, remember the (typed,
-        // value_reg) pair, and unbox back after the walker runs
-        // so mutations inside the deferred block propagate.
-        let mut names: Vec<String> = Vec::with_capacity(entries.len());
-        let mut regs: Vec<Reg> = Vec::with_capacity(entries.len());
-        let mut writebacks: Vec<(TypedReg, Reg)> = Vec::new();
-        for (name, tr) in entries {
-            let value_reg = match tr.kind {
-                RegKind::Value => tr.reg,
-                RegKind::F64 => {
-                    let dst = self.alloc_reg();
-                    self.emit(Op::BoxF64 {
-                        dst_v: dst,
-                        src_f: tr.reg,
-                    });
-                    writebacks.push((tr, dst));
-                    dst
-                }
-                RegKind::I64 => {
-                    let dst = self.alloc_reg();
-                    self.emit(Op::BoxI64 {
-                        dst_v: dst,
-                        src_i: tr.reg,
-                    });
-                    writebacks.push((tr, dst));
-                    dst
-                }
-            };
-            names.push(name);
-            regs.push(value_reg);
-        }
-        let expr_idx =
-            u32::try_from(self.deferred_exprs.len()).expect("deferred expression index overflow");
-        self.deferred_exprs.push(expr.clone());
-        self.deferred_envs.push(names);
-        self.deferred_env_regs.push(regs);
         let dst = self.alloc_reg();
-        self.emit(Op::EvalDeferred { dst, expr_idx });
-        for (tr, vr) in writebacks {
-            match tr.kind {
-                RegKind::F64 => {
-                    self.emit(Op::UnboxF64 {
-                        dst_f: tr.reg,
-                        src_v: vr,
-                    });
-                }
-                RegKind::I64 => {
-                    self.emit(Op::UnboxI64 {
-                        dst_i: tr.reg,
-                        src_v: vr,
-                    });
-                }
-                RegKind::Value => {}
+        let count = u16::try_from(n)
+            .map_err(|_| RuntimeError::Unsupported("array literal exceeds 65535 elements"))?;
+        self.emit(Op::BuildArray { dst, first, count });
+        Ok(dst)
+    }
+
+    /// Lowers a generic `[value; count]` repeat to `Op::BuildArrayRepeat`,
+    /// which clones `value` `count` times into a `Value::Array`. The count
+    /// is read at runtime (`Value::Int`).
+    pub(crate) fn compile_array_repeat(
+        &mut self,
+        value: &HirExpr,
+        count: &HirExpr,
+    ) -> RuntimeResult<Reg> {
+        let value_reg = self.compile_expr(value)?;
+        let count_reg = self.compile_expr(count)?;
+        let dst = self.alloc_reg();
+        self.emit(Op::BuildArrayRepeat {
+            dst,
+            value: value_reg,
+            count: count_reg,
+        });
+        Ok(dst)
+    }
+
+    /// Lowers a standalone range value (`a..b` / `a..=b`) to
+    /// `Op::BuildRange`. Open bounds default to `0`; the op materialises
+    /// an eager `Value::Array` of `Value::Int`.
+    pub(crate) fn compile_range_value(
+        &mut self,
+        start: Option<&HirExpr>,
+        end: Option<&HirExpr>,
+        inclusive: bool,
+    ) -> RuntimeResult<Reg> {
+        let start_reg = match start {
+            Some(e) => self.compile_expr(e)?,
+            None => {
+                let idx = self.const_idx(ConstKey::Int(0), Value::Int(0));
+                let r = self.alloc_reg();
+                self.emit(Op::LoadConst { dst: r, idx });
+                r
             }
-        }
+        };
+        // A missing upper bound mirrors `eval_range`'s degenerate empty
+        // range (`end_val == start_val`), so reuse the start register.
+        let end_reg = match end {
+            Some(e) => self.compile_expr(e)?,
+            None => start_reg,
+        };
+        let dst = self.alloc_reg();
+        self.emit(Op::BuildRange {
+            dst,
+            start: start_reg,
+            end: end_reg,
+            inclusive,
+        });
         Ok(dst)
     }
 
@@ -580,28 +668,33 @@ impl<'tcx> FnBuilder<'tcx> {
     /// sequence of shape tests (`VariantIs` / `StructIs` / literal
     /// `Eq` / range compares) that branch to the next arm on failure
     /// and extract sub-values into freshly-bound registers on
-    /// success. Replaces the per-evaluation `EvalDeferred` walker
-    /// re-entry that dominated every `match`-heavy program.
-    ///
-    /// Patterns the chain can't express losslessly (an or-pattern
-    /// that introduces bindings) route the whole `match` back through
-    /// `compile_deferred` so semantics stay correct.
+    /// success. Every pattern shape — including or-patterns that bind —
+    /// lowers natively via [`Self::emit_pattern_test`].
     pub(crate) fn compile_match(
         &mut self,
         scrutinee: &HirExpr,
         arms: &[gossamer_hir::HirMatchArm],
-        whole: &HirExpr,
+        _whole: &HirExpr,
     ) -> RuntimeResult<Reg> {
-        if !arms.iter().all(|a| pattern_native_ok(&a.pattern)) {
-            return self.compile_deferred(whole);
-        }
         let scrut = self.compile_expr(scrutinee)?;
         let result = self.alloc_reg();
         let mut end_jumps: Vec<InstrIdx> = Vec::new();
+        let scrut_ty = scrutinee.ty;
         for arm in arms {
             self.push_scope();
             let mut fails: Vec<InstrIdx> = Vec::new();
             self.emit_pattern_test(scrut, &arm.pattern, &mut fails)?;
+            // Tag collection-typed pattern bindings (`Some(arr)`, …) so a
+            // `for x in <binding>` in the arm body iterates by index. The
+            // binding's own `Path` carries an unresolved var when inferred,
+            // so the type comes from the resolved scrutinee type instead.
+            let mut coll_names: Vec<String> = Vec::new();
+            self.collect_collection_binding_names(&arm.pattern, Some(scrut_ty), &mut coll_names);
+            for name in coll_names {
+                if let Some(tr) = self.lookup_local(&name) {
+                    self.collection_locals.insert(tr.reg);
+                }
+            }
             if let Some(guard) = &arm.guard {
                 let g = self.compile_expr(guard)?;
                 fails.push(self.emit(Op::BranchIfNot { cond: g, target: 0 }));
@@ -625,6 +718,100 @@ impl<'tcx> FnBuilder<'tcx> {
             dst: result,
             src: unit,
         });
+        let end = self.cur_idx();
+        for j in end_jumps {
+            self.patch_jump(j, end);
+        }
+        Ok(result)
+    }
+
+    /// Native `select { … }` compilation. Evaluates each arm's
+    /// channel (and value, for sends) into registers up front, emits a
+    /// single [`Op::Select`] referencing a contiguous range of
+    /// [`crate::bytecode::SelectArmMeta`] entries, then compiles every
+    /// arm body as a basic block the op jumps to. Recv arms destructure
+    /// the received value (written into the arm's `bind_reg` by the
+    /// handler) at the top of their block. The handler's poll/park loop
+    /// operates over `Value::Channel`.
+    pub(crate) fn compile_select(
+        &mut self,
+        arms: &[gossamer_hir::HirSelectArm],
+    ) -> RuntimeResult<Reg> {
+        use crate::bytecode::{SelectArmKind, SelectArmMeta};
+        use gossamer_hir::HirSelectOp;
+
+        // An empty `select {}` blocks forever in Go; degrade it to Unit
+        // rather than emitting an arm-less op that would spin in the
+        // park loop.
+        if arms.is_empty() {
+            return Ok(self.load_unit());
+        }
+
+        let result = self.alloc_reg();
+        let first = u32::try_from(self.select_arms.len())
+            .map_err(|_| RuntimeError::Unsupported("too many select arms in one function"))?;
+
+        // Pass 1: evaluate operand expressions (channels / send values)
+        // and pre-allocate recv binding registers. The `body_block`
+        // index is filled in pass 2 once each body is laid down.
+        for arm in arms {
+            let meta = match &arm.op {
+                HirSelectOp::Recv { channel, .. } => {
+                    let channel_reg = self.compile_expr(channel)?;
+                    let bind_reg = self.alloc_reg();
+                    SelectArmMeta {
+                        kind: SelectArmKind::Recv,
+                        channel_reg,
+                        value_reg: 0,
+                        bind_reg,
+                        body_block: 0,
+                    }
+                }
+                HirSelectOp::Send { channel, value } => {
+                    let channel_reg = self.compile_expr(channel)?;
+                    let value_reg = self.compile_expr(value)?;
+                    SelectArmMeta {
+                        kind: SelectArmKind::Send,
+                        channel_reg,
+                        value_reg,
+                        bind_reg: 0,
+                        body_block: 0,
+                    }
+                }
+                HirSelectOp::Default => SelectArmMeta {
+                    kind: SelectArmKind::Default,
+                    channel_reg: 0,
+                    value_reg: 0,
+                    bind_reg: 0,
+                    body_block: 0,
+                },
+            };
+            self.select_arms.push(meta);
+        }
+        let count = u16::try_from(arms.len())
+            .map_err(|_| RuntimeError::Unsupported("too many select arms in one select"))?;
+        self.emit(Op::Select { first, count });
+
+        // Pass 2: each arm body becomes a basic block. The handler
+        // jumps to one of them; every block moves its result into the
+        // shared `result` register and jumps to the continuation.
+        let mut end_jumps: Vec<InstrIdx> = Vec::new();
+        for (i, arm) in arms.iter().enumerate() {
+            let meta_idx = first as usize + i;
+            self.select_arms[meta_idx].body_block = self.cur_idx();
+            self.push_scope();
+            if let HirSelectOp::Recv { pattern, .. } = &arm.op {
+                let bind_reg = self.select_arms[meta_idx].bind_reg;
+                self.bind_pattern_locals(pattern, bind_reg)?;
+            }
+            let body_reg = self.compile_expr(&arm.body)?;
+            self.emit(Op::Move {
+                dst: result,
+                src: body_reg,
+            });
+            end_jumps.push(self.emit(Op::Jump { target: 0 }));
+            self.pop_scope();
+        }
         let end = self.cur_idx();
         for j in end_jumps {
             self.patch_jump(j, end);
@@ -811,12 +998,12 @@ impl<'tcx> FnBuilder<'tcx> {
                     self.emit_pattern_test(elem, part, fails)?;
                 }
             }
-            HirPatKind::Or(alts) => {
-                // `pattern_native_ok` guarantees no alternative binds,
-                // so each alt is a pure test. Emit them as a
-                // short-circuit OR: the first alt that matches jumps
-                // past the rest to the shared continuation; if every
-                // alt fails, fall through to the arm-fail branch.
+            HirPatKind::Or(alts) if !pattern_has_binding(pat) => {
+                // No alternative binds, so each alt is a pure test.
+                // Emit them as a short-circuit OR: the first alt that
+                // matches jumps past the rest to the shared
+                // continuation; if every alt fails, fall through to
+                // the arm-fail branch.
                 let mut matched: Vec<InstrIdx> = Vec::new();
                 for alt in alts {
                     let mut alt_fails: Vec<InstrIdx> = Vec::new();
@@ -835,6 +1022,77 @@ impl<'tcx> FnBuilder<'tcx> {
                 let cont = self.cur_idx();
                 for m in matched {
                     self.patch_jump(m, cont);
+                }
+            }
+            HirPatKind::Or(alts) => {
+                // Binding or-pattern: every alternative binds the same
+                // set of names (a typecheck invariant). One shared
+                // register per name is the single home the arm body
+                // reads, regardless of which alternative won — so each
+                // alternative copies its freshly-extracted bindings
+                // into those shared registers on its match path before
+                // jumping to the continuation. Mirrors the MIR lowering
+                // (`gossamer-mir/.../ctrl.rs`), which writes every
+                // alternative's bindings into common slots.
+                let mut names: Vec<String> = Vec::new();
+                collect_pattern_binding_names(pat, &mut names);
+                let shared: Vec<(String, Reg)> = names
+                    .into_iter()
+                    .map(|name| (name, self.alloc_reg()))
+                    .collect();
+
+                let mut matched: Vec<InstrIdx> = Vec::new();
+                for alt in alts {
+                    debug_assert!(
+                        {
+                            let mut alt_names = Vec::new();
+                            collect_pattern_binding_names(alt, &mut alt_names);
+                            alt_names.len() == shared.len()
+                                && alt_names.iter().all(|n| shared.iter().any(|(s, _)| s == n))
+                        },
+                        "or-pattern alternatives must bind the same set of names"
+                    );
+                    let mut alt_fails: Vec<InstrIdx> = Vec::new();
+                    // Compile the alternative in an inner scope so its
+                    // leaf bindings land in fresh registers that this
+                    // scope owns; relocate each into its shared home,
+                    // then discard the scope.
+                    self.push_scope();
+                    self.emit_pattern_test(scrut, alt, &mut alt_fails)?;
+                    for (name, dst) in &shared {
+                        if let Some(src) = self.lookup_local(name) {
+                            let src_v = self.as_value(src);
+                            self.emit(Op::Move {
+                                dst: *dst,
+                                src: src_v,
+                            });
+                        }
+                    }
+                    self.pop_scope();
+                    // This alt matched — jump to the continuation.
+                    matched.push(self.emit(Op::Jump { target: 0 }));
+                    // This alt failed — next alt starts here.
+                    let next_alt = self.cur_idx();
+                    for f in alt_fails {
+                        self.patch_jump(f, next_alt);
+                    }
+                }
+                // All alternatives failed: jump to the arm-fail target.
+                fails.push(self.emit(Op::Jump { target: 0 }));
+                // Matched continuation: expose each shared register to
+                // the arm body (and any guard) under its bound name.
+                let cont = self.cur_idx();
+                for m in matched {
+                    self.patch_jump(m, cont);
+                }
+                for (name, reg) in &shared {
+                    self.bind_local(
+                        name,
+                        TypedReg {
+                            reg: *reg,
+                            kind: RegKind::Value,
+                        },
+                    );
                 }
             }
         }
@@ -893,6 +1151,19 @@ impl<'tcx> FnBuilder<'tcx> {
             let rhs_i = self.as_i64(rhs_tr);
             return self.emit_binary_i64(op, lhs_i, rhs_i);
         }
+        // Struct `==` / `!=` routes to the derived `<Type>::eq` method,
+        // which the bytecode `Op::Eq` (scalar / structural) can't express
+        // for a `Value::Struct`. `==` only typechecks on a struct that
+        // derives or implements `PartialEq`, so the method is present.
+        // Enums fall through to the structural `Op::Eq` below.
+        if matches!(op, HirBinaryOp::Eq | HirBinaryOp::Ne) {
+            if let Some(sname) = self
+                .struct_eq_dispatch_name(lhs.ty)
+                .or_else(|| self.struct_eq_dispatch_name(rhs.ty))
+            {
+                return self.compile_struct_eq(&sname, op, lhs, rhs);
+            }
+        }
         // Fallback: generic path on Value regs.
         let lhs_reg = self.compile_expr(lhs)?;
         let rhs_reg = self.compile_expr(rhs)?;
@@ -901,6 +1172,69 @@ impl<'tcx> FnBuilder<'tcx> {
             .binary_op(op, dst, lhs_reg, rhs_reg)
             .ok_or(RuntimeError::Unsupported("binary op kind"))?;
         self.emit(instr);
+        Ok(TypedReg {
+            reg: dst,
+            kind: RegKind::Value,
+        })
+    }
+
+    /// Lowers a struct `==` / `!=` to a call of the derived
+    /// `<sname>::eq(lhs, rhs)` method, negating the result for `!=`.
+    /// Mirrors the compiled tiers, which route aggregate equality to the
+    /// same synthesized method.
+    fn compile_struct_eq(
+        &mut self,
+        sname: &str,
+        op: HirBinaryOp,
+        lhs: &HirExpr,
+        rhs: &HirExpr,
+    ) -> RuntimeResult<TypedReg> {
+        let key = format!("{sname}::eq");
+        let idx = self.global_idx(&key);
+        let callee_reg = self.alloc_reg();
+        self.emit(Op::LoadGlobal {
+            dst: callee_reg,
+            idx,
+        });
+        // Reserve the two argument slots before compiling either operand
+        // so an operand whose compile allocates fresh registers can't land
+        // inside the not-yet-populated span. Mirrors `compile_call_ex`.
+        let args_start = self.next_reg;
+        self.next_reg = self
+            .next_reg
+            .checked_add(2)
+            .expect("register overflow reserving eq args");
+        let lhs_reg = self.compile_expr(lhs)?;
+        self.emit(Op::Move {
+            dst: args_start,
+            src: lhs_reg,
+        });
+        let rhs_reg = self.compile_expr(rhs)?;
+        self.emit(Op::Move {
+            dst: args_start + 1,
+            src: rhs_reg,
+        });
+        let dst = self.alloc_reg();
+        let cache_idx = self.alloc_cache_idx();
+        self.emit(Op::Call {
+            dst,
+            callee: callee_reg,
+            args: args_start,
+            argc: 2,
+            cache_idx,
+            may_have_cells: false,
+        });
+        if matches!(op, HirBinaryOp::Ne) {
+            let neg = self.alloc_reg();
+            self.emit(Op::Not {
+                dst: neg,
+                operand: dst,
+            });
+            return Ok(TypedReg {
+                reg: neg,
+                kind: RegKind::Value,
+            });
+        }
         Ok(TypedReg {
             reg: dst,
             kind: RegKind::Value,
@@ -1016,7 +1350,11 @@ impl<'tcx> FnBuilder<'tcx> {
         // struct `Arc`.
         if let HirExprKind::Index { base, index } = &receiver.kind {
             let base_reg = self.compile_expr(base)?;
-            let idx_reg = self.compile_expr(index)?;
+            // Compile the index in its native register file. When it
+            // lands in the int bank (the common loop-counter case) the
+            // flat read can consume it directly, skipping the per-access
+            // `BoxI64` that a `Value`-register index would force.
+            let idx_tr = self.compile_expr_ex(index)?;
             if field_is_f64 {
                 if let Some(offset) = offset {
                     // Known-flat local: emit the dedicated
@@ -1024,18 +1362,30 @@ impl<'tcx> FnBuilder<'tcx> {
                     // discriminant check.
                     if let Some(&stride) = self.flat_locals.get(&base_reg) {
                         let dst = self.alloc_float();
-                        self.emit(Op::FlatGetF64 {
-                            dst_f: dst,
-                            base: base_reg,
-                            index: idx_reg,
-                            stride,
-                            offset,
-                        });
+                        if idx_tr.kind == RegKind::I64 {
+                            self.emit(Op::FlatGetF64I {
+                                dst_f: dst,
+                                base: base_reg,
+                                index_i: idx_tr.reg,
+                                stride,
+                                offset,
+                            });
+                        } else {
+                            let idx_reg = self.as_value(idx_tr);
+                            self.emit(Op::FlatGetF64 {
+                                dst_f: dst,
+                                base: base_reg,
+                                index: idx_reg,
+                                stride,
+                                offset,
+                            });
+                        }
                         return Ok(TypedReg {
                             reg: dst,
                             kind: RegKind::F64,
                         });
                     }
+                    let idx_reg = self.as_value(idx_tr);
                     let dst = self.alloc_float();
                     self.emit(Op::IndexedFieldGetF64ByOffset {
                         dst_f: dst,
@@ -1048,6 +1398,7 @@ impl<'tcx> FnBuilder<'tcx> {
                         kind: RegKind::F64,
                     });
                 }
+                let idx_reg = self.as_value(idx_tr);
                 let dst = self.alloc_float();
                 self.emit(Op::IndexedFieldGetF64 {
                     dst_f: dst,
@@ -1060,6 +1411,7 @@ impl<'tcx> FnBuilder<'tcx> {
                     kind: RegKind::F64,
                 });
             }
+            let idx_reg = self.as_value(idx_tr);
             let dst = self.alloc_reg();
             self.emit(Op::IndexedFieldGet {
                 dst,
@@ -1154,6 +1506,104 @@ impl<'tcx> FnBuilder<'tcx> {
         name: &Ident,
         args: &[HirExpr],
     ) -> RuntimeResult<Reg> {
+        // A `&mut self` user method on a writeback place rides the cell
+        // protocol so its mutation of `self` reaches the caller's
+        // binding — the mechanism `for x in <custom iterator>` and every
+        // stateful `obj.advance()` depend on. Tried first so a user
+        // struct whose `&mut self` method shadows a builtin name (`pop`,
+        // `swap`, `insert`) routes to the user method.
+        if let Some(reg) = self.try_compile_mut_self_method(receiver, name, args)? {
+            return Ok(reg);
+        }
+        // `d.as_millis()` / `d.as_secs()` / `d.as_micros()` — method form
+        // of the `time::Duration` accessors. A Duration value is a bare
+        // `Value::Int` at runtime with no qualified-key receiver, so the
+        // generic `MethodCall` dispatch cannot reach the accessor by name.
+        // Resolve it statically from the receiver's Duration type and emit
+        // a direct call to the `time::Duration::<accessor>` global.
+        if matches!(name.name.as_str(), "as_millis" | "as_secs" | "as_micros") && args.is_empty() {
+            let mut k = self.tcx.kind(receiver.ty).cloned();
+            while let Some(TyKind::Ref { inner, .. }) = k {
+                k = self.tcx.kind(inner).cloned();
+            }
+            // A `flag::Set` duration cell (`fs.duration(...)`) carries no
+            // Duration tag on its HIR type (an unresolved inference var),
+            // so dispatch on the compile-time `duration_cell_locals` tag.
+            // The cell is a `__Cell` handle at runtime; auto-derefing it at
+            // the call boundary yields its backing `Value::Int`-of-ms, so
+            // the accessor receives the same shape as a bare Duration.
+            let is_duration_cell = self.receiver_is_duration_cell(receiver);
+            if matches!(k, Some(TyKind::Duration)) || is_duration_cell {
+                let qual = format!("time::Duration::{}", name.name);
+                let idx = self.global_idx(&qual);
+                let callee_reg = self.alloc_reg();
+                self.emit(Op::LoadGlobal {
+                    dst: callee_reg,
+                    idx,
+                });
+                let args_start = self.next_reg;
+                self.next_reg = self
+                    .next_reg
+                    .checked_add(1)
+                    .expect("register overflow reserving duration accessor arg");
+                let recv_reg = self.compile_expr(receiver)?;
+                self.emit(Op::Move {
+                    dst: args_start,
+                    src: recv_reg,
+                });
+                let dst = self.alloc_reg();
+                let cache_idx = self.alloc_cache_idx();
+                self.emit(Op::Call {
+                    dst,
+                    callee: callee_reg,
+                    args: args_start,
+                    argc: 1,
+                    cache_idx,
+                    may_have_cells: is_duration_cell,
+                });
+                return Ok(dst);
+            }
+        }
+        // `inst.elapsed_ms()` — method form of the `time::Instant`
+        // accessor. An Instant value is a bare `Value::Int` of monotonic
+        // ms at runtime with no qualified-key receiver, so resolve it
+        // statically from the receiver's Instant type and emit a direct
+        // call to the `time::Instant::elapsed_ms` global.
+        if name.name.as_str() == "elapsed_ms" && args.is_empty() {
+            let mut k = self.tcx.kind(receiver.ty).cloned();
+            while let Some(TyKind::Ref { inner, .. }) = k {
+                k = self.tcx.kind(inner).cloned();
+            }
+            if matches!(k, Some(TyKind::Instant)) {
+                let idx = self.global_idx("time::Instant::elapsed_ms");
+                let callee_reg = self.alloc_reg();
+                self.emit(Op::LoadGlobal {
+                    dst: callee_reg,
+                    idx,
+                });
+                let args_start = self.next_reg;
+                self.next_reg = self
+                    .next_reg
+                    .checked_add(1)
+                    .expect("register overflow reserving instant accessor arg");
+                let recv_reg = self.compile_expr(receiver)?;
+                self.emit(Op::Move {
+                    dst: args_start,
+                    src: recv_reg,
+                });
+                let dst = self.alloc_reg();
+                let cache_idx = self.alloc_cache_idx();
+                self.emit(Op::Call {
+                    dst,
+                    callee: callee_reg,
+                    args: args_start,
+                    argc: 1,
+                    cache_idx,
+                    may_have_cells: false,
+                });
+                return Ok(dst);
+            }
+        }
         // Super-instruction fast path for the canonical
         // `m.insert(k, m.get_or(k, 0) + by)` counter-bump.
         // Detected here (before compiling args) so the inner
@@ -1462,14 +1912,12 @@ impl<'tcx> FnBuilder<'tcx> {
             argc,
             cache_idx,
         });
-        // Mutating-method writeback. The interp builtins for
-        // `push` / `insert` / etc. return the *new* aggregate
-        // rather than mutating in place, so the VM has to thread
-        // the result back into the receiver's storage. The tree-
-        // walker handles this via `maybe_writeback`; the VM has
-        // no equivalent dispatcher, so we splice the move here
-        // when the receiver is a bindable local. Field / Index
-        // receivers fall through with no writeback today.
+        // Mutating-method writeback. The builtins for `push` /
+        // `insert` / etc. return the *new* aggregate rather than
+        // mutating in place, so the VM has to thread the result back
+        // into the receiver's storage by splicing the move here when
+        // the receiver is a bindable local. Field / Index receivers
+        // fall through with no writeback today.
         if Self::is_mutating_method_name(name.name.as_str()) {
             if let HirExprKind::Path { segments, .. } = &receiver.kind {
                 if segments.len() == 1 {
@@ -1485,6 +1933,112 @@ impl<'tcx> FnBuilder<'tcx> {
             }
         }
         Ok(dst)
+    }
+
+    /// Lowers a `&mut self` user-method call (`obj.bump()`,
+    /// `(&mut __for_iter).next()`) through the write-back cell protocol
+    /// so the method's mutation of `self` persists in the caller's
+    /// binding. Returns `Some(result_reg)` when the receiver resolves to
+    /// a local-rooted place whose `Type::method` is a known `&mut self`
+    /// method; otherwise `None`, leaving the generic dispatch to handle
+    /// it (a temporary receiver's mutation is discarded, matching the
+    /// compiled tiers). The receiver crosses as a `MutCell`; the callee
+    /// unwraps it (its `self` register is a `mut_ref_param`) and
+    /// publishes the post-call `self` on return, which `Op::CellTake` +
+    /// `compile_place_store` write back into the receiver place.
+    fn try_compile_mut_self_method(
+        &mut self,
+        receiver: &HirExpr,
+        name: &Ident,
+        args: &[HirExpr],
+    ) -> RuntimeResult<Option<Reg>> {
+        let place = peel_ref_wrappers_expr(receiver);
+        // Match the compiled tiers: only a direct local receiver's
+        // `&mut self` mutation persists. A field / index / temporary
+        // receiver (`w.c.bump()`, `arr[i].bump()`, `make().bump()`)
+        // operates on a value copy whose mutation `gos build` discards,
+        // so writing it back here would diverge from the AOT oracle. A
+        // local Path is also the shape the `for x in <custom iterator>`
+        // desugar produces (`(&mut __for_iter).next()`).
+        let HirExprKind::Path { segments, .. } = &place.kind else {
+            return Ok(None);
+        };
+        let [seg] = segments.as_slice() else {
+            return Ok(None);
+        };
+        if self.lookup_local(&seg.name).is_none() {
+            return Ok(None);
+        }
+        let Some(type_name) = self.adt_type_name(place.ty) else {
+            return Ok(None);
+        };
+        let qual = format!("{type_name}::{}", name.name);
+        if !self.method_muts.contains(&qual) {
+            return Ok(None);
+        }
+        let total = args.len() + 1;
+        let argc = u16::try_from(total).map_err(|_| RuntimeError::Arity {
+            expected: u16::MAX as usize,
+            found: total,
+        })?;
+        // `Type::method` is registered for every user `impl` method, so
+        // the global resolves; loading it yields the callee identity the
+        // `Op::Call` inline cache keys on.
+        let global_idx = self.global_idx(&qual);
+        let callee_reg = self.alloc_reg();
+        self.emit(Op::LoadGlobal {
+            dst: callee_reg,
+            idx: global_idx,
+        });
+        // Reserve the contiguous arg block (receiver cell + declared
+        // args) before compiling any operand, so an operand whose
+        // compile allocates fresh registers can't clobber the span.
+        let args_start = self.next_reg;
+        self.next_reg = self
+            .next_reg
+            .checked_add(argc)
+            .expect("register overflow reserving mut-self method args");
+        let place_reg = self.compile_expr(place)?;
+        let cell = self.alloc_reg();
+        self.emit(Op::CellNew {
+            dst: cell,
+            src: place_reg,
+        });
+        self.emit(Op::Move {
+            dst: args_start,
+            src: cell,
+        });
+        for (i, arg) in args.iter().enumerate() {
+            let r = self.compile_expr(arg)?;
+            let slot = args_start
+                .checked_add(u16::try_from(i + 1).expect("argc overflow"))
+                .expect("register overflow");
+            self.emit(Op::Move { dst: slot, src: r });
+        }
+        let dst = self.alloc_reg();
+        let cache_idx = self.alloc_cache_idx();
+        // The receiver `MutCell` passes through `auto_deref_cell`
+        // untouched (it only resolves `flag::Cell` handles); a declared
+        // arg that is a `flag::Cell` still needs the auto-deref, so gate
+        // it on a non-scalar arg being present.
+        let may_have_cells = !args.iter().all(|a| {
+            matches!(
+                self.tcx.kind(a.ty),
+                Some(TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Char)
+            )
+        });
+        self.emit(Op::Call {
+            dst,
+            callee: callee_reg,
+            args: args_start,
+            argc,
+            cache_idx,
+            may_have_cells,
+        });
+        let tmp = self.alloc_reg();
+        self.emit(Op::CellTake { dst: tmp, cell });
+        self.compile_place_store(place, tmp)?;
+        Ok(Some(dst))
     }
 
     /// Extended call compiler that takes the call's **result** type.
@@ -1530,27 +2084,39 @@ impl<'tcx> FnBuilder<'tcx> {
             .next_reg
             .checked_add(argc)
             .expect("register overflow reserving call args");
-        // `&mut Vec<T>` / `&mut [T]` arguments ride the write-back
-        // cell protocol: wrap the local's current value in a cell,
-        // pass the cell, and read the callee's final value back into
-        // the local after the call. `(home register, cell register)`
-        // pairs collected here drive the post-call `CellTake`s.
+        // `&mut Vec<T>` / `&mut [T]` / `&mut <scalar>` arguments ride the
+        // write-back cell protocol: wrap the current value in a cell, pass
+        // the cell (the callee unwraps it via `mut_ref_params`), and read
+        // the callee's final value back after the call. A `&mut <local
+        // Vec>` writes straight back into the local's register
+        // (`cell_takes`); a non-local place (`&mut arr[i]`, `&mut
+        // obj.field`, `&mut <scalar local>`) takes the cell's inner into a
+        // temp and re-stores it through the place (`place_takes`).
         let mut cell_takes: Vec<(Reg, Reg)> = Vec::new();
-        let arg_regs: Vec<Reg> = args
-            .iter()
-            .map(|arg| {
-                if let Some(home) = self.mut_ref_arg_home(arg) {
-                    let cell = self.alloc_reg();
-                    self.emit(Op::CellNew {
-                        dst: cell,
-                        src: home,
-                    });
-                    cell_takes.push((home, cell));
-                    return Ok(cell);
-                }
-                self.compile_expr(arg)
-            })
-            .collect::<RuntimeResult<Vec<_>>>()?;
+        let mut place_takes: Vec<(&HirExpr, Reg)> = Vec::new();
+        let mut arg_regs: Vec<Reg> = Vec::with_capacity(args.len());
+        for arg in args {
+            if let Some(home) = self.mut_ref_arg_home(arg) {
+                let cell = self.alloc_reg();
+                self.emit(Op::CellNew {
+                    dst: cell,
+                    src: home,
+                });
+                cell_takes.push((home, cell));
+                arg_regs.push(cell);
+            } else if let Some(place) = Self::mut_ref_writeback_place(self.tcx, arg) {
+                let place_reg = self.compile_expr(place)?;
+                let cell = self.alloc_reg();
+                self.emit(Op::CellNew {
+                    dst: cell,
+                    src: place_reg,
+                });
+                place_takes.push((place, cell));
+                arg_regs.push(cell);
+            } else {
+                arg_regs.push(self.compile_expr(arg)?);
+            }
+        }
         for (i, arg_reg) in arg_regs.iter().enumerate() {
             let slot = args_start
                 .checked_add(u16::try_from(i).unwrap())
@@ -1562,15 +2128,31 @@ impl<'tcx> FnBuilder<'tcx> {
         }
         let dst = self.alloc_reg();
         let cache_idx = self.alloc_cache_idx();
+        // A `flag::Cell` handle is a `Value::Struct("__Cell")`; a
+        // primitive-scalar argument can never be one, so a call whose
+        // every argument is scalar-typed needs no per-argument
+        // auto-deref check.
+        let may_have_cells = !args.iter().all(|a| {
+            matches!(
+                self.tcx.kind(a.ty),
+                Some(TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Char)
+            )
+        });
         self.emit(Op::Call {
             dst,
             callee: callee_reg,
             args: args_start,
             argc,
             cache_idx,
+            may_have_cells,
         });
         for (home, cell) in cell_takes {
             self.emit(Op::CellTake { dst: home, cell });
+        }
+        for (place, cell) in place_takes {
+            let tmp = self.alloc_reg();
+            self.emit(Op::CellTake { dst: tmp, cell });
+            self.compile_place_store(place, tmp)?;
         }
         Ok(dst)
     }
@@ -1603,29 +2185,29 @@ impl<'tcx> FnBuilder<'tcx> {
         (tr.kind == RegKind::Value).then_some(tr.reg)
     }
 
-    /// `true` when a call carries a `&mut Vec<T>` / `&mut [T]`
-    /// argument whose place is not a plain local (`&mut s.field`,
-    /// `&mut grid[i]`). Such calls route through the walker, whose
-    /// generic `write_back` handles field / index places — keeping
-    /// write-through semantics instead of silently cloning.
-    pub(crate) fn call_has_nonlocal_mut_ref_arg(&self, args: &[HirExpr]) -> bool {
-        args.iter().any(|arg| {
-            if !crate::compile::is_mut_ref_vec(self.tcx, arg.ty)
-                || self.mut_ref_arg_home(arg).is_some()
-            {
-                return false;
-            }
-            let place = match &arg.kind {
-                HirExprKind::Unary {
-                    op: HirUnaryOp::RefMut,
-                    operand,
-                } => operand,
-                _ => arg,
-            };
-            matches!(
-                place.kind,
-                HirExprKind::Path { .. } | HirExprKind::Field { .. } | HirExprKind::Index { .. }
-            )
-        })
+    /// Returns the lvalue place of a `&mut Vec<T>` / `&mut [T]` /
+    /// `&mut <scalar>` call argument that is *not* a plain local Vec
+    /// (`&mut s.field`, `&mut grid[i]`, `&mut <scalar local>`, or a bare
+    /// path forwarding a `&mut` parameter). The caller wraps the place in
+    /// a write-back cell and re-stores the callee's final value through it
+    /// after the call. The plain-local-Vec case is handled separately by
+    /// [`Self::mut_ref_arg_home`]; everything that isn't a write-through
+    /// place (a temporary, a deref of a call result) returns `None`.
+    fn mut_ref_writeback_place<'a>(tcx: &TyCtxt, arg: &'a HirExpr) -> Option<&'a HirExpr> {
+        if !crate::compile::is_mut_ref_writeback(tcx, arg.ty) {
+            return None;
+        }
+        let place = match &arg.kind {
+            HirExprKind::Unary {
+                op: HirUnaryOp::RefMut,
+                operand,
+            } => operand.as_ref(),
+            _ => arg,
+        };
+        matches!(
+            place.kind,
+            HirExprKind::Path { .. } | HirExprKind::Field { .. } | HirExprKind::Index { .. }
+        )
+        .then_some(place)
     }
 }

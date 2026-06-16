@@ -229,14 +229,50 @@ impl Parser<'_> {
         )
     }
 
-    fn validate_pipe_rhs(&mut self, lhs: Expr, rhs: Expr) -> Expr {
+    fn validate_pipe_rhs(&mut self, lhs: Expr, mut rhs: Expr) -> Expr {
+        // `_`-headed RHS threads the piped value in as the receiver, so the
+        // resolver only ever sees an ordinary method/field/index expression —
+        // no `_` placeholder escapes into later passes.
+        //   x |> _.trim          => x.trim()      (bare ident => nullary method)
+        //   x |> _.replace(a, b) => x.replace(a, b)
+        //   x |> _.0             => x.0           (tuple index)
+        //   x |> _[i]            => x[i]
+        //   x |> _               => x
+        // A direct `_.ident` with no parens is a nullary method call, not a
+        // field access (bare `s.trim` is a field access elsewhere and would
+        // not resolve). Field access through a pipe keeps the closure idiom
+        // (`x |> |v| v.field`).
+        if let ExprKind::FieldAccess { receiver, field } = &rhs.kind {
+            if let (ExprKind::Path(p), FieldSelector::Named(name)) = (&receiver.kind, field) {
+                if is_pipe_placeholder(p) {
+                    let span = self.join(lhs.span, rhs.span);
+                    let id = self.alloc_id();
+                    return Expr::new(
+                        id,
+                        span,
+                        ExprKind::MethodCall {
+                            receiver: Box::new(lhs),
+                            name: name.clone(),
+                            generics: Vec::new(),
+                            args: Vec::new(),
+                        },
+                    );
+                }
+            }
+        }
+        let lhs_span = lhs.span;
+        let mut piped = Some(lhs);
+        if substitute_pipe_placeholder(&mut rhs, &mut piped) {
+            rhs.span = self.join(lhs_span, rhs.span);
+            return rhs;
+        }
+        let lhs = piped.take().expect("piped value left unconsumed");
         let rhs_span = rhs.span;
         let valid = matches!(
             rhs.kind,
             ExprKind::Path(_)
                 | ExprKind::Call { .. }
                 | ExprKind::MethodCall { .. }
-                | ExprKind::FieldAccess { .. }
                 | ExprKind::MacroCall(_)
                 | ExprKind::Closure { .. }
         );
@@ -1314,6 +1350,17 @@ impl Parser<'_> {
                     concat_args
                         .push(self.alloc_function_call_expr("__fmt_prec", vec![arg, prec_lit]));
                 }
+                FormatSegment::PositionalSpec(spec) => {
+                    if let Some(expr) = positional_iter.next() {
+                        let e = self.build_format_spec_expr(expr, &spec);
+                        concat_args.push(e);
+                    }
+                }
+                FormatSegment::NamedSpec(name, spec) => {
+                    let arg = self.alloc_path_expr(&name);
+                    let e = self.build_format_spec_expr(arg, &spec);
+                    concat_args.push(e);
+                }
             }
         }
         for extra in positional_iter {
@@ -1330,6 +1377,40 @@ impl Parser<'_> {
         let id = self.alloc_id();
         let span = self.last_span();
         Expr::new(id, span, self.alloc_function_call(name, args))
+    }
+
+    /// Expands a `{:spec}` argument into a composition of already-wired
+    /// stdlib calls: render the value (`__concat` for Display,
+    /// `strconv::format_i64_radix` for `{:x}`/`{:b}`/`{:o}`, `__fmt_prec` for
+    /// `{:.N}`), then pad to width via `strings::pad_left` / `pad_right` /
+    /// `center`. No tier-specific lowering is needed.
+    fn build_format_spec_expr(&mut self, value: Expr, spec: &FormatSpec) -> Expr {
+        let rendered = if let Some(base) = spec.radix {
+            let base_lit = self.alloc_literal_expr(Literal::Int(base.to_string()));
+            let r = self.alloc_function_call_expr("__fmt_radix", vec![value, base_lit]);
+            if spec.upper {
+                self.alloc_function_call_expr("__fmt_upper", vec![r])
+            } else {
+                r
+            }
+        } else if let Some(prec) = spec.precision {
+            let prec_lit = self.alloc_literal_expr(Literal::Int(prec.to_string()));
+            self.alloc_function_call_expr("__fmt_prec", vec![value, prec_lit])
+        } else {
+            self.alloc_function_call_expr("__concat", vec![value])
+        };
+        if spec.width == 0 {
+            return rendered;
+        }
+        let width_lit = self.alloc_literal_expr(Literal::Int(spec.width.to_string()));
+        let fill_lit = self.alloc_literal_expr(Literal::Int((spec.fill as u32).to_string()));
+        let align_code = match spec.align {
+            Align::Left => 1,
+            Align::Center => 2,
+            Align::Right | Align::Default => 0,
+        };
+        let align_lit = self.alloc_literal_expr(Literal::Int(align_code.to_string()));
+        self.alloc_function_call_expr("__fmt_pad", vec![rendered, width_lit, fill_lit, align_lit])
     }
 
     fn alloc_function_call(&mut self, name: &str, args: Vec<Expr>) -> ExprKind {
@@ -1629,6 +1710,59 @@ pub(crate) fn at_block_end(parser: &Parser<'_>) -> bool {
 }
 
 /// One parsed segment of a format-string template.
+/// True if `path` is the bare `_` pipe placeholder: a single segment
+/// named `_` with no turbofish generics.
+fn is_pipe_placeholder(path: &PathExpr) -> bool {
+    path.segments.len() == 1
+        && path.segments[0].name.name == "_"
+        && path.segments[0].generics.is_empty()
+}
+
+/// Replaces a `_` placeholder at the head of `expr`'s receiver/base chain
+/// with the piped value, consuming `value`. Walks through `MethodCall`,
+/// `FieldAccess`, and `Index` receivers down to the leading `_`. Returns
+/// true (and leaves `value` taken) when a placeholder was substituted;
+/// returns false and leaves `value` intact when the RHS has no `_` head.
+fn substitute_pipe_placeholder(expr: &mut Expr, value: &mut Option<Expr>) -> bool {
+    match &mut expr.kind {
+        ExprKind::MethodCall { receiver, .. } | ExprKind::FieldAccess { receiver, .. } => {
+            substitute_pipe_placeholder(receiver, value)
+        }
+        ExprKind::Index { base, .. } => substitute_pipe_placeholder(base, value),
+        ExprKind::Path(path) if is_pipe_placeholder(path) => {
+            if let Some(piped) = value.take() {
+                *expr = piped;
+            }
+            true
+        }
+        _ => false,
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Align {
+    Default,
+    Left,
+    Center,
+    Right,
+}
+
+/// A parsed format spec covering width / alignment / fill / zero-pad /
+/// precision / radix — the subset of Rust's `{:spec}` grammar Gossamer
+/// expands by composing `__concat`, `strconv::format_i64_radix`, and the
+/// `strings` padding helpers (all already wired on every tier).
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct FormatSpec {
+    fill: char,
+    align: Align,
+    width: usize,
+    precision: Option<usize>,
+    /// Integer radix (`x`/`X` => 16, `b` => 2, `o` => 8); `None` is decimal.
+    radix: Option<u32>,
+    /// `{:X}` — uppercase the radix digits.
+    upper: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum FormatSegment {
     /// Plain text written into the output verbatim.
@@ -1644,6 +1778,10 @@ enum FormatSegment {
     PositionalPrec(usize),
     /// `{ident:.N}` — same as `Positional` but with precision.
     NamedPrec(String, usize),
+    /// `{:spec}` — a positional argument with a width/align/fill/radix spec.
+    PositionalSpec(FormatSpec),
+    /// `{ident:spec}` — same as `PositionalSpec` but a named binding.
+    NamedSpec(String, FormatSpec),
 }
 
 /// Splits a template into `FormatSegment`s. `{{` / `}}` escape
@@ -1716,6 +1854,8 @@ fn parse_format_template(template: &str) -> Vec<FormatSegment> {
                     } else {
                         segments.push(FormatSegment::Literal(format!("{{{inner}}}")));
                     }
+                } else if let Some(seg) = parse_format_spec(inner) {
+                    segments.push(seg);
                 } else {
                     segments.push(FormatSegment::Literal(format!("{{{inner}}}")));
                 }
@@ -1799,6 +1939,123 @@ fn parse_precision_spec(inner: &str) -> Option<FormatSegment> {
         Some(FormatSegment::PositionalPrec(prec))
     } else if is_identifier(head) {
         Some(FormatSegment::NamedPrec(head.to_string(), prec))
+    } else {
+        None
+    }
+}
+
+/// Parses a full `{[name]:[[fill]align][0][width][.prec][type]}` spec into a
+/// `PositionalSpec` / `NamedSpec`. Returns `None` (so the caller falls back to
+/// emitting the brace block literally) for anything it doesn't understand, so
+/// an unrecognized spec never breaks compilation. `type` is one of
+/// `x`/`X`/`b`/`o`/`d`. The grammar mirrors Rust's `std::fmt` subset.
+fn parse_format_spec(inner: &str) -> Option<FormatSegment> {
+    let (head, spec) = inner.split_once(':')?;
+    let head = head.trim();
+    let chars: Vec<char> = spec.chars().collect();
+    let mut pos = 0;
+
+    let is_align = |c: char| matches!(c, '<' | '>' | '^');
+    let to_align = |c: char| match c {
+        '<' => Align::Left,
+        '^' => Align::Center,
+        _ => Align::Right,
+    };
+
+    let mut fill = ' ';
+    let mut align = Align::Default;
+    // `[fill]align`: a fill char only counts when an align char follows it.
+    if chars.len() >= 2 && is_align(chars[1]) {
+        fill = chars[0];
+        align = to_align(chars[1]);
+        pos = 2;
+    } else if !chars.is_empty() && is_align(chars[0]) {
+        align = to_align(chars[0]);
+        pos = 1;
+    }
+
+    // `0` zero-pad flag: fill with '0', right-align by default.
+    if chars.get(pos) == Some(&'0') {
+        fill = '0';
+        if align == Align::Default {
+            align = Align::Right;
+        }
+        pos += 1;
+    }
+
+    // width
+    let mut width = 0usize;
+    let mut saw_width = false;
+    while let Some(c) = chars.get(pos) {
+        if let Some(d) = c.to_digit(10) {
+            width = width.checked_mul(10)?.checked_add(d as usize)?;
+            saw_width = true;
+            pos += 1;
+        } else {
+            break;
+        }
+    }
+
+    // `.precision`
+    let mut precision = None;
+    if chars.get(pos) == Some(&'.') {
+        pos += 1;
+        let mut p = 0usize;
+        let mut saw = false;
+        while let Some(c) = chars.get(pos) {
+            if let Some(d) = c.to_digit(10) {
+                p = p.checked_mul(10)?.checked_add(d as usize)?;
+                saw = true;
+                pos += 1;
+            } else {
+                break;
+            }
+        }
+        if !saw {
+            return None;
+        }
+        precision = Some(p);
+    }
+
+    // type
+    let mut radix = None;
+    let mut upper = false;
+    if let Some(&c) = chars.get(pos) {
+        match c {
+            'x' => radix = Some(16),
+            'X' => {
+                radix = Some(16);
+                upper = true;
+            }
+            'b' => radix = Some(2),
+            'o' => radix = Some(8),
+            'd' => radix = None,
+            _ => return None,
+        }
+        pos += 1;
+    }
+
+    // Reject trailing junk and specs that carry no formatting at all
+    // (a bare `{x:}` should not shadow the plain-name path).
+    if pos != chars.len() {
+        return None;
+    }
+    if align == Align::Default && !saw_width && precision.is_none() && radix.is_none() {
+        return None;
+    }
+
+    let spec = FormatSpec {
+        fill,
+        align,
+        width,
+        precision,
+        radix,
+        upper,
+    };
+    if head.is_empty() {
+        Some(FormatSegment::PositionalSpec(spec))
+    } else if is_identifier(head) {
+        Some(FormatSegment::NamedSpec(head.to_string(), spec))
     } else {
         None
     }

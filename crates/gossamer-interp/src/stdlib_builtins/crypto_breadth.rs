@@ -163,6 +163,15 @@ pub(crate) fn install_crypto_breadth(globals: &mut Vec<(&'static str, Value)>) {
         let q: &'static str = Box::leak(format!("crypto::kdf::{short}").into_boxed_str());
         globals.push((q, crate::builtins::builtin_pub(q, call)));
     }
+    // password (Argon2id PHC strings; delegates to kdf::argon2id)
+    for (short, call) in [
+        ("hash", builtin_crypto_password_hash as BuiltinFnPub),
+        ("verify", builtin_crypto_password_verify),
+        ("needs_rehash", builtin_crypto_password_needs_rehash),
+    ] {
+        let q: &'static str = Box::leak(format!("crypto::password::{short}").into_boxed_str());
+        globals.push((q, crate::builtins::builtin_pub(q, call)));
+    }
     // x509
     {
         let q = "crypto::x509::parse_pem";
@@ -370,6 +379,30 @@ pub(crate) fn builtin_crypto_kdf_argon2id_verify(args: &[Value]) -> RuntimeResul
         Ok(ok) => Ok(ok_variant(Value::Bool(ok))),
         Err(e) => Ok(err_variant(format!("{e}"))),
     }
+}
+
+pub(crate) fn builtin_crypto_password_hash(args: &[Value]) -> RuntimeResult<Value> {
+    let password = value_to_bytes(args.first().unwrap_or(&Value::Unit));
+    match gossamer_std::crypto::password::hash(&password) {
+        Ok(phc) => Ok(ok_variant(Value::String(phc.into()))),
+        Err(e) => Ok(err_variant(format!("{e}"))),
+    }
+}
+
+pub(crate) fn builtin_crypto_password_verify(args: &[Value]) -> RuntimeResult<Value> {
+    let password = value_to_bytes(args.first().unwrap_or(&Value::Unit));
+    let phc = args.get(1).and_then(as_str).unwrap_or("").to_string();
+    match gossamer_std::crypto::password::verify(&password, &phc) {
+        Ok(ok) => Ok(ok_variant(Value::Bool(ok))),
+        Err(e) => Ok(err_variant(format!("{e}"))),
+    }
+}
+
+pub(crate) fn builtin_crypto_password_needs_rehash(args: &[Value]) -> RuntimeResult<Value> {
+    let phc = args.first().and_then(as_str).unwrap_or("").to_string();
+    Ok(Value::Bool(gossamer_std::crypto::password::needs_rehash(
+        &phc,
+    )))
 }
 
 pub(crate) fn builtin_crypto_kdf_scrypt(args: &[Value]) -> RuntimeResult<Value> {

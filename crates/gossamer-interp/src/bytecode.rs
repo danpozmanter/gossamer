@@ -24,7 +24,7 @@ pub type GlobalIdx = u16;
 pub type InstrIdx = u32;
 
 /// Bytecode instructions. The VM dispatch loop is a `match` over this
-/// enum — fast enough for the "parity with the tree-walker" bar
+/// enum — fast enough for the compiled-tier parity bar
 /// and trivially safe. Every variant's payload is `Copy`, so the
 /// dispatch loop can pull instructions without cloning. The
 /// explicit `u16` discriminant keeps the per-op memory footprint
@@ -37,6 +37,11 @@ pub enum Op {
     LoadConst { dst: Reg, idx: ConstIdx },
     /// `dst = globals[idx]`.
     LoadGlobal { dst: Reg, idx: GlobalIdx },
+    /// `globals[idx] = src`. Stores `src` into the `static mut` cell
+    /// named by `globals[idx]` (a `Global::MutStatic`). The cell is
+    /// shared across goroutines, so the write is published under the
+    /// cell's `Mutex`.
+    StoreStatic { name_idx: GlobalIdx, src: Reg },
     /// `dst = src`.
     Move { dst: Reg, src: Reg },
     /// `dst = *src`. Resolves a `__Cell` flag handle to its
@@ -124,40 +129,62 @@ pub enum Op {
         /// `Value::String → globals.get` path on subsequent calls
         /// from the same site.
         cache_idx: u16,
+        /// `true` when at least one argument could evaluate to a
+        /// `flag::Cell` (`__Cell`) handle that needs auto-dereferencing
+        /// at the call boundary. `false` when every argument is a
+        /// primitive scalar (which can never be a `__Cell`), letting
+        /// the dispatch skip the per-argument cell check.
+        may_have_cells: bool,
     },
     /// `ret value`.
     Return { value: Reg },
     /// `ret ()`.
     ReturnUnit,
-    /// Delegates a single HIR expression evaluation to a bundled
-    /// tree-walker. The VM compiler falls back to this op for any
-    /// expression kind that doesn't yet have a native opcode —
-    /// method calls, match, closures, struct literals, etc. The
-    /// expression is stored in the chunk's `deferred_exprs` table
-    /// at `expr_idx`; runtime evaluation uses the outer `Vm`'s
-    /// bundled interpreter so the result shares the same Value
-    /// representation. Local-binding registers available to the
-    /// delegated expression start at `env_start` and span
-    /// `env_count` entries paired with names in the chunk's
-    /// `deferred_env` table.
-    EvalDeferred {
-        /// Destination register.
+    /// `dst = closure value` — builds a [`crate::value::Closure`]
+    /// from the proto at `FnChunk::closure_protos[proto]`. The
+    /// handler snapshots each register named in the proto's
+    /// `capture_regs` into the closure's upvalue list, then forms a
+    /// `Value::Closure` referencing the proto's compiled body chunk.
+    MakeClosure {
+        /// Destination register for the `Value::Closure`.
         dst: Reg,
-        /// Index into `FnChunk::deferred_exprs`. The matching
-        /// `deferred_envs[expr_idx]` entry carries the binding
-        /// names paired with the registers listed in
-        /// `deferred_env_regs[expr_idx]`. Mutations the walker
-        /// makes through those bindings (`bodies[i].vx = x`)
-        /// flow back into the same registers after the call.
-        expr_idx: u32,
+        /// Index into [`FnChunk::closure_protos`].
+        proto: u32,
+    },
+    /// Native `select { … }` dispatch over [`Value::Channel`] arms.
+    /// The arm metadata for this select occupies the contiguous range
+    /// `FnChunk::select_arms[first .. first + count]`. The handler
+    /// polls each arm in source order (recv via `try_recv`, send via
+    /// `send`, a `default` arm last), parking on the receive arms'
+    /// condvar when nothing is ready and no `default` exists. On a
+    /// winning recv it writes the received value into the arm's
+    /// `bind_reg`; in every case it sets `pc` to the winning arm's
+    /// `body_block`, which moves the arm's result into the shared
+    /// select-result register and jumps to the continuation.
+    Select {
+        /// First arm's index into [`FnChunk::select_arms`].
+        first: u32,
+        /// Number of arms in this select.
+        count: u16,
+    },
+    /// Records one line-coverage hit at a pre-registered counter slot.
+    /// Emitted at every statement boundary only when `gos test
+    /// --coverage` compiles the program with a source map published
+    /// (see [`crate::vm::Vm::set_source_map`]); the slot is the
+    /// [`gossamer_runtime::coverage::register`] index the compiler
+    /// resolved the statement's `(file, line)` to. The handler bumps
+    /// that global counter, so the bytecode tier feeds the same lcov
+    /// table the LLVM AOT tier instruments.
+    CovHit {
+        /// Index into the global `gossamer_runtime::coverage` table.
+        slot: u32,
     },
     /// `dst = receiver.method_name(args…)` — native method
     /// dispatch. `name_idx` is a `ConstIdx` into the chunk's
     /// globals table (keyed by the bare method name). The VM
     /// puts the receiver value at `args` and the remaining args
     /// at `args+1..args+argc+1`, then calls the looked-up
-    /// builtin / closure. Skips the `EvalDeferred` env-rebuild
-    /// cost for the most common hot-path shape.
+    /// builtin / closure.
     MethodCall {
         /// Destination register.
         dst: Reg,
@@ -277,11 +304,7 @@ pub enum Op {
         count: u16,
     },
     /// Builds a `Value::Tuple` from `count` consecutive value
-    /// registers starting at `first`. Replaces the `EvalDeferred`
-    /// tree-walker fallback that previously fired on every
-    /// `(a, b, …)` literal — that path allocated a bindings
-    /// `Vec`, rebuilt an env, re-evaluated each element through
-    /// the walker, and packed the result. The native op just
+    /// registers starting at `first` for an `(a, b, …)` literal.
     /// `Arc::clone`s each register and assembles the tuple.
     BuildTuple {
         /// Destination value register.
@@ -291,10 +314,47 @@ pub enum Op {
         /// Number of elements.
         count: u16,
     },
+    /// Builds a `Value::Array` from `count` consecutive value
+    /// registers starting at `first`. The generic array-literal
+    /// (`[a, b, c]`) counterpart of `BuildTuple` for element types
+    /// the typed-storage builders (`BuildIntArray` / `BuildFloatVec`)
+    /// don't specialise — strings, structs, bools, nested arrays.
+    BuildArray {
+        /// Destination value register.
+        dst: Reg,
+        /// First value register holding the array's elements.
+        first: Reg,
+        /// Number of elements.
+        count: u16,
+    },
+    /// Builds a `Value::Array` of `registers[count]` clones of
+    /// `registers[value]`. The generic `[v; n]` repeat counterpart for
+    /// element types the typed-storage repeat builders don't
+    /// specialise. The count register holds a `Value::Int`.
+    BuildArrayRepeat {
+        /// Destination value register.
+        dst: Reg,
+        /// Register holding the element to clone.
+        value: Reg,
+        /// Register holding the repeat count (`Value::Int`).
+        count: Reg,
+    },
+    /// Materialises a standalone range expression (`a..b` / `a..=b`)
+    /// into an eager `Value::Array` of `Value::Int`. `start` / `end`
+    /// are value registers; an inclusive range includes `end`.
+    BuildRange {
+        /// Destination value register.
+        dst: Reg,
+        /// Register holding the lower bound (`Value::Int`).
+        start: Reg,
+        /// Register holding the upper bound (`Value::Int`).
+        end: Reg,
+        /// `true` when the upper bound is inclusive (`a..=b`).
+        inclusive: bool,
+    },
     /// Typed numeric cast: `i64 as f64`. Reads from the `i64`
     /// register file and writes to the `f64` register file with
-    /// no boxing. Replaces the deferred-walker path that
-    /// previously rebuilt an env per cast.
+    /// no boxing.
     IntToFloatF64 {
         /// Destination `f64` register.
         dst_f: Reg,
@@ -473,11 +533,8 @@ pub enum Op {
     },
     /// `go callee(args[0..argc])` — spawns a goroutine that runs
     /// `callee` with the supplied args entirely through the bytecode
-    /// VM (no tree-walker re-entry). Replaces the prior
-    /// `compile_deferred(Go)` path that bounced every goroutine
-    /// body through the slow walker; required `FnChunk` to be
-    /// `Send + Sync` (call/arith caches now `parking_lot::Mutex`
-    /// rather than `RefCell`).
+    /// VM. Requires `FnChunk` to be `Send + Sync` (call/arith caches
+    /// live in per-`Vm` `ChunkState` rather than on the chunk).
     Spawn {
         /// Register holding the callee value (`Value::Closure` /
         /// `Value::Builtin` / `Value::String` global name / etc.).
@@ -494,10 +551,8 @@ pub enum Op {
     /// chunk's globals at `name_idx`. Mirrors `Op::MethodCall`'s
     /// resolution chain (`qualified_key` then bare name) so a
     /// freshly-spawned goroutine takes the same dispatch path the
-    /// synchronous call would. Without this op, `go obj.method()`
-    /// fell through to the deferred tree-walker which ran the body
-    /// on the calling thread synchronously — defeating goroutine
-    /// semantics.
+    /// synchronous call would, running the method body on a separate
+    /// goroutine rather than the calling thread.
     SpawnMethod {
         /// Register holding the receiver value.
         receiver: Reg,
@@ -510,7 +565,7 @@ pub enum Op {
     },
     /// `dst = base[index]` — native indexed read over arrays,
     /// strings, tuples, vecs, and structs (tuple-struct
-    /// projection). Mirrors the tree-walker's `eval_index`.
+    /// projection).
     IndexGet {
         /// Destination register.
         dst: Reg,
@@ -915,6 +970,37 @@ pub enum Op {
         /// Source float register.
         value_f: Reg,
     },
+    /// Like `FlatGetF64` but the element index is read straight
+    /// from the int register file, skipping the per-access
+    /// `BoxI64` a `Value`-register index would need. Emitted when
+    /// the index expression compiles to an `i64` register — the
+    /// common loop-counter case (`bodies[a].x`).
+    FlatGetF64I {
+        /// Destination float register.
+        dst_f: Reg,
+        /// Register holding the `Value::FloatArray`.
+        base: Reg,
+        /// Int register holding the element index.
+        index_i: Reg,
+        /// Element stride (f64s per element).
+        stride: u16,
+        /// Field offset within an element.
+        offset: u16,
+    },
+    /// Like `FlatSetF64` but with an int-register index. See
+    /// [`Op::FlatGetF64I`].
+    FlatSetF64I {
+        /// Register holding the `Value::FloatArray`.
+        base: Reg,
+        /// Int register holding the element index.
+        index_i: Reg,
+        /// Element stride (f64s per element).
+        stride: u16,
+        /// Field offset within an element.
+        offset: u16,
+        /// Source float register.
+        value_f: Reg,
+    },
     // BuildFloatArray (assembles `Value::FloatArray` from a
     // contiguous block of float registers for `[S; N]` literals
     // where `S` has all-f64 fields) lives in the `wide_ops`
@@ -931,7 +1017,7 @@ pub enum Op {
     /// Whitelisted scalar cast over Value registers — the combos the
     /// typed-register cast ops don't reach (f32 / bool / char sources,
     /// `char` and `f32` targets). Keeps every GT0005-whitelisted cast
-    /// native so none falls back to the walker's no-op.
+    /// native.
     CastScalar {
         /// Destination Value register.
         dst: Reg,
@@ -1104,8 +1190,56 @@ pub enum WideOp {
     },
 }
 
-/// Compiled function — the unit of bytecode the VM can call.
+/// One closure literal's compile-time template, referenced by
+/// [`Op::MakeClosure`] through [`FnChunk::closure_protos`].
+///
+/// `MakeClosure` snapshots the enclosing frame's [`Self::capture_regs`]
+/// into a [`crate::value::Closure`]: the VM runs [`Self::chunk`], whose
+/// leading parameters are the captured upvalues followed by the
+/// closure's declared parameters.
 #[derive(Debug)]
+pub struct ClosureProto {
+    /// Native body chunk run by the VM.
+    pub chunk: Arc<FnChunk>,
+    /// Enclosing-frame registers to snapshot as upvalues, in capture order.
+    pub capture_regs: Vec<Reg>,
+}
+
+/// Operation an [`Op::Select`] arm performs, recorded in
+/// [`SelectArmMeta`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SelectArmKind {
+    /// `pat = chan.recv()` — receive, binding the value before the body.
+    Recv,
+    /// `chan.send(value)` — send on the channel, then run the body.
+    Send,
+    /// `default` — chosen when no other arm is ready.
+    Default,
+}
+
+/// One arm of a native `select { … }`, referenced by [`Op::Select`]
+/// through [`FnChunk::select_arms`]. The operand registers are
+/// evaluated before the `Op::Select` runs; the handler reads the
+/// channel/value out of them, writes any received value into
+/// `bind_reg`, and jumps to `body_block`.
+#[derive(Debug, Clone, Copy)]
+pub struct SelectArmMeta {
+    /// Which operation this arm performs.
+    pub kind: SelectArmKind,
+    /// Register holding the channel value (`Recv` / `Send` arms;
+    /// unused and `0` for `Default`).
+    pub channel_reg: Reg,
+    /// Register holding the value to send (`Send` arms; `0` otherwise).
+    pub value_reg: Reg,
+    /// Register the received value is written into before the body
+    /// block destructures it (`Recv` arms; `0` otherwise).
+    pub bind_reg: Reg,
+    /// Instruction index of this arm's body basic block.
+    pub body_block: InstrIdx,
+}
+
+/// Compiled function — the unit of bytecode the VM can call.
+#[derive(Debug, Default)]
 pub struct FnChunk {
     /// Source-level name (useful in diagnostics). Interned into the
     /// process-global pool at construction so recursive call stacks
@@ -1143,18 +1277,6 @@ pub struct FnChunk {
     /// of the shape test come from `intern_type_name`, so the run
     /// loop compares one pointer instead of string content.
     pub shape_names: Vec<&'static str>,
-    /// HIR expressions kept alongside the bytecode for
-    /// `Op::EvalDeferred` — expression kinds the VM compiler
-    /// doesn't yet native-lower. Indexed by `EvalDeferred::expr_idx`.
-    pub deferred_exprs: Vec<gossamer_hir::HirExpr>,
-    /// Binding names paired with `deferred_env_regs` by the
-    /// matching index.
-    pub deferred_envs: Vec<Vec<String>>,
-    /// Registers exposed to each delegated expression. The VM
-    /// reads these into the walker's env before the call and
-    /// writes them back afterwards so in-place mutations through
-    /// the walker flow back into the VM's register file.
-    pub deferred_env_regs: Vec<Vec<Reg>>,
     /// Number of inline-cache slots this chunk needs (`Op::Call`
     /// / `Op::MethodCall` sites). The actual `Vec<CacheSlot>` lives
     /// per-`Vm` inside `crate::vm::ChunkState`, not on the chunk —
@@ -1178,6 +1300,13 @@ pub struct FnChunk {
     /// the vast majority of chunks, so the entry probe is one
     /// `is_empty` test.
     pub mut_ref_params: Vec<Reg>,
+    /// Closure templates referenced by [`Op::MakeClosure`]. Empty for
+    /// chunks that build no closures.
+    pub closure_protos: Vec<ClosureProto>,
+    /// `select` arm metadata referenced by [`Op::Select`] as
+    /// contiguous `[first .. first + count]` ranges. Empty for chunks
+    /// containing no `select`.
+    pub select_arms: Vec<SelectArmMeta>,
 }
 
 /// One adaptive-arith inline-cache slot. Tier C2 of the interp
@@ -1290,9 +1419,8 @@ impl FnChunk {
         self.f64_consts.shrink_to_fit();
         self.i64_consts.shrink_to_fit();
         self.globals.shrink_to_fit();
-        self.deferred_exprs.shrink_to_fit();
-        self.deferred_envs.shrink_to_fit();
-        self.deferred_env_regs.shrink_to_fit();
+        self.closure_protos.shrink_to_fit();
+        self.select_arms.shrink_to_fit();
     }
 
     /// Produces a `Arc<Self>` so multiple callers share the same chunk.

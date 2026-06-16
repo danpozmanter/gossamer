@@ -20,8 +20,8 @@ static types, no implicit `None`, and pattern matching instead of
 
 ## What stays the same
 
-- List / dict / set comprehensions have direct iterator equivalents (`xs.filter(...).map(...).collect()`).
-- `print("a", "b")` → `println("a", "b")`.
+- List / dict / set comprehensions have direct iterator equivalents (`xs |> iter::filter(...) |> iter::map(...)`).
+- `print("a", "b")` → `println!("{} {}", "a", "b")`.
 - Named arguments → struct-literal call style: `Handler { log: true }`.
 
 ## Translation examples
@@ -39,8 +39,8 @@ Gossamer:
 ```gos
 fn parse(line: &str) -> Result<[i64], errors::Error> {
     let mut out: [i64] = []
-    for piece in line.trim().split(',') {
-        let n: i64 = piece.trim().parse()
+    for piece in line.trim().split(",") {
+        let n = strconv::parse_i64(&piece.trim())
             .map_err(|_| errors::new(format!("bad number: {piece}")))?
         out.push(n)
     }
@@ -94,7 +94,7 @@ Gossamer (rough mirror — `|>` threads each stage):
 ```gos
 let names = users
     |> iter::filter(|n: String| n.len() > 0)
-    |> iter::map(|n: String| n.to_lowercase())
+    |> iter::map(|n: String| n.to_lower())
     |> iter::sort_by_key(|n: String| n.len())
 ```
 

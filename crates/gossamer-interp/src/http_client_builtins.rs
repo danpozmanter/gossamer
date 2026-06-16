@@ -1,4 +1,4 @@
-//! Interpreter hooks for `std::http::Client`.
+//! VM hooks for `std::http::Client`.
 //!
 //! Every client entry point — the method-style surface
 //! (`Client::get` / `post` / `put` / `options` / `delete` / `head`
@@ -54,6 +54,30 @@ const DEFAULT_MAX_REDIRECTS: i64 = 10;
 /// Default per-request timeout in milliseconds, matching `Client::new()`.
 const DEFAULT_TIMEOUT_MS: i64 = 30_000;
 
+/// Process-wide registry of persistent `gossamer_std::http::Client`
+/// instances built with `.cookie_jar(true)`. The built `Client`
+/// Gossamer struct carries the id in a `__client` field; the request
+/// builtins look the engine up so the cookie jar survives across
+/// requests on the same client (the runtime tiers do this by holding
+/// a persistent `ureq::Agent` on the boxed `GosHttpClient`). The
+/// `gossamer_std::http::Client` is `Send + Sync` (an `Arc` inside).
+static NEXT_CLIENT_ID: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(1);
+static CLIENT_REGISTRY: parking_lot::Mutex<Option<rustc_hash::FxHashMap<i64, StdClient>>> =
+    parking_lot::Mutex::new(None);
+
+fn client_registry_register(client: StdClient) -> i64 {
+    let id = NEXT_CLIENT_ID.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let mut guard = CLIENT_REGISTRY.lock();
+    guard
+        .get_or_insert_with(rustc_hash::FxHashMap::default)
+        .insert(id, client);
+    id
+}
+
+fn client_registry_lookup(id: i64) -> Option<StdClient> {
+    CLIENT_REGISTRY.lock().as_ref()?.get(&id).cloned()
+}
+
 pub(crate) fn builtin_http_client_new(_args: &[Value]) -> RuntimeResult<Value> {
     Ok(Value::struct_(
         "Client",
@@ -61,11 +85,32 @@ pub(crate) fn builtin_http_client_new(_args: &[Value]) -> RuntimeResult<Value> {
     ))
 }
 
-fn config_fields(max_redirects: i64, timeout_ms: i64) -> Vec<(Ident, Value)> {
+fn config_fields(
+    max_redirects: i64,
+    timeout_ms: i64,
+    cookie_jar: bool,
+    proxy: &str,
+) -> Vec<(Ident, Value)> {
     vec![
         (Ident::new("max_redirects"), Value::Int(max_redirects)),
         (Ident::new("timeout_ms"), Value::Int(timeout_ms)),
+        (Ident::new("cookie_jar"), Value::Bool(cookie_jar)),
+        (
+            Ident::new("proxy"),
+            Value::String(SmolStr::from(proxy.to_string())),
+        ),
     ]
+}
+
+/// Reads the four builder settings off a `ClientBuilder` receiver,
+/// filling defaults for any absent field.
+fn builder_settings(inner: &crate::value::StructInner) -> (i64, i64, bool, String) {
+    (
+        int_field(inner, "max_redirects").unwrap_or(DEFAULT_MAX_REDIRECTS),
+        int_field(inner, "timeout_ms").unwrap_or(DEFAULT_TIMEOUT_MS),
+        bool_field(inner, "cookie_jar").unwrap_or(false),
+        str_field(inner, "proxy").unwrap_or_default(),
+    )
 }
 
 fn int_field(inner: &crate::value::StructInner, name: &str) -> Option<i64> {
@@ -77,6 +122,25 @@ fn int_field(inner: &crate::value::StructInner, name: &str) -> Option<i64> {
             Value::Int(n) => Some(*n),
             _ => None,
         })
+}
+
+fn bool_field(inner: &crate::value::StructInner, name: &str) -> Option<bool> {
+    inner
+        .fields
+        .iter()
+        .find(|(ident, _)| ident.name == name)
+        .and_then(|(_, v)| match v {
+            Value::Bool(b) => Some(*b),
+            _ => None,
+        })
+}
+
+fn str_field(inner: &crate::value::StructInner, name: &str) -> Option<String> {
+    inner
+        .fields
+        .iter()
+        .find(|(ident, _)| ident.name == name)
+        .and_then(|(_, v)| as_str(v).map(str::to_string))
 }
 
 /// Receiver guard for the `ClientBuilder` chain builtins.
@@ -110,7 +174,7 @@ fn clamp_timeout_ms(t: i64) -> i64 {
 pub(crate) fn builtin_http_client_builder(_args: &[Value]) -> RuntimeResult<Value> {
     Ok(Value::struct_(
         "ClientBuilder",
-        config_fields(DEFAULT_MAX_REDIRECTS, DEFAULT_TIMEOUT_MS),
+        config_fields(DEFAULT_MAX_REDIRECTS, DEFAULT_TIMEOUT_MS, false, ""),
     ))
 }
 
@@ -119,14 +183,14 @@ pub(crate) fn builtin_http_client_builder(_args: &[Value]) -> RuntimeResult<Valu
 /// redirect-following entirely (3xx responses are returned raw).
 pub(crate) fn builtin_http_client_builder_max_redirects(args: &[Value]) -> RuntimeResult<Value> {
     let inner = expect_builder(args, "ClientBuilder::max_redirects")?;
+    let (_, timeout_ms, cookie_jar, proxy) = builder_settings(inner);
     let n = match args.get(1) {
         Some(Value::Int(n)) => clamp_max_redirects(*n),
         _ => DEFAULT_MAX_REDIRECTS,
     };
-    let timeout_ms = int_field(inner, "timeout_ms").unwrap_or(DEFAULT_TIMEOUT_MS);
     Ok(Value::struct_(
         "ClientBuilder",
-        config_fields(n, timeout_ms),
+        config_fields(n, timeout_ms, cookie_jar, &proxy),
     ))
 }
 
@@ -134,29 +198,67 @@ pub(crate) fn builtin_http_client_builder_max_redirects(args: &[Value]) -> Runti
 /// immutably; non-positive values fall back to the 30 s default.
 pub(crate) fn builtin_http_client_builder_timeout_ms(args: &[Value]) -> RuntimeResult<Value> {
     let inner = expect_builder(args, "ClientBuilder::timeout_ms")?;
+    let (max_redirects, _, cookie_jar, proxy) = builder_settings(inner);
     let t = match args.get(1) {
         Some(Value::Int(t)) => clamp_timeout_ms(*t),
         _ => DEFAULT_TIMEOUT_MS,
     };
-    let max_redirects = int_field(inner, "max_redirects").unwrap_or(DEFAULT_MAX_REDIRECTS);
     Ok(Value::struct_(
         "ClientBuilder",
-        config_fields(max_redirects, t),
+        config_fields(max_redirects, t, cookie_jar, &proxy),
+    ))
+}
+
+/// `ClientBuilder::cookie_jar(enabled) -> ClientBuilder` — rebuilt
+/// immutably. When enabled, the built client reuses one persistent
+/// engine so `Set-Cookie` survives across requests; when disabled,
+/// each request runs on a fresh engine (no cookie carryover).
+pub(crate) fn builtin_http_client_builder_cookie_jar(args: &[Value]) -> RuntimeResult<Value> {
+    let inner = expect_builder(args, "ClientBuilder::cookie_jar")?;
+    let (max_redirects, timeout_ms, _, proxy) = builder_settings(inner);
+    let enabled = matches!(args.get(1), Some(Value::Bool(true)));
+    Ok(Value::struct_(
+        "ClientBuilder",
+        config_fields(max_redirects, timeout_ms, enabled, &proxy),
+    ))
+}
+
+/// `ClientBuilder::proxy(url) -> ClientBuilder` — rebuilt immutably;
+/// routes every request through `url`. An empty string clears it.
+pub(crate) fn builtin_http_client_builder_proxy(args: &[Value]) -> RuntimeResult<Value> {
+    let inner = expect_builder(args, "ClientBuilder::proxy")?;
+    let (max_redirects, timeout_ms, cookie_jar, _) = builder_settings(inner);
+    let proxy = args.get(1).and_then(as_str).unwrap_or("");
+    Ok(Value::struct_(
+        "ClientBuilder",
+        config_fields(max_redirects, timeout_ms, cookie_jar, proxy),
     ))
 }
 
 /// `ClientBuilder::build() -> Client` — carries the configured
-/// policy on the Client struct. The configured Client still works
-/// with the legacy `get`/`post` pending-request chain (those
-/// builtins dispatch by struct name and ignore extra fields).
+/// policy on the Client struct. When the cookie jar is enabled, a
+/// persistent engine is built once and registered; the Client struct
+/// carries its id in `__client` so the jar survives across requests.
+/// The configured Client still works with the legacy `get`/`post`
+/// pending-request chain (those builtins dispatch by struct name).
 pub(crate) fn builtin_http_client_builder_build(args: &[Value]) -> RuntimeResult<Value> {
     let inner = expect_builder(args, "ClientBuilder::build")?;
-    let max_redirects = int_field(inner, "max_redirects").unwrap_or(DEFAULT_MAX_REDIRECTS);
-    let timeout_ms = int_field(inner, "timeout_ms").unwrap_or(DEFAULT_TIMEOUT_MS);
-    Ok(Value::struct_(
-        "Client",
-        config_fields(max_redirects, timeout_ms),
-    ))
+    let (max_redirects, timeout_ms, cookie_jar, proxy) = builder_settings(inner);
+    let mut fields = config_fields(max_redirects, timeout_ms, cookie_jar, &proxy);
+    if cookie_jar {
+        match configured_std_client(
+            clamp_max_redirects(max_redirects) as u32,
+            clamp_timeout_ms(timeout_ms) as u64,
+            &proxy,
+        ) {
+            Ok(client) => {
+                let id = client_registry_register(client);
+                fields.push((Ident::new("__client"), Value::Int(id)));
+            }
+            Err(e) => return Ok(crate::builtins::err_variant(e)),
+        }
+    }
+    Ok(Value::struct_("Client", fields))
 }
 
 /// Reads the redirect/timeout policy off a `Client` receiver. A
@@ -178,27 +280,56 @@ fn client_config(receiver: Option<&Value>) -> (u32, u64) {
     (max_redirects as u32, timeout_ms as u64)
 }
 
+/// The `gossamer_std::http::Client` a request on `receiver` runs on:
+/// the registered persistent engine (cookie jar survives) when the
+/// receiver carries a `__client` id, otherwise a fresh engine built
+/// from the receiver's policy (redirects / timeout / proxy).
+fn client_for_request(receiver: Option<&Value>) -> Result<StdClient, String> {
+    if let Some(Value::Struct(inner)) = receiver
+        && inner.name == "Client"
+        && let Some(id) = int_field(inner, "__client")
+        && let Some(client) = client_registry_lookup(id)
+    {
+        return Ok(client);
+    }
+    let (max_redirects, timeout_ms) = client_config(receiver);
+    let proxy = match receiver {
+        Some(Value::Struct(inner)) => str_field(inner, "proxy").unwrap_or_default(),
+        _ => String::new(),
+    };
+    configured_std_client(max_redirects, timeout_ms, &proxy)
+}
+
 /// Builds a `gossamer_std` client carrying the receiver's policy.
-/// The default builder configures no custom TLS, so `build()`
-/// cannot fail; failures are surfaced as Err anyway to keep the
-/// builtin total.
-fn configured_std_client(max_redirects: u32, timeout_ms: u64) -> Result<StdClient, String> {
-    StdClient::builder()
+/// The default builder configures no custom TLS, so `build()` fails
+/// only on a malformed proxy URL; that error is surfaced as Err so
+/// the builtin stays total.
+fn configured_std_client(
+    max_redirects: u32,
+    timeout_ms: u64,
+    proxy: &str,
+) -> Result<StdClient, String> {
+    let mut builder = StdClient::builder()
         .max_redirects(max_redirects)
-        .timeout(std::time::Duration::from_millis(timeout_ms))
-        .build()
-        .map_err(|e| format!("{e}"))
+        .timeout(std::time::Duration::from_millis(timeout_ms));
+    if !proxy.is_empty() {
+        builder = builder.proxy(proxy);
+    }
+    builder.build().map_err(|e| format!("{e}"))
+}
+
+/// Extracts the persistent-client registry id (`__client`) off a
+/// `Client` receiver, if it was built with the cookie jar enabled.
+fn client_id_of(receiver: Option<&Value>) -> Option<i64> {
+    match receiver {
+        Some(Value::Struct(inner)) if inner.name == "Client" => int_field(inner, "__client"),
+        _ => None,
+    }
 }
 
 pub(crate) fn builtin_http_client_get(args: &[Value]) -> RuntimeResult<Value> {
     let url = args.get(1).and_then(as_str).unwrap_or("");
-    Ok(Value::struct_(
-        "Request",
-        vec![(
-            Ident::new("url"),
-            Value::String(SmolStr::from(url.to_string())),
-        )],
-    ))
+    Ok(pending_request_for("GET", url, client_id_of(args.first())))
 }
 
 /// Receiver guard shared by the `Request` builder builtins: the
@@ -279,7 +410,15 @@ pub(crate) fn builtin_http_request_send(args: &[Value]) -> RuntimeResult<Value> 
     } else {
         Some(body.as_bytes())
     };
-    let client = gossamer_std::http::Client::new();
+    // Reuse the originating client's persistent engine (cookie jar /
+    // proxy) when this request came from `client.<verb>(url)`; a
+    // standalone request uses a fresh default-policy engine.
+    let client = field("__client")
+        .and_then(|v| match v {
+            Value::Int(id) => client_registry_lookup(*id),
+            _ => None,
+        })
+        .unwrap_or_else(gossamer_std::http::Client::new);
     match client.do_request(parsed, &url, body_opt, &headers) {
         Ok(resp) => Ok(crate::builtins::ok_variant(lift_response(resp))),
         Err(e) => Ok(crate::builtins::err_variant(format!("{e}"))),
@@ -531,9 +670,9 @@ pub(crate) fn builtin_http_request_bytes(args: &[Value]) -> RuntimeResult<Value>
         )));
     };
     let url = args.get(1).and_then(as_str).unwrap_or("");
-    // The tree-walker hands `[104, 105]` over as `Value::Array` of
-    // Ints; the bytecode VM specialises int vectors to
-    // `Value::IntArray`. Both must decode or the VM tier silently
+    // A byte body can arrive as `Value::Array` of Ints, or — when
+    // the VM specialises int vectors — as `Value::IntArray`. Both
+    // must decode or the VM tier silently
     // uploads an empty body.
     let body: Vec<u8> = match args.get(2) {
         Some(Value::Array(items)) => items
@@ -734,45 +873,54 @@ pub(crate) fn builtin_response_stream_next_chunk(args: &[Value]) -> RuntimeResul
 // builder produces a `Request { method, url }` struct; calling
 // `.send()` on it dispatches through `gossamer_std::http::Client`.
 
-fn pending_request(method: &str, url: &str) -> Value {
-    Value::struct_(
-        "Request",
-        vec![
-            (
-                Ident::new("method"),
-                Value::String(SmolStr::from(method.to_string())),
-            ),
-            (
-                Ident::new("url"),
-                Value::String(SmolStr::from(url.to_string())),
-            ),
-        ],
-    )
+fn pending_request_for(method: &str, url: &str, client_id: Option<i64>) -> Value {
+    let mut fields = vec![
+        (
+            Ident::new("method"),
+            Value::String(SmolStr::from(method.to_string())),
+        ),
+        (
+            Ident::new("url"),
+            Value::String(SmolStr::from(url.to_string())),
+        ),
+    ];
+    if let Some(id) = client_id {
+        fields.push((Ident::new("__client"), Value::Int(id)));
+    }
+    Value::struct_("Request", fields)
 }
 
 pub(crate) fn builtin_http_client_post(args: &[Value]) -> RuntimeResult<Value> {
     let url = args.get(1).and_then(as_str).unwrap_or("");
-    Ok(pending_request("POST", url))
+    Ok(pending_request_for("POST", url, client_id_of(args.first())))
 }
 
 pub(crate) fn builtin_http_client_put(args: &[Value]) -> RuntimeResult<Value> {
     let url = args.get(1).and_then(as_str).unwrap_or("");
-    Ok(pending_request("PUT", url))
+    Ok(pending_request_for("PUT", url, client_id_of(args.first())))
 }
 
 pub(crate) fn builtin_http_client_options(args: &[Value]) -> RuntimeResult<Value> {
     let url = args.get(1).and_then(as_str).unwrap_or("");
-    Ok(pending_request("OPTIONS", url))
+    Ok(pending_request_for(
+        "OPTIONS",
+        url,
+        client_id_of(args.first()),
+    ))
 }
 
 pub(crate) fn builtin_http_client_delete(args: &[Value]) -> RuntimeResult<Value> {
     let url = args.get(1).and_then(as_str).unwrap_or("");
-    Ok(pending_request("DELETE", url))
+    Ok(pending_request_for(
+        "DELETE",
+        url,
+        client_id_of(args.first()),
+    ))
 }
 
 pub(crate) fn builtin_http_client_head(args: &[Value]) -> RuntimeResult<Value> {
     let url = args.get(1).and_then(as_str).unwrap_or("");
-    Ok(pending_request("HEAD", url))
+    Ok(pending_request_for("HEAD", url, client_id_of(args.first())))
 }
 
 /// `Client::request(method, url, body, headers) -> Result<Response, String>`
@@ -796,8 +944,7 @@ pub(crate) fn builtin_http_client_request(args: &[Value]) -> RuntimeResult<Value
     } else {
         Some(body.as_bytes())
     };
-    let (max_redirects, timeout_ms) = client_config(args.first());
-    let client = match configured_std_client(max_redirects, timeout_ms) {
+    let client = match client_for_request(args.first()) {
         Ok(c) => c,
         Err(e) => return Ok(crate::builtins::err_variant(e)),
     };
@@ -818,9 +965,9 @@ pub(crate) fn builtin_http_client_request_bytes(args: &[Value]) -> RuntimeResult
         )));
     };
     let url = args.get(2).and_then(as_str).unwrap_or("");
-    // Same dual Array/IntArray decode as `http::request_bytes`:
-    // tree-walker hands Value::Array of Ints, the bytecode VM
-    // specialises to Value::IntArray.
+    // Same dual Array/IntArray decode as `http::request_bytes`: a
+    // byte body can arrive as Value::Array of Ints or, when the VM
+    // specialises int vectors, as Value::IntArray.
     let body: Vec<u8> = match args.get(3) {
         Some(Value::Array(items)) => items
             .iter()
@@ -842,8 +989,7 @@ pub(crate) fn builtin_http_client_request_bytes(args: &[Value]) -> RuntimeResult
     } else {
         Some(body.as_slice())
     };
-    let (max_redirects, timeout_ms) = client_config(args.first());
-    let client = match configured_std_client(max_redirects, timeout_ms) {
+    let client = match client_for_request(args.first()) {
         Ok(c) => c,
         Err(e) => return Ok(crate::builtins::err_variant(e)),
     };
@@ -856,6 +1002,12 @@ pub(crate) fn builtin_http_client_request_bytes(args: &[Value]) -> RuntimeResult
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Standalone pending request (no originating client) for the
+    /// `Request::header`/`body`/`send` chain tests.
+    fn pending_request(method: &str, url: &str) -> Value {
+        pending_request_for(method, url, None)
+    }
 
     fn request_field<'a>(req: &'a Value, name: &str) -> Option<&'a Value> {
         let Value::Struct(inner) = req else {

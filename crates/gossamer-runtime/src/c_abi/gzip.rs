@@ -197,3 +197,49 @@ pub unsafe extern "C" fn gos_rt_compress_zlib_decompress(data: *const super::vec
         }
     })
 }
+
+/// `compress::zstd::encode(data) -> Result<[u8], Error>` — Zstandard at
+/// the default level (3).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_compress_zstd_encode(data: *const super::vec::GosVec) -> i128 {
+    ffi_entry!(0i128, {
+        let input = unsafe { gosvec_u8_to_vec(data) };
+        match zstd::stream::encode_all(&input[..], 3) {
+            Ok(out) => ok_bytes_result(&out),
+            Err(e) => err_bytes_result(&format!("zstd: {e}")),
+        }
+    })
+}
+
+/// `compress::zstd::encode_level(data, level) -> Result<[u8], Error>` —
+/// `level` clamped to 1..=22.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_compress_zstd_encode_level(
+    data: *const super::vec::GosVec,
+    level: i64,
+) -> i128 {
+    ffi_entry!(0i128, {
+        if !(1..=22).contains(&level) {
+            return err_bytes_result(&format!(
+                "zstd level out of range (expected 1..=22): {level}"
+            ));
+        }
+        let input = unsafe { gosvec_u8_to_vec(data) };
+        match zstd::stream::encode_all(&input[..], level as i32) {
+            Ok(out) => ok_bytes_result(&out),
+            Err(e) => err_bytes_result(&format!("zstd: {e}")),
+        }
+    })
+}
+
+/// `compress::zstd::decode(data) -> Result<[u8], Error>`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_compress_zstd_decode(data: *const super::vec::GosVec) -> i128 {
+    ffi_entry!(0i128, {
+        let input = unsafe { gosvec_u8_to_vec(data) };
+        match zstd::stream::decode_all(&input[..]) {
+            Ok(out) => ok_bytes_result(&out),
+            Err(e) => err_bytes_result(&format!("zstd: {e}")),
+        }
+    })
+}

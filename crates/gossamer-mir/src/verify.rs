@@ -281,6 +281,9 @@ fn check_statement(
         StatementKind::SetDiscriminant { place, .. } => {
             check_place(body, block, place, n_locals, errors);
         }
+        StatementKind::StaticStore { value, .. } => {
+            check_operand(body, block, value, n_locals, errors);
+        }
         StatementKind::Nop => {}
     }
 }
@@ -369,6 +372,8 @@ fn check_rvalue(
                 check_operand(body, block, op, n_locals, errors);
             }
         }
+        // No local operands: the static is referenced by symbol.
+        Rvalue::StaticLoad(_) => {}
     }
 }
 

@@ -31,11 +31,18 @@ impl<'tcx> FnBuilder<'tcx> {
         // full join — the global table has entries for both, and
         // the qualified key is unambiguous.
         let name = if segments.len() > 1 {
-            segments
-                .iter()
-                .map(|s| s.name.as_str())
-                .collect::<Vec<_>>()
-                .join("::")
+            // Strip `super::` / `crate::` / `self::` so a path written
+            // inside an inline `mod tests` resolves the flat global.
+            let stripped = strip_module_relative(segments);
+            if stripped.len() == 1 {
+                stripped[0].name.clone()
+            } else {
+                stripped
+                    .iter()
+                    .map(|s| s.name.as_str())
+                    .collect::<Vec<_>>()
+                    .join("::")
+            }
         } else {
             first.name.clone()
         };

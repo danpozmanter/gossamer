@@ -395,6 +395,38 @@ pub unsafe extern "C" fn gos_rt_str_as_bytes(s: *const c_char) -> *mut GosVec {
     })
 }
 
+/// `s.chars()` — materialises the string's Unicode scalar values as a
+/// fresh `*mut GosVec` of i64 codepoints (one 8-byte slot per char), so
+/// `for ch in s.chars()` reads each scalar via `gos_rt_vec_get_i64` and
+/// binds a `char`. Mirrors the interp builtin so `gos run` and
+/// `gos build` agree. The backing buffer + header are
+/// `Box::from_raw`-compatible (via `gos_rt_vec_with_capacity`) so the
+/// auto-emitted `gos_rt_vec_free` at scope-end reclaims them.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_str_chars(s: *const c_char) -> *mut GosVec {
+    ffi_entry!(std::ptr::null_mut(), {
+        let st = if s.is_null() {
+            ""
+        } else {
+            unsafe { CStr::from_ptr(s).to_str().unwrap_or("") }
+        };
+        let codepoints: Vec<i64> = st.chars().map(|c| i64::from(u32::from(c))).collect();
+        let v = unsafe { gos_rt_vec_with_capacity(8, codepoints.len() as i64) };
+        if v.is_null() {
+            return v;
+        }
+        unsafe {
+            let header = &mut *v;
+            let dst = header.ptr.cast::<i64>();
+            for (i, cp) in codepoints.iter().enumerate() {
+                *dst.add(i) = *cp;
+            }
+            header.len = codepoints.len() as i64;
+        }
+        v
+    })
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_str_byte_at(s: *const c_char, i: i64) -> i64 {
     ffi_entry!(-1, {
@@ -603,6 +635,43 @@ pub unsafe extern "C" fn gos_rt_str_concat_drop_a(
             }
         }
         result
+    })
+}
+
+/// Appends the decimal form of `n` straight onto growable string `acc`
+/// and returns the (possibly reallocated) accumulator. The digits format
+/// into a stack buffer, so the value reaches `acc` in a single copy — the
+/// fused form of `acc += format!("{}", n)` that skips the concat buffer and
+/// the throwaway result string.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_str_append_i64(acc: *const c_char, n: i64) -> *mut c_char {
+    ffi_entry!(std::ptr::null_mut(), {
+        use std::io::{Cursor, Write};
+        // 20 digits + sign fit in 21 bytes; the buffer stays zero-filled
+        // past the written run so the next byte is the NUL terminator.
+        let mut buf = [0u8; 24];
+        let mut cur = Cursor::new(&mut buf[..23]);
+        let _ = write!(cur, "{n}");
+        unsafe { gos_rt_str_concat_drop_a(acc, buf.as_ptr().cast()) }
+    })
+}
+
+/// Appends the decimal form of `x` straight onto growable string `acc`.
+/// See [`gos_rt_str_append_i64`]; the stack buffer holds every finite
+/// `f64`'s shortest round-tripping decimal, with a heap fallback for the
+/// pathological denormal lengths.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_str_append_f64(acc: *const c_char, x: f64) -> *mut c_char {
+    ffi_entry!(std::ptr::null_mut(), {
+        use std::io::{Cursor, Write};
+        let mut buf = [0u8; 512];
+        let mut cur = Cursor::new(&mut buf[..511]);
+        if write!(cur, "{x}").is_ok() {
+            unsafe { gos_rt_str_concat_drop_a(acc, buf.as_ptr().cast()) }
+        } else {
+            let cs = std::ffi::CString::new(format!("{x}")).unwrap_or_default();
+            unsafe { gos_rt_str_concat_drop_a(acc, cs.as_ptr()) }
+        }
     })
 }
 
@@ -2041,6 +2110,17 @@ pub unsafe extern "C" fn gos_rt_str_trim_matches(
     })
 }
 
+/// First Unicode scalar of `s`, or 32 (space) when `s` is empty or
+/// null. Backs the `strings::pad_left/pad_right` lowering, whose
+/// pad-char parameter is an `i64` codepoint but whose language-level
+/// argument is a String pad glyph.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_str_first_codepoint(s: *const c_char) -> i64 {
+    ffi_entry!(32, {
+        unsafe { cstr(s) }.chars().next().map_or(32, |c| c as i64)
+    })
+}
+
 /// `strings::pad_left(s, width, pad_char) -> String`. `pad_char` is
 /// the Unicode scalar value; invalid scalars fall back to a space.
 #[unsafe(no_mangle)]
@@ -2096,6 +2176,50 @@ pub unsafe extern "C" fn gos_rt_str_pad_right(
             }
             out
         };
+        alloc_cstring(out.as_bytes())
+    })
+}
+
+/// `__fmt_pad(s, width, fill, align)` — pads the already-rendered string `s`
+/// to `width` characters with the `fill` codepoint. `align`: 0 = right
+/// (pad on the left), 1 = left (pad on the right), 2 = center. Backs the
+/// `{:>N}` / `{:<N}` / `{:^N}` / `{:0N}` format specs.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_fmt_pad(
+    s: *const c_char,
+    width: i64,
+    fill: i64,
+    align: i64,
+) -> *mut c_char {
+    ffi_entry!(std::ptr::null_mut(), {
+        let text = if s.is_null() {
+            ""
+        } else {
+            unsafe { CStr::from_ptr(s).to_str().unwrap_or("") }
+        };
+        let width = usize::try_from(width.max(0)).unwrap_or(0);
+        let pad_char = u32::try_from(fill)
+            .ok()
+            .and_then(char::from_u32)
+            .unwrap_or(' ');
+        let count = text.chars().count();
+        if count >= width {
+            return alloc_cstring(text.as_bytes());
+        }
+        let total = width - count;
+        let (left, right) = match align {
+            1 => (0, total),                     // left-align: pad on the right
+            2 => (total / 2, total - total / 2), // center
+            _ => (total, 0),                     // right-align / default
+        };
+        let mut out = String::with_capacity(text.len() + total);
+        for _ in 0..left {
+            out.push(pad_char);
+        }
+        out.push_str(text);
+        for _ in 0..right {
+            out.push(pad_char);
+        }
         alloc_cstring(out.as_bytes())
     })
 }

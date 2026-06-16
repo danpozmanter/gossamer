@@ -62,8 +62,12 @@ pub unsafe extern "C" fn gos_rt_concat_str(s: *const c_char) {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_concat_i64(n: i64) {
     ffi_entry!((), {
-        let s = format!("{n}");
-        CONCAT_BUF.with(|b| b.borrow_mut().extend_from_slice(s.as_bytes()));
+        use std::io::Write;
+        // `Vec<u8>` is an `io::Write` sink, so the digits format straight
+        // into the buffer with no intermediate `String` allocation.
+        CONCAT_BUF.with(|b| {
+            let _ = write!(&mut *b.borrow_mut(), "{n}");
+        });
     });
 }
 
@@ -75,16 +79,20 @@ pub unsafe extern "C" fn gos_rt_concat_i64(n: i64) {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_concat_u64(n: u64) {
     ffi_entry!((), {
-        let s = format!("{n}");
-        CONCAT_BUF.with(|b| b.borrow_mut().extend_from_slice(s.as_bytes()));
+        use std::io::Write;
+        CONCAT_BUF.with(|b| {
+            let _ = write!(&mut *b.borrow_mut(), "{n}");
+        });
     });
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_concat_f64(x: f64) {
     ffi_entry!((), {
-        let s = format!("{x}");
-        CONCAT_BUF.with(|b| b.borrow_mut().extend_from_slice(s.as_bytes()));
+        use std::io::Write;
+        CONCAT_BUF.with(|b| {
+            let _ = write!(&mut *b.borrow_mut(), "{x}");
+        });
     });
 }
 

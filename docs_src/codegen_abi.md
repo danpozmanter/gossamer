@@ -15,8 +15,8 @@ compilation with a diagnostic.
 A generic instantiation `Foo<T>` compiles end-to-end when **every
 type parameter `T` is representable in 64 bits**:
 
-- All integer types (`i8` … `i128`* and `u8` … `u128`*, `isize`,
-  `usize`).
+- All integer types up to 64 bits (`i8` … `i64`, `u8` … `u64`,
+  `isize`, `usize`).
 - `f32`, `f64`.
 - `bool`, `char`.
 - `&T` and `&mut T` references — references are pointers, which
@@ -26,9 +26,9 @@ type parameter `T` is representable in 64 bits**:
   `WaitGroup`, `Atomic<i64>`. Each is a 64-bit pointer or handle
   to runtime-managed storage.
 
-\* `i128` and `u128` are passed as a pair of i64 slots, not a
-single one. `Vec<i128>` works; **a generic `T = i128` does not**
-in v1, because the monomorphic ABI is one slot per `T`.
+`i128` / `u128` are **rejected at type-check time** (`GT0014`): no
+tier has a 128-bit runtime representation. Use `i64` / `u64`, or
+split the value into two 64-bit halves.
 
 ## What fails to compile
 
@@ -75,7 +75,7 @@ because:
   are *not* monomorphised by the user — they are a single
   generic implementation in the runtime that takes a `T` slot.
   The runtime handles arbitrarily-sized elements internally
-  by allocating each `T` on the GC heap and the slot it stores
+  by allocating each `T` on the managed heap and the slot it stores
   is a pointer.
 - User generics over `&T` work for any `T` (since `&T` is a
   pointer = 64 bits).
@@ -95,7 +95,7 @@ fn id_ref<T>(x: &T) -> &T { x }   // works for any T
 
 Generic *types* with internal layout sensitivity (a hypothetical
 user `MyVec<T>` storing `T` inline) hit the same constraint. The
-v1 workaround is "store `&T`, let the GC own the body."
+v1 workaround is "store `&T`, let the runtime own the body."
 
 ## What changes in v1.x
 

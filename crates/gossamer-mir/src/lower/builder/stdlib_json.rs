@@ -302,6 +302,7 @@ impl<'a> Builder<'a> {
         let (rt_name, ret_ty) = match last {
             "parse" | "decode" => ("gos_rt_json_parse", self.result_json_value_error_adt_ty()),
             "render" | "encode" => ("gos_rt_json_render", self.tcx.string_ty()),
+            "valid" => ("gos_rt_json_valid", self.tcx.bool_ty()),
             // `json::set(obj, key, value) → json::Value` — append or
             // replace a named field on an object-shaped Value.
             "set" => ("gos_rt_json_set", self.tcx.json_value_ty()),
@@ -318,7 +319,7 @@ impl<'a> Builder<'a> {
             "as_i64" => ("gos_rt_json_as_i64_opt", self.option_i64_adt_ty()),
             "as_f64" => ("gos_rt_json_as_f64_opt", self.option_f64_adt_ty()),
             "as_str" => ("gos_rt_json_as_str_opt", self.option_string_adt_ty()),
-            "as_bool" => ("gos_rt_json_as_bool", self.tcx.bool_ty()),
+            "as_bool" => ("gos_rt_json_as_bool_opt", self.option_bool_adt_ty()),
             "as_array" => ("gos_rt_json_as_array_opt", self.option_json_array_adt_ty()),
             "keys" => ("gos_rt_json_keys_opt", self.option_string_vec_adt_ty()),
             "len" => (

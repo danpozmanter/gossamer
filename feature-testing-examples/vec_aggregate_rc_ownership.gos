@@ -1,0 +1,105 @@
+// Regression coverage for two coupled compiled-tier RC bugs found via
+// the atlas_db SQL engine benchmark:
+//
+//  1. A `Vec` of by-value aggregate elements that carry RC child
+//     pointers (a struct whose field is a heap enum / string) must OWN
+//     those children: push retains, free deep-frees. Before the fix the
+//     vec was shallow-freed and the source temp's fields were released
+//     at scope end, so a vec built in one function and RETURNED (it
+//     outlives the temp) left dangling enum pointers — a use-after-free
+//     when the caller walked them.
+//
+//  2. The loop-carried-release hoist nulled a string that was still
+//     live on a sibling branch of a `for` loop (a group-by match that
+//     reads the key in one arm and pushes it in another), collapsing
+//     every later group key to empty.
+//
+// Output must be bit-identical across the bytecode VM, Cranelift JIT,
+// and LLVM AOT tiers.
+
+enum Expr {
+    EColumn(String),
+    ELiteral(i64),
+    EWild,
+}
+
+struct Projection {
+    expr: Expr,
+    alias: String,
+}
+
+fn mk_proj(e: Expr) -> Projection {
+    Projection { expr: e, alias: "" }
+}
+
+// Built here and returned by value: the vec escapes this frame.
+fn build_projections() -> [Projection] {
+    let mut ps: [Projection] = []
+    ps.push(mk_proj(Expr::EColumn("id")))
+    ps.push(mk_proj(Expr::ELiteral(42)))
+    ps.push(mk_proj(Expr::EColumn("amount")))
+    ps.push(mk_proj(Expr::EWild))
+    ps
+}
+
+// Borrows the escaped vec and walks the heap enum field of each element.
+fn describe(ps: &[Projection]) -> i64 {
+    let mut score = 0
+    for p in ps {
+        match &p.expr {
+            Expr::EColumn(name) => { score += name.len() },
+            Expr::ELiteral(n) => { score += *n },
+            Expr::EWild => { score += 1 },
+        }
+    }
+    score
+}
+
+// Group-by accumulation: the inner `for k in &keys` arm reads `key`,
+// the `else` arm pushes it. Exercises the hoist forward-liveness guard.
+fn group_counts(labels: &[String]) -> i64 {
+    let mut keys: [String] = []
+    let mut counts: [i64] = []
+    for label in labels {
+        let key = format!("k:{}|", label.clone())
+        let mut idx: i64 = -1
+        let mut i: i64 = 0
+        for k in &keys {
+            if k.clone() == key { idx = i }
+            i += 1
+        }
+        if idx < 0 {
+            keys.push(key.clone())
+            counts.push(1)
+        } else {
+            counts[idx] += 1
+        }
+    }
+    let mut total = 0
+    let mut i: i64 = 0
+    for k in &keys {
+        println!("group {} = {}", k.clone(), counts[i])
+        total += counts[i]
+        i += 1
+    }
+    total
+}
+
+fn main() {
+    // Prelude assertions: identical pass behaviour on every tier.
+    assert(1 + 1 == 2)
+    assert_eq(6, 2 * 3)
+    assert(true, "always holds")
+
+    let ps = build_projections()
+    println!("score = {}", describe(&ps))
+
+    let mut labels: [String] = []
+    let names: [String; 4] = ["north", "south", "east", "west"]
+    let mut i: i64 = 0
+    while i < 10 {
+        labels.push(names[i % 4].clone())
+        i += 1
+    }
+    println!("total = {}", group_counts(&labels))
+}

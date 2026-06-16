@@ -112,6 +112,108 @@ pub fn format_float(value: f64) -> String {
     format_f64(value)
 }
 
+/// Parses an `i64` in `base` (2..=36), like Go's `strconv.ParseInt(s, base, 64)`.
+pub fn parse_i64_radix(text: &str, base: u32) -> Result<i64, ParseError> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return Err(ParseError::Empty);
+    }
+    if !(2..=36).contains(&base) {
+        return Err(ParseError::Invalid(format!("invalid base {base}")));
+    }
+    i64::from_str_radix(trimmed, base).map_err(|err| classify(err, trimmed))
+}
+
+/// Renders an `i64` in `base` (2..=36), like Go's `strconv.FormatInt(i, base)`.
+/// Out-of-range bases fall back to decimal. Digits a-z are lowercase.
+#[must_use]
+pub fn format_i64_radix(value: i64, base: u32) -> String {
+    if !(2..=36).contains(&base) {
+        return format_i64(value);
+    }
+    if value == 0 {
+        return "0".to_string();
+    }
+    let negative = value < 0;
+    // i128 widening so `i64::MIN` negates without overflow.
+    let mut n = i128::from(value).unsigned_abs();
+    let radix = u128::from(base);
+    let mut digits = Vec::new();
+    while n > 0 {
+        let d = (n % radix) as u32;
+        digits.push(std::char::from_digit(d, base).unwrap_or('0'));
+        n /= radix;
+    }
+    if negative {
+        digits.push('-');
+    }
+    digits.iter().rev().collect()
+}
+
+/// Wraps `s` in double quotes, escaping `"`, `\`, and control characters,
+/// producing a string that [`unquote`] reverses exactly.
+#[must_use]
+pub fn quote(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\t' => out.push_str("\\t"),
+            '\r' => out.push_str("\\r"),
+            c if c.is_control() => {
+                let _ = write!(out, "\\u{{{:04x}}}", c as u32);
+            }
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
+/// Reverses [`quote`]: strips the surrounding double quotes and unescapes the
+/// body. Errors when the input is not a well-formed quoted string.
+pub fn unquote(s: &str) -> Result<String, ParseError> {
+    if s.len() < 2 || !s.starts_with('"') || !s.ends_with('"') {
+        return Err(ParseError::Invalid(s.to_string()));
+    }
+    let inner = &s[1..s.len() - 1];
+    let mut out = String::with_capacity(inner.len());
+    let mut chars = inner.chars();
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+        match chars.next() {
+            Some('"') => out.push('"'),
+            Some('\\') => out.push('\\'),
+            Some('n') => out.push('\n'),
+            Some('t') => out.push('\t'),
+            Some('r') => out.push('\r'),
+            Some('u') => {
+                if chars.next() != Some('{') {
+                    return Err(ParseError::Invalid(s.to_string()));
+                }
+                let mut hex = String::new();
+                for hc in chars.by_ref() {
+                    if hc == '}' {
+                        break;
+                    }
+                    hex.push(hc);
+                }
+                let code = u32::from_str_radix(&hex, 16)
+                    .map_err(|_| ParseError::Invalid(s.to_string()))?;
+                out.push(char::from_u32(code).ok_or_else(|| ParseError::Invalid(s.to_string()))?);
+            }
+            _ => return Err(ParseError::Invalid(s.to_string())),
+        }
+    }
+    Ok(out)
+}
+
 fn classify(err: std::num::ParseIntError, text: &str) -> ParseError {
     use std::num::IntErrorKind;
     match err.kind() {

@@ -88,6 +88,26 @@ pub const RUNTIME: StdModule = StdModule {
             kind: StdItemKind::Function,
             doc: "Logical CPU cores visible to the process.",
         },
+        StdItem {
+            name: "collect_cycles",
+            kind: StdItemKind::Function,
+            doc: "Runs the reference-cycle collector and returns objects reclaimed.",
+        },
+        StdItem {
+            name: "arena_push",
+            kind: StdItemKind::Function,
+            doc: "Opens an arena region for bump allocation.",
+        },
+        StdItem {
+            name: "arena_pop",
+            kind: StdItemKind::Function,
+            doc: "Closes the innermost arena region, freeing its slabs.",
+        },
+        StdItem {
+            name: "set_panic_hook",
+            kind: StdItemKind::Function,
+            doc: "Installs a hook invoked with the message on panic.",
+        },
     ],
 };
 
@@ -146,6 +166,31 @@ pub const FLAG: StdModule = StdModule {
             name: "Error",
             kind: StdItemKind::Type,
             doc: "Error produced while parsing flags.",
+        },
+        StdItem {
+            name: "parse",
+            kind: StdItemKind::Function,
+            doc: "Parses the default flag set against the given args.",
+        },
+        StdItem {
+            name: "string",
+            kind: StdItemKind::Function,
+            doc: "Defines a string flag on the default set.",
+        },
+        StdItem {
+            name: "int",
+            kind: StdItemKind::Function,
+            doc: "Defines an integer flag on the default set.",
+        },
+        StdItem {
+            name: "bool",
+            kind: StdItemKind::Function,
+            doc: "Defines a boolean flag on the default set.",
+        },
+        StdItem {
+            name: "define",
+            kind: StdItemKind::Function,
+            doc: "Registers a flag definition on the default set.",
         },
     ],
 };
@@ -215,6 +260,11 @@ pub const TESTING: StdModule = StdModule {
             name: "check_eq",
             kind: StdItemKind::Function,
             doc: "Asserts equality, rendering a diff on failure.",
+        },
+        StdItem {
+            name: "check_ok",
+            kind: StdItemKind::Function,
+            doc: "Asserts a Result is Ok, recording without panicking.",
         },
     ],
 };
@@ -299,6 +349,36 @@ pub const TIME: StdModule = StdModule {
             name: "parse_rfc3339",
             kind: StdItemKind::Function,
             doc: "Parses an RFC 3339 timestamp into a `SystemTime`.",
+        },
+        StdItem {
+            name: "now_ms",
+            kind: StdItemKind::Function,
+            doc: "Wall-clock milliseconds since the Unix epoch.",
+        },
+        StdItem {
+            name: "now_nanos",
+            kind: StdItemKind::Function,
+            doc: "Wall-clock nanoseconds since the Unix epoch.",
+        },
+        StdItem {
+            name: "unix_ms",
+            kind: StdItemKind::Function,
+            doc: "Current Unix time in milliseconds.",
+        },
+        StdItem {
+            name: "monotonic_ms",
+            kind: StdItemKind::Function,
+            doc: "Monotonic clock reading in milliseconds.",
+        },
+        StdItem {
+            name: "monotonic_nanos",
+            kind: StdItemKind::Function,
+            doc: "Monotonic clock reading in nanoseconds.",
+        },
+        StdItem {
+            name: "since_ms",
+            kind: StdItemKind::Function,
+            doc: "Milliseconds elapsed since an earlier monotonic reading.",
         },
     ],
 };

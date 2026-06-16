@@ -1,0 +1,26 @@
+// Cross-tier fixture for `std::net::ip` — the stateless IP
+// classification surface (string in, bool/Result out), backed by
+// Rust's std::net::IpAddr on every tier. Deterministic: pure
+// computation, no sockets, prints a single line.
+//
+// Exercises is_v4 / is_v6 / is_valid / is_loopback (string predicates
+// reused from the wired `gos_rt_netip_*` shims) and parse (the new
+// `gos_rt_net_ip_parse` Result shim) observed via its Ok/Err
+// discriminant.
+
+use std::net
+
+fn main() {
+    assert(net::ip::is_v4("1.2.3.4"))
+    assert(!net::ip::is_v4("::1"))
+    assert(net::ip::is_v6("::1"))
+    assert(!net::ip::is_v6("1.2.3.4"))
+    assert(net::ip::is_valid("127.0.0.1"))
+    assert(!net::ip::is_valid("not-an-ip"))
+    assert(net::ip::is_loopback("127.0.0.1"))
+    assert(net::ip::is_loopback("::1"))
+    assert(!net::ip::is_loopback("8.8.8.8"))
+    assert(net::ip::parse("10.0.0.1").is_ok())
+    assert(net::ip::parse("nope").is_err())
+    println!("net_ip ok")
+}

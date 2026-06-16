@@ -71,6 +71,50 @@ pub unsafe extern "C" fn gos_rt_atomic_i64_fetch_add(a: *mut GosAtomicI64, delta
     })
 }
 
+// ---------------------------------------------------------------
+// Atomic<bool> primitive
+// ---------------------------------------------------------------
+//
+// An `AtomicBool` shares the `GosAtomicI64` storage (0 / 1), so the
+// constructor, load, and store live alongside the i64 family. The
+// dedicated symbols let the compiled tiers pin the load result to
+// `bool` so `{}` renders `true` / `false`, matching the VM, instead
+// of the raw `i64` the shared `gos_rt_atomic_i64_load` returns.
+
+/// Allocate a new atomic boolean initialised to `initial`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_atomic_bool_new(initial: bool) -> *mut GosAtomicI64 {
+    ffi_entry!(std::ptr::null_mut(), {
+        Box::into_raw(Box::new(GosAtomicI64 {
+            inner: AtomicI64::new(i64::from(initial)),
+        }))
+    })
+}
+
+/// Load an atomic boolean with sequentially-consistent ordering.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_atomic_bool_load(a: *const GosAtomicI64) -> bool {
+    ffi_entry!(false, {
+        if a.is_null() {
+            return false;
+        }
+        let a = unsafe { &*a };
+        a.inner.load(Ordering::SeqCst) != 0
+    })
+}
+
+/// Store into an atomic boolean with sequentially-consistent ordering.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_atomic_bool_store(a: *mut GosAtomicI64, val: bool) {
+    ffi_entry!((), {
+        if a.is_null() {
+            return;
+        }
+        let a = unsafe { &*a };
+        a.inner.store(i64::from(val), Ordering::SeqCst);
+    });
+}
+
 /// Acquire-ordered load. Cheaper than the SeqCst variant on
 /// architectures with relaxed memory models (ARM64, RISC-V); on
 /// x86 it lowers to the same instruction. Pair with the `_release`

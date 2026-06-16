@@ -1,0 +1,28 @@
+// A hot scalar-signature caller that, before inlining, called a small
+// helper returning a String (an excluded aggregate-signature body) —
+// which poisoned the caller's JIT eligibility. Post-inline the helper
+// is dissolved and `hot_sum` is a self-contained promotable body.
+fn label_len(i: i64) -> i64 {
+    let s = format!("item-{}", i)
+    s.len()
+}
+
+fn hot_sum(n: i64) -> i64 {
+    let mut acc = 0
+    let mut i = 0
+    while i < n {
+        acc += label_len(i)
+        i += 1
+    }
+    acc
+}
+
+fn main() {
+    let mut total = 0
+    let mut k = 0
+    while k < 2000 {
+        total += hot_sum(50)
+        k += 1
+    }
+    println!("{}", total)
+}

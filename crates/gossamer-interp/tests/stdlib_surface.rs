@@ -1,6 +1,6 @@
 //! Integration tests for stdlib surface that previously had Rust-side
 //! implementations but no Gossamer-callable bindings. Each test runs
-//! a small `.gos` program through the full frontend + interpreter
+//! a small `.gos` program through the full frontend + VM
 //! pipeline and asserts on the captured stdout.
 
 #![allow(clippy::needless_raw_string_hashes)]
@@ -8,7 +8,7 @@
 use std::cell::RefCell;
 
 use gossamer_hir::lower_source_file;
-use gossamer_interp::{Interpreter, set_stdout_writer};
+use gossamer_interp::{Vm, set_stdout_writer};
 use gossamer_lex::SourceMap;
 use gossamer_parse::parse_source_file;
 use gossamer_resolve::resolve_source_file;
@@ -31,8 +31,8 @@ fn run(source: &str) -> String {
     let mut tcx = TyCtxt::new();
     let (table, _type_diags) = typecheck_source_file(&sf, &resolutions, &mut tcx);
     let program = lower_source_file(&sf, &resolutions, &table, &mut tcx);
-    let mut interp = Interpreter::new();
-    interp.load(&program);
+    let mut interp = Vm::new();
+    interp.load(&program, tcx).expect("vm load");
     CAPTURED.with(|cell| cell.borrow_mut().clear());
     let prev = set_stdout_writer(capture_writer);
     let result = interp.call("main", Vec::new());
@@ -189,9 +189,14 @@ fn once_call_runs_exactly_once() {
     let src = r#"
 fn main() {
     let o = Once::new()
-    println(Once::call(o))
-    println(Once::call(o))
+    let first = Once::call(o, || { println("init") })
+    let second = Once::call(o, || { println("init") })
+    println(first)
+    println(second)
 }
 "#;
-    assert_eq!(run(src), "true\nfalse\n");
+    // The closure body runs on the first call only ("init" printed
+    // once); `Once::call` returns true on the call that executed the
+    // body and false afterwards.
+    assert_eq!(run(src), "init\ntrue\nfalse\n");
 }

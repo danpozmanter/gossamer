@@ -54,7 +54,7 @@ impl OutputFormat {
 /// that tier; an explicit value is either `"pass"` or `"fail"`.
 #[derive(Debug, Clone, Default)]
 pub struct TierStatus {
-    /// Tree-walker / bytecode VM tier outcome.
+    /// Bytecode VM (`gos run`) tier outcome.
     pub vm: Option<String>,
     /// Cranelift JIT tier outcome.
     pub cranelift: Option<String>,

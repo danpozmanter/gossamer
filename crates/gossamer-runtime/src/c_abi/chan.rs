@@ -471,32 +471,53 @@ fn record_chan_handoff(chan: &GosChan) {
     crate::race::record_sync(u32::try_from(from).unwrap_or(0), to);
 }
 
-/// Closes a channel. Returns `0` on success, `-1` if `c` is null,
-/// `-2` if the channel was already closed (double-close used to
-/// abort the process; the runtime now returns an error code so a
-/// stray double-close in user code becomes a recoverable
-/// diagnostic instead of a process-wide crash). Callers may
-/// ignore the return value — the prior `()` signature is binary-
-/// compatible with the new `i32` one under SysV (callee fills
-/// `%rax`, caller ignores).
+/// Closes `chan` if it is not already closed, returning `true` when
+/// this call performed the close and `false` when it was already
+/// closed. Never panics: the reclamation path (`gos_rt_chan_drop`)
+/// closes through here so a channel the user already closed
+/// explicitly is reclaimed without a spurious double-close panic.
+pub(crate) fn chan_close_idempotent(chan: &GosChan) -> bool {
+    {
+        let mut guard = chan.closed.lock();
+        if *guard {
+            return false;
+        }
+        *guard = true;
+    }
+    wake_all(chan);
+    true
+}
+
+/// Closes a channel. Returns `0` on success and `-1` if `c` is null.
+/// Closing an already-closed channel panics with
+/// `close of closed channel`, matching Go. The panic is
+/// goroutine-scoped (via `gos_rt_panic`): it unwinds to the
+/// coroutine boundary inside a spawned goroutine (isolating only
+/// that goroutine) and exits 101 on the main goroutine — it never
+/// aborts the whole process. Callers may ignore the return value.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_chan_close(c: *mut GosChan) -> i32 {
-    ffi_entry!(-1, {
+    // `None` = null channel, `Some(false)` = already closed. The close
+    // itself runs under the FFI catch-guard; the double-close panic is
+    // raised below, *outside* the guard, so a goroutine-scoped unwind
+    // reaches the coroutine boundary instead of being swallowed and
+    // converted to an FFI-entry sentinel.
+    let outcome = ffi_entry!(None, {
         if c.is_null() {
-            return -1;
+            None
+        } else {
+            Some(chan_close_idempotent(unsafe { &*c }))
         }
-        let chan = unsafe { &*c };
-        {
-            let mut guard = chan.closed.lock();
-            if *guard {
-                eprintln!("gossamer runtime: channel already closed (ignored)");
-                return -2;
-            }
-            *guard = true;
+    });
+    match outcome {
+        None => -1,
+        Some(true) => 0,
+        Some(false) => {
+            let cs = std::ffi::CString::new("close of closed channel").unwrap();
+            unsafe { super::gos_rt_panic(cs.as_ptr()) };
+            0
         }
-        wake_all(chan);
-        0
-    })
+    }
 }
 
 /// Drops a channel created with `gos_rt_chan_new`.
@@ -517,9 +538,10 @@ pub unsafe extern "C" fn gos_rt_chan_drop(c: *mut GosChan) {
         // because callers may also drop a `Box<GosChan>` directly in
         // tests without going through this entry point.
         unsafe {
-            // Discard the close result — double-close is now an error
-            // code, not a process abort. Drop still runs.
-            let _ = gos_rt_chan_close(c);
+            // Idempotent close for reclamation — must not panic if the
+            // user already closed this channel explicitly (the
+            // user-facing `gos_rt_chan_close` panics on double-close).
+            chan_close_idempotent(&*c);
             drop(Box::from_raw(c));
         }
     });
@@ -544,7 +566,8 @@ impl Drop for GosChan {
 // lowering free of array construction while the transfer stays atomic inside
 // `wait` (no recheck-after-return TOCTOU). Semantics match the VM walker:
 // lowest-index ready arm wins (deterministic source order), a closed+drained
-// recv arm is not ready, and the default arm fires only when nothing else is.
+// recv arm is always ready (yielding the element-type zero value, matching
+// Go), and the default arm fires only when nothing else is.
 
 enum SelectArmRt {
     Recv(*mut GosChan),
@@ -641,6 +664,16 @@ pub unsafe extern "C" fn gos_rt_select_wait(b: *mut SelectBuilder) -> i64 {
                         record_chan_handoff(chan);
                         wake_one_send(chan);
                         builder.last_value = tmp;
+                        return i as i64;
+                    }
+                    // Go semantics: a closed+drained recv arm is always
+                    // ready, yielding the element-type zero value. Hold the
+                    // `buf` lock while reading `closed` (same lock order as
+                    // `gos_rt_chan_recv`) so an empty-then-closed transition
+                    // is observed atomically.
+                    if *chan.closed.lock() {
+                        drop(guard);
+                        builder.last_value = 0;
                         return i as i64;
                     }
                 } else if *kind == 1 {

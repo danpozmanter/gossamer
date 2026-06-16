@@ -72,6 +72,8 @@ struct Primitives {
     error: Option<Ty>,
     json_value: Option<Ty>,
     dyn_error: Option<Ty>,
+    duration: Option<Ty>,
+    instant: Option<Ty>,
 }
 
 impl TyCtxt {
@@ -215,6 +217,30 @@ impl TyCtxt {
         ty
     }
 
+    /// Interns the transparent `time::Duration` newtype. Backed by an
+    /// `i64` at runtime; the distinct kind only steers method-form
+    /// accessor dispatch.
+    pub fn duration_ty(&mut self) -> Ty {
+        if let Some(ty) = self.primitives.duration {
+            return ty;
+        }
+        let ty = self.intern(TyKind::Duration);
+        self.primitives.duration = Some(ty);
+        ty
+    }
+
+    /// Interns the transparent `time::Instant` newtype. Backed by an
+    /// `i64` (monotonic-ms) at runtime; the distinct kind only steers
+    /// method-form accessor dispatch (`inst.elapsed_ms()`).
+    pub fn instant_ty(&mut self) -> Ty {
+        if let Some(ty) = self.primitives.instant {
+            return ty;
+        }
+        let ty = self.intern(TyKind::Instant);
+        self.primitives.instant = Some(ty);
+        ty
+    }
+
     /// Interns an integer primitive.
     pub fn int_ty(&mut self, int: IntTy) -> Ty {
         self.intern(TyKind::Int(int))
@@ -236,6 +262,46 @@ impl TyCtxt {
     #[must_use]
     pub fn struct_field_tys(&self, def: gossamer_resolve::DefId) -> Option<&[Ty]> {
         self.struct_fields.get(&def).map(Vec::as_slice)
+    }
+
+    /// Inline slot size in bytes of a value of type `ty` on the compiled
+    /// tiers, where every slot is 8-byte-aligned. Aggregates sum their
+    /// fields' rounded-up slot widths; `Option`/`Result` are the 2-word
+    /// (16-byte) by-value representation; opaque stdlib handles are one
+    /// slot. The MIR builder's `type_slot_bytes` delegates here so the
+    /// vec-element-layout passes and the builder agree exactly.
+    #[must_use]
+    pub fn slot_bytes(&self, ty: Ty) -> u32 {
+        match self.kind_of(ty) {
+            TyKind::Tuple(elems) => {
+                let total: u32 = elems.iter().map(|t| self.slot_bytes(*t).max(8) / 8).sum();
+                total.max(1) * 8
+            }
+            TyKind::Array { elem, len } => {
+                let elem_bytes = self.slot_bytes(*elem).max(8);
+                u32::try_from(*len).unwrap_or(1).saturating_mul(elem_bytes)
+            }
+            TyKind::Adt { def, .. } => {
+                if def.local == u32::MAX || def.local == u32::MAX - 1 {
+                    return 16;
+                }
+                if def.local >= u32::MAX - 6 {
+                    return 8;
+                }
+                if let Some(field_tys) = self.struct_field_tys(*def) {
+                    let total_slots: u32 = field_tys
+                        .iter()
+                        .map(|t| self.slot_bytes(*t).max(8) / 8)
+                        .sum();
+                    return total_slots.max(1) * 8;
+                }
+                8
+            }
+            TyKind::Bool => 1,
+            TyKind::Char => 4,
+            TyKind::Int(_) | TyKind::Float(_) | TyKind::String => 8,
+            _ => 8,
+        }
     }
 
     /// Records a human-readable name for the given `DefId`.
@@ -328,6 +394,22 @@ impl TyCtxt {
         if matches!(
             self.kind(ty),
             Some(TyKind::Adt { def, .. }) if def.local == u32::MAX || def.local == u32::MAX - 1
+        ) {
+            return false;
+        }
+        // Opaque runtime-handle / heap-blob stdlib structs — `fs::DirInfo`
+        // (`u32::MAX - 2`), `process::Output` (`- 3`), `http::ResponseStream`
+        // (`- 4`), and `http::Response` (`- 5`). Each is a plain `Box`
+        // handle with no RC header, so `gos_rt_rc_release` on the whole
+        // local reads a non-existent header and corrupts the heap. They are
+        // never reference-counted: handle locals leak (process-teardown
+        // reclaim) exactly like `http::Client` / SQL handles. (`u32::MAX`
+        // Result / `- 1` Option already returned above; `- 6` Weak stays
+        // RC-managed via the weak helpers.)
+        if matches!(
+            self.kind(ty),
+            Some(TyKind::Adt { def, .. })
+                if (u32::MAX - 5..=u32::MAX - 2).contains(&def.local)
         ) {
             return false;
         }

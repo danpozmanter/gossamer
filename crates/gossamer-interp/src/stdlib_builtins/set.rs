@@ -115,6 +115,16 @@ pub(crate) fn install_set(globals: &mut Vec<(&'static str, Value)>) {
         ("HashSet::clear", builtin_set_clear),
         ("HashSet::to_vec", builtin_set_to_vec),
         ("HashSet::iter", builtin_set_to_vec),
+        ("HashSet::union", builtin_set_union),
+        ("HashSet::intersection", builtin_set_intersection),
+        ("HashSet::difference", builtin_set_difference),
+        (
+            "HashSet::symmetric_difference",
+            builtin_set_symmetric_difference,
+        ),
+        ("HashSet::is_subset", builtin_set_is_subset),
+        ("HashSet::is_superset", builtin_set_is_superset),
+        ("HashSet::is_disjoint", builtin_set_is_disjoint),
         ("collections::HashSet::new", builtin_set_new),
     ];
     for (name, call) in entries {
@@ -252,36 +262,192 @@ pub(crate) fn builtin_set_to_vec(args: &[Value]) -> RuntimeResult<Value> {
     let values: Vec<Value> = SET_REGISTRY.with(|r| {
         r.borrow()
             .get(&id)
-            .map(|s| s.iter().map(MapKey::to_value).collect())
+            .map(|s| {
+                // Sort for deterministic, cross-tier-identical order — a
+                // `HashSet`'s iteration order is otherwise unstable
+                // (RandomState) and differs run-to-run and across tiers.
+                let mut keys: Vec<MapKey> = s.iter().cloned().collect();
+                keys.sort();
+                keys.iter().map(MapKey::to_value).collect()
+            })
             .unwrap_or_default()
     });
     Ok(Value::Array(Arc::new(values)))
 }
 
+fn set_pair_ids(args: &[Value]) -> Option<(i64, i64)> {
+    Some((
+        args.first().and_then(set_id_of)?,
+        args.get(1).and_then(set_id_of)?,
+    ))
+}
+
+/// Runs a binary set operation over the two operand handles and stores the
+/// result under a fresh handle.
+fn set_binary_op(
+    args: &[Value],
+    op: impl Fn(
+        &std::collections::HashSet<MapKey>,
+        &std::collections::HashSet<MapKey>,
+    ) -> std::collections::HashSet<MapKey>,
+) -> RuntimeResult<Value> {
+    let result = match set_pair_ids(args) {
+        Some((a, b)) => SET_REGISTRY.with(|r| {
+            let r = r.borrow();
+            let sa = r.get(&a).cloned().unwrap_or_default();
+            let sb = r.get(&b).cloned().unwrap_or_default();
+            op(&sa, &sb)
+        }),
+        None => std::collections::HashSet::new(),
+    };
+    let id = next_set_handle();
+    SET_REGISTRY.with(|r| {
+        r.borrow_mut().insert(id, result);
+    });
+    Ok(set_handle(id))
+}
+
+fn set_predicate(
+    args: &[Value],
+    pred: impl Fn(&std::collections::HashSet<MapKey>, &std::collections::HashSet<MapKey>) -> bool,
+) -> RuntimeResult<Value> {
+    let result = match set_pair_ids(args) {
+        Some((a, b)) => SET_REGISTRY.with(|r| {
+            let r = r.borrow();
+            let sa = r.get(&a).cloned().unwrap_or_default();
+            let sb = r.get(&b).cloned().unwrap_or_default();
+            pred(&sa, &sb)
+        }),
+        None => false,
+    };
+    Ok(Value::Bool(result))
+}
+
+pub(crate) fn builtin_set_union(args: &[Value]) -> RuntimeResult<Value> {
+    set_binary_op(args, |a, b| a.union(b).cloned().collect())
+}
+
+pub(crate) fn builtin_set_intersection(args: &[Value]) -> RuntimeResult<Value> {
+    set_binary_op(args, |a, b| a.intersection(b).cloned().collect())
+}
+
+pub(crate) fn builtin_set_difference(args: &[Value]) -> RuntimeResult<Value> {
+    set_binary_op(args, |a, b| a.difference(b).cloned().collect())
+}
+
+pub(crate) fn builtin_set_symmetric_difference(args: &[Value]) -> RuntimeResult<Value> {
+    set_binary_op(args, |a, b| a.symmetric_difference(b).cloned().collect())
+}
+
+pub(crate) fn builtin_set_is_subset(args: &[Value]) -> RuntimeResult<Value> {
+    set_predicate(args, |a, b| a.is_subset(b))
+}
+
+pub(crate) fn builtin_set_is_superset(args: &[Value]) -> RuntimeResult<Value> {
+    set_predicate(args, |a, b| a.is_superset(b))
+}
+
+pub(crate) fn builtin_set_is_disjoint(args: &[Value]) -> RuntimeResult<Value> {
+    set_predicate(args, |a, b| a.is_disjoint(b))
+}
+
 // ----------------------------------------------------------------------
 // sync extras (atomics + mutex + once)
 
+use std::sync::LazyLock;
 use std::sync::atomic::{AtomicBool as StdAtomicBool, AtomicI64 as StdAtomicI64, Ordering};
 
-thread_local! {
-    pub(crate) static NEXT_ATOMIC_ID: RefCell<i64> = const { RefCell::new(1) };
-    #[allow(clippy::missing_const_for_thread_local)]
-    pub(crate) static ATOMIC_I64_REGISTRY: RefCell<StdHashMap<i64, Arc<StdAtomicI64>>> =
-        RefCell::new(StdHashMap::new());
-    #[allow(clippy::missing_const_for_thread_local)]
-    pub(crate) static ATOMIC_BOOL_REGISTRY: RefCell<StdHashMap<i64, Arc<StdAtomicBool>>> =
-        RefCell::new(StdHashMap::new());
-    #[allow(clippy::missing_const_for_thread_local)]
-    pub(crate) static MUTEX_REGISTRY: RefCell<StdHashMap<i64, Arc<parking_lot::Mutex<Value>>>> =
-        RefCell::new(StdHashMap::new());
-    #[allow(clippy::missing_const_for_thread_local)]
-    pub(crate) static ONCE_REGISTRY: RefCell<StdHashMap<i64, Arc<parking_lot::Once>>> =
-        RefCell::new(StdHashMap::new());
-    #[allow(clippy::missing_const_for_thread_local, clippy::type_complexity)]
-    pub(crate) static SYNC_MAP_REGISTRY: RefCell<
-        StdHashMap<i64, Arc<parking_lot::RwLock<StdHashMap<String, String>>>>,
-    > = RefCell::new(StdHashMap::new());
+/// Process-global registry shared across goroutines. The sync
+/// primitives (atomics, mutex, once, map) hand user code an integer
+/// handle; the real `Arc<...>` lives here keyed by that handle. This
+/// MUST be global rather than `thread_local!`: goroutines run on an OS
+/// worker-thread pool, so a handle minted on one thread has to resolve
+/// on another (a `thread_local!` registry silently lost every
+/// cross-goroutine update). A `ReentrantMutex<RefCell<_>>` keeps the
+/// old `.with(|r| r.borrow()/.borrow_mut())` call sites unchanged while
+/// serializing cross-thread access; same-thread reentrancy still hits
+/// RefCell's borrow checks exactly as the previous thread_local did.
+pub(crate) struct GlobalReg<T: 'static>(LazyLock<parking_lot::ReentrantMutex<RefCell<T>>>);
+
+impl<T: 'static> GlobalReg<T> {
+    pub(crate) const fn new(init: fn() -> parking_lot::ReentrantMutex<RefCell<T>>) -> Self {
+        Self(LazyLock::new(init))
+    }
+
+    pub(crate) fn with<R>(&self, f: impl FnOnce(&RefCell<T>) -> R) -> R {
+        let guard = self.0.lock();
+        f(&guard)
+    }
 }
+
+pub(crate) static NEXT_ATOMIC_ID: GlobalReg<i64> =
+    GlobalReg::new(|| parking_lot::ReentrantMutex::new(RefCell::new(1)));
+pub(crate) static ATOMIC_I64_REGISTRY: GlobalReg<StdHashMap<i64, Arc<StdAtomicI64>>> =
+    GlobalReg::new(|| parking_lot::ReentrantMutex::new(RefCell::new(StdHashMap::new())));
+pub(crate) static ATOMIC_BOOL_REGISTRY: GlobalReg<StdHashMap<i64, Arc<StdAtomicBool>>> =
+    GlobalReg::new(|| parking_lot::ReentrantMutex::new(RefCell::new(StdHashMap::new())));
+pub(crate) static MUTEX_REGISTRY: GlobalReg<StdHashMap<i64, Arc<MutexCell>>> =
+    GlobalReg::new(|| parking_lot::ReentrantMutex::new(RefCell::new(StdHashMap::new())));
+
+/// Backing state for an interpreter `sync::Mutex`. The lock is held
+/// from a `lock()` call until the matching `unlock()`, so a
+/// read-modify-write on shared state performed by user code between
+/// the two is serialized across goroutines — mirroring the compiled
+/// tier's `gos_rt_mutex_lock`/`gos_rt_mutex_unlock`. Acquisition parks
+/// the contending goroutine's worker thread on the condvar (the same
+/// blocking discipline `Channel::recv` uses) rather than spinning.
+pub(crate) struct MutexCell {
+    /// `true` while a goroutine holds the lock.
+    held: parking_lot::Mutex<bool>,
+    /// Signalled by `unlock()` so one parked acquirer can proceed.
+    available: parking_lot::Condvar,
+    /// Protected payload, readable on `lock()` and writable via
+    /// `store()`. Guarded by its own short-held lock so it never
+    /// contends with the held mutual-exclusion lock.
+    value: parking_lot::Mutex<Value>,
+}
+
+impl MutexCell {
+    /// Creates an unlocked cell protecting `value`.
+    pub(crate) fn new(value: Value) -> Self {
+        Self {
+            held: parking_lot::Mutex::new(false),
+            available: parking_lot::Condvar::new(),
+            value: parking_lot::Mutex::new(value),
+        }
+    }
+
+    /// Acquires the lock, parking until it is free, and returns a
+    /// clone of the protected value.
+    pub(crate) fn lock(&self) -> Value {
+        let mut held = self.held.lock();
+        while *held {
+            self.available.wait(&mut held);
+        }
+        *held = true;
+        drop(held);
+        self.value.lock().clone()
+    }
+
+    /// Releases the lock and wakes one parked acquirer.
+    pub(crate) fn unlock(&self) {
+        let mut held = self.held.lock();
+        *held = false;
+        drop(held);
+        self.available.notify_one();
+    }
+
+    /// Overwrites the protected value.
+    pub(crate) fn store(&self, value: Value) {
+        *self.value.lock() = value;
+    }
+}
+pub(crate) static ONCE_REGISTRY: GlobalReg<StdHashMap<i64, Arc<parking_lot::Once>>> =
+    GlobalReg::new(|| parking_lot::ReentrantMutex::new(RefCell::new(StdHashMap::new())));
+#[allow(clippy::type_complexity)]
+pub(crate) static SYNC_MAP_REGISTRY: GlobalReg<
+    StdHashMap<i64, Arc<parking_lot::RwLock<StdHashMap<String, String>>>>,
+> = GlobalReg::new(|| parking_lot::ReentrantMutex::new(RefCell::new(StdHashMap::new())));
 
 pub(crate) fn next_atomic_id() -> i64 {
     NEXT_ATOMIC_ID.with(|c| {

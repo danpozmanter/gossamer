@@ -404,10 +404,11 @@ fn compute_predecessors(body: &Body) -> Vec<Vec<BlockId>> {
 }
 
 fn stmt_reads_local(stmt: &crate::ir::Statement, local: Local) -> bool {
-    if let StatementKind::Assign { rvalue, .. } = &stmt.kind {
-        return rvalue_reads_local(rvalue, local);
+    match &stmt.kind {
+        StatementKind::Assign { rvalue, .. } => rvalue_reads_local(rvalue, local),
+        StatementKind::StaticStore { value, .. } => operand_reads_local(value, local),
+        _ => false,
     }
-    false
 }
 
 fn stmt_writes_local(stmt: &crate::ir::Statement, local: Local) -> bool {
@@ -432,6 +433,8 @@ fn rvalue_reads_local(rvalue: &Rvalue, local: Local) -> bool {
         Rvalue::Ref { place, .. } => place_reads_local(place, local),
         Rvalue::Len(place) => place_reads_local(place, local),
         Rvalue::CallIntrinsic { args, .. } => args.iter().any(|op| operand_reads_local(op, local)),
+        // No local operands; the static is referenced by symbol.
+        Rvalue::StaticLoad(_) => false,
     }
 }
 

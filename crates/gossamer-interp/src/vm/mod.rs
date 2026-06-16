@@ -88,24 +88,15 @@ use crate::builtins;
 use crate::bytecode;
 use crate::bytecode::{FnChunk, Op};
 use crate::compile::compile_fn;
-use crate::interp::Interpreter;
 use crate::jit_call;
 use crate::value::{MapKey, RuntimeError, RuntimeResult, SmolStr, Value};
 
 /// Linked program: every global the VM needs to execute a call.
 ///
-/// The VM bundles a tree-walker `Interpreter` so that
-/// `Op::EvalDeferred` can hand off expression kinds the VM
-/// compiler doesn't native-lower yet. The shared interpreter
-/// receives the same global table (built-ins + compiled
-/// functions) and is consulted only for the delegated
-/// expression's subtree — the VM keeps driving everything else.
-///
-/// The walker sits behind a `RefCell` rather than a `Mutex`:
-/// `Vm::run` is the single writer and runs fully on the calling
-/// thread, so there's no concurrent-access to guard against. A
-/// mutex's per-call atomic swap showed up as the #1 hot spot in
-/// tight-loop programs that go through `Op::EvalDeferred`.
+/// The VM compiles HIR directly to bytecode and lowers every
+/// construct natively; there is no fallback evaluator. The global
+/// table holds the built-in intrinsics plus every compiled function,
+/// const, and static.
 pub struct Vm {
     /// Per-Vm overlay holding user-defined functions, consts, and
     /// statics. Lookups consult this first; on miss they fall back
@@ -118,13 +109,6 @@ pub struct Vm {
     /// construction. Pre-lazy: every `Vm::new` cloned all ~330
     /// entries into its own HashMap. Post-lazy: a refcount bump.
     pub(crate) prelude: Arc<rustc_hash::FxHashMap<&'static str, Global>>,
-    pub(crate) walker: RefCell<Interpreter>,
-    /// Snapshot of the loaded walker (user fn table included), taken
-    /// at the end of [`Vm::load`]. Goroutine pool workers seed their
-    /// bundled walker from this so Native builtins running off-main
-    /// (e.g. `http::serve` dispatching `App::serve`) resolve user
-    /// functions; a fresh `Interpreter::new()` walker has none.
-    pub(crate) walker_proto: Option<Arc<Interpreter>>,
     /// Frame pool: reused register-file storage handed out at
     /// `run()` entry and returned on exit. Eliminates the per-
     /// call `Vec<Value>` / `Vec<f64>` / `Vec<i64>` malloc storm
@@ -214,12 +198,36 @@ pub struct Vm {
     /// so unbounded mutual or direct recursion aborts instead of spinning
     /// the CPU indefinitely through heap-allocated frame allocation.
     pub(crate) call_depth: Cell<usize>,
+    /// Source map published by `gos test --coverage` (via
+    /// [`Vm::set_source_map`]) before [`Vm::load`]. When set and
+    /// `gossamer_runtime::coverage` is enabled, the compiler resolves
+    /// each statement's span to `(file, line)` and emits an
+    /// [`crate::bytecode::Op::CovHit`] against a pre-registered counter
+    /// slot, so the bytecode tier records line coverage into the same
+    /// global table the LLVM AOT tier instruments. `None` for every
+    /// non-coverage path (`gos run`, plain `gos test`).
+    pub(crate) source_map: Option<Arc<gossamer_lex::SourceMap>>,
 }
 
 /// Per-`Vm` per-chunk dispatch caches. Pinned inside
 /// [`Vm::chunk_state_arena`]; references handed out by
 /// [`Vm::chunk_state_for`] are valid for the lifetime of the
 /// owning `Vm`.
+/// Memoised JIT-override resolution for a chunk. `Unresolved` until
+/// the first call after the one-shot JIT install; then fixed (the
+/// override map only shrinks afterward, so a cached resolution — even
+/// an `Arc`-held evicted entry — stays valid).
+#[derive(Clone, Default)]
+pub(crate) enum JitResolve {
+    /// Not yet resolved against the installed override map.
+    #[default]
+    Unresolved,
+    /// Resolved: this chunk has no native override (stays bytecode).
+    None,
+    /// Resolved: pre-computed dispatch data to call through.
+    Some(std::sync::Arc<crate::jit_call::Prepared>),
+}
+
 pub(crate) struct ChunkState {
     /// Inline-cache slots for `Op::Call` / `Op::MethodCall` sites.
     /// One slot per `cache_idx`. `RefCell` because the dispatch
@@ -241,6 +249,10 @@ pub(crate) struct ChunkState {
     /// `Cell<i32>` (single-thread mutation only — each `Vm` owns
     /// its own counter, so cross-thread atomicity is unneeded).
     pub(crate) hot_counter: Cell<i32>,
+    /// Per-chunk memoised JIT override (see [`JitResolve`]). Lets the
+    /// hot path skip the shared `RwLock<JitState>` probe and the
+    /// `HashMap<String>` name lookup after the first post-install call.
+    pub(crate) jit_resolve: RefCell<JitResolve>,
 }
 
 impl ChunkState {
@@ -268,6 +280,7 @@ impl ChunkState {
                 .map(|_| crate::bytecode::FieldCacheSlot::default())
                 .collect(),
             hot_counter: Cell::new(initial),
+            jit_resolve: RefCell::new(JitResolve::Unresolved),
         }
     }
 }
@@ -597,7 +610,7 @@ impl Drop for FrameGuard<'_> {
 
 impl std::fmt::Debug for Vm {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // Intentionally non-exhaustive: the FramePool, walker, JIT
+        // Intentionally non-exhaustive: the FramePool, JIT
         // artifact, and tcx snapshot are gnarly to render and add
         // no debugging signal beyond the global names.
         f.debug_struct("Vm")
@@ -613,6 +626,13 @@ impl std::fmt::Debug for Vm {
 pub(crate) enum Global {
     Fn(Arc<FnChunk>),
     Value(Value),
+    /// A `static mut` cell. The shared `Arc<Mutex<Value>>` is cloned
+    /// into every spawned goroutine's `globals` map (which itself is an
+    /// `Arc`), so writes from one goroutine are observable in all
+    /// others; the `Mutex` makes the concurrent access sound. Reads
+    /// (`LoadGlobal`) load the current value; writes (`Op::StoreStatic`)
+    /// replace it.
+    MutStatic(Arc<parking_lot::Mutex<Value>>),
 }
 
 /// Maximum Gossamer call frames per goroutine before `StackOverflow`.
@@ -627,7 +647,8 @@ pub(crate) enum Global {
 /// several KB of `Value` slots in the register pool). Release builds
 /// have ~10× smaller frames in practice; the cap is raised to 512 so
 /// typical recursive shapes (mergesort over moderate inputs, parser
-/// combinators, tree walkers) run without hitting the limit. For
+/// combinators, recursive-descent traversals) run without hitting the
+/// limit. For
 /// deeply recursive programs use `gos build`, where the native codegen
 /// produces standard call instructions the OS can grow to handle.
 #[cfg(debug_assertions)]
@@ -636,7 +657,9 @@ const MAX_CALL_DEPTH: usize = 40;
 const MAX_CALL_DEPTH: usize = 512;
 
 mod call_dispatch;
+pub(crate) mod goroutine;
 mod lifecycle;
+mod native_dispatch;
 mod resolve;
 mod run;
 
@@ -716,9 +739,9 @@ fn detect_trivial_wrapper(decl: &gossamer_hir::HirFn) -> Option<Vec<String>> {
     Some(segments.iter().map(|s| s.name.clone()).collect())
 }
 
-/// Native indexed read: `base[i]`. Matches the tree-walker's
-/// `eval_index` shape so both code paths produce the same
-/// value for every legal `(base, i)` pair.
+/// Native indexed read: `base[i]` over arrays, strings, tuples, vecs,
+/// and structs, producing the element type's value (or its zero value
+/// for an out-of-range index).
 fn index_get(base: &Value, idx: &Value) -> RuntimeResult<Value> {
     let raw = match idx {
         Value::Int(n) => *n,
@@ -777,14 +800,18 @@ fn index_get(base: &Value, idx: &Value) -> RuntimeResult<Value> {
 }
 
 /// Builds the `TypeName::method` global-table key for a
-/// nominal receiver, mirroring the walker's
-/// `qualified_method_key`. Used as the fallback when the bare
+/// nominal receiver. Used as the fallback when the bare
 /// method-name lookup misses.
 fn qualified_key(receiver: &Value, method: &str) -> Option<&'static str> {
     match receiver {
         Value::Struct(inner) => Some(intern_qualified(inner.name, method)),
         Value::Channel(_) => Some(intern_qualified("Channel", method)),
         Value::String(_) => Some(intern_qualified("String", method)),
+        // `Vec`-receiver methods resolve by type so a bare name shared with
+        // another module's free function (`path::join` vs `strings::join`)
+        // dispatches correctly. Only names registered under `Vec::` reroute;
+        // the rest fall back to the bare lookup.
+        Value::Array(_) => Some(intern_qualified("Vec", method)),
         _ => None,
     }
 }
@@ -809,8 +836,13 @@ pub(crate) fn type_token(v: &Value) -> u64 {
     const TAG_VARIANT: u64 = 6 << 56;
     match v {
         Value::Struct(inner) => {
-            let interned = intern_type_name(inner.name);
-            TAG_STRUCT | (interned.as_ptr() as u64 & 0x00FF_FFFF_FFFF_FFFF)
+            // `inner.name` is already a globally-interned `&'static str`
+            // (every `Value::struct_` routes the name through
+            // `value::intern_type_name`), so its pointer is canonical and
+            // stable across every clone of any instance of this type — the
+            // same identity `Op::StructIs` relies on via `ptr::eq`. Use it
+            // directly instead of re-hashing through a second pool.
+            TAG_STRUCT | (inner.name.as_ptr() as u64 & 0x00FF_FFFF_FFFF_FFFF)
         }
         Value::Channel(_) => TAG_CHANNEL,
         Value::String(_) => TAG_STRING,
@@ -819,8 +851,8 @@ pub(crate) fn type_token(v: &Value) -> u64 {
         }
         Value::Tuple(_) => TAG_TUPLE,
         Value::Variant(inner) => {
-            let interned = intern_type_name(inner.name);
-            TAG_VARIANT | (interned.as_ptr() as u64 & 0x00FF_FFFF_FFFF_FFFF)
+            // Globally-interned canonical pointer (see the `Struct` arm).
+            TAG_VARIANT | (inner.name.as_ptr() as u64 & 0x00FF_FFFF_FFFF_FFFF)
         }
         // Primitives + non-cacheable receivers fall through to the
         // slow path on every call. The IC slot stores token=0 and
@@ -843,7 +875,7 @@ fn fill_cache_slot(token: u64, generation: u32, g: &Global) -> crate::bytecode::
     };
     let fn_chunk = match g {
         Global::Fn(chunk) => Some(Arc::clone(chunk)),
-        Global::Value(_) => None,
+        Global::Value(_) | Global::MutStatic(_) => None,
     };
     crate::bytecode::CacheSlot {
         type_token: token,
@@ -1060,9 +1092,7 @@ fn adaptive_div(
         bytecode::ARITH_INT_INT => {
             if let (Value::Int(x), Value::Int(y)) = (a, b) {
                 if *y == 0 {
-                    return Err(RuntimeError::Arithmetic(
-                        "integer divide by zero".to_string(),
-                    ));
+                    return Err(RuntimeError::Panic("divide by zero".to_string()));
                 }
                 return Ok(Value::Int(x.wrapping_div(*y)));
             }
@@ -1090,9 +1120,7 @@ fn adaptive_rem(
         bytecode::ARITH_INT_INT => {
             if let (Value::Int(x), Value::Int(y)) = (a, b) {
                 if *y == 0 {
-                    return Err(RuntimeError::Arithmetic(
-                        "integer modulo by zero".to_string(),
-                    ));
+                    return Err(RuntimeError::Panic("divide by zero".to_string()));
                 }
                 return Ok(Value::Int(x.wrapping_rem(*y)));
             }
@@ -1110,9 +1138,7 @@ fn adaptive_rem(
 
 fn div_int(a: &Value, b: &Value) -> RuntimeResult<Value> {
     match (a, b) {
-        (Value::Int(_), Value::Int(0)) => Err(RuntimeError::Arithmetic(
-            "integer divide by zero".to_string(),
-        )),
+        (Value::Int(_), Value::Int(0)) => Err(RuntimeError::Panic("divide by zero".to_string())),
         (Value::Int(x), Value::Int(y)) => Ok(Value::Int(x.wrapping_div(*y))),
         (Value::Float(x), Value::Float(y)) => Ok(Value::Float(x / y)),
         (Value::Int(x), Value::Float(y)) => Ok(Value::Float((*x as f64) / y)),
@@ -1125,9 +1151,7 @@ fn div_int(a: &Value, b: &Value) -> RuntimeResult<Value> {
 
 fn rem_int(a: &Value, b: &Value) -> RuntimeResult<Value> {
     match (a, b) {
-        (Value::Int(_), Value::Int(0)) => Err(RuntimeError::Arithmetic(
-            "integer modulo by zero".to_string(),
-        )),
+        (Value::Int(_), Value::Int(0)) => Err(RuntimeError::Panic("divide by zero".to_string())),
         (Value::Int(x), Value::Int(y)) => Ok(Value::Int(x.wrapping_rem(*y))),
         (Value::Float(x), Value::Float(y)) => Ok(Value::Float(x % y)),
         (Value::Int(x), Value::Float(y)) => Ok(Value::Float((*x as f64) % y)),
@@ -1138,7 +1162,9 @@ fn rem_int(a: &Value, b: &Value) -> RuntimeResult<Value> {
 
 fn neg(v: &Value) -> RuntimeResult<Value> {
     match v {
-        Value::Int(i) => Ok(Value::Int(-*i)),
+        // `i64::MIN` negates to itself (wraps), matching the typed-int
+        // negation path and the documented integer-overflow semantics.
+        Value::Int(i) => Ok(Value::Int(i.wrapping_neg())),
         Value::Float(f) => Ok(Value::Float(-*f)),
         _ => Err(RuntimeError::Type("neg on non-numeric".to_string())),
     }
@@ -1273,9 +1299,8 @@ pub(crate) fn auto_deref_cell(v: &Value) -> Option<Value> {
     crate::builtins::resolve_cell(set_id, &flag_name)
 }
 
-/// Native struct-field read. Mirrors the walker's `eval_field`
-/// behaviour: returns `Value::Unit` on unknown fields so
-/// partially-typed programs keep running.
+/// Native struct-field read. Returns `Value::Unit` on unknown fields
+/// so partially-typed programs keep running.
 fn field_get(receiver: &Value, name: &str) -> RuntimeResult<Value> {
     if let Value::Struct(inner) = receiver {
         if let Some((_, v)) = inner.fields.iter().find(|(ident, _)| ident.name == name) {
@@ -1290,9 +1315,8 @@ fn field_get(receiver: &Value, name: &str) -> RuntimeResult<Value> {
 
 /// Native struct-field write. Mutates the register's struct
 /// in place using `Arc::make_mut`, so aliasing values see the
-/// new state only if they share the same `Arc` — matching the
-/// walker's `update_struct_field` semantics when the receiver
-/// is a local (register) binding.
+/// new state only if they share the same `Arc` (value-aggregate
+/// semantics) when the receiver is a local (register) binding.
 fn field_set(receiver: &mut Value, name: &str, new_value: Value) -> RuntimeResult<()> {
     let Value::Struct(struct_arc) = receiver else {
         return Err(RuntimeError::Type(format!(
@@ -1331,13 +1355,12 @@ mod tests {
             i64_consts: Vec::new(),
             globals: Vec::new(),
             shape_names: Vec::new(),
-            deferred_exprs: Vec::new(),
-            deferred_envs: Vec::new(),
-            deferred_env_regs: Vec::new(),
             call_cache_count: 0,
             arith_cache_count: 0,
             field_cache_count: 0,
             mut_ref_params: Vec::new(),
+            closure_protos: Vec::new(),
+            select_arms: Vec::new(),
         }
     }
 

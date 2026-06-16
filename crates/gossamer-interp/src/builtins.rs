@@ -179,11 +179,9 @@ pub(crate) fn install(globals: &mut Vec<(&'static str, Value)>) {
 /// Returns the process-wide cached builtin table (built once on
 /// first call). Each `Value::Builtin` / `Value::Native` payload is
 /// behind an `Arc`, so cloning the entries is a refcount bump per
-/// builtin — cheap enough that downstream consumers (`Vm::new`,
-/// `Interpreter::new`) can iterate the cached slice when populating
-/// their own globals maps. Pre-cache, both call sites independently
-/// rebuilt all ~330 entries, doubling startup work and per-VM
-/// memory.
+/// builtin — cheap enough that `Vm::new` can iterate the cached slice
+/// when populating its globals map. The single shared cache avoids
+/// rebuilding all ~330 entries per VM construction.
 pub(crate) fn cached() -> &'static [(&'static str, Value)] {
     use std::sync::OnceLock;
     static CACHE: OnceLock<Vec<(&'static str, Value)>> = OnceLock::new();
@@ -311,8 +309,13 @@ fn install_io_builtins(globals: &mut Vec<(&'static str, Value)>) {
     globals.push(("eprint", builtin("eprint", builtin_eprint)));
     globals.push(("format", builtin("format", builtin_format)));
     globals.push(("panic", builtin("panic", builtin_panic)));
+    globals.push(("assert", builtin("assert", builtin_assert)));
+    globals.push(("assert_eq", builtin("assert_eq", builtin_assert_eq)));
     globals.push(("__concat", builtin("__concat", builtin_concat)));
     globals.push(("__fmt_prec", builtin("__fmt_prec", builtin_fmt_prec)));
+    globals.push(("__fmt_radix", builtin("__fmt_radix", builtin_fmt_radix)));
+    globals.push(("__fmt_upper", builtin("__fmt_upper", builtin_fmt_upper)));
+    globals.push(("__fmt_pad", builtin("__fmt_pad", builtin_fmt_pad)));
     globals.push(("__struct", builtin("__struct", builtin_struct_new)));
 }
 
@@ -325,6 +328,20 @@ fn install_http_builtins(globals: &mut Vec<(&'static str, Value)>) {
     globals.push((
         "Router::serve",
         native("Router::serve", crate::stdlib_builtins::native_router_serve),
+    ));
+    globals.push((
+        "FileServer::serve",
+        native(
+            "FileServer::serve",
+            crate::stdlib_builtins::native_file_server_serve,
+        ),
+    ));
+    globals.push((
+        "Middleware::serve",
+        native(
+            "Middleware::serve",
+            crate::stdlib_builtins::native_middleware_serve,
+        ),
     ));
     // HTTP/2 folded into std::http per the Go model. Canonical
     // names live under http::*; nothing exposes the old http2::
@@ -399,6 +416,20 @@ fn install_http_builtins(globals: &mut Vec<(&'static str, Value)>) {
         builtin(
             "ClientBuilder::timeout_ms",
             crate::http_client_builtins::builtin_http_client_builder_timeout_ms,
+        ),
+    ));
+    globals.push((
+        "ClientBuilder::cookie_jar",
+        builtin(
+            "ClientBuilder::cookie_jar",
+            crate::http_client_builtins::builtin_http_client_builder_cookie_jar,
+        ),
+    ));
+    globals.push((
+        "ClientBuilder::proxy",
+        builtin(
+            "ClientBuilder::proxy",
+            crate::http_client_builtins::builtin_http_client_builder_proxy,
         ),
     ));
     globals.push((
@@ -688,8 +719,24 @@ fn install_module_builtins(globals: &mut Vec<(&'static str, Value)>) {
         ],
         globals,
     );
-    install_module("signal", &[("on", builtin_signal_on)], globals);
-    install_module("os::signal", &[("on", builtin_signal_on)], globals);
+    install_module(
+        "signal",
+        &[
+            ("on", builtin_signal_on),
+            ("wait", builtin_signal_wait),
+            ("try_wait", builtin_signal_try_wait),
+        ],
+        globals,
+    );
+    install_module(
+        "os::signal",
+        &[
+            ("on", builtin_signal_on),
+            ("wait", builtin_signal_wait),
+            ("try_wait", builtin_signal_try_wait),
+        ],
+        globals,
+    );
     globals.push(("signal_wait", builtin("signal_wait", builtin_signal_wait)));
     globals.push((
         "signal_try_wait",
@@ -1264,35 +1311,15 @@ fn install_method_helpers(globals: &mut Vec<(&'static str, Value)>) {
     globals.push(("upgrade", builtin("upgrade", builtin_upgrade)));
     // String surface that the MIR method-dispatch table already
     // wires for compiled mode. Keep the interpreter's coverage
-    // in lockstep so `gos run` and `gos build` agree.
-    globals.push((
-        "to_uppercase",
-        builtin("to_uppercase", builtin_to_uppercase),
-    ));
-    globals.push((
-        "to_lowercase",
-        builtin("to_lowercase", builtin_to_lowercase),
-    ));
-    // Note: `to_lower` / `to_upper` are NOT registered here as
-    // bare globals — `install_module("unicode", ...)` later
-    // registers char-level shims under those names, which would
-    // shadow a string-level binding via the last-write-wins
-    // lookup. Method dispatch on a `String` receiver routes
-    // through the qualified `String::to_lower` key set up below.
+    // in lockstep so `gos run` and `gos build` agree. The canonical
+    // casing spellings are `to_lower` / `to_upper` (registered under
+    // the `String::` key below); the longer Rust-style aliases are
+    // not exposed.
     globals.push(("contains", builtin("contains", builtin_contains)));
     globals.push(("starts_with", builtin("starts_with", builtin_starts_with)));
     globals.push(("ends_with", builtin("ends_with", builtin_ends_with)));
     globals.push(("replace", builtin("replace", builtin_str_replace)));
     globals.push(("find", builtin("find", builtin_str_find)));
-    // `String::substring(start, end)` — byte-range slice. Registered
-    // under the qualified `String::` key so it dominates any
-    // user-defined free fn named `substring` during method
-    // dispatch (otherwise `s.substring(a, b)` resolves to the user
-    // fn and infinite-recurses).
-    globals.push((
-        "String::substring",
-        builtin("String::substring", builtin_str_substring),
-    ));
     // `String::byte_at(s, i) -> i64`. Qualified key dominates any
     // user free fn named `byte_at` during method dispatch; bare key
     // lets `byte_at(s, i)` resolve too.
@@ -1301,6 +1328,16 @@ fn install_method_helpers(globals: &mut Vec<(&'static str, Value)>) {
         builtin("String::byte_at", builtin_str_byte_at),
     ));
     globals.push(("byte_at", builtin("byte_at", builtin_str_byte_at)));
+    // `String::substring(s, a, b) -> String` — clamping, infallible
+    // byte-range substring (out-of-range bounds clamp; inverted bounds
+    // yield ""). Mirrors the compiled tier's `gos_rt_str_substring`.
+    // Registered qualified + bare so `s.substring(a, b)` dispatches by
+    // type and `substring(s, a, b)` resolves too.
+    globals.push((
+        "String::substring",
+        builtin("String::substring", builtin_str_substring),
+    ));
+    globals.push(("substring", builtin("substring", builtin_str_substring)));
     // `String::slice(s, a, b) -> Result<String, errors::Error>` —
     // the non-panicking byte-range slice. Inverted or out-of-range
     // bounds return Err, not a truncated string. Registered under
@@ -1354,15 +1391,29 @@ fn install_method_helpers(globals: &mut Vec<(&'static str, Value)>) {
         "String::to_upper",
         builtin("String::to_upper", builtin_to_uppercase),
     ));
+    // Fundamental String-building surface. `String::new` /
+    // `String::with_capacity` are Path-call globals (no receiver);
+    // `push` / `push_str` / `chars` dispatch through the `String::`
+    // qualified key so a String receiver reaches the string op rather
+    // than the bare Vec `push` (which would clobber the receiver with
+    // its Unit return under the mutating-method writeback). `push` and
+    // `push_str` return the new String so that writeback is idempotent.
+    globals.push(("String::new", builtin("String::new", builtin_str_new)));
     globals.push((
-        "String::to_lowercase",
-        builtin("String::to_lowercase", builtin_to_lowercase),
+        "String::with_capacity",
+        builtin("String::with_capacity", builtin_str_new),
     ));
+    globals.push(("String::push", builtin("String::push", builtin_str_push)));
     globals.push((
-        "String::to_uppercase",
-        builtin("String::to_uppercase", builtin_to_uppercase),
+        "String::push_str",
+        builtin("String::push_str", builtin_str_push_str),
     ));
+    globals.push(("String::chars", builtin("String::chars", builtin_str_chars)));
     globals.push(("unwrap", builtin("unwrap", builtin_variant_unwrap)));
+    // `expect(msg)` reads only the receiver: the compiled tiers route
+    // both `unwrap` and `expect` to `gos_rt_result_unwrap` (the message
+    // arg is discarded), so the VM matches that for tier parity.
+    globals.push(("expect", builtin("expect", builtin_variant_unwrap)));
     globals.push(("unwrap_or", builtin("unwrap_or", builtin_variant_unwrap_or)));
     globals.push((
         "unwrap_or_else",
@@ -2355,8 +2406,115 @@ fn builtin_fmt_prec(args: &[Value]) -> RuntimeResult<Value> {
     Ok(Value::String(format!("{f:.prec$}").into()))
 }
 
+/// `__fmt_radix(value, base)` — renders an integer in `base` (2..=36).
+fn builtin_fmt_radix(args: &[Value]) -> RuntimeResult<Value> {
+    let value = args.first().and_then(value_to_int).unwrap_or(0);
+    let base = args.get(1).and_then(value_to_int).unwrap_or(10);
+    let radix = u32::try_from(base).unwrap_or(10);
+    let out = if !(2..=36).contains(&radix) || value == 0 {
+        if value == 0 {
+            "0".to_string()
+        } else {
+            value.to_string()
+        }
+    } else {
+        let negative = value < 0;
+        let mut v = i128::from(value).unsigned_abs();
+        let r = u128::from(radix);
+        let mut digits = Vec::new();
+        while v > 0 {
+            let d = (v % r) as u32;
+            digits.push(std::char::from_digit(d, radix).unwrap_or('0'));
+            v /= r;
+        }
+        if negative {
+            digits.push('-');
+        }
+        digits.iter().rev().collect()
+    };
+    Ok(Value::String(out.into()))
+}
+
+/// `__fmt_upper(s)` — uppercases the rendered string (for `{:X}`).
+fn builtin_fmt_upper(args: &[Value]) -> RuntimeResult<Value> {
+    let s = args.first().and_then(as_str).unwrap_or("");
+    Ok(Value::String(s.to_uppercase().into()))
+}
+
+/// `__fmt_pad(s, width, fill, align)` — pads a rendered string to `width`.
+/// `align`: 0 = right (pad left), 1 = left (pad right), 2 = center.
+fn builtin_fmt_pad(args: &[Value]) -> RuntimeResult<Value> {
+    let text = args.first().and_then(as_str).unwrap_or("");
+    let width = args.get(1).and_then(value_to_int).unwrap_or(0).max(0) as usize;
+    let fill = args
+        .get(2)
+        .and_then(value_to_int)
+        .and_then(|c| u32::try_from(c).ok())
+        .and_then(char::from_u32)
+        .unwrap_or(' ');
+    let align = args.get(3).and_then(value_to_int).unwrap_or(0);
+    let count = text.chars().count();
+    if count >= width {
+        return Ok(Value::String(text.into()));
+    }
+    let total = width - count;
+    let (left, right) = match align {
+        1 => (0, total),
+        2 => (total / 2, total - total / 2),
+        _ => (total, 0),
+    };
+    let mut out = String::with_capacity(text.len() + total);
+    for _ in 0..left {
+        out.push(fill);
+    }
+    out.push_str(text);
+    for _ in 0..right {
+        out.push(fill);
+    }
+    Ok(Value::String(out.into()))
+}
+
 fn builtin_panic(args: &[Value]) -> RuntimeResult<Value> {
     Err(RuntimeError::Panic(render_args(args)))
+}
+
+/// `assert(cond)` / `assert(cond, msg)` — prelude assertion. Panics on a
+/// false condition (so a failing test is recorded as a failure); a
+/// passing assertion is counted in the test tally. Mirrored on the
+/// compiled tiers by lowering to a conditional `gos_rt_panic`.
+fn builtin_assert(args: &[Value]) -> RuntimeResult<Value> {
+    let cond = matches!(args.first(), Some(Value::Bool(true)));
+    if cond {
+        observe_assertion(true, "assert".to_string());
+        return Ok(Value::Unit);
+    }
+    // Match the compiled tier (and Rust's `assert!`): a supplied message
+    // is the panic text verbatim; the no-message form panics with
+    // "assertion failed".
+    let detail = match args.get(1).and_then(as_str) {
+        Some(m) => m.to_string(),
+        None => "assertion failed".to_string(),
+    };
+    Err(RuntimeError::Panic(detail))
+}
+
+/// `assert_eq(a, b)` / `assert_eq(a, b, msg)` — panics unless `a == b`.
+fn builtin_assert_eq(args: &[Value]) -> RuntimeResult<Value> {
+    let left = args.first().cloned().unwrap_or(Value::Unit);
+    let right = args.get(1).cloned().unwrap_or(Value::Unit);
+    if values_equal_for_assertion(&left, &right) {
+        observe_assertion(true, "assert_eq".to_string());
+        return Ok(Value::Unit);
+    }
+    let suffix = match args.get(2).and_then(as_str) {
+        Some(m) => format!(": {m}"),
+        None => String::new(),
+    };
+    Err(RuntimeError::Panic(format!(
+        "assertion failed{suffix}: {} != {}",
+        render_one(&left),
+        render_one(&right)
+    )))
 }
 
 fn builtin_http_response_text(args: &[Value]) -> RuntimeResult<Value> {
@@ -4537,7 +4695,10 @@ fn gossamer_to_json_value(value: &Value) -> json_std::Value {
 
 fn builtin_len(args: &[Value]) -> RuntimeResult<Value> {
     let count = match args.first() {
-        Some(Value::String(s)) => s.chars().count(),
+        // Byte length, matching the compiled `gos_rt_str_len` shim and
+        // Rust/Go `len(string)`. Codepoint counts live in
+        // `utf8::count_runes` / `unicode::grapheme_count`.
+        Some(Value::String(s)) => s.len(),
         Some(Value::Array(parts) | Value::Tuple(parts)) => parts.len(),
         Some(Value::IntArray(data)) => data.len(),
         Some(Value::FloatVec(data)) => data.len(),
@@ -4623,13 +4784,69 @@ fn builtin_to_lowercase(args: &[Value]) -> RuntimeResult<Value> {
     Ok(Value::String(SmolStr::from(s.to_lowercase())))
 }
 
+/// `String::new()` / `String::with_capacity(n)` — a fresh empty owned
+/// String. The capacity hint is advisory and ignored (gos `String` is
+/// the runtime's immutable byte buffer).
+fn builtin_str_new(_args: &[Value]) -> RuntimeResult<Value> {
+    Ok(Value::String(SmolStr::from(String::new())))
+}
+
+/// `s.push(ch)` — append a char, returning the new String. Returning
+/// the new value (not Unit) keeps the VM's mutating-method writeback
+/// idempotent: the writeback move assigns the appended String back into
+/// the receiver binding, so `let mut s = …; s.push('x')` leaves `s` a
+/// String rather than clobbering it with `()`.
+fn builtin_str_push(args: &[Value]) -> RuntimeResult<Value> {
+    let base = args.first().and_then(as_str).unwrap_or("");
+    let mut out = String::with_capacity(base.len() + 4);
+    out.push_str(base);
+    match args.get(1) {
+        Some(Value::Char(c)) => out.push(*c),
+        other => {
+            if let Some(c) = other
+                .and_then(value_to_int)
+                .and_then(|n| char::from_u32(n as u32))
+            {
+                out.push(c);
+            }
+        }
+    }
+    Ok(Value::String(SmolStr::from(out)))
+}
+
+/// `s.push_str(t)` — append a string slice, returning the new String.
+/// See `builtin_str_push` for the writeback contract.
+fn builtin_str_push_str(args: &[Value]) -> RuntimeResult<Value> {
+    let base = args.first().and_then(as_str).unwrap_or("");
+    let suffix = args.get(1).and_then(as_str).unwrap_or("");
+    let mut out = String::with_capacity(base.len() + suffix.len());
+    out.push_str(base);
+    out.push_str(suffix);
+    Ok(Value::String(SmolStr::from(out)))
+}
+
+/// `s.chars()` — the Unicode scalars of `s` as a `Vec<char>`, so
+/// `for ch in s.chars()` binds each `Value::Char` and the elements
+/// work with `out.push(ch)`. Mirrors the compiled `gos_rt_str_chars`.
+fn builtin_str_chars(args: &[Value]) -> RuntimeResult<Value> {
+    let s = args.first().and_then(as_str).unwrap_or("");
+    let items: Vec<Value> = s.chars().map(Value::Char).collect();
+    Ok(Value::Array(Arc::new(items)))
+}
+
 pub(crate) fn builtin_contains(args: &[Value]) -> RuntimeResult<Value> {
     // String::contains(substr) when both args are strings; otherwise
     // Vec::contains(&v) — element membership by value equality. The
     // compiled tier exposes both shapes under the same `contains`
     // method, so the interp must too.
-    if let (Some(Value::String(s)), Some(Value::String(needle))) = (args.first(), args.get(1)) {
-        return Ok(Value::Bool(s.contains(needle.as_str())));
+    if let Some(Value::String(s)) = args.first() {
+        match args.get(1) {
+            Some(Value::String(needle)) => return Ok(Value::Bool(s.contains(needle.as_str()))),
+            // `s.contains('e')` — a char needle is the single-codepoint
+            // substring, matching the compiled tiers' char→String coercion.
+            Some(Value::Char(c)) => return Ok(Value::Bool(s.as_str().contains(*c))),
+            _ => {}
+        }
     }
     if let (Some(recv), Some(needle)) = (args.first(), args.get(1)) {
         if let Some(items) = array_as_values(recv) {
@@ -5166,7 +5383,7 @@ fn builtin_map_or_insert(args: &[Value]) -> RuntimeResult<Value> {
 
 /// `m.inc_at(seq, start, len, by)` for `HashMap<String, i64>` —
 /// the zero-allocation analogue of `m[seq[start..start+len]] += by`.
-/// Wired into the interp tree-walker so `gos run` doesn't degrade
+/// Wired into the VM builtins so `gos run` doesn't degrade
 /// to a per-iteration String build when user code uses this method.
 fn builtin_map_inc_at(args: &[Value]) -> RuntimeResult<Value> {
     let by = match args.get(4) {
@@ -5295,14 +5512,17 @@ fn builtin_map_keys(args: &[Value]) -> RuntimeResult<Value> {
     let mut out: Vec<Value> = Vec::new();
     match args.first() {
         Some(Value::Map(map)) => {
-            for k in map.lock().keys() {
-                out.push(k.to_value());
-            }
+            // Sort by key for deterministic order that matches `iter()`
+            // and the compiled tier (a `FxHashMap`'s bucket order is
+            // neither stable nor the same across tiers).
+            let mut keys: Vec<MapKey> = map.lock().keys().cloned().collect();
+            keys.sort();
+            out.extend(keys.iter().map(MapKey::to_value));
         }
         Some(Value::IntMap(map)) => {
-            for k in map.lock().keys() {
-                out.push(Value::Int(*k));
-            }
+            let mut keys: Vec<i64> = map.lock().keys().copied().collect();
+            keys.sort_unstable();
+            out.extend(keys.into_iter().map(Value::Int));
         }
         _ => {}
     }
@@ -5354,14 +5574,21 @@ fn builtin_map_values(args: &[Value]) -> RuntimeResult<Value> {
     let mut out: Vec<Value> = Vec::new();
     match args.first() {
         Some(Value::Map(map)) => {
-            for v in map.lock().values() {
-                out.push(v.clone());
-            }
+            // Emit values in key-sorted order so `keys()` / `values()` /
+            // `iter()` agree on ordering and it is deterministic across
+            // tiers.
+            let mut entries: Vec<(MapKey, Value)> = map
+                .lock()
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect();
+            entries.sort_by(|a, b| a.0.cmp(&b.0));
+            out.extend(entries.into_iter().map(|(_, v)| v));
         }
         Some(Value::IntMap(map)) => {
-            for v in map.lock().values() {
-                out.push(Value::Int(*v));
-            }
+            let mut entries: Vec<(i64, i64)> = map.lock().iter().map(|(k, v)| (*k, *v)).collect();
+            entries.sort_by_key(|(k, _)| *k);
+            out.extend(entries.into_iter().map(|(_, v)| Value::Int(v)));
         }
         _ => {}
     }
@@ -6247,8 +6474,12 @@ fn builtin_channel_close(args: &[Value]) -> RuntimeResult<Value> {
             "close: receiver must be a channel".to_string(),
         ));
     };
-    channel.close();
-    Ok(Value::Unit)
+    if channel.close() {
+        Ok(Value::Unit)
+    } else {
+        // Go semantics: closing an already-closed channel panics.
+        Err(RuntimeError::Panic("close of closed channel".to_string()))
+    }
 }
 
 fn builtin_channel_recv(args: &[Value]) -> RuntimeResult<Value> {

@@ -1,0 +1,26 @@
+// Locks the method-form `time::Duration` accessors on a `flag::Set`
+// duration cell across every tier. A duration flag cell's element type
+// is the transparent `i64`-of-ms `time::Duration` newtype, but the
+// typechecker leaves the cell an inference var, so `cell.as_millis()`
+// must dispatch on the cell's runtime kind rather than failing as an
+// unbound method name. The default holds with no flags supplied, so the
+// accessor values are deterministic on the VM, Cranelift, and LLVM
+// tiers, and a value-context comparison of the same cell still rides the
+// existing auto-deref.
+use std::flag
+use std::time
+
+fn main() -> Result<(), flag::Error> {
+    let mut fs = flag::Set::new("flag_cell_duration")
+    let timeout = fs.duration("timeout", time::Duration::from_millis(1500), "request timeout")
+
+    assert_eq(timeout.as_millis(), 1500, "default millis")
+    assert_eq(timeout.as_secs(), 1, "default secs")
+    assert_eq(timeout.as_micros(), 1500000, "default micros")
+    println!("timeout: {} {} {}", timeout.as_millis(), timeout.as_secs(), timeout.as_micros())
+
+    // Value-context use of the same cell auto-derefs to compare.
+    let over_one_second = timeout > time::Duration::from_millis(1000)
+    println!("over 1s: {}", over_one_second)
+    Ok(())
+}

@@ -10,4 +10,6 @@ Raw DEFLATE (RFC 1951) encoder / decoder.
 |---|---|---|
 | `encode` | fn | One-shot DEFLATE compress. |
 | `decode` | fn | One-shot DEFLATE decompress. |
+| `compress` | fn | One-shot DEFLATE compress (alias of encode). |
+| `decompress` | fn | One-shot DEFLATE decompress (alias of decode). |
 

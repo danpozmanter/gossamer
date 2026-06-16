@@ -133,6 +133,8 @@ pub unsafe extern "C" fn gos_rt_html_escape(s: *const c_char) -> *mut c_char {
                 '>' => out.push_str("&gt;"),
                 '"' => out.push_str("&quot;"),
                 '\'' => out.push_str("&#39;"),
+                '/' => out.push_str("&#x2F;"),
+                '`' => out.push_str("&#x60;"),
                 c => out.push(c),
             }
         }
@@ -194,6 +196,31 @@ pub unsafe extern "C" fn gos_rt_html_unescape(s: *const c_char) -> *mut c_char {
     })
 }
 
+/// `html::template::render_json(source, json_data)` — renders the
+/// context-aware HTML template `source` against a JSON-encoded data
+/// context, returning `Result<String, errors::Error>`. The `GosResult`
+/// disc is 0 for `Ok` (the rendered text), 1 for `Err` (the parse /
+/// data error message). Calls the leaf `gossamer-template` engine
+/// directly, the same code the VM tier reaches through
+/// `gossamer_std::html::template`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_html_template_render_json(
+    source: *const c_char,
+    json_data: *const c_char,
+) -> i128 {
+    ffi_entry!(0i128, {
+        let source = cstr_to_str(source);
+        let json_data = cstr_to_str(json_data);
+        match gossamer_template::html::render_json(source, json_data) {
+            Ok(text) => {
+                let p = alloc_cstring(text.as_bytes());
+                unsafe { super::vec::gos_rt_result_new(0, p as i64) }
+            }
+            Err(e) => err_result(&format!("{e}")),
+        }
+    })
+}
+
 fn base64_encode(data: &[u8]) -> String {
     const ALPHA: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
@@ -229,7 +256,7 @@ fn base64_val(c: u8) -> Option<u8> {
     }
 }
 
-fn base64_decode(s: &str) -> Result<Vec<u8>, String> {
+pub(crate) fn base64_decode(s: &str) -> Result<Vec<u8>, String> {
     let mut bits: u32 = 0;
     let mut nbits = 0u32;
     let mut out = Vec::new();

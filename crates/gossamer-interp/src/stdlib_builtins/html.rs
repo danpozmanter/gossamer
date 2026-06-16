@@ -114,11 +114,31 @@ pub(crate) fn install_html(globals: &mut Vec<(&'static str, Value)>) {
         ],
         globals,
     );
+    // `html::template::render_json(source, json_data)` — the
+    // stateless cross-tier template renderer. Registered under its
+    // fully-qualified path so the resolver's `html::template::render_json`
+    // call binds here, matching the compiled tier's shim.
+    globals.push((
+        "html::template::render_json",
+        crate::builtins::builtin_pub(
+            "html::template::render_json",
+            builtin_html_template_render_json,
+        ),
+    ));
 }
 
 pub(crate) fn builtin_html_escape(args: &[Value]) -> RuntimeResult<Value> {
     let s = args.first().and_then(as_str).unwrap_or("").to_string();
     Ok(Value::String(gossamer_std::html::escape(&s).into()))
+}
+
+pub(crate) fn builtin_html_template_render_json(args: &[Value]) -> RuntimeResult<Value> {
+    let source = args.first().and_then(as_str).unwrap_or("").to_string();
+    let json_data = args.get(1).and_then(as_str).unwrap_or("").to_string();
+    match gossamer_std::html::template::render_json(&source, &json_data) {
+        Ok(out) => Ok(ok_variant(Value::String(out.into()))),
+        Err(e) => Ok(err_variant(format!("{e}"))),
+    }
 }
 
 pub(crate) fn builtin_html_unescape(args: &[Value]) -> RuntimeResult<Value> {

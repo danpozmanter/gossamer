@@ -83,6 +83,71 @@ pub const UTF8: StdModule = StdModule {
             kind: StdItemKind::Function,
             doc: "Counts Unicode scalar values.",
         },
+        StdItem {
+            name: "count_runes",
+            kind: StdItemKind::Function,
+            doc: "Counts the runes in a byte slice.",
+        },
+        StdItem {
+            name: "rune_count_in_string",
+            kind: StdItemKind::Function,
+            doc: "Counts the runes in a String.",
+        },
+        StdItem {
+            name: "rune_len",
+            kind: StdItemKind::Function,
+            doc: "Number of bytes needed to encode a rune.",
+        },
+        StdItem {
+            name: "valid_string",
+            kind: StdItemKind::Function,
+            doc: "Reports whether a String is valid UTF-8.",
+        },
+        StdItem {
+            name: "valid_rune",
+            kind: StdItemKind::Function,
+            doc: "Reports whether a code point can be legally encoded.",
+        },
+        StdItem {
+            name: "full_rune",
+            kind: StdItemKind::Function,
+            doc: "Reports whether the bytes begin with a full rune.",
+        },
+        StdItem {
+            name: "full_rune_in_string",
+            kind: StdItemKind::Function,
+            doc: "Reports whether the String begins with a full rune.",
+        },
+        StdItem {
+            name: "rune_start",
+            kind: StdItemKind::Function,
+            doc: "Reports whether the byte could be the first of a rune.",
+        },
+        StdItem {
+            name: "decode_rune",
+            kind: StdItemKind::Function,
+            doc: "Decodes the first rune from bytes, returning (rune, width).",
+        },
+        StdItem {
+            name: "decode_rune_in_string",
+            kind: StdItemKind::Function,
+            doc: "Decodes the first rune from a String, returning (rune, width).",
+        },
+        StdItem {
+            name: "decode_last_rune",
+            kind: StdItemKind::Function,
+            doc: "Decodes the last rune from bytes, returning (rune, width).",
+        },
+        StdItem {
+            name: "decode_last_rune_in_string",
+            kind: StdItemKind::Function,
+            doc: "Decodes the last rune from a String, returning (rune, width).",
+        },
+        StdItem {
+            name: "append_rune",
+            kind: StdItemKind::Function,
+            doc: "Appends the UTF-8 encoding of a rune to a byte Vec.",
+        },
     ],
 };
 
@@ -304,6 +369,116 @@ pub const STRINGS: StdModule = StdModule {
             kind: StdItemKind::Function,
             doc: "Safe byte-range slice returning Result<String, errors::Error>.",
         },
+        StdItem {
+            name: "split_whitespace",
+            kind: StdItemKind::Function,
+            doc: "Splits on runs of whitespace, dropping empty fields.",
+        },
+        StdItem {
+            name: "trim_start",
+            kind: StdItemKind::Function,
+            doc: "Removes leading whitespace.",
+        },
+        StdItem {
+            name: "trim_end",
+            kind: StdItemKind::Function,
+            doc: "Removes trailing whitespace.",
+        },
+        StdItem {
+            name: "rfind",
+            kind: StdItemKind::Function,
+            doc: "Byte index of the last occurrence of a needle, or -1.",
+        },
+        StdItem {
+            name: "trim_start_matches",
+            kind: StdItemKind::Function,
+            doc: "Removes leading characters in the given set.",
+        },
+        StdItem {
+            name: "trim_end_matches",
+            kind: StdItemKind::Function,
+            doc: "Removes trailing characters in the given set.",
+        },
+        StdItem {
+            name: "replacen",
+            kind: StdItemKind::Function,
+            doc: "Replaces the first n occurrences of a substring.",
+        },
+        StdItem {
+            name: "repeat",
+            kind: StdItemKind::Function,
+            doc: "Concatenates n copies of the string.",
+        },
+        StdItem {
+            name: "lines",
+            kind: StdItemKind::Function,
+            doc: "Splits into lines, dropping line terminators.",
+        },
+        StdItem {
+            name: "join",
+            kind: StdItemKind::Function,
+            doc: "Joins string parts with a separator.",
+        },
+        StdItem {
+            name: "strip_prefix",
+            kind: StdItemKind::Function,
+            doc: "Removes a leading prefix if present.",
+        },
+        StdItem {
+            name: "strip_suffix",
+            kind: StdItemKind::Function,
+            doc: "Removes a trailing suffix if present.",
+        },
+        StdItem {
+            name: "pad_left",
+            kind: StdItemKind::Function,
+            doc: "Left-pads to `width` with the given character.",
+        },
+        StdItem {
+            name: "pad_right",
+            kind: StdItemKind::Function,
+            doc: "Right-pads to `width` with the given character.",
+        },
+        StdItem {
+            name: "contains_rune",
+            kind: StdItemKind::Function,
+            doc: "Reports whether the string contains a given rune.",
+        },
+        StdItem {
+            name: "contains_any",
+            kind: StdItemKind::Function,
+            doc: "Reports whether the string contains any rune in a set.",
+        },
+        StdItem {
+            name: "index_rune",
+            kind: StdItemKind::Function,
+            doc: "Byte index of the first occurrence of a rune, or -1.",
+        },
+        StdItem {
+            name: "find_any",
+            kind: StdItemKind::Function,
+            doc: "Byte index of the first rune in a set, or None.",
+        },
+        StdItem {
+            name: "rfind_any",
+            kind: StdItemKind::Function,
+            doc: "Byte index of the last rune in a set, or None.",
+        },
+        StdItem {
+            name: "equal_fold",
+            kind: StdItemKind::Function,
+            doc: "Case-insensitive Unicode string equality.",
+        },
+        StdItem {
+            name: "trim_matches",
+            kind: StdItemKind::Function,
+            doc: "Removes characters in the given set from both ends.",
+        },
+        StdItem {
+            name: "to_title",
+            kind: StdItemKind::Function,
+            doc: "Title-cases the first letter of each word.",
+        },
     ],
 };
 
@@ -371,6 +546,26 @@ pub const STRCONV: StdModule = StdModule {
             name: "format_float",
             kind: StdItemKind::Function,
             doc: "Alias for format_f64.",
+        },
+        StdItem {
+            name: "parse_i64_radix",
+            kind: StdItemKind::Function,
+            doc: "Parses an i64 from a string in the given base (2..=36).",
+        },
+        StdItem {
+            name: "format_i64_radix",
+            kind: StdItemKind::Function,
+            doc: "Formats an i64 in the given base (2..=36).",
+        },
+        StdItem {
+            name: "quote",
+            kind: StdItemKind::Function,
+            doc: "Wraps a string in double quotes with escapes.",
+        },
+        StdItem {
+            name: "unquote",
+            kind: StdItemKind::Function,
+            doc: "Removes surrounding quotes and resolves escapes.",
         },
     ],
 };
@@ -615,6 +810,23 @@ pub const UTF16: StdModule = StdModule {
             name: "decode_to_string",
             kind: StdItemKind::Function,
             doc: "Decodes a []u16 to String.",
+        },
+    ],
+};
+
+pub const HTML: StdModule = StdModule {
+    path: "std::html",
+    summary: "HTML text escaping and unescaping.",
+    items: &[
+        StdItem {
+            name: "escape",
+            kind: StdItemKind::Function,
+            doc: "Escapes HTML metacharacters (&, <, >, \", ').",
+        },
+        StdItem {
+            name: "unescape",
+            kind: StdItemKind::Function,
+            doc: "Resolves HTML entities back to their characters.",
         },
     ],
 };

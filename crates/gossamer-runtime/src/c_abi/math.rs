@@ -150,6 +150,53 @@ pub unsafe extern "C" fn gos_rt_math_dim(x: f64, y: f64) -> f64 {
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_math_trunc(x: f64) -> f64 {
+    ffi_entry!(f64::NAN, { x.trunc() })
+}
+
+/// `math::abs_i64(x)` — magnitude of `x`, saturating at `i64::MAX`
+/// for `i64::MIN` (mirrors `gossamer_std::math::abs_i64`).
+#[unsafe(no_mangle)]
+pub extern "C" fn gos_rt_math_abs_i64(x: i64) -> i64 {
+    x.saturating_abs()
+}
+
+/// `math::is_nan(x)` — 1 when `x` is NaN, else 0.
+#[unsafe(no_mangle)]
+pub extern "C" fn gos_rt_math_is_nan(x: f64) -> i32 {
+    i32::from(x.is_nan())
+}
+
+/// `math::is_inf(x, sign)` — `sign > 0` checks +∞, `sign < 0` checks
+/// −∞, `sign == 0` checks either. Mirrors `gossamer_std::math::is_inf`.
+#[unsafe(no_mangle)]
+pub extern "C" fn gos_rt_math_is_inf(x: f64, sign: i64) -> i32 {
+    let hit = match sign.cmp(&0) {
+        std::cmp::Ordering::Greater => x == f64::INFINITY,
+        std::cmp::Ordering::Less => x == f64::NEG_INFINITY,
+        std::cmp::Ordering::Equal => x.is_infinite(),
+    };
+    i32::from(hit)
+}
+
+/// `math::nan()` — the IEEE 754 not-a-number value.
+#[unsafe(no_mangle)]
+pub extern "C" fn gos_rt_math_nan() -> f64 {
+    f64::NAN
+}
+
+/// `math::inf(sign)` — positive infinity when `sign >= 0`, else
+/// negative infinity (mirrors `gossamer_std::math::inf`).
+#[unsafe(no_mangle)]
+pub extern "C" fn gos_rt_math_inf(sign: i64) -> f64 {
+    if sign >= 0 {
+        f64::INFINITY
+    } else {
+        f64::NEG_INFINITY
+    }
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_time_now_ms() -> i64 {
     ffi_entry!(-1, {
         use std::time::{SystemTime, UNIX_EPOCH};

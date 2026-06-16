@@ -369,6 +369,7 @@ mod tests {
 
     #[test]
     #[cfg(unix)]
+    #[cfg_attr(miri, ignore)] // installs a SIGURG handler via sigaction; Miri has no signals
     fn signal_thread_sigurg_round_trips() {
         let _guard = TEST_LOCK.lock();
         // Initialise the SIGURG dispatcher first so the kernel does
@@ -389,6 +390,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)] // installs a SIGURG handler via sigaction; Miri has no signals
     fn signal_thread_sigurg_null_handle_is_noop() {
         // No global state mutated; runs in parallel with the
         // serialised tests safely.

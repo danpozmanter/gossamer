@@ -1,0 +1,37 @@
+// Locks method-form accessor dispatch when a `time::Duration` or
+// `time::Instant` arrives as an explicit parameter (or `let`) type
+// annotation, not via inference. The annotation must resolve to the
+// transparent newtype kind so `d.as_millis()` / `t.elapsed_ms()`
+// dispatch on the receiver's static type and reach the same runtime
+// helper the qualified free call uses — on every tier. The inference
+// form (`let d = time::Duration::from_millis(..)`) already locks this;
+// this fixture covers the annotation form, which previously fell to
+// name-global dispatch and failed to lower on the compiled tiers.
+use std::time
+
+fn dur_ms(d: time::Duration) -> i64 {
+    d.as_millis()
+}
+
+fn dur_secs(d: time::Duration) -> i64 {
+    d.as_secs()
+}
+
+fn inst_ms(t: time::Instant) -> i64 {
+    t.elapsed_ms()
+}
+
+fn main() {
+    let d = time::Duration::from_millis(2500)
+    assert_eq(dur_ms(d), time::Duration::as_millis(d), "param millis == qualified")
+    assert_eq(dur_secs(d), time::Duration::as_secs(d), "param secs == qualified")
+
+    // Explicit `let` annotation routes through the same resolution path.
+    let annotated: time::Duration = time::Duration::from_secs(3)
+    assert_eq(annotated.as_millis(), 3000, "annotated let secs to millis")
+
+    let t = time::Instant::now()
+    assert(inst_ms(t) >= 0, "param elapsed_ms non-negative")
+
+    println!("param dispatch ok")
+}

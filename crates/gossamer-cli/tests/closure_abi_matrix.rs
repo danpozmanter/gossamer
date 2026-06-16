@@ -209,9 +209,8 @@ fn fn_f64_to_i64_indirect_through_vec_read() {
     // returns an integer. Catches the "double → i64" bitcast
     // direction at the Vec push site (the closure's return is
     // bitcast into i64 storage shape before vec_push). Avoid `x as
-    // i64` because the tree-walker tier does not lower numeric
-    // casts the same way as the compiled tiers — see
-    // `interp_perf_*` memory.
+    // i64` so the closure-return bitcast — not scalar-cast lowering
+    // — is the path under test.
     let src = r#"
 fn map_f64_to_i64(xs: [f64], f: Fn(f64) -> i64) -> [i64] {
     let mut out: [i64] = []
@@ -233,8 +232,8 @@ fn main() {
 fn fn_i64_to_f64_indirect_through_vec_read() {
     // i64 input, f64 output: opposite direction, exercises the
     // "i64 → double" bitcast on the closure result before it lands in
-    // a Vec<f64> slot. Avoid `as f64` so VM and compiled tiers agree
-    // even where the tree-walker's numeric-cast handling differs.
+    // a Vec<f64> slot. Avoid `as f64` so the closure-result bitcast
+    // — not scalar-cast lowering — is the path under test.
     let src = r#"
 fn map_i64_to_f64(xs: [i64], f: Fn(i64) -> f64) -> [f64] {
     let mut out: [f64] = []

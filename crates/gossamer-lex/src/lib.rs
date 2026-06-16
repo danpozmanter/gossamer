@@ -3,7 +3,10 @@
 //! precise byte-range `Span`s and recoverable diagnostics. Populated as
 //! part of of the implementation plan.
 
-#![forbid(unsafe_code)]
+// `deny` rather than `forbid`: the symbol interner needs exactly one
+// contained `unsafe` block (`reset_interner` reclaims the leak-on-purpose
+// arena it hands out as `&'static str`), which `forbid` cannot permit.
+#![deny(unsafe_code)]
 
 mod comment;
 mod cursor;
@@ -21,5 +24,5 @@ pub use diagnostic::LexError;
 pub use lexer::{Lexer, tokenize};
 pub use source_map::SourceMap;
 pub use span::{FileId, LineCol, Span};
-pub use symbol::Symbol;
+pub use symbol::{Symbol, reset_interner};
 pub use token::{Keyword, Punct, Token, TokenKind};

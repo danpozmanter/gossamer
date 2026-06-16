@@ -10,9 +10,43 @@ use std::collections::HashMap;
 use gossamer_types::{TyCtxt, TyKind};
 
 use crate::ir::{
-    BinOp, BlockId, Body, ConstValue, Local, Operand, Place, Projection, Rvalue, StatementKind,
-    Terminator,
+    BasicBlock, BinOp, BlockId, Body, ConstValue, Local, Operand, Place, Projection, Rvalue,
+    Statement, StatementKind, Terminator,
 };
+
+/// Returns `false` when `GOSSAMER_INLINE=0` (or `false`) is set. Lets
+/// the differential test assert that inlining never changes observable
+/// program behaviour: run a program with the inliner on and off and
+/// compare output. Read live (not memoised) so a test can flip it.
+fn inlining_enabled() -> bool {
+    !matches!(
+        std::env::var("GOSSAMER_INLINE").ok().as_deref(),
+        Some("0" | "false")
+    )
+}
+
+/// Maps each body's resolver `DefId` (its `local` index) to the body
+/// name, so an `Operand::FnRef` call site can be resolved to the
+/// callee body the same way the JIT compile-set BFS resolves it.
+fn def_to_name_map(bodies: &[Body]) -> HashMap<u32, String> {
+    bodies
+        .iter()
+        .filter_map(|b| b.def.map(|d| (d.local, b.name.clone())))
+        .collect()
+}
+
+/// Resolves a call terminator's `callee` to the name of the user body
+/// it targets, if any. Handles both by-name (`Const(Str)`) calls and
+/// monomorphic `FnRef` calls (resolved through `def_to_name`). Generic
+/// `FnRef` calls (non-empty `substs`) target a mangled specialisation
+/// and are left for the call-site lowering to resolve.
+fn callee_body_name(callee: &Operand, def_to_name: &HashMap<u32, String>) -> Option<String> {
+    match callee {
+        Operand::Const(ConstValue::Str(name)) => Some(name.clone()),
+        Operand::FnRef { def, substs } if substs.is_empty() => def_to_name.get(&def.local).cloned(),
+        _ => None,
+    }
+}
 
 /// Runs the full optimisation pipeline on `body`. Copy propagation
 /// runs before constant folding so that temporaries introduced by the
@@ -41,6 +75,9 @@ pub fn optimise(body: &mut Body, tcx: &TyCtxt) {
 /// Must be called before [`optimise`] so that subsequent copy-propagation
 /// and dead-store passes see the tightened call graph.
 pub fn inline_trivial_wrappers(bodies: &mut [Body]) {
+    if !inlining_enabled() {
+        return;
+    }
     let mut wrappers: HashMap<String, Operand> = HashMap::new();
     for body in bodies.iter() {
         if let Some(inner_callee) = detect_wrapper_callee(body) {
@@ -108,8 +145,24 @@ fn detect_wrapper_callee(body: &Body) -> Option<Operand> {
     Some(callee.clone())
 }
 
-/// Maximum number of statements in a callee body that we are willing to inline.
-const INLINE_STMT_LIMIT: usize = 4;
+/// Per-callee inlining cost ceiling, in weighted MIR units
+/// (statements + one per block terminator). Replaces the old flat
+/// 4-statement rule: small leaf helpers up to this weight inline.
+/// Lowering emits roughly two statements per source operation (a temp
+/// plus its named binding), so this admits leaves of about five to
+/// eight source statements.
+const INLINE_COST_LIMIT: usize = 24;
+
+/// Total weighted growth one caller may accrue from inlining before
+/// further inlines into it are skipped — caps caller blow-up when a
+/// hot function calls many small helpers.
+const INLINE_CALLER_BUDGET: usize = 96;
+
+/// Weighted size of a body: one unit per statement plus one per block
+/// terminator.
+fn body_cost(body: &Body) -> usize {
+    body.blocks.iter().map(|b| b.stmts.len() + 1).sum()
+}
 
 /// Snapshot of an inlineable callee body: its arity, its locals
 /// (for splicing into the caller's local table), and its one
@@ -123,6 +176,8 @@ struct InlineableCallee {
     /// Statements from the callee's single computation block, before
     /// remapping.
     stmts: Vec<crate::ir::Statement>,
+    /// Weighted cost of the callee body (see [`body_cost`]).
+    cost: usize,
 }
 
 /// Inlines small (≤ `INLINE_STMT_LIMIT`-statement) single-block callee
@@ -136,6 +191,9 @@ struct InlineableCallee {
 ///
 /// Run before `optimise` so the per-body passes see the flattened graph.
 pub fn inline_small_callees(bodies: &mut [Body]) {
+    if !inlining_enabled() {
+        return;
+    }
     let mut inlineables: HashMap<String, InlineableCallee> = HashMap::new();
     for body in bodies.iter() {
         if let Some(ic) = try_build_inlineable(body) {
@@ -145,8 +203,9 @@ pub fn inline_small_callees(bodies: &mut [Body]) {
     if inlineables.is_empty() {
         return;
     }
+    let def_to_name = def_to_name_map(bodies);
     for body in bodies.iter_mut() {
-        inline_into_body(body, &inlineables);
+        inline_into_body(body, &inlineables, &def_to_name);
     }
 }
 
@@ -170,13 +229,13 @@ fn try_build_inlineable(body: &Body) -> Option<InlineableCallee> {
         if matches!(rvalue, Rvalue::CallIntrinsic { .. }) {
             return None;
         }
-        // Don't inline a callee that builds an aggregate (struct / tuple /
-        // array). Inlining splices the aggregate's construction into the
-        // caller and remaps the return slot, but the caller's downstream
-        // *nested* field access (`a.inner.tag` on the inlined result) then
-        // resolves its leaf type against a remapped local whose Adt type is
-        // lost — the field read defaults to a pointer and crashes. Such
-        // callees stay as typed `Call`s, where the return type is explicit.
+        // Aggregate-building callees stay out of the single-block path:
+        // it remaps the return slot to the caller's destination without
+        // copying the callee's typed return local, so a later nested
+        // field read would resolve its leaf type against an untyped
+        // local. `inline_general` is the aggregate-capable path — it
+        // copies every callee `LocalDecl` (with its `ty`), preserving
+        // the return type by construction.
         if matches!(rvalue, Rvalue::Aggregate { .. } | Rvalue::Repeat { .. }) {
             return None;
         }
@@ -198,8 +257,8 @@ fn try_build_inlineable(body: &Body) -> Option<InlineableCallee> {
         }
         _ => return None,
     }
-    let total_stmts = bb0.stmts.len();
-    if total_stmts > INLINE_STMT_LIMIT {
+    let cost = body_cost(body);
+    if cost > INLINE_COST_LIMIT {
         return None;
     }
     // Slice off the extra locals (temps beyond params + return slot).
@@ -213,13 +272,19 @@ fn try_build_inlineable(body: &Body) -> Option<InlineableCallee> {
         arity: body.arity,
         extra_locals,
         stmts: bb0.stmts.clone(),
+        cost,
     })
 }
 
-fn inline_into_body(body: &mut Body, inlineables: &HashMap<String, InlineableCallee>) {
+fn inline_into_body(
+    body: &mut Body,
+    inlineables: &HashMap<String, InlineableCallee>,
+    def_to_name: &HashMap<u32, String>,
+) {
     // Iterate over block indices because we mutate `body.locals` (to
     // add callee temps) during the loop. The block list itself does
     // not grow — we splice statements into existing blocks.
+    let mut budget = INLINE_CALLER_BUDGET;
     let mut bi = 0;
     while bi < body.blocks.len() {
         let Terminator::Call {
@@ -232,16 +297,28 @@ fn inline_into_body(body: &mut Body, inlineables: &HashMap<String, InlineableCal
             bi += 1;
             continue;
         };
-        let callee_name = if let Operand::Const(ConstValue::Str(s)) = &callee {
-            s.clone()
-        } else {
+        let Some(callee_name) = callee_body_name(&callee, def_to_name) else {
             bi += 1;
             continue;
         };
+        if callee_name.as_str() == body.name.as_str() {
+            bi += 1;
+            continue;
+        }
         let Some(ic) = inlineables.get(&callee_name) else {
             bi += 1;
             continue;
         };
+        if ic.cost > budget {
+            bi += 1;
+            continue;
+        }
+        // Guard: arity must match (defensive against a resolved
+        // `FnRef` whose call site disagrees with the callee).
+        if ic.arity as usize != args.len() {
+            bi += 1;
+            continue;
+        }
         // Guard: destination must be a bare local.
         if !destination.projection.is_empty() {
             bi += 1;
@@ -263,6 +340,7 @@ fn inline_into_body(body: &mut Body, inlineables: &HashMap<String, InlineableCal
             continue;
         }
         // All guards passed — inline.
+        budget -= ic.cost;
         let orig_local_count = body.locals.len() as u32;
         body.locals.extend(ic.extra_locals.iter().cloned());
 
@@ -362,6 +440,358 @@ fn remap_rvalue(rv: &Rvalue, remap: &impl Fn(Local) -> Local) -> Rvalue {
             name,
             args: args.iter().map(|op| remap_operand(op, remap)).collect(),
         },
+        // No local operands to remap; the static is referenced by symbol.
+        Rvalue::StaticLoad(_) => rv.clone(),
+    }
+}
+
+/// A callee eligible for general inlining: a clone of its whole body
+/// plus its weighted cost.
+#[derive(Clone)]
+struct GeneralCallee {
+    body: Body,
+    cost: usize,
+}
+
+/// Decides whether `body` may be inlined as a whole-CFG splice.
+/// Requires a real (non-diverging) `Return` path, bounded cost, and no
+/// `Drop` terminator: drop semantics depend on the callee's own scope
+/// boundaries, so relocating a `Drop` into the caller is unsound.
+fn try_build_general(body: &Body) -> Option<GeneralCallee> {
+    if body.blocks.is_empty() {
+        return None;
+    }
+    let cost = body_cost(body);
+    if cost > INLINE_COST_LIMIT {
+        return None;
+    }
+    let mut has_return = false;
+    for b in &body.blocks {
+        match &b.terminator {
+            Terminator::Return => has_return = true,
+            Terminator::Drop { .. } => return None,
+            _ => {}
+        }
+    }
+    if !has_return {
+        return None;
+    }
+    Some(GeneralCallee {
+        body: body.clone(),
+        cost,
+    })
+}
+
+/// Inlines user-function call sites whose callee is a registered
+/// [`GeneralCallee`] — splicing the callee's whole CFG so multi-block,
+/// call-containing, and aggregate-returning callees flatten into the
+/// caller. This is the strongest safe lever for JIT coverage: the JIT
+/// compile-set BFS drops any body that calls an excluded body, so
+/// dissolving the call edge promotes whole chains.
+///
+/// Each caller has a single weighted growth budget; a direct
+/// self-recursive call is never inlined. Spliced blocks are rescanned
+/// within the same caller (bounded by the budget), so a chain
+/// `top -> mid -> lo` flattens in one pass.
+pub fn inline_general(bodies: &mut [Body]) {
+    if !inlining_enabled() {
+        return;
+    }
+    let mut callees: HashMap<String, GeneralCallee> = HashMap::new();
+    for b in bodies.iter() {
+        if let Some(gc) = try_build_general(b) {
+            callees.insert(b.name.clone(), gc);
+        }
+    }
+    if callees.is_empty() {
+        return;
+    }
+    let def_to_name = def_to_name_map(bodies);
+    for body in bodies.iter_mut() {
+        inline_general_into(body, &callees, &def_to_name);
+    }
+}
+
+fn inline_general_into(
+    body: &mut Body,
+    callees: &HashMap<String, GeneralCallee>,
+    def_to_name: &HashMap<u32, String>,
+) {
+    let mut budget = INLINE_CALLER_BUDGET;
+    // The block list grows as callees are spliced; scanning the
+    // appended blocks too flattens a call chain transitively, and the
+    // shared `budget` (each splice costs >= 1) guarantees termination.
+    let mut bi = 0;
+    while bi < body.blocks.len() {
+        let Terminator::Call {
+            callee,
+            args,
+            destination,
+            target,
+        } = body.blocks[bi].terminator.clone()
+        else {
+            bi += 1;
+            continue;
+        };
+        let Some(name) = callee_body_name(&callee, def_to_name) else {
+            bi += 1;
+            continue;
+        };
+        if name.as_str() == body.name.as_str() {
+            bi += 1;
+            continue;
+        }
+        let Some(gc) = callees.get(name.as_str()) else {
+            bi += 1;
+            continue;
+        };
+        let Some(continuation) = target else {
+            bi += 1;
+            continue;
+        };
+        if gc.body.arity as usize != args.len() {
+            bi += 1;
+            continue;
+        }
+        if gc.cost > budget {
+            bi += 1;
+            continue;
+        }
+        budget -= gc.cost;
+        splice_callee(body, bi, &gc.body, &args, &destination, continuation);
+        bi += 1;
+    }
+}
+
+/// Splices `callee` into `body` at `call_block`. Appends fresh copies
+/// of every callee local, clones+remaps the callee's blocks, routes
+/// each callee `Return` to a landing block that writes `destination`,
+/// binds params via injected `param = Use(arg)` statements, and turns
+/// the original call into a `Goto` to the callee entry.
+fn splice_callee(
+    body: &mut Body,
+    call_block: usize,
+    callee: &Body,
+    args: &[Operand],
+    destination: &Place,
+    continuation: BlockId,
+) {
+    let base_local = body.locals.len() as u32;
+    for decl in &callee.locals {
+        body.locals.push(decl.clone());
+    }
+    let base_block = body.blocks.len() as u32;
+    let remap_local = move |l: Local| Local(base_local + l.0);
+    let remap_block = move |b: BlockId| BlockId(base_block + b.0);
+    // Landing block sits after the callee's own blocks.
+    let landing_id = BlockId(base_block + callee.blocks.len() as u32);
+
+    for cb in &callee.blocks {
+        let stmts = cb
+            .stmts
+            .iter()
+            .map(|s| remap_statement_full(s, &remap_local))
+            .collect();
+        let terminator =
+            remap_terminator_full(&cb.terminator, &remap_local, &remap_block, landing_id);
+        body.blocks.push(BasicBlock {
+            id: remap_block(cb.id),
+            stmts,
+            terminator,
+            span: cb.span,
+        });
+    }
+
+    body.blocks.push(BasicBlock {
+        id: landing_id,
+        stmts: vec![Statement {
+            kind: StatementKind::Assign {
+                place: destination.clone(),
+                rvalue: Rvalue::Use(Operand::Copy(Place {
+                    local: remap_local(Local::RETURN),
+                    projection: Vec::new(),
+                })),
+            },
+            span: callee.span,
+        }],
+        terminator: Terminator::Goto {
+            target: continuation,
+        },
+        span: callee.span,
+    });
+
+    let entry = remap_block(callee.blocks[0].id);
+    let bind: Vec<Statement> = (0..callee.arity)
+        .map(|i| Statement {
+            kind: StatementKind::Assign {
+                place: Place {
+                    local: remap_local(Local(i + 1)),
+                    projection: Vec::new(),
+                },
+                rvalue: Rvalue::Use(args[i as usize].clone()),
+            },
+            span: callee.span,
+        })
+        .collect();
+    body.blocks[call_block].stmts.extend(bind);
+    body.blocks[call_block].terminator = Terminator::Goto { target: entry };
+}
+
+/// Full statement remap that, unlike [`remap_statement`], also remaps
+/// `StorageLive`/`StorageDead`/`SetDiscriminant` locals and every
+/// `Projection::Index` local — required for general inlining where the
+/// callee may carry storage annotations and indexed accesses.
+fn remap_statement_full(stmt: &Statement, remap: &impl Fn(Local) -> Local) -> Statement {
+    let kind = match &stmt.kind {
+        StatementKind::Assign { place, rvalue } => StatementKind::Assign {
+            place: remap_place_full(place, remap),
+            rvalue: remap_rvalue_full(rvalue, remap),
+        },
+        StatementKind::StorageLive(l) => StatementKind::StorageLive(remap(*l)),
+        StatementKind::StorageDead(l) => StatementKind::StorageDead(remap(*l)),
+        StatementKind::SetDiscriminant { place, variant } => StatementKind::SetDiscriminant {
+            place: remap_place_full(place, remap),
+            variant: *variant,
+        },
+        StatementKind::StaticStore { target, value } => StatementKind::StaticStore {
+            target: target.clone(),
+            value: remap_operand_full(value, remap),
+        },
+        StatementKind::Nop => StatementKind::Nop,
+    };
+    Statement {
+        kind,
+        span: stmt.span,
+    }
+}
+
+/// Remaps a place's root local AND any `Projection::Index` local, which
+/// [`remap_place`] does not — needed for indexed accesses in a spliced
+/// callee.
+fn remap_place_full(place: &Place, remap: &impl Fn(Local) -> Local) -> Place {
+    let projection = place
+        .projection
+        .iter()
+        .map(|p| match p {
+            Projection::Index(idx) => Projection::Index(remap(*idx)),
+            other => other.clone(),
+        })
+        .collect();
+    Place {
+        local: remap(place.local),
+        projection,
+    }
+}
+
+/// Operand remap that walks `Index` projection locals (via
+/// [`remap_place_full`]).
+fn remap_operand_full(op: &Operand, remap: &impl Fn(Local) -> Local) -> Operand {
+    match op {
+        Operand::Copy(place) => Operand::Copy(remap_place_full(place, remap)),
+        other => other.clone(),
+    }
+}
+
+/// Rvalue remap that walks `Index` projection locals in every operand
+/// and place (via [`remap_place_full`] / [`remap_operand_full`]).
+fn remap_rvalue_full(rv: &Rvalue, remap: &impl Fn(Local) -> Local) -> Rvalue {
+    match rv {
+        Rvalue::Use(op) => Rvalue::Use(remap_operand_full(op, remap)),
+        Rvalue::BinaryOp { op, lhs, rhs } => Rvalue::BinaryOp {
+            op: *op,
+            lhs: remap_operand_full(lhs, remap),
+            rhs: remap_operand_full(rhs, remap),
+        },
+        Rvalue::UnaryOp { op, operand } => Rvalue::UnaryOp {
+            op: *op,
+            operand: remap_operand_full(operand, remap),
+        },
+        Rvalue::Cast { operand, target } => Rvalue::Cast {
+            operand: remap_operand_full(operand, remap),
+            target: *target,
+        },
+        Rvalue::Aggregate { kind, operands } => Rvalue::Aggregate {
+            kind: kind.clone(),
+            operands: operands
+                .iter()
+                .map(|op| remap_operand_full(op, remap))
+                .collect(),
+        },
+        Rvalue::Repeat { value, count } => Rvalue::Repeat {
+            value: remap_operand_full(value, remap),
+            count: *count,
+        },
+        Rvalue::Len(place) => Rvalue::Len(remap_place_full(place, remap)),
+        Rvalue::Ref { place, mutable } => Rvalue::Ref {
+            place: remap_place_full(place, remap),
+            mutable: *mutable,
+        },
+        Rvalue::CallIntrinsic { name, args } => Rvalue::CallIntrinsic {
+            name,
+            args: args
+                .iter()
+                .map(|op| remap_operand_full(op, remap))
+                .collect(),
+        },
+        // No local operands to remap; the static is referenced by symbol.
+        Rvalue::StaticLoad(_) => rv.clone(),
+    }
+}
+
+/// Remaps a terminator's locals and block targets; `Return` becomes a
+/// `Goto` to the landing block.
+fn remap_terminator_full(
+    t: &Terminator,
+    remap_local: &impl Fn(Local) -> Local,
+    remap_block: &impl Fn(BlockId) -> BlockId,
+    landing: BlockId,
+) -> Terminator {
+    match t {
+        Terminator::Return => Terminator::Goto { target: landing },
+        Terminator::Goto { target } => Terminator::Goto {
+            target: remap_block(*target),
+        },
+        Terminator::SwitchInt {
+            discriminant,
+            arms,
+            default,
+        } => Terminator::SwitchInt {
+            discriminant: remap_operand_full(discriminant, remap_local),
+            arms: arms.iter().map(|(v, b)| (*v, remap_block(*b))).collect(),
+            default: remap_block(*default),
+        },
+        Terminator::Call {
+            callee,
+            args,
+            destination,
+            target,
+        } => Terminator::Call {
+            callee: remap_operand_full(callee, remap_local),
+            args: args
+                .iter()
+                .map(|a| remap_operand_full(a, remap_local))
+                .collect(),
+            destination: remap_place_full(destination, remap_local),
+            target: target.map(remap_block),
+        },
+        Terminator::Assert {
+            cond,
+            expected,
+            msg,
+            target,
+        } => Terminator::Assert {
+            cond: remap_operand_full(cond, remap_local),
+            expected: *expected,
+            msg: msg.clone(),
+            target: remap_block(*target),
+        },
+        Terminator::Unreachable => Terminator::Unreachable,
+        Terminator::Panic { message } => Terminator::Panic {
+            message: message.clone(),
+        },
+        // Excluded by `try_build_general`; kept total to satisfy the
+        // compiler without relocating drop semantics into the caller.
+        Terminator::Drop { .. } => Terminator::Unreachable,
     }
 }
 
@@ -643,6 +1073,10 @@ pub fn copy_propagate(body: &mut Body, tcx: &TyCtxt) {
     for block in &mut body.blocks {
         let mut bindings: HashMap<Local, Operand> = HashMap::new();
         for stmt in &mut block.stmts {
+            if let StatementKind::StaticStore { value, .. } = &mut stmt.kind {
+                substitute_operand(value, &bindings);
+                continue;
+            }
             if let StatementKind::Assign { place, rvalue } = &mut stmt.kind {
                 // Substitute reads first (covers `Use` and every other
                 // rvalue shape uniformly).
@@ -700,7 +1134,7 @@ fn substitute_rvalue(rvalue: &mut Rvalue, bindings: &HashMap<Local, Operand>) {
             }
         }
         Rvalue::Repeat { value, .. } => substitute_operand(value, bindings),
-        Rvalue::Len(_) | Rvalue::Ref { .. } => {}
+        Rvalue::Len(_) | Rvalue::Ref { .. } | Rvalue::StaticLoad(_) => {}
     }
 }
 
@@ -738,11 +1172,17 @@ pub fn dead_store_elim(body: &mut Body, tcx: &TyCtxt) {
     let mut use_count: HashMap<Local, usize> = HashMap::new();
     for block in &body.blocks {
         for stmt in &block.stmts {
-            if let StatementKind::Assign { place, rvalue } = &stmt.kind {
-                if !place.projection.is_empty() {
-                    count_place_reads(place, &mut use_count);
+            match &stmt.kind {
+                StatementKind::Assign { place, rvalue } => {
+                    if !place.projection.is_empty() {
+                        count_place_reads(place, &mut use_count);
+                    }
+                    count_rvalue_reads(rvalue, &mut use_count);
                 }
-                count_rvalue_reads(rvalue, &mut use_count);
+                StatementKind::StaticStore { value, .. } => {
+                    count_operand_reads(value, &mut use_count);
+                }
+                _ => {}
             }
         }
         count_terminator_reads(&block.terminator, &mut use_count);
@@ -801,6 +1241,8 @@ fn count_rvalue_reads(rvalue: &Rvalue, uses: &mut HashMap<Local, usize>) {
         Rvalue::Len(place) | Rvalue::Ref { place, .. } => {
             count_place_reads(place, uses);
         }
+        // No local reads; the static is referenced by symbol.
+        Rvalue::StaticLoad(_) => {}
     }
 }
 

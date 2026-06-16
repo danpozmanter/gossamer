@@ -1,0 +1,49 @@
+// Cross-tier parity for std::http::csrf — the signed double-submit
+// token primitives. Wire shape: base64url(nonce).base64url(hmac(key,
+// nonce)). issue_token carries a fresh random nonce, so (like a salted
+// hash) the fixture asserts the verify OUTCOMES (ok / err) rather than
+// the raw token, which is the correct way to test a randomized token.
+// Those outcomes are deterministic and bit-identical across the
+// bytecode VM, Cranelift, and LLVM.
+
+use std::http
+
+fn main() {
+    let key = [1, 2, 3, 4, 5, 6, 7, 8]
+
+    let token = match http::csrf::issue_token(key) {
+        Ok(t) => t,
+        Err(_) => {
+            println!("issue: err")
+            return
+        }
+    }
+
+    // A self-paired, freshly issued token verifies under its key.
+    match http::csrf::verify_token(token, token, key) {
+        Ok(_) => println!("self: ok"),
+        Err(_) => println!("self: err"),
+    }
+
+    // The same token under a different key fails the HMAC check.
+    let wrong = [9, 9, 9, 9, 9, 9, 9, 9]
+    match http::csrf::verify_token(token, token, wrong) {
+        Ok(_) => println!("wrongkey: ok"),
+        Err(_) => println!("wrongkey: err"),
+    }
+
+    // Two independently issued tokens carry different nonces, so the
+    // cookie-vs-supplied nonce compare rejects them.
+    let a = match http::csrf::issue_token(key) {
+        Ok(t) => t,
+        Err(_) => "",
+    }
+    let b = match http::csrf::issue_token(key) {
+        Ok(t) => t,
+        Err(_) => "",
+    }
+    match http::csrf::verify_token(a, b, key) {
+        Ok(_) => println!("mismatch: ok"),
+        Err(_) => println!("mismatch: err"),
+    }
+}

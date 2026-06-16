@@ -10,8 +10,11 @@ the hardening roadmap. Reporting details are in
 
 - Zero `unsafe` in first-party code. Every crate carries
   `#![forbid(unsafe_code)]`.
-- GC is arena-indexed, not pointer-based. Use-after-free
-  through the GC API is representationally impossible.
+- No manual memory management in the language: there is no
+  `free`, no raw pointers, and no `unsafe` keyword in Gossamer
+  source. Memory is reclaimed automatically (reference counting
+  plus an on-demand cycle collector), so use-after-free and
+  double-free are not expressible in safe Gossamer code.
 - Minimal external dependencies: `anyhow`, `clap`,
   `codespan-reporting`, `parking_lot`, `thiserror` — plus
   `insta` as a dev-only snapshot tool.

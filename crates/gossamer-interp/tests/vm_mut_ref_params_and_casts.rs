@@ -201,7 +201,7 @@ fn main() {
 }
 
 #[test]
-fn casts_inside_capturing_closures_resolve_on_the_walker() {
+fn casts_inside_capturing_closures_resolve_on_the_vm() {
     let output = run_vm_main(
         r#"
 fn main() {

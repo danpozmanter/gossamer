@@ -64,18 +64,65 @@ pub(crate) fn collect_const_values(
         let Some(def) = item.def else { continue };
         let init = match &item.kind {
             HirItemKind::Const(decl) => &decl.value,
-            // Inline both immutable and mutable statics as their
-            // initial values in compiled mode. Writes to mutable
-            // statics are no-ops in the compiled tier (lower_assign
-            // can't resolve the place), so inlining the initial value
-            // is the correct observable behaviour and fixes the
-            // "start = " empty-print regression in compiled mode.
+            // Fold every static's initializer here so references to one
+            // static from another (`static B = A * 2`) resolve. A scalar
+            // `static mut` is then promoted to a real mutable global by
+            // `collect_mut_static_defs` and removed from this inline map
+            // (its reads load the live cell); the entries that remain
+            // here are `const`s, immutable statics, and any mutable
+            // static whose initializer is not a foldable scalar (those
+            // keep the inline-the-initial-value fallback).
             HirItemKind::Static(decl) => &decl.value,
             _ => continue,
         };
         if let Some(value) = const_value_of_expr(init, &out) {
             out.insert(def, value);
         }
+    }
+    out
+}
+
+/// Collects the `static mut` items that become real mutable module
+/// globals: those whose initializer folds to a scalar (`Int` / `Float` /
+/// `Bool` / `Char`). `consts` is the full fold map (from
+/// [`collect_const_values`]) so an initializer that references another
+/// const resolves. A mutable static with a non-scalar or non-foldable
+/// initializer is intentionally omitted — it keeps the inline-the-
+/// initial-value fallback through the const map. Known limitation:
+/// aggregate `static mut` (Vec / struct / String) therefore has no
+/// shared mutable storage — writes are not observable. `static mut`
+/// is supported for scalar types; guard a shared aggregate behind a
+/// `sync::Mutex` instead.
+pub(crate) fn collect_mut_static_defs(
+    program: &HirProgram,
+    consts: &HashMap<gossamer_resolve::DefId, ConstValue>,
+) -> HashMap<gossamer_resolve::DefId, crate::ir::StaticRef> {
+    let mut out = HashMap::new();
+    for item in &program.items {
+        let Some(def) = item.def else { continue };
+        let HirItemKind::Static(decl) = &item.kind else {
+            continue;
+        };
+        if !decl.mutable {
+            continue;
+        }
+        let Some(init) = const_value_of_expr(&decl.value, consts) else {
+            continue;
+        };
+        if !matches!(
+            init,
+            ConstValue::Int(_) | ConstValue::Float(_) | ConstValue::Bool(_) | ConstValue::Char(_)
+        ) {
+            continue;
+        }
+        out.insert(
+            def,
+            crate::ir::StaticRef {
+                symbol: format!("gos_static_{}", def.local),
+                ty: decl.ty,
+                init,
+            },
+        );
     }
     out
 }
@@ -672,6 +719,7 @@ pub(crate) fn collect_item(
     fn_returns: &HashMap<gossamer_resolve::DefId, Ty>,
     fn_inputs: &HashMap<gossamer_resolve::DefId, Vec<Ty>>,
     consts: &HashMap<gossamer_resolve::DefId, ConstValue>,
+    mut_statics: &HashMap<gossamer_resolve::DefId, crate::ir::StaticRef>,
     region_unsafe: &std::collections::HashSet<gossamer_resolve::DefId>,
     out: &mut Vec<Body>,
 ) {
@@ -696,6 +744,7 @@ pub(crate) fn collect_item(
                 fn_returns,
                 fn_inputs,
                 consts,
+                mut_statics,
                 region_unsafe,
             ) {
                 out.push(body);
@@ -729,6 +778,7 @@ pub(crate) fn collect_item(
                     fn_returns,
                     fn_inputs,
                     consts,
+                    mut_statics,
                     region_unsafe,
                 ) {
                     out.push(body);
@@ -754,6 +804,7 @@ pub(crate) fn collect_item(
                         fn_returns,
                         fn_inputs,
                         consts,
+                        mut_statics,
                         region_unsafe,
                     ) {
                         out.push(body);
@@ -910,6 +961,7 @@ pub(crate) fn lower_fn(
     fn_returns: &HashMap<gossamer_resolve::DefId, Ty>,
     fn_inputs: &HashMap<gossamer_resolve::DefId, Vec<Ty>>,
     consts: &HashMap<gossamer_resolve::DefId, ConstValue>,
+    mut_statics: &HashMap<gossamer_resolve::DefId, crate::ir::StaticRef>,
     region_unsafe: &std::collections::HashSet<gossamer_resolve::DefId>,
 ) -> Option<Body> {
     let body = decl.body.as_ref()?;
@@ -925,6 +977,7 @@ pub(crate) fn lower_fn(
         fn_returns,
         fn_inputs,
         consts,
+        mut_statics,
         region_unsafe,
     );
     collect_growth_receivers(

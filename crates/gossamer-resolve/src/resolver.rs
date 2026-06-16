@@ -887,14 +887,44 @@ impl Resolver {
         let Some(head) = path.segments.first() else {
             return;
         };
-        let name = &head.name.name;
-        let resolution = self.scopes.lookup_type(&head.name.name).map_or_else(
-            || {
-                self.emit(ResolveError::UnresolvedName { name: name.clone() }, span);
+        // Strip leading module-relative prefixes (`super`/`crate`/`self`)
+        // so a struct literal written inside an inline child module
+        // (`super::P { .. }` in a `#[cfg(test)] mod tests {}`) resolves
+        // the parent module's type, the same way `resolve_value_path`
+        // resolves a `super::foo()` call. The head of the stripped path
+        // is the type name (`super::P` -> `P`, `Shape::Rect` -> `Shape`).
+        let effective: Vec<&str> = path
+            .segments
+            .iter()
+            .map(|s| s.name.name.as_str())
+            .skip_while(|s| matches!(*s, "super" | "crate" | "self"))
+            .collect();
+        let lookup_name = effective
+            .first()
+            .copied()
+            .unwrap_or(head.name.name.as_str());
+        // A sibling-module-qualified type (`other::Widget { .. }`)
+        // registers under its joined name; prefer that, then fall back
+        // to the bare head (covers enum struct-variant literals like
+        // `Shape::Rect { .. }`, whose head is the enum type).
+        let joined = (effective.len() > 1)
+            .then(|| {
+                self.scopes
+                    .lookup_type(&effective.join("::"))
+                    .map(|b| b.resolution)
+            })
+            .flatten();
+        let resolution = joined
+            .or_else(|| self.scopes.lookup_type(lookup_name).map(|b| b.resolution))
+            .unwrap_or_else(|| {
+                self.emit(
+                    ResolveError::UnresolvedName {
+                        name: lookup_name.to_string(),
+                    },
+                    span,
+                );
                 Resolution::Err
-            },
-            |binding| binding.resolution,
-        );
+            });
         self.resolutions.insert(anchor, resolution);
         for segment in &path.segments {
             self.resolve_generic_args(&segment.generics);

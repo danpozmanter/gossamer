@@ -37,7 +37,7 @@ use gossamer_hir::{
     HirLiteral, HirMatchArm, HirPat, HirPatKind, HirProgram, HirStmt, HirStmtKind, HirUnaryOp,
 };
 use gossamer_lex::Span;
-use gossamer_types::{Ty, TyCtxt};
+use gossamer_types::{IntTy, Ty, TyCtxt, TyKind};
 
 use crate::ir::{
     BasicBlock, BinOp, BlockId, Body, ConstValue, Local, LocalDecl, Operand, Place, Rvalue,
@@ -50,6 +50,15 @@ use super::Builder;
 
 impl<'a> Builder<'a> {
     pub(crate) fn push_local(&mut self, ty: Ty, debug_name: Option<Ident>, mutable: bool) -> Local {
+        // `time::Duration` / `time::Instant` are transparent `i64`
+        // newtypes: their distinct kinds exist only to steer method-form
+        // accessor dispatch on the HIR side. Storage and codegen treat
+        // them as an `i64`, so locals never carry those kinds.
+        let ty = if matches!(self.tcx.kind_of(ty), TyKind::Duration | TyKind::Instant) {
+            self.tcx.int_ty(IntTy::I64)
+        } else {
+            ty
+        };
         let id = u32::try_from(self.locals.len()).expect("local overflow");
         self.locals.push(LocalDecl {
             ty,
@@ -142,16 +151,41 @@ impl<'a> Builder<'a> {
         self.current_block().stmts.push(stmt);
     }
 
+    /// Emits a [`StatementKind::StaticStore`] writing `value` into the
+    /// `static mut` cell `target`.
+    pub(crate) fn emit_static_store(
+        &mut self,
+        target: crate::ir::StaticRef,
+        value: Operand,
+        span: Span,
+    ) {
+        if self.current.is_none() {
+            return;
+        }
+        let stmt = Statement {
+            kind: StatementKind::StaticStore { target, value },
+            span,
+        };
+        self.current_block().stmts.push(stmt);
+    }
+
     pub(crate) fn auto_deref_cell(&mut self, local: Local, span: Span) -> Local {
         let Some(kind) = self.local_runtime_kind.get(&local).copied() else {
             return local;
         };
         let (helper, dest_ty): (&'static str, Ty) = match kind {
             "flag::Cell::String" => ("gos_rt_flag_cell_load_str", self.tcx.string_ty()),
-            "flag::Cell::Int" | "flag::Cell::Uint" | "flag::Cell::Duration" => (
+            "flag::Cell::Int" | "flag::Cell::Uint" => (
                 "gos_rt_flag_cell_load_i64",
                 self.tcx.int_ty(gossamer_types::IntTy::I64),
             ),
+            // A duration cell's backing repr is the same `i64`-of-ms, but
+            // its element type is the transparent `time::Duration` newtype
+            // so the method-form accessors (`cell.as_millis()`) dispatch on
+            // the receiver's static type. Duration normalizes back to i64
+            // in `push_local` and unifies with `Int`, so arithmetic and
+            // comparison on a deref'd duration cell are unaffected.
+            "flag::Cell::Duration" => ("gos_rt_flag_cell_load_i64", self.tcx.duration_ty()),
             "flag::Cell::Bool" => ("gos_rt_flag_cell_load_bool", self.tcx.bool_ty()),
             "flag::Cell::Float" => (
                 "gos_rt_flag_cell_load_f64",
@@ -168,6 +202,32 @@ impl<'a> Builder<'a> {
             },
             span,
         );
+        dest
+    }
+
+    /// Convert a `char`-typed string-method needle to a one-char
+    /// `String` via `gos_rt_char_to_str`. The `gos_rt_str_*` helpers
+    /// read the needle as a `*const c_char`; a bare `char` lowers to an
+    /// i32 codepoint, so passing it raw makes the helper dereference
+    /// the codepoint as a pointer. Non-`char` args pass through.
+    pub(crate) fn coerce_char_arg_to_str(&mut self, local: Local, span: Span) -> Local {
+        let mut t = self.locals[local.0 as usize].ty;
+        while let gossamer_types::TyKind::Ref { inner, .. } = self.tcx.kind_of(t) {
+            t = *inner;
+        }
+        if !matches!(self.tcx.kind_of(t), gossamer_types::TyKind::Char) {
+            return local;
+        }
+        let string_ty = self.tcx.string_ty();
+        let dest = self.fresh(string_ty);
+        let next = self.new_block(span);
+        self.terminate(Terminator::Call {
+            callee: Operand::Const(ConstValue::Str("gos_rt_char_to_str".to_string())),
+            args: vec![Operand::Copy(Place::local(local))],
+            destination: Place::local(dest),
+            target: Some(next),
+        });
+        self.set_current(next);
         dest
     }
 
@@ -436,9 +496,12 @@ impl<'a> Builder<'a> {
             .iter()
             .find(|(long, _)| long == field_name.name.as_str())?;
         match *cell_kind {
-            "flag::Cell::Int" | "flag::Cell::Uint" | "flag::Cell::Duration" => {
+            "flag::Cell::Int" | "flag::Cell::Uint" => {
                 Some(TyKind::Int(gossamer_types::IntTy::I64))
             }
+            // The transparent Duration newtype keeps the accessor dispatch
+            // on the cell's element type; its repr is still `i64`-of-ms.
+            "flag::Cell::Duration" => Some(TyKind::Duration),
             "flag::Cell::Float" => Some(TyKind::Float(gossamer_types::FloatTy::F64)),
             "flag::Cell::Bool" => Some(TyKind::Bool),
             "flag::Cell::String" => Some(TyKind::String),

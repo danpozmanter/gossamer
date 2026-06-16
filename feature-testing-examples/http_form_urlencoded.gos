@@ -1,0 +1,27 @@
+// Cross-tier parity for the `application/x-www-form-urlencoded` body
+// parser: `http::form::Form::parse` over a body with repeated keys and
+// percent-/plus-decoding, plus the `get` / `get_all` / `has` / `count`
+// accessors. Pure body parsing composed from injected Gossamer source,
+// so the decoded field values are bit-identical across the bytecode VM,
+// Cranelift, and LLVM (including `gos build --release`).
+
+use std::http
+
+fn main() {
+    let form = http::form::Form::parse(&"user=alice&role=admin&tag=a&tag=b&q=hi+there%21")
+    println!("user={}", http::form::get(&form, &"user"))
+    println!("q={}", http::form::get(&form, &"q"))
+    println!("count={}", http::form::count(&form))
+    println!("tags={}", http::form::get_all(&form, &"tag").len())
+    println!("has_role={}", http::form::has(&form, &"role"))
+    println!("has_x={}", http::form::has(&form, &"nope"))
+    // An absent key reads back as the empty string (the get-or-default shape).
+    println!("missing=[{}]", http::form::get(&form, &"missing"))
+    // get_all returns every value for a repeated key, in order.
+    let tags = http::form::get_all(&form, &"tag")
+    let mut joined = ""
+    for t in tags {
+        joined = joined + "/" + &t
+    }
+    println!("tag_values={}", joined)
+}

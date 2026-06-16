@@ -22,10 +22,10 @@ fn main() {
         None => println!("no eq"),
     }
     println!("count slashes = {}", url.count("/"))
-    println!("strip_chars |{}|", "  hello  ".strip_chars(" "))
-    println!("lstrip_chars |{}|", "##title".lstrip_chars("#"))
-    println!("rstrip_chars |{}|", "abc.gos".rstrip_chars(".gos"))
-    println!("zfill 000042 = {}", "42".zfill(6))
+    println!("trim_matches |{}|", "  hello  ".trim_matches(" "))
+    println!("ltrim_matches |{}|", "##title".trim_start_matches("#"))
+    println!("rtrim_matches |{}|", "abc.gos".trim_end_matches(".gos"))
+    println!("pad_left 000042 = {}", "42".pad_left(6, '0'))
     println!("center = {}", "title".center(20, '-'))
     match "hello".slice(1, 4) {
         Ok(s) => println!("str.slice ok: {}", s),

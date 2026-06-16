@@ -123,6 +123,33 @@ pub(crate) fn is_mut_ref_vec(tcx: &TyCtxt, ty: Ty) -> bool {
     matches!(tcx.kind(*inner), Some(TyKind::Vec(_) | TyKind::Slice(_)))
 }
 
+/// Returns `true` when `ty` is a `&mut T` whose mutation through the
+/// reference must be visible to the caller on every tier: `&mut Vec<T>`
+/// / `&mut [T]` (the cell-protocol shapes above) plus `&mut <scalar
+/// primitive>` (`i*` / `u*` / `f*` / `bool` / `char`). The compiled
+/// tiers pass each of these by pointer, so `*p = v` writes back; the VM
+/// must match. Used to decide that a call carrying such an argument
+/// participates in the `MutCell` write-back + `*p = …` deref-assign
+/// protocol. Aggregates (`struct` / `enum` /
+/// fixed `[T; N]`) are deliberately excluded: their by-value vs
+/// by-pointer treatment varies and a blanket write-back would diverge.
+pub(crate) fn is_mut_ref_writeback(tcx: &TyCtxt, ty: Ty) -> bool {
+    if is_mut_ref_vec(tcx, ty) {
+        return true;
+    }
+    let Some(TyKind::Ref {
+        mutability: gossamer_types::Mutbl::Mut,
+        inner,
+    }) = tcx.kind(ty)
+    else {
+        return false;
+    };
+    matches!(
+        tcx.kind(*inner),
+        Some(TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Char)
+    )
+}
+
 /// Trivial-wrapper inlining table: for each user function
 /// whose body is `return intrinsic(param)` (a pattern common
 /// enough in library code that its call overhead shows up on
@@ -141,6 +168,75 @@ pub(crate) type InlinableWrappers = std::collections::HashMap<String, Vec<String
 /// otherwise pay three name lookups per iteration.
 pub(crate) type ConstValues = std::collections::HashMap<String, Value>;
 
+/// Qualified names (`Type::method`) of every user `impl` method whose
+/// receiver is `&mut self`. A method call on a writeback place
+/// (`obj.bump()`, `(&mut __for_iter).next()`) lowers through the
+/// write-back cell protocol so the method's mutation of `self`
+/// persists in the caller's binding — matching the by-pointer receiver
+/// the compiled tiers pass. The bytecode compiler reconstructs the
+/// `Type::method` key from the receiver's resolved type at each call
+/// site and consults this set to decide whether the writeback fires.
+pub(crate) type MutSelfMethods = std::collections::HashSet<String>;
+
+/// Bare names of every `static mut` item in the program. The bytecode
+/// compiler consults this set to lower an assignment whose place is
+/// rooted at a mutable static into an [`Op::StoreStatic`] against the
+/// shared `Global::MutStatic` cell, rather than treating the path as a
+/// local. Reads need no entry here: a mutable static is excluded from
+/// the const-inlining snapshot, so its path already lowers to a
+/// `LoadGlobal` that resolves the cell at runtime.
+pub(crate) type MutStatics = std::collections::HashSet<String>;
+
+/// Collects the [`MutStatics`] set: the name of every `static mut` item.
+pub fn collect_mut_statics(program: &gossamer_hir::HirProgram) -> MutStatics {
+    let mut out = MutStatics::new();
+    for item in &program.items {
+        if let gossamer_hir::HirItemKind::Static(decl) = &item.kind
+            && decl.mutable
+        {
+            out.insert(decl.name.name.clone());
+        }
+    }
+    out
+}
+
+/// Collects the [`MutSelfMethods`] set from a program's `impl` blocks:
+/// every method whose first parameter is a `&mut self` receiver. Built
+/// once at load time and threaded into [`compile_fn`].
+pub fn collect_mut_self_methods(program: &gossamer_hir::HirProgram) -> MutSelfMethods {
+    let mut out = MutSelfMethods::new();
+    for item in &program.items {
+        let gossamer_hir::HirItemKind::Impl(decl) = &item.kind else {
+            continue;
+        };
+        let Some(type_name) = &decl.self_name else {
+            continue;
+        };
+        for method in &decl.methods {
+            if method_has_mut_self(method) {
+                out.insert(format!("{}::{}", type_name.name, method.name.name));
+            }
+        }
+    }
+    out
+}
+
+/// `true` when `decl`'s first parameter is a `&mut self` receiver — the
+/// shape (`fn next(&mut self)`, `fn bump(&mut self)`) whose mutation
+/// must flow back to the caller's binding.
+fn method_has_mut_self(decl: &HirFn) -> bool {
+    if !decl.has_self {
+        return false;
+    }
+    matches!(
+        decl.params.first().map(|p| &p.pattern.kind),
+        Some(HirPatKind::Binding {
+            name,
+            mutable: true,
+        }) if name.name == "self"
+    )
+}
+
 /// Compiles an [`HirFn`] body into a [`FnChunk`]. The caller owns the
 /// resulting chunk; the compiler itself has no shared state.
 pub fn compile_fn(
@@ -149,6 +245,9 @@ pub fn compile_fn(
     layouts: &StructLayouts,
     wrappers: &InlinableWrappers,
     consts: &ConstValues,
+    method_muts: &MutSelfMethods,
+    mut_statics: &MutStatics,
+    cov: Option<&gossamer_lex::SourceMap>,
 ) -> RuntimeResult<FnChunk> {
     let name = crate::value::intern_type_name(&decl.name.name);
     let Some(body) = decl.body.as_ref() else {
@@ -164,23 +263,42 @@ pub fn compile_fn(
             i64_consts: Vec::new(),
             globals: Vec::new(),
             shape_names: Vec::new(),
-            deferred_exprs: Vec::new(),
-            deferred_envs: Vec::new(),
-            deferred_env_regs: Vec::new(),
             wide_ops: Vec::new(),
             call_cache_count: 0,
             arith_cache_count: 0,
             field_cache_count: 0,
             mut_ref_params: Vec::new(),
+            closure_protos: Vec::new(),
+            select_arms: Vec::new(),
         });
     };
-    let mut builder = FnBuilder::new(name, tcx, layouts, wrappers, consts);
-    for param in &decl.params {
+    let mut builder = FnBuilder::new(
+        name,
+        tcx,
+        layouts,
+        wrappers,
+        consts,
+        method_muts,
+        mut_statics,
+        cov,
+    );
+    for (idx, param) in decl.params.iter().enumerate() {
         let reg = builder.alloc_reg();
         builder.bind_param(&param.pattern, reg);
-        // `&mut Vec<T>` / `&mut [T]` parameters participate in the
-        // write-back cell protocol — see `FnChunk::mut_ref_params`.
-        if is_mut_ref_vec(tcx, param.ty) {
+        // `&mut Vec<T>` / `&mut [T]` / `&mut <scalar>` parameters
+        // participate in the write-back cell protocol — the callee
+        // unwraps an incoming `MutCell` into the param register and
+        // publishes its final value back on return. See
+        // `FnChunk::mut_ref_params`. A `&mut self` receiver (an
+        // aggregate, which `is_mut_ref_writeback` deliberately excludes
+        // for general args) rides the same protocol: the compiled tiers
+        // pass `self` by pointer, so its mutation must reach the
+        // caller's binding. Marking the receiver register here lets the
+        // call-site cell wrapping in `compile_method_call` publish the
+        // post-call `self` back to the receiver place.
+        if is_mut_ref_writeback(tcx, param.ty)
+            || (idx == 0 && method_has_mut_self(decl) && builder.is_adt_ref(param.ty))
+        {
             builder.mut_ref_params.push(reg);
         }
         // Track typed-storage parameter shapes so callees can use
@@ -204,26 +322,6 @@ pub fn compile_fn(
             }
         }
     }
-    // Block-scoped `defer` is implemented by the tree-walker (the bytecode VM
-    // runs deferred expressions eagerly, which is the wrong order). Route a
-    // function whose body contains a `defer` through the walker wholesale, so
-    // its LIFO at-block-exit semantics hold. `defer` is rare and never on a hot
-    // path, so the walker cost is irrelevant here.
-    if block_contains_defer(&body.block) || block_contains_struct_eq(&body.block, tcx) {
-        use gossamer_hir::{HirExpr, HirExprKind};
-        let block = body.block.clone();
-        let (id, span, ty) = (block.id, block.span, block.ty);
-        let block_expr = HirExpr {
-            id,
-            span,
-            ty,
-            kind: HirExprKind::Block(block),
-        };
-        let reg = builder.compile_deferred(&block_expr)?;
-        builder.emit(Op::Return { value: reg });
-        let arity = u16::try_from(decl.params.len()).unwrap_or(u16::MAX);
-        return Ok(builder.finish(arity));
-    }
     let result = builder.compile_block(&body.block)?;
     if matches!(result, BlockResult::ValueIn(_)) {
         let BlockResult::ValueIn(reg) = result else {
@@ -235,6 +333,38 @@ pub fn compile_fn(
     }
     let arity = u16::try_from(decl.params.len()).unwrap_or(u16::MAX);
     Ok(builder.finish(arity))
+}
+
+/// Compiles a single `const`/`static` initializer expression into a
+/// synthetic nullary [`FnChunk`]. Running the chunk on the VM yields the
+/// item's value, so const/static evaluation reuses the ordinary
+/// compile-and-run path — every initializer shape the VM can lower
+/// (literals, arithmetic, aggregates, prelude/const-fn calls) is
+/// evaluated by the same machinery, with no separate evaluator.
+pub fn compile_initializer(
+    expr: &HirExpr,
+    tcx: &TyCtxt,
+    layouts: &StructLayouts,
+    wrappers: &InlinableWrappers,
+    consts: &ConstValues,
+    method_muts: &MutSelfMethods,
+    mut_statics: &MutStatics,
+    cov: Option<&gossamer_lex::SourceMap>,
+) -> RuntimeResult<FnChunk> {
+    let name = crate::value::intern_type_name("__init");
+    let mut builder = FnBuilder::new(
+        name,
+        tcx,
+        layouts,
+        wrappers,
+        consts,
+        method_muts,
+        mut_statics,
+        cov,
+    );
+    let reg = builder.compile_expr(expr)?;
+    builder.emit(Op::Return { value: reg });
+    Ok(builder.finish(0))
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -272,6 +402,27 @@ pub(crate) struct FnBuilder<'tcx> {
     /// Lets indexed reads / writes route through the typed-`f64`
     /// fast path that skips the `Value::Float` round-trip.
     pub(crate) flat_float_locals: std::collections::HashSet<Reg>,
+    /// Registers bound by a pattern to an array / vec / slice value
+    /// (`Some(arr)`, `(head, tail)`, …). A pattern binding's `Path`
+    /// reference carries the binding's *declared* type only when the
+    /// frontend resolved it; for an inferred binding the HIR `ty` stays
+    /// an unresolved var, so the for-loop fast path can't tell `for x in
+    /// arr` iterates a collection. Tracking the binding register here
+    /// lets `try_compile_for_loop_vec_iter` drive it by index instead of
+    /// deferring. Populated from the pattern's resolved type at bind time.
+    pub(crate) collection_locals: std::collections::HashSet<Reg>,
+    /// Registers bound to a `flag::Set` handle (`flag::Set::new(...)`),
+    /// so a chained `set.duration(...)` is recognised as constructing a
+    /// duration-flag cell rather than calling a same-named user method.
+    pub(crate) flag_set_locals: std::collections::HashSet<Reg>,
+    /// Registers bound to a `flag::Set` duration cell
+    /// (`set.duration(...)`). A duration cell's element type is the
+    /// transparent `time::Duration` newtype, but the typechecker leaves
+    /// the cell an inference var, so the method-form accessors
+    /// (`cell.as_millis()`) dispatch on this tag instead of the receiver
+    /// type, routing to the `time::Duration::<accessor>` global with the
+    /// cell auto-deref'd to its backing `i64`-of-ms value.
+    pub(crate) duration_cell_locals: std::collections::HashSet<Reg>,
     pub(crate) instrs: Vec<Op>,
     pub(crate) consts: Vec<Value>,
     pub(crate) const_cache: HashMap<ConstKey, ConstIdx>,
@@ -287,9 +438,14 @@ pub(crate) struct FnBuilder<'tcx> {
     pub(crate) next_int_reg: u16,
     pub(crate) scopes: Vec<Scope>,
     pub(crate) loop_stack: Vec<LoopCtx>,
-    pub(crate) deferred_exprs: Vec<HirExpr>,
-    pub(crate) deferred_envs: Vec<Vec<String>>,
-    pub(crate) deferred_env_regs: Vec<Vec<Reg>>,
+    /// Per-block frames of `defer`red expressions, mirroring the MIR
+    /// builder's `defer_stack`. `compile_block` pushes a frame on entry
+    /// and emits it LIFO on a normal exit; `return` / `break` /
+    /// `continue` emit the pending frames at their exit edge before the
+    /// jump. The same block-scoped LIFO contract the compiled tiers use.
+    pub(crate) defer_stack: Vec<Vec<HirExpr>>,
+    pub(crate) closure_protos: Vec<crate::bytecode::ClosureProto>,
+    pub(crate) select_arms: Vec<crate::bytecode::SelectArmMeta>,
     pub(crate) wide_ops: Vec<crate::bytecode::WideOp>,
     /// Counter incremented every time we emit a dispatch op
     /// (`Op::Call` / `Op::MethodCall`) so each call site gets a
@@ -307,6 +463,20 @@ pub(crate) struct FnBuilder<'tcx> {
     /// Parameter registers declared `&mut Vec<T>` / `&mut [T]`;
     /// copied into [`FnChunk::mut_ref_params`] at `finish` time.
     pub(crate) mut_ref_params: Vec<Reg>,
+    /// Qualified names (`Type::method`) of user `&mut self` methods, used
+    /// by `compile_method_call` to route a place-receiver call through
+    /// the write-back cell protocol so the receiver's mutation persists.
+    pub(crate) method_muts: &'tcx MutSelfMethods,
+    /// Names of `static mut` items. Used to lower a static-rooted
+    /// assignment into an [`Op::StoreStatic`] instead of deferring it.
+    pub(crate) mut_statics: &'tcx MutStatics,
+    /// Source map for `gos test --coverage`. `Some` only when the VM
+    /// loaded the program with coverage active (see
+    /// [`crate::vm::Vm::coverage_active`]); each `compile_stmt` then
+    /// resolves the statement span to `(file, line)`, registers a
+    /// counter slot, and emits [`Op::CovHit`]. `None` everywhere else,
+    /// so non-coverage compiles pay nothing.
+    pub(crate) cov: Option<&'tcx gossamer_lex::SourceMap>,
 }
 
 #[derive(Debug, Default)]
@@ -326,6 +496,12 @@ pub(crate) struct LoopCtx {
     /// rest of the body without bypassing the iteration counter.
     pub(crate) continue_patches: Vec<InstrIdx>,
     pub(crate) result_reg: Reg,
+    /// `defer_stack` length at loop entry. `break` / `continue` emit the
+    /// defer frames at indices `>= defer_depth` — the blocks nested
+    /// inside the loop body — before jumping, so per-iteration cleanup
+    /// runs on every exit edge while the loop's enclosing frames stay
+    /// pending. Mirrors `gossamer-mir`'s `LoopCtx::defer_depth`.
+    pub(crate) defer_depth: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -340,6 +516,7 @@ pub(crate) enum ConstKey {
 
 mod block;
 mod call_expr;
+mod closure;
 mod compile_expr;
 mod control_flow;
 mod emit_const;
@@ -365,6 +542,20 @@ fn expr_diverges(expr: &HirExpr) -> bool {
 /// directly.
 fn is_path_expr(expr: &HirExpr) -> bool {
     matches!(&expr.kind, HirExprKind::Path { .. })
+}
+
+/// Strips leading module-relative prefix segments (`super`, `crate`,
+/// `self`) from a path while more than one segment remains. The global
+/// table is keyed by unqualified or module-joined names, so a
+/// `super::foo` reference inside an inline `#[cfg(test)] mod tests`
+/// resolves the flat parent-module item — matching the resolver's
+/// flat-lookup strip (`resolver.rs`) and the walker's `eval_path`.
+pub(crate) fn strip_module_relative(segments: &[Ident]) -> &[Ident] {
+    let mut tail = segments;
+    while tail.len() > 1 && matches!(tail[0].name.as_str(), "super" | "crate" | "self") {
+        tail = &tail[1..];
+    }
+    tail
 }
 
 /// Maps a runtime [`Value`] back into the [`ConstKey`] used to
@@ -413,36 +604,10 @@ fn literal_const(lit: &HirLiteral) -> (ConstKey, Value) {
     }
 }
 
-/// `true` when `compile_match` can lower `pat` to a native
-/// test-and-branch sequence. The only shape it can't express
-/// losslessly is an or-pattern that introduces bindings (each
-/// alternative would have to extract into a shared register set);
-/// those route the whole `match` back through the walker.
-fn pattern_native_ok(pat: &HirPat) -> bool {
-    match &pat.kind {
-        HirPatKind::Wildcard
-        | HirPatKind::Rest
-        | HirPatKind::Binding { .. }
-        | HirPatKind::Literal(_)
-        | HirPatKind::Range { .. } => true,
-        HirPatKind::Tuple(ps) | HirPatKind::Variant { fields: ps, .. } => {
-            ps.iter().all(pattern_native_ok)
-        }
-        HirPatKind::Struct { fields, .. } => fields
-            .iter()
-            .all(|f| f.pattern.as_ref().is_none_or(pattern_native_ok)),
-        HirPatKind::Ref { inner, .. } => pattern_native_ok(inner),
-        HirPatKind::At { sub, .. } => pattern_native_ok(sub),
-        HirPatKind::Or(alts) => alts
-            .iter()
-            .all(|a| pattern_native_ok(a) && !pattern_has_binding(a)),
-    }
-}
-
 /// `true` when `pat` introduces any name binding (a plain binding,
-/// an `@`-binding, or a struct-field shorthand). Used to reject
-/// or-patterns whose alternatives bind — those need a shared
-/// destination register the native chain doesn't allocate.
+/// an `@`-binding, or a struct-field shorthand). The or-pattern
+/// lowering uses this to decide whether its alternatives need a
+/// shared destination-register set or are pure tests.
 fn pattern_has_binding(pat: &HirPat) -> bool {
     match &pat.kind {
         HirPatKind::Wildcard
@@ -493,10 +658,6 @@ fn resolve_const_count(expr: &HirExpr) -> Option<i64> {
     None
 }
 
-/// Recursively walks `expr` looking for expression kinds the VM
-/// compiler doesn't handle natively. When a `Loop { body }` body
-/// contains one, the whole loop defers to the tree-walker so
-/// Break/Continue flow out correctly.
 /// Returns `true` when the array-shaped `array_ty`'s element type
 /// — or, when typeck left the array's elem as a still-bound
 /// `TyKind::Var`, the optional `value_ty` of the literal element —
@@ -533,289 +694,6 @@ fn is_array_elem_kind(
         }
     }
     false
-}
-
-/// Returns `true` when `expr` is the desugared shape of `for x in
-/// a..b { body }` — `Loop { body: Block { tail: Match { scrutinee:
-/// MethodCall(Range, "next"), arms: [Some, None] } } }`. The
-/// for-range fast path compiles this shape natively, so the
-/// outer-Loop body should not refuse it just because of the inner
-/// `Match`. Mirrors the gate in [`FnBuilder::try_compile_for_loop_range`].
-fn is_for_range_desugar(expr: &gossamer_hir::HirExpr) -> bool {
-    use gossamer_hir::HirExprKind as H;
-    let H::Loop { body } = &expr.kind else {
-        return false;
-    };
-    let H::Block(block) = &body.kind else {
-        return false;
-    };
-    if !block.stmts.is_empty() {
-        return false;
-    }
-    let Some(tail) = block.tail.as_deref() else {
-        return false;
-    };
-    let H::Match { scrutinee, arms } = &tail.kind else {
-        return false;
-    };
-    if arms.len() != 2 {
-        return false;
-    }
-    let H::MethodCall {
-        receiver,
-        name,
-        args,
-    } = &scrutinee.kind
-    else {
-        return false;
-    };
-    if name.name != "next" || !args.is_empty() {
-        return false;
-    }
-    matches!(
-        &receiver.kind,
-        H::Range {
-            start: Some(_),
-            end: Some(_),
-            ..
-        }
-    )
-}
-
-fn body_contains_unsupported(expr: &HirExpr) -> bool {
-    use gossamer_hir::{HirArrayExpr, HirExprKind as H};
-    // For-range desugars are natively compilable — recurse into
-    // their Some-arm body only. Without this case, an outer
-    // `loop { ... }` whose body contains any nested `for i in 0..n`
-    // sees the desugar's `Match` and defers the WHOLE outer loop
-    // to the tree-walker. fannkuch / spectral-norm / nbody are
-    // hot-pathed through nested for-ranges and pay the walker
-    // tax on every iteration without this check.
-    if is_for_range_desugar(expr) {
-        if let H::Loop { body } = &expr.kind {
-            if let H::Block(block) = &body.kind {
-                if let Some(tail) = block.tail.as_deref() {
-                    if let H::Match { arms, .. } = &tail.kind {
-                        // Some-arm body is the user-visible loop body.
-                        return body_contains_unsupported(&arms[0].body);
-                    }
-                }
-            }
-        }
-        return false;
-    }
-    match &expr.kind {
-        H::Match { .. }
-        | H::Closure { .. }
-        | H::Go(_)
-        | H::Range { .. }
-        | H::Select { .. }
-        | H::LiftedClosure { .. } => true,
-        // Tuples, Casts, and Continue are now natively lowered,
-        // so a loop containing one stays on the bytecode path
-        // instead of deferring the whole loop body.
-        H::Tuple(elems) => elems.iter().any(body_contains_unsupported),
-        H::Cast { value, .. } => body_contains_unsupported(value),
-        H::MethodCall { receiver, args, .. } => {
-            body_contains_unsupported(receiver) || args.iter().any(body_contains_unsupported)
-        }
-        H::Field { receiver, .. } => body_contains_unsupported(receiver),
-        H::TupleIndex { receiver, .. } => body_contains_unsupported(receiver),
-        H::Index { base, index } => {
-            body_contains_unsupported(base) || body_contains_unsupported(index)
-        }
-        H::Literal(_) | H::Path { .. } => false,
-        H::Unary { operand, .. } => body_contains_unsupported(operand),
-        H::Binary { lhs, rhs, .. } => {
-            body_contains_unsupported(lhs) || body_contains_unsupported(rhs)
-        }
-        H::Assign { place, value } => {
-            body_contains_unsupported(place) || body_contains_unsupported(value)
-        }
-        H::Call { callee, args } => {
-            body_contains_unsupported(callee) || args.iter().any(body_contains_unsupported)
-        }
-        H::If {
-            condition,
-            then_branch,
-            else_branch,
-        } => {
-            body_contains_unsupported(condition)
-                || body_contains_unsupported(then_branch)
-                || else_branch
-                    .as_deref()
-                    .is_some_and(body_contains_unsupported)
-        }
-        H::While { condition, body } => {
-            body_contains_unsupported(condition) || body_contains_unsupported(body)
-        }
-        H::Loop { body } => body_contains_unsupported(body),
-        H::Block(block) => {
-            block.stmts.iter().any(stmt_contains_unsupported)
-                || block
-                    .tail
-                    .as_ref()
-                    .is_some_and(|t| body_contains_unsupported(t))
-        }
-        H::Return(v) | H::Break(v) => v.as_ref().is_some_and(|e| body_contains_unsupported(e)),
-        H::Placeholder => true,
-        // Native `continue` jumps to loop_start; only an
-        // unsupported sub-expression in the surrounding shape
-        // would force a defer.
-        H::Continue => false,
-        H::Array(arr) => match arr {
-            HirArrayExpr::List(elems) => elems.iter().any(body_contains_unsupported),
-            HirArrayExpr::Repeat { value, count } => {
-                body_contains_unsupported(value) || body_contains_unsupported(count)
-            }
-        },
-    }
-}
-
-fn stmt_contains_unsupported(stmt: &gossamer_hir::HirStmt) -> bool {
-    use gossamer_hir::HirStmtKind as S;
-    match &stmt.kind {
-        S::Let { init, .. } => init.as_ref().is_some_and(body_contains_unsupported),
-        S::Expr { expr, .. } => body_contains_unsupported(expr),
-        S::Defer(_) | S::Go(_) => true,
-        S::Item(_) => false,
-    }
-}
-
-/// `true` if a `defer` statement appears anywhere in `expr`'s own body
-/// (not counting nested closures, which compile as separate functions).
-/// The bytecode VM runs deferred expressions eagerly; a function containing
-/// a `defer` is routed wholesale to the tree-walker, which implements the
-/// block-scoped LIFO semantics. Recurses into every sub-expression so a
-/// `defer` buried in a control-flow or argument position is still found.
-fn expr_contains_defer(expr: &HirExpr) -> bool {
-    use gossamer_hir::{HirArrayExpr, HirExprKind as H};
-    match &expr.kind {
-        // Closures are their own compilation units; their defers are handled
-        // when the closure body is compiled/walked, not by the enclosing fn.
-        H::Closure { .. } | H::LiftedClosure { .. } => false,
-        H::Literal(_) | H::Path { .. } | H::Continue | H::Placeholder | H::Range { .. } => false,
-        H::Block(block) => block_contains_defer(block),
-        H::Go(inner) => expr_contains_defer(inner),
-        H::Tuple(elems) => elems.iter().any(expr_contains_defer),
-        H::Cast { value, .. } => expr_contains_defer(value),
-        H::Unary { operand, .. } => expr_contains_defer(operand),
-        H::Field { receiver, .. } | H::TupleIndex { receiver, .. } => expr_contains_defer(receiver),
-        H::MethodCall { receiver, args, .. } => {
-            expr_contains_defer(receiver) || args.iter().any(expr_contains_defer)
-        }
-        H::Index { base, index } => expr_contains_defer(base) || expr_contains_defer(index),
-        H::Binary { lhs, rhs, .. } => expr_contains_defer(lhs) || expr_contains_defer(rhs),
-        H::Assign { place, value } => expr_contains_defer(place) || expr_contains_defer(value),
-        H::Call { callee, args } => {
-            expr_contains_defer(callee) || args.iter().any(expr_contains_defer)
-        }
-        H::If {
-            condition,
-            then_branch,
-            else_branch,
-        } => {
-            expr_contains_defer(condition)
-                || expr_contains_defer(then_branch)
-                || else_branch.as_deref().is_some_and(expr_contains_defer)
-        }
-        H::While { condition, body } => expr_contains_defer(condition) || expr_contains_defer(body),
-        H::Loop { body } => expr_contains_defer(body),
-        H::Match { scrutinee, arms } => {
-            expr_contains_defer(scrutinee) || arms.iter().any(|a| expr_contains_defer(&a.body))
-        }
-        H::Return(v) | H::Break(v) => v.as_deref().is_some_and(expr_contains_defer),
-        H::Select { arms } => arms.iter().any(|a| expr_contains_defer(&a.body)),
-        H::Array(arr) => match arr {
-            HirArrayExpr::List(elems) => elems.iter().any(expr_contains_defer),
-            HirArrayExpr::Repeat { value, count } => {
-                expr_contains_defer(value) || expr_contains_defer(count)
-            }
-        },
-    }
-}
-
-/// `true` when `ty` (seeing through one `&`) is a struct / enum value.
-fn is_adt_ty(tcx: &TyCtxt, ty: gossamer_types::Ty) -> bool {
-    use gossamer_types::TyKind;
-    match tcx.kind(ty) {
-        Some(TyKind::Adt { .. }) => true,
-        Some(TyKind::Ref { inner, .. }) => is_adt_ty(tcx, *inner),
-        _ => false,
-    }
-}
-
-/// `true` if the block does an `==` / `!=` on a struct/enum operand. Such a
-/// comparison must route to a `Type::eq` method (the bytecode `Op::Eq` only
-/// compares scalars), which the tree-walker's `eval_binary` does — so a
-/// function containing one is run wholesale on the walker, exactly like
-/// `defer`. The walker still falls back to `false` when no `eq` exists, so
-/// non-deriving structs match the compiled tier.
-fn block_contains_struct_eq(block: &gossamer_hir::HirBlock, tcx: &TyCtxt) -> bool {
-    use gossamer_hir::HirStmtKind as S;
-    block.stmts.iter().any(|stmt| match &stmt.kind {
-        S::Defer(e) => expr_contains_struct_eq(e, tcx),
-        S::Let { init, .. } => init
-            .as_ref()
-            .is_some_and(|e| expr_contains_struct_eq(e, tcx)),
-        S::Expr { expr, .. } => expr_contains_struct_eq(expr, tcx),
-        S::Go(inner) => expr_contains_struct_eq(inner, tcx),
-        S::Item(_) => false,
-    }) || block
-        .tail
-        .as_deref()
-        .is_some_and(|e| expr_contains_struct_eq(e, tcx))
-}
-
-fn expr_contains_struct_eq(expr: &HirExpr, tcx: &TyCtxt) -> bool {
-    use gossamer_hir::{HirArrayExpr, HirBinaryOp, HirExprKind as H};
-    let rec = |e: &HirExpr| expr_contains_struct_eq(e, tcx);
-    match &expr.kind {
-        H::Closure { .. } | H::LiftedClosure { .. } => false,
-        H::Literal(_) | H::Path { .. } | H::Continue | H::Placeholder | H::Range { .. } => false,
-        H::Block(block) => block_contains_struct_eq(block, tcx),
-        H::Go(inner) => rec(inner),
-        H::Tuple(elems) => elems.iter().any(rec),
-        H::Cast { value, .. } => rec(value),
-        H::Unary { operand, .. } => rec(operand),
-        H::Field { receiver, .. } | H::TupleIndex { receiver, .. } => rec(receiver),
-        H::MethodCall { receiver, args, .. } => rec(receiver) || args.iter().any(rec),
-        H::Index { base, index } => rec(base) || rec(index),
-        H::Binary { op, lhs, rhs } => {
-            (matches!(op, HirBinaryOp::Eq | HirBinaryOp::Ne)
-                && (is_adt_ty(tcx, lhs.ty) || is_adt_ty(tcx, rhs.ty)))
-                || rec(lhs)
-                || rec(rhs)
-        }
-        H::Assign { place, value } => rec(place) || rec(value),
-        H::Call { callee, args } => rec(callee) || args.iter().any(rec),
-        H::If {
-            condition,
-            then_branch,
-            else_branch,
-        } => rec(condition) || rec(then_branch) || else_branch.as_deref().is_some_and(rec),
-        H::While { condition, body } => rec(condition) || rec(body),
-        H::Loop { body } => rec(body),
-        H::Match { scrutinee, arms } => rec(scrutinee) || arms.iter().any(|a| rec(&a.body)),
-        H::Return(v) | H::Break(v) => v.as_deref().is_some_and(rec),
-        H::Select { arms } => arms.iter().any(|a| rec(&a.body)),
-        H::Array(arr) => match arr {
-            HirArrayExpr::List(elems) => elems.iter().any(rec),
-            HirArrayExpr::Repeat { value, count } => rec(value) || rec(count),
-        },
-    }
-}
-
-/// `true` if any statement (or the tail) of `block` carries a `defer`.
-fn block_contains_defer(block: &gossamer_hir::HirBlock) -> bool {
-    use gossamer_hir::HirStmtKind as S;
-    block.stmts.iter().any(|stmt| match &stmt.kind {
-        S::Defer(_) => true,
-        S::Let { init, .. } => init.as_ref().is_some_and(expr_contains_defer),
-        S::Expr { expr, .. } => expr_contains_defer(expr),
-        S::Go(inner) => expr_contains_defer(inner),
-        S::Item(_) => false,
-    }) || block.tail.as_deref().is_some_and(expr_contains_defer)
 }
 
 fn parse_int(text: &str) -> Option<i64> {

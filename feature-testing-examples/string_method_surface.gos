@@ -1,0 +1,80 @@
+// The canonical String method surface, wired across all tiers (VM,
+// Cranelift, LLVM) so `s.method(...)` and the `_.method` pipe placeholder
+// dispatch identically. Each method also exists as a `strings::*` free
+// function; the method form is the canonical, pipeable spelling.
+//
+// Also covers `Vec<String>.join(sep)` — the method form of
+// `strings::join(parts, sep)` — and receiver-typed dispatch so
+// `s.to_title()` resolves to the string title-caser, not `unicode::to_title`.
+
+use std::iter
+
+fn main() {
+    let s = "Hello World Foo"
+
+    // split family
+    println!("{}", s.split_whitespace().len())
+    println!("{}", s.splitn(2, " ").len())
+
+    // transform -> String
+    println!("{}", "hello world".to_title())
+    println!("{}", s.trim_matches("Hoo"))
+    println!("{}", "a,b,a,b".replacen("a", "X", 1))
+    println!("[{}]", "hi".pad_left(6, '.'))
+    println!("[{}]", "hi".pad_right(6, '*'))
+    println!("{}", s.to_lower())
+    println!("{}", s.to_upper())
+
+    // predicates -> bool
+    println!("{}", s.contains_any("xW"))
+    println!("{}", s.contains_rune('F'))
+    println!("{}", s.equal_fold("HELLO WORLD FOO"))
+
+    // search -> Option<i64>
+    println!("{}", match s.find_any("WF") { Some(i) => i, None => -1 })
+    println!("{}", match s.index_rune('W') { Some(i) => i, None => -1 })
+    println!("{}", match s.rfind_any("lo") { Some(i) => i, None => -1 })
+
+    // strip -> Option<String>
+    println!("{}", match s.strip_prefix("Hello ") { Some(r) => r, None => "?" })
+    println!("{}", match s.strip_suffix(" Foo") { Some(r) => r, None => "?" })
+
+    // Vec<String>.join — method form of strings::join
+    let parts: Vec<String> = ["a", "b", "c"]
+    println!("{}", parts.join("-"))
+    let upper: Vec<String> = "one two three"
+        |> _.split_whitespace()
+        |> iter::map(|w: String| w.to_upper())
+    println!("{}", upper.join("|"))
+
+    // `_.method` pipe placeholder over the wired surface
+    println!("{}", "  trimmed  " |> _.trim |> _.to_title)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::testing
+
+    #[test]
+    fn transforms_match_across_tiers() {
+        testing::check("hello world".to_title() == "Hello World", "to_title titlecases words")
+        testing::check("hi".pad_left(6, '.') == "....hi", "pad_left uses the char")
+        testing::check("hi".pad_right(6, '*') == "hi****", "pad_right uses the char")
+        testing::check("a,b,a".replacen("a", "X", 1) == "X,b,a", "replacen bounds replacements")
+    }
+
+    #[test]
+    fn predicates_and_search() {
+        testing::check("abc".contains_any("zx") == false, "contains_any false")
+        testing::check("abc".contains_any("zb"), "contains_any true")
+        testing::check("Hello".equal_fold("HELLO"), "equal_fold case-insensitive")
+        let i = match "Hello".find_any("lo") { Some(n) => n, None => -1 }
+        testing::check(i == 2, "find_any finds first of set")
+    }
+
+    #[test]
+    fn vec_join_method() {
+        let parts: Vec<String> = ["x", "y", "z"]
+        testing::check(parts.join("+") == "x+y+z", "Vec<String>.join")
+    }
+}

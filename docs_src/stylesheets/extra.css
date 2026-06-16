@@ -1,99 +1,57 @@
-/* Small readability tweaks over the readthedocs theme. */
-.wy-nav-content {
-    max-width: 960px;
+/* Refined-dark palette for the Material theme, matched to the
+ * gossamer-lang.org landing page (true black + cyan accent). */
+
+:root {
+  --md-accent-fg-color: #38bdf8;
 }
 
-/* Pin the logo + search box to the top of the sidebar so only the
- * navigation menu scrolls. Default theme lets the whole sidebar
- * scroll, hiding the search box. */
-.wy-nav-side {
-    overflow: hidden;
-}
-.wy-side-scroll {
-    display: flex;
-    flex-direction: column;
-    height: 100%;
-    width: 100%;
-    overflow: hidden;
-}
-.wy-side-nav-search {
-    flex: 0 0 auto;
-    background: #000 !important;
-    position: sticky;
-    top: 0;
-    z-index: 200;
-}
-.wy-side-nav-search input[type="text"] {
-    border-color: #000;
-}
-.wy-menu.wy-menu-vertical {
-    flex: 1 1 auto;
-    overflow-y: auto;
-    overflow-x: hidden;
-}
-h1, h2, h3 {
-    font-family: "Inter", "Helvetica Neue", Arial, sans-serif;
-    font-weight: 600;
-}
-code, pre, tt {
-    font-family: "JetBrains Mono", "Fira Code", Menlo, Consolas, monospace;
-    font-size: 0.92em;
-}
-table.docutils {
-    width: 100%;
-}
-blockquote {
-    border-left: 4px solid #4a90d9;
-    padding: 0.5em 1em;
-    margin: 1em 0;
-    background: #f5f7fa;
+/* Dark scheme (default) — pull the slate background to true black and
+ * key the accents to the landing page's cyan. */
+[data-md-color-scheme="slate"] {
+  --md-default-bg-color: #000000;
+  --md-default-fg-color: #f3f4f6;
+  --md-default-fg-color--light: #c7ccd4;
+  --md-default-fg-color--lighter: #9ca3af;
+  --md-default-fg-color--lightest: #4b5563;
+
+  --md-code-bg-color: #0f1115;
+  --md-code-fg-color: #e6e9ef;
+
+  --md-primary-fg-color: #000000;
+  --md-accent-fg-color: #38bdf8;
+  --md-typeset-a-color: #7dd3fc;
+
+  --md-footer-bg-color: #0b0d11;
+  --md-footer-bg-color--dark: #07090c;
 }
 
-/* Anchor for the in-content "View on GitHub" button. Without this,
- * absolute positioning would resolve against the viewport. */
-.rst-content {
-    position: relative;
+/* True-black header with a hairline divider, echoing the landing. */
+[data-md-color-scheme="slate"] .md-header {
+  background-color: #000000;
+  border-bottom: 1px solid #1f2937;
+}
+[data-md-color-scheme="slate"] .md-tabs {
+  background-color: #000000;
 }
 
-/* "View on GitHub" button injected by js/repo_button.js, anchored
- * to the top-right of the article content area (inside
- * `.rst-content`). Sits beside the page's H1 instead of floating
- * over the prose. */
-#gos-repo-button {
-    position: absolute;
-    top: 12px;
-    right: 12px;
-    z-index: 5;
-    display: inline-flex;
-    align-items: center;
-    gap: 0.5em;
-    padding: 0.5em 0.95em;
-    border-radius: 8px;
-    background: #1f2937;
-    color: #ffffff !important;
-    font-family: "Inter", "Helvetica Neue", Arial, sans-serif;
-    font-weight: 600;
-    font-size: 0.92em;
-    text-decoration: none !important;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.16);
-    transition: background 120ms ease, transform 120ms ease;
-}
-#gos-repo-button:hover,
-#gos-repo-button:focus {
-    background: #111827;
-    transform: translateY(-1px);
-    color: #ffffff !important;
-    text-decoration: none !important;
-}
-#gos-repo-button svg {
-    width: 17px;
-    height: 17px;
-    fill: currentColor;
+/* Code blocks get the same hairline-bordered, rounded panel as the
+ * landing's <pre>. */
+[data-md-color-scheme="slate"] .md-typeset pre > code,
+[data-md-color-scheme="slate"] .md-typeset .highlight > pre {
+  border: 1px solid #1f2937;
+  border-radius: 10px;
 }
 
-@media (max-width: 640px) {
-    /* Collapse to icon-only on phones so the page H1 isn't
-     * visually crowded. */
-    #gos-repo-button { padding: 0.45em 0.55em; }
-    #gos-repo-button .gos-repo-button-label { display: none; }
+/* Section headings track the landing's tightened display type. */
+.md-typeset h1,
+.md-typeset h2,
+.md-typeset h3 {
+  letter-spacing: -0.02em;
+}
+
+/* Admonitions read a touch softer against true black. */
+[data-md-color-scheme="slate"] .md-typeset .admonition,
+[data-md-color-scheme="slate"] .md-typeset details {
+  background: #0b0d11;
+  border-color: #1f2937;
 }

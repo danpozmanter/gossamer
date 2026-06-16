@@ -1,4 +1,4 @@
-//! End-to-end run-pass tests for the tree-walking interpreter.
+//! End-to-end run-pass tests for the bytecode VM.
 //! Each test parses a small Gossamer program, runs it through the
 //! full frontend pipeline, and evaluates the `main` function. The
 //! `println` built-in is captured into an in-memory buffer so the
@@ -9,7 +9,7 @@
 use std::cell::RefCell;
 
 use gossamer_hir::lower_source_file;
-use gossamer_interp::{Interpreter, Value, set_stdout_writer};
+use gossamer_interp::{Value, Vm, set_stdout_writer};
 use gossamer_lex::SourceMap;
 use gossamer_parse::parse_source_file;
 use gossamer_resolve::resolve_source_file;
@@ -33,8 +33,8 @@ fn run_program(source: &str) -> String {
     let (table, _type_diags) = typecheck_source_file(&sf, &resolutions, &mut tcx);
     let program = lower_source_file(&sf, &resolutions, &table, &mut tcx);
 
-    let mut interp = Interpreter::new();
-    interp.load(&program);
+    let mut interp = Vm::new();
+    interp.load(&program, tcx).expect("vm load");
 
     CAPTURED.with(|cell| cell.borrow_mut().clear());
     let prev = set_stdout_writer(capture_writer);
@@ -53,8 +53,8 @@ fn call_and_return(source: &str, entry: &str, args: Vec<Value>) -> Value {
     let mut tcx = TyCtxt::new();
     let (table, _type_diags) = typecheck_source_file(&sf, &resolutions, &mut tcx);
     let program = lower_source_file(&sf, &resolutions, &table, &mut tcx);
-    let mut interp = Interpreter::new();
-    interp.load(&program);
+    let mut interp = Vm::new();
+    interp.load(&program, tcx).expect("vm load");
     interp.call(entry, args).expect("call failed")
 }
 

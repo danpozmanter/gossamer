@@ -1178,11 +1178,11 @@ dependencies = [
 
 [[package]]
 name = "gossamer-abi"
-version = "0.13.0"
+version = "0.14.0"
 
 [[package]]
 name = "gossamer-ast"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "gossamer-lex",
  "serde",
@@ -1190,7 +1190,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-codegen-cranelift"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "anyhow",
  "cranelift-codegen",
@@ -1211,14 +1211,14 @@ dependencies = [
 
 [[package]]
 name = "gossamer-coro"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "corosensei",
 ]
 
 [[package]]
 name = "gossamer-diagnostics"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "gossamer-lex",
 ]
@@ -1242,7 +1242,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-hir"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "gossamer-ast",
  "gossamer-lex",
@@ -1252,10 +1252,11 @@ dependencies = [
 
 [[package]]
 name = "gossamer-interp"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "gossamer-ast",
  "gossamer-codegen-cranelift",
+ "gossamer-coro",
  "gossamer-hir",
  "gossamer-lex",
  "gossamer-mir",
@@ -1270,7 +1271,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-lex"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "parking_lot",
  "serde",
@@ -1280,7 +1281,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-mir"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "gossamer-abi",
  "gossamer-ast",
@@ -1292,7 +1293,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-parse"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "gossamer-ast",
  "gossamer-diagnostics",
@@ -1302,7 +1303,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-pkg"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "ed25519-dalek",
  "parking_lot",
@@ -1317,7 +1318,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-resolve"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "gossamer-ast",
  "gossamer-diagnostics",
@@ -1328,14 +1329,19 @@ dependencies = [
 
 [[package]]
 name = "gossamer-runtime"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
+ "aes-gcm",
+ "argon2",
  "backtrace",
  "blake3",
  "bytes",
+ "bzip2",
+ "chacha20poly1305",
  "crossbeam-deque",
  "crossbeam-utils",
  "csv",
+ "ed25519-dalek",
  "flate2",
  "futures-core",
  "futures-task",
@@ -1343,12 +1349,14 @@ dependencies = [
  "gossamer-abi",
  "gossamer-coro",
  "gossamer-pkg",
+ "gossamer-template",
  "h2",
  "http",
  "itoa",
  "libc",
  "libloading",
  "libmimalloc-sys",
+ "md-5",
  "mimalloc",
  "mime",
  "mime_guess",
@@ -1357,14 +1365,18 @@ dependencies = [
  "num-bigint",
  "num-integer",
  "num-traits",
+ "p256",
  "parking_lot",
+ "pbkdf2",
  "pin-project-lite",
  "quick-xml",
  "regex",
  "rustc-hash",
+ "scrypt",
  "serde",
  "serde_json",
  "serde_yaml",
+ "sha1",
  "sha2",
  "signal-hook",
  "tar",
@@ -1379,18 +1391,19 @@ dependencies = [
  "windows-sys 0.59.0",
  "x509-parser",
  "zip",
+ "zstd",
 ]
 
 [[package]]
 name = "gossamer-sched"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "gossamer-runtime",
 ]
 
 [[package]]
 name = "gossamer-std"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "aes",
  "aes-gcm",
@@ -1417,6 +1430,7 @@ dependencies = [
  "gossamer-pkg",
  "gossamer-runtime",
  "gossamer-sched",
+ "gossamer-template",
  "h2",
  "h3",
  "h3-quinn",
@@ -1469,8 +1483,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "gossamer-template"
+version = "0.14.0"
+dependencies = [
+ "serde_json",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "gossamer-types"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "gossamer-ast",
  "gossamer-diagnostics",

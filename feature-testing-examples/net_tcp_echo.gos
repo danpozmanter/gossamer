@@ -1,0 +1,79 @@
+// Cross-tier fixture for `std::net` TCP: a self-terminating loopback
+// echo. The server lives entirely in `main` (so its handles stay in
+// one frame); the client runs on a goroutine that connects, sends 4
+// bytes, reads the echo, verifies the round-trip, and reports a single
+// deterministic status code over a channel.
+//
+// Binds 127.0.0.1:0 (OS-assigned ephemeral port, read back via
+// local_addr), so there is no fixed-port contention with the parallel
+// SPECS walk — this runs as a plain stdout-parity fixture.
+//
+// Bytes (not a String) are written on both sides so the single
+// `gos_rt_tcp_stream_write([u8])` ABI applies uniformly. A 4-byte
+// payload over loopback, write_all-flushed before the peer reads, is
+// delivered in one read() on every platform — the echo is exact. The
+// result is a numeric status code (not a String) so the cross-goroutine
+// channel carries an i64 — its element type is identical on every tier.
+
+use std::net
+use std::sync::channel
+
+// Status codes the client reports over the channel.
+const OK: i64 = 1
+const MISMATCH: i64 = 0
+const CONNECT_FAILED: i64 = -1
+const READ_FAILED: i64 = -2
+
+fn client(addr: String, tx: Sender<i64>) {
+    let stream = match net::TcpStream::connect(&addr) {
+        Ok(s) => s,
+        Err(_) => { tx.send(CONNECT_FAILED); return }
+    }
+    let _ = stream.write([80, 73, 78, 71])
+    let echo = match stream.read(64) {
+        Ok(b) => b,
+        Err(_) => { tx.send(READ_FAILED); return }
+    }
+    let _ = stream.close()
+    let ok = echo.len() == 4 && echo[0] == 80 && echo[1] == 73 && echo[2] == 78 && echo[3] == 71
+    tx.send(if ok { OK } else { MISMATCH })
+}
+
+fn main() {
+    let listener = match net::TcpListener::bind("127.0.0.1:0") {
+        Ok(l) => l,
+        Err(e) => { println!("bind failed: {}", e); return }
+    }
+    let addr = match listener.local_addr() {
+        Ok(a) => a,
+        Err(e) => { println!("addr failed: {}", e); return }
+    }
+    let (tx, rx) = channel()
+    go client(addr, tx)
+    let (stream, _peer) = match listener.accept() {
+        Ok(p) => p,
+        Err(e) => { println!("accept failed: {}", e); return }
+    }
+    let req = match stream.read(64) {
+        Ok(b) => b,
+        Err(e) => { println!("server read failed: {}", e); return }
+    }
+    let _ = stream.write(&req)
+    let _ = stream.close()
+    let _ = listener.close()
+    let code = match rx.recv() {
+        Some(c) => c,
+        None => { println!("no client result"); return }
+    }
+    if code == OK {
+        println!("tcp echo ok")
+    } else if code == MISMATCH {
+        println!("tcp echo MISMATCH")
+    } else if code == CONNECT_FAILED {
+        println!("client connect failed")
+    } else if code == READ_FAILED {
+        println!("client read failed")
+    } else {
+        println!("unexpected code {}", code)
+    }
+}

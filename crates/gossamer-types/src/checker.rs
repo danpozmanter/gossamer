@@ -1644,37 +1644,8 @@ impl<'a> TypeChecker<'a> {
                 let e = self.tcx.dyn_error_ty();
                 return self.result_adt_ty(vec_u8, e);
             }
-            let module_ok = matches!(
-                module,
-                ["json"] | ["encoding", "json"] | ["std", "encoding", "json"]
-            );
-            if module_ok {
-                match last {
-                    "parse" | "decode" => {
-                        let j = self.tcx.json_value_ty();
-                        let e = self.tcx.dyn_error_ty();
-                        return self.result_adt_ty(j, e);
-                    }
-                    "render" | "encode" => {
-                        self.reject_json_enum_arg(last, callee, args, arg_tys);
-                        return self.tcx.string_ty();
-                    }
-                    "get" | "at" | "as_array" | "identity" => {
-                        return self.tcx.json_value_ty();
-                    }
-                    "as_i64" | "len" => return self.tcx.int_ty(IntTy::I64),
-                    "as_f64" => return self.tcx.float_ty(FloatTy::F64),
-                    "as_str" => return self.tcx.string_ty(),
-                    "as_bool" | "is_null" => return self.tcx.bool_ty(),
-                    _ => {}
-                }
-            }
-            let errors_ok = matches!(module, ["errors"] | ["std", "errors"]);
-            if errors_ok {
-                match last {
-                    "new" | "wrap" => return self.tcx.dyn_error_ty(),
-                    _ => {}
-                }
+            if let Some(ty) = self.check_stdlib_module_ret_ty(module, last, callee, args, arg_tys) {
+                return ty;
             }
             // Built-in intrinsics emitted by the parser's macro
             // expansion (`format!` only — `println!` / `print!` /
@@ -1695,6 +1666,104 @@ impl<'a> TypeChecker<'a> {
         self.fresh()
     }
 
+    /// Concrete return type of a stdlib `json` / `errors` / `fs` / `os`
+    /// free call whose signature lives outside user source. Returning a
+    /// real type (rather than a fresh inference var) lets the checker
+    /// catch mismatches — e.g. matching `fs::file_size(p)`'s bare `i64`
+    /// against a `Result` pattern. The json accessors return `Option<T>`
+    /// at runtime (the interp emits `Some`/`None`), so they are typed as
+    /// such; `json::get(v, k).unwrap()` and the autoderive `Some`/`None`
+    /// matches both rely on it.
+    fn check_stdlib_module_ret_ty(
+        &mut self,
+        module: &[&str],
+        last: &str,
+        callee: &Expr,
+        args: &[Expr],
+        arg_tys: &[Ty],
+    ) -> Option<Ty> {
+        if matches!(
+            module,
+            ["json"] | ["encoding", "json"] | ["std", "encoding", "json"]
+        ) {
+            return match last {
+                "parse" | "decode" => {
+                    let j = self.tcx.json_value_ty();
+                    let e = self.tcx.dyn_error_ty();
+                    Some(self.result_adt_ty(j, e))
+                }
+                "render" | "encode" => {
+                    self.reject_json_enum_arg(last, callee, args, arg_tys);
+                    Some(self.tcx.string_ty())
+                }
+                "at" | "identity" => Some(self.tcx.json_value_ty()),
+                "get" => {
+                    let j = self.tcx.json_value_ty();
+                    Some(self.option_adt_ty(j))
+                }
+                "len" => Some(self.tcx.int_ty(IntTy::I64)),
+                "is_null" => Some(self.tcx.bool_ty()),
+                "as_i64" => {
+                    let i = self.tcx.int_ty(IntTy::I64);
+                    Some(self.option_adt_ty(i))
+                }
+                "as_f64" => {
+                    let f = self.tcx.float_ty(FloatTy::F64);
+                    Some(self.option_adt_ty(f))
+                }
+                "as_str" => {
+                    let s = self.tcx.string_ty();
+                    Some(self.option_adt_ty(s))
+                }
+                "as_bool" => {
+                    let b = self.tcx.bool_ty();
+                    Some(self.option_adt_ty(b))
+                }
+                "as_array" => {
+                    let j = self.tcx.json_value_ty();
+                    let arr = self.tcx.intern(TyKind::Vec(j));
+                    Some(self.option_adt_ty(arr))
+                }
+                _ => None,
+            };
+        }
+        if matches!(module, ["errors"] | ["std", "errors"]) {
+            return match last {
+                "new" | "wrap" => Some(self.tcx.dyn_error_ty()),
+                _ => None,
+            };
+        }
+        if matches!(module, ["fs" | "os"] | ["std", "fs" | "os"]) {
+            return match last {
+                "file_size" => Some(self.tcx.int_ty(IntTy::I64)),
+                "exists" | "is_file" | "is_dir" | "is_symlink" => Some(self.tcx.bool_ty()),
+                _ => None,
+            };
+        }
+        // `time::Duration` constructors yield the transparent Duration
+        // newtype so the method-form accessors (`d.as_millis()`) can
+        // dispatch on the receiver's static type; the accessors
+        // themselves return a bare `i64`.
+        if matches!(module, ["time", "Duration"] | ["std", "time", "Duration"]) {
+            return match last {
+                "from_millis" | "from_secs" | "from_micros" => Some(self.tcx.duration_ty()),
+                "as_millis" | "as_secs" | "as_micros" => Some(self.tcx.int_ty(IntTy::I64)),
+                _ => None,
+            };
+        }
+        // `time::Instant::now()` yields the transparent Instant newtype so
+        // the method-form accessor (`inst.elapsed_ms()`) can dispatch on
+        // the receiver's static type; the accessor itself returns `i64`.
+        if matches!(module, ["time", "Instant"] | ["std", "time", "Instant"]) {
+            return match last {
+                "now" => Some(self.tcx.instant_ty()),
+                "elapsed_ms" => Some(self.tcx.int_ty(IntTy::I64)),
+                _ => None,
+            };
+        }
+        None
+    }
+
     /// Types the parser-injected format intrinsics and the bare
     /// variant constructors. The resolver doesn't hand `Some` / `Ok` /
     /// `Err` / `None` a `DefId`, so the call expression typechecks as
@@ -1709,7 +1778,9 @@ impl<'a> TypeChecker<'a> {
     /// parser injects and no user code can shadow them.
     fn check_bare_intrinsic_call(&mut self, name: &str, arg_tys: &[Ty]) -> Option<Ty> {
         let ty = match name {
-            "__concat" | "__fmt_prec" => self.tcx.string_ty(),
+            "__concat" | "__fmt_prec" | "__fmt_pad" | "__fmt_radix" | "__fmt_upper" => {
+                self.tcx.string_ty()
+            }
             "Some" => {
                 let payload = arg_tys.first().copied().unwrap_or_else(|| self.fresh());
                 self.option_adt_ty(payload)
@@ -1873,6 +1944,23 @@ impl<'a> TypeChecker<'a> {
         let mut resolved = self.infer.resolve(self.tcx, receiver_ty);
         while let Some(TyKind::Ref { inner, .. }) = self.tcx.kind(resolved) {
             resolved = self.infer.resolve(self.tcx, *inner);
+        }
+        // `time::Duration` accessors in method form: `d.as_millis()`
+        // mirrors the qualified `time::Duration::as_millis(d)` free
+        // call, all of which yield a bare `i64`.
+        if matches!(self.tcx.kind(resolved), Some(TyKind::Duration))
+            && matches!(method, "as_millis" | "as_secs" | "as_micros")
+            && args.is_empty()
+        {
+            return self.tcx.int_ty(IntTy::I64);
+        }
+        // `inst.elapsed_ms()` in method form mirrors the qualified
+        // `time::Instant::elapsed_ms(inst)` free call; both yield `i64`.
+        if matches!(self.tcx.kind(resolved), Some(TyKind::Instant))
+            && method == "elapsed_ms"
+            && args.is_empty()
+        {
+            return self.tcx.int_ty(IntTy::I64);
         }
         if let Some(TyKind::Adt { def, substs }) = self.tcx.kind(resolved)
             && substs.types().is_empty()
@@ -2721,6 +2809,7 @@ impl<'a> TypeChecker<'a> {
 
     fn check_match(&mut self, scrutinee: &Expr, arms: &[MatchArm], expected: Expectation) -> Ty {
         let scrut_ty = self.check_expr(scrutinee);
+        self.reject_constructor_scrutinee_mismatch(scrut_ty, arms);
         let mut result_ty = self.fresh();
         for arm in arms {
             self.push_scope();
@@ -2744,6 +2833,65 @@ impl<'a> TypeChecker<'a> {
             self.adjust_literal_to_join(&arm.body, result_ty);
         }
         result_ty
+    }
+
+    /// Rejects `Ok` / `Err` / `Some` / `None` arms whose scrutinee's
+    /// resolved head is not the matching `Result` / `Option`. The
+    /// `unify` mismatch is suppressed for these arms because the
+    /// synthesized pattern type carries unresolved payload vars, so the
+    /// hole is closed with a direct GT0001 here. Skips a scrutinee whose
+    /// head is still an inference variable so a not-yet-resolved shape is
+    /// never flagged.
+    fn reject_constructor_scrutinee_mismatch(&mut self, scrut_ty: Ty, arms: &[MatchArm]) {
+        let resolved = self.infer.resolve(self.tcx, scrut_ty);
+        let resolved = match self.tcx.kind(resolved) {
+            Some(TyKind::Ref { inner, .. }) => self.infer.resolve(self.tcx, *inner),
+            _ => resolved,
+        };
+        // Judge the container by the resolved head only: an unresolved
+        // scrutinee (`Var`) or an error type carries no decision; a
+        // partially-inferred `Result<_, Var>` still has a known `Result`
+        // head, so a `Some` arm against it is correctly rejected.
+        match self.tcx.kind(resolved) {
+            Some(TyKind::Var(_) | TyKind::Error) | None => return,
+            _ => {}
+        }
+        for arm in arms {
+            let ctor = match &arm.pattern.kind {
+                PatternKind::TupleStruct { path, .. } | PatternKind::Path(path) => {
+                    Self::bare_result_option_ctor(path)
+                }
+                _ => None,
+            };
+            let Some(ctor) = ctor else { continue };
+            // `Ok` / `Err` need the `Result` sentinel (`u32::MAX`);
+            // `Some` / `None` need the `Option` sentinel (`u32::MAX - 1`).
+            let want_def = match ctor {
+                "Ok" | "Err" => u32::MAX,
+                _ => u32::MAX - 1,
+            };
+            let matches_container = matches!(
+                self.tcx.kind(resolved),
+                Some(TyKind::Adt { def, .. }) if def.local == want_def
+            );
+            if matches_container {
+                continue;
+            }
+            let expected = if want_def == u32::MAX {
+                let fresh_ok = self.fresh();
+                let fresh_err = self.fresh();
+                self.result_adt_ty(fresh_ok, fresh_err)
+            } else {
+                let fresh = self.fresh();
+                self.option_adt_ty(fresh)
+            };
+            let expected = render_ty(self.tcx, expected);
+            let found = render_ty(self.tcx, resolved);
+            self.emit(
+                TypeError::TypeMismatch { expected, found },
+                arm.pattern.span,
+            );
+        }
     }
 
     /// Type-checks a `select { … }` expression. Each arm is checked in its own
@@ -3289,6 +3437,10 @@ impl<'a> TypeChecker<'a> {
         self.record(ast_ty.id, ty)
     }
 
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one arm per built-in type constructor; splitting hides the dispatch table"
+    )]
     fn type_from_ast_path(&mut self, node: NodeId, path: &TypePath) -> Ty {
         let head_name = path
             .segments
@@ -3389,6 +3541,24 @@ impl<'a> TypeChecker<'a> {
                 let value = tys.get(1).copied().unwrap_or_else(|| self.fresh());
                 return self.tcx.intern(TyKind::HashMap { key, value });
             }
+            // `HashSet<T>` / `BTreeMap<K, V>` are opaque i64 handles at
+            // runtime with no dedicated `TyKind`. Resolving the annotation to
+            // a named sentinel Adt (rather than a fresh inference var) lets
+            // method dispatch recover the receiver kind from its *type* when a
+            // set/map flows across a function boundary and the construction
+            // tag is gone.
+            "HashSet" => {
+                let substs = self.substs_from_ast(path);
+                let def = gossamer_resolve::DefId::local(u32::MAX - 7);
+                self.tcx.register_def_name(def, "HashSet");
+                return self.tcx.intern(TyKind::Adt { def, substs });
+            }
+            "BTreeMap" => {
+                let substs = self.substs_from_ast(path);
+                let def = gossamer_resolve::DefId::local(u32::MAX - 8);
+                self.tcx.register_def_name(def, "BTreeMap");
+                return self.tcx.intern(TyKind::Adt { def, substs });
+            }
             // `Box<T>` / `Arc<T>` / `Rc<T>` are transparent in a fully
             // GC'd language — every value is heap-shared already, so
             // these wrappers carry no runtime distinction. Keep the
@@ -3418,6 +3588,22 @@ impl<'a> TypeChecker<'a> {
             }
             _ => {}
         }
+        // `time::Duration` / `time::Instant` are transparent i64 newtypes
+        // with no resolver `DefId`. An explicit annotation (`d:
+        // time::Duration`) must resolve to the dedicated `TyKind` so the
+        // method form (`d.as_millis()`) dispatches on the receiver's
+        // static type the same way the inference form does — otherwise
+        // it falls to name-global dispatch and fails to lower on the
+        // compiled tiers. Match the full module path (not a bare tail)
+        // so a user type or `flag::Cell::Duration` named `Duration` is
+        // left untouched.
+        let segs: Vec<&str> = path.segments.iter().map(|s| s.name.name.as_str()).collect();
+        if matches!(segs.as_slice(), ["time", "Duration"] | ["std", "time", "Duration"]) {
+            return self.tcx.duration_ty();
+        }
+        if matches!(segs.as_slice(), ["time", "Instant"] | ["std", "time", "Instant"]) {
+            return self.tcx.instant_ty();
+        }
         // Recognise stdlib struct types by their last path segment
         // so parameter annotations like `entry: &fs::DirInfo` resolve
         // to the sentinel Adt rather than a fresh inference variable.
@@ -3430,10 +3616,43 @@ impl<'a> TypeChecker<'a> {
             "Output" => Some(3),
             "ResponseStream" => Some(4),
             "Response" => Some(5),
+            // `context::Context` — an opaque i64 handle with no
+            // dedicated `TyKind`. Resolving the annotation to a named
+            // sentinel Adt (rather than a fresh inference var) lets
+            // method dispatch recover the receiver kind from its *type*
+            // when a context flows in as a parameter (the canonical
+            // request-propagation shape) and the construction tag is
+            // gone — the `is_cancelled` / `cancel` / `done` / `done_chan`
+            // calls then route to the `gos_rt_ctx_*` shims. Offset 11:
+            // 9 and 10 are taken by `validate::Errors` / `FieldError`.
+            "Context" => Some(11),
             _ => None,
         };
         if let Some(off) = stdlib_def_offset {
             let def = gossamer_resolve::DefId::local(u32::MAX - off);
+            if tail == "Context" {
+                self.tcx.register_def_name(def, "context::Context");
+            }
+            return self.tcx.intern(TyKind::Adt {
+                def,
+                substs: crate::Substs::new(),
+            });
+        }
+        // `validate::Errors` / `validate::FieldError` are opaque i64
+        // handles with no dedicated `TyKind`. Resolving the annotation to
+        // a named sentinel Adt (instead of a fresh inference var) lets
+        // method dispatch recover the handle kind from its *type* when an
+        // `Errors` / `FieldError` flows across a function boundary and the
+        // construction-site tag is gone — the same recovery `HashSet`
+        // and `BTreeMap` rely on.
+        let validate_handle: Option<(u32, &str)> = match tail {
+            "Errors" => Some((9, "Errors")),
+            "FieldError" => Some((10, "FieldError")),
+            _ => None,
+        };
+        if let Some((off, name)) = validate_handle {
+            let def = gossamer_resolve::DefId::local(u32::MAX - off);
+            self.tcx.register_def_name(def, name);
             return self.tcx.intern(TyKind::Adt {
                 def,
                 substs: crate::Substs::new(),
@@ -3504,6 +3723,24 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
+    /// The built-in `Result` / `Option` constructor named by an
+    /// unqualified pattern path (`Ok` / `Err` / `Some` / `None`), or
+    /// `None` for a qualified path or any other name. Qualified
+    /// variants (`MyEnum::Ok`) keep their user typing — only the bare
+    /// spelling is the reserved built-in.
+    fn bare_result_option_ctor(path: &gossamer_ast::Path) -> Option<&'static str> {
+        if path.segments.len() != 1 {
+            return None;
+        }
+        match path.segments.last()?.name.name.as_str() {
+            "Ok" => Some("Ok"),
+            "Err" => Some("Err"),
+            "Some" => Some("Some"),
+            "None" => Some("None"),
+            _ => None,
+        }
+    }
+
     fn type_of_pattern(&mut self, pattern: &Pattern) -> Ty {
         if self.enter_recursion(pattern.span).is_err() {
             return self.tcx.error_ty();
@@ -3514,6 +3751,12 @@ impl<'a> TypeChecker<'a> {
     }
 
     fn type_of_pattern_kind(&mut self, pattern: &Pattern) -> Ty {
+        // A constructor pattern's type stays a fresh inference variable
+        // here; the scrutinee unification binds it. Synthesizing the
+        // `Result` / `Option` Adt at this site desugars `if let Some(n)
+        // = m.get(k)` differently and miscompiles the payload binding,
+        // so the bare `Ok` / `Err` / `Some` / `None` mismatch is caught
+        // separately in `reject_constructor_scrutinee_mismatch`.
         match &pattern.kind {
             PatternKind::Wildcard
             | PatternKind::Ident { .. }
@@ -3855,6 +4098,8 @@ fn kind_is_concrete(checker: &TypeChecker<'_>, kind: &TyKind) -> bool {
         | TyKind::Float(_)
         | TyKind::Unit
         | TyKind::Never
+        | TyKind::Duration
+        | TyKind::Instant
         | TyKind::JsonValue
         | TyKind::DynError
         | TyKind::Param { .. } => true,

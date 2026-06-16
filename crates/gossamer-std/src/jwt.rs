@@ -1137,6 +1137,80 @@ fn decode_b64url_char(c: u8) -> Result<u8, Error> {
 }
 
 // --------------------------------------------------------------------------
+// JSON-string entry API
+//
+// The bytecode-VM builtins for `std::jwt` move `Claims` across the call
+// boundary as a JSON object string rather than a struct, so the surface
+// is struct-marshalling-free and bit-identical to the compiled tier's
+// `gos_rt_jwt_*` shims. Each wrapper parses the claims JSON into a
+// `Claims` (`Claims::from_json`) before signing, and renders the
+// verified `Claims` back to canonical JSON (`Claims::to_json`) after
+// verifying.
+
+/// Parse a JSON object string into a `Claims` set.
+fn claims_from_json_str(claims_json: &str) -> Result<Claims, Error> {
+    let v: serde_json::Value = serde_json::from_str(claims_json)
+        .map_err(|e| Error::new(format!("jwt: claims json: {e}")))?;
+    Claims::from_json(v)
+}
+
+/// Render a `Claims` set to canonical JSON (sorted keys, matching the
+/// compiled tier's `normalize_claims`).
+fn claims_to_json_str(claims: &Claims) -> Result<String, Error> {
+    serde_json::to_string(&claims.to_json())
+        .map_err(|e| Error::new(format!("jwt: encode claims: {e}")))
+}
+
+/// `jwt::sign_hs(alg, claims_json, key)` over JSON-string claims.
+pub fn sign_hs_json(alg: &str, claims_json: &str, key: &[u8]) -> Result<String, Error> {
+    let alg = Alg::from_str(alg)?;
+    let claims = claims_from_json_str(claims_json)?;
+    sign_hs(alg, &claims, key)
+}
+
+/// `jwt::verify_hs(token, alg, key, leeway)` returning canonical claims JSON.
+pub fn verify_hs_json(token: &str, alg: &str, key: &[u8], leeway: i64) -> Result<String, Error> {
+    let alg = Alg::from_str(alg)?;
+    let opts = VerifyOpts::new().leeway(leeway);
+    let claims = verify_hs(token, alg, key, &opts)?;
+    claims_to_json_str(&claims)
+}
+
+/// `jwt::sign_es256(claims_json, signing_key_pem)` over JSON-string claims.
+pub fn sign_es256_json(claims_json: &str, signing_key_pem: &str) -> Result<String, Error> {
+    let claims = claims_from_json_str(claims_json)?;
+    sign_es256(&claims, signing_key_pem)
+}
+
+/// `jwt::verify_es256(token, pem, leeway)` returning canonical claims JSON.
+pub fn verify_es256_json(
+    token: &str,
+    verifying_key_pem: &str,
+    leeway: i64,
+) -> Result<String, Error> {
+    let opts = VerifyOpts::new().leeway(leeway);
+    let claims = verify_es256(token, verifying_key_pem, &opts)?;
+    claims_to_json_str(&claims)
+}
+
+/// `jwt::sign_eddsa(claims_json, signing_key_pem)` over JSON-string claims.
+pub fn sign_eddsa_json(claims_json: &str, signing_key_pem: &str) -> Result<String, Error> {
+    let claims = claims_from_json_str(claims_json)?;
+    sign_eddsa(&claims, signing_key_pem)
+}
+
+/// `jwt::verify_eddsa(token, pem, leeway)` returning canonical claims JSON.
+pub fn verify_eddsa_json(
+    token: &str,
+    verifying_key_pem: &str,
+    leeway: i64,
+) -> Result<String, Error> {
+    let opts = VerifyOpts::new().leeway(leeway);
+    let claims = verify_eddsa(token, verifying_key_pem, &opts)?;
+    claims_to_json_str(&claims)
+}
+
+// --------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {

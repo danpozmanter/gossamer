@@ -200,6 +200,13 @@ const SPECS: &[Spec] = &[
     },
     spec("examples/vowel_count.gos"),
     Spec {
+        skip_all: Some(
+            "binds a fixed loopback port — covered serially by \
+             web_auth_api_parity_across_tiers",
+        ),
+        ..spec("examples/web_auth_api.gos")
+    },
+    Spec {
         server: Some(ServerFixture {
             boot_ms: 800,
             addr: "127.0.0.1:8080",
@@ -209,9 +216,39 @@ const SPECS: &[Spec] = &[
     },
     spec("examples/word_count.gos"),
     // --- feature-testing-examples/ ---
+    // JIT widening coverage fixtures (inliner edge-dissolving,
+    // aggregate-interior bodies, char-field enums, mixed-arity).
+    spec("feature-testing-examples/jit_inline_chain.gos"),
+    spec("feature-testing-examples/jit_aggregate_local.gos"),
+    spec("feature-testing-examples/jit_inline_aggregate_return.gos"),
+    spec("feature-testing-examples/jit_inline_const_args.gos"),
+    spec("feature-testing-examples/jit_enum_char_field.gos"),
+    spec("feature-testing-examples/jit_inline_vec_ops.gos"),
+    spec("feature-testing-examples/jit_mixed_arity6.gos"),
+    spec("feature-testing-examples/temporary_wrap.gos"),
+    spec("feature-testing-examples/borrowed_option_result.gos"),
+    spec("feature-testing-examples/aggregate_binding.gos"),
+    spec("feature-testing-examples/fs_metadata.gos"),
+    spec("feature-testing-examples/html_escape.gos"),
+    spec("feature-testing-examples/html_template_render_json.gos"),
+    spec("feature-testing-examples/jwt_roundtrip.gos"),
+    spec("feature-testing-examples/crypto_ecdsa.gos"),
+    spec("feature-testing-examples/validate_errors.gos"),
+    spec("feature-testing-examples/validate_errors_return.gos"),
+    spec("feature-testing-examples/sync_rwlock.gos"),
+    spec("feature-testing-examples/context_cancel.gos"),
+    spec("feature-testing-examples/metrics_observability.gos"),
+    spec("feature-testing-examples/trace_observability.gos"),
+    spec("feature-testing-examples/os_signal_subscribe.gos"),
     spec("feature-testing-examples/array_bounds_probe.gos"),
+    spec("feature-testing-examples/array_literal_vec_methods.gos"),
+    spec("feature-testing-examples/vec_aggregate_rc_ownership.gos"),
+    spec("feature-testing-examples/mut_ref_scalar_writeback.gos"),
     spec("feature-testing-examples/byte_vec_i64_model.gos"),
+    spec("feature-testing-examples/map_iteration_order.gos"),
+    spec("feature-testing-examples/usize_compare.gos"),
     spec("feature-testing-examples/channel_close_drain.gos"),
+    spec("feature-testing-examples/channel_timers.gos"),
     Spec {
         nondeterministic: true,
         ..spec("feature-testing-examples/channel_fan_in.gos")
@@ -222,7 +259,12 @@ const SPECS: &[Spec] = &[
     spec("feature-testing-examples/combinator_sweep.gos"),
     spec("feature-testing-examples/mut_ref_params.gos"),
     spec("feature-testing-examples/http_surface.gos"),
+    spec("feature-testing-examples/http_form_multipart.gos"),
+    spec("feature-testing-examples/option_none_variant_collision.gos"),
+    spec("feature-testing-examples/method_name_collision.gos"),
     spec("feature-testing-examples/select_multiplex.gos"),
+    spec("feature-testing-examples/select_closed_chan_ready.gos"),
+    spec("feature-testing-examples/select_ctx_cancel.gos"),
     spec("feature-testing-examples/let_else_binding.gos"),
     spec("feature-testing-examples/slice_param_coercion.gos"),
     spec("feature-testing-examples/enum_param_rc_repro.gos"),
@@ -238,6 +280,7 @@ const SPECS: &[Spec] = &[
     spec("feature-testing-examples/vec_literal_coercion.gos"),
     spec("feature-testing-examples/derive_traits.gos"),
     spec("feature-testing-examples/struct_map_keys.gos"),
+    spec("feature-testing-examples/atomic_bool.gos"),
     spec("feature-testing-examples/cycle_collector.gos"),
     spec("feature-testing-examples/arena_regions.gos"),
     spec("feature-testing-examples/auto_regions.gos"),
@@ -250,6 +293,7 @@ const SPECS: &[Spec] = &[
     spec("feature-testing-examples/error_question_mark_propagation.gos"),
     spec("feature-testing-examples/float_cast_drift.gos"),
     spec("feature-testing-examples/format_precision_padding.gos"),
+    spec("feature-testing-examples/format_spec.gos"),
     spec("feature-testing-examples/fs_error_text.gos"),
     spec("feature-testing-examples/fs_temp_file_lifecycle.gos"),
     spec("feature-testing-examples/generic_function_monomorphization.gos"),
@@ -258,8 +302,15 @@ const SPECS: &[Spec] = &[
         nondeterministic: true,
         ..spec("feature-testing-examples/hashmap_counter_race.gos")
     },
+    spec("feature-testing-examples/hashset_algebra.gos"),
     spec("feature-testing-examples/http2_push.gos"),
     spec("feature-testing-examples/http2_trailers.gos"),
+    spec("feature-testing-examples/http_cookie.gos"),
+    spec("feature-testing-examples/http_csrf.gos"),
+    spec("feature-testing-examples/http_csrf_attach.gos"),
+    spec("feature-testing-examples/http_session.gos"),
+    spec("feature-testing-examples/http_session_roundtrip.gos"),
+    spec("feature-testing-examples/http_form_urlencoded.gos"),
     Spec {
         skip_all: Some(
             "binds fixed loopback ports — covered serially by \
@@ -267,6 +318,49 @@ const SPECS: &[Spec] = &[
         ),
         ..spec("feature-testing-examples/http_bare_handler.gos")
     },
+    Spec {
+        skip_all: Some(
+            "binds a fixed loopback port — covered serially by \
+             http_bare_aliases_parity_across_tiers",
+        ),
+        ..spec("feature-testing-examples/http_bare_aliases.gos")
+    },
+    Spec {
+        skip_all: Some(
+            "binds a fixed loopback port — covered serially by \
+             http_client_cookie_jar_parity_across_tiers",
+        ),
+        ..spec("feature-testing-examples/http_client_cookie_jar.gos")
+    },
+    Spec {
+        skip_all: Some(
+            "binds a fixed loopback port — covered serially by \
+             http_client_verbs_parity_across_tiers",
+        ),
+        ..spec("feature-testing-examples/http_client_verbs.gos")
+    },
+    Spec {
+        skip_all: Some(
+            "binds a fixed loopback port — covered serially by \
+             http_middleware_bearer_parity_across_tiers",
+        ),
+        ..spec("feature-testing-examples/http_middleware_bearer.gos")
+    },
+    Spec {
+        skip_all: Some(
+            "binds a fixed loopback port — covered serially by \
+             http_middleware_compose_parity_across_tiers",
+        ),
+        ..spec("feature-testing-examples/http_middleware_compose.gos")
+    },
+    Spec {
+        skip_all: Some(
+            "binds a fixed loopback port — covered serially by \
+             http_middleware_ws_parity_across_tiers",
+        ),
+        ..spec("feature-testing-examples/http_middleware_ws.gos")
+    },
+    spec("feature-testing-examples/http_router_lookup.gos"),
     Spec {
         skip_all: Some(
             "binds a fixed loopback port — covered serially by \
@@ -305,6 +399,27 @@ const SPECS: &[Spec] = &[
     Spec {
         skip_all: Some(
             "binds a fixed loopback port — covered serially by \
+             http_request_values_parity_across_tiers",
+        ),
+        ..spec("feature-testing-examples/http_request_values.gos")
+    },
+    Spec {
+        skip_all: Some(
+            "binds a fixed loopback port — covered serially by \
+             http_request_form_auth_parity_across_tiers",
+        ),
+        ..spec("feature-testing-examples/http_request_form_auth.gos")
+    },
+    Spec {
+        skip_all: Some(
+            "binds a fixed loopback port — covered serially by \
+             http_form_file_parity_across_tiers",
+        ),
+        ..spec("feature-testing-examples/http_form_file.gos")
+    },
+    Spec {
+        skip_all: Some(
+            "binds a fixed loopback port — covered serially by \
              http_response_headers_parity_across_tiers",
         ),
         ..spec("feature-testing-examples/http_response_headers.gos")
@@ -316,9 +431,36 @@ const SPECS: &[Spec] = &[
         ),
         ..spec("feature-testing-examples/http_roundtrip.gos")
     },
+    Spec {
+        skip_all: Some(
+            "binds a fixed loopback port — covered serially by \
+             http_static_file_parity_across_tiers",
+        ),
+        ..spec("feature-testing-examples/http_static_file.gos")
+    },
+    Spec {
+        skip_all: Some(
+            "binds a fixed loopback port — covered serially by \
+             http_static_range_parity_across_tiers",
+        ),
+        ..spec("feature-testing-examples/http_static_range.gos")
+    },
+    Spec {
+        skip_all: Some(
+            "binds a fixed loopback port — covered serially by \
+             http_websocket_accept_parity_across_tiers",
+        ),
+        ..spec("feature-testing-examples/http_websocket_accept.gos")
+    },
     spec("feature-testing-examples/http_serve_err_binding.gos"),
     spec("feature-testing-examples/integer_overflow_edges.gos"),
     spec("feature-testing-examples/iter_combinator_chain.gos"),
+    spec("feature-testing-examples/iter_extra.gos"),
+    spec("feature-testing-examples/sync_extra.gos"),
+    spec("feature-testing-examples/math_rand.gos"),
+    spec("feature-testing-examples/bytes_builder.gos"),
+    spec("feature-testing-examples/net_ip.gos"),
+    spec("feature-testing-examples/net_tcp_echo.gos"),
     spec("feature-testing-examples/json_round_trip_fuzz.gos"),
     spec("feature-testing-examples/method_dispatch_collision.gos"),
     spec("feature-testing-examples/mutex_poison_recovery.gos"),
@@ -334,6 +476,7 @@ const SPECS: &[Spec] = &[
     spec("feature-testing-examples/panic_recover_round_trip.gos"),
     spec("feature-testing-examples/pattern_match_exhaustiveness.gos"),
     spec("feature-testing-examples/pipe_operator_precedence.gos"),
+    spec("feature-testing-examples/pipe_placeholder.gos"),
     Spec {
         // The example exercises `exec::run` against `echo`, `printf`,
         // `sh`, `true`, `false` — all Unix-only standalone executables
@@ -361,9 +504,12 @@ const SPECS: &[Spec] = &[
     spec("feature-testing-examples/slice_subslicing.gos"),
     spec("feature-testing-examples/sort_with_closure.gos"),
     spec("feature-testing-examples/spawn_join.gos"),
+    spec("feature-testing-examples/string_build.gos"),
     spec("feature-testing-examples/string_concatenation_stress.gos"),
+    spec("feature-testing-examples/string_method_surface.gos"),
     spec("feature-testing-examples/string_unicode_boundaries.gos"),
     spec("feature-testing-examples/time_monotonic_vs_wall.gos"),
+    spec("feature-testing-examples/tw_go_block.gos"),
     spec("feature-testing-examples/trait_object_dispatch.gos"),
     Spec {
         nondeterministic: true,
@@ -373,13 +519,44 @@ const SPECS: &[Spec] = &[
     spec("feature-testing-examples/literal_forms.gos"),
     spec("feature-testing-examples/loop_continue.gos"),
     spec("feature-testing-examples/match_or_patterns.gos"),
+    spec("feature-testing-examples/string_char_needle.gos"),
     spec("feature-testing-examples/static_items.gos"),
     spec("feature-testing-examples/stdlib_expansion.gos"),
+    spec("feature-testing-examples/strconv_radix_quote.gos"),
     spec("feature-testing-examples/stdlib_strings_free.gos"),
     spec("feature-testing-examples/stdlib_path_free.gos"),
     spec("feature-testing-examples/stdlib_time_free.gos"),
     spec("feature-testing-examples/stdlib_hash.gos"),
     spec("feature-testing-examples/stdlib_math_bits.gos"),
+    spec("feature-testing-examples/stdlib_math_pred.gos"),
+    spec("feature-testing-examples/stdlib_os_introspection.gos"),
+    spec("feature-testing-examples/stdlib_fs_rename.gos"),
+    spec("feature-testing-examples/stdlib_json_as_bool.gos"),
+    spec("feature-testing-examples/stdlib_thread_yield.gos"),
+    Spec {
+        stdin: b"alpha\nbeta\ngamma\n",
+        ..spec("feature-testing-examples/stdlib_io_read_all.gos")
+    },
+    Spec {
+        stdin: b"one two three",
+        ..spec("feature-testing-examples/stdlib_io_copy.gos")
+    },
+    spec("feature-testing-examples/stdlib_alias_wiring.gos"),
+    spec("feature-testing-examples/stdlib_math_scalar.gos"),
+    spec("feature-testing-examples/stdlib_math_const.gos"),
+    spec("feature-testing-examples/stdlib_unicode_norm.gos"),
+    spec("feature-testing-examples/stdlib_process.gos"),
+    spec("feature-testing-examples/stdlib_time_methods.gos"),
+    spec("feature-testing-examples/duration_methods.gos"),
+    spec("feature-testing-examples/flag_cell_duration.gos"),
+    spec("feature-testing-examples/instant_methods.gos"),
+    spec("feature-testing-examples/time_param_dispatch.gos"),
+    spec("feature-testing-examples/neg_int_min_wraps.gos"),
+    spec("feature-testing-examples/stdlib_net_dns.gos"),
+    spec("feature-testing-examples/stdlib_json_dynamic.gos"),
+    spec("feature-testing-examples/stdlib_netip.gos"),
+    spec("feature-testing-examples/stdlib_strconv.gos"),
+    spec("feature-testing-examples/stdlib_fs_ops.gos"),
     spec("feature-testing-examples/stdlib_encoding_crypto.gos"),
     spec("feature-testing-examples/stdlib_text_codec.gos"),
     spec("feature-testing-examples/stdlib_pem.gos"),
@@ -395,12 +572,24 @@ const SPECS: &[Spec] = &[
         ..spec("feature-testing-examples/scheduler_drain.gos")
     },
     spec("feature-testing-examples/static_mut_basic.gos"),
+    spec("feature-testing-examples/static_mut_goroutines.gos"),
     spec("feature-testing-examples/closure_goroutine.gos"),
+    spec("feature-testing-examples/go_stdlib_spawn.gos"),
     spec("feature-testing-examples/yaml_autoderive.gos"),
     spec("feature-testing-examples/sync_map_demo.gos"),
     spec("feature-testing-examples/autoderive_int_widths.gos"),
     spec("feature-testing-examples/write_file_bytes.gos"),
     spec("feature-testing-examples/unicode_full.gos"),
+    spec("feature-testing-examples/string_len_bytes.gos"),
+    spec("feature-testing-examples/concurrent_atomic.gos"),
+    spec("feature-testing-examples/stdlib_parity_batch.gos"),
+    spec("feature-testing-examples/compress_zstd.gos"),
+    spec("feature-testing-examples/compress_bzip2.gos"),
+    spec("feature-testing-examples/crypto_password.gos"),
+    spec("feature-testing-examples/crypto_extra.gos"),
+    spec("feature-testing-examples/crypto_aead.gos"),
+    spec("feature-testing-examples/encoding_xml.gos"),
+    spec("feature-testing-examples/misc_class_a.gos"),
     spec("feature-testing-examples/hashmap_get_some_field.gos"),
     Spec {
         skip_all: if cfg!(windows) {
@@ -652,29 +841,58 @@ fn vm_runs_every_example_without_crashing() {
     );
 }
 
-#[test]
-fn cranelift_debug_matches_vm_on_every_example() {
-    parity_walk(Tier::Cranelift);
+// The parity battery is split into `PARITY_GROUPS` round-robin groups
+// per tier so a single failing example fails only its small group test
+// (e.g. `llvm_parity_group_2`) instead of the whole "every example"
+// suite — narrower to find, faster to re-run. The failure message
+// still names the exact example. Keep the group tests below in sync
+// with this count.
+const PARITY_GROUPS: usize = 6;
+
+macro_rules! parity_group_tests {
+    ($($g:literal => $cranelift:ident, $llvm:ident, $strict:ident;)*) => {
+        $(
+            #[test]
+            fn $cranelift() {
+                parity_walk(Tier::Cranelift, $g);
+            }
+            #[test]
+            fn $llvm() {
+                parity_walk(Tier::Llvm, $g);
+            }
+            #[test]
+            fn $strict() {
+                lowers_without_fallback_group($g);
+            }
+        )*
+    };
 }
 
-#[test]
-fn llvm_release_matches_vm_on_every_example() {
-    parity_walk(Tier::Llvm);
+parity_group_tests! {
+    0 => cranelift_parity_group_0, llvm_parity_group_0, llvm_strict_lower_group_0;
+    1 => cranelift_parity_group_1, llvm_parity_group_1, llvm_strict_lower_group_1;
+    2 => cranelift_parity_group_2, llvm_parity_group_2, llvm_strict_lower_group_2;
+    3 => cranelift_parity_group_3, llvm_parity_group_3, llvm_strict_lower_group_3;
+    4 => cranelift_parity_group_4, llvm_parity_group_4, llvm_strict_lower_group_4;
+    5 => cranelift_parity_group_5, llvm_parity_group_5, llvm_strict_lower_group_5;
 }
 
 /// Serialises every parity walk so concurrent test functions can't
 /// race on examples whose fixtures share `/tmp/gossamer_test_*`
-/// paths (notably `fs_temp_file_lifecycle.gos`). Each walk takes
-/// ~40 s; doing them sequentially adds wall-clock but eliminates
-/// the cross-test fixture race.
+/// paths (notably `fs_temp_file_lifecycle.gos`). The grouped tests run
+/// sequentially under this lock — the round-robin split shrinks the
+/// failing unit without reintroducing the cross-test fixture race.
 static PARITY_WALK_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-fn parity_walk(compiled: Tier) {
+fn parity_walk(compiled: Tier, group: usize) {
     let _guard = PARITY_WALK_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut failures = Vec::new();
-    for spec in SPECS {
+    for (idx, spec) in SPECS.iter().enumerate() {
+        if idx % PARITY_GROUPS != group {
+            continue;
+        }
         if spec.skip_all.is_some() || spec.skip_parity.is_some() || spec.server.is_some() {
             continue;
         }
@@ -770,6 +988,122 @@ fn self_terminating_server_parity(path: &'static str, expect_contains: &[&str]) 
     }
 }
 
+/// `go <stdlib-free-call>` must spawn a goroutine on every tier rather
+/// than run inline. The fixture's two-line output is reachable only
+/// when the spawned `Barrier::wait` runs asynchronously (it is one of
+/// two barrier parties; main is the other). A synchronous inline call
+/// would deadlock main on the barrier and print nothing. Asserting the
+/// exact output plus cross-tier parity proves the spawn is async and
+/// identical across the bytecode VM, Cranelift JIT, and LLVM AOT.
+#[test]
+fn go_stdlib_spawn_is_async_across_tiers() {
+    let fixture = spec("feature-testing-examples/go_stdlib_spawn.gos");
+    let expected = "main reached barrier\nreleased\n";
+    let vm = run_tier(&fixture, Tier::Vm).expect("vm run");
+    assert_eq!(
+        normalize_newlines(&vm.stdout),
+        expected,
+        "vm stdout\n--- stderr ---\n{}",
+        vm.stderr,
+    );
+    assert_eq!(vm.code, Some(0), "vm exit={:?}", vm.code);
+    for tier in [Tier::Cranelift, Tier::Llvm] {
+        let run = run_tier(&fixture, tier)
+            .unwrap_or_else(|e| panic!("{} error: {e}", tier.label()));
+        if let Some(d) = divergence(&fixture, (Tier::Vm, &vm), (tier, &run)) {
+            panic!("{d}\n--- {} stderr ---\n{}", tier.label(), run.stderr);
+        }
+    }
+}
+
+/// The one-shot client verbs `http::head` / `options` / `post` / `put`
+/// / `delete` each lower to a per-verb `gos_rt_http_<verb>` shim so the
+/// method string is fixed at the runtime boundary; the request method,
+/// body, and Content-Type must round-trip bit-identically on every tier.
+#[test]
+fn http_client_verbs_parity_across_tiers() {
+    self_terminating_server_parity(
+        "feature-testing-examples/http_client_verbs.gos",
+        &[
+            "get status=200 body=m=GET b= ct=",
+            "options status=200 body=m=OPTIONS b= ct=",
+            "post status=200 body=m=POST b=hello-post ct=application/json",
+            "put status=200 body=m=PUT b=hello-put ct=text/plain",
+            "delete status=200 body=m=DELETE b=hello-delete ct=",
+            "head status=200",
+        ],
+    );
+}
+
+/// The canonical classifier free functions
+/// `http::middleware::decode_basic_auth` (header -> Option<(user, pass)>)
+/// and `http::websocket::is_websocket_upgrade` (request -> bool) must
+/// classify bit-identically on every tier, degrading to `None` / `false`
+/// when the relevant headers are absent.
+#[test]
+fn http_middleware_ws_parity_across_tiers() {
+    self_terminating_server_parity(
+        "feature-testing-examples/http_middleware_ws.gos",
+        &[
+            "A status=200 body=cred=admin:s3cret up=yes",
+            "B status=200 body=cred=none up=no",
+        ],
+    );
+}
+
+/// Go-style middleware composition `http::middleware::tag(inner) ->
+/// Handler` must wrap a handler and prepend `mw:` to each response body
+/// bit-identically on every tier; a double-wrap `tag(tag(App{}))` proves
+/// the chained path (the inner middleware serves through
+/// `gos_rt_middleware_serve`), yielding `mw:mw:ok`.
+#[test]
+fn http_middleware_compose_parity_across_tiers() {
+    self_terminating_server_parity(
+        "feature-testing-examples/http_middleware_compose.gos",
+        &["status=200 body=mw:mw:ok"],
+    );
+}
+
+/// The bare HTTP free-function aliases `native_client::{get,post,put,delete}`,
+/// `proxy::forward`, and `static_files::serve_file` must resolve to their
+/// canonical compiled shims and behave bit-identically on every tier.
+#[test]
+fn http_bare_aliases_parity_across_tiers() {
+    self_terminating_server_parity(
+        "feature-testing-examples/http_bare_aliases.gos",
+        &[
+            "nc_get status=200 body=m=GET b=",
+            "nc_post status=200 body=m=POST b=p",
+            "nc_put status=200 body=m=PUT b=q",
+            "nc_delete status=200 body=m=DELETE b=",
+            "proxy_get status=200 body=m=GET b=",
+            "proxy_post status=200 body=m=POST b=fwd",
+            "serve_file status=200 body=served-from-disk",
+        ],
+    );
+}
+
+/// `FileServer` byte-range (RFC 7233) responses must be bit-identical on
+/// every tier: a single `Range` yields 206 + `Content-Range` + the
+/// sliced body, a multi-range yields a 206 `multipart/byteranges` body
+/// with the fixed boundary, an out-of-range request yields 416. Both the
+/// compiled `gos_rt_file_server_serve` and interp `native_file_server_serve`
+/// route through the shared gossamer-runtime Range helpers.
+#[test]
+fn http_static_range_parity_across_tiers() {
+    self_terminating_server_parity(
+        "feature-testing-examples/http_static_range.gos",
+        &[
+            "single status=206 cr=bytes 2-5/16 body=2345",
+            "multi status=206 ct=multipart/byteranges; boundary=gossamer_byteranges_boundary",
+            "Content-Range: bytes 0-2/16",
+            "Content-Range: bytes 5-7/16",
+            "bad status=416 cr=bytes */16",
+            "whole status=200 body=0123456789ABCDEF",
+        ],
+    );
+}
+
 /// Bare-`http::Response` handlers (no `Result` wrapper) must serve
 /// identically on every tier: the MIR-synthesized `::__ok_wrap`
 /// thunk adapts them to the packed-Result handler C-ABI. Covers
@@ -781,6 +1115,148 @@ fn http_bare_handler_parity_across_tiers() {
         &[
             "struct status=200 body=bare struct ok",
             "route status=200 body=bare route ok",
+        ],
+    );
+}
+
+/// The `http::Client` cookie jar (`Client::builder().cookie_jar(true)`)
+/// must persist `Set-Cookie` across requests on the same client and
+/// re-send it bit-identically on every tier: the compiled tiers keep a
+/// persistent `ureq::Agent` on the boxed client, the interp tier an
+/// id-keyed `gossamer_std::http::Client` registry. The handler echoes
+/// the `Cookie` header it received on the second request.
+#[test]
+fn http_client_cookie_jar_parity_across_tiers() {
+    self_terminating_server_parity(
+        "feature-testing-examples/http_client_cookie_jar.gos",
+        &["login status=200", "me_body=cookie=sid=abc123"],
+    );
+}
+
+/// Request-scoped values (`r.set_value(k, v)` / `r.value(k)`, Go's
+/// `context.WithValue`) must read back bit-identically on every tier;
+/// re-setting a key overwrites, an absent key yields `""`.
+#[test]
+fn http_request_values_parity_across_tiers() {
+    self_terminating_server_parity(
+        "feature-testing-examples/http_request_values.gos",
+        &["status=200 body=user=bob role=admin missing=[]"],
+    );
+}
+
+/// `r.form_value(key)` reads an x-www-form-urlencoded body field and
+/// `r.basic_auth()` decodes the `Authorization: Basic` header into
+/// `Option<(String, String)>`; both must read back bit-identically on
+/// every tier, degrading to `""` / `None` when absent.
+#[test]
+fn http_request_form_auth_parity_across_tiers() {
+    self_terminating_server_parity(
+        "feature-testing-examples/http_request_form_auth.gos",
+        &[
+            "status=200 body=form_user=alice form_role=admin missing=[] auth=admin:s3cret",
+            "status=200 body=form_user= form_role= missing=[] auth=none",
+        ],
+    );
+}
+
+/// `r.form_file(name)` parses a `multipart/form-data` request body off
+/// `raw_body` (boundary from the `Content-Type` header) and returns the
+/// matching file part's `filename` / `content_type` / `[u8]` content.
+/// The upload echo and the no-body 404 must read back bit-identically
+/// on every tier.
+#[test]
+fn http_form_file_parity_across_tiers() {
+    self_terminating_server_parity(
+        "feature-testing-examples/http_form_file.gos",
+        &[
+            "status=200 body=file=x.txt ctype=text/plain len=5 sum=335",
+            "status=404 body=no file",
+        ],
+    );
+}
+
+/// `http::middleware::bearer_ok` runs the caller's verify closure on
+/// the request's Bearer token across the C-ABI; a valid token reaches
+/// the handler (200), an invalid or absent one is rejected (401).
+#[test]
+fn http_middleware_bearer_parity_across_tiers() {
+    self_terminating_server_parity(
+        "feature-testing-examples/http_middleware_bearer.gos",
+        &[
+            "valid status=200 body=welcome",
+            "wrong status=401 body=unauthorized",
+            "none status=401 body=unauthorized",
+        ],
+    );
+}
+
+/// Canonical authenticated API example: a path-parameter router, a
+/// `middleware::bearer_ok` auth gate, typed `r.path_int` extraction,
+/// and signed `session::sign` / `verify` cookies — all composed in
+/// one program that must behave bit-identically on every tier.
+#[test]
+fn web_auth_api_parity_across_tiers() {
+    self_terminating_server_parity(
+        "examples/web_auth_api.gos",
+        &[
+            "login session={\"user\":\"ada\"}",
+            "order status=200 body={\"order\":42}",
+            "noauth status=401",
+        ],
+    );
+}
+
+/// Router `{id}` / `{rest...}` path captures must reach a Gossamer
+/// handler via `r.path_value(name)` bit-identically on every tier.
+/// An undeclared capture name yields `""`.
+#[test]
+fn http_router_params_parity_across_tiers() {
+    self_terminating_server_parity(
+        "feature-testing-examples/http_router_params.gos",
+        &[
+            "A status=200 body=user=42",
+            "B status=200 body=file=docs/readme.md",
+            "C status=200 body=missing=[]",
+        ],
+    );
+}
+
+/// Typed path extractors `r.path_int` / `r.path_float` (Option<T>) must
+/// parse captures and return None on unparseable/absent identically on
+/// every tier — exercises the packed-Option C-ABI.
+#[test]
+fn http_router_typed_params_parity_across_tiers() {
+    self_terminating_server_parity(
+        "feature-testing-examples/http_router_typed_params.gos",
+        &["A id=42 amt=3.5 raw=42", "B id=-1 amt=-1 raw=notnum"],
+    );
+}
+
+/// `http::static_files::FileServer` served through `http::serve` must
+/// resolve a real file (200 + body + MIME) and 404 a missing path
+/// bit-identically on every tier — compiled wires `gos_rt_file_server_*`,
+/// interp the `native_file_server_serve` dispatch.
+#[test]
+fn http_static_file_parity_across_tiers() {
+    self_terminating_server_parity(
+        "feature-testing-examples/http_static_file.gos",
+        &["status=200 body=static file ok", "missing status=404"],
+    );
+}
+
+/// `http::websocket::accept` (RFC 6455 server handshake) must validate
+/// the upgrade headers and build a 101 Response identically on every
+/// tier — compiled wires `gos_rt_ws_accept`, interp the native
+/// `websocket::accept`; a request without the headers is rejected with
+/// the handshake error string.
+#[test]
+fn http_websocket_accept_parity_across_tiers() {
+    self_terminating_server_parity(
+        "feature-testing-examples/http_websocket_accept.gos",
+        &[
+            "accept_key=s3pPLMBiTxaQ9kYGzzhZRbK+xOo=",
+            "valid=status=101",
+            "reject=missing Upgrade header",
         ],
     );
 }
@@ -1161,11 +1637,16 @@ fn probe_once(
 // `~/dev/contexts/lang/ai_driven_gaps.md` and tracked one by one.
 // ----------------------------------------------------------------
 
-#[test]
-fn llvm_release_lowers_every_example_without_fallback() {
+/// One round-robin group of the strict-lowering battery (invoked by the
+/// `llvm_strict_lower_group_N` tests). Builds only (to fresh per-spec
+/// dirs), so groups can run concurrently without the parity lock.
+fn lowers_without_fallback_group(group: usize) {
     let mut fallbacks: Vec<String> = Vec::new();
     let mut errors: Vec<String> = Vec::new();
-    for spec in SPECS {
+    for (idx, spec) in SPECS.iter().enumerate() {
+        if idx % PARITY_GROUPS != group {
+            continue;
+        }
         if spec.skip_all.is_some() {
             continue;
         }

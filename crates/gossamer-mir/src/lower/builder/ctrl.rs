@@ -968,8 +968,22 @@ impl<'a> Builder<'a> {
                 //      down to "take the success path"; programs
                 //      that depend on real error dispatch keep
                 //      working under `gos run`.
-                if let Some((_, idx)) = self.enums.lookup(std::slice::from_ref(name)) {
-                    let scrut_ty = self.locals[scrutinee.0 as usize].ty;
+                // A bare variant name resolves through the global
+                // `variant_index` map, so `None` / `Some` / `Ok` / `Err`
+                // collide with any user enum that reuses one (e.g. an
+                // injected `enum { BearerOnly, CookieSession, None }`).
+                // When the scrutinee is genuinely a `Result` / `Option`,
+                // dispatch on its real discriminant below rather than the
+                // colliding user-enum variant index — otherwise the arm
+                // compares the whole i128 value to that index and never
+                // matches, falling through to a stale local.
+                let scrut_ty = self.locals[scrutinee.0 as usize].ty;
+                let user_enum_match = if self.is_result_or_option_adt(scrut_ty) {
+                    None
+                } else {
+                    self.enums.lookup(std::slice::from_ref(name))
+                };
+                if let Some((_, idx)) = user_enum_match {
                     let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
                     // For payload-bearing variants the scrutinee is a
                     // ptr to `[disc, p0, p1, ...]`; for no-payload
@@ -1222,11 +1236,12 @@ impl<'a> Builder<'a> {
                     _ => 1,
                 };
                 let scrut_ty = self.locals[scrutinee.0 as usize].ty;
-                let scrut_kind = self.tcx.kind_of(scrut_ty);
-                let real_disc = matches!(
-                    scrut_kind,
-                    TyKind::Adt { .. } if self.is_result_or_option_adt(scrut_ty)
-                );
+                // `is_result_or_option_adt` peels any leading `Ref`, so a
+                // borrowed `&Result` / `&Option` scrutinee dispatches on its
+                // real discriminant (the i128 carried by value through the
+                // reference) instead of falling into the happy-path alias that
+                // bound the payload to the reference operand.
+                let real_disc = self.is_result_or_option_adt(scrut_ty);
                 let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
                 let const_pred = self.fresh(bool_ty);
                 if real_disc {
@@ -1286,8 +1301,15 @@ impl<'a> Builder<'a> {
                         // the match arm loop set `payload_defer_block`. Unconditional
                         // payload extraction in the pre-branch header dereferences a
                         // null pointer when the scrutinee is None/Err on re-entry.
+                        // Read it without consuming: every alternative of a binding
+                        // or-pattern (`Some(x) | Other(x)`, `Ok(x) | Err(x)`) must
+                        // bind its payload into the shared arm block from its own
+                        // matched branch. Consuming here left the second alternative
+                        // emitting into the pre-branch header, where last-binding-wins
+                        // bound the name from an unconditional extraction. The match
+                        // arm loop clears the hint once the whole pattern is lowered.
                         let saved_current = self.current;
-                        if let Some(defer) = self.payload_defer_block.take() {
+                        if let Some(defer) = self.payload_defer_block {
                             self.current = Some(defer);
                         }
                         let payload_local = if real_disc {
@@ -1522,6 +1544,13 @@ impl<'a> Builder<'a> {
         span: Span,
     ) {
         use gossamer_types::TyKind;
+        // `TcpListener::accept` returns `(TcpStream-handle, peer-addr)`;
+        // the call dest is tagged `net::accept_pair`, which flows here
+        // through the `Ok(p)`/match-result kind propagation. Re-tag the
+        // stream element so `stream.read(..)` dispatches to the runtime
+        // helper rather than reading the raw i64 handle.
+        let accept_pair =
+            self.local_runtime_kind.get(&tuple_local).copied() == Some("net::accept_pair");
         let rest_pos = sub_patterns
             .iter()
             .position(|p| matches!(p.kind, HirPatKind::Rest));
@@ -1575,6 +1604,10 @@ impl<'a> Builder<'a> {
             let element_local =
                 self.push_local(elem_ty, Some(Ident::new(name.name.as_str())), *mutable);
             self.bind_local(name.name.as_str(), element_local);
+            if accept_pair && field_idx == 0 {
+                self.local_runtime_kind
+                    .insert(element_local, "net::TcpStream");
+            }
             let projection = vec![crate::ir::Projection::Field(
                 u32::try_from(field_idx).expect("tuple projection overflow"),
             )];
@@ -1987,6 +2020,8 @@ impl<'a> Builder<'a> {
                     if let HirExprKind::MethodCall { name, .. } = &for_loop.iter_expr.kind {
                         if matches!(name.name.as_str(), "split" | "lines") {
                             for_vec_elem = Some(self.tcx.string_ty());
+                        } else if name.name.as_str() == "chars" {
+                            for_vec_elem = Some(self.tcx.intern(gossamer_types::TyKind::Char));
                         }
                     }
                 }
@@ -2071,6 +2106,44 @@ impl<'a> Builder<'a> {
                                 "regex::captures_all" | "std::regex::captures_all" => {
                                     Some(opt_str_vec_ty)
                                 }
+                                _ => None,
+                            };
+                        }
+                    }
+                }
+                if for_vec_elem.is_none() {
+                    // Inline `for … in iter::X(…)`: the typechecker
+                    // leaves these stdlib intrinsics' result `Var`, so
+                    // pin the element type for the tuple-returning and
+                    // nested-vec combinators. Without this the loop
+                    // falls to the single-slot i64 shape and either the
+                    // tuple destructure has no slot address (panic) or
+                    // `w[0]` indexes an i64 as if it were a vec.
+                    if let HirExprKind::Call { callee, .. } = &for_loop.iter_expr.kind {
+                        if let HirExprKind::Path { segments, .. } = &callee.kind {
+                            let joined = segments
+                                .iter()
+                                .map(|s| s.name.as_str())
+                                .collect::<Vec<_>>()
+                                .join("::");
+                            let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+                            let pair_ty = self
+                                .tcx
+                                .intern(gossamer_types::TyKind::Tuple(vec![i64_ty, i64_ty]));
+                            let vec_i64 = self.tcx.intern(gossamer_types::TyKind::Vec(i64_ty));
+                            for_vec_elem = match joined.as_str() {
+                                "iter::enumerate"
+                                | "std::iter::enumerate"
+                                | "iter::zip"
+                                | "std::iter::zip"
+                                | "iter::pairwise"
+                                | "std::iter::pairwise" => Some(pair_ty),
+                                "iter::windowed"
+                                | "std::iter::windowed"
+                                | "iter::chunk_by_size"
+                                | "std::iter::chunk_by_size" => Some(vec_i64),
+                                "iter::flatten" | "std::iter::flatten" | "iter::dedup"
+                                | "std::iter::dedup" => Some(i64_ty),
                                 _ => None,
                             };
                         }

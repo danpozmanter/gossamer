@@ -1,14 +1,13 @@
 //! Cross-shape coverage for the bytecode VM's `for` loop fast paths.
 //!
-//! Each test runs the same program through the tree-walker and the
-//! bytecode VM and asserts byte-equal output. Catches regressions in
-//! the `for-range` / inclusive-range / `vec.iter()` / `enumerate()`
-//! lowering paths added under H3.
+//! Each test runs a program through the bytecode VM and asserts its
+//! exact output. Catches regressions in the `for-range` /
+//! inclusive-range / `vec.iter()` / `enumerate()` lowering paths.
 
 use std::cell::RefCell;
 
 use gossamer_hir::lower_source_file;
-use gossamer_interp::{Interpreter, Vm, set_stdout_writer};
+use gossamer_interp::{Vm, set_stdout_writer};
 use gossamer_lex::SourceMap;
 use gossamer_parse::parse_source_file;
 use gossamer_resolve::resolve_source_file;
@@ -20,24 +19,6 @@ thread_local! {
 
 fn capture_writer(text: &str) {
     CAPTURED.with(|cell| cell.borrow_mut().push_str(text));
-}
-
-fn run_walker(source: &str) -> String {
-    let mut map = SourceMap::new();
-    let file = map.add_file("test.gos", source.to_string());
-    let (sf, parse_diags) = parse_source_file(source, file);
-    assert!(parse_diags.is_empty(), "parse: {parse_diags:?}");
-    let (resolutions, _) = resolve_source_file(&sf);
-    let mut tcx = TyCtxt::new();
-    let (table, _) = typecheck_source_file(&sf, &resolutions, &mut tcx);
-    let program = lower_source_file(&sf, &resolutions, &table, &mut tcx);
-    let mut interp = Interpreter::new();
-    interp.load(&program);
-    CAPTURED.with(|cell| cell.borrow_mut().clear());
-    let prev = set_stdout_writer(capture_writer);
-    let _ = interp.call("main", Vec::new()).expect("walker main failed");
-    set_stdout_writer(prev);
-    CAPTURED.with(|cell| cell.borrow().clone())
 }
 
 fn run_vm(source: &str) -> String {
@@ -58,12 +39,6 @@ fn run_vm(source: &str) -> String {
     CAPTURED.with(|cell| cell.borrow().clone())
 }
 
-fn assert_parity(source: &str) {
-    let walker = run_walker(source);
-    let vm = run_vm(source);
-    assert_eq!(walker, vm, "walker / VM diverged");
-}
-
 #[test]
 fn exclusive_for_range_sums_to_expected_total() {
     let source = r"
@@ -75,7 +50,6 @@ fn main() {
     println(total);
 }
 ";
-    assert_parity(source);
     assert_eq!(run_vm(source), "10\n");
 }
 
@@ -90,7 +64,6 @@ fn main() {
     println(total);
 }
 ";
-    assert_parity(source);
     assert_eq!(run_vm(source), "15\n");
 }
 
@@ -105,7 +78,6 @@ fn main() {
     println(total);
 }
 ";
-    assert_parity(source);
     assert_eq!(run_vm(source), "0\n");
 }
 
@@ -120,7 +92,6 @@ fn main() {
     println(count);
 }
 ";
-    assert_parity(source);
     assert_eq!(run_vm(source), "0\n");
 }
 
@@ -138,6 +109,5 @@ fn main() {
     println(found);
 }
 ";
-    assert_parity(source);
     assert_eq!(run_vm(source), "7\n");
 }

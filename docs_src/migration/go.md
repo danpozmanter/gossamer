@@ -12,10 +12,13 @@ the spec, see [`SPEC.md`](https://github.com/danpozmanter/gossamer/blob/main/SPE
 ## TL;DR
 
 - **What stays the same:** goroutines, channels, defer,
-  select, GC, package-per-directory, structural concurrency.
+  select, package-per-directory, structural concurrency,
+  automatic memory management.
 - **What changes:** syntax (Rust-shaped), error handling
   (`Result<T, E>` + `?`), interfaces become traits (nominal),
-  no implicit numeric coercion (`as` is explicit).
+  no implicit numeric coercion (`as` is explicit), and memory is
+  reclaimed deterministically — reference counting plus arenas,
+  not a tracing GC, so no collector pauses.
 - **What's missing today:** gRPC, real package registry,
   first-party SQL drivers. `std::database::sql` is the
   driver-pluggable surface (Conn / Tx / Stmt / Rows / Pool /
@@ -43,7 +46,7 @@ the spec, see [`SPEC.md`](https://github.com/danpozmanter/gossamer/blob/main/SPE
 | `defer cleanup()` | `defer cleanup()` | Same syntax, same semantics. |
 | `go work()` | `go work()` | Same. |
 | `ch <- v` / `v := <-ch` | `tx.send(v)` / `let v = rx.recv()` | Channels are typed: `channel::<i64>()`. |
-| `select { case x := <-ch: … }` | `select { recv x = ch => …, default => … }` | Select arms are typed. |
+| `select { case x := <-ch: … }` | `select { x = ch.recv() => …, default => … }` | Select arms are typed. |
 | `make([]int, 0, 16)` | `Vec::<i64>::with_capacity(16)` | Vec API. |
 | `make(map[string]int)` | `HashMap::<String, i64>::new()` | HashMap API. |
 
@@ -186,9 +189,9 @@ Goroutine and channel syntax is the same. Behavioural notes:
 
 ```gos
 select {
-    recv v = rx => println("got:", v),
-    send tx = 42 => println("sent"),
-    default => println("would block"),
+    v = rx.recv() => println!("got: {}", v),
+    tx.send(42) => println!("sent"),
+    default => println!("would block"),
 }
 ```
 
@@ -232,12 +235,12 @@ otherwise spawn a `let mut acc = 0; for x in xs { acc += … }`.
 
 | Go | Gossamer | Status |
 |---|---|---|
-| `fmt.Println` | `println(...)` | ✓ |
+| `fmt.Println` | `println!(...)` | ✓ |
 | `fmt.Printf` | `println!("{x}")` interpolation | ✓ |
 | `fmt.Sprintf` | `format!("{x}")` | ✓ |
-| `os.Args` | `os::args()` | ✓ |
-| `os.Getenv` | `os::env(name)` | ✓ |
-| `os.Exit` | `os::exit(code)` | ✓ |
+| `os.Args` | `env::args()` | ✓ |
+| `os.Getenv` | `env::var(name)` | ✓ |
+| `os.Exit` | `process::exit(code)` | ✓ |
 | `os.ReadFile` | `os::read_file(path)` | ✓ |
 | `os.WriteFile` | `os::write_file(path, data)` | ✓ |
 | `os/exec.Command` | `os::exec::Command::new(prog).arg(a).output()` | v1.x |
@@ -252,7 +255,7 @@ otherwise spawn a `let mut acc = 0; for x in xs { acc += … }`.
 | `crypto/hmac` | `crypto::hmac::sha256_mac(key, msg)` | ✓ |
 | `crypto/rand` | `crypto::rand::bytes(n)` | ✓ |
 | `crypto/subtle` | `crypto::subtle::constant_time_eq(a, b)` | ✓ |
-| `net/http` server | `http::Server::bind(addr)` | ✓ (HTTP/1.1 only) |
+| `net/http` server | `http::serve(addr, App {})` | ✓ (HTTP/1.1 only) |
 | `net/http` client | `http::Client::new()` | ✓ |
 | `net.Listen("tcp", …)` | `net::TcpListener::bind(addr)` | ✓ |
 | `net/url.Parse` | `net::url::Url::parse(s)` | ✓ |
@@ -268,7 +271,7 @@ otherwise spawn a `let mut acc = 0; for x in xs { acc += … }`.
 | `time.Format` | `time::format(t, layout)` | v1.x |
 | `time.Parse` | `time::parse(layout, s)` | v1.x |
 | `flag.Parse` | `flag::parse()` | partial |
-| `log/slog` | `slog::Logger::new(JsonHandler::new(io::stdout()))` | partial |
+| `log/slog` | `slog::info(msg, key, value)` | ✓ |
 | `context.Background` | `context::background()` | ✓ |
 | `context.WithCancel` | `context::with_cancel(parent)` | ✓ |
 | `sync.Mutex` | `sync::Mutex::new()` | ✓ |
@@ -297,7 +300,7 @@ fmt.Println(n)
 // Gossamer
 let data = os::read_file_to_string("input.txt")?
 let n = strings::count(&data, "\n")
-println(n)
+println!("{}", n)
 ```
 
 ### Spawn a worker, wait for it
@@ -336,12 +339,16 @@ log.Fatal(http.ListenAndServe(":8080", nil))
 
 ```gos
 // Gossamer
-fn handler(req: http::Request) -> http::Response {
-    http::Response::ok("hello\n")
+struct App { }
+
+impl http::Handler for App {
+    fn serve(&self, r: http::Request) -> Result<http::Response, http::Error> {
+        Ok(http::Response::text(200, "hello\n"))
+    }
 }
 
-fn main() {
-    http::serve("0.0.0.0:8080", handler)
+fn main() -> Result<(), http::Error> {
+    http::serve("0.0.0.0:8080", App { })
 }
 ```
 
@@ -417,14 +424,19 @@ log.Fatal(http.ListenAndServe(":8080", nil))
 Gossamer:
 
 ```gos
-fn handle(req: &http::Request) -> http::Response {
-    http::Response::ok().text("hi")
+struct App { }
+
+impl http::Handler for App {
+    fn serve(&self, r: http::Request) -> Result<http::Response, http::Error> {
+        if r.path() == "/notes" {
+            return Ok(http::Response::text(200, "hi"))
+        }
+        Ok(http::Response::text(404, "not found"))
+    }
 }
 
-fn main() {
-    let mut server = http::Server::new()
-    server.route("/notes", handle)
-    server.bind_and_run("0.0.0.0:8080").expect("listen")
+fn main() -> Result<(), http::Error> {
+    http::serve("0.0.0.0:8080", App { })
 }
 ```
 
@@ -456,7 +468,7 @@ let mut rows = conn.query("SELECT id, body FROM notes WHERE id = $1",
 defer rows.close()                 // like Go's defer rows.Close()
 while let Some(row) = rows.next_row()? {
     let id   = row.get_i64("id")?
-    let body = row.get_string("body")?
+    let body = row.get_text("body")?
 }
 ```
 
@@ -473,8 +485,12 @@ signal.Notify(ch, syscall.SIGTERM)
 Gossamer:
 
 ```gos
-let term = signal::on(signal::sigs::SIGTERM)
-term.wait()         // Condvar-blocked, no 50 ms polling
+// Gossamer has no user-level OS-signal handler; drive graceful
+// shutdown through a cancellation channel that a coordinator
+// goroutine signals.
+let (shutdown_tx, shutdown_rx) = channel()
+go request_shutdown(shutdown_tx)
+shutdown_rx.recv()         // blocks until shutdown is signalled
 ```
 
 ### Structured logging
@@ -489,9 +505,9 @@ logger.Info("started", "port", 8080)
 Gossamer:
 
 ```gos
-let logger = slog::Logger::new()
-    .handler(slog::JsonHandler::new(os::stdout()))
-logger.info("started", &[slog::field("port", 8080)])
+// std::slog emits one JSON record per call to stdout; the trailing
+// args are key/value pairs.
+slog::info("started", "port", 8080)
 ```
 
 ## Cross-references

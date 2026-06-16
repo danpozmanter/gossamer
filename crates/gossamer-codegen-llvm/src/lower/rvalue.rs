@@ -192,7 +192,32 @@ impl<'a> Lowerer<'a> {
                     "Aggregate / Repeat as non-assignment rvalue",
                 ))
             }
+            Rvalue::StaticLoad(sref) => {
+                let llvm_ty = render_ty(self.tcx, sref.ty);
+                self.register_static_global(sref, &llvm_ty);
+                let tmp = self.fresh();
+                writeln!(
+                    self.out,
+                    "  {tmp} = load {llvm_ty}, ptr @{sym}",
+                    sym = sref.symbol,
+                )
+                .unwrap();
+                Ok(tmp)
+            }
         }
+    }
+
+    /// Registers the backing module global for a `static mut`. The
+    /// definition uses `linkonce_odr` linkage so the same global emitted
+    /// from every object that references the static coalesces to one
+    /// shared cell at link time. `runtime_refs` is a `BTreeSet`, so the
+    /// duplicate definitions a single module emits dedup to one line.
+    pub(crate) fn register_static_global(&mut self, sref: &gossamer_mir::StaticRef, llvm_ty: &str) {
+        let init = render_const(&sref.init);
+        self.runtime_refs.insert(format!(
+            "@{sym} = linkonce_odr global {llvm_ty} {init}",
+            sym = sref.symbol,
+        ));
     }
 
     /// MIR's `CallIntrinsic` is used for stdlib math and

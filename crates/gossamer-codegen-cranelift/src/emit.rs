@@ -106,6 +106,11 @@ fn emit_statement(out: &mut String, stmt: &gossamer_mir::Statement) {
             emit_place(out, place);
             let _ = writeln!(out, ", {variant}");
         }
+        StatementKind::StaticStore { target, value } => {
+            let _ = write!(out, "    static_store @{} = ", target.symbol);
+            emit_operand(out, value);
+            out.push('\n');
+        }
         StatementKind::Nop => {
             out.push_str("    nop\n");
         }
@@ -296,6 +301,9 @@ fn emit_rvalue(out: &mut String, rvalue: &Rvalue) {
                 emit_operand(out, op);
             }
             out.push(')');
+        }
+        Rvalue::StaticLoad(sref) => {
+            let _ = write!(out, "static_load @{}", sref.symbol);
         }
     }
 }

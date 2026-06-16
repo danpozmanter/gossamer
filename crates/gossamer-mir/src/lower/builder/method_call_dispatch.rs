@@ -289,6 +289,7 @@ impl<'a> Builder<'a> {
             | "gos_rt_str_to_upper"
             | "gos_rt_str_replace"
             | "gos_rt_str_repeat"
+            | "gos_rt_str_substring"
             | "gos_rt_heap_u8_to_string"
             | "gos_rt_i64_to_str"
             | "gos_rt_f64_to_str"
@@ -311,11 +312,33 @@ impl<'a> Builder<'a> {
             | "gos_rt_http_request_method"
             | "gos_rt_http_request_query"
             | "gos_rt_http_request_body_str"
+            | "gos_rt_str_to_title"
+            | "gos_rt_str_trim_matches"
+            | "gos_rt_str_replacen"
+            | "gos_rt_str_pad_left"
+            | "gos_rt_str_pad_right"
             | "gos_rt_regex_find" => self.tcx.string_ty(),
-            "gos_rt_str_split" | "gos_rt_str_lines" => {
+            "gos_rt_str_split"
+            | "gos_rt_str_lines"
+            | "gos_rt_str_split_whitespace"
+            | "gos_rt_str_splitn" => {
                 let s = self.tcx.string_ty();
                 self.tcx.intern(gossamer_types::TyKind::Vec(s))
             }
+            "gos_rt_str_chars" => {
+                // Return shape is `Vec<char>` — one i64 codepoint per
+                // slot — so `for ch in s.chars()` reads each via
+                // `gos_rt_vec_get_i64` and binds a `char`.
+                let ch = self.tcx.intern(gossamer_types::TyKind::Char);
+                self.tcx.intern(gossamer_types::TyKind::Vec(ch))
+            }
+            "gos_rt_str_contains_any" | "gos_rt_str_contains_rune" | "gos_rt_str_equal_fold" => {
+                self.tcx.bool_ty()
+            }
+            "gos_rt_str_index_any" | "gos_rt_str_index_rune" | "gos_rt_str_last_index_any" => {
+                self.option_i64_adt_ty()
+            }
+            "gos_rt_str_strip_prefix" | "gos_rt_str_strip_suffix" => self.option_string_adt_ty(),
             "gos_rt_str_as_bytes" => {
                 // Return shape is `Vec<i64>` — the runtime
                 // helper materialises one i64 slot per byte
@@ -338,7 +361,7 @@ impl<'a> Builder<'a> {
             }
             "gos_rt_sync_map_len" => self.tcx.int_ty(gossamer_types::IntTy::I64),
             "gos_rt_sync_map_contains" => self.tcx.bool_ty(),
-            "gos_rt_sync_map_keys" => {
+            "gos_rt_sync_map_keys" | "gos_rt_btmap_keys" => {
                 let s = self.tcx.string_ty();
                 self.tcx.intern(gossamer_types::TyKind::Vec(s))
             }
@@ -370,7 +393,10 @@ impl<'a> Builder<'a> {
             // is a vec pointer — pin the dest to the value type so
             // for-loops and indexing dispatch through the vec helpers
             // instead of treating it as a scalar.
-            "gos_rt_map_get_or_i64" | "gos_rt_map_get_or_str_i64" => {
+            "gos_rt_map_get_or_i64"
+            | "gos_rt_map_get_or_str_i64"
+            | "gos_rt_map_or_insert_i64_i64"
+            | "gos_rt_map_or_insert_str_i64" => {
                 let value_ty = self.hash_map_kv_tys(receiver_ty).map(|(_, v)| v);
                 match value_ty.map(|v| self.tcx.kind_of(v).clone()) {
                     Some(TyKind::Vec(_) | TyKind::Slice(_)) => {
@@ -385,12 +411,25 @@ impl<'a> Builder<'a> {
             // all backends can call with just the channel pointer.
             "gos_rt_chan_recv_option" | "gos_rt_chan_try_recv_option" => {
                 use gossamer_types::TyKind;
-                let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
-                let substs = gossamer_types::Substs::from_types([i64_ty]);
-                self.tcx.intern(TyKind::Adt {
-                    def: gossamer_resolve::DefId::local(u32::MAX - 1),
-                    substs,
-                })
+                // Derive the element type from the receiver's
+                // `Receiver<T>` so `rx.recv()` yields `Option<T>` with the
+                // right payload. A hardcoded `Option<i64>` made a
+                // `channel<String>` recv print the String payload's
+                // pointer as a number on the compiled tier.
+                let elem = [receiver_ty, lowered_recv_ty]
+                    .into_iter()
+                    .find_map(|t| match self.tcx.kind_of(t) {
+                        TyKind::Receiver(e) | TyKind::Sender(e) => Some(*e),
+                        _ => None,
+                    })
+                    .filter(|e| {
+                        !matches!(
+                            self.tcx.kind_of(*e),
+                            TyKind::Var(_) | TyKind::Error | TyKind::Never
+                        )
+                    })
+                    .unwrap_or_else(|| self.tcx.int_ty(gossamer_types::IntTy::I64));
+                self.option_payload_adt_ty(elem)
             }
             "gos_rt_parse_i64_result" => self.result_i64_error_adt_ty(),
             "gos_rt_str_find_opt" => {
@@ -568,7 +607,16 @@ impl<'a> Builder<'a> {
                 while let TyKind::Ref { inner, .. } = self.tcx.kind_of(flat) {
                     flat = *inner;
                 }
-                flat
+                // A `[T; N]` array receiver is coerced to a `GosVec` before the
+                // call, so the reversed copy is a heap `Vec<T>`, not a flat
+                // `[T; N]` — indexing the result as an inline array would read
+                // the GosVec header. `Vec` / `Slice` keep their own type.
+                match self.tcx.kind_of(flat).clone() {
+                    TyKind::Array { elem, .. } => {
+                        self.tcx.intern(gossamer_types::TyKind::Vec(elem))
+                    }
+                    _ => flat,
+                }
             }
             "gos_rt_vec_reversed"
             | "gos_rt_bheap_push_i64"
@@ -764,6 +812,7 @@ impl<'a> Builder<'a> {
         // correctly on the result of the runtime helper.
         let dest_kind: Option<&'static str> = match sym {
             "gos_rt_http_request_header" | "gos_rt_http_request_body" => Some("http::Request"),
+            "gos_rt_http_request_set_value" => Some("http::Request"),
             "gos_rt_http_response_with_header" => Some("http::Response"),
             "gos_rt_http_client_get"
             | "gos_rt_http_client_post"

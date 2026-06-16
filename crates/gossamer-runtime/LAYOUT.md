@@ -14,32 +14,47 @@ primary 64-bit targets (`x86_64`, `aarch64`, `riscv64`) a word is
 
 ## Object header
 
-Every GC-managed heap allocation begins with the fixed-size
-`ObjHeader` defined in `crates/gossamer-runtime/src/layout.rs`:
+Every reference-counted heap allocation in the compiled tiers
+(Cranelift, LLVM) begins with the fixed-size `RcHeader` defined in
+`crates/gossamer-runtime/src/c_abi/rc.rs`. The pointer a compiled
+program holds addresses the *payload*; the header sits
+`RC_HEADER_SIZE` (8) bytes before it:
 
-| Offset | Size | Field       | Purpose                                             |
-|--------|------|-------------|-----------------------------------------------------|
-| 0      | 8    | `type_info` | Pointer to the object's [`TypeInfo`] descriptor.    |
-| 8      | 1    | `gc_mark`   | Set by the mark phase of the tracing GC.            |
-| 9      | 1    | `flags`     | Reserved; future use for forwarding / pinning bits. |
-| 10     | 6    | padding     | Zeroed on allocation.                               |
+| Offset | Size | Field     | Purpose                                                                                          |
+|--------|------|-----------|--------------------------------------------------------------------------------------------------|
+| 0      | 4    | `strong`  | Strong reference count in the low 27 bits (`STRONG_COUNT_MASK`); the high bits hold the shared / region / buffered / cycle-color flags. Starts at 1. |
+| 4      | 1    | `weak`    | Weak reference count (saturating); the allocation outlives `strong == 0` while this is non-zero. |
+| 5      | 1    | `disc`    | Enum discriminant — codegen reads/writes the byte at `payload - 3`; 0 (and unread) for non-enum objects. |
+| 6      | 2    | `meta_id` | Interned id of the child-layout descriptor blob; 0 for leaf objects with no RC-pointer children. |
 
-Total: **16 bytes**, word-aligned.
+Total: **8 bytes**, 8-byte-aligned (`RC_ALIGN`). There is no mark byte
+and no tracing collector. An object is freed when its strong count
+reaches zero — its RC-pointer children are released first — and
+reference cycles are reclaimed on demand by the cycle collector
+("Cycle-collector roots" below). The interpreter tier does not use this
+header; it mirrors the same semantics with Rust `Arc`-shared values.
 
-## TypeInfo descriptor
+## Child-layout meta blob
 
-`TypeInfo` is a shared, read-only record. Every ADT emits a static
-`TypeInfo` instance at compile time; the header points at it by
-address, not by index. Fields:
+`meta_id` interns a pointer to a per-type *child-layout blob* — the
+descriptor the release path uses to find the RC-managed pointers inside
+a payload. Codegen emits one flat `[i64]` blob per RC-managed ADT as a
+single module constant; `meta_intern` / `meta_of` map between the blob
+pointer and the 16-bit id stored in the header. The blob is
+self-describing:
 
-- `size: usize` — size of the payload that follows the header.
-- `align: usize` — alignment of the payload.
-- `scan_fn: fn(*const u8, &mut dyn FnMut(*const u8))` — walks the
-  payload and invokes the visitor on each GC-managed pointer it
-  encounters. Primitives supply a no-op implementation.
-- `drop_fn: Option<fn(*mut u8)>` — optional destructor for values that
-  own native resources (files, sockets). Pure-Gossamer types leave this
-  as `None`.
+- `[0]` — kind tag (`RC_KIND_ENUM`, `RC_KIND_STRUCT`, … re-exported
+  from `gossamer-abi`).
+- `[1]` — variant count `V`.
+- then `V` variant records, each `disc, child_count C, off_0 … off_C`,
+  where each `off_i` is a payload word index (byte offset / 8) holding
+  an RC-managed child pointer.
+
+On release, `release_children` reads the live discriminant, finds the
+matching record, and releases each child pointer. Leaf objects (no
+RC-pointer children) carry `meta_id == 0` and free immediately at strong
+count zero. No per-type `scan_fn` is walked by a collector — release is
+driven entirely by this blob.
 
 ## Primitive values
 
@@ -63,45 +78,75 @@ Primitive types live inline and carry no header:
 
 ### `String`
 
-`String` is an immutable, growable UTF-8 string. The value layout is a
-three-word record:
+A `String` value is a single pointer to the first content byte of a
+heap buffer; the metadata lives in an inline prefix header just before
+the content, so the program holds no separate length/capacity words.
+For a growable string (`alloc_growable` in `c_abi/string.rs`) the
+buffer is:
 
 ```
-Repr {
-  ptr: *const u8,    // GC-managed buffer
-  len: usize,
-  capacity: usize,
-}
+[ rc: u32 LE ][ cap: u32 LE ][ len: u32 LE ][ tag: u8 ][ content (cap bytes) ][ NUL ]
+                                                        ^ ptr  (what the program holds)
 ```
 
-Total: **3 words**. The `ptr` field points at a GC-allocated byte
-buffer; `String` values never own a non-GC allocation.
+so `ptr[-1]` is the provenance tag, `ptr[-5..-1]` the length,
+`ptr[-9..-5]` the capacity, and `ptr[-13..-9]` the front reference
+count. The buffer is reference counted: `gos_rt_str_retain` /
+`gos_rt_str_free` adjust the front count and free at zero, refusing to
+reclaim a pointer whose tag does not match (a foreign pointer leaks
+rather than corrupting the heap). Static literals emitted into rodata
+and arena-region strings carry distinct tags and are never individually
+freed (a region frees its bytes wholesale at `arena_pop`). No tracing
+collector scans the buffer.
 
 ### `Vec<T>`
 
-Three-word record identical in shape to `String`:
+A `Vec<T>` value is a pointer to a heap-allocated `GosVec` header
+(`c_abi/vec.rs`):
 
 ```
-Repr {
-  ptr: *const T,
-  len: usize,
-  capacity: usize,
+GosVec {
+  len:        i64,
+  cap:        i64,
+  elem_bytes: u32,
+  elem_kind:  u8,         // tag driving deep-free of pointer-bearing elements
+  _reserved:  [u8; 3],    // padding; _reserved[0] flags an arena-region vec
+  ptr:        *mut u8,    // element buffer
 }
 ```
+
+The header is reference counted (`vec_retain_header`) and reclaimed by
+`gos_rt_vec_free`, which uses `elem_kind` to recursively free
+string / vec / map / RC-node elements; an arena-region vec is freed
+wholesale at `arena_pop` instead. No tracing collector scans it.
 
 ### `HashMap<K, V>`
 
-Swiss-table layout; four words at the top level plus a GC-managed
-buckets array:
+A `HashMap<K, V>` value is a pointer to a heap-allocated `GosMap`
+header (`c_abi/map.rs`), which wraps a mutex-guarded typed-storage enum
+rather than an inline swiss table:
 
 ```
-Repr {
-  ctrl: *const u8,     // control-byte table
-  buckets: *const u8,  // entry storage
-  len: usize,
-  capacity: usize,
+GosMap {
+  len_cache:   i64,
+  storage:     parking_lot::Mutex<MapStorage>,
+  blob_values: AtomicBool,   // true when stored values are owned RC copy-blobs
+}
+
+enum MapStorage {            // auto-promoted from Empty on first insert
+  Empty,
+  I64I64 (FxHashMap<i64, i64>),
+  StrI64 (FxHashMap<Box<[u8]>, i64>),
+  StrStr (FxHashMap<Box<[u8]>, Box<[u8]>>),
+  I64Str (FxHashMap<i64, Box<[u8]>>),
+  Bytes  (FxHashMap<Box<[u8]>, Box<[u8]>>),
+  SkeyVal(FxHashMap<Box<[u8]>, i64>),   // aggregate keys (flat content bytes)
 }
 ```
+
+The backing maps are `rustc-hash` `FxHashMap`s. The header is reclaimed
+by `gos_rt_map_free` (which releases any RC copy-blob values it owns);
+there is no separately collected buckets array.
 
 ### Fat pointers (`dyn Trait`, closure)
 
@@ -135,16 +180,33 @@ reuse the pointee's zero-bit pattern.
 ## Function ABI
 
 Function calls follow the target's native C ABI (System V on unix, MS
-x64 on Windows). GC-managed references travel in registers like any
-other pointer. At every safepoint, the native backend emits a stack
-map recording which registers and stack slots currently hold GC
-references. The stack maps are consumed by the GC during marking (see
-).
+x64 on Windows). Reference-counted pointers travel in registers like
+any other pointer. The compiler inserts balanced retain/release calls
+(`gos_rt_rc_retain` / `gos_rt_rc_release`) around the points where a
+reference is copied or dropped, so there are no safepoints, no stack
+maps, and no register/stack-slot root scanning. The cycle collector
+discovers its roots from a candidate buffer (next section) instead of
+walking the stack.
+
+## Cycle-collector roots
+
+Reference counting alone cannot reclaim cycles (`A -> B -> A` never
+reaches zero), so a synchronous Bacon-Rajan trial-deletion collector
+backs it up (`collect_cycles` in `c_abi/rc.rs`). It needs no stack scan
+and no compiler root map: its candidate roots are exactly the objects
+whose strong count was decremented to a *non-zero* value
+(`possible_root`), recorded in a thread-local buffer (`ROOTS`) and
+deduplicated by the header's buffered bit. When the buffer crosses
+`DEFAULT_COLLECT_THRESHOLD` (10 000) — or when user code calls
+`runtime::collect_cycles()` (`gos_rt_collect_cycles`) — the collector
+traces only the subgraph reachable from those candidates and frees any
+confirmed garbage cycle. Objects shared across goroutines and
+arena-region objects are excluded.
 
 ## Invariants enforced at compile time
 
-The `_ASSERTIONS` constant in `layout.rs` encodes every invariant above
-as a `const fn` check. Any change to the struct shapes that violates
-those bounds produces a compile error, so the reproducibility guarantee
-the three compilers rely on is not an aspiration — it is a precondition
-for building the crate at all.
+The header size is pinned by a `const` assertion in `c_abi/rc.rs`
+(`assert!(RC_HEADER_SIZE == 8, "RcHeader must remain 8 bytes")`), so any
+field change that would grow the per-object header fails the build
+rather than silently regressing memory or breaking the `payload - 3`
+discriminant offset the compiled tiers rely on.

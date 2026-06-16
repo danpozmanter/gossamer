@@ -3,7 +3,7 @@
 Gossamer's surface is Rust with two simplifications:
 
 - No lifetime annotations. References express aliasing intent;
-  the GC owns the memory.
+  the runtime owns the memory.
 - Semicolons are optional at statement boundaries.
 
 See the full grammar in
@@ -197,7 +197,7 @@ Channels are typed and bounded; `select` multiplexes receives.
 ## Closures and higher-order fns
 
 Lambdas use `|param: T| body`; captures from the enclosing scope
-work transparently (GC-managed, no `move`).
+work transparently (runtime-managed, no `move`).
 
 Higher-order parameters distinguish two callable types:
 
@@ -222,7 +222,7 @@ fn main() {
 The conversion at the call boundary is implicit. Single trait
 variant — `FnMut` / `FnOnce` parse but lower to the same
 `Fn(_)` shape (the borrow-style split Rust draws is unnecessary
-in a fully GC'd world).
+with automatic memory management).
 
 ## Attributes
 
@@ -271,27 +271,30 @@ for the rare standalone case with no contextual hint.
 
 ## Formatted output
 
-Gossamer has no macro system and no `!` syntax. Formatted output
-goes through plain variadic builtins:
+Formatted output goes through six format macros — the only macros
+in the language. Each takes a Rust-style format string with `{}`
+placeholders, plus named captures `{ident}` for bindings in scope:
 
 ```gossamer
 let name = "jane"
 let age = 30
-println("hello, ", name, "! you are ", age, " years old.")
-let greeting = format("welcome, ", name)
+println!("hello, {name}! you are {age} years old.")
+let greeting = format!("welcome, {}", name)
 ```
 
-Every builtin below stringifies each argument and joins them
-with a single space:
+| Macro | Effect |
+|-------|--------|
+| `format!("…", a, b)` | Returns a `String`. |
+| `println!("…", a, b)` | Writes to stdout + newline. |
+| `print!("…", a, b)` | Writes to stdout, no newline. |
+| `eprintln!("…", a, b)` | Writes to stderr + newline. |
+| `eprint!("…", a, b)` | Writes to stderr, no newline. |
+| `panic!("…", a, b)` | Unwinds with the rendered message. |
 
-| Builtin | Effect |
-|---------|--------|
-| `format(a, b, …)` | Returns a `String`. |
-| `println(a, b, …)` | Writes to stdout + newline. |
-| `print(a, b, …)` | Writes to stdout, no newline. |
-| `eprintln(a, b, …)` | Writes to stderr + newline. |
-| `eprint(a, b, …)` | Writes to stderr, no newline. |
-| `panic(a, b, …)` | Unwinds with the rendered message. |
+Every other `name!(…)` is a parse error — there is no user macro
+system. Format specs follow Rust's `{:spec}` grammar — width,
+alignment, fill, zero-pad, radix, and precision (`{:>8}`,
+`{:08x}`, `{:^6}`, `{:.2}`).
 
 For the single-`String` output shape, `+` concatenates without
 adding a separator:

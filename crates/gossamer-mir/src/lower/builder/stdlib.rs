@@ -200,6 +200,17 @@ impl<'a> Builder<'a> {
     /// handle's `gos_rt_join`.
     pub(crate) fn lower_spawn(&mut self, f_expr: &HirExpr, span: Span) -> Option<Local> {
         use gossamer_types::TyKind;
+        // The spawned closure's captures escape to the new goroutine:
+        // switch any RC-managed capture to atomic reference counting
+        // before it's copied into the env. Captures are free-variable
+        // expressions (paths), so re-lowering them here is idempotent.
+        if let gossamer_hir::HirExprKind::LiftedClosure { captures, .. } = &f_expr.kind {
+            for cap in captures.clone() {
+                if let Some(c) = self.lower_expr(&cap) {
+                    self.emit_mark_shared_if_rc(c, span);
+                }
+            }
+        }
         let f_local = self.lower_expr(f_expr)?;
         let f_ty = self.locals[f_local.0 as usize].ty;
         let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
@@ -246,6 +257,69 @@ impl<'a> Builder<'a> {
         Some(dest)
     }
 
+    /// Lowers `go <closure>` — a fire-and-forget goroutine. The
+    /// front-end (`lift_go_inner`) wraps any `go <expr>` that the
+    /// named-function fast path can't spawn (a stdlib free call, a
+    /// method call, a block, …) into a zero-argument closure; this
+    /// routes that closure through the runtime's fire-and-forget
+    /// goroutine spawn. The wrapped call runs on the spawned
+    /// goroutine with its own calling convention, so a stdlib free
+    /// call is asynchronous on every compiled tier — matching the
+    /// bytecode VM's `compile_non_call_go`. Mirrors `lower_spawn`'s
+    /// env-blob construction but discards the join handle and uses
+    /// `gos_rt_go_spawn`, which carries no outcome channel.
+    pub(crate) fn lower_go_spawn_closure(&mut self, f_expr: &HirExpr, span: Span) -> Option<Local> {
+        use gossamer_types::TyKind;
+        // Captures escape to the new goroutine: switch any RC-managed
+        // capture to atomic reference counting before it is copied
+        // into the env. Captures are free-variable paths, so
+        // re-lowering them here is idempotent.
+        if let gossamer_hir::HirExprKind::LiftedClosure { captures, .. } = &f_expr.kind {
+            for cap in captures.clone() {
+                if let Some(c) = self.lower_expr(&cap) {
+                    self.emit_mark_shared_if_rc(c, span);
+                }
+            }
+        }
+        let f_local = self.lower_expr(f_expr)?;
+        let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+        // Coerce a bare fn / non-capturing closure into the env-blob
+        // shape so `code = load(env+0)` is uniform; capturing closures
+        // are already env-shaped. The return value is discarded, so an
+        // i64 output slot is sufficient for the per-shape thunk.
+        let fn_trait_ty = self.tcx.intern(TyKind::FnTrait(gossamer_types::FnSig {
+            inputs: Vec::new(),
+            output: i64_ty,
+        }));
+        let env_local = self.coerce_to_fn_trait_if_needed(f_local, fn_trait_ty, span);
+        let code_local = self.fresh(i64_ty);
+        self.emit_assign(
+            Place::local(code_local),
+            Rvalue::CallIntrinsic {
+                name: "gos_load",
+                args: vec![
+                    Operand::Copy(Place::local(env_local)),
+                    Operand::Const(ConstValue::Int(0)),
+                ],
+            },
+            span,
+        );
+        let unit_ty = self.tcx.unit();
+        let dest = self.fresh(unit_ty);
+        let next = self.new_block(span);
+        self.terminate(Terminator::Call {
+            callee: Operand::Const(ConstValue::Str("gos_rt_go_spawn".to_string())),
+            args: vec![
+                Operand::Copy(Place::local(code_local)),
+                Operand::Copy(Place::local(env_local)),
+            ],
+            destination: Place::local(dest),
+            target: Some(next),
+        });
+        self.set_current(next);
+        Some(dest)
+    }
+
     pub(crate) fn lower_http_serve(
         &mut self,
         addr_expr: &HirExpr,
@@ -265,6 +339,7 @@ impl<'a> Builder<'a> {
             Some("http::Router") => "gos_rt_router_serve".to_string(),
             Some("http::FileServer") => "gos_rt_file_server_serve".to_string(),
             Some("http::Proxy") => "gos_rt_proxy_forward".to_string(),
+            Some("http::Middleware") => "gos_rt_middleware_serve".to_string(),
             _ => {
                 let handler_ty = self.locals[handler_local.0 as usize].ty;
                 let handler_struct = self.struct_name_of(handler_ty)?;

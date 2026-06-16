@@ -1,0 +1,16 @@
+[package]
+name = "gossamer-template"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Text + context-aware HTML template engine for Gossamer. Leaf crate (below gossamer-runtime) so the compiled-tier runtime can render templates directly."
+
+[lints]
+workspace = true
+
+[dependencies]
+thiserror = { workspace = true }
+serde_json = { workspace = true }

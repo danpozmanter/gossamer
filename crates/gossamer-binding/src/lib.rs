@@ -195,7 +195,7 @@ pub fn install_all_for_compiled() {
 ///
 /// Each item is registered under its fully-qualified
 /// `module::item` spelling. Call this exactly once at runtime
-/// startup, before constructing the first VM/Interpreter.
+/// startup, before constructing the first VM.
 ///
 /// Returns the number of items installed (sum of `module.items.len()`
 /// across [`REGISTRY`]).

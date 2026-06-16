@@ -216,8 +216,8 @@ impl<'a> Lowerer<'a> {
     /// val)`. The `GosI64Vec` is laid out as
     /// `{ i64 len; ptr data }` (8-byte aligned); we load
     /// `data` from offset 8, index it by `idx`, store `val`.
-    /// Skips bounds checks â user code is expected to keep
-    /// `idx` in range.
+    /// Null vec / out-of-range `idx` -> no-op (see body comment),
+    /// matching the `gos_rt_heap_i64_set` shim.
     pub(crate) fn lower_heap_i64_set_inline(
         &mut self,
         args: &[Operand],
@@ -231,6 +231,30 @@ impl<'a> Lowerer<'a> {
         // emitted `icmp i64` / `mul i64` don't reference an i32 SSA value.
         let idx = self.widen_to_i64(&args[1], &idx);
         let val = self.lower_operand(&args[2])?;
+        // Null vec / out-of-range idx -> no-op, matching the
+        // `gos_rt_heap_i64_set` shim. Without this guard an
+        // out-of-range index stored into arbitrary heap memory.
+        let s = self.next_ssa;
+        self.next_ssa += 1;
+        let (check, store_b, cont) = (
+            format!("hs_check_{s}"),
+            format!("hs_store_{s}"),
+            format!("hs_cont_{s}"),
+        );
+        let isnull = self.fresh();
+        writeln!(self.out, "  {isnull} = icmp eq ptr {v}, null").unwrap();
+        writeln!(self.out, "  br i1 {isnull}, label %{cont}, label %{check}").unwrap();
+        writeln!(self.out, "{check}:").unwrap();
+        let len = self.fresh();
+        writeln!(self.out, "  {len} = load i64, ptr {v}").unwrap();
+        let lo = self.fresh();
+        writeln!(self.out, "  {lo} = icmp slt i64 {idx}, 0").unwrap();
+        let hi = self.fresh();
+        writeln!(self.out, "  {hi} = icmp sge i64 {idx}, {len}").unwrap();
+        let bad = self.fresh();
+        writeln!(self.out, "  {bad} = or i1 {lo}, {hi}").unwrap();
+        writeln!(self.out, "  br i1 {bad}, label %{cont}, label %{store_b}").unwrap();
+        writeln!(self.out, "{store_b}:").unwrap();
         let data_ptr_addr = self.fresh();
         writeln!(
             self.out,
@@ -246,6 +270,8 @@ impl<'a> Lowerer<'a> {
         )
         .unwrap();
         writeln!(self.out, "  store i64 {val}, ptr {dst}").unwrap();
+        writeln!(self.out, "  br label %{cont}").unwrap();
+        writeln!(self.out, "{cont}:").unwrap();
         let _ = destination;
         emit_terminator_branch(&mut self.out, target);
         Ok(())
@@ -265,6 +291,33 @@ impl<'a> Lowerer<'a> {
         // narrow-typed index (`u8`/`u16`/`u32`/`i8`/`i16`/`i32`) first so the
         // emitted `icmp i64` / `mul i64` don't reference an i32 SSA value.
         let idx = self.widen_to_i64(&args[1], &idx);
+        // Null vec / out-of-range idx -> 0, matching the
+        // `gos_rt_heap_i64_get` shim. Without this guard an
+        // out-of-range index read arbitrary heap memory.
+        let is_unit_dest = is_unit(self.tcx, self.body.local_ty(destination.local));
+        let slot = local_slot(destination.local);
+        let s = self.next_ssa;
+        self.next_ssa += 1;
+        let (check, load_b, dflt, cont) = (
+            format!("hg_check_{s}"),
+            format!("hg_load_{s}"),
+            format!("hg_dflt_{s}"),
+            format!("hg_cont_{s}"),
+        );
+        let isnull = self.fresh();
+        writeln!(self.out, "  {isnull} = icmp eq ptr {v}, null").unwrap();
+        writeln!(self.out, "  br i1 {isnull}, label %{dflt}, label %{check}").unwrap();
+        writeln!(self.out, "{check}:").unwrap();
+        let len = self.fresh();
+        writeln!(self.out, "  {len} = load i64, ptr {v}").unwrap();
+        let lo = self.fresh();
+        writeln!(self.out, "  {lo} = icmp slt i64 {idx}, 0").unwrap();
+        let hi = self.fresh();
+        writeln!(self.out, "  {hi} = icmp sge i64 {idx}, {len}").unwrap();
+        let bad = self.fresh();
+        writeln!(self.out, "  {bad} = or i1 {lo}, {hi}").unwrap();
+        writeln!(self.out, "  br i1 {bad}, label %{dflt}, label %{load_b}").unwrap();
+        writeln!(self.out, "{load_b}:").unwrap();
         let data_ptr_addr = self.fresh();
         writeln!(
             self.out,
@@ -281,10 +334,16 @@ impl<'a> Lowerer<'a> {
         .unwrap();
         let val = self.fresh();
         writeln!(self.out, "  {val} = load i64, ptr {src}").unwrap();
-        if !is_unit(self.tcx, self.body.local_ty(destination.local)) {
-            let slot = local_slot(destination.local);
+        if !is_unit_dest {
             writeln!(self.out, "  store i64 {val}, ptr {slot}").unwrap();
         }
+        writeln!(self.out, "  br label %{cont}").unwrap();
+        writeln!(self.out, "{dflt}:").unwrap();
+        if !is_unit_dest {
+            writeln!(self.out, "  store i64 0, ptr {slot}").unwrap();
+        }
+        writeln!(self.out, "  br label %{cont}").unwrap();
+        writeln!(self.out, "{cont}:").unwrap();
         emit_terminator_branch(&mut self.out, target);
         Ok(())
     }

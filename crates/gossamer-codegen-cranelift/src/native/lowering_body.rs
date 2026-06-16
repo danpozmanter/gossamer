@@ -153,7 +153,7 @@ pub(super) fn collect_body_str_consts(body: &Body) -> Vec<String> {
             }
             Rvalue::Aggregate { operands, .. } => operands.iter().filter_map(op_str).collect(),
             Rvalue::CallIntrinsic { args, .. } => args.iter().filter_map(op_str).collect(),
-            Rvalue::Len(_) | Rvalue::Ref { .. } => vec![],
+            Rvalue::Len(_) | Rvalue::Ref { .. } | Rvalue::StaticLoad(_) => vec![],
         }
     }
     let mut out: Vec<String> = Vec::new();

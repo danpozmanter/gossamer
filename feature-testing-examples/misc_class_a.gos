@@ -1,0 +1,45 @@
+// Cross-tier parity for four compiled-tier gaps that worked under
+// `gos run` but broke under `gos build`:
+//   - thread::num_cpus (build-fail: no compiled shim)
+//   - strings::pad_left / pad_right (runtime-diverge: String pad char
+//     dropped, 2-arg default missing)
+//   - BTreeMap::keys() iteration (build-fail: keys-Vec mistyped i64)
+//   - math::PI in arithmetic + print (build-fail / prints "math::PI")
+use std::collections::BTreeMap
+use std::math
+use std::strings
+use std::thread
+
+fn main() {
+    // thread::num_cpus — the count is host-dependent, so assert the
+    // invariant rather than the raw value to stay tier-stable.
+    let cpus = thread::num_cpus()
+    println!("cpus_ok={}", cpus >= 1)
+
+    // strings::pad_* — 2-arg form defaults to a space; 3-arg form
+    // honours a String pad glyph; the char-literal pad keeps working.
+    println!("[{}]", strings::pad_left("hi", 5))
+    println!("[{}]", strings::pad_right("hi", 5))
+    println!("[{}]", strings::pad_left("hi", 5, "*"))
+    println!("[{}]", strings::pad_right("hi", 5, "*"))
+    println!("[{}]", strings::pad_left("7", 4, '0'))
+
+    // BTreeMap::keys() -> Vec<String> in sorted order. Bound to a
+    // local before iterating (the inline `for k in m.keys()` form
+    // hits the shared inline-method-call-in-for-loop element-typing
+    // gap, tracked with the reversed-index class).
+    let mut ranks: BTreeMap<String, i64> = BTreeMap::new()
+    ranks.insert("banana", 3)
+    ranks.insert("apple", 1)
+    ranks.insert("cherry", 2)
+    let key_list = ranks.keys()
+    for k in key_list {
+        println!("key={}", k)
+    }
+
+    // math::PI in arithmetic and print context.
+    let r = 2.0
+    let area = math::PI * r * r
+    println!("pi={:.5}", math::PI)
+    println!("area={:.5}", area)
+}

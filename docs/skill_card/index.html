@@ -1,210 +1,1970 @@
-<!DOCTYPE html>
-<html class="writer-html5" lang="en" >
-<head>
-    <meta charset="utf-8" />
-    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="author" content="Gossamer contributors" /><link rel="canonical" href="https://danpozmanter.github.io/gossamer/docs/skill_card/" />
-      <link rel="shortcut icon" href="../img/favicon.ico" />
-    <title>Skill card - Gossamer</title>
-    <link rel="stylesheet" href="../css/theme.css" />
-    <link rel="stylesheet" href="../css/theme_extra.css" />
-        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github.min.css" />
-        <link href="../stylesheets/extra.css" rel="stylesheet" />
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
     
-      <script>
-        // Current page data
-        var mkdocs_page_name = "Skill card";
-        var mkdocs_page_input_path = "skill_card.md";
-        var mkdocs_page_url = "/gossamer/docs/skill_card/";
-      </script>
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="A goroutine-powered, fast-compiling systems language with Rust-flavoured syntax and automatic, pause-free memory management.">
+      
+      
+        <meta name="author" content="Gossamer contributors">
+      
+      
+        <link rel="canonical" href="https://danpozmanter.github.io/gossamer/docs/skill_card/">
+      
+      
+        <link rel="prev" href="../design/selfhosting/">
+      
+      
+        <link rel="next" href="../security/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../img/GossamerLogo.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
     
-    <!--[if lt IE 9]>
-      <script src="../js/html5shiv.min.js"></script>
-    <![endif]-->
-      <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
-        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/rust.min.js"></script>
-        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/go.min.js"></script>
-        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/python.min.js"></script>
-        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/bash.min.js"></script>
-        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/languages/toml.min.js"></script>
-      <script>hljs.highlightAll();</script> 
-</head>
+    
+      
+        <title>Skill card - Gossamer</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
 
-<body class="wy-body-for-nav" role="document">
 
-  <div class="wy-grid-for-nav">
-    <nav data-toggle="wy-nav-shift" class="wy-nav-side stickynav">
-    <div class="wy-side-scroll">
-      <div class="wy-side-nav-search">
-          <a href="..">
-          <img src="../img/GossamerLogo.png" class="logo" alt="Logo"/>
-        </a><div role="search">
-  <form id ="rtd-search-form" class="wy-form" action="../search.html" method="get">
-      <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" title="Type search term here" />
-  </form>
-</div>
-      </div>
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Inter:300,300i,400,400i,700,700i%7CJetBrains+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Inter";--md-code-font:"JetBrains Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
 
-      <div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
-              <ul>
-                <li class="toctree-l1"><a class="reference internal" href="..">Home</a>
-                </li>
-              </ul>
-              <ul>
-                <li class="toctree-l1"><a class="reference internal" href="../install/">Install</a>
-                </li>
-              </ul>
-              <ul>
-                <li class="toctree-l1"><a class="reference internal" href="../running/">Running</a>
-                </li>
-              </ul>
-              <ul>
-                <li class="toctree-l1"><a class="reference internal" href="../syntax/">Syntax</a>
-                </li>
-              </ul>
-              <ul>
-                <li class="toctree-l1"><a class="reference internal" href="../memory/">Memory model</a>
-                </li>
-              </ul>
-              <ul>
-                <li class="toctree-l1"><a class="reference internal" href="../libraries/">Writing libraries</a>
-                </li>
-              </ul>
-              <p class="caption"><span class="caption-text">Standard library</span></p>
-              <ul>
-                  <li class="toctree-l1"><a class="reference internal" href="../stdlib/">Overview</a>
-                  </li>
-                  <li class="toctree-l1"><a class="reference internal" href="../prelude/">Prelude (no imports)</a>
-                  </li>
-                  <li class="toctree-l1"><a class="reference internal" href="../method_support/">Method support</a>
-                  </li>
-                  <li class="toctree-l1"><a class="reference internal" href="../stdlib_coverage/">Coverage matrix</a>
-                  </li>
-              </ul>
-              <p class="caption"><span class="caption-text">Toolchain</span></p>
-              <ul>
-                  <li class="toctree-l1"><a class="reference internal" href="../toolchain/">Overview</a>
-                  </li>
-                  <li class="toctree-l1"><a class="reference internal" href="../toolchain/lints/">Lints</a>
-                  </li>
-                  <li class="toctree-l1"><a class="reference internal" href="../toolchain/diagnostics/">Diagnostics</a>
-                  </li>
-              </ul>
-              <ul>
-                <li class="toctree-l1"><a class="reference internal" href="../examples/">Examples</a>
-                </li>
-              </ul>
-              <p class="caption"><span class="caption-text">Production</span></p>
-              <ul>
-                  <li class="toctree-l1"><a class="reference internal" href="../deployment/">Deployment</a>
-                  </li>
-                  <li class="toctree-l1"><a class="reference internal" href="../codegen_abi/">Codegen ABI</a>
-                  </li>
-              </ul>
-              <p class="caption"><span class="caption-text">Migrating</span></p>
-              <ul>
-                  <li class="toctree-l1"><a class="reference internal" href="../migration/rust/">From Rust</a>
-                  </li>
-                  <li class="toctree-l1"><a class="reference internal" href="../migration/go/">From Go</a>
-                  </li>
-                  <li class="toctree-l1"><a class="reference internal" href="../migration/python/">From Python</a>
-                  </li>
-                  <li class="toctree-l1"><a class="reference internal" href="../migration/fsharp/">From F#</a>
-                  </li>
-                  <li class="toctree-l1"><a class="reference internal" href="../migration/kotlin/">From Kotlin</a>
-                  </li>
-              </ul>
-              <p class="caption"><span class="caption-text">Design notes</span></p>
-              <ul>
-                  <li class="toctree-l1"><a class="reference internal" href="../design/diagnostics/">Diagnostics style</a>
-                  </li>
-                  <li class="toctree-l1"><a class="reference internal" href="../design/runtime/">Runtime internals</a>
-                  </li>
-                  <li class="toctree-l1"><a class="reference internal" href="../design/selfhosting/">Self-hosting study</a>
-                  </li>
-              </ul>
-              <ul class="current">
-                <li class="toctree-l1 current"><a class="reference internal current" href="#">Skill card</a>
-    <ul class="current">
-    <li class="toctree-l2"><a class="reference internal" href="#1-what-gossamer-is">1. What Gossamer is</a>
-    </li>
-    <li class="toctree-l2"><a class="reference internal" href="#2-idioms-at-a-glance">2. Idioms at a glance</a>
-    </li>
-    <li class="toctree-l2"><a class="reference internal" href="#3-the-forward-pipe-operator">3. The |&gt; forward-pipe operator</a>
-    </li>
-    <li class="toctree-l2"><a class="reference internal" href="#4-cheat-sheet">4. Cheat sheet</a>
-    </li>
-    <li class="toctree-l2"><a class="reference internal" href="#5-grammar-essentials">5. Grammar essentials</a>
-    </li>
-    <li class="toctree-l2"><a class="reference internal" href="#6-formatted-output-the-only-macros">6. Formatted output (the only macros)</a>
-    </li>
-    <li class="toctree-l2"><a class="reference internal" href="#7-error-handling">7. Error handling</a>
-    </li>
-    <li class="toctree-l2"><a class="reference internal" href="#8-concurrency">8. Concurrency</a>
-    </li>
-    <li class="toctree-l2"><a class="reference internal" href="#8a-closures-and-higher-order-fns">8a. Closures and higher-order fns</a>
-    </li>
-    <li class="toctree-l2"><a class="reference internal" href="#9-data-structures">9. Data structures</a>
-    </li>
-    <li class="toctree-l2"><a class="reference internal" href="#10-the-gos-toolchain">10. The gos toolchain</a>
-    </li>
-    <li class="toctree-l2"><a class="reference internal" href="#11-writing-tests">11. Writing tests</a>
-    </li>
-    <li class="toctree-l2"><a class="reference internal" href="#12-standard-library-surface">12. Standard library surface</a>
-    </li>
-    <li class="toctree-l2"><a class="reference internal" href="#13-project-layout">13. Project layout</a>
-    </li>
-    <li class="toctree-l2"><a class="reference internal" href="#14-worked-examples">14. Worked examples</a>
-        <ul>
-    <li class="toctree-l3"><a class="reference internal" href="#cli-flags">CLI flags</a>
-    </li>
-    <li class="toctree-l3"><a class="reference internal" href="#http-server">HTTP server</a>
-    </li>
-        </ul>
-    </li>
-    <li class="toctree-l2"><a class="reference internal" href="#15-current-gaps-pre-100">15. Current gaps (pre-1.0.0)</a>
-    </li>
-    <li class="toctree-l2"><a class="reference internal" href="#16-style-rules">16. Style rules</a>
-    </li>
-    <li class="toctree-l2"><a class="reference internal" href="#17-where-to-read-more">17. Where to read more</a>
-    </li>
-    <li class="toctree-l2"><a class="reference internal" href="#18-when-in-doubt">18. When in doubt</a>
-    </li>
-    </ul>
-                </li>
-              </ul>
-              <ul>
-                <li class="toctree-l1"><a class="reference internal" href="../security/">Security</a>
-                </li>
-              </ul>
-              <ul>
-                <li class="toctree-l1"><a class="reference internal" href="../contributing/">Contributing</a>
-                </li>
-              </ul>
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="cyan">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#gossamer-skill-card" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="Gossamer" class="md-header__button md-logo" aria-label="Gossamer" data-md-component="logo">
+      
+  <img src="../img/GossamerLogo.png" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Gossamer
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Skill card
+            
+          </span>
+        </div>
       </div>
     </div>
-    </nav>
-
-    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap">
-      <nav class="wy-nav-top" role="navigation" aria-label="Mobile navigation menu">
-          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
-          <a href="..">Gossamer</a>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="cyan"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 7a5 5 0 0 1 5 5 5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5m0 2a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3m0-7 2.39 3.42C13.65 5.15 12.84 5 12 5s-1.65.15-2.39.42zM3.34 7l4.16-.35A7.2 7.2 0 0 0 5.94 8.5c-.44.74-.69 1.5-.83 2.29zm.02 10 1.76-3.77a7.131 7.131 0 0 0 2.38 4.14zM20.65 7l-1.77 3.79a7.02 7.02 0 0 0-2.38-4.15zm-.01 10-4.14.36c.59-.51 1.12-1.14 1.54-1.86.42-.73.69-1.5.83-2.29zM12 22l-2.41-3.44c.74.27 1.55.44 2.41.44.82 0 1.63-.17 2.37-.44z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="black" data-md-color-accent="cyan"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m17.75 4.09-2.53 1.94.91 3.06-2.63-1.81-2.63 1.81.91-3.06-2.53-1.94L12.44 4l1.06-3 1.06 3zm3.5 6.91-1.64 1.25.59 1.98-1.7-1.17-1.7 1.17.59-1.98L15.75 11l2.06-.05L18.5 9l.69 1.95zm-2.28 4.95c.83-.08 1.72 1.1 1.19 1.85-.32.45-.66.87-1.08 1.27C15.17 23 8.84 23 4.94 19.07c-3.91-3.9-3.91-10.24 0-14.14.4-.4.82-.76 1.27-1.08.75-.53 1.93.36 1.85 1.19-.27 2.86.69 5.83 2.89 8.02a9.96 9.96 0 0 0 8.02 2.89m-1.64 2.02a12.08 12.08 0 0 1-7.8-3.47c-2.17-2.19-3.33-5-3.49-7.82-2.81 3.14-2.7 7.96.31 10.98 3.02 3.01 7.84 3.12 10.98.31"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
         
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
       </nav>
-      <div class="wy-nav-content">
-        <div class="rst-content"><div role="navigation" aria-label="breadcrumbs navigation">
-  <ul class="wy-breadcrumbs">
-    <li><a href=".." class="icon icon-home" aria-label="Docs"></a></li>
-      <li class="breadcrumb-item active">Skill card</li>
-    <li class="wy-breadcrumbs-aside">
-    </li>
-  </ul>
-  <hr/>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
 </div>
-          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
-            <div class="section" itemprop="articleBody">
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/danpozmanter/gossamer" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    danpozmanter/gossamer
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
               
-                <h1 id="gossamer-skill-card">Gossamer — Skill Card<a class="headerlink" href="#gossamer-skill-card" title="Permanent link">&para;</a></h1>
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="Gossamer" class="md-nav__button md-logo" aria-label="Gossamer" data-md-component="logo">
+      
+  <img src="../img/GossamerLogo.png" alt="logo">
+
+    </a>
+    Gossamer
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/danpozmanter/gossamer" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    danpozmanter/gossamer
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../install/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../running/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Running
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../syntax/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Syntax
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../memory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Memory model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../libraries/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Writing libraries
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Standard library
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Standard library
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../stdlib/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../prelude/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Prelude (no imports)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../method_support/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Method support
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../stdlib_coverage/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Coverage matrix
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_8" >
+        
+          
+          <label class="md-nav__link" for="__nav_8" id="__nav_8_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Toolchain
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_8_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_8">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Toolchain
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../toolchain/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../toolchain/lints/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Lints
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../toolchain/diagnostics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Diagnostics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../examples/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Examples
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_10" >
+        
+          
+          <label class="md-nav__link" for="__nav_10" id="__nav_10_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Production
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_10_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_10">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Production
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../deployment/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deployment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../codegen_abi/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Codegen ABI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_11" >
+        
+          
+          <label class="md-nav__link" for="__nav_11" id="__nav_11_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Migrating
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_11_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_11">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Migrating
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../migration/rust/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    From Rust
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../migration/go/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    From Go
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../migration/python/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    From Python
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../migration/fsharp/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    From F#
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../migration/kotlin/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    From Kotlin
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_12" >
+        
+          
+          <label class="md-nav__link" for="__nav_12" id="__nav_12_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Design notes
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_12_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_12">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Design notes
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../design/diagnostics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Diagnostics style
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../design/runtime/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Runtime internals
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../design/selfhosting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Self-hosting study
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Skill card
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Skill card
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-what-gossamer-is" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. What Gossamer is
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-idioms-at-a-glance" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Idioms at a glance
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="2. Idioms at a glance">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#immutability-default-concrete-examples" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Immutability default — concrete examples
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#if-let-while-let-when-to-reach-for-them" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        if let / while let — when to reach for them
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-the-forward-pipe-operator" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. The |&gt; forward-pipe operator
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-cheat-sheet" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Cheat sheet
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-grammar-essentials" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Grammar essentials
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-formatted-output-the-only-macros" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. Formatted output (the only macros)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-error-handling" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. Error handling
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#8-concurrency" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8. Concurrency
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#8a-closures-and-higher-order-fns" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8a. Closures and higher-order fns
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#8b-iterators" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8b. Iterators
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#9-data-structures" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        9. Data structures
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#10-the-gos-toolchain" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        10. The gos toolchain
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#11-writing-tests" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        11. Writing tests
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#12-standard-library-surface" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        12. Standard library surface
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#13-project-layout" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        13. Project layout
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#14-worked-example-http-server-with-method-path-routing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        14. Worked example — HTTP server with method + path routing
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#15-current-gaps-pre-100" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        15. Current gaps (pre-1.0.0)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="15. Current gaps (pre-1.0.0)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#tier-divergence-traps" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tier-divergence traps
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#16-style-checklist" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        16. Style checklist
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#17-where-to-read-more" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        17. Where to read more
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#18-when-in-doubt" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        18. When in doubt
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../security/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Security
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../contributing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-what-gossamer-is" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. What Gossamer is
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-idioms-at-a-glance" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Idioms at a glance
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="2. Idioms at a glance">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#immutability-default-concrete-examples" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Immutability default — concrete examples
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#if-let-while-let-when-to-reach-for-them" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        if let / while let — when to reach for them
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-the-forward-pipe-operator" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. The |&gt; forward-pipe operator
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-cheat-sheet" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Cheat sheet
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-grammar-essentials" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Grammar essentials
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-formatted-output-the-only-macros" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. Formatted output (the only macros)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-error-handling" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. Error handling
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#8-concurrency" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8. Concurrency
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#8a-closures-and-higher-order-fns" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8a. Closures and higher-order fns
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#8b-iterators" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8b. Iterators
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#9-data-structures" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        9. Data structures
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#10-the-gos-toolchain" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        10. The gos toolchain
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#11-writing-tests" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        11. Writing tests
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#12-standard-library-surface" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        12. Standard library surface
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#13-project-layout" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        13. Project layout
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#14-worked-example-http-server-with-method-path-routing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        14. Worked example — HTTP server with method + path routing
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#15-current-gaps-pre-100" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        15. Current gaps (pre-1.0.0)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="15. Current gaps (pre-1.0.0)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#tier-divergence-traps" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tier-divergence traps
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#16-style-checklist" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        16. Style checklist
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#17-where-to-read-more" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        17. Where to read more
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#18-when-in-doubt" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        18. When in doubt
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<!-- This page is the canonical SKILL.md, transcluded verbatim so the
+     docs and the AI skill card never drift. Edit /SKILL.md, not this file. -->
+<h1 id="gossamer-skill-card">Gossamer — Skill Card<a class="headerlink" href="#gossamer-skill-card" title="Permanent link">&para;</a></h1>
 <p>Drop this file into a model's context to teach it how to write
 idiomatic Gossamer. Self-contained. Covers: what Gossamer is,
 surface syntax, forward-pipe style, the <code>gos</code> toolchain, error
@@ -212,139 +1972,224 @@ handling, concurrency, stdlib surface, and how to test. No prior
 context assumed.</p>
 <hr />
 <h2 id="1-what-gossamer-is">1. What Gossamer is<a class="headerlink" href="#1-what-gossamer-is" title="Permanent link">&para;</a></h2>
-<p>A garbage-collected, goroutine-powered, fast-compiling systems
-language. Syntax is Rust-flavoured without lifetimes or a borrow
-checker. Runtime is Go-shaped: goroutines, channels, GC. Source
-files end in <code>.gos</code>. The toolchain binary is <code>gos</code>. Every project
-ships a <code>project.toml</code> manifest.</p>
-<p>Status: pre-1.0.0. Surface is stable enough to write against;
-runtime and native codegen are partially wired — see "current
-gaps" at the bottom.</p>
+<p>A goroutine-powered, fast-compiling systems language with
+automatic memory management (deterministic reference counting
+plus <code>arena { }</code> regions — no borrow checker, no lifetimes, no
+tracing-GC pauses). Syntax is Rust-flavoured. Runtime is
+Go-shaped: goroutines, channels. Source files end in <code>.gos</code>. The
+toolchain binary is <code>gos</code>. Every project ships a <code>project.toml</code>
+manifest.</p>
+<p>Status: pre-1.0.0 (currently 0.14.0). The surface is stable to
+write against, and features ship across all three tiers (bytecode
+VM, in-process JIT, LLVM AOT) — see "current gaps" at the bottom.</p>
 <h2 id="2-idioms-at-a-glance">2. Idioms at a glance<a class="headerlink" href="#2-idioms-at-a-glance" title="Permanent link">&para;</a></h2>
 <p>Write <strong>clear, low-complexity, concise code.</strong> Names earn their
 length; helpers earn their existence. If a line reads cleanly the
-first time through, leave it alone — don't dress it up.</p>
-<p>Prefer these shapes when writing Gossamer:</p>
+first time through, leave it alone.</p>
 <ul>
-<li><strong>Left-to-right dataflow with <code>|&gt;</code>.</strong> Chain calls with the
-  forward-pipe operator instead of nesting.</li>
-<li><strong>Plain functions for free-standing logic.</strong> Reach for
-  <code>impl</code> only when state is genuinely tied to a type.</li>
+<li><strong>Default to immutable.</strong> <code>let x = …</code> first; <code>let mut</code> only when
+  a binding genuinely changes after construction. Build new values
+  with expressions (<code>if</code>, <code>match</code>, <code>loop … break v</code>, folds) and
+  return them; callers shadow.</li>
+<li><strong>Compound-assign accumulators.</strong> <code>+= -= *= /= %= &amp;= |= ^= &lt;&lt;= &gt;&gt;=</code>.
+  Write <code>x += 1</code>, never <code>x = x + 1</code>.</li>
+<li><strong><code>if let</code> / <code>while let</code> for <code>Option</code> and single-variant matches.</strong>
+  <code>if let Some(n) = m.get(&amp;k) { use(n) }</code>. <code>while let Some(v) =
+  rx.recv()</code> is the canonical channel drain.</li>
+<li><strong>Tuple destructuring at every binding site.</strong> <code>let (a, b) =
+  pair</code>, <code>for (k, v) in m.iter()</code>, <code>let (tx, rx) = channel()</code>.</li>
+<li><strong><code>for x in xs</code> over collections — no <code>.iter()</code>, no <code>*x</code>.</strong> The
+  binding is the value for <code>Copy</code> types, a borrow otherwise.</li>
+<li><strong>Bare integer indices — no <code>as usize</code>.</strong> <code>arr[i]</code> works for
+  <code>i: i64</code>. An index outside <code>[0, len)</code> yields the element type's
+  zero value rather than panicking (identical on every tier) — so
+  guard with <code>len()</code> when absence must differ from zero.</li>
+<li><strong><code>arr.swap(i, j)</code></strong> over the manual three-line temp dance.</li>
+<li><strong><code>m.inc(k)</code> / <code>m.inc(k, by)</code></strong> for counters; <code>m.or_insert(k,
+  default)</code> for get-or-fill.</li>
+<li><strong>Recursive enums work directly.</strong> <code>enum List { Cons(i64,
+  Box&lt;List&gt;), Nil }</code>. <code>Box</code> / <code>Arc</code> / <code>Rc</code> are transparent — every
+  variant payload is heap-shared; the bare <code>Cons(i64, List)</code> form
+  works too.</li>
+<li><strong><code>#[derive(Clone, PartialEq, Eq, Default, Debug, Hash)]</code></strong> on
+  structs and enums — synthesized as real source, so <code>==</code>,
+  <code>.clone()</code>, <code>Type::default()</code>, <code>{:?}</code> work on every tier. Enums
+  derive when variants are all tuple/unit; <code>#[default]</code> picks the
+  <code>Default</code> variant. Don't hand-roll field-wise eq/clone.</li>
+<li><strong><code>defer expr</code> for cleanup.</strong> Runs when control leaves the
+  enclosing <code>{ }</code> block by any path (fall-through, <code>return</code>,
+  <code>break</code>, <code>continue</code>), LIFO order. In a loop body it runs each
+  iteration.</li>
+<li><strong><code>let PAT = expr else { … }</code></strong> for refutable-let-or-diverge; the
+  else block must <code>return</code> / <code>break</code> / <code>continue</code> / <code>panic!</code>.</li>
+<li><strong>Left-to-right dataflow with <code>|&gt;</code>.</strong> Chain instead of nesting.</li>
+<li><strong>Plain functions for free-standing logic;</strong> reach for <code>impl</code>
+  only when state is genuinely tied to a type.</li>
 <li><strong><code>Result&lt;T, E&gt;</code> + <code>?</code> for fallibility.</strong> Panic only for
   invariant violations.</li>
-<li><strong>Exhaustive <code>match</code>.</strong> Leave no <code>_ =&gt;</code> arm unless every
-  unmatched case genuinely means the same thing.</li>
-<li><strong>Goroutines + channels for async work.</strong> Share by
-  communicating; reach for <code>sync::Mutex</code> only when
-  shared-memory is the simpler model.</li>
-<li><strong>Bare numeric literals.</strong> Write <code>0</code>, not <code>0i64</code>. Inference
-  picks the type from the binding, the call site, or the
-  return type. Only suffix when the literal stands alone with
-  no contextual hint.</li>
+<li><strong>Exhaustive <code>match</code>.</strong> No <code>_ =&gt;</code> unless every unmatched case
+  genuinely means the same thing.</li>
+<li><strong>Goroutines + channels for async work.</strong> Share by communicating;
+  reach for <code>sync::Mutex</code> only when shared memory is simpler.</li>
+<li><strong><code>arena { ... }</code> for object graphs that die together.</strong>
+  Everything allocated inside is bump-allocated and freed wholesale
+  at every exit path. Contract: nothing allocated inside may be
+  referenced after the block — compute scalar/string summaries
+  inside, keep survivors outside. Statement position only; nests.</li>
+<li><strong>Bare numeric literals — always.</strong> <code>0</code>, <code>200</code>, <code>1.5</code>, not
+  <code>0i64</code> / <code>1.5f64</code>. Inference picks the type from binding, call
+  site, or return type. Suffix only when a literal stands alone
+  with no contextual hint. Same for indices: <code>arr[0]</code>.</li>
 <li><strong>String literals are already <code>String</code>.</strong> Don't write
-  <code>"foo".to_string()</code> — the literal is the owned value. <code>&amp;"foo"</code>
-  borrows it where a <code>&amp;String</code> / <code>&amp;str</code> parameter is expected.</li>
-<li><strong>Macros only for formatted output.</strong> <code>println!</code>,
-  <code>format!</code>, <code>print!</code>, <code>eprintln!</code>, <code>eprint!</code>, <code>panic!</code> are
-  the six macro entries — no others exist.</li>
+  <code>"foo".to_string()</code>. <code>&amp;"foo"</code> borrows where <code>&amp;String</code> / <code>&amp;str</code>
+  is expected.</li>
+<li><strong>Macros only for formatted output.</strong> <code>println!</code>, <code>format!</code>,
+  <code>print!</code>, <code>eprintln!</code>, <code>eprint!</code>, <code>panic!</code> — no others exist.</li>
 </ul>
+<h3 id="immutability-default-concrete-examples">Immutability default — concrete examples<a class="headerlink" href="#immutability-default-concrete-examples" title="Permanent link">&para;</a></h3>
+<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="c1">// `if` / `match` are expressions — bind their result.</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="kd">let</span><span class="w"> </span><span class="n">label</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">if</span><span class="w"> </span><span class="n">n</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="mi">0</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="s">&quot;negative&quot;</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="s">&quot;non-negative&quot;</span><span class="w"> </span><span class="p">}</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="kd">let</span><span class="w"> </span><span class="n">label</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">match</span><span class="w"> </span><span class="n">shape</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">    </span><span class="n">Shape</span>::<span class="n">Circle</span><span class="p">(</span><span class="n">_</span><span class="p">)</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="s">&quot;round&quot;</span><span class="p">,</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="w">    </span><span class="n">Shape</span>::<span class="n">Rect</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="o">..</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="s">&quot;boxy&quot;</span><span class="p">,</span>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="p">}</span>
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="c1">// Push accumulator mutation into a small helper that returns the</span>
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="c1">// final value; the caller&#39;s binding stays `let`.</span>
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="k">fn</span> <span class="nf">sum</span><span class="p">(</span><span class="n">xs</span>: <span class="kp">&amp;</span><span class="p">[</span><span class="kt">i64</span><span class="p">])</span><span class="w"> </span>-&gt; <span class="kt">i64</span> <span class="p">{</span>
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="k">mut</span><span class="w"> </span><span class="n">acc</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span>
+<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a><span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="n">n</span><span class="w"> </span><span class="k">in</span><span class="w"> </span><span class="n">xs</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">acc</span><span class="w"> </span><span class="o">+=</span><span class="w"> </span><span class="n">n</span><span class="w"> </span><span class="p">}</span>
+<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a><span class="w">    </span><span class="n">acc</span>
+<a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a><span class="p">}</span>
+<a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a><span class="kd">let</span><span class="w"> </span><span class="n">total</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">sum</span><span class="p">(</span><span class="o">&amp;</span><span class="n">xs</span><span class="p">)</span><span class="w">               </span><span class="c1">// immutable at the call site</span>
+</code></pre></div>
+<p>A <code>let mut</code> lives near a single update site (a loop, a builder, an
+in-place sort) inside a small function that returns the new state.
+If a binding is written from many places, break the function up.</p>
+<h3 id="if-let-while-let-when-to-reach-for-them"><code>if let</code> / <code>while let</code> — when to reach for them<a class="headerlink" href="#if-let-while-let-when-to-reach-for-them" title="Permanent link">&para;</a></h3>
+<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="k">if</span><span class="w"> </span><span class="kd">let</span><span class="w"> </span><span class="nb">Some</span><span class="p">(</span><span class="n">score</span><span class="p">)</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">scores</span><span class="p">.</span><span class="n">get</span><span class="p">(</span><span class="o">&amp;</span><span class="n">name</span><span class="p">)</span><span class="w"> </span><span class="p">{</span><span class="w">     </span><span class="c1">// collapses a 4-line match</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">    </span><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;{name}: {score}&quot;</span><span class="p">)</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="p">}</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="k">while</span><span class="w"> </span><span class="kd">let</span><span class="w"> </span><span class="nb">Some</span><span class="p">(</span><span class="n">value</span><span class="p">)</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">rx</span><span class="p">.</span><span class="n">recv</span><span class="p">()</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">handle</span><span class="p">(</span><span class="n">value</span><span class="p">)</span><span class="w"> </span><span class="p">}</span><span class="w">   </span><span class="c1">// drain a channel</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="kd">let</span><span class="w"> </span><span class="k">mut</span><span class="w"> </span><span class="n">cursor</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">err</span><span class="p">.</span><span class="n">cause</span><span class="p">()</span><span class="w">                          </span><span class="c1">// walk a cause chain</span>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="k">while</span><span class="w"> </span><span class="kd">let</span><span class="w"> </span><span class="nb">Some</span><span class="p">(</span><span class="n">inner</span><span class="p">)</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">cursor</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="w">    </span><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;  caused by: {}&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">inner</span><span class="p">.</span><span class="n">message</span><span class="p">())</span>
+<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="w">    </span><span class="n">cursor</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">inner</span><span class="p">.</span><span class="n">cause</span><span class="p">()</span>
+<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="p">}</span>
+<a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="k">if</span><span class="w"> </span><span class="kd">let</span><span class="w"> </span><span class="n">Tree</span>::<span class="n">Node</span><span class="p">(</span><span class="n">value</span><span class="p">,</span><span class="w"> </span><span class="n">_</span><span class="p">,</span><span class="w"> </span><span class="n">_</span><span class="p">)</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">node</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;node = {value}&quot;</span><span class="p">)</span><span class="w"> </span><span class="p">}</span>
+</code></pre></div>
+<p>Use <code>match</code> (not <code>if let … else</code>) when you genuinely need every
+variant.</p>
 <h2 id="3-the-forward-pipe-operator">3. The <code>|&gt;</code> forward-pipe operator<a class="headerlink" href="#3-the-forward-pipe-operator" title="Permanent link">&para;</a></h2>
-<p>Prefer <code>|&gt;</code> over nested calls whenever a value flows through
-two or more transformations.</p>
+<p>Prefer <code>|&gt;</code> whenever a value flows through two or more transforms.</p>
 <ul>
 <li><code>x |&gt; f</code> desugars to <code>f(x)</code>.</li>
-<li><code>x |&gt; f(a, b)</code> desugars to <code>f(a, b, x)</code> — the piped value
-  lands in the <strong>last positional slot</strong>.</li>
-<li><code>x |&gt; recv.m(a)</code> becomes <code>recv.m(a, x)</code> — methods compose
-  the same way.</li>
-<li><code>|&gt;</code> is left-associative with very low precedence, so
-  <code>a |&gt; f |&gt; g</code> reads as <code>g(f(a))</code> without parentheses.</li>
+<li><code>x |&gt; f(a, b)</code> desugars to <code>f(a, b, x)</code> — piped value lands in the
+  <strong>last positional slot</strong>.</li>
+<li><code>x |&gt; recv.m(a)</code> becomes <code>recv.m(a, x)</code> — pipe into an <em>external</em>
+  receiver's last argument.</li>
+<li><code>x |&gt; _.m(a)</code> becomes <code>x.m(a)</code> — the <strong><code>_</code> placeholder</strong> makes the
+  piped value the <em>receiver</em>. <code>_</code> reads as "the value flowing through
+  here". Bare <code>x |&gt; _.trim</code> (no parens) is the nullary method call
+  <code>x.trim()</code>; <code>x |&gt; _.0</code> / <code>x |&gt; _[i]</code> index the value; <code>x |&gt; _</code> is the
+  identity. Use this to pipe a value through its own methods:
+  <code>s |&gt; _.trim |&gt; _.to_upper</code>.</li>
+<li>Left-associative, very low precedence: <code>a |&gt; f |&gt; g</code> reads as
+  <code>g(f(a))</code> without parens.</li>
 </ul>
-<pre><code class="language-gossamer">fn double(x: i64) -&gt; i64 { x * 2 }
-fn add(a: i64, b: i64) -&gt; i64 { a + b }
-fn clamp(lo: i64, hi: i64, x: i64) -&gt; i64 {
-    if x &lt; lo { lo } else if x &gt; hi { hi } else { x }
-}
-
-// Preferred — reads top-down.
-let n = 3 |&gt; double |&gt; add(10) |&gt; clamp(0, 100)
-
-// Discouraged — the same meaning, but the eye has to unwind.
-let same = clamp(0, 100, add(10, double(3)))
-</code></pre>
-<p>When a step is a closure, write it inline — <code>|&gt;</code> still threads
-the value into the last slot:</p>
-<pre><code class="language-gossamer">let result = input
-    |&gt; parse_header
-    |&gt; validate
-    |&gt; |row| { row.body }
-    |&gt; write_out
-</code></pre>
+<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="k">fn</span> <span class="nf">double</span><span class="p">(</span><span class="n">x</span>: <span class="kt">i64</span><span class="p">)</span><span class="w"> </span>-&gt; <span class="kt">i64</span> <span class="p">{</span><span class="w"> </span><span class="n">x</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">2</span><span class="w"> </span><span class="p">}</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="k">fn</span> <span class="nf">add</span><span class="p">(</span><span class="n">a</span>: <span class="kt">i64</span><span class="p">,</span><span class="w"> </span><span class="n">b</span>: <span class="kt">i64</span><span class="p">)</span><span class="w"> </span>-&gt; <span class="kt">i64</span> <span class="p">{</span><span class="w"> </span><span class="n">a</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">b</span><span class="w"> </span><span class="p">}</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="k">fn</span> <span class="nf">clamp</span><span class="p">(</span><span class="n">lo</span>: <span class="kt">i64</span><span class="p">,</span><span class="w"> </span><span class="n">hi</span>: <span class="kt">i64</span><span class="p">,</span><span class="w"> </span><span class="n">x</span>: <span class="kt">i64</span><span class="p">)</span><span class="w"> </span>-&gt; <span class="kt">i64</span> <span class="p">{</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="n">x</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">lo</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">lo</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="k">if</span><span class="w"> </span><span class="n">x</span><span class="w"> </span><span class="o">&gt;</span><span class="w"> </span><span class="n">hi</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">hi</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">x</span><span class="w"> </span><span class="p">}</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="p">}</span>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="kd">let</span><span class="w"> </span><span class="n">n</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">3</span><span class="w"> </span><span class="o">|&gt;</span><span class="w"> </span><span class="n">double</span><span class="w"> </span><span class="o">|&gt;</span><span class="w"> </span><span class="n">add</span><span class="p">(</span><span class="mi">10</span><span class="p">)</span><span class="w"> </span><span class="o">|&gt;</span><span class="w"> </span><span class="n">clamp</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="mi">100</span><span class="p">)</span><span class="w">   </span><span class="c1">// reads top-down</span>
+</code></pre></div>
+<p>A closure step threads the value into the last slot too:</p>
+<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="kd">let</span><span class="w"> </span><span class="n">result</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">input</span><span class="w"> </span><span class="o">|&gt;</span><span class="w"> </span><span class="n">parse_header</span><span class="w"> </span><span class="o">|&gt;</span><span class="w"> </span><span class="n">validate</span><span class="w"> </span><span class="o">|&gt;</span><span class="w"> </span><span class="o">|</span><span class="n">row</span><span class="o">|</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">row</span><span class="p">.</span><span class="n">body</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="o">|&gt;</span><span class="w"> </span><span class="n">write_out</span>
+</code></pre></div>
 <h2 id="4-cheat-sheet">4. Cheat sheet<a class="headerlink" href="#4-cheat-sheet" title="Permanent link">&para;</a></h2>
-<pre><code class="language-gossamer">use std::io
-
-const PI: f64 = 3.14159
-static MAX_RETRIES: u32 = 3
-
-struct Point { x: f64, y: f64 }
-struct Pair(i64, i64)
-enum Shape { Circle(f64), Rect { w: f64, h: f64 } }
-
-trait Area { fn area(&amp;self) -&gt; f64; }
-
-impl Area for Shape {
-    fn area(&amp;self) -&gt; f64 {
-        match self {
-            Shape::Circle(r) =&gt; 3.14159 * r * r,
-            Shape::Rect { w, h } =&gt; w * h,
-        }
-    }
-}
-
-fn main() {
-    let mut total = 0
-    for n in [1, 2, 3].iter() {
-        total = total + *n
-    }
-    println!(&quot;total: {}&quot;, total)
-}
-</code></pre>
+<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="k">use</span><span class="w"> </span><span class="n">std</span>::<span class="n">io</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="k">const</span><span class="w"> </span><span class="n">PI</span>: <span class="kt">f64</span> <span class="o">=</span><span class="w"> </span><span class="mf">3.14159</span>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="k">static</span><span class="w"> </span><span class="n">MAX_RETRIES</span>: <span class="kt">u32</span> <span class="o">=</span><span class="w"> </span><span class="mi">3</span>
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>
+<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="k">struct</span> <span class="nc">Point</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">x</span>: <span class="kt">f64</span><span class="p">,</span><span class="w"> </span><span class="n">y</span>: <span class="kt">f64</span> <span class="p">}</span>
+<a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="k">struct</span> <span class="nc">Pair</span><span class="p">(</span><span class="kt">i64</span><span class="p">,</span><span class="w"> </span><span class="kt">i64</span><span class="p">)</span>
+<a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a><span class="k">enum</span> <span class="nc">Shape</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">Circle</span><span class="p">(</span><span class="kt">f64</span><span class="p">),</span><span class="w"> </span><span class="n">Rect</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">w</span>: <span class="kt">f64</span><span class="p">,</span><span class="w"> </span><span class="n">h</span>: <span class="kt">f64</span> <span class="p">}</span><span class="w"> </span><span class="p">}</span>
+<a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a>
+<a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a><span class="k">trait</span><span class="w"> </span><span class="n">Area</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="k">fn</span> <span class="nf">area</span><span class="p">(</span><span class="o">&amp;</span><span class="bp">self</span><span class="p">)</span><span class="w"> </span>-&gt; <span class="kt">f64</span><span class="p">;</span><span class="w"> </span><span class="p">}</span>
+<a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a>
+<a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a><span class="k">impl</span><span class="w"> </span><span class="n">Area</span><span class="w"> </span><span class="k">for</span><span class="w"> </span><span class="n">Shape</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-4-13" name="__codelineno-4-13" href="#__codelineno-4-13"></a><span class="w">    </span><span class="k">fn</span> <span class="nf">area</span><span class="p">(</span><span class="o">&amp;</span><span class="bp">self</span><span class="p">)</span><span class="w"> </span>-&gt; <span class="kt">f64</span> <span class="p">{</span>
+<a id="__codelineno-4-14" name="__codelineno-4-14" href="#__codelineno-4-14"></a><span class="w">        </span><span class="k">match</span><span class="w"> </span><span class="bp">self</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-4-15" name="__codelineno-4-15" href="#__codelineno-4-15"></a><span class="w">            </span><span class="n">Shape</span>::<span class="n">Circle</span><span class="p">(</span><span class="n">r</span><span class="p">)</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="mf">3.14159</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">r</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">r</span><span class="p">,</span>
+<a id="__codelineno-4-16" name="__codelineno-4-16" href="#__codelineno-4-16"></a><span class="w">            </span><span class="n">Shape</span>::<span class="n">Rect</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">w</span><span class="p">,</span><span class="w"> </span><span class="n">h</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="n">w</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">h</span><span class="p">,</span>
+<a id="__codelineno-4-17" name="__codelineno-4-17" href="#__codelineno-4-17"></a><span class="w">        </span><span class="p">}</span>
+<a id="__codelineno-4-18" name="__codelineno-4-18" href="#__codelineno-4-18"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-4-19" name="__codelineno-4-19" href="#__codelineno-4-19"></a><span class="p">}</span>
+<a id="__codelineno-4-20" name="__codelineno-4-20" href="#__codelineno-4-20"></a>
+<a id="__codelineno-4-21" name="__codelineno-4-21" href="#__codelineno-4-21"></a><span class="k">fn</span> <span class="nf">sum</span><span class="p">(</span><span class="n">xs</span>: <span class="kp">&amp;</span><span class="p">[</span><span class="kt">i64</span><span class="p">])</span><span class="w"> </span>-&gt; <span class="kt">i64</span> <span class="p">{</span>
+<a id="__codelineno-4-22" name="__codelineno-4-22" href="#__codelineno-4-22"></a><span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="k">mut</span><span class="w"> </span><span class="n">acc</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span>
+<a id="__codelineno-4-23" name="__codelineno-4-23" href="#__codelineno-4-23"></a><span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="n">n</span><span class="w"> </span><span class="k">in</span><span class="w"> </span><span class="n">xs</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">acc</span><span class="w"> </span><span class="o">+=</span><span class="w"> </span><span class="n">n</span><span class="w"> </span><span class="p">}</span>
+<a id="__codelineno-4-24" name="__codelineno-4-24" href="#__codelineno-4-24"></a><span class="w">    </span><span class="n">acc</span>
+<a id="__codelineno-4-25" name="__codelineno-4-25" href="#__codelineno-4-25"></a><span class="p">}</span>
+<a id="__codelineno-4-26" name="__codelineno-4-26" href="#__codelineno-4-26"></a>
+<a id="__codelineno-4-27" name="__codelineno-4-27" href="#__codelineno-4-27"></a><span class="k">fn</span> <span class="nf">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-4-28" name="__codelineno-4-28" href="#__codelineno-4-28"></a><span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="n">total</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">sum</span><span class="p">(</span><span class="o">&amp;</span><span class="p">[</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span><span class="w"> </span><span class="mi">3</span><span class="p">])</span>
+<a id="__codelineno-4-29" name="__codelineno-4-29" href="#__codelineno-4-29"></a><span class="w">    </span><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;total: {}&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">total</span><span class="p">)</span>
+<a id="__codelineno-4-30" name="__codelineno-4-30" href="#__codelineno-4-30"></a><span class="p">}</span>
+</code></pre></div>
 <h2 id="5-grammar-essentials">5. Grammar essentials<a class="headerlink" href="#5-grammar-essentials" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Comments</strong>: <code>//</code> single-line and <code>/* ... */</code> block are
-  the only two forms — block comments do <strong>not</strong> nest, and
-  there is no separate <code>///</code> / <code>//!</code> doc-comment syntax. A
-  run of <code>//</code> lines immediately above an item (no blank line
-  between) is its documentation; <code>gos doc</code> renders these and
-  <code>gos test</code> runs fenced code inside them.</li>
-<li><strong>Semicolons</strong> are optional at statement boundaries; one
-  statement per line.</li>
-<li><strong>Expressions-as-statements.</strong> <code>if</code>, <code>match</code>, <code>loop</code>, and
-  block expressions all yield values.</li>
-<li><strong>Bindings.</strong> <code>let name = expr</code>, <code>let mut name = expr</code>,
-  <code>let Point { x, y } = p</code> (destructure), <code>let (a, b) = pair</code>.</li>
-<li><strong>References.</strong> <code>&amp;x</code> read-shared, <code>&amp;mut x</code> exclusive write.
-  Aliasing intent only; the GC owns memory. <strong>No lifetimes,
-  no borrow checker.</strong></li>
-<li><strong>Types.</strong> <code>bool</code>, <code>char</code>, <code>i8..i128</code>, <code>u8..u128</code>, <code>isize</code>,
-  <code>usize</code>, <code>f32</code>, <code>f64</code>, <code>String</code>, <code>[T]</code>, <code>(A, B)</code>,
-  <code>Option&lt;T&gt;</code>, <code>Result&lt;T, E&gt;</code>, <code>&amp;T</code>, <code>&amp;mut T</code>, user types.</li>
-<li><strong>Integer literals</strong> are bare by default: <code>1</code>, <code>255</code>, <code>0</code>.
-  Inference picks the type from the binding, the call site, or
-  the return type. Suffix only when no contextual hint exists
-  (e.g. <code>1i32</code> standing alone in an expression with no other
-  width signal). Unsuffixed literals default to <code>i64</code>.</li>
+<li><strong>Comments</strong>: <code>//</code> line and <code>/* ... */</code> block are the only forms
+  — block comments do <strong>not</strong> nest; there is no <code>///</code> / <code>//!</code>. A run
+  of <code>//</code> lines immediately above an item (no blank line) is its
+  documentation; <code>gos doc</code> renders these and <code>gos test</code> runs fenced
+  code inside them.</li>
+<li><strong>Semicolons</strong> are optional; one statement per line. A newline
+  followed by a leading <code>&amp;</code>, <code>*</code>, or <code>-</code> starts a new statement, so
+  for multi-line continuation put the operator at the end of the
+  previous line (<code>let x = a -\n  b</code>) or parenthesize.</li>
+<li><strong>Imports.</strong> <code>use std::iter</code>; group with braces — <code>use std::{iter,
+  os, strings}</code>. No trailing <code>;</code>. Alias with <code>use
+  std::collections::{HashMap as Map}</code>. Paths validate against the
+  canonical std manifest (<code>GR0005</code>): always spell the full path
+  (<code>std::encoding::json</code>, not <code>std::json</code>).</li>
+<li><strong>Expressions-as-statements.</strong> <code>if</code>, <code>match</code>, <code>loop</code>, and blocks
+  all yield values.</li>
+<li><strong>Bindings.</strong> <code>let name = expr</code>, <code>let mut name = expr</code>, <code>let
+  Point { x, y } = p</code>, <code>let (a, b) = pair</code>.</li>
+<li><strong>References.</strong> <code>&amp;x</code> read-shared, <code>&amp;mut x</code> exclusive write —
+  aliasing intent only; the runtime owns memory. <strong>No lifetimes, no
+  borrow checker.</strong></li>
+<li><strong>Types.</strong> <code>bool</code>, <code>char</code>, <code>i8..i64</code>, <code>u8..u64</code>, <code>isize</code>,
+  <code>usize</code>, <code>f32</code>, <code>f64</code>, <code>String</code>, <code>[T]</code>, <code>(A, B)</code>, <code>Option&lt;T&gt;</code>,
+  <code>Result&lt;T, E&gt;</code>, <code>&amp;T</code>, <code>&amp;mut T</code>, user types. <code>i128</code> / <code>u128</code> are
+  rejected (<code>GT0014</code>) — no tier has a 128-bit representation. Nested
+  generics parse (<code>Vec&lt;Vec&lt;T&gt;&gt;</code>, <code>HashMap&lt;String, Vec&lt;i64&gt;&gt;</code>).</li>
+<li><strong><code>defer expr</code></strong> — runs on block exit by any path, LIFO, every tier.</li>
+<li><strong>Integer literals</strong> are bare; inference picks the type, default
+  <code>i64</code>. Suffix only with no contextual hint.</li>
 <li><strong>Casts.</strong> <code>x as i32</code> — whitelist-checked (numeric ↔ numeric,
-  <code>bool</code> / <code>char</code> → integer, <code>u8</code> → <code>char</code>, same-type no-op).
-  Every other <code>as</code> shape is a hard error (GT0005).</li>
-<li><strong>Patterns.</strong> Wildcard <code>_</code>, literals, <code>name</code>, <code>mut name</code>,
-  <code>Variant(…)</code>, <code>Struct { … }</code>, tuples <code>(a, b)</code>, ranges
-  <code>1..=5</code>, or-patterns <code>a | b</code>, <code>@</code>-bindings <code>x @ 1..=3</code>,
-  rest <code>..</code>. Guards: <code>Some(n) if n &gt; 0 =&gt; …</code>.</li>
+  <code>bool</code>/<code>char</code> → int, <code>u8</code> → <code>char</code>, same-type no-op). Int → narrow
+  int masks at width (<code>300 as u8 == 44</code>); float → int truncates
+  toward zero, saturates at i64 width, no narrow mask (<code>300.7 as u8
+  == 300</code>, NaN → 0). Other <code>as</code> shapes are GT0005; <code>as i128/u128</code> is
+  GT0014.</li>
+<li><strong>Patterns.</strong> <code>_</code>, literals, <code>name</code>, <code>mut name</code>, <code>Variant(…)</code>,
+  <code>Struct { … }</code>, tuples <code>(a, b)</code>, ranges <code>1..=5</code>, or-patterns
+  <code>a | b</code>, <code>@</code>-bindings <code>x @ 1..=3</code>, rest <code>..</code>. Guards: <code>Some(n) if
+  n &gt; 0 =&gt; …</code>. Used in <code>let</code>, <code>for</code>, params, <code>match</code>, <code>if let</code>,
+  <code>while let</code>.</li>
+<li><strong><code>if let</code> / <code>while let</code></strong> desugar to <code>match</code> — shorter reading,
+  no new behavior.</li>
+<li><strong><code>let PAT = expr else { … }</code></strong> — the else block must diverge
+  (<code>return</code> / <code>break</code> / <code>continue</code> / <code>panic!</code>).</li>
 </ul>
 <h2 id="6-formatted-output-the-only-macros">6. Formatted output (the only macros)<a class="headerlink" href="#6-formatted-output-the-only-macros" title="Permanent link">&para;</a></h2>
-<p>Gossamer has exactly six macros, all format-shaped. Every other
-<code>name!(…)</code> is a parse error.</p>
+<p>Exactly six macros, all format-shaped. Every other <code>name!(…)</code> is a
+parse error.</p>
 <table>
 <thead>
 <tr>
@@ -386,138 +2231,191 @@ fn main() {
 </tr>
 </tbody>
 </table>
-<p>Each macro supports Rust-style <code>{}</code> placeholders and
-named-capture via <code>{ident}</code> for bindings in scope:</p>
-<pre><code class="language-gossamer">let name = &quot;jane&quot;
-println!(&quot;hello, {name}!&quot;)
-println!(&quot;value: {} / {}&quot;, answer, total)
-</code></pre>
-<p>The six macros lower to one allocation through the internal
-<code>__concat</code> builtin. For building a single <code>String</code> piece-by-
-piece, <code>+</code> concatenates without a separator:</p>
-<pre><code class="language-gossamer">let greeting = &quot;hello, &quot; + &amp;name
-</code></pre>
+<p>Rust-style <code>{}</code> placeholders plus named-capture <code>{ident}</code> for
+bindings in scope:</p>
+<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="kd">let</span><span class="w"> </span><span class="n">name</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">&quot;jane&quot;</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;hello, {name}!&quot;</span><span class="p">)</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;value: {} / {}&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">answer</span><span class="p">,</span><span class="w"> </span><span class="n">total</span><span class="p">)</span>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="kd">let</span><span class="w"> </span><span class="n">greeting</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">&quot;hello, &quot;</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="o">&amp;</span><span class="n">name</span><span class="w">      </span><span class="c1">// `+` concatenates, no separator</span>
+</code></pre></div>
+<p>Format specs follow Rust's <code>{:spec}</code> grammar — width and alignment
+(<code>{:&gt;8}</code> / <code>{:&lt;8}</code> / <code>{:^8}</code> / <code>{:8}</code>), fill chars (<code>{:*&gt;8}</code>),
+zero-pad (<code>{:08}</code>), radix (<code>{:x}</code> / <code>{:X}</code> / <code>{:b}</code> / <code>{:o}</code>), and
+precision (<code>{:.2}</code>, <code>{:&gt;8.2}</code>), for positional and named (<code>{n:03}</code>)
+arguments:</p>
+<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;[{:&gt;8}]&quot;</span><span class="p">,</span><span class="w"> </span><span class="mi">42</span><span class="p">)</span><span class="w">        </span><span class="c1">// [      42]</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;[{:08x}]&quot;</span><span class="p">,</span><span class="w"> </span><span class="mi">255</span><span class="p">)</span><span class="w">      </span><span class="c1">// [000000ff]</span>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;[{:^6}]&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;hi&quot;</span><span class="p">)</span><span class="w">      </span><span class="c1">// [  hi  ]</span>
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;[{:&gt;8.2}]&quot;</span><span class="p">,</span><span class="w"> </span><span class="mf">3.14159</span><span class="p">)</span><span class="w"> </span><span class="c1">// [    3.14]</span>
+</code></pre></div>
 <h2 id="7-error-handling">7. Error handling<a class="headerlink" href="#7-error-handling" title="Permanent link">&para;</a></h2>
-<p>Fallible functions return <code>Result&lt;T, E&gt;</code>. Propagate with <code>?</code> and
-build / wrap / inspect errors through <code>std::errors</code>:</p>
-<pre><code class="language-gossamer">use std::errors
-use std::os
-
-fn load_config(path: &amp;String) -&gt; Result&lt;String, errors::Error&gt; {
-    os::read_file_to_string(path)
-        .map_err(|e| errors::wrap(e, format!(&quot;reading {}&quot;, path)))
-}
-</code></pre>
+<p>Fallible functions return <code>Result&lt;T, E&gt;</code>. Propagate with <code>?</code>; build
+/ wrap / inspect through <code>std::errors</code>:</p>
+<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="k">use</span><span class="w"> </span><span class="n">std</span>::<span class="n">errors</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="k">use</span><span class="w"> </span><span class="n">std</span>::<span class="n">fs</span>
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="k">fn</span> <span class="nf">load_config</span><span class="p">(</span><span class="n">path</span>: <span class="kp">&amp;</span><span class="nb">String</span><span class="p">)</span><span class="w"> </span>-&gt; <span class="nb">Result</span><span class="o">&lt;</span><span class="nb">String</span><span class="p">,</span><span class="w"> </span><span class="n">errors</span>::<span class="n">Error</span><span class="o">&gt;</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="w">    </span><span class="n">fs</span>::<span class="n">read_to_string</span><span class="p">(</span><span class="n">path</span><span class="p">)</span>
+<a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a><span class="w">        </span><span class="p">.</span><span class="n">map_err</span><span class="p">(</span><span class="o">|</span><span class="n">e</span><span class="o">|</span><span class="w"> </span><span class="n">errors</span>::<span class="n">wrap</span><span class="p">(</span><span class="n">e</span><span class="p">,</span><span class="w"> </span><span class="fm">format!</span><span class="p">(</span><span class="s">&quot;reading {}&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">path</span><span class="p">)))</span>
+<a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a><span class="p">}</span>
+</code></pre></div>
 <ul>
-<li><code>errors::new(msg)</code> — build a free-standing error.</li>
+<li><code>errors::new(msg)</code> — free-standing error.</li>
+<li><code>errors::newf(fmt, args…)</code> — format-shaped constructor, e.g.
+  <code>errors::newf("status {}", code)</code>.</li>
 <li><code>errors::wrap(cause, msg)</code> — add a higher-level message.</li>
-<li><code>errors::is(err, needle)</code> — walk the cause chain.</li>
-<li><code>errors::chain(err)</code> — iterate the cause chain.</li>
-<li><code>errors::join([err, err])</code> — combine several into one.</li>
+<li><code>errors::is(err, needle)</code> / <code>errors::chain(err)</code> — walk/iterate
+  the cause chain.</li>
+<li><code>errors::join([err, err])</code> — combine several.</li>
 </ul>
-<p>Panics abort the current goroutine (and, for now, usually the
-process). Reserve them for invariant violations, not
-recoverable failure.</p>
+<p>Rendering a wrapped error with <code>{}</code> prints the colon-joined chain
+(<code>outer: mid: root</code>); a joined error joins parts with <code>"; "</code>.
+<code>.message()</code> is the top message only.</p>
+<p><code>?</code> also propagates <code>Option&lt;T&gt;</code> inside an <code>Option</code>-returning
+function, and Result <code>?</code> auto-converts the error through <code>From</code>.</p>
+<p>Idiomatic shape — fallible work returns <code>Result</code>, piped through
+<code>result::map</code> for the ok-path and <code>result::default_with</code> to handle
+the error in-line:</p>
+<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="k">use</span><span class="w"> </span><span class="n">std</span>::<span class="p">{</span><span class="n">env</span><span class="p">,</span><span class="w"> </span><span class="n">errors</span><span class="p">,</span><span class="w"> </span><span class="n">fs</span><span class="p">,</span><span class="w"> </span><span class="n">iter</span><span class="p">,</span><span class="w"> </span><span class="n">result</span><span class="p">}</span>
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="k">fn</span> <span class="nf">cat</span><span class="p">(</span><span class="n">f</span>: <span class="kp">&amp;</span><span class="nb">String</span><span class="p">)</span><span class="w"> </span>-&gt; <span class="nb">Result</span><span class="o">&lt;</span><span class="p">(),</span><span class="w"> </span><span class="n">errors</span>::<span class="n">Error</span><span class="o">&gt;</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="w">    </span><span class="n">fs</span>::<span class="n">read_to_string</span><span class="p">(</span><span class="n">f</span><span class="p">)</span><span class="w"> </span><span class="o">|&gt;</span><span class="w"> </span><span class="n">result</span>::<span class="n">map</span><span class="p">(</span><span class="o">|</span><span class="n">s</span><span class="o">|</span><span class="w"> </span><span class="fm">print!</span><span class="p">(</span><span class="s">&quot;{}&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">s</span><span class="p">))</span>
+<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="p">}</span>
+<a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a>
+<a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a><span class="k">fn</span> <span class="nf">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a><span class="w">    </span><span class="n">env</span>::<span class="n">args</span><span class="p">()</span><span class="w"> </span><span class="o">|&gt;</span><span class="w"> </span><span class="n">iter</span>::<span class="n">for_each</span><span class="p">(</span><span class="o">|</span><span class="n">f</span><span class="o">|</span><span class="w"> </span><span class="n">cat</span><span class="p">(</span><span class="o">&amp;</span><span class="n">f</span><span class="p">)</span><span class="w"> </span><span class="o">|&gt;</span><span class="w"> </span><span class="n">result</span>::<span class="n">default_with</span><span class="p">(</span><span class="o">|</span><span class="n">e</span><span class="o">|</span><span class="w"> </span><span class="fm">eprintln!</span><span class="p">(</span><span class="s">&quot;{f}: {e}&quot;</span><span class="p">)))</span>
+<a id="__codelineno-8-9" name="__codelineno-8-9" href="#__codelineno-8-9"></a><span class="p">}</span>
+</code></pre></div>
+<p><code>result::map(fn, r)</code> transforms <code>Ok(v)</code>, leaving <code>Err</code> untouched;
+<code>result::default_with(fn, r)</code> handles the error and returns <code>()</code>.
+Data-last argument order threads both through <code>|&gt;</code>. <code>?</code> also works
+inside macro arguments (<code>print!("{}", expr?)</code>).</p>
+<p>Panics are goroutine-scoped: a panic in a spawned goroutine ends
+only that goroutine — the scheduler keeps running — while a panic on
+the main goroutine is fatal, as in Rust. Reserve for invariant
+violations. Integer divide / modulo by zero panics (<code>GX0005</code>) on
+every tier; <code>i64::MIN / -1</code> wraps to <code>i64::MIN</code>. Deep recursion in a
+goroutine, closure, or method body raises a clean stack-overflow
+(<code>GX0008</code>) rather than crashing — for genuinely deep recursion use
+<code>gos build</code>, where native code lets the OS grow the stack.</p>
 <h2 id="8-concurrency">8. Concurrency<a class="headerlink" href="#8-concurrency" title="Permanent link">&para;</a></h2>
-<p>Goroutines via <code>go expr</code> (fire-and-forget). For a result, <code>spawn(f)</code>
-runs <code>f</code> on a goroutine and returns a <code>JoinHandle&lt;T&gt;</code>; <code>handle.join()</code>
-blocks for <code>Result&lt;T, String&gt;</code> — <code>Ok(value)</code>, or <code>Err(message)</code> if the
-goroutine panicked:</p>
-<pre><code class="language-gossamer">let h = spawn(|| compute())
-match h.join() {
-    Ok(v) =&gt; println!(&quot;{}&quot;, v),
-    Err(e) =&gt; eprintln!(&quot;worker failed: {}&quot;, e),
-}
-</code></pre>
-<p>Typed channels via <code>std::sync::channel()</code>. <code>select { }</code> multiplexes
-receives and sends:</p>
-<pre><code class="language-gossamer">use std::sync::channel
-use std::time
-
-fn main() {
-    let pair = channel()
-    let tx = pair.0
-    let rx = pair.1
-
-    go tx.send(10)
-    go tx.send(20)
-    go tx.send(30)
-
-    time::sleep(50)
-
-    let mut total = 0
-    loop {
-        match rx.recv() {
-            Some(v) =&gt; total = total + v,
-            None =&gt; break,
-        }
-    }
-    println!(&quot;total: {}&quot;, total)
-}
-</code></pre>
-<p><code>select { }</code> multiplexes:</p>
-<pre><code class="language-gossamer">select {
-    x = rx_a.recv() =&gt; handle_a(x),
-    y = rx_b.recv() =&gt; handle_b(y),
-    default =&gt; do_something_else(),
-}
-</code></pre>
-<ul>
-<li>Prefer channels for coordination; reach for <code>sync::Mutex</code>
-  only when shared-memory updates are the simpler shape.</li>
-<li><code>go</code> takes a full expression — usually a function or method
-  call. Closures work (<code>go || { ... }()</code>) but a named helper
-  is easier to read and test.</li>
-<li>Goroutines are real stackful coroutines on a work-stealing
-  M:N scheduler. Blocking primitives (<code>channel.recv</code>,
-  <code>mutex.lock</code>, <code>time::sleep</code>, network reads, fs syscalls)
-  park the goroutine, not the OS thread — so writing
-  blocking-shaped code is the right shape; do not pre-emptively
-  add <code>select</code> arms or sleeps to "yield".</li>
-</ul>
+<p><code>go expr</code> is fire-and-forget. When you need the result, <code>spawn(f)</code>
+runs <code>f</code> on a goroutine and returns a <code>JoinHandle&lt;T&gt;</code>;
+<code>handle.join()</code> blocks for <code>Result&lt;T, String&gt;</code> — <code>Ok(value)</code> or
+<code>Err(message)</code> on panic. Closures capture their environment.</p>
+<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="kd">let</span><span class="w"> </span><span class="n">h</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">spawn</span><span class="p">(</span><span class="o">||</span><span class="w"> </span><span class="n">compute</span><span class="p">())</span>
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="k">match</span><span class="w"> </span><span class="n">h</span><span class="p">.</span><span class="n">join</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="w">    </span><span class="nb">Ok</span><span class="p">(</span><span class="n">v</span><span class="p">)</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;{}&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">v</span><span class="p">),</span>
+<a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="w">    </span><span class="nb">Err</span><span class="p">(</span><span class="n">e</span><span class="p">)</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="fm">eprintln!</span><span class="p">(</span><span class="s">&quot;worker failed: {}&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">e</span><span class="p">),</span>
+<a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a><span class="p">}</span>
+</code></pre></div>
+<p>Typed channels via <code>std::sync::channel()</code>. <code>recv()</code> blocks until a
+value arrives or every sender is gone; <code>close()</code> ends the stream, so
+<code>while let Some(v) = rx.recv()</code> is the canonical drain — no sleeps,
+identical under <code>gos run</code> and <code>gos build</code>:</p>
+<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="k">use</span><span class="w"> </span><span class="n">std</span>::<span class="n">sync</span>::<span class="n">channel</span>
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>
+<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="k">fn</span> <span class="nf">produce</span><span class="p">(</span><span class="n">tx</span>: <span class="nc">Sender</span><span class="o">&lt;</span><span class="kt">i64</span><span class="o">&gt;</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a><span class="w">    </span><span class="n">tx</span><span class="p">.</span><span class="n">send</span><span class="p">(</span><span class="mi">1</span><span class="p">);</span><span class="w"> </span><span class="n">tx</span><span class="p">.</span><span class="n">send</span><span class="p">(</span><span class="mi">2</span><span class="p">);</span><span class="w"> </span><span class="n">tx</span><span class="p">.</span><span class="n">send</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span>
+<a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a><span class="w">    </span><span class="n">tx</span><span class="p">.</span><span class="n">close</span><span class="p">()</span>
+<a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a><span class="p">}</span>
+<a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a>
+<a id="__codelineno-10-8" name="__codelineno-10-8" href="#__codelineno-10-8"></a><span class="k">fn</span> <span class="nf">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-10-9" name="__codelineno-10-9" href="#__codelineno-10-9"></a><span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="p">(</span><span class="n">tx</span><span class="p">,</span><span class="w"> </span><span class="n">rx</span><span class="p">)</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">channel</span><span class="p">()</span>
+<a id="__codelineno-10-10" name="__codelineno-10-10" href="#__codelineno-10-10"></a><span class="w">    </span><span class="n">go</span><span class="w"> </span><span class="n">produce</span><span class="p">(</span><span class="n">tx</span><span class="p">)</span>
+<a id="__codelineno-10-11" name="__codelineno-10-11" href="#__codelineno-10-11"></a><span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="k">mut</span><span class="w"> </span><span class="n">total</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span>
+<a id="__codelineno-10-12" name="__codelineno-10-12" href="#__codelineno-10-12"></a><span class="w">    </span><span class="k">while</span><span class="w"> </span><span class="kd">let</span><span class="w"> </span><span class="nb">Some</span><span class="p">(</span><span class="n">v</span><span class="p">)</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">rx</span><span class="p">.</span><span class="n">recv</span><span class="p">()</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">total</span><span class="w"> </span><span class="o">+=</span><span class="w"> </span><span class="n">v</span><span class="w"> </span><span class="p">}</span>
+<a id="__codelineno-10-13" name="__codelineno-10-13" href="#__codelineno-10-13"></a><span class="w">    </span><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;total: {}&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">total</span><span class="p">)</span>
+<a id="__codelineno-10-14" name="__codelineno-10-14" href="#__codelineno-10-14"></a><span class="p">}</span>
+</code></pre></div>
+<p><code>select { }</code> multiplexes receives/sends; arms poll in source order,
+the goroutine parks until one is ready (or a <code>default</code> arm fires):</p>
+<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="n">select</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="w">    </span><span class="n">x</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">rx_a</span><span class="p">.</span><span class="n">recv</span><span class="p">()</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="n">handle_a</span><span class="p">(</span><span class="n">x</span><span class="p">),</span>
+<a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a><span class="w">    </span><span class="n">y</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">rx_b</span><span class="p">.</span><span class="n">recv</span><span class="p">()</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="n">handle_b</span><span class="p">(</span><span class="n">y</span><span class="p">),</span>
+<a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a><span class="w">    </span><span class="n">default</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="n">do_something_else</span><span class="p">(),</span>
+<a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a><span class="p">}</span>
+</code></pre></div>
+<p>Prefer channels for coordination; <code>sync::Mutex</code> only when
+shared-memory updates are simpler. Close the channel from the
+producer when the stream ends.</p>
 <h2 id="8a-closures-and-higher-order-fns">8a. Closures and higher-order fns<a class="headerlink" href="#8a-closures-and-higher-order-fns" title="Permanent link">&para;</a></h2>
-<p>Lambdas use <code>|param: T| body</code>. Captures from the enclosing scope
-work as you'd expect (GC-managed, no <code>move</code> keyword).</p>
-<p>For higher-order parameters, distinguish two callable types:</p>
+<p>Lambdas: <code>|param: T| body</code>. Captures work as expected
+(runtime-managed, no <code>move</code>). Two callable types:</p>
 <ul>
-<li><code>fn(args) -&gt; ret</code> — raw code pointer, accepts only non-capturing
-  items (bare functions, lifted lambdas with no captures).</li>
-<li><code>Fn(args) -&gt; ret</code> — callable trait, accepts both bare items
-  and capturing closures. Fat pointer (env + code) under the
-  hood; the conversion is implicit at the call site.</li>
+<li><code>fn(args) -&gt; ret</code> — raw code pointer; accepts only non-capturing
+  items.</li>
+<li><code>Fn(args) -&gt; ret</code> — callable trait; accepts bare items and
+  capturing closures (fat pointer; implicit conversion at the call
+  site).</li>
 </ul>
-<pre><code class="language-gossamer">fn apply(f: Fn(i64) -&gt; i64, x: i64) -&gt; i64 { f(x) }
-
-fn main() {
-    let scale = 10
-    let scaled = |y: i64| scale * y     // captures `scale`
-    println!(&quot;{}&quot;, apply(scaled, 5))    // 50
-
-    fn add_one(y: i64) -&gt; i64 { y + 1 }
-    println!(&quot;{}&quot;, apply(add_one, 41))  // 42 — bare fn coerces
-}
-</code></pre>
-<p>Single trait variant — no <code>FnMut</code> / <code>FnOnce</code> distinction (the
-borrow-style split Rust draws is unnecessary in a fully GC'd
-world). <code>FnMut</code> / <code>FnOnce</code> parse but lower to the same
-<code>Fn(_)</code> shape.</p>
+<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="k">fn</span> <span class="nf">apply</span><span class="p">(</span><span class="n">f</span>: <span class="nb">Fn</span><span class="p">(</span><span class="kt">i64</span><span class="p">)</span><span class="w"> </span>-&gt; <span class="kt">i64</span><span class="p">,</span><span class="w"> </span><span class="n">x</span>: <span class="kt">i64</span><span class="p">)</span><span class="w"> </span>-&gt; <span class="kt">i64</span> <span class="p">{</span><span class="w"> </span><span class="n">f</span><span class="p">(</span><span class="n">x</span><span class="p">)</span><span class="w"> </span><span class="p">}</span>
+<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>
+<a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a><span class="k">fn</span> <span class="nf">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a><span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="n">scale</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">10</span>
+<a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a><span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="n">scaled</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="o">|</span><span class="n">y</span>: <span class="kt">i64</span><span class="o">|</span><span class="w"> </span><span class="n">scale</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">y</span><span class="w">     </span><span class="c1">// captures `scale`</span>
+<a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a><span class="w">    </span><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;{}&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">apply</span><span class="p">(</span><span class="n">scaled</span><span class="p">,</span><span class="w"> </span><span class="mi">5</span><span class="p">))</span><span class="w">    </span><span class="c1">// 50</span>
+<a id="__codelineno-12-7" name="__codelineno-12-7" href="#__codelineno-12-7"></a><span class="w">    </span><span class="k">fn</span> <span class="nf">add_one</span><span class="p">(</span><span class="n">y</span>: <span class="kt">i64</span><span class="p">)</span><span class="w"> </span>-&gt; <span class="kt">i64</span> <span class="p">{</span><span class="w"> </span><span class="n">y</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mi">1</span><span class="w"> </span><span class="p">}</span>
+<a id="__codelineno-12-8" name="__codelineno-12-8" href="#__codelineno-12-8"></a><span class="w">    </span><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;{}&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">apply</span><span class="p">(</span><span class="n">add_one</span><span class="p">,</span><span class="w"> </span><span class="mi">41</span><span class="p">))</span><span class="w">  </span><span class="c1">// 42 — bare fn coerces</span>
+<a id="__codelineno-12-9" name="__codelineno-12-9" href="#__codelineno-12-9"></a><span class="p">}</span>
+</code></pre></div>
+<p>Single trait variant — no <code>FnMut</code> / <code>FnOnce</code> distinction (they parse
+but lower to the same <code>Fn(_)</code> shape).</p>
+<h2 id="8b-iterators">8b. Iterators<a class="headerlink" href="#8b-iterators" title="Permanent link">&para;</a></h2>
+<p>Any type with <code>fn next(&amp;mut self) -&gt; Option&lt;T&gt;</code> is iterable; <code>for x
+in ...</code> desugars to <code>{ let mut __iter = expr; loop { match (&amp;mut
+__iter).next() { Some(x) =&gt; body, None =&gt; break } } }</code>.</p>
+<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="k">struct</span> <span class="nc">Counter</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">next_value</span>: <span class="kt">i64</span><span class="p">,</span><span class="w"> </span><span class="n">end</span>: <span class="kt">i64</span> <span class="p">}</span>
+<a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a><span class="k">trait</span><span class="w"> </span><span class="nb">Iterator</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="k">fn</span> <span class="nf">next</span><span class="p">(</span><span class="o">&amp;</span><span class="k">mut</span><span class="w"> </span><span class="bp">self</span><span class="p">)</span><span class="w"> </span>-&gt; <span class="nb">Option</span><span class="o">&lt;</span><span class="kt">i64</span><span class="o">&gt;</span><span class="w"> </span><span class="p">}</span>
+<a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a><span class="k">impl</span><span class="w"> </span><span class="nb">Iterator</span><span class="w"> </span><span class="k">for</span><span class="w"> </span><span class="n">Counter</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a><span class="w">    </span><span class="k">fn</span> <span class="nf">next</span><span class="p">(</span><span class="o">&amp;</span><span class="k">mut</span><span class="w"> </span><span class="bp">self</span><span class="p">)</span><span class="w"> </span>-&gt; <span class="nb">Option</span><span class="o">&lt;</span><span class="kt">i64</span><span class="o">&gt;</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a><span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="bp">self</span><span class="p">.</span><span class="n">next_value</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="bp">self</span><span class="p">.</span><span class="n">end</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-13-6" name="__codelineno-13-6" href="#__codelineno-13-6"></a><span class="w">            </span><span class="kd">let</span><span class="w"> </span><span class="n">v</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="bp">self</span><span class="p">.</span><span class="n">next_value</span>
+<a id="__codelineno-13-7" name="__codelineno-13-7" href="#__codelineno-13-7"></a><span class="w">            </span><span class="bp">self</span><span class="p">.</span><span class="n">next_value</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="bp">self</span><span class="p">.</span><span class="n">next_value</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mi">1</span>
+<a id="__codelineno-13-8" name="__codelineno-13-8" href="#__codelineno-13-8"></a><span class="w">            </span><span class="nb">Some</span><span class="p">(</span><span class="n">v</span><span class="p">)</span>
+<a id="__codelineno-13-9" name="__codelineno-13-9" href="#__codelineno-13-9"></a><span class="w">        </span><span class="p">}</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nb">None</span><span class="w"> </span><span class="p">}</span>
+<a id="__codelineno-13-10" name="__codelineno-13-10" href="#__codelineno-13-10"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-13-11" name="__codelineno-13-11" href="#__codelineno-13-11"></a><span class="p">}</span>
+</code></pre></div>
+<p><code>std::iter</code> also exposes a lazy <code>Lazy</code> adapter over any Rust
+<code>Iterator</code>: <code>map</code> / <code>filter</code> / <code>take</code> / <code>skip</code> / <code>step_by</code> adapters,
+<code>to_vec</code> / <code>sum</code> / <code>min</code> / <code>max</code> / <code>count</code> / <code>any</code> / <code>all</code>
+terminals — allocation-free until the terminal.</p>
 <h2 id="9-data-structures">9. Data structures<a class="headerlink" href="#9-data-structures" title="Permanent link">&para;</a></h2>
 <ul>
-<li><code>[T]</code> — growable array. Literal: <code>[1, 2, 3]</code>.</li>
-<li><code>(A, B, …)</code> — tuple. Field access via <code>.0</code>, <code>.1</code>, ….</li>
-<li><code>struct Foo { x, y }</code> / <code>struct Pair(A, B)</code> — GC-managed
+<li><code>[T]</code> — growable array. <code>[1, 2, 3]</code>; <code>for x in xs</code>; mutate with
+  <code>push</code>, <code>pop</code>, <code>swap(i, j)</code>, <code>sort()</code>, <code>sort_by(|a, b| …)</code>.</li>
+<li><code>[T; N]</code> — fixed-size. <code>[v; N]</code> (repeat) or <code>[a, b, c]</code>.
+  Stack-allocatable; pick when the size is a compile-time constant.</li>
+<li><code>(A, B, …)</code> — tuple. <code>.0</code>, <code>.1</code>, … or destructure inline.</li>
+<li><code>struct Foo { x, y }</code> / <code>struct Pair(A, B)</code> — runtime-managed
   value types.</li>
-<li><code>enum E { A, B(Payload) }</code> — sum types, pattern-matched
-  exhaustively.</li>
-<li><code>Option&lt;T&gt;</code> — <code>Some(T)</code> / <code>None</code>.</li>
-<li><code>Result&lt;T, E&gt;</code> — <code>Ok(T)</code> / <code>Err(E)</code>.</li>
-<li><code>std::collections::{Vec, HashMap, HashSet, BTreeMap}</code> —
-  the richer containers; dispatch is wiring-dependent today,
-  so verify with a small test if unsure.</li>
+<li><code>enum E { A, B(Payload) }</code> — sum types, matched exhaustively.
+  Recursive payloads work directly; <code>Box</code>/<code>Arc</code>/<code>Rc</code> transparent.</li>
+<li><code>Option&lt;T&gt;</code> — <code>Some</code> / <code>None</code>, read with <code>if let</code>. <code>Result&lt;T, E&gt;</code>
+  — <code>Ok</code> / <code>Err</code>, propagate with <code>?</code>.</li>
+<li><code>std::collections::{Vec, HashMap, HashSet, BTreeMap}</code> — the richer
+  containers. <code>HashMap</code>: <code>m.inc(k)</code> / <code>m.inc(k, by)</code>, <code>m.or_insert(k,
+  default)</code>, <code>m.iter()</code> (yields <code>[(K, V)]</code>), <code>keys()</code> / <code>values()</code>,
+  <code>HashMap::pop(m, k) -&gt; Option&lt;V&gt;</code>. Structs and tuples work as
+  keys, keyed by value on every tier.</li>
+<li><code>Vec</code> methods: <code>contains(&amp;v)</code>, <code>index_of(&amp;v) -&gt; Option&lt;i64&gt;</code>,
+  <code>count_of(&amp;v)</code>, <code>first()</code> / <code>last() -&gt; Option&lt;T&gt;</code>, <code>reversed()</code>
+  (non-mutating; <code>reverse()</code> is in-place), <code>xs.slice(start, end) -&gt;
+  Result&lt;Vec&lt;T&gt;, errors::Error&gt;</code> (out-of-range → Err). The
+  Result-returning <code>Vec::insert(xs, i, v)</code> / <code>Vec::remove(xs, i)</code> are
+  qualified free functions; method-call <code>xs.insert/remove</code> keep
+  silent in-place semantics.</li>
+<li>Collection literals coerce to <code>Vec&lt;T&gt;</code> / <code>[T]</code> wherever the
+  expected type calls for one (let annotation, return, field, arg);
+  <code>if</code>/<code>match</code> branches of differing lengths join to <code>Vec&lt;T&gt;</code>.</li>
+<li>Enums cap at 256 variants (<code>GT0012</code>).</li>
 </ul>
 <h2 id="10-the-gos-toolchain">10. The <code>gos</code> toolchain<a class="headerlink" href="#10-the-gos-toolchain" title="Permanent link">&para;</a></h2>
-<p>Every subcommand takes a <code>.gos</code> file or a project directory.
-Bare <code>gos</code> drops into the REPL.</p>
+<p>Every subcommand takes a <code>.gos</code> file or a project dir. Bare <code>gos</code>
+opens the REPL. In a project, <code>gos run</code> / <code>gos build</code> with no path
+resolve the entry themselves (<code>src/main.gos</code>, <code>main.gos</code>, the
+manifest-id-named source, then a sole <code>.gos</code> candidate).</p>
 <table>
 <thead>
 <tr>
@@ -532,35 +2430,35 @@ Bare <code>gos</code> drops into the REPL.</p>
 </tr>
 <tr>
 <td><code>gos run FILE</code></td>
-<td>Register-based bytecode VM. The walker is gone as a user-facing mode; if the VM hits an HIR shape it doesn't lower yet, it falls back internally — never user-selectable.</td>
+<td>Register-based bytecode VM (with in-process JIT).</td>
 </tr>
 <tr>
 <td><code>gos build FILE</code></td>
-<td>Native build via LLVM (<code>opt -O0 \| llc -O0</code>) + system linker.</td>
+<td>Native build via LLVM (<code>llc -O0</code>) + system linker. Fast compile, unoptimised.</td>
 </tr>
 <tr>
 <td><code>gos build --release FILE</code></td>
-<td>Native build via LLVM (<code>opt -O3 \| llc -O3 -mcpu=native</code>) + system linker.</td>
+<td>Full LLVM pipeline (<code>opt -O3 \| llc -O3</code>), static-musl on Linux. Strict lowering by default (<code>--allow-llvm-fallback</code> opts out). <code>--target TRIPLE</code> cross-compiles; <code>-g</code> embeds DWARF.</td>
 </tr>
 <tr>
 <td><code>gos test PATH</code></td>
-<td>Discover and run <code>#[test]</code> functions.</td>
+<td>Run <code>#[test]</code> functions. <code>--coverage &lt;path&gt;</code> (lcov), <code>--parallel N</code> / <code>--serial</code>, <code>--format junit</code>, <code>--tier-parity</code>.</td>
 </tr>
 <tr>
 <td><code>gos bench PATH</code></td>
-<td>Discover and time <code>#[bench]</code> functions.</td>
+<td>Time <code>#[bench]</code> functions.</td>
 </tr>
 <tr>
 <td><code>gos fmt [--check] FILE</code></td>
-<td>Rewrite canonically.</td>
+<td>Token-stream formatter; idempotent, comment/macro/line-structure preserving.</td>
 </tr>
 <tr>
 <td><code>gos doc FILE</code></td>
-<td>Print item listing + doc comments.</td>
+<td>Item listing + doc comments.</td>
 </tr>
 <tr>
 <td><code>gos lint [--deny-warnings] PATH</code></td>
-<td>Run the lint suite.</td>
+<td>Lint suite.</td>
 </tr>
 <tr>
 <td><code>gos explain CODE</code></td>
@@ -571,242 +2469,427 @@ Bare <code>gos</code> drops into the REPL.</p>
 <td>Re-run on file change.</td>
 </tr>
 <tr>
+<td><code>gos clean [--vendor] [--dry-run]</code></td>
+<td>Remove <code>target/</code>, caches; <code>--vendor</code> drops <code>vendor/</code>.</td>
+</tr>
+<tr>
 <td><code>gos new ID --path DIR</code></td>
 <td>Scaffold a project.</td>
 </tr>
 <tr>
-<td><code>gos add SPEC</code> / <code>remove ID</code> / <code>tidy</code> / <code>fetch</code> / <code>vendor</code></td>
+<td><code>gos add SPEC</code> / <code>remove</code> / <code>tidy</code> / <code>fetch</code> / <code>vendor</code></td>
 <td>Package manager.</td>
+</tr>
+<tr>
+<td><code>gos publish</code> / <code>yank</code> / <code>login</code> / <code>logout</code> / <code>owner</code></td>
+<td>Registry workflow (Ed25519-signed tarballs, sha256 pinned in the lockfile).</td>
+</tr>
+<tr>
+<td><code>gos feature-status</code></td>
+<td>List/<code>--check</code> the feature-status registry.</td>
 </tr>
 </tbody>
 </table>
 <h2 id="11-writing-tests">11. Writing tests<a class="headerlink" href="#11-writing-tests" title="Permanent link">&para;</a></h2>
-<p>Unit tests live inside the file they cover, under
-<code>#[cfg(test)] mod tests { … }</code>. Integration tests live under
-<code>tests/</code> in a project.</p>
-<pre><code class="language-gossamer">pub fn add(a: i64, b: i64) -&gt; i64 { a + b }
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn add_adds() {
-        let total = super::add(2, 3)
-        assert(total == 5)
-    }
-}
-</code></pre>
-<p>Doc-tests: fenced code inside a <code>//</code> doc-comment block (a
-run of <code>//</code> lines directly above an item) is compiled and
-executed by <code>gos test</code>. Mark non-runnable fences as
-<code>```text</code>.</p>
+<p>Unit tests live in the file they cover under <code>#[cfg(test)] mod
+&lt;file&gt;_tests { … }</code>, reaching the file's own items via <code>super::</code>.
+<strong>In a multi-file project give each file's test module a unique name</strong>
+(<code>util_tests</code>, <code>parser_tests</code>, …): several <code>mod tests</code> across bundled
+siblings collide on <code>gos build</code>/<code>gos run</code> (<code>GR0003</code>). <code>gos test</code> bundles
+sibling modules the same way <code>gos run</code> / <code>gos build</code> do, so a <code>#[test]</code>
+may call a sibling module declared <code>mod NAME;</code> via <code>super::NAME::item</code>.
+<code>assert(cond[, msg])</code> / <code>assert_eq(a, b[, msg])</code> are prelude builtins
+(panic on failure; a pass is counted in the tally); <code>std::testing::check*</code>
+record without panicking.</p>
+<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="k">pub</span><span class="w"> </span><span class="k">fn</span> <span class="nf">add</span><span class="p">(</span><span class="n">a</span>: <span class="kt">i64</span><span class="p">,</span><span class="w"> </span><span class="n">b</span>: <span class="kt">i64</span><span class="p">)</span><span class="w"> </span>-&gt; <span class="kt">i64</span> <span class="p">{</span><span class="w"> </span><span class="n">a</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">b</span><span class="w"> </span><span class="p">}</span>
+<a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a>
+<a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a><span class="cp">#[cfg(test)]</span>
+<a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a><span class="k">mod</span> <span class="nn">arith_tests</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a><span class="w">    </span><span class="k">use</span><span class="w"> </span><span class="n">std</span>::<span class="n">testing</span>
+<a id="__codelineno-14-6" name="__codelineno-14-6" href="#__codelineno-14-6"></a><span class="w">    </span><span class="cp">#[test]</span>
+<a id="__codelineno-14-7" name="__codelineno-14-7" href="#__codelineno-14-7"></a><span class="w">    </span><span class="k">fn</span> <span class="nf">add_adds</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-14-8" name="__codelineno-14-8" href="#__codelineno-14-8"></a><span class="w">        </span><span class="n">testing</span>::<span class="n">check_eq</span><span class="p">(</span><span class="o">&amp;</span><span class="k">super</span>::<span class="n">add</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span><span class="w"> </span><span class="mi">3</span><span class="p">),</span><span class="w"> </span><span class="o">&amp;</span><span class="mi">5</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;2+3&quot;</span><span class="p">)</span>
+<a id="__codelineno-14-9" name="__codelineno-14-9" href="#__codelineno-14-9"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-14-10" name="__codelineno-14-10" href="#__codelineno-14-10"></a><span class="p">}</span>
+</code></pre></div>
+<p>Doc-tests: fenced code inside a <code>//</code> doc-comment block is compiled
+and run by <code>gos test</code>. Mark non-runnable fences <code>```text</code>.</p>
 <h2 id="12-standard-library-surface">12. Standard library surface<a class="headerlink" href="#12-standard-library-surface" title="Permanent link">&para;</a></h2>
+<p>Tight index of the common surface. Many modules are large; trust
+repo examples and write a small test when unsure.</p>
 <ul>
 <li><code>std::fmt</code> — <code>Display</code>, <code>Debug</code>.</li>
 <li><code>std::io</code> — <code>Read</code>, <code>Write</code>, buffered wrappers, <code>stdin</code> / <code>stdout</code>.</li>
-<li><code>std::os</code> — process environment, argv, filesystem primitives.</li>
-<li><code>std::strings</code> / <code>std::strconv</code> — string and numeric helpers.</li>
-<li><code>std::collections</code> — <code>Vec</code>, <code>HashMap</code>, <code>HashSet</code>, <code>BTreeMap</code>.</li>
-<li><code>std::net</code> — <code>TcpListener</code>, <code>TcpStream</code>, <code>UdpSocket</code>, DNS.</li>
-<li><code>std::net::url</code> — URL parse + render + escape.</li>
+<li><code>std::env</code> — <code>args</code>, <code>program_name</code>, <code>var</code>, <code>set_var</code>,
+  <code>unset_var</code>, <code>current_dir</code>, <code>set_current_dir</code>, <code>home_dir</code>,
+  <code>temp_dir</code>.</li>
+<li><code>std::process</code> — <code>Command</code>, <code>Output</code>, <code>Stdio</code>, <code>Child</code>,
+  <code>ExitStatus</code>, <code>run</code>, <code>spawn</code>, <code>kill</code>, <code>exit</code>, <code>id</code>, <code>abort</code>,
+  <code>Pipeline</code> (<code>pipeline_run</code>), <code>Signal</code>, <code>signal</code>, <code>kill_group</code>,
+  <code>wait_timeout</code> (POSIX-only).</li>
+<li><code>std::fs</code> — <code>read</code>, <code>read_to_string</code>, <code>write</code>, <code>read_dir</code>,
+  <code>walk_dir</code>, <code>create_dir(_all)</code>, <code>remove_file/dir(_all)</code>,
+  <code>remove_all</code>, <code>copy</code>, <code>rename</code>, <code>exists</code>, <code>is_file/dir/symlink</code>,
+  <code>file_size</code>, <code>metadata</code>, <code>canonicalize</code>, <code>glob</code>, <code>eval_symlinks</code>,
+  <code>mmap_read/write</code>, <code>lock_exclusive/shared</code>, <code>write_atomic</code>,
+  <code>hard_link</code>, <code>set_permissions_mode</code>, <code>chown</code>, <code>TempDir</code>,
+  <code>temp_file(prefix)</code>, <code>fs::watch::Watcher</code>.</li>
+<li><code>std::path</code> — pure manipulation (no I/O): <code>join</code>, <code>split</code>, <code>base</code>,
+  <code>dir</code>, <code>ext</code>, <code>clean</code>, <code>is_absolute</code>, <code>has_prefix</code>, <code>matches</code>,
+  <code>parent</code>, <code>file_name</code>, <code>stem</code>, <code>normalize</code>. <code>path::native</code> for
+  Windows-style paths.</li>
+<li><code>std::os</code> — <code>family()</code>, <code>arch()</code>; <code>write_file(path, &amp;Vec&lt;u8&gt;)</code>
+  (binary-safe) and <code>read_file(path) -&gt; Result&lt;Vec&lt;u8&gt;, _&gt;</code> /
+  <code>read_file_to_string</code>.</li>
+<li><code>std::strings</code> — <code>split</code>, <code>splitn</code>, <code>split_whitespace</code>, <code>trim(_start/_end)</code>,
+  char-set trims <code>trim_matches(set)</code> (both ends) / <code>trim_start_matches(set)</code> /
+  <code>trim_end_matches(set)</code> (there is <strong>no</strong> <code>strip_chars</code>/<code>lstrip_chars</code>/
+  <code>rstrip_chars</code> — those raise <code>GX0002</code>), <code>contains</code>, <code>find</code>, <code>rfind</code>,
+  <code>replace</code>, <code>replacen</code>,
+  <code>to_lower/upper</code>, <code>to_title</code>, <code>starts_with</code>, <code>ends_with</code>, <code>repeat</code>,
+  <code>lines</code>, <code>join</code>, <code>strip_prefix/suffix</code>, <code>pad_left/right</code>. Also as
+  <code>String</code> methods: <code>split_once(sep) -&gt; Option&lt;(String, String)&gt;</code>,
+  <code>rsplit_once</code>, <code>count(needle)</code>, <code>find_any(chars)</code>/<code>rfind_any(chars)
+  -&gt; Option&lt;i64&gt;</code>, <code>center(w, c)</code>, <code>slice(a, b) -&gt; Result&lt;String, _&gt;</code>,
+  <code>substring(a, b) -&gt; String</code> (out-of-range clamps rather than erroring;
+  see the tier caveat in §15), <code>byte_at(i) -&gt; i64</code>. Prefer <code>to_lower</code>
+  over the <code>to_lowercase</code> alias. Join with <code>strings::join(&amp;parts, sep)</code>,
+  not the <code>parts.join(sep)</code> method (the latter mis-dispatches and drops
+  the elements).</li>
+<li><code>std::strconv</code> — <code>parse_int/i64/u64/float/f64/bool</code>,
+  <code>format_int/i64/float/f64</code>, <code>itoa</code>, <code>atoi</code>, <code>parse_i64_radix(s, base)</code>
+  / <code>format_i64_radix(n, base)</code> (bases 2..=36), <code>quote</code>/<code>unquote</code>.</li>
+<li><code>std::utf8</code> — <code>count_runes</code>, <code>rune_count(_in_string)</code>, <code>rune_len</code>,
+  <code>is_valid</code>, <code>valid_rune/string</code>, <code>full_rune(_in_string)</code>,
+  <code>rune_start</code>, <code>decode_rune/last_rune/first</code> (+ <code>_in_string</code>),
+  <code>encode_rune</code>, <code>append_rune</code>.</li>
+<li><code>std::unicode</code> — full Unicode 16: general-category predicates
+  (<code>is_letter/digit/number/space/upper/lower/title/punct/symbol/mark/print/graphic/control/assigned</code>,
+  <code>combining_class</code>); casing (<code>to_upper/lower/title</code>, <code>simple_fold</code>,
+  <code>to_upper_str/lower_str</code>, <code>fold_case</code>); normalization
+  (<code>nfc/nfd/nfkc/nfkd</code>, <code>is_nf*</code>); segmentation
+  (<code>graphemes</code>, <code>grapheme_count</code>, <code>words</code>, <code>word_bounds/count</code>,
+  <code>sentences</code>, <code>sentence_count</code>). Identifiers follow UAX #31, so
+  <code>let café = 1</code>, <code>let π = 3.14</code> parse.</li>
+<li><code>std::collections</code> — <code>Vec</code>, <code>HashMap</code>, <code>HashSet</code> (real set:
+  <code>insert</code>, <code>remove</code>, <code>contains</code>, <code>len</code>, <code>is_empty</code>, <code>clear</code>,
+  <code>to_vec</code>, <code>iter</code>; algebra: <code>union</code>, <code>intersection</code>, <code>difference</code>,
+  <code>symmetric_difference</code>, <code>is_subset</code>, <code>is_superset</code>, <code>is_disjoint</code>),
+  <code>BTreeMap</code>. (Vec/HashMap method extras under §9.)</li>
+<li><code>std::net</code> — <code>TcpListener::{bind, accept, local_addr, close}</code>,
+  <code>TcpStream::{connect, read, read_to_string, write, close}</code>,
+  <code>UdpSocket::{bind, send_to, recv_from, local_addr, close}</code>,
+  <code>resolve</code> / <code>lookup</code> (DNS). <code>std::net::url</code> — parse + render +
+  escape.</li>
 <li><code>std::http</code> — <code>Method</code>, <code>StatusCode</code>, <code>Headers</code>, <code>Request</code>,
-  <code>Response</code>, <code>Handler</code>, <code>serve</code>.</li>
-<li><code>std::encoding::{json, base64, hex, binary}</code>.</li>
-<li><code>std::sync</code> — <code>Mutex</code>, <code>RwLock</code>, atomics, <code>channel</code>, <code>Once</code>.</li>
-<li><code>std::time</code> — <code>Instant</code>, <code>Duration</code>, <code>sleep</code>, <code>now</code>.</li>
+  <code>Response</code>, <code>Handler</code>, <code>serve</code> (returns <code>Result&lt;(), Error&gt;</code>; a
+  bind failure is the caller's <code>Err</code>). One client engine on every
+  tier. Client surface: <code>Client { get, post, put, options, delete,
+  head, request, request_bytes, stream }</code> plus free wrappers
+  <code>http::get(url, headers)</code>, <code>post(url, body, ct)</code>, <code>put</code>,
+  <code>options</code>, <code>delete</code>, <code>head</code>, <code>request(method, url, body, headers)</code>,
+  <code>request_bytes(method, url, body: [u8], headers)</code>, and
+  <code>stream(method, url, body, headers) -&gt; ResponseStream</code> whose
+  <code>next_line()</code> reads SSE/chunked bodies line-by-line and
+  <code>next_chunk(max) -&gt; Option&lt;[u8]&gt;</code> reads byte frames. Configured:
+  <code>Client::builder().max_redirects(n).timeout_ms(ms).build()</code>;
+  <code>max_redirects(0)</code> returns the raw 3xx with <code>Location</code> intact. The
+  client <code>Response</code> carries <code>status</code>, <code>body</code>, <code>raw_bytes</code>,
+  <code>content_type</code>, <code>location</code>, <code>headers: [(String, String)]</code>. Server
+  side: <code>Request.headers</code> and <code>Request.raw_body</code> (<code>[u8]</code>) populated,
+  <code>r.path</code> strips the query (<code>r.query</code> keeps it); handlers return
+  <code>Result&lt;Response, Error&gt;</code> or a bare <code>http::Response</code>, built via
+  <code>Response::text</code> / <code>Response::json</code> or a plain struct literal;
+  <code>Response::with_header(k, v)</code> chains (replace-then-push,
+  case-insensitive); <code>Response::stream(status, ct, upstream)</code> streams
+  a <code>ResponseStream</code> in chunked frames (proxy passthrough). Bodies
+  cap at 1 MiB (413 beyond). Method strings are case-insensitive;
+  unknown methods → <code>Err(transport)</code>.</li>
+<li><code>std::http</code> server stack: <code>http::cookie</code> (RFC 6265), <code>csrf</code>
+  (double-submit + Origin/Referer), <code>form</code>
+  (<code>x-www-form-urlencoded</code>), <code>multipart</code> (RFC 7578 streaming),
+  <code>query</code> (typed query wrapper), <code>session</code> (signed-cookie),
+  <code>state</code> (<code>AppState</code> typemap + <code>State&lt;T&gt;</code> DI), <code>health</code> (<code>Probe</code> +
+  <code>Health</code>), <code>middleware</code> (<code>body_limit</code>, <code>timeout</code>, <code>hsts</code>,
+  <code>security_headers</code>, <code>cache_control</code>, <code>etag</code>, <code>bearer_auth</code>,
+  <code>rate_limit</code>, <code>compress_gzip</code>, <code>safe_defaults</code>, <code>logger</code>,
+  <code>recoverer</code>, <code>request_id</code>, <code>cors</code>, <code>basic_auth</code>); HTTP/2 push +
+  trailers. <code>std::http_h3</code> — HTTP/3 server + client (RFC 9114).</li>
+<li><code>std::encoding::{json, base64, hex, binary}</code>. Every user struct
+  gets generic serializer free functions called with a turbofish:
+  <code>from_json::&lt;Type&gt;(text) -&gt; Result&lt;Type, _&gt;</code> and
+  <code>to_json::&lt;Type&gt;(value) -&gt; Result&lt;String, _&gt;</code> (the single
+  spelling — no <code>Type::from_json</code> methods). The decoder validates
+  each field against its declared type with path-qualified errors;
+  nested structs, <code>[T]</code>/<code>Vec&lt;T&gt;</code>/<code>[T; N]</code>/tuples/<code>Option&lt;T&gt;</code>/
+  <code>HashMap&lt;String, V&gt;</code> walk recursively; a <code>json::Value</code> field
+  passes through. <code>let user: User = from_json::&lt;User&gt;(&amp;text)?</code> is
+  canonical. Dynamic <code>json::parse</code> / <code>decode</code> / <code>render</code> +
+  <code>json::as_i64/f64/str -&gt; Option&lt;T&gt;</code> stay available for
+  unknown-shape documents. Narrow int fields round-trip via <code>as</code>.</li>
+<li><code>std::encoding::yaml</code> — YAML 1.2 parse/encode + <code>yaml::to_json</code> /
+  <code>from_json</code> text converters; auto-derived <code>from_yaml::&lt;T&gt;</code> /
+  <code>to_yaml::&lt;T&gt;</code> on every struct compose these with the JSON pair.
+  Also <code>encoding::toml</code> (<code>toml::to_json</code> / <code>from_json</code>).</li>
+<li><code>std::database::sql</code> — driver-pluggable SQL modelled on Go's
+  <code>database/sql</code> (no driver in the box; a Rust crate implements the
+  <code>Driver</code> trait via <code>[rust-bindings]</code>). <code>open(driver, url) -&gt;
+  Result&lt;Conn, _&gt;</code>; <code>Conn</code>: <code>execute(sql, &amp;[Value])</code>, <code>query</code>,
+  <code>query_each(sql, params, f)</code> (leak-proof), <code>prepare(sql) -&gt; Stmt</code>,
+  <code>begin</code> / <code>begin_with(IsolationLevel)</code>, <code>copy_in</code>/<code>copy_out</code>,
+  <code>listen</code>/<code>unlisten</code>/<code>poll_notification</code>, <code>ping</code>,
+  <code>set_busy_timeout</code>, <code>interrupt</code>, <code>close</code>; <code>Tx</code>: <code>commit</code>,
+  <code>rollback</code>, <code>execute(_params)</code>, <code>query</code>, savepoints; <code>Rows::next_row()
+  -&gt; Option&lt;Row&gt;</code> (cursor semantics; <code>defer rows.close()</code> for early
+  exits), <code>columns()</code>; <code>Row</code> getters (<code>get_i64/f64/bool/text/blob</code>,
+  <code>get_opt_*</code>, <code>is_null</code>, <code>width</code>); <code>Value</code>
+  (Null/Bool/Int/Float/Text/Blob) with positional <code>$N</code> binding;
+  <code>Pool::open(_with)</code> + <code>acquire</code>/<code>live</code>/<code>idle</code>/<code>close_idle</code>;
+  <code>migrate::up(&amp;mut conn, dir) -&gt; i64</code> (forward-only
+  <code>&lt;version&gt;_&lt;slug&gt;.sql</code>); <code>Select</code> fluent builder (<code>new(t).columns(&amp;[..])
+  .where_eq(col, v).order_by(col, asc).limit(n)</code> → <code>render()</code> /
+  <code>params()</code>).</li>
+<li><code>std::sync</code> — <code>Mutex</code>, <code>RwLock</code>, atomics, <code>channel</code>, <code>Once</code>,
+  <code>WaitGroup</code> (<code>new</code>/<code>add</code>/<code>done</code>/<code>wait</code>), <code>Map</code> (concurrent
+  string→string: <code>set</code>/<code>get</code>/<code>delete</code>/<code>len</code>/<code>contains</code>/<code>keys</code>). For
+  non-string payloads wrap a <code>HashMap</code> in <code>Mutex</code>.</li>
+<li><code>std::time</code> — <code>Instant::{now, elapsed_ms}</code>, <code>Duration::{from_millis/secs/micros,
+  as_millis/secs/micros}</code>, <code>sleep</code>, <code>now</code>, <code>now_nanos</code>,
+  <code>monotonic_ms/nanos</code>, <code>since_ms</code>, <code>format_rfc3339</code>, <code>parse_rfc3339</code>.
+  Channel timer: <code>after(d) -&gt; Receiver</code> (one-shot) — drain with
+  <code>while let</code> or use as a <code>select</code> timeout arm.</li>
 <li><code>std::context</code> — cancellation, deadlines, <code>Context::background()</code>.</li>
 <li><code>std::bytes</code> / <code>std::bufio</code> — binary buffers and buffered IO.</li>
-<li><code>std::errors</code> — wrap / chain / join.</li>
-<li><code>std::flag</code> — CLI flag parser.</li>
-<li><code>std::sort</code> / <code>std::utf8</code> / <code>std::path</code> / <code>std::fs</code>.</li>
-<li><code>std::math::rand</code> — deterministic RNG.</li>
-<li><code>std::crypto::{rand, sha256, hmac, subtle}</code> — narrow, audited.</li>
-<li><code>std::slog</code> — structured logging.</li>
-<li><code>std::runtime</code> — scheduler + GC knobs.</li>
+<li><code>std::flag</code> — CLI flag parser; <code>flag::Cell&lt;T&gt;</code> auto-derefs at
+  every value-context (comparisons, call args, <code>if</code>), explicit
+  <code>*cell</code> still works.</li>
+<li><strong>Scalar <code>min</code> / <code>max</code> / <code>clamp</code></strong> — bare prelude functions, no
+  import. <code>min(3, 7) == 3</code>, <code>clamp(15, 0, 10) == 10</code>. Vec-shaped
+  <code>min(xs)</code> / <code>max(xs)</code> return <code>Option&lt;T&gt;</code>.</li>
+<li><code>std::sort</code>, <code>std::math::rand</code> (deterministic RNG).</li>
+<li><code>std::crypto::{rand, sha256, hmac, subtle}</code> — narrow, audited;
+  <code>crypto::password</code> — Argon2id (<code>hash</code>, <code>verify</code>, <code>needs_rehash</code>,
+  PHC strings).</li>
+<li><code>std::jwt</code> — RFC 7519 sign/verify HS256/384/512, ES256, EdDSA,
+  RS256/384/512 (verify): <code>sign_hs</code>/<code>verify_hs</code>,
+  <code>sign_es256</code>/<code>verify_es256</code>, <code>sign_eddsa</code>/<code>verify_eddsa</code>.</li>
+<li><code>std::metrics</code> — Prometheus <code>Counter</code>/<code>Gauge</code>/<code>Histogram</code> +
+  <code>Registry</code>. <code>std::trace</code> — W3C trace-context + OTLP JSON exporter.</li>
+<li><code>std::compress::{gzip, flate, zlib, zstd}</code> — byte-in/byte-out
+  (zstd 1–22, default 3).</li>
+<li><code>std::lifecycle</code> — graceful shutdown, signals, sd_notify.
+  <code>std::validate</code> — <code>Validate</code> trait + <code>FieldError</code> / <code>Errors</code>.
+  <code>std::slog</code> — structured logging.</li>
+<li><code>std::runtime</code> — <code>collect_cycles()</code>, <code>arena_push/pop</code> (prefer the
+  <code>arena {}</code> block), <code>set_panic_hook(f: fn(String))</code>. Main-goroutine
+  panic exits 101; an unobserved <code>go</code> panic prints one <code>error[GX0005]</code>
+  line and ends only that goroutine.</li>
 <li><code>std::testing</code> — <code>check</code>, <code>check_eq</code>, <code>Runner</code>, <code>check_ok</code>.</li>
-<li><code>std::regex</code> — wraps the Rust <code>regex</code> crate.</li>
+<li><code>std::regex</code> — wraps the Rust <code>regex</code> crate; named groups via
+  <code>capture_names(pat)</code>, <code>captures_named(pat, hay)</code> /
+  <code>captures_named_all</code> → <code>HashMap&lt;String, String&gt;</code>.</li>
 </ul>
-<p>Reality check: many modules exist in the manifest with
-partial implementations. Trust examples in the repo; write
-a small test when unsure.</p>
 <h2 id="13-project-layout">13. Project layout<a class="headerlink" href="#13-project-layout" title="Permanent link">&para;</a></h2>
-<pre><code>project.toml       # manifest: [project], [dependencies], [registries], optional [[bin]] / [lib]
-src/
-├── main.gos       # default binary entry  (override via [[bin]].path)
-├── lib.gos        # default library root  (override via [lib].path)
-└── subdir/
-    └── mod.gos    # module `subdir`
-tests/             # integration tests
-</code></pre>
-<p><code>project.toml</code>:</p>
-<pre><code class="language-toml">[project]
-id      = &quot;example.com/widget&quot;
-version = &quot;0.1.0&quot;
-authors = [&quot;Jane Roe &lt;jane@example.com&gt;&quot;]
-license = &quot;Apache-2.0&quot;
-
-[dependencies]
-&quot;example.org/lib&quot; = &quot;1.2.3&quot;
-
-# Optional. Without this section, the default is one binary
-# named after the project id whose entry point is src/main.gos.
-[[bin]]
-name = &quot;widget&quot;
-path = &quot;src/main.gos&quot;
-
-# Optional. Without this section, presence of src/lib.gos is
-# enough to build the library by convention.
-[lib]
-name = &quot;widget&quot;
-path = &quot;src/lib.gos&quot;
-</code></pre>
-<h2 id="14-worked-examples">14. Worked examples<a class="headerlink" href="#14-worked-examples" title="Permanent link">&para;</a></h2>
-<h3 id="cli-flags">CLI flags<a class="headerlink" href="#cli-flags" title="Permanent link">&para;</a></h3>
-<pre><code class="language-gossamer">use std::flag
-use std::os
-
-fn main() -&gt; Result&lt;(), flag::Error&gt; {
-    let mut fs = flag::Set::new(&quot;myapp&quot;)
-    let port = fs.uint(&quot;port&quot;, 8080, &quot;listen port&quot;)
-    let verbose = fs.bool(&quot;verbose&quot;, false, &quot;chatty output&quot;)
-    let _ = fs.parse(os::args())?
-
-    if *verbose {
-        println!(&quot;starting on port {}&quot;, *port)
-    }
-    Ok(())
-}
-</code></pre>
-<h3 id="http-server">HTTP server<a class="headerlink" href="#http-server" title="Permanent link">&para;</a></h3>
-<pre><code class="language-gossamer">use std::http
-
-struct App { }
-
-impl http::Handler for App {
-    fn serve(&amp;self, r: http::Request) -&gt; Result&lt;http::Response, http::Error&gt; {
-        Ok(http::Response::text(200, format!(&quot;hi from {}&quot;, r.path)))
-    }
-}
-
-fn main() -&gt; Result&lt;(), http::Error&gt; {
-    let app = App { }
-    println!(&quot;listening on 0.0.0.0:8080&quot;)
-    http::serve(&quot;0.0.0.0:8080&quot;, app)
-}
-</code></pre>
+<div class="language-text highlight"><pre><span></span><code><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a>project.toml       # manifest: [project], [dependencies], [registries]
+<a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a>src/
+<a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a>├── main.gos       # binary entry
+<a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a>├── lib.gos        # library root (optional)
+<a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a>└── subdir/
+<a id="__codelineno-15-6" name="__codelineno-15-6" href="#__codelineno-15-6"></a>    └── mod.gos    # module `subdir`
+<a id="__codelineno-15-7" name="__codelineno-15-7" href="#__codelineno-15-7"></a>tests/             # integration tests
+</code></pre></div>
+<div class="language-toml highlight"><pre><span></span><code><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="k">[project]</span>
+<a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a><span class="n">id</span><span class="w">      </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;example.com/widget&quot;</span>
+<a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a><span class="n">version</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;0.1.0&quot;</span>
+<a id="__codelineno-16-4" name="__codelineno-16-4" href="#__codelineno-16-4"></a><span class="n">authors</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;Jane Roe &lt;jane@example.com&gt;&quot;</span><span class="p">]</span>
+<a id="__codelineno-16-5" name="__codelineno-16-5" href="#__codelineno-16-5"></a><span class="n">license</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;Apache-2.0&quot;</span>
+<a id="__codelineno-16-6" name="__codelineno-16-6" href="#__codelineno-16-6"></a>
+<a id="__codelineno-16-7" name="__codelineno-16-7" href="#__codelineno-16-7"></a><span class="k">[dependencies]</span>
+<a id="__codelineno-16-8" name="__codelineno-16-8" href="#__codelineno-16-8"></a><span class="s2">&quot;example.org/lib&quot;</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;1.2.3&quot;</span>
+</code></pre></div>
+<h2 id="14-worked-example-http-server-with-method-path-routing">14. Worked example — HTTP server with method + path routing<a class="headerlink" href="#14-worked-example-http-server-with-method-path-routing" title="Permanent link">&para;</a></h2>
+<p>Route per (method, path); keep each handler a one-job free
+function. Lift dispatch into one <code>App::serve</code> that matches and
+forwards — never inline the response shape in the dispatcher. Full
+pattern in <code>examples/web_server.gos</code>.</p>
+<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a><span class="k">use</span><span class="w"> </span><span class="n">std</span>::<span class="n">http</span>
+<a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a>
+<a id="__codelineno-17-3" name="__codelineno-17-3" href="#__codelineno-17-3"></a><span class="k">fn</span> <span class="nf">health</span><span class="p">(</span><span class="n">_r</span>: <span class="nc">http</span>::<span class="n">Request</span><span class="p">)</span><span class="w"> </span>-&gt; <span class="nb">Result</span><span class="o">&lt;</span><span class="n">http</span>::<span class="n">Response</span><span class="p">,</span><span class="w"> </span><span class="n">http</span>::<span class="n">Error</span><span class="o">&gt;</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-17-4" name="__codelineno-17-4" href="#__codelineno-17-4"></a><span class="w">    </span><span class="nb">Ok</span><span class="p">(</span><span class="n">http</span>::<span class="n">Response</span>::<span class="n">text</span><span class="p">(</span><span class="mi">200</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;ok&quot;</span><span class="p">))</span>
+<a id="__codelineno-17-5" name="__codelineno-17-5" href="#__codelineno-17-5"></a><span class="p">}</span>
+<a id="__codelineno-17-6" name="__codelineno-17-6" href="#__codelineno-17-6"></a><span class="k">fn</span> <span class="nf">list_users</span><span class="p">(</span><span class="n">_r</span>: <span class="nc">http</span>::<span class="n">Request</span><span class="p">)</span><span class="w"> </span>-&gt; <span class="nb">Result</span><span class="o">&lt;</span><span class="n">http</span>::<span class="n">Response</span><span class="p">,</span><span class="w"> </span><span class="n">http</span>::<span class="n">Error</span><span class="o">&gt;</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-17-7" name="__codelineno-17-7" href="#__codelineno-17-7"></a><span class="w">    </span><span class="nb">Ok</span><span class="p">(</span><span class="n">http</span>::<span class="n">Response</span>::<span class="n">json</span><span class="p">(</span><span class="mi">200</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;[{</span><span class="se">\&quot;</span><span class="s">id</span><span class="se">\&quot;</span><span class="s">:1,</span><span class="se">\&quot;</span><span class="s">name</span><span class="se">\&quot;</span><span class="s">:</span><span class="se">\&quot;</span><span class="s">ada</span><span class="se">\&quot;</span><span class="s">}]&quot;</span><span class="p">))</span>
+<a id="__codelineno-17-8" name="__codelineno-17-8" href="#__codelineno-17-8"></a><span class="p">}</span>
+<a id="__codelineno-17-9" name="__codelineno-17-9" href="#__codelineno-17-9"></a><span class="k">fn</span> <span class="nf">create_user</span><span class="p">(</span><span class="n">r</span>: <span class="nc">http</span>::<span class="n">Request</span><span class="p">)</span><span class="w"> </span>-&gt; <span class="nb">Result</span><span class="o">&lt;</span><span class="n">http</span>::<span class="n">Response</span><span class="p">,</span><span class="w"> </span><span class="n">http</span>::<span class="n">Error</span><span class="o">&gt;</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-17-10" name="__codelineno-17-10" href="#__codelineno-17-10"></a><span class="w">    </span><span class="nb">Ok</span><span class="p">(</span><span class="n">http</span>::<span class="n">Response</span>::<span class="n">json</span><span class="p">(</span><span class="mi">201</span><span class="p">,</span><span class="w"> </span><span class="fm">format!</span><span class="p">(</span><span class="s">&quot;{{</span><span class="se">\&quot;</span><span class="s">body</span><span class="se">\&quot;</span><span class="s">:</span><span class="se">\&quot;</span><span class="s">{}</span><span class="se">\&quot;</span><span class="s">}}&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">r</span><span class="p">.</span><span class="n">body</span><span class="p">)))</span>
+<a id="__codelineno-17-11" name="__codelineno-17-11" href="#__codelineno-17-11"></a><span class="p">}</span>
+<a id="__codelineno-17-12" name="__codelineno-17-12" href="#__codelineno-17-12"></a>
+<a id="__codelineno-17-13" name="__codelineno-17-13" href="#__codelineno-17-13"></a><span class="k">struct</span> <span class="nc">App</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="p">}</span>
+<a id="__codelineno-17-14" name="__codelineno-17-14" href="#__codelineno-17-14"></a>
+<a id="__codelineno-17-15" name="__codelineno-17-15" href="#__codelineno-17-15"></a><span class="k">impl</span><span class="w"> </span><span class="n">http</span>::<span class="n">Handler</span><span class="w"> </span><span class="k">for</span><span class="w"> </span><span class="n">App</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-17-16" name="__codelineno-17-16" href="#__codelineno-17-16"></a><span class="w">    </span><span class="k">fn</span> <span class="nf">serve</span><span class="p">(</span><span class="o">&amp;</span><span class="bp">self</span><span class="p">,</span><span class="w"> </span><span class="n">r</span>: <span class="nc">http</span>::<span class="n">Request</span><span class="p">)</span><span class="w"> </span>-&gt; <span class="nb">Result</span><span class="o">&lt;</span><span class="n">http</span>::<span class="n">Response</span><span class="p">,</span><span class="w"> </span><span class="n">http</span>::<span class="n">Error</span><span class="o">&gt;</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-17-17" name="__codelineno-17-17" href="#__codelineno-17-17"></a><span class="w">        </span><span class="kd">let</span><span class="w"> </span><span class="n">method</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="o">&amp;</span><span class="n">r</span><span class="p">.</span><span class="n">method</span>
+<a id="__codelineno-17-18" name="__codelineno-17-18" href="#__codelineno-17-18"></a><span class="w">        </span><span class="kd">let</span><span class="w"> </span><span class="n">path</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">r</span><span class="p">.</span><span class="n">path</span><span class="p">()</span>
+<a id="__codelineno-17-19" name="__codelineno-17-19" href="#__codelineno-17-19"></a><span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="n">path</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="s">&quot;/health&quot;</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="k">return</span><span class="w"> </span><span class="n">health</span><span class="p">(</span><span class="n">r</span><span class="p">)</span><span class="w"> </span><span class="p">}</span>
+<a id="__codelineno-17-20" name="__codelineno-17-20" href="#__codelineno-17-20"></a><span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="n">path</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="s">&quot;/users&quot;</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-17-21" name="__codelineno-17-21" href="#__codelineno-17-21"></a><span class="w">            </span><span class="k">if</span><span class="w"> </span><span class="n">method</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="s">&quot;POST&quot;</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="k">return</span><span class="w"> </span><span class="n">create_user</span><span class="p">(</span><span class="n">r</span><span class="p">)</span><span class="w"> </span><span class="p">}</span>
+<a id="__codelineno-17-22" name="__codelineno-17-22" href="#__codelineno-17-22"></a><span class="w">            </span><span class="k">return</span><span class="w"> </span><span class="n">list_users</span><span class="p">(</span><span class="n">r</span><span class="p">)</span>
+<a id="__codelineno-17-23" name="__codelineno-17-23" href="#__codelineno-17-23"></a><span class="w">        </span><span class="p">}</span>
+<a id="__codelineno-17-24" name="__codelineno-17-24" href="#__codelineno-17-24"></a><span class="w">        </span><span class="nb">Ok</span><span class="p">(</span><span class="n">http</span>::<span class="n">Response</span>::<span class="n">text</span><span class="p">(</span><span class="mi">404</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;not found&quot;</span><span class="p">))</span>
+<a id="__codelineno-17-25" name="__codelineno-17-25" href="#__codelineno-17-25"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-17-26" name="__codelineno-17-26" href="#__codelineno-17-26"></a><span class="p">}</span>
+<a id="__codelineno-17-27" name="__codelineno-17-27" href="#__codelineno-17-27"></a>
+<a id="__codelineno-17-28" name="__codelineno-17-28" href="#__codelineno-17-28"></a><span class="k">fn</span> <span class="nf">main</span><span class="p">()</span><span class="w"> </span>-&gt; <span class="nb">Result</span><span class="o">&lt;</span><span class="p">(),</span><span class="w"> </span><span class="n">http</span>::<span class="n">Error</span><span class="o">&gt;</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-17-29" name="__codelineno-17-29" href="#__codelineno-17-29"></a><span class="w">    </span><span class="n">http</span>::<span class="n">serve</span><span class="p">(</span><span class="s">&quot;0.0.0.0:8080&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">App</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="p">})</span>
+<a id="__codelineno-17-30" name="__codelineno-17-30" href="#__codelineno-17-30"></a><span class="p">}</span>
+</code></pre></div>
+<p>Mirrors Go's <code>http.ServeMux</code>: free-function handlers, one match per
+(method, path), <code>path.starts_with</code> for prefix routes.</p>
+<p>CLI flags, for contrast:</p>
+<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a><span class="k">use</span><span class="w"> </span><span class="n">std</span>::<span class="p">{</span><span class="n">env</span><span class="p">,</span><span class="w"> </span><span class="n">flag</span><span class="p">}</span>
+<a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a>
+<a id="__codelineno-18-3" name="__codelineno-18-3" href="#__codelineno-18-3"></a><span class="k">fn</span> <span class="nf">main</span><span class="p">()</span><span class="w"> </span>-&gt; <span class="nb">Result</span><span class="o">&lt;</span><span class="p">(),</span><span class="w"> </span><span class="n">flag</span>::<span class="n">Error</span><span class="o">&gt;</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-18-4" name="__codelineno-18-4" href="#__codelineno-18-4"></a><span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="k">mut</span><span class="w"> </span><span class="n">fs</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">flag</span>::<span class="n">Set</span>::<span class="n">new</span><span class="p">(</span><span class="s">&quot;myapp&quot;</span><span class="p">)</span>
+<a id="__codelineno-18-5" name="__codelineno-18-5" href="#__codelineno-18-5"></a><span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="n">port</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">fs</span><span class="p">.</span><span class="n">uint</span><span class="p">(</span><span class="s">&quot;port&quot;</span><span class="p">,</span><span class="w"> </span><span class="mi">8080</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;listen port&quot;</span><span class="p">)</span>
+<a id="__codelineno-18-6" name="__codelineno-18-6" href="#__codelineno-18-6"></a><span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="n">verbose</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">fs</span><span class="p">.</span><span class="kt">bool</span><span class="p">(</span><span class="s">&quot;verbose&quot;</span><span class="p">,</span><span class="w"> </span><span class="kc">false</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;chatty output&quot;</span><span class="p">)</span>
+<a id="__codelineno-18-7" name="__codelineno-18-7" href="#__codelineno-18-7"></a><span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="n">_</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">fs</span><span class="p">.</span><span class="n">parse</span><span class="p">(</span><span class="n">env</span>::<span class="n">args</span><span class="p">())</span><span class="o">?</span>
+<a id="__codelineno-18-8" name="__codelineno-18-8" href="#__codelineno-18-8"></a><span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="n">verbose</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;starting on port {}&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">port</span><span class="p">)</span><span class="w"> </span><span class="p">}</span><span class="w">   </span><span class="c1">// cells auto-deref</span>
+<a id="__codelineno-18-9" name="__codelineno-18-9" href="#__codelineno-18-9"></a><span class="w">    </span><span class="nb">Ok</span><span class="p">(())</span>
+<a id="__codelineno-18-10" name="__codelineno-18-10" href="#__codelineno-18-10"></a><span class="p">}</span>
+</code></pre></div>
 <h2 id="15-current-gaps-pre-100">15. Current gaps (pre-1.0.0)<a class="headerlink" href="#15-current-gaps-pre-100" title="Permanent link">&para;</a></h2>
 <ul>
 <li><code>+</code> on <code>String</code> copies; for heavy assembly use
   <code>std::bytes::Builder</code> or a <code>mut String</code> with <code>+=</code>.</li>
-<li>Method dispatch is name-global in places. Qualified path
-  calls (<code>Point::origin()</code>) always work; method-style may
-  collide across types until the resolver tightens.</li>
-<li>The scheduler is M:N work-stealing with stackful coroutines.
-  <code>gos run</code> and <code>gos build</code> both route every <code>go fn(args)</code> onto
-  the same shared pool; channels, mutexes, sleeps, and network
-  I/O all park the goroutine without holding a worker thread.</li>
-<li><code>os::args()</code> can return empty under some codegen paths —
-  prefer <code>std::flag</code> with explicit defaults.</li>
+<li>Method dispatch is name-global in places. Qualified path calls
+  (<code>Point::origin()</code>) always work. <code>String</code> / <code>HashMap</code> / <code>Vec</code>
+  receivers dispatch by type (a <code>String::</code> / <code>HashMap::</code> / <code>Vec::</code>
+  key resolved ahead of the bare name), so <code>s.to_title()</code> reaches the
+  string op, not <code>unicode::to_title</code>. (Exception: <code>parts.join(sep)</code> on
+  a <code>[String]</code> mis-dispatches and returns just the separator — use
+  <code>strings::join(&amp;parts, sep)</code>.) Remaining trap: once any struct carries
+  <code>#[derive(Clone)]</code>, calling <code>.clone()</code> on a <em><code>String</code></em> receiver can
+  dispatch to the struct's derived clone under <code>gos run</code> (a <code>GX0001</code>
+  runtime error); compiled tiers resolve it. Strings are values — bind
+  or borrow instead of cloning, and don't shadow built-in method names.</li>
+<li><code>#[derive(...)]</code> does not yet cover enums with struct-payload
+  variants (<code>Rect { w, h }</code>); tuple and unit variants derive fine.</li>
+<li><code>u64</code> above 2^63 aliases i64 semantics: every ≤64-bit integer runs
+  signed-i64 arithmetic; unsigned display fires only for explicit
+  <code>as u64</code> / <code>as usize</code> results.</li>
 </ul>
-<h2 id="16-style-rules">16. Style rules<a class="headerlink" href="#16-style-rules" title="Permanent link">&para;</a></h2>
+<h3 id="tier-divergence-traps">Tier-divergence traps<a class="headerlink" href="#tier-divergence-traps" title="Permanent link">&para;</a></h3>
+<p>The surface runs bit-identically across the bytecode VM (<code>gos run</code> /
+<code>gos test</code>), the Cranelift JIT, and the LLVM AOT tier (<code>gos build</code>).
+When you hit something that behaves differently across tiers it is a
+bug — reduce it and check against <code>gos test</code> (interpreter) <strong>and</strong>
+<code>gos build</code> (LLVM). One source-level rule remains:</p>
 <ul>
-<li><strong>Clear, low-complexity, concise.</strong> Plain reads beat clever
-  ones. If a helper, type, or comment doesn't earn its space,
-  drop it.</li>
-<li><strong>No emojis.</strong> Source, comments, commits, docs — all plain.</li>
-<li><strong>No TODO / FIXME</strong> committed; open an issue.</li>
-<li><strong>Doc every <code>pub</code> item</strong> with a single-line <code>//</code> directly
-  above it (no blank line between); don't narrate
-  self-evident code. Gossamer has no <code>///</code> / <code>//!</code> form.</li>
-<li><strong>Pipe aggressively</strong> — if a value flows through more
-  than one call, use <code>|&gt;</code>.</li>
-<li><strong><code>iter::*</code> over hand-rolled <code>for</code> loops for transformations.</strong>
-  <code>xs |&gt; iter::for_each(handle)</code> instead of
-  <code>for x in xs { handle(x) }</code> when the body is a single call.
-  <code>xs |&gt; iter::sum_by(|n| n*n)</code> instead of a
-  <code>let mut total=0; for n in xs { ... }</code>. The combinators (<code>map</code>,
-  <code>filter</code>, <code>filter_map</code>, <code>fold</code>, <code>reduce</code>, <code>for_each</code>, <code>find</code>,
-  <code>group_by</code>, <code>partition</code>, …) live as free functions in
-  <code>std::iter</code> with data-last argument order so they thread through
-  <code>|&gt;</code>. Keep <code>for</code> for side-effect loops with complex state,
-  <code>break</code>/<code>continue</code>, or early-return.</li>
-<li><strong><code>option::*</code> / <code>result::*</code> for in-pipeline chaining.</strong>
-  <code>parse(s) |&gt; result::map(render) |&gt; result::default("")</code>
-  instead of a <code>match</code> when each arm is extract-or-default.
-  <code>?</code> remains the right tool for short-circuit propagation.</li>
-<li><strong>Free functions in <code>std::iter</code>, not methods on collections.</strong>
-  <code>Vec&lt;T&gt;</code> / <code>HashMap</code> / <code>HashSet</code> do not carry <code>.map</code> /
-  <code>.filter</code> / <code>.fold</code> methods. Mutating helpers like <code>xs.push</code>,
-  <code>xs.sort</code>, <code>m.inc</code>, <code>m.or_insert</code> stay as methods because they
-  operate by side-effect on the receiver.</li>
-<li><strong>One statement per line;</strong> omit semicolons.</li>
-<li><strong>Derive <code>Debug</code>, <code>Clone</code>, <code>PartialEq</code></strong> when cheap and
-  meaningful; derive <code>Default</code> for zero-valued types.</li>
+<li><strong>Per-file test modules must have unique names.</strong> Multiple
+  <code>#[cfg(test)] mod tests</code> across bundled sibling files collide on
+  <code>gos build</code>/<code>gos run</code> with <code>GR0003: name 'tests' defined multiple
+  times</code> — name them <code>mod foo_tests</code>, <code>mod bar_tests</code>, etc.</li>
+</ul>
+<h2 id="16-style-checklist">16. Style checklist<a class="headerlink" href="#16-style-checklist" title="Permanent link">&para;</a></h2>
+<p>(The idioms in §2 are the rules; this is the quick scan.)</p>
+<ul>
+<li><code>let</code> first, <code>let mut</code> only for a single named accumulator.</li>
+<li>Compound assignment everywhere (<code>x += 1</code>).</li>
+<li><code>if let</code> / <code>while let</code> for refutable patterns; <code>match</code> only when
+  you need every variant.</li>
+<li>Tuple-destructure at the binding; no <code>pair.0</code> reach-through.</li>
+<li><code>for x in xs</code>, not <code>xs.iter()</code>; no <code>as usize</code> on indices.</li>
+<li>Use the helpers: <code>arr.swap</code>, <code>m.inc</code>, <code>m.or_insert</code>.</li>
+<li>Pipe (<code>|&gt;</code>) when a value flows through more than one call.</li>
+<li><code>iter::*</code> over hand-rolled <code>for</code> for transformations
+  (<code>xs |&gt; iter::for_each(handle)</code>, <code>xs |&gt; iter::sum_by(|n| n*n)</code>);
+  keep <code>for</code> for complex state / early-return / <code>break</code>/<code>continue</code>.
+  The combinators (<code>map</code>, <code>filter</code>, <code>filter_map</code>, <code>fold</code>, <code>reduce</code>,
+  <code>find</code>, <code>group_by</code>, <code>partition</code>, …) are free functions in
+  <code>std::iter</code>, data-last. Collections carry no <code>.map</code>/<code>.filter</code>/
+  <code>.fold</code> — only mutating methods (<code>push</code>, <code>sort</code>, <code>inc</code>,
+  <code>or_insert</code>).</li>
+<li><code>option::*</code> / <code>result::*</code> for in-pipeline chaining; <code>?</code> for
+  short-circuit propagation.</li>
+<li>One statement per line; omit semicolons. No emojis. No committed
+  TODO/FIXME (open an issue). Doc every <code>pub</code> item with a single
+  <code>//</code> line directly above it.</li>
+<li>Derive <code>Debug</code>, <code>Clone</code>, <code>PartialEq</code> when cheap; <code>Default</code> for
+  zero-valued types.</li>
 </ul>
 <h2 id="17-where-to-read-more">17. Where to read more<a class="headerlink" href="#17-where-to-read-more" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Language spec: <code>SPEC.md</code> (repo root).</li>
-<li>Project style guide: <code>GUIDELINES.md</code> (repo root).</li>
-<li>Rendered docs: <code>docs_src/</code> (source) → <code>site/</code> (built).</li>
+<li>Language spec: <code>SPEC.md</code>. Style guide: <code>GUIDELINES.md</code>.</li>
+<li>Rendered docs: <code>docs_src/</code> → <code>site/</code>.</li>
 <li>Examples: <code>examples/</code> — start with <code>hello_world.gos</code>,
   <code>function_piping.gos</code>, <code>go_spawn.gos</code>, <code>concurrency.gos</code>.</li>
 </ul>
 <h2 id="18-when-in-doubt">18. When in doubt<a class="headerlink" href="#18-when-in-doubt" title="Permanent link">&para;</a></h2>
 <p>Run it. <code>gos check</code> gives rustc-class diagnostics with source
-excerpts and did-you-mean suggestions. <code>gos explain &lt;CODE&gt;</code>
-expands any diagnostic code. The toolchain is your first
-debugger.</p>
-              
+excerpts and did-you-mean suggestions; <code>gos explain &lt;CODE&gt;</code> expands
+any diagnostic code. The toolchain is your first debugger.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
             </div>
-          </div><footer>
-    <div class="rst-footer-buttons" role="navigation" aria-label="Footer Navigation">
-        <a href="../design/selfhosting/" class="btn btn-neutral float-left" title="Self-hosting study"><span class="icon icon-circle-arrow-left"></span> Previous</a>
-        <a href="../security/" class="btn btn-neutral float-right" title="Security">Next <span class="icon icon-circle-arrow-right"></span></a>
-    </div>
-
-  <hr/>
-
-  <div role="contentinfo">
-    <!-- Copyright etc -->
-  </div>
-
-  Built with <a href="https://www.mkdocs.org/">MkDocs</a> using a <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a> provided by <a href="https://readthedocs.org">Read the Docs</a>.
-</footer>
           
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
         </div>
-      </div>
-
-    </section>
-
-  </div>
-
-  <div class="rst-versions" role="note" aria-label="Versions">
-  <span class="rst-current-version" data-toggle="rst-current-version">
-    
-        <span>
-          <a href="https://github.com/danpozmanter/gossamer" class="fa fa-code-fork" style="color: #fcfcfc"> danpozmanter/gossamer</a>
-        </span>
-    
-    
-      <span><a href="../design/selfhosting/" style="color: #fcfcfc">&laquo; Previous</a></span>
-    
-    
-      <span><a href="../security/" style="color: #fcfcfc">Next &raquo;</a></span>
-    
-  </span>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
 </div>
-    <script src="../js/jquery-3.6.0.min.js"></script>
-    <script>var base_url = "..";</script>
-    <script src="../js/theme_extra.js"></script>
-    <script src="../js/theme.js"></script>
-      <script src="../js/hljs_gossamer.js"></script>
-      <script src="../js/repo_button.js"></script>
-      <script src="../js/scroll_top.js"></script>
-      <script src="../search/main.js"></script>
-    <script>
-        jQuery(function () {
-            SphinxRtdTheme.Navigation.enable(true);
-        });
-    </script>
-
-</body>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.instant", "navigation.tracking", "navigation.top", "navigation.sections", "navigation.indexes", "toc.follow", "search.suggest", "search.highlight", "content.code.copy", "content.code.annotate", "content.tabs.link"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
 </html>

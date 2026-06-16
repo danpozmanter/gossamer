@@ -1,0 +1,12 @@
+// Locks net DNS resolution across tiers using `localhost`, which
+// resolves from the hosts database without a network round-trip, so the
+// result is deterministic. Asserts shape (at least one address), not the
+// exact IPs, which differ by host (127.0.0.1 vs ::1).
+use std::net
+
+fn main() {
+    match net::resolve(&"localhost") {
+        Ok(ips) => println!("resolved={}", ips.len() > 0),
+        Err(_) => println!("resolved=false"),
+    }
+}

@@ -23,8 +23,8 @@ gaps are one-line additions to the dispatch table.
 | `s.find(needle)` | `Option<i64>` | Byte position of first match. |
 | `s.replace(from, to)` | `String` | Replaces every occurrence. |
 | `s.split(delim)` | `[String]` | Splits on every delimiter occurrence. |
-| `s.to_lowercase()` | `String` | ASCII fast-path; falls back to Unicode. |
-| `s.to_uppercase()` | `String` | Same. |
+| `s.to_lower()` | `String` | Lowercase; Unicode-aware. (`to_lowercase` is not a method.) |
+| `s.to_upper()` | `String` | Uppercase; Unicode-aware. |
 | `s.to_string()` | `String` | No-op clone for `&str`/`String`. |
 | `s.clone()` | `String` | |
 | `s.as_bytes()` | `&[u8]` | Zero-copy borrow. |

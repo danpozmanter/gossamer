@@ -87,7 +87,9 @@ unsafe fn gather_command_lines(commands: *mut GosVec) -> Result<Vec<Vec<String>>
     let mut stages = Vec::with_capacity(v.len as usize);
     for i in 0..v.len {
         let slot = unsafe { v.ptr.add((i as usize) * elem_bytes) };
-        let cstr_ptr = unsafe { (slot as *const *const c_char).read_unaligned() };
+        let cstr_ptr = unsafe {
+            std::ptr::with_exposed_provenance::<c_char>((slot as *const usize).read_unaligned())
+        };
         if cstr_ptr.is_null() {
             continue;
         }

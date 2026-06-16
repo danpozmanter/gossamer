@@ -22,6 +22,7 @@ gossamer-pkg = { workspace = true }
 gossamer-runtime = { workspace = true }
 gossamer-sched = { workspace = true }
 gossamer-coro = { workspace = true }
+gossamer-template = { workspace = true }
 thiserror = { workspace = true }
 parking_lot = { workspace = true }
 mio = { workspace = true }

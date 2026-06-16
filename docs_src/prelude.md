@@ -89,11 +89,11 @@ compile time.
 
 Always-in-scope type names:
 
-- Primitives: `bool`, `char`, `i8`…`i128`, `u8`…`u128`, `isize`,
+- Primitives: `bool`, `char`, `i8`…`i64`, `u8`…`u64`, `isize`,
   `usize`, `f32`, `f64`, `String`, `str`.
 - Wrappers: `Option<T>` (`Some` / `None`), `Result<T, E>`
   (`Ok` / `Err`), `Box<T>`, `Rc<T>`, `Arc<T>` (all three are
-  transparent in a GC'd runtime — spelling compatibility with
+  transparent in a managed runtime — spelling compatibility with
   Rust), `Weak<T>`.
 - Collections: `Vec<T>`, `HashMap<K, V>`, `HashSet<T>`,
   `BTreeMap<K, V>`, `BTreeSet<T>`, `VecDeque<T>`, `Range`.

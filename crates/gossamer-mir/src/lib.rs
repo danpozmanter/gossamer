@@ -25,12 +25,12 @@ pub use escape::{
 };
 pub use ir::{
     AggregateKind, AssertMessage, BasicBlock, BinOp, BlockId, Body, ConstValue, Local, LocalDecl,
-    Operand, Place, Projection, Rvalue, Statement, StatementKind, Terminator, UnOp,
+    Operand, Place, Projection, Rvalue, Statement, StatementKind, StaticRef, Terminator, UnOp,
     local_is_uint_cast,
 };
 pub use lower::{lower_program, mangle_callable_shape};
 pub use monomorph::{check_generic_layouts, mangled_name, monomorphise};
 pub use opt::{
-    const_branch_elim, const_fold, const_value_of, copy_propagate, dead_store_elim,
+    const_branch_elim, const_fold, const_value_of, copy_propagate, dead_store_elim, inline_general,
     inline_small_callees, inline_trivial_wrappers, optimise, statement_count,
 };

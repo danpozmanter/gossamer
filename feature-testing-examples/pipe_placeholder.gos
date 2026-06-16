@@ -1,0 +1,98 @@
+// `_.method` pipe placeholder: `_` reads as "the value flowing through here",
+// so the piped value becomes the receiver of the step. A pure parse-time
+// desugar, so it runs identically on the VM, Cranelift, and LLVM tiers:
+//
+//   x |> _.trim          => x.trim()      (bare ident => nullary method)
+//   x |> _.replace(a, b) => x.replace(a, b)
+//   x |> _.0             => x.0           (tuple index)
+//   x |> _[i]            => x[i]
+//   x |> _               => x
+//
+// `_.method` composes with the data-last `iter::*` free-function pipe steps.
+
+use std::iter
+
+struct Point {
+    x: i64,
+    y: i64,
+}
+
+fn label(p: Point) -> String {
+    // bare-method and tuple/field steps thread `p` in as the receiver.
+    format!("{},{}", p.x, p.y)
+}
+
+fn main() {
+    // bare method, no parens => nullary method call
+    let t = "  hello  " |> _.trim
+    println!("[{}]", t)
+
+    // method with args: piped value is the receiver, not an appended arg
+    let r = "a,b,c" |> _.replace(",", "-")
+    println!("{}", r)
+
+    // chained method steps
+    let up = "go" |> _.to_upper |> _.repeat(3)
+    println!("{}", up)
+
+    // tuple index and array index
+    let pair = (10, 20)
+    println!("{}", pair |> _.1)
+    let xs = [3, 6, 9]
+    println!("{}", xs |> _[1])
+
+    // identity
+    println!("{}", 42 |> _)
+
+    // mixed with data-last iter steps; `_.len()` consumes the iter result
+    let evens = [1, 2, 3, 4, 5, 6] |> iter::filter(|x: i64| x % 2 == 0) |> _.len()
+    println!("{}", evens)
+
+    // in-place method through a pipe, used as a statement
+    let mut v = [3, 1, 2]
+    v |> _.sort()
+    println!("{} {} {}", v[0], v[1], v[2])
+
+    // placeholder threads a struct receiver into a free function's last slot
+    // is still available the old way; `_.field`-style access uses a closure:
+    let lab = Point { x: 7, y: 9 } |> |p: Point| label(p)
+    println!("{}", lab)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::testing
+    use std::iter
+
+    #[test]
+    fn bare_method_trims() {
+        testing::check(("  hi  " |> _.trim) == "hi", "_.trim => x.trim()")
+    }
+
+    #[test]
+    fn method_with_args() {
+        testing::check(("a,b" |> _.replace(",", "-")) == "a-b", "_.replace threads receiver")
+    }
+
+    #[test]
+    fn chained_methods() {
+        testing::check(("go" |> _.to_upper |> _.repeat(2)) == "GOGO", "chains compose")
+    }
+
+    #[test]
+    fn tuple_and_index() {
+        testing::check(((1, 2) |> _.1) == 2, "_.1 tuple index")
+        testing::check(([7, 8, 9] |> _[2]) == 9, "_[i] index")
+    }
+
+    #[test]
+    fn identity_pipe() {
+        testing::check((99 |> _) == 99, "x |> _ is identity")
+    }
+
+    #[test]
+    fn mixed_with_iter() {
+        let n = [1, 2, 3, 4] |> iter::filter(|x: i64| x % 2 == 0) |> _.len()
+        testing::check(n == 2, "_.len() consumes an iter result")
+    }
+}

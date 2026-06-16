@@ -1,0 +1,29 @@
+// json::as_bool must return Option<bool> on every tier. The compiled
+// tier previously returned a bare truthy bool (non-bool values
+// coerced to true/false) where the VM returns None for anything that
+// is not a JSON boolean.
+
+use std::encoding::json
+
+fn run() -> Result<(), String> {
+    let v = json::parse(&"{\"active\": true, \"disabled\": false, \"count\": 7, \"label\": \"x\"}")?
+    report("active", json::as_bool(json::get(v, "active").unwrap()))
+    report("disabled", json::as_bool(json::get(v, "disabled").unwrap()))
+    report("count", json::as_bool(json::get(v, "count").unwrap()))
+    report("label", json::as_bool(json::get(v, "label").unwrap()))
+    Ok(())
+}
+
+fn report(label: &String, value: Option<bool>) {
+    match value {
+        Some(b) => println!("{}=Some({})", label, b),
+        None => println!("{}=None", label),
+    }
+}
+
+fn main() {
+    match run() {
+        Ok(_) => println!("done"),
+        Err(e) => println!("error: {}", e),
+    }
+}

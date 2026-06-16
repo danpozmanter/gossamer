@@ -348,6 +348,90 @@ pub fn parse_rfc3339(s: &str) -> Result<SystemTime, FormatError> {
     Ok(SystemTime(stdtime))
 }
 
+/// Parses an HTTP-date (RFC 7231 §7.1.1.1). The preferred RFC 1123
+/// form (`Sun, 06 Nov 1994 08:49:37 GMT`) is what browsers send in
+/// `If-Modified-Since` / `If-Unmodified-Since`, echoing the server's
+/// `Last-Modified`. The obsolete RFC 850 (`Sunday, 06-Nov-94
+/// 08:49:37 GMT`) and asctime (`Sun Nov  6 08:49:37 1994`) forms are
+/// also accepted, as RFC 7231 requires of recipients. Always GMT/UTC.
+pub fn parse_rfc1123_gmt(s: &str) -> Result<SystemTime, FormatError> {
+    let bad = || FormatError::BadInput(s.to_string());
+    let trimmed = s.trim();
+    let (day, month, year, hms) = if let Some(comma) = trimmed.find(',') {
+        let toks: Vec<&str> = trimmed[comma + 1..].split_whitespace().collect();
+        if toks.len() < 3 {
+            return Err(bad());
+        }
+        if toks[0].contains('-') {
+            // RFC 850: `06-Nov-94 08:49:37 GMT`.
+            let p: Vec<&str> = toks[0].split('-').collect();
+            if p.len() != 3 {
+                return Err(bad());
+            }
+            let day: u32 = p[0].parse().map_err(|_| bad())?;
+            let month = month_index(p[1]).ok_or_else(bad)?;
+            let yy: i32 = p[2].parse().map_err(|_| bad())?;
+            // Two-digit year window (RFC 6265 §5.1.1): 00..=68 -> 2000s.
+            let year = if yy < 70 { 2000 + yy } else { 1900 + yy };
+            (day, month, year, toks[1])
+        } else {
+            // RFC 1123: `06 Nov 1994 08:49:37 GMT`.
+            if toks.len() < 4 {
+                return Err(bad());
+            }
+            let day: u32 = toks[0].parse().map_err(|_| bad())?;
+            let month = month_index(toks[1]).ok_or_else(bad)?;
+            let year: i32 = toks[2].parse().map_err(|_| bad())?;
+            (day, month, year, toks[3])
+        }
+    } else {
+        // asctime: `Sun Nov  6 08:49:37 1994` (no comma).
+        let toks: Vec<&str> = trimmed.split_whitespace().collect();
+        if toks.len() < 5 {
+            return Err(bad());
+        }
+        let month = month_index(toks[1]).ok_or_else(bad)?;
+        let day: u32 = toks[2].parse().map_err(|_| bad())?;
+        let year: i32 = toks[4].parse().map_err(|_| bad())?;
+        (day, month, year, toks[3])
+    };
+    let t: Vec<&str> = hms.split(':').collect();
+    if t.len() != 3 {
+        return Err(bad());
+    }
+    let hour: u32 = t[0].parse().map_err(|_| bad())?;
+    let minute: u32 = t[1].parse().map_err(|_| bad())?;
+    let second: u32 = t[2].parse().map_err(|_| bad())?;
+    if !valid_civil(year, month, day, hour, minute, second) {
+        return Err(bad());
+    }
+    let unix = civil_to_unix(&CivilTime {
+        year,
+        month,
+        day,
+        hour,
+        minute,
+        second,
+    });
+    let stdtime = if unix >= 0 {
+        std::time::UNIX_EPOCH + std::time::Duration::from_secs(unix as u64)
+    } else {
+        std::time::UNIX_EPOCH - std::time::Duration::from_secs((-unix) as u64)
+    };
+    Ok(SystemTime(stdtime))
+}
+
+/// Month abbreviation (`Jan`..`Dec`, case-insensitive) to 1-based index.
+fn month_index(name: &str) -> Option<u32> {
+    const MONTHS: [&str; 12] = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ];
+    MONTHS
+        .iter()
+        .position(|m| m.eq_ignore_ascii_case(name))
+        .map(|i| i as u32 + 1)
+}
+
 fn parse_unsigned(bytes: &[u8]) -> Option<u32> {
     let s = std::str::from_utf8(bytes).ok()?;
     s.parse::<u32>().ok()

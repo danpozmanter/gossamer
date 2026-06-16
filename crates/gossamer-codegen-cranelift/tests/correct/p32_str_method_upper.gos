@@ -1,1 +1,1 @@
-fn main() { let s = "hi"; println(s.to_uppercase()) }
+fn main() { let s = "hi"; println(s.to_upper()) }

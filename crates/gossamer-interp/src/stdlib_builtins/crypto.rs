@@ -175,6 +175,11 @@ pub(crate) fn value_to_bytes(v: &Value) -> Vec<u8> {
             .iter()
             .filter_map(|x| value_to_int(x).map(|n| n as u8))
             .collect(),
+        // An `[u8]` / `[i64]` byte-array literal lowers to the packed
+        // `IntArray` representation, not a boxed `Array`; without this
+        // arm `value_to_bytes` returned empty and every crypto helper
+        // taking `[u8]` (kdf / aead / ed25519) silently hashed nothing.
+        Value::IntArray(data) => data.iter().map(|n| *n as u8).collect(),
         Value::String(s) => s.as_str().as_bytes().to_vec(),
         _ => Vec::new(),
     }

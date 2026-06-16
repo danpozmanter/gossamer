@@ -1,0 +1,21 @@
+// Cross-tier regression batch for stdlib functions that previously
+// diverged or build-failed on the compiled tiers (parity_audit.md):
+//   - encoding::ascii85::encode(String): compiled SIGSEGV (String was
+//     missing from the byte-coercion whitelist).
+//   - utf8::rune_len(<int codepoint>): VM returned 0 (only handled char).
+//   - math::min / max / clamp qualified form: compiled BUILD-FAIL
+//     (only the bare prelude names routed to the shim).
+//   - encoding::json::valid: compiled BUILD-FAIL (no shim).
+// All must now agree bit-for-bit on `gos run` and `gos build`.
+
+use std::encoding
+use std::utf8
+use std::math
+
+fn main() {
+    println!("a85 {}", encoding::ascii85::encode("hello"))
+    println!("runelen {} {} {}", utf8::rune_len(65), utf8::rune_len(233), utf8::rune_len(26085))
+    println!("mm {} {} {}", math::min(3, 7), math::max(3, 7), math::clamp(15, 0, 10))
+    println!("mmf {} {}", math::min(2.5, 1.5), math::max(2.5, 1.5))
+    println!("jsonvalid {} {}", encoding::json::valid("{\"a\":1}"), encoding::json::valid("{bad"))
+}

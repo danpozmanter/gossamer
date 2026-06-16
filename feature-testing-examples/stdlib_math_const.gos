@@ -1,0 +1,18 @@
+// Locks the math constants across tiers in both print and arithmetic
+// context. Historically these were a compiled-tier BUILD-FAIL in
+// arithmetic and printed the literal `math::PI` string; the const-fold
+// in lowering fixed that, and this fixture guards against regression.
+use std::math
+
+fn main() {
+    println!("{:.6}", math::PI)
+    println!("{:.6}", math::E)
+    println!("{:.6}", math::SQRT_2)
+    println!("{:.6}", math::LN_2)
+    println!("{:.6}", math::LN_10)
+    println!("{:.6}", math::PHI)
+    let circle_area = math::PI * 4.0 * 4.0
+    let scaled = math::E * 2.0 + math::SQRT_2
+    println!("{:.6}", circle_area)
+    println!("{:.6}", scaled)
+}

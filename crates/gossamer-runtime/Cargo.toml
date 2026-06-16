@@ -61,6 +61,17 @@ thiserror = { workspace = true }
 serde_json = { workspace = true }
 regex = { version = "1", default-features = false, features = ["std", "unicode"] }
 flate2 = "1"
+zstd = "0.13"
+bzip2 = "0.5"
+argon2 = { version = "0.5", default-features = false, features = ["std", "alloc", "password-hash"] }
+pbkdf2 = { version = "0.12", default-features = false, features = ["std", "hmac"] }
+scrypt = { version = "0.11", default-features = false, features = ["std"] }
+md-5 = { version = "0.10", default-features = false, features = ["std"] }
+sha1 = { version = "0.10", default-features = false, features = ["std"] }
+aes-gcm = "0.10"
+chacha20poly1305 = "0.10"
+ed25519-dalek = { version = "2", default-features = false, features = ["std", "fast", "pkcs8", "pem"] }
+p256 = { version = "0.13", default-features = false, features = ["ecdsa", "std", "pem"] }
 rustc-hash = "2"
 signal-hook = { workspace = true }
 libloading = "0.8"
@@ -70,6 +81,7 @@ mio = { workspace = true }
 gossamer-coro = { workspace = true }
 gossamer-pkg = { workspace = true }
 gossamer-abi = { workspace = true }
+gossamer-template = { workspace = true }
 # `gos_rt_http_stream` uses ureq for the wire request so the
 # compiled tier matches the interp's `http::stream` semantics.
 # Same feature set as gossamer-std (TLS via rustls, gzip, cookies)

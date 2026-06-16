@@ -4,7 +4,7 @@ Kotlin and Gossamer share several ideas: null safety maps to
 `Option<T>`, `val`/`var` maps to `let`/`let mut`, `when`
 expressions map to `match`, data classes map to structs, and
 coroutines map to goroutines. The main shift is from JVM-hosted
-OO with nullable types to a GC-managed systems language where
+OO with nullable types to a memory-managed systems language where
 every absent value is explicit and every blocking call is safe.
 
 ## TL;DR
@@ -61,9 +61,9 @@ val forced = name!!.uppercase()
 Gossamer:
 
 ```gos
-let len: Option<i64> = name.as_ref().map(|s: &String| s.len() as i64)
-let display = name.as_deref().unwrap_or("anonymous")
-let forced = name.as_ref().unwrap().to_uppercase()
+let len: Option<i64> = name.map(|s: String| s.len() as i64)
+let display = name.unwrap_or("anonymous")
+let forced = name.unwrap().to_upper()
 ```
 
 For conditional access, `if let` is idiomatic:
@@ -168,7 +168,6 @@ Gossamer:
 let words = strings::split(&sentence, " ")
     |> iter::map(|s: String| strings::trim(&s))
     |> iter::filter(|s: String| s.len() > 0)
-    |> iter::collect()
 ```
 
 ## String interpolation
@@ -232,7 +231,7 @@ for url in urls {
 
 go fn() {
     wg.wait()
-    drop(tx)
+    tx.close()
 }()
 
 while let Some(result) = rx.recv() {

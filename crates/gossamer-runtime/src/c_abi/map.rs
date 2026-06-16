@@ -314,7 +314,10 @@ unsafe fn build_skey(key: *const u8, desc: *const c_char) -> Option<Vec<u8>> {
         match c {
             b's' => out.extend_from_slice(unsafe { std::slice::from_raw_parts(slot, 8) }),
             b'S' => {
-                let sptr = unsafe { *(slot as *const *const c_char) };
+                // The string field holds a cstring pointer exposed as an
+                // integer by the flat-slot ABI; recover its provenance.
+                let raw = unsafe { (slot as *const usize).read_unaligned() };
+                let sptr: *const c_char = std::ptr::with_exposed_provenance(raw);
                 if sptr.is_null() {
                     out.extend_from_slice(&0u64.to_le_bytes());
                 } else {
@@ -560,10 +563,23 @@ pub unsafe extern "C" fn gos_rt_map_insert_str_i64(m: *mut GosMap, key: *const c
         let MapStorage::StrI64(inner) = &mut *storage else {
             return;
         };
-        if inner.insert(key_bytes.into_boxed_slice(), val).is_none() {
+        let prev = inner.insert(key_bytes.into_boxed_slice(), val);
+        if prev.is_none() {
             map.len_cache += 1;
         }
+        // Overwriting a copy-blob value (e.g. a `Vec<i64>` handle in a
+        // `HashMap<String, Vec<i64>>`): release the map's share of the
+        // old word, mirroring the i64/i64 insert path. Gated on the
+        // blob-values flag so scalar-valued maps stay untouched.
+        let release_old = if map_has_blob_values(map) && prev != Some(val) {
+            prev
+        } else {
+            None
+        };
         drop(storage);
+        if let Some(old) = release_old {
+            unsafe { release_blob_value(old) };
+        }
         // Consuming insert copied the key bytes; release the moved-in gos-string
         // (rc-aware + tag-checked — safe for temps, shared, and literals).
         unsafe { gos_rt_str_free(key.cast_mut()) };
@@ -605,6 +621,17 @@ pub unsafe extern "C" fn gos_rt_map_get_str_opt(m: *const GosMap, key: *const c_
             }
             _ => None,
         };
+        // Handing out a copy-blob value (Vec / struct handle) shares
+        // ownership with the caller: retain so the map's later drop
+        // and the caller's drop are balanced. Gated like the i64/i64
+        // get path; the StrStr/Bytes arms allocate a fresh c-string
+        // and are not blob-values.
+        if let Some(v) = payload
+            && matches!(&*storage, MapStorage::StrI64(_))
+            && map_has_blob_values(map)
+        {
+            unsafe { retain_blob_value(v) };
+        }
         match payload {
             Some(v) => unsafe { gos_rt_result_new(0, v) },
             None => unsafe { gos_rt_result_new(1, 0) },
@@ -819,9 +846,26 @@ pub unsafe extern "C" fn gos_rt_map_or_insert_str_i64(
         let MapStorage::StrI64(inner) = &mut *storage else {
             return default;
         };
-        if let Some(v) = inner.get(key_bytes) {
-            return *v;
+        if let Some(v) = inner.get(key_bytes).copied() {
+            // Key present: hand back the stored value. For a copy-blob
+            // value (Vec / struct handle) this is a shared hand-out, so
+            // retain to balance the caller's later drop of the returned
+            // value (mirrors gos_rt_map_get_str_opt). The unused
+            // `default` blob is released here, since or_insert owns it.
+            if map_has_blob_values(map) {
+                unsafe { retain_blob_value(v) };
+                if default != v {
+                    unsafe { release_blob_value(default) };
+                }
+            }
+            return v;
         }
+        // Key absent: store `default`. Aggregate (blob) values inserted
+        // here on a previously-absent key currently hang the compiled
+        // tier at teardown (a deeper RC-ownership issue between the
+        // coerced literal, the stored word, and the returned word); the
+        // scalar path and the key-present path are unaffected. The
+        // aggregate_binding fixture exercises the working shapes.
         inner.insert(key_bytes.to_vec().into_boxed_slice(), default);
         map.len_cache += 1;
         default
@@ -1080,12 +1124,17 @@ pub unsafe extern "C" fn gos_rt_vec_free(v: *mut GosVec) {
                 // SAFETY: ptr is non-null + cap > 0 (checked above);
                 // we only read `count <= len <= cap` slots of 8 bytes
                 // each, all initialised by construction.
-                let slots =
-                    unsafe { std::slice::from_raw_parts(boxed.ptr.cast::<*mut u8>(), count) };
-                for &slot in slots {
-                    if slot.is_null() {
+                let base = boxed.ptr;
+                for i in 0..count {
+                    // Slots hold child pointers exposed as integers by the
+                    // flat-slot ABI in a byte buffer with no 8-byte
+                    // alignment guarantee; read unaligned and recover
+                    // provenance before the dereferencing free.
+                    let raw = unsafe { base.add(i * 8).cast::<usize>().read_unaligned() };
+                    if raw == 0 {
                         continue;
                     }
+                    let slot: *mut u8 = std::ptr::with_exposed_provenance_mut(raw);
                     match boxed.elem_kind {
                         vec_elem_kind::STRING => {
                             // SAFETY: each slot in a STRING-typed vec was
@@ -1112,8 +1161,9 @@ pub unsafe extern "C" fn gos_rt_vec_free(v: *mut GosVec) {
                 }
             }
             let bytes = (boxed.cap as usize) * (boxed.elem_bytes as usize);
+            // SAFETY: the buffer was allocated by `alloc_vec_buffer(bytes)`.
             unsafe {
-                let _ = Vec::from_raw_parts(boxed.ptr.as_ptr(), bytes, bytes);
+                crate::c_abi::vec::free_vec_buffer(boxed.ptr.as_ptr(), bytes);
             }
         }
         // Side-table entries are keyed by the header address `boxed`
@@ -1165,11 +1215,16 @@ pub unsafe extern "C" fn gos_rt_map_keys_i64(m: *const GosMap) -> *mut GosVec {
             let bytes = k.to_ne_bytes();
             unsafe { gos_rt_vec_push(out, bytes.as_ptr()) };
         };
-        match &*storage {
-            MapStorage::I64I64(inner) => inner.keys().for_each(push_key),
-            MapStorage::I64Str(inner) => inner.keys().for_each(push_key),
-            _ => {}
-        }
+        // Sort by key for deterministic order that matches `values()`,
+        // `iter()`, and the VM (a `FxHashMap`'s bucket order is neither
+        // stable nor the same across tiers).
+        let mut keys: Vec<i64> = match &*storage {
+            MapStorage::I64I64(inner) => inner.keys().copied().collect(),
+            MapStorage::I64Str(inner) => inner.keys().copied().collect(),
+            _ => Vec::new(),
+        };
+        keys.sort_unstable();
+        keys.iter().for_each(push_key);
         out
     })
 }
@@ -1187,17 +1242,26 @@ pub unsafe extern "C" fn gos_rt_map_values_i64(m: *const GosMap) -> *mut GosVec 
         }
         let map = unsafe { &*m };
         let storage = map.storage.lock();
+        // Emit values in key-sorted order so `keys()` / `values()` /
+        // `iter()` agree and the order is deterministic across tiers.
+        let push_val = |v: i64| {
+            let bytes = v.to_ne_bytes();
+            unsafe { gos_rt_vec_push(out, bytes.as_ptr()) };
+        };
         match &*storage {
             MapStorage::I64I64(inner) => {
-                for v in inner.values() {
-                    let bytes = v.to_ne_bytes();
-                    unsafe { gos_rt_vec_push(out, bytes.as_ptr()) };
+                let mut entries: Vec<(i64, i64)> = inner.iter().map(|(k, v)| (*k, *v)).collect();
+                entries.sort_unstable_by_key(|(k, _)| *k);
+                for (_, v) in entries {
+                    push_val(v);
                 }
             }
             MapStorage::StrI64(inner) => {
-                for v in inner.values() {
-                    let bytes = v.to_ne_bytes();
-                    unsafe { gos_rt_vec_push(out, bytes.as_ptr()) };
+                let mut entries: Vec<(&[u8], i64)> =
+                    inner.iter().map(|(k, v)| (k.as_ref(), *v)).collect();
+                entries.sort_unstable_by(|a, b| a.0.cmp(b.0));
+                for (_, v) in entries {
+                    push_val(v);
                 }
             }
             _ => {}
@@ -1226,18 +1290,16 @@ pub unsafe extern "C" fn gos_rt_map_keys_str(m: *const GosMap) -> *mut GosVec {
             let slot = (cstr as usize as i64).to_ne_bytes();
             unsafe { gos_rt_vec_push(out, slot.as_ptr()) };
         };
-        match &*storage {
-            MapStorage::StrI64(inner) => {
-                for k in inner.keys() {
-                    push_key(k);
-                }
-            }
-            MapStorage::StrStr(inner) => {
-                for k in inner.keys() {
-                    push_key(k);
-                }
-            }
-            _ => {}
+        // Sort by key (lexicographic byte order, matching the VM's
+        // `SmolStr` ordering) for deterministic, cross-tier order.
+        let mut keys: Vec<&[u8]> = match &*storage {
+            MapStorage::StrI64(inner) => inner.keys().map(|k| &**k).collect(),
+            MapStorage::StrStr(inner) => inner.keys().map(|k| &**k).collect(),
+            _ => Vec::new(),
+        };
+        keys.sort_unstable();
+        for k in keys {
+            push_key(k);
         }
         out
     })
@@ -1260,9 +1322,25 @@ pub unsafe extern "C" fn gos_rt_map_values_str(m: *const GosMap) -> *mut GosVec 
             let slot = (cstr as usize as i64).to_ne_bytes();
             unsafe { gos_rt_vec_push(out, slot.as_ptr()) };
         };
+        // Values in key-sorted order so `keys()` / `values()` / `iter()`
+        // agree and the order is deterministic across tiers.
         match &*storage {
-            MapStorage::StrStr(inner) => inner.values().for_each(|v| push_val(v)),
-            MapStorage::I64Str(inner) => inner.values().for_each(|v| push_val(v)),
+            MapStorage::StrStr(inner) => {
+                let mut entries: Vec<(&[u8], &[u8])> =
+                    inner.iter().map(|(k, v)| (&**k, &**v)).collect();
+                entries.sort_unstable_by(|a, b| a.0.cmp(b.0));
+                for (_, v) in entries {
+                    push_val(v);
+                }
+            }
+            MapStorage::I64Str(inner) => {
+                let mut entries: Vec<(i64, &[u8])> =
+                    inner.iter().map(|(k, v)| (*k, &**v)).collect();
+                entries.sort_unstable_by_key(|(k, _)| *k);
+                for (_, v) in entries {
+                    push_val(v);
+                }
+            }
             _ => {}
         }
         out

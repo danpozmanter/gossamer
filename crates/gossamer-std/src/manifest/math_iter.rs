@@ -310,6 +310,61 @@ pub const MATH: StdModule = StdModule {
             kind: StdItemKind::Function,
             doc: "max(x-y, 0) — Go's math.Dim.",
         },
+        StdItem {
+            name: "sinh",
+            kind: StdItemKind::Function,
+            doc: "Hyperbolic sine.",
+        },
+        StdItem {
+            name: "cosh",
+            kind: StdItemKind::Function,
+            doc: "Hyperbolic cosine.",
+        },
+        StdItem {
+            name: "tanh",
+            kind: StdItemKind::Function,
+            doc: "Hyperbolic tangent.",
+        },
+        StdItem {
+            name: "min",
+            kind: StdItemKind::Function,
+            doc: "Lesser of two values.",
+        },
+        StdItem {
+            name: "max",
+            kind: StdItemKind::Function,
+            doc: "Greater of two values.",
+        },
+        StdItem {
+            name: "clamp",
+            kind: StdItemKind::Function,
+            doc: "Constrain x to the inclusive range [lo, hi].",
+        },
+        StdItem {
+            name: "LOG2_E",
+            kind: StdItemKind::Const,
+            doc: "Base-2 logarithm of e.",
+        },
+        StdItem {
+            name: "LOG10_E",
+            kind: StdItemKind::Const,
+            doc: "Base-10 logarithm of e.",
+        },
+        StdItem {
+            name: "MAX_F64",
+            kind: StdItemKind::Const,
+            doc: "Largest finite f64 value.",
+        },
+        StdItem {
+            name: "MIN_POSITIVE_F64",
+            kind: StdItemKind::Const,
+            doc: "Smallest positive normal f64 value.",
+        },
+        StdItem {
+            name: "NEG_INF",
+            kind: StdItemKind::Const,
+            doc: "Negative infinity.",
+        },
     ],
 };
 
@@ -469,6 +524,156 @@ pub const ITER: StdModule = StdModule {
             kind: StdItemKind::Function,
             doc: "Sum of i64 or f64 elements.",
         },
+        StdItem {
+            name: "product",
+            kind: StdItemKind::Function,
+            doc: "Product of i64 or f64 elements.",
+        },
+        StdItem {
+            name: "min",
+            kind: StdItemKind::Function,
+            doc: "Smallest element, or None when empty.",
+        },
+        StdItem {
+            name: "max",
+            kind: StdItemKind::Function,
+            doc: "Largest element, or None when empty.",
+        },
+        StdItem {
+            name: "range",
+            kind: StdItemKind::Function,
+            doc: "Half-open integer sequence [start, end).",
+        },
+        StdItem {
+            name: "range_inclusive",
+            kind: StdItemKind::Function,
+            doc: "Closed integer sequence [start, end].",
+        },
+        StdItem {
+            name: "repeat",
+            kind: StdItemKind::Function,
+            doc: "A value repeated n times.",
+        },
+        StdItem {
+            name: "unzip",
+            kind: StdItemKind::Function,
+            doc: "Splits a sequence of pairs into two Vecs.",
+        },
+        StdItem {
+            name: "windowed",
+            kind: StdItemKind::Function,
+            doc: "Overlapping windows of width n.",
+        },
+        StdItem {
+            name: "pairwise",
+            kind: StdItemKind::Function,
+            doc: "Consecutive overlapping pairs.",
+        },
+        StdItem {
+            name: "chunk_by_size",
+            kind: StdItemKind::Function,
+            doc: "Non-overlapping chunks of length n.",
+        },
+        StdItem {
+            name: "for_each",
+            kind: StdItemKind::Function,
+            doc: "Applies f to each element for its side effect.",
+        },
+        StdItem {
+            name: "filter_map",
+            kind: StdItemKind::Function,
+            doc: "Maps each element and keeps the Some results.",
+        },
+        StdItem {
+            name: "reduce",
+            kind: StdItemKind::Function,
+            doc: "Folds with the first element as the initial accumulator.",
+        },
+        StdItem {
+            name: "scan",
+            kind: StdItemKind::Function,
+            doc: "Folds while yielding each intermediate accumulator.",
+        },
+        StdItem {
+            name: "sum_by",
+            kind: StdItemKind::Function,
+            doc: "Sum of f(element) over the sequence.",
+        },
+        StdItem {
+            name: "product_by",
+            kind: StdItemKind::Function,
+            doc: "Product of f(element) over the sequence.",
+        },
+        StdItem {
+            name: "find",
+            kind: StdItemKind::Function,
+            doc: "First element satisfying f, or None.",
+        },
+        StdItem {
+            name: "position",
+            kind: StdItemKind::Function,
+            doc: "Index of the first element satisfying f, or None.",
+        },
+        StdItem {
+            name: "find_map",
+            kind: StdItemKind::Function,
+            doc: "First Some result of f over the sequence.",
+        },
+        StdItem {
+            name: "take_while",
+            kind: StdItemKind::Function,
+            doc: "Leading run of elements satisfying f.",
+        },
+        StdItem {
+            name: "skip_while",
+            kind: StdItemKind::Function,
+            doc: "Elements after the leading run satisfying f.",
+        },
+        StdItem {
+            name: "partition",
+            kind: StdItemKind::Function,
+            doc: "Splits into (matching, non-matching) by f.",
+        },
+        StdItem {
+            name: "sort_by",
+            kind: StdItemKind::Function,
+            doc: "Sorted copy ordered by the comparison closure.",
+        },
+        StdItem {
+            name: "sort_by_key",
+            kind: StdItemKind::Function,
+            doc: "Sorted copy ordered by a derived key.",
+        },
+        StdItem {
+            name: "min_by",
+            kind: StdItemKind::Function,
+            doc: "Smallest element by the comparison closure.",
+        },
+        StdItem {
+            name: "max_by",
+            kind: StdItemKind::Function,
+            doc: "Largest element by the comparison closure.",
+        },
+        StdItem {
+            name: "min_by_key",
+            kind: StdItemKind::Function,
+            doc: "Element with the smallest derived key.",
+        },
+        StdItem {
+            name: "max_by_key",
+            kind: StdItemKind::Function,
+            doc: "Element with the largest derived key.",
+        },
+        StdItem {
+            name: "group_by",
+            kind: StdItemKind::Function,
+            doc: "Groups elements into a map keyed by f.",
+        },
+        StdItem {
+            name: "count_by",
+            kind: StdItemKind::Function,
+            doc: "Counts elements per key derived by f.",
+        },
     ],
 };
 
@@ -496,6 +701,156 @@ pub const MATH_BIG: StdModule = StdModule {
             name: "factorial",
             kind: StdItemKind::Function,
             doc: "Computes n! as an Int.",
+        },
+        StdItem {
+            name: "int_from_str",
+            kind: StdItemKind::Function,
+            doc: "Parses a decimal string into an Int.",
+        },
+        StdItem {
+            name: "int_from_i64",
+            kind: StdItemKind::Function,
+            doc: "Converts an i64 into an Int.",
+        },
+        StdItem {
+            name: "int_to_str",
+            kind: StdItemKind::Function,
+            doc: "Decimal string form of an Int.",
+        },
+        StdItem {
+            name: "int_to_hex",
+            kind: StdItemKind::Function,
+            doc: "Hexadecimal string form of an Int.",
+        },
+        StdItem {
+            name: "int_to_i64",
+            kind: StdItemKind::Function,
+            doc: "Narrows an Int to i64 where it fits.",
+        },
+        StdItem {
+            name: "int_is_zero",
+            kind: StdItemKind::Function,
+            doc: "Reports whether the Int is zero.",
+        },
+        StdItem {
+            name: "int_is_positive",
+            kind: StdItemKind::Function,
+            doc: "Reports whether the Int is greater than zero.",
+        },
+        StdItem {
+            name: "int_is_negative",
+            kind: StdItemKind::Function,
+            doc: "Reports whether the Int is less than zero.",
+        },
+        StdItem {
+            name: "int_add",
+            kind: StdItemKind::Function,
+            doc: "Sum of two Ints.",
+        },
+        StdItem {
+            name: "int_sub",
+            kind: StdItemKind::Function,
+            doc: "Difference of two Ints.",
+        },
+        StdItem {
+            name: "int_mul",
+            kind: StdItemKind::Function,
+            doc: "Product of two Ints.",
+        },
+        StdItem {
+            name: "int_div",
+            kind: StdItemKind::Function,
+            doc: "Truncated quotient of two Ints.",
+        },
+        StdItem {
+            name: "int_rem",
+            kind: StdItemKind::Function,
+            doc: "Remainder of two Ints.",
+        },
+        StdItem {
+            name: "int_pow",
+            kind: StdItemKind::Function,
+            doc: "Int raised to a non-negative power.",
+        },
+        StdItem {
+            name: "int_abs",
+            kind: StdItemKind::Function,
+            doc: "Absolute value of an Int.",
+        },
+        StdItem {
+            name: "int_neg",
+            kind: StdItemKind::Function,
+            doc: "Negation of an Int.",
+        },
+        StdItem {
+            name: "int_gcd",
+            kind: StdItemKind::Function,
+            doc: "Greatest common divisor of two Ints.",
+        },
+        StdItem {
+            name: "int_lcm",
+            kind: StdItemKind::Function,
+            doc: "Least common multiple of two Ints.",
+        },
+        StdItem {
+            name: "int_cmp",
+            kind: StdItemKind::Function,
+            doc: "Three-way comparison of two Ints (-1, 0, 1).",
+        },
+        StdItem {
+            name: "uint_from_str",
+            kind: StdItemKind::Function,
+            doc: "Parses a decimal string into a Uint.",
+        },
+        StdItem {
+            name: "uint_from_u64",
+            kind: StdItemKind::Function,
+            doc: "Converts a u64 into a Uint.",
+        },
+        StdItem {
+            name: "uint_to_str",
+            kind: StdItemKind::Function,
+            doc: "Decimal string form of a Uint.",
+        },
+        StdItem {
+            name: "uint_to_hex",
+            kind: StdItemKind::Function,
+            doc: "Hexadecimal string form of a Uint.",
+        },
+        StdItem {
+            name: "uint_to_u64",
+            kind: StdItemKind::Function,
+            doc: "Narrows a Uint to u64 where it fits.",
+        },
+        StdItem {
+            name: "uint_is_zero",
+            kind: StdItemKind::Function,
+            doc: "Reports whether the Uint is zero.",
+        },
+        StdItem {
+            name: "uint_add",
+            kind: StdItemKind::Function,
+            doc: "Sum of two Uints.",
+        },
+        StdItem {
+            name: "uint_mul",
+            kind: StdItemKind::Function,
+            doc: "Product of two Uints.",
+        },
+        StdItem {
+            name: "uint_pow",
+            kind: StdItemKind::Function,
+            doc: "Uint raised to a non-negative power.",
+        },
+        StdItem {
+            name: "uint_pow_mod",
+            kind: StdItemKind::Function,
+            doc: "Modular exponentiation of a Uint.",
+        },
+        StdItem {
+            name: "uint_bit_len",
+            kind: StdItemKind::Function,
+            doc: "Number of significant bits in a Uint.",
         },
     ],
 };

@@ -1,0 +1,16 @@
+fn weighted(xs: &[i64], i: i64, w: i64) -> i64 { xs[i] * w }
+
+fn score(seed: i64) -> i64 {
+    let xs = [seed, seed + 1, seed + 2, seed + 3]
+    weighted(&xs, 0, 5) + weighted(&xs, 2, 3)
+}
+
+fn main() {
+    let mut total = 0
+    let mut i = 0
+    while i < 5000 {
+        total += score(i % 11)
+        i += 1
+    }
+    println!("{}", total)
+}

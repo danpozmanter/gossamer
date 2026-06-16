@@ -456,8 +456,12 @@ fn render_chunk_module(
     }
     writeln!(out).unwrap();
 
-    // Runtime declares — dedup by symbol name.
+    // Runtime declares — dedup by symbol name. Other module globals
+    // (e.g. `static mut` `linkonce_odr` definitions a chunk emits once
+    // per referencing body) dedup by their full line, since the same
+    // static yields a byte-identical definition at every access site.
     let mut emitted_syms: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut emitted_lines: std::collections::HashSet<&str> = std::collections::HashSet::new();
     for g in &globals_raw {
         if let Ok(()) = validate_global_decl_shape(g) {
             if let Some(rest) = g.strip_prefix("declare ") {
@@ -470,6 +474,8 @@ fn render_chunk_module(
                         continue;
                     }
                 }
+            } else if !emitted_lines.insert(g.as_str()) {
+                continue;
             }
             writeln!(out, "{g}").unwrap();
         }

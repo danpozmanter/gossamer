@@ -42,6 +42,71 @@ fn on_axis(p: &Point3) -> String {
     }
 }
 
+enum Signal {
+    Red(i64),
+    Yellow(i64),
+    Green(i64),
+}
+
+// Or-pattern alternatives binding the same name into one shared slot.
+fn intensity(s: &Signal) -> i64 {
+    match s {
+        Signal::Red(n) | Signal::Green(n) => *n,
+        Signal::Yellow(n) => *n + 1000,
+    }
+}
+
+// A binding or-pattern fronted by a guard that reads the shared binding.
+fn describe(s: &Signal) -> String {
+    match s {
+        Signal::Red(n) | Signal::Green(n) if *n > 0 => format!("lit {}", n),
+        Signal::Red(n) | Signal::Green(n) => format!("dark {}", n),
+        Signal::Yellow(n) => format!("warn {}", n),
+    }
+}
+
+enum Cell {
+    Filled(Signal),
+    Blank,
+}
+
+// Binding or-pattern nested under an enclosing variant pattern.
+fn cell_intensity(c: &Cell) -> i64 {
+    match c {
+        Cell::Filled(Signal::Red(n)) | Cell::Filled(Signal::Green(n)) => *n,
+        Cell::Filled(Signal::Yellow(n)) => *n + 1000,
+        Cell::Blank => -1,
+    }
+}
+
+enum Wrap {
+    A(i64),
+    B(i64),
+}
+
+// Result-nested binding or-pattern: both wrappers bind the shared name.
+fn collapse_result(r: Result<i64, i64>) -> i64 {
+    match r {
+        Ok(x) | Err(x) => x,
+    }
+}
+
+// Option-nested binding or-pattern over a user enum.
+fn option_wrap(v: Option<Wrap>) -> i64 {
+    match v {
+        Some(Wrap::A(x)) | Some(Wrap::B(x)) => x,
+        None => -1,
+    }
+}
+
+// Option-of-Result binding or-pattern (the inner Ok/Err share the slot).
+fn option_result(v: Option<Result<i64, i64>>) -> i64 {
+    match v {
+        Some(Ok(x)) | Some(Err(x)) => x,
+        None => -1,
+    }
+}
+
 fn main() {
     let ranks = [Rank::Ace, Rank::Number(7), Rank::Jack, Rank::Queen, Rank::King]
     for r in ranks {
@@ -62,6 +127,30 @@ fn main() {
     for p in pts {
         println!("{}", on_axis(&p))
     }
+
+    let sigs = [Signal::Red(3), Signal::Yellow(4), Signal::Green(0), Signal::Red(-2)]
+    for s in sigs {
+        println!("int={} {}", intensity(&s), describe(&s))
+    }
+
+    let cells = [
+        Cell::Filled(Signal::Red(7)),
+        Cell::Filled(Signal::Yellow(2)),
+        Cell::Filled(Signal::Green(9)),
+        Cell::Blank,
+    ]
+    for c in cells {
+        println!("cell={}", cell_intensity(&c))
+    }
+
+    println!("collapse_ok={}", collapse_result(Ok(5)))
+    println!("collapse_err={}", collapse_result(Err(9)))
+    println!("option_wrap_a={}", option_wrap(Some(Wrap::A(11))))
+    println!("option_wrap_b={}", option_wrap(Some(Wrap::B(22))))
+    println!("option_wrap_none={}", option_wrap(None))
+    println!("option_result_ok={}", option_result(Some(Ok(33))))
+    println!("option_result_err={}", option_result(Some(Err(44))))
+    println!("option_result_none={}", option_result(None))
 }
 
 #[cfg(test)]
@@ -97,5 +186,53 @@ mod tests {
         let p = super::Point3 { x: 1, y: 2, z: 3 }
         let desc = super::on_axis(&p)
         testing::check(&desc.contains("off-axis"), "off-axis detected")
+    }
+
+    #[test]
+    fn binding_or_pattern_shares_slot() {
+        testing::check_eq(&super::intensity(&super::Signal::Red(3)), &3, "red binds n")
+        testing::check_eq(&super::intensity(&super::Signal::Green(8)), &8, "green binds n")
+        testing::check_eq(&super::intensity(&super::Signal::Yellow(4)), &1004, "yellow arm")
+    }
+
+    #[test]
+    fn binding_or_pattern_with_guard() {
+        testing::check_eq(&super::describe(&super::Signal::Red(5)), &"lit 5", "lit guard")
+        testing::check_eq(&super::describe(&super::Signal::Green(0)), &"dark 0", "dark fallthrough")
+        testing::check_eq(&super::describe(&super::Signal::Yellow(1)), &"warn 1", "warn arm")
+    }
+
+    #[test]
+    fn nested_binding_or_pattern() {
+        testing::check_eq(
+            &super::cell_intensity(&super::Cell::Filled(super::Signal::Green(9))),
+            &9,
+            "nested green binds n",
+        )
+        testing::check_eq(
+            &super::cell_intensity(&super::Cell::Blank),
+            &-1,
+            "blank arm",
+        )
+    }
+
+    #[test]
+    fn result_nested_binding_or_pattern() {
+        testing::check_eq(&super::collapse_result(super::Ok(5)), &5, "ok binds x")
+        testing::check_eq(&super::collapse_result(super::Err(9)), &9, "err binds x")
+    }
+
+    #[test]
+    fn option_nested_binding_or_pattern() {
+        testing::check_eq(&super::option_wrap(super::Some(super::Wrap::A(11))), &11, "wrap a")
+        testing::check_eq(&super::option_wrap(super::Some(super::Wrap::B(22))), &22, "wrap b")
+        testing::check_eq(&super::option_wrap(super::None), &-1, "wrap none")
+    }
+
+    #[test]
+    fn option_result_nested_binding_or_pattern() {
+        testing::check_eq(&super::option_result(super::Some(super::Ok(33))), &33, "opt ok")
+        testing::check_eq(&super::option_result(super::Some(super::Err(44))), &44, "opt err")
+        testing::check_eq(&super::option_result(super::None), &-1, "opt none")
     }
 }

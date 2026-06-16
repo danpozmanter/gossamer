@@ -4,7 +4,7 @@
     clippy::unnecessary_wraps,
     clippy::module_name_repetitions
 )]
-//! Interpreter bindings for the `__gos_sql_*_raw` leaf intrinsics
+//! VM bindings for the `__gos_sql_*_raw` leaf intrinsics
 //! behind the injected `std::database::sql` wrappers
 //! (gossamer-parse autoderive).
 //!

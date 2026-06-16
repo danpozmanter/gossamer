@@ -1,0 +1,51 @@
+// Cross-tier parity for crypto::insecure (MD5 / SHA-1 legacy digests)
+// and crypto::kdf (PBKDF2, scrypt, Argon2id). These were previously
+// bound only in the bytecode VM and failed to link under `gos build`.
+// Each call now routes through a `gos_rt_crypto_*` shim so the output
+// matches `gos run` bit-identically.
+//
+// Digest / KDF outputs use known test vectors so the bytes are
+// deterministic across tiers. Argon2id carries a random salt, so the
+// fixture asserts the verify outcomes (true / false) rather than the
+// raw hash, which is the correct way to test a salted hash.
+
+use std::crypto
+use std::encoding
+
+fn main() {
+    // Legacy digests — string input, lowercase-hex output.
+    println!("md5(abc) = {}", crypto::insecure::md5_hex("abc"))
+    println!("sha1(abc) = {}", crypto::insecure::sha1_hex("abc"))
+
+    // "password" / "salt" as raw bytes.
+    let pw = [112, 97, 115, 115, 119, 111, 114, 100]
+    let salt = [115, 97, 108, 116]
+
+    // PBKDF2-HMAC-SHA256: 1 iteration, 32-byte derived key.
+    let dk = crypto::kdf::pbkdf2_sha256(pw, salt, 1, 32)
+    println!("pbkdf2 = {}", encoding::hex::encode(dk))
+
+    // scrypt interactive (log_n=15, r=8, p=1), 32-byte derived key.
+    match crypto::kdf::scrypt_interactive(pw, salt) {
+        Ok(key) => println!("scrypt = {}", encoding::hex::encode(key)),
+        Err(e) => println!("scrypt err {}", e),
+    }
+
+    // Argon2id hash + verify (random salt -> assert outcomes).
+    let secret = [104, 117, 110, 116, 101, 114, 50]
+    let wrong = [119, 114, 111, 110, 103]
+    match crypto::kdf::argon2id_hash(secret) {
+        Ok(phc) => {
+            let v = match crypto::kdf::argon2id_verify(secret, phc) {
+                Ok(b) => b,
+                Err(_) => false,
+            }
+            let w = match crypto::kdf::argon2id_verify(wrong, phc) {
+                Ok(b) => b,
+                Err(_) => false,
+            }
+            println!("argon2 verify={} wrong={}", v, w)
+        }
+        Err(e) => println!("argon2 err {}", e),
+    }
+}

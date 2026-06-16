@@ -141,6 +141,18 @@ impl<'a> Lowerer<'a> {
                     .unwrap();
                 }
             }
+            StatementKind::StaticStore { target, value } => {
+                // Store the value into the backing `static mut` global.
+                let llvm_ty = render_ty(self.tcx, target.ty);
+                self.register_static_global(target, &llvm_ty);
+                let val = self.lower_operand(value)?;
+                writeln!(
+                    self.out,
+                    "  store {llvm_ty} {val}, ptr @{sym}",
+                    sym = target.symbol,
+                )
+                .unwrap();
+            }
             StatementKind::Nop => {}
             StatementKind::SetDiscriminant { place, variant } => {
                 // Stores the variant index at offset 0 of the
@@ -206,6 +218,7 @@ impl<'a> Lowerer<'a> {
                         | "gos_rt_option_slot_retain"
                         | "gos_rt_option_slot_release"
                         | "gos_rt_vec_set_elem_meta"
+                        | "gos_rt_vec_set_slot_children"
                         | "gos_rt_map_set_blob_values"
                 )
             {

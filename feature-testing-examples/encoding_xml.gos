@@ -1,0 +1,27 @@
+// Tier-parity fixture for std::encoding::xml parse -> encode round-trip.
+// Exercises attributes, nested elements, escape round-trip
+// ('  -> &apos;, &lt;/&gt; entities), and a self-closing element. The
+// re-encoded bytes must be identical across the VM, Cranelift, and
+// LLVM tiers.
+
+use std::encoding
+use std::strings
+
+fn main() {
+    let src = "<note id=\"7\"><to>Tove</to><from>Jani</from><body>Don't &lt;forget&gt; me</body><empty/></note>"
+    match encoding::xml::parse(src) {
+        Ok(node) => {
+            let out = encoding::xml::encode(node)
+            println!("{}", out)
+            println!("has_body={}", strings::contains(out, "<body>"))
+            println!("self_closing={}", strings::contains(out, "<empty/>"))
+        }
+        Err(e) => println!("err: {}", e),
+    }
+
+    // Empty/whitespace-only input is a parse error on every tier.
+    match encoding::xml::parse("   ") {
+        Ok(_) => println!("unexpected ok"),
+        Err(_) => println!("empty=err"),
+    }
+}

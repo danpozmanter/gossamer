@@ -1047,6 +1047,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)] // starts worker threads that sigaltstack; Miri has no signals
     fn drains_all_tasks_across_workers() {
         let sched = MultiScheduler::new(4);
         let counter = Arc::new(AtomicUsize::new(0));
@@ -1063,6 +1064,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)] // starts worker threads that sigaltstack; Miri has no signals
     fn park_unpark_round_trip() {
         let sched = MultiScheduler::new(2);
         sched.start();
@@ -1080,6 +1082,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)] // starts worker threads that sigaltstack; Miri has no signals
     fn unpark_after_home_worker_retired_still_runs_task() {
         let sched = MultiScheduler::new(4);
         sched.start();
@@ -1109,6 +1112,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)] // starts worker threads that sigaltstack; Miri has no signals
     fn retiring_worker_does_not_strand_inbox_tasks() {
         let sched = MultiScheduler::new(2);
         sched.start();
@@ -1136,6 +1140,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)] // starts worker threads that sigaltstack; Miri has no signals
     fn set_worker_count_grows_pool() {
         let sched = MultiScheduler::new(1);
         sched.start();

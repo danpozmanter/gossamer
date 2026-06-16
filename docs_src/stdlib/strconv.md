@@ -20,4 +20,8 @@ Conversions between strings and primitive numeric types.
 | `format_int` | fn | Alias for format_i64. |
 | `itoa` | fn | Alias for format_i64 (Go-style spelling). |
 | `format_float` | fn | Alias for format_f64. |
+| `parse_i64_radix` | fn | Parses an i64 from a string in the given base (2..=36). |
+| `format_i64_radix` | fn | Formats an i64 in the given base (2..=36). |
+| `quote` | fn | Wraps a string in double quotes with escapes. |
+| `unquote` | fn | Removes surrounding quotes and resolves escapes. |
 

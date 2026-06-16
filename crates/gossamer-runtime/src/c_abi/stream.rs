@@ -63,6 +63,52 @@ pub unsafe extern "C" fn gos_rt_io_stderr() -> *const GosStream {
     ffi_entry!(std::ptr::null(), { std::ptr::addr_of!(STREAM_STDERR) })
 }
 
+/// `io::Copy(dst, src)` — drains `src` (the stdin stream) to EOF,
+/// writing every byte to `dst`, and returns the byte count. Mirrors
+/// Go's `io.Copy`. Only stdin -> stdout/stderr is wired today; any
+/// other source fd is a no-op returning 0, matching the interpreter
+/// builtin.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_io_copy(dst: *const GosStream, src: *const GosStream) -> i64 {
+    ffi_entry!(0, {
+        let dst_fd = unsafe { stream_fd(dst) };
+        let src_fd = unsafe { stream_fd(src) };
+        if src_fd != 0 {
+            return 0;
+        }
+        unsafe { gos_rt_flush_stdout() };
+        let stdin = std::io::stdin();
+        let mut buf = String::new();
+        let n = match stdin.lock().read_to_string(&mut buf) {
+            Ok(n) => n as i64,
+            Err(_) => return 0,
+        };
+        unsafe { write_fd(dst_fd, buf.as_bytes()) };
+        n
+    })
+}
+
+/// `io::ReadAll(reader)` — drains `reader` (the stdin stream) to EOF
+/// and returns the accumulated bytes as a freshly-allocated
+/// GC-arena string. Mirrors Go's `io.ReadAll`. Non-stdin readers
+/// return an empty string, matching the interpreter builtin.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_io_read_all(reader: *const GosStream) -> *mut c_char {
+    ffi_entry!(std::ptr::null_mut(), {
+        let fd = unsafe { stream_fd(reader) };
+        if fd != 0 {
+            return alloc_cstring(b"");
+        }
+        unsafe { gos_rt_flush_stdout() };
+        let stdin = std::io::stdin();
+        let mut buf = String::new();
+        match stdin.lock().read_to_string(&mut buf) {
+            Ok(_) => alloc_cstring(buf.as_bytes()),
+            Err(_) => alloc_cstring(b""),
+        }
+    })
+}
+
 unsafe fn stream_fd(s: *const GosStream) -> i32 {
     if s.is_null() {
         return 1;

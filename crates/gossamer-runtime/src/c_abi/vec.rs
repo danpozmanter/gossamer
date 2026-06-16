@@ -67,6 +67,14 @@ pub mod vec_elem_kind {
     /// slot's children. Set via [`super::vec::vec_set_slot_children`] by
     /// runtime materializer shims — never by codegen.
     pub const AGGR_OWNED: u8 = 6;
+    /// Slot-child kind (NOT a vec-level `elem_kind`): the slot word holds
+    /// a reference-counted heap node — a user enum or struct pointer
+    /// (possibly tag-bit-encoded) — retained via `gos_rt_rc_retain` and
+    /// released via `gos_rt_rc_release`, both of which mask the low tag
+    /// bits and walk the node's own child meta. Used inside `AGGR_OWNED`
+    /// slot-children layouts for an aggregate element's enum/struct
+    /// fields.
+    pub const RC_NODE: u8 = 7;
 }
 
 #[repr(C)]
@@ -201,7 +209,10 @@ unsafe fn visit_slot_children(
                 continue;
             }
         }
-        let child = unsafe { slot.add(c.word * 8).cast::<*mut u8>().read_unaligned() };
+        // Slots hold child pointers exposed as integers by the flat-slot
+        // ABI; recover provenance before use.
+        let raw = unsafe { slot.add(c.word * 8).cast::<usize>().read_unaligned() };
+        let child: *mut u8 = std::ptr::with_exposed_provenance_mut(raw);
         if !child.is_null() {
             f(child, c.kind);
         }
@@ -218,6 +229,7 @@ pub(crate) unsafe fn vec_retain_slot_children(v: *const GosVec, slot: *const u8)
         visit_slot_children(slot, children, |child, kind| match kind {
             vec_elem_kind::STRING => crate::c_abi::string::gos_rt_str_retain(child.cast()),
             vec_elem_kind::VEC => vec_retain_header(child.cast()),
+            vec_elem_kind::RC_NODE => crate::c_abi::rc::gos_rt_rc_retain(child),
             _ => {}
         });
     }
@@ -243,6 +255,7 @@ pub(crate) unsafe fn vec_release_owned_children(v: &GosVec) {
             visit_slot_children(v.ptr.add(i * stride), children, |child, kind| match kind {
                 vec_elem_kind::STRING => crate::c_abi::string::gos_rt_str_free(child.cast()),
                 vec_elem_kind::VEC => crate::c_abi::map::gos_rt_vec_free(child.cast()),
+                vec_elem_kind::RC_NODE => crate::c_abi::rc::gos_rt_rc_release(child),
                 _ => {}
             });
         }
@@ -283,7 +296,9 @@ pub(crate) unsafe fn vec_share_owned_elements(src: *const GosVec, out: *mut GosV
         vec_elem_kind::STRING | vec_elem_kind::VEC if s.elem_bytes == 8 => {
             o.elem_kind = s.elem_kind;
             for i in 0..o.len.max(0) as usize {
-                let child = unsafe { o.ptr.add(i * 8).cast::<*mut u8>().read_unaligned() };
+                // Exposed-integer slot (flat-slot ABI); recover provenance.
+                let raw = unsafe { o.ptr.add(i * 8).cast::<usize>().read_unaligned() };
+                let child: *mut u8 = std::ptr::with_exposed_provenance_mut(raw);
                 if child.is_null() {
                     continue;
                 }
@@ -331,6 +346,49 @@ pub unsafe extern "C" fn gos_rt_vec_set_elem_meta(v: *mut GosVec, meta: *const i
     }
     vec.elem_kind = vec_elem_kind::AGGR_GUARDED;
     VEC_ELEM_METAS.lock().insert(v as usize, meta as usize);
+}
+
+/// Parsed `VecSlotChild` layouts, keyed by the (static) meta blob
+/// address so each per-type layout is parsed and leaked at most once.
+static SLOT_CHILD_LAYOUTS: std::sync::LazyLock<
+    parking_lot::Mutex<std::collections::HashMap<usize, &'static [VecSlotChild]>>,
+> = std::sync::LazyLock::new(|| parking_lot::Mutex::new(std::collections::HashMap::new()));
+
+/// Tags `v` as an [`vec_elem_kind::AGGR_OWNED`] vec carrying inline
+/// aggregate elements whose RC child pointers (strings, nested vecs,
+/// user enum/struct heap nodes) the vec owns, recording where they sit
+/// inside each element slot. Emitted by the MIR lowering right after
+/// constructing such a vec. The `meta` blob is a static, codegen-owned
+/// `i64` array: `[count, (gate, disc_word, word, kind) * count]`, with
+/// `kind` a [`vec_elem_kind`] slot-child tag (`STRING` / `VEC` /
+/// `RC_NODE`). No-op for null / region vecs.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_vec_set_slot_children(v: *mut GosVec, meta: *const i64) {
+    if v.is_null() || meta.is_null() {
+        return;
+    }
+    let layout = {
+        let mut cache = SLOT_CHILD_LAYOUTS.lock();
+        if let Some(l) = cache.get(&(meta as usize)) {
+            *l
+        } else {
+            let count = unsafe { *meta }.max(0) as usize;
+            let mut children = Vec::with_capacity(count);
+            for i in 0..count {
+                let base = 1 + i * 4;
+                children.push(VecSlotChild {
+                    gate: unsafe { *meta.add(base) },
+                    disc_word: unsafe { *meta.add(base + 1) }.max(0) as usize,
+                    word: unsafe { *meta.add(base + 2) }.max(0) as usize,
+                    kind: unsafe { *meta.add(base + 3) } as u8,
+                });
+            }
+            let leaked: &'static [VecSlotChild] = Box::leak(children.into_boxed_slice());
+            cache.insert(meta as usize, leaked);
+            leaked
+        }
+    };
+    vec_set_slot_children(v, layout);
 }
 
 /// Release the guarded children of every element of an
@@ -460,6 +518,30 @@ pub unsafe extern "C" fn gos_rt_vec_new_typed(elem_bytes: u32, elem_kind: u8) ->
     })
 }
 
+/// Allocates a zeroed `bytes`-byte vec element buffer with 8-byte
+/// alignment. Vec slots hold 8-byte words (`i64` / pointer), so the
+/// buffer must be word-aligned for the slot accesses across the
+/// runtime to be sound; a `Vec<u8>` (align 1) only happens to work
+/// because the system allocator over-aligns. Backed by a leaked
+/// `Vec<u64>`; free with [`free_vec_buffer`] passing the same `bytes`.
+pub(crate) fn alloc_vec_buffer(bytes: usize) -> *mut u8 {
+    let words = bytes.div_ceil(8).max(1);
+    let mut buf: Vec<u64> = vec![0u64; words];
+    let ptr = buf.as_mut_ptr().cast::<u8>();
+    std::mem::forget(buf);
+    ptr
+}
+
+/// Frees a buffer from [`alloc_vec_buffer`]. `bytes` must equal the
+/// value passed at allocation; every GosVec buffer is sized
+/// `cap * elem_bytes`, stable across the buffer's life.
+pub(crate) unsafe fn free_vec_buffer(ptr: *mut u8, bytes: usize) {
+    let words = bytes.div_ceil(8).max(1);
+    // SAFETY: `ptr` came from `alloc_vec_buffer(bytes)`, so the same
+    // word count reconstructs its `Vec<u64>` layout exactly.
+    drop(unsafe { Vec::<u64>::from_raw_parts(ptr.cast::<u64>(), words, words) });
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_vec_with_capacity(elem_bytes: u32, cap: i64) -> *mut GosVec {
     ffi_entry!(std::ptr::null_mut(), {
@@ -471,9 +553,7 @@ pub unsafe extern "C" fn gos_rt_vec_with_capacity(elem_bytes: u32, cap: i64) -> 
         // read (clippy::uninit_vec). The interpreter never observes a
         // slot before it's been explicitly written via push/insert,
         // but zeroing is cheap and removes the UB risk.
-        let mut buf: Vec<u8> = vec![0u8; bytes];
-        let ptr = buf.as_mut_ptr();
-        std::mem::forget(buf);
+        let ptr = alloc_vec_buffer(bytes);
         // Ledger + initial strong count, symmetric with `alloc_vec_header`
         // (gos_rt_vec_free always decrements the ledger).
         crate::c_abi::ledger::vec_inc();
@@ -514,9 +594,7 @@ pub unsafe extern "C" fn gos_rt_vec_with_capacity_typed(
             return unsafe { gos_rt_vec_new_typed(elem_bytes, kind) };
         }
         let bytes = (cap as usize) * (elem_bytes as usize);
-        let mut buf: Vec<u8> = vec![0u8; bytes];
-        let ptr = buf.as_mut_ptr();
-        std::mem::forget(buf);
+        let ptr = alloc_vec_buffer(bytes);
         // Ledger + initial strong count, symmetric with `alloc_vec_header`.
         crate::c_abi::ledger::vec_inc();
         let mut v = GosVec {
@@ -552,12 +630,10 @@ pub unsafe extern "C" fn gos_rt_vec_from_arr(
         let buf_ptr = if n == 0 || data.is_null() {
             std::ptr::null_mut()
         } else {
-            let mut buf: Vec<u8> = vec![0u8; n];
+            let p = alloc_vec_buffer(n);
             unsafe {
-                std::ptr::copy_nonoverlapping(data, buf.as_mut_ptr(), n);
+                std::ptr::copy_nonoverlapping(data, p, n);
             }
-            let p = buf.as_mut_ptr();
-            std::mem::forget(buf);
             p
         };
         // Ledger + initial strong count, symmetric with `alloc_vec_header`.
@@ -678,19 +754,14 @@ pub unsafe extern "C" fn gos_rt_vec_push(v: *mut GosVec, elem: *const u8) {
                     // No active region (grown after its pop — unusual): fall
                     // back to a global buffer; the region flag stays set so
                     // free still skips it (small bounded leak in this edge).
-                    let mut buf: Vec<u8> = vec![0u8; new_bytes];
+                    let new_buf = alloc_vec_buffer(new_bytes);
                     if !vec.ptr.is_null() && old_bytes > 0 {
                         unsafe {
-                            std::ptr::copy_nonoverlapping(
-                                vec.ptr.as_ptr(),
-                                buf.as_mut_ptr(),
-                                old_bytes,
-                            );
+                            std::ptr::copy_nonoverlapping(vec.ptr.as_ptr(), new_buf, old_bytes);
                         }
                     }
-                    vec.ptr = SyncRawPtr::new(buf.as_mut_ptr());
+                    vec.ptr = SyncRawPtr::new(new_buf);
                     vec.cap = new_cap;
-                    std::mem::forget(buf);
                 } else {
                     if !vec.ptr.is_null() && old_bytes > 0 {
                         unsafe {
@@ -702,24 +773,18 @@ pub unsafe extern "C" fn gos_rt_vec_push(v: *mut GosVec, elem: *const u8) {
                 }
             } else {
                 // Zero-initialised — see `gos_rt_vec_with_capacity`.
-                let mut buf: Vec<u8> = vec![0u8; new_bytes];
+                let new_buf = alloc_vec_buffer(new_bytes);
                 if !vec.ptr.is_null() && old_bytes > 0 {
                     unsafe {
-                        std::ptr::copy_nonoverlapping(
-                            vec.ptr.as_ptr(),
-                            buf.as_mut_ptr(),
-                            old_bytes,
-                        );
-                        // drop old allocation — sound only if `vec.ptr` was
-                        // allocated through `Vec<u8>::Global`. Every helper
-                        // that writes `vec.ptr` does so through that domain
-                        // (see fix_architecture_ownership.md Stage 1.a).
-                        Vec::from_raw_parts(vec.ptr.as_ptr(), old_bytes, old_bytes);
+                        std::ptr::copy_nonoverlapping(vec.ptr.as_ptr(), new_buf, old_bytes);
+                        // Free the old buffer; every helper that writes
+                        // `vec.ptr` allocates through `alloc_vec_buffer`, so
+                        // `free_vec_buffer` matches its layout exactly.
+                        free_vec_buffer(vec.ptr.as_ptr(), old_bytes);
                     }
                 }
-                vec.ptr = SyncRawPtr::new(buf.as_mut_ptr());
+                vec.ptr = SyncRawPtr::new(new_buf);
                 vec.cap = new_cap;
-                std::mem::forget(buf);
             }
         }
         // STRING / VEC / MAP elements are pointer-sized and transferred by

@@ -151,26 +151,9 @@ fn channel_roundtrips() {
 
 #[test]
 fn closure_roundtrips() {
-    use gossamer_hir::{HirExpr, HirExprKind, HirLiteral};
-    use gossamer_lex::Span;
-
-    let dummy_expr = HirExpr {
-        id: gossamer_hir::HirId(0),
-        span: Span::new(
-            {
-                let mut map = gossamer_lex::SourceMap::new();
-                map.add_file("t.gos", "")
-            },
-            0,
-            0,
-        ),
-        ty: gossamer_types::TyCtxt::new().unit(),
-        kind: HirExprKind::Literal(HirLiteral::Unit),
-    };
     let closure = gossamer_interp::Closure {
-        params: Vec::new(),
-        body: dummy_expr,
-        captures: Vec::new(),
+        chunk: gossamer_interp::FnChunk::default().into_shared(),
+        capture_values: Vec::new(),
     };
     let v = Value::Closure(Arc::new(closure));
     let decoded = Value::from_raw(v.to_raw());

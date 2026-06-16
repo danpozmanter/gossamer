@@ -1288,7 +1288,7 @@ impl Lowerer<'_> {
     /// trailing `"__base", base_expr` pair. The MIR layer fills any
     /// missing fields by reading `base.field` via projection.
     ///
-    /// Interpreter and codegen layers can recognise `__struct` as the
+    /// The VM and codegen layers can recognise `__struct` as the
     /// canonical struct-literal constructor without needing a new HIR
     /// node variant.
     fn lower_struct_literal(

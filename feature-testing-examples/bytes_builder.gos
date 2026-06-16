@@ -1,0 +1,46 @@
+// std::bytes — Builder (string assembly) + Buffer (byte accumulation)
+// + the stateless index_of / split / replace helpers. Exercises the
+// handle types across every tier; output is deterministic, so the
+// tier-parity harness asserts the strings are bit-identical on VM,
+// Cranelift, and LLVM. The explicit assert_eq covers the integer len.
+use std::bytes
+
+fn greeting(name: &String) -> String {
+    let mut b = bytes::Builder::new()
+    b.write(&"Hello, ")
+    b.write(name)
+    b.write_char('!')
+    b.build()
+}
+
+fn main() {
+    // Builder: incremental string assembly.
+    println!("{}", greeting(&"world"))
+
+    let mut acc = bytes::Builder::new()
+    let mut i = 0
+    while i < 3 {
+        acc.write(&"ab")
+        i += 1
+    }
+    assert_eq(acc.len(), 6)
+    println!("len={}", acc.len())
+    println!("{}", acc.build())
+
+    // Buffer: byte accumulation, rendered back to a String.
+    let mut buf = bytes::Buffer::new()
+    buf.write_str(&"hi")
+    buf.push(32)
+    buf.write_str(&"there")
+    println!("buflen={}", buf.len())
+    println!("{}", buf.to_string())
+
+    // Stateless helpers operate on the UTF-8 bytes of a string.
+    match bytes::index_of(&"hello world", &"world") {
+        Some(n) => println!("idx={}", n),
+        None => println!("idx=none"),
+    }
+    let parts = bytes::split(&"a,b,,c", &",")
+    println!("parts={}", parts.len())
+    println!("{}", bytes::replace(&"aXbXc", &"X", &"-"))
+}

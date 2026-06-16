@@ -1,0 +1,11 @@
+// `as usize` / `as u64` cast results compare via the typed-i64 path on
+// the interpreter (they alias i64-width), matching the compiled tiers.
+fn main() {
+    let x = 5
+    let y = 10
+    if (x as usize) < (y as usize) { println!("less") } else { println!("ge") }
+    let big = 300
+    println!("{}", (big as usize) + (big as usize))
+    let a = 9
+    if (a as u64) >= (y as u64) { println!("a>=y") } else { println!("a<y") }
+}

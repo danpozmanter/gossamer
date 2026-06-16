@@ -237,6 +237,10 @@ const PRELUDE_VALUES: &[&str] = &[
     // returns a handle whose `.join()` blocks for the outcome. Bare
     // prelude name so a user `fn spawn` overrides it.
     "spawn",
+    // `channel()` — typed goroutine channel constructor. Prelude so the
+    // injected `time::after` / `time::tick` timer wrappers can build a
+    // channel without the user importing `std::sync::channel`.
+    "channel",
     // Compile-time intrinsics referenced by macro expansion
     // (`println!` → `println(__concat(…))`) and struct-literal
     // lowering (`Path { f: v }` → `__struct("Path", "f", v)`).
@@ -244,6 +248,12 @@ const PRELUDE_VALUES: &[&str] = &[
     // code, but the resolver still traverses the expanded form.
     "__concat",
     "__fmt_prec",
+    // Format-spec intrinsics emitted by `{:spec}` macro expansion:
+    // `__fmt_pad` (width/align/fill), `__fmt_radix` (`{:x}`/`{:b}`/`{:o}`),
+    // `__fmt_upper` (`{:X}`). Lowered through the stdlib free-call table.
+    "__fmt_pad",
+    "__fmt_radix",
+    "__fmt_upper",
     "__struct",
     // LCG jump-ahead: routes to `gos_rt_lcg_jump`. Callable
     // from user code as `lcg_jump(state, ia, ic, im, n)`.
@@ -258,6 +268,7 @@ const PRELUDE_VALUES: &[&str] = &[
     "__gos_pem_decode_all_raw",
     "__gos_pem_encode_raw",
     "__gos_x509_parse_pem_raw",
+    "__gos_fs_metadata_raw",
     "__gos_tar_read_raw",
     "__gos_zip_read_raw",
     // Leaf intrinsics for the injected `database::sql` real-struct

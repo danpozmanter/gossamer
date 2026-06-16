@@ -1,0 +1,75 @@
+// Regression: stdlib surfaces whose values/args are aggregates
+// (struct / slice) must marshal bit-identically on the compiled
+// tiers, not just the bytecode VM.
+//
+// Covered live (tractable MIR-dispatch / coercion fixes):
+//   - HashMap<String, Vec<i64>> insert / get / or_insert. A
+//     String-keyed, aggregate-valued map used to insert via the
+//     i64/i64 path (key pointer reinterpreted as i64) but read back
+//     via the str path, so `.get` returned None; `.or_insert` had no
+//     dispatch entry and emitted an undefined `@or_insert` call.
+//   - flag::Set::parse([String array literal]). An array-literal arg
+//     lowers to a flat header-less stack aggregate; `parse` expects a
+//     real `*mut GosVec`, so it read a string pointer as the length
+//     and walked off into unmapped memory (SIGSEGV). env::args() (a
+//     real GosVec) always worked.
+//   - HashMap<String, Vec<i64>>.or_insert with a *fresh* key whose
+//     result is bound and used. `or_insert` returns a borrow of the
+//     map's stored value (like Rust's `&mut V`); for a fresh key the
+//     returned word aliases the inserted value temp, which the
+//     ctor-cleanup already frees, so treating the return as an owned
+//     vec double-freed it and hung at teardown. The fix marks the
+//     return as a borrowed pointer (no second free).
+//
+// fs::metadata struct-field access lives in fs_metadata.gos.
+
+use std::collections::HashMap
+use std::flag
+
+fn main() {
+    let mut m: HashMap<String, Vec<i64>> = HashMap::new()
+    m.insert("a", [1, 2, 3])
+    m.insert("b", [4, 5])
+
+    if let Some(v) = m.get("a") {
+        println!("a: len={} v0={} v2={}", v.len(), v[0], v[2])
+    } else {
+        println!("a: MISSING")
+    }
+    if let Some(v) = m.get("b") {
+        println!("b: len={} v0={}", v.len(), v[0])
+    } else {
+        println!("b: MISSING")
+    }
+
+    // or_insert on a FRESH key: inserts the default Vec and returns a
+    // borrow of it. Binding + using the result (len / index) is the
+    // shape that used to double-free and hang the compiled tier at
+    // teardown.
+    let fresh = m.or_insert("c", [11, 22, 33])
+    println!("c fresh: len={} v0={} v2={}", fresh.len(), fresh[0], fresh[2])
+
+    // or_insert on a PRESENT key returns the stored Vec unchanged.
+    let present = m.or_insert("a", [99])
+    println!("a present: len={} v0={}", present.len(), present[0])
+    m.insert("z", [7, 8])
+    if let Some(v) = m.get("z") {
+        println!("z: len={} v0={} v1={}", v.len(), v[0], v[1])
+    } else {
+        println!("z: MISSING")
+    }
+    if let Some(v) = m.get("a") {
+        println!("a unchanged: len={} v0={}", v.len(), v[0])
+    } else {
+        println!("a: MISSING")
+    }
+
+    // flag parse from an inline [String] array literal. A leading
+    // program-name element keeps the result stable regardless of the
+    // arg[0]-skip convention across tiers.
+    let mut fs = flag::Set::new("app")
+    let port = fs.uint("port", 8080, "listen port")
+    let verbose = fs.bool("verbose", false, "chatty output")
+    let _ = fs.parse(["app", "--port", "9090", "--verbose"])
+    println!("port = {} verbose = {}", port, verbose)
+}

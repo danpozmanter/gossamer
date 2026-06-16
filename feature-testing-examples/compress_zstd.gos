@@ -1,0 +1,28 @@
+// Cross-tier regression for std::compress::zstd (previously a phantom
+// module — manifest-advertised but unbound on every tier). encode /
+// encode_level / decode must round-trip identically on `gos run` and
+// `gos build`. A String argument is byte-coerced before the shim (the
+// same whitelist that gzip/base64 use), so this also guards the
+// String->bytes path that segfaulted before the fix.
+
+use std::compress
+
+fn main() {
+    let plain = "hello zstd world, hello zstd world, hello zstd world"
+    match compress::zstd::encode(plain) {
+        Ok(c) => match compress::zstd::decode(c) {
+            Ok(b) => println!("rt ok in={} c={} back={}", plain.len(), c.len(), b.len()),
+            Err(e) => println!("decode err {}", e),
+        },
+        Err(e) => println!("encode err {}", e),
+    }
+    match compress::zstd::encode_level(plain, 19) {
+        Ok(c) => println!("lvl19 c={}", c.len()),
+        Err(e) => println!("lvl err {}", e),
+    }
+    // Out-of-range level is a clean error on every tier.
+    match compress::zstd::encode_level(plain, 99) {
+        Ok(_) => println!("BUG: level 99 accepted"),
+        Err(_) => println!("lvl99 rejected"),
+    }
+}

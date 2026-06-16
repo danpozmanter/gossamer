@@ -14,4 +14,6 @@ Signed-cookie session store with pluggable backend trait.
 | `SignedCookieStore` | type | Cookie-backed store with HMAC signature; no server state. |
 | `SerializationMode` | type | Session payload encoding: Json or Bincode. |
 | `with_session` | fn | Run a closure with the session bound; persist any mutations. |
+| `sign` | fn | Sign session data into a tamper-evident cookie value. |
+| `verify` | fn | Verify and decode a signed session cookie value. |
 

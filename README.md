@@ -20,7 +20,7 @@ A language that balances developer experience, execution efficiency, and safety.
 | (Local) Borrow checking | ✓ |  |  |  |  |
 | No `null` by default | ✓ |  | ✓ |  | ✓ |
 | Immutable by default | ✓ |  | ✓ |  | ✓ |
-| Garbage collected |  | ✓ | ✓ | ✓ | ✓ |
+| Automatic memory management |  | ✓ | ✓ | ✓ | ✓ |
 | Lightweight concurrency primitives |  | ✓ | ✓ |  | ✓ |
 | Batteries-included standard library | ✓ | ✓ |  | ✓ | ✓ |
 | Fast compilation |  | ✓ |  |  |  |
@@ -28,6 +28,11 @@ A language that balances developer experience, execution efficiency, and safety.
 | Pipe operator (`\|>`) |  |  | ✓ |  | ✓ |
 | Interpreted / scripting mode |  |  | ✓ | ✓ | ✓ |
 | Interactive REPL |  |  | ✓ | ✓ | ✓ |
+
+Gossamer's automatic memory management is **deterministic**: reference
+counting reclaims a value the moment its last reference dies, an
+on-demand cycle collector handles reference cycles, and there is no
+tracing collector and no stop-the-world pause.
 
 Plus `arena { }` blocks, inspired by Zig: everything allocated inside
 the block is bump-allocated and freed wholesale when the block exits —

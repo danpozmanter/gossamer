@@ -126,7 +126,6 @@ pub(crate) fn install_sync_extras(globals: &mut Vec<(&'static str, Value)>) {
         ("Mutex::unlock", builtin_mutex_unlock),
         ("Mutex::store", builtin_mutex_store),
         ("Once::new", builtin_once_new),
-        ("Once::call", builtin_once_call),
         ("Map::new", builtin_sync_map_new),
         ("Map::set", builtin_sync_map_set),
         ("Map::insert", builtin_sync_map_set),
@@ -142,6 +141,15 @@ pub(crate) fn install_sync_extras(globals: &mut Vec<(&'static str, Value)>) {
         let qualified: &'static str = Box::leak(format!("sync::{name}").into_boxed_str());
         globals.push((qualified, crate::builtins::builtin_pub(qualified, *call)));
         globals.push((*name, crate::builtins::builtin_pub(name, *call)));
+    }
+
+    // `Once::call(o, || ...)` runs a closure, so it must be a `native`
+    // builtin with access to the interpreter dispatcher (a plain
+    // `BuiltinFnPub` cannot invoke the callback). Register both the
+    // bare and `sync::`-qualified spellings.
+    let once_call_entries: &[&str] = &["sync::Once::call", "Once::call"];
+    for name in once_call_entries {
+        globals.push((*name, Value::native(name, native_once_call)));
     }
 }
 
@@ -369,8 +377,7 @@ pub(crate) fn builtin_mutex_new(args: &[Value]) -> RuntimeResult<Value> {
     let init = args.first().cloned().unwrap_or(Value::Unit);
     let id = next_atomic_id();
     MUTEX_REGISTRY.with(|r| {
-        r.borrow_mut()
-            .insert(id, Arc::new(parking_lot::Mutex::new(init)));
+        r.borrow_mut().insert(id, Arc::new(MutexCell::new(init)));
     });
     Ok(Value::struct_(
         "sync::Mutex",
@@ -397,21 +404,24 @@ pub(crate) fn builtin_mutex_lock(args: &[Value]) -> RuntimeResult<Value> {
     let Some(id) = args.first().and_then(mutex_id_of) else {
         return Ok(Value::Unit);
     };
+    // Clone the handle out of the registry before acquiring, so the
+    // registry lock is not held while this goroutine parks on the
+    // mutex's condvar.
     let arc = MUTEX_REGISTRY.with(|r| r.borrow().get(&id).cloned());
     match arc {
-        Some(m) => {
-            let guard = m.lock();
-            Ok(guard.clone())
-        }
+        Some(cell) => Ok(cell.lock()),
         None => Ok(Value::Unit),
     }
 }
 
-pub(crate) fn builtin_mutex_unlock(_args: &[Value]) -> RuntimeResult<Value> {
-    // The VM's `lock()` acquires and releases atomically (the
-    // parking_lot guard is dropped before the builtin returns), so
-    // the lock is never held across Gossamer code. `unlock()` is
-    // therefore a no-op in the interpreted tier.
+pub(crate) fn builtin_mutex_unlock(args: &[Value]) -> RuntimeResult<Value> {
+    let Some(id) = args.first().and_then(mutex_id_of) else {
+        return Ok(Value::Unit);
+    };
+    let arc = MUTEX_REGISTRY.with(|r| r.borrow().get(&id).cloned());
+    if let Some(cell) = arc {
+        cell.unlock();
+    }
     Ok(Value::Unit)
 }
 
@@ -421,8 +431,8 @@ pub(crate) fn builtin_mutex_store(args: &[Value]) -> RuntimeResult<Value> {
     };
     let new_val = args.get(1).cloned().unwrap_or(Value::Unit);
     let arc = MUTEX_REGISTRY.with(|r| r.borrow().get(&id).cloned());
-    if let Some(m) = arc {
-        *m.lock() = new_val;
+    if let Some(cell) = arc {
+        cell.store(new_val);
     }
     Ok(Value::Unit)
 }
@@ -439,7 +449,14 @@ pub(crate) fn builtin_once_new(_args: &[Value]) -> RuntimeResult<Value> {
     ))
 }
 
-pub(crate) fn builtin_once_call(args: &[Value]) -> RuntimeResult<Value> {
+/// `Once::call(o, f)` — run `f` exactly once across all callers of the
+/// handle. Native so the closure can be invoked through the interpreter
+/// dispatcher; returns `true` on the call that executed the body, mirror
+/// of the compiled `gos_rt_once_call`.
+pub(crate) fn native_once_call(
+    dispatch: &mut dyn NativeDispatch,
+    args: &[Value],
+) -> RuntimeResult<Value> {
     let id = match args.first() {
         Some(Value::Struct(inner)) if inner.name == "sync::Once" => inner
             .fields
@@ -458,13 +475,19 @@ pub(crate) fn builtin_once_call(args: &[Value]) -> RuntimeResult<Value> {
             .unwrap_or(0),
         _ => return Ok(Value::Bool(false)),
     };
-    let mut ran = false;
+    let Some(f) = args.get(1).cloned() else {
+        return Ok(Value::Bool(false));
+    };
     let arc = ONCE_REGISTRY.with(|r| r.borrow().get(&id).cloned());
+    let mut ran = false;
+    let mut call_result: RuntimeResult<Value> = Ok(Value::Unit);
     if let Some(once) = arc {
         once.call_once(|| {
             ran = true;
+            call_result = dispatch.call_value(&f, Vec::new());
         });
     }
+    call_result?;
     Ok(Value::Bool(ran))
 }
 

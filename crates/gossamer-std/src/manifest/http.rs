@@ -103,7 +103,7 @@ pub const TLS: StdModule = StdModule {
 
 pub const HTML_TEMPLATE: StdModule = StdModule {
     path: "std::html::template",
-    summary: "Context-aware HTML templates with auto-escape.",
+    summary: "Context-aware HTML templates with auto-escape (text/attr/URL/JS). The context classifier is heuristic — sound for typical server-rendered responses but NOT a content-security-policy substitute; sanitize untrusted HTML fragments with a dedicated sanitizer.",
     items: &[
         StdItem {
             name: "Template",
@@ -119,6 +119,11 @@ pub const HTML_TEMPLATE: StdModule = StdModule {
             name: "render",
             kind: StdItemKind::Function,
             doc: "Renders a template with the supplied data context.",
+        },
+        StdItem {
+            name: "render_json",
+            kind: StdItemKind::Function,
+            doc: "render_json(source, json_data) -> Result<String, Error>: renders a context-aware HTML template against a JSON data context. Stateless and wired bit-identically across every tier.",
         },
     ],
 };
@@ -315,12 +320,12 @@ pub const HTTP_ROUTER: StdModule = StdModule {
         StdItem {
             name: "Router",
             kind: StdItemKind::Type,
-            doc: "Routing table (Rust-side full surface; method-chain bridge is interp tier).",
+            doc: "Routing table. `Router::new()` + verb method-chain (`r.get(pattern, handler)`) and `http::serve(addr, router)` dispatch work on every tier.",
         },
         StdItem {
             name: "Params",
             kind: StdItemKind::Type,
-            doc: "Captured path parameters.",
+            doc: "Captured path parameters. Read inside a handler with `r.path_value(name) -> String` (Go's `r.PathValue`); returns \"\" for an undeclared name. All tiers.",
         },
         StdItem {
             name: "Handler",
@@ -395,6 +400,11 @@ pub const HTTP_MIDDLEWARE: StdModule = StdModule {
             doc: "Generate a process-monotonic request id string. Available in interp + compiled.",
         },
         StdItem {
+            name: "tag",
+            kind: StdItemKind::Function,
+            doc: "Wrap a handler (`tag(inner) -> Handler`), prepending `mw:` to each response body. Deterministic composition primitive; available in interp + compiled.",
+        },
+        StdItem {
             name: "accepts_gzip",
             kind: StdItemKind::Function,
             doc: "Check an Accept-Encoding header for a gzip token. Available in interp + compiled.",
@@ -403,6 +413,11 @@ pub const HTTP_MIDDLEWARE: StdModule = StdModule {
             name: "decode_basic_auth",
             kind: StdItemKind::Function,
             doc: "Decode a Basic-auth Authorization header into (user, password). Interp tier.",
+        },
+        StdItem {
+            name: "bearer_ok",
+            kind: StdItemKind::Function,
+            doc: "Run a verify closure on the request's Bearer token; false (without calling verify) when no Bearer header is present. Available in interp + compiled.",
         },
     ],
 };
@@ -618,6 +633,11 @@ pub const HTTP_COOKIE: StdModule = StdModule {
             kind: StdItemKind::Function,
             doc: "Parse a Set-Cookie response header into a Cookie.",
         },
+        StdItem {
+            name: "serialize",
+            kind: StdItemKind::Function,
+            doc: "Render a Cookie as a Set-Cookie header value.",
+        },
     ],
 };
 
@@ -802,6 +822,16 @@ pub const HTTP_SESSION: StdModule = StdModule {
             name: "with_session",
             kind: StdItemKind::Function,
             doc: "Run a closure with the session bound; persist any mutations.",
+        },
+        StdItem {
+            name: "sign",
+            kind: StdItemKind::Function,
+            doc: "Sign session data into a tamper-evident cookie value.",
+        },
+        StdItem {
+            name: "verify",
+            kind: StdItemKind::Function,
+            doc: "Verify and decode a signed session cookie value.",
         },
     ],
 };

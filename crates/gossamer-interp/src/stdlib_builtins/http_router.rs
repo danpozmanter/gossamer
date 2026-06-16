@@ -129,6 +129,27 @@ pub(crate) fn install_http_router(globals: &mut Vec<(&'static str, Value)>) {
     for &(qualified, call) in ROUTER_METHODS {
         globals.push((qualified, crate::builtins::builtin_pub(qualified, call)));
     }
+    // `r.path_value("id")` on a server Request reads the router's path
+    // captures. Registered for both the bare and `http::`-qualified
+    // dispatch keys.
+    for key in ["Request::path_value", "http::Request::path_value"] {
+        globals.push((
+            key,
+            crate::builtins::builtin_pub(key, builtin_request_path_value as BuiltinFnPub),
+        ));
+    }
+    for key in ["Request::path_int", "http::Request::path_int"] {
+        globals.push((
+            key,
+            crate::builtins::builtin_pub(key, builtin_request_path_int as BuiltinFnPub),
+        ));
+    }
+    for key in ["Request::path_float", "http::Request::path_float"] {
+        globals.push((
+            key,
+            crate::builtins::builtin_pub(key, builtin_request_path_float as BuiltinFnPub),
+        ));
+    }
 }
 
 pub(crate) fn router_method_add(verb: &'static str, args: &[Value]) -> RuntimeResult<Value> {
@@ -195,20 +216,22 @@ pub(crate) fn native_router_serve(
     let request = args.get(1).cloned().unwrap_or(Value::Unit);
     // Extract method + path from the Request value.
     let (method, path) = request_method_and_path(&request);
-    // Find a matching route index.
-    let matched_idx: Option<usize> = ROUTER_REGISTRY.with(|r| {
+    // Find a matching route index and its captured path params in one
+    // pass, so selection and capture use identical matcher semantics.
+    let matched: Option<(usize, Vec<(String, String)>)> = ROUTER_REGISTRY.with(|r| {
         r.borrow().get(&router_id).and_then(|table| {
             let table = table.borrow();
             for (i, (m, pat)) in table.routes.iter().enumerate() {
-                if (m.is_empty() || m.eq_ignore_ascii_case(&method)) && pattern_matches(pat, &path)
-                {
-                    return Some(i);
+                if m.is_empty() || m.eq_ignore_ascii_case(&method) {
+                    if let Some(caps) = pattern_captures(pat, &path) {
+                        return Some((i, caps));
+                    }
                 }
             }
             None
         })
     });
-    let Some(idx) = matched_idx else {
+    let Some((idx, captures)) = matched else {
         return Ok(ok_variant(http_404_response()));
     };
     let handler = ROUTER_HANDLERS.with(|h| {
@@ -217,6 +240,10 @@ pub(crate) fn native_router_serve(
             .and_then(|hs| hs.get(idx).cloned())
             .unwrap_or(Value::Unit)
     });
+    // Attach captures to the request so the handler can read them via
+    // `r.path_value("id")`; mirrors the compiled tier writing
+    // `GosHttpRequest.params` in `gos_rt_router_serve`.
+    let request = inject_path_params(request, &captures);
     // Struct handlers route through `{StructName}::serve(handler, request)`
     // because the bare "serve" name is shared across every impl and gets
     // overwritten as more types load. Any other shape (Closure, Builtin,
@@ -253,6 +280,81 @@ pub(crate) fn request_method_and_path(v: &Value) -> (String, String) {
         }
     }
     (method, path)
+}
+
+/// Rebuild a `Request` struct value with a hidden `__params` field
+/// carrying the router's path captures. The handler reads them back
+/// through `Request::path_value`.
+fn inject_path_params(request: Value, captures: &[(String, String)]) -> Value {
+    let Value::Struct(inner) = &request else {
+        return request;
+    };
+    let mut fields: Vec<(Ident, Value)> = inner.fields.clone();
+    let params: Vec<Value> = captures
+        .iter()
+        .map(|(k, v)| {
+            Value::Tuple(Arc::new(vec![
+                Value::String(SmolStr::from(k.as_str())),
+                Value::String(SmolStr::from(v.as_str())),
+            ]))
+        })
+        .collect();
+    fields.push((Ident::new("__params"), Value::Array(Arc::new(params))));
+    Value::struct_(inner.name, fields)
+}
+
+/// Look up a router-captured path parameter on a server Request value
+/// (the hidden `__params` field) by name.
+fn path_param_str(args: &[Value]) -> Option<String> {
+    let name = arg_str(args.get(1));
+    let Some(Value::Struct(inner)) = args.first() else {
+        return None;
+    };
+    for (field, val) in &inner.fields {
+        if field.name == "__params" {
+            if let Value::Array(items) = val {
+                for item in items.iter() {
+                    if let Value::Tuple(t) = item {
+                        if let (Some(Value::String(k)), Some(Value::String(v))) =
+                            (t.first(), t.get(1))
+                        {
+                            if k.as_str() == name.as_str() {
+                                return Some(v.as_str().to_string());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+/// `Request::path_value(req, name) -> String` — the router-captured
+/// path parameter, or `""` when absent. Matches the compiled
+/// `gos_rt_http_request_path_value` shim.
+pub(crate) fn builtin_request_path_value(args: &[Value]) -> RuntimeResult<Value> {
+    Ok(Value::String(SmolStr::from(
+        path_param_str(args).unwrap_or_default(),
+    )))
+}
+
+/// `Request::path_int(req, name) -> Option<i64>` — typed extractor for
+/// a numeric path segment. `None` when absent or not an integer.
+pub(crate) fn builtin_request_path_int(args: &[Value]) -> RuntimeResult<Value> {
+    match path_param_str(args).and_then(|s| s.trim().parse::<i64>().ok()) {
+        Some(n) => Ok(some_variant(Value::Int(n))),
+        None => Ok(none_variant()),
+    }
+}
+
+/// `Request::path_float(req, name) -> Option<f64>` — typed extractor.
+/// `None` when absent or unparseable.
+pub(crate) fn builtin_request_path_float(args: &[Value]) -> RuntimeResult<Value> {
+    match path_param_str(args).and_then(|s| s.trim().parse::<f64>().ok()) {
+        Some(n) => Ok(some_variant(Value::Float(n))),
+        None => Ok(none_variant()),
+    }
 }
 
 pub(crate) fn builtin_router_new(_args: &[Value]) -> RuntimeResult<Value> {
@@ -328,22 +430,44 @@ pub(crate) fn builtin_router_lookup(args: &[Value]) -> RuntimeResult<Value> {
     }
 }
 
+/// Match `path` against a route `pattern`, collecting `{name}` and
+/// `{name...}` captures. `Some(params)` on a match (empty for a fully
+/// literal pattern), `None` otherwise. Mirrors the compiled tier's
+/// `route_segments_match` in `runtime::c_abi::http_bridges` so route
+/// selection and captures agree bit-for-bit across tiers.
+pub(crate) fn pattern_captures(pattern: &str, path: &str) -> Option<Vec<(String, String)>> {
+    let pat_segs: Vec<&str> = pattern.split('/').filter(|s| !s.is_empty()).collect();
+    let path_segs: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+    let mut params: Vec<(String, String)> = Vec::new();
+    let mut i = 0;
+    let mut j = 0;
+    while i < pat_segs.len() {
+        let p = pat_segs[i];
+        if p.starts_with('{') && p.ends_with("...}") {
+            params.push((p[1..p.len() - 4].to_string(), path_segs[j..].join("/")));
+            return Some(params);
+        } else if p.starts_with('{') && p.ends_with('}') {
+            if j >= path_segs.len() {
+                return None;
+            }
+            params.push((p[1..p.len() - 1].to_string(), path_segs[j].to_string()));
+            i += 1;
+            j += 1;
+        } else {
+            if j >= path_segs.len() || path_segs[j] != p {
+                return None;
+            }
+            i += 1;
+            j += 1;
+        }
+    }
+    if j == path_segs.len() {
+        Some(params)
+    } else {
+        None
+    }
+}
+
 pub(crate) fn pattern_matches(pattern: &str, path: &str) -> bool {
-    // Tiny matcher: exact match, plus `{name}` captures one
-    // path segment. Sufficient for the bridge surface; full
-    // typed / multi-segment captures land in #54.
-    let pat_segments: Vec<&str> = pattern.split('/').collect();
-    let req_segments: Vec<&str> = path.split('/').collect();
-    if pat_segments.len() != req_segments.len() {
-        return false;
-    }
-    for (p, q) in pat_segments.iter().zip(req_segments.iter()) {
-        if p.starts_with('{') && p.ends_with('}') {
-            continue;
-        }
-        if p != q {
-            return false;
-        }
-    }
-    true
+    pattern_captures(pattern, path).is_some()
 }

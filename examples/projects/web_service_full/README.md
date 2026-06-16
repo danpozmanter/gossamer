@@ -1,45 +1,59 @@
-# web_service_full — Track B joint-validation target
+# web_service_full
 
-End-to-end HTTP service stack:
+A complete, runnable HTTP service that exercises the production-stack
+shape end to end and behaves identically on every tier (bytecode VM,
+Cranelift JIT, LLVM AOT):
 
-- HTTP API with sqlite-backed CRUD
-- mTLS for service-to-service auth
+- HTTP routing with path parameters via `std::http::router`
+- A notes API in CRUD shape (`GET`/`POST`/`DELETE`)
 - Structured JSON logging via `std::slog`
-- Graceful shutdown via `signal::Notifier`
-- Run-time templating via `std::html::template`
+- Signal-driven graceful shutdown via `std::os::signal`
+- Server-side HTML rendering (HTML-escaped) for the browser view
 
-This service is the load-test target Track A uses to prove out the
-netpoller / scheduler integration. Until those land, the service
-runs on the thread-pool-backed I/O fallback documented in
-`~/dev/contexts/lang/prod_gaps.md`.
+The notes "store" is an in-memory seeded dataset. The language ships
+no in-the-box SQL driver — a driver is wired per project through the
+`[rust-bindings]` mechanism — so this example keeps the data in
+process to stay self-contained and runnable everywhere. Reads come
+from the seed; create/delete return the operation result the way a
+REST front end does.
 
 ## Endpoints
 
-| Method  | Path                    | Notes                              |
-|---------|-------------------------|------------------------------------|
-| `GET`   | `/health`               | `200 ok`                           |
-| `GET`   | `/notes`                | List every note as JSON.           |
-| `POST`  | `/notes`                | Create a note from JSON body.      |
-| `GET`   | `/notes/<id>`           | Single note by id.                 |
-| `DELETE`| `/notes/<id>`           | Delete by id.                      |
-| `GET`   | `/notes.html`           | HTML rendering via the template.   |
+| Method   | Path             | Notes                              |
+|----------|------------------|------------------------------------|
+| `GET`    | `/health`        | `200 ok`                           |
+| `GET`    | `/notes`         | List every seeded note as JSON.    |
+| `POST`   | `/notes`         | Create a note from a JSON body.    |
+| `GET`    | `/notes/{id}`    | Single note by id (`200` / `404`). |
+| `DELETE` | `/notes/{id}`    | Delete by id (`204` / `400`).      |
+| `GET`    | `/notes.html`    | HTML listing (escaped).            |
+
+The `{id}` segment is a router path parameter, read back in the
+handler with `r.path_int("id") -> Option<i64>`.
 
 ## Running
 
 ```
-gos run            # interpreter mode (HTTP only)
-gos build --release
-GOS_TLS_CERT=server.pem GOS_TLS_KEY=server.key ./web_service_full
+gos run                    # bytecode VM
+gos build --release && ./web_service_full
+
+curl -i http://localhost:8080/health
+curl -i http://localhost:8080/notes
+curl -i -X POST http://localhost:8080/notes -d '{"body":"hello"}'
+curl -i http://localhost:8080/notes/2
+curl -i -X DELETE http://localhost:8080/notes/2
+curl -i http://localhost:8080/notes.html
 ```
 
-When `GOS_TLS_CERT` / `GOS_TLS_KEY` / `GOS_TLS_CLIENT_CA` are set,
-the server runs over mTLS instead of plain HTTP.
+Structured logs are written to stderr as one JSON object per line.
+Press Ctrl-C (or send `SIGTERM`) to trigger the graceful-shutdown
+coordinator, which logs and exits cleanly.
 
 ## Testing
 
 ```
-gos test --parallel 4 --format junit --junit-out report.xml
+gos test
 ```
 
-The harness exercises every handler, the JSON encode / decode
-round trip, and the html template render.
+The unit tests cover the seed lookup, the JSON encoder, the HTML
+escaper, and the request-body parser without binding a socket.

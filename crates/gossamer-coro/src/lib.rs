@@ -38,7 +38,7 @@
 
 use std::cell::Cell;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicUsize, Ordering};
 
 /// Payload type for Gossamer-originated panics. Raised by the
 /// runtime's `gos_rt_panic` on the goroutine path and recognised by
@@ -102,11 +102,87 @@ pub fn stack_size() -> usize {
     })
 }
 
+/// Headroom reserved below the stack limit by the byte-budget
+/// recursion guard, in bytes. Must comfortably exceed one deep
+/// interpreter frame plus the error-construction / unwind path that
+/// runs *after* the guard fires. 256 KiB leaves room for several fat
+/// frames before the real guard page.
+pub const STACK_GUARD_MARGIN: usize = 256 * 1024;
+
+thread_local! {
+    /// Stack address captured at a shallow point (goroutine body
+    /// entry, or program start for the main thread) as the baseline
+    /// for the byte-budget recursion guard. `0` means unarmed —
+    /// callers fall back to a frame count.
+    static STACK_ORIGIN: Cell<usize> = const { Cell::new(0) };
+    /// Bytes of stack growth allowed past [`STACK_ORIGIN`] before the
+    /// guard trips. Set alongside the origin.
+    static STACK_BUDGET: Cell<usize> = const { Cell::new(0) };
+}
+
+/// Current stack pointer, approximated by the address of a stack
+/// local. Stacks grow downward on every platform Gossamer targets, so
+/// a larger value is a shallower stack.
+#[inline(never)]
+#[must_use]
+pub fn current_stack_ptr() -> usize {
+    let probe = 0u8;
+    std::ptr::from_ref(&probe) as usize
+}
+
+/// Arms the byte-budget recursion guard on the current thread:
+/// records the current (shallow) stack pointer as the origin and the
+/// bytes of growth allowed past it before [`stack_guard_tripped`]
+/// fires. Call at a shallow point — goroutine body entry (`budget =
+/// stack_size() - STACK_GUARD_MARGIN`) or program start.
+pub fn arm_stack_guard(budget: usize) {
+    STACK_ORIGIN.with(|o| o.set(current_stack_ptr()));
+    STACK_BUDGET.with(|b| b.set(budget));
+}
+
+/// Overwrites the guard origin/budget and returns the previous pair,
+/// so [`Goroutine::resume`] can re-arm a migrated goroutine on its
+/// new worker and restore the worker's prior state afterward.
+fn set_stack_guard(origin: usize, budget: usize) -> (usize, usize) {
+    let prev = (STACK_ORIGIN.with(Cell::get), STACK_BUDGET.with(Cell::get));
+    STACK_ORIGIN.with(|o| o.set(origin));
+    STACK_BUDGET.with(|b| b.set(budget));
+    prev
+}
+
+/// Whether the byte-budget guard is armed on this thread. When it is,
+/// recursion-depth checks should consult [`stack_guard_tripped`]
+/// (precise, frame-fatness-aware) rather than a frame count.
+#[must_use]
+pub fn stack_guard_armed() -> bool {
+    STACK_ORIGIN.with(Cell::get) != 0
+}
+
+/// Returns `true` when the armed guard's stack has grown past its
+/// budget — the caller must stop recursing and raise a clean
+/// stack-overflow error rather than let the native stack overflow
+/// (which aborts the whole process, fatal on a 1 MiB goroutine
+/// stack). Always `false` when unarmed.
+#[must_use]
+pub fn stack_guard_tripped() -> bool {
+    let origin = STACK_ORIGIN.with(Cell::get);
+    if origin == 0 {
+        return false;
+    }
+    let budget = STACK_BUDGET.with(Cell::get);
+    origin.saturating_sub(current_stack_ptr()) > budget
+}
+
 /// Stackful coroutine that runs a single Gossamer goroutine to
 /// completion across one or more `resume()` calls.
 pub struct Goroutine {
     coro: Coroutine<(), (), (), DefaultStack>,
     yielder_slot: Arc<AtomicPtr<()>>,
+    /// Stack origin captured at body entry, published so
+    /// [`Self::resume`] can re-arm the byte-budget guard when this
+    /// goroutine migrates to a different worker thread. `0` until the
+    /// first resume runs the body.
+    stack_origin_slot: Arc<AtomicUsize>,
 }
 
 // SAFETY: the coroutine's stack and saved register state are
@@ -129,6 +205,8 @@ impl Goroutine {
     pub fn new(main: Box<dyn FnOnce() + Send + 'static>) -> Self {
         let yielder_slot: Arc<AtomicPtr<()>> = Arc::new(AtomicPtr::new(std::ptr::null_mut()));
         let yielder_slot_clone = Arc::clone(&yielder_slot);
+        let stack_origin_slot: Arc<AtomicUsize> = Arc::new(AtomicUsize::new(0));
+        let stack_origin_slot_clone = Arc::clone(&stack_origin_slot);
         let stack = DefaultStack::new(stack_size()).expect("alloc goroutine stack");
         let coro = Coroutine::with_stack(stack, move |yielder: &Yielder<(), ()>, ()| {
             // The yielder is a stack value with an address that is
@@ -147,6 +225,13 @@ impl Goroutine {
                 .cast_mut();
             yielder_slot_clone.store(ptr, Ordering::Release);
             set_current_yielder(ptr);
+            // Arm the byte-budget recursion guard at the shallowest
+            // point of this goroutine's stack, and publish the origin
+            // so a post-migration `resume` can re-arm the new worker.
+            let origin = current_stack_ptr();
+            let budget = stack_size().saturating_sub(STACK_GUARD_MARGIN);
+            stack_origin_slot_clone.store(origin, Ordering::Release);
+            let _ = set_stack_guard(origin, budget);
             // contain panics inside the
             // goroutine body so they don't propagate to the
             // scheduler's `resume()` and abort the worker (and
@@ -169,7 +254,11 @@ impl Goroutine {
                 GOROUTINE_PANICKED.store(true, Ordering::Release);
             }
         });
-        Self { coro, yielder_slot }
+        Self {
+            coro,
+            yielder_slot,
+            stack_origin_slot,
+        }
     }
 
     /// Returns the yielder pointer for this goroutine, or null if
@@ -193,10 +282,22 @@ impl Goroutine {
     /// to the caller. (Suspended-then-resumed coroutines do not panic
     /// from the resume site itself.)
     pub fn resume(&mut self) -> bool {
-        match self.coro.resume(()) {
+        // Re-arm the byte-budget guard for this goroutine before
+        // switching to its stack: it may resume on a different worker
+        // than the one that first ran (and armed) it. The body arms
+        // the guard itself on the very first resume (origin still 0
+        // here). Restore the worker's prior state afterward.
+        let origin = self.stack_origin_slot.load(Ordering::Acquire);
+        let restore = (origin != 0)
+            .then(|| set_stack_guard(origin, stack_size().saturating_sub(STACK_GUARD_MARGIN)));
+        let done = match self.coro.resume(()) {
             CoroutineResult::Yield(()) => false,
             CoroutineResult::Return(()) => true,
+        };
+        if let Some((o, b)) = restore {
+            let _ = set_stack_guard(o, b);
         }
+        done
     }
 
     /// Returns whether the goroutine has finished.

@@ -21,11 +21,18 @@
 #   --no-doctests     skip `cargo test --doc --workspace --release`
 #   --no-rustdoc      skip `cargo doc -D rustdoc::broken_intra_doc_links`
 #
+# Output:
+#   --errors-only     suppress progress headers and success-time warning
+#                     lines; print output only for a step that FAILS (a
+#                     fully-clean run prints nothing). For CI / scripted
+#                     gates where only failures matter.
+#
 # Missing optional tools cause a clean skip rather than a failure;
 # everything that *can* run, runs.
 set -euo pipefail
 
 full=0
+errors_only=0
 run_sanitizers=1
 run_fuzz=1
 run_cross=1
@@ -36,6 +43,7 @@ run_rustdoc=1
 for arg in "$@"; do
     case "$arg" in
         --full)          full=1 ;;
+        --errors-only)   errors_only=1 ;;
         --no-sanitizers) run_sanitizers=0 ;;
         --no-fuzz)       run_fuzz=0 ;;
         --no-cross)      run_cross=0 ;;
@@ -65,7 +73,9 @@ run_step() {
     shift
     local log
     log="$(mktemp)"
-    echo "==> $label"
+    if [[ $errors_only -eq 0 ]]; then
+        echo "==> $label"
+    fi
     if [[ $full -eq 1 ]]; then
         if ! "$@" 2>&1 | tee "$log"; then
             rm -f "$log"
@@ -81,8 +91,11 @@ run_step() {
         # Surface warning / error lines (plus a couple of lines of
         # following context — diagnostics usually print the source
         # excerpt right after the header) so problems aren't silent
-        # even when the step succeeds with warnings.
-        grep -E -i -A 2 '^(warning|error)[:\[]|: warning:|: error:' "$log" || true
+        # even when the step succeeds with warnings. Suppressed under
+        # --errors-only, which prints output only for a failing step.
+        if [[ $errors_only -eq 0 ]]; then
+            grep -E -i -A 2 '^(warning|error)[:\[]|: warning:|: error:' "$log" || true
+        fi
     fi
     rm -f "$log"
 }

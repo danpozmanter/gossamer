@@ -81,6 +81,18 @@ pub(crate) fn returns_borrowed_pointer(name: &str) -> bool {
             | "gos_rt_vec_get_ptr"
             | "gos_rt_vec_first"
             | "gos_rt_vec_last"
+            // `m.or_insert(k, default)` / `m.get_or(k, default)` on a
+            // Vec-valued map hand back a borrow of the map's stored
+            // value (like Rust's `&mut V`), not an owned vec. The map
+            // still owns and frees each value. Freeing the returned
+            // borrow here would double-free: for a *fresh* key the
+            // returned word aliases the inserted value temp (which the
+            // ctor-cleanup already frees), and for a present key it
+            // aliases the value another binding owns.
+            | "gos_rt_map_or_insert_str_i64"
+            | "gos_rt_map_or_insert_i64_i64"
+            | "gos_rt_map_get_or_str_i64"
+            | "gos_rt_map_get_or_i64"
     )
 }
 

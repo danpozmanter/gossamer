@@ -9,6 +9,7 @@ impl Vm {
             .ok_or_else(|| RuntimeError::UnresolvedName(name.to_string()))?;
         match entry {
             Global::Value(value) => Ok(value.clone()),
+            Global::MutStatic(cell) => Ok(cell.lock().clone()),
             Global::Fn(_) => {
                 // Bytecode chunk (possibly with a deferred JIT
                 // override) — surface as the function's name

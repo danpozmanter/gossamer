@@ -23,6 +23,7 @@ pub(crate) mod run;
 pub(crate) mod scaffold;
 pub(crate) mod skill_prompt;
 pub(crate) mod test;
+pub(crate) mod traceback;
 pub(crate) mod watch;
 
 pub(crate) use run::RunMode;

@@ -1,0 +1,17 @@
+// thread::yield_now() had no compiled-tier dispatch arm. It performs
+// a goroutine-aware yield (Gosched) and returns unit, so the only
+// observable behaviour is that the program runs to completion
+// identically on every tier.
+
+use std::thread
+
+fn main() {
+    let mut sum = 0
+    for i in 0..5 {
+        thread::yield_now()
+        sum += i
+    }
+    println!("sum={}", sum)
+    thread::yield_now()
+    println!("done")
+}

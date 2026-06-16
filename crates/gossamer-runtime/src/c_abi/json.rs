@@ -72,7 +72,7 @@ pub struct GosJson {
 impl GosJson {
     /// Wraps a fresh `serde_json::Value` as the root of its own
     /// tree. Allocates one `Arc<Value>` and one `Box<GosJson>`.
-    fn into_raw(value: serde_json::Value) -> *mut GosJson {
+    pub(crate) fn into_raw(value: serde_json::Value) -> *mut GosJson {
         let tree = std::sync::Arc::new(value);
         let view = std::sync::Arc::as_ptr(&tree);
         Box::into_raw(Box::new(GosJson {
@@ -154,6 +154,24 @@ unsafe fn json_handle<'a>(p: *const GosJson) -> Option<&'a GosJson> {
 }
 
 /// `json::parse(text) -> Result<json::Value, String>` runtime
+/// `json::valid(text) -> bool` — true when `text` parses as
+/// well-formed JSON. Mirrors the interp `json::valid` builtin.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_json_valid(text: *const c_char) -> i8 {
+    ffi_entry!(0, {
+        let bytes: &[u8] = if text.is_null() {
+            b""
+        } else {
+            unsafe { CStr::from_ptr(text).to_bytes() }
+        };
+        let ok = std::str::from_utf8(bytes)
+            .ok()
+            .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
+            .is_some();
+        i8::from(ok)
+    })
+}
+
 /// entry point. Returns a real `GosResult` so `match` and `?`
 /// work across function boundaries in compiled code.
 #[unsafe(no_mangle)]
@@ -444,6 +462,19 @@ pub unsafe extern "C" fn gos_rt_json_as_bool(j: *const GosJson) -> i32 {
     })
 }
 
+/// `json::as_bool(value) -> Option<bool>` — `Some(b)` only when the
+/// value is a JSON boolean, else `None`. Result-shaped (disc 0 =
+/// Some, disc 1 = None) to match the bytecode VM's `Option<bool>`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_json_as_bool_opt(j: *const GosJson) -> i128 {
+    ffi_entry!(0i128, {
+        match unsafe { json_borrow(j) } {
+            Some(serde_json::Value::Bool(b)) => unsafe { gos_rt_result_new(0, i64::from(*b)) },
+            _ => unsafe { gos_rt_result_new(1, 0) },
+        }
+    })
+}
+
 /// Identity helper for `json::as_array` / similar type
 /// assertions — the runtime doesn't keep separate array vs
 /// object handles, so the as_* coercions just thread the
@@ -602,10 +633,14 @@ pub unsafe extern "C" fn gos_rt_json_value_array(vec: *const GosVec) -> *mut Gos
             let header = unsafe { &*vec };
             let len = usize::try_from(header.len.max(0)).unwrap_or(0);
             if !header.ptr.is_null() && len > 0 {
-                let elems =
-                    unsafe { std::slice::from_raw_parts(header.ptr.cast::<*const GosJson>(), len) };
-                for elem in elems {
-                    if let Some(v) = unsafe { json_borrow(*elem) } {
+                let base = header.ptr;
+                for i in 0..len {
+                    // Slots hold child pointers exposed as integers by the
+                    // flat-slot ABI in an unaligned byte buffer; read
+                    // unaligned and recover provenance.
+                    let addr = unsafe { base.add(i * 8).cast::<usize>().read_unaligned() };
+                    let elem: *const GosJson = std::ptr::with_exposed_provenance(addr);
+                    if let Some(v) = unsafe { json_borrow(elem) } {
                         out.push(v.clone());
                     } else {
                         out.push(serde_json::Value::Null);
@@ -814,7 +849,11 @@ mod tests {
         // Probe-share key 0, free the vec WITHOUT iterating (the
         // early-break consumer shape): deep-free must release exactly
         // the vec's share — rc 2 -> 1, not 2 (leak), not 0 (double free).
-        let k0 = unsafe { (vec.ptr.as_ptr() as *const *mut c_char).read_unaligned() };
+        let k0 = unsafe {
+            std::ptr::with_exposed_provenance_mut::<c_char>(
+                (vec.ptr.as_ptr() as *const usize).read_unaligned(),
+            )
+        };
         unsafe { crate::c_abi::string::gos_rt_str_retain(k0) };
         assert_eq!(unsafe { str_rc(k0) }, 2);
         unsafe { crate::c_abi::map::gos_rt_vec_free(v) };

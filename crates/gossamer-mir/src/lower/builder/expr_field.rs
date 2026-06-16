@@ -248,7 +248,25 @@ impl<'a> Builder<'a> {
         // instead of `tmp = a[i]; tmp.x` (and the latter's
         // lost-struct-name fallback to the unsupported placeholder).
         if let Some(mut place) = self.lower_place_expr(receiver) {
-            if let Some(rk) = self.local_runtime_kind.get(&place.local).copied() {
+            // Recover the runtime-handle kind from the local's *type* when
+            // its construction-site tag was lost — e.g. an `http::Response`
+            // returned from a user function (`let r = attach(r)`) or bound
+            // through a `let`. Without this the `.headers` / `.body` field
+            // projection falls through to a positional struct read against a
+            // handle the codegen treats as an opaque pointer.
+            let rk = self.local_runtime_kind.get(&place.local).copied().or_else(|| {
+                let lty = self.locals[place.local.0 as usize].ty;
+                let inner = match self.tcx.kind_of(lty) {
+                    gossamer_types::TyKind::Ref { inner, .. } => *inner,
+                    _ => lty,
+                };
+                self.struct_name_of(inner).and_then(|s| match s.as_str() {
+                    "Response" => Some("http::Response"),
+                    "Request" => Some("http::Request"),
+                    _ => None,
+                })
+            });
+            if let Some(rk) = rk {
                 let helper: Option<(&'static str, Ty)> = match (rk, name.name.as_str()) {
                     ("http::Response", "status") => Some((
                         "gos_rt_http_response_status",

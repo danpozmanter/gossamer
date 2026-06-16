@@ -11,8 +11,8 @@ use gossamer_codegen_cranelift::{
 use gossamer_hir::{lift_closures, lower_source_file};
 use gossamer_lex::SourceMap;
 use gossamer_mir::{
-    Body, check_generic_layouts, inline_small_callees, inline_trivial_wrappers, lower_program,
-    optimise,
+    Body, check_generic_layouts, inline_general, inline_small_callees, inline_trivial_wrappers,
+    lower_program, optimise,
 };
 use gossamer_resolve::{Resolutions, resolve_source_file};
 use gossamer_types::{TyCtxt, TypeTable, typecheck_source_file};
@@ -262,6 +262,7 @@ fn lower_to_mir_from_frontend(checked: CheckedFrontend) -> (Vec<Body>, TyCtxt) {
     gossamer_mir::monomorphise(&mut bodies, &mut tcx);
     inline_trivial_wrappers(&mut bodies);
     inline_small_callees(&mut bodies);
+    inline_general(&mut bodies);
     for body in &mut bodies {
         optimise(body, &tcx);
     }
@@ -300,6 +301,7 @@ fn lower_to_mir_with_tcx(source: &str, unit_name: &str) -> (Vec<Body>, TyCtxt) {
     gossamer_mir::monomorphise(&mut bodies, &mut tcx);
     inline_trivial_wrappers(&mut bodies);
     inline_small_callees(&mut bodies);
+    inline_general(&mut bodies);
     for body in &mut bodies {
         optimise(body, &tcx);
     }

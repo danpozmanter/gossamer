@@ -1,0 +1,89 @@
+// Exercises the eight iter combinators that previously had no
+// compiled-tier lowering (enumerate, zip, flatten, dedup, unzip,
+// windowed, pairwise, chunk_by_size) plus the reversed-index idiom
+// `iter::reversed(xs)[i]` (the unannotated-result SIGSEGV class).
+//
+// i64-element only — matches the `_i64` shim family. Output is
+// scalar-only (no tuple Debug) so it is bit-identical across the
+// bytecode VM, the Cranelift JIT, and LLVM AOT. Pair with
+// tier_parity so any per-tier regression trips the stdout gate.
+
+use std::iter
+
+fn main() {
+    let xs = [10, 20, 30, 40]
+
+    // -- enumerate: Vec<(i64, i64)>, destructured in a for-loop.
+    let mut esum = 0
+    for (i, x) in iter::enumerate(xs) {
+        esum += i * 100 + x
+    }
+    println!("enumerate {}", esum)
+
+    // -- zip: stops at the shorter input.
+    let ys = [1, 2, 3]
+    let mut zsum = 0
+    for (a, b) in iter::zip(xs, ys) {
+        zsum += a + b
+    }
+    println!("zip {}", zsum)
+
+    // -- flatten: Vec<Vec<i64>> -> Vec<i64>.
+    let nested = [[1, 2], [3], [4, 5, 6]]
+    let mut fsum = 0
+    for v in iter::flatten(nested) {
+        fsum += v
+    }
+    println!("flatten {}", fsum)
+
+    // -- dedup: drop consecutive duplicates.
+    let dups = [1, 1, 2, 2, 2, 3, 1]
+    let mut dcount = 0
+    for v in iter::dedup(dups) {
+        dcount += 1
+    }
+    println!("dedup {}", dcount)
+
+    // -- unzip: Vec<(i64, i64)> -> (Vec<i64>, Vec<i64>).
+    let pairs = iter::zip(xs, ys)
+    let (lefts, rights) = iter::unzip(pairs)
+    println!("unzip {} {}", lefts[0], rights[0])
+
+    // -- windowed(n, xs): sliding width-2 windows.
+    let mut wsum = 0
+    for w in iter::windowed(2, xs) {
+        wsum += w[0] * w[1]
+    }
+    println!("windowed {}", wsum)
+
+    // -- pairwise: successive overlapping pairs.
+    let mut psum = 0
+    for (a, b) in iter::pairwise(xs) {
+        psum += b - a
+    }
+    println!("pairwise {}", psum)
+
+    // -- chunk_by_size(n, xs): consecutive chunks, final may be short.
+    let nine = [1, 2, 3, 4, 5]
+    let mut chunks = 0
+    let mut last_first = 0
+    for c in iter::chunk_by_size(2, nine) {
+        chunks += 1
+        last_first = c[0]
+    }
+    println!("chunk_by_size {} {}", chunks, last_first)
+
+    // -- reversed-index idiom: indexing the heap-vec result directly,
+    // with no `: [i64]` annotation (the SIGSEGV regression).
+    let r = iter::reversed(xs)
+    println!("reversed {} {} {} {}", r[0], r[1], r[2], r[3])
+
+    // -- same crash class for take / skip / chain / range / repeat.
+    let t = iter::take(2, xs)
+    let s = iter::skip(2, xs)
+    let ch = iter::chain(ys, ys)
+    let rg = iter::range(0, 4)
+    let rp = iter::repeat(7, 3)
+    println!("take {} skip {} chain {} range {} repeat {}",
+        t[0], s[0], ch[3], rg[3], rp[2])
+}

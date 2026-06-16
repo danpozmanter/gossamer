@@ -596,12 +596,17 @@ impl<'a> Builder<'a> {
                 self.set_current(next);
                 Some(dest)
             }
-            ("iter::min", 1) => self.lower_iter_simple_vec_i64("gos_rt_iter_min_i64", args, span),
-            ("iter::max", 1) => self.lower_iter_simple_vec_i64("gos_rt_iter_max_i64", args, span),
+            ("iter::min", 1) => {
+                self.lower_iter_simple_vec_i64_opt("gos_rt_iter_min_i64", args, span)
+            }
+            ("iter::max", 1) => {
+                self.lower_iter_simple_vec_i64_opt("gos_rt_iter_max_i64", args, span)
+            }
             ("iter::range", 2) => {
                 let a = self.lower_expr(&args[0])?;
                 let b = self.lower_expr(&args[1])?;
-                let dest = self.fresh(ty);
+                let vec_i64 = self.tcx.intern(TyKind::Vec(i64_ty));
+                let dest = self.fresh(vec_i64);
                 let next = self.new_block(span);
                 self.terminate(Terminator::Call {
                     callee: Operand::Const(ConstValue::Str("gos_rt_iter_range".to_string())),
@@ -637,7 +642,8 @@ impl<'a> Builder<'a> {
             ("iter::repeat", 2) => {
                 let v = self.lower_expr(&args[0])?;
                 let n = self.lower_expr(&args[1])?;
-                let dest = self.fresh(ty);
+                let vec_i64 = self.tcx.intern(TyKind::Vec(i64_ty));
+                let dest = self.fresh(vec_i64);
                 let next = self.new_block(span);
                 self.terminate(Terminator::Call {
                     callee: Operand::Const(ConstValue::Str("gos_rt_iter_repeat_i64".to_string())),
@@ -654,7 +660,8 @@ impl<'a> Builder<'a> {
             ("iter::take", 2) => {
                 let n = self.lower_expr(&args[0])?;
                 let v = self.lower_iter_vec_arg(&args[1])?;
-                let dest = self.fresh(ty);
+                let vec_i64 = self.tcx.intern(TyKind::Vec(i64_ty));
+                let dest = self.fresh(vec_i64);
                 let next = self.new_block(span);
                 self.terminate(Terminator::Call {
                     callee: Operand::Const(ConstValue::Str("gos_rt_iter_take_i64".to_string())),
@@ -671,7 +678,8 @@ impl<'a> Builder<'a> {
             ("iter::skip", 2) => {
                 let n = self.lower_expr(&args[0])?;
                 let v = self.lower_iter_vec_arg(&args[1])?;
-                let dest = self.fresh(ty);
+                let vec_i64 = self.tcx.intern(TyKind::Vec(i64_ty));
+                let dest = self.fresh(vec_i64);
                 let next = self.new_block(span);
                 self.terminate(Terminator::Call {
                     callee: Operand::Const(ConstValue::Str("gos_rt_iter_skip_i64".to_string())),
@@ -691,7 +699,8 @@ impl<'a> Builder<'a> {
             ("iter::chain", 2) => {
                 let a = self.lower_iter_vec_arg(&args[0])?;
                 let b = self.lower_iter_vec_arg(&args[1])?;
-                let dest = self.fresh(ty);
+                let vec_i64 = self.tcx.intern(TyKind::Vec(i64_ty));
+                let dest = self.fresh(vec_i64);
                 let next = self.new_block(span);
                 self.terminate(Terminator::Call {
                     callee: Operand::Const(ConstValue::Str("gos_rt_iter_chain_i64".to_string())),
@@ -704,6 +713,97 @@ impl<'a> Builder<'a> {
                 });
                 self.set_current(next);
                 Some(dest)
+            }
+            ("iter::dedup", 1) => {
+                self.lower_iter_simple_vec_in_vec_out("gos_rt_iter_dedup_i64", args, ty, span)
+            }
+            ("iter::flatten", 1) => {
+                let vec_local = self.lower_iter_vec_arg(&args[0])?;
+                let dest_ty = self.tcx.intern(TyKind::Vec(i64_ty));
+                Some(self.emit_combinator_call(
+                    "gos_rt_iter_flatten_i64",
+                    vec![Operand::Copy(Place::local(vec_local))],
+                    dest_ty,
+                    span,
+                ))
+            }
+            ("iter::enumerate", 1) => {
+                let vec_local = self.lower_iter_vec_arg(&args[0])?;
+                let pair = self.tcx.intern(TyKind::Tuple(vec![i64_ty, i64_ty]));
+                let dest_ty = self.tcx.intern(TyKind::Vec(pair));
+                Some(self.emit_combinator_call(
+                    "gos_rt_iter_enumerate_i64",
+                    vec![Operand::Copy(Place::local(vec_local))],
+                    dest_ty,
+                    span,
+                ))
+            }
+            ("iter::zip", 2) => {
+                let a = self.lower_iter_vec_arg(&args[0])?;
+                let b = self.lower_iter_vec_arg(&args[1])?;
+                let pair = self.tcx.intern(TyKind::Tuple(vec![i64_ty, i64_ty]));
+                let dest_ty = self.tcx.intern(TyKind::Vec(pair));
+                Some(self.emit_combinator_call(
+                    "gos_rt_iter_zip_i64",
+                    vec![
+                        Operand::Copy(Place::local(a)),
+                        Operand::Copy(Place::local(b)),
+                    ],
+                    dest_ty,
+                    span,
+                ))
+            }
+            ("iter::pairwise", 1) => {
+                let vec_local = self.lower_iter_vec_arg(&args[0])?;
+                let pair = self.tcx.intern(TyKind::Tuple(vec![i64_ty, i64_ty]));
+                let dest_ty = self.tcx.intern(TyKind::Vec(pair));
+                Some(self.emit_combinator_call(
+                    "gos_rt_iter_pairwise_i64",
+                    vec![Operand::Copy(Place::local(vec_local))],
+                    dest_ty,
+                    span,
+                ))
+            }
+            ("iter::windowed", 2) => {
+                let n = self.lower_expr(&args[0])?;
+                let vec_local = self.lower_iter_vec_arg(&args[1])?;
+                let inner = self.tcx.intern(TyKind::Vec(i64_ty));
+                let dest_ty = self.tcx.intern(TyKind::Vec(inner));
+                Some(self.emit_combinator_call(
+                    "gos_rt_iter_windowed_i64",
+                    vec![
+                        Operand::Copy(Place::local(n)),
+                        Operand::Copy(Place::local(vec_local)),
+                    ],
+                    dest_ty,
+                    span,
+                ))
+            }
+            ("iter::chunk_by_size", 2) => {
+                let n = self.lower_expr(&args[0])?;
+                let vec_local = self.lower_iter_vec_arg(&args[1])?;
+                let inner = self.tcx.intern(TyKind::Vec(i64_ty));
+                let dest_ty = self.tcx.intern(TyKind::Vec(inner));
+                Some(self.emit_combinator_call(
+                    "gos_rt_iter_chunk_by_size_i64",
+                    vec![
+                        Operand::Copy(Place::local(n)),
+                        Operand::Copy(Place::local(vec_local)),
+                    ],
+                    dest_ty,
+                    span,
+                ))
+            }
+            ("iter::unzip", 1) => {
+                let vec_local = self.lower_iter_vec_arg(&args[0])?;
+                let vec_i64 = self.tcx.intern(TyKind::Vec(i64_ty));
+                let dest_ty = self.tcx.intern(TyKind::Tuple(vec![vec_i64, vec_i64]));
+                Some(self.emit_combinator_call(
+                    "gos_rt_iter_unzip_i64",
+                    vec![Operand::Copy(Place::local(vec_local))],
+                    dest_ty,
+                    span,
+                ))
             }
             // Closure-taking helpers. Args are `(f, ..., xs)`; coerce
             // the closure to its callback FnTrait shape so the
@@ -1253,6 +1353,76 @@ impl<'a> Builder<'a> {
                     span,
                 ))
             }
+            ("sync::Once::call" | "Once::call", 2) => {
+                // `Once::call(o, || ...)` — handle first, nullary closure
+                // second. The closure crosses the C-ABI through the same
+                // env-thunk convention as `option::default_with`; the run
+                // body's value is ignored (the i64 result is the ran flag).
+                let handle = self.lower_expr(&args[0])?;
+                let closure = self.lower_iter_closure(&args[1], &[], i64_ty, span)?;
+                Some(self.emit_combinator_call(
+                    "gos_rt_once_call",
+                    vec![
+                        Operand::Copy(Place::local(handle)),
+                        Operand::Copy(Place::local(closure)),
+                    ],
+                    i64_ty,
+                    span,
+                ))
+            }
+            ("middleware::bearer_ok" | "http::middleware::bearer_ok", 2) => {
+                // `bearer_ok(req, verify)` — request first, a
+                // String-taking verify closure second. Mirrors the
+                // VM-native `native_bearer_ok`; the closure runs on the
+                // extracted Bearer token and its bool result is returned
+                // (false, without calling verify, when no Bearer header
+                // is present).
+                let string_ty = self.tcx.string_ty();
+                let req = self.lower_expr(&args[0])?;
+                let verify = self.lower_iter_closure(&args[1], &[string_ty], bool_ty, span)?;
+                Some(self.emit_combinator_call(
+                    "gos_rt_http_bearer_ok",
+                    vec![
+                        Operand::Copy(Place::local(req)),
+                        Operand::Copy(Place::local(verify)),
+                    ],
+                    bool_ty,
+                    span,
+                ))
+            }
+            ("sync::RwLock::with_read" | "RwLock::with_read", 2) => {
+                // `RwLock::with_read(lock, |v| ...)` — handle first, an
+                // i64-taking closure second. Mirrors the VM-native
+                // `native_rwlock_with_read`; the callback runs under a
+                // read lock and its result is returned unchanged.
+                let handle = self.lower_expr(&args[0])?;
+                let closure = self.lower_iter_closure(&args[1], &[i64_ty], i64_ty, span)?;
+                Some(self.emit_combinator_call(
+                    "gos_rt_rwlock_with_read",
+                    vec![
+                        Operand::Copy(Place::local(handle)),
+                        Operand::Copy(Place::local(closure)),
+                    ],
+                    i64_ty,
+                    span,
+                ))
+            }
+            ("sync::RwLock::with_write" | "RwLock::with_write", 2) => {
+                // `RwLock::with_write(lock, |v| ...)` — the callback runs
+                // under a write lock and its result becomes the new
+                // guarded value, which is also returned.
+                let handle = self.lower_expr(&args[0])?;
+                let closure = self.lower_iter_closure(&args[1], &[i64_ty], i64_ty, span)?;
+                Some(self.emit_combinator_call(
+                    "gos_rt_rwlock_with_write",
+                    vec![
+                        Operand::Copy(Place::local(handle)),
+                        Operand::Copy(Place::local(closure)),
+                    ],
+                    i64_ty,
+                    span,
+                ))
+            }
             ("option::default_with", 2) => {
                 let closure = self.lower_iter_closure(&args[0], &[], i64_ty, span)?;
                 let opt = self.lower_expr(&args[1])?;
@@ -1665,6 +1835,32 @@ impl<'a> Builder<'a> {
         Some(dest)
     }
 
+    /// Like [`Self::lower_iter_simple_vec_i64`] but pins the dest as a
+    /// boxed `Option<i64>` (the 16-byte Result/Option ABI), for
+    /// terminals such as `iter::min` / `iter::max` whose Gossamer type
+    /// is `Option<i64>`. The matching shim returns an i128-packed
+    /// Option (None = 1, Some(m) = `gos_rt_result_new(0, m)`).
+    pub(crate) fn lower_iter_simple_vec_i64_opt(
+        &mut self,
+        helper: &str,
+        args: &[HirExpr],
+        span: Span,
+    ) -> Option<Local> {
+        let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+        let opt_ty = self.option_payload_adt_ty(i64_ty);
+        let v = self.lower_iter_vec_arg(&args[0])?;
+        let dest = self.fresh(opt_ty);
+        let next = self.new_block(span);
+        self.terminate(Terminator::Call {
+            callee: Operand::Const(ConstValue::Str(helper.to_string())),
+            args: vec![Operand::Copy(Place::local(v))],
+            destination: Place::local(dest),
+            target: Some(next),
+        });
+        self.set_current(next);
+        Some(dest)
+    }
+
     pub(crate) fn lower_iter_simple_vec_in_vec_out(
         &mut self,
         helper: &str,
@@ -1672,8 +1868,19 @@ impl<'a> Builder<'a> {
         ty: Ty,
         span: Span,
     ) -> Option<Local> {
+        use gossamer_types::{IntTy, TyKind};
         let v = self.lower_iter_vec_arg(&args[0])?;
-        let dest = self.fresh(ty);
+        // Pin the dest to `Vec<elem>` (never the call's raw Array/Var
+        // type): the shim returns a heap `*mut GosVec`, so an
+        // unannotated `iter::reversed(xs)[i]` would otherwise take the
+        // stack-array index path on a heap pointer and SIGSEGV.
+        let i64_ty = self.tcx.int_ty(IntTy::I64);
+        let elem = match self.tcx.kind_of(ty) {
+            TyKind::Array { elem, .. } | TyKind::Slice(elem) | TyKind::Vec(elem) => *elem,
+            _ => i64_ty,
+        };
+        let vec_ty = self.tcx.intern(TyKind::Vec(elem));
+        let dest = self.fresh(vec_ty);
         let next = self.new_block(span);
         self.terminate(Terminator::Call {
             callee: Operand::Const(ConstValue::Str(helper.to_string())),

@@ -10,18 +10,19 @@
 
 ## 1. Introduction
 
-Gossamer is a general-purpose, garbage-collected, statically typed
-programming language with first-class concurrency. It runs on the same
-target set as Go, compiles to a single self-contained binary, and shares
-Go's runtime model (M:N goroutine scheduler, channels, concurrent
-garbage collection). Its surface syntax, type system, and error-handling
+Gossamer is a general-purpose, automatically memory-managed, statically
+typed programming language with first-class concurrency. It runs on the
+same target set as Go, compiles to a single self-contained binary, and
+shares Go's runtime model (M:N goroutine scheduler, channels, automatic
+memory management). Its surface syntax, type system, and error-handling
 discipline are taken from Rust (2024 edition): `fn` declarations, `let`
 bindings, `struct`/`enum`/`trait`/`impl`, pattern matching, `Option` and
 `Result`, the `?` operator, monomorphized generics.
 
 Gossamer deliberately omits:
 
-- Lifetimes and the borrow checker (GC removes the need).
+- Lifetimes and the borrow checker (automatic memory management
+  removes the need).
 - Manual memory management and `Drop` semantics tied to stack frames.
 - `nil`/`null` of any kind.
 - Raw pointers in safe code.
@@ -139,8 +140,8 @@ Reserved but currently unused (future extensions): `async`, `await`,
 is reserved but has no role — source files do not declare a package;
 see §6. `move` is **not** a keyword: Gossamer has no ownership
 transfer, so the Rust-style `move` closure qualifier would be
-meaningless. Closures capture by GC reference for heap types and by
-copy for `Copy` types with no opt-in needed.
+meaningless. Closures capture by managed reference for heap types and
+by copy for `Copy` types with no opt-in needed.
 
 ### 2.5 Operators and punctuation
 
@@ -157,7 +158,7 @@ copy for `Copy` types with no opt-in needed.
 ```
 
 Unlike Rust, Gossamer does not use `&` to mean "borrow" — `&expr` takes
-a GC-managed reference (see §4.3). The `*` operator is used only for
+a managed reference (see §4.3). The `*` operator is used only for
 pointer dereference inside `unsafe` blocks; regular method/field access
 auto-dereferences.
 
@@ -306,10 +307,10 @@ error.
 
 ### 3.2 Strings
 
-`String` is a GC-managed, growable UTF-8 string. It is mutable through
-`push_str`, `+`, and similar methods. Because `String` is GC-managed,
-there is no `&str`/`String` split and no lifetime parameter. String
-literals have type `String`.
+`String` is a runtime-managed, growable UTF-8 string. It is mutable
+through `push_str`, `+`, and similar methods. Because `String` is
+runtime-managed, there is no `&str`/`String` split and no lifetime
+parameter. String literals have type `String`.
 
 `char` is a 32-bit Unicode scalar value. A `String` is not indexable by
 `char`; iteration is via `.chars()` (an iterator of `char`) or
@@ -328,7 +329,7 @@ bytes.
 | `HashSet<T>`, `BTreeSet<T>` | Sets. |
 | `Sender<T>`, `Receiver<T>` | Channel endpoints. Always come as a pair from `channel<T>()`. |
 
-All collections are GC-managed reference types. Assigning
+All collections are managed reference types. Assigning
 `let b = a;` where `a: Vec<T>` creates a second reference to the same
 underlying slice (same as Go's behavior). For a deep copy, use
 `.clone()`.
@@ -364,27 +365,27 @@ type: `let g: Vec<Vec<i64>> = [[1, 2], [3]]` builds a Vec of Vecs.
 
 - `T` — a value. For `Copy` types (primitive numerics, `bool`, `char`,
   small POD structs) pass/return is a copy. For heap-managed types,
-  `T` still names a GC reference — assignment and parameter passing
-  create a second reference to the same heap cell. There is no
+  `T` still names a managed reference — assignment and parameter
+  passing create a second reference to the same heap cell. There is no
   ownership transfer and no `move` keyword: the original binding
   remains accessible.
-- `&T` — a **shared GC reference** to a value of type `T`. Not a raw
-  pointer. Cannot be null. Created by `&expr`. Auto-dereferenced for `.`
-  access. Liveness is guaranteed by the GC; the compiler additionally
-  enforces a local aliasing discipline described in §7.5.
-- `&mut T` — an **exclusive GC reference**. Required to mutate through a
-  reference. Cannot coexist with any other reference (shared or
-  exclusive) to the same value within a function body. Cannot appear as
-  a struct field. Does not carry write-through across a `go` or channel
-  boundary (see the parameter-semantics paragraph below).
+- `&T` — a **shared managed reference** to a value of type `T`. Not a
+  raw pointer. Cannot be null. Created by `&expr`. Auto-dereferenced
+  for `.` access. Liveness is guaranteed by the runtime; the compiler
+  additionally enforces a local aliasing discipline described in §7.5.
+- `&mut T` — an **exclusive managed reference**. Required to mutate
+  through a reference. Cannot coexist with any other reference (shared
+  or exclusive) to the same value within a function body. Cannot appear
+  as a struct field. Does not carry write-through across a `go` or
+  channel boundary (see the parameter-semantics paragraph below).
 - `*const T`, `*mut T` — raw pointers. Only constructible and usable
   inside `unsafe` blocks. Used for FFI.
 
-`&T` and `&mut T` in Gossamer are not borrows in the Rust sense — GC
-already guarantees liveness. They are access-mode markers used by a
-scope-local check (§7.5) to prevent simultaneous mutation and reading
-of the same value. No lifetime parameters exist at any level of the
-language.
+`&T` and `&mut T` in Gossamer are not borrows in the Rust sense —
+automatic memory management already guarantees liveness. They are
+access-mode markers used by a scope-local check (§7.5) to prevent
+simultaneous mutation and reading of the same value. No lifetime
+parameters exist at any level of the language.
 
 **`&mut` parameter semantics.** A `&mut Vec<T>` / `&mut [T]` parameter
 writes through to the caller's storage on every tier: element writes,
@@ -415,7 +416,7 @@ FnType = "fn" "(" [ TypeList ] ")" [ "->" Type ]
 Plain `fn(...) -> ...` is a non-capturing function pointer. `Fn`,
 `FnMut`, `FnOnce` are closure traits (as in Rust). Closures that capture
 the environment satisfy the appropriate closure trait and are
-GC-allocated. Because there is no borrow checker, `Fn` and `FnMut`
+heap-allocated. Because there is no borrow checker, `Fn` and `FnMut`
 collapse into essentially the same constraint; the distinction is
 retained for readability and forward compatibility.
 
@@ -431,7 +432,7 @@ Field      = [ "pub" ] Ident ":" Type
 ```
 
 Struct values are allocated inline when they are local variables, but
-may escape to the GC heap via escape analysis (any field mutation
+may escape to the managed heap via escape analysis (any field mutation
 through a `&T`, any storage in a channel, any capture by a closure that
 outlives the caller, etc.).
 
@@ -495,10 +496,11 @@ declare that a type satisfies a trait.
 
 Method receivers:
 
-- `fn m(self)` — receives the value by copy (Copy types) or by GC
-  reference (heap types). The caller's binding remains usable after
-  the call.
-- `fn m(&self)` — shared access. Under GC this is just "pass the ref".
+- `fn m(self)` — receives the value by copy (Copy types) or by
+  managed reference (heap types). The caller's binding remains
+  usable after the call.
+- `fn m(&self)` — shared access. With managed references this is
+  just "pass the ref".
 - `fn m(&mut self)` — exclusive access. Same runtime as `&self`; used
   by the type checker and the local borrow check (§7.5) to forbid
   method calls on non-mut bindings and to prevent simultaneous aliases
@@ -540,14 +542,14 @@ disambiguate with one-token lookahead after the closing `>` (must be
 ### 3.11 Dynamic dispatch
 
 `dyn Trait` is a trait object (fat pointer: data + vtable). Allocated
-on the GC heap.
+on the managed heap.
 
 ```
 let handlers: Vec<dyn Handler> = vec![...]
 ```
 
 Unlike Rust, no explicit `Box<dyn Trait>` is needed — because values in
-heap-allocated collections are already GC-managed references, writing
+heap-allocated collections are already managed references, writing
 `dyn Handler` as an element type is sufficient.
 
 ### 3.12 Type aliases
@@ -627,9 +629,9 @@ evaluate to `()`. `loop` can return a value via `break value;`.
 
 ### 4.3 Reference expressions
 
-`&expr` creates a GC reference. `&mut expr` is the same runtime but
-requires `expr` to be a mutable place. In the absence of lifetimes and
-borrow checking, this is pure ergonomics.
+`&expr` creates a managed reference. `&mut expr` is the same runtime
+but requires `expr` to be a mutable place. In the absence of lifetimes
+and borrow checking, this is pure ergonomics.
 
 `*expr` (inside `unsafe`) dereferences a raw pointer. Regular
 `&T -> T` dereference is implicit at `.` and index operators.
@@ -1298,9 +1300,9 @@ The memory model is the Go 1.19 memory model verbatim:
 Gossamer has no ownership transfer, no `move` keyword, and no lifetime
 annotations anywhere. All bindings stay live and accessible for the
 duration of their lexical scope. Assignment, parameter passing, and
-closure capture all behave like Go: a GC reference for heap-managed
-types, a copy for `Copy` types. The cognitive load of "who owns this
-value now" does not exist.
+closure capture all behave like Go: a managed reference for
+heap-managed types, a copy for `Copy` types. The cognitive load of "who
+owns this value now" does not exist.
 
 > **Conformance (0.5.0)** `status: not-in-0.5.0`. The scope-local
 > borrow check described in §7.5.1–7.5.4 is the v1 target. `&mut T`
@@ -1309,15 +1311,16 @@ value now" does not exist.
 > rule compile and run; the check is deferred to a release that
 > ships the canonical codegen pipeline.
 
-GC already guarantees that no reference dangles. Gossamer layers one
-additional check on top: **within a single function body, a value may
-have many shared `&T` references, or exactly one `&mut T` reference,
-but never both at once.** The analysis is strictly scope-local — no
-lifetime parameters, no cross-function inference, no whole-program
-data-flow. One linear pass per function.
+Automatic memory management already guarantees that no reference
+dangles. Gossamer layers one additional check on top: **within a
+single function body, a value may have many shared `&T` references, or
+exactly one `&mut T` reference, but never both at once.** The analysis
+is strictly scope-local — no lifetime parameters, no cross-function
+inference, no whole-program data-flow. One linear pass per function.
 
-The check catches the bug class that GC cannot: iterator invalidation,
-simultaneous mutation and iteration, and accidental self-aliasing.
+The check catches the bug class automatic memory management cannot:
+iterator invalidation, simultaneous mutation and iteration, and
+accidental self-aliasing.
 
 #### 7.5.1 The rule
 
@@ -1360,8 +1363,9 @@ the same way. No annotation flows across the boundary.
 
 The compiler does not infer relationships between function return
 values and their inputs. Returning a reference from a function is
-permitted (GC keeps the pointee alive), but the caller receives an
-unconstrained `&T` or `&mut T` that begins a fresh active range.
+permitted (the runtime keeps the pointee alive), but the caller
+receives an unconstrained `&T` or `&mut T` that begins a fresh active
+range.
 
 #### 7.5.3 Hard limits
 
@@ -1369,10 +1373,11 @@ Two patterns are outright forbidden to keep the analysis tractable:
 
 - **Struct fields may not have type `&mut T`.** Tracking exclusivity
   through heap-stored references would require lifetime parameters.
-  `&T` fields are fine — they are GC references, not tracked borrows.
+  `&T` fields are fine — they are managed references, not tracked
+  borrows.
 - **No `&T` or `&mut T` crosses a `go` or channel boundary.** `go`
   and `Sender::send` pass values the same way ordinary assignment does
-  — GC reference for heap types, copy for `Copy` types — and the
+  — managed reference for heap types, copy for `Copy` types — and the
   caller retains access to its bindings. Tracked reference markers
   cannot cross because the local borrow check is scope-local. See
   §8.1 and §8.2. This rules out one source of cross-goroutine bugs
@@ -1410,10 +1415,10 @@ mmap'd stack (default 16 KiB; override with `GOSSAMER_GOROUTINE_STACK`).
 The stack lives below a guard page, so overflow traps as a
 deterministic SIGSEGV instead of clobbering arbitrary memory.
 
-**Argument discipline.** `go` captures values by GC reference the same
-way an ordinary closure does. `Copy` types (primitive numerics, `bool`,
-`char`, small POD structs) are captured by value. After `go f(x)`
-returns, the caller may continue to use `x` — Gossamer has no
+**Argument discipline.** `go` captures values by managed reference the
+same way an ordinary closure does. `Copy` types (primitive numerics,
+`bool`, `char`, small POD structs) are captured by value. After
+`go f(x)` returns, the caller may continue to use `x` — Gossamer has no
 ownership transfer, no `move` keyword, and no "value becomes invalid
 after this point" semantics. This matches Go.
 
@@ -1421,7 +1426,7 @@ A `go` call may not capture or pass a `&T` or `&mut T`. The tracked
 `&`/`&mut` access markers are scope-local (§7.5) and cannot be
 reasoned about across goroutine boundaries; permitting them would
 either require lifetime annotations (which we explicitly avoid) or
-silently weaken the local check. Pass the underlying value (GC
+silently weaken the local check. Pass the underlying value (managed
 reference, or `Copy`) instead.
 
 Cross-goroutine data races on shared mutable state are possible — the
@@ -1465,7 +1470,7 @@ Channel operations (non-`select`):
 
 Channels are many-to-many. Close only once.
 
-`Sender::send` passes a GC reference for heap-managed types and a
+`Sender::send` passes a managed reference for heap-managed types and a
 copy for `Copy` types — the same rules as ordinary assignment or
 function call. No ownership transfer is implied; the sender retains
 access to whatever bindings it named. Sending a `&T` or `&mut T` on a
@@ -1514,7 +1519,8 @@ unsafe fn raw_thing() { ... }
 - Raw pointer (`*const T`, `*mut T`) deref.
 - Calling other `unsafe fn`.
 
-They do **not** disable GC or suspend safepoints.
+They do **not** disable automatic memory management or affect memory
+reclamation.
 
 > **Conformance (0.5.0)** `status: implemented`. Source-level
 > `extern "C"` items are **not** an `unsafe` power in 0.5.0 — they are
@@ -1845,9 +1851,9 @@ transformation when the chain doesn't return from the enclosing fn.
 
 ### 11.2 Linking
 
-Static linking by default. The produced binary embeds the runtime and
-the GC. On Linux, `musl` target produces a zero-libc static binary
-identical in deployment experience to `CGO_ENABLED=0` Go.
+Static linking by default. The produced binary embeds the runtime. On
+Linux, `musl` target produces a zero-libc static binary identical in
+deployment experience to `CGO_ENABLED=0` Go.
 
 Dynamic linking for FFI is **not** available through a source-level
 syntax. See §12 for the supported FFI mechanism (`[rust-bindings]`).
@@ -1872,10 +1878,12 @@ syntax. See §12 for the supported FFI mechanism (`[rust-bindings]`).
 > for the in-process JIT inside `gossamer-interp` and is not
 > reachable from `gos build`. Any MIR shape the LLVM lowerer
 > cannot handle is a hard `gos build` failure rather than a
-> silent per-function Cranelift fallback. The tree-walker
-> interpreter remains as an internal correctness oracle for the
-> test suite; the `--tree-walker` user flag was removed in
-> 0.5.0.
+> silent per-function Cranelift fallback. The register-based
+> bytecode VM is the sole `gos run` / `gos test` engine and lowers
+> every construct natively; the tree-walker interpreter was removed
+> in 0.14.0, and the `--tree-walker` user flag in 0.5.0. VM
+> correctness is pinned by the tier-parity suite and the
+> VM-vs-LLVM-AOT differential.
 
 ### 11.4 Cross-compilation
 
@@ -2150,13 +2158,13 @@ sources is a fully supported, registry-free setup.
 
 ## Appendix B — Differences from Rust
 
-1. No lifetimes (GC removes the need).
-2. No borrow checker (GC removes the need).
+1. No lifetimes (automatic memory management removes the need).
+2. No borrow checker (automatic memory management removes the need).
 3. No `Drop` trait with deterministic destruction — use `defer` for
-   cleanup tied to scope; the GC reclaims memory.
-4. No `Box<T>` / `Rc<T>` / `Arc<T>` — plain references are GC-managed
-   and safe to share across goroutines.
-5. `&T` is a GC reference, not a borrow. `&T` and `&mut T` have the
+   cleanup tied to scope; the runtime reclaims memory.
+4. No `Box<T>` / `Rc<T>` / `Arc<T>` — plain references are
+   runtime-managed and safe to share across goroutines.
+5. `&T` is a managed reference, not a borrow. `&T` and `&mut T` have the
    same runtime; the distinction is a type-check-only aliasing hint.
 6. No `async`/`await` — goroutines replace the entire async story.
 7. No macros in v1 (beyond built-ins).

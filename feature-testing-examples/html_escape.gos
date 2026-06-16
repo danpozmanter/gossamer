@@ -1,0 +1,32 @@
+// The HTML escape primitive (`html::escape`) escapes the OWASP
+// "CSP-grade" defensive set bit-identically on every tier: the five
+// standard metacharacters plus `/` (closing-tag / attribute edge
+// cases) and backtick (IE attribute delimiter), so the result is safe
+// in HTML text AND quoted/unquoted attribute values. Context-specific
+// escaping for URL / JS / CSS sinks is the `html::template` engine's
+// job (see followups.md).
+
+use std::html
+
+fn main() {
+    let raw = "<script>alert('XSS & \"injection\"')</script>"
+    let safe = html::escape(raw)
+    println!("{}", safe)
+    assert(!safe.contains("<script>"), "angle brackets escaped")
+    assert(!safe.contains("</"), "closing-tag slash escaped")
+    assert(safe.contains("&lt;script&gt;"), "tag escaped")
+    assert(safe.contains("&amp;"), "ampersand escaped")
+    assert(safe.contains("&quot;"), "double quote escaped")
+    assert(safe.contains("&#39;"), "single quote escaped")
+    assert(safe.contains("&#x2F;"), "forward slash escaped (CSP-grade)")
+
+    // The CSP-grade set escapes `/` and backtick too.
+    assert_eq(html::escape("a/b`c"), "a&#x2F;b&#x60;c", "slash + backtick")
+
+    // Round-trip every metacharacter through escape/unescape.
+    for ch in ["<", ">", "&", "\"", "'", "/", "`"] {
+        let round = html::unescape(html::escape(ch))
+        assert_eq(round, ch, "round-trip")
+    }
+    println!("ok")
+}

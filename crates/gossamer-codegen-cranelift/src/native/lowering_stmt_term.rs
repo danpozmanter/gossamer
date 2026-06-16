@@ -328,6 +328,12 @@ pub(super) fn lower_statement(
                 ir::immediates::Offset32::new(0),
             );
         }
+        // `static mut` write has no Cranelift JIT lowering; declining the
+        // body keeps it on the bytecode VM, which handles the shared cell
+        // correctly.
+        StatementKind::StaticStore { .. } => {
+            bail!("native codegen: static mut store unsupported; running on VM")
+        }
     }
     Ok(())
 }

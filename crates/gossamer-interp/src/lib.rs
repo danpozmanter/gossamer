@@ -19,11 +19,9 @@ mod builtins;
 mod bytecode;
 mod cast;
 mod compile;
-mod env;
 pub mod external_natives;
 mod flag_set_builtins;
 mod http_client_builtins;
-mod interp;
 mod jit_call;
 pub mod profile;
 mod regex_builtins;
@@ -149,16 +147,15 @@ pub fn flush_runtime_stdout() {
 }
 pub use bytecode::{FnChunk, Op};
 pub use compile::compile_fn;
-pub use env::Env;
 pub use external_natives::{
     clear_external_natives_for_test, external_natives_snapshot, register_external_native,
 };
-pub use interp::{Interpreter, join_outstanding_goroutines};
 pub use value::{
     Channel, Closure, NativeEnumOwner, NativeEnumShape, RuntimeError, RuntimeResult, SmolStr,
     Value, native_enum_to_variant, registry_stats_for_test,
 };
 pub use vm::Vm;
+pub use vm::goroutine::join_outstanding_goroutines;
 
 /// Process-wide panic hook value registered by
 /// `runtime::set_panic_hook` on the interpreter tier. The report

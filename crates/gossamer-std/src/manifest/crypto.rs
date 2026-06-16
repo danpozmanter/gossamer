@@ -106,11 +106,18 @@ pub const CRYPTO_SHA256: StdModule = StdModule {
 pub const CRYPTO_HMAC: StdModule = StdModule {
     path: "std::crypto::hmac",
     summary: "HMAC-SHA-256 keyed MACs.",
-    items: &[StdItem {
-        name: "sha256_mac",
-        kind: StdItemKind::Function,
-        doc: "HMAC-SHA-256 over a message.",
-    }],
+    items: &[
+        StdItem {
+            name: "sha256_mac",
+            kind: StdItemKind::Function,
+            doc: "HMAC-SHA-256 over a message.",
+        },
+        StdItem {
+            name: "sha256_hex",
+            kind: StdItemKind::Function,
+            doc: "HMAC-SHA-256 over a message, hex-encoded.",
+        },
+    ],
 };
 
 pub const CRYPTO_SUBTLE: StdModule = StdModule {
@@ -291,6 +298,65 @@ pub const HASH_FNV: StdModule = StdModule {
             kind: StdItemKind::Function,
             doc: "One-shot 64-bit FNV-1a of a byte slice.",
         },
+        StdItem {
+            name: "hash32",
+            kind: StdItemKind::Function,
+            doc: "32-bit FNV-1a of a byte slice.",
+        },
+        StdItem {
+            name: "hash64",
+            kind: StdItemKind::Function,
+            doc: "64-bit FNV-1a of a byte slice.",
+        },
+        StdItem {
+            name: "hash_string",
+            kind: StdItemKind::Function,
+            doc: "64-bit FNV-1a of a String.",
+        },
+    ],
+};
+
+pub const HASH_CRC32: StdModule = StdModule {
+    path: "std::hash::crc32",
+    summary: "CRC-32 (IEEE) checksums.",
+    items: &[
+        StdItem {
+            name: "checksum",
+            kind: StdItemKind::Function,
+            doc: "CRC-32 checksum of a byte slice.",
+        },
+        StdItem {
+            name: "checksum_string",
+            kind: StdItemKind::Function,
+            doc: "CRC-32 checksum of a String.",
+        },
+        StdItem {
+            name: "update",
+            kind: StdItemKind::Function,
+            doc: "Continues a CRC-32 from a running value over more bytes.",
+        },
+    ],
+};
+
+pub const HASH_ADLER32: StdModule = StdModule {
+    path: "std::hash::adler32",
+    summary: "Adler-32 checksums.",
+    items: &[
+        StdItem {
+            name: "checksum",
+            kind: StdItemKind::Function,
+            doc: "Adler-32 checksum of a byte slice.",
+        },
+        StdItem {
+            name: "checksum_string",
+            kind: StdItemKind::Function,
+            doc: "Adler-32 checksum of a String.",
+        },
+        StdItem {
+            name: "update",
+            kind: StdItemKind::Function,
+            doc: "Continues an Adler-32 from a running value over more bytes.",
+        },
     ],
 };
 
@@ -307,6 +373,16 @@ pub const CRYPTO_INSECURE: StdModule = StdModule {
             name: "sha1",
             kind: StdItemKind::Function,
             doc: "One-shot SHA-1.",
+        },
+        StdItem {
+            name: "md5_hex",
+            kind: StdItemKind::Function,
+            doc: "One-shot MD5, hex-encoded.",
+        },
+        StdItem {
+            name: "sha1_hex",
+            kind: StdItemKind::Function,
+            doc: "One-shot SHA-1, hex-encoded.",
         },
     ],
 };

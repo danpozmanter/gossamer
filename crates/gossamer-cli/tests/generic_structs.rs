@@ -9,11 +9,10 @@
 //! field-read sites so the per-instance concrete type is
 //! available for arithmetic / method dispatch.
 //!
-//! Each test runs the program through the bytecode VM and the
-//! tree-walker (reached via `GOSSAMER_INTERNAL_FORCE_WALKER=1`)
-//! and asserts identical stdout. Release-tier parity is covered
-//! by the `release_stability` suite which exercises a
-//! representative set of programs through `gos build --release`.
+//! Each test runs the program through the bytecode VM and asserts
+//! its stdout. Release-tier parity is covered by the
+//! `release_stability` suite which exercises a representative set
+//! of programs through `gos build --release`.
 
 #![allow(missing_docs)]
 
@@ -80,28 +79,13 @@ fn run_vm(src: &Path) -> String {
     stdout
 }
 
-fn run_walker(src: &Path) -> String {
-    let mut cmd = Command::new(gos_bin());
-    cmd.arg("run")
-        .arg(src)
-        .env("GOSSAMER_INTERNAL_FORCE_WALKER", "1");
-    let (stdout, _stderr, _ok) = run_with_timeout(cmd, Duration::from_secs(30));
-    stdout
-}
-
-fn assert_vm_and_walker(tag: &str, src: &str, expected: &str) {
+fn assert_vm(tag: &str, src: &str, expected: &str) {
     let path = write_fixture(tag, src);
     let vm = run_vm(&path);
     assert_eq!(
         vm.trim_end(),
         expected.trim_end(),
         "[{tag}/vm] expected {expected:?}, got {vm:?}",
-    );
-    let walker = run_walker(&path);
-    assert_eq!(
-        walker.trim_end(),
-        expected.trim_end(),
-        "[{tag}/walker] expected {expected:?}, got {walker:?}",
     );
 }
 
@@ -114,7 +98,7 @@ fn main() {
     println!("{} = {}", p.fst, p.snd)
 }
 "#;
-    assert_vm_and_walker("pair_two_params", src, "42 = answer");
+    assert_vm("pair_two_params", src, "42 = answer");
 }
 
 #[test]
@@ -130,7 +114,7 @@ fn main() {
     println!("{}/{}", c.fst, c.snd)
 }
 "#;
-    assert_vm_and_walker("pair_multi_instantiation", src, "1/2\nx/y\n7/seven");
+    assert_vm("pair_multi_instantiation", src, "1/2\nx/y\n7/seven");
 }
 
 #[test]
@@ -148,7 +132,7 @@ fn main() {
     println!("{}", p.fst + p.snd)
 }
 "#;
-    assert_vm_and_walker("pair_arith", src, "42");
+    assert_vm("pair_arith", src, "42");
 }
 
 #[test]
@@ -162,7 +146,7 @@ fn main() {
     println!("{} {}", c.value, s.value)
 }
 "#;
-    assert_vm_and_walker("cell_single_param", src, "99 ninety-nine");
+    assert_vm("cell_single_param", src, "99 ninety-nine");
 }
 
 #[test]
@@ -176,7 +160,7 @@ fn main() {
     println!("{} {} {}", t.a, t.b, t.c)
 }
 "#;
-    assert_vm_and_walker("triple_params", src, "1 two 3");
+    assert_vm("triple_params", src, "1 two 3");
 }
 
 #[test]
@@ -192,5 +176,5 @@ fn main() {
     println!("{} + {} = {}", pair.left, pair.right, pair.left + pair.right)
 }
 "#;
-    assert_vm_and_walker("same_type_twice", src, "7 + 13 = 20");
+    assert_vm("same_type_twice", src, "7 + 13 = 20");
 }

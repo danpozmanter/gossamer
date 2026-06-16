@@ -746,6 +746,112 @@ pub(super) fn lower_intrinsic_call_string(
             );
             Ok(true)
         }
+        // ---- Atomic<bool> primitive ----
+        // Shares the i64 storage but keeps distinct symbols so the
+        // load result pins to `bool` (renders `true` / `false`).
+        "AtomicBool::new" | "sync::AtomicBool::new" | "gos_rt_atomic_bool_new" => {
+            let initial = match args.first() {
+                Some(a) => lower_operand(
+                    module,
+                    builder,
+                    locals,
+                    body,
+                    tcx,
+                    a,
+                    Some(types::I8),
+                    intrinsics,
+                )?,
+                None => builder.ins().iconst(types::I8, 0),
+            };
+            let i8v = coerce_arg_to(builder, initial, types::I8)?;
+            let f =
+                intrinsics.extern_fn(module, "gos_rt_atomic_bool_new", &[types::I8], &[ptr_ty])?;
+            let fref = module.declare_func_in_func(f, builder.func);
+            let call = builder.ins().call(fref, &[i8v]);
+            let ptr = builder.inst_results(call)[0];
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                ptr,
+            );
+            Ok(true)
+        }
+        "gos_rt_atomic_bool_load" => {
+            let a = match args.first() {
+                Some(a) => lower_operand(
+                    module,
+                    builder,
+                    locals,
+                    body,
+                    tcx,
+                    a,
+                    Some(ptr_ty),
+                    intrinsics,
+                )?,
+                None => bail!("atomic_bool_load: missing receiver"),
+            };
+            let f =
+                intrinsics.extern_fn(module, "gos_rt_atomic_bool_load", &[ptr_ty], &[types::I8])?;
+            let fref = module.declare_func_in_func(f, builder.func);
+            let call = builder.ins().call(fref, &[a]);
+            let val = builder.inst_results(call)[0];
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                val,
+            );
+            Ok(true)
+        }
+        "gos_rt_atomic_bool_store" => {
+            let a = match args.first() {
+                Some(a) => lower_operand(
+                    module,
+                    builder,
+                    locals,
+                    body,
+                    tcx,
+                    a,
+                    Some(ptr_ty),
+                    intrinsics,
+                )?,
+                None => bail!("atomic_bool_store: missing receiver"),
+            };
+            let v = match args.get(1) {
+                Some(a) => lower_operand(
+                    module,
+                    builder,
+                    locals,
+                    body,
+                    tcx,
+                    a,
+                    Some(types::I8),
+                    intrinsics,
+                )?,
+                None => builder.ins().iconst(types::I8, 0),
+            };
+            let v8 = coerce_arg_to(builder, v, types::I8)?;
+            let f = intrinsics.extern_fn(
+                module,
+                "gos_rt_atomic_bool_store",
+                &[ptr_ty, types::I8],
+                &[],
+            )?;
+            let fref = module.declare_func_in_func(f, builder.func);
+            let _ = builder.ins().call(fref, &[a, v8]);
+            let unit = builder.ins().iconst(types::I64, 0);
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                unit,
+            );
+            Ok(true)
+        }
         "gos_rt_atomic_i64_load" => {
             let a = match args.first() {
                 Some(a) => lower_operand(

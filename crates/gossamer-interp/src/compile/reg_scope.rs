@@ -52,6 +52,33 @@ impl<'tcx> FnBuilder<'tcx> {
         self.scopes.pop();
     }
 
+    /// Compiles a defer frame's expressions for their side effects in
+    /// LIFO (reverse-registration) order. Emitted at every edge that
+    /// leaves the frame's block — normal fall-through, `return`,
+    /// `break`, `continue`. Each expression's result register is
+    /// discarded: a `defer` body yields no value and never redirects
+    /// control flow out of the deferred expression.
+    pub(crate) fn emit_defer_frame(&mut self, frame: &[HirExpr]) -> RuntimeResult<()> {
+        for expr in frame.iter().rev() {
+            let _ = self.compile_expr(expr)?;
+        }
+        Ok(())
+    }
+
+    /// Emits every defer frame at stack index `>= from_depth`, innermost
+    /// block first, without removing them — each owning `compile_block`
+    /// pops its own frame as control unwinds. `return` passes `0` (all
+    /// frames); `break` / `continue` pass the target loop's `defer_depth`
+    /// (only the frames nested inside the loop body). Mirrors
+    /// `gossamer-mir`'s `emit_defers_above`.
+    pub(crate) fn emit_defers_above(&mut self, from_depth: usize) -> RuntimeResult<()> {
+        for i in (from_depth..self.defer_stack.len()).rev() {
+            let frame = self.defer_stack[i].clone();
+            self.emit_defer_frame(&frame)?;
+        }
+        Ok(())
+    }
+
     pub(crate) fn bind_local(&mut self, name: &str, typed: TypedReg) {
         if let Some(scope) = self.scopes.last_mut() {
             scope.locals.insert(name.to_string(), typed);

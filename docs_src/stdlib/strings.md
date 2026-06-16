@@ -29,4 +29,26 @@ Polished `String` operations.
 | `zfill` | fn | Pads with `'0'` on the left until at least `width` wide. |
 | `center` | fn | Symmetric pad to `width` using the given pad character. |
 | `slice` | fn | Safe byte-range slice returning Result<String, errors::Error>. |
+| `split_whitespace` | fn | Splits on runs of whitespace, dropping empty fields. |
+| `trim_start` | fn | Removes leading whitespace. |
+| `trim_end` | fn | Removes trailing whitespace. |
+| `rfind` | fn | Byte index of the last occurrence of a needle, or -1. |
+| `trim_start_matches` | fn | Removes leading characters in the given set. |
+| `trim_end_matches` | fn | Removes trailing characters in the given set. |
+| `replacen` | fn | Replaces the first n occurrences of a substring. |
+| `repeat` | fn | Concatenates n copies of the string. |
+| `lines` | fn | Splits into lines, dropping line terminators. |
+| `join` | fn | Joins string parts with a separator. |
+| `strip_prefix` | fn | Removes a leading prefix if present. |
+| `strip_suffix` | fn | Removes a trailing suffix if present. |
+| `pad_left` | fn | Left-pads to `width` with the given character. |
+| `pad_right` | fn | Right-pads to `width` with the given character. |
+| `contains_rune` | fn | Reports whether the string contains a given rune. |
+| `contains_any` | fn | Reports whether the string contains any rune in a set. |
+| `index_rune` | fn | Byte index of the first occurrence of a rune, or -1. |
+| `find_any` | fn | Byte index of the first rune in a set, or None. |
+| `rfind_any` | fn | Byte index of the last rune in a set, or None. |
+| `equal_fold` | fn | Case-insensitive Unicode string equality. |
+| `trim_matches` | fn | Removes characters in the given set from both ends. |
+| `to_title` | fn | Title-cases the first letter of each word. |
 

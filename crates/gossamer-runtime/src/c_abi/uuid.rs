@@ -180,37 +180,44 @@ pub unsafe extern "C" fn gos_rt_iter_product_f64(v: *const GosVec) -> f64 {
     })
 }
 
-/// Minimum i64 element. Returns `i64::MIN` for empty input (caller
-/// should check `iter::count(xs) > 0` first, or use the closure-taking
-/// variants when the empty-vs-non-empty distinction matters).
+/// `iter::min(xs) -> Option<i64>` as an i128-packed Option:
+/// `None` (= 1) for empty input, `Some(m)` otherwise. Matches the
+/// 16-byte Option ABI the typechecker pins for `iter::min`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_iter_min_i64(v: *const GosVec) -> i64 {
-    ffi_entry!(-1, {
+pub unsafe extern "C" fn gos_rt_iter_min_i64(v: *const GosVec) -> i128 {
+    ffi_entry!(1i128, {
         if v.is_null() {
-            return i64::MIN;
+            return 1i128;
         }
         let vec = unsafe { &*v };
         if vec.ptr.is_null() || vec.len <= 0 {
-            return i64::MIN;
+            return 1i128;
         }
         let slice = unsafe { std::slice::from_raw_parts(vec.ptr.cast::<i64>(), vec.len as usize) };
-        slice.iter().copied().min().unwrap_or(i64::MIN)
+        match slice.iter().copied().min() {
+            Some(m) => gos_rt_result_new(0, m),
+            None => 1i128,
+        }
     })
 }
 
-/// Maximum i64 element. Returns `i64::MIN` for empty input.
+/// `iter::max(xs) -> Option<i64>` as an i128-packed Option:
+/// `None` (= 1) for empty input, `Some(m)` otherwise.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_iter_max_i64(v: *const GosVec) -> i64 {
-    ffi_entry!(-1, {
+pub unsafe extern "C" fn gos_rt_iter_max_i64(v: *const GosVec) -> i128 {
+    ffi_entry!(1i128, {
         if v.is_null() {
-            return i64::MIN;
+            return 1i128;
         }
         let vec = unsafe { &*v };
         if vec.ptr.is_null() || vec.len <= 0 {
-            return i64::MIN;
+            return 1i128;
         }
         let slice = unsafe { std::slice::from_raw_parts(vec.ptr.cast::<i64>(), vec.len as usize) };
-        slice.iter().copied().max().unwrap_or(i64::MIN)
+        match slice.iter().copied().max() {
+            Some(m) => gos_rt_result_new(0, m),
+            None => 1i128,
+        }
     })
 }
 
@@ -323,6 +330,173 @@ pub unsafe extern "C" fn gos_rt_iter_chain_i64(a: *const GosVec, b: *const GosVe
                 let x = unsafe { gos_rt_vec_get_i64(v, i) };
                 unsafe { gos_rt_vec_push_i64(out, x) };
             }
+        }
+        out
+    })
+}
+
+/// `iter::dedup(xs)` — drop consecutive duplicate elements.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_iter_dedup_i64(v: *const GosVec) -> *mut GosVec {
+    ffi_entry!(std::ptr::null_mut(), {
+        let out = unsafe { gos_rt_vec_new(8) };
+        if v.is_null() {
+            return out;
+        }
+        let vec = unsafe { &*v };
+        let mut prev: Option<i64> = None;
+        for i in 0..vec.len {
+            let x = unsafe { gos_rt_vec_get_i64(v, i) };
+            if prev != Some(x) {
+                unsafe { gos_rt_vec_push_i64(out, x) };
+                prev = Some(x);
+            }
+        }
+        out
+    })
+}
+
+/// `iter::flatten(xss)` — concatenate a `Vec<Vec<i64>>` into one
+/// `Vec<i64>`. Each outer element is an 8-byte `*mut GosVec`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_iter_flatten_i64(v: *const GosVec) -> *mut GosVec {
+    ffi_entry!(std::ptr::null_mut(), {
+        let out = unsafe { gos_rt_vec_new(8) };
+        if v.is_null() {
+            return out;
+        }
+        let outer = unsafe { &*v };
+        for i in 0..outer.len {
+            let inner = unsafe { gos_rt_vec_get_i64(v, i) } as usize as *const GosVec;
+            if inner.is_null() {
+                continue;
+            }
+            let inner_ref = unsafe { &*inner };
+            for j in 0..inner_ref.len {
+                let x = unsafe { gos_rt_vec_get_i64(inner, j) };
+                unsafe { gos_rt_vec_push_i64(out, x) };
+            }
+        }
+        out
+    })
+}
+
+/// `iter::enumerate(xs)` — `Vec<(i64, i64)>` of `(index, value)`.
+/// Each element is a 16-byte 2-slot tuple read by the multislot
+/// for-loop path (`gos_rt_vec_get_ptr` + `gos_load` at 0 / 8).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_iter_enumerate_i64(v: *const GosVec) -> *mut GosVec {
+    ffi_entry!(std::ptr::null_mut(), {
+        let out = unsafe { gos_rt_vec_new(16) };
+        if v.is_null() {
+            return out;
+        }
+        let vec = unsafe { &*v };
+        for i in 0..vec.len {
+            let x = unsafe { gos_rt_vec_get_i64(v, i) };
+            let slot: [i64; 2] = [i, x];
+            unsafe { gos_rt_vec_push(out, slot.as_ptr().cast::<u8>()) };
+        }
+        out
+    })
+}
+
+/// `iter::zip(a, b)` — `Vec<(i64, i64)>`, stopping at the shorter
+/// input. 16-byte 2-slot tuple elements.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_iter_zip_i64(a: *const GosVec, b: *const GosVec) -> *mut GosVec {
+    ffi_entry!(std::ptr::null_mut(), {
+        let out = unsafe { gos_rt_vec_new(16) };
+        if a.is_null() || b.is_null() {
+            return out;
+        }
+        let av = unsafe { &*a };
+        let bv = unsafe { &*b };
+        let n = av.len.min(bv.len);
+        for i in 0..n {
+            let x = unsafe { gos_rt_vec_get_i64(a, i) };
+            let y = unsafe { gos_rt_vec_get_i64(b, i) };
+            let slot: [i64; 2] = [x, y];
+            unsafe { gos_rt_vec_push(out, slot.as_ptr().cast::<u8>()) };
+        }
+        out
+    })
+}
+
+/// `iter::pairwise(xs)` — `Vec<(i64, i64)>` of successive
+/// overlapping pairs (width-2 windows).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_iter_pairwise_i64(v: *const GosVec) -> *mut GosVec {
+    ffi_entry!(std::ptr::null_mut(), {
+        let out = unsafe { gos_rt_vec_new(16) };
+        if v.is_null() {
+            return out;
+        }
+        let vec = unsafe { &*v };
+        for i in 1..vec.len {
+            let a = unsafe { gos_rt_vec_get_i64(v, i - 1) };
+            let b = unsafe { gos_rt_vec_get_i64(v, i) };
+            let slot: [i64; 2] = [a, b];
+            unsafe { gos_rt_vec_push(out, slot.as_ptr().cast::<u8>()) };
+        }
+        out
+    })
+}
+
+/// `iter::windowed(n, xs)` — `Vec<Vec<i64>>` of every contiguous
+/// width-`n` window. Empty when `n <= 0` or `xs` is shorter than
+/// `n`. Outer is a VEC-typed vec of inner `*mut GosVec` pointers
+/// (recursively freed).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_iter_windowed_i64(n: i64, v: *const GosVec) -> *mut GosVec {
+    ffi_entry!(std::ptr::null_mut(), {
+        let out = unsafe {
+            crate::c_abi::vec::gos_rt_vec_new_typed(8, crate::c_abi::vec::vec_elem_kind::VEC)
+        };
+        if v.is_null() || n <= 0 {
+            return out;
+        }
+        let vec = unsafe { &*v };
+        if vec.len < n {
+            return out;
+        }
+        for start in 0..=(vec.len - n) {
+            let inner = unsafe { gos_rt_vec_new(8) };
+            for j in 0..n {
+                let x = unsafe { gos_rt_vec_get_i64(v, start + j) };
+                unsafe { gos_rt_vec_push_i64(inner, x) };
+            }
+            let inner_val = inner as i64;
+            unsafe { gos_rt_vec_push(out, std::ptr::addr_of!(inner_val).cast::<u8>()) };
+        }
+        out
+    })
+}
+
+/// `iter::chunk_by_size(n, xs)` — `Vec<Vec<i64>>` of consecutive
+/// width-`n` chunks; the final chunk may be short. Empty when
+/// `n <= 0`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_iter_chunk_by_size_i64(n: i64, v: *const GosVec) -> *mut GosVec {
+    ffi_entry!(std::ptr::null_mut(), {
+        let out = unsafe {
+            crate::c_abi::vec::gos_rt_vec_new_typed(8, crate::c_abi::vec::vec_elem_kind::VEC)
+        };
+        if v.is_null() || n <= 0 {
+            return out;
+        }
+        let vec = unsafe { &*v };
+        let mut start = 0;
+        while start < vec.len {
+            let inner = unsafe { gos_rt_vec_new(8) };
+            let end = (start + n).min(vec.len);
+            for j in start..end {
+                let x = unsafe { gos_rt_vec_get_i64(v, j) };
+                unsafe { gos_rt_vec_push_i64(inner, x) };
+            }
+            let inner_val = inner as i64;
+            unsafe { gos_rt_vec_push(out, std::ptr::addr_of!(inner_val).cast::<u8>()) };
+            start += n;
         }
         out
     })

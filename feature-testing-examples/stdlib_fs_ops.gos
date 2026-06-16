@@ -1,0 +1,34 @@
+// Regression lock for the wired fs file-ops surface: create_dir_all,
+// write, copy, is_file / is_dir, file_size. Prints derived booleans
+// and sizes, never the temp path, so output is identical across
+// tiers and machines.
+
+use std::env
+use std::fs
+use std::path
+
+fn main() {
+    let dir = path::join(&env::temp_dir(), &"gossamer-fsops-demo")
+    let _ = fs::remove_all(&dir)
+    let _ = fs::create_dir_all(&dir)
+
+    let a = path::join(&dir, &"a.txt")
+    let b = path::join(&dir, &"b.txt")
+    let _ = fs::write(&a, &"hello world")
+
+    println!("a_is_file={}", fs::is_file(&a))
+    println!("dir_is_dir={}", fs::is_dir(&dir))
+    println!("a_is_dir={}", fs::is_dir(&a))
+    println!("a_size={}", fs::file_size(&a))
+
+    match fs::copy(&a, &b) {
+        Ok(_) => println!("copy_ok=true"),
+        Err(e) => println!("copy_err={}", e),
+    }
+    println!("b_is_file={}", fs::is_file(&b))
+    println!("b_size={}", fs::file_size(&b))
+    println!("missing_is_file={}", fs::is_file(&path::join(&dir, &"nope.txt")))
+
+    let _ = fs::remove_all(&dir)
+    println!("cleaned_dir_exists={}", fs::exists(&dir))
+}

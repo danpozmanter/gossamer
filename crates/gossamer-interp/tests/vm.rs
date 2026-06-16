@@ -139,8 +139,7 @@ fn main() {
 }
 
 #[test]
-fn vm_arithmetic_agrees_with_tree_walker() {
-    use gossamer_interp::Interpreter;
+fn vm_arithmetic_evaluates_expression() {
     let source = r"
 fn compute(a: i64, b: i64) -> i64 {
     (a + b) * (a - b) + a * b
@@ -156,16 +155,14 @@ fn compute(a: i64, b: i64) -> i64 {
 
     let mut vm = Vm::new();
     vm.load(&program, tcx).unwrap();
-    let mut tree = Interpreter::new();
-    tree.load(&program);
 
     for (a, b) in [(1, 2), (3, 4), (10, 3), (-5, 7)] {
         let args = vec![Value::Int(a), Value::Int(b)];
-        let vm_result = vm.call("compute", args.clone()).unwrap();
-        let tree_result = tree.call("compute", args).unwrap();
+        let expected = (a + b) * (a - b) + a * b;
+        let result = vm.call("compute", args).unwrap();
         assert!(
-            matches!((&vm_result, &tree_result), (Value::Int(x), Value::Int(y)) if x == y),
-            "mismatch on ({a}, {b}): vm={vm_result:?} tree={tree_result:?}"
+            matches!(&result, Value::Int(x) if *x == expected),
+            "mismatch on ({a}, {b}): vm={result:?} expected={expected}"
         );
     }
 }

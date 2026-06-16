@@ -16,4 +16,5 @@ Synchronisation primitives beyond channels.
 | `AtomicI64` | type | Atomic 64-bit signed integer. |
 | `AtomicU64` | type | Atomic 64-bit unsigned integer. |
 | `AtomicBool` | type | Atomic boolean. |
+| `channel` | fn | Creates a typed channel, returning (Sender, Receiver). |
 

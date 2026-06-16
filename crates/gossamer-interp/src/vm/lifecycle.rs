@@ -8,8 +8,6 @@ impl Vm {
         let mut vm = Self {
             globals: Arc::new(rustc_hash::FxHashMap::default()),
             prelude: builtins::prelude_globals(),
-            walker: RefCell::new(Interpreter::new()),
-            walker_proto: None,
             pool: RefCell::new(FramePool::default()),
             mir_bodies: None,
             tcx_snapshot: None,
@@ -22,6 +20,7 @@ impl Vm {
             globals_generation: Cell::new(1),
             call_stack: RefCell::new(Vec::new()),
             call_depth: Cell::new(0),
+            source_map: None,
         };
         // Late-registered binding natives go into the per-Vm overlay
         // because they can be added between Vm constructions; the
@@ -46,21 +45,9 @@ impl Vm {
         tcx_snapshot: Option<Arc<TyCtxt>>,
         enum_shape_defs: Option<Arc<std::collections::HashMap<u32, u32>>>,
     ) -> Self {
-        let walker = {
-            let mut w = Interpreter::new();
-            // Goroutine VMs need the interner too — deferred casts in
-            // spawned bodies resolve their targets the same way the
-            // parent's bundled walker does.
-            if let Some(tcx) = &tcx_snapshot {
-                w.set_type_context(Arc::clone(tcx));
-            }
-            w
-        };
         Self {
             globals,
             prelude: builtins::prelude_globals(),
-            walker: RefCell::new(walker),
-            walker_proto: None,
             pool: RefCell::new(FramePool::default()),
             mir_bodies,
             tcx_snapshot,
@@ -73,6 +60,42 @@ impl Vm {
             globals_generation: Cell::new(1),
             call_stack: RefCell::new(Vec::new()),
             call_depth: Cell::new(0),
+            // Worker VMs run already-compiled chunks; the source map is
+            // a compile-time input only, and `Op::CovHit` bumps the
+            // global table regardless of which Vm executes the chunk.
+            source_map: None,
+        }
+    }
+
+    /// Publishes the source map `gos test --coverage` uses to resolve
+    /// statement spans to `(file, line)` for line-coverage recording.
+    /// Must be called before [`Self::load`] so the compiler can emit
+    /// [`crate::bytecode::Op::CovHit`] at each statement boundary;
+    /// leaving it unset (the default) compiles without any coverage
+    /// instrumentation.
+    pub fn set_source_map(&mut self, map: Arc<gossamer_lex::SourceMap>) {
+        self.source_map = Some(map);
+    }
+
+    /// True when coverage recording should be instrumented for this
+    /// load: the runtime flag is on and a source map is published.
+    /// Gates both the `Op::CovHit` emission and the JIT (native code
+    /// carries no coverage ops, so coverage runs stay on bytecode).
+    #[must_use]
+    pub(crate) fn coverage_active(&self) -> bool {
+        gossamer_runtime::coverage::enabled() && self.source_map.is_some()
+    }
+
+    /// The source map to thread into the compiler for coverage, or
+    /// `None` when coverage is not active for this load. Returns an
+    /// `Arc` clone (a refcount bump) so the caller holds an owned
+    /// handle that doesn't borrow `self` across the `&mut self`
+    /// compilation passes.
+    fn coverage_source_map(&self) -> Option<Arc<gossamer_lex::SourceMap>> {
+        if self.coverage_active() {
+            self.source_map.clone()
+        } else {
+            None
         }
     }
 
@@ -142,7 +165,12 @@ impl Vm {
     /// `shrink_to_fit` calls.
     pub(crate) fn reset_after_task(&mut self) {
         self.pool.borrow_mut().shrink_to(4);
-        self.walker.borrow_mut().reset_after_task();
+        // Clear this goroutine-worker's traceback frames so the next
+        // task starts with an empty call stack rather than inheriting
+        // stale frames from the one that just finished.
+        let mut call_stack = self.call_stack.borrow_mut();
+        call_stack.clear();
+        call_stack.shrink_to_fit();
     }
 
     /// Frees MIR bodies and the `TyCtxt` snapshot retained for deferred JIT.
@@ -161,10 +189,11 @@ impl Vm {
     }
 
     /// Compiles and registers every `fn`/`const`/`static`/impl item in
-    /// `program`. Items the VM can't lower yet produce a runtime error.
-    /// The bundled tree-walker is loaded with the same program so
-    /// `Op::EvalDeferred` can delegate anything the VM compiler
-    /// falls back on.
+    /// `program`. ADT constructors register first, then each
+    /// `const`/`static` initializer is evaluated by compiling it to a
+    /// synthetic nullary chunk and running it on the VM, then functions
+    /// compile last (so they inline the now-known const values). Items
+    /// the VM can't lower produce a runtime error.
     ///
     /// `tcx` is taken by value: the JIT prepass drives
     /// [`gossamer_mir::lower_program`] (which interns inferred types
@@ -175,10 +204,6 @@ impl Vm {
     /// `load` on the same `tcx`). Callers that need the `tcx`
     /// afterwards must clone before calling.
     pub fn load(&mut self, program: &HirProgram, mut tcx: TyCtxt) -> RuntimeResult<()> {
-        // Phase 1: evaluate consts/statics and register ADT constructors.
-        // Skips function body clones — those are only needed when at least
-        // one bytecode chunk defers expressions back to the tree-walker.
-        self.walker.borrow_mut().load_non_fns(program);
         // Prepass: collect struct field orderings so `__struct`
         // can place literal fields in declaration order and the
         // VM compiler can emit compile-time offset reads.
@@ -213,50 +238,120 @@ impl Vm {
             }
         }
         crate::builtins::set_struct_layouts(name_layouts);
+        // Qualified names of every user `&mut self` method, so a call on
+        // a place receiver routes through the write-back cell protocol
+        // and the receiver's mutation persists (the `for x in <custom
+        // iterator>` / stateful-method mechanism). See
+        // `compile::collect_mut_self_methods`.
+        let method_muts = crate::compile::collect_mut_self_methods(program);
+        // Names of `static mut` items. The compiler lowers an
+        // assignment rooted at one of these into an `Op::StoreStatic`
+        // against the shared `Global::MutStatic` cell.
+        let mut_statics = crate::compile::collect_mut_statics(program);
         // (Previously: a per-program JSON struct-schema registry was
         // built here so the VM tier could intercept
         // `<Type>::from_json` calls. 0.7.0 replaces that with
         // compile-time codegen in `gossamer-parse::autoderive`; the
         // synthesized methods are real Gossamer code and need no
         // VM-side bookkeeping.)
-        // Snapshot every top-level `const NAME = ...` value the
-        // tree-walker has already evaluated. Passed to `compile_fn`
-        // so a path that resolves to one of these inlines as a
+        //
+        // Pre-evaluated values for top-level `const` items (and immutable
+        // `static`s). A path that resolves to one of these inlines as a
         // `LoadConst` instead of a string-keyed `LoadGlobal` lookup.
+        // Filled by pass B below and consumed when compiling functions in
+        // pass C.
         let mut module_consts: HashMap<String, Value> = HashMap::new();
-        {
-            let walker = self.walker.borrow();
-            for item in &program.items {
-                let name = match &item.kind {
-                    HirItemKind::Const(decl) => &decl.name.name,
-                    // Immutable statics inline as constants. Mutable
-                    // statics (`static mut COUNTER: i64 = 0`) are
-                    // skipped: their reads must continue to flow
-                    // through `LoadGlobal` so writes the tree-walker
-                    // performs against the globals table are visible
-                    // to subsequent reads. Inlining the initial
-                    // value would shadow every store and freeze the
-                    // observed value at the declaration site.
-                    HirItemKind::Static(decl) if !decl.mutable => &decl.name.name,
-                    _ => continue,
-                };
-                if let Some(value) = walker.lookup_global(name) {
-                    module_consts.insert(name.clone(), value);
-                }
+
+        // Pass A: register ADT constructors so const/static initializers
+        // and function bodies can resolve enum variants.
+        for item in &program.items {
+            if matches!(&item.kind, HirItemKind::Adt(_)) {
+                self.load_item(
+                    item,
+                    &tcx,
+                    &def_layouts,
+                    &wrappers,
+                    &module_consts,
+                    &method_muts,
+                    &mut_statics,
+                )?;
             }
         }
+
+        // Pass B: evaluate every `const`/`static` initializer on the VM.
+        // Each initializer compiles to a synthetic nullary chunk and runs
+        // through `apply`; the resulting value registers in `globals`. A
+        // `static mut` gets a shared `Global::MutStatic` cell so writes
+        // from `Op::StoreStatic` persist and are observable. Immutable
+        // consts/statics also feed `module_consts` for the inline path —
+        // mutable statics are deliberately excluded: their reads flow
+        // through `LoadGlobal` to the live cell so every store is seen.
         for item in &program.items {
-            self.load_item(item, &tcx, &def_layouts, &wrappers, &module_consts)?;
+            let module_prefix = if item.module_path.is_empty() {
+                None
+            } else {
+                Some(item.module_path.join("::"))
+            };
+            match &item.kind {
+                HirItemKind::Const(decl) => {
+                    let value = self.eval_initializer(
+                        &decl.value,
+                        &tcx,
+                        &def_layouts,
+                        &wrappers,
+                        &module_consts,
+                        &method_muts,
+                        &mut_statics,
+                    )?;
+                    self.register_item_value(
+                        module_prefix.as_deref(),
+                        &decl.name.name,
+                        Global::Value(value.clone()),
+                    );
+                    module_consts.insert(decl.name.name.clone(), value);
+                }
+                HirItemKind::Static(decl) => {
+                    let value = self.eval_initializer(
+                        &decl.value,
+                        &tcx,
+                        &def_layouts,
+                        &wrappers,
+                        &module_consts,
+                        &method_muts,
+                        &mut_statics,
+                    )?;
+                    let global = if decl.mutable {
+                        Global::MutStatic(Arc::new(parking_lot::Mutex::new(value.clone())))
+                    } else {
+                        Global::Value(value.clone())
+                    };
+                    self.register_item_value(module_prefix.as_deref(), &decl.name.name, global);
+                    if !decl.mutable {
+                        module_consts.insert(decl.name.name.clone(), value);
+                    }
+                }
+                _ => {}
+            }
         }
-        // Phase 2: load function closures into the walker. The walker
-        // backs every `NativeDispatch::call_fn` / `call_value` callback
-        // a Native builtin makes — http::serve dispatching `Router::serve`,
-        // iter::for_each invoking a passed-in fn, etc. A bare function
-        // value (e.g. `r.get("/", root)`) reaches the walker as
-        // `Value::String("root")` and resolves through `globals`, so the
-        // user's fn table must live there unconditionally. The cost is a
-        // one-time HashMap insert per top-level fn at startup.
-        self.walker.borrow_mut().load_fns(program);
+
+        // Pass C: compile and register every function / impl / trait
+        // method, inlining the const values gathered in pass B.
+        for item in &program.items {
+            if matches!(
+                &item.kind,
+                HirItemKind::Fn(_) | HirItemKind::Impl(_) | HirItemKind::Trait(_)
+            ) {
+                self.load_item(
+                    item,
+                    &tcx,
+                    &def_layouts,
+                    &wrappers,
+                    &module_consts,
+                    &method_muts,
+                    &mut_statics,
+                )?;
+            }
+        }
         // Tier D2 — deferred JIT. Lower MIR up front so the
         // tier-up trigger (in `apply`) can dispatch a compile via
         // `&self`, but don't compile yet: short-running programs
@@ -270,11 +365,15 @@ impl Vm {
         // skip in `try_compile_jit_lazy`) so lowering MIR for it
         // would never be consumed. `hello.gos` lands in this
         // bucket, shaving the lower + the tcx clone.
-        if jit_call::jit_enabled() && has_jit_eligible_fn(program) {
+        // Coverage runs stay on the bytecode path: the cranelift JIT
+        // lowers from MIR and never sees the `Op::CovHit` markers, so a
+        // promoted function would silently stop recording line hits.
+        if jit_call::jit_enabled() && has_jit_eligible_fn(program) && !self.coverage_active() {
             self.enum_shape_defs = Some(Arc::new(build_native_enum_shapes(program, &tcx)));
             let mut bodies = gossamer_mir::lower_program(program, &mut tcx);
             gossamer_mir::inline_trivial_wrappers(&mut bodies);
             gossamer_mir::inline_small_callees(&mut bodies);
+            gossamer_mir::inline_general(&mut bodies);
             self.mir_bodies = Some(Arc::new(bodies));
             // Move the owned type context into the snapshot — no clone.
             // `load` takes `tcx` by value precisely so this hand-off is
@@ -284,22 +383,13 @@ impl Vm {
             // with an empty interner when it used `mem::take` on a
             // borrow. By-value ownership makes the consume explicit and
             // costs neither.
-            let tcx_arc = Arc::new(tcx);
-            self.walker
-                .borrow_mut()
-                .set_type_context(Arc::clone(&tcx_arc));
-            self.tcx_snapshot = Some(tcx_arc);
+            self.tcx_snapshot = Some(Arc::new(tcx));
         } else {
             self.jit.write().compiled = JitCompileState::Failed;
-            // No JIT snapshot to retain — the walker still needs the
-            // interner so deferred casts resolve their target kinds.
-            self.walker.borrow_mut().set_type_context(Arc::new(tcx));
+            // No JIT snapshot to retain. Every chunk compiled against the
+            // borrowed `&tcx` during the passes above, so the owned `tcx`
+            // is no longer needed and drops here.
         }
-        // Snapshot the loaded walker for goroutine pool workers —
-        // their per-thread `Vm` clones this fn table (plus the
-        // type-context handle just installed) once at first use
-        // instead of starting from an empty walker.
-        self.walker_proto = Some(Arc::new(self.walker.borrow().clone()));
         // End-of-load compaction: every item is registered, so the
         // overlay HashMap has reached its steady-state size. Release
         // hashbrown's growth-by-doubling slack.
@@ -402,10 +492,17 @@ impl Vm {
             // Skip promotion of any chunk that calls `panic`.
             // The cranelift codegen lowers `panic(...)` into a
             // `gos_rt_panic` call that aborts the process directly,
-            // bypassing the bytecode VM's tree-walker fallback that
-            // captures the call stack for the user-facing
-            // diagnostic. Keeping panicking helpers on the
+            // bypassing the bytecode VM's call-stack capture for the
+            // user-facing diagnostic. Keeping panicking helpers on the
             // bytecode path preserves the call-stack render.
+            //
+            // Admitting these would also be unsound for side-effecting
+            // helpers: the trampoline catches the unwind and falls back
+            // to the bytecode chunk, which re-runs the body from the
+            // start — any effect performed before the panic in the
+            // native body would happen twice. The bytecode path renders
+            // the same trace (exit 101, `main` -> helper) with neither
+            // hazard, so the exclusion stays.
             if chunk.globals.iter().any(|g| g == "panic") {
                 continue;
             }
@@ -431,6 +528,60 @@ impl Vm {
         state.compiled = JitCompileState::Done;
     }
 
+    /// Evaluates a `const`/`static` initializer by compiling `expr` into
+    /// a synthetic nullary chunk and running it on the VM. `module_consts`
+    /// lets the initializer inline any earlier const it references.
+    fn eval_initializer(
+        &self,
+        expr: &gossamer_hir::HirExpr,
+        tcx: &TyCtxt,
+        layouts: &HashMap<gossamer_resolve::DefId, Vec<String>>,
+        wrappers: &HashMap<String, Vec<String>>,
+        module_consts: &HashMap<String, Value>,
+        method_muts: &crate::compile::MutSelfMethods,
+        mut_statics: &crate::compile::MutStatics,
+    ) -> RuntimeResult<Value> {
+        let cov_map = self.coverage_source_map();
+        let chunk = crate::compile::compile_initializer(
+            expr,
+            tcx,
+            layouts,
+            wrappers,
+            module_consts,
+            method_muts,
+            mut_statics,
+            cov_map.as_deref(),
+        )?;
+        debug_validate_chunk(&chunk)?;
+        // Run with a fresh, local `ChunkState` rather than the
+        // address-keyed `chunk_state_for` cache. An initializer chunk is
+        // dropped as soon as it returns, so caching its heap address
+        // would alias a later real chunk allocated at the same slot.
+        let jit_disabled = !jit_call::jit_enabled();
+        let state = ChunkState::new(
+            chunk.call_cache_count,
+            chunk.arith_cache_count,
+            chunk.field_cache_count,
+            chunk.instrs.len(),
+            jit_disabled,
+        );
+        self.run(&chunk, &state, Vec::new())
+    }
+
+    /// Registers a `const`/`static` value in `globals` under both its
+    /// bare name and (if the item lives in a module) its qualified name.
+    /// Bumps the globals generation so any inline cache stamped against
+    /// the prior map re-validates.
+    fn register_item_value(&mut self, prefix: Option<&str>, name: &str, global: Global) {
+        self.bump_globals_generation();
+        let globals = Arc::make_mut(&mut self.globals);
+        let intern = crate::value::intern_type_name;
+        if let Some(prefix) = prefix {
+            globals.insert(intern(&format!("{prefix}::{name}")), global.clone());
+        }
+        globals.insert(intern(name), global);
+    }
+
     pub(crate) fn load_item(
         &mut self,
         item: &HirItem,
@@ -438,7 +589,14 @@ impl Vm {
         layouts: &HashMap<gossamer_resolve::DefId, Vec<String>>,
         wrappers: &HashMap<String, Vec<String>>,
         module_consts: &HashMap<String, Value>,
+        method_muts: &crate::compile::MutSelfMethods,
+        mut_statics: &crate::compile::MutStatics,
     ) -> RuntimeResult<()> {
+        // Resolve the coverage source map before borrowing `globals`
+        // (the helper takes `&self`, which would conflict with the
+        // `&mut self.globals` borrow held below). An owned `Arc` clone
+        // keeps no borrow of `self` outstanding.
+        let cov_map = self.coverage_source_map();
         // Loading an item mutates the globals map. Bump the
         // generation so any IC slots already populated against an
         // earlier snapshot of `globals` re-validate. Today every
@@ -456,7 +614,16 @@ impl Vm {
         let intern = crate::value::intern_type_name;
         match &item.kind {
             HirItemKind::Fn(decl) => {
-                let chunk = compile_fn(decl, tcx, layouts, wrappers, module_consts)?;
+                let chunk = compile_fn(
+                    decl,
+                    tcx,
+                    layouts,
+                    wrappers,
+                    module_consts,
+                    method_muts,
+                    mut_statics,
+                    cov_map.as_deref(),
+                )?;
                 debug_validate_chunk(&chunk)?;
                 let shared = chunk.into_shared();
                 if let Some(prefix) = &module_prefix {
@@ -467,7 +634,16 @@ impl Vm {
             }
             HirItemKind::Impl(decl) => {
                 for method in &decl.methods {
-                    let chunk = compile_fn(method, tcx, layouts, wrappers, module_consts)?;
+                    let chunk = compile_fn(
+                        method,
+                        tcx,
+                        layouts,
+                        wrappers,
+                        module_consts,
+                        method_muts,
+                        mut_statics,
+                        cov_map.as_deref(),
+                    )?;
                     debug_validate_chunk(&chunk)?;
                     let shared = chunk.into_shared();
                     if let Some(type_name) = &decl.self_name {
@@ -486,7 +662,16 @@ impl Vm {
             HirItemKind::Trait(decl) => {
                 for method in &decl.methods {
                     if method.body.is_some() {
-                        let chunk = compile_fn(method, tcx, layouts, wrappers, module_consts)?;
+                        let chunk = compile_fn(
+                            method,
+                            tcx,
+                            layouts,
+                            wrappers,
+                            module_consts,
+                            method_muts,
+                            mut_statics,
+                            cov_map.as_deref(),
+                        )?;
                         debug_validate_chunk(&chunk)?;
                         let shared = chunk.into_shared();
                         if let Some(prefix) = &module_prefix {
@@ -499,28 +684,11 @@ impl Vm {
                     }
                 }
             }
-            HirItemKind::Const(decl) => {
-                if let Some(value) = self.walker.borrow().lookup_global(&decl.name.name) {
-                    if let Some(prefix) = &module_prefix {
-                        globals.insert(
-                            intern(&format!("{prefix}::{}", decl.name.name)),
-                            Global::Value(value.clone()),
-                        );
-                    }
-                    globals.insert(intern(&decl.name.name), Global::Value(value));
-                }
-            }
-            HirItemKind::Static(decl) => {
-                if let Some(value) = self.walker.borrow().lookup_global(&decl.name.name) {
-                    if let Some(prefix) = &module_prefix {
-                        globals.insert(
-                            intern(&format!("{prefix}::{}", decl.name.name)),
-                            Global::Value(value.clone()),
-                        );
-                    }
-                    globals.insert(intern(&decl.name.name), Global::Value(value));
-                }
-            }
+            // `const` / `static` items are evaluated and registered by
+            // `load`'s dedicated pass (see [`Self::eval_initializer`] /
+            // [`Self::register_item_value`]) before any function compiles,
+            // so there is nothing to do here.
+            HirItemKind::Const(_) | HirItemKind::Static(_) => {}
             HirItemKind::Adt(decl) => {
                 if let gossamer_hir::HirAdtKind::Enum(variants) = &decl.kind {
                     let type_name = decl.name.name.as_str();
@@ -555,7 +723,7 @@ fn build_native_enum_shapes(
 ) -> std::collections::HashMap<u32, u32> {
     use crate::value::{
         NativeEnumShape, NativeFieldKind, NativeVariantShape, intern_type_name,
-        native_shape_next_index, register_native_shape,
+        register_native_shapes,
     };
     use gossamer_types::TyKind;
     struct Cand<'a> {
@@ -599,7 +767,11 @@ fn build_native_enum_shapes(
             }
             let ok = c.variants.iter().all(|(_, tys)| {
                 tys.iter().all(|t| match tcx.kind_of(*t) {
-                    TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::String => true,
+                    TyKind::Int(_)
+                    | TyKind::Float(_)
+                    | TyKind::Bool
+                    | TyKind::Char
+                    | TyKind::String => true,
                     TyKind::Adt { def, .. } => supported.contains(&def.local),
                     _ => false,
                 })
@@ -621,41 +793,50 @@ fn build_native_enum_shapes(
         return std::collections::HashMap::new();
     }
     // Two-phase index assignment so recursive/mutual references
-    // resolve: indices are decided up front, shapes built after.
-    let base = native_shape_next_index();
-    let idx_of: std::collections::HashMap<u32, u32> = kept
-        .iter()
-        .enumerate()
-        .map(|(i, c)| (c.def_local, base + u32::try_from(i).unwrap_or(0)))
-        .collect();
-    for c in &kept {
-        let tagged = !c.variants.is_empty() && c.variants.len() <= 4;
-        let variants: Vec<NativeVariantShape> = c
-            .variants
+    // resolve: indices are decided up front, shapes built after. The
+    // base read and the registration run under one lock inside
+    // `register_native_shapes`, so two concurrent loads can't assign
+    // overlapping indices.
+    register_native_shapes(|base| {
+        let idx_of: std::collections::HashMap<u32, u32> = kept
             .iter()
-            .map(|(vname, tys)| NativeVariantShape {
-                name: intern_type_name(vname),
-                fields: tys
+            .enumerate()
+            .map(|(i, c)| (c.def_local, base + u32::try_from(i).unwrap_or(0)))
+            .collect();
+        let shapes: Vec<&'static NativeEnumShape> = kept
+            .iter()
+            .map(|c| {
+                let tagged = !c.variants.is_empty() && c.variants.len() <= 4;
+                let variants: Vec<NativeVariantShape> = c
+                    .variants
                     .iter()
-                    .map(|t| match tcx.kind_of(*t) {
-                        TyKind::Int(_) => NativeFieldKind::I64,
-                        TyKind::Float(_) => NativeFieldKind::F64,
-                        TyKind::Bool => NativeFieldKind::Bool,
-                        TyKind::String => NativeFieldKind::Str,
-                        TyKind::Adt { def, .. } => NativeFieldKind::Enum(idx_of[&def.local]),
-                        _ => unreachable!("filtered by the supported fixpoint"),
+                    .map(|(vname, tys)| NativeVariantShape {
+                        name: intern_type_name(vname),
+                        fields: tys
+                            .iter()
+                            .map(|t| match tcx.kind_of(*t) {
+                                TyKind::Int(_) => NativeFieldKind::I64,
+                                TyKind::Float(_) => NativeFieldKind::F64,
+                                TyKind::Bool => NativeFieldKind::Bool,
+                                TyKind::Char => NativeFieldKind::Char,
+                                TyKind::String => NativeFieldKind::Str,
+                                TyKind::Adt { def, .. } => {
+                                    NativeFieldKind::Enum(idx_of[&def.local])
+                                }
+                                _ => unreachable!("filtered by the supported fixpoint"),
+                            })
+                            .collect(),
                     })
-                    .collect(),
+                    .collect();
+                let shape: &'static NativeEnumShape = Box::leak(Box::new(NativeEnumShape {
+                    enum_name: intern_type_name(c.name),
+                    index: idx_of[&c.def_local],
+                    tagged,
+                    variants,
+                }));
+                shape
             })
             .collect();
-        let shape: &'static NativeEnumShape = Box::leak(Box::new(NativeEnumShape {
-            enum_name: intern_type_name(c.name),
-            index: idx_of[&c.def_local],
-            tagged,
-            variants,
-        }));
-        let got = register_native_shape(shape);
-        debug_assert_eq!(got, shape.index, "shape table index drift");
-    }
-    idx_of
+        (shapes, idx_of)
+    })
 }

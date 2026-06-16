@@ -1,5 +1,5 @@
 //! Multi-connection stress test for the native HTTP server.
-//! Spins up the interpreter-hosted server, fires N sequential
+//! Spins up the VM-hosted server, fires N sequential
 //! connections from several client threads, and asserts the server
 //! answered each request. The goal is not to saturate a real
 //! production server — it is to catch regressions in the per-
@@ -14,7 +14,7 @@ use std::thread;
 use std::time::Duration;
 
 use gossamer_hir::lower_source_file;
-use gossamer_interp::Interpreter;
+use gossamer_interp::Vm;
 use gossamer_lex::SourceMap;
 use gossamer_parse::parse_source_file;
 use gossamer_resolve::resolve_source_file;
@@ -31,8 +31,8 @@ fn run_server(source: &str) -> Result<(), String> {
     let mut tcx = TyCtxt::new();
     let (table, _) = typecheck_source_file(&sf, &resolutions, &mut tcx);
     let program = lower_source_file(&sf, &resolutions, &table, &mut tcx);
-    let mut interp = Interpreter::new();
-    interp.load(&program);
+    let mut interp = Vm::new();
+    interp.load(&program, tcx).expect("vm load");
     interp
         .call("main", Vec::new())
         .map(|_| ())

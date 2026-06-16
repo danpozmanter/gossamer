@@ -118,20 +118,49 @@ impl Vm {
                 let jit_opt = if self.jit_override_count.load(Ordering::Acquire) == 0 {
                     None
                 } else {
-                    self.jit.read().overrides.get(chunk.name).cloned()
+                    // Resolve once per ChunkState, then read a plain
+                    // field — no lock, no string hash. Sound because
+                    // JIT install is one-shot and the map only shrinks.
+                    let mut slot = state.jit_resolve.borrow_mut();
+                    if matches!(&*slot, crate::vm::JitResolve::Unresolved) {
+                        // `Prepared` carries the non-Sync raw JIT fn ptr
+                        // (and a per-entry verification `Cell`); the VM is
+                        // single-threaded, so the `Arc` never crosses a
+                        // thread. `Arc` (not `Rc`) keeps the resolution
+                        // valid even after the override map evicts it.
+                        #[allow(
+                            clippy::arc_with_non_send_sync,
+                            reason = "Prepared carries non-Sync raw fn ptr; per-ChunkState cache stays on one thread"
+                        )]
+                        let resolved = match self.jit.read().overrides.get(chunk.name).cloned() {
+                            Some(j) => match jit_call::prepare(j) {
+                                Some(p) => crate::vm::JitResolve::Some(std::sync::Arc::new(p)),
+                                None => crate::vm::JitResolve::None,
+                            },
+                            None => crate::vm::JitResolve::None,
+                        };
+                        *slot = resolved;
+                    }
+                    match &*slot {
+                        crate::vm::JitResolve::Some(p) => Some(p.clone()),
+                        _ => None,
+                    }
                 };
-                if let Some(jit) = jit_opt {
-                    match jit_call::invoke(&jit, &args) {
+                if let Some(prepared) = jit_opt {
+                    match jit_call::invoke_prepared(&prepared, &args) {
                         jit_call::Dispatch::Ok(value) => {
                             if jit_call::jit_trace() {
-                                eprintln!("jit: native hit {}", jit.name);
+                                eprintln!("jit: native hit {}", prepared.jit.name);
                             }
                             self.call_depth.set(self.call_depth.get().saturating_sub(1));
+                            if pushed_frame {
+                                self.call_stack.borrow_mut().pop();
+                            }
                             return Ok(value);
                         }
                         jit_call::Dispatch::Fallback => {
                             if jit_call::jit_trace() {
-                                eprintln!("jit: fallback to bytecode for {}", jit.name);
+                                eprintln!("jit: fallback to bytecode for {}", prepared.jit.name);
                             }
                         }
                     }
@@ -151,18 +180,15 @@ impl Vm {
                 // plain aggregate (the unchanged value flows back to
                 // the caller through the cell afterwards).
                 Value::Builtin(inner) => {
-                    let args = crate::interp::unwrap_mut_cells(args);
+                    let args = crate::value::unwrap_mut_cells(args);
                     (inner.call)(&args)
                 }
                 Value::Native(inner) => {
-                    let args = crate::interp::unwrap_mut_cells(args);
-                    let mut walker = self.walker.borrow_mut();
-                    (inner.call)(&mut *walker, &args)
+                    let args = crate::value::unwrap_mut_cells(args);
+                    let mut dispatch = super::native_dispatch::VmDispatch::new(self);
+                    (inner.call)(&mut dispatch, &args)
                 }
-                Value::Closure(closure) => self
-                    .walker
-                    .borrow_mut()
-                    .invoke_callable_value(Value::Closure(closure), args),
+                Value::Closure(closure) => self.invoke_closure(&closure, args),
                 Value::Variant(inner) if inner.fields.is_empty() => Ok(Value::variant(
                     inner.name,
                     Arc::unwrap_or_clone(std::sync::Arc::new(args)),
@@ -171,31 +197,38 @@ impl Vm {
                     "global is not callable at this call site".to_string(),
                 )),
             },
+            // A `static mut` holding a callable value — load the current
+            // value and dispatch it as a plain value.
+            Global::MutStatic(cell) => {
+                let value = cell.lock().clone();
+                self.apply(Global::Value(value), args)
+            }
         }
     }
 
-    /// Spawns a goroutine that runs `callee(args)` through the
-    /// bytecode VM via the process-wide [`crate::interp::pool`].
-    /// The pool keeps `num_cpus()` worker threads, each owning
-    /// a thread-local `Vm` reused across many goroutines. This
-    /// replaces the prior one-OS-thread-per-`go` shape, which
-    /// burned ~140 µs of CPU and ~15 KB of leaked `JoinHandle`
-    /// state per goroutine. Tasks queue if every worker is
-    /// busy; the spawning thread does not block.
-    pub(crate) fn spawn_goroutine_native(&self, callee: Value, args: Vec<Value>) {
+    /// Enqueues `task` on the process-wide [`crate::vm::goroutine::pool`],
+    /// running it against the worker thread's reused `Vm`. The pool
+    /// keeps `num_cpus()` worker threads, each owning a thread-local
+    /// `Vm` lazily built on first task and reused across every
+    /// goroutine that lands on it — chunk caches stay warm, the frame
+    /// pool stays populated, and there is no per-spawn `HashMap::clone`
+    /// of globals. After `task` returns, the worker `Vm` is trimmed
+    /// back toward steady state so bursty workloads do not leave every
+    /// worker holding the union of every task's high-water mark.
+    ///
+    /// Tasks queue if every worker is busy; the spawning thread does
+    /// not block. Programs that mix `gos run` invocations within one
+    /// process would see stale per-worker state here; the bench-game
+    /// shape (one program per process) does not.
+    fn spawn_on_pool<F>(&self, task: F)
+    where
+        F: FnOnce(&mut Vm) + Send + 'static,
+    {
         let globals = Arc::clone(&self.globals);
         let mir_bodies = self.mir_bodies.clone();
         let tcx_snapshot = self.tcx_snapshot.clone();
         let enum_shape_defs = self.enum_shape_defs.clone();
-        let walker_proto = self.walker_proto.clone();
-        crate::interp::pool().spawn(Box::new(move || {
-            // Per-worker `Vm`, lazily built on first task. Reused
-            // across every subsequent goroutine landing on this
-            // worker — chunk caches stay warm, frame pool stays
-            // populated, no per-spawn `HashMap::clone` of globals.
-            // Programs that mix `gos run` invocations within one
-            // process would see stale state here; the bench-game
-            // shape (one program per process) doesn't.
+        crate::vm::goroutine::pool().spawn(Box::new(move || {
             thread_local! {
                 static THREAD_VM: std::cell::OnceCell<std::cell::RefCell<Option<Vm>>> =
                     const { std::cell::OnceCell::new() };
@@ -204,37 +237,68 @@ impl Vm {
                 let vm_cell = cell.get_or_init(|| std::cell::RefCell::new(None));
                 let mut slot = vm_cell.borrow_mut();
                 if slot.is_none() {
-                    let vm = Vm::with_globals(globals, mir_bodies, tcx_snapshot, enum_shape_defs);
-                    if let Some(proto) = walker_proto {
-                        // Seed the worker's walker with the loaded fn
-                        // table and keep the proto so nested `go`
-                        // spawns from this worker propagate it.
-                        *vm.walker.borrow_mut() = (*proto).clone();
-                        let mut vm = vm;
-                        vm.walker_proto = Some(proto);
-                        *slot = Some(vm);
-                    } else {
-                        *slot = Some(vm);
-                    }
+                    // The worker `Vm` shares the parent's loaded globals
+                    // (user fns, consts, statics, ADT ctors) via the
+                    // `Arc`, so every callable a Native builtin resolves
+                    // off-main is already present.
+                    *slot = Some(Vm::with_globals(
+                        globals,
+                        mir_bodies,
+                        tcx_snapshot,
+                        enum_shape_defs,
+                    ));
                 }
                 let vm = slot.as_mut().expect("THREAD_VM init");
-                if let Err(err) = vm.dispatch_call(&callee, args) {
-                    if !vm.invoke_panic_hook(&crate::panic_message(&err)) {
-                        eprintln!("goroutine panic (isolated): {err}");
-                    }
-                }
-                // Trim per-task buffers back toward steady-state so
-                // bursty goroutine workloads do not leave every worker
-                // holding the union of every task's high-water mark.
+                task(vm);
                 vm.reset_after_task();
             });
         }));
     }
 
+    /// Spawns a goroutine that runs `callee(args)` through the
+    /// bytecode VM. A panic in the spawned callee is isolated to its
+    /// worker: it is delivered to the panic hook (if any) or reported
+    /// on stderr, and never propagates to the spawning thread.
+    pub(crate) fn spawn_goroutine_native(&self, callee: Value, args: Vec<Value>) {
+        self.spawn_on_pool(move |vm| {
+            if let Err(err) = vm.dispatch_call(&callee, args) {
+                if !vm.invoke_panic_hook(&crate::panic_message(&err)) {
+                    eprintln!("goroutine panic (isolated): {err}");
+                }
+            }
+        });
+    }
+
+    /// Spawns `callee(args)` through the bytecode VM and returns a
+    /// one-shot channel handle that `.join()` blocks on for the
+    /// outcome. Backs `spawn(f)`: the outcome rides the channel as the
+    /// final `Result<T, String>` variant — `Ok(value)`, or
+    /// `Err(message)` carrying the bare panic text, matching the
+    /// compiled tier's `gos_rt_join`.
+    pub(crate) fn spawn_join_native(
+        &self,
+        callee: Value,
+        args: Vec<Value>,
+    ) -> RuntimeResult<Value> {
+        let channel = crate::value::Channel::new();
+        let worker_channel = channel.clone();
+        self.spawn_on_pool(move |vm| {
+            let outcome = match vm.dispatch_call(&callee, args) {
+                Ok(v) => Value::variant("Ok", vec![v]),
+                Err(RuntimeError::Panic(msg)) => {
+                    Value::variant("Err", vec![Value::String(msg.into())])
+                }
+                Err(other) => Value::variant("Err", vec![Value::String(format!("{other}").into())]),
+            };
+            worker_channel.send(outcome);
+        });
+        Ok(Value::Channel(channel))
+    }
+
     pub(crate) fn dispatch_call(&self, callee: &Value, args: Vec<Value>) -> RuntimeResult<Value> {
         match callee {
             Value::Builtin(inner) => {
-                let args = crate::interp::unwrap_mut_cells(args);
+                let args = crate::value::unwrap_mut_cells(args);
                 (inner.call)(&args)
             }
             Value::String(name) => {
@@ -245,18 +309,51 @@ impl Vm {
                     .ok_or_else(|| RuntimeError::UnresolvedName(name.to_string()))?;
                 self.apply(entry, args)
             }
-            // Any other callable shape (closure, native dispatch
-            // with `&mut self` hooks, zero-field-variant
-            // constructor) delegates to the bundled tree-walker
-            // which already knows how to extend envs, bind
-            // params, and evaluate the body.
-            Value::Closure(_) | Value::Native(_) | Value::Variant(_) => self
-                .walker
-                .borrow_mut()
-                .invoke_callable_value(callee.clone(), args),
+            // Closures run natively via their compiled body chunk.
+            Value::Closure(closure) => self.invoke_closure(closure, args),
+            // Native-dispatch hooks (`&mut self` builtins) re-enter the
+            // VM's own call machinery through `VmDispatch`, so the user
+            // callables they invoke run on the VM.
+            Value::Native(inner) => {
+                let args = crate::value::unwrap_mut_cells(args);
+                let mut dispatch = super::native_dispatch::VmDispatch::new(self);
+                (inner.call)(&mut dispatch, &args)
+            }
+            // Calling a zero-field variant value acts as that variant's
+            // constructor: `Circle(1.5)` produces
+            // `Value::variant("Circle", [1.5])`.
+            Value::Variant(inner) if inner.fields.is_empty() => Ok(Value::variant(
+                inner.name,
+                Arc::unwrap_or_clone(std::sync::Arc::new(args)),
+            )),
             other => Err(RuntimeError::Type(format!(
                 "value of kind `{other}` is not callable"
             ))),
         }
+    }
+
+    /// Invokes a [`Value::Closure`] by running its native body chunk
+    /// with `capture_values ++ args` in the leading registers. Every
+    /// closure the VM builds carries a compiled chunk; a missing one is
+    /// an internal lowering invariant violation.
+    pub(crate) fn invoke_closure(
+        &self,
+        closure: &Arc<crate::value::Closure>,
+        args: Vec<Value>,
+    ) -> RuntimeResult<Value> {
+        let chunk = &closure.chunk;
+        // The chunk's leading parameters are the captured upvalues, so
+        // its declared-parameter count is the arity minus the captures.
+        let expected = chunk.arity as usize - closure.capture_values.len();
+        if expected != args.len() {
+            return Err(RuntimeError::Arity {
+                expected,
+                found: args.len(),
+            });
+        }
+        let mut full = Vec::with_capacity(closure.capture_values.len() + args.len());
+        full.extend(closure.capture_values.iter().cloned());
+        full.extend(args);
+        self.apply(Global::Fn(Arc::clone(chunk)), full)
     }
 }

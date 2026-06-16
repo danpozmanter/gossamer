@@ -1,0 +1,25 @@
+// `time::after(d)` returns a `Receiver` that yields once after `d`, firing on a
+// goroutine that then completes — so it composes with `select` (timeout) and
+// `while let` (drain). Output is made deterministic (counting / fixed winner)
+// rather than racing the clock, so it is bit-identical on the VM, Cranelift,
+// and LLVM tiers.
+
+use std::time
+
+fn main() {
+    // One-shot: drain the single yield.
+    let once = time::after(time::Duration::from_millis(2))
+    let mut fired = 0
+    while let Some(v) = once.recv() {
+        fired += v
+    }
+    println!("after fired={}", fired)
+
+    // Timer in a select: the short timer always wins against the long one.
+    let fast = time::after(time::Duration::from_millis(2))
+    let slow = time::after(time::Duration::from_millis(500))
+    select {
+        _ = fast.recv() => println!("fast"),
+        _ = slow.recv() => println!("slow"),
+    }
+}

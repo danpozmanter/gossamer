@@ -1,0 +1,30 @@
+// std::sync::RwLock — reader-writer lock guarding an i64.
+//
+// Covers: RwLock::new, get/set methods, and the closure-taking
+// with_read / with_write combinators. with_read returns the callback
+// result and leaves the value unchanged; with_write stores the
+// callback result back and returns it. Fixed values make stdout
+// bit-identical across the bytecode VM (`gos run` / `gos test`), the
+// Cranelift JIT, and the LLVM AOT tier (`gos build`).
+
+use std::sync
+
+fn main() {
+    let lock = sync::RwLock::new(10)
+    println!("init: {}", lock.get())
+
+    let doubled = sync::RwLock::with_read(lock, |v| v * 2)
+    println!("with_read result: {}", doubled)
+    println!("after read unchanged: {}", lock.get())
+
+    let updated = sync::RwLock::with_write(lock, |v| v + 5)
+    println!("with_write result: {}", updated)
+    println!("after write: {}", lock.get())
+
+    lock.set(100)
+    println!("after set: {}", lock.get())
+
+    let squared = sync::RwLock::with_write(lock, |v| v * v)
+    println!("squared result: {}", squared)
+    println!("final: {}", lock.get())
+}

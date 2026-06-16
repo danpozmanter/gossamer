@@ -1,0 +1,78 @@
+// Cross-tier regression for the sync primitives whose compiled-tier
+// wiring was missing while the bytecode VM already supported them:
+//
+//   1. The *qualified free-call* atomic spelling
+//      `sync::AtomicI64::fetch_add(a, n)` (the method form
+//      `a.fetch_add(n)` already lowered; the qualified form
+//      build-failed because no MIR free-call arm routed it to the
+//      existing `gos_rt_atomic_i64_*` shims).
+//   2. `sync::Barrier::new` / `sync::Barrier::wait` across goroutines
+//      (no `gos_rt_barrier_*` shims existed for the compiled tiers).
+//   3. `sync::Once::call` with a closure callback (no `gos_rt_once_*`
+//      shims; the closure crosses the C-ABI through the same env-thunk
+//      convention the `iter::*` / `option::*` combinators use).
+//
+// Output is fully deterministic on every tier: the barrier turns
+// goroutine scheduling into a fixed two-phase rendezvous, so `main`
+// always reads each round's published counter, and `Once` fires its
+// body exactly once. No sleeps — `WaitGroup` makes completion
+// deterministic.
+
+use std::sync
+use std::sync::WaitGroup
+
+// Two-phase rendezvous worker. Each round it bumps a shared counter
+// via the qualified-free atomic spelling, then meets `main` at the
+// barrier twice: phase A publishes the update (main reads after),
+// phase B holds the worker until main has read, so the next bump
+// cannot race ahead.
+fn worker(b: sync::Barrier, c: sync::AtomicI64, wg: WaitGroup) {
+    let mut round = 0
+    while round < 3 {
+        sync::AtomicI64::fetch_add(c, 10)
+        sync::Barrier::wait(b)
+        sync::Barrier::wait(b)
+        round += 1
+    }
+    wg.done()
+}
+
+// Calls into the Once three times; the body runs on the first call
+// only, so "init" prints exactly once across every tier.
+fn run_init(o: sync::Once) {
+    let mut i = 0
+    while i < 3 {
+        sync::Once::call(o, || println!("init"))
+        i += 1
+    }
+}
+
+fn main() {
+    // --- qualified free-call atomic spelling, single goroutine ---
+    let a = sync::AtomicI64::new(0)
+    sync::AtomicI64::store(a, 42)
+    println!("atomic load = {}", sync::AtomicI64::load(a))
+    let prev = sync::AtomicI64::fetch_add(a, 8)
+    println!("atomic prev = {}", prev)
+    println!("atomic load = {}", sync::AtomicI64::load(a))
+
+    // --- Barrier rendezvous across two goroutines (main + worker) ---
+    let b = sync::Barrier::new(2)
+    let c = sync::AtomicI64::new(0)
+    let wg = WaitGroup::new()
+    wg.add(1)
+    go worker(b, c, wg)
+    let mut round = 0
+    while round < 3 {
+        sync::Barrier::wait(b)
+        println!("round {} -> {}", round, sync::AtomicI64::load(c))
+        sync::Barrier::wait(b)
+        round += 1
+    }
+    wg.wait()
+    println!("barrier final = {}", sync::AtomicI64::load(c))
+
+    // --- Once fires its body exactly once ---
+    let o = sync::Once::new()
+    run_init(o)
+}

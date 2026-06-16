@@ -1,9 +1,7 @@
 //! Runtime support library linked into every Gossamer program.
-//! Commits the compiler and runtime to a single value layout.
-//! will add the tracing GC on top of the allocator implied
-//! here; the scheduler. For now this crate exposes the
-//! layout descriptors in [`layout`] so the rest of the toolchain can
-//! assume a stable representation.
+//! Provides the C-ABI shims, allocator, scheduler, and
+//! reference-counting memory management that compiled and
+//! interpreted programs share.
 
 // `c_abi` requires unsafe for `#[no_mangle] extern "C"` symbols and
 // raw-pointer dispatch. The rest of the crate stays safe by
@@ -23,9 +21,17 @@
 // blinds TSan to real heap races regardless. Under `-Zsanitizer=thread`
 // fall back to the default system allocator, which TSan instruments —
 // the standard practice for custom allocators under sanitizers
-// (jemalloc / mimalloc document the same). Every non-TSan build —
-// release, debug, ASan, every compiled program — keeps mimalloc.
-#[cfg(not(tsan))]
+// (jemalloc / mimalloc document the same). Miri cannot execute
+// mimalloc's foreign allocation functions at all — it models the
+// default Rust allocator and rejects the C `mi_malloc_aligned`
+// call — so it falls back to the system allocator for the same
+// reason. The cargo-fuzz harness (`--cfg fuzzing`) likewise falls
+// back: it runs many independent programs in one long-lived process
+// under ASan, where the system allocator keeps RSS bounded across
+// iterations and lets ASan instrument the heap (a custom global
+// allocator blinds it). Every other build — release, debug, the
+// standalone ASan job, every compiled program — keeps mimalloc.
+#[cfg(not(any(tsan, miri, fuzzing)))]
 #[global_allocator]
 static GLOBAL_ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
@@ -47,7 +53,8 @@ static GLOBAL_ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
 /// this crate as an rlib and so shares the same mimalloc) calls it once
 /// at startup so `gos run` and the toolchain benefit too. Safe wrapper so
 /// callers under `#![forbid(unsafe_code)]` (the `gos` `main`) can invoke
-/// it. No-op under `ThreadSanitizer`, where the system allocator is used.
+/// it. No-op under `ThreadSanitizer` and Miri, where the system
+/// allocator is used.
 ///
 /// Also disables mimalloc's transparent-huge-page request. By default
 /// mimalloc `madvise(MADV_HUGEPAGE)`s its arena memory, so on Linux with
@@ -65,7 +72,7 @@ static GLOBAL_ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
 /// the `allocator_tests` unit tests below, which assert each index still
 /// reports its documented default.
 pub fn init_process_allocator() {
-    #[cfg(not(tsan))]
+    #[cfg(not(any(tsan, miri, fuzzing)))]
     {
         const MI_OPTION_PURGE_DELAY: libmimalloc_sys::mi_option_t = 15;
         const MI_OPTION_ALLOW_THP: libmimalloc_sys::mi_option_t = 43;
@@ -83,7 +90,6 @@ pub mod c_abi;
 pub mod coverage;
 pub mod ffi;
 pub mod http2_server;
-pub mod layout;
 pub mod preempt;
 pub mod race;
 pub mod replay;
@@ -98,7 +104,6 @@ pub mod sql_pool;
 pub mod stack_guard;
 pub mod value;
 
-pub use layout::{HEAP_ALIGN, ObjHeader, Ptr, TypeInfo, WORD_BYTES, header_align, header_size};
 // Re-export preempt-check FFI symbols so JIT-side
 // `rt::gos_rt_preempt_check{,_and_yield}` lookups resolve through
 // the crate root rather than the `preempt` submodule path. The
@@ -112,7 +117,7 @@ pub use value::{
     from_singleton, tag_of, to_f64, to_heap_handle, to_i64, to_singleton,
 };
 
-#[cfg(all(test, not(tsan)))]
+#[cfg(all(test, not(any(tsan, miri, fuzzing))))]
 mod allocator_tests {
     /// Guards the `mi_option_purge_delay` (15) and `mi_option_allow_thp`
     /// (43) enum indices that [`super::init_process_allocator`] pins by

@@ -1,0 +1,46 @@
+// strconv radix parsing/formatting (bases 2..=36) and quote/unquote
+// (round-tripping double-quoted strings with escapes). Bit-identical on the
+// VM, Cranelift, and LLVM tiers.
+
+use std::strconv
+
+fn main() {
+    println!("{}", strconv::format_i64_radix(255, 16))
+    println!("{}", strconv::format_i64_radix(10, 2))
+    println!("{}", strconv::format_i64_radix(-42, 16))
+    println!("{}", strconv::format_i64_radix(35, 36))
+
+    println!("{}", match strconv::parse_i64_radix("ff", 16) { Ok(n) => n, Err(_) => -1 })
+    println!("{}", match strconv::parse_i64_radix("1010", 2) { Ok(n) => n, Err(_) => -1 })
+    println!("{}", match strconv::parse_i64_radix("-2a", 16) { Ok(n) => n, Err(_) => -1 })
+    println!("{}", match strconv::parse_i64_radix("zz", 16) { Ok(n) => n, Err(_) => -1 })
+
+    let q = strconv::quote("a\tb\"c\"\n")
+    println!("{}", q)
+    println!("{}", match strconv::unquote(q) { Ok(s) => s == "a\tb\"c\"\n", Err(_) => false })
+    println!("{}", match strconv::unquote("not quoted") { Ok(_) => false, Err(_) => true })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::strconv
+    use std::testing
+
+    #[test]
+    fn radix_round_trips() {
+        testing::check(strconv::format_i64_radix(255, 16) == "ff", "255 in hex")
+        testing::check(strconv::format_i64_radix(10, 2) == "1010", "10 in binary")
+        let n = match strconv::parse_i64_radix("zz", 36) { Ok(v) => v, Err(_) => -1 }
+        testing::check(n == 1295, "zz base 36 = 1295")
+        let bad = match strconv::parse_i64_radix("2", 2) { Ok(_) => false, Err(_) => true }
+        testing::check(bad, "digit 2 is invalid in base 2")
+    }
+
+    #[test]
+    fn quote_round_trips() {
+        let original = "tab\there\\and\"quotes\""
+        let q = strconv::quote(original)
+        let back = match strconv::unquote(q) { Ok(s) => s, Err(_) => "" }
+        testing::check(back == original, "quote then unquote is identity")
+    }
+}

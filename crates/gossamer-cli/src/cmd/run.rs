@@ -1,8 +1,9 @@
 //! `gos run [PATH]` — execute a program through the bytecode VM.
 //!
-//! The bytecode VM is the only interpretation tier. The tree-walker
-//! was retired in 0.5.0; it is no longer reachable from this command
-//! or from any CLI / env-var path.
+//! The register-based bytecode VM is the only execution engine for
+//! `gos run`. The tree-walker interpreter was removed in 0.14.0 (the
+//! `--tree-walker` flag in 0.5.0); no CLI / env-var path selects an
+//! engine.
 
 use std::path::PathBuf;
 
@@ -56,17 +57,7 @@ fn run(file: &PathBuf, _mode: RunMode, forwarded: &[String]) -> Result<()> {
     match r {
         Ok(()) => Ok(()),
         Err(err) => {
-            let stack = vm.call_stack_snapshot();
-            let trace = if stack.is_empty() {
-                String::new()
-            } else {
-                let mut rendered = String::from("\n  call stack (outermost first):");
-                for name in &stack {
-                    rendered.push_str("\n    at ");
-                    rendered.push_str(name);
-                }
-                rendered
-            };
+            let trace = crate::cmd::traceback::render_call_stack(&vm.call_stack_snapshot());
             if gossamer_interp::is_panic_error(&err) {
                 // A user hook replaces the default report; either way a
                 // main-goroutine panic exits with the pinned code 101

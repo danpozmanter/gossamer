@@ -1,0 +1,23 @@
+// Cross-tier regression for `sync::AtomicBool`. The compiled atomic
+// dispatch was name-only, so `b.load()` routed to the i64 load shim
+// and the result rendered as `1` / `0` instead of `true` / `false`.
+// Receiver-type-aware dispatch now pins the bool-typed shims, so the
+// load result renders identically on the VM, the JIT, and LLVM AOT.
+
+use std::sync
+
+// Param receiver (no local construction in this body): the load still
+// routes to the bool-typed shim through the rendered receiver type.
+fn read(b: sync::AtomicBool) -> bool {
+    b.load()
+}
+
+fn main() {
+    let b = sync::AtomicBool::new(false)
+    println!("initial={}", b.load())
+    b.store(true)
+    println!("after_store={}", b.load())
+    println!("via_param={}", read(b))
+    b.store(false)
+    println!("reset={}", read(b))
+}

@@ -40,8 +40,8 @@ use gossamer_lex::Span;
 use gossamer_types::{Ty, TyCtxt};
 
 use crate::ir::{
-    BasicBlock, BinOp, BlockId, Body, ConstValue, Local, LocalDecl, Operand, Place, Rvalue,
-    Statement, StatementKind, Terminator, UnOp,
+    AssertMessage, BasicBlock, BinOp, BlockId, Body, ConstValue, Local, LocalDecl, Operand, Place,
+    Rvalue, Statement, StatementKind, Terminator, UnOp,
 };
 
 use super::*;
@@ -212,16 +212,17 @@ impl<'a> Builder<'a> {
             HirExprKind::Go(inner) => {
                 let go_span = expr.span;
                 // Real spawn for `go f(args)` where f is a named
-                // function with 0-2 scalar args: emit a call to
+                // function with ≤ 6 scalar args: emit a call to
                 // `gos_rt_go_spawn_call_N(fn_addr, args…)`. The
                 // runtime helper transmutes fn_addr back to
                 // `extern "C" fn(...) -> i64` and runs it on a
                 // fresh OS thread.
                 //
-                // Anything more complex (closure captures, >2
-                // args, method calls) falls back to synchronous
-                // execution so the program still runs — sound
-                // for single-threaded workloads.
+                // Anything more complex (a stdlib free call, a
+                // method call, > 6 args, a block) has been wrapped
+                // by the front-end (`lift_go_inner`) into a
+                // zero-argument closure and spawns fire-and-forget
+                // through `lower_go_spawn_closure`.
                 if let HirExprKind::Call { callee, args } = &inner.kind {
                     if let HirExprKind::Path { def: Some(def), .. } = &callee.kind {
                         if args.len() <= 6 {
@@ -252,6 +253,10 @@ impl<'a> Builder<'a> {
                                 {
                                     a = self.coerce_array_to_vec(a, elem, len, go_span);
                                 }
+                                // The arg escapes to the spawned goroutine:
+                                // switch any RC-managed value to atomic
+                                // reference counting before the spawn.
+                                self.emit_mark_shared_if_rc(a, go_span);
                                 operands.push(Operand::Copy(Place::local(a)));
                             }
                             let unit_ty = self.tcx.unit();
@@ -268,9 +273,11 @@ impl<'a> Builder<'a> {
                         }
                     }
                 }
-                // Fallback: synchronous.
-                let _ = self.lower_expr(inner);
-                Some(self.lower_unit(go_span))
+                // Non-fast-path `go`: the front-end wrapped `inner`
+                // into a zero-argument closure — spawn it
+                // fire-and-forget so the wrapped call runs on its own
+                // goroutine, identical to the VM tier.
+                self.lower_go_spawn_closure(inner, go_span)
             }
             HirExprKind::Select { arms } => {
                 // Real multiplexing via the runtime select builder. The arms
@@ -561,6 +568,15 @@ impl<'a> Builder<'a> {
                 return Some(local);
             }
         }
+        // A `static mut` read loads the live global cell rather than
+        // inlining the declaration value.
+        if let Some(def) = def
+            && let Some(sref) = self.mut_statics.get(&def).cloned()
+        {
+            let local = self.fresh(sref.ty);
+            self.emit_assign(Place::local(local), Rvalue::StaticLoad(sref), span);
+            return Some(local);
+        }
         // `None` as a value (no payload) lowers to a heap-allocated
         // `gos_rt_result_new(1, 0)` so the match disc check can
         // distinguish it from `Some(_)`.
@@ -633,6 +649,26 @@ impl<'a> Builder<'a> {
             });
             self.set_current(next);
             return Some(dest);
+        }
+        // `math::PI` / `math::E` / … are `f64` constants in
+        // `gossamer-std`; the interpreter binds them as `Value::Float`
+        // globals, but the compiled tiers never see a `const` def for
+        // them, so the path would otherwise fall through to the
+        // FnRef/string fallback below — printing the literal "math::PI"
+        // and feeding a string-tag pointer into arithmetic. Inline the
+        // IEEE value so every tier folds them identically.
+        if strip_std.len() == 2
+            && strip_std[0] == "math"
+            && let Some(bits) = math_const_bits(strip_std[1])
+        {
+            let f64_ty = self.tcx.float_ty(gossamer_types::FloatTy::F64);
+            let local = self.fresh(f64_ty);
+            self.emit_assign(
+                Place::local(local),
+                Rvalue::Use(Operand::Const(ConstValue::Float(bits))),
+                span,
+            );
+            return Some(local);
         }
         // When the typechecker leaves a path-expr's type as `Var(_)`
         // — common for paths that resolve to `const` / `static`
@@ -898,6 +934,29 @@ impl<'a> Builder<'a> {
         Some(local)
     }
 
+    /// Marks `value` (and its reachable RC subgraph) as escaped to
+    /// another goroutine, so it switches to atomic reference counting
+    /// and is excluded from the per-thread cycle collector. Emitted at
+    /// escape points (`go f(args)`, `spawn` closure captures, channel
+    /// `send`). No-op unless `value`'s static type is RC-managed, so the
+    /// runtime helper never sees a scalar / non-RC pointer.
+    pub(crate) fn emit_mark_shared_if_rc(&mut self, value: Local, span: Span) {
+        let ty = self.locals[value.0 as usize].ty;
+        if !self.tcx.is_rc_managed(ty) {
+            return;
+        }
+        let unit_ty = self.tcx.unit();
+        let dest = self.fresh(unit_ty);
+        let next = self.new_block(span);
+        self.terminate(Terminator::Call {
+            callee: Operand::Const(ConstValue::Str("gos_rt_rc_mark_shared".to_string())),
+            args: vec![Operand::Copy(Place::local(value))],
+            destination: Place::local(dest),
+            target: Some(next),
+        });
+        self.set_current(next);
+    }
+
     pub(crate) fn lower_binary(
         &mut self,
         op: HirBinaryOp,
@@ -1122,8 +1181,144 @@ impl<'a> Builder<'a> {
         } else {
             ty
         };
-        let local = self.fresh(ty);
         let bin_op = lower_binop(op);
+        // Integer divide / modulo guards. The compiled tiers lower
+        // these to raw `sdiv`/`srem`, which trap (SIGFPE on x86) on a
+        // zero divisor and on the signed `MIN / -1` overflow. Match
+        // the VM: a zero divisor is a clean panic; `MIN / -1` wraps to
+        // `MIN` and `MIN % -1` to 0. Floats follow IEEE (`x / 0.0` is
+        // ±inf), so only integer operands are guarded.
+        let int_ty: Option<gossamer_types::IntTy> = if matches!(bin_op, BinOp::Div | BinOp::Rem) {
+            match self.tcx.kind_of(ty) {
+                gossamer_types::TyKind::Int(it) => Some(*it),
+                _ => None,
+            }
+        } else {
+            None
+        };
+        // A literal divisor lets us drop the guards at compile time: a
+        // known non-zero, non-(-1) constant (the common `/ 2`, `/ 10`,
+        // `/ 1` case) can neither divide by zero nor overflow, so the
+        // plain `BinaryOp` is emitted and identity/strength-reduction
+        // folds still fire.
+        let rhs_const: Option<i128> = match &rhs.kind {
+            HirExprKind::Literal(lit @ HirLiteral::Int(_)) => match literal_to_const(lit) {
+                ConstValue::Int(n) => Some(n),
+                _ => None,
+            },
+            _ => None,
+        };
+        let divisor_maybe_zero = !matches!(rhs_const, Some(n) if n != 0);
+        let divisor_maybe_neg1 = !matches!(rhs_const, Some(n) if n != -1);
+        if int_ty.is_some() && divisor_maybe_zero {
+            // Divide-by-zero: emit the wired `Assert{DivideByZero}`
+            // (consumed by every backend). `expected: true` ⇒ panic
+            // when `cond` (rhs != 0) is false, i.e. when the divisor
+            // is zero (each backend's `lower_assert` polarity).
+            let bool_ty = self.tcx.bool_ty();
+            let nonzero = self.fresh(bool_ty);
+            self.emit_assign(
+                Place::local(nonzero),
+                Rvalue::BinaryOp {
+                    op: BinOp::Ne,
+                    lhs: Operand::Copy(Place::local(rhs_local)),
+                    rhs: Operand::Const(ConstValue::Int(0)),
+                },
+                span,
+            );
+            let ok = self.new_block(span);
+            self.terminate(Terminator::Assert {
+                cond: Operand::Copy(Place::local(nonzero)),
+                expected: true,
+                msg: AssertMessage::DivideByZero,
+                target: ok,
+            });
+            self.set_current(ok);
+        }
+        // Signed `MIN / -1`: the wrapped result the VM produces
+        // (`MIN` for `/`, `0` for `%`) instead of a trapping `sdiv`.
+        // LLVM/Cranelift fold this away when the divisor is a constant
+        // other than -1. Unsigned division never overflows this way.
+        let signed_min: Option<i128> = match int_ty {
+            Some(gossamer_types::IntTy::I8) => Some(i128::from(i8::MIN)),
+            Some(gossamer_types::IntTy::I16) => Some(i128::from(i16::MIN)),
+            Some(gossamer_types::IntTy::I32) => Some(i128::from(i32::MIN)),
+            Some(gossamer_types::IntTy::I64 | gossamer_types::IntTy::Isize) => {
+                Some(i128::from(i64::MIN))
+            }
+            Some(gossamer_types::IntTy::I128) => Some(i128::MIN),
+            _ => None,
+        };
+        if let Some(min_val) = signed_min.filter(|_| divisor_maybe_neg1) {
+            let bool_ty = self.tcx.bool_ty();
+            let is_min = self.fresh(bool_ty);
+            self.emit_assign(
+                Place::local(is_min),
+                Rvalue::BinaryOp {
+                    op: BinOp::Eq,
+                    lhs: Operand::Copy(Place::local(lhs_local)),
+                    rhs: Operand::Const(ConstValue::Int(min_val)),
+                },
+                span,
+            );
+            let is_neg1 = self.fresh(bool_ty);
+            self.emit_assign(
+                Place::local(is_neg1),
+                Rvalue::BinaryOp {
+                    op: BinOp::Eq,
+                    lhs: Operand::Copy(Place::local(rhs_local)),
+                    rhs: Operand::Const(ConstValue::Int(-1)),
+                },
+                span,
+            );
+            let ovf = self.fresh(bool_ty);
+            self.emit_assign(
+                Place::local(ovf),
+                Rvalue::BinaryOp {
+                    op: BinOp::BitAnd,
+                    lhs: Operand::Copy(Place::local(is_min)),
+                    rhs: Operand::Copy(Place::local(is_neg1)),
+                },
+                span,
+            );
+            let result = self.fresh(ty);
+            let ovf_block = self.new_block(span);
+            let normal_block = self.new_block(span);
+            let join = self.new_block(span);
+            self.terminate(Terminator::SwitchInt {
+                discriminant: Operand::Copy(Place::local(ovf)),
+                arms: vec![(0, normal_block)],
+                default: ovf_block,
+            });
+            // Overflow arm: the wrapped result (MIN for `/`, 0 for `%`).
+            self.set_current(ovf_block);
+            let wrapped = if matches!(bin_op, BinOp::Rem) {
+                0
+            } else {
+                min_val
+            };
+            self.emit_assign(
+                Place::local(result),
+                Rvalue::Use(Operand::Const(ConstValue::Int(wrapped))),
+                span,
+            );
+            self.terminate(Terminator::Goto { target: join });
+            // Normal arm: the actual division.
+            self.set_current(normal_block);
+            self.emit_assign(
+                Place::local(result),
+                Rvalue::BinaryOp {
+                    op: bin_op,
+                    lhs: Operand::Copy(Place::local(lhs_local)),
+                    rhs: Operand::Copy(Place::local(rhs_local)),
+                },
+                span,
+            );
+            self.terminate(Terminator::Goto { target: join });
+            self.set_current(join);
+            return Some(result);
+        }
+        let local = self.fresh(ty);
         self.emit_assign(
             Place::local(local),
             Rvalue::BinaryOp {
@@ -1137,6 +1332,18 @@ impl<'a> Builder<'a> {
     }
 
     pub(crate) fn lower_assign(&mut self, place: &HirExpr, value: &HirExpr, span: Span) {
+        // A `static mut` assignment (`COUNTER = v`, `COUNTER += 1`) stores
+        // into the live global cell. The RHS is lowered first so a read of
+        // the same static inside it observes the pre-write value.
+        if let HirExprKind::Path { def: Some(def), .. } = &place.kind
+            && let Some(sref) = self.mut_statics.get(def).cloned()
+        {
+            let Some(value_local) = self.lower_expr(value) else {
+                return;
+            };
+            self.emit_static_store(sref, Operand::Copy(Place::local(value_local)), span);
+            return;
+        }
         // `xs[idx] = v` on a `Vec<T>` / `Slice<T>` receiver routes
         // through the runtime helper `gos_rt_vec_set_i64`. The
         // generic projection path computes a flat-array address
@@ -1186,6 +1393,30 @@ impl<'a> Builder<'a> {
                 return;
             }
         }
+        // Fuse `acc += format!(...)`: append each format piece straight onto
+        // the accumulator so the text reaches `acc` in one copy, instead of
+        // routing through the concat buffer and a throwaway result string that
+        // `+=` then copies a second time.
+        if let HirExprKind::Binary {
+            op: HirBinaryOp::Add,
+            lhs,
+            rhs,
+        } = &value.kind
+            && let (Some(acc), Some(lhs_local)) = (
+                self.receiver_local_from_path(place),
+                self.receiver_local_from_path(lhs),
+            )
+            && acc == lhs_local
+            && let HirExprKind::Call { callee, args } = &rhs.kind
+            && matches!(
+                &callee.kind,
+                HirExprKind::Path { segments, .. }
+                    if segments.len() == 1 && segments[0].name.as_str() == "__concat"
+            )
+            && self.try_lower_append_fused(acc, args, span)
+        {
+            return;
+        }
         let Some(mut value_local) = self.lower_expr(value) else {
             return;
         };
@@ -1214,6 +1445,60 @@ impl<'a> Builder<'a> {
             Rvalue::Use(Operand::Copy(Place::local(value_local))),
             span,
         );
+    }
+
+    /// Lowers `acc += __concat(pieces...)` to one in-place append per piece
+    /// (`acc = gos_rt_str_append_*(acc, piece)`), each copying its piece a
+    /// single time into the accumulator. Returns `false` without emitting
+    /// anything when a piece is not a `String` / `i64` / `f64`, so the caller
+    /// falls back to the buffered concat path.
+    fn try_lower_append_fused(&mut self, acc: Local, pieces: &[HirExpr], span: Span) -> bool {
+        use gossamer_types::{FloatTy, IntTy, TyKind};
+        if pieces.is_empty() {
+            return false;
+        }
+        let append_fn = |this: &Self, ty: Ty| -> Option<&'static str> {
+            let mut cur = ty;
+            while let TyKind::Ref { inner, .. } = this.tcx.kind_of(cur) {
+                cur = *inner;
+            }
+            match this.tcx.kind_of(cur) {
+                TyKind::String => Some("gos_rt_str_concat_drop_a"),
+                TyKind::Int(IntTy::I64) => Some("gos_rt_str_append_i64"),
+                TyKind::Float(FloatTy::F64) => Some("gos_rt_str_append_f64"),
+                _ => None,
+            }
+        };
+        // The accumulator must itself be a `String` for the append result to
+        // type-check back into its slot.
+        if append_fn(self, self.locals[acc.0 as usize].ty) != Some("gos_rt_str_concat_drop_a") {
+            return false;
+        }
+        let mut fns = Vec::with_capacity(pieces.len());
+        for p in pieces {
+            match append_fn(self, p.ty) {
+                Some(f) => fns.push(f),
+                None => return false,
+            }
+        }
+        for (p, fname) in pieces.iter().zip(fns) {
+            let Some(piece_local) = self.lower_expr(p) else {
+                return true;
+            };
+            let piece_local = self.auto_deref_cell(piece_local, span);
+            let next = self.new_block(span);
+            self.terminate(Terminator::Call {
+                callee: Operand::Const(ConstValue::Str(fname.to_string())),
+                args: vec![
+                    Operand::Copy(Place::local(acc)),
+                    Operand::Copy(Place::local(piece_local)),
+                ],
+                destination: Place::local(acc),
+                target: Some(next),
+            });
+            self.set_current(next);
+        }
+        true
     }
 
     pub(crate) fn lower_place_expr(&mut self, expr: &HirExpr) -> Option<Place> {
@@ -1742,4 +2027,27 @@ impl<'a> Builder<'a> {
         }
         Some(dest)
     }
+}
+
+/// Bit pattern of the `f64` behind a `std::math` constant, or `None`
+/// if `name` is not one. Mirrors `gossamer_std::math`'s constants so
+/// the compiled tiers fold them identically to the interpreter's
+/// `Value::Float` globals.
+fn math_const_bits(name: &str) -> Option<u64> {
+    let v: f64 = match name {
+        "PI" => std::f64::consts::PI,
+        "E" => std::f64::consts::E,
+        "SQRT_2" => std::f64::consts::SQRT_2,
+        "LN_2" => std::f64::consts::LN_2,
+        "LN_10" => std::f64::consts::LN_10,
+        "LOG2_E" => std::f64::consts::LOG2_E,
+        "LOG10_E" => std::f64::consts::LOG10_E,
+        "PHI" => 1.618_033_988_749_895,
+        "MAX_F64" => f64::MAX,
+        "MIN_POSITIVE_F64" => f64::MIN_POSITIVE,
+        "INF" => f64::INFINITY,
+        "NEG_INF" => f64::NEG_INFINITY,
+        _ => return None,
+    };
+    Some(v.to_bits())
 }

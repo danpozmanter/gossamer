@@ -1,0 +1,42 @@
+// A user struct's own `impl` method must win over a same-named runtime
+// builtin. The compiled-tier method dispatch table resolves several
+// bare names (`load` / `store` / `add` / `lock` / ...) with no
+// receiver-type guard, so a user `Store` with `fn load(&self, ...)`
+// would otherwise hijack to `gos_rt_atomic_i64_load` and read the
+// struct pointer as an atomic cell. The receiver here is a plain user
+// struct (no atomic / mutex / wait-group handle), so every call must
+// reach the declared method bit-identically on the bytecode VM,
+// Cranelift JIT, and LLVM AOT (incl. `--release`).
+
+use std::errors
+
+struct Store { base: i64 }
+
+impl Store {
+    fn load(&self, key: &String) -> Result<i64, errors::Error> {
+        if *key == "" {
+            return Err(errors::new("empty key"))
+        }
+        Ok(self.base + key.len())
+    }
+    fn store(&self, delta: i64) -> i64 {
+        self.base + delta
+    }
+    fn add(&self, factor: i64) -> i64 {
+        self.base * factor
+    }
+}
+
+fn main() {
+    let s = Store { base: 100 }
+    match s.load(&"abc") {
+        Ok(v) => println!("load ok {}", v),
+        Err(e) => println!("load err {}", e.message()),
+    }
+    match s.load(&"") {
+        Ok(v) => println!("load ok {}", v),
+        Err(e) => println!("load err {}", e.message()),
+    }
+    println!("store {}", s.store(5))
+    println!("add {}", s.add(3))
+}

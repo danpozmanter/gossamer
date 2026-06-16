@@ -3,9 +3,11 @@
  *
  * `x |> f` desugars to `f(x)`; `x |> f(a, b)` desugars to
  * `f(a, b, x)` (the piped value lands in the *last* positional
- * slot). Method calls work the same: `x |> recv.m(a)` becomes
- * `recv.m(a, x)`. `|>` is left-associative with very low
- * precedence, so `a |> f |> g` reads as `g(f(a))` without
+ * slot). `x |> recv.m(a)` pipes into an external receiver's last
+ * argument: `recv.m(a, x)`. The `_` placeholder instead makes the
+ * piped value the *receiver*: `x |> _.m(a)` is `x.m(a)`, and bare
+ * `x |> _.trim` is `x.trim()`. `|>` is left-associative with very
+ * low precedence, so `a |> f |> g` reads as `g(f(a))` without
  * parentheses.
  *
  * Combinator surfaces in `std::iter` / `std::option` / `std::result`
@@ -27,7 +29,7 @@ fn clamp(lo: i64, hi: i64, x: i64) -> i64 {
 }
 
 fn split_words(s: String) -> [String] {
-    s.trim().to_lowercase().split(" ")
+    s.trim().to_lower().split(" ")
 }
 
 fn main() {
@@ -38,6 +40,11 @@ fn main() {
     // Equivalent nested form (what `|>` desugars to):
     let same = clamp(0, 100, add(10, double(3)))
     println!("nested: {same}")
+
+    // `_.method` pipes the value through its own methods — `_` is the
+    // receiver of the step, so `_.trim` is `x.trim()`.
+    let shout = "  hello  " |> _.trim |> _.to_upper
+    println!("shout: {shout}")
 
     // Word count, top-down: split on whitespace, drop empties, count.
     let words = "  Hello  World  "

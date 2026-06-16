@@ -35,24 +35,27 @@ source.gos
 └──────────────┘
    │
    ▼
-┌──────────────┐  gossamer-interp     tree-walker VM; the bytecode
-│  Evaluation  │                      and Cranelift backends live in
-└──────────────┘                      gossamer-mir / -codegen-*.
+┌──────────────┐  gossamer-interp     register-based bytecode VM;
+│  Evaluation  │                      the LLVM and Cranelift backends
+└──────────────┘                      live in gossamer-mir / -codegen-*.
 ```
 
 ## Evaluator
 
-The tree-walker in `gossamer-interp` is the default engine. It:
+The register-based bytecode VM in `gossamer-interp` is the sole
+`gos run` / `gos test` engine. It:
 
 1. Accepts an `HirProgram`.
-2. Installs every top-level function and inherent-impl method under
-   both the unqualified (`foo`) and type-qualified (`Type::foo`)
-   names in a `HashMap<String, Value>`.
+2. Compiles every top-level function and inherent-impl method to a
+   register-machine `FnChunk`, registered under both the unqualified
+   (`foo`) and type-qualified (`Type::foo`) names.
 3. Registers builtin callables for stdlib functions (`os::args`,
    `time::sleep`, `json::parse`, …) and variant constructors for
    every user enum.
-4. Walks HIR expressions directly, keeping local bindings in an
-   `Env` stack.
+4. Executes the compiled bytecode in a register machine, keeping
+   locals in per-frame register files. Every construct — closures,
+   `select`, `defer`, or-patterns, goroutines, custom iterators — is
+   lowered to native bytecode; nothing is interpreted from HIR.
 
 Struct values are `Rc<Vec<(Ident, Value)>>`. Field assignment runs
 through a copy-on-write helper that allocates a fresh `Rc` so alias
@@ -78,8 +81,10 @@ tracing collector and no pause:
 - **Arenas.** `arena { }` blocks bump-allocate and free wholesale
   at every block exit.
 
-The tree-walker piggy-backs on Rust's `Rc` / `Arc` for object
-lifetime, which is the semantic oracle the compiled tiers match.
+The bytecode VM piggy-backs on Rust's `Rc` / `Arc` for object
+lifetime; its output is the semantic oracle the compiled tiers
+match, cross-checked by the tier-parity suite and the VM-vs-LLVM-AOT
+differential.
 
 ## Scheduler
 
@@ -169,7 +174,7 @@ Graceful shutdown is driven by:
 
 ## Panic recovery
 
-`panic(msg)` in user code returns `RuntimeError::Panic(msg)` from
+`panic!(msg)` in user code returns `RuntimeError::Panic(msg)` from
 the evaluator. The native HTTP server catches that per-request,
 logs it, and returns a 500. A panic inside a goroutine body
 unwinds the coroutine's stack and propagates to the worker M's

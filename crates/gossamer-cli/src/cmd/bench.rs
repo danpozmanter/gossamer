@@ -175,22 +175,22 @@ fn run_parallel(targets: Vec<BenchTarget>, parallel: usize) -> Vec<BenchRecord> 
     collected.into_iter().map(|(_, rec)| rec).collect()
 }
 
-/// Calibrates and runs one bench fn end-to-end. The interp is
+/// Calibrates and runs one bench fn end-to-end. The VM is
 /// re-created per-target so cross-bench JIT state cannot perturb
 /// the timing of a later bench.
 fn run_one(target: &BenchTarget) -> Result<BenchRecord> {
     let source = read_source(&target.file)?;
     let mut map = gossamer_lex::SourceMap::new();
     let file_id = map.add_file(target.file.to_string_lossy().into_owned(), source.clone());
-    let (program, _sf, _tcx) = load_and_check_with_sf(&source, file_id, &map)?;
-    let mut interp = gossamer_interp::Interpreter::new();
-    interp.load(&program);
+    let (program, _sf, tcx) = load_and_check_with_sf(&source, file_id, &map)?;
+    let mut vm = gossamer_interp::Vm::new();
+    vm.load(&program, tcx)
+        .map_err(|e| anyhow!("bench {} load failed: {e}", target.name))?;
 
-    let iterations = auto_tune_iterations(&mut interp, &target.name)?;
+    let iterations = auto_tune_iterations(&vm, &target.name)?;
     let started = Instant::now();
     for _ in 0..iterations {
-        interp
-            .call(&target.name, Vec::new())
+        vm.call(&target.name, Vec::new())
             .map_err(|e| anyhow!("bench {} failed: {e}", target.name))?;
     }
     let elapsed = started.elapsed();
@@ -221,13 +221,12 @@ fn run_one(target: &BenchTarget) -> Result<BenchRecord> {
 /// exceeds [`CALIBRATION_NANOS`] or the count hits
 /// [`MAX_ITERATIONS`]. Returns the count to use for the final
 /// timed batch.
-fn auto_tune_iterations(interp: &mut gossamer_interp::Interpreter, name: &str) -> Result<u64> {
+fn auto_tune_iterations(vm: &gossamer_interp::Vm, name: &str) -> Result<u64> {
     let mut n: u64 = 1;
     loop {
         let started = Instant::now();
         for _ in 0..n {
-            interp
-                .call(name, Vec::new())
+            vm.call(name, Vec::new())
                 .map_err(|e| anyhow!("bench {name} failed during calibration: {e}"))?;
         }
         let elapsed = started.elapsed();

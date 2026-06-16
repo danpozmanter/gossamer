@@ -1,4 +1,4 @@
-//! Interpreter ↔ native parity harness.
+//! VM ↔ native parity harness.
 //!
 //! Default `cargo test` runs only the `minimal_parity_*` smoke
 //! tests against `examples/hello_world.gos`, which keeps the suite

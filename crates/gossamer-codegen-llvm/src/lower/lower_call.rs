@@ -803,20 +803,22 @@ impl<'a> Lowerer<'a> {
                 && slot_count(self.tcx, want).is_none_or(|n| n == 1)
                 && matches!(
                     self.tcx.kind(local_ty),
-                    Some(TyKind::Var(_) | TyKind::Error) | None
+                    Some(TyKind::Var(_) | TyKind::Error | TyKind::Int(_)) | None
                 )
             {
                 // Case 2b: the callee declares a one-slot aggregate
-                // param (a tagged-pointer enum), but inference left
-                // this call site's arg local untyped — common for
-                // method-call argument temporaries. The callee
-                // memcpys 8 bytes from the arg address, so pass the
-                // slot address; passing the loaded tagged-pointer
-                // VALUE instead made the callee dereference the tag
-                // bits (read garbage or fault). Bounded to one slot
-                // (`slot_count` of a tagged heap enum is `None`; its
-                // storage is one word) so an under-sized scalar slot
-                // can never be overread.
+                // param (a tagged-pointer / bare-discriminant enum),
+                // but this call site's arg local is a one-word scalar
+                // — either inference left it untyped (method-call arg
+                // temporaries) or a unit-only enum lowered its value
+                // to a bare `i64` discriminant. The callee memcpys 8
+                // bytes from the arg address, so pass the slot address;
+                // passing the loaded VALUE instead makes the callee
+                // dereference the bits (read garbage or fault).
+                // Bounded to one slot (a tagged heap enum's
+                // `slot_count` is `None`, its storage one word; an
+                // `i64` slot is exactly one word) so the callee can
+                // never overread.
                 return Ok((local_slot(place.local), "ptr".to_string()));
             }
         }

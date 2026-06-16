@@ -1,0 +1,13 @@
+fn blend(a: i64, x: f64, b: i64, y: f64, c: i64, z: f64) -> f64 {
+    (a as f64) * x + (b as f64) * y + (c as f64) * z
+}
+
+fn main() {
+    let mut total = 0.0
+    let mut i = 0
+    while i < 4000 {
+        total += blend(i, 1.5, i + 1, 2.5, i + 2, 0.5)
+        i += 1
+    }
+    println!("{}", total)
+}

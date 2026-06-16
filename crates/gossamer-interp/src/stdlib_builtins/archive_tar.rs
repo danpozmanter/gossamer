@@ -206,12 +206,23 @@ pub(crate) fn builtin_archive_tar_write(args: &[Value]) -> RuntimeResult<Value> 
 
 use std::sync::atomic::AtomicU64 as StdAtomicU64;
 
-thread_local! {
-    pub(crate) static ATOMIC_U64_REGISTRY: std::cell::RefCell<std::collections::HashMap<i64, Arc<StdAtomicU64>>> =
-        std::cell::RefCell::new(std::collections::HashMap::new());
-    pub(crate) static BARRIER_REGISTRY: std::cell::RefCell<std::collections::HashMap<i64, Arc<gossamer_std::sync::Barrier>>> =
-        std::cell::RefCell::new(std::collections::HashMap::new());
-}
+use super::set::GlobalReg;
+
+// Process-global (not `thread_local!`): goroutines run on an OS
+// worker-thread pool, so a handle minted on one thread must resolve on
+// another. A `thread_local!` registry silently lost every cross-goroutine
+// barrier rendezvous (`Barrier::wait` no-op'd on the worker thread,
+// deadlocking the main goroutine). Mirrors the `sync::*` registries.
+pub(crate) static ATOMIC_U64_REGISTRY: GlobalReg<
+    std::collections::HashMap<i64, Arc<StdAtomicU64>>,
+> = GlobalReg::new(|| {
+    parking_lot::ReentrantMutex::new(std::cell::RefCell::new(std::collections::HashMap::new()))
+});
+pub(crate) static BARRIER_REGISTRY: GlobalReg<
+    std::collections::HashMap<i64, Arc<gossamer_std::sync::Barrier>>,
+> = GlobalReg::new(|| {
+    parking_lot::ReentrantMutex::new(std::cell::RefCell::new(std::collections::HashMap::new()))
+});
 
 pub(crate) fn install_sync_atomic_u64(globals: &mut Vec<(&'static str, Value)>) {
     let entries: &[(&str, BuiltinFnPub)] = &[

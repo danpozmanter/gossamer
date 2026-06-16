@@ -1,0 +1,81 @@
+// Selectable context cancellation.
+//
+// `ctx.done_chan()` returns the context's "done" channel. `cancel`
+// (this context or an ancestor) closes it, so a `select` recv arm on
+// the channel fires on cancellation via closed-channel select
+// readiness. `is_cancelled()` / `done()` stay boolean. Every decision
+// here is synchronous — no goroutines, no sleeps — so stdout is
+// bit-identical across the bytecode VM (`gos run` / `gos test`), the
+// Cranelift JIT, and the LLVM AOT tier (`gos build`).
+
+use std::context
+
+// Reports 1 when the context's done channel is ready (closed), else 0.
+fn poll_done(ctx: context::Context) -> i64 {
+    select {
+        _ = ctx.done_chan().recv() => 1,
+        default => 0,
+    }
+}
+
+fn main() {
+    let root = context::Context::background()
+    let ctx = context::Context::with_cancel(root)
+    let child = context::Context::with_cancel(ctx)
+
+    // Before any cancel: the done channels are open, so the recv arms
+    // are not ready and the default fires.
+    println!("ctx before = {}", poll_done(ctx))
+    println!("child before = {}", poll_done(child))
+
+    // Cancelling the parent closes its done channel AND every
+    // descendant's, so both select arms become ready.
+    ctx.cancel()
+    println!("ctx after = {}", poll_done(ctx))
+    println!("child after = {}", poll_done(child))
+
+    // The boolean surface stays consistent with the selectable one.
+    println!("ctx is_cancelled = {}", ctx.is_cancelled())
+    println!("child is_cancelled = {}", child.is_cancelled())
+
+    // A sibling under a never-cancelled root stays open.
+    let other = context::Context::with_cancel(root)
+    println!("other = {}", poll_done(other))
+}
+
+#[cfg(test)]
+mod select_ctx_tests {
+    use std::context
+    use std::testing
+
+    fn ready(ctx: context::Context) -> i64 {
+        select {
+            _ = ctx.done_chan().recv() => 1,
+            default => 0,
+        }
+    }
+
+    #[test]
+    fn open_context_done_arm_not_ready() {
+        let root = context::Context::background()
+        let ctx = context::Context::with_cancel(root)
+        testing::check_eq(&super::poll_done(ctx), &0, "open ctx done arm falls to default")
+    }
+
+    #[test]
+    fn cancelled_context_done_arm_ready() {
+        let root = context::Context::background()
+        let ctx = context::Context::with_cancel(root)
+        ctx.cancel()
+        testing::check_eq(&super::poll_done(ctx), &1, "cancelled ctx done arm is ready")
+    }
+
+    #[test]
+    fn ancestor_cancel_closes_descendant_done() {
+        let root = context::Context::background()
+        let parent = context::Context::with_cancel(root)
+        let child = context::Context::with_cancel(parent)
+        parent.cancel()
+        testing::check_eq(&ready(child), &1, "ancestor cancel makes descendant done arm ready")
+    }
+}

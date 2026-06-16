@@ -148,27 +148,18 @@ journalctl -u myservice -f
 
 Gossamer services should handle SIGTERM (sent by `systemctl
 stop`) so in-flight requests finish before the process exits.
-Use `os::signal` (v1.x):
+An in-process signal API is planned (v1.x). Today, drive graceful
+shutdown from the supervisor: with systemd, set `KillSignal=SIGTERM`
+and `TimeoutStopSec=30s` in the unit file so in-flight requests have
+time to finish before the process is forced down.
 
-```gos
-use std::http
-use std::os
-use std::os::signal
-
-fn main() {
-    let server = http::Server::bind("0.0.0.0:8080")?
-    let term = signal::on(signal::SIGTERM)
-    go fn() {
-        term.wait()
-        server.shutdown()
-    }()
-    server.serve(handler)
-}
+```ini
+[Service]
+KillSignal=SIGTERM
+TimeoutStopSec=30s
 ```
 
-Until `os::signal` lands, set `KillSignal=SIGTERM` and
-`TimeoutStopSec=30s` in the unit file, and rely on systemd to
-escalate to SIGKILL only after the timeout.
+systemd escalates to `SIGKILL` only after the timeout.
 
 ## Log shipping
 
@@ -181,8 +172,7 @@ so the lines are JSON-line-formatted:
 use std::slog
 
 fn main() {
-    let logger = slog::Logger::new(slog::JsonHandler::new(io::stdout()))
-    logger.info("listening", &[("addr", "0.0.0.0:8080")])
+    slog::info("listening", "addr", "0.0.0.0:8080")
     // ...
 }
 ```
@@ -231,15 +221,17 @@ constant memory.
 
 ### Memory
 
-Gossamer's GC runs concurrently with the program but pauses for
-mark / sweep phases. For tail-latency-sensitive services, set
-`GOSSAMER_GC_TARGET=2.0` (default `1.5`) to grow the heap more
-aggressively before triggering a collection. Higher = fewer
-pauses, more RAM.
+Gossamer reclaims memory deterministically: reference counting frees
+each value the moment its last reference dies, an on-demand cycle
+collector (`runtime::collect_cycles()`) handles reference cycles, and
+`arena { }` regions free short-lived graphs wholesale. There is no
+tracing collector, so there are no mark/sweep pauses and no GC tuning
+knobs to set — RAM tracks the live working set and stays predictable.
 
-For container memory limits, give the container at least 2× the
-service's typical working set. The GC will not free memory back
-to the OS aggressively.
+The allocator returns freed pages to the OS promptly, so resident
+memory follows the working set down as well as up. For container
+limits, size to the service's peak working set plus headroom for
+transient spikes, rather than a multiple to absorb collector slack.
 
 ## Health check / readiness
 
@@ -248,7 +240,7 @@ A typical HTTP service exposes `/healthz`:
 ```gos
 fn handler(req: http::Request) -> http::Response {
     match req.path() {
-        "/healthz" => http::Response::ok("ok"),
+        "/healthz" => http::Response::text(200, "ok"),
         _ => app_handler(req),
     }
 }
@@ -294,16 +286,17 @@ goroutine 17 [chan receive]:
   ...
 ```
 
-### pprof endpoint
+### pprof endpoint (planned)
 
-Mount `/debug/pprof/*` in your HTTP router by routing to
-`std::pprof::route(path, query)`:
+A `std::pprof` module to mount `/debug/pprof/*` is planned for v1.x.
+The intended shape routes the request path and query through
+`pprof::route` and returns the profile bytes:
 
-```gos
+```text
 fn pprof_handler(req: &http::Request) -> http::Response {
     match pprof::route(req.path(), req.query()) {
-        Some(bytes) => http::Response::ok().body(bytes),
-        None => http::Response::not_found(),
+        Some(bytes) => http::Response::json(200, bytes),
+        None        => http::Response::text(404, "not found"),
     }
 }
 ```

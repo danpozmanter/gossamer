@@ -95,10 +95,12 @@ pub(crate) enum PoolKind {
     I64Consts,
     /// Global-name table (`globals`).
     Globals,
-    /// Deferred HIR expression table (`deferred_exprs`).
-    DeferredExprs,
     /// Wide-op side table (`wide_ops`).
     WideOps,
+    /// Closure-proto table (`closure_protos`).
+    ClosureProtos,
+    /// `select` arm metadata table (`select_arms`).
+    SelectArms,
 }
 
 impl fmt::Display for PoolKind {
@@ -108,8 +110,9 @@ impl fmt::Display for PoolKind {
             Self::F64Consts => f.write_str("f64_consts"),
             Self::I64Consts => f.write_str("i64_consts"),
             Self::Globals => f.write_str("globals"),
-            Self::DeferredExprs => f.write_str("deferred_exprs"),
             Self::WideOps => f.write_str("wide_ops"),
+            Self::ClosureProtos => f.write_str("closure_protos"),
+            Self::SelectArms => f.write_str("select_arms"),
         }
     }
 }
@@ -169,7 +172,8 @@ pub(crate) fn validate_chunk(chunk: &FnChunk) -> Result<(), ValidationError> {
     let i_consts_len = chunk.i64_consts.len();
     let globals_len = chunk.globals.len();
     let shape_names_len = chunk.shape_names.len();
-    let deferred_len = chunk.deferred_exprs.len();
+    let closure_protos_len = chunk.closure_protos.len();
+    let select_arms_len = chunk.select_arms.len();
     let wide_len = chunk.wide_ops.len();
 
     let check_v = |op_idx: usize, r: Reg| -> Result<(), ValidationError> {
@@ -287,6 +291,10 @@ pub(crate) fn validate_chunk(chunk: &FnChunk) -> Result<(), ValidationError> {
                 check_v(op_idx, dst)?;
                 check_pool(op_idx, u32::from(idx), globals_len, PoolKind::Globals)?;
             }
+            Op::StoreStatic { name_idx, src } => {
+                check_v(op_idx, src)?;
+                check_pool(op_idx, u32::from(name_idx), globals_len, PoolKind::Globals)?;
+            }
             Op::Move { dst, src } | Op::Deref { dst, src } => {
                 check_v(op_idx, dst)?;
                 check_v(op_idx, src)?;
@@ -338,10 +346,34 @@ pub(crate) fn validate_chunk(chunk: &FnChunk) -> Result<(), ValidationError> {
             }
             Op::Return { value } => check_v(op_idx, value)?,
             Op::ReturnUnit => {}
-            Op::EvalDeferred { dst, expr_idx } => {
+            Op::MakeClosure { dst, proto } => {
                 check_v(op_idx, dst)?;
-                check_pool(op_idx, expr_idx, deferred_len, PoolKind::DeferredExprs)?;
+                check_pool(op_idx, proto, closure_protos_len, PoolKind::ClosureProtos)?;
             }
+            Op::Select { first, count } => {
+                if count > 0 {
+                    let last = first.saturating_add(u32::from(count) - 1);
+                    check_pool(op_idx, last, select_arms_len, PoolKind::SelectArms)?;
+                    let start = first as usize;
+                    for arm in &chunk.select_arms[start..start + count as usize] {
+                        check_target(op_idx, arm.body_block)?;
+                        match arm.kind {
+                            crate::bytecode::SelectArmKind::Recv => {
+                                check_v(op_idx, arm.channel_reg)?;
+                                check_v(op_idx, arm.bind_reg)?;
+                            }
+                            crate::bytecode::SelectArmKind::Send => {
+                                check_v(op_idx, arm.channel_reg)?;
+                                check_v(op_idx, arm.value_reg)?;
+                            }
+                            crate::bytecode::SelectArmKind::Default => {}
+                        }
+                    }
+                }
+            }
+            // `slot` indexes the process-global coverage table, not a
+            // per-chunk pool, so there is nothing chunk-local to bound.
+            Op::CovHit { .. } => {}
             Op::MethodCall {
                 dst,
                 receiver,
@@ -420,6 +452,22 @@ pub(crate) fn validate_chunk(chunk: &FnChunk) -> Result<(), ValidationError> {
             Op::BuildTuple { dst, first, count } => {
                 check_v(op_idx, dst)?;
                 check_v_span(op_idx, first, count)?;
+            }
+            Op::BuildArray { dst, first, count } => {
+                check_v(op_idx, dst)?;
+                check_v_span(op_idx, first, count)?;
+            }
+            Op::BuildArrayRepeat { dst, value, count } => {
+                check_v(op_idx, dst)?;
+                check_v(op_idx, value)?;
+                check_v(op_idx, count)?;
+            }
+            Op::BuildRange {
+                dst, start, end, ..
+            } => {
+                check_v(op_idx, dst)?;
+                check_v(op_idx, start)?;
+                check_v(op_idx, end)?;
             }
             Op::IntToFloatF64 { dst_f, src_i } => {
                 check_f(op_idx, dst_f)?;
@@ -943,6 +991,26 @@ pub(crate) fn validate_chunk(chunk: &FnChunk) -> Result<(), ValidationError> {
                 check_v(op_idx, index)?;
                 check_f(op_idx, value_f)?;
             }
+            Op::FlatGetF64I {
+                dst_f,
+                base,
+                index_i,
+                ..
+            } => {
+                check_f(op_idx, dst_f)?;
+                check_v(op_idx, base)?;
+                check_i(op_idx, index_i)?;
+            }
+            Op::FlatSetF64I {
+                base,
+                index_i,
+                value_f,
+                ..
+            } => {
+                check_v(op_idx, base)?;
+                check_i(op_idx, index_i)?;
+                check_f(op_idx, value_f)?;
+            }
             Op::I64ToUint { dst_v, src_i } => {
                 check_v(op_idx, dst_v)?;
                 check_i(op_idx, src_i)?;
@@ -1069,13 +1137,12 @@ mod tests {
             i64_consts: vec![0],
             globals: vec!["g".to_string()],
             shape_names: vec!["TestVariant"],
-            deferred_exprs: Vec::new(),
-            deferred_envs: Vec::new(),
-            deferred_env_regs: Vec::new(),
             call_cache_count: 0,
             arith_cache_count: 0,
             field_cache_count: 0,
             mut_ref_params: Vec::new(),
+            closure_protos: Vec::new(),
+            select_arms: Vec::new(),
         }
     }
 

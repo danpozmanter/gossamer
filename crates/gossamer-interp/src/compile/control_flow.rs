@@ -74,6 +74,7 @@ impl<'tcx> FnBuilder<'tcx> {
             break_patches: Vec::new(),
             continue_patches: Vec::new(),
             result_reg: result,
+            defer_depth: self.defer_stack.len(),
         });
         let _ = self.compile_expr(body)?;
         self.emit(Op::Jump { target: loop_start });
@@ -102,6 +103,7 @@ impl<'tcx> FnBuilder<'tcx> {
             break_patches: Vec::new(),
             continue_patches: Vec::new(),
             result_reg: result,
+            defer_depth: self.defer_stack.len(),
         });
         let _ = self.compile_expr(body)?;
         self.emit(Op::Jump { target: loop_start });
@@ -123,6 +125,12 @@ impl<'tcx> FnBuilder<'tcx> {
             Some(value) => self.compile_expr(value)?,
             None => self.load_unit(),
         };
+        // `return` leaves every enclosing block: run all pending defer
+        // frames (LIFO, innermost first) after the return value is
+        // computed, before the actual Return. The HIR desugars `?` into a
+        // `match` with an early `return Err(...)`, so this also runs the
+        // defers above the `?` site before the error propagates.
+        self.emit_defers_above(0)?;
         self.emit(Op::Return { value: reg });
         Ok(reg)
     }
@@ -132,15 +140,20 @@ impl<'tcx> FnBuilder<'tcx> {
             Some(value) => self.compile_expr(value)?,
             None => self.load_unit(),
         };
-        let ctx = self
-            .loop_stack
-            .last_mut()
-            .ok_or(RuntimeError::Unsupported("break outside of loop"))?;
-        let result_reg = ctx.result_reg;
+        let (result_reg, defer_depth) = {
+            let ctx = self
+                .loop_stack
+                .last()
+                .ok_or(RuntimeError::Unsupported("break outside of loop"))?;
+            (ctx.result_reg, ctx.defer_depth)
+        };
         self.emit(Op::Move {
             dst: result_reg,
             src: reg,
         });
+        // Run the defers of the blocks being exited (the loop body and any
+        // nested blocks), but not the loop's enclosing frames.
+        self.emit_defers_above(defer_depth)?;
         let patch = self.emit(Op::Jump { target: 0 });
         self.loop_stack
             .last_mut()

@@ -27,18 +27,29 @@ use super::*;
 // `gossamer_std::http::Client` defaults so tier output matches.
 // ---------------------------------------------------------------
 
-/// Redirect/timeout policy carried by a configured client. Defaults
-/// mirror `gossamer_std::http::Client::new()` (10 redirects, 30 s).
-#[derive(Clone, Copy)]
+/// Redirect/timeout/cookie/proxy policy carried by a configured
+/// client. Defaults mirror `gossamer_std::http::Client::new()`
+/// (10 redirects, 30 s, no persistent cookie jar, no proxy).
+#[derive(Clone)]
 pub struct ClientConfig {
     pub max_redirects: u32,
     pub timeout_ms: u64,
+    /// When `true`, requests on this client reuse one persistent
+    /// `ureq::Agent` so `Set-Cookie` survives across requests (the
+    /// agent's jar is shared across its clones). When `false`, each
+    /// request gets a fresh agent — no cookie carryover.
+    pub cookie_jar: bool,
+    /// Proxy URL (`http://host:port`, `socks5://...`) every request is
+    /// routed through, or `None` for a direct connection.
+    pub proxy: Option<String>,
 }
 
 impl ClientConfig {
     pub const DEFAULT: Self = Self {
         max_redirects: 10,
         timeout_ms: 30_000,
+        cookie_jar: false,
+        proxy: None,
     };
 }
 
@@ -66,6 +77,11 @@ fn clamp_timeout_ms(t: i64) -> u64 {
 
 pub struct GosHttpClient {
     pub config: ClientConfig,
+    /// Persistent ureq engine built once at `build()`. Holds the
+    /// cookie jar that survives across requests when
+    /// `config.cookie_jar` is set, and carries the configured proxy /
+    /// redirect / timeout policy.
+    pub agent: ureq::Agent,
 }
 
 /// Configuration accumulator for `http::Client::builder()` chains.
@@ -88,6 +104,22 @@ pub struct GosHttpRequest {
     /// and points this at the first body byte. Every other
     /// constructor stores the body alone and leaves this 0.
     pub body_offset: usize,
+    /// Router-captured path parameters (`/users/{id}` matched against
+    /// `/users/42` yields `[("id", "42")]`). Empty unless the request
+    /// was dispatched through a `Router` that matched a capture
+    /// pattern; `gos_rt_router_serve` populates it before invoking the
+    /// handler. Read back via `gos_rt_http_request_path_value`.
+    pub params: Vec<(String, String)>,
+    /// Request-scoped values (Go's `context.WithValue` analog).
+    /// Attached by `gos_rt_http_request_set_value` (replace-then-push,
+    /// the `set_header` pattern) and read back via
+    /// `gos_rt_http_request_value`; empty until a handler sets one.
+    pub values: Vec<(String, String)>,
+    /// Agent a chained `client.<verb>(url)....send()` runs on, captured
+    /// from the originating client so its cookie jar / proxy / policy
+    /// apply. `None` for server-side requests and standalone pending
+    /// requests, which fall back to the default-policy agent.
+    pub agent: Option<ureq::Agent>,
 }
 
 /// Body slice of a request: past `body_offset` when the h1 server
@@ -116,6 +148,9 @@ impl GosHttpRequest {
             headers,
             body,
             body_offset: 0,
+            params: Vec::new(),
+            values: Vec::new(),
+            agent: None,
         }
     }
 }
@@ -141,9 +176,9 @@ pub struct GosHttpResponse {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_http_client_new() -> *mut GosHttpClient {
     ffi_entry!(std::ptr::null_mut(), {
-        Box::into_raw(Box::new(GosHttpClient {
-            config: ClientConfig::DEFAULT,
-        }))
+        let config = ClientConfig::DEFAULT;
+        let agent = build_agent(&config);
+        Box::into_raw(Box::new(GosHttpClient { config, agent }))
     })
 }
 
@@ -190,13 +225,51 @@ pub unsafe extern "C" fn gos_rt_http_client_builder_timeout_ms(
     })
 }
 
+/// `ClientBuilder::cookie_jar(enabled) -> ClientBuilder` — toggles the
+/// persistent cookie jar (chainable). When enabled, requests on the
+/// built client reuse one agent so `Set-Cookie` survives across
+/// requests; when disabled, every request gets a fresh agent.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_http_client_builder_cookie_jar(
+    builder: *mut GosClientBuilder,
+    enabled: i32,
+) -> *mut GosClientBuilder {
+    ffi_entry!(builder, {
+        if !builder.is_null() {
+            unsafe { (*builder).config.cookie_jar = enabled != 0 };
+        }
+        builder
+    })
+}
+
+/// `ClientBuilder::proxy(url) -> ClientBuilder` — routes every request
+/// through `url` (chainable). An empty string clears the proxy.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_http_client_builder_proxy(
+    builder: *mut GosClientBuilder,
+    url: *const c_char,
+) -> *mut GosClientBuilder {
+    ffi_entry!(builder, {
+        if !builder.is_null() {
+            let proxy = if url.is_null() {
+                None
+            } else {
+                let s = unsafe { CStr::from_ptr(url).to_string_lossy().into_owned() };
+                if s.is_empty() { None } else { Some(s) }
+            };
+            unsafe { (*builder).config.proxy = proxy };
+        }
+        builder
+    })
+}
+
 /// `ClientBuilder::build() -> Client` — consumes the builder Box
 /// (exactly once; the builder pointer is dead after this call) and
-/// produces a configured client. Like the legacy
-/// `gos_rt_http_client_new` allocation, the client itself is never
-/// reclaimed by generated code: client locals are opaque i64 handles
-/// with no drop registration, so both constructors lean on process
-/// teardown (one allocation per built client).
+/// produces a configured client carrying a persistent ureq agent.
+/// Like the legacy `gos_rt_http_client_new` allocation, the client
+/// itself is never reclaimed by generated code: client locals are
+/// opaque i64 handles with no drop registration, so both constructors
+/// lean on process teardown (one allocation per built client).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_http_client_builder_build(
     builder: *mut GosClientBuilder,
@@ -207,17 +280,29 @@ pub unsafe extern "C" fn gos_rt_http_client_builder_build(
         } else {
             unsafe { Box::from_raw(builder) }.config
         };
-        Box::into_raw(Box::new(GosHttpClient { config }))
+        let agent = build_agent(&config);
+        Box::into_raw(Box::new(GosHttpClient { config, agent }))
     })
 }
 
 /// Allocates the pending builder request the `client.<verb>(url)`
-/// shims hand back for `.header(..)` / `.body(..)` / `.send()` chaining.
-unsafe fn client_pending_request(method: &str, url: *const c_char) -> *mut GosHttpRequest {
+/// shims hand back for `.header(..)` / `.body(..)` / `.send()`
+/// chaining. Captures the originating client's agent so the eventual
+/// `.send()` honours its cookie jar / proxy / policy.
+unsafe fn client_pending_request(
+    method: &str,
+    url: *const c_char,
+    client: *const GosHttpClient,
+) -> *mut GosHttpRequest {
     let url = if url.is_null() {
         String::new()
     } else {
         unsafe { CStr::from_ptr(url).to_string_lossy().into_owned() }
+    };
+    let agent = if client.is_null() {
+        None
+    } else {
+        Some(client_agent(client))
     };
     Box::into_raw(Box::new(GosHttpRequest {
         method: method.to_string(),
@@ -225,66 +310,69 @@ unsafe fn client_pending_request(method: &str, url: *const c_char) -> *mut GosHt
         headers: Vec::new(),
         body: Vec::new(),
         body_offset: 0,
+        params: Vec::new(),
+        values: Vec::new(),
+        agent,
     }))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_http_client_get(
-    _client: *mut GosHttpClient,
+    client: *mut GosHttpClient,
     url: *const c_char,
 ) -> *mut GosHttpRequest {
     ffi_entry!(std::ptr::null_mut(), {
-        unsafe { client_pending_request("GET", url) }
+        unsafe { client_pending_request("GET", url, client) }
     })
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_http_client_post(
-    _client: *mut GosHttpClient,
+    client: *mut GosHttpClient,
     url: *const c_char,
 ) -> *mut GosHttpRequest {
     ffi_entry!(std::ptr::null_mut(), {
-        unsafe { client_pending_request("POST", url) }
+        unsafe { client_pending_request("POST", url, client) }
     })
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_http_client_put(
-    _client: *mut GosHttpClient,
+    client: *mut GosHttpClient,
     url: *const c_char,
 ) -> *mut GosHttpRequest {
     ffi_entry!(std::ptr::null_mut(), {
-        unsafe { client_pending_request("PUT", url) }
+        unsafe { client_pending_request("PUT", url, client) }
     })
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_http_client_options(
-    _client: *mut GosHttpClient,
+    client: *mut GosHttpClient,
     url: *const c_char,
 ) -> *mut GosHttpRequest {
     ffi_entry!(std::ptr::null_mut(), {
-        unsafe { client_pending_request("OPTIONS", url) }
+        unsafe { client_pending_request("OPTIONS", url, client) }
     })
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_http_client_delete(
-    _client: *mut GosHttpClient,
+    client: *mut GosHttpClient,
     url: *const c_char,
 ) -> *mut GosHttpRequest {
     ffi_entry!(std::ptr::null_mut(), {
-        unsafe { client_pending_request("DELETE", url) }
+        unsafe { client_pending_request("DELETE", url, client) }
     })
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_http_client_head(
-    _client: *mut GosHttpClient,
+    client: *mut GosHttpClient,
     url: *const c_char,
 ) -> *mut GosHttpRequest {
     ffi_entry!(std::ptr::null_mut(), {
-        unsafe { client_pending_request("HEAD", url) }
+        unsafe { client_pending_request("HEAD", url, client) }
     })
 }
 
@@ -400,15 +488,15 @@ pub unsafe extern "C" fn gos_rt_http_request_send(req: *mut GosHttpRequest) -> i
             headers,
             body,
             body_offset: _,
+            params: _,
+            values: _,
+            agent,
         } = *unsafe { Box::from_raw(req) };
-        http_request_buffered(
-            "Request::send",
-            &method,
-            &url,
-            body,
-            &headers,
-            ClientConfig::DEFAULT,
-        )
+        // Reuse the originating client's agent (cookie jar / proxy /
+        // policy) when this request came from `client.<verb>(url)`;
+        // a standalone request uses a default-policy agent.
+        let agent = agent.unwrap_or_else(|| build_agent(&ClientConfig::DEFAULT));
+        http_request_buffered("Request::send", &method, &url, body, &headers, &agent)
     })
 }
 
@@ -488,6 +576,69 @@ pub unsafe extern "C" fn gos_rt_http_request_path(req: *const GosHttpRequest) ->
             None => path,
         };
         alloc_cstring(path.as_bytes())
+    })
+}
+
+/// Shared lookup for the router-captured path parameter `name`.
+unsafe fn path_param_lookup(req: *const GosHttpRequest, name: *const c_char) -> Option<String> {
+    if req.is_null() || name.is_null() {
+        return None;
+    }
+    let wanted = unsafe { CStr::from_ptr(name).to_string_lossy().into_owned() };
+    let r = unsafe { &*req };
+    r.params
+        .iter()
+        .find(|(k, _)| *k == wanted)
+        .map(|(_, v)| v.clone())
+}
+
+/// `Request.path_value(name) -> String` — the router-captured path
+/// parameter for `name`, or `""` when the request didn't match a
+/// pattern carrying that capture. Mirrors Go's `http.Request.PathValue`.
+/// Populated by `gos_rt_router_serve`; empty for a plain
+/// `http::serve(addr, app)` that routes by hand.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_http_request_path_value(
+    req: *const GosHttpRequest,
+    name: *const c_char,
+) -> *mut c_char {
+    ffi_entry!(std::ptr::null_mut(), {
+        match unsafe { path_param_lookup(req, name) } {
+            Some(v) => alloc_cstring(v.as_bytes()),
+            None => alloc_cstring(b""),
+        }
+    })
+}
+
+/// `Request.path_int(name) -> Option<i64>` — the captured path
+/// parameter parsed as a base-10 integer (the typed extractor for
+/// `/users/{id}` where `id` is numeric). `None` when the capture is
+/// absent or not an integer.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_http_request_path_int(
+    req: *const GosHttpRequest,
+    name: *const c_char,
+) -> i128 {
+    ffi_entry!(crate::c_abi::vec::gos_rt_result_new(1, 0), {
+        match unsafe { path_param_lookup(req, name) }.and_then(|s| s.trim().parse::<i64>().ok()) {
+            Some(n) => crate::c_abi::vec::gos_rt_result_new(0, n),
+            None => crate::c_abi::vec::gos_rt_result_new(1, 0),
+        }
+    })
+}
+
+/// `Request.path_float(name) -> Option<f64>` — the captured path
+/// parameter parsed as an `f64`. `None` when absent or unparseable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_http_request_path_float(
+    req: *const GosHttpRequest,
+    name: *const c_char,
+) -> i128 {
+    ffi_entry!(crate::c_abi::vec::gos_rt_result_new_f64(1, 0.0), {
+        match unsafe { path_param_lookup(req, name) }.and_then(|s| s.trim().parse::<f64>().ok()) {
+            Some(n) => crate::c_abi::vec::gos_rt_result_new_f64(0, n),
+            None => crate::c_abi::vec::gos_rt_result_new_f64(1, 0.0),
+        }
     })
 }
 
@@ -1028,8 +1179,13 @@ fn decode_header_tuple_vec(headers: *const GosVec) -> Vec<(String, String)> {
     }
     for i in 0..v.len {
         let slot = unsafe { v.ptr.add((i as usize) * elem_bytes) };
-        let key_ptr = unsafe { (slot as *const *const c_char).read_unaligned() };
-        let val_ptr = unsafe { (slot.add(8) as *const *const c_char).read_unaligned() };
+        // Slots hold cstring pointers exposed as integers by the
+        // flat-slot ABI; recover provenance before reading the bytes.
+        let key_ptr: *const c_char =
+            std::ptr::with_exposed_provenance(unsafe { (slot as *const usize).read_unaligned() });
+        let val_ptr: *const c_char = std::ptr::with_exposed_provenance(unsafe {
+            (slot.add(8) as *const usize).read_unaligned()
+        });
         let key = if key_ptr.is_null() {
             String::new()
         } else {
@@ -1056,38 +1212,67 @@ fn validate_http_method(method: &str) -> Option<String> {
     }
 }
 
-/// Shared ureq engine for every buffered client entry point
-/// (`gos_rt_http_request`, `gos_rt_http_request_bytes`,
-/// `gos_rt_http_get`, `gos_rt_http_request_send`). Agent settings
-/// mirror `gossamer_std::http::Client::new()` defaults (30s global
-/// timeout, 10 redirects, `gossamer/{version}` UA, non-2xx statuses
-/// are Ok responses — matching the interp tier's
-/// `http_status_as_error(false)`). Ok payload is a fully populated
-/// `GosHttpResponse` (status, body, headers, body_bytes,
-/// content_type, stream_handle = -1).
-fn http_response_buffered(
+/// Builds a fresh ureq engine from a client config. Settings mirror
+/// `gossamer_std::http::Client::new()` defaults (global timeout, 10
+/// redirects, `gossamer/{version}` UA, non-2xx are Ok responses —
+/// matching the interp tier's `http_status_as_error(false)`), plus the
+/// configured proxy. Cookie persistence comes from REUSING an agent:
+/// the jar is shared across an agent's clones, so a `cookie_jar`
+/// client stores its built agent and reuses it, while a non-jar client
+/// builds a fresh agent per request (no Set-Cookie carryover).
+fn build_agent(config: &ClientConfig) -> ureq::Agent {
+    // Redirect semantics (ureq 3, will_error left at its default):
+    // `max_redirects(0)` never follows and returns 3xx raw; exceeding
+    // a non-zero budget is a "too many redirects" transport error —
+    // matching `gossamer_std::http::ClientBuilder`.
+    let mut cfg = ureq::config::Config::builder()
+        .http_status_as_error(false)
+        .timeout_global(Some(std::time::Duration::from_millis(config.timeout_ms)))
+        .max_redirects(config.max_redirects)
+        .user_agent(concat!("gossamer/", env!("CARGO_PKG_VERSION")));
+    if let Some(proxy_url) = &config.proxy {
+        // A malformed proxy URL drops to a direct connection rather
+        // than panicking; the interp tier surfaces the parse error at
+        // build time, but the request path stays infallible here.
+        if let Ok(proxy) = ureq::Proxy::new(proxy_url) {
+            cfg = cfg.proxy(Some(proxy));
+        }
+    }
+    cfg.build().new_agent()
+}
+
+/// The agent a client request runs on: the stored persistent agent
+/// when the cookie jar is enabled (so `Set-Cookie` survives across
+/// requests on this client), a fresh per-request agent otherwise. A
+/// null client gets the default-policy agent.
+fn client_agent(client: *const GosHttpClient) -> ureq::Agent {
+    if client.is_null() {
+        build_agent(&ClientConfig::DEFAULT)
+    } else {
+        let c = unsafe { &*client };
+        if c.config.cookie_jar {
+            c.agent.clone()
+        } else {
+            build_agent(&c.config)
+        }
+    }
+}
+
+/// Runs a buffered request on `agent` and lifts the response into a
+/// fully populated `GosHttpResponse` (status, body, headers,
+/// body_bytes, content_type, stream_handle = -1). Shared by every
+/// buffered client entry point.
+fn http_response_with_agent(
     label: &str,
     method: &str,
     url: &str,
     body: Vec<u8>,
     header_pairs: &[(String, String)],
-    config: ClientConfig,
+    agent: &ureq::Agent,
 ) -> Result<*mut GosHttpResponse, String> {
     let Some(method_upper) = validate_http_method(method) else {
         return Err(format!("{label}: unknown method `{method}`"));
     };
-    // Redirect semantics (ureq 3, will_error left at its default):
-    // `max_redirects(0)` never follows and returns 3xx raw;
-    // exceeding a non-zero budget is a "too many redirects"
-    // transport error — matching the interp tier's
-    // `gossamer_std::http::ClientBuilder`.
-    let agent = ureq::config::Config::builder()
-        .http_status_as_error(false)
-        .timeout_global(Some(std::time::Duration::from_millis(config.timeout_ms)))
-        .max_redirects(config.max_redirects)
-        .user_agent(concat!("gossamer/", env!("CARGO_PKG_VERSION")))
-        .build()
-        .new_agent();
     let mut builder = ureq::http::Request::builder()
         .method(method_upper.as_str())
         .uri(url);
@@ -1150,9 +1335,9 @@ fn http_request_buffered(
     url: &str,
     body: Vec<u8>,
     header_pairs: &[(String, String)],
-    config: ClientConfig,
+    agent: &ureq::Agent,
 ) -> i128 {
-    match http_response_buffered(label, method, url, body, header_pairs, config) {
+    match http_response_with_agent(label, method, url, body, header_pairs, agent) {
         Ok(resp) => gos_rt_result_new(0, resp as i64),
         Err(msg) => err_result_with_msg(&msg),
     }
@@ -1194,7 +1379,7 @@ pub unsafe extern "C" fn gos_rt_http_request(
             &url_str,
             body_bytes,
             &header_pairs,
-            ClientConfig::DEFAULT,
+            &build_agent(&ClientConfig::DEFAULT),
         )
     })
 }
@@ -1229,19 +1414,9 @@ pub unsafe extern "C" fn gos_rt_http_request_bytes(
             &url_str,
             body_bytes,
             &header_pairs,
-            ClientConfig::DEFAULT,
+            &build_agent(&ClientConfig::DEFAULT),
         )
     })
-}
-
-/// Reads the policy off a client receiver; a null pointer (or the
-/// legacy default-constructed client) yields the defaults.
-fn client_config_of(client: *const GosHttpClient) -> ClientConfig {
-    if client.is_null() {
-        ClientConfig::DEFAULT
-    } else {
-        unsafe { (*client).config }
-    }
 }
 
 /// `Client::request(method, url, body, headers) -> Result<Response, errors::Error>`.
@@ -1280,7 +1455,7 @@ pub unsafe extern "C" fn gos_rt_http_client_request(
             &url_str,
             body_bytes,
             &header_pairs,
-            client_config_of(client),
+            &client_agent(client),
         )
     })
 }
@@ -1314,7 +1489,7 @@ pub unsafe extern "C" fn gos_rt_http_client_request_bytes(
             &url_str,
             body_bytes,
             &header_pairs,
-            client_config_of(client),
+            &client_agent(client),
         )
     })
 }
@@ -1338,8 +1513,290 @@ pub extern "C" fn gos_rt_http_get(url: *const c_char, headers: *mut GosVec) -> i
             &url_str,
             Vec::new(),
             &header_pairs,
-            ClientConfig::DEFAULT,
+            &build_agent(&ClientConfig::DEFAULT),
         )
+    })
+}
+
+/// One-shot bodyless verb (`HEAD` / `OPTIONS`) shim. `url` + `headers`
+/// match `gos_rt_http_get`; `method`/`label` select the verb.
+fn http_verb_no_body(method: &str, label: &str, url: *const c_char, headers: *mut GosVec) -> i128 {
+    let url_str = if url.is_null() {
+        return unsafe { err_result_with_msg(&format!("{label}: url is null")) };
+    } else {
+        unsafe { CStr::from_ptr(url).to_string_lossy().into_owned() }
+    };
+    let header_pairs = decode_header_tuple_vec(headers);
+    http_request_buffered(
+        label,
+        method,
+        &url_str,
+        Vec::new(),
+        &header_pairs,
+        &build_agent(&ClientConfig::DEFAULT),
+    )
+}
+
+/// One-shot body verb (`POST` / `PUT`) shim. `body` is the request
+/// body c-string, `content_type` becomes the `Content-Type` header.
+fn http_verb_body(
+    method: &str,
+    label: &str,
+    url: *const c_char,
+    body: *const c_char,
+    content_type: *const c_char,
+) -> i128 {
+    let url_str = if url.is_null() {
+        return unsafe { err_result_with_msg(&format!("{label}: url is null")) };
+    } else {
+        unsafe { CStr::from_ptr(url).to_string_lossy().into_owned() }
+    };
+    let body_bytes = if body.is_null() {
+        Vec::new()
+    } else {
+        unsafe { CStr::from_ptr(body).to_bytes().to_vec() }
+    };
+    let ct = if content_type.is_null() {
+        String::new()
+    } else {
+        unsafe { CStr::from_ptr(content_type).to_string_lossy().into_owned() }
+    };
+    let header_pairs = vec![("Content-Type".to_string(), ct)];
+    http_request_buffered(
+        label,
+        method,
+        &url_str,
+        body_bytes,
+        &header_pairs,
+        &build_agent(&ClientConfig::DEFAULT),
+    )
+}
+
+/// `http::head(url, headers) -> Result<http::Response, errors::Error>`.
+#[unsafe(no_mangle)]
+pub extern "C" fn gos_rt_http_head(url: *const c_char, headers: *mut GosVec) -> i128 {
+    ffi_entry!(0i128, {
+        http_verb_no_body("HEAD", "http::head", url, headers)
+    })
+}
+
+/// `http::options(url, headers) -> Result<http::Response, errors::Error>`.
+#[unsafe(no_mangle)]
+pub extern "C" fn gos_rt_http_options(url: *const c_char, headers: *mut GosVec) -> i128 {
+    ffi_entry!(0i128, {
+        http_verb_no_body("OPTIONS", "http::options", url, headers)
+    })
+}
+
+/// `http::post(url, body, content_type) -> Result<http::Response, errors::Error>`.
+#[unsafe(no_mangle)]
+pub extern "C" fn gos_rt_http_post(
+    url: *const c_char,
+    body: *const c_char,
+    content_type: *const c_char,
+) -> i128 {
+    ffi_entry!(0i128, {
+        http_verb_body("POST", "http::post", url, body, content_type)
+    })
+}
+
+/// `http::put(url, body, content_type) -> Result<http::Response, errors::Error>`.
+#[unsafe(no_mangle)]
+pub extern "C" fn gos_rt_http_put(
+    url: *const c_char,
+    body: *const c_char,
+    content_type: *const c_char,
+) -> i128 {
+    ffi_entry!(0i128, {
+        http_verb_body("PUT", "http::put", url, body, content_type)
+    })
+}
+
+/// `http::delete(url, body, headers) -> Result<http::Response, errors::Error>`.
+/// `body` is the request body c-string (null or empty = no body);
+/// `headers` is a `Vec<(String, String)>` of 16-byte tuple slots.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_http_delete(
+    url: *const c_char,
+    body: *const c_char,
+    headers: *mut GosVec,
+) -> i128 {
+    ffi_entry!(0i128, {
+        let url_str = if url.is_null() {
+            return err_result_with_msg("http::delete: url is null");
+        } else {
+            unsafe { CStr::from_ptr(url).to_string_lossy().into_owned() }
+        };
+        let body_bytes = if body.is_null() {
+            Vec::new()
+        } else {
+            unsafe { CStr::from_ptr(body).to_bytes().to_vec() }
+        };
+        let header_pairs = decode_header_tuple_vec(headers);
+        http_request_buffered(
+            "http::delete",
+            "DELETE",
+            &url_str,
+            body_bytes,
+            &header_pairs,
+            &build_agent(&ClientConfig::DEFAULT),
+        )
+    })
+}
+
+/// `native_client::get(url) -> Result<Response, errors::Error>` —
+/// one-shot GET with no extra headers (the bare `NativeClient` helper).
+#[unsafe(no_mangle)]
+pub extern "C" fn gos_rt_nc_get(url: *const c_char) -> i128 {
+    ffi_entry!(0i128, {
+        http_verb_no_body("GET", "native_client::get", url, std::ptr::null_mut())
+    })
+}
+
+/// `native_client::delete(url) -> Result<Response, errors::Error>` —
+/// one-shot DELETE with no body and no extra headers.
+#[unsafe(no_mangle)]
+pub extern "C" fn gos_rt_nc_delete(url: *const c_char) -> i128 {
+    ffi_entry!(0i128, {
+        http_verb_no_body("DELETE", "native_client::delete", url, std::ptr::null_mut())
+    })
+}
+
+/// `application/octet-stream` when `content_type` is null/empty,
+/// matching the interp `NativeClient` body-verb default.
+fn nc_content_type(content_type: *const c_char) -> String {
+    let ct = if content_type.is_null() {
+        String::new()
+    } else {
+        unsafe { CStr::from_ptr(content_type).to_string_lossy().into_owned() }
+    };
+    if ct.is_empty() {
+        "application/octet-stream".to_string()
+    } else {
+        ct
+    }
+}
+
+/// `native_client::post(url, body, content_type) -> Result<Response, errors::Error>`.
+#[unsafe(no_mangle)]
+pub extern "C" fn gos_rt_nc_post(
+    url: *const c_char,
+    body: *const c_char,
+    content_type: *const c_char,
+) -> i128 {
+    ffi_entry!(0i128, {
+        let url_str = if url.is_null() {
+            return unsafe { err_result_with_msg("native_client::post: url is null") };
+        } else {
+            unsafe { CStr::from_ptr(url).to_string_lossy().into_owned() }
+        };
+        let body_bytes = if body.is_null() {
+            Vec::new()
+        } else {
+            unsafe { CStr::from_ptr(body).to_bytes().to_vec() }
+        };
+        let header_pairs = vec![("Content-Type".to_string(), nc_content_type(content_type))];
+        http_request_buffered(
+            "native_client::post",
+            "POST",
+            &url_str,
+            body_bytes,
+            &header_pairs,
+            &build_agent(&ClientConfig::DEFAULT),
+        )
+    })
+}
+
+/// `native_client::put(url, body, content_type) -> Result<Response, errors::Error>`.
+#[unsafe(no_mangle)]
+pub extern "C" fn gos_rt_nc_put(
+    url: *const c_char,
+    body: *const c_char,
+    content_type: *const c_char,
+) -> i128 {
+    ffi_entry!(0i128, {
+        let url_str = if url.is_null() {
+            return unsafe { err_result_with_msg("native_client::put: url is null") };
+        } else {
+            unsafe { CStr::from_ptr(url).to_string_lossy().into_owned() }
+        };
+        let body_bytes = if body.is_null() {
+            Vec::new()
+        } else {
+            unsafe { CStr::from_ptr(body).to_bytes().to_vec() }
+        };
+        let header_pairs = vec![("Content-Type".to_string(), nc_content_type(content_type))];
+        http_request_buffered(
+            "native_client::put",
+            "PUT",
+            &url_str,
+            body_bytes,
+            &header_pairs,
+            &build_agent(&ClientConfig::DEFAULT),
+        )
+    })
+}
+
+/// `proxy::forward(upstream_url, method, body) -> Result<Response, errors::Error>`.
+/// One-shot upstream request: GET / DELETE ignore the body; POST / PUT
+/// send it with `application/octet-stream`; unknown methods fall back to
+/// GET. Mirrors the interp `proxy::forward` over a fresh `NativeClient`.
+#[unsafe(no_mangle)]
+pub extern "C" fn gos_rt_proxy_forward_url(
+    upstream_url: *const c_char,
+    method: *const c_char,
+    body: *const c_char,
+) -> i128 {
+    ffi_entry!(0i128, {
+        let url_str = if upstream_url.is_null() {
+            return unsafe { err_result_with_msg("proxy::forward: url is null") };
+        } else {
+            unsafe { CStr::from_ptr(upstream_url).to_string_lossy().into_owned() }
+        };
+        let method_str = if method.is_null() {
+            "GET".to_string()
+        } else {
+            unsafe { CStr::from_ptr(method).to_string_lossy().into_owned() }
+        };
+        let body_bytes = if body.is_null() {
+            Vec::new()
+        } else {
+            unsafe { CStr::from_ptr(body).to_bytes().to_vec() }
+        };
+        let agent = build_agent(&ClientConfig::DEFAULT);
+        match method_str.to_ascii_uppercase().as_str() {
+            "POST" => http_request_buffered(
+                "proxy::forward",
+                "POST",
+                &url_str,
+                body_bytes,
+                &[(
+                    "Content-Type".to_string(),
+                    "application/octet-stream".to_string(),
+                )],
+                &agent,
+            ),
+            "PUT" => http_request_buffered(
+                "proxy::forward",
+                "PUT",
+                &url_str,
+                body_bytes,
+                &[(
+                    "Content-Type".to_string(),
+                    "application/octet-stream".to_string(),
+                )],
+                &agent,
+            ),
+            "DELETE" => http_request_buffered(
+                "proxy::forward",
+                "DELETE",
+                &url_str,
+                Vec::new(),
+                &[],
+                &agent,
+            ),
+            _ => http_request_buffered("proxy::forward", "GET", &url_str, Vec::new(), &[], &agent),
+        }
     })
 }
 
@@ -1558,8 +2015,14 @@ mod tests {
         let expected = [("content-type", "text/plain"), ("x-request-id", "abc123")];
         for (i, (name, value)) in expected.iter().enumerate() {
             let slot = unsafe { vec_ref.ptr.add(i * 16) };
-            let name_ptr = unsafe { (slot as *const *mut c_char).read_unaligned() };
-            let value_ptr = unsafe { (slot.add(8) as *const *mut c_char).read_unaligned() };
+            // Slots hold cstring pointers exposed as integers by the
+            // flat-slot ABI; recover provenance before use.
+            let name_ptr: *mut c_char = std::ptr::with_exposed_provenance_mut(unsafe {
+                (slot as *const usize).read_unaligned()
+            });
+            let value_ptr: *mut c_char = std::ptr::with_exposed_provenance_mut(unsafe {
+                (slot.add(8) as *const usize).read_unaligned()
+            });
             let got_name = unsafe { CStr::from_ptr(name_ptr) }.to_str().unwrap();
             let got_value = unsafe { CStr::from_ptr(value_ptr) }.to_str().unwrap();
             assert_eq!(got_name, *name);
@@ -1618,6 +2081,9 @@ mod tests {
             ],
             body: Vec::new(),
             body_offset: 0,
+            params: Vec::new(),
+            values: Vec::new(),
+            agent: None,
         };
         let v = unsafe { gos_rt_http_request_headers(std::ptr::from_ref(&req)) };
         assert!(!v.is_null());
@@ -1631,8 +2097,14 @@ mod tests {
         let expected = [("accept", "*/*"), ("x-token", "t1")];
         for (i, (name, value)) in expected.iter().enumerate() {
             let slot = unsafe { vec_ref.ptr.add(i * 16) };
-            let name_ptr = unsafe { (slot as *const *mut c_char).read_unaligned() };
-            let value_ptr = unsafe { (slot.add(8) as *const *mut c_char).read_unaligned() };
+            // Slots hold cstring pointers exposed as integers by the
+            // flat-slot ABI; recover provenance before use.
+            let name_ptr: *mut c_char = std::ptr::with_exposed_provenance_mut(unsafe {
+                (slot as *const usize).read_unaligned()
+            });
+            let value_ptr: *mut c_char = std::ptr::with_exposed_provenance_mut(unsafe {
+                (slot.add(8) as *const usize).read_unaligned()
+            });
             assert_eq!(unsafe { CStr::from_ptr(name_ptr) }.to_str().unwrap(), *name);
             assert_eq!(
                 unsafe { CStr::from_ptr(value_ptr) }.to_str().unwrap(),
@@ -1658,6 +2130,9 @@ mod tests {
             headers: Vec::new(),
             body: Vec::new(),
             body_offset: 0,
+            params: Vec::new(),
+            values: Vec::new(),
+            agent: None,
         };
         let cases = [
             ("/a?x=1", "/a"),
@@ -1754,8 +2229,14 @@ mod tests {
         let vec_ref = unsafe { &*v };
         for i in 0..vec_ref.len as usize {
             let slot = unsafe { vec_ref.ptr.add(i * 16) };
-            let name_ptr = unsafe { (slot as *const *mut c_char).read_unaligned() };
-            let value_ptr = unsafe { (slot.add(8) as *const *mut c_char).read_unaligned() };
+            // Slots hold cstring pointers exposed as integers by the
+            // flat-slot ABI; recover provenance before use.
+            let name_ptr: *mut c_char = std::ptr::with_exposed_provenance_mut(unsafe {
+                (slot as *const usize).read_unaligned()
+            });
+            let value_ptr: *mut c_char = std::ptr::with_exposed_provenance_mut(unsafe {
+                (slot.add(8) as *const usize).read_unaligned()
+            });
             unsafe {
                 crate::c_abi::string::gos_rt_str_free(name_ptr);
                 crate::c_abi::string::gos_rt_str_free(value_ptr);
@@ -1809,11 +2290,18 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)] // network round-trip: Miri has no socket syscalls
     fn buffered_response_lifts_mixed_case_header_names_lowercase() {
         let (url, server) = spawn_one_shot_server("HTTP/1.1 200 OK", "X-MiXeD-CaSe: v\r\n", b"ok");
-        let resp =
-            http_response_buffered("test", "GET", &url, Vec::new(), &[], ClientConfig::DEFAULT)
-                .expect("buffered response");
+        let resp = http_response_with_agent(
+            "test",
+            "GET",
+            &url,
+            Vec::new(),
+            &[],
+            &build_agent(&ClientConfig::DEFAULT),
+        )
+        .expect("buffered response");
         let resp_ref = unsafe { &*resp };
         assert!(
             resp_ref
@@ -1836,6 +2324,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)] // network round-trip: Miri has no socket syscalls
     fn stream_next_chunk_drains_body_in_max_byte_chunks_then_eof() {
         // 10 bytes with values above 0x7F to catch sign-extension /
         // stride bugs: "Aÿ™zABC" = 41 C3 BF E2 84 A2 7A 41 42 43.
@@ -1867,6 +2356,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)] // network round-trip: Miri has no socket syscalls
     fn stream_next_chunk_interleaves_coherently_with_next_line() {
         let (url, server) = spawn_one_shot_server("HTTP/1.1 200 OK", "", b"alpha\nbeta!");
         let blob = open_stream(&url);
@@ -1893,6 +2383,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)] // network round-trip: Miri has no socket syscalls
     fn response_stream_new_consumes_handle_and_pending_serve_is_one_shot() {
         let (url, server) = spawn_one_shot_server("HTTP/1.1 200 OK", "", b"proxied body");
         let blob = open_stream(&url);
@@ -1951,6 +2442,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)] // network round-trip: Miri has no socket syscalls
     fn http_request_round_trips_method_body_headers_and_response_fields() {
         let (url, server) = spawn_one_shot_server(
             "HTTP/1.1 201 Created",
@@ -2008,6 +2500,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)] // network round-trip: Miri has no socket syscalls
     fn http_request_bytes_preserves_binary_upload_body() {
         let (url, server) = spawn_one_shot_server("HTTP/1.1 200 OK", "", b"ok");
         let method = std::ffi::CString::new("PUT").unwrap();
@@ -2035,6 +2528,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)] // network round-trip: Miri has no socket syscalls
     fn http_request_send_posts_builder_body_and_returns_real_status() {
         let (url, server) = spawn_one_shot_server(
             "HTTP/1.1 202 Accepted",
@@ -2081,6 +2575,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)] // network round-trip: Miri has no socket syscalls
     fn http_request_send_get_follows_engine_and_reports_real_status() {
         let (url, server) = spawn_one_shot_server(
             "HTTP/1.1 404 Not Found",
@@ -2111,6 +2606,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)] // network round-trip: Miri has no socket syscalls
     fn duplicate_set_cookie_headers_survive_in_wire_order() {
         // RFC 6265 servers legally repeat `Set-Cookie`; the lifted
         // header sequence must keep both pairs in wire order so a
@@ -2172,6 +2668,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)] // network round-trip: Miri has no socket syscalls
     fn http_request_send_transport_failure_packs_interp_shaped_err() {
         let client = unsafe { gos_rt_http_client_new() };
         // Port 1 is never listening; the dial must fail.
@@ -2247,7 +2744,7 @@ mod tests {
         assert_eq!(b, b2);
         let client = unsafe { gos_rt_http_client_builder_build(b2) };
         assert!(!client.is_null());
-        let config = unsafe { (*client).config };
+        let config = unsafe { &(*client).config };
         assert_eq!(config.max_redirects, 0);
         assert_eq!(config.timeout_ms, 5000);
         drop(unsafe { Box::from_raw(client) });
@@ -2259,7 +2756,7 @@ mod tests {
         let b = unsafe { gos_rt_http_client_builder_max_redirects(b, -7) };
         let b = unsafe { gos_rt_http_client_builder_timeout_ms(b, -1) };
         let client = unsafe { gos_rt_http_client_builder_build(b) };
-        let config = unsafe { (*client).config };
+        let config = unsafe { &(*client).config };
         assert_eq!(config.max_redirects, 0);
         assert_eq!(config.timeout_ms, 30_000);
         drop(unsafe { Box::from_raw(client) });
@@ -2268,13 +2765,14 @@ mod tests {
     #[test]
     fn client_new_keeps_default_policy() {
         let client = unsafe { gos_rt_http_client_new() };
-        let config = unsafe { (*client).config };
+        let config = unsafe { &(*client).config };
         assert_eq!(config.max_redirects, 10);
         assert_eq!(config.timeout_ms, 30_000);
         drop(unsafe { Box::from_raw(client) });
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)] // network round-trip: Miri has no socket syscalls
     fn client_request_default_policy_follows_redirect() {
         let (base, server) = spawn_redirect_server(2);
         let b = unsafe { gos_rt_http_client_builder_new() };
@@ -2301,6 +2799,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)] // network round-trip: Miri has no socket syscalls
     fn client_request_max_redirects_zero_returns_raw_302_with_location() {
         let (base, server) = spawn_redirect_server(1);
         let b = unsafe { gos_rt_http_client_builder_new() };

@@ -106,58 +106,78 @@ use crate::value::{MapKey, NativeCall, NativeDispatch, RuntimeResult, Value};
 use super::*;
 
 pub(crate) fn install_strings(globals: &mut Vec<(&'static str, Value)>) {
-    install_module_pub(
-        "strings",
-        &[
-            ("split", builtin_strings_split),
-            ("splitn", builtin_strings_splitn),
-            ("split_whitespace", builtin_strings_split_ws),
-            ("trim", builtin_strings_trim),
-            ("trim_start", builtin_strings_trim_start),
-            ("trim_end", builtin_strings_trim_end),
-            ("contains", builtin_strings_contains),
-            ("find", builtin_strings_find),
-            ("rfind", builtin_strings_rfind),
-            ("split_once", builtin_strings_split_once),
-            ("rsplit_once", builtin_strings_rsplit_once),
-            ("count", builtin_strings_count),
-            ("strip_chars", builtin_strings_strip_chars),
-            ("lstrip_chars", builtin_strings_lstrip_chars),
-            ("rstrip_chars", builtin_strings_rstrip_chars),
-            ("zfill", builtin_strings_zfill),
-            ("center", builtin_strings_center),
-            ("slice", builtin_strings_slice),
-            ("replace", builtin_strings_replace),
-            ("replacen", builtin_strings_replacen),
-            ("to_lower", builtin_strings_to_lower),
-            ("to_upper", builtin_strings_to_upper),
-            ("starts_with", builtin_strings_starts_with),
-            ("ends_with", builtin_strings_ends_with),
-            ("repeat", builtin_strings_repeat),
-            ("lines", builtin_strings_lines),
-            ("join", builtin_strings_join),
-            ("strip_prefix", builtin_strings_strip_prefix),
-            ("strip_suffix", builtin_strings_strip_suffix),
-            ("pad_left", builtin_strings_pad_left),
-            ("pad_right", builtin_strings_pad_right),
-            ("contains_rune", builtin_strings_contains_rune),
-            ("contains_any", builtin_strings_contains_any),
-            ("index_rune", builtin_strings_index_rune),
-            ("index_any", builtin_strings_index_any),
-            ("last_index_any", builtin_strings_last_index_any),
-            ("fields", builtin_strings_fields),
-            ("equal_fold", builtin_strings_equal_fold),
-            ("trim_matches", builtin_strings_trim_matches),
-            ("to_title", builtin_strings_to_title),
-        ],
-        globals,
-    );
+    // The canonical string surface, registered under both `strings::`
+    // (the free-function path) and `String::` (the method path). The
+    // `String::` keys give receiver-typed method dispatch a name that
+    // can't collide with another module's bare free function — e.g.
+    // `s.to_title()` resolves to the string-wise title-caser instead of
+    // `unicode::to_title`, which titlecases a single char.
+    const TABLE: &[(&str, BuiltinFnPub)] = &[
+        ("split", builtin_strings_split),
+        ("splitn", builtin_strings_splitn),
+        ("split_whitespace", builtin_strings_split_ws),
+        ("trim", builtin_strings_trim),
+        ("trim_start", builtin_strings_trim_start),
+        ("trim_end", builtin_strings_trim_end),
+        ("contains", builtin_strings_contains),
+        ("find", builtin_strings_find),
+        ("rfind", builtin_strings_rfind),
+        ("split_once", builtin_strings_split_once),
+        ("rsplit_once", builtin_strings_rsplit_once),
+        ("count", builtin_strings_count),
+        ("trim_start_matches", builtin_strings_lstrip_chars),
+        ("trim_end_matches", builtin_strings_rstrip_chars),
+        ("center", builtin_strings_center),
+        ("slice", builtin_strings_slice),
+        ("replace", builtin_strings_replace),
+        ("replacen", builtin_strings_replacen),
+        ("to_lower", builtin_strings_to_lower),
+        ("to_upper", builtin_strings_to_upper),
+        ("starts_with", builtin_strings_starts_with),
+        ("ends_with", builtin_strings_ends_with),
+        ("repeat", builtin_strings_repeat),
+        ("lines", builtin_strings_lines),
+        ("join", builtin_strings_join),
+        ("strip_prefix", builtin_strings_strip_prefix),
+        ("strip_suffix", builtin_strings_strip_suffix),
+        ("pad_left", builtin_strings_pad_left),
+        ("pad_right", builtin_strings_pad_right),
+        ("contains_rune", builtin_strings_contains_rune),
+        ("contains_any", builtin_strings_contains_any),
+        ("index_rune", builtin_strings_index_rune),
+        ("find_any", builtin_strings_index_any),
+        ("rfind_any", builtin_strings_last_index_any),
+        ("equal_fold", builtin_strings_equal_fold),
+        ("trim_matches", builtin_strings_trim_matches),
+        ("to_title", builtin_strings_to_title),
+    ];
+    install_module_pub("strings", TABLE, globals);
+    install_module_pub("String", TABLE, globals);
+    // `parts.join(sep)` as a method on a `Vec<String>` receiver. Registered
+    // under the `Vec::` key so receiver-typed dispatch resolves it ahead of
+    // the bare `join` name shared with `path::join`.
+    install_module_pub("Vec", &[("join", builtin_strings_join)], globals);
+}
+
+/// String form of a separator / needle argument. A `char`
+/// (`s.split(',')`, `s.contains('x')`, `s.trim_matches('"')`) coerces
+/// to its single-character string so char and string patterns behave
+/// identically — matching the compiled tiers, where `gos_rt_str_*`
+/// shims receive the char as a one-byte string. A missing or
+/// non-stringy argument is the empty string, preserving the prior
+/// `as_str().unwrap_or("")` default.
+fn pattern_arg(value: Option<&Value>) -> std::borrow::Cow<'_, str> {
+    match value {
+        Some(Value::String(s)) => std::borrow::Cow::Borrowed(s.as_str()),
+        Some(Value::Char(c)) => std::borrow::Cow::Owned(c.to_string()),
+        _ => std::borrow::Cow::Borrowed(""),
+    }
 }
 
 pub(crate) fn builtin_strings_split(args: &[Value]) -> RuntimeResult<Value> {
     let text = args.first().and_then(as_str).unwrap_or("");
-    let sep = args.get(1).and_then(as_str).unwrap_or("");
-    Ok(string_array(strings_std::split(text, sep)))
+    let sep = pattern_arg(args.get(1));
+    Ok(string_array(strings_std::split(text, &sep)))
 }
 
 pub(crate) fn builtin_strings_splitn(args: &[Value]) -> RuntimeResult<Value> {
@@ -202,8 +222,8 @@ pub(crate) fn builtin_strings_contains(args: &[Value]) -> RuntimeResult<Value> {
 
 pub(crate) fn builtin_strings_find(args: &[Value]) -> RuntimeResult<Value> {
     let text = args.first().and_then(as_str).unwrap_or("");
-    let needle = args.get(1).and_then(as_str).unwrap_or("");
-    match strings_std::find(text, needle) {
+    let needle = pattern_arg(args.get(1));
+    match strings_std::find(text, &needle) {
         Some(idx) => Ok(some_variant(Value::Int(idx as i64))),
         None => Ok(none_variant()),
     }
@@ -211,8 +231,8 @@ pub(crate) fn builtin_strings_find(args: &[Value]) -> RuntimeResult<Value> {
 
 pub(crate) fn builtin_strings_rfind(args: &[Value]) -> RuntimeResult<Value> {
     let text = args.first().and_then(as_str).unwrap_or("");
-    let needle = args.get(1).and_then(as_str).unwrap_or("");
-    match strings_std::rfind(text, needle) {
+    let needle = pattern_arg(args.get(1));
+    match strings_std::rfind(text, &needle) {
         Some(idx) => Ok(some_variant(Value::Int(idx as i64))),
         None => Ok(none_variant()),
     }
@@ -220,8 +240,8 @@ pub(crate) fn builtin_strings_rfind(args: &[Value]) -> RuntimeResult<Value> {
 
 pub(crate) fn builtin_strings_split_once(args: &[Value]) -> RuntimeResult<Value> {
     let text = args.first().and_then(as_str).unwrap_or("");
-    let sep = args.get(1).and_then(as_str).unwrap_or("");
-    match text.split_once(sep) {
+    let sep = pattern_arg(args.get(1));
+    match text.split_once(&*sep) {
         Some((head, tail)) => Ok(some_variant(Value::Tuple(std::sync::Arc::new(vec![
             Value::String(head.into()),
             Value::String(tail.into()),
@@ -232,8 +252,8 @@ pub(crate) fn builtin_strings_split_once(args: &[Value]) -> RuntimeResult<Value>
 
 pub(crate) fn builtin_strings_rsplit_once(args: &[Value]) -> RuntimeResult<Value> {
     let text = args.first().and_then(as_str).unwrap_or("");
-    let sep = args.get(1).and_then(as_str).unwrap_or("");
-    match text.rsplit_once(sep) {
+    let sep = pattern_arg(args.get(1));
+    match text.rsplit_once(&*sep) {
         Some((head, tail)) => Ok(some_variant(Value::Tuple(std::sync::Arc::new(vec![
             Value::String(head.into()),
             Value::String(tail.into()),
@@ -244,11 +264,11 @@ pub(crate) fn builtin_strings_rsplit_once(args: &[Value]) -> RuntimeResult<Value
 
 pub(crate) fn builtin_strings_count(args: &[Value]) -> RuntimeResult<Value> {
     let text = args.first().and_then(as_str).unwrap_or("");
-    let needle = args.get(1).and_then(as_str).unwrap_or("");
+    let needle = pattern_arg(args.get(1));
     if needle.is_empty() {
         return Ok(Value::Int(0));
     }
-    Ok(Value::Int(text.matches(needle).count() as i64))
+    Ok(Value::Int(text.matches(&*needle).count() as i64))
 }
 
 pub(crate) fn builtin_strings_strip_chars(args: &[Value]) -> RuntimeResult<Value> {
@@ -263,7 +283,7 @@ pub(crate) fn builtin_strings_strip_chars(args: &[Value]) -> RuntimeResult<Value
 
 pub(crate) fn builtin_strings_lstrip_chars(args: &[Value]) -> RuntimeResult<Value> {
     let text = args.first().and_then(as_str).unwrap_or("");
-    let cutset = args.get(1).and_then(as_str).unwrap_or("");
+    let cutset = pattern_arg(args.get(1));
     if cutset.is_empty() {
         return Ok(Value::String(text.into()));
     }
@@ -275,7 +295,7 @@ pub(crate) fn builtin_strings_lstrip_chars(args: &[Value]) -> RuntimeResult<Valu
 
 pub(crate) fn builtin_strings_rstrip_chars(args: &[Value]) -> RuntimeResult<Value> {
     let text = args.first().and_then(as_str).unwrap_or("");
-    let cutset = args.get(1).and_then(as_str).unwrap_or("");
+    let cutset = pattern_arg(args.get(1));
     if cutset.is_empty() {
         return Ok(Value::String(text.into()));
     }
@@ -334,21 +354,21 @@ pub(crate) fn builtin_strings_slice(args: &[Value]) -> RuntimeResult<Value> {
 
 pub(crate) fn builtin_strings_replace(args: &[Value]) -> RuntimeResult<Value> {
     let text = args.first().and_then(as_str).unwrap_or("");
-    let from = args.get(1).and_then(as_str).unwrap_or("");
-    let to = args.get(2).and_then(as_str).unwrap_or("");
-    Ok(Value::String(strings_std::replace(text, from, to).into()))
+    let from = pattern_arg(args.get(1));
+    let to = pattern_arg(args.get(2));
+    Ok(Value::String(strings_std::replace(text, &from, &to).into()))
 }
 
 pub(crate) fn builtin_strings_replacen(args: &[Value]) -> RuntimeResult<Value> {
     let text = args.first().and_then(as_str).unwrap_or("");
-    let from = args.get(1).and_then(as_str).unwrap_or("");
-    let to = args.get(2).and_then(as_str).unwrap_or("");
+    let from = pattern_arg(args.get(1));
+    let to = pattern_arg(args.get(2));
     let n = args
         .get(3)
         .and_then(value_to_int)
         .map_or(0, |v| usize::try_from(v.max(0)).unwrap_or(0));
     Ok(Value::String(
-        strings_std::replacen(text, from, to, n).into(),
+        strings_std::replacen(text, &from, &to, n).into(),
     ))
 }
 
@@ -364,14 +384,14 @@ pub(crate) fn builtin_strings_to_upper(args: &[Value]) -> RuntimeResult<Value> {
 
 pub(crate) fn builtin_strings_starts_with(args: &[Value]) -> RuntimeResult<Value> {
     let text = args.first().and_then(as_str).unwrap_or("");
-    let prefix = args.get(1).and_then(as_str).unwrap_or("");
-    Ok(Value::Bool(strings_std::starts_with(text, prefix)))
+    let prefix = pattern_arg(args.get(1));
+    Ok(Value::Bool(strings_std::starts_with(text, &prefix)))
 }
 
 pub(crate) fn builtin_strings_ends_with(args: &[Value]) -> RuntimeResult<Value> {
     let text = args.first().and_then(as_str).unwrap_or("");
-    let suffix = args.get(1).and_then(as_str).unwrap_or("");
-    Ok(Value::Bool(strings_std::ends_with(text, suffix)))
+    let suffix = pattern_arg(args.get(1));
+    Ok(Value::Bool(strings_std::ends_with(text, &suffix)))
 }
 
 pub(crate) fn builtin_strings_repeat(args: &[Value]) -> RuntimeResult<Value> {
@@ -416,8 +436,8 @@ pub(crate) fn builtin_strings_join(args: &[Value]) -> RuntimeResult<Value> {
 
 pub(crate) fn builtin_strings_strip_prefix(args: &[Value]) -> RuntimeResult<Value> {
     let text = args.first().and_then(as_str).unwrap_or("");
-    let prefix = args.get(1).and_then(as_str).unwrap_or("");
-    match strings_std::strip_prefix(text, prefix) {
+    let prefix = pattern_arg(args.get(1));
+    match strings_std::strip_prefix(text, &prefix) {
         Some(s) => Ok(some_variant(Value::String(s.into()))),
         None => Ok(none_variant()),
     }
@@ -425,8 +445,8 @@ pub(crate) fn builtin_strings_strip_prefix(args: &[Value]) -> RuntimeResult<Valu
 
 pub(crate) fn builtin_strings_strip_suffix(args: &[Value]) -> RuntimeResult<Value> {
     let text = args.first().and_then(as_str).unwrap_or("");
-    let suffix = args.get(1).and_then(as_str).unwrap_or("");
-    match strings_std::strip_suffix(text, suffix) {
+    let suffix = pattern_arg(args.get(1));
+    match strings_std::strip_suffix(text, &suffix) {
         Some(s) => Ok(some_variant(Value::String(s.into()))),
         None => Ok(none_variant()),
     }
@@ -519,11 +539,6 @@ pub(crate) fn builtin_strings_last_index_any(args: &[Value]) -> RuntimeResult<Va
     }
 }
 
-pub(crate) fn builtin_strings_fields(args: &[Value]) -> RuntimeResult<Value> {
-    let text = args.first().and_then(as_str).unwrap_or("");
-    Ok(string_array(strings_std::fields(text)))
-}
-
 pub(crate) fn builtin_strings_equal_fold(args: &[Value]) -> RuntimeResult<Value> {
     let a = args.first().and_then(as_str).unwrap_or("");
     let b = args.get(1).and_then(as_str).unwrap_or("");
@@ -532,9 +547,9 @@ pub(crate) fn builtin_strings_equal_fold(args: &[Value]) -> RuntimeResult<Value>
 
 pub(crate) fn builtin_strings_trim_matches(args: &[Value]) -> RuntimeResult<Value> {
     let text = args.first().and_then(as_str).unwrap_or("");
-    let cutset = args.get(1).and_then(as_str).unwrap_or("");
+    let cutset = pattern_arg(args.get(1));
     Ok(Value::String(
-        strings_std::trim_matches(text, cutset).into(),
+        strings_std::trim_matches(text, &cutset).into(),
     ))
 }
 

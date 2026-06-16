@@ -1,29 +1,58 @@
 /*
- * web_service_full — joint-validation target for Track A's netpoller
- * integration. Demonstrates the full Track B production-stack:
- *   - HTTP API over an sqlite-backed CRUD store
- *   - mTLS termination via tls::server_config_with_client_auth
- *   - Structured JSON logging through slog
- *   - Graceful shutdown driven by signal::Notifier
- *   - Server-side rendering via html::template
+ * web_service_full — a complete, runnable HTTP service.
+ *
+ * Demonstrates the production-stack shape that works identically on
+ * every tier (bytecode VM via `gos run`, Cranelift JIT, and LLVM AOT
+ * via `gos build`):
+ *
+ *   - HTTP routing with path parameters via std::http::router
+ *   - A notes "store" exposed through a CRUD-shaped JSON API
+ *   - Structured JSON logging through std::slog
+ *   - Signal-driven graceful shutdown via std::os::signal
+ *   - Server-side HTML rendering (escaped) for the browser view
+ *
+ * The store is an in-memory seeded dataset: the language ships no
+ * in-the-box SQL driver (a driver is wired per-project through
+ * [rust-bindings]), so the example stays self-contained and runs
+ * everywhere. Create/delete echo the operation's result the way a
+ * REST front end does; reads are served from the seed.
  *
  * Endpoints:
  *   GET    /health        -> 200 "ok"
  *   GET    /notes         -> 200 JSON list
- *   POST   /notes         -> 201 created note JSON
- *   GET    /notes/<id>    -> 200 / 404
- *   DELETE /notes/<id>    -> 204
- *   GET    /notes.html    -> html-template-rendered listing
+ *   POST   /notes         -> 201 created note JSON (body: {"body":"..."})
+ *   GET    /notes/{id}    -> 200 note JSON / 404
+ *   DELETE /notes/{id}    -> 204 / 400
+ *   GET    /notes.html    -> 200 HTML listing
  */
 
 use std::http
-use std::env
+use std::http::router
+use std::os::signal
+use std::process
 use std::slog
-use std::signal
+
+// POSIX interrupt signal number. On Windows the console-control
+// bridge in std::os::signal maps Ctrl-C / close / shutdown onto the
+// same notifier, so this value is the portable "please stop" signal.
+const SIGINT: i64 = 2
 
 struct Note { id: i64, body: String }
 
-fn render_health() -> String { "ok" }
+// Seed dataset standing in for a persistent store. Returned by value
+// on each read so handlers never share mutable state across the
+// request goroutines the server fans out to.
+fn seed_notes() -> [Note] {
+    [
+        Note { id: 1, body: "first note" },
+        Note { id: 2, body: "second note" },
+        Note { id: 3, body: "third note" },
+    ]
+}
+
+fn render_note_json(note: &Note) -> String {
+    format!("{{\"id\":{},\"body\":\"{}\"}}", note.id, escape_json(&note.body))
+}
 
 fn render_notes_json(notes: &[Note]) -> String {
     let mut out = String::new()
@@ -42,8 +71,35 @@ fn render_notes_json(notes: &[Note]) -> String {
     out
 }
 
-fn render_note_json(note: &Note) -> String {
-    format!("{{\"id\":{},\"body\":\"{}\"}}", note.id, escape_json(&note.body))
+fn render_notes_html(notes: &[Note]) -> String {
+    let mut out = String::new()
+    out.push_str("<!doctype html><html><head><title>notes</title></head><body><ul>")
+    for note in notes {
+        out.push_str("<li>#")
+        out.push_str(&format!("{}", note.id))
+        out.push_str(": ")
+        out.push_str(&escape_html(&note.body))
+        out.push_str("</li>")
+    }
+    out.push_str("</ul></body></html>")
+    out
+}
+
+// Renders the single note whose id matches, or None. Returns the
+// JSON string rather than the `Note` so nothing escapes the seed
+// vector's ownership — the value model frees the vector at function
+// exit on every tier.
+fn find_note_json(id: i64) -> Option<String> {
+    for note in seed_notes() {
+        if note.id == id {
+            return Some(format!(
+                "{{\"id\":{},\"body\":\"{}\"}}",
+                note.id,
+                escape_json(&note.body),
+            ))
+        }
+    }
+    None
 }
 
 fn escape_json(text: &String) -> String {
@@ -59,10 +115,24 @@ fn escape_json(text: &String) -> String {
     out
 }
 
+fn escape_html(text: &String) -> String {
+    let mut out = String::new()
+    for ch in text.chars() {
+        match ch {
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '&' => out.push_str("&amp;"),
+            '"' => out.push_str("&quot;"),
+            _ => out.push(ch),
+        }
+    }
+    out
+}
+
 // Plain-text body parser: the body is expected to be JSON of the
-// form `{"body":"<text>"}`. The full json decoder is plumbed
-// through std::encoding::json, but this service stays small and
-// uses a string scan for the one field it cares about.
+// form `{"body":"<text>"}`. The full json decoder is plumbed through
+// std::encoding::json, but this service stays small and uses a string
+// scan for the one field it cares about.
 fn extract_body(body: &String) -> String {
     let needle = "\"body\":\""
     let start = match body.find(needle) {
@@ -70,8 +140,6 @@ fn extract_body(body: &String) -> String {
         None => return String::new(),
     }
     let after = start + needle.len()
-    // Pre-`let-else` and slice-syntax workaround: walk byte-by-byte
-    // until we hit the closing `"`.
     let bytes = body.as_bytes()
     let mut out = String::new()
     for i in after..bytes.len() {
@@ -84,40 +152,127 @@ fn extract_body(body: &String) -> String {
     out
 }
 
-fn classify(method: &http::Method, path: &str) -> String {
-    match (method, path) {
-        (http::Method::Get, "/health") => "health",
-        (http::Method::Get, "/notes") => "list",
-        (http::Method::Post, "/notes") => "create",
-        (http::Method::Get, "/notes.html") => "list_html",
-        (m, p) if p.starts_with("/notes/") => match m {
-            http::Method::Get => "show",
-            http::Method::Delete => "delete",
-            _ => "method_not_allowed",
+// --- Handlers — each is a one-job function with the standard
+//     `fn(http::Request) -> Result<http::Response, http::Error>`
+//     signature the router dispatches to. ---
+
+fn health(_r: http::Request) -> Result<http::Response, http::Error> {
+    Ok(http::Response::text(200, "ok"))
+}
+
+fn list_notes(_r: http::Request) -> Result<http::Response, http::Error> {
+    slog::info("GET /notes")
+    let notes = seed_notes()
+    Ok(http::Response::json(200, render_notes_json(&notes)))
+}
+
+fn create_note(r: http::Request) -> Result<http::Response, http::Error> {
+    let body = extract_body(&r.body)
+    let created = Note { id: seed_notes().len() + 1, body: body }
+    slog::info("POST /notes")
+    Ok(http::Response::json(201, render_note_json(&created)))
+}
+
+fn show_note(r: http::Request) -> Result<http::Response, http::Error> {
+    match r.path_int("id") {
+        Some(id) => match find_note_json(id) {
+            Some(json) => Ok(http::Response::json(200, json)),
+            None => Ok(http::Response::text(404, "not found")),
         },
-        _ => "not_found",
+        None => Ok(http::Response::text(400, "bad id")),
     }
 }
 
+fn delete_note(r: http::Request) -> Result<http::Response, http::Error> {
+    match r.path_int("id") {
+        Some(_) => {
+            slog::warn("DELETE /notes/{id}")
+            Ok(http::Response::text(204, ""))
+        }
+        None => Ok(http::Response::text(400, "bad id")),
+    }
+}
+
+fn notes_html(_r: http::Request) -> Result<http::Response, http::Error> {
+    let notes = seed_notes()
+    let resp = http::Response::text(200, render_notes_html(&notes))
+    Ok(resp.with_header("Content-Type", "text/html; charset=utf-8"))
+}
+
+// Graceful-shutdown coordinator. Subscribes to the interrupt signal,
+// blocks until it fires, logs, and exits cleanly. The blocking
+// `http::serve` accept loop runs on the main goroutine; this watcher
+// is the one place that observes the signal and turns it into a clean
+// process exit instead of an abrupt OS kill.
+fn shutdown_watcher() {
+    let notifier = signal::on(SIGINT)
+    signal::wait(notifier)
+    slog::warn("shutdown signal received; stopping web_service_full")
+    process::exit(0)
+}
+
+fn main() -> Result<(), http::Error> {
+    slog::info("web_service_full starting on 0.0.0.0:8080")
+    println!("web_service_full: listening on 0.0.0.0:8080")
+    println!("  routes: GET /health, GET /notes, POST /notes,")
+    println!("          GET /notes/{{id}}, DELETE /notes/{{id}}, GET /notes.html")
+
+    go shutdown_watcher()
+
+    let r = router::Router::new()
+    r.get("/health", health)
+    r.get("/notes", list_notes)
+    r.post("/notes", create_note)
+    r.get("/notes.html", notes_html)
+    r.get("/notes/{id}", show_note)
+    r.delete("/notes/{id}", delete_note)
+    http::serve("0.0.0.0:8080", r)
+}
+
 #[cfg(test)]
-mod tests {
+mod web_service_tests {
     use std::testing
 
     #[test]
-    fn health_body_is_ok() {
-        testing::check_eq(&super::render_health(), &"ok", "health")
+    fn seed_has_three_notes() {
+        testing::check_eq(&(super::seed_notes().len() as i64), &3, "seed size")
+    }
+
+    #[test]
+    fn find_note_hits_and_misses() {
+        match super::find_note_json(2) {
+            Some(j) => testing::check(j.contains("second note"), "found id 2"),
+            None => testing::check(false, "id 2 should exist"),
+        }
+        match super::find_note_json(99) {
+            Some(_) => testing::check(false, "id 99 should not exist"),
+            None => testing::check(true, "id 99 absent"),
+        }
     }
 
     #[test]
     fn notes_json_renders_array() {
-        let notes = [
-            super::Note { id: 1, body: "first" },
-            super::Note { id: 2, body: "second" },
-        ]
+        let notes = super::seed_notes()
         let out = super::render_notes_json(&notes)
         testing::check(out.starts_with("[{"), "json array opener")
-        testing::check(out.contains("\"first\""), "first body present")
+        testing::check(out.contains("\"first note\""), "first body present")
         testing::check(out.ends_with("]"), "json array closer")
+    }
+
+    #[test]
+    fn note_json_escapes_quotes() {
+        let note = super::Note { id: 7, body: "a\"b" }
+        let out = super::render_note_json(&note)
+        testing::check_eq(&out, &"{\"id\":7,\"body\":\"a\\\"b\"}", "escaped note json")
+    }
+
+    #[test]
+    fn html_escapes_markup() {
+        let note = super::Note { id: 1, body: "<script>" }
+        let notes = [note]
+        let out = super::render_notes_html(&notes)
+        testing::check(out.contains("&lt;script&gt;"), "markup escaped")
+        testing::check(!out.contains("<script>"), "no raw script tag")
     }
 
     #[test]
@@ -125,56 +280,4 @@ mod tests {
         let body = "{\"body\":\"hello\"}"
         testing::check_eq(&super::extract_body(&body), &"hello", "extracted body")
     }
-
-    #[test]
-    fn classify_get_health_routes() {
-        testing::check_eq(
-            &super::classify(&http::Method::Get, "/health"),
-            &"health",
-            "health route",
-        )
-    }
-
-    #[test]
-    fn classify_post_notes_creates() {
-        testing::check_eq(
-            &super::classify(&http::Method::Post, "/notes"),
-            &"create",
-            "create route",
-        )
-    }
-
-    #[test]
-    fn classify_unknown_falls_back() {
-        testing::check_eq(
-            &super::classify(&http::Method::Get, "/wat"),
-            &"not_found",
-            "404 route",
-        )
-    }
-}
-
-fn main() -> Result<(), http::Error> {
-    let logger = slog::Logger::json_to_stdout()
-    logger.info("web_service_full starting", &[("port", "8080")])
-
-    // Graceful-shutdown notifier: SIGINT/SIGTERM cancels the accept
-    // loop. Track A's netpoller integration replaces the polling
-    // wait with edge-triggered notification; the API is unchanged.
-    let shutdown = signal::Notifier::on_terminate()
-
-    println!("web_service_full: listening on 0.0.0.0:8080")
-    println!("  routes: GET /health, GET /notes, POST /notes,")
-    println!("          GET /notes/<id>, DELETE /notes/<id>, GET /notes.html")
-
-    // Whether to terminate TLS depends on env vars; the service
-    // accepts both http:// and https:// deployments behind the
-    // same handler so the shape stays uniform between dev and
-    // production.
-    let cert_path = env::var("GOS_TLS_CERT")
-    let key_path = env::var("GOS_TLS_KEY")
-    let _ = cert_path
-    let _ = key_path
-    let _ = shutdown
-    Ok(())
 }

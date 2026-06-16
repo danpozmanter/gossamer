@@ -2101,6 +2101,7 @@ pub struct ClientBuilder {
     cookies: bool,
     user_agent: String,
     tls: Option<crate::tls::ClientConfig>,
+    proxy: Option<String>,
 }
 
 impl Default for ClientBuilder {
@@ -2111,6 +2112,7 @@ impl Default for ClientBuilder {
             cookies: true,
             user_agent: format!("gossamer/{}", env!("CARGO_PKG_VERSION")),
             tls: None,
+            proxy: None,
         }
     }
 }
@@ -2154,6 +2156,16 @@ impl ClientBuilder {
         self
     }
 
+    /// Routes every request through the given proxy URL (e.g.
+    /// `http://127.0.0.1:8080`). Mirrors Go's `http.Transport.Proxy`.
+    /// An empty string clears any previously-set proxy.
+    #[must_use]
+    pub fn proxy(mut self, url: impl Into<String>) -> Self {
+        let url = url.into();
+        self.proxy = if url.is_empty() { None } else { Some(url) };
+        self
+    }
+
     /// Builds the client.
     ///
     /// # Errors
@@ -2166,6 +2178,12 @@ impl ClientBuilder {
             .timeout_global(Some(self.timeout))
             .max_redirects(self.max_redirects)
             .user_agent(self.user_agent.as_str());
+
+        if let Some(proxy_url) = &self.proxy {
+            let proxy = ureq::Proxy::new(proxy_url)
+                .map_err(|e| ClientError::Transport(format!("proxy {proxy_url}: {e}")))?;
+            cfg = cfg.proxy(Some(proxy));
+        }
 
         if let Some(tls) = &self.tls {
             let mut tls_builder =
@@ -2329,6 +2347,39 @@ mod tests {
             .expect("default builder cannot fail");
         // Smoke test only; the actual transport is exercised by the
         // optional integration test gated on GOS_HTTP_LIVE.
+        let _ = client;
+    }
+
+    #[test]
+    fn client_builder_accepts_valid_proxy_url() {
+        // A well-formed proxy URL is parsed and applied without
+        // error; the agent is built with the proxy configured.
+        let client = Client::builder()
+            .proxy("http://127.0.0.1:8080")
+            .build()
+            .expect("valid proxy url must build");
+        let _ = client;
+    }
+
+    #[test]
+    fn client_builder_rejects_malformed_proxy_url() {
+        // A proxy URL ureq cannot parse surfaces a typed transport
+        // error rather than silently dropping the setting.
+        let err = Client::builder().proxy("::not a url::").build();
+        assert!(
+            matches!(err, Err(ClientError::Transport(_))),
+            "malformed proxy must be a transport error, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn client_builder_empty_proxy_clears_setting() {
+        // An empty proxy string is a no-op (no proxy), so build()
+        // succeeds with a direct-connection agent.
+        let client = Client::builder()
+            .proxy("")
+            .build()
+            .expect("empty proxy must build as direct connection");
         let _ = client;
     }
 

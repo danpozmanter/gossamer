@@ -1,0 +1,18 @@
+struct Pt { x: i64, y: i64 }
+
+fn make(a: i64, b: i64) -> Pt { Pt { x: a * 2, y: b + 3 } }
+
+fn dist2(n: i64) -> i64 {
+    let p = make(n, n)
+    p.x * p.x + p.y * p.y
+}
+
+fn main() {
+    let mut total = 0
+    let mut i = 0
+    while i < 4000 {
+        total += dist2(i % 17)
+        i += 1
+    }
+    println!("{}", total)
+}

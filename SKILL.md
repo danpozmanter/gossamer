@@ -18,7 +18,7 @@ Go-shaped: goroutines, channels. Source files end in `.gos`. The
 toolchain binary is `gos`. Every project ships a `project.toml`
 manifest.
 
-Status: pre-1.0.0 (currently 0.13.0). The surface is stable to
+Status: pre-1.0.0 (currently 0.14.0). The surface is stable to
 write against, and features ship across all three tiers (bytecode
 VM, in-process JIT, LLVM AOT) — see "current gaps" at the bottom.
 
@@ -136,7 +136,14 @@ Prefer `|>` whenever a value flows through two or more transforms.
 - `x |> f` desugars to `f(x)`.
 - `x |> f(a, b)` desugars to `f(a, b, x)` — piped value lands in the
   **last positional slot**.
-- `x |> recv.m(a)` becomes `recv.m(a, x)`.
+- `x |> recv.m(a)` becomes `recv.m(a, x)` — pipe into an *external*
+  receiver's last argument.
+- `x |> _.m(a)` becomes `x.m(a)` — the **`_` placeholder** makes the
+  piped value the *receiver*. `_` reads as "the value flowing through
+  here". Bare `x |> _.trim` (no parens) is the nullary method call
+  `x.trim()`; `x |> _.0` / `x |> _[i]` index the value; `x |> _` is the
+  identity. Use this to pipe a value through its own methods:
+  `s |> _.trim |> _.to_upper`.
 - Left-associative, very low precedence: `a |> f |> g` reads as
   `g(f(a))` without parens.
 
@@ -262,6 +269,19 @@ println!("value: {} / {}", answer, total)
 let greeting = "hello, " + &name      // `+` concatenates, no separator
 ```
 
+Format specs follow Rust's `{:spec}` grammar — width and alignment
+(`{:>8}` / `{:<8}` / `{:^8}` / `{:8}`), fill chars (`{:*>8}`),
+zero-pad (`{:08}`), radix (`{:x}` / `{:X}` / `{:b}` / `{:o}`), and
+precision (`{:.2}`, `{:>8.2}`), for positional and named (`{n:03}`)
+arguments:
+
+```gossamer
+println!("[{:>8}]", 42)        // [      42]
+println!("[{:08x}]", 255)      // [000000ff]
+println!("[{:^6}]", "hi")      // [  hi  ]
+println!("[{:>8.2}]", 3.14159) // [    3.14]
+```
+
 ## 7. Error handling
 
 Fallible functions return `Result<T, E>`. Propagate with `?`; build
@@ -316,7 +336,11 @@ inside macro arguments (`print!("{}", expr?)`).
 Panics are goroutine-scoped: a panic in a spawned goroutine ends
 only that goroutine — the scheduler keeps running — while a panic on
 the main goroutine is fatal, as in Rust. Reserve for invariant
-violations.
+violations. Integer divide / modulo by zero panics (`GX0005`) on
+every tier; `i64::MIN / -1` wraps to `i64::MIN`. Deep recursion in a
+goroutine, closure, or method body raises a clean stack-overflow
+(`GX0008`) rather than crashing — for genuinely deep recursion use
+`gos build`, where native code lets the OS grow the stack.
 
 ## 8. Concurrency
 
@@ -479,18 +503,26 @@ manifest-id-named source, then a sole `.gos` candidate).
 
 ## 11. Writing tests
 
-Unit tests live in the file they cover under `#[cfg(test)] mod tests
-{ … }`. Integration tests live under `tests/`.
+Unit tests live in the file they cover under `#[cfg(test)] mod
+<file>_tests { … }`, reaching the file's own items via `super::`.
+**In a multi-file project give each file's test module a unique name**
+(`util_tests`, `parser_tests`, …): several `mod tests` across bundled
+siblings collide on `gos build`/`gos run` (`GR0003`). `gos test` bundles
+sibling modules the same way `gos run` / `gos build` do, so a `#[test]`
+may call a sibling module declared `mod NAME;` via `super::NAME::item`.
+`assert(cond[, msg])` / `assert_eq(a, b[, msg])` are prelude builtins
+(panic on failure; a pass is counted in the tally); `std::testing::check*`
+record without panicking.
 
 ```gossamer
 pub fn add(a: i64, b: i64) -> i64 { a + b }
 
 #[cfg(test)]
-mod tests {
+mod arith_tests {
+    use std::testing
     #[test]
     fn add_adds() {
-        let total = super::add(2, 3)
-        assert(total == 5)
+        testing::check_eq(&super::add(2, 3), &5, "2+3")
     }
 }
 ```
@@ -527,15 +559,23 @@ repo examples and write a small test when unsure.
   (binary-safe) and `read_file(path) -> Result<Vec<u8>, _>` /
   `read_file_to_string`.
 - `std::strings` — `split`, `splitn`, `split_whitespace`, `trim(_start/_end)`,
-  `contains`, `find`, `rfind`, `replace`, `replacen`, `to_lower/upper`,
-  `starts_with`, `ends_with`, `repeat`, `lines`, `join`,
-  `strip_prefix/suffix`, `pad_left/right`. Also as `String` methods:
-  `split_once(sep) -> Option<(String, String)>`, `rsplit_once`,
-  `count(needle)`, `strip_chars`/`lstrip_chars`/`rstrip_chars`,
-  `zfill(w)`, `center(w, c)`, `slice(a, b) -> Result<String, _>`,
-  `byte_at(i) -> i64`.
+  char-set trims `trim_matches(set)` (both ends) / `trim_start_matches(set)` /
+  `trim_end_matches(set)` (there is **no** `strip_chars`/`lstrip_chars`/
+  `rstrip_chars` — those raise `GX0002`), `contains`, `find`, `rfind`,
+  `replace`, `replacen`,
+  `to_lower/upper`, `to_title`, `starts_with`, `ends_with`, `repeat`,
+  `lines`, `join`, `strip_prefix/suffix`, `pad_left/right`. Also as
+  `String` methods: `split_once(sep) -> Option<(String, String)>`,
+  `rsplit_once`, `count(needle)`, `find_any(chars)`/`rfind_any(chars)
+  -> Option<i64>`, `center(w, c)`, `slice(a, b) -> Result<String, _>`,
+  `substring(a, b) -> String` (out-of-range clamps rather than erroring;
+  see the tier caveat in §15), `byte_at(i) -> i64`. Prefer `to_lower`
+  over the `to_lowercase` alias. Join with `strings::join(&parts, sep)`,
+  not the `parts.join(sep)` method (the latter mis-dispatches and drops
+  the elements).
 - `std::strconv` — `parse_int/i64/u64/float/f64/bool`,
-  `format_int/i64/float/f64`, `itoa`, `atoi`.
+  `format_int/i64/float/f64`, `itoa`, `atoi`, `parse_i64_radix(s, base)`
+  / `format_i64_radix(n, base)` (bases 2..=36), `quote`/`unquote`.
 - `std::utf8` — `count_runes`, `rune_count(_in_string)`, `rune_len`,
   `is_valid`, `valid_rune/string`, `full_rune(_in_string)`,
   `rune_start`, `decode_rune/last_rune/first` (+ `_in_string`),
@@ -550,7 +590,9 @@ repo examples and write a small test when unsure.
   `let café = 1`, `let π = 3.14` parse.
 - `std::collections` — `Vec`, `HashMap`, `HashSet` (real set:
   `insert`, `remove`, `contains`, `len`, `is_empty`, `clear`,
-  `to_vec`, `iter`), `BTreeMap`. (Vec/HashMap method extras under §9.)
+  `to_vec`, `iter`; algebra: `union`, `intersection`, `difference`,
+  `symmetric_difference`, `is_subset`, `is_superset`, `is_disjoint`),
+  `BTreeMap`. (Vec/HashMap method extras under §9.)
 - `std::net` — `TcpListener::{bind, accept, local_addr, close}`,
   `TcpStream::{connect, read, read_to_string, write, close}`,
   `UdpSocket::{bind, send_to, recv_from, local_addr, close}`,
@@ -631,6 +673,8 @@ repo examples and write a small test when unsure.
 - `std::time` — `Instant::{now, elapsed_ms}`, `Duration::{from_millis/secs/micros,
   as_millis/secs/micros}`, `sleep`, `now`, `now_nanos`,
   `monotonic_ms/nanos`, `since_ms`, `format_rfc3339`, `parse_rfc3339`.
+  Channel timer: `after(d) -> Receiver` (one-shot) — drain with
+  `while let` or use as a `select` timeout arm.
 - `std::context` — cancellation, deadlines, `Context::background()`.
 - `std::bytes` / `std::bufio` — binary buffers and buffered IO.
 - `std::flag` — CLI flag parser; `flag::Cell<T>` auto-derefs at
@@ -748,17 +792,34 @@ fn main() -> Result<(), flag::Error> {
 - `+` on `String` copies; for heavy assembly use
   `std::bytes::Builder` or a `mut String` with `+=`.
 - Method dispatch is name-global in places. Qualified path calls
-  (`Point::origin()`) always work; method-style may collide across
-  types. Trap: once any struct carries `#[derive(Clone)]`, calling
-  `.clone()` on a *`String`* receiver can dispatch to the struct's
-  derived clone under `gos run` (a `GX0001` runtime error); compiled
-  tiers resolve it. Strings are values — bind or borrow instead of
-  cloning, and don't shadow built-in method names.
+  (`Point::origin()`) always work. `String` / `HashMap` / `Vec`
+  receivers dispatch by type (a `String::` / `HashMap::` / `Vec::`
+  key resolved ahead of the bare name), so `s.to_title()` reaches the
+  string op, not `unicode::to_title`. (Exception: `parts.join(sep)` on
+  a `[String]` mis-dispatches and returns just the separator — use
+  `strings::join(&parts, sep)`.) Remaining trap: once any struct carries
+  `#[derive(Clone)]`, calling `.clone()` on a *`String`* receiver can
+  dispatch to the struct's derived clone under `gos run` (a `GX0001`
+  runtime error); compiled tiers resolve it. Strings are values — bind
+  or borrow instead of cloning, and don't shadow built-in method names.
 - `#[derive(...)]` does not yet cover enums with struct-payload
   variants (`Rect { w, h }`); tuple and unit variants derive fine.
 - `u64` above 2^63 aliases i64 semantics: every ≤64-bit integer runs
   signed-i64 arithmetic; unsigned display fires only for explicit
   `as u64` / `as usize` results.
+
+### Tier-divergence traps
+
+The surface runs bit-identically across the bytecode VM (`gos run` /
+`gos test`), the Cranelift JIT, and the LLVM AOT tier (`gos build`).
+When you hit something that behaves differently across tiers it is a
+bug — reduce it and check against `gos test` (interpreter) **and**
+`gos build` (LLVM). One source-level rule remains:
+
+- **Per-file test modules must have unique names.** Multiple
+  `#[cfg(test)] mod tests` across bundled sibling files collide on
+  `gos build`/`gos run` with `GR0003: name 'tests' defined multiple
+  times` — name them `mod foo_tests`, `mod bar_tests`, etc.
 
 ## 16. Style checklist
 

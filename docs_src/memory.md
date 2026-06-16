@@ -1,9 +1,9 @@
 # Memory model
 
-Gossamer is garbage-collected from the programmer's point of view:
-there is no borrow checker, no lifetime annotations, and no manual
-ownership transfer. `&` and `&mut` exist — but they express *aliasing
-intent*, not ownership.
+Gossamer manages memory for you automatically: there is no borrow
+checker, no lifetime annotations, and no manual ownership transfer.
+`&` and `&mut` exist — but they express *aliasing intent*, not
+ownership.
 
 Under the hood the compiled tiers use **deterministic reference
 counting** with a cycle collector, not a tracing collector: most
@@ -15,7 +15,7 @@ short-lived object graphs.
 ## Values vs references
 
 - **Value-semantic types** are copied on assignment and passed
-  by value: `bool`, `char`, `i8`..`i128`, `u8`..`u128`,
+  by value: `bool`, `char`, `i8`..`i64`, `u8`..`u64`,
   `isize`/`usize`, `f32`/`f64`.
 - **Reference-semantic types** share their backing storage when
   copied; the runtime reclaims the backing when the last reference

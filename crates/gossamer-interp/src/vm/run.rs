@@ -53,6 +53,19 @@ impl Vm {
                 }
             }
         }
+        crate::profile::enter_frame();
+        #[cfg(feature = "profile")]
+        struct ProfDump(&'static str);
+        #[cfg(feature = "profile")]
+        impl Drop for ProfDump {
+            fn drop(&mut self) {
+                if self.0 == "main" && std::env::var_os("GOS_VM_PROFILE").is_some() {
+                    eprint!("{}", crate::profile::dump_report());
+                }
+            }
+        }
+        #[cfg(feature = "profile")]
+        let _prof_dump = ProfDump(chunk.name);
         let mut pc: u32 = 0;
         let instrs: &[Op] = &chunk.instrs;
         let instr_count = instrs.len();
@@ -70,6 +83,7 @@ impl Vm {
             debug_assert!((pc as usize) < instr_count, "fell off end of bytecode");
             let _ = instr_count;
             let op = unsafe { *instrs.get_unchecked(pc as usize) };
+            crate::profile::record_op(op);
             pc += 1;
             match op {
                 Op::LoadConst { dst, idx } => {
@@ -79,10 +93,20 @@ impl Vm {
                     let name: &str = &chunk.globals[idx as usize];
                     let value = match self.lookup_global_ref(name) {
                         Some(Global::Value(v)) => v.clone(),
+                        Some(Global::MutStatic(cell)) => cell.lock().clone(),
                         Some(Global::Fn(_)) => Value::String(SmolStr::from(name)),
                         None => return Err(RuntimeError::UnresolvedName(name.to_string())),
                     };
                     registers[dst as usize] = value;
+                }
+                Op::StoreStatic { name_idx, src } => {
+                    let name: &str = &chunk.globals[name_idx as usize];
+                    match self.lookup_global_ref(name) {
+                        Some(Global::MutStatic(cell)) => {
+                            *cell.lock() = registers[src as usize].clone();
+                        }
+                        _ => return Err(RuntimeError::UnresolvedName(name.to_string())),
+                    }
                 }
                 Op::Move { dst, src } => {
                     registers[dst as usize] = registers[src as usize].clone();
@@ -256,6 +280,7 @@ impl Vm {
                     args,
                     argc,
                     cache_idx,
+                    may_have_cells,
                 } => {
                     let argc_usz = argc as usize;
                     let mut arg_values = self.pool.borrow_mut().take_args(argc_usz);
@@ -264,9 +289,15 @@ impl Vm {
                         // boundary: `f(flags.output)` passes the
                         // current backing value instead of the
                         // `__Cell` handle. Matches Rust's `Deref`
-                        // coercion on fn-arg sites.
+                        // coercion on fn-arg sites. Skipped when the
+                        // compiler proved every argument is scalar.
                         let raw = registers[args as usize + i].clone();
-                        arg_values.push(auto_deref_cell(&raw).unwrap_or(raw));
+                        let v = if may_have_cells {
+                            auto_deref_cell(&raw).unwrap_or(raw)
+                        } else {
+                            raw
+                        };
+                        arg_values.push(v);
                     }
                     let callee_val = &registers[callee as usize];
                     // Inline-cache probe. The slot is keyed by the
@@ -277,29 +308,46 @@ impl Vm {
                     // loops calling small helper functions.
                     let token = call_token(callee_val);
                     let live_generation = self.globals_generation();
-                    let cached: Option<Global> = if token != 0 {
-                        // Read-only borrow on the IC hit path; the
-                        // fill (miss) path below takes borrow_mut.
-                        // Splitting avoids serialising every cached
-                        // hit against any concurrent borrow on the
-                        // same RefCell.
-                        let cache = state.call_caches.borrow();
-                        let slot = &cache[cache_idx as usize];
-                        if slot.type_token == token && slot.generation == live_generation {
-                            // Same two-tier shape as MethodCall: fast
-                            // builtin-fn-ptr first, then resolved chunk.
-                            if let Some(call_fn) = slot.builtin_fn {
-                                Some(Global::Value(Value::builtin("<cached>", call_fn)))
+                    // Two-tier IC probe (same shape as MethodCall): a
+                    // resolved builtin is returned as a raw `fn` pointer so
+                    // the hit path calls it directly — no per-call
+                    // `Arc<BuiltinInner>` allocation just to thread it
+                    // through `apply`.
+                    type BuiltinFn = fn(&[Value]) -> RuntimeResult<Value>;
+                    let (cached_builtin, cached): (Option<BuiltinFn>, Option<Global>) =
+                        if token != 0 {
+                            // Read-only borrow on the IC hit path; the
+                            // fill (miss) path below takes borrow_mut.
+                            // Splitting avoids serialising every cached
+                            // hit against any concurrent borrow on the
+                            // same RefCell.
+                            let cache = state.call_caches.borrow();
+                            let slot = &cache[cache_idx as usize];
+                            if slot.type_token == token && slot.generation == live_generation {
+                                if let Some(call_fn) = slot.builtin_fn {
+                                    (Some(call_fn), None)
+                                } else {
+                                    (
+                                        None,
+                                        slot.fn_chunk.as_ref().map(|c| Global::Fn(Arc::clone(c))),
+                                    )
+                                }
                             } else {
-                                slot.fn_chunk.as_ref().map(|c| Global::Fn(Arc::clone(c)))
+                                (None, None)
                             }
                         } else {
-                            None
-                        }
-                    } else {
-                        None
-                    };
-                    let result = if let Some(g) = cached {
+                            (None, None)
+                        };
+                    let result = if let Some(call_fn) = cached_builtin {
+                        // Hottest hit: direct fn-ptr call. Unwrap any `&mut`
+                        // write-back cells (free builtins take aggregates by
+                        // value) and return the pooled arg buffer — both
+                        // things `apply`'s builtin arm does, minus the alloc.
+                        let call_args = crate::value::unwrap_mut_cells(arg_values);
+                        let r = call_fn(&call_args)?;
+                        self.pool.borrow_mut().give_args(call_args);
+                        r
+                    } else if let Some(g) = cached {
                         self.apply(g, arg_values)?
                     } else if token != 0 {
                         // Miss: do the full dispatch and write back.
@@ -929,7 +977,11 @@ impl Vm {
                     // skipping the linear name-scan in `field_get`.
                     let recv = &registers[receiver as usize];
                     if let Value::Struct(inner) = recv {
-                        let token = intern_type_name(inner.name).as_ptr() as u64;
+                        // `inner.name` is a globally-interned `&'static str`
+                        // (canonical, pointer-stable across every clone of
+                        // any instance of this type), so its address is a
+                        // ready-made guard token — no second hash needed.
+                        let token = inner.name.as_ptr() as u64;
                         let slot = &state.field_caches[cache_idx as usize];
                         if slot.type_token.get() == token {
                             let off = slot.offset.get() as usize;
@@ -938,10 +990,9 @@ impl Vm {
                                 continue;
                             }
                         }
-                        // Miss: linear-scan, then refill the slot
-                        // for next time. `intern_type_name` returns
-                        // the same `&'static str` for any struct
-                        // sharing this name, so the token compare
+                        // Miss: linear-scan, then refill the slot for next
+                        // time. Every instance of a struct shares one
+                        // globally-interned `name`, so the token compare
                         // above is `O(1)` after fill.
                         let field_name = match &chunk.consts[name_idx as usize] {
                             Value::String(s) => s.as_str(),
@@ -1088,34 +1139,30 @@ impl Vm {
                         field_slots.push((Ident::new(field_name), new_value));
                     }
                 }
-                Op::EvalDeferred { dst, expr_idx } => {
-                    let idx = expr_idx as usize;
-                    let expr = &chunk.deferred_exprs[idx];
-                    let names = &chunk.deferred_envs[idx];
-                    let regs = &chunk.deferred_env_regs[idx];
-                    let mut env_values: Vec<(String, Value)> = Vec::with_capacity(regs.len());
-                    for (i, reg) in regs.iter().enumerate() {
-                        let value = registers[*reg as usize].clone();
-                        let name = names.get(i).cloned().unwrap_or_default();
-                        env_values.push((name, value));
-                    }
-                    let (result, is_return, updated) = self
-                        .walker
-                        .borrow_mut()
-                        .eval_standalone_with_flow(expr, &env_values)?;
-                    for (reg, value) in regs.iter().zip(updated) {
-                        registers[*reg as usize] = value;
-                    }
-                    if is_return {
-                        // Walker took an early-return path (e.g. the
-                        // `?` desugar's `Err(_) => return Err(_)`
-                        // arm). Surface as the chunk's return so
-                        // the caller sees a real unwind, not a
-                        // value collapsed into the next register.
-                        publish_ref_cells(&ref_cells, registers);
-                        return Ok(result);
-                    }
-                    registers[dst as usize] = result;
+                Op::MakeClosure { dst, proto } => {
+                    let proto = &chunk.closure_protos[proto as usize];
+                    // Snapshot the captured upvalue registers. A `Value`
+                    // clone is a by-value snapshot for scalars and an
+                    // `Arc` refcount bump for aggregates, so a captured
+                    // aggregate mutated through the closure stays visible
+                    // to the original binding.
+                    let capture_values: Vec<Value> = proto
+                        .capture_regs
+                        .iter()
+                        .map(|r| registers[*r as usize].clone())
+                        .collect();
+                    registers[dst as usize] = Value::Closure(Arc::new(crate::value::Closure {
+                        chunk: Arc::clone(&proto.chunk),
+                        capture_values,
+                    }));
+                }
+                Op::Select { first, count } => {
+                    let start = first as usize;
+                    let arms = &chunk.select_arms[start..start + count as usize];
+                    pc = select_dispatch(arms, &mut registers[..]);
+                }
+                Op::CovHit { slot } => {
+                    gossamer_runtime::coverage::bump(slot as usize);
                 }
 
                 // ----- Phase 1 typed ops -----
@@ -1347,7 +1394,7 @@ impl Vm {
                 } => {
                     let r = ints[rhs_i as usize];
                     if r == 0 {
-                        return Err(RuntimeError::Arithmetic("division by zero".to_string()));
+                        return Err(RuntimeError::Panic("divide by zero".to_string()));
                     }
                     ints[dst_i as usize] = ints[lhs_i as usize].wrapping_div(r);
                 }
@@ -1358,7 +1405,7 @@ impl Vm {
                 } => {
                     let r = ints[rhs_i as usize];
                     if r == 0 {
-                        return Err(RuntimeError::Arithmetic("remainder by zero".to_string()));
+                        return Err(RuntimeError::Panic("divide by zero".to_string()));
                     }
                     ints[dst_i as usize] = ints[lhs_i as usize].wrapping_rem(r);
                 }
@@ -1470,9 +1517,16 @@ impl Vm {
                     // type-error arm and aborts.
                     let n = match v {
                         Value::Int(n) => *n,
+                        // `as usize` / `as u64` produce a `Uint` (for unsigned
+                        // display); every ≤64-bit integer shares i64 arithmetic,
+                        // so unboxing it into the typed i64 register is correct
+                        // (and lets `(x as usize) < (y as usize)` take the typed
+                        // comparison path instead of type-erroring).
+                        Value::Uint(n) => *n as i64,
                         Value::Struct(inner) if inner.name == "__Cell" => {
                             match auto_deref_cell(v) {
                                 Some(Value::Int(n)) => n,
+                                Some(Value::Uint(n)) => n as i64,
                                 _ => {
                                     return Err(RuntimeError::Type(format!(
                                         "expected i64 at register, got `{v}`"
@@ -1975,6 +2029,60 @@ impl Vm {
                         *buf.get_unchecked_mut(pos) = new_f;
                     }
                 },
+                Op::FlatGetF64I {
+                    dst_f,
+                    base,
+                    index_i,
+                    stride,
+                    offset,
+                } => unsafe {
+                    let raw = *ints.get_unchecked(index_i as usize);
+                    if raw < 0 {
+                        return Err(RuntimeError::Arithmetic(
+                            "negative index into sequence".to_string(),
+                        ));
+                    }
+                    let idx = raw as usize;
+                    let b = registers.get_unchecked(base as usize);
+                    let Value::FloatArray(fa_inner) = b else {
+                        return Err(RuntimeError::Type(
+                            "FlatGetF64I: receiver lost flat invariant".to_string(),
+                        ));
+                    };
+                    let pos = idx * stride as usize + offset as usize;
+                    if pos >= fa_inner.data.len() {
+                        return Err(RuntimeError::Arithmetic("index out of bounds".to_string()));
+                    }
+                    *floats.get_unchecked_mut(dst_f as usize) = *fa_inner.data.get_unchecked(pos);
+                },
+                Op::FlatSetF64I {
+                    base,
+                    index_i,
+                    stride,
+                    offset,
+                    value_f,
+                } => unsafe {
+                    let raw = *ints.get_unchecked(index_i as usize);
+                    if raw < 0 {
+                        return Err(RuntimeError::Arithmetic(
+                            "negative index into sequence".to_string(),
+                        ));
+                    }
+                    let idx = raw as usize;
+                    let new_f = *floats.get_unchecked(value_f as usize);
+                    let b = registers.get_unchecked_mut(base as usize);
+                    let Value::FloatArray(fa_arc) = b else {
+                        return Err(RuntimeError::Type(
+                            "FlatSetF64I: receiver lost flat invariant".to_string(),
+                        ));
+                    };
+                    let fa_inner = Arc::make_mut(fa_arc);
+                    let pos = idx * stride as usize + offset as usize;
+                    let buf = Arc::make_mut(&mut fa_inner.data);
+                    if pos < buf.len() {
+                        *buf.get_unchecked_mut(pos) = new_f;
+                    }
+                },
 
                 Op::BuildIntArray {
                     dst_v,
@@ -2040,11 +2148,9 @@ impl Vm {
                     registers[dst as usize] = taken;
                 }
                 Op::BuildTuple { dst, first, count } => {
-                    // Native counterpart to the deferred-walker
-                    // path. Clones each value register into a
-                    // fresh `Vec<Value>`, wraps in Arc, drops
-                    // into `Value::Tuple`. No env reconstruction,
-                    // no walker re-entry.
+                    // Clones each value register into a fresh
+                    // `Vec<Value>`, wraps in Arc, drops into
+                    // `Value::Tuple`.
                     let n = count as usize;
                     let start = first as usize;
                     let mut items: Vec<Value> = Vec::with_capacity(n);
@@ -2052,6 +2158,58 @@ impl Vm {
                         items.push(registers[start + i].clone());
                     }
                     registers[dst as usize] = Value::Tuple(Arc::new(items));
+                }
+                Op::BuildArray { dst, first, count } => {
+                    let n = count as usize;
+                    let start = first as usize;
+                    let mut items: Vec<Value> = Vec::with_capacity(n);
+                    for i in 0..n {
+                        items.push(registers[start + i].clone());
+                    }
+                    registers[dst as usize] = Value::Array(Arc::new(items));
+                }
+                Op::BuildArrayRepeat { dst, value, count } => {
+                    let n = match &registers[count as usize] {
+                        Value::Int(c) if *c >= 0 => *c as usize,
+                        Value::Int(_) => {
+                            return Err(RuntimeError::Type("negative repeat count".to_string()));
+                        }
+                        _ => {
+                            return Err(RuntimeError::Type("repeat count must be int".to_string()));
+                        }
+                    };
+                    let elem = registers[value as usize].clone();
+                    registers[dst as usize] = Value::Array(Arc::new(vec![elem; n]));
+                }
+                Op::BuildRange {
+                    dst,
+                    start,
+                    end,
+                    inclusive,
+                } => {
+                    // A non-`Int` bound degrades to `0` / `start` so a
+                    // partially-typed program keeps running rather than
+                    // trapping.
+                    let start_val = match &registers[start as usize] {
+                        Value::Int(n) => *n,
+                        _ => 0,
+                    };
+                    let end_val = match &registers[end as usize] {
+                        Value::Int(n) => *n,
+                        _ => start_val,
+                    };
+                    let elems: Vec<Value> = if inclusive {
+                        if end_val >= start_val {
+                            (start_val..=end_val).map(Value::Int).collect()
+                        } else {
+                            Vec::new()
+                        }
+                    } else if end_val > start_val {
+                        (start_val..end_val).map(Value::Int).collect()
+                    } else {
+                        Vec::new()
+                    };
+                    registers[dst as usize] = Value::Array(Arc::new(elems));
                 }
                 Op::VariantIs {
                     dst,
@@ -2169,16 +2327,37 @@ impl Vm {
                     let i = idx as usize;
                     let new_val = *ints.get_unchecked(value_i as usize);
                     let b = registers.get_unchecked_mut(base as usize);
-                    let Value::IntArray(data) = b else {
-                        return Err(RuntimeError::Type(
-                            "IntArraySetI64: receiver lost flat invariant".to_string(),
-                        ));
-                    };
-                    let v = Arc::make_mut(data);
-                    if i >= v.len() {
-                        return Err(RuntimeError::Arithmetic("index out of bounds".to_string()));
+                    // Like `IntArrayGetI64`, the `flat_int_locals` tracking
+                    // on a `&mut Vec<i64>` parameter can outlive the actual
+                    // `Value::IntArray` payload when the caller passes a
+                    // generic `Value::Array` (a struct-field or call-arg
+                    // literal). Fall back to a generic element write rather
+                    // than aborting the hot loop.
+                    match b {
+                        Value::IntArray(data) => {
+                            let v = Arc::make_mut(data);
+                            if i >= v.len() {
+                                return Err(RuntimeError::Arithmetic(
+                                    "index out of bounds".to_string(),
+                                ));
+                            }
+                            *v.get_unchecked_mut(i) = new_val;
+                        }
+                        Value::Array(items) => {
+                            let v = Arc::make_mut(items);
+                            if i >= v.len() {
+                                return Err(RuntimeError::Arithmetic(
+                                    "index out of bounds".to_string(),
+                                ));
+                            }
+                            v[i] = Value::Int(new_val);
+                        }
+                        _ => {
+                            return Err(RuntimeError::Type(
+                                "IntArraySetI64: receiver lost flat invariant".to_string(),
+                            ));
+                        }
                     }
-                    *v.get_unchecked_mut(i) = new_val;
                 },
                 Op::IntArraySwap { base, i_i, j_i } => unsafe {
                     let i_idx = *ints.get_unchecked(i_i as usize);
@@ -2429,6 +2608,7 @@ impl Vm {
                     }
                     let callee_val = match resolved {
                         Some(Global::Value(v)) => v,
+                        Some(Global::MutStatic(cell)) => cell.lock().clone(),
                         Some(Global::Fn(_)) => Value::String(SmolStr::from(name.to_string())),
                         None => {
                             return Err(RuntimeError::UnresolvedName(name.to_string()));
@@ -2449,5 +2629,94 @@ impl Vm {
 fn publish_ref_cells(cells: &[(usize, Arc<parking_lot::Mutex<Value>>)], registers: &[Value]) {
     for (slot, cell) in cells {
         *cell.lock() = registers[*slot].clone();
+    }
+}
+
+/// One non-blocking poll over every `select` arm in source order.
+/// Returns the chosen arm's `body_block` — writing a received value
+/// into the recv arm's `bind_reg`, or completing a send — or `None`
+/// when no arm (including `default`) is ready. The two-pass scan
+/// (recv/send first, then `default`) chooses a `default` arm only once
+/// every recv/send arm has been found not-ready.
+fn select_try_once(
+    arms: &[crate::bytecode::SelectArmMeta],
+    registers: &mut [Value],
+) -> Option<crate::bytecode::InstrIdx> {
+    use crate::bytecode::SelectArmKind;
+    for arm in arms {
+        match arm.kind {
+            SelectArmKind::Recv => {
+                let Value::Channel(ch) = &registers[arm.channel_reg as usize] else {
+                    continue;
+                };
+                let ch = ch.clone();
+                if let Some(value) = ch.try_recv() {
+                    registers[arm.bind_reg as usize] = value;
+                    return Some(arm.body_block);
+                }
+                // Go semantics: a recv arm on a closed (and drained)
+                // channel is always ready, binding the element-type
+                // zero value. The 8-byte select payload contract is
+                // i64-shaped on every tier, so the VM mirrors the
+                // compiled tier's `last_value = 0`.
+                if ch.is_closed() {
+                    registers[arm.bind_reg as usize] = Value::Int(0);
+                    return Some(arm.body_block);
+                }
+            }
+            SelectArmKind::Send => {
+                let Value::Channel(ch) = &registers[arm.channel_reg as usize] else {
+                    continue;
+                };
+                let ch = ch.clone();
+                let value = registers[arm.value_reg as usize].clone();
+                ch.send(value);
+                return Some(arm.body_block);
+            }
+            SelectArmKind::Default => {}
+        }
+    }
+    for arm in arms {
+        if arm.kind == SelectArmKind::Default {
+            return Some(arm.body_block);
+        }
+    }
+    None
+}
+
+/// Polls every `select` arm, parking on the receive arms' condvar when
+/// nothing is ready and no `default` exists, and re-polling on each
+/// wake. Returns the chosen arm's `body_block`. Blocking semantics over
+/// `Value::Channel` — `Channel::send`/`close` notify every waiter, so
+/// the first push wakes the park; the bounded wait keeps a missed
+/// notify from stranding the goroutine, and a (spec-disallowed)
+/// send-only select with no default yields briefly rather than
+/// busy-spinning.
+fn select_dispatch(
+    arms: &[crate::bytecode::SelectArmMeta],
+    registers: &mut [Value],
+) -> crate::bytecode::InstrIdx {
+    use crate::bytecode::SelectArmKind;
+    use std::time::Duration;
+    if let Some(target) = select_try_once(arms, registers) {
+        return target;
+    }
+    let recv_channels: Vec<crate::value::Channel> = arms
+        .iter()
+        .filter(|a| a.kind == SelectArmKind::Recv)
+        .filter_map(|a| match &registers[a.channel_reg as usize] {
+            Value::Channel(ch) => Some(ch.clone()),
+            _ => None,
+        })
+        .collect();
+    loop {
+        if let Some(target) = select_try_once(arms, registers) {
+            return target;
+        }
+        if recv_channels.is_empty() {
+            std::thread::sleep(Duration::from_millis(1));
+            continue;
+        }
+        let _ = recv_channels[0].wait_for(Duration::from_millis(50));
     }
 }

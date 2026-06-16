@@ -1,0 +1,40 @@
+// std::math::rand — deterministic SplitMix64 RNG.
+//
+// Covers: Rng::new(seed), next_u64, next_u32, range_u64, next_f64.
+// A fixed seed makes the sequence reproducible, so stdout is
+// bit-identical across the bytecode VM (`gos run` / `gos test`),
+// the Cranelift JIT, and the LLVM AOT tier (`gos build`). Exercises
+// the runtime-kind tagging path so method dispatch on the handle
+// picks the right runtime helper on every tier.
+
+use std::math::rand
+
+fn main() {
+    let r = rand::Rng::new(424242)
+
+    println!("u64:")
+    for _ in 0..4 {
+        println!("  {}", r.next_u64())
+    }
+
+    println!("u32:")
+    for _ in 0..4 {
+        println!("  {}", r.next_u32())
+    }
+
+    println!("range [0,100):")
+    for _ in 0..6 {
+        println!("  {}", r.range_u64(0, 100))
+    }
+
+    println!("f64:")
+    for _ in 0..4 {
+        println!("  {:.6}", r.next_f64())
+    }
+
+    // Determinism: a second RNG with the same seed reproduces the
+    // first draw exactly.
+    let a = rand::Rng::new(7)
+    let b = rand::Rng::new(7)
+    println!("replay match: {}", a.next_u64() == b.next_u64())
+}

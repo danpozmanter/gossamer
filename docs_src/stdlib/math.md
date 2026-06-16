@@ -49,4 +49,15 @@ Mathematical constants and f64 functions (Go's math package shape).
 | `inf` | fn | Returns ±infinity based on sign. |
 | `copysign` | fn | Magnitude of x with sign of y. |
 | `dim` | fn | max(x-y, 0) — Go's math.Dim. |
+| `sinh` | fn | Hyperbolic sine. |
+| `cosh` | fn | Hyperbolic cosine. |
+| `tanh` | fn | Hyperbolic tangent. |
+| `min` | fn | Lesser of two values. |
+| `max` | fn | Greater of two values. |
+| `clamp` | fn | Constrain x to the inclusive range [lo, hi]. |
+| `LOG2_E` | const | Base-2 logarithm of e. |
+| `LOG10_E` | const | Base-10 logarithm of e. |
+| `MAX_F64` | const | Largest finite f64 value. |
+| `MIN_POSITIVE_F64` | const | Smallest positive normal f64 value. |
+| `NEG_INF` | const | Negative infinity. |
 

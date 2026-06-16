@@ -1,0 +1,35 @@
+// std::metrics across all tiers: Counter / Gauge / Histogram primitives
+// plus a Registry that renders the Prometheus text-exposition format.
+// Asserted output is integer- / bool- / substring-shaped so it is
+// bit-identical across the VM, Cranelift JIT, and LLVM AOT tiers (no
+// raw float printing, no timestamps).
+use std::metrics
+use std::strings
+
+fn main() {
+    let c = metrics::Counter::new("requests_total", "total requests")
+    c.inc()
+    c.inc()
+    c.inc()
+    println!("counter={}", c.value())
+
+    let g = metrics::Gauge::new("temperature", "current temperature")
+    g.set(7.0)
+    g.inc()
+    g.dec()
+    println!("gauge_ok={}", g.value() == 7.0)
+
+    let buckets: [f64] = [1.0, 4.0, 8.0]
+    let h = metrics::Histogram::new("latency_seconds", "request latency", buckets)
+    h.observe(2.0)
+    h.observe(5.0)
+    println!("hist_count={}", h.count())
+    println!("hist_sum_ok={}", h.sum() == 7.0)
+
+    let r = metrics::Registry::new()
+    r.register(c)
+    let text = r.render()
+    println!("has_help={}", strings::contains(&text, "# HELP requests_total total requests"))
+    println!("has_type={}", strings::contains(&text, "# TYPE requests_total counter"))
+    println!("has_value={}", strings::contains(&text, "requests_total 3"))
+}

@@ -1,0 +1,61 @@
+// Format-spec mini-language: width, alignment (`<` `>` `^`), fill characters,
+// zero-padding, radix (`x`/`X`/`b`/`o`), and precision combined with width.
+// Each `{:spec}` expands to a composition of already-wired stdlib helpers
+// (`__concat` / `__fmt_radix` / `__fmt_prec` / `__fmt_pad`), so it runs
+// bit-identically on the VM, Cranelift, and LLVM tiers.
+
+fn main() {
+    // width + alignment
+    println!("[{:>6}]", 42)
+    println!("[{:<6}]", 42)
+    println!("[{:^6}]", 42)
+    println!("[{:6}]", "hi")
+
+    // fill character + zero-pad
+    println!("[{:*>6}]", "hi")
+    println!("[{:->6}]", 7)
+    println!("[{:06}]", 42)
+    println!("[{:06}]", -42)
+
+    // radix
+    println!("[{:x}]", 255)
+    println!("[{:X}]", 255)
+    println!("[{:b}]", 10)
+    println!("[{:o}]", 64)
+    println!("[{:08x}]", 255)
+
+    // precision and precision+width
+    println!("[{:.2}]", 3.14159)
+    println!("[{:>8.2}]", 3.14159)
+
+    // named arguments with specs
+    let n = 7
+    let label = "ok"
+    println!("[{n:03}] [{label:>5}]")
+
+    // escaped braces are untouched
+    println!("{{literal}} {}", 1)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::testing
+
+    #[test]
+    fn width_and_align() {
+        testing::check(format!("[{:>6}]", 42) == "[    42]", "right align")
+        testing::check(format!("[{:<6}]", 42) == "[42    ]", "left align")
+        testing::check(format!("[{:^6}]", 42) == "[  42  ]", "center")
+        testing::check(format!("[{:06}]", 42) == "[000042]", "zero pad")
+        testing::check(format!("[{:*>5}]", "hi") == "[***hi]", "fill char")
+    }
+
+    #[test]
+    fn radix_and_precision() {
+        testing::check(format!("{:x}", 255) == "ff", "hex")
+        testing::check(format!("{:X}", 255) == "FF", "upper hex")
+        testing::check(format!("{:b}", 10) == "1010", "binary")
+        testing::check(format!("{:08x}", 255) == "000000ff", "zero-padded hex")
+        testing::check(format!("{:>8.2}", 3.5) == "    3.50", "precision + width")
+    }
+}

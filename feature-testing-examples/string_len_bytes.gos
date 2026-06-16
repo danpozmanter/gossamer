@@ -1,0 +1,21 @@
+// Cross-tier regression for `String.len()` semantics. `.len()` is the
+// BYTE length on every tier (matching Rust/Go `len(string)` and the
+// compiled `gos_rt_str_len` shim). Codepoint counts come from
+// `utf8::rune_count_in_string`. Before this was reconciled the VM
+// returned codepoints (5/3) while the compiled tiers returned bytes
+// (6/9) for multibyte input — a silent divergence on a green build.
+
+use std::utf8
+
+fn main() {
+    let a = "hello"
+    let b = "héllo"
+    let c = "日本語"
+    println!("len {} {} {}", a.len(), b.len(), c.len())
+    println!(
+        "runes {} {} {}",
+        utf8::rune_count_in_string(&a),
+        utf8::rune_count_in_string(&b),
+        utf8::rune_count_in_string(&c)
+    )
+}

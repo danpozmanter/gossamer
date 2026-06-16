@@ -87,7 +87,7 @@ mod tests {
 ```
 
 Integration tests live under `tests/`. `gos test src/lib.gos`
-runs them through the tree-walker.
+runs them on the register-based bytecode VM.
 
 ## Documentation
 

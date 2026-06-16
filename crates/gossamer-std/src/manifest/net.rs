@@ -88,6 +88,16 @@ pub const NET_URL: StdModule = StdModule {
             kind: StdItemKind::Function,
             doc: "Inverse of `query_escape`.",
         },
+        StdItem {
+            name: "path_escape",
+            kind: StdItemKind::Function,
+            doc: "Percent-encodes a URL path segment.",
+        },
+        StdItem {
+            name: "path_unescape",
+            kind: StdItemKind::Function,
+            doc: "Inverse of `path_escape`.",
+        },
     ],
 };
 
@@ -114,6 +124,68 @@ pub const NET: StdModule = StdModule {
             name: "resolve",
             kind: StdItemKind::Function,
             doc: "Resolves a hostname to a list of IP addresses.",
+        },
+        StdItem {
+            name: "lookup",
+            kind: StdItemKind::Function,
+            doc: "Resolves a hostname to its IP addresses (alias of resolve).",
+        },
+    ],
+};
+
+pub const NET_IP: StdModule = StdModule {
+    path: "std::net::ip",
+    summary: "String-level IPv4 / IPv6 parsing and classification helpers.",
+    items: &[
+        StdItem {
+            name: "parse",
+            kind: StdItemKind::Function,
+            doc: "Parses an IP string, returning its canonical form or None.",
+        },
+        StdItem {
+            name: "is_valid",
+            kind: StdItemKind::Function,
+            doc: "Reports whether the string is a valid v4 or v6 IP.",
+        },
+        StdItem {
+            name: "is_v4",
+            kind: StdItemKind::Function,
+            doc: "Reports whether the string is a valid v4 IP.",
+        },
+        StdItem {
+            name: "is_v6",
+            kind: StdItemKind::Function,
+            doc: "Reports whether the string is a valid v6 IP.",
+        },
+        StdItem {
+            name: "to_string",
+            kind: StdItemKind::Function,
+            doc: "Canonical lowercase string form of the IP.",
+        },
+        StdItem {
+            name: "is_loopback",
+            kind: StdItemKind::Function,
+            doc: "Reports whether the IP is a loopback address.",
+        },
+        StdItem {
+            name: "is_private",
+            kind: StdItemKind::Function,
+            doc: "Reports whether the IP is in a private range.",
+        },
+        StdItem {
+            name: "is_multicast",
+            kind: StdItemKind::Function,
+            doc: "Reports whether the IP is a multicast address.",
+        },
+        StdItem {
+            name: "is_unspecified",
+            kind: StdItemKind::Function,
+            doc: "Reports whether the IP is the unspecified address.",
+        },
+        StdItem {
+            name: "octets",
+            kind: StdItemKind::Function,
+            doc: "Byte octets of the IP as a Vec.",
         },
     ],
 };

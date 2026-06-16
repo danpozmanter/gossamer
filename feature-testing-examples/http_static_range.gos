@@ -1,0 +1,111 @@
+// Cross-tier regression for http::static_files::FileServer byte-range
+// (RFC 7233) responses. A single `Range: bytes=N-M` yields a 206 with
+// the sliced body + Content-Range; a multi-range `bytes=N-M,P-Q` yields
+// a 206 multipart/byteranges body with a fixed boundary; an out-of-range
+// request yields 416 + `Content-Range: bytes */LEN`. Both the compiled
+// (gos_rt_file_server_serve) and interp (native_file_server_serve)
+// servers route through the shared gossamer-runtime Range helpers, so
+// every byte is identical across the bytecode VM (`gos run`) and LLVM
+// AOT (`gos build`).
+//
+// Self-terminating: the client runs in main and exits explicitly, so
+// the run is a plain stdout-parity comparison. Binds a fixed loopback
+// port, serialized under SERVER_PORT_LOCK by
+// `http_static_range_parity_across_tiers` in
+// crates/gossamer-cli/tests/tier_parity.rs.
+
+use std::env
+use std::fs
+use std::http
+use std::http::static_files
+use std::path
+use std::process
+use std::time
+
+fn doc_root() -> String {
+    path::join(&env::temp_dir(), &"gossamer_static_range_fixture")
+}
+
+fn serve_files(root: &String) {
+    let server = static_files::FileServer::new(root, "")
+    if let Err(e) = http::serve("127.0.0.1:23912", server) {
+        eprintln!("serve failed: {e}")
+    }
+}
+
+fn header_of(headers: &[(String, String)], want: String) -> String {
+    let mut found = ""
+    for (name, value) in headers {
+        if name == want {
+            found = value
+        }
+    }
+    found
+}
+
+// Polls until the server goroutine accepts connections; binding is
+// asynchronous, so readiness is observable only by connecting.
+fn await_ready(url: &String) {
+    let mut tries = 0
+    while tries < 400 {
+        if let Ok(_) = http::get(url, []) {
+            return
+        }
+        time::sleep(25)
+        tries += 1
+    }
+}
+
+fn main() {
+    let root = doc_root()
+    let _ = fs::create_dir_all(root)
+    // 16-byte body so range arithmetic is easy to read.
+    let _ = fs::write(path::join(&root, &"data.txt"), "0123456789ABCDEF")
+
+    go serve_files(&root)
+    let url = "http://127.0.0.1:23912/data.txt"
+    await_ready(&url)
+
+    // Single range: bytes 2-5 -> "2345".
+    let single_hdr: [(String, String)] = [("Range", "bytes=2-5")]
+    match http::request("GET", &url, "", single_hdr) {
+        Ok(r) => println!(
+            "single status={} cr={} body={}",
+            r.status,
+            header_of(&r.headers, "content-range"),
+            r.body,
+        ),
+        Err(e) => println!("single error: {}", e),
+    }
+
+    // Multi range: bytes 0-2 + 5-7 -> multipart/byteranges.
+    let multi_hdr: [(String, String)] = [("Range", "bytes=0-2,5-7")]
+    match http::request("GET", &url, "", multi_hdr) {
+        Ok(r) => println!("multi status={} ct={}", r.status, r.content_type),
+        Err(e) => println!("multi error: {}", e),
+    }
+    match http::request("GET", &url, "", [("Range", "bytes=0-2,5-7")]) {
+        Ok(r) => println!("multi body=[{}]", r.body),
+        Err(e) => println!("multi body error: {}", e),
+    }
+
+    // Unsatisfiable range -> 416.
+    let bad_hdr: [(String, String)] = [("Range", "bytes=100-200")]
+    match http::request("GET", &url, "", bad_hdr) {
+        Ok(r) => println!(
+            "bad status={} cr={}",
+            r.status,
+            header_of(&r.headers, "content-range"),
+        ),
+        Err(e) => println!("bad error: {}", e),
+    }
+
+    // No range -> whole file 200.
+    match http::get(&url, []) {
+        Ok(r) => println!("whole status={} body={}", r.status, r.body),
+        Err(e) => println!("whole error: {}", e),
+    }
+
+    let _ = fs::remove_all(root)
+    process::exit(0)
+}

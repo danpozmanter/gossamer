@@ -1,4 +1,4 @@
-//! Interpreter hooks for `std::regex`. An opaque Pattern handle
+//! VM hooks for `std::regex`. An opaque Pattern handle
 //! is stashed in a per-thread registry; the `Value::Struct`
 //! exposed to Gossamer carries the handle id alongside the
 //! original source so diagnostics can render the pattern.

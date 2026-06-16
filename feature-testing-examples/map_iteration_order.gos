@@ -1,0 +1,22 @@
+// Deterministic, cross-tier HashMap iteration: keys(), values(), and
+// iter() all traverse in key-sorted order (bit-identical on every tier).
+use std::collections::HashMap
+fn main() {
+    let mut m: HashMap<String, i64> = HashMap::new()
+    m.insert("zebra", 1)
+    m.insert("apple", 2)
+    m.insert("mango", 3)
+    m.insert("cherry", 4)
+    for k in m.keys() { print!("{} ", k) }
+    println!("")
+    for v in m.values() { print!("{} ", v) }
+    println!("")
+    for (k, v) in m.iter() { print!("{}={} ", k, v) }
+    println!("")
+    let mut n: HashMap<i64, i64> = HashMap::new()
+    n.insert(30, 300)
+    n.insert(10, 100)
+    n.insert(20, 200)
+    for k in n.keys() { print!("{} ", k) }
+    println!("")
+}

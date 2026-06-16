@@ -166,6 +166,14 @@ pub enum StatementKind {
         /// Variant index within the enum's declaration order.
         variant: u32,
     },
+    /// Stores `value` into a `static mut` global. Lowers to a `store`
+    /// into the backing module global in the native backends.
+    StaticStore {
+        /// The static being written.
+        target: StaticRef,
+        /// Value to store.
+        value: Operand,
+    },
     /// No-op preserved for alignment with rustc-style MIR dumps.
     Nop,
 }
@@ -393,6 +401,24 @@ pub enum Rvalue {
         /// Arguments.
         args: Vec<Operand>,
     },
+    /// Loads the current value of a `static mut` global. Lowers to a
+    /// `load` from the backing module global in the native backends.
+    StaticLoad(StaticRef),
+}
+
+/// Reference to a `static mut` global. Every access (load or store)
+/// carries the static's mangled symbol, value type, and const
+/// initializer so any backend can materialise the backing global
+/// locally — the native linker coalesces duplicate `linkonce_odr`
+/// definitions emitted across object files into one shared cell.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StaticRef {
+    /// Mangled global symbol (`gos_static_<defid>`).
+    pub symbol: String,
+    /// Declared value type of the static.
+    pub ty: Ty,
+    /// Const-folded initializer value.
+    pub init: ConstValue,
 }
 
 /// Aggregate constructors surfaced by the lowerer.

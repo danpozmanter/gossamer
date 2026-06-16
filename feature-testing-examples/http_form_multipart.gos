@@ -1,0 +1,48 @@
+// Multipart/form-data (RFC 7578) request-body parsing must lower
+// bit-identically on the bytecode VM, Cranelift JIT, and LLVM AOT tiers,
+// including `gos build --release` (-O3 whole-program optimisation).
+//
+// The injected `http::multipart::parse` builds a `Vec<Part>` whose
+// elements are aggregates carrying three heap `String` fields plus a
+// heap `[u8]` byte field, then iterates it. This is the exact
+// Vec-of-aggregate-with-heap-fields ownership shape that the AGGR_OWNED
+// slot-children machinery must keep alive across the parse-and-return
+// boundary under optimisation.
+
+use std::http
+
+fn byte_sum(data: &[u8]) -> i64 {
+    let mut sum: i64 = 0
+    for b in data {
+        sum += b as i64
+    }
+    sum
+}
+
+fn main() {
+    let boundary = "GOSBOUNDARY9000"
+    let body = "preamble-ignored\r\n"
+        + "--GOSBOUNDARY9000\r\n"
+        + "Content-Disposition: form-data; name=\"field1\"\r\n"
+        + "\r\n"
+        + "hello-value\r\n"
+        + "--GOSBOUNDARY9000\r\n"
+        + "Content-Disposition: form-data; name=\"upload\"; filename=\"greeting.txt\"\r\n"
+        + "Content-Type: text/plain\r\n"
+        + "\r\n"
+        + "file-body-contents\r\n"
+        + "--GOSBOUNDARY9000--\r\n"
+    let bytes = body.as_bytes()
+    let parts = http::multipart::parse(&bytes, &boundary)
+    println!("count={}", parts.len())
+    for p in parts {
+        println!(
+            "name={} filename={} ctype={} len={} sum={}",
+            p.name,
+            p.filename,
+            p.content_type,
+            p.content.len(),
+            byte_sum(&p.content)
+        )
+    }
+}

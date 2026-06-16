@@ -1,0 +1,29 @@
+// Locks the `time::Duration` accessors in method form across every
+// tier. A Duration is a transparent `i64`-of-milliseconds newtype, so
+// `d.as_millis()` must dispatch by the receiver's static type and yield
+// exactly the same value as the qualified `time::Duration::as_millis(d)`
+// free call already locked by `stdlib_time_methods.gos`.
+use std::time
+
+fn main() {
+    let d = time::Duration::from_millis(2500)
+    assert_eq(d.as_millis(), time::Duration::as_millis(d), "millis from_millis")
+    assert_eq(d.as_secs(), time::Duration::as_secs(d), "secs from_millis")
+    assert_eq(d.as_micros(), time::Duration::as_micros(d), "micros from_millis")
+    println!("from_millis: {} {} {}", d.as_millis(), d.as_secs(), d.as_micros())
+
+    let s = time::Duration::from_secs(3)
+    assert_eq(s.as_millis(), 3000, "secs to millis")
+    println!("from_secs: {} {} {}", s.as_millis(), s.as_secs(), s.as_micros())
+
+    let u = time::Duration::from_micros(4000)
+    assert_eq(u.as_millis(), 4, "micros to millis")
+    println!("from_micros: {} {} {}", u.as_millis(), u.as_secs(), u.as_micros())
+
+    // Method form chains directly off the constructor, and the
+    // accessor result threads through ordinary integer arithmetic.
+    let chained = time::Duration::from_secs(2).as_millis()
+    println!("chained: {}", chained)
+    let doubled = d.as_millis() * 2
+    println!("doubled: {}", doubled)
+}

@@ -129,13 +129,12 @@ impl<'a> Lowerer<'a> {
             gossamer_mir::AssertMessage::DivideByZero => "divide by zero\n",
         };
         declare_rt(&mut self.runtime_refs, "gos_rt_panic");
-        let msg_global = self.runtime_refs.len();
-        let msg_name = format!("@.assert_msg_{msg_global}");
-        let escaped = escape_c_string(msg_text);
-        let size = msg_text.len() + 1;
-        self.runtime_refs.insert(format!(
-            "{msg_name} = private unnamed_addr constant [{size} x i8] c\"{escaped}\\00\""
-        ));
+        // Intern the message through the module-scoped string pool so a
+        // function with several asserts of the same kind (e.g. repeated
+        // `%` in gcd) — and asserts across different functions in the
+        // module — all reference one shared global instead of each
+        // emitting a colliding `@.assert_msg_*` definition.
+        let (msg_name, _) = self.strings.borrow_mut().intern(msg_text);
         writeln!(self.out, "{fail_label}:").unwrap();
         writeln!(self.out, "  call void @gos_rt_panic(ptr {msg_name})").unwrap();
         writeln!(self.out, "  unreachable").unwrap();

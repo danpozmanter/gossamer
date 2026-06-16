@@ -687,6 +687,9 @@ pub fn augment_source(source: &str) -> String {
     if source.contains("x509::") {
         stdlib_wrappers.push_str(X509_WRAPPERS);
     }
+    if source.contains("fs::metadata") {
+        stdlib_wrappers.push_str(FS_METADATA_WRAPPERS);
+    }
     if source.contains("tar::") {
         stdlib_wrappers.push_str(TAR_WRAPPERS);
     }
@@ -695,6 +698,12 @@ pub fn augment_source(source: &str) -> String {
     }
     if source.contains("sql::") {
         stdlib_wrappers.push_str(SQL_WRAPPERS);
+    }
+    if HTTP_SECURITY_MARKERS.iter().any(|m| source.contains(m)) {
+        stdlib_wrappers.push_str(HTTP_SECURITY_WRAPPERS);
+    }
+    if source.contains("time::after") {
+        stdlib_wrappers.push_str(TIME_TIMER_WRAPPERS);
     }
     if synth_is_empty(&serde) && stdlib_wrappers.is_empty() && derives.is_empty() {
         return source.to_string();
@@ -721,6 +730,21 @@ pub fn augment_source(source: &str) -> String {
 /// Real-struct + wrapper source for `std::encoding::pem`. The
 /// wrappers fold the leaf intrinsics' tuple/byte returns into real
 /// `__gos_pem_Block` structs, which lower natively on every tier.
+/// Source substrings that pull in [`HTTP_SECURITY_WRAPPERS`]. Only the
+/// request/response-integrated gap surface triggers injection; the bare
+/// `csrf::issue_token` / `session::sign` / `cookie::*` primitives are
+/// already wired and must not drag the wrappers (and their `use`s) into
+/// programs that only touch them.
+const HTTP_SECURITY_MARKERS: &[&str] = &[
+    "csrf::Config", "csrf::config", "csrf::check", "csrf::extract_token",
+    "csrf::attach_cookie", "csrf::origin_allowed", "csrf::RouteAuth",
+    "session::signed", "session::encrypted", "session::with_session",
+    "session::save", "session::load", "session::Store",
+    "form::Form", "form::parse",
+    "multipart::parse", "multipart::Part", "multipart::boundary",
+    "form_file",
+];
+
 const PEM_WRAPPERS: &str = r"
 struct __gos_pem_Block { block_type: String, bytes: [u8] }
 fn __gos_pem_decode(s: &String) -> Result<__gos_pem_Block, errors::Error> {
@@ -740,12 +764,41 @@ fn __gos_pem_encode(b: __gos_pem_Block) -> String {
 }
 ";
 
+/// Channel-returning timer wrapper for `std::time`. `time::after(d)` returns a
+/// `Receiver` that yields once after `d`, firing on a goroutine that completes,
+/// so the result composes with `select` / `while let`.
+const TIME_TIMER_WRAPPERS: &str = r"
+fn __gos_time_after_fire(tx: Sender<i64>, d: time::Duration) {
+    time::sleep(d)
+    tx.send(1)
+    tx.close()
+}
+fn __gos_time_after(d: time::Duration) -> Receiver<i64> {
+    let (tx, rx) = channel()
+    go __gos_time_after_fire(tx, d)
+    rx
+}
+";
+
 /// Real-struct + wrapper source for `std::crypto::x509`.
 const X509_WRAPPERS: &str = r"
 struct __gos_x509_CertInfo { subject: String, issuer: String, serial: [u8], not_before_unix: i64, not_after_unix: i64, san_dns: [String], sha256: [u8] }
 fn __gos_x509_parse_pem(s: &String) -> Result<__gos_x509_CertInfo, errors::Error> {
     let (subject, issuer, serial, nb, na, san, sha) = __gos_x509_parse_pem_raw(s)?
     Ok(__gos_x509_CertInfo { subject: subject, issuer: issuer, serial: serial, not_before_unix: nb, not_after_unix: na, san_dns: san, sha256: sha })
+}
+";
+
+/// Real-struct + wrapper source for `std::fs::metadata`. Folds the
+/// leaf intrinsic's 6-tuple into a real `Metadata` struct so
+/// `fs::metadata(p).size` / `.is_file` lower natively on every tier.
+/// Field order MUST match the VM's `fs::Metadata` (see
+/// `builtin_fs_metadata`).
+const FS_METADATA_WRAPPERS: &str = r"
+struct __gos_fs_Metadata { size: i64, is_file: bool, is_dir: bool, is_symlink: bool, readonly: bool, modified_unix_ms: i64 }
+fn __gos_fs_metadata(path: &String) -> Result<__gos_fs_Metadata, errors::Error> {
+    let (size, is_file, is_dir, is_symlink, readonly, modified) = __gos_fs_metadata_raw(path)?
+    Ok(__gos_fs_Metadata { size: size, is_file: is_file, is_dir: is_dir, is_symlink: is_symlink, readonly: readonly, modified_unix_ms: modified })
 }
 ";
 
@@ -1196,6 +1249,393 @@ impl __gos_sql_Tx {
 }
 "#;
 
+/// Real-struct + wrapper source for the request/response-integrated
+/// `std::http::{csrf, session, form, multipart}` surface. Pure
+/// composition over the already-wired csrf / session / cookie / aead /
+/// hmac / hex / url primitives, so it lowers natively on every tier.
+const HTTP_SECURITY_WRAPPERS: &str = r##"
+// ---- shared helpers ----
+fn __gos_http_header_lookup(headers: &[(String, String)], name: &String) -> String {
+    let target = name.to_lower()
+    let mut found = ""
+    for (k, v) in headers {
+        if k.to_lower() == target { found = v }
+    }
+    found
+}
+fn __gos_http_bytes_to_str(b: &[u8]) -> String {
+    let mut buf = bytes::Buffer::new()
+    for x in b { buf.push(x) }
+    buf.to_string()
+}
+fn __gos_http_first12(b: &[u8]) -> [u8] {
+    let mut out: [u8] = []
+    let mut i = 0
+    while i < 12 { out.push(b[i]); i += 1 }
+    out
+}
+fn __gos_http_trim_slash(s: &String) -> String {
+    let n = s.len()
+    if n > 0 && s.ends_with("/") { s.substring(0, n - 1) } else { s.substring(0, n) }
+}
+fn __gos_http_origin_host(origin: &String) -> String {
+    let mut host: String = match origin.split_once("://") {
+        Some((_, r)) => r,
+        None => origin.substring(0, origin.len()),
+    }
+    match host.split_once("/") { Some((h, _)) => host = h, None => {} }
+    match host.split_once("?") { Some((h, _)) => host = h, None => {} }
+    match host.split_once("#") { Some((h, _)) => host = h, None => {} }
+    host
+}
+fn __gos_http_origin_from_referer(referer: &String) -> String {
+    match referer.split_once("://") {
+        Some((scheme, _)) => scheme + "://" + &__gos_http_origin_host(referer),
+        None => "",
+    }
+}
+fn __gos_http_origins_equal(a: &String, b: &String) -> bool {
+    __gos_http_trim_slash(a).to_lower() == __gos_http_trim_slash(b).to_lower()
+}
+
+// ---- csrf (request/response integrated) ----
+struct __gos_http_csrf_Config {
+    cookie_name: String,
+    header_name: String,
+    form_field: String,
+    key: [u8],
+    trusted_origins: [String],
+    secure: bool,
+    same_site: String,
+    max_age_secs: i64,
+    safe_methods: [String],
+    exempt_prefixes: [String],
+}
+enum __gos_http_csrf_RouteAuth { BearerOnly, CookieSession, None }
+fn __gos_http_csrf_config(key: [u8]) -> __gos_http_csrf_Config {
+    __gos_http_csrf_Config {
+        cookie_name: "gos_csrf",
+        header_name: "X-CSRF-Token",
+        form_field: "_csrf",
+        key: key,
+        trusted_origins: [],
+        secure: true,
+        same_site: "Lax",
+        max_age_secs: 86400,
+        safe_methods: ["GET", "HEAD", "OPTIONS", "TRACE"],
+        exempt_prefixes: [],
+    }
+}
+fn __gos_http_csrf_is_safe(config: &__gos_http_csrf_Config, method: &String) -> bool {
+    let m = method.to_lower()
+    let mut safe = false
+    for s in config.safe_methods {
+        if s.to_lower() == m { safe = true }
+    }
+    safe
+}
+fn __gos_http_csrf_extract_token(r: http::Request, config: &__gos_http_csrf_Config) -> Option<String> {
+    let h = __gos_http_header_lookup(&r.headers, &config.header_name)
+    if h != "" { return Some(h) }
+    let ct = __gos_http_header_lookup(&r.headers, &"content-type")
+    if ct.to_lower().starts_with("application/x-www-form-urlencoded") {
+        let f = r.form_value(config.form_field)
+        if f != "" { return Some(f) }
+    }
+    None
+}
+fn __gos_http_csrf_origin_allowed(r: http::Request, config: &__gos_http_csrf_Config) -> bool {
+    let method = r.method()
+    let is_safe = __gos_http_csrf_is_safe(config, &method)
+    let origin = __gos_http_header_lookup(&r.headers, &"origin")
+    let referer = __gos_http_header_lookup(&r.headers, &"referer")
+    let mut candidate = ""
+    if origin != "" {
+        candidate = origin
+    } else if referer != "" {
+        let o = __gos_http_origin_from_referer(&referer)
+        if o == "" { return is_safe }
+        candidate = o
+    } else {
+        return is_safe
+    }
+    if config.trusted_origins.len() > 0 {
+        let mut ok = false
+        for t in config.trusted_origins {
+            if __gos_http_origins_equal(&t, &candidate) { ok = true }
+        }
+        return ok
+    }
+    let host = __gos_http_header_lookup(&r.headers, &"host")
+    if host == "" { return false }
+    __gos_http_origin_host(&candidate).to_lower() == host.to_lower()
+}
+fn __gos_http_csrf_check(r: http::Request, route_auth: __gos_http_csrf_RouteAuth, config: &__gos_http_csrf_Config) -> Result<(), errors::Error> {
+    match route_auth {
+        __gos_http_csrf_RouteAuth::BearerOnly => return Ok(()),
+        _ => {}
+    }
+    let method = r.method()
+    if __gos_http_csrf_is_safe(config, &method) { return Ok(()) }
+    if config.exempt_prefixes.len() > 0 {
+        let path = r.path()
+        for p in config.exempt_prefixes {
+            if path.starts_with(&p) { return Ok(()) }
+        }
+    }
+    if !__gos_http_csrf_origin_allowed(r, config) {
+        return Err(errors::new("csrf: origin not allowed"))
+    }
+    let cookie_header = __gos_http_header_lookup(&r.headers, &"cookie")
+    if cookie_header == "" { return Err(errors::new("csrf: missing cookie header")) }
+    let pairs = http::cookie::parse_cookie_header(&cookie_header)
+    let mut cookie_token = ""
+    for (k, v) in pairs {
+        if k == config.cookie_name { cookie_token = v }
+    }
+    if cookie_token == "" { return Err(errors::new("csrf: missing csrf cookie")) }
+    let supplied = match __gos_http_csrf_extract_token(r, config) {
+        Some(t) => t,
+        None => return Err(errors::new("csrf: missing csrf token")),
+    }
+    http::csrf::verify_token(&cookie_token, &supplied, &config.key)
+}
+// A function that returns an `http::Response` must stay strictly
+// straight-line: a branch (`if` / `match`) between the handle param and
+// the `with_header` that mutates it loses the mutation on the compiled
+// tiers, so every conditional that shapes the header string lives in a
+// pure `String` helper and the response builder only concatenates calls.
+fn __gos_http_max_age_attr(max_age_secs: i64) -> String {
+    if max_age_secs > 0 { "; Max-Age=" + &format!("{}", max_age_secs) } else { "" }
+}
+fn __gos_http_secure_attr(secure: bool) -> String {
+    if secure { "; Secure" } else { "" }
+}
+fn __gos_http_csrf_cookie_value(token: &String, config: &__gos_http_csrf_Config) -> String {
+    let bare = http::cookie::serialize(&config.cookie_name, token)
+    bare + "; Path=/" + &__gos_http_max_age_attr(config.max_age_secs)
+        + &__gos_http_secure_attr(config.secure) + "; SameSite=" + &config.same_site
+}
+fn __gos_http_csrf_attach_cookie(resp: http::Response, token: &String, config: &__gos_http_csrf_Config) -> http::Response {
+    let sc = __gos_http_csrf_cookie_value(token, config)
+    resp.with_header("set-cookie", &sc)
+}
+
+// ---- session (signed + AES-256-GCM encrypted store) ----
+struct __gos_http_session_Store {
+    key: [u8],
+    cookie_name: String,
+    encrypted: bool,
+    secure: bool,
+    max_age_secs: i64,
+}
+fn __gos_http_session_signed(key: [u8]) -> __gos_http_session_Store {
+    __gos_http_session_Store { key: key, cookie_name: "gos_session", encrypted: false, secure: true, max_age_secs: 86400 }
+}
+fn __gos_http_session_encrypted(key: [u8]) -> __gos_http_session_Store {
+    __gos_http_session_Store { key: key, cookie_name: "gos_session", encrypted: true, secure: true, max_age_secs: 86400 }
+}
+fn __gos_http_session_seal(key: &[u8], data: &String) -> Result<String, errors::Error> {
+    let pt = data.as_bytes()
+    let mac = crypto::hmac::sha256_mac(key, &pt)
+    let nonce = __gos_http_first12(&mac)
+    let empty: [u8] = []
+    let ct = crypto::aead::aes_256_gcm_seal(key, &nonce, &pt, &empty)?
+    Ok(encoding::hex::encode(&nonce) + "." + &encoding::hex::encode(&ct))
+}
+fn __gos_http_session_open(key: &[u8], cookie: &String) -> Result<String, errors::Error> {
+    let (n, c) = match cookie.split_once(".") {
+        Some(p) => p,
+        None => return Err(errors::new("session: bad framing")),
+    }
+    let nonce = encoding::hex::decode(&n)?
+    let ct = encoding::hex::decode(&c)?
+    let empty: [u8] = []
+    let pt = crypto::aead::aes_256_gcm_open(key, &nonce, &ct, &empty)?
+    Ok(__gos_http_bytes_to_str(&pt))
+}
+fn __gos_http_session_encode(store: &__gos_http_session_Store, data: &String) -> String {
+    if store.encrypted {
+        match __gos_http_session_seal(&store.key, data) {
+            Ok(v) => v,
+            Err(_) => "",
+        }
+    } else {
+        http::session::sign(data, &store.key)
+    }
+}
+fn __gos_http_session_cookie_value(store: &__gos_http_session_Store, data: &String) -> String {
+    let cookie_val = __gos_http_session_encode(store, data)
+    let bare = http::cookie::serialize(&store.cookie_name, &cookie_val)
+    bare + "; Path=/; HttpOnly" + &__gos_http_max_age_attr(store.max_age_secs)
+        + &__gos_http_secure_attr(store.secure) + "; SameSite=Lax"
+}
+// load / save are free functions, not methods: a `&self` method that
+// returns the 2-word `Result` while also taking an opaque-handle arg
+// (`http::Request`) miscompiles the call on the LLVM tier, whereas the
+// free-function form is sound — and `session::load(store, req)` /
+// `session::save(store, resp, data)` is also the data-first spelling.
+fn __gos_http_session_save(store: &__gos_http_session_Store, resp: http::Response, data: &String) -> http::Response {
+    let sc = __gos_http_session_cookie_value(store, data)
+    resp.with_header("set-cookie", &sc)
+}
+fn __gos_http_session_cookie_raw(store: &__gos_http_session_Store, r: http::Request) -> String {
+    let cookie_header = __gos_http_header_lookup(&r.headers, &"cookie")
+    let pairs = http::cookie::parse_cookie_header(&cookie_header)
+    let mut raw = ""
+    for (k, v) in pairs {
+        if k == store.cookie_name { raw = v }
+    }
+    raw
+}
+fn __gos_http_session_load(store: &__gos_http_session_Store, r: http::Request) -> Result<String, errors::Error> {
+    let raw = __gos_http_session_cookie_raw(store, r)
+    if raw == "" { return Err(errors::new("session: cookie not present")) }
+    if store.encrypted {
+        __gos_http_session_open(&store.key, &raw)
+    } else {
+        http::session::verify(&raw, &store.key)
+    }
+}
+fn __gos_http_session_load_or_empty(store: &__gos_http_session_Store, r: http::Request) -> String {
+    match __gos_http_session_load(store, r) {
+        Ok(d) => d,
+        Err(_) => "",
+    }
+}
+fn __gos_http_session_with_session(store: &__gos_http_session_Store, r: http::Request, resp: http::Response, f: Fn(String) -> String) -> http::Response {
+    let current = __gos_http_session_load_or_empty(store, r)
+    let updated = f(current)
+    __gos_http_session_save(store, resp, &updated)
+}
+
+// ---- form (application/x-www-form-urlencoded) ----
+struct __gos_http_form_Form { pairs: [(String, String)] }
+fn __gos_http_form_parse(body: &String) -> __gos_http_form_Form {
+    let mut pairs: [(String, String)] = []
+    let raw_pairs: [String] = strings::split(body, "&")
+    for pair in raw_pairs {
+        let p: String = pair
+        if p == "" { continue }
+        match p.split_once("=") {
+            Some((k, v)) => pairs.push((url::query_unescape(&k), url::query_unescape(&v))),
+            None => pairs.push((url::query_unescape(&p), "")),
+        }
+    }
+    __gos_http_form_Form { pairs: pairs }
+}
+fn __gos_http_form_get(form: &__gos_http_form_Form, name: &String) -> String {
+    for (k, v) in form.pairs {
+        if k == *name { return v }
+    }
+    ""
+}
+fn __gos_http_form_get_all(form: &__gos_http_form_Form, name: &String) -> [String] {
+    let mut out: [String] = []
+    for (k, v) in form.pairs {
+        if k == *name { out.push(v) }
+    }
+    out
+}
+fn __gos_http_form_has(form: &__gos_http_form_Form, name: &String) -> bool {
+    for (k, _v) in form.pairs {
+        if k == *name { return true }
+    }
+    false
+}
+fn __gos_http_form_count(form: &__gos_http_form_Form) -> i64 {
+    form.pairs.len()
+}
+
+// ---- multipart (multipart/form-data, RFC 7578) ----
+struct __gos_http_multipart_Part {
+    name: String,
+    filename: String,
+    content_type: String,
+    content: [u8],
+}
+fn __gos_http_multipart_boundary(content_type: &String) -> String {
+    match content_type.split_once("boundary=") {
+        Some((_, rest)) => {
+            let raw = match rest.split_once(";") {
+                Some((b, _)) => b,
+                None => rest,
+            }
+            raw.trim_matches("\"")
+        },
+        None => "",
+    }
+}
+fn __gos_http_multipart_header_value(head: &String, key: &String) -> String {
+    let target = key.to_lower()
+    let lines: [String] = strings::lines(head)
+    for line in lines {
+        let l: String = line
+        match l.split_once(":") {
+            Some((k, v)) => {
+                if k.trim().to_lower() == target { return v.trim() }
+            },
+            None => {},
+        }
+    }
+    ""
+}
+fn __gos_http_multipart_disp_param(disp: &String, key: &String) -> String {
+    let needle = key.clone() + "=\""
+    match disp.split_once(&needle) {
+        Some((_, rest)) => {
+            match rest.split_once("\"") {
+                Some((val, _)) => val,
+                None => "",
+            }
+        },
+        None => "",
+    }
+}
+fn __gos_http_multipart_parse(body: &[u8], boundary: &String) -> [__gos_http_multipart_Part] {
+    let text = __gos_http_bytes_to_str(body)
+    let delim = "--" + boundary
+    let segments: [String] = strings::split(&text, &delim)
+    let mut parts: [__gos_http_multipart_Part] = []
+    for seg in segments {
+        let s: String = seg
+        let trimmed = s.trim()
+        if trimmed == "" || trimmed == "--" { continue }
+        match s.split_once("\r\n\r\n") {
+            Some((head, rest)) => {
+                let mut content_str: String = rest
+                if content_str.ends_with("\r\n") {
+                    content_str = content_str.substring(0, content_str.len() - 2)
+                }
+                let disp = __gos_http_multipart_header_value(&head, &"content-disposition")
+                let name = __gos_http_multipart_disp_param(&disp, &"name")
+                let filename = __gos_http_multipart_disp_param(&disp, &"filename")
+                let ctype = __gos_http_multipart_header_value(&head, &"content-type")
+                parts.push(__gos_http_multipart_Part {
+                    name: name,
+                    filename: filename,
+                    content_type: ctype,
+                    content: content_str.as_bytes(),
+                })
+            },
+            None => {},
+        }
+    }
+    parts
+}
+fn __gos_http_request_form_file(r: http::Request, name: &String) -> Option<__gos_http_multipart_Part> {
+    let ct = __gos_http_header_lookup(&r.headers, &"content-type")
+    let boundary = __gos_http_multipart_boundary(&ct)
+    if boundary == "" { return None }
+    let parts = __gos_http_multipart_parse(&r.raw_body, &boundary)
+    for p in parts {
+        if p.name == *name && p.filename != "" { return Some(p) }
+    }
+    None
+}
+
+"##;
+
 /// Convenience wrapper that augments `source` then parses the
 /// result against `file`. Returns the merged `SourceFile` and any
 /// parse diagnostics. Callers MUST have already added the augmented
@@ -1221,6 +1661,8 @@ fn mangled_stdlib_name(parent: &str, item: &str) -> Option<&'static str> {
         ("pem", "Block") => Some("__gos_pem_Block"),
         ("x509", "parse_pem") => Some("__gos_x509_parse_pem"),
         ("x509", "CertInfo") => Some("__gos_x509_CertInfo"),
+        ("fs", "metadata") => Some("__gos_fs_metadata"),
+        ("fs", "Metadata") => Some("__gos_fs_Metadata"),
         // tar/zip `read` route through the struct wrapper; `write`
         // lowers directly (no struct), so it is NOT rewritten.
         ("tar", "read") => Some("__gos_tar_read"),
@@ -1242,8 +1684,97 @@ fn mangled_stdlib_name(parent: &str, item: &str) -> Option<&'static str> {
         ("sql", "pool_open") => Some("__gos_sql_pool_open"),
         ("sql", "pool_open_with") => Some("__gos_sql_pool_open_with"),
         ("sql", "migrate_up") => Some("__gos_sql_migrate_up"),
+        // Channel-returning timer: `time::after(d)` fires on a goroutine that
+        // sleeps then sends, so the result is usable in `select` / `while let`.
+        ("time", "after") => Some("__gos_time_after"),
+        // std::http::csrf request/response-integrated surface.
+        ("csrf", "Config") => Some("__gos_http_csrf_Config"),
+        ("csrf", "config") => Some("__gos_http_csrf_config"),
+        ("csrf", "RouteAuth") => Some("__gos_http_csrf_RouteAuth"),
+        ("csrf", "extract_token") => Some("__gos_http_csrf_extract_token"),
+        ("csrf", "origin_allowed") => Some("__gos_http_csrf_origin_allowed"),
+        ("csrf", "check") => Some("__gos_http_csrf_check"),
+        ("csrf", "attach_cookie") => Some("__gos_http_csrf_attach_cookie"),
+        // std::http::session signed + AES-GCM store surface.
+        ("session", "Store") => Some("__gos_http_session_Store"),
+        ("session", "signed") => Some("__gos_http_session_signed"),
+        ("session", "encrypted") => Some("__gos_http_session_encrypted"),
+        ("session", "save") => Some("__gos_http_session_save"),
+        ("session", "load") => Some("__gos_http_session_load"),
+        ("session", "with_session") => Some("__gos_http_session_with_session"),
+        // std::http::form url-encoded parser.
+        ("form", "Form") => Some("__gos_http_form_Form"),
+        ("form", "parse") => Some("__gos_http_form_parse"),
+        ("form", "get") => Some("__gos_http_form_get"),
+        ("form", "get_all") => Some("__gos_http_form_get_all"),
+        ("form", "has") => Some("__gos_http_form_has"),
+        ("form", "count") => Some("__gos_http_form_count"),
+        // std::http::multipart (multipart/form-data) parser.
+        ("multipart", "Part") => Some("__gos_http_multipart_Part"),
+        ("multipart", "parse") => Some("__gos_http_multipart_parse"),
+        ("multipart", "boundary") => Some("__gos_http_multipart_boundary"),
         _ => None,
     }
+}
+
+/// Collapses the `csrf::RouteAuth::X` enum-variant and the
+/// `form::Form::parse` associated-function paths onto their injected
+/// names, guarded on the `csrf` / `form` head so a user's own
+/// `RouteAuth::X` / `Form::parse` is left alone. Returns true when it
+/// rewrote `path`.
+fn collapse_http_security_path(path: &mut gossamer_ast::PathExpr) -> bool {
+    let n = path.segments.len();
+    if n < 3 {
+        return false;
+    }
+    if path.segments[n - 3].name.name.as_str() == "csrf"
+        && path.segments[n - 2].name.name.as_str() == "RouteAuth"
+    {
+        let variant =
+            std::mem::replace(&mut path.segments[n - 1], gossamer_ast::PathSegment::new(""));
+        path.segments = vec![
+            gossamer_ast::PathSegment::new("__gos_http_csrf_RouteAuth"),
+            variant,
+        ];
+        return true;
+    }
+    if path.segments[n - 3].name.name.as_str() == "form"
+        && path.segments[n - 2].name.name.as_str() == "Form"
+        && path.segments[n - 1].name.name.as_str() == "parse"
+    {
+        path.segments = vec![gossamer_ast::PathSegment::new("__gos_http_form_parse")];
+        return true;
+    }
+    false
+}
+
+/// Rewrites `recv.form_file(name)` into a call of the injected
+/// `__gos_http_request_form_file(recv, name)` free wrapper. The
+/// `form_file` source marker is what pulled the multipart wrappers in,
+/// so the rewrite only ever fires when they are present.
+fn rewrite_form_file_method(expr: &mut gossamer_ast::expr::Expr) {
+    use gossamer_ast::expr::{Expr, ExprKind};
+    let span = expr.span;
+    let ExprKind::MethodCall {
+        receiver, mut args, ..
+    } = std::mem::replace(&mut expr.kind, ExprKind::Tuple(Vec::new()))
+    else {
+        return;
+    };
+    let mut call_args = Vec::with_capacity(2);
+    call_args.push(*receiver);
+    call_args.append(&mut args);
+    let callee = Expr {
+        id: NodeId::DUMMY,
+        span,
+        kind: ExprKind::Path(gossamer_ast::PathExpr {
+            segments: vec![gossamer_ast::PathSegment::new("__gos_http_request_form_file")],
+        }),
+    };
+    expr.kind = ExprKind::Call {
+        callee: Box::new(callee),
+        args: call_args,
+    };
 }
 
 /// Redirects the user-facing stdlib struct surface
@@ -1296,6 +1827,9 @@ pub fn rewrite_stdlib_struct_surface(sf: &mut SourceFile) {
                 return;
             }
         }
+        if collapse_http_security_path(path) {
+            return;
+        }
         if let Some(name) = mangled_stdlib_name(
             path.segments[n - 2].name.name.as_str(),
             path.segments[n - 1].name.name.as_str(),
@@ -1336,6 +1870,17 @@ pub fn rewrite_stdlib_struct_surface(sf: &mut SourceFile) {
     impl VisitorMut for Rewriter {
         fn visit_expr(&mut self, expr: &mut Expr) {
             walk_expr_mut(self, expr);
+            // `r.form_file(name)` is a request/multipart convenience that
+            // composes the injected multipart parser, so it lowers to the
+            // free wrapper `__gos_http_request_form_file(r, name)` rather
+            // than a runtime method.
+            if let ExprKind::MethodCall { name, args, .. } = &expr.kind
+                && name.name.as_str() == "form_file"
+                && args.len() == 1
+            {
+                rewrite_form_file_method(expr);
+                return;
+            }
             match &mut expr.kind {
                 ExprKind::Call { callee, .. } => {
                     if let ExprKind::Path(path) = &mut callee.kind {
@@ -1464,6 +2009,30 @@ pub fn inject_synthetic_uses(sf: &mut SourceFile, file: FileId) {
                 dummy_span,
                 UseTarget::Module(ModulePath::from_names(segs.iter().copied())),
             ));
+        }
+    }
+    // The `__gos_http_*` request/response-security wrappers compose http,
+    // crypto, encoding, bytes, strings, and net::url primitives by their
+    // qualified paths, so those modules must be in scope.
+    let has_http_sec = sf.items.iter().any(|item| {
+        matches!(&item.kind, ItemKind::Fn(decl) if decl.name.name.starts_with("__gos_http_"))
+    });
+    if has_http_sec {
+        for segs in [
+            &["std", "http"][..],
+            &["std", "strings"][..],
+            &["std", "crypto"][..],
+            &["std", "encoding"][..],
+            &["std", "bytes"][..],
+            &["std", "net", "url"][..],
+        ] {
+            if !already_imports(&sf.uses, segs) {
+                sf.uses.push(UseDecl::simple(
+                    NodeId::DUMMY,
+                    dummy_span,
+                    UseTarget::Module(ModulePath::from_names(segs.iter().copied())),
+                ));
+            }
         }
     }
 }

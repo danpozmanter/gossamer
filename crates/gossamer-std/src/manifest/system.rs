@@ -166,6 +166,16 @@ pub const OS_SIGNAL: StdModule = StdModule {
             doc: "Subscribes to a signal; returns a Notifier.",
         },
         StdItem {
+            name: "wait",
+            kind: StdItemKind::Function,
+            doc: "Blocks the calling goroutine until the subscribed signal fires.",
+        },
+        StdItem {
+            name: "try_wait",
+            kind: StdItemKind::Function,
+            doc: "Non-blocking poll: returns true if the subscribed signal has fired.",
+        },
+        StdItem {
             name: "deliver",
             kind: StdItemKind::Function,
             doc: "Test helper: synthesise a signal delivery without involving the OS.",
@@ -206,6 +216,41 @@ pub const PATH: StdModule = StdModule {
             name: "clean",
             kind: StdItemKind::Function,
             doc: "Collapses `.`, `..`, and duplicate separators.",
+        },
+        StdItem {
+            name: "parent",
+            kind: StdItemKind::Function,
+            doc: "Parent directory, or None at the root.",
+        },
+        StdItem {
+            name: "file_name",
+            kind: StdItemKind::Function,
+            doc: "Final path component, or None.",
+        },
+        StdItem {
+            name: "stem",
+            kind: StdItemKind::Function,
+            doc: "File name without its extension.",
+        },
+        StdItem {
+            name: "extension",
+            kind: StdItemKind::Function,
+            doc: "Dotted extension as an Option.",
+        },
+        StdItem {
+            name: "is_absolute",
+            kind: StdItemKind::Function,
+            doc: "Reports whether the path is absolute.",
+        },
+        StdItem {
+            name: "normalize",
+            kind: StdItemKind::Function,
+            doc: "Lexically normalizes the path (alias of clean).",
+        },
+        StdItem {
+            name: "has_prefix",
+            kind: StdItemKind::Function,
+            doc: "Reports whether the path begins with a prefix component-wise.",
         },
     ],
 };
@@ -356,6 +401,11 @@ pub const FS: StdModule = StdModule {
             kind: StdItemKind::Function,
             doc: "Resolves all symlinks along a path; mirrors Go's filepath.EvalSymlinks.",
         },
+        StdItem {
+            name: "list_dir",
+            kind: StdItemKind::Function,
+            doc: "Returns directory entries with name/size/kind metadata.",
+        },
     ],
 };
 
@@ -414,6 +464,21 @@ pub const BUFIO: StdModule = StdModule {
             name: "read_lines",
             kind: StdItemKind::Function,
             doc: "Reads every line from a file path; one-shot convenience over the streaming Scanner.",
+        },
+        StdItem {
+            name: "read_lines_of",
+            kind: StdItemKind::Function,
+            doc: "Reads every line of a file path into a Vec<String>.",
+        },
+        StdItem {
+            name: "read_to_string",
+            kind: StdItemKind::Function,
+            doc: "Reads an entire file path into a String.",
+        },
+        StdItem {
+            name: "split_whitespace",
+            kind: StdItemKind::Function,
+            doc: "Splits a String on runs of whitespace.",
         },
     ],
 };
@@ -574,6 +639,66 @@ pub const OS: StdModule = StdModule {
             kind: StdItemKind::Type,
             doc: "Deprecated: use fs::File.",
         },
+        StdItem {
+            name: "cwd",
+            kind: StdItemKind::Function,
+            doc: "Current working directory.",
+        },
+        StdItem {
+            name: "stdin",
+            kind: StdItemKind::Function,
+            doc: "Process standard input stream (Go's os.Stdin).",
+        },
+        StdItem {
+            name: "unset_env",
+            kind: StdItemKind::Function,
+            doc: "Removes an environment variable.",
+        },
+        StdItem {
+            name: "is_file",
+            kind: StdItemKind::Function,
+            doc: "Reports whether the path is a regular file.",
+        },
+        StdItem {
+            name: "is_dir",
+            kind: StdItemKind::Function,
+            doc: "Reports whether the path is a directory.",
+        },
+        StdItem {
+            name: "is_symlink",
+            kind: StdItemKind::Function,
+            doc: "Reports whether the path is a symbolic link.",
+        },
+        StdItem {
+            name: "file_size",
+            kind: StdItemKind::Function,
+            doc: "Size of the file in bytes.",
+        },
+        StdItem {
+            name: "temp_dir",
+            kind: StdItemKind::Function,
+            doc: "System temporary-file directory.",
+        },
+        StdItem {
+            name: "canonicalize",
+            kind: StdItemKind::Function,
+            doc: "Resolves a path to its absolute canonical form.",
+        },
+        StdItem {
+            name: "remove_dir",
+            kind: StdItemKind::Function,
+            doc: "Removes an empty directory.",
+        },
+        StdItem {
+            name: "remove_dir_all",
+            kind: StdItemKind::Function,
+            doc: "Removes a directory and its contents recursively.",
+        },
+        StdItem {
+            name: "copy",
+            kind: StdItemKind::Function,
+            doc: "Copies a file, returning the byte count.",
+        },
     ],
 };
 
@@ -635,6 +760,26 @@ pub const PROCESS: StdModule = StdModule {
             name: "abort",
             kind: StdItemKind::Function,
             doc: "Aborts the current process without unwinding.",
+        },
+        StdItem {
+            name: "signal",
+            kind: StdItemKind::Function,
+            doc: "Sends a signal to a process by PID (POSIX).",
+        },
+        StdItem {
+            name: "kill_group",
+            kind: StdItemKind::Function,
+            doc: "Sends a signal to a process group (POSIX).",
+        },
+        StdItem {
+            name: "wait_timeout",
+            kind: StdItemKind::Function,
+            doc: "Waits for a child with a timeout (POSIX).",
+        },
+        StdItem {
+            name: "pipeline_run",
+            kind: StdItemKind::Function,
+            doc: "Runs a shell-tokenised pipeline, returning the final Output.",
         },
     ],
 };

@@ -6,12 +6,13 @@ license = "Apache-2.0"
 
 [dependencies]
 
-# FFI declaration: this service links libsqlite3 (bundled with the
-# rusqlite-driven runtime). Per SPEC.md §12, source-level
-# `extern "C"` items are not part of the 0.5.0 language; the
-# native binding is wired through `[rust-bindings]` and the
-# `gossamer-binding` crate. Stays for the example's documentation
-# value; the driver does not consume this section.
-[[ffi.libraries]]
-name = "sqlite3"
-kind = "dylib"
+# A persistent build of this service would link a SQL driver through a
+# Rust crate. Per SPEC.md §12, source-level `extern "C"` items are not
+# part of the language; a native binding is wired through the
+# `[rust-bindings]` map and the `gossamer-binding` crate, e.g.:
+#
+#   [rust-bindings]
+#   sqlite_driver = { path = "sqlite_driver" }
+#
+# This example stays self-contained (an in-memory seed, no driver), so
+# it declares no binding.

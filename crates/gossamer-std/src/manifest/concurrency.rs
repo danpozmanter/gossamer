@@ -177,5 +177,10 @@ pub const SYNC: StdModule = StdModule {
             kind: StdItemKind::Type,
             doc: "Atomic boolean.",
         },
+        StdItem {
+            name: "channel",
+            kind: StdItemKind::Function,
+            doc: "Creates a typed channel, returning (Sender, Receiver).",
+        },
     ],
 };

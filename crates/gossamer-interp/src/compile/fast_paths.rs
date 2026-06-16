@@ -66,8 +66,8 @@ impl<'tcx> FnBuilder<'tcx> {
 
     /// Attempts a native lowering of `go callable(args)`. Returns
     /// `Ok(true)` when the spawn was emitted; `Ok(false)` when the
-    /// shape is something the VM doesn't yet handle natively (and
-    /// the caller should fall back to `compile_deferred`).
+    /// shape is a non-call `go` the caller lowers via
+    /// [`Self::compile_non_call_go`].
     pub(crate) fn try_compile_go_native(&mut self, expr: &HirExpr) -> RuntimeResult<bool> {
         // The HIR shapes we native-lower are:
         //   `go callable(args)`     — a `Call`, dispatched via
@@ -80,9 +80,8 @@ impl<'tcx> FnBuilder<'tcx> {
         //                              `Op::MethodCall` does.
         //
         // Anything else (bare blocks, closures defined inline at
-        // the spawn site, etc.) falls through to the deferred
-        // walker — those shapes don't appear in the bench-game
-        // programs but are flagged for follow-up.
+        // the spawn site, etc.) returns `Ok(false)` so the caller
+        // lowers it via `compile_non_call_go` (closure-lift + spawn).
         if let HirExprKind::MethodCall {
             receiver,
             name,
@@ -163,6 +162,25 @@ impl<'tcx> FnBuilder<'tcx> {
             argc,
         });
         Ok(true)
+    }
+
+    /// Lowers a non-call `go <expr>` — `go { block }`, `go` over a bare
+    /// expression, or `go` in expression position — by lifting the
+    /// spawned expression into a zero-argument closure (reusing the
+    /// native closure path) and spawning that closure on the goroutine
+    /// pool. The closure captures the expression's free variables by
+    /// value, so the goroutine reads them on its own thread; spawning
+    /// clones the closure `Value`, bumping the `Arc` on every captured
+    /// aggregate so it stays alive for the goroutine's lifetime, exactly
+    /// as `Op::Spawn` retains call-shaped goroutine arguments.
+    pub(crate) fn compile_non_call_go(&mut self, expr: &HirExpr) -> RuntimeResult<()> {
+        let closure_reg = self.compile_closure(&[], expr)?;
+        self.emit(Op::Spawn {
+            callee: closure_reg,
+            args: 0,
+            argc: 0,
+        });
+        Ok(())
     }
 
     /// Allocates a fresh `arith_caches` slot for a Tier-C2
@@ -1104,13 +1122,14 @@ impl<'tcx> FnBuilder<'tcx> {
         }))
     }
 
-    /// Mirrors the tree-walker's `is_mutating_method` list. Methods
-    /// here have a "returns the new aggregate" interp builtin that
-    /// the VM has to thread back into the receiver's slot.
+    /// In-place-mutation method names. Methods here have a "returns the
+    /// new aggregate" builtin whose result the VM has to thread back
+    /// into the receiver's slot.
     pub(crate) fn is_mutating_method_name(name: &str) -> bool {
         matches!(
             name,
             "push"
+                | "push_str"
                 | "pop"
                 | "insert"
                 | "remove"
@@ -1497,7 +1516,15 @@ impl<'tcx> FnBuilder<'tcx> {
         else {
             return Ok(None);
         };
-        if self.expr_kind(start) != RegKind::I64 || self.expr_kind(end) != RegKind::I64 {
+        // A range's bounds are integers by typecheck. Accept a bound
+        // whose static kind is `i64` (the common case, driven by a typed
+        // counter) or `Value` (an unresolved-typed bound such as
+        // `0..xs.len()` where `len()`'s result stayed an inference var) —
+        // `as_i64` unboxes the runtime `Value::Int`. Only a statically
+        // float bound is rejected (no valid for-range produces one), so
+        // it falls through to the general inline-iterable materialiser
+        // rather than miscompiling.
+        if self.expr_kind(start) == RegKind::F64 || self.expr_kind(end) == RegKind::F64 {
             return Ok(None);
         }
         let some_arm = &arms[0];
@@ -1576,6 +1603,7 @@ impl<'tcx> FnBuilder<'tcx> {
             break_patches: Vec::new(),
             continue_patches: Vec::new(),
             result_reg: result,
+            defer_depth: self.defer_stack.len(),
         });
         let _ = self.compile_expr(&some_arm.body)?;
         // `continue` jumps here: the same fused inc-and-test op
@@ -1659,6 +1687,13 @@ impl<'tcx> FnBuilder<'tcx> {
         // Walk the iterator chain. Recognise:
         //   `vec.iter()`              → element binding, no enumerate
         //   `vec.iter().enumerate()`  → tuple binding (i, x)
+        //   `vec` (plain collection)  → element binding, no enumerate
+        // The plain shape is the `for x in xs` desugar, where the
+        // receiver of `.next()` is the collection itself (no `.iter()`).
+        // It is accepted only when the receiver's type is an
+        // array / vec / slice the index-walk below can drive — a user
+        // `impl Iterator` (Adt receiver) falls through to `None` so the
+        // stateful `.next()` desugar keeps its own handling.
         let (vec_expr, is_enumerate) = match &next_recv.kind {
             HirExprKind::MethodCall {
                 receiver: chain_recv,
@@ -1682,6 +1717,27 @@ impl<'tcx> FnBuilder<'tcx> {
                     return Ok(None);
                 }
                 (chain_recv.as_ref(), true)
+            }
+            // Any other inline `for`-desugar receiver: a plain collection
+            // (`for x in xs`), a method-result collection (`for (k, v) in
+            // map.iter()`, `map.keys()`, `text.chars()`,
+            // `text.as_bytes()`), a free-function iterator
+            // (`iter::enumerate(xs)`), or a range value the typed
+            // for-range path declined. Each evaluates to an indexable
+            // `Value::Array` at runtime, so it materialises once and
+            // drives by index. The stateful custom-iterator desugar is
+            // excluded — its `.next()` receiver is a `&mut __for_iter`
+            // borrow, driven by the generic loop emitter's `&mut self`
+            // write-back instead — so it falls through to `compile_loop`.
+            _ if !matches!(
+                &next_recv.kind,
+                HirExprKind::Unary {
+                    op: HirUnaryOp::RefMut,
+                    ..
+                }
+            ) =>
+            {
+                (next_recv.as_ref(), false)
             }
             _ => return Ok(None),
         };
@@ -1735,13 +1791,42 @@ impl<'tcx> FnBuilder<'tcx> {
             let pick = match &elem_pat.kind {
                 HirPatKind::Binding { name, .. } => Some(name.name.clone()),
                 HirPatKind::Wildcard => None,
+                // A destructuring element pattern (`for (a, b) in xs`) is
+                // bound after the per-iteration `IndexGet` below; it has no
+                // single pre-loop name. Decline shapes `bind_pattern_locals`
+                // can't lower so they keep their own handling.
+                HirPatKind::Tuple(_) => None,
                 _ => return Ok(None),
             };
             (pick, None)
         };
+        // For a non-enumerate destructuring element pattern, remember it so
+        // each iteration re-binds it from the freshly-loaded element.
+        let elem_destructure: Option<&HirPat> = match (is_enumerate, &elem_pat.kind) {
+            (false, HirPatKind::Tuple(_)) => Some(elem_pat),
+            _ => None,
+        };
 
-        // Compile the vec receiver and capture it once.
-        let vec_reg = self.compile_expr(vec_expr)?;
+        // Pick the expression to materialise and drive by `len()` +
+        // `IndexGet`. When the inner receiver is itself an indexable
+        // collection (`xs.iter()`, a plain `xs`, or a pattern-bound
+        // collection local), index it directly — no intermediate
+        // `.iter()` allocation. An `xs.iter().enumerate()` chain needs
+        // `xs` itself indexable; a non-collection enumerate base isn't
+        // driven here. Otherwise materialise the iterator expression once
+        // (`map.iter()`, `text.chars()`, `iter::enumerate(xs)`, a range
+        // value): every non-stateful inline receiver yields an indexable
+        // `Value::Array` at runtime.
+        let source_expr: &HirExpr = if self.receiver_is_collection(vec_expr) {
+            vec_expr
+        } else if is_enumerate {
+            return Ok(None);
+        } else {
+            next_recv
+        };
+
+        // Compile the iterable and capture it once.
+        let vec_reg = self.compile_expr(source_expr)?;
 
         // Length: emit a `len()` MethodCall whose result we treat as
         // an i64 by unboxing through `as_i64`.
@@ -1820,11 +1905,17 @@ impl<'tcx> FnBuilder<'tcx> {
             base: vec_reg,
             index: idx_v,
         });
+        // Destructure the loaded element (`for (a, b) in xs`) each
+        // iteration; a simple binding was already aliased to `elem_reg`.
+        if let Some(pat) = elem_destructure {
+            self.bind_pattern_locals(pat, elem_reg)?;
+        }
 
         self.loop_stack.push(LoopCtx {
             break_patches: Vec::new(),
             continue_patches: Vec::new(),
             result_reg: result,
+            defer_depth: self.defer_stack.len(),
         });
         let _ = self.compile_expr(&some_arm.body)?;
         // `continue` jumps here so the counter increment + jump

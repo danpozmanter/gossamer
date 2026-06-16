@@ -226,7 +226,9 @@ pub unsafe extern "C" fn gos_rt_vec_format_string(v: *const GosVec) -> *mut c_ch
                 out.push_str(", ");
             }
             let p = unsafe { vec.ptr.add((i as usize) * (vec.elem_bytes as usize)) };
-            let s_ptr = unsafe { (p as *const *const c_char).read_unaligned() };
+            let s_ptr = unsafe {
+                std::ptr::with_exposed_provenance::<c_char>((p as *const usize).read_unaligned())
+            };
             if !s_ptr.is_null() {
                 let cs = unsafe { std::ffi::CStr::from_ptr(s_ptr) };
                 out.push_str(&cs.to_string_lossy());
@@ -255,7 +257,9 @@ pub unsafe extern "C" fn gos_rt_vec_format_vec_i64(v: *const GosVec) -> *mut c_c
                 out.push_str(", ");
             }
             let p = unsafe { vec.ptr.add((i as usize) * (vec.elem_bytes as usize)) };
-            let inner_ptr = unsafe { (p as *const *const GosVec).read_unaligned() };
+            let inner_ptr = unsafe {
+                std::ptr::with_exposed_provenance::<GosVec>((p as *const usize).read_unaligned())
+            };
             if inner_ptr.is_null() {
                 out.push_str("[]");
             } else {
@@ -291,7 +295,9 @@ pub unsafe extern "C" fn gos_rt_vec_format_vec_string(v: *const GosVec) -> *mut 
                 out.push_str(", ");
             }
             let p = unsafe { vec.ptr.add((i as usize) * (vec.elem_bytes as usize)) };
-            let inner_ptr = unsafe { (p as *const *const GosVec).read_unaligned() };
+            let inner_ptr = unsafe {
+                std::ptr::with_exposed_provenance::<GosVec>((p as *const usize).read_unaligned())
+            };
             if inner_ptr.is_null() {
                 out.push_str("[]");
             } else {
@@ -486,7 +492,11 @@ pub unsafe extern "C" fn gos_rt_exec_spawn(prog: *const c_char, args: *mut GosVe
             if elem_bytes != 0 && !v.ptr.is_null() {
                 for i in 0..v.len {
                     let slot = unsafe { v.ptr.add((i as usize) * elem_bytes) };
-                    let cstr_ptr = unsafe { (slot as *const *const c_char).read_unaligned() };
+                    let cstr_ptr = unsafe {
+                        std::ptr::with_exposed_provenance::<c_char>(
+                            (slot as *const usize).read_unaligned(),
+                        )
+                    };
                     if cstr_ptr.is_null() {
                         cmd_args.push(String::new());
                         continue;

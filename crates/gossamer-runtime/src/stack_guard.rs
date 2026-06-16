@@ -382,6 +382,7 @@ mod unix {
         }
 
         #[test]
+        #[cfg_attr(miri, ignore)] // install() calls sigaltstack; Miri has no signals
         fn install_is_idempotent() {
             // Under AddressSanitizer `install` is a no-op (see the
             // doc on `install` for why our sigaltstack would
@@ -482,6 +483,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[cfg_attr(miri, ignore)] // install_stack_guard calls sigaltstack; Miri has no signals
     fn install_does_not_panic() {
         install_stack_guard();
         // Installing twice on the same thread is a no-op on Unix

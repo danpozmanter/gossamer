@@ -57,13 +57,11 @@ enum Command {
     },
     /// Execute a program by invoking its `main` function.
     ///
-    /// The execution path is the register-based bytecode VM.
-    /// When the VM's compiler hits an HIR construct it doesn't
-    /// yet support, the runner internally falls back to the
-    /// tree-walker oracle; this is an implementation detail and
-    /// not a user-selectable tier. The historical
-    /// `--tree-walker` flag was retired in 0.5.0 — the walker is
-    /// no longer a user-facing execution mode.
+    /// The execution path is the register-based bytecode VM, which
+    /// lowers every language construct to native bytecode. The
+    /// historical `--tree-walker` / `--vm` flags were retired in
+    /// 0.5.0 — there is one `gos run` engine and it is not a
+    /// user-selectable tier.
     ///
     /// With no path: defaults to `<project-root>/src/main.gos`
     /// when a `project.toml` is reachable.
@@ -750,10 +748,8 @@ fn dispatch_feature_status(
 }
 
 fn dispatch_run(file: Option<PathBuf>, no_jit: bool, args: &[String]) -> anyhow::Result<()> {
-    // VM is the only user-selectable `gos run` tier in 0.5.0.
-    // The tree-walker remains as an internal correctness oracle
-    // reachable from the test suite; the CLI no longer exposes
-    // a tree-walker mode.
+    // The register-based bytecode VM is the only `gos run` engine;
+    // the CLI exposes no engine selection.
     let mode = RunMode::Vm;
     if no_jit {
         gossamer_interp::set_jit_disabled();

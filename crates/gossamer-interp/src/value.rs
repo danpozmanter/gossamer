@@ -22,7 +22,6 @@ use std::sync::{Arc, OnceLock};
 use parking_lot::Mutex;
 
 use gossamer_ast::Ident;
-use gossamer_hir::{HirExpr, HirParam};
 use gossamer_runtime::{
     GossamerValue, SINGLETON_FALSE, SINGLETON_TRUE, SINGLETON_UNIT, TAG_FLOAT, TAG_HEAP,
     TAG_IMMEDIATE, TAG_SINGLETON, fits_i56, from_f64, from_heap_handle, from_i64, from_singleton,
@@ -752,10 +751,14 @@ impl Channel {
     }
 
     /// Marks the channel as closed and wakes every parked receiver
-    /// so they observe the closed state and exit their wait.
-    /// Panics if the channel was already closed (matches Go's
-    /// `close on closed channel` panic).
-    pub fn close(&self) {
+    /// so they observe the closed state and exit their wait. Returns
+    /// `true` when this call performed the close and `false` when the
+    /// channel was already closed — the caller turns the latter into
+    /// a `close of closed channel` panic, matching Go. That panic is
+    /// goroutine-scoped, so it ends only the offending goroutine
+    /// (fatal on `main`) and never aborts the whole process.
+    #[must_use]
+    pub fn close(&self) -> bool {
         let guard = self.inner.buf.lock();
         // Compare-exchange under the buf lock so the
         // already-closed check and the set are a single atomic
@@ -772,11 +775,11 @@ impl Channel {
             )
             .is_err()
         {
-            eprintln!("panic: channel already closed");
-            std::process::abort();
+            return false;
         }
         self.inner.cv.notify_all();
         drop(guard);
+        true
     }
 
     /// Non-blocking receive. Returns `None` when the channel is
@@ -1248,18 +1251,38 @@ fn write_struct(
     out.write_str(" }")
 }
 
-/// Concrete closure representation: captured environment plus the HIR
-/// body to interpret on invocation.
+/// Concrete closure representation.
+///
+/// The bytecode VM compiles the closure body to its own [`FnChunk`]
+/// whose leading parameters are the captured upvalues, followed by the
+/// declared parameters. [`Self::chunk`] holds that body and
+/// [`Self::capture_values`] the snapshotted upvalue `Value`s; the VM
+/// invokes the closure by running the chunk with `capture_values ++
+/// args` in the leading registers. The chunk's `arity` minus
+/// `capture_values.len()` is the closure's declared parameter count.
 #[derive(Debug, Clone)]
 pub struct Closure {
-    /// Parameters declared at the lowering stage.
-    pub params: Vec<HirParam>,
-    /// Body expression lowered from AST.
-    pub body: HirExpr,
-    /// Captured lexical bindings at closure-construction time. Stored
-    /// as flat name/value pairs so the interpreter can splice them into
-    /// a fresh frame on each call.
-    pub captures: Vec<(String, Value)>,
+    /// Native bytecode body run by the VM. Its leading registers hold
+    /// the captured upvalues, then the declared parameters.
+    pub chunk: Arc<crate::bytecode::FnChunk>,
+    /// Upvalue snapshot, positionally aligned with the chunk's leading
+    /// parameters. Scalars are by-value snapshots; aggregates share
+    /// their `Arc` backing, so a mutation through the closure is visible
+    /// to the original binding.
+    pub capture_values: Vec<Value>,
+}
+
+/// Replaces any `MutCell` argument with a clone of its inner value.
+/// Builtins and natives have no parameter table, so they receive the
+/// plain aggregate; user functions keep the cell for write-back.
+pub(crate) fn unwrap_mut_cells(mut args: Vec<Value>) -> Vec<Value> {
+    for arg in &mut args {
+        if let Value::MutCell(cell) = arg {
+            let inner = cell.lock().clone();
+            *arg = inner;
+        }
+    }
+    args
 }
 
 /// Result type used throughout the interpreter for operations that can
@@ -1321,19 +1344,6 @@ impl RuntimeError {
             Self::StackOverflow(_) => "GX0008",
         }
     }
-}
-
-/// Control-flow signal propagated through nested expressions.
-#[derive(Debug, Clone)]
-pub(crate) enum Flow {
-    /// Normal evaluation produced a value.
-    Value(Value),
-    /// `return expr;` unwinds to the nearest call frame.
-    Return(Value),
-    /// `break expr;` unwinds to the nearest loop.
-    Break(Value),
-    /// `continue;` skips to the next loop iteration.
-    Continue,
 }
 
 // ------------------------------------------------------------------
@@ -1466,6 +1476,9 @@ pub enum NativeFieldKind {
     Bool,
     /// Heap string (slot is a tagged c-string body pointer).
     Str,
+    /// Unicode scalar value (the compiled layout stores it in the
+    /// low 32 bits of the payload slot).
+    Char,
     /// Another supported heap enum; index into the program's shape
     /// table.
     Enum(u32),
@@ -1525,18 +1538,33 @@ impl Drop for NativeEnumOwner {
 static NATIVE_SHAPES: std::sync::LazyLock<parking_lot::RwLock<Vec<&'static NativeEnumShape>>> =
     std::sync::LazyLock::new(|| parking_lot::RwLock::new(Vec::new()));
 
-/// Registers a shape and returns its global index.
-pub fn register_native_shape(shape: &'static NativeEnumShape) -> u32 {
+/// Atomically reserves a contiguous block of shape indices and
+/// registers the shapes that `build` produces under them.
+///
+/// The reserve (reading the base index) and the inserts happen under a
+/// single write lock, so concurrent program loads can never interleave
+/// a reserve with another load's register — the indices a shape is
+/// built against are guaranteed to be the indices it lands at.
+///
+/// `build` is handed the base index the block will occupy and must
+/// return the shapes in index order, each carrying `index == base +
+/// offset`. Returns `build`'s second value (typically the `DefId ->
+/// index` map the shapes were built against).
+pub fn register_native_shapes<R>(
+    build: impl FnOnce(u32) -> (Vec<&'static NativeEnumShape>, R),
+) -> R {
     let mut t = NATIVE_SHAPES.write();
-    t.push(shape);
-    u32::try_from(t.len() - 1).unwrap_or(0)
-}
-
-/// Reserves the next `n` shape indices (for two-phase recursive
-/// construction) and returns the base index.
-#[must_use]
-pub fn native_shape_next_index() -> u32 {
-    u32::try_from(NATIVE_SHAPES.read().len()).unwrap_or(0)
+    let base = u32::try_from(t.len()).unwrap_or(0);
+    let (shapes, result) = build(base);
+    for (offset, shape) in shapes.into_iter().enumerate() {
+        debug_assert_eq!(
+            shape.index,
+            base + u32::try_from(offset).unwrap_or(0),
+            "shape table index drift",
+        );
+        t.push(shape);
+    }
+    result
 }
 
 /// Looks up a registered shape by global index.
@@ -1580,6 +1608,7 @@ pub fn native_enum_field(owner: &NativeEnumOwner, idx: usize) -> Value {
         NativeFieldKind::I64 => Value::Int(word),
         NativeFieldKind::F64 => Value::Float(f64::from_bits(word as u64)),
         NativeFieldKind::Bool => Value::Bool(word != 0),
+        NativeFieldKind::Char => Value::Char(char::from_u32(word as u32).unwrap_or('\u{0}')),
         NativeFieldKind::Str => {
             if word == 0 {
                 Value::String(SmolStr::default())

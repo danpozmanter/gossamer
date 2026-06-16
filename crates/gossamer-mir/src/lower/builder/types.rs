@@ -61,6 +61,7 @@ impl<'a> Builder<'a> {
         fn_returns: &'a HashMap<gossamer_resolve::DefId, Ty>,
         fn_inputs: &'a HashMap<gossamer_resolve::DefId, Vec<Ty>>,
         consts: &'a HashMap<gossamer_resolve::DefId, ConstValue>,
+        mut_statics: &'a HashMap<gossamer_resolve::DefId, crate::ir::StaticRef>,
         region_unsafe: &'a std::collections::HashSet<gossamer_resolve::DefId>,
     ) -> Self {
         Self {
@@ -78,6 +79,7 @@ impl<'a> Builder<'a> {
             fn_returns,
             fn_inputs,
             consts,
+            mut_statics,
             region_unsafe,
             local_struct: HashMap::new(),
             local_elem_struct: HashMap::new(),
@@ -562,6 +564,15 @@ impl<'a> Builder<'a> {
         }
     }
 
+    /// `Vec<(String, String)>` — ordered string key/value pairs, the
+    /// shape of `http::Request`/`Response` headers and the
+    /// `http::cookie::parse_cookie_header` result.
+    pub(crate) fn string_pair_vec_ty(&mut self) -> Ty {
+        let s = self.tcx.string_ty();
+        let tup = self.tcx.intern(gossamer_types::TyKind::Tuple(vec![s, s]));
+        self.tcx.intern(gossamer_types::TyKind::Vec(tup))
+    }
+
     pub(crate) fn option_vec_string_ty(&mut self) -> Ty {
         let s = self.tcx.string_ty();
         let v = self.tcx.intern(gossamer_types::TyKind::Vec(s));
@@ -581,6 +592,19 @@ impl<'a> Builder<'a> {
         })
     }
 
+    /// `Option<(String, String)>` sentinel Adt — the packed shape the
+    /// `gos_rt_http_request_basic_auth` / `decode_basic_auth` /
+    /// `gos_rt_str_split_once` family return.
+    pub(crate) fn option_pair_string_adt_ty(&mut self) -> Ty {
+        let s = self.tcx.string_ty();
+        let tup = self.tcx.intern(gossamer_types::TyKind::Tuple(vec![s, s]));
+        let substs = gossamer_types::Substs::from_types([tup]);
+        self.tcx.intern(gossamer_types::TyKind::Adt {
+            def: gossamer_resolve::DefId::local(u32::MAX - 1),
+            substs,
+        })
+    }
+
     pub(crate) fn option_i64_adt_ty(&mut self) -> Ty {
         let i = self.tcx.int_ty(gossamer_types::IntTy::I64);
         let substs = gossamer_types::Substs::from_types([i]);
@@ -593,6 +617,15 @@ impl<'a> Builder<'a> {
     pub(crate) fn option_f64_adt_ty(&mut self) -> Ty {
         let f = self.tcx.float_ty(gossamer_types::FloatTy::F64);
         let substs = gossamer_types::Substs::from_types([f]);
+        self.tcx.intern(gossamer_types::TyKind::Adt {
+            def: gossamer_resolve::DefId::local(u32::MAX - 1),
+            substs,
+        })
+    }
+
+    pub(crate) fn option_bool_adt_ty(&mut self) -> Ty {
+        let b = self.tcx.bool_ty();
+        let substs = gossamer_types::Substs::from_types([b]);
         self.tcx.intern(gossamer_types::TyKind::Adt {
             def: gossamer_resolve::DefId::local(u32::MAX - 1),
             substs,
@@ -658,6 +691,17 @@ impl<'a> Builder<'a> {
         self.tcx.intern(gossamer_types::TyKind::Tuple(vec![
             s, s, vec_u8, i, i, vec_str, vec_u8,
         ]))
+    }
+
+    /// The `fs::metadata` leaf tuple `(size: i64, is_file: bool,
+    /// is_dir: bool, is_symlink: bool, readonly: bool,
+    /// modified_unix_ms: i64)`. Field order matches the VM's
+    /// `fs::Metadata` struct.
+    pub(crate) fn tuple_fs_metadata_ty(&mut self) -> Ty {
+        let i = self.tcx.int_ty(gossamer_types::IntTy::I64);
+        let b = self.tcx.bool_ty();
+        self.tcx
+            .intern(gossamer_types::TyKind::Tuple(vec![i, b, b, b, b, i]))
     }
 
     /// The archive entry leaf tuple `(String, [u8], bool)`.
@@ -803,6 +847,41 @@ impl<'a> Builder<'a> {
         })
     }
 
+    /// Recovers the runtime-kind tag of an opaque-handle stdlib type from
+    /// the receiver's *type* when the construction-site tag was lost — e.g.
+    /// a `HashSet<String>` flowing in as a function parameter or out as a
+    /// return value carries no `local_runtime_kind` entry, so method
+    /// dispatch on it would miss without this fallback.
+    pub(crate) fn runtime_kind_from_ty(&self, ty: Ty) -> Option<&'static str> {
+        use gossamer_types::TyKind;
+        let mut cur = ty;
+        while let TyKind::Ref { inner, .. } = self.tcx.kind_of(cur) {
+            cur = *inner;
+        }
+        let rendered = gossamer_types::printer::render_ty(self.tcx, cur);
+        let bare = rendered.rsplit("::").next().unwrap_or(&rendered);
+        let name = bare.split('<').next().unwrap_or(bare).trim();
+        match name {
+            "HashSet" => Some("collections::HashSet"),
+            "BTreeMap" => Some("collections::BTreeMap"),
+            // A `sync::AtomicBool` reaching a method call by parameter
+            // (no local construction to tag) still routes `load`/`store`
+            // to the bool-typed shims.
+            "AtomicBool" => Some("sync::AtomicBool"),
+            // `validate::Errors` / `validate::FieldError` handles flowing
+            // in by parameter or out by return carry no construction tag;
+            // recover the handle kind from the receiver's named type.
+            "Errors" => Some("validate::Errors"),
+            "FieldError" => Some("validate::FieldError"),
+            // A `context::Context` passed as a parameter (the canonical
+            // request-propagation shape) carries no construction tag, so
+            // its `is_cancelled` / `cancel` / `done` / `done_chan` calls
+            // route through the type here.
+            "Context" => Some("context::Context"),
+            _ => None,
+        }
+    }
+
     pub(crate) fn expr_runtime_kind(&self, expr: &HirExpr) -> Option<&'static str> {
         let HirExprKind::MethodCall { receiver, name, .. } = &expr.kind else {
             return None;
@@ -818,7 +897,9 @@ impl<'a> Builder<'a> {
             // Configured-policy request entry points yield the same
             // packed Result<Response, errors::Error> as `.send()`.
             ("http::Client", "request" | "request_bytes") => Some("http::SendResult"),
-            ("http::ClientBuilder", "max_redirects" | "timeout_ms") => Some("http::ClientBuilder"),
+            ("http::ClientBuilder", "max_redirects" | "timeout_ms" | "cookie_jar" | "proxy") => {
+                Some("http::ClientBuilder")
+            }
             ("http::ClientBuilder", "build") => Some("http::Client"),
             ("http::Request", "header" | "body") => Some("http::Request"),
             // `.send()` yields `Result<Response, errors::Error>` —
@@ -1051,57 +1132,9 @@ impl<'a> Builder<'a> {
     }
 
     pub(crate) fn type_slot_bytes(&self, ty: Ty) -> u32 {
-        use gossamer_types::TyKind;
-        match self.tcx.kind_of(ty) {
-            TyKind::Tuple(elems) => {
-                let total: u32 = elems
-                    .iter()
-                    .map(|t| self.type_slot_bytes(*t).max(8) / 8)
-                    .sum();
-                total.max(1) * 8
-            }
-            TyKind::Array { elem, len } => {
-                let elem_bytes = self.type_slot_bytes(*elem).max(8);
-                u32::try_from(*len).unwrap_or(1).saturating_mul(elem_bytes)
-            }
-            TyKind::Adt { def, .. } => {
-                // `Result<T,E>` / `Option<T>` (u32::MAX, u32::MAX - 1) are the
-                // 2-word by-value `i128` representation: 16 bytes per element
-                // (so `Vec<Option<T>>` reserves 16 bytes/elem and push/read
-                // move the full payload, not just the discriminant).
-                if def.local == u32::MAX || def.local == u32::MAX - 1 {
-                    return 16;
-                }
-                // The other stdlib struct sentinels (DirInfo, Output,
-                // ResponseStream, Response — u32::MAX-2 .. u32::MAX-5) are
-                // heap-allocated by `gos_rt_*` helpers and passed by pointer,
-                // and `Weak<T>` (u32::MAX-6) is a weak-counted pointer — one
-                // slot each.
-                if def.local >= u32::MAX - 6 {
-                    return 8;
-                }
-                // For user-defined structs with a registered field
-                // layout, sum each field's slot width (rounded up to
-                // 8 bytes per slot). A `Projection { a: i64, b: i64 }`
-                // is two slots = 16 bytes, so a `Vec<Projection>`
-                // created with `gos_rt_vec_new(elem_bytes)` reserves
-                // 16 bytes per element and the push-site memcpy
-                // copies the full inline struct rather than truncating
-                // to the first field.
-                if let Some(field_tys) = self.tcx.struct_field_tys(*def) {
-                    let total_slots: u32 = field_tys
-                        .iter()
-                        .map(|t| (self.type_slot_bytes(*t).max(8)) / 8)
-                        .sum();
-                    return total_slots.max(1) * 8;
-                }
-                8
-            }
-            TyKind::Bool => 1,
-            TyKind::Char => 4,
-            TyKind::Int(_) | TyKind::Float(_) | TyKind::String => 8,
-            _ => 8,
-        }
+        // Single source of truth on the `TyCtxt` so the vec-element
+        // layout passes (`insert_vec_elem_metas`) and the builder agree.
+        self.tcx.slot_bytes(ty)
     }
 
     pub(crate) fn binding_type_to_mir(&mut self, t: &gossamer_resolve::BindingType) -> Ty {

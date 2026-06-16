@@ -1,0 +1,19 @@
+// Regression lock for the base-10 strconv surface (parse/format
+// int+float, itoa/atoi). The radix and quote helpers are covered by
+// strconv_radix_quote.gos; this pins the plain conversions.
+
+use std::strconv
+
+fn main() {
+    println!("parse_int={}", strconv::parse_int("123").unwrap())
+    println!("parse_int_neg={}", strconv::parse_int("-45").unwrap())
+    println!("parse_float={:.4}", strconv::parse_float("3.14159").unwrap())
+    println!("parse_bool={}", strconv::parse_bool("true").unwrap())
+    println!("itoa={}", strconv::itoa(789))
+    println!("format_int={}", strconv::format_int(-256))
+    println!("atoi={}", strconv::atoi("1000").unwrap())
+    println!("bad_parse={}", match strconv::parse_int("nope") {
+        Ok(_) => -1,
+        Err(_) => 0,
+    })
+}

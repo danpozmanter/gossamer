@@ -8,6 +8,10 @@
 
 fn main() {
     println!("cargo:rustc-check-cfg=cfg(tsan)");
+    // `cargo-fuzz` sets `--cfg fuzzing`; declare it so the allocator
+    // gates in `lib.rs` / `rc.rs` (which fall back to the system
+    // allocator under the fuzz harness) don't trip `unexpected_cfgs`.
+    println!("cargo:rustc-check-cfg=cfg(fuzzing)");
     println!("cargo:rerun-if-env-changed=RUSTFLAGS");
     println!("cargo:rerun-if-env-changed=CARGO_ENCODED_RUSTFLAGS");
 

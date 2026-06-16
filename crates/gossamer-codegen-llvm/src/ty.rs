@@ -50,6 +50,12 @@ pub(crate) fn render_ty(tcx: &TyCtxt, ty: Ty) -> String {
         // Inline-able user enums share the same 2-word by-value `i128` shape.
         Some(TyKind::Adt { .. }) if tcx.is_inline_enum_ty(ty) => "i128".to_string(),
         Some(TyKind::String) => "ptr".to_string(),
+        // A reference to a 2-word by-value enum (`&Option` / `&Result` /
+        // `&InlineEnum`) carries the i128 value itself — the reference is
+        // transparent in this codegen. Rendering it as `ptr` would truncate
+        // the aggregate to its low word at every call / field / return
+        // boundary, discarding the payload.
+        Some(TyKind::Ref { inner, .. }) if is_by_value_enum(tcx, *inner) => "i128".to_string(),
         Some(TyKind::Ref { .. }) => "ptr".to_string(),
         Some(TyKind::FnPtr(_) | TyKind::FnDef { .. }) => "ptr".to_string(),
         Some(
@@ -70,6 +76,16 @@ pub(crate) fn render_ty(tcx: &TyCtxt, ty: Ty) -> String {
         // typechecks.
         _ => "ptr".to_string(),
     }
+}
+
+/// True when `ty` lowers to the 2-word by-value enum representation:
+/// the `Option` / `Result` sentinel Adts (`u32::MAX` / `u32::MAX - 1`)
+/// or an inline-able user enum. These cross the ABI as a packed `i128`.
+fn is_by_value_enum(tcx: &TyCtxt, ty: Ty) -> bool {
+    matches!(
+        tcx.kind(ty),
+        Some(TyKind::Adt { def, .. }) if def.local == u32::MAX || def.local == u32::MAX - 1
+    ) || tcx.is_inline_enum_ty(ty)
 }
 
 /// Convenience: returns `true` when the type is `()`, i.e.

@@ -597,6 +597,55 @@ pub unsafe extern "C" fn gos_rt_fs_metadata(path: *const c_char) -> i128 {
     })
 }
 
+/// `fs::metadata(path)` leaf -> Result<(size, is_file, is_dir,
+/// is_symlink, readonly, modified_unix_ms), errors::Error>. The
+/// injected Gossamer wrapper (`__gos_fs_metadata`) folds this 6-slot
+/// tuple into a real `Metadata` struct, so `fs::metadata(p).size` /
+/// `.is_file` lower natively on every tier. Field order and units
+/// (millis since the Unix epoch) match the VM's `fs::Metadata`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_fs_metadata_raw(path: *const c_char) -> i128 {
+    ffi_entry!(0i128, {
+        if path.is_null() {
+            let cs = std::ffi::CString::new("fs::metadata: null path").unwrap_or_default();
+            let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+            return unsafe { gos_rt_result_new(1, err as i64) };
+        }
+        let p = unsafe { CStr::from_ptr(path).to_string_lossy().into_owned() };
+        match std::fs::metadata(&p) {
+            Ok(m) => {
+                let modified = m
+                    .modified()
+                    .ok()
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX));
+                let blob = crate::c_abi::gos_rt_gc_alloc(48) as *mut i64;
+                if blob.is_null() {
+                    let cs =
+                        std::ffi::CString::new("fs::metadata: alloc failed").unwrap_or_default();
+                    let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+                    return unsafe { gos_rt_result_new(1, err as i64) };
+                }
+                unsafe {
+                    *blob = i64::try_from(m.len()).unwrap_or(i64::MAX);
+                    *blob.add(1) = i64::from(m.is_file());
+                    *blob.add(2) = i64::from(m.is_dir());
+                    *blob.add(3) = i64::from(m.file_type().is_symlink());
+                    *blob.add(4) = i64::from(m.permissions().readonly());
+                    *blob.add(5) = modified;
+                }
+                unsafe { gos_rt_result_new(0, blob as i64) }
+            }
+            Err(e) => {
+                let msg = format!("fs::metadata({p}): {e}");
+                let cs = std::ffi::CString::new(msg).unwrap_or_default();
+                let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+                unsafe { gos_rt_result_new(1, err as i64) }
+            }
+        }
+    })
+}
+
 /// `exec::run(prog, args) -> Result<Output, errors::Error>`.
 ///
 /// Spawns `prog` with `args` (a `Vec<String>` whose backing storage
@@ -634,7 +683,11 @@ pub unsafe extern "C" fn gos_rt_exec_run(prog: *const c_char, args: *mut GosVec)
             if elem_bytes != 0 && !v.ptr.is_null() {
                 for i in 0..v.len {
                     let slot = unsafe { v.ptr.add((i as usize) * elem_bytes) };
-                    let cstr_ptr = unsafe { (slot as *const *const c_char).read_unaligned() };
+                    let cstr_ptr = unsafe {
+                        std::ptr::with_exposed_provenance::<c_char>(
+                            (slot as *const usize).read_unaligned(),
+                        )
+                    };
                     if cstr_ptr.is_null() {
                         cmd_args.push(String::new());
                         continue;

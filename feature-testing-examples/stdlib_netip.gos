@@ -1,0 +1,18 @@
+// Regression lock for the canonical string-based net::netip
+// predicate surface (is_multicast / is_unspecified and friends),
+// distinct from the struct-based net::ip module.
+
+use std::net::netip
+
+fn main() {
+    println!("v4={}", netip::is_v4(&"192.168.1.1"))
+    println!("v6={}", netip::is_v6(&"::1"))
+    println!("valid={}", netip::is_valid(&"10.0.0.1"))
+    println!("invalid={}", netip::is_valid(&"not-an-ip"))
+    println!("loopback={}", netip::is_loopback(&"127.0.0.1"))
+    println!("multicast={}", netip::is_multicast(&"224.0.0.1"))
+    println!("not_multicast={}", netip::is_multicast(&"8.8.8.8"))
+    println!("unspecified={}", netip::is_unspecified(&"0.0.0.0"))
+    println!("private={}", netip::is_private(&"10.0.0.5"))
+    println!("not_private={}", netip::is_private(&"8.8.8.8"))
+}
