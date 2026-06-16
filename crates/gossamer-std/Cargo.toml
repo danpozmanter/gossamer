@@ -47,7 +47,12 @@ tokio-rustls = { version = "0.26", default-features = false, features = ["ring"]
 
 # Compression (`std::compress::{gzip,flate,zlib,zstd}` + `std::compress::bzip2`).
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
-bzip2 = "0.5"
+# `static` compiles the bundled libbz2 C source into the archive instead of
+# dynamically linking the system `-lbz2`. Without it, macOS resolves bzip2
+# via pkg-config to the SDK's libbz2 and a `gos build` link (which does not
+# pass `-lbz2`) fails with undefined `_BZ2_*` symbols; bundling keeps the
+# runtime self-contained on every platform.
+bzip2 = { version = "0.5", features = ["static"] }
 zstd = "0.13"
 
 # File-system watching (`std::fs::watch`), memory mapping

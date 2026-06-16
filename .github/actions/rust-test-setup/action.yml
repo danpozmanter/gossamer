@@ -1,0 +1,120 @@
+name: Rust test setup
+description: >
+  Install the LLVM 18 tools `gos build` drives (opt / llc), the pinned Rust
+  toolchain, the build cache, and resolve the real cargo binary into
+  $CARGO_BIN. Shared by the test-native and test-workspace jobs. The caller
+  must run `actions/checkout` before this action so the action file is present.
+inputs:
+  cache-prefix:
+    description: Swatinem cache prefix-key (distinct per job so the two jobs do not thrash one cache).
+    required: true
+runs:
+  using: composite
+  steps:
+    # `gos build` shells out to `opt` and `llc` from LLVM 18+. Ubuntu
+    # runners ship them at `/usr/lib/llvm-18/bin/` (auto-discovered);
+    # macOS and Windows need explicit discovery + env-var pointers. These
+    # run BEFORE `dtolnay/rust-toolchain` so its `$GITHUB_PATH` push of
+    # `~/.cargo/bin` stays last on PATH (otherwise a brew-managed `cargo`
+    # shim on the macOS image resolves ahead of the installed toolchain).
+    - name: Install LLVM (macOS)
+      if: runner.os == 'macOS'
+      shell: bash
+      env:
+        HOMEBREW_NO_AUTO_UPDATE: "1"
+        HOMEBREW_NO_INSTALL_CLEANUP: "1"
+      run: |
+        set -euo pipefail
+        brew install llvm@18
+        prefix="$(brew --prefix llvm@18)"
+        test -x "$prefix/bin/opt" || { echo "opt missing under $prefix/bin" >&2; exit 1; }
+        test -x "$prefix/bin/llc" || { echo "llc missing under $prefix/bin" >&2; exit 1; }
+        echo "GOS_LLVM_OPT=$prefix/bin/opt" >> "$GITHUB_ENV"
+        echo "GOS_LLC=$prefix/bin/llc"      >> "$GITHUB_ENV"
+    - name: Install LLVM (Windows)
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        $ErrorActionPreference = 'Stop'
+        # The upstream LLVM Windows installer (wrapped by the chocolatey
+        # `llvm` package) ships a slim distribution: clang / clang-cl /
+        # clang-tidy / lld / llvm-ar - but NOT `opt.exe` or `llc.exe`, the
+        # two binaries our codegen pipeline drives. Pull the full toolchain
+        # from MSYS2's `mingw-w64-x86_64-llvm`, preinstalled at `C:\msys64\`.
+        function Find-LlvmTool($name) {
+          $cmd = Get-Command $name -ErrorAction SilentlyContinue
+          if ($cmd) { return $cmd.Source }
+          foreach ($dir in @(
+            'C:\msys64\mingw64\bin',
+            'C:\msys64\clang64\bin',
+            'C:\Program Files\LLVM\bin',
+            'C:\Program Files (x86)\LLVM\bin'
+          )) {
+            $cand = Join-Path $dir $name
+            if (Test-Path $cand) { return $cand }
+          }
+          return $null
+        }
+        $opt = Find-LlvmTool 'opt.exe'
+        $llc = Find-LlvmTool 'llc.exe'
+        if (-not $opt -or -not $llc) {
+          Write-Host "Installing mingw-w64 LLVM via MSYS2 pacman"
+          & 'C:\msys64\usr\bin\pacman.exe' -S --noconfirm --needed `
+            mingw-w64-x86_64-llvm
+          if ($LASTEXITCODE -ne 0) {
+            throw "pacman -S mingw-w64-x86_64-llvm failed (exit $LASTEXITCODE)"
+          }
+          $opt = Find-LlvmTool 'opt.exe'
+          $llc = Find-LlvmTool 'llc.exe'
+        }
+        if (-not $opt -or -not $llc) {
+          Write-Host "=== Diagnostic: contents of expected install dirs ==="
+          foreach ($d in @(
+            'C:\msys64\mingw64\bin',
+            'C:\Program Files\LLVM\bin'
+          )) {
+            if (Test-Path $d) {
+              Write-Host "--- $d ---"
+              Get-ChildItem -Path $d -Filter '*.exe' -ErrorAction SilentlyContinue |
+                Select-Object -ExpandProperty Name | Sort-Object | Format-Wide -Column 4 |
+                Out-String | Write-Host
+            } else {
+              Write-Host "--- $d  (missing) ---"
+            }
+          }
+          if (-not $opt) { throw "opt.exe not found after MSYS2 install" }
+          if (-not $llc) { throw "llc.exe not found after MSYS2 install" }
+        }
+        Write-Host "GOS_LLVM_OPT=$opt"
+        Write-Host "GOS_LLC=$llc"
+        "GOS_LLVM_OPT=$opt" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+        "GOS_LLC=$llc"      | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+    - uses: dtolnay/rust-toolchain@1.95.0
+    - shell: bash
+      run: rustup set profile minimal
+    - uses: Swatinem/rust-cache@v2
+      with:
+        prefix-key: ${{ inputs.cache-prefix }}
+    # Defensive against the macOS-runner brew/rustup shim issue: `cargo` in
+    # $PATH can resolve to `rustup-init` even after the toolchain action
+    # pushes `~/.cargo/bin` to $GITHUB_PATH. Resolve the real toolchain
+    # binary via `rustup which cargo` and export it as $CARGO_BIN; later
+    # steps invoke that absolute path so a stray shim cannot intercept
+    # `cargo test` and produce `unexpected argument 'test' / rustup-init`.
+    - name: Resolve cargo binary (shim guard)
+      shell: bash
+      run: |
+        set -euxo pipefail
+        which cargo || true
+        which rustup || true
+        rustup_bin="$HOME/.cargo/bin/rustup"
+        if [ ! -x "$rustup_bin" ]; then
+          echo "::error::$rustup_bin missing - rust-toolchain action did not install rustup at the expected path"
+          ls -la "$HOME/.cargo/bin/" || true
+          exit 1
+        fi
+        "$rustup_bin" --version
+        resolved_cargo="$("$rustup_bin" which cargo)"
+        echo "resolved cargo => $resolved_cargo"
+        "$resolved_cargo" --version
+        echo "CARGO_BIN=$resolved_cargo" >> "$GITHUB_ENV"

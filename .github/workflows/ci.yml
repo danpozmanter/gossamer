@@ -53,8 +53,8 @@ jobs:
           prefix-key: v2-clippy-stdio
       - run: cargo clippy --workspace --all-targets -- -D warnings
 
-  test:
-    name: Test (${{ matrix.os }})
+  test-native:
+    name: Test native (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -66,134 +66,9 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v6
-      # `gos build` shells out to `opt` and `llc` from LLVM 18+.
-      # Ubuntu runners ship them at `/usr/lib/llvm-18/bin/` (auto-
-      # discovered); macOS and Windows runners need explicit
-      # discovery + env-var pointers. Both steps run BEFORE
-      # `dtolnay/rust-toolchain@1.95.0` so its `$GITHUB_PATH`
-      # push of `~/.cargo/bin` is the last entry on PATH -
-      # without that ordering, a brew-managed `cargo` shim
-      # (left by a stale `rustup-init` install on the macOS
-      # runner image) gets resolved ahead of the rust toolchain
-      # this job actually installed, and `cargo test` becomes
-      # `rustup-init test` → unrecognised-argument failure.
-      - name: Install LLVM (macOS)
-        if: runner.os == 'macOS'
-        env:
-          HOMEBREW_NO_AUTO_UPDATE: "1"
-          HOMEBREW_NO_INSTALL_CLEANUP: "1"
-        run: |
-          set -euo pipefail
-          brew install llvm@18
-          prefix="$(brew --prefix llvm@18)"
-          test -x "$prefix/bin/opt" || { echo "opt missing under $prefix/bin" >&2; exit 1; }
-          test -x "$prefix/bin/llc" || { echo "llc missing under $prefix/bin" >&2; exit 1; }
-          echo "GOS_LLVM_OPT=$prefix/bin/opt" >> "$GITHUB_ENV"
-          echo "GOS_LLC=$prefix/bin/llc"      >> "$GITHUB_ENV"
-      - name: Install LLVM (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          # The upstream LLVM Windows installer (wrapped by the
-          # chocolatey `llvm` package) ships a slim distribution:
-          # clang / clang-cl / clang-tidy / lld / llvm-ar - but
-          # NOT `opt.exe` or `llc.exe`, the two binaries our
-          # codegen pipeline drives. Pull the full toolchain from
-          # MSYS2's `mingw-w64-x86_64-llvm` package, which is
-          # preinstalled on the windows-latest runner image at
-          # `C:\msys64\` and includes both.
-          function Find-LlvmTool($name) {
-            $cmd = Get-Command $name -ErrorAction SilentlyContinue
-            if ($cmd) { return $cmd.Source }
-            foreach ($dir in @(
-              'C:\msys64\mingw64\bin',
-              'C:\msys64\clang64\bin',
-              'C:\Program Files\LLVM\bin',
-              'C:\Program Files (x86)\LLVM\bin'
-            )) {
-              $cand = Join-Path $dir $name
-              if (Test-Path $cand) { return $cand }
-            }
-            return $null
-          }
-          $opt = Find-LlvmTool 'opt.exe'
-          $llc = Find-LlvmTool 'llc.exe'
-          if (-not $opt -or -not $llc) {
-            Write-Host "Installing mingw-w64 LLVM via MSYS2 pacman"
-            & 'C:\msys64\usr\bin\pacman.exe' -S --noconfirm --needed `
-              mingw-w64-x86_64-llvm
-            if ($LASTEXITCODE -ne 0) {
-              throw "pacman -S mingw-w64-x86_64-llvm failed (exit $LASTEXITCODE)"
-            }
-            $opt = Find-LlvmTool 'opt.exe'
-            $llc = Find-LlvmTool 'llc.exe'
-          }
-          if (-not $opt -or -not $llc) {
-            Write-Host "=== Diagnostic: contents of expected install dirs ==="
-            foreach ($d in @(
-              'C:\msys64\mingw64\bin',
-              'C:\Program Files\LLVM\bin'
-            )) {
-              if (Test-Path $d) {
-                Write-Host "--- $d ---"
-                Get-ChildItem -Path $d -Filter '*.exe' -ErrorAction SilentlyContinue |
-                  Select-Object -ExpandProperty Name | Sort-Object | Format-Wide -Column 4 |
-                  Out-String | Write-Host
-              } else {
-                Write-Host "--- $d  (missing) ---"
-              }
-            }
-            if (-not $opt) { throw "opt.exe not found after MSYS2 install" }
-            if (-not $llc) { throw "llc.exe not found after MSYS2 install" }
-          }
-          Write-Host "GOS_LLVM_OPT=$opt"
-          Write-Host "GOS_LLC=$llc"
-          "GOS_LLVM_OPT=$opt" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-          "GOS_LLC=$llc"      | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-      - uses: dtolnay/rust-toolchain@1.95.0
-      - run: rustup set profile minimal
-      - uses: Swatinem/rust-cache@v2
+      - uses: ./.github/actions/rust-test-setup
         with:
-          # Bumped after the runtime stdio rewrite (extern POSIX
-          # `write` removed). Old cached `target/<profile>/deps/`
-          # rlibs still reference the absent symbol on Windows
-          # MSVC; bumping the prefix forces a clean rebuild.
-          prefix-key: v2-test-stdio
-      # Defensive against the macOS-runner brew/rustup shim issue:
-      # `cargo` in $PATH can resolve to `rustup-init` even after
-      # `dtolnay/rust-toolchain@1.95.0` pushes `~/.cargo/bin` to
-      # $GITHUB_PATH (the runner image ships a brew-managed `cargo`
-      # link earlier in PATH on some images). Resolve the real
-      # toolchain binary via `rustup which cargo` and export it as
-      # $CARGO_BIN; subsequent steps invoke that absolute path so a
-      # stray shim cannot intercept `cargo test` and produce
-      # `error: unexpected argument 'test' found / rustup-init`.
-      - name: Resolve cargo binary (shim guard)
-        shell: bash
-        run: |
-          set -euxo pipefail
-          # The macOS runner image ships a brew-installed `cargo`/`rustup`
-          # link that can be the standalone `rustup-init` installer
-          # binary; resolving via $PATH then dispatches `cargo test`
-          # to `rustup-init test` and errors with
-          # `unexpected argument 'test'`. Resolving through
-          # `~/.cargo/bin/rustup which cargo` bypasses any PATH-resolved
-          # shim and yields the absolute path to the toolchain cargo
-          # that `dtolnay/rust-toolchain@1.95.0` actually installed.
-          which cargo || true
-          which rustup || true
-          rustup_bin="$HOME/.cargo/bin/rustup"
-          if [ ! -x "$rustup_bin" ]; then
-            echo "::error::$rustup_bin missing - rust-toolchain action did not install rustup at the expected path"
-            ls -la "$HOME/.cargo/bin/" || true
-            exit 1
-          fi
-          "$rustup_bin" --version
-          resolved_cargo="$("$rustup_bin" which cargo)"
-          echo "resolved cargo => $resolved_cargo"
-          "$resolved_cargo" --version
-          echo "CARGO_BIN=$resolved_cargo" >> "$GITHUB_ENV"
+          cache-prefix: v2-test-native-stdio
       # `crates/gossamer-cli/build.rs` ensures the runtime
       # staticlib is emitted into `target/<profile>/` for both
       # debug and release; no explicit pre-build step needed.
@@ -251,13 +126,32 @@ jobs:
           # uploaded artifacts even if the crash takes the runner down. Slower
           # than one combined run; that cost buys a failure log that always
           # names the test.
+          # The passing output streams inside a collapsed `::group::` so the
+          # log stays tidy. On failure the group is NOT enough - GitHub does
+          # not auto-expand it, so the previous design forced you to open
+          # every section by hand to find the error. Instead, on failure we
+          # emit a top-level `::error::` annotation (shown at the top of the
+          # run and inline) and re-print the failing test names + panic /
+          # assertion lines FLAT, outside the group, so the failure is
+          # visible at a glance. The full streamed log stays in the group and
+          # in the uploaded artifacts.
           run_target() {
             local crate="$1" label="$2"; shift 2
+            local log="$logdir/${crate}-${label}.log"
+            local ok=1
             echo "::group::test ${crate} :: ${label}"
             "$CARGO_BIN" test -p "$crate" "$@" --no-fail-fast \
               -- --test-threads=1 --nocapture 2>&1 \
-              | tee "$logdir/${crate}-${label}.log" || rc=1
+              | tee "$log" || ok=0
             echo "::endgroup::"
+            if [ "$ok" -ne 1 ]; then
+              rc=1
+              echo "::error::test ${crate} :: ${label} FAILED - see flat detail below / uploaded artifacts"
+              echo "===================== FAILED: ${crate} :: ${label} ====================="
+              grep -nE "panicked at|^test .* \.\.\. FAILED|^error(\[|:)|^failures:|assertion .*failed|left ==|right ==|diverged|Undefined symbols|linker command failed" \
+                "$log" | head -n 80 || true
+              echo "============ end ${crate} :: ${label} (full log above is collapsed) ============"
+            fi
           }
           for crate in gossamer-cli gossamer-codegen-cranelift; do
             run_target "$crate" lib --lib
@@ -267,17 +161,32 @@ jobs:
             done
           done
           exit "$rc"
-      # The rest of the workspace: parallel + captured (compact). These
-      # crates don't fork native toolchains, so a captured parallel run is
-      # both faster and prints a tidy `failures:` block. Split into named
-      # area groups so a failure on one platform lands in its own labelled,
-      # collapsible log section instead of being buried in one giant block
-      # after any platform-specific error. Each group is `if: !cancelled()`
-      # so a failure in an earlier group does not skip the later groups -
-      # every area still reports for the platform, and the job goes red if
-      # any group fails. The native crates ran in the step above; the
-      # final group is `--workspace --exclude` of everything already run,
-      # so a newly added crate is always covered somewhere.
+      - name: Upload native build artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-build-artifacts-${{ matrix.os }}
+          path: ${{ github.workspace }}/native-build-artifacts
+          retention-days: 7
+          if-no-files-found: ignore
+
+  test-workspace:
+    name: Test workspace (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    # Fast, parallel-safe crate tests. Split into its own job so it runs
+    # concurrently with `test-native` (which is serial and slow) instead of
+    # queueing behind it - frontend/IR/runtime/stdlib feedback no longer
+    # waits on the native build/run suite.
+    strategy:
+      fail-fast: false
+      matrix:
+        # Always use *-latest runners (pinned majors get retired by GitHub).
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/rust-test-setup
+        with:
+          cache-prefix: v2-test-workspace-stdio
       - name: Test - frontend (lex/parse/resolve/hir/types)
         if: ${{ !cancelled() }}
         shell: bash
@@ -326,14 +235,6 @@ jobs:
             --exclude gossamer-runtime --exclude gossamer-interp \
             --exclude gossamer-sched --exclude gossamer-coro \
             -- --nocapture
-      - name: Upload native build artifacts
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: native-build-artifacts-${{ matrix.os }}
-          path: ${{ github.workspace }}/native-build-artifacts
-          retention-days: 7
-          if-no-files-found: ignore
       - name: Build release
         shell: bash
         run: |
