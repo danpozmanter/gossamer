@@ -717,7 +717,7 @@ mod tests {
         let cert_path = tempdir.join("cert.pem");
         let key_path = tempdir.join("key.pem");
         std::fs::write(&cert_path, cert.cert.pem()).expect("write cert");
-        std::fs::write(&key_path, cert.key_pair.serialize_pem()).expect("write key");
+        std::fs::write(&key_path, cert.signing_key.serialize_pem()).expect("write key");
         (cert_path, key_path)
     }
 

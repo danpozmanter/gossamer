@@ -14,12 +14,12 @@ workspace = true
 [dependencies]
 anyhow = { workspace = true }
 gossamer-abi = { workspace = true }
-cranelift-codegen = "0.123"
-cranelift-frontend = "0.123"
-cranelift-jit = "0.123"
-cranelift-module = "0.123"
-cranelift-object = "0.123"
-cranelift-native = "0.123"
+cranelift-codegen = "0.132"
+cranelift-frontend = "0.132"
+cranelift-jit = "0.132"
+cranelift-module = "0.132"
+cranelift-object = "0.132"
+cranelift-native = "0.132"
 gossamer-hir = { workspace = true }
 gossamer-mir = { workspace = true }
 gossamer-runtime = { workspace = true }
@@ -29,7 +29,7 @@ parking_lot = { workspace = true }
 rayon = { workspace = true }
 
 [dev-dependencies]
-object = { version = "0.37", default-features = false, features = ["read"] }
+object = { version = "0.39", default-features = false, features = ["read"] }
 target-lexicon = "0.13"
 gossamer-ast = { workspace = true }
 gossamer-hir = { workspace = true }

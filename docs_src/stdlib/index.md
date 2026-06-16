@@ -47,7 +47,7 @@ One page per module. Source is `crates/gossamer-std/src/`; this index is regener
 | [`std::encoding::pem`](encoding_pem.md) | PEM block encoder and decoder. |
 | [`std::encoding::toml`](encoding_toml.md) | TOML 1.0 parsing + emission. Pair with `<Type>::from_toml` for typed decoding (struct auto-derive). |
 | [`std::encoding::xml`](encoding_xml.md) | Streaming XML decoder + builder (quick-xml). |
-| [`std::encoding::yaml`](encoding_yaml.md) | YAML 1.2 parser/emitter (serde_yaml-backed). |
+| [`std::encoding::yaml`](encoding_yaml.md) | YAML 1.2 parser/emitter (serde_norway-backed). |
 | [`std::env`](env.md) | Process environment, command-line arguments, working directory. |
 | [`std::errors`](errors.md) | Error construction, wrapping, and chain traversal. |
 | [`std::flag`](flag.md) | Batteries-included CLI argument parsing. |

@@ -34,7 +34,7 @@ exclude = [
 ]
 
 [workspace.package]
-version = "0.14.0"
+version = "0.14.1"
 edition = "2024"
 rust-version = "1.95"
 license = "Apache-2.0"
@@ -92,39 +92,35 @@ format_push_string = "allow"
 collapsible_if = "allow"
 
 [workspace.dependencies]
-gossamer-abi = { path = "crates/gossamer-abi", version = "0.14.0" }
-gossamer-ast = { path = "crates/gossamer-ast", version = "0.14.0" }
-gossamer-binding = { path = "crates/gossamer-binding", version = "0.14.0" }
-gossamer-binding-macros = { path = "crates/gossamer-binding-macros", version = "0.14.0" }
-gossamer-codegen-cranelift = { path = "crates/gossamer-codegen-cranelift", version = "0.14.0" }
-gossamer-codegen-llvm = { path = "crates/gossamer-codegen-llvm", version = "0.14.0" }
-gossamer-coro = { path = "crates/gossamer-coro", version = "0.14.0" }
-gossamer-diagnostics = { path = "crates/gossamer-diagnostics", version = "0.14.0" }
-gossamer-driver = { path = "crates/gossamer-driver", version = "0.14.0" }
-gossamer-hir = { path = "crates/gossamer-hir", version = "0.14.0" }
-gossamer-interp = { path = "crates/gossamer-interp", version = "0.14.0" }
-gossamer-lex = { path = "crates/gossamer-lex", version = "0.14.0" }
-gossamer-lint = { path = "crates/gossamer-lint", version = "0.14.0" }
-gossamer-lsp = { path = "crates/gossamer-lsp", version = "0.14.0" }
-gossamer-mir = { path = "crates/gossamer-mir", version = "0.14.0" }
-gossamer-parse = { path = "crates/gossamer-parse", version = "0.14.0" }
-gossamer-pkg = { path = "crates/gossamer-pkg", version = "0.14.0" }
-gossamer-resolve = { path = "crates/gossamer-resolve", version = "0.14.0" }
-gossamer-runner-template = { path = "crates/gossamer-runner-template", version = "0.14.0" }
-gossamer-runtime = { path = "crates/gossamer-runtime", version = "0.14.0" }
-gossamer-sched = { path = "crates/gossamer-sched", version = "0.14.0" }
-gossamer-std = { path = "crates/gossamer-std", version = "0.14.0" }
-gossamer-template = { path = "crates/gossamer-template", version = "0.14.0" }
-gossamer-types = { path = "crates/gossamer-types", version = "0.14.0" }
+gossamer-abi = { path = "crates/gossamer-abi", version = "0.14.1" }
+gossamer-ast = { path = "crates/gossamer-ast", version = "0.14.1" }
+gossamer-binding = { path = "crates/gossamer-binding", version = "0.14.1" }
+gossamer-binding-macros = { path = "crates/gossamer-binding-macros", version = "0.14.1" }
+gossamer-codegen-cranelift = { path = "crates/gossamer-codegen-cranelift", version = "0.14.1" }
+gossamer-codegen-llvm = { path = "crates/gossamer-codegen-llvm", version = "0.14.1" }
+gossamer-coro = { path = "crates/gossamer-coro", version = "0.14.1" }
+gossamer-diagnostics = { path = "crates/gossamer-diagnostics", version = "0.14.1" }
+gossamer-driver = { path = "crates/gossamer-driver", version = "0.14.1" }
+gossamer-hir = { path = "crates/gossamer-hir", version = "0.14.1" }
+gossamer-interp = { path = "crates/gossamer-interp", version = "0.14.1" }
+gossamer-lex = { path = "crates/gossamer-lex", version = "0.14.1" }
+gossamer-lint = { path = "crates/gossamer-lint", version = "0.14.1" }
+gossamer-lsp = { path = "crates/gossamer-lsp", version = "0.14.1" }
+gossamer-mir = { path = "crates/gossamer-mir", version = "0.14.1" }
+gossamer-parse = { path = "crates/gossamer-parse", version = "0.14.1" }
+gossamer-pkg = { path = "crates/gossamer-pkg", version = "0.14.1" }
+gossamer-resolve = { path = "crates/gossamer-resolve", version = "0.14.1" }
+gossamer-runner-template = { path = "crates/gossamer-runner-template", version = "0.14.1" }
+gossamer-runtime = { path = "crates/gossamer-runtime", version = "0.14.1" }
+gossamer-sched = { path = "crates/gossamer-sched", version = "0.14.1" }
+gossamer-std = { path = "crates/gossamer-std", version = "0.14.1" }
+gossamer-template = { path = "crates/gossamer-template", version = "0.14.1" }
+gossamer-types = { path = "crates/gossamer-types", version = "0.14.1" }
 
 anyhow = "1"
-bincode = { version = "1", default-features = false }
 clap = { version = "4", features = ["derive"] }
-codespan-reporting = "0.12"
 crossbeam-channel = "0.5"
 crossbeam-deque = "0.8"
-crossbeam-utils = "0.8"
-gimli = { version = "0.31", default-features = false, features = ["read", "write", "std"] }
 insta = { version = "1", features = ["yaml"] }
 linkme = "0.3"
 mio = { version = "1", features = ["os-poll", "net"] }
@@ -135,7 +131,7 @@ serde_json = "1"
 sha2 = "0.10"
 signal-hook = { version = "0.3", default-features = false, features = ["iterator"] }
 thiserror = "2"
-toml = "0.8"
+toml = "0.9"
 unicode-ident = "1"
 unicode-normalization = "0.1"
 unicode-properties = { version = "0.1", default-features = false, features = ["general-category"] }

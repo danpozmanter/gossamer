@@ -454,51 +454,46 @@ pub fn mmap_read(path: &str) -> io::Result<Mmap> {
 /// only cooperating processes that also call the lock helpers
 /// see them.
 pub fn lock_exclusive(file: &File) -> io::Result<()> {
-    fs2::FileExt::lock_exclusive(file)
+    fs4::FileExt::lock(file)
 }
 
 /// Acquires a shared (reader) advisory lock on `file`. Multiple
 /// shared locks may coexist; an exclusive lock blocks them.
 pub fn lock_shared(file: &File) -> io::Result<()> {
-    fs2::FileExt::lock_shared(file)
+    fs4::FileExt::lock_shared(file)
 }
 
 /// Non-blocking variant of [`lock_exclusive`]. Returns
 /// `ErrorKind::WouldBlock` immediately when a conflicting lock
 /// is held.
 pub fn try_lock_exclusive(file: &File) -> io::Result<()> {
-    fs2::FileExt::try_lock_exclusive(file).map_err(normalize_try_lock_err)
+    fs4::FileExt::try_lock(file).map_err(try_lock_err_to_io)
 }
 
 /// Non-blocking variant of [`lock_shared`]. Returns
 /// `ErrorKind::WouldBlock` immediately when a conflicting lock
 /// is held.
 pub fn try_lock_shared(file: &File) -> io::Result<()> {
-    fs2::FileExt::try_lock_shared(file).map_err(normalize_try_lock_err)
+    fs4::FileExt::try_lock_shared(file).map_err(try_lock_err_to_io)
 }
 
-/// Normalizes platform-specific lock-contention errors so the
-/// documented `try_lock_*` contract holds on every platform.
-///
-/// POSIX `flock` returns `EAGAIN`/`EWOULDBLOCK` (Rust maps both
-/// to `ErrorKind::WouldBlock`). Windows `LockFileEx` with
-/// `LOCKFILE_FAIL_IMMEDIATELY` returns `ERROR_LOCK_VIOLATION` (33),
-/// which Rust's `decode_error_kind` table does not list - it
-/// surfaces as the private `ErrorKind::Uncategorized`, breaking
-/// callers that match on `WouldBlock`. Re-stamp the kind here so
-/// the contract is the same shape everywhere.
-fn normalize_try_lock_err(e: io::Error) -> io::Error {
-    #[cfg(windows)]
-    if e.raw_os_error() == Some(33) {
-        return io::Error::new(io::ErrorKind::WouldBlock, e);
+/// Maps `fs4`'s `TryLockError` onto the `io::Result` contract the
+/// `try_lock_*` helpers expose. `WouldBlock` is surfaced as
+/// `ErrorKind::WouldBlock` on every platform - `fs4` already
+/// normalizes the Windows `ERROR_LOCK_VIOLATION` contention case
+/// into this variant, so callers matching on `WouldBlock` get the
+/// same shape everywhere.
+fn try_lock_err_to_io(e: fs4::TryLockError) -> io::Error {
+    match e {
+        fs4::TryLockError::WouldBlock => io::ErrorKind::WouldBlock.into(),
+        fs4::TryLockError::Error(err) => err,
     }
-    e
 }
 
 /// Releases any advisory lock previously taken on `file`. Idempotent
 /// - releasing an already-unlocked handle is not an error on POSIX.
 pub fn unlock(file: &File) -> io::Result<()> {
-    fs2::FileExt::unlock(file)
+    fs4::FileExt::unlock(file)
 }
 
 /// RAII wrapper around a freshly-created temporary directory. The

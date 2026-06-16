@@ -1,6 +1,6 @@
 //! YAML 1.2 parser and emitter, exposed at `std::encoding::yaml`.
 //!
-//! Backed by `serde_yaml` for the heavy lifting; the wrapper preserves
+//! Backed by `serde_norway` for the heavy lifting; the wrapper preserves
 //! the same dynamic-`Value` shape the rest of the stdlib uses for
 //! JSON, so callers can `match` on tag and traverse maps and arrays
 //! the same way regardless of source format. Multi-document streams
@@ -41,19 +41,19 @@ pub fn max_size() -> usize {
     MAX_SIZE.load(Ordering::Relaxed)
 }
 
-fn check_depth(value: &serde_yaml::Value, depth: usize, cap: usize) -> Result<(), Error> {
+fn check_depth(value: &serde_norway::Value, depth: usize, cap: usize) -> Result<(), Error> {
     if depth > cap {
         return Err(Error {
             message: format!("nesting depth exceeds max_depth ({cap})"),
         });
     }
     match value {
-        serde_yaml::Value::Sequence(seq) => {
+        serde_norway::Value::Sequence(seq) => {
             for v in seq {
                 check_depth(v, depth + 1, cap)?;
             }
         }
-        serde_yaml::Value::Mapping(map) => {
+        serde_norway::Value::Mapping(map) => {
             for (_, v) in map {
                 check_depth(v, depth + 1, cap)?;
             }
@@ -169,7 +169,7 @@ pub struct Error {
 }
 
 impl Error {
-    fn from_serde(err: serde_yaml::Error) -> Self {
+    fn from_serde(err: serde_norway::Error) -> Self {
         Self {
             message: err.to_string(),
         }
@@ -184,7 +184,7 @@ pub fn parse(source: &str) -> Result<Value, Error> {
             message: format!("input exceeds max_size ({} > {size_cap})", source.len()),
         });
     }
-    let raw: serde_yaml::Value = serde_yaml::from_str(source).map_err(Error::from_serde)?;
+    let raw: serde_norway::Value = serde_norway::from_str(source).map_err(Error::from_serde)?;
     check_depth(&raw, 0, max_depth())?;
     Ok(from_serde(raw))
 }
@@ -199,8 +199,8 @@ pub fn parse_all(source: &str) -> Result<Vec<Value>, Error> {
     }
     let depth_cap = max_depth();
     let mut out = Vec::new();
-    for doc in serde_yaml::Deserializer::from_str(source) {
-        let value = serde_yaml::Value::deserialize(doc).map_err(Error::from_serde)?;
+    for doc in serde_norway::Deserializer::from_str(source) {
+        let value = serde_norway::Value::deserialize(doc).map_err(Error::from_serde)?;
         check_depth(&value, 0, depth_cap)?;
         out.push(from_serde(value));
     }
@@ -210,7 +210,7 @@ pub fn parse_all(source: &str) -> Result<Vec<Value>, Error> {
 /// Encodes a [`Value`] as a YAML document (no leading `---`).
 pub fn encode(value: &Value) -> Result<String, Error> {
     let serde_value = to_serde(value);
-    serde_yaml::to_string(&serde_value).map_err(Error::from_serde)
+    serde_norway::to_string(&serde_value).map_err(Error::from_serde)
 }
 
 /// Encodes a slice of values as a multi-document YAML stream.
@@ -225,11 +225,11 @@ pub fn encode_all(values: &[Value]) -> Result<String, Error> {
     Ok(out)
 }
 
-fn from_serde(value: serde_yaml::Value) -> Value {
+fn from_serde(value: serde_norway::Value) -> Value {
     match value {
-        serde_yaml::Value::Null => Value::Null,
-        serde_yaml::Value::Bool(b) => Value::Bool(b),
-        serde_yaml::Value::Number(n) => {
+        serde_norway::Value::Null => Value::Null,
+        serde_norway::Value::Bool(b) => Value::Bool(b),
+        serde_norway::Value::Number(n) => {
             if let Some(i) = n.as_i64() {
                 Value::Int(i)
             } else if let Some(u) = n.as_u64() {
@@ -244,18 +244,18 @@ fn from_serde(value: serde_yaml::Value) -> Value {
                 Value::Null
             }
         }
-        serde_yaml::Value::String(s) => Value::String(s),
-        serde_yaml::Value::Sequence(items) => {
+        serde_norway::Value::String(s) => Value::String(s),
+        serde_norway::Value::Sequence(items) => {
             Value::Seq(items.into_iter().map(from_serde).collect())
         }
-        serde_yaml::Value::Mapping(map) => {
+        serde_norway::Value::Mapping(map) => {
             let entries = map
                 .into_iter()
                 .map(|(k, v)| (from_serde(k), from_serde(v)))
                 .collect();
             Value::Map(entries)
         }
-        serde_yaml::Value::Tagged(boxed) => {
+        serde_norway::Value::Tagged(boxed) => {
             // Drop tag, preserve the inner value. Track B doesn't
             // expose explicit tag handling yet - most user code uses
             // YAML as a JSON-shaped data format.
@@ -264,20 +264,20 @@ fn from_serde(value: serde_yaml::Value) -> Value {
     }
 }
 
-fn to_serde(value: &Value) -> serde_yaml::Value {
+fn to_serde(value: &Value) -> serde_norway::Value {
     match value {
-        Value::Null => serde_yaml::Value::Null,
-        Value::Bool(b) => serde_yaml::Value::Bool(*b),
-        Value::Int(n) => serde_yaml::Value::Number((*n).into()),
-        Value::Float(n) => serde_yaml::Value::Number(serde_yaml::Number::from(*n)),
-        Value::String(s) => serde_yaml::Value::String(s.clone()),
-        Value::Seq(items) => serde_yaml::Value::Sequence(items.iter().map(to_serde).collect()),
+        Value::Null => serde_norway::Value::Null,
+        Value::Bool(b) => serde_norway::Value::Bool(*b),
+        Value::Int(n) => serde_norway::Value::Number((*n).into()),
+        Value::Float(n) => serde_norway::Value::Number(serde_norway::Number::from(*n)),
+        Value::String(s) => serde_norway::Value::String(s.clone()),
+        Value::Seq(items) => serde_norway::Value::Sequence(items.iter().map(to_serde).collect()),
         Value::Map(entries) => {
-            let mut map = serde_yaml::Mapping::with_capacity(entries.len());
+            let mut map = serde_norway::Mapping::with_capacity(entries.len());
             for (k, v) in entries {
                 map.insert(to_serde(k), to_serde(v));
             }
-            serde_yaml::Value::Mapping(map)
+            serde_norway::Value::Mapping(map)
         }
     }
 }

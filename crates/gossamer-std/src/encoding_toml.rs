@@ -30,10 +30,10 @@ pub fn from_json(json_text: &str) -> Result<String, String> {
     toml::to_string_pretty(&toml_value).map_err(|e| e.to_string())
 }
 
-/// `true` iff `text` parses as TOML.
+/// `true` iff `text` parses as a TOML document.
 #[must_use]
 pub fn is_valid(text: &str) -> bool {
-    text.parse::<toml::Value>().is_ok()
+    toml::from_str::<toml::Value>(text).is_ok()
 }
 
 /// Round-trips `text` through the parser + pretty-printer.

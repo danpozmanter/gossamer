@@ -153,7 +153,7 @@ pub unsafe extern "C" fn gos_rt_crypto_argon2id_hash(password: *const GosVec) ->
         use argon2::{Algorithm, Argon2, Params, Version};
         let pw = unsafe { gosvec_u8(password) };
         let mut salt_bytes = [0u8; 16];
-        if getrandom::getrandom(&mut salt_bytes).is_err() {
+        if getrandom::fill(&mut salt_bytes).is_err() {
             return kdf_err("argon2: rng failure");
         }
         let salt = match SaltString::encode_b64(&salt_bytes) {

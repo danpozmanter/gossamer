@@ -317,7 +317,7 @@ pub unsafe extern "C" fn gos_rt_http_csrf_issue_token(key: *const GosVec) -> i12
     ffi_entry!(0i128, {
         let key = unsafe { gosvec_u8(key) };
         let mut nonce = [0u8; 32];
-        if getrandom::getrandom(&mut nonce).is_err() {
+        if getrandom::fill(&mut nonce).is_err() {
             return sec_err("csrf: rng failure");
         }
         let mac = hmac_sha256(&key, &nonce);

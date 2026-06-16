@@ -57,9 +57,9 @@ zstd = "0.13"
 
 # File-system watching (`std::fs::watch`), memory mapping
 # (`std::fs::mmap`), and advisory file locks (`std::fs::lock`).
-notify = "6"
+notify = "8"
 memmap2 = "0.9"
-fs2 = "0.4"
+fs4 = { version = "1.1", features = ["sync"] }
 
 # RSA verify / sign for `std::jwt` (RS256 / RS384 / RS512). `ring`
 # is the audited constant-time choice; the `rsa` crate is excluded
@@ -74,9 +74,6 @@ h2 = "0.4"
 http = "1"
 bytes = "1"
 tokio = { version = "1", default-features = false, features = ["io-util", "rt", "net", "time", "sync", "macros"] }
-futures-core = { version = "0.3", default-features = false }
-futures-task = { version = "0.3", default-features = false, features = ["alloc"] }
-pin-project-lite = "0.2"
 
 # HTTP/3 stack (`std::http_h3` - quinn + h3 + h3-quinn).
 quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
@@ -87,7 +84,7 @@ h3-quinn = "0.0.10"
 # the `rsa 0.9.x` crate is the only pure-Rust option and carries
 # RUSTSEC-2023-0071 (Marvin Attack timing sidechannel, no upstream
 # fix). Re-enable once a constant-time replacement lands.
-getrandom = "0.2"
+getrandom = "0.3"
 aes = "0.8"
 aes-gcm = "0.10"
 cbc = "0.1"
@@ -96,7 +93,7 @@ ctr = "0.9"
 chacha20poly1305 = "0.10"
 p256 = { version = "0.13", default-features = false, features = ["ecdsa", "std", "pem"] }
 ed25519-dalek = { version = "2", default-features = false, features = ["std", "fast", "pkcs8", "pem", "rand_core"] }
-x509-parser = "0.16"
+x509-parser = "0.18"
 pbkdf2 = { version = "0.12", default-features = false, features = ["std", "hmac"] }
 scrypt = { version = "0.11", default-features = false, features = ["std"] }
 argon2 = { version = "0.5", default-features = false, features = ["std", "alloc", "password-hash"] }
@@ -108,11 +105,12 @@ rand_core = "0.6"
 md-5 = { version = "0.10", default-features = false, features = ["std"] }
 sha1 = { version = "0.10", default-features = false, features = ["std"] }
 
-# Encodings (`std::encoding::{xml,yaml}`).
+# Encodings (`std::encoding::{xml,yaml}`). `serde_norway` is the
+# maintained fork of the archived `serde_yaml`, API-compatible.
 serde = { workspace = true }
 serde_json = { workspace = true }
-serde_yaml = "0.9"
-quick-xml = "0.37"
+serde_norway = "0.9"
+quick-xml = "0.40"
 
 # Time-zone surface (`std::time::tz`).
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
@@ -122,7 +120,7 @@ chrono-tz = { version = "0.10", default-features = false }
 ureq = { version = "3", features = ["cookies", "json"] }
 
 # Archive readers/writers (`std::archive::{zip,tar}`).
-zip = { version = "2", default-features = false, features = ["deflate"] }
+zip = { version = "8", default-features = false, features = ["deflate"] }
 tar = "0.4"
 
 # Arbitrary-precision integers (`std::math::big`).
@@ -130,26 +128,19 @@ num-bigint = "0.4"
 num-integer = "0.1"
 num-traits = "0.2"
 
-libloading = "0.8"
-
 # UUID generation (`std::uuid`). v4 (random) + v7 (timestamp-ordered).
 uuid = { version = "1", features = ["v4", "v7"] }
 
 # User-facing TOML (`std::encoding::toml`). Used internally for
 # project.toml by gossamer-pkg; now exposed to user code.
-toml = "0.8"
-
-# CSV codec (`std::encoding::csv`). Already partially present; the
-# `csv` crate gives the canonical row-shape API and now also backs
-# the from_csv / to_csv auto-derive entries.
-csv = "1"
+toml = "0.9"
 
 # Media type parsing (`std::mime`).
 mime = "0.3"
 mime_guess = "2"
 
 # POSIX user / group lookup (`std::os::user`).
-nix = { version = "0.29", default-features = false, features = ["user", "fs", "process", "signal"] }
+nix = { version = "0.31", default-features = false, features = ["user", "fs", "process", "signal"] }
 
 # Unicode property tables (`std::unicode`). Real general-category
 # tests, normalization forms, and grapheme/word/sentence
@@ -162,7 +153,7 @@ unicode-segmentation = { workspace = true }
 [dev-dependencies]
 # Self-signed PEM keypair generation for `http_h3` round-trip
 # tests. Never compiled into the shipped crate.
-rcgen = { version = "0.13", default-features = false, features = ["aws_lc_rs", "pem"] }
+rcgen = { version = "0.14", default-features = false, features = ["aws_lc_rs", "pem"] }
 
 [target.'cfg(unix)'.dependencies]
 # Signal delivery + process-group control for `std::exec`.
@@ -172,7 +163,7 @@ libc = "0.2"
 # Console control handler for `std::signal` (Ctrl+C / Ctrl+Break /
 # close / logoff / shutdown). Mirrors the unix `signal-hook`
 # dispatcher; no equivalent surface ships in std today.
-windows-sys = { version = "0.59", features = [
+windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_System_Console",
     "Win32_Security",

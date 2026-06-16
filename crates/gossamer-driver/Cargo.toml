@@ -32,7 +32,7 @@ gossamer-pkg = { workspace = true }
 gossamer-resolve = { workspace = true }
 gossamer-runner-template = { workspace = true }
 gossamer-types = { workspace = true }
-bincode = { workspace = true }
+postcard = { version = "1", default-features = false, features = ["use-std"] }
 parking_lot = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -45,7 +45,7 @@ which = { workspace = true }
 libc = "0.2"
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.59", features = [
+windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_System_Threading",
 ] }

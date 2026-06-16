@@ -52,7 +52,7 @@ impl RngCore for OsRng {
         u64::from_le_bytes(b)
     }
     fn fill_bytes(&mut self, dest: &mut [u8]) {
-        if getrandom::getrandom(dest).is_err() {
+        if getrandom::fill(dest).is_err() {
             dest.fill(0);
         }
     }
@@ -60,7 +60,7 @@ impl RngCore for OsRng {
         &mut self,
         dest: &mut [u8],
     ) -> Result<(), p256::elliptic_curve::rand_core::Error> {
-        getrandom::getrandom(dest).map_err(|_| {
+        getrandom::fill(dest).map_err(|_| {
             p256::elliptic_curve::rand_core::Error::from(
                 core::num::NonZeroU32::new(1).expect("static"),
             )
@@ -116,7 +116,7 @@ pub unsafe extern "C" fn gos_rt_crypto_ecdsa_keypair_pem() -> i128 {
         // Probe the OS RNG before generating, so an entropy failure is
         // a clean Err rather than an invalid all-zero key.
         let mut probe = [0u8; 1];
-        if getrandom::getrandom(&mut probe).is_err() {
+        if getrandom::fill(&mut probe).is_err() {
             return ecdsa_err("ecdsa: rng failure");
         }
         let signing = SigningKey::random(&mut OsRng);

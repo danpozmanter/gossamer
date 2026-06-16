@@ -238,7 +238,7 @@ pub unsafe extern "C" fn gos_rt_crypto_ed25519_keypair() -> i128 {
     ffi_entry!(0i128, {
         use ed25519_dalek::SigningKey;
         let mut seed = [0u8; 32];
-        if getrandom::getrandom(&mut seed).is_err() {
+        if getrandom::fill(&mut seed).is_err() {
             return aead_err("ed25519: rng failure");
         }
         let signing = SigningKey::from_bytes(&seed);

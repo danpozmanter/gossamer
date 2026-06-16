@@ -54,7 +54,7 @@ pub mod rand {
                 "rand: injected fault (set_fault_for_tests is true)",
             ));
         }
-        getrandom::getrandom(buf).map_err(|e| Error::new(format!("rand: {e}")))
+        getrandom::fill(buf).map_err(|e| Error::new(format!("rand: {e}")))
     }
 
     /// Fills `buf` with cryptographically-secure random bytes or

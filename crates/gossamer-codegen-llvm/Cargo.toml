@@ -17,7 +17,6 @@ gossamer-abi = { workspace = true }
 gossamer-mir = { workspace = true }
 gossamer-resolve = { workspace = true }
 gossamer-types = { workspace = true }
-gossamer-runtime = { workspace = true }
 parking_lot = { workspace = true }
 
 [dev-dependencies]

@@ -105,7 +105,7 @@ pub const ENCODING_HEX: StdModule = StdModule {
 
 pub const ENCODING_YAML: StdModule = StdModule {
     path: "std::encoding::yaml",
-    summary: "YAML 1.2 parser/emitter (serde_yaml-backed).",
+    summary: "YAML 1.2 parser/emitter (serde_norway-backed).",
     items: &[
         StdItem {
             name: "Value",

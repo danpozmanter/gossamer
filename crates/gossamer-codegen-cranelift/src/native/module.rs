@@ -230,6 +230,7 @@ impl Module for OfflineModule {
             name: ir::ExternalName::user(user_name_ref),
             signature,
             colocated: *colocated,
+            patchable: false,
         })
     }
     /// Override the default implementation so we never call `declarations()`.

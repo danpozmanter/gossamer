@@ -832,7 +832,7 @@ mod tests {
         let cert = rcgen::generate_simple_self_signed(vec!["localhost".to_string()])
             .expect("rcgen self-signed");
         let der = cert.cert.der().clone();
-        let key = PrivateKeyDer::Pkcs8(cert.key_pair.serialize_der().into());
+        let key = PrivateKeyDer::Pkcs8(cert.signing_key.serialize_der().into());
         (vec![der], key)
     }
 

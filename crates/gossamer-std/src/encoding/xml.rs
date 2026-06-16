@@ -138,12 +138,22 @@ pub fn parse(src: &str) -> Result<Node, Error> {
     }
     let depth_cap = max_depth();
     let mut reader = Reader::from_str(src);
-    reader.config_mut().trim_text(true);
     let mut stack: Vec<(String, BTreeMap<String, String>, Vec<Node>)> = Vec::new();
     let mut root: Option<Node> = None;
+    // `quick-xml` reports entity references (`&lt;` etc.) as their own
+    // `GeneralRef` events and splits surrounding character data, so text
+    // is reassembled here and entity-resolved as one piece at each
+    // element boundary.
+    let mut text_buf = String::new();
     loop {
-        match reader.read_event() {
-            Ok(Event::Start(e)) => {
+        let event = reader
+            .read_event()
+            .map_err(|e| Error::new(format!("xml: parse: {e}")))?;
+        if !matches!(event, Event::Text(_) | Event::GeneralRef(_)) {
+            flush_text(&mut text_buf, &mut stack)?;
+        }
+        match event {
+            Event::Start(e) => {
                 if stack.len() >= depth_cap {
                     return Err(Error::new(format!(
                         "xml nesting depth exceeds max_depth ({depth_cap})"
@@ -158,7 +168,7 @@ pub fn parse(src: &str) -> Result<Node, Error> {
                 }
                 stack.push((name, attrs, Vec::new()));
             }
-            Ok(Event::Empty(e)) => {
+            Event::Empty(e) => {
                 let name = String::from_utf8_lossy(e.local_name().as_ref()).into_owned();
                 let mut attrs = BTreeMap::new();
                 for attr in e.attributes().flatten() {
@@ -177,7 +187,7 @@ pub fn parse(src: &str) -> Result<Node, Error> {
                     root = Some(node);
                 }
             }
-            Ok(Event::End(_)) => {
+            Event::End(_) => {
                 if let Some((name, attrs, children)) = stack.pop() {
                     let node = Node::Element {
                         name,
@@ -191,28 +201,54 @@ pub fn parse(src: &str) -> Result<Node, Error> {
                     }
                 }
             }
-            Ok(Event::Text(e)) => {
-                let text = e
-                    .unescape()
+            Event::Text(e) => {
+                let decoded = e
+                    .decode()
                     .map_err(|err| Error::new(format!("xml: {err}")))?;
-                if !text.trim().is_empty() {
-                    if let Some(parent) = stack.last_mut() {
-                        parent.2.push(Node::Text(text.into_owned()));
-                    }
-                }
+                text_buf.push_str(&decoded);
             }
-            Ok(Event::CData(e)) => {
+            Event::GeneralRef(e) => {
+                let name = e
+                    .decode()
+                    .map_err(|err| Error::new(format!("xml: {err}")))?;
+                text_buf.push('&');
+                text_buf.push_str(&name);
+                text_buf.push(';');
+            }
+            Event::CData(e) => {
                 let text = String::from_utf8_lossy(e.as_ref()).into_owned();
                 if let Some(parent) = stack.last_mut() {
                     parent.2.push(Node::Text(text));
                 }
             }
-            Ok(Event::Eof) => break,
-            Ok(_) => {}
-            Err(e) => return Err(Error::new(format!("xml: parse: {e}"))),
+            Event::Eof => break,
+            _ => {}
         }
     }
     root.ok_or_else(|| Error::new("xml: empty document"))
+}
+
+/// Resolves the accumulated character data (entity references
+/// reconstructed as `&name;`), trims surrounding whitespace, and
+/// appends it as a text child of the current element. Whitespace-only
+/// runs collapse to nothing, matching the old `trim_text` behaviour.
+fn flush_text(
+    buf: &mut String,
+    stack: &mut [(String, BTreeMap<String, String>, Vec<Node>)],
+) -> Result<(), Error> {
+    if buf.is_empty() {
+        return Ok(());
+    }
+    let resolved =
+        quick_xml::escape::unescape(buf).map_err(|err| Error::new(format!("xml: {err}")))?;
+    let trimmed = resolved.trim().to_owned();
+    buf.clear();
+    if !trimmed.is_empty() {
+        if let Some(parent) = stack.last_mut() {
+            parent.2.push(Node::Text(trimmed));
+        }
+    }
+    Ok(())
 }
 
 /// Serialises a [`Node`] tree to an XML string. Does not emit an XML declaration.

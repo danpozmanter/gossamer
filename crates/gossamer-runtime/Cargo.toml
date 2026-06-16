@@ -81,7 +81,6 @@ rustc-hash = "2"
 signal-hook = { workspace = true }
 libloading = "0.8"
 crossbeam-deque = { workspace = true }
-crossbeam-utils = { workspace = true }
 mio = { workspace = true }
 gossamer-coro = { workspace = true }
 gossamer-pkg = { workspace = true }
@@ -102,15 +101,12 @@ h2 = "0.4"
 http = "1"
 bytes = "1"
 tokio = { version = "1", default-features = false, features = ["io-util"] }
-futures-core = { version = "0.3", default-features = false }
-futures-task = { version = "0.3", default-features = false, features = ["alloc"] }
-pin-project-lite = "0.2"
 
 # UUID generation (`std::uuid` compiled-tier helpers).
 uuid = { version = "1", features = ["v4", "v7"] }
 
 # OS RNG for `gos_rt_crypto_rand_bytes`.
-getrandom = "0.2"
+getrandom = "0.3"
 
 # Unicode tables (`std::unicode` compiled-tier helpers). Same
 # crates as gossamer-std so the property data is single-sourced
@@ -120,20 +116,17 @@ unicode-normalization = { workspace = true }
 unicode-segmentation = { workspace = true }
 
 # User-facing TOML (`std::encoding::toml` compiled-tier helpers).
-toml = "0.8"
+toml = "0.9"
 
 # Media type parsing (`std::mime` compiled-tier helpers).
 mime = "0.3"
 mime_guess = "2"
 
-# CSV codec (`std::encoding::csv` compiled-tier helpers).
-csv = "1"
-
 # YAML codec - already used by gossamer-std; needed in runtime for
-# auto-derive helpers.
-serde_yaml = "0.9"
-serde = { workspace = true }
-quick-xml = "0.37"
+# auto-derive helpers. `serde_norway` is the maintained fork of the
+# archived `serde_yaml`, API-compatible.
+serde_norway = "0.9"
+quick-xml = "0.40"
 
 # Crypto digest helpers consumed by `c_abi::crypto` so the
 # compiled tier can call `std::crypto::sha256` / `sha512` /
@@ -142,20 +135,20 @@ sha2 = { version = "0.10", default-features = false, features = ["std"] }
 blake3 = { version = "1", default-features = false, features = ["std"] }
 # Same versions as gossamer-std so the compiled-tier x509 / tar / zip
 # leaf intrinsics produce byte-identical results to the VM tier.
-x509-parser = "0.16"
+x509-parser = "0.18"
 tar = "0.4"
-zip = { version = "2", default-features = false, features = ["deflate"] }
+zip = { version = "8", default-features = false, features = ["deflate"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 # POSIX user / group lookup for `std::os::user` compiled-tier helpers.
-nix = { version = "0.29", default-features = false, features = ["user"] }
+nix = { version = "0.31", default-features = false, features = ["user"] }
 
 # Audit M21: Windows preemption uses QueueUserAPC. `windows-sys`
 # is the lighter-weight binding (compared to `winapi`) and is
 # already a transitive dependency via `mio` / `socket2`.
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.59", features = [
+windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_Storage_FileSystem",
     "Win32_System_Console",

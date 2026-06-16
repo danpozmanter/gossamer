@@ -166,7 +166,7 @@ pub unsafe extern "C" fn gos_rt_crypto_rand_bytes(n: i64) -> *mut GosVec {
     let vref = unsafe { &mut *v };
     if !vref.ptr.is_null() {
         let slice = unsafe { std::slice::from_raw_parts_mut(vref.ptr.as_ptr(), len as usize) };
-        if getrandom::getrandom(slice).is_err() {
+        if getrandom::fill(slice).is_err() {
             slice.fill(0);
         }
     }
@@ -198,7 +198,7 @@ pub unsafe extern "C" fn gos_rt_crypto_password_hash(plaintext: *const c_char) -
             unsafe { CStr::from_ptr(plaintext).to_bytes().to_vec() }
         };
         let mut salt_bytes = [0u8; 16];
-        if getrandom::getrandom(&mut salt_bytes).is_err() {
+        if getrandom::fill(&mut salt_bytes).is_err() {
             return password_err("crypto::password: rng failure");
         }
         let salt = match SaltString::encode_b64(&salt_bytes) {

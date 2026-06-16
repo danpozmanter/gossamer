@@ -2,7 +2,7 @@
 
 Status: shipped
 
-YAML 1.2 parser/emitter (serde_yaml-backed).
+YAML 1.2 parser/emitter (serde_norway-backed).
 
 ## Public items
 

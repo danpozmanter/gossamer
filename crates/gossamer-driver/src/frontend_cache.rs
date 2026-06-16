@@ -112,7 +112,7 @@ pub fn observe_hit_in(root: &Path, key: &FrontendCacheKey) -> bool {
     marker_path(root, key).is_file()
 }
 
-/// Serializes `value` as a bincode blob keyed by `key`. Errors
+/// Serializes `value` as a postcard blob keyed by `key`. Errors
 /// silently - cache writes are advisory.
 pub fn store_blob<T: serde::Serialize>(key: &FrontendCacheKey, value: &T) {
     store_blob_in(&cache_dir(), key, value);
@@ -122,7 +122,7 @@ pub fn store_blob<T: serde::Serialize>(key: &FrontendCacheKey, value: &T) {
 /// shared cache directory.
 pub fn store_blob_in<T: serde::Serialize>(root: &Path, key: &FrontendCacheKey, value: &T) {
     let _ = fs::create_dir_all(root);
-    let Ok(encoded) = bincode::serialize(value) else {
+    let Ok(encoded) = postcard::to_allocvec(value) else {
         return;
     };
     let _ = fs::write(blob_path(root, key), encoded);
@@ -143,12 +143,12 @@ pub fn load_blob_in<T: serde::de::DeserializeOwned>(
     key: &FrontendCacheKey,
 ) -> Option<T> {
     let bytes = fs::read(blob_path(root, key)).ok()?;
-    bincode::deserialize(&bytes).ok()
+    postcard::from_bytes(&bytes).ok()
 }
 
 /// Writes `bytes` directly to the cache file for `key` without any
 /// envelope encoding. Use this for raw binary blobs (object files,
-/// large buffers) where bincode's `Vec<u8>` round-trip would force
+/// large buffers) where a serde `Vec<u8>` round-trip would force
 /// an extra full-buffer clone on every cache miss.
 pub fn store_raw(key: &FrontendCacheKey, bytes: &[u8]) {
     store_raw_in(&cache_dir(), key, bytes);

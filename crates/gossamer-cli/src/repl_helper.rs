@@ -12,7 +12,7 @@ use std::borrow::Cow;
 use gossamer_lex::{Punct, SourceMap, TokenKind, tokenize};
 use rustyline::Helper;
 use rustyline::completion::Completer;
-use rustyline::highlight::Highlighter;
+use rustyline::highlight::{CmdKind, Highlighter};
 use rustyline::hint::Hinter;
 use rustyline::validate::{ValidationContext, ValidationResult, Validator};
 
@@ -170,7 +170,7 @@ impl Highlighter for GosReplHelper {
         Cow::Owned(out)
     }
 
-    fn highlight_char(&self, _line: &str, _pos: usize, _forced: bool) -> bool {
+    fn highlight_char(&self, _line: &str, _pos: usize, _kind: CmdKind) -> bool {
         true
     }
 }

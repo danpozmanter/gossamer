@@ -137,7 +137,7 @@ pub unsafe extern "C" fn gos_rt_toml_is_valid(s: *const c_char) -> i64 {
         } else {
             unsafe { CStr::from_ptr(s).to_str().unwrap_or("") }
         };
-        i64::from(text.parse::<toml::Value>().is_ok())
+        i64::from(toml::from_str::<toml::Value>(text).is_ok())
     })
 }
 
