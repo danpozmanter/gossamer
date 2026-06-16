@@ -463,6 +463,10 @@ pub(super) fn generic_rt_static_name(name: &str) -> Option<&'static str> {
         "gos_rt_http_response_content_type" => Some("gos_rt_http_response_content_type"),
         "gos_rt_http_response_location" => Some("gos_rt_http_response_location"),
         "gos_rt_vec_get_i64" => Some("gos_rt_vec_get_i64"),
+        // The JIT is not the perf target: resolve the bounds-free counted-loop
+        // reader to the checked symbol so it keeps the lenient null/OOB -> 0
+        // behavior, bit-identical to the VM and the checked path.
+        "gos_rt_vec_get_i64_unchecked" => Some("gos_rt_vec_get_i64"),
         "gos_rt_vec_set_i64" => Some("gos_rt_vec_set_i64"),
         "gos_rt_vec_format_i64" => Some("gos_rt_vec_format_i64"),
         "gos_rt_chan_recv_option" => Some("gos_rt_chan_recv_option"),

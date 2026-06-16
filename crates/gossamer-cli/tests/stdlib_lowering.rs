@@ -195,7 +195,7 @@ fn crypto_hmac_sha256_mac_lowers() {
         r#"
 use std::crypto::hmac
 fn main() {
-    let mac = hmac::sha256_mac(&"key".to_string(), &"msg".to_string())
+    let mac = hmac::sha256_mac("key".to_string().as_bytes(), "msg".to_string().as_bytes())
     println!("len={}", mac.len() > 0)
 }
 "#,

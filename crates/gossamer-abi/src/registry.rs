@@ -1196,6 +1196,7 @@ pub const REGISTRY: &[RuntimeEntry] = &[
     rt!("gos_rt_vec_from_arr", (I32, Ptr, I64) -> Ptr, Cranelift, "Construct a GosVec from a raw element array with type tag and length."),
     rt!("gos_rt_vec_get_i128", (Ptr, I64) -> I128, Cranelift, "Read the 16-byte i128 (by-value Result/Option) at index `i` from a GosVec."),
     rt!("gos_rt_vec_get_i64", (Ptr, I64) -> I64, Cranelift, "Read the i64 at index `i` from a GosVec."),
+    rt!("gos_rt_vec_get_i64_unchecked", (Ptr, I64) -> I64, Cranelift, "Read the i64 at index `i` from a GosVec without null/bounds guards; emitted only by the counted-loop element read where `i` is proven in `[0, len)`."),
     rt!("gos_rt_vec_get_ptr", (Ptr, I64) -> Ptr, Cranelift, "Read the pointer at index `i` from a GosVec."),
     rt!("gos_rt_vec_index_of_i64", (Ptr, I64) -> I128, Cranelift, "Return Option<i64> of the position of a Vec<i64> element."),
     rt!("gos_rt_vec_index_of_str", (Ptr, Ptr) -> I128, Cranelift, "Return Option<i64> of the position of a Vec<String> element."),

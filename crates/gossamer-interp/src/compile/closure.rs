@@ -83,11 +83,16 @@ impl<'tcx> FnBuilder<'tcx> {
             self.tcx,
             self.layouts,
             self.wrappers,
+            self.inline_fns,
             self.module_consts,
             self.method_muts,
             self.mut_statics,
             self.cov,
         );
+        // The closure body is a distinct function frame; carry the active
+        // inline stack into it so a callee mid-inline in the enclosing
+        // function is never re-inlined across the closure boundary.
+        b.inlining.clone_from(&self.inlining);
         // Captured upvalues occupy the leading registers, bound by name so
         // body references resolve to them.
         for cname in capture_names {

@@ -507,10 +507,32 @@ impl<'a> Builder<'a> {
                 // slot directly, halving the per-element runtime calls vs
                 // `gos_rt_vec_get_ptr` + `gos_load` (the hot path for
                 // `for x in vec_of_scalars`, e.g. BFS adjacency iteration).
+                //
+                // The counter is a fresh `0..len` induction with `len =
+                // gos_rt_vec_len(vec)` of this same iterated vec, and the
+                // header only branches into the body while `counter < len`,
+                // so the index is provably in `[0, len)` and the receiver
+                // non-null at the read. For primitive non-pointer elements
+                // (int/bool/char) that proof lets us emit the bounds-free
+                // `gos_rt_vec_get_i64_unchecked`, which the LLVM tier inlines
+                // branch-free. String / heap-handle-ptr elements keep the
+                // checked reader: they carry RC/borrow semantics and the
+                // unchecked variant is restricted to leave those paths alone.
+                let elem_is_unchecked_scalar = matches!(
+                    self.tcx.kind_of(elem_ty),
+                    gossamer_types::TyKind::Int(_)
+                        | gossamer_types::TyKind::Bool
+                        | gossamer_types::TyKind::Char
+                );
+                let callee_name = if elem_is_unchecked_scalar {
+                    "gos_rt_vec_get_i64_unchecked"
+                } else {
+                    "gos_rt_vec_get_i64"
+                };
                 let l = self.fresh(elem_ty);
                 let after = self.new_block(span);
                 self.terminate(Terminator::Call {
-                    callee: Operand::Const(ConstValue::Str("gos_rt_vec_get_i64".to_string())),
+                    callee: Operand::Const(ConstValue::Str(callee_name.to_string())),
                     args: vec![
                         Operand::Copy(Place::local(iter_local)),
                         Operand::Copy(Place::local(counter)),

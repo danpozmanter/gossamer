@@ -1,0 +1,48 @@
+// Exercises `&mut String` writeback across all three tiers: overwrite
+// (`*s = v`), self-consuming append (`*s += v`), and a deliberately
+// non-inlinable accumulator (`serialize_into`) that forces the Cranelift
+// cross-call round-trip rather than relying on inlining.
+
+fn set_str(s: &mut String, v: String) {
+    *s = v
+}
+
+fn append(s: &mut String, v: String) {
+    *s += v
+}
+
+// Multi-block body (while + branch) above the inliner's statement budget, so
+// the call is NOT inlined: the `&mut String` slot genuinely crosses the call
+// boundary and must round-trip via the Ref slot + post-call reload.
+fn serialize_into(s: &mut String, xs: [i64]) {
+    *s += "["
+    let mut i = 0
+    while i < xs.len() {
+        if i > 0 {
+            *s += ", "
+        }
+        let n = format!("{}", xs[i])
+        *s += n
+        i += 1
+    }
+    *s += "]"
+}
+
+fn main() {
+    let mut a = "before"
+    set_str(&mut a, "after")
+    println!("{}", a)
+
+    let mut b = "hello"
+    append(&mut b, ", world")
+    println!("{}", b)
+
+    let mut c = ""
+    serialize_into(&mut c, [1, 2, 3, 40, 500])
+    println!("{}", c)
+
+    let mut d = "x"
+    append(&mut d, "y")
+    append(&mut d, "z")
+    println!("{}", d)
+}

@@ -496,9 +496,7 @@ impl<'a> Builder<'a> {
             .iter()
             .find(|(long, _)| long == field_name.name.as_str())?;
         match *cell_kind {
-            "flag::Cell::Int" | "flag::Cell::Uint" => {
-                Some(TyKind::Int(gossamer_types::IntTy::I64))
-            }
+            "flag::Cell::Int" | "flag::Cell::Uint" => Some(TyKind::Int(gossamer_types::IntTy::I64)),
             // The transparent Duration newtype keeps the accessor dispatch
             // on the cell's element type; its repr is still `i64`-of-ms.
             "flag::Cell::Duration" => Some(TyKind::Duration),

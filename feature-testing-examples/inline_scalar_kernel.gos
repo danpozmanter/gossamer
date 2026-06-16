@@ -1,0 +1,48 @@
+// Bytecode user-function inliner coverage.
+//
+// `gos run` re-compiles small pure helpers (a single tail expression,
+// no control flow, no `&mut` write-back) directly at their call sites
+// instead of emitting a per-call `Op::Call`. The compiled tiers already
+// inline at the MIR level, so this fixture proves the bytecode inliner
+// stays bit-identical to them. The output is also invariant to
+// `GOSSAMER_INLINE=0`, which disables the optimisation.
+
+use std::math
+
+// Two-argument scalar kernel (the spectral-norm `mat_a` shape): one tail
+// expression whose f64 result must stay unboxed in the float register
+// file across the inline.
+fn mat_a(i: i64, j: i64) -> f64 {
+    1.0 / (((i + j) * (i + j + 1) / 2 + i + 1) as f64)
+}
+
+// One-argument helper.
+fn square(x: i64) -> i64 { x * x }
+
+// Calls another inlinable helper in its own tail — exercises transitive
+// inlining (the inner `square` calls inline inside the inlined `quad`).
+fn quad(x: i64) -> i64 { square(x) + square(x) }
+
+fn main() {
+    // Hot nested loop summing the two-argument kernel — the dominant
+    // inlining win, called n*n times.
+    let n = 80
+    let mut sum = 0.0
+    for i in 0..n {
+        for j in 0..n {
+            sum += mat_a(i, j)
+        }
+    }
+    println!("{:.9}", sum)
+
+    // One-argument inlining and several inlinable calls in one
+    // expression (`square`, `quad`, and another `square`).
+    let mut acc = 0
+    for k in 0..20 {
+        acc += square(k) + quad(k) - square(k - 1)
+    }
+    println!("acc = {}", acc)
+
+    // An inlined call result fed straight into an intrinsic transform.
+    println!("{:.9}", math::sqrt(mat_a(3, 4) + mat_a(4, 3)))
+}

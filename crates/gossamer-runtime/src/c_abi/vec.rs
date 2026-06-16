@@ -819,31 +819,13 @@ pub unsafe extern "C" fn gos_rt_vec_push(v: *mut GosVec, elem: *const u8) {
     });
 }
 
-// ---------------------------------------------------------------
-// Tagged-union encoding for `Result<T, E>` and `Option<T>`. The
-// previous "happy-path" encoding stored just the payload value
-// in the Result slot — meaning `Err(_)` and `None` had no
-// distinguishing bit at runtime, so `match res { Ok(v) => …,
-// Err(e) => … }` always took the Ok arm. A 2-slot heap struct
-// (`disc`, `payload`) makes the Err / None case representable
-// and lets pattern dispatch read the real discriminant.
-//
-// Convention: `disc == 0` = Ok / Some, `disc == 1` = Err / None.
-// ---------------------------------------------------------------
-
-#[repr(C)]
-pub struct GosResult {
-    pub disc: i64,
-    pub payload: i64,
-}
-
-// Result/Option are a 2-word BY-VALUE representation: an `i128` with the
-// discriminant in the low 64 bits and the payload in the high 64 bits. This
-// replaced a heap `Box<GosResult>` per `Ok`/`Err`/`Some`/`None` that was
-// never freed (an unbounded leak on every `?`). Construction is now a
-// register pack with zero allocation; the payload flows as a normal value
-// (a scalar, or a pointer to a heap-copied aggregate) managed by RC like any
-// other binding.
+// Tagged-union encoding for `Result<T, E>` and `Option<T>`: a 2-word
+// BY-VALUE `i128` with the discriminant in the low 64 bits and the
+// payload in the high 64 bits. Convention: `disc == 0` = Ok / Some,
+// `disc == 1` = Err / None — the distinguishing bit pattern dispatch
+// reads. Construction is a register pack with zero allocation; the
+// payload flows as a normal value (a scalar, or a pointer to a
+// heap-copied aggregate) managed by RC like any other binding.
 
 /// Pack `(disc, payload)` into the 2-word Result/Option value.
 #[inline]
@@ -1023,11 +1005,11 @@ pub extern "C" fn gos_rt_result_is_err(r: i128) -> i64 {
     i64::from(result_disc_of(r) != 0)
 }
 
-/// Maps a `gos_main` return value to a process exit code.
-/// Treats a heap-shaped pointer as a `*mut GosResult` and reads
-/// its `disc`; falls back to the raw value (truncated) for
-/// non-pointer returns. Also blocks until every outstanding
-/// goroutine has settled so their stdout reaches the user
+/// Maps a `gos_main` return value to a process exit code. A
+/// `Result`-returning `main` yields its discriminant (`0` = `Ok`,
+/// `1` = `Err`) in the low word; a unit or integer `main` yields its
+/// value directly — both are the exit code. Also blocks until every
+/// outstanding goroutine has settled so their stdout reaches the user
 /// before the process exits.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_main_exit_code(raw: i64) -> i32 {
@@ -1042,15 +1024,6 @@ pub unsafe extern "C" fn gos_rt_main_exit_code(raw: i64) -> i32 {
         // Flush any buffered stdout that workers wrote so it
         // reaches the user before the process exits.
         unsafe { gos_rt_flush_stdout() };
-        if raw == 0 {
-            return 0;
-        }
-        let p = raw as usize;
-        let looks_like_heap = p > 0x10000 && p.trailing_zeros() >= 3;
-        if !looks_like_heap {
-            return raw as i32;
-        }
-        let disc = unsafe { (*(raw as *const GosResult)).disc };
-        disc as i32
+        raw as i32
     })
 }

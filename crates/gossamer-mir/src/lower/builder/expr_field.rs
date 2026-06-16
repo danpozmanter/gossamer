@@ -254,18 +254,22 @@ impl<'a> Builder<'a> {
             // through a `let`. Without this the `.headers` / `.body` field
             // projection falls through to a positional struct read against a
             // handle the codegen treats as an opaque pointer.
-            let rk = self.local_runtime_kind.get(&place.local).copied().or_else(|| {
-                let lty = self.locals[place.local.0 as usize].ty;
-                let inner = match self.tcx.kind_of(lty) {
-                    gossamer_types::TyKind::Ref { inner, .. } => *inner,
-                    _ => lty,
-                };
-                self.struct_name_of(inner).and_then(|s| match s.as_str() {
-                    "Response" => Some("http::Response"),
-                    "Request" => Some("http::Request"),
-                    _ => None,
-                })
-            });
+            let rk = self
+                .local_runtime_kind
+                .get(&place.local)
+                .copied()
+                .or_else(|| {
+                    let lty = self.locals[place.local.0 as usize].ty;
+                    let inner = match self.tcx.kind_of(lty) {
+                        gossamer_types::TyKind::Ref { inner, .. } => *inner,
+                        _ => lty,
+                    };
+                    self.struct_name_of(inner).and_then(|s| match s.as_str() {
+                        "Response" => Some("http::Response"),
+                        "Request" => Some("http::Request"),
+                        _ => None,
+                    })
+                });
             if let Some(rk) = rk {
                 let helper: Option<(&'static str, Ty)> = match (rk, name.name.as_str()) {
                     ("http::Response", "status") => Some((

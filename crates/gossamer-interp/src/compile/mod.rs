@@ -126,7 +126,8 @@ pub(crate) fn is_mut_ref_vec(tcx: &TyCtxt, ty: Ty) -> bool {
 /// Returns `true` when `ty` is a `&mut T` whose mutation through the
 /// reference must be visible to the caller on every tier: `&mut Vec<T>`
 /// / `&mut [T]` (the cell-protocol shapes above) plus `&mut <scalar
-/// primitive>` (`i*` / `u*` / `f*` / `bool` / `char`). The compiled
+/// primitive>` (`i*` / `u*` / `f*` / `bool` / `char`) and `&mut String`
+/// (a flat `*mut c_char` whose pointer IS the value). The compiled
 /// tiers pass each of these by pointer, so `*p = v` writes back; the VM
 /// must match. Used to decide that a call carrying such an argument
 /// participates in the `MutCell` write-back + `*p = …` deref-assign
@@ -146,7 +147,7 @@ pub(crate) fn is_mut_ref_writeback(tcx: &TyCtxt, ty: Ty) -> bool {
     };
     matches!(
         tcx.kind(*inner),
-        Some(TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Char)
+        Some(TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Char | TyKind::String)
     )
 }
 
@@ -158,6 +159,32 @@ pub(crate) fn is_mut_ref_writeback(tcx: &TyCtxt, ty: Ty) -> bool {
 /// calls at compile time — no `Op::Call`, no push/pop of a
 /// frame, no boxing across the call boundary.
 pub(crate) type InlinableWrappers = std::collections::HashMap<String, Vec<String>>;
+
+/// An owned snapshot of a user function the bytecode compiler may inline
+/// at its call sites. Holds clones of the function's parameter patterns
+/// and its single tail expression, taken once at load time so the
+/// inliner re-compiles the body without re-borrowing the `HirProgram`.
+/// Built by [`inline::detect_inlinable_fn`] and consulted by
+/// [`FnBuilder::try_inline_user_call`].
+#[derive(Clone)]
+pub(crate) struct InlinableFn {
+    /// Parameter binding patterns in declaration order.
+    pub(crate) params: Vec<HirPat>,
+    /// The function's tail expression — its sole computation, re-compiled
+    /// directly into the caller at each inlined call site.
+    pub(crate) tail: HirExpr,
+    /// Weighted node count of `tail`, charged against the caller's inline
+    /// budget so transitive inlining stays bounded.
+    pub(crate) cost: usize,
+}
+
+/// User-function inlining table, keyed by bare function name (mirroring
+/// [`InlinableWrappers`]). A call whose callee is a single-segment path
+/// naming an entry here may be inlined in place of an `Op::Call`. The
+/// map is owned by the VM load frame and plumbed by `&` exactly like
+/// `wrappers` / `module_consts`, so its lifetime never entangles with
+/// the `HirProgram` borrow.
+pub(crate) type InlinableFns = std::collections::HashMap<String, InlinableFn>;
 
 /// Top-level `const` items, keyed by name, with their already-
 /// evaluated `Value`. The bytecode compiler inlines a path that
@@ -244,6 +271,7 @@ pub fn compile_fn(
     tcx: &TyCtxt,
     layouts: &StructLayouts,
     wrappers: &InlinableWrappers,
+    inline_fns: &InlinableFns,
     consts: &ConstValues,
     method_muts: &MutSelfMethods,
     mut_statics: &MutStatics,
@@ -277,6 +305,7 @@ pub fn compile_fn(
         tcx,
         layouts,
         wrappers,
+        inline_fns,
         consts,
         method_muts,
         mut_statics,
@@ -346,6 +375,7 @@ pub fn compile_initializer(
     tcx: &TyCtxt,
     layouts: &StructLayouts,
     wrappers: &InlinableWrappers,
+    inline_fns: &InlinableFns,
     consts: &ConstValues,
     method_muts: &MutSelfMethods,
     mut_statics: &MutStatics,
@@ -357,6 +387,7 @@ pub fn compile_initializer(
         tcx,
         layouts,
         wrappers,
+        inline_fns,
         consts,
         method_muts,
         mut_statics,
@@ -379,6 +410,19 @@ pub(crate) struct FnBuilder<'tcx> {
     pub(crate) tcx: &'tcx TyCtxt,
     pub(crate) layouts: &'tcx StructLayouts,
     pub(crate) wrappers: &'tcx InlinableWrappers,
+    /// User functions eligible for call-site inlining (see
+    /// [`InlinableFns`]). Borrowed from the VM load frame for the
+    /// duration of the compile, like `wrappers`.
+    pub(crate) inline_fns: &'tcx InlinableFns,
+    /// Names of the functions whose bodies are currently being inlined
+    /// into this builder, innermost last. Consulted before each inline to
+    /// reject direct / mutual / transitive recursion; pushed before
+    /// compiling a callee body and popped after.
+    pub(crate) inlining: Vec<&'static str>,
+    /// Running total of inlined tail nodes spliced into this builder.
+    /// Once it would exceed the per-caller budget, further calls stay
+    /// real `Op::Call`s, bounding code growth.
+    pub(crate) inlined_nodes: usize,
     /// Pre-evaluated values for top-level `const` items. A path
     /// expression that resolves to one of these inlines as a
     /// `LoadConst` instead of a `LoadGlobal` so the bytecode VM
@@ -521,11 +565,14 @@ mod compile_expr;
 mod control_flow;
 mod emit_const;
 mod fast_paths;
+mod inline;
 mod lifecycle;
 mod op_expr;
 mod reg_scope;
 mod stmt;
 mod type_helpers;
+
+pub(crate) use inline::detect_inlinable_fn;
 
 fn expr_diverges(expr: &HirExpr) -> bool {
     matches!(

@@ -483,7 +483,7 @@ fn try_build_general(body: &Body) -> Option<GeneralCallee> {
 }
 
 /// Inlines user-function call sites whose callee is a registered
-/// [`GeneralCallee`] — splicing the callee's whole CFG so multi-block,
+/// `GeneralCallee` — splicing the callee's whole CFG so multi-block,
 /// call-containing, and aggregate-returning callees flatten into the
 /// caller. This is the strongest safe lever for JIT coverage: the JIT
 /// compile-set BFS drops any body that calls an excluded body, so

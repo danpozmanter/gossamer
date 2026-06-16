@@ -67,7 +67,7 @@ fn mutex_serializes_concurrent_compound_update() {
     assert!(type_diags.is_empty(), "typecheck: {type_diags:?}");
     let program = lower_source_file(&sf, &resolutions, &table, &mut tcx);
     let mut vm = Vm::new();
-    vm.load(&program, tcx).expect("load");
+    vm.load(&program, tcx, true).expect("load");
 
     let prev = set_stdout_writer(capture_writer);
     for run in 0..25 {

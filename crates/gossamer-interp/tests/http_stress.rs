@@ -32,7 +32,7 @@ fn run_server(source: &str) -> Result<(), String> {
     let (table, _) = typecheck_source_file(&sf, &resolutions, &mut tcx);
     let program = lower_source_file(&sf, &resolutions, &table, &mut tcx);
     let mut interp = Vm::new();
-    interp.load(&program, tcx).expect("vm load");
+    interp.load(&program, tcx, true).expect("vm load");
     interp
         .call("main", Vec::new())
         .map(|_| ())

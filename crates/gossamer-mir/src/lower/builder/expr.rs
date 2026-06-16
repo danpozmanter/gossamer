@@ -777,17 +777,25 @@ impl<'a> Builder<'a> {
                 //
                 // We restrict the Rvalue::Ref path to `&mut` on
                 // genuine place expressions (path / field / index /
-                // nested deref) for SCALAR operands. Shared `&` on a
-                // literal or temporary keeps the historical
-                // value-passthrough so existing dispatch sites (e.g.
-                // `map.get(&k)` lowering to `gos_rt_map_get_i64(m,
-                // k_value)`) continue to work.
+                // nested deref) for SCALAR operands and for `String`.
+                // A `String` is a flat `*mut c_char` (the pointer IS
+                // the value, not a stable header like `GosVec`), so a
+                // callee's `*s = v` / `*s += v` must land on the
+                // caller's SLOT, not on a passed-by-value copy of the
+                // pointer — hence the by-slot-address `Rvalue::Ref`,
+                // exactly as for a scalar. The post-call reload in
+                // `lower_call` pulls the callee's new pointer back into
+                // the caller's local. Shared `&` on a literal or
+                // temporary keeps the historical value-passthrough so
+                // existing dispatch sites (e.g. `map.get(&k)` lowering
+                // to `gos_rt_map_get_i64(m, k_value)`) continue to work.
                 let scalar = matches!(
                     self.tcx.kind_of(operand.ty),
                     gossamer_types::TyKind::Int(_)
                         | gossamer_types::TyKind::Float(_)
                         | gossamer_types::TyKind::Bool
                         | gossamer_types::TyKind::Char
+                        | gossamer_types::TyKind::String
                 );
                 let is_place_expr = matches!(
                     operand.kind,
@@ -1417,12 +1425,47 @@ impl<'a> Builder<'a> {
         {
             return;
         }
+        // Fuse `*s += piece` where `*s` is a `&mut String` deref place: append
+        // in place via the self-consuming runtime helper, then store the
+        // result back through the slot. The bare-path fast path above cannot
+        // reach a deref accumulator (`receiver_local_from_path` is `None` for
+        // `*s`), so this is its deref counterpart.
+        if let HirExprKind::Binary {
+            op: HirBinaryOp::Add,
+            lhs,
+            rhs,
+        } = &value.kind
+            && let Some(s_local) = self.deref_string_place_local(place)
+            && self.deref_string_place_local(lhs) == Some(s_local)
+            && self.try_lower_deref_append_fused(s_local, rhs, span)
+        {
+            return;
+        }
         let Some(mut value_local) = self.lower_expr(value) else {
             return;
         };
         let Some(mir_place) = self.lower_place_expr(place) else {
             return;
         };
+        // Overwrite of a `&mut String` deref place (`*s = v`): the slot's
+        // previous String is displaced, so release it before the store binds
+        // the new value. The store's own `Copy` retain (in the RC pass) gives
+        // the slot its share of the new value. The self-consuming `*s += …`
+        // append handled above never reaches here (it returns early), so this
+        // fires only for genuine overwrites — no double release of a value the
+        // append helper already consumed.
+        if self.deref_string_place_local(place).is_some() {
+            let unit_ty = self.tcx.unit();
+            let rel = self.fresh(unit_ty);
+            self.emit_assign(
+                Place::local(rel),
+                Rvalue::CallIntrinsic {
+                    name: "gos_rt_rc_release",
+                    args: vec![Operand::Copy(mir_place.clone())],
+                },
+                span,
+            );
+        }
         // Same callable-coercion as `let` and `return`: when the
         // lvalue's static type is callable and the rvalue is a
         // bare fn item, wrap the fn into the env+code blob so the
@@ -1498,6 +1541,93 @@ impl<'a> Builder<'a> {
             });
             self.set_current(next);
         }
+        true
+    }
+
+    /// For a `*s` deref-assign place whose `s` is a bare local of type
+    /// `&_ String`, returns `s`'s local; otherwise `None`. Used to route
+    /// `&mut String` deref appends/overwrites onto the in-place append and
+    /// release-old paths.
+    fn deref_string_place_local(&self, expr: &HirExpr) -> Option<Local> {
+        use gossamer_types::TyKind;
+        let HirExprKind::Unary {
+            op: HirUnaryOp::Deref,
+            operand,
+        } = &expr.kind
+        else {
+            return None;
+        };
+        let HirExprKind::Path { segments, .. } = &operand.kind else {
+            return None;
+        };
+        let [seg] = segments.as_slice() else {
+            return None;
+        };
+        let local = self.lookup_local(&seg.name)?;
+        match self.tcx.kind_of(self.locals[local.0 as usize].ty) {
+            TyKind::Ref { inner, .. } if matches!(self.tcx.kind_of(*inner), TyKind::String) => {
+                Some(local)
+            }
+            _ => None,
+        }
+    }
+
+    /// Lowers `*s += piece` (deref `&mut String` accumulator) to a single
+    /// self-consuming append (`gos_rt_str_concat_drop_a` / `_append_i64` /
+    /// `_append_f64`) of the slot's current value with `piece`, stored back
+    /// through the slot. The append helper consumes the old buffer in place,
+    /// so the RC pass recognises the `tmp = append(*s, piece); *s = Copy(tmp)`
+    /// copy-back and emits neither a release of the old value nor a retain of
+    /// the result. Returns `false` (no emission) when `piece` is not a
+    /// `String` / `i64` / `f64`, so the caller falls back to the general path.
+    fn try_lower_deref_append_fused(
+        &mut self,
+        s_local: Local,
+        piece: &HirExpr,
+        span: Span,
+    ) -> bool {
+        use gossamer_types::{FloatTy, IntTy, TyKind};
+        let append_fn = |this: &Self, ty: Ty| -> Option<&'static str> {
+            let mut cur = ty;
+            while let TyKind::Ref { inner, .. } = this.tcx.kind_of(cur) {
+                cur = *inner;
+            }
+            match this.tcx.kind_of(cur) {
+                TyKind::String => Some("gos_rt_str_concat_drop_a"),
+                TyKind::Int(IntTy::I64) => Some("gos_rt_str_append_i64"),
+                TyKind::Float(FloatTy::F64) => Some("gos_rt_str_append_f64"),
+                _ => None,
+            }
+        };
+        let Some(fname) = append_fn(self, piece.ty) else {
+            return false;
+        };
+        let Some(piece_local) = self.lower_expr(piece) else {
+            return true;
+        };
+        let piece_local = self.auto_deref_cell(piece_local, span);
+        let deref_place = Place {
+            local: s_local,
+            projection: vec![crate::ir::Projection::Deref],
+        };
+        let string_ty = self.tcx.string_ty();
+        let tmp = self.fresh(string_ty);
+        let next = self.new_block(span);
+        self.terminate(Terminator::Call {
+            callee: Operand::Const(ConstValue::Str(fname.to_string())),
+            args: vec![
+                Operand::Copy(deref_place.clone()),
+                Operand::Copy(Place::local(piece_local)),
+            ],
+            destination: Place::local(tmp),
+            target: Some(next),
+        });
+        self.set_current(next);
+        self.emit_assign(
+            deref_place,
+            Rvalue::Use(Operand::Copy(Place::local(tmp))),
+            span,
+        );
         true
     }
 

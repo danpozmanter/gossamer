@@ -33,7 +33,7 @@ fn run_main(source: &str) -> String {
     let (table, _type_diags) = typecheck_source_file(&sf, &resolutions, &mut tcx);
     let program = lower_source_file(&sf, &resolutions, &table, &mut tcx);
     let mut vm = Vm::new();
-    vm.load(&program, tcx).expect("load");
+    vm.load(&program, tcx, true).expect("load");
     CAPTURED.with(|cell| cell.borrow_mut().clear());
     let prev = set_stdout_writer(capture_writer);
     let result = vm.call("main", Vec::new());

@@ -212,8 +212,12 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
             TyKind::Adt { def, .. } if def.local < u32::MAX - 16 && !tcx.is_inline_enum_ty(ty) => {
                 tcx.struct_field_tys(*def).map(collect).unwrap_or_default()
             }
-            // Tuples deferred: they entangle with container element ownership
-            // and destructuring patterns; handled with Vec/Map (Phase 2/3).
+            // A by-value tuple is a stack slot like a struct: each RC-managed
+            // element retained when the tuple (or a destructured binding) takes
+            // a reference must be released when that owner dies. `is_rc_managed`
+            // already excludes Result/Option/inline-enum elements, so a packed
+            // 2-word element never enters the per-field accounting.
+            TyKind::Tuple(elems) => collect(elems),
             _ => Vec::new(),
         }
     };
@@ -246,24 +250,57 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
             destination,
             target: Some(succ),
         } = &block.terminator
-            && matches!(callee, Operand::Const(ConstValue::Str(n)) if n == "gos_rt_str_concat_drop_a")
+            && matches!(callee, Operand::Const(ConstValue::Str(n))
+                if n == "gos_rt_str_concat_drop_a"
+                    || n == "gos_rt_str_append_i64"
+                    || n == "gos_rt_str_append_f64")
             && destination.projection.is_empty()
             && let Some(Operand::Copy(arg0)) = args.first()
-            && arg0.projection.is_empty()
         {
-            let (tmp, s, succ_idx) = (destination.local, arg0.local, succ.0 as usize);
+            // The self-consuming append accumulator is `arg0` — a bare local
+            // (`acc`) or a `&mut String` deref place (`*s`). The copy-back
+            // stores `tmp` straight back into that same place; recognising it
+            // (by matching both the local AND the projection) keeps the
+            // accumulator off the retain-of-result / release-of-old paths.
+            let (tmp, succ_idx) = (destination.local, succ.0 as usize);
             if succ_idx < body.blocks.len()
                 && let Some(first) = body.blocks[succ_idx].stmts.first()
                 && let StatementKind::Assign {
                     place,
                     rvalue: Rvalue::Use(Operand::Copy(src)),
                 } = &first.kind
-                && place.local == s
-                && place.projection.is_empty()
+                && place.local == arg0.local
+                && place.projection == arg0.projection
                 && src.local == tmp
                 && src.projection.is_empty()
             {
                 copyback_sites.insert((succ_idx, 0));
+            }
+        }
+    }
+    // Post-call reload of a `&mut String` writeback (`L = *R`, where `R` is the
+    // `&mut String` ref produced for the call): a copy-back, not a fresh
+    // reassignment. The callee already released the value `L` previously held
+    // (its `*R = …` displaced it through the slot), so the release-before-
+    // reassignment that would otherwise fire for `L` must be suppressed — else
+    // it double-frees. The reload itself takes no retain (its source is a
+    // borrowed deref), so adding it here only cancels the spurious release.
+    for (bi, block) in body.blocks.iter().enumerate() {
+        for (si, stmt) in block.stmts.iter().enumerate() {
+            if let StatementKind::Assign {
+                place,
+                rvalue: Rvalue::Use(Operand::Copy(src)),
+            } = &stmt.kind
+                && place.projection.is_empty()
+                && (src.local.0 as usize) < n_locals
+                && matches!(src.projection.as_slice(), [crate::ir::Projection::Deref])
+                && matches!(
+                    tcx.kind_of(body.locals[src.local.0 as usize].ty),
+                    gossamer_types::TyKind::Ref { inner, .. }
+                        if matches!(tcx.kind_of(*inner), gossamer_types::TyKind::String)
+                )
+            {
+                copyback_sites.insert((bi, si));
             }
         }
     }
@@ -361,7 +398,10 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
         } = &block.terminator
             && destination.projection.is_empty()
             && (destination.local.0 as usize) < n_locals
-            && name.as_str() == "gos_rt_vec_get_i64"
+            && matches!(
+                name.as_str(),
+                "gos_rt_vec_get_i64" | "gos_rt_vec_get_i64_unchecked"
+            )
         {
             borrowed_word_elem_src[destination.local.0 as usize] = true;
         }

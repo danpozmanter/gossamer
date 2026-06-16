@@ -220,7 +220,7 @@ fn rebuild_session(declarations: &[String]) -> std::result::Result<(), String> {
     let (tbl, _) = gossamer_types::typecheck_source_file(&sf, &res, &mut tcx);
     let program = gossamer_hir::lower_source_file(&sf, &res, &tbl, &mut tcx);
     let mut vm = gossamer_interp::Vm::new();
-    vm.load(&program, tcx).map_err(|e| format!("{e}"))?;
+    vm.load(&program, tcx, true).map_err(|e| format!("{e}"))?;
     Ok(())
 }
 
@@ -239,7 +239,7 @@ fn build_and_call(
     let (tbl, _) = gossamer_types::typecheck_source_file(&sf, &res, &mut tcx);
     let program = gossamer_hir::lower_source_file(&sf, &res, &tbl, &mut tcx);
     let mut vm = gossamer_interp::Vm::new();
-    vm.load(&program, tcx).map_err(|e| format!("{e}"))?;
+    vm.load(&program, tcx, true).map_err(|e| format!("{e}"))?;
     vm.call(entry, Vec::new()).map_err(|e| format!("{e}"))
 }
 

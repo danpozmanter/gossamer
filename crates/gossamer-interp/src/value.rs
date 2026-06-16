@@ -1253,7 +1253,7 @@ fn write_struct(
 
 /// Concrete closure representation.
 ///
-/// The bytecode VM compiles the closure body to its own [`FnChunk`]
+/// The bytecode VM compiles the closure body to its own `FnChunk`
 /// whose leading parameters are the captured upvalues, followed by the
 /// declared parameters. [`Self::chunk`] holds that body and
 /// [`Self::capture_values`] the snapshotted upvalue `Value`s; the VM

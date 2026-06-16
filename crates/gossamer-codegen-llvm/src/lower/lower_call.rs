@@ -523,6 +523,14 @@ impl<'a> Lowerer<'a> {
             self.lower_vec_get_i64_inline(args, destination, target)?;
             return Ok(());
         }
+        // The MIR emits this only for the counted-loop element read of a
+        // primitive int/bool/char Vec, where the index is proven in
+        // `[0, len)` and the receiver non-null. Inline it without the null /
+        // bounds guard so the inner loop is a straight load.
+        if name == "gos_rt_vec_get_i64_unchecked" && args.len() == 2 {
+            self.lower_vec_get_i64_unchecked_inline(args, destination, target)?;
+            return Ok(());
+        }
         if name == "gos_rt_vec_set_i64"
             && args.len() == 3
             && is_primitive_int_llvm(&self.operand_llvm_ty(&args[2]))

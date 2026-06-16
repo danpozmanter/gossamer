@@ -91,6 +91,9 @@ impl<'tcx> FnBuilder<'tcx> {
                 if let Some(tr) = self.try_intrinsic_call(callee, args)? {
                     return Ok(tr);
                 }
+                if let Some(tr) = self.try_inline_user_call(callee, args)? {
+                    return Ok(tr);
+                }
                 let reg = self.compile_call_ex(callee, args, expr.ty)?;
                 Ok(TypedReg {
                     reg,
@@ -344,6 +347,8 @@ impl<'tcx> FnBuilder<'tcx> {
                 let tr = {
                     let intr = self.try_intrinsic_call(callee, args)?;
                     if let Some(tr) = intr {
+                        tr
+                    } else if let Some(tr) = self.try_inline_user_call(callee, args)? {
                         tr
                     } else {
                         let reg = self.compile_call_ex(callee, args, expr.ty)?;

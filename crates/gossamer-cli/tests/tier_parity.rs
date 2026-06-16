@@ -225,6 +225,9 @@ const SPECS: &[Spec] = &[
     spec("feature-testing-examples/jit_enum_char_field.gos"),
     spec("feature-testing-examples/jit_inline_vec_ops.gos"),
     spec("feature-testing-examples/jit_mixed_arity6.gos"),
+    // Bytecode VM user-function inliner — must stay bit-identical to the
+    // MIR-tier inlining already present in the compiled tiers.
+    spec("feature-testing-examples/inline_scalar_kernel.gos"),
     spec("feature-testing-examples/temporary_wrap.gos"),
     spec("feature-testing-examples/borrowed_option_result.gos"),
     spec("feature-testing-examples/aggregate_binding.gos"),
@@ -244,6 +247,7 @@ const SPECS: &[Spec] = &[
     spec("feature-testing-examples/array_literal_vec_methods.gos"),
     spec("feature-testing-examples/vec_aggregate_rc_ownership.gos"),
     spec("feature-testing-examples/mut_ref_scalar_writeback.gos"),
+    spec("feature-testing-examples/mut_ref_string_writeback.gos"),
     spec("feature-testing-examples/byte_vec_i64_model.gos"),
     spec("feature-testing-examples/map_iteration_order.gos"),
     spec("feature-testing-examples/usize_compare.gos"),
@@ -284,6 +288,7 @@ const SPECS: &[Spec] = &[
     spec("feature-testing-examples/cycle_collector.gos"),
     spec("feature-testing-examples/arena_regions.gos"),
     spec("feature-testing-examples/auto_regions.gos"),
+    spec("feature-testing-examples/tuple_extract_region.gos"),
     spec("feature-testing-examples/defer_unwind_order.gos"),
     spec("feature-testing-examples/early_break_materializers.gos"),
     spec("feature-testing-examples/empty_vec_growth.gos"),
@@ -1008,8 +1013,8 @@ fn go_stdlib_spawn_is_async_across_tiers() {
     );
     assert_eq!(vm.code, Some(0), "vm exit={:?}", vm.code);
     for tier in [Tier::Cranelift, Tier::Llvm] {
-        let run = run_tier(&fixture, tier)
-            .unwrap_or_else(|e| panic!("{} error: {e}", tier.label()));
+        let run =
+            run_tier(&fixture, tier).unwrap_or_else(|e| panic!("{} error: {e}", tier.label()));
         if let Some(d) = divergence(&fixture, (Tier::Vm, &vm), (tier, &run)) {
             panic!("{d}\n--- {} stderr ---\n{}", tier.label(), run.stderr);
         }

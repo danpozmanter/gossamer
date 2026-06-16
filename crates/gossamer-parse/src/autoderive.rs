@@ -736,12 +736,24 @@ pub fn augment_source(source: &str) -> String {
 /// already wired and must not drag the wrappers (and their `use`s) into
 /// programs that only touch them.
 const HTTP_SECURITY_MARKERS: &[&str] = &[
-    "csrf::Config", "csrf::config", "csrf::check", "csrf::extract_token",
-    "csrf::attach_cookie", "csrf::origin_allowed", "csrf::RouteAuth",
-    "session::signed", "session::encrypted", "session::with_session",
-    "session::save", "session::load", "session::Store",
-    "form::Form", "form::parse",
-    "multipart::parse", "multipart::Part", "multipart::boundary",
+    "csrf::Config",
+    "csrf::config",
+    "csrf::check",
+    "csrf::extract_token",
+    "csrf::attach_cookie",
+    "csrf::origin_allowed",
+    "csrf::RouteAuth",
+    "session::signed",
+    "session::encrypted",
+    "session::with_session",
+    "session::save",
+    "session::load",
+    "session::Store",
+    "form::Form",
+    "form::parse",
+    "multipart::parse",
+    "multipart::Part",
+    "multipart::boundary",
     "form_file",
 ];
 
@@ -1730,8 +1742,10 @@ fn collapse_http_security_path(path: &mut gossamer_ast::PathExpr) -> bool {
     if path.segments[n - 3].name.name.as_str() == "csrf"
         && path.segments[n - 2].name.name.as_str() == "RouteAuth"
     {
-        let variant =
-            std::mem::replace(&mut path.segments[n - 1], gossamer_ast::PathSegment::new(""));
+        let variant = std::mem::replace(
+            &mut path.segments[n - 1],
+            gossamer_ast::PathSegment::new(""),
+        );
         path.segments = vec![
             gossamer_ast::PathSegment::new("__gos_http_csrf_RouteAuth"),
             variant,
@@ -1768,7 +1782,9 @@ fn rewrite_form_file_method(expr: &mut gossamer_ast::expr::Expr) {
         id: NodeId::DUMMY,
         span,
         kind: ExprKind::Path(gossamer_ast::PathExpr {
-            segments: vec![gossamer_ast::PathSegment::new("__gos_http_request_form_file")],
+            segments: vec![gossamer_ast::PathSegment::new(
+                "__gos_http_request_form_file",
+            )],
         }),
     };
     expr.kind = ExprKind::Call {

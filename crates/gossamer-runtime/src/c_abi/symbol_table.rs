@@ -4455,6 +4455,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_vec_get_i64 as *const u8,
         ),
         (
+            "gos_rt_vec_get_i64_unchecked",
+            crate::c_abi::gos_rt_vec_get_i64_unchecked as *const u8,
+        ),
+        (
             "gos_rt_vec_get_ptr",
             crate::c_abi::gos_rt_vec_get_ptr as *const u8,
         ),

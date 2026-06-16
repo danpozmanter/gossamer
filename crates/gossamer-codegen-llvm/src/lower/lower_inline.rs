@@ -531,6 +531,94 @@ impl<'a> Lowerer<'a> {
         Ok(())
     }
 
+    /// Inline fast path for `gos_rt_vec_get_i64_unchecked(vec, idx) -> i64`.
+    /// Identical element load to [`Self::lower_vec_get_i64_inline`] but WITHOUT the
+    /// null guard and bounds compare/branch: the MIR emits this call only from
+    /// the counted-loop element read, where the index is a fresh `0..len`
+    /// induction over this same vec and the loop header only branches into the
+    /// body while `counter < len` — so the receiver is non-null and the index
+    /// is provably in `[0, len)`. Dropping the guard leaves a straight load
+    /// (branch-free for word-stride elements) that LLVM keeps in the inner
+    /// loop.
+    pub(crate) fn lower_vec_get_i64_unchecked_inline(
+        &mut self,
+        args: &[Operand],
+        destination: &Place,
+        target: Option<&gossamer_mir::BlockId>,
+    ) -> Result<(), BuildError> {
+        let word_elem = self.vec_operand_has_word_elem(&args[0]);
+        let vec_ptr = self.vec_operand_ptr(&args[0])?;
+        let idx = self.lower_operand(&args[1])?;
+        // The address math operates on i64; widen a narrow-typed index
+        // (`u8`/`u16`/`u32`/`i8`/`i16`/`i32`) first so the emitted `mul i64`
+        // doesn't reference an i32 SSA value.
+        let idx = self.widen_to_i64(&args[1], &idx);
+        let dest_ty = render_ty(self.tcx, self.body.local_ty(destination.local));
+        let dest_slot = local_slot(destination.local);
+        let s = self.next_ssa;
+        self.next_ssa += 1;
+        // Word-stride elements scale by a constant 8 that folds into the
+        // address mode; narrower vecs read the stride from the header and
+        // pick the load width to match (a packed `elem_bytes == 1` byte
+        // buffer must not be read i64-wide). Mirrors the checked reader's
+        // load, minus the surrounding bounds control flow.
+        let loaded = if word_elem {
+            let off = self.fresh();
+            writeln!(self.out, "  {off} = mul i64 {idx}, 8").unwrap();
+            let ea = self.vec_elem_addr(&vec_ptr, &off);
+            let loaded = self.fresh();
+            writeln!(self.out, "  {loaded} = load i64, ptr {ea}").unwrap();
+            loaded
+        } else {
+            let eb_addr = self.fresh();
+            writeln!(
+                self.out,
+                "  {eb_addr} = getelementptr i8, ptr {vec_ptr}, i64 16"
+            )
+            .unwrap();
+            let eb32 = self.fresh();
+            writeln!(self.out, "  {eb32} = load i32, ptr {eb_addr}").unwrap();
+            let eb = self.fresh();
+            writeln!(self.out, "  {eb} = zext i32 {eb32} to i64").unwrap();
+            let off = self.fresh();
+            writeln!(self.out, "  {off} = mul i64 {idx}, {eb}").unwrap();
+            let ea = self.vec_elem_addr(&vec_ptr, &off);
+            let (byte_b, word_b, join_b) = (
+                format!("vgu_byte_{s}"),
+                format!("vgu_word_{s}"),
+                format!("vgu_join_{s}"),
+            );
+            let is_byte = self.fresh();
+            writeln!(self.out, "  {is_byte} = icmp eq i64 {eb}, 1").unwrap();
+            writeln!(
+                self.out,
+                "  br i1 {is_byte}, label %{byte_b}, label %{word_b}"
+            )
+            .unwrap();
+            writeln!(self.out, "{byte_b}:").unwrap();
+            let b8 = self.fresh();
+            writeln!(self.out, "  {b8} = load i8, ptr {ea}").unwrap();
+            let b64 = self.fresh();
+            writeln!(self.out, "  {b64} = zext i8 {b8} to i64").unwrap();
+            writeln!(self.out, "  br label %{join_b}").unwrap();
+            writeln!(self.out, "{word_b}:").unwrap();
+            let w64 = self.fresh();
+            writeln!(self.out, "  {w64} = load i64, ptr {ea}").unwrap();
+            writeln!(self.out, "  br label %{join_b}").unwrap();
+            writeln!(self.out, "{join_b}:").unwrap();
+            let loaded = self.fresh();
+            writeln!(
+                self.out,
+                "  {loaded} = phi i64 [ {b64}, %{byte_b} ], [ {w64}, %{word_b} ]"
+            )
+            .unwrap();
+            loaded
+        };
+        self.store_i64_as(&loaded, &dest_ty, &dest_slot);
+        emit_terminator_branch(&mut self.out, target);
+        Ok(())
+    }
+
     /// Inline fast path for `gos_rt_vec_set_i64(vec, idx, val)`. Null vec /
     /// out-of-range idx → no-op (matching the runtime), else store.
     pub(crate) fn lower_vec_set_i64_inline(

@@ -63,7 +63,7 @@ fn run_main(program: &gossamer_hir::HirProgram, tcx: &mut TyCtxt) {
     let mut vm = Vm::new();
     // `load` consumes the interner; clone per call so the bench can
     // re-load the same program across `measure` iterations.
-    vm.load(program, tcx.clone()).unwrap();
+    vm.load(program, tcx.clone(), true).unwrap();
     let _ = vm.call("main", Vec::new()).unwrap();
 }
 

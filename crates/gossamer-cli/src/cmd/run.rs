@@ -47,7 +47,7 @@ fn run(file: &PathBuf, _mode: RunMode, forwarded: &[String]) -> Result<()> {
     gossamer_interp::set_program_args(forwarded);
     let mut vm = gossamer_interp::Vm::new();
     // `load` consumes `tcx` (moves the interner into the JIT snapshot).
-    vm.load(&program, tcx)
+    vm.load(&program, tcx, true)
         .map_err(|err| anyhow!("vm load failed: {err}"))?;
     drop(program);
     let r = vm.call("main", Vec::new()).map(|_| ());

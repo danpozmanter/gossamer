@@ -9,6 +9,49 @@ fn sum_first(xs: &[i64], k: i64) -> i64 {
     acc
 }
 
+// `for x in xs` over a Vec<i64>: the counted-loop element read lowers to
+// the bounds-free `gos_rt_vec_get_i64_unchecked` (LLVM inlines it
+// branch-free) because the counter is provably in `[0, len)`.
+fn sum_for(xs: &[i64]) -> i64 {
+    let mut acc = 0
+    for x in xs {
+        acc += x
+    }
+    acc
+}
+
+// Adjacency walk over `[[i64]]`: the inner `for nb in graph[node]`
+// iterates a Vec<i64> element with the same counted-loop reader. Mirrors
+// the BFS neighbor scan that the unchecked read targets.
+fn walk_neighbors(graph: &[[i64]]) -> i64 {
+    let mut total = 0
+    let n = graph.len()
+    let mut node = 0
+    while node < n {
+        for nb in graph[node] {
+            total += nb
+        }
+        node += 1
+    }
+    total
+}
+
+fn build_graph(n: i64) -> [[i64]] {
+    let mut graph: [[i64]] = []
+    let mut node = 0
+    while node < n {
+        let mut neighbors: [i64] = []
+        let mut e = 0
+        while e < 4 {
+            neighbors.push((node * 7 + e) % n)
+            e += 1
+        }
+        graph.push(neighbors)
+        node += 1
+    }
+    graph
+}
+
 fn main() {
     let xs = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
     let mut total = 0
@@ -18,4 +61,9 @@ fn main() {
         r += 1
     }
     println!("{}", total)
+
+    println!("{}", sum_for(&xs))
+
+    let graph = build_graph(8)
+    println!("{}", walk_neighbors(&graph))
 }

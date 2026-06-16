@@ -442,7 +442,7 @@ fn run_tests_filtered(
     // Publish the source map before `load` so the VM compiler can emit
     // per-statement coverage hits when `gos test --coverage` is active.
     vm.set_source_map(std::sync::Arc::new(map));
-    if vm.load(&program, tcx).is_err() {
+    if vm.load(&program, tcx, false).is_err() {
         return Vec::new();
     }
     let mut records = Vec::new();
@@ -657,7 +657,7 @@ fn run_doc_tests_in_file(file: &std::path::Path, style: &TestStyle) -> DocTestFi
         };
         let mut vm = gossamer_interp::Vm::new();
         vm.set_source_map(std::sync::Arc::new(map));
-        if vm.load(&program, tcx).is_err() {
+        if vm.load(&program, tcx, false).is_err() {
             println!("  {} doc-test {} (compile)", style.fail(), doc.name);
             failures += 1;
             continue;

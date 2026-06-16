@@ -106,8 +106,7 @@ impl<'a> Builder<'a> {
         // type carries the transparent Duration tag (its runtime value is
         // a bare `i64`), so route to the same `gos_rt_duration_*` helper
         // the qualified `time::Duration::as_millis(d)` free call uses.
-        if matches!(method.name.as_str(), "as_millis" | "as_secs" | "as_micros")
-            && args.is_empty()
+        if matches!(method.name.as_str(), "as_millis" | "as_secs" | "as_micros") && args.is_empty()
         {
             let mut recv_kind = self.tcx.kind_of(receiver.ty).clone();
             while let TyKind::Ref { inner, .. } = recv_kind {

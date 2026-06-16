@@ -35,7 +35,7 @@ fn run_program(source: &str) -> String {
     let program = lower_source_file(&sf, &resolutions, &table, &mut tcx);
 
     let mut interp = Vm::new();
-    interp.load(&program, tcx).expect("vm load");
+    interp.load(&program, tcx, true).expect("vm load");
 
     CAPTURED.with(|cell| cell.borrow_mut().clear());
     let prev = set_stdout_writer(capture_writer);
@@ -55,7 +55,7 @@ fn call_and_return(source: &str, entry: &str, args: Vec<Value>) -> Value {
     let (table, _type_diags) = typecheck_source_file(&sf, &resolutions, &mut tcx);
     let program = lower_source_file(&sf, &resolutions, &table, &mut tcx);
     let mut interp = Vm::new();
-    interp.load(&program, tcx).expect("vm load");
+    interp.load(&program, tcx, true).expect("vm load");
     interp.call(entry, args).expect("call failed")
 }
 
@@ -358,7 +358,7 @@ fn explode() -> i64 {
     let (table, _) = typecheck_source_file(&sf, &resolutions, &mut tcx);
     let program = lower_source_file(&sf, &resolutions, &table, &mut tcx);
     let mut interp = Vm::new();
-    interp.load(&program, tcx).expect("vm load");
+    interp.load(&program, tcx, true).expect("vm load");
     let result = interp.call("explode", Vec::new());
     assert!(result.is_err(), "panic should surface as RuntimeError");
 }
@@ -514,7 +514,7 @@ fn main() {
     let (table, _) = typecheck_source_file(&sf, &resolutions, &mut tcx);
     let program = lower_source_file(&sf, &resolutions, &table, &mut tcx);
     let mut interp = Vm::new();
-    interp.load(&program, tcx).expect("vm load");
+    interp.load(&program, tcx, true).expect("vm load");
     let result = interp.call("main", Vec::new());
     assert!(result.is_err(), "expected a type error on int / string");
 }
@@ -536,7 +536,7 @@ fn main() {
     let (table, _) = typecheck_source_file(&sf, &resolutions, &mut tcx);
     let program = lower_source_file(&sf, &resolutions, &table, &mut tcx);
     let mut interp = Vm::new();
-    interp.load(&program, tcx).expect("vm load");
+    interp.load(&program, tcx, true).expect("vm load");
     let result = interp.call("main", Vec::new());
     assert!(result.is_err(), "expected a type error on int < string");
 }

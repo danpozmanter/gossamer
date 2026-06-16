@@ -3598,10 +3598,16 @@ impl<'a> TypeChecker<'a> {
         // so a user type or `flag::Cell::Duration` named `Duration` is
         // left untouched.
         let segs: Vec<&str> = path.segments.iter().map(|s| s.name.name.as_str()).collect();
-        if matches!(segs.as_slice(), ["time", "Duration"] | ["std", "time", "Duration"]) {
+        if matches!(
+            segs.as_slice(),
+            ["time", "Duration"] | ["std", "time", "Duration"]
+        ) {
             return self.tcx.duration_ty();
         }
-        if matches!(segs.as_slice(), ["time", "Instant"] | ["std", "time", "Instant"]) {
+        if matches!(
+            segs.as_slice(),
+            ["time", "Instant"] | ["std", "time", "Instant"]
+        ) {
             return self.tcx.instant_ty();
         }
         // Recognise stdlib struct types by their last path segment

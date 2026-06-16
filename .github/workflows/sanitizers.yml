@@ -79,6 +79,7 @@ jobs:
           RUSTFLAGS: "-Z sanitizer=address"
           RUSTDOCFLAGS: "-Z sanitizer=address"
           ASAN_OPTIONS: "detect_leaks=0:abort_on_error=1:halt_on_error=1"
+          RUST_BACKTRACE: "full"
         run: |
           cargo +nightly-2026-04-14 test \
             -Z build-std \
@@ -88,7 +89,8 @@ jobs:
             -p gossamer-interp \
             -p gossamer-coro \
             -p gossamer-mir \
-            -p gossamer-binding
+            -p gossamer-binding \
+            --no-fail-fast -- --nocapture --test-threads=1
 
   tsan:
     name: TSan (Linux nightly)
@@ -110,6 +112,7 @@ jobs:
           RUSTFLAGS: "-Z sanitizer=thread"
           RUSTDOCFLAGS: "-Z sanitizer=thread"
           TSAN_OPTIONS: "halt_on_error=1:second_deadlock_stack=1"
+          RUST_BACKTRACE: "full"
         # TSan-relevant crates: anything that spawns threads or
         # crosses thread boundaries. The MIR / interp lib tests
         # don't exercise concurrency but build cleanly under
@@ -121,4 +124,5 @@ jobs:
             --lib \
             -p gossamer-runtime \
             -p gossamer-sched \
-            -p gossamer-coro
+            -p gossamer-coro \
+            --no-fail-fast -- --nocapture --test-threads=1

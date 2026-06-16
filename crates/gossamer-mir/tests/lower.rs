@@ -1025,6 +1025,110 @@ fn build() -> i64 {
     );
 }
 
+/// Destination local of a `X = Copy(tuple.0)` field-extract, the binding
+/// produced when a tuple's first element is destructured.
+fn field0_extract_dest(body: &gossamer_mir::Body) -> Option<Local> {
+    body.blocks
+        .iter()
+        .flat_map(|b| b.stmts.iter())
+        .find_map(|stmt| match &stmt.kind {
+            StatementKind::Assign {
+                place,
+                rvalue: Rvalue::Use(Operand::Copy(src)),
+            } if place.projection.is_empty()
+                && matches!(
+                    src.projection.as_slice(),
+                    [gossamer_mir::Projection::Field(0)]
+                ) =>
+            {
+                Some(place.local)
+            }
+            _ => None,
+        })
+}
+
+/// Count of `name` intrinsic calls whose first argument is `local`.
+fn rc_calls_on(body: &gossamer_mir::Body, name: &str, local: Local) -> usize {
+    body.blocks
+        .iter()
+        .flat_map(|b| b.stmts.iter())
+        .filter(|stmt| {
+            matches!(
+                &stmt.kind,
+                StatementKind::Assign {
+                    rvalue: Rvalue::CallIntrinsic { name: n, args },
+                    ..
+                } if *n == name
+                    && matches!(
+                        args.first(),
+                        Some(Operand::Copy(p)) if p.projection.is_empty() && p.local == local
+                    )
+            )
+        })
+        .count()
+}
+
+/// A by-value tuple is a stack slot whose RC-managed elements are owned
+/// per-field: `let (t, n) = make()` (where `make -> (String, i64)`) must
+/// retain the extracted `String` at the field-0 copy — the binding holds
+/// a fresh reference — and release it at end of life. Without it every
+/// round of a tuple-returning allocator leaks one element.
+#[test]
+fn drop_pass_retains_and_releases_tuple_extracted_rc_field() {
+    let source = r#"
+fn make() -> (String, i64) {
+    let s = "node"
+    (s, 1)
+}
+
+fn use_it() -> i64 {
+    let (t, n) = make()
+    n + t.byte_at(0)
+}
+"#;
+    let (bodies, _) = build(source);
+    let body = bodies.iter().find(|b| b.name == "use_it").expect("body");
+    let dest = field0_extract_dest(body).expect("field-0 tuple extract");
+
+    assert!(
+        rc_calls_on(body, "gos_rt_rc_retain", dest) > 0,
+        "extracted tuple String must be retained at the field copy"
+    );
+    assert!(
+        rc_calls_on(body, "gos_rt_rc_release", dest) > 0,
+        "extracted tuple String must be released at end of life"
+    );
+}
+
+/// A `Result` / `Option` tuple element is a 2-word by-value, never an RC
+/// pointer, so per-field accounting must skip it: destructuring
+/// `(Result<String, _>, i64)` emits no retain on the field-0 extract.
+/// Treating the packed value as a pointer would corrupt the heap.
+#[test]
+fn drop_pass_skips_result_tuple_element() {
+    let source = r#"
+use std::errors
+
+fn make() -> (Result<String, errors::Error>, i64) {
+    (Ok("node"), 1)
+}
+
+fn use_it() -> i64 {
+    let (_r, n) = make()
+    n
+}
+"#;
+    let (bodies, _) = build(source);
+    let body = bodies.iter().find(|b| b.name == "use_it").expect("body");
+    if let Some(dest) = field0_extract_dest(body) {
+        assert_eq!(
+            rc_calls_on(body, "gos_rt_rc_retain", dest),
+            0,
+            "a Result tuple element is by-value and must not be RC-retained"
+        );
+    }
+}
+
 fn optimised(source: &str) -> gossamer_mir::Body {
     let (mut bodies, tcx) = build(source);
     let mut body = bodies.remove(0);

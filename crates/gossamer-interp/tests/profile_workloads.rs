@@ -39,7 +39,7 @@ fn run(label: &str, src: &str) -> String {
     gossamer_interp::set_jit_disabled();
     let (program, tcx) = compile(src);
     let mut vm = Vm::new();
-    vm.load(&program, tcx).unwrap();
+    vm.load(&program, tcx, true).unwrap();
     let t0 = Instant::now();
     let _ = vm.call("main", Vec::new()).unwrap();
     let dur = t0.elapsed();

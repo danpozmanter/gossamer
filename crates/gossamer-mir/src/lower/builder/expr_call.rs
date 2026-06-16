@@ -479,8 +479,24 @@ impl<'a> Builder<'a> {
                 if segments.len() == 1 && segments[0].name.as_str() == "__concat"
         );
         let mut arg_operands = Vec::with_capacity(args.len());
+        // `&mut <bare-local>` arguments of a writeback type (scalar / String)
+        // lower to a by-slot-address `Rvalue::Ref`. After the call the callee
+        // may have stored a new value through that address; reload the local
+        // from `*ref` so the caller's binding sees it. This is mandatory on the
+        // Cranelift tier — its locals are SSA Variables with no machine
+        // address, so the Ref materialises a throwaway stack slot the callee
+        // writes into; without the reload the round-trip is lost. On the LLVM
+        // tier the local is alloca-backed and the reload re-reads the same
+        // alloca (a harmless no-op). Recorded as (place_local, ref_local).
+        let mut mut_ref_reloads: Vec<(Local, Local)> = Vec::new();
         for (idx, arg) in args.iter().enumerate() {
+            // Detect a `&mut <bare local>` of a writeback type before lowering;
+            // the matching `Rvalue::Ref` emission lives in `lower_unary`.
+            let reload_target = self.mut_ref_reload_target(arg);
             let local = self.lower_expr(arg)?;
+            if let Some(place_local) = reload_target {
+                mut_ref_reloads.push((place_local, local));
+            }
             // 0.7.0 flag::Cell auto-deref at the user-fn call
             // boundary — matches the VM tier's behaviour so
             // `f(flags.output)` passes the unwrapped value.
@@ -639,6 +655,48 @@ impl<'a> Builder<'a> {
             target: Some(next),
         });
         self.set_current(next);
+        for (place_local, ref_local) in mut_ref_reloads {
+            self.emit_assign(
+                Place::local(place_local),
+                Rvalue::Use(Operand::Copy(Place {
+                    local: ref_local,
+                    projection: vec![crate::ir::Projection::Deref],
+                })),
+                span,
+            );
+        }
         Some(dest)
+    }
+
+    /// For a `&mut <bare local>` argument of a writeback type (scalar /
+    /// `String`), returns the borrowed local — the destination of the
+    /// post-call `place = *ref` reload. Mirrors the `Rvalue::Ref` emission
+    /// gate in `lower_unary`: only `&mut` over a place-expr of a scalar or
+    /// `String` operand takes a slot address. A bare path that *forwards* an
+    /// existing `&mut` parameter is already a pointer and needs no reload, so
+    /// only the explicit `&mut <local>` form qualifies.
+    fn mut_ref_reload_target(&self, arg: &HirExpr) -> Option<Local> {
+        use gossamer_types::TyKind;
+        let HirExprKind::Unary {
+            op: HirUnaryOp::RefMut,
+            operand,
+        } = &arg.kind
+        else {
+            return None;
+        };
+        let writeback = matches!(
+            self.tcx.kind_of(operand.ty),
+            TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Char | TyKind::String
+        );
+        if !writeback {
+            return None;
+        }
+        let HirExprKind::Path { segments, .. } = &operand.kind else {
+            return None;
+        };
+        let [seg] = segments.as_slice() else {
+            return None;
+        };
+        self.lookup_local(&seg.name)
     }
 }

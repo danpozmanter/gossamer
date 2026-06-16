@@ -36,9 +36,7 @@ impl<'tcx> FnBuilder<'tcx> {
                     }
                 }
             }
-            HirExprKind::MethodCall { receiver, name, .. }
-                if name.name.as_str() == "duration" =>
-            {
+            HirExprKind::MethodCall { receiver, name, .. } if name.name.as_str() == "duration" => {
                 if let HirExprKind::Path { segments, .. } = &receiver.kind
                     && let [seg] = segments.as_slice()
                     && let Some(tr) = self.lookup_local(&seg.name)

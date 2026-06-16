@@ -78,6 +78,10 @@ pub(crate) fn returns_borrowed_pointer(name: &str) -> bool {
             // inner Vec) or a `Vec<String>` (the element string) frees memory
             // the outer container reclaims again at scope end.
             | "gos_rt_vec_get_i64"
+            // Same interior-borrow contract as the checked reader; the
+            // counted-loop element read emits this when the index is
+            // provably in range.
+            | "gos_rt_vec_get_i64_unchecked"
             | "gos_rt_vec_get_ptr"
             | "gos_rt_vec_first"
             | "gos_rt_vec_last"

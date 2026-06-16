@@ -530,6 +530,22 @@ pub unsafe extern "C" fn gos_rt_vec_get_i64(v: *const GosVec, idx: i64) -> i64 {
     })
 }
 
+/// Reads an `i64`-shaped element from a `Vec` WITHOUT the null/bounds
+/// guard of [`gos_rt_vec_get_i64`]. Emitted only by the counted-loop
+/// element read, where the index is proven in `[0, len)` against this
+/// same vec and the receiver is non-null. The LLVM tier inlines this
+/// branch-free; the symbol exists so that AOT declare/link resolves.
+///
+/// # Safety
+/// `v` must be a non-null `GosVec` and `idx` in `[0, v.len)`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_vec_get_i64_unchecked(v: *const GosVec, idx: i64) -> i64 {
+    ffi_entry!(-1, {
+        let vec = unsafe { &*v };
+        unsafe { crate::c_abi::vec::vec_elem_load_i64(vec, idx) }
+    })
+}
+
 /// Writes an `i64`-shaped element to a `Vec` at `idx`. No-op for
 /// null receivers or out-of-range indices (so a stale `xs[i] = v`
 /// after a shrink doesn't trash unrelated memory).

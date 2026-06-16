@@ -76,4 +76,5 @@ jobs:
           # - `-Zmiri-ignore-leaks`: the GC heap leaks by design
           #   under tests that don't run a full collection cycle.
           MIRIFLAGS: -Zmiri-disable-isolation -Zmiri-permissive-provenance -Zmiri-ignore-leaks
-        run: cargo miri test -p ${{ matrix.crate }} --lib
+          RUST_BACKTRACE: "full"
+        run: cargo miri test -p ${{ matrix.crate }} --lib --no-fail-fast -- --nocapture --test-threads=1

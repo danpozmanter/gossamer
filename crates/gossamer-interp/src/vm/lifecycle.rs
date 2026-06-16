@@ -203,7 +203,12 @@ impl Vm {
     /// silently emptied the caller's interner, breaking any second
     /// `load` on the same `tcx`). Callers that need the `tcx`
     /// afterwards must clone before calling.
-    pub fn load(&mut self, program: &HirProgram, mut tcx: TyCtxt) -> RuntimeResult<()> {
+    pub fn load(
+        &mut self,
+        program: &HirProgram,
+        mut tcx: TyCtxt,
+        enable_inlining: bool,
+    ) -> RuntimeResult<()> {
         // Prepass: collect struct field orderings so `__struct`
         // can place literal fields in declaration order and the
         // VM compiler can emit compile-time offset reads.
@@ -218,6 +223,12 @@ impl Vm {
         // every call site, skipping an entire function frame per
         // call.
         let mut wrappers: HashMap<String, Vec<String>> = HashMap::new();
+        // User-function inlining table. A free function whose body is a
+        // single side-effect-transparent tail expression (`fn mat_a(i, j)
+        // -> f64 { … }`) is re-compiled directly at each call site,
+        // skipping the per-call frame. Built once here; consulted while
+        // compiling every function body in pass C.
+        let mut inline_fns = crate::compile::InlinableFns::new();
         for item in &program.items {
             match &item.kind {
                 HirItemKind::Adt(adt) => {
@@ -232,6 +243,18 @@ impl Vm {
                 HirItemKind::Fn(decl) => {
                     if let Some(target) = detect_trivial_wrapper(decl) {
                         wrappers.insert(decl.name.name.clone(), target);
+                    }
+                    // The user-function inliner is a performance optimization
+                    // for `gos run` / `gos build` / `gos bench`. `gos test`
+                    // loads with `enable_inlining == false` so a failed test's
+                    // call-chain traceback preserves every intermediate frame.
+                    let inlinable = if enable_inlining {
+                        crate::compile::detect_inlinable_fn(decl, &tcx)
+                    } else {
+                        None
+                    };
+                    if let Some(info) = inlinable {
+                        inline_fns.insert(decl.name.name.clone(), info);
                     }
                 }
                 _ => {}
@@ -271,6 +294,7 @@ impl Vm {
                     &tcx,
                     &def_layouts,
                     &wrappers,
+                    &inline_fns,
                     &module_consts,
                     &method_muts,
                     &mut_statics,
@@ -299,6 +323,7 @@ impl Vm {
                         &tcx,
                         &def_layouts,
                         &wrappers,
+                        &inline_fns,
                         &module_consts,
                         &method_muts,
                         &mut_statics,
@@ -316,6 +341,7 @@ impl Vm {
                         &tcx,
                         &def_layouts,
                         &wrappers,
+                        &inline_fns,
                         &module_consts,
                         &method_muts,
                         &mut_statics,
@@ -346,6 +372,7 @@ impl Vm {
                     &tcx,
                     &def_layouts,
                     &wrappers,
+                    &inline_fns,
                     &module_consts,
                     &method_muts,
                     &mut_statics,
@@ -537,6 +564,7 @@ impl Vm {
         tcx: &TyCtxt,
         layouts: &HashMap<gossamer_resolve::DefId, Vec<String>>,
         wrappers: &HashMap<String, Vec<String>>,
+        inline_fns: &crate::compile::InlinableFns,
         module_consts: &HashMap<String, Value>,
         method_muts: &crate::compile::MutSelfMethods,
         mut_statics: &crate::compile::MutStatics,
@@ -547,6 +575,7 @@ impl Vm {
             tcx,
             layouts,
             wrappers,
+            inline_fns,
             module_consts,
             method_muts,
             mut_statics,
@@ -588,6 +617,7 @@ impl Vm {
         tcx: &TyCtxt,
         layouts: &HashMap<gossamer_resolve::DefId, Vec<String>>,
         wrappers: &HashMap<String, Vec<String>>,
+        inline_fns: &crate::compile::InlinableFns,
         module_consts: &HashMap<String, Value>,
         method_muts: &crate::compile::MutSelfMethods,
         mut_statics: &crate::compile::MutStatics,
@@ -619,6 +649,7 @@ impl Vm {
                     tcx,
                     layouts,
                     wrappers,
+                    inline_fns,
                     module_consts,
                     method_muts,
                     mut_statics,
@@ -639,6 +670,7 @@ impl Vm {
                         tcx,
                         layouts,
                         wrappers,
+                        inline_fns,
                         module_consts,
                         method_muts,
                         mut_statics,
@@ -667,6 +699,7 @@ impl Vm {
                             tcx,
                             layouts,
                             wrappers,
+                            inline_fns,
                             module_consts,
                             method_muts,
                             mut_statics,

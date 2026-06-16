@@ -76,7 +76,11 @@ pub(crate) fn collect_region_unsafe_fns(program: &HirProgram, tcx: &TyCtxt) -> H
         let params: HashSet<String> = f
             .params
             .iter()
-            .filter_map(|p| pat_binding_name(&p.pattern))
+            .flat_map(|p| {
+                let mut names = Vec::new();
+                pat_binding_names(&p.pattern, &mut names);
+                names
+            })
             .collect();
         let mut scan = Scan {
             tcx,
@@ -110,11 +114,41 @@ pub(crate) fn collect_region_unsafe_fns(program: &HirProgram, tcx: &TyCtxt) -> H
     unsafe_set
 }
 
-/// First binding name of a (possibly `mut`) identifier pattern.
-fn pat_binding_name(pat: &gossamer_hir::HirPat) -> Option<String> {
+/// Every identifier a pattern binds, walking tuple / variant / struct / ref /
+/// `@` sub-patterns so a destructured `let (a, b) = …` registers both names.
+fn pat_binding_names(pat: &gossamer_hir::HirPat, out: &mut Vec<String>) {
+    use gossamer_hir::HirPatKind;
     match &pat.kind {
-        gossamer_hir::HirPatKind::Binding { name, .. } => Some(name.name.clone()),
-        _ => None,
+        HirPatKind::Binding { name, .. } => out.push(name.name.clone()),
+        HirPatKind::At { name, sub, .. } => {
+            out.push(name.name.clone());
+            pat_binding_names(sub, out);
+        }
+        HirPatKind::Tuple(parts) | HirPatKind::Variant { fields: parts, .. } => {
+            for p in parts {
+                pat_binding_names(p, out);
+            }
+        }
+        HirPatKind::Struct { fields, .. } => {
+            for f in fields {
+                match &f.pattern {
+                    Some(p) => pat_binding_names(p, out),
+                    // Shorthand `Foo { x }` binds the field name itself.
+                    None => out.push(f.name.name.clone()),
+                }
+            }
+        }
+        HirPatKind::Ref { inner, .. } => pat_binding_names(inner, out),
+        HirPatKind::Or(alts) => {
+            // Every arm of an or-pattern binds the same names; one arm suffices.
+            if let Some(first) = alts.first() {
+                pat_binding_names(first, out);
+            }
+        }
+        HirPatKind::Wildcard
+        | HirPatKind::Literal(_)
+        | HirPatKind::Rest
+        | HirPatKind::Range { .. } => {}
     }
 }
 
@@ -351,6 +385,7 @@ impl<'a> LoopEligibility<'a> {
                 | TyKind::String
                 | TyKind::DynError
                 | TyKind::JsonValue
+                | TyKind::Tuple(_)
         )
     }
 
@@ -367,9 +402,9 @@ impl<'a> LoopEligibility<'a> {
                     if let Some(e) = init {
                         self.expr(e, false);
                     }
-                    if let Some(name) = pat_binding_name(pattern) {
-                        self.in_body.insert(name);
-                    }
+                    let mut names = Vec::new();
+                    pat_binding_names(pattern, &mut names);
+                    self.in_body.extend(names);
                 }
                 HirStmtKind::Expr { expr, .. } => self.expr(expr, false),
                 HirStmtKind::Defer(_) | HirStmtKind::Go(_) | HirStmtKind::Item(_) => {

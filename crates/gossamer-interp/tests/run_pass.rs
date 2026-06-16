@@ -34,7 +34,7 @@ fn run_program(source: &str) -> String {
     let program = lower_source_file(&sf, &resolutions, &table, &mut tcx);
 
     let mut interp = Vm::new();
-    interp.load(&program, tcx).expect("vm load");
+    interp.load(&program, tcx, true).expect("vm load");
 
     CAPTURED.with(|cell| cell.borrow_mut().clear());
     let prev = set_stdout_writer(capture_writer);
@@ -54,7 +54,7 @@ fn call_and_return(source: &str, entry: &str, args: Vec<Value>) -> Value {
     let (table, _type_diags) = typecheck_source_file(&sf, &resolutions, &mut tcx);
     let program = lower_source_file(&sf, &resolutions, &table, &mut tcx);
     let mut interp = Vm::new();
-    interp.load(&program, tcx).expect("vm load");
+    interp.load(&program, tcx, true).expect("vm load");
     interp.call(entry, args).expect("call failed")
 }
 

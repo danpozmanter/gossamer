@@ -1,6 +1,6 @@
 //! Trampoline that dispatches into a JIT-compiled body.
 //!
-//! Every call into native code goes through [`invoke`]: it inspects
+//! Every call into native code goes through `invoke_prepared`: it inspects
 //! the [`JitFn`]'s parameter and return kinds, marshals the VM's
 //! boxed `Value`s into raw scalars, transmutes the function pointer
 //! to a typed `extern "C"` callable, and calls it.
@@ -879,7 +879,7 @@ unsafe fn call_0(ptr: *const u8, _s: &[Slot], ret: JitKind) -> Option<Value> {
 }
 
 /// Returns the stub for an `(arity, shape)` pair, or `None` for a shape
-/// the trampoline doesn't cover. Mirrors the `match` in [`dispatch`].
+/// the trampoline doesn't cover. Mirrors the `match` in `invoke_prepared`.
 pub(crate) fn resolve_stub(arity: usize, shape: u32) -> Option<StubFn> {
     let f: StubFn = match (arity, shape) {
         (0, _) => call_0,

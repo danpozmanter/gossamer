@@ -180,6 +180,15 @@ fn jit_compile_set<'a>(
                     gossamer_types::IntTy::I128 | gossamer_types::IntTy::U128
                 )
             }
+            // A by-value tuple carrying an RC-managed element needs per-field
+            // retain/release teardown at the JIT boundary, where the aggregate
+            // is a marshalled handle rather than a native stack layout. Like
+            // struct locals, such bodies stay on bytecode; LLVM AOT lowers the
+            // per-field accounting natively.
+            TyKind::Tuple(elems) => elems.iter().any(|t| {
+                tcx.is_rc_managed(*t)
+                    && !matches!(tcx.kind_of(*t), TyKind::Vec(_) | TyKind::Slice(_))
+            }),
             _ => false,
         })
     };
