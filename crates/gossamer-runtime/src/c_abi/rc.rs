@@ -17,7 +17,7 @@
 
 #[cfg(any(tsan, miri, fuzzing))]
 use std::alloc::{Layout, alloc_zeroed, dealloc};
-use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering, fence};
+use std::sync::atomic::{AtomicU8, AtomicU32, AtomicUsize, Ordering, fence};
 
 // ---------------------------------------------------------------
 // Intrusive reference counting for compiled-tier heap objects.
@@ -54,13 +54,11 @@ pub struct RcHeader {
     /// Strong reference count (low 28 bits) plus the collector flag bits.
     /// Starts at 1 on allocation.
     pub strong: u32,
-    /// Weak reference count (saturating). The allocation outlives `strong ==
-    /// 0` whenever this is non-zero, so a `Weak` can probe liveness without
-    /// reading freed memory. `u8`: an object observed by 255 simultaneous
-    /// weak handles saturates and its allocation is never reclaimed - a
-    /// leak, never a corruption - which frees the byte the enum
-    /// discriminant now occupies.
-    pub weak: u8,
+    /// Weak reference count. The allocation outlives `strong == 0` whenever
+    /// this is non-zero, so a `Weak` can probe liveness without reading freed
+    /// memory. `AtomicU8`: concurrent downgrade/upgrade across goroutines is
+    /// safe; same size and layout as `u8` so the 8-byte header is preserved.
+    pub weak: AtomicU8,
     /// Enum discriminant. Lives in the header (codegen reads/writes the
     /// byte at `payload - 3`) so the payload holds only the variant's
     /// fields: a `Node(i64, Box, Box)` is 8 + 24 = 32 bytes and a
@@ -1192,7 +1190,7 @@ pub unsafe extern "C" fn gos_rt_rc_alloc_tagged(size: u64, meta: *const i64) -> 
     let h = base as *mut RcHeader;
     unsafe {
         (*h).strong = 1;
-        (*h).weak = 0;
+        (*h).weak = AtomicU8::new(0);
         (*h).disc = 0;
         (*h).meta_id = meta_intern(meta);
     }
@@ -1221,7 +1219,7 @@ pub unsafe extern "C" fn gos_rt_rc_alloc(size: u64, meta: *const i64) -> *mut u8
     let h = base as *mut RcHeader;
     unsafe {
         (*h).strong = if in_region { 1 | REGION_BIT } else { 1 };
-        (*h).weak = 0;
+        (*h).weak = AtomicU8::new(0);
         (*h).disc = 0;
         (*h).meta_id = meta_intern(meta);
     }
@@ -1254,7 +1252,7 @@ pub extern "C" fn gos_rt_enum_unit(tag: i64) -> *mut u8 {
         unsafe {
             let h = base as *mut RcHeader;
             (*h).strong = STRONG_IMMORTAL;
-            (*h).weak = 0;
+            (*h).weak = AtomicU8::new(0);
             // Unit-variant singleton: the discriminant lives in the
             // header byte the compiled match reads. The 8-byte payload
             // stays zeroed spare space.
@@ -1362,7 +1360,7 @@ pub unsafe extern "C" fn gos_rt_rc_downgrade(payload: *mut u8) -> *mut u8 {
         return std::ptr::null_mut();
     }
     let h = unsafe { header_ptr(base) };
-    unsafe { (*h).weak = (*h).weak.saturating_add(1) };
+    unsafe { (*h).weak.fetch_add(1, Ordering::Relaxed) };
     payload
 }
 
@@ -1379,7 +1377,7 @@ pub unsafe extern "C" fn gos_rt_rc_weak_retain(payload: *mut u8) {
         return;
     }
     let h = unsafe { header_ptr(payload) };
-    unsafe { (*h).weak = (*h).weak.saturating_add(1) };
+    unsafe { (*h).weak.fetch_add(1, Ordering::Relaxed) };
 }
 
 /// Decrement the weak count; if both strong and weak counts are now zero,
@@ -1396,9 +1394,11 @@ pub unsafe extern "C" fn gos_rt_rc_weak_release(payload: *mut u8) {
         return;
     }
     let h = unsafe { header_ptr(payload) };
-    let next = unsafe { (*h).weak }.saturating_sub(1);
-    unsafe { (*h).weak = next };
-    if next == 0 {
+    // prev is the old weak count; the new value is prev - 1. When prev == 1
+    // the count just reached 0, so the allocation can be reclaimed if nothing
+    // else pins it.
+    let prev = unsafe { (*h).weak.fetch_sub(1, Ordering::Relaxed) };
+    if prev == 1 {
         unsafe { try_reclaim(payload) };
     }
 }
@@ -1418,13 +1418,31 @@ pub unsafe extern "C" fn gos_rt_rc_weak_upgrade(payload: *mut u8) -> *mut u8 {
         return std::ptr::null_mut();
     }
     let h = unsafe { header_ptr(base) };
-    let count = unsafe { strong_count(h) };
+    let s = unsafe { load_strong(h) };
+    let count = s & STRONG_COUNT_MASK;
     if count == 0 {
         return std::ptr::null_mut();
     }
-    // A new strong reference revives the object: bump the count and color it
-    // black so a concurrent cycle scan treats it as live.
-    unsafe { set_strong_count(h, count.saturating_add(1)) };
+    if s & SHARED_BIT != 0 {
+        // CAS loop: atomically upgrade only while the strong count remains
+        // non-zero. Two goroutines upgrading the same weak reference
+        // simultaneously must not both succeed after the referent dies.
+        let a = unsafe { AtomicU32::from_ptr(std::ptr::addr_of_mut!((*h).strong)) };
+        let mut cur = s;
+        loop {
+            if cur & STRONG_COUNT_MASK == 0 {
+                return std::ptr::null_mut();
+            }
+            match a.compare_exchange_weak(cur, cur + 1, Ordering::Relaxed, Ordering::Relaxed) {
+                Ok(_) => break,
+                Err(actual) => cur = actual,
+            }
+        }
+    } else {
+        // Thread-local object: no concurrent writer exists.
+        unsafe { set_strong_count(h, count.saturating_add(1)) };
+    }
+    // Color black so a concurrent cycle scan treats the revived object as live.
     unsafe { set_color(h, COLOR_BLACK) };
     payload
 }
@@ -1464,7 +1482,10 @@ pub unsafe extern "C" fn gos_rt_rc_weak_upgrade_opt(payload: *mut u8) -> i128 {
 /// release path goes through, so each block is freed exactly once.
 unsafe fn try_reclaim(payload: *mut u8) {
     let h = unsafe { header_ptr(payload) };
-    if unsafe { strong_count(h) } == 0 && unsafe { (*h).weak } == 0 && !unsafe { is_buffered(h) } {
+    if unsafe { strong_count(h) } == 0
+        && unsafe { (*h).weak.load(Ordering::Relaxed) } == 0
+        && !unsafe { is_buffered(h) }
+    {
         unsafe { free_block(payload) };
     }
 }
@@ -1883,7 +1904,15 @@ unsafe fn mark_gray(root: *mut u8) {
         unsafe {
             visit_rc_children(s, |t| {
                 let th = header_ptr(t);
-                set_strong_count(th, strong_count(th).saturating_sub(1));
+                let ts = load_strong(th);
+                if ts & SHARED_BIT != 0 {
+                    // Shared child: atomic decrement so we don't race a
+                    // concurrent retain/release on another goroutine.
+                    let a = AtomicU32::from_ptr(std::ptr::addr_of_mut!((*th).strong));
+                    a.fetch_sub(1, Ordering::Relaxed);
+                } else {
+                    set_strong_count(th, strong_count(th).saturating_sub(1));
+                }
                 stack.push(t);
             });
         }
@@ -1922,7 +1951,15 @@ unsafe fn scan_black(root: *mut u8) {
         unsafe {
             visit_rc_children(s, |t| {
                 let th = header_ptr(t);
-                set_strong_count(th, strong_count(th).saturating_add(1));
+                let ts = load_strong(th);
+                if ts & SHARED_BIT != 0 {
+                    // Shared child: atomic increment mirrors the atomic
+                    // decrement in mark_gray.
+                    let a = AtomicU32::from_ptr(std::ptr::addr_of_mut!((*th).strong));
+                    a.fetch_add(1, Ordering::Relaxed);
+                } else {
+                    set_strong_count(th, strong_count(th).saturating_add(1));
+                }
                 if color_of(th) != COLOR_BLACK {
                     stack.push(t);
                 }
@@ -1944,13 +1981,23 @@ unsafe fn collect_white(root: *mut u8) {
             continue;
         }
         unsafe { set_color(h, COLOR_BLACK) };
-        unsafe { visit_rc_children(s, |t| stack.push(t)) };
+        // Use visit_children_raw so string children are freed via their own
+        // destructor rather than silently skipped, mirroring rc_release_impl.
+        unsafe {
+            visit_children_raw(s, |c| {
+                if crate::c_abi::string::is_gos_string(c.cast()) {
+                    crate::c_abi::string::gos_rt_str_free(c.cast());
+                } else {
+                    stack.push(c);
+                }
+            });
+        }
         to_free.push(s);
     }
     for s in to_free {
         let h = unsafe { header_ptr(s) };
         if unsafe { strong_count(h) } == 0
-            && unsafe { (*h).weak } == 0
+            && unsafe { (*h).weak.load(Ordering::Relaxed) } == 0
             && !unsafe { is_buffered(h) }
         {
             CYCLES_FREED.fetch_add(1, Ordering::Relaxed);
@@ -2299,7 +2346,7 @@ mod tests {
     }
 
     unsafe fn weak_of(payload: *mut u8) -> usize {
-        unsafe { (*header_ptr(payload)).weak as usize }
+        unsafe { (*header_ptr(payload)).weak.load(Ordering::Relaxed) as usize }
     }
 
     #[test]

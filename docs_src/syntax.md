@@ -50,6 +50,22 @@ impl Area for Shape {
 }
 ```
 
+## Top-level statements
+
+The entry file may skip the `fn main` wrapper. Bare statements at file
+scope become the body of an implicit `fn main()`; items declared
+alongside them are hoisted out as usual:
+
+```gossamer
+println!("Hello World")
+```
+
+A `?` at the top level makes the implicit main return
+`Result<(), errors::Error>`; set a process exit code with
+`std::process::exit(n)`. See
+[Top-level statements](language/top_level_statements.md) for the full
+rules.
+
 ## Generic structs
 
 A struct may carry one or more type parameters. The typechecker

@@ -21,6 +21,16 @@ fn main() {
 }
 ```
 
+For scripts and examples, the entry file may skip the `fn main`
+wrapper: bare statements at file scope become the body of an implicit
+`fn main()`, so this is a complete program too:
+
+```gossamer
+println!("hello, world")
+```
+
+See [Top-level statements](language/top_level_statements.md).
+
 ## Hello, Goroutines and Channels
 
 ```gossamer

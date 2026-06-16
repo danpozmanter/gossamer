@@ -62,6 +62,17 @@ Until then, treat the public API as may-change-with-notice.
 
 ## Gossamer's Syntax
 
+For scripts and examples, the entry file may skip the `fn main` wrapper:
+bare statements at file scope become the body of an implicit `fn main()`,
+so this is a complete program:
+
+```gossamer
+println!("Hello World")
+```
+
+A top-level `?` makes the implicit main return `Result<(),
+errors::Error>`; set a process exit code with `std::process::exit(n)`.
+
 Gossamer leans on a forward-pipe operator (`|>`) so data flows
 left-to-right. `x |> f(a, b)` desugars to
 `f(a, b, x)`, and `|>` chains cleanly with methods, closures, and

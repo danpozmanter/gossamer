@@ -10,6 +10,7 @@ use crate::common::Ident;
 use crate::items::{Attrs, Item};
 use crate::node_id::NodeId;
 use crate::printer::Printer;
+use crate::stmt::Stmt;
 
 /// A parsed `.gos` source file.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -22,6 +23,17 @@ pub struct SourceFile {
     pub uses: Vec<UseDecl>,
     /// Items in source order.
     pub items: Vec<Item>,
+    /// Bare statements parsed at file scope, in source order. Non-empty
+    /// only for an entry file; `synthesize_entry_main` consumes them into
+    /// the body of an implicit `fn main`. The sibling bundler keeps every
+    /// non-entry file's contents inside a `mod { }` body, where statements
+    /// are not accepted, so this list belongs solely to the entry file.
+    #[serde(default)]
+    pub top_level_stmts: Vec<Stmt>,
+    /// First node id the parser did not use, so a post-parse pass (entry-main
+    /// synthesis) can mint fresh ids for the wrapper nodes without colliding.
+    #[serde(default)]
+    pub next_node_id: u32,
 }
 
 impl SourceFile {
@@ -33,6 +45,8 @@ impl SourceFile {
             attrs: Attrs::default(),
             uses,
             items,
+            top_level_stmts: Vec::new(),
+            next_node_id: 0,
         }
     }
 }
@@ -147,5 +161,20 @@ impl UseListEntry {
             name: Ident::new(name),
             alias: Some(Ident::new(alias)),
         }
+    }
+}
+
+#[cfg(test)]
+mod source_file_tests {
+    use super::*;
+    use gossamer_lex::SourceMap;
+
+    #[test]
+    fn new_source_file_has_empty_top_level_stmts() {
+        let mut map = SourceMap::new();
+        let file = map.add_file("t.gos", String::new());
+        let sf = SourceFile::new(file, Vec::new(), Vec::new());
+        assert!(sf.top_level_stmts.is_empty());
+        assert_eq!(sf.next_node_id, 0);
     }
 }

@@ -38,8 +38,26 @@ fn run_interp(source: &str) -> Result<(), String> {
         .map_err(|e| format!("runtime: {e}"))
 }
 
+/// Serializes the networking tests below. They share two process-global
+/// resources: `set_http_max_requests` (a single override every server in
+/// the process reads) and the OS ephemeral-port handoff - each test
+/// probes a free port with `bind("127.0.0.1:0")`, drops it, then has the
+/// interpreter rebind that same address. Run concurrently, one test's
+/// server can claim the port another just probed, so a client reaches the
+/// wrong server (or none, once the thief consumes the single permitted
+/// request). Held for each test's duration, this lock keeps the
+/// probe-to-teardown window exclusive within the process.
+static NET_TEST_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn net_guard() -> std::sync::MutexGuard<'static, ()> {
+    NET_TEST_GUARD
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 #[test]
 fn native_http_serve_dispatches_user_handler() {
+    let _net = net_guard();
     // The interpreter's `http::serve` exits after
     // `gossamer_interp::set_http_max_requests(n)`; without it the
     // server loops forever and the test's `server_thread.join()`
@@ -213,6 +231,7 @@ fn spawn_canned_body_server(body: &'static [u8]) -> (std::net::SocketAddr, threa
 
 #[test]
 fn response_stream_next_chunk_drains_body_in_max_byte_chunks() {
+    let _net = net_guard();
     let (addr, server) = spawn_canned_body_server(b"0123456789");
 
     // Byte sum of "0123456789" = 10 * 0x30 + (0+..+9) = 525.
@@ -243,6 +262,7 @@ fn response_stream_next_chunk_drains_body_in_max_byte_chunks() {
 
 #[test]
 fn response_stream_next_line_then_next_chunk_share_one_cursor() {
+    let _net = net_guard();
     let (addr, server) = spawn_canned_body_server(b"alpha\nbeta!");
 
     let source = format!(
@@ -272,6 +292,7 @@ fn response_stream_next_line_then_next_chunk_share_one_cursor() {
 
 #[test]
 fn client_get_send_returns_response_with_populated_headers() {
+    let _net = net_guard();
     let (addr, server) = spawn_custom_header_server();
 
     let source = format!(
@@ -300,6 +321,7 @@ fn client_get_send_returns_response_with_populated_headers() {
 
 #[test]
 fn http_request_bytes_posts_binary_body_and_returns_ok_response() {
+    let _net = net_guard();
     let (addr, server) = spawn_echo_server();
 
     let source = format!(
@@ -336,6 +358,7 @@ fn http_request_bytes_posts_binary_body_and_returns_ok_response() {
 
 #[test]
 fn server_request_raw_body_preserves_binary_post_bytes() {
+    let _net = net_guard();
     gossamer_interp::set_http_max_requests(1);
 
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -424,6 +447,7 @@ fn server_request_raw_body_preserves_binary_post_bytes() {
 
 #[test]
 fn handler_with_header_chain_reaches_the_wire_with_replace_semantics() {
+    let _net = net_guard();
     gossamer_interp::set_http_max_requests(1);
 
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -543,6 +567,7 @@ fn raw_get(addr: std::net::SocketAddr) -> (String, String, Vec<u8>) {
 
 #[test]
 fn proxy_handler_streams_upstream_body_as_chunked_passthrough() {
+    let _net = net_guard();
     gossamer_interp::set_http_max_requests(1);
     let (upstream_addr, upstream) = spawn_canned_body_server(b"proxied payload bytes");
 
@@ -601,6 +626,7 @@ fn proxy_handler_streams_upstream_body_as_chunked_passthrough() {
 
 #[test]
 fn response_stream_construction_consumes_the_client_stream() {
+    let _net = net_guard();
     gossamer_interp::set_http_max_requests(1);
     let (upstream_addr, upstream) = spawn_canned_body_server(b"consume-me");
 

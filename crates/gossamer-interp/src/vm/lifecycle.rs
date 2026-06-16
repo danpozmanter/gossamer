@@ -635,6 +635,13 @@ impl Vm {
         // construction: any future op that calls `load_item` mid-
         // run still gets a valid invalidation signal.
         self.bump_globals_generation();
+        // A method whose bare name matches a prelude builtin (`clone`,
+        // `len`, `push`, ...) must not shadow it in the per-Vm overlay:
+        // overlay entries win over the prelude, so a bare-name insert
+        // would reroute every `String`/`Vec`/enum receiver - which falls
+        // back to the bare name when no `Type::method` key matches - into
+        // a type-specific impl that only understands its own shape.
+        let prelude = Arc::clone(&self.prelude);
         let globals = Arc::make_mut(&mut self.globals);
         let module_prefix = if item.module_path.is_empty() {
             None
@@ -688,7 +695,9 @@ impl Vm {
                             );
                         }
                     }
-                    globals.insert(intern(&method.name.name), Global::Fn(shared));
+                    if !prelude.contains_key(method.name.name.as_str()) {
+                        globals.insert(intern(&method.name.name), Global::Fn(shared));
+                    }
                 }
             }
             HirItemKind::Trait(decl) => {

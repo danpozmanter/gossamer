@@ -757,6 +757,20 @@ impl<'a> Builder<'a> {
         })
     }
 
+    /// `Result<Vec<json::Value>, errors::Error>` - the shape
+    /// `gos_rt_yaml_parse_all` returns (one `json::Value` handle per
+    /// document in a multi-document YAML stream).
+    pub(crate) fn result_vec_json_value_error_ty(&mut self) -> Ty {
+        let jv = self.tcx.json_value_ty();
+        let vec = self.tcx.intern(gossamer_types::TyKind::Vec(jv));
+        let e = self.tcx.dyn_error_ty();
+        let substs = gossamer_types::Substs::from_types([vec, e]);
+        self.tcx.intern(gossamer_types::TyKind::Adt {
+            def: gossamer_resolve::DefId::local(u32::MAX),
+            substs,
+        })
+    }
+
     pub(crate) fn result_unit_error_adt_ty(&mut self) -> Ty {
         let u = self.tcx.unit();
         let e = self.tcx.dyn_error_ty();
@@ -1071,15 +1085,17 @@ impl<'a> Builder<'a> {
     pub(crate) fn elem_bytes_of(&self, ty: Ty) -> u32 {
         use gossamer_types::TyKind;
         match self.tcx.kind_of(ty) {
-            // The compiled tiers store every scalar element in a full
-            // 8-byte slot: the flat-stack representation, the inline
-            // index fast paths, and the array->Vec coercions all copy
-            // and address elements at i64 width. Narrower widths here
-            // (bool was 1, char was 4) made `[].to_vec()`-constructed
-            // vecs disagree with literal-constructed ones (which clamp
-            // to 8), and an 8-byte inline element store into a
-            // 1-byte-stride vec corrupts the neighbouring elements.
-            TyKind::Bool | TyKind::Char => 8,
+            // Bool uses a 1-byte element stride: each element occupies
+            // exactly 1 byte in the GosVec data buffer. The inline
+            // get/set paths read and write via the header-driven byte
+            // path (`elem_bytes == 1` branch), and the push path uses
+            // `gos_rt_vec_push_i64` which memcpys only `elem_bytes`
+            // bytes from the i64 payload, so a bool push correctly
+            // stores the low byte (0 or 1) with no overflow.
+            TyKind::Bool => 1,
+            // Char occupies a full 8-byte slot so it aligns with the
+            // word-stride fast paths throughout the codegen.
+            TyKind::Char => 8,
             TyKind::Int(_) | TyKind::Float(_) => 8,
             TyKind::String => 8,
             // Tuples / aggregate ADTs occupy `slot_count * 8` bytes

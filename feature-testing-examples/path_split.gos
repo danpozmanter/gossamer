@@ -1,0 +1,12 @@
+// path::split parity: splits a path into (directory, file). The
+// directory keeps no trailing separator unless the path is "/".
+
+use std::path
+
+fn main() {
+    let cases = ["/usr/local/bin", "foo.txt", "/etc", "a/b/c", "/", ""]
+    for c in cases {
+        let (dir, file) = path::split(&c)
+        println!("{} -> [{}] [{}]", c, dir, file)
+    }
+}

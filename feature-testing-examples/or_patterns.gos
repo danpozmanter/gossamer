@@ -1,0 +1,48 @@
+// Or-patterns in match arms: `Pat1 | Pat2 => body`.
+// Each alternative must bind the same names with the same types.
+// Verified across all three tiers (VM, Cranelift JIT, LLVM AOT).
+
+enum Shape { Circle(f64), Square(f64), Rectangle(f64, f64) }
+
+// `Shape::Square` and `Shape::Rectangle` share the first-field binding `side`.
+fn area(s: Shape) -> f64 {
+    match s {
+        Shape::Circle(r) => 3.14159 * r * r,
+        Shape::Square(side) | Shape::Rectangle(side, _) => side * side,
+    }
+}
+
+fn main() {
+    println!("{:.2}", area(Shape::Circle(1.0)))
+    println!("{:.2}", area(Shape::Square(2.0)))
+    println!("{:.2}", area(Shape::Rectangle(3.0, 4.0)))
+}
+
+#[cfg(test)]
+mod or_patterns_tests {
+    use std::testing
+
+    #[test]
+    fn circle_area() {
+        let got = super::area(super::Shape::Circle(1.0))
+        let want = 3.14159
+        testing::check(
+            &((got - want).abs() < 0.001),
+            "circle area",
+        )
+    }
+
+    #[test]
+    fn square_area() {
+        testing::check_eq(&super::area(super::Shape::Square(2.0)), &4.0, "square area")
+    }
+
+    #[test]
+    fn rectangle_uses_first_side() {
+        testing::check_eq(
+            &super::area(super::Shape::Rectangle(3.0, 4.0)),
+            &9.0,
+            "rectangle side*side",
+        )
+    }
+}

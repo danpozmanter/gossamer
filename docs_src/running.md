@@ -30,6 +30,16 @@ Once `gos` is on your `PATH`, every subcommand takes either a
 | `gos fetch` / `gos vendor` | Populate the package cache / vendor tree |
 | `gos` (no args) | Interactive REPL |
 
+## Entry file
+
+`gos run file.gos` and `gos build file.gos` accept a file with no
+`fn main`: bare statements at the top of the entry file become the
+body of an implicit `fn main()`. So a one-line `println!("Hello
+World")` file runs as-is. See
+[Top-level statements](language/top_level_statements.md). A project's
+entry file is `src/main.gos` by convention, or whatever
+`[project] entry` names in `project.toml`.
+
 ## Environment variables
 
 - `GOSSAMER_HTTP_MAX_REQUESTS=N` - ask the HTTP server to exit

@@ -546,6 +546,74 @@ impl<'a> Builder<'a> {
                 return Some(self.lower_unit(span));
             }
         }
+        // `s.push_char(c)` on a String receiver. Same receiver-rebind
+        // contract as `push`; dispatches to `gos_rt_str_push_char` which
+        // interprets the argument as a Unicode codepoint.
+        if method.name.as_str() == "push_char"
+            && args.len() == 1
+            && let Some(recv_local) = self.receiver_local_from_path(receiver)
+        {
+            let recv_ty = self.locals[recv_local.0 as usize].ty;
+            let mut peeled = recv_ty;
+            while let TyKind::Ref { inner, .. } = self.tcx.kind_of(peeled) {
+                peeled = *inner;
+            }
+            if matches!(self.tcx.kind_of(peeled), TyKind::String) {
+                let arg_local = self.lower_expr(&args[0])?;
+                let dest = self.fresh(recv_ty);
+                let next = self.new_block(span);
+                self.terminate(Terminator::Call {
+                    callee: Operand::Const(ConstValue::Str("gos_rt_str_push_char".to_string())),
+                    args: vec![
+                        Operand::Copy(Place::local(recv_local)),
+                        Operand::Copy(Place::local(arg_local)),
+                    ],
+                    destination: Place::local(dest),
+                    target: Some(next),
+                });
+                self.set_current(next);
+                self.emit_assign(
+                    Place::local(recv_local),
+                    Rvalue::Use(Operand::Copy(Place::local(dest))),
+                    span,
+                );
+                return Some(self.lower_unit(span));
+            }
+        }
+        // `s.push_byte(b)` on a String receiver. Same receiver-rebind
+        // contract as `push`; dispatches to `gos_rt_str_push_byte` which
+        // interprets the argument as a raw byte value.
+        if method.name.as_str() == "push_byte"
+            && args.len() == 1
+            && let Some(recv_local) = self.receiver_local_from_path(receiver)
+        {
+            let recv_ty = self.locals[recv_local.0 as usize].ty;
+            let mut peeled = recv_ty;
+            while let TyKind::Ref { inner, .. } = self.tcx.kind_of(peeled) {
+                peeled = *inner;
+            }
+            if matches!(self.tcx.kind_of(peeled), TyKind::String) {
+                let arg_local = self.lower_expr(&args[0])?;
+                let dest = self.fresh(recv_ty);
+                let next = self.new_block(span);
+                self.terminate(Terminator::Call {
+                    callee: Operand::Const(ConstValue::Str("gos_rt_str_push_byte".to_string())),
+                    args: vec![
+                        Operand::Copy(Place::local(recv_local)),
+                        Operand::Copy(Place::local(arg_local)),
+                    ],
+                    destination: Place::local(dest),
+                    target: Some(next),
+                });
+                self.set_current(next);
+                self.emit_assign(
+                    Place::local(recv_local),
+                    Rvalue::Use(Operand::Copy(Place::local(dest))),
+                    span,
+                );
+                return Some(self.lower_unit(span));
+            }
+        }
 
         // Prefer the MIR local's pinned type over the HIR receiver
         // type when the receiver is a Path bound to a local - the
@@ -1559,6 +1627,10 @@ impl<'a> Builder<'a> {
                 (Some("collections::HashSet"), "is_subset") => Some("gos_rt_set_is_subset"),
                 (Some("collections::HashSet"), "is_superset") => Some("gos_rt_set_is_superset"),
                 (Some("collections::HashSet"), "is_disjoint") => Some("gos_rt_set_is_disjoint"),
+                (Some("collections::VecDeque"), "push_back") => Some("gos_rt_deque_push_back"),
+                (Some("collections::VecDeque"), "pop_front") => Some("gos_rt_deque_pop_front"),
+                (Some("collections::VecDeque"), "len") => Some("gos_rt_deque_len"),
+                (Some("collections::VecDeque"), "is_empty") => Some("gos_rt_deque_is_empty"),
                 (Some("collections::BTreeMap"), "insert") => Some("gos_rt_btmap_insert"),
                 (Some("collections::BTreeMap"), "get") => Some("gos_rt_btmap_get"),
                 (Some("collections::BTreeMap"), "get_or") => Some("gos_rt_btmap_get_or"),
@@ -1765,6 +1837,9 @@ impl<'a> Builder<'a> {
                     })
                 }
                 "gos_rt_btmap_insert" | "gos_rt_flag_set_short" => self.tcx.unit(),
+                "gos_rt_deque_push_back" => self.tcx.unit(),
+                "gos_rt_deque_pop_front" => self.option_i64_adt_ty(),
+                "gos_rt_deque_is_empty" => self.tcx.bool_ty(),
                 "gos_rt_router_add"
                 | "gos_rt_router_get"
                 | "gos_rt_router_post"
@@ -2055,6 +2130,10 @@ impl<'a> Builder<'a> {
             (Some("collections::HashSet"), "is_subset") => Some("gos_rt_set_is_subset"),
             (Some("collections::HashSet"), "is_superset") => Some("gos_rt_set_is_superset"),
             (Some("collections::HashSet"), "is_disjoint") => Some("gos_rt_set_is_disjoint"),
+            (Some("collections::VecDeque"), "push_back") => Some("gos_rt_deque_push_back"),
+            (Some("collections::VecDeque"), "pop_front") => Some("gos_rt_deque_pop_front"),
+            (Some("collections::VecDeque"), "len") => Some("gos_rt_deque_len"),
+            (Some("collections::VecDeque"), "is_empty") => Some("gos_rt_deque_is_empty"),
             (Some("collections::BTreeMap"), "insert") => Some("gos_rt_btmap_insert"),
             (Some("collections::BTreeMap"), "get") => Some("gos_rt_btmap_get"),
             (Some("collections::BTreeMap"), "get_or") => Some("gos_rt_btmap_get_or"),
@@ -2244,6 +2323,9 @@ impl<'a> Builder<'a> {
                     })
                 }
                 "gos_rt_btmap_insert" | "gos_rt_flag_set_short" => self.tcx.unit(),
+                "gos_rt_deque_push_back" => self.tcx.unit(),
+                "gos_rt_deque_pop_front" => self.option_i64_adt_ty(),
+                "gos_rt_deque_is_empty" => self.tcx.bool_ty(),
                 "gos_rt_router_add"
                 | "gos_rt_router_get"
                 | "gos_rt_router_post"

@@ -1,0 +1,83 @@
+// String literal patterns in `match`.
+// A string scrutinee (`String` or `&String`) is matched against literal
+// arms; the compiler desugars the chain through `gos_rt_str_eq` so all
+// three tiers (VM, Cranelift JIT, LLVM AOT) produce identical output.
+
+fn classify(s: &String) -> String {
+    match s {
+        "GET" => "read",
+        "POST" => "write",
+        _ => "other",
+    }
+}
+
+// Match on an owned String scrutinee.
+fn describe(s: String) -> String {
+    match s {
+        "SELECT" => "query",
+        "INSERT" => "write",
+        "DELETE" => "remove",
+        _ => "unknown",
+    }
+}
+
+// String literal pattern with a guard.
+fn guarded(s: &String, n: i64) -> String {
+    match s {
+        "big" if n > 100 => "big and large",
+        "big" => "big but small",
+        _ => "other",
+    }
+}
+
+fn main() {
+    println!("{}", classify(&"GET".to_string()))
+    println!("{}", classify(&"POST".to_string()))
+    println!("{}", classify(&"DELETE".to_string()))
+
+    println!("{}", describe("SELECT".to_string()))
+    println!("{}", describe("INSERT".to_string()))
+    println!("{}", describe("UPDATE".to_string()))
+
+    println!("{}", guarded(&"big".to_string(), 200))
+    println!("{}", guarded(&"big".to_string(), 50))
+    println!("{}", guarded(&"small".to_string(), 200))
+}
+
+#[cfg(test)]
+mod string_match_patterns_tests {
+    use std::testing
+
+    #[test]
+    fn ref_string_classify() {
+        testing::check_eq(&super::classify(&"GET".to_string()), &"read", "GET=read")
+        testing::check_eq(&super::classify(&"POST".to_string()), &"write", "POST=write")
+        testing::check_eq(&super::classify(&"DELETE".to_string()), &"other", "DELETE=other")
+    }
+
+    #[test]
+    fn owned_string_describe() {
+        testing::check_eq(&super::describe("SELECT".to_string()), &"query", "SELECT=query")
+        testing::check_eq(&super::describe("INSERT".to_string()), &"write", "INSERT=write")
+        testing::check_eq(&super::describe("UPDATE".to_string()), &"unknown", "UPDATE=unknown")
+    }
+
+    #[test]
+    fn string_pattern_with_guard() {
+        testing::check_eq(
+            &super::guarded(&"big".to_string(), 200),
+            &"big and large",
+            "big+200",
+        )
+        testing::check_eq(
+            &super::guarded(&"big".to_string(), 50),
+            &"big but small",
+            "big+50",
+        )
+        testing::check_eq(
+            &super::guarded(&"small".to_string(), 200),
+            &"other",
+            "small+200",
+        )
+    }
+}

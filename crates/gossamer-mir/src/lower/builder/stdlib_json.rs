@@ -267,7 +267,11 @@ impl<'a> Builder<'a> {
         // parameter T in `render<T>(val: &T)`). To find the concrete
         // struct type, peel `&` syntactically and use the inner
         // expression's type, which the typechecker always resolves.
-        if (last == "render" || last == "encode") && !args.is_empty() {
+        if (last == "render" || last == "encode" || last == "encode_pretty") && !args.is_empty() {
+            // `encode_pretty(val[, indent])` renders with two-space
+            // indentation; the optional indent arg is accepted and
+            // ignored (parity with the interp / `gossamer_std`).
+            let pretty = last == "encode_pretty";
             let inner_arg = {
                 let mut e = &args[0];
                 while let gossamer_hir::HirExprKind::Unary {
@@ -285,7 +289,7 @@ impl<'a> Builder<'a> {
                 peeled = *inner;
             }
             if let gossamer_types::TyKind::Adt { def, .. } = self.tcx.kind_of(peeled).clone() {
-                if let Some(result) = self.lower_json_render_adt(args, def, span) {
+                if let Some(result) = self.lower_json_render_adt(args, def, span, pretty) {
                     return Some(result);
                 }
             }
@@ -295,13 +299,22 @@ impl<'a> Builder<'a> {
             // and a typed scalar `*GosVec` (`encode([1,2,3])`) would be
             // misread as a Value. Box the argument into a `*GosJson`
             // first.
-            if let Some(result) = self.lower_json_render_value(args, peeled, span) {
+            if let Some(result) = self.lower_json_render_value(args, peeled, span, pretty) {
                 return Some(result);
             }
         }
+        // Only the leading value arg crosses the FFI for the renderers;
+        // `encode_pretty`'s optional indent arg is dropped here so the
+        // single-pointer `gos_rt_json_render_pretty` ABI matches.
+        let args: &[HirExpr] = if last == "encode_pretty" && !args.is_empty() {
+            &args[..1]
+        } else {
+            args
+        };
         let (rt_name, ret_ty) = match last {
             "parse" | "decode" => ("gos_rt_json_parse", self.result_json_value_error_adt_ty()),
             "render" | "encode" => ("gos_rt_json_render", self.tcx.string_ty()),
+            "encode_pretty" => ("gos_rt_json_render_pretty", self.tcx.string_ty()),
             "valid" => ("gos_rt_json_valid", self.tcx.bool_ty()),
             // `json::set(obj, key, value) → json::Value` - append or
             // replace a named field on an object-shaped Value.
@@ -353,6 +366,7 @@ impl<'a> Builder<'a> {
         args: &[HirExpr],
         def: gossamer_resolve::DefId,
         span: Span,
+        pretty: bool,
     ) -> Option<Local> {
         use gossamer_types::TyKind;
         let struct_name = self.struct_defs.get(&def)?.clone();
@@ -491,11 +505,16 @@ impl<'a> Builder<'a> {
             span,
         );
 
-        // Render the json::Value to a compact JSON string.
+        // Render the json::Value to a JSON string (pretty or compact).
+        let render_sym = if pretty {
+            "gos_rt_json_render_pretty"
+        } else {
+            "gos_rt_json_render"
+        };
         let result = self.fresh(string_ty);
         let next = self.new_block(span);
         self.terminate(Terminator::Call {
-            callee: Operand::Const(ConstValue::Str("gos_rt_json_render".to_string())),
+            callee: Operand::Const(ConstValue::Str(render_sym.to_string())),
             args: vec![Operand::Copy(Place::local(json_obj))],
             destination: Place::local(result),
             target: Some(next),
@@ -513,6 +532,7 @@ impl<'a> Builder<'a> {
         args: &[HirExpr],
         value_ty: gossamer_types::Ty,
         span: Span,
+        pretty: bool,
     ) -> Option<Local> {
         use gossamer_types::TyKind;
         let string_ty = self.tcx.string_ty();
@@ -592,10 +612,15 @@ impl<'a> Builder<'a> {
             _ => return None,
         };
 
+        let render_sym = if pretty {
+            "gos_rt_json_render_pretty"
+        } else {
+            "gos_rt_json_render"
+        };
         let result = self.fresh(string_ty);
         let next = self.new_block(span);
         self.terminate(Terminator::Call {
-            callee: Operand::Const(ConstValue::Str("gos_rt_json_render".to_string())),
+            callee: Operand::Const(ConstValue::Str(render_sym.to_string())),
             args: vec![Operand::Copy(Place::local(json_local))],
             destination: Place::local(result),
             target: Some(next),

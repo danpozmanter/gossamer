@@ -1,0 +1,37 @@
+// A mutating builtin (`push`, ...) called on an index or field place
+// rooted at a local must persist. The compiled tiers mutate the backing
+// storage in place; the bytecode VM splices the returned aggregate back
+// through the place-store protocol so a bare local, a nested-vec element
+// (`groups[i].push(x)`), and a struct field (`bag.items.push(x)`) all
+// agree. This is the shape SQL-style group-by aggregation relies on.
+// Bit-identical across VM / Cranelift / LLVM (incl. `--release`).
+
+struct Bag { items: [i64] }
+
+fn main() {
+    let mut groups: [[i64]] = []
+    let g0: [i64] = []
+    groups.push(g0)
+    groups[0].push(1)
+    groups[0].push(2)
+    groups[0].push(3)
+    println!("nested: {}", groups[0].len())
+
+    let mut b = Bag { items: [] }
+    b.items.push(10)
+    b.items.push(20)
+    println!("field: {} {}", b.items.len(), b.items[1])
+
+    let mut buckets: [[i64]] = []
+    let b0: [i64] = []
+    let b1: [i64] = []
+    buckets.push(b0)
+    buckets.push(b1)
+    let mut i: i64 = 0
+    while i < 10 {
+        let k = i % 2
+        buckets[k].push(i)
+        i += 1
+    }
+    println!("counts: {} {}", buckets[0].len(), buckets[1].len())
+}

@@ -663,6 +663,15 @@ impl Parser<'_> {
                 self.hoisted_uses.push(use_decl);
                 continue;
             }
+            if !crate::recovery::is_item_start(self) {
+                // A module body holds items only; a bare statement here is
+                // the misplaced-top-level-code case (a bundled sibling or
+                // library module is not the entry file's implicit `fn main`).
+                self.record(ParseError::StatementOutsideEntry, self.peek_span());
+                self.bump();
+                self.recover_to_item_start();
+                continue;
+            }
             items.push(self.parse_item());
             if self.checkpoint_public() == before {
                 self.bump();

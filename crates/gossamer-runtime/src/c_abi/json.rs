@@ -131,6 +131,13 @@ unsafe fn json_borrow<'a>(p: *const GosJson) -> Option<&'a serde_json::Value> {
     Some(unsafe { &*json.view.as_const_ptr() })
 }
 
+/// Borrows the `serde_json::Value` a `GosJson` handle views, for
+/// sibling runtime modules (e.g. yaml encoding) that project a parsed
+/// JSON tree onto another format. `None` for a null/None handle.
+pub(crate) unsafe fn json_value_ref<'a>(p: *const GosJson) -> Option<&'a serde_json::Value> {
+    unsafe { json_borrow(p) }
+}
+
 /// Resolves `p` and returns the GosJson struct itself so the
 /// caller can construct child handles via `Self::child`. Returns
 /// `None` only for null inputs.
@@ -237,6 +244,20 @@ pub unsafe extern "C" fn gos_rt_json_render(j: *const GosJson) -> *mut c_char {
             return alloc_cstring(b"");
         };
         let s = escape_json_for_html(serde_json::to_string(v).unwrap_or_default());
+        alloc_cstring(s.as_bytes())
+    })
+}
+
+/// `json::encode_pretty(value) -> String`. Two-space indented form of
+/// `gos_rt_json_render`; the same HTML-safe escaping applies. Always
+/// returns a non-null C-string (empty on null input) into the GC arena.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_json_render_pretty(j: *const GosJson) -> *mut c_char {
+    ffi_entry!(std::ptr::null_mut(), {
+        let Some(v) = (unsafe { json_borrow(j) }) else {
+            return alloc_cstring(b"");
+        };
+        let s = escape_json_for_html(serde_json::to_string_pretty(v).unwrap_or_default());
         alloc_cstring(s.as_bytes())
     })
 }

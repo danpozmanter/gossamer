@@ -17,6 +17,7 @@ static types, no implicit `None`, and pattern matching instead of
 | Decorators, metaclasses. | Attributes (`#[test]`, `#[cfg(...)]`, `#[lint(allow(...))]`). Not user-extensible. |
 | Indentation is syntax. | Braces `{ }` are syntax; `gos fmt` enforces a consistent shape. |
 | `async def` / `await`. | `go expr` spawns a goroutine; blocking IO is fine. |
+| `if __name__ == "__main__":` guards top-level code. | No equivalent: top-level code in the entry file just runs. Bare statements become the body of an implicit `fn main()`; a top-level `?` makes it return `Result<(), errors::Error>`; set an exit code with `std::process::exit(n)`. See [Top-level statements](../language/top_level_statements.md). |
 
 ## What stays the same
 

@@ -1130,6 +1130,8 @@ impl<'tcx> FnBuilder<'tcx> {
             name,
             "push"
                 | "push_str"
+                | "push_char"
+                | "push_byte"
                 | "pop"
                 | "insert"
                 | "remove"

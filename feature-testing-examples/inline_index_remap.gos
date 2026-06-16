@@ -1,0 +1,25 @@
+// A small callee that indexes an array with a local index, inlined into a
+// caller. The index local lives in the callee's local space and must be
+// remapped into the caller's appended locals when spliced; otherwise it
+// collides with a caller local of the same number and reads the wrong index.
+// (iron_knight's gen_pawn_moves hit this through `pos.boards[us][PAWN]`.)
+struct Board { cells: [[i64; 6]; 2], side: i64 }
+
+fn at1(q: &Board, us: i64) -> i64 { q.cells[us][3] }
+
+fn at_arr(a: &[i64; 4], i: i64) -> i64 { a[i] }
+
+fn main() {
+    let mut b = Board { cells: [[0; 6], [0; 6]], side: 1 }
+    b.cells[1][3] = 42
+    b.cells[0][3] = 99
+    // `at1(&b, b.side)` is small and inlines; `us` must not collide.
+    let us = b.side
+    println!("{}", at1(&b, us))      // 42
+    println!("{}", at1(&b, 0))       // 99
+
+    let arr = [10, 20, 30, 40]
+    let k = 2
+    println!("{}", at_arr(&arr, k))  // 30
+    println!("{}", at_arr(&arr, 0))  // 10
+}

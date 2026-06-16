@@ -1,0 +1,22 @@
+fn main() {
+    let n = 5
+    let zeros = [0; n]
+    let flags = [false; n]
+    println!("{}", zeros.len())
+    println!("{}", flags.len())
+    println!("{}", zeros[2])
+    println!("{}", flags[3])
+
+    // Verify elements via iteration
+    let mut sum = 0
+    for v in zeros {
+        sum += v
+    }
+    println!("{}", sum)
+
+    let mut trues = 0
+    for f in flags {
+        if f { trues += 1 }
+    }
+    println!("{}", trues)
+}

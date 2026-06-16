@@ -31,6 +31,11 @@
 # everything that *can* run, runs.
 set -euo pipefail
 
+# Force full backtraces so a panicking step (e.g. a failed `cargo test`)
+# replays its stack in the captured output, not just the panic message and
+# a note to set this. A caller's explicit RUST_BACKTRACE wins.
+export RUST_BACKTRACE="${RUST_BACKTRACE:-full}"
+
 full=0
 errors_only=0
 run_sanitizers=1

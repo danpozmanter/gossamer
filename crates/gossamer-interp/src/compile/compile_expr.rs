@@ -1920,12 +1920,15 @@ impl<'tcx> FnBuilder<'tcx> {
         // Mutating-method writeback. The builtins for `push` /
         // `insert` / etc. return the *new* aggregate rather than
         // mutating in place, so the VM has to thread the result back
-        // into the receiver's storage by splicing the move here when
-        // the receiver is a bindable local. Field / Index receivers
-        // fall through with no writeback today.
+        // into the receiver's storage. A bare local receiver is the
+        // common case (one `Op::Move`); an index / field place rooted
+        // at a local (`groups[i].push(x)`, `bag.items.push(x)`) splices
+        // the result back through the place-store protocol so the
+        // mutation persists - matching the compiled tiers, which mutate
+        // the backing storage in place.
         if Self::is_mutating_method_name(name.name.as_str()) {
-            if let HirExprKind::Path { segments, .. } = &receiver.kind {
-                if segments.len() == 1 {
+            match &receiver.kind {
+                HirExprKind::Path { segments, .. } if segments.len() == 1 => {
                     if let Some(target) = self.lookup_local(&segments[0].name) {
                         if target.kind == RegKind::Value && target.reg == receiver_reg {
                             self.emit(Op::Move {
@@ -1935,6 +1938,12 @@ impl<'tcx> FnBuilder<'tcx> {
                         }
                     }
                 }
+                HirExprKind::Index { .. } | HirExprKind::Field { .. }
+                    if self.place_root_is_local(receiver) =>
+                {
+                    self.compile_place_store(receiver, dst)?;
+                }
+                _ => {}
             }
         }
         Ok(dst)

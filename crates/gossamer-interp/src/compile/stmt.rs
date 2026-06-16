@@ -393,7 +393,7 @@ impl<'tcx> FnBuilder<'tcx> {
     /// `true` when the lvalue `place` is rooted at a bound local - a
     /// chain of field / index / deref projections bottoming out at a
     /// local binding. A static-rooted place returns `false`.
-    fn place_root_is_local(&self, place: &HirExpr) -> bool {
+    pub(crate) fn place_root_is_local(&self, place: &HirExpr) -> bool {
         match &place.kind {
             HirExprKind::Path { segments, .. } => segments
                 .first()

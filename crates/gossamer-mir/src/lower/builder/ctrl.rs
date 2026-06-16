@@ -850,22 +850,28 @@ impl<'a> Builder<'a> {
                         let pos = order.iter().position(|n| n == &f.name.name);
                         let Some(pos) = pos else { continue };
                         let field_idx = u32::try_from(pos).ok()?;
-                        // The field's HIR-recorded type lives on
-                        // the sub-pattern (or, for shorthand, on
-                        // the field-pattern itself); fall back to
-                        // the enum decl's recorded field type for
-                        // shorthand bindings whose `f.pattern` is
-                        // `None`. Without the decl-typed fallback
-                        // an `f64` field decoded as the I64 load
-                        // result, and printing/arithmetic saw the
-                        // bit pattern of the float as an integer.
-                        let field_ty = match &f.pattern {
-                            Some(sub) => sub.ty,
-                            None => declared_tys
-                                .as_ref()
-                                .and_then(|tys| tys.get(pos).copied())
-                                .unwrap_or(i64_ty),
-                        };
+                        // The variant declaration's recorded field type is
+                        // authoritative: a named sub-pattern binding
+                        // (`Rect { w: __d0 }`) carries a fresh inference
+                        // variable that can resolve to the wrong type (e.g.
+                        // `String` from a `format!` use site) instead of the
+                        // declared field type (e.g. `f64`), which would decode
+                        // the I64 load as the wrong shape. Prefer the declared
+                        // type when it is resolved, falling back to the HIR
+                        // sub-pattern type (free structs have no variant entry)
+                        // and finally I64.
+                        let declared_field_ty = declared_tys
+                            .as_ref()
+                            .and_then(|tys| tys.get(pos).copied())
+                            .filter(|&ty| {
+                                !matches!(
+                                    self.tcx.kind_of(ty),
+                                    gossamer_types::TyKind::Var(_) | gossamer_types::TyKind::Error
+                                )
+                            });
+                        let field_ty = declared_field_ty
+                            .or_else(|| f.pattern.as_ref().map(|sub| sub.ty))
+                            .unwrap_or(i64_ty);
                         let elem = self.fresh(field_ty);
                         if scrut_is_real_struct {
                             // Free struct: real field projection.
@@ -1887,17 +1893,31 @@ impl<'a> Builder<'a> {
                 span,
             ),
             HirExprKind::Array(arr) => {
-                let len = match arr {
-                    gossamer_hir::HirArrayExpr::List(elems) => elems.len() as i64,
+                let len_opt = match arr {
+                    gossamer_hir::HirArrayExpr::List(elems) => Some(elems.len() as i64),
                     gossamer_hir::HirArrayExpr::Repeat { count, .. } => {
-                        literal_u64(count).and_then(|c| i64::try_from(c).ok())?
+                        literal_u64(count).and_then(|c| i64::try_from(c).ok())
                     }
                 };
-                self.lower_for_array(
+                if let Some(len) = len_opt {
+                    return self.lower_for_array(
+                        for_loop.iter_expr,
+                        for_loop.loop_pat,
+                        for_loop.body,
+                        len,
+                        span,
+                    );
+                }
+                // Runtime-sized [val; n]: type is Vec<elem> after typechecking.
+                let elem_ty = match self.tcx.kind_of(for_loop.iter_expr.ty) {
+                    TyKind::Vec(e) | TyKind::Slice(e) => *e,
+                    _ => self.tcx.int_ty(gossamer_types::IntTy::I64),
+                };
+                self.lower_for_vec(
                     for_loop.iter_expr,
+                    elem_ty,
                     for_loop.loop_pat,
                     for_loop.body,
-                    len,
                     span,
                 )
             }

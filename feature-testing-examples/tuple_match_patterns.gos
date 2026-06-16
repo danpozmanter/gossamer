@@ -1,0 +1,17 @@
+fn classify(x: i64, y: i64) -> String {
+    match (x, y) {
+        (0, 0) => "origin",
+        (0, _) => "y-axis",
+        (_, 0) => "x-axis",
+        (x, y) if x == y => "diagonal",
+        _ => "general",
+    }
+}
+
+fn main() {
+    println!("{}", classify(0, 0))
+    println!("{}", classify(0, 5))
+    println!("{}", classify(3, 0))
+    println!("{}", classify(4, 4))
+    println!("{}", classify(2, 7))
+}

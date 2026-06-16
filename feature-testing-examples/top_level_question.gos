@@ -1,0 +1,10 @@
+use std::errors
+
+fn checked(n: i64) -> Result<i64, errors::Error> {
+    if n < 0 { return Err(errors::new("negative")) }
+    Ok(n * 2)
+}
+
+let a = checked(20)?
+let b = checked(1)?
+println!("{}", a + b)

@@ -2815,7 +2815,21 @@ impl<'a> TypeChecker<'a> {
             self.push_scope();
             let pat_ty = self.type_of_pattern(&arm.pattern);
             self.bind_pattern(&arm.pattern, pat_ty);
-            self.unify(scrut_ty, pat_ty, arm.pattern.span);
+            // String literal patterns compare by value through any leading `&`
+            // on the scrutinee, so `match ref_str { "foo" => ... }` is valid.
+            let effective_scrut_ty = if matches!(
+                &arm.pattern.kind,
+                PatternKind::Literal(Literal::String(_) | Literal::RawString { .. })
+            ) {
+                let resolved = self.infer.resolve(self.tcx, scrut_ty);
+                match self.tcx.kind(resolved) {
+                    Some(TyKind::Ref { inner, .. }) => *inner,
+                    _ => scrut_ty,
+                }
+            } else {
+                scrut_ty
+            };
+            self.unify(effective_scrut_ty, pat_ty, arm.pattern.span);
             if let Some(guard) = &arm.guard {
                 let guard_ty = self.check_expr(guard);
                 let bool_ty = self.tcx.bool_ty();
@@ -3147,8 +3161,12 @@ impl<'a> TypeChecker<'a> {
                 }
                 let elem_ty = self.check_expr(value);
                 self.check_expr(count);
-                let len = self.evaluate_array_len(count).unwrap_or(0);
-                self.tcx.intern(TyKind::Array { elem: elem_ty, len })
+                if let Some(len) = self.evaluate_array_len(count) {
+                    self.tcx.intern(TyKind::Array { elem: elem_ty, len })
+                } else {
+                    // Non-constant count: the result is a heap-allocated Vec.
+                    self.tcx.intern(TyKind::Vec(elem_ty))
+                }
             }
         }
     }

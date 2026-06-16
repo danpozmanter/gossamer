@@ -49,6 +49,7 @@ the spec, see [`SPEC.md`](https://github.com/danpozmanter/gossamer/blob/main/SPE
 | `select { case x := <-ch: … }` | `select { x = ch.recv() => …, default => … }` | Select arms are typed. |
 | `make([]int, 0, 16)` | `Vec::<i64>::with_capacity(16)` | Vec API. |
 | `make(map[string]int)` | `HashMap::<String, i64>::new()` | HashMap API. |
+| `package main` + `func main() { … }` | bare statements at the top of the entry file | No `package main` and no `func main` are required: top-level statements become the body of an implicit `fn main()`. See [Top-level statements](../language/top_level_statements.md). |
 
 ## Semantic differences
 

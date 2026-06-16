@@ -166,6 +166,52 @@ pub unsafe extern "C" fn gos_rt_yaml_from_json(s: *const c_char) -> i128 {
     })
 }
 
+/// `encoding::yaml::encode(value) -> Result<String, Error>`. Projects a
+/// `json::Value` tree onto YAML and serialises it. Mirrors the interp's
+/// `yaml::encode`, which converts through the JSON lingua franca then
+/// emits via `serde_norway`. Err payload is an `errors::Error`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_yaml_encode(j: *const crate::c_abi::json::GosJson) -> i128 {
+    ffi_entry!(0i128, {
+        let yaml_val = match unsafe { crate::c_abi::json::json_value_ref(j) } {
+            Some(jv) => json_to_serde_norway(jv),
+            None => serde_norway::Value::Null,
+        };
+        match serde_norway::to_string(&yaml_val) {
+            Ok(out) => yaml_result_ok(&out),
+            Err(e) => yaml_result_err(&format!("yaml::encode: {e}")),
+        }
+    })
+}
+
+/// `encoding::yaml::parse_all(text) -> Result<Vec<json::Value>, Error>`.
+/// Parses every document in a multi-document YAML stream, projecting
+/// each onto the `json::Value` runtime type. The Ok payload is a
+/// `*mut GosVec` of `*mut GosJson` handles (8-byte slots).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_yaml_parse_all(s: *const c_char) -> i128 {
+    use serde::Deserialize;
+    ffi_entry!(0i128, {
+        let text = if s.is_null() {
+            ""
+        } else {
+            unsafe { CStr::from_ptr(s).to_str().unwrap_or("") }
+        };
+        let vec = unsafe { crate::c_abi::vec::gos_rt_vec_new(8) };
+        for doc in serde_norway::Deserializer::from_str(text) {
+            match serde_norway::Value::deserialize(doc) {
+                Ok(value) => {
+                    let json_val = serde_norway_to_json(value);
+                    let ptr = crate::c_abi::json::GosJson::into_raw(json_val);
+                    unsafe { crate::c_abi::vec::gos_rt_vec_push_i64(vec, ptr as i64) };
+                }
+                Err(e) => return yaml_result_err(&format!("yaml::parse_all: {e}")),
+            }
+        }
+        unsafe { gos_rt_result_new(0, vec as i64) }
+    })
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_yaml_is_valid(s: *const c_char) -> i64 {
     ffi_entry!(0, {

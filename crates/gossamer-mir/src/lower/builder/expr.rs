@@ -865,14 +865,17 @@ impl<'a> Builder<'a> {
                 }
                 // Real reference deref: when the inner local has
                 // type `&T` (taken via `&x` or yielded by an
-                // iterator like `vec.iter()`), `*p` must load from
-                // the address rather than yield the pointer.
-                // Without this load, `for x in v.iter() { *x }`
-                // prints the iterator's slot pointer, not the
-                // element. Apply only to scalar inner types
-                // (i64/f64/bool/char) - aggregate refs are passed
-                // by pointer in this codegen and have their own
-                // projection paths.
+                // iterator like `vec.iter()`), `*p` read as a value
+                // must load from the address rather than yield the
+                // pointer. Without this load, `for x in v.iter() { *x }`
+                // prints the iterator's slot pointer, not the element.
+                // `String` is itself pointer-shaped, so `&String` is a
+                // pointer-to-pointer and `*p` as an rvalue needs one
+                // load to reach the String value; passing the bare `&mut
+                // String` to a by-value consumer (e.g. `*out + s`) reads
+                // the slot address as string bytes. Larger aggregates
+                // (structs, Vec, Adt) are consumed through place
+                // projections, not this by-value path.
                 let inner_ty = self.locals[inner.0 as usize].ty;
                 if let gossamer_types::TyKind::Ref { inner: pointee, .. } =
                     self.tcx.kind_of(inner_ty)
@@ -1572,14 +1575,21 @@ impl<'a> Builder<'a> {
         }
     }
 
-    /// Lowers `*s += piece` (deref `&mut String` accumulator) to a single
+    /// Lowers `*s += piece` (deref `&mut String` accumulator) to one
     /// self-consuming append (`gos_rt_str_concat_drop_a` / `_append_i64` /
-    /// `_append_f64`) of the slot's current value with `piece`, stored back
-    /// through the slot. The append helper consumes the old buffer in place,
-    /// so the RC pass recognises the `tmp = append(*s, piece); *s = Copy(tmp)`
-    /// copy-back and emits neither a release of the old value nor a retain of
-    /// the result. Returns `false` (no emission) when `piece` is not a
-    /// `String` / `i64` / `f64`, so the caller falls back to the general path.
+    /// `_append_f64`) per piece, each reading the slot's current value,
+    /// appending, and storing the result back through the slot. The append
+    /// helper consumes the old buffer in place, so the RC pass recognises the
+    /// `tmp = append(*s, piece); *s = Copy(tmp)` copy-back and emits neither a
+    /// release of the old value nor a retain of the result.
+    ///
+    /// `*s += format!("{}", n)` lowers to `*s += __concat(pieces...)`; this
+    /// detects that `__concat` and appends each formatted piece straight onto
+    /// the deref accumulator, skipping the throwaway String the concat would
+    /// otherwise build (the deref counterpart of `try_lower_append_fused`). A
+    /// non-`__concat` `piece` is treated as a single-element piece list.
+    /// Returns `false` (no emission) when any piece is not a `String` / `i64`
+    /// / `f64`, so the caller falls back to the general path.
     fn try_lower_deref_append_fused(
         &mut self,
         s_local: Local,
@@ -1599,35 +1609,88 @@ impl<'a> Builder<'a> {
                 _ => None,
             }
         };
-        let Some(fname) = append_fn(self, piece.ty) else {
+        let pieces: &[HirExpr] = if let HirExprKind::Call { callee, args } = &piece.kind
+            && matches!(
+                &callee.kind,
+                HirExprKind::Path { segments, .. }
+                    if segments.len() == 1 && segments[0].name.as_str() == "__concat"
+            ) {
+            args.as_slice()
+        } else {
+            std::slice::from_ref(piece)
+        };
+        if pieces.is_empty() {
             return false;
-        };
-        let Some(piece_local) = self.lower_expr(piece) else {
-            return true;
-        };
-        let piece_local = self.auto_deref_cell(piece_local, span);
-        let deref_place = Place {
-            local: s_local,
-            projection: vec![crate::ir::Projection::Deref],
+        }
+        // Per-piece appends need every piece to be a known scalar / String. A
+        // piece whose type is unresolved (e.g. an enum-payload binding the
+        // checker left as an inference var inside `format!("{}", n)`) collapses
+        // the whole `piece` back to a single String append: its runtime value
+        // is always a String (a `format!` / `__concat` result, or a String
+        // operand), so `gos_rt_str_concat_drop_a` appends it in place. This
+        // keeps the deref accumulator on the correct in-place path instead of
+        // falling through to the general `*s + piece` lowering, which reads the
+        // `&mut String` slot pointer as string bytes.
+        let per_piece: Option<Vec<&'static str>> =
+            pieces.iter().map(|p| append_fn(self, p.ty)).collect();
+        let (emit_pieces, fns): (Vec<&HirExpr>, Vec<&'static str>) = match per_piece {
+            Some(fns) => (pieces.iter().collect(), fns),
+            None => (vec![piece], vec!["gos_rt_str_concat_drop_a"]),
         };
         let string_ty = self.tcx.string_ty();
-        let tmp = self.fresh(string_ty);
-        let next = self.new_block(span);
-        self.terminate(Terminator::Call {
-            callee: Operand::Const(ConstValue::Str(fname.to_string())),
-            args: vec![
-                Operand::Copy(deref_place.clone()),
-                Operand::Copy(Place::local(piece_local)),
-            ],
-            destination: Place::local(tmp),
-            target: Some(next),
-        });
-        self.set_current(next);
-        self.emit_assign(
-            deref_place,
-            Rvalue::Use(Operand::Copy(Place::local(tmp))),
-            span,
-        );
+        for (p, fname) in emit_pieces.into_iter().zip(fns) {
+            // A string-literal piece carries a compile-time byte length, so it
+            // appends through `gos_rt_str_append_bytes` (length-counted, no
+            // per-call strlen) which the LLVM tier inlines to a capacity-check
+            // + memcpy. Non-literal String pieces keep `concat_drop_a`.
+            let literal_len = match &p.kind {
+                HirExprKind::Literal(gossamer_hir::HirLiteral::String(s))
+                    if fname == "gos_rt_str_concat_drop_a" =>
+                {
+                    Some(s.len() as i128)
+                }
+                _ => None,
+            };
+            let Some(piece_local) = self.lower_expr(p) else {
+                return true;
+            };
+            let piece_local = self.auto_deref_cell(piece_local, span);
+            let deref_place = Place {
+                local: s_local,
+                projection: vec![crate::ir::Projection::Deref],
+            };
+            let tmp = self.fresh(string_ty);
+            let next = self.new_block(span);
+            let (call_name, call_args) = match literal_len {
+                Some(len) => (
+                    "gos_rt_str_append_bytes",
+                    vec![
+                        Operand::Copy(deref_place.clone()),
+                        Operand::Copy(Place::local(piece_local)),
+                        Operand::Const(ConstValue::Int(len)),
+                    ],
+                ),
+                None => (
+                    fname,
+                    vec![
+                        Operand::Copy(deref_place.clone()),
+                        Operand::Copy(Place::local(piece_local)),
+                    ],
+                ),
+            };
+            self.terminate(Terminator::Call {
+                callee: Operand::Const(ConstValue::Str(call_name.to_string())),
+                args: call_args,
+                destination: Place::local(tmp),
+                target: Some(next),
+            });
+            self.set_current(next);
+            self.emit_assign(
+                deref_place,
+                Rvalue::Use(Operand::Copy(Place::local(tmp))),
+                span,
+            );
+        }
         true
     }
 
@@ -1701,11 +1764,19 @@ impl<'a> Builder<'a> {
                 if let gossamer_types::TyKind::Vec(elem) | gossamer_types::TyKind::Slice(elem) =
                     base_kind
                 {
-                    let elem_multislot = matches!(
+                    // Any struct/tuple element lives by value inside the Vec's
+                    // data buffer, so a `vec[i].field` place must take the
+                    // element's address (`gos_rt_vec_get_ptr`) and walk the
+                    // `Field` projection from there. A single-pointer-field
+                    // struct (slot_bytes == 8) was previously excluded by a
+                    // `> 8` gate and fell through to the flat-projection path,
+                    // which strides off the GosVec header instead of its data
+                    // pointer (segfault on `buckets[i].items.push(...)`).
+                    let elem_aggregate = matches!(
                         self.tcx.kind_of(elem),
                         gossamer_types::TyKind::Tuple(_) | gossamer_types::TyKind::Adt { .. }
-                    ) && self.type_slot_bytes(elem) > 8;
-                    if elem_multislot {
+                    ) && self.type_slot_bytes(elem) >= 8;
+                    if elem_aggregate {
                         // Materialise the element address with
                         // `gos_rt_vec_get_ptr` and bind it to a
                         // `&elem`-typed local. A reference-typed local

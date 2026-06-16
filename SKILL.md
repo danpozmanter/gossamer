@@ -216,6 +216,12 @@ fn main() {
   (`std::encoding::json`, not `std::json`).
 - **Expressions-as-statements.** `if`, `match`, `loop`, and blocks
   all yield values.
+- **Entry file may omit `fn main`.** Bare statements at the top level of
+  the entry file become the body of an implicit `fn main()`; items
+  declared alongside are hoisted out. `?` makes the implicit main return
+  `Result<(), errors::Error>`; set an exit code with `process::exit(n)`.
+  Only the entry file (the file run directly, or `[project] entry`) may do
+  this, and it cannot also declare an explicit `fn main`.
 - **Bindings.** `let name = expr`, `let mut name = expr`, `let
   Point { x, y } = p`, `let (a, b) = pair`.
 - **References.** `&x` read-shared, `&mut x` exclusive write -
@@ -724,10 +730,15 @@ id      = "example.com/widget"
 version = "0.1.0"
 authors = ["Jane Roe <jane@example.com>"]
 license = "Apache-2.0"
+# entry  = "src/app.gos"   # optional: override convention-based entry resolution
 
 [dependencies]
 "example.org/lib" = "1.2.3"
 ```
+
+The optional `[project] entry` key names the entry source directly,
+overriding the convention search; the resolved entry is the only file
+allowed to carry top-level statements.
 
 ## 14. Worked example - HTTP server with method + path routing
 

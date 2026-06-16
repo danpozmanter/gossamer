@@ -717,6 +717,11 @@ pub struct Channel {
 struct ChannelInner {
     buf: Mutex<VecDeque<Value>>,
     cv: parking_lot::Condvar,
+    /// Buffered capacity. `0` means unbounded - a send never blocks on
+    /// a full buffer. A positive capacity bounds the buffer: a send
+    /// parks while `buf.len() >= capacity`, matching the compiled tier's
+    /// `gos_rt_chan_new(elem_bytes, cap)` where `cap <= 0` is unbounded.
+    capacity: usize,
     /// `close()` flips this to `true`; receivers that find an empty
     /// buffer with `closed = true` return `None` instead of parking
     /// forever. Stored as an `AtomicBool` so peers (e.g. select's
@@ -727,27 +732,61 @@ struct ChannelInner {
 }
 
 impl Channel {
-    /// Constructs a new empty channel.
+    /// Constructs a new unbounded channel.
     #[must_use]
     pub fn new() -> Self {
+        Self::with_capacity(0)
+    }
+
+    /// Constructs a channel with the given buffered capacity. A
+    /// `capacity` of `0` is unbounded; a positive value bounds the
+    /// buffer so a send parks once the buffer reaches capacity.
+    #[must_use]
+    pub fn with_capacity(capacity: usize) -> Self {
         Self {
             inner: Arc::new(ChannelInner {
                 buf: Mutex::new(VecDeque::new()),
                 cv: parking_lot::Condvar::new(),
+                capacity,
                 closed: std::sync::atomic::AtomicBool::new(false),
             }),
         }
     }
 
     /// Pushes `value` onto the channel and notifies any parked
-    /// receiver so it can re-check.
+    /// receiver so it can re-check. On a bounded channel (positive
+    /// capacity) the caller parks on the condvar while the buffer is at
+    /// capacity, so a producer outrunning its consumer applies
+    /// backpressure exactly as the compiled tier's `gos_rt_chan_send`.
     pub fn send(&self, value: Value) {
         let mut guard = self.inner.buf.lock();
+        if self.inner.capacity != 0 {
+            while guard.len() >= self.inner.capacity {
+                self.inner.cv.wait(&mut guard);
+            }
+        }
         guard.push_back(value);
         // Stay safe under the existing lock-discipline; `closed` is
         // only ever touched while `buf` is locked.
         self.inner.cv.notify_all();
         drop(guard);
+    }
+
+    /// Non-blocking send. Enqueues `value` and returns `true` when the
+    /// buffer had room (always true for an unbounded channel); returns
+    /// `false` without enqueueing when a bounded buffer is at capacity.
+    /// Used by `select` so a full send arm reads as not-ready instead
+    /// of blocking inside the readiness probe.
+    #[must_use]
+    pub fn try_send(&self, value: Value) -> bool {
+        let mut guard = self.inner.buf.lock();
+        if self.inner.capacity != 0 && guard.len() >= self.inner.capacity {
+            return false;
+        }
+        guard.push_back(value);
+        self.inner.cv.notify_all();
+        drop(guard);
+        true
     }
 
     /// Marks the channel as closed and wakes every parked receiver
@@ -787,7 +826,14 @@ impl Channel {
     /// drain-aware semantics should use [`Channel::recv`]).
     #[must_use]
     pub fn try_recv(&self) -> Option<Value> {
-        self.inner.buf.lock().pop_front()
+        let mut guard = self.inner.buf.lock();
+        let value = guard.pop_front();
+        if value.is_some() && self.inner.capacity != 0 {
+            // A pop frees a slot on a bounded channel; wake any sender
+            // parked on the full buffer so it can proceed.
+            self.inner.cv.notify_all();
+        }
+        value
     }
 
     /// Blocking receive. Parks until a value is available or the
@@ -800,6 +846,11 @@ impl Channel {
         let mut guard = self.inner.buf.lock();
         loop {
             if let Some(v) = guard.pop_front() {
+                if self.inner.capacity != 0 {
+                    // A pop frees a slot on a bounded channel; wake any
+                    // sender parked on the full buffer so it can proceed.
+                    self.inner.cv.notify_all();
+                }
                 return Some(v);
             }
             if self.inner.closed.load(std::sync::atomic::Ordering::Acquire) {

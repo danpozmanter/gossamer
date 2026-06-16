@@ -728,8 +728,17 @@ pub unsafe extern "C" fn gos_rt_map_remove_str(m: *mut GosMap, key: *const c_cha
         let map = unsafe { &mut *m };
         let key_bytes = unsafe { CStr::from_ptr(key) }.to_bytes();
         let mut storage = map.storage.lock();
+        let blob_values = map_has_blob_values(map);
         let removed = match &mut *storage {
-            MapStorage::StrI64(inner) => inner.remove(key_bytes).is_some(),
+            MapStorage::StrI64(inner) => match inner.remove(key_bytes) {
+                Some(old) => {
+                    if blob_values {
+                        unsafe { release_blob_value(old) };
+                    }
+                    true
+                }
+                None => false,
+            },
             MapStorage::StrStr(inner) => inner.remove(key_bytes).is_some(),
             _ => false,
         };
@@ -952,6 +961,21 @@ pub unsafe extern "C" fn gos_rt_map_clear(m: *mut GosMap) {
         }
         let map = unsafe { &mut *m };
         let mut storage = map.storage.lock();
+        if map_has_blob_values(map) {
+            match &*storage {
+                MapStorage::I64I64(inner) => {
+                    for &v in inner.values() {
+                        unsafe { release_blob_value(v) };
+                    }
+                }
+                MapStorage::StrI64(inner) | MapStorage::SkeyVal(inner) => {
+                    for &v in inner.values() {
+                        unsafe { release_blob_value(v) };
+                    }
+                }
+                _ => {}
+            }
+        }
         *storage = MapStorage::Empty;
         map.len_cache = 0;
     });
@@ -1092,11 +1116,11 @@ pub unsafe extern "C" fn gos_rt_vec_free(v: *mut GosVec) {
         if crate::c_abi::vec::vec_is_region(unsafe { &*v }) {
             return;
         }
-        // RC: this is a release. Decrement; reclaim only when the last
-        // reference drops. An aliased Vec (`let b = v`) still has live holders.
-        let rc = crate::c_abi::vec::vec_rc(unsafe { &*v });
-        if rc > 1 {
-            crate::c_abi::vec::vec_set_rc(unsafe { &mut *v }, rc - 1);
+        // RC: atomic decrement. Reclaim only when this thread held the last
+        // reference (old count was 1). An aliased Vec still has live holders.
+        let old_rc = crate::c_abi::vec::vec_rc_atomic(unsafe { &*v })
+            .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+        if old_rc > 1 {
             return;
         }
         crate::c_abi::ledger::vec_dec();

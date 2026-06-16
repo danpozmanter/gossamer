@@ -317,6 +317,8 @@ impl<'a> Builder<'a> {
             | "gos_rt_str_replacen"
             | "gos_rt_str_pad_left"
             | "gos_rt_str_pad_right"
+            | "gos_rt_str_push_char"
+            | "gos_rt_str_push_byte"
             | "gos_rt_regex_find" => self.tcx.string_ty(),
             "gos_rt_str_split"
             | "gos_rt_str_lines"
@@ -359,8 +361,10 @@ impl<'a> Builder<'a> {
                 let tup = self.tcx.intern(gossamer_types::TyKind::Tuple(vec![s, s]));
                 self.tcx.intern(gossamer_types::TyKind::Vec(tup))
             }
-            "gos_rt_sync_map_len" => self.tcx.int_ty(gossamer_types::IntTy::I64),
-            "gos_rt_sync_map_contains" => self.tcx.bool_ty(),
+            "gos_rt_sync_map_len" | "gos_rt_deque_len" => {
+                self.tcx.int_ty(gossamer_types::IntTy::I64)
+            }
+            "gos_rt_sync_map_contains" | "gos_rt_deque_is_empty" => self.tcx.bool_ty(),
             "gos_rt_sync_map_keys" | "gos_rt_btmap_keys" => {
                 let s = self.tcx.string_ty();
                 self.tcx.intern(gossamer_types::TyKind::Vec(s))
@@ -520,7 +524,8 @@ impl<'a> Builder<'a> {
             | "gos_rt_vec_index_of_i64"
             | "gos_rt_vec_index_of_str"
             | "gos_rt_map_pop_i64"
-            | "gos_rt_map_pop_str" => {
+            | "gos_rt_map_pop_str"
+            | "gos_rt_deque_pop_front" => {
                 let i = self.tcx.int_ty(gossamer_types::IntTy::I64);
                 let substs = gossamer_types::Substs::from_types([i]);
                 self.tcx.intern(gossamer_types::TyKind::Adt {

@@ -486,6 +486,7 @@ impl<'a> Builder<'a> {
                 };
                 (sym, self.result_unit_error_adt_ty())
             }
+            "fs::create_dir" => ("gos_rt_fs_create_dir", self.result_unit_error_adt_ty()),
             "fs::create_dir_all" | "os::mkdir" | "os::mkdir_all" | "fs::mkdir"
             | "fs::mkdir_all" => (
                 "gos_rt_os_mkdir_all_result",
@@ -495,11 +496,20 @@ impl<'a> Builder<'a> {
                 "gos_rt_os_remove_file_result",
                 self.result_unit_error_adt_ty(),
             ),
-            "fs::remove_all" | "os::remove_dir" | "os::remove_dir_all" => (
+            // Non-recursive empty-directory removal, matching the interp.
+            "fs::remove_dir" | "os::remove_dir" => {
+                ("gos_rt_fs_remove_dir", self.result_unit_error_adt_ty())
+            }
+            "fs::remove_all" | "fs::remove_dir_all" | "os::remove_dir_all" => (
                 "gos_rt_os_remove_dir_all_result",
                 self.result_unit_error_adt_ty(),
             ),
             "path::join" => ("gos_rt_path_join", self.tcx.string_ty()),
+            "path::split" => {
+                let s = self.tcx.string_ty();
+                let tup = self.tcx.intern(gossamer_types::TyKind::Tuple(vec![s, s]));
+                ("gos_rt_path_split", tup)
+            }
             "path::clean" | "path::normalize" => ("gos_rt_path_clean", self.tcx.string_ty()),
             "path::is_absolute" => ("gos_rt_path_is_absolute", self.tcx.bool_ty()),
             "path::has_prefix" => ("gos_rt_path_has_prefix", self.tcx.bool_ty()),
@@ -864,6 +874,14 @@ impl<'a> Builder<'a> {
             "encoding::base32::encode" | "base32::encode" => {
                 ("gos_rt_encoding_base32_encode", self.tcx.string_ty())
             }
+            "encoding::base32::decode" | "base32::decode" => (
+                "gos_rt_encoding_base32_decode",
+                self.result_vec_u8_error_ty(),
+            ),
+            "encoding::base32::decode_hex" | "base32::decode_hex" => (
+                "gos_rt_encoding_base32_decode_hex",
+                self.result_vec_u8_error_ty(),
+            ),
             // encoding::binary - put_* return [u8]; get_* return
             // Result<i64>; uvarint/varint return Result<(i64,i64)>.
             "encoding::binary::put_u16_be"
@@ -1583,6 +1601,13 @@ impl<'a> Builder<'a> {
             // routes through the same projection).
             "yaml::parse" | "encoding::yaml::parse" => {
                 ("gos_rt_yaml_parse", self.result_json_value_error_adt_ty())
+            }
+            "yaml::parse_all" | "encoding::yaml::parse_all" => (
+                "gos_rt_yaml_parse_all",
+                self.result_vec_json_value_error_ty(),
+            ),
+            "yaml::encode" | "encoding::yaml::encode" => {
+                ("gos_rt_yaml_encode", self.result_string_error_adt_ty())
             }
             "yaml::to_json" => ("gos_rt_yaml_to_json", self.result_string_error_adt_ty()),
             "yaml::from_json" => ("gos_rt_yaml_from_json", self.result_string_error_adt_ty()),
@@ -2491,6 +2516,10 @@ impl<'a> Builder<'a> {
                 "gos_rt_btmap_new",
                 self.tcx.int_ty(gossamer_types::IntTy::I64),
             ),
+            "VecDeque::new" | "collections::VecDeque::new" => (
+                "gos_rt_deque_new",
+                self.tcx.int_ty(gossamer_types::IntTy::I64),
+            ),
             // 0.7.0 - `HashMap::pop(m, k) -> Option<V>` free-fn shape.
             // Dispatches by the first arg's HashMap key type to the
             // string-keyed or i64-keyed runtime variant. The Option
@@ -2761,6 +2790,7 @@ impl<'a> Builder<'a> {
             "gos_rt_regex_compile" | "gos_rt_regex_compile_result" => Some("regex::Pattern"),
             "gos_rt_set_new" => Some("collections::HashSet"),
             "gos_rt_btmap_new" => Some("collections::BTreeMap"),
+            "gos_rt_deque_new" => Some("collections::VecDeque"),
             "gos_rt_sync_map_new" => Some("sync::Map"),
             "gos_rt_math_rng_new" => Some("math::rand::Rng"),
             "gos_rt_field_error_new" => Some("validate::FieldError"),

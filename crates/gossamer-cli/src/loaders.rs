@@ -28,13 +28,15 @@ pub(crate) fn load_or_parse(
         if trace {
             eprintln!("cache: parse skipped for {}", cache_key.as_hex());
         }
+        // The cached blob is the post-synthesis `SourceFile` (stored after a
+        // successful pipeline), so the implicit `fn main` is already present.
         return (cached, Vec::new());
     }
     // Source has already been augmented by the cli entry point
-    // (`gos run` / `gos build`) before reaching the source map. We
-    // call the autoderive wrapper to also pick up the synthetic
-    // `use std::json` / `use std::errors` injections that the impls
-    // depend on.
+    // (`gos run` / `gos build`) before reaching the source map. The autoderive
+    // wrapper also folds an entry file's top-level statements into the implicit
+    // `fn main` and injects the synthetic `use std::json` / `use std::errors`
+    // the impls depend on.
     gossamer_parse::autoderive::parse_with_autoderive(source, file_id)
 }
 
@@ -110,6 +112,8 @@ pub(crate) fn load_and_check_with_sf(
     };
     let cache_key = gossamer_driver::FrontendCacheKey::new(source, env!("CARGO_PKG_VERSION"));
     let trace = std::env::var_os("GOSSAMER_CACHE_TRACE").is_some();
+    // `load_or_parse` synthesizes the implicit `fn main` for an entry file's
+    // top-level statements, so `sf` already carries it here.
     let (sf, parse_diags) = load_or_parse(source, file_id, &cache_key, trace);
     if !parse_diags.is_empty() {
         for diag in &parse_diags {

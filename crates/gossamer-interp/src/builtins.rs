@@ -1405,6 +1405,14 @@ fn install_method_helpers(globals: &mut Vec<(&'static str, Value)>) {
     ));
     globals.push(("String::push", builtin("String::push", builtin_str_push)));
     globals.push((
+        "String::push_char",
+        builtin("String::push_char", builtin_str_push_char),
+    ));
+    globals.push((
+        "String::push_byte",
+        builtin("String::push_byte", builtin_str_push_byte),
+    ));
+    globals.push((
         "String::push_str",
         builtin("String::push_str", builtin_str_push_str),
     ));
@@ -4814,6 +4822,38 @@ fn builtin_str_push(args: &[Value]) -> RuntimeResult<Value> {
     Ok(Value::String(SmolStr::from(out)))
 }
 
+/// `s.push_char(c)` - append a char, returning the new String.
+/// Identical write-back contract as `builtin_str_push`.
+fn builtin_str_push_char(args: &[Value]) -> RuntimeResult<Value> {
+    let base = args.first().and_then(as_str).unwrap_or("");
+    let mut out = String::with_capacity(base.len() + 4);
+    out.push_str(base);
+    match args.get(1) {
+        Some(Value::Char(c)) => out.push(*c),
+        other => {
+            if let Some(c) = other
+                .and_then(value_to_int)
+                .and_then(|n| char::from_u32(n as u32))
+            {
+                out.push(c);
+            }
+        }
+    }
+    Ok(Value::String(SmolStr::from(out)))
+}
+
+/// `s.push_byte(b)` - append a byte (0-255) as its Unicode codepoint,
+/// returning the new String. Write-back contract matches `builtin_str_push`.
+fn builtin_str_push_byte(args: &[Value]) -> RuntimeResult<Value> {
+    let base = args.first().and_then(as_str).unwrap_or("");
+    let byte = args.get(1).and_then(value_to_int).unwrap_or(0) as u8;
+    let ch = char::from(byte);
+    let mut out = String::with_capacity(base.len() + 4);
+    out.push_str(base);
+    out.push(ch);
+    Ok(Value::String(SmolStr::from(out)))
+}
+
 /// `s.push_str(t)` - append a string slice, returning the new String.
 /// See `builtin_str_push` for the writeback contract.
 fn builtin_str_push_str(args: &[Value]) -> RuntimeResult<Value> {
@@ -6450,8 +6490,15 @@ fn builtin_struct_new(args: &[Value]) -> RuntimeResult<Value> {
     Ok(Value::struct_(name, Arc::unwrap_or_clone(Arc::new(fields))))
 }
 
-fn builtin_channel_new(_args: &[Value]) -> RuntimeResult<Value> {
-    let channel = crate::value::Channel::new();
+fn builtin_channel_new(args: &[Value]) -> RuntimeResult<Value> {
+    // `channel(N)` bounds the buffer to capacity `N`; `channel()` (or a
+    // non-positive `N`) is unbounded. Matches the compiled tier's
+    // `gos_rt_chan_new(elem_bytes, cap)` where `cap <= 0` is unbounded.
+    let capacity = match args.first() {
+        Some(Value::Int(n)) if *n > 0 => *n as usize,
+        _ => 0,
+    };
+    let channel = crate::value::Channel::with_capacity(capacity);
     let sender = Value::Channel(channel.clone());
     let receiver = Value::Channel(channel);
     Ok(Value::Tuple(Arc::new(vec![sender, receiver])))

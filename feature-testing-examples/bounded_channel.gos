@@ -1,0 +1,29 @@
+// Bounded channel parity: a producer outruns a consumer over a
+// capacity-2 channel. The bounded buffer applies backpressure (the
+// producer parks while full) instead of growing without limit, yet
+// every value is still delivered in order - identical output on the
+// VM and both compiled tiers.
+
+use std::sync::channel
+
+fn produce(tx: Sender<i64>) {
+    let mut i = 1
+    while i <= 5 {
+        tx.send(i)
+        i += 1
+    }
+    tx.close()
+}
+
+fn main() {
+    let (tx, rx) = channel(2)
+    go produce(tx)
+    let mut total = 0
+    let mut received = 0
+    while let Some(v) = rx.recv() {
+        total += v
+        received += 1
+    }
+    println!("received: {}", received)
+    println!("total: {}", total)
+}

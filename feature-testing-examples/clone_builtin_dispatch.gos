@@ -1,0 +1,33 @@
+// When a user struct or enum derives `Clone`, the synthesized `clone`
+// impl method must not hijack `.clone()` on `String` / `Vec` / enum
+// receivers. A `String` / `Vec` receiver resolves to the universal
+// builtin clone (by type key, or by bare-name fallback to the prelude);
+// a struct receiver resolves to its derived `Type::clone`; an enum
+// receiver round-trips through the universal clone. The presence of any
+// derived `clone` must not change those outcomes. Bit-identical on the
+// bytecode VM, Cranelift JIT, and LLVM AOT (incl. `--release`).
+
+#[derive(Clone)]
+struct Point { x: i64, y: i64 }
+
+#[derive(Clone)]
+enum Val { I(i64), T(String), N }
+
+fn main() {
+    let s = "hello"
+    println!("str: {}", s.clone())
+
+    let xs: [String] = ["a", "b", "c"]
+    let ys = xs.clone()
+    println!("vec: {} {}", ys.len(), ys[2])
+
+    let p = Point { x: 3, y: 4 }
+    let q = p.clone()
+    println!("point: {} {}", q.x, q.y)
+
+    let v = Val::T("vt")
+    match v.clone() {
+        Val::T(t) => println!("val: {}", t),
+        _ => println!("val: ?"),
+    }
+}

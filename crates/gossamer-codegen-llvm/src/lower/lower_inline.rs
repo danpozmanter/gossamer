@@ -366,9 +366,8 @@ impl<'a> Lowerer<'a> {
     /// `f64` (`elem_bytes_of` maps them to 8, and every runtime
     /// constructor that returns such a vec passes 8). Byte buffers
     /// (`Vec<u8>` from `fs::read` / `crypto::rand_bytes` / HTTP
-    /// `raw_bytes`) are stride 1 and bools/chars may predate the
-    /// 8-byte clamp, so anything narrower keeps the header-driven
-    /// element-size load.
+    /// `raw_bytes`) and `Vec<bool>` are stride 1, so anything narrower
+    /// keeps the header-driven element-size load in the get/set paths.
     pub(crate) fn vec_operand_has_word_elem(&self, op: &Operand) -> bool {
         let Operand::Copy(pl) = op else {
             return false;
@@ -1160,19 +1159,22 @@ impl<'a> Lowerer<'a> {
             _ => val_v,
         };
         // Inline no-grow fast path: when the vec is non-null, has spare
-        // capacity, and uses the 8-byte element stride every compiled
-        // construction path produces, a push is one store plus a len
-        // increment. The runtime call remains the slow path for growth,
-        // null vecs, and narrow-stride vecs built by runtime helpers
-        // (byte buffers). The runtime push is itself a plain
-        // `memcpy + len += 1` - RC retains happen at the push site via
-        // the drop pass - so the two paths are semantically identical.
+        // capacity, and the element stride is known, a push is one store
+        // plus a len increment. Two stride cases get fast paths: 8-byte
+        // (word, covering i64/f64/ptr/char/String/Vec) and 1-byte (bool
+        // and byte buffers from fs::read / crypto::rand_bytes). The
+        // runtime call remains the slow path for growth, null vecs, and
+        // any other stride. RC retains happen at the push site via the
+        // drop pass, so every path is semantically identical.
         declare_rt(&mut self.runtime_refs, "gos_rt_vec_push_i64");
         let s_id = self.next_ssa;
         self.next_ssa += 1;
-        let (chk, fast, slow, cont) = (
+        let (chk, chk2, chk3, word_fast, byte_fast, slow, cont) = (
             format!("vp_chk_{s_id}"),
-            format!("vp_fast_{s_id}"),
+            format!("vp_chk2_{s_id}"),
+            format!("vp_chk3_{s_id}"),
+            format!("vp_word_{s_id}"),
+            format!("vp_byte_{s_id}"),
             format!("vp_slow_{s_id}"),
             format!("vp_cont_{s_id}"),
         );
@@ -1200,12 +1202,19 @@ impl<'a> Lowerer<'a> {
         .unwrap();
         let eb32 = self.fresh();
         writeln!(self.out, "  {eb32} = load i32, ptr {eb_addr}").unwrap();
-        let not8 = self.fresh();
-        writeln!(self.out, "  {not8} = icmp ne i32 {eb32}, 8").unwrap();
-        let bail = self.fresh();
-        writeln!(self.out, "  {bail} = or i1 {full}, {not8}").unwrap();
-        writeln!(self.out, "  br i1 {bail}, label %{slow}, label %{fast}").unwrap();
-        writeln!(self.out, "{fast}:").unwrap();
+        // Full: must grow - delegate to the runtime. Otherwise dispatch
+        // on the element stride to pick the matching inline store.
+        writeln!(self.out, "  br i1 {full}, label %{slow}, label %{chk2}").unwrap();
+        writeln!(self.out, "{chk2}:").unwrap();
+        let is8 = self.fresh();
+        writeln!(self.out, "  {is8} = icmp eq i32 {eb32}, 8").unwrap();
+        writeln!(self.out, "  br i1 {is8}, label %{word_fast}, label %{chk3}").unwrap();
+        writeln!(self.out, "{chk3}:").unwrap();
+        let is1 = self.fresh();
+        writeln!(self.out, "  {is1} = icmp eq i32 {eb32}, 1").unwrap();
+        writeln!(self.out, "  br i1 {is1}, label %{byte_fast}, label %{slow}").unwrap();
+        // Word-stride (8-byte) fast path: store i64 directly.
+        writeln!(self.out, "{word_fast}:").unwrap();
         let dptr_addr = self.fresh();
         writeln!(
             self.out,
@@ -1222,6 +1231,30 @@ impl<'a> Lowerer<'a> {
         let len1 = self.fresh();
         writeln!(self.out, "  {len1} = add i64 {len}, 1").unwrap();
         writeln!(self.out, "  store i64 {len1}, ptr {vec_ptr}").unwrap();
+        writeln!(self.out, "  br label %{cont}").unwrap();
+        // Byte-stride (1-byte) fast path for bool and byte-buffer elements.
+        // Element address is data_ptr + len (stride == 1, no multiply).
+        writeln!(self.out, "{byte_fast}:").unwrap();
+        let dptr_addr2 = self.fresh();
+        writeln!(
+            self.out,
+            "  {dptr_addr2} = getelementptr i8, ptr {vec_ptr}, i64 24"
+        )
+        .unwrap();
+        let dptr2 = self.fresh();
+        writeln!(self.out, "  {dptr2} = load ptr, ptr {dptr_addr2}").unwrap();
+        let ea2 = self.fresh();
+        writeln!(
+            self.out,
+            "  {ea2} = getelementptr i8, ptr {dptr2}, i64 {len}"
+        )
+        .unwrap();
+        let val8 = self.fresh();
+        writeln!(self.out, "  {val8} = trunc i64 {val_i64} to i8").unwrap();
+        writeln!(self.out, "  store i8 {val8}, ptr {ea2}").unwrap();
+        let len1b = self.fresh();
+        writeln!(self.out, "  {len1b} = add i64 {len}, 1").unwrap();
+        writeln!(self.out, "  store i64 {len1b}, ptr {vec_ptr}").unwrap();
         writeln!(self.out, "  br label %{cont}").unwrap();
         writeln!(self.out, "{slow}:").unwrap();
         writeln!(
@@ -1277,6 +1310,119 @@ impl<'a> Lowerer<'a> {
         if !is_unit(self.tcx, self.body.local_ty(destination.local)) {
             let slot = local_slot(destination.local);
             writeln!(self.out, "  store i64 {ext}, ptr {slot}").unwrap();
+        }
+        emit_terminator_branch(&mut self.out, target);
+        Ok(())
+    }
+
+    /// Inline fast path for `gos_rt_str_append_bytes(acc, ptr, len)`.
+    /// Mirrors the runtime shim's in-place branch: when `acc` is a
+    /// sole-owner growable builder (`STR_BUILDER_TAG`) with spare
+    /// capacity, append `len` bytes via memcpy + length bump with no
+    /// FFI call. Every other shape (null, non-builder, region builder,
+    /// shared, capacity-exhausted) branches to the runtime shim, which
+    /// owns those paths. Header layout matches `c_abi::string`:
+    /// `rc@acc-13`, `cap@acc-9`, `len@acc-5`, `tag@acc-1`.
+    pub(crate) fn lower_str_append_bytes_inline(
+        &mut self,
+        args: &[Operand],
+        destination: &Place,
+        target: Option<&gossamer_mir::BlockId>,
+    ) -> Result<(), BuildError> {
+        let acc = self.lower_operand(&args[0])?;
+        let piece = self.lower_operand(&args[1])?;
+        let len_raw = self.lower_operand(&args[2])?;
+        let len = self.widen_to_i64(&args[2], &len_raw);
+        declare_rt(&mut self.runtime_refs, "gos_rt_str_append_bytes");
+
+        let tagchk = self.fresh_label("ab_tag");
+        let hdr = self.fresh_label("ab_hdr");
+        let fast = self.fresh_label("ab_fast");
+        let slow = self.fresh_label("ab_slow");
+        let done = self.fresh_label("ab_done");
+
+        let isnull = self.fresh();
+        writeln!(self.out, "  {isnull} = icmp eq ptr {acc}, null").unwrap();
+        writeln!(self.out, "  br i1 {isnull}, label %{slow}, label %{tagchk}").unwrap();
+
+        writeln!(self.out, "{tagchk}:").unwrap();
+        let tagp = self.fresh();
+        writeln!(self.out, "  {tagp} = getelementptr i8, ptr {acc}, i64 -1").unwrap();
+        let tag = self.fresh();
+        writeln!(self.out, "  {tag} = load i8, ptr {tagp}").unwrap();
+        let isbuilder = self.fresh();
+        // STR_BUILDER_TAG = 0xAB.
+        writeln!(self.out, "  {isbuilder} = icmp eq i8 {tag}, -85").unwrap();
+        writeln!(self.out, "  br i1 {isbuilder}, label %{hdr}, label %{slow}").unwrap();
+
+        writeln!(self.out, "{hdr}:").unwrap();
+        let rcp = self.fresh();
+        writeln!(self.out, "  {rcp} = getelementptr i8, ptr {acc}, i64 -13").unwrap();
+        let rc = self.fresh();
+        writeln!(self.out, "  {rc} = load i32, ptr {rcp}").unwrap();
+        let capp = self.fresh();
+        writeln!(self.out, "  {capp} = getelementptr i8, ptr {acc}, i64 -9").unwrap();
+        let cap = self.fresh();
+        writeln!(self.out, "  {cap} = load i32, ptr {capp}").unwrap();
+        let lenp = self.fresh();
+        writeln!(self.out, "  {lenp} = getelementptr i8, ptr {acc}, i64 -5").unwrap();
+        let curlen = self.fresh();
+        writeln!(self.out, "  {curlen} = load i32, ptr {lenp}").unwrap();
+        let lentr = self.fresh();
+        writeln!(self.out, "  {lentr} = trunc i64 {len} to i32").unwrap();
+        let newlen = self.fresh();
+        writeln!(self.out, "  {newlen} = add i32 {curlen}, {lentr}").unwrap();
+        let fits = self.fresh();
+        writeln!(self.out, "  {fits} = icmp ule i32 {newlen}, {cap}").unwrap();
+        let sole = self.fresh();
+        writeln!(self.out, "  {sole} = icmp eq i32 {rc}, 1").unwrap();
+        let okc = self.fresh();
+        writeln!(self.out, "  {okc} = and i1 {fits}, {sole}").unwrap();
+        writeln!(self.out, "  br i1 {okc}, label %{fast}, label %{slow}").unwrap();
+
+        writeln!(self.out, "{fast}:").unwrap();
+        let curlen64 = self.fresh();
+        writeln!(self.out, "  {curlen64} = zext i32 {curlen} to i64").unwrap();
+        let dst = self.fresh();
+        writeln!(
+            self.out,
+            "  {dst} = getelementptr i8, ptr {acc}, i64 {curlen64}"
+        )
+        .unwrap();
+        writeln!(
+            self.out,
+            "  call void @llvm.memcpy.p0.p0.i64(ptr {dst}, ptr {piece}, i64 {len}, i1 false)"
+        )
+        .unwrap();
+        let nulp = self.fresh();
+        writeln!(
+            self.out,
+            "  {nulp} = getelementptr i8, ptr {dst}, i64 {len}"
+        )
+        .unwrap();
+        writeln!(self.out, "  store i8 0, ptr {nulp}").unwrap();
+        writeln!(self.out, "  store i32 {newlen}, ptr {lenp}").unwrap();
+        writeln!(self.out, "  br label %{done}").unwrap();
+
+        writeln!(self.out, "{slow}:").unwrap();
+        let r = self.fresh();
+        writeln!(
+            self.out,
+            "  {r} = call ptr @gos_rt_str_append_bytes(ptr {acc}, ptr {piece}, i64 {len})"
+        )
+        .unwrap();
+        writeln!(self.out, "  br label %{done}").unwrap();
+
+        writeln!(self.out, "{done}:").unwrap();
+        let res = self.fresh();
+        writeln!(
+            self.out,
+            "  {res} = phi ptr [ {acc}, %{fast} ], [ {r}, %{slow} ]"
+        )
+        .unwrap();
+        if !is_unit(self.tcx, self.body.local_ty(destination.local)) {
+            let slot = local_slot(destination.local);
+            writeln!(self.out, "  store ptr {res}, ptr {slot}").unwrap();
         }
         emit_terminator_branch(&mut self.out, target);
         Ok(())

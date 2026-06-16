@@ -65,11 +65,12 @@ impl<'a> Builder<'a> {
         // as the next entry's String pointer on iteration. Extract
         // the inner element type from the binding's `Vec(_)` /
         // `Slice(_)` kind and route through `elem_bytes_of` (which
-        // sums the slot bytes of compound types correctly).
+        // returns the correct stride for each element type, including
+        // 1 for bool and larger counts for multi-slot aggregates).
         let binding_ty = self.locals[local.0 as usize].ty;
         let elem_bytes_val: i128 = match self.tcx.kind_of(binding_ty) {
             gossamer_types::TyKind::Vec(elem) | gossamer_types::TyKind::Slice(elem) => {
-                i128::from(self.elem_bytes_of(*elem).max(8))
+                i128::from(self.elem_bytes_of(*elem).max(1))
             }
             _ => 8,
         };
@@ -265,7 +266,7 @@ impl<'a> Builder<'a> {
             TyKind::Vec(e) | TyKind::Slice(e) => *e,
             _ => self.locals[value_local.0 as usize].ty,
         };
-        let elem_bytes_val = i128::from(self.elem_bytes_of(elem_src_ty).max(8));
+        let elem_bytes_val = i128::from(self.elem_bytes_of(elem_src_ty).max(1));
         let elem_bytes_local = self.fresh(i64_ty);
         self.emit_assign(
             Place::local(elem_bytes_local),

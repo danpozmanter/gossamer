@@ -256,6 +256,7 @@ pub const STDLIB_QUALIFIED: &[&str] = &[
     "collections::HashSet::new",
     "collections::Vec::insert",
     "collections::Vec::remove",
+    "collections::VecDeque::new",
     "compress::bzip2::compress",
     "compress::bzip2::decompress",
     "compress::flate::compress",

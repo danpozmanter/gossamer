@@ -1,0 +1,4 @@
+use std::process
+
+println!("exiting with 3")
+process::exit(3)

@@ -2670,8 +2670,12 @@ fn select_try_once(
                 };
                 let ch = ch.clone();
                 let value = registers[arm.value_reg as usize].clone();
-                ch.send(value);
-                return Some(arm.body_block);
+                // A bounded channel at capacity makes this send arm
+                // not-ready; fall through to the next arm rather than
+                // blocking inside the non-blocking probe.
+                if ch.try_send(value) {
+                    return Some(arm.body_block);
+                }
             }
             SelectArmKind::Default => {}
         }

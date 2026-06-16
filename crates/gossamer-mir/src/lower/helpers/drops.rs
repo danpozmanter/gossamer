@@ -253,7 +253,8 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
             && matches!(callee, Operand::Const(ConstValue::Str(n))
                 if n == "gos_rt_str_concat_drop_a"
                     || n == "gos_rt_str_append_i64"
-                    || n == "gos_rt_str_append_f64")
+                    || n == "gos_rt_str_append_f64"
+                    || n == "gos_rt_str_append_bytes")
             && destination.projection.is_empty()
             && let Some(Operand::Copy(arg0)) = args.first()
         {
@@ -2876,6 +2877,9 @@ pub(crate) fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyC
             "Vec::new" | "Vec::with_capacity" => Some("gos_rt_vec_free"),
             "HashSet::new" | "collections::HashSet::new" => Some("gos_rt_set_free"),
             "BTreeMap::new" | "collections::BTreeMap::new" => Some("gos_rt_btmap_free"),
+            "gos_rt_deque_new" | "VecDeque::new" | "collections::VecDeque::new" => {
+                Some("gos_rt_deque_free")
+            }
             _ => None,
         }
     };

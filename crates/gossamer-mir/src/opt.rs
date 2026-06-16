@@ -63,6 +63,8 @@ pub fn optimise(body: &mut Body, tcx: &TyCtxt) {
     crate::verify::debug_verify_body(body);
     const_branch_elim(body);
     crate::verify::debug_verify_body(body);
+    dead_block_sweep(body);
+    crate::verify::debug_verify_body(body);
     dead_store_elim(body, tcx);
     crate::verify::debug_verify_body(body);
 }
@@ -149,9 +151,19 @@ fn detect_wrapper_callee(body: &Body) -> Option<Operand> {
 /// (statements + one per block terminator). Replaces the old flat
 /// 4-statement rule: small leaf helpers up to this weight inline.
 /// Lowering emits roughly two statements per source operation (a temp
-/// plus its named binding), so this admits leaves of about five to
-/// eight source statements.
-const INLINE_COST_LIMIT: usize = 24;
+/// plus its named binding), so this admits leaves of about ten to
+/// fifteen source statements.
+const INLINE_COST_LIMIT: usize = 40;
+
+/// Promotion ceiling for callees that would otherwise exceed
+/// [`INLINE_COST_LIMIT`]: a callee whose cost falls in the window
+/// `(INLINE_COST_LIMIT, INLINE_CONST_ARG_COST_LIMIT]` is inlined only at
+/// call sites passing at least one constant argument, where folding the
+/// constant through the spliced body collapses constant-conditioned
+/// branches (e.g. the JSON parser's `parse_val` / `parse_str` / `parse_num`
+/// dispatched on a constant mode). Mid-window callees are still registered
+/// as candidates so the application pass can make this per-call-site choice.
+const INLINE_CONST_ARG_COST_LIMIT: usize = 60;
 
 /// Total weighted growth one caller may accrue from inlining before
 /// further inlines into it are skipped - caps caller blow-up when a
@@ -394,9 +406,21 @@ fn remap_statement(
 }
 
 fn remap_place(place: &Place, remap: &impl Fn(Local) -> Local) -> Place {
+    // A `Projection::Index(local)` carries a runtime index local that lives in
+    // the callee's local space; it must be remapped into the caller's appended
+    // locals like the place root, or the spliced access reads a colliding
+    // caller local (`a[i]` in a small inlined callee read the wrong index).
+    let projection = place
+        .projection
+        .iter()
+        .map(|p| match p {
+            Projection::Index(idx) => Projection::Index(remap(*idx)),
+            other => other.clone(),
+        })
+        .collect();
     Place {
         local: remap(place.local),
-        projection: place.projection.clone(),
+        projection,
     }
 }
 
@@ -462,7 +486,10 @@ fn try_build_general(body: &Body) -> Option<GeneralCallee> {
         return None;
     }
     let cost = body_cost(body);
-    if cost > INLINE_COST_LIMIT {
+    // Register candidates up to the const-arg promotion ceiling; the
+    // application pass admits the mid-window ones only at constant-fed
+    // call sites.
+    if cost > INLINE_CONST_ARG_COST_LIMIT {
         return None;
     }
     let mut has_return = false;
@@ -553,12 +580,25 @@ fn inline_general_into(
             bi += 1;
             continue;
         }
+        // Callees over the base limit are in the promotion window: inline
+        // them only when a call-site argument is a constant. The constant
+        // flows into the spliced body and the follow-up `const_fold`
+        // collapses the now-constant-conditioned branches that make the
+        // larger body worth pulling in.
+        let promoted = gc.cost > INLINE_COST_LIMIT;
+        if promoted && !args.iter().any(|a| matches!(a, Operand::Const(_))) {
+            bi += 1;
+            continue;
+        }
         if gc.cost > budget {
             bi += 1;
             continue;
         }
         budget -= gc.cost;
         splice_callee(body, bi, &gc.body, &args, &destination, continuation);
+        if promoted {
+            const_fold(body);
+        }
         bi += 1;
     }
 }
@@ -859,6 +899,115 @@ pub fn const_branch_elim(body: &mut Body) {
             }
         }
         block.terminator = Terminator::Goto { target };
+    }
+}
+
+/// Removes basic blocks unreachable from the entry block, renumbers the
+/// survivors consecutively, and rewrites every terminator target through
+/// the old-id -> new-id map. Runs after [`const_branch_elim`], which turns
+/// constant `SwitchInt`s into `Goto`s and orphans the arms no longer taken;
+/// without this sweep those arms linger as dead blocks that later passes
+/// and codegen still walk. Preserves the `block.id == position` invariant
+/// the verifier enforces.
+pub fn dead_block_sweep(body: &mut Body) {
+    use std::collections::VecDeque;
+    if body.blocks.is_empty() {
+        return;
+    }
+    let id_to_index: HashMap<u32, usize> = body
+        .blocks
+        .iter()
+        .enumerate()
+        .map(|(i, b)| (b.id.0, i))
+        .collect();
+    let mut reachable = vec![false; body.blocks.len()];
+    let entry = body.blocks[0].id;
+    let mut queue: VecDeque<BlockId> = VecDeque::new();
+    if let Some(&i) = id_to_index.get(&entry.0) {
+        reachable[i] = true;
+        queue.push_back(entry);
+    }
+    while let Some(b) = queue.pop_front() {
+        let Some(&i) = id_to_index.get(&b.0) else {
+            continue;
+        };
+        for succ in block_successors(&body.blocks[i].terminator) {
+            if let Some(&j) = id_to_index.get(&succ.0)
+                && !reachable[j]
+            {
+                reachable[j] = true;
+                queue.push_back(succ);
+            }
+        }
+    }
+    if reachable.iter().all(|&r| r) {
+        return;
+    }
+    // Renumber the survivors consecutively in their current order, so the
+    // entry block (always reachable, always first) stays `BlockId(0)`.
+    let mut old_to_new: HashMap<u32, BlockId> = HashMap::new();
+    let mut next = 0u32;
+    for (i, block) in body.blocks.iter().enumerate() {
+        if reachable[i] {
+            old_to_new.insert(block.id.0, BlockId(next));
+            next += 1;
+        }
+    }
+    let blocks = std::mem::take(&mut body.blocks);
+    let mut new_blocks = Vec::with_capacity(next as usize);
+    for (i, mut block) in blocks.into_iter().enumerate() {
+        if !reachable[i] {
+            continue;
+        }
+        block.id = old_to_new[&block.id.0];
+        remap_terminator_targets(&mut block.terminator, &old_to_new);
+        new_blocks.push(block);
+    }
+    body.blocks = new_blocks;
+}
+
+/// Successor block ids of a terminator (every block it may transfer
+/// control to).
+fn block_successors(t: &Terminator) -> Vec<BlockId> {
+    match t {
+        Terminator::Goto { target } => vec![*target],
+        Terminator::SwitchInt { arms, default, .. } => {
+            let mut out: Vec<BlockId> = arms.iter().map(|(_, b)| *b).collect();
+            out.push(*default);
+            out
+        }
+        Terminator::Call { target, .. } => target.iter().copied().collect(),
+        Terminator::Assert { target, .. } => vec![*target],
+        Terminator::Drop { target, .. } => vec![*target],
+        Terminator::Return | Terminator::Unreachable | Terminator::Panic { .. } => Vec::new(),
+    }
+}
+
+/// Rewrites every block target in `t` through `map` (old id -> new id).
+/// Targets absent from the map belong to removed-unreachable blocks and
+/// so cannot be reached from `t`; they are left as-is.
+fn remap_terminator_targets(t: &mut Terminator, map: &HashMap<u32, BlockId>) {
+    let remap = |b: &mut BlockId| {
+        if let Some(&new) = map.get(&b.0) {
+            *b = new;
+        }
+    };
+    match t {
+        Terminator::Goto { target } => remap(target),
+        Terminator::SwitchInt { arms, default, .. } => {
+            for (_, b) in arms.iter_mut() {
+                remap(b);
+            }
+            remap(default);
+        }
+        Terminator::Call { target, .. } => {
+            if let Some(b) = target {
+                remap(b);
+            }
+        }
+        Terminator::Assert { target, .. } => remap(target),
+        Terminator::Drop { target, .. } => remap(target),
+        Terminator::Return | Terminator::Unreachable | Terminator::Panic { .. } => {}
     }
 }
 

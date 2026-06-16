@@ -1,0 +1,18 @@
+use std::strings
+
+fn main() {
+    // u32 range bounds
+    let mut sum: u32 = 0
+    for i in 0u32..10u32 {
+        sum += i
+    }
+    println!("{}", sum)
+
+    // i32 range bounds with variable end
+    let n: i32 = 5
+    let mut parts: [String] = []
+    for j in 0i32..n {
+        parts.push(format!("{}", j))
+    }
+    println!("{}", strings::join(&parts, " "))
+}

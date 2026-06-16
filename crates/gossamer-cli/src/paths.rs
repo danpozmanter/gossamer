@@ -266,12 +266,24 @@ pub(crate) fn default_main_entry() -> Result<PathBuf> {
     resolve_project_entry(&root)
 }
 
-/// Entry-point resolution for a project root, in order:
+/// Entry-point resolution for a project root. An explicit `[project] entry`
+/// in the manifest wins; otherwise the convention order applies:
 /// `src/main.gos`, `main.gos`, the manifest-id-named source
 /// (`src/<id-tail>.gos`, then `<id-tail>.gos`), and finally a sole
 /// `.gos` candidate under `src/` or the root. A directory with
 /// several nameless candidates is an error that lists them.
 pub(crate) fn resolve_project_entry(root: &Path) -> Result<PathBuf> {
+    if let Some(entry) = manifest_entry(root) {
+        let path = root.join(&entry);
+        if path.is_file() {
+            return Ok(path);
+        }
+        return Err(anyhow!(
+            "project.toml sets [project] entry = {:?} but {} does not exist",
+            entry,
+            path.display()
+        ));
+    }
     let canonical = root.join("src").join("main.gos");
     if canonical.is_file() {
         return Ok(canonical);
@@ -320,6 +332,13 @@ fn manifest_id_tail(root: &Path) -> Option<String> {
     let text = fs::read_to_string(root.join("project.toml")).ok()?;
     let manifest = gossamer_pkg::Manifest::parse(&text).ok()?;
     Some(manifest.project.id.tail().to_string())
+}
+
+/// `[project] entry` from the root's manifest, when present and the
+/// `project.toml` parses.
+fn manifest_entry(root: &Path) -> Option<String> {
+    let text = fs::read_to_string(root.join("project.toml")).ok()?;
+    gossamer_pkg::Manifest::parse(&text).ok()?.project.entry
 }
 
 /// `.gos` files in `dir` that qualify as an entry point, sorted by

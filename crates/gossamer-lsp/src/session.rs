@@ -431,4 +431,42 @@ mod tests {
         assert!(!ctx.is_method_position);
         assert!(!ctx.is_use_context);
     }
+
+    #[test]
+    fn top_level_statements_produce_no_spurious_diagnostics() {
+        // An entry file with bare top-level statements is implicitly `fn main`;
+        // the LSP must analyse it cleanly, not report it as malformed items.
+        let doc = analyse(
+            "file:///t.gos",
+            "println!(\"hi\")\nlet x = 1\nprintln!(\"{}\", x)\n",
+        );
+        assert!(
+            doc.diagnostics.is_empty(),
+            "unexpected diagnostics: {:?}",
+            doc.diagnostics
+        );
+    }
+
+    #[test]
+    fn top_level_question_operator_is_accepted() {
+        let src = "use std::errors\n\
+                   fn f() -> Result<i64, errors::Error> { Ok(1) }\n\
+                   let n = f()?\n\
+                   println!(\"{}\", n)\n";
+        let doc = analyse("file:///t.gos", src);
+        assert!(
+            doc.diagnostics.is_empty(),
+            "unexpected diagnostics: {:?}",
+            doc.diagnostics
+        );
+    }
+
+    #[test]
+    fn mixing_top_level_statements_with_explicit_main_is_reported() {
+        let doc = analyse("file:///t.gos", "println!(\"hi\")\nfn main() { }\n");
+        assert!(
+            !doc.diagnostics.is_empty(),
+            "expected a conflict diagnostic for mixed entry forms"
+        );
+    }
 }

@@ -268,6 +268,57 @@ pub unsafe extern "C" fn gos_rt_os_remove_dir_all_result(path: *const c_char) ->
     })
 }
 
+/// `fs::create_dir(path) -> Result<(), Error>` - non-recursive
+/// directory creation; fails when a parent component is missing.
+/// Use `fs::create_dir_all` for the recursive form. Matches the
+/// interp's `fs::create_dir` builtin (`std::fs::create_dir`).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_fs_create_dir(path: *const c_char) -> i128 {
+    ffi_entry!(0i128, {
+        if path.is_null() {
+            let cs = std::ffi::CString::new("create_dir: null path").unwrap_or_default();
+            let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+            return unsafe { gos_rt_result_new(1, err as i64) };
+        }
+        let p = unsafe { CStr::from_ptr(path).to_string_lossy().into_owned() };
+        match std::fs::create_dir(&p) {
+            Ok(()) => unsafe { gos_rt_result_new(0, 0) },
+            Err(e) => {
+                let msg = classify_io_error(&e, &p);
+                let cs = std::ffi::CString::new(msg).unwrap_or_default();
+                let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+                unsafe { gos_rt_result_new(1, err as i64) }
+            }
+        }
+    })
+}
+
+/// `fs::remove_dir(path) -> Result<(), Error>` - removes a single
+/// empty directory; fails if it is non-empty. Use `fs::remove_dir_all`
+/// / `fs::remove_all` for a recursive tree removal. Matches the
+/// interp's `fs::remove_dir` / `os::remove_dir` builtin
+/// (`std::fs::remove_dir`).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_fs_remove_dir(path: *const c_char) -> i128 {
+    ffi_entry!(0i128, {
+        if path.is_null() {
+            let cs = std::ffi::CString::new("remove_dir: null path").unwrap_or_default();
+            let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+            return unsafe { gos_rt_result_new(1, err as i64) };
+        }
+        let p = unsafe { CStr::from_ptr(path).to_string_lossy().into_owned() };
+        match std::fs::remove_dir(&p) {
+            Ok(()) => unsafe { gos_rt_result_new(0, 0) },
+            Err(e) => {
+                let msg = classify_io_error(&e, &p);
+                let cs = std::ffi::CString::new(msg).unwrap_or_default();
+                let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+                unsafe { gos_rt_result_new(1, err as i64) }
+            }
+        }
+    })
+}
+
 /// `os::remove_file(path) -> Result<(), IoError>` - Result shape.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_os_remove_file_result(path: *const c_char) -> i128 {
@@ -399,6 +450,38 @@ pub unsafe extern "C" fn gos_rt_path_dir(p: *const c_char) -> *mut c_char {
             Some(idx) => &s[..idx],
         };
         alloc_cstring(dirname.as_bytes())
+    })
+}
+
+/// `path::split(p) -> (String, String)` - splits into a
+/// `(directory, file)` pair. Returns a heap `*mut StrPair` (two
+/// c-string slots); the MIR types the return as `(String, String)`
+/// so a destructure reads slot 0 (dir) and slot 1 (file). The
+/// directory carries no trailing separator unless the path is `/`,
+/// matching `gossamer_std::path::split`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_path_split(p: *const c_char) -> *mut i64 {
+    ffi_entry!(std::ptr::null_mut(), {
+        let s = if p.is_null() {
+            ""
+        } else {
+            unsafe { CStr::from_ptr(p).to_str() }.unwrap_or("")
+        };
+        let (dir, file): (&str, &str) = match s.rfind('/') {
+            None => ("", s),
+            Some(0) => ("/", &s[1..]),
+            Some(idx) => (&s[..idx], &s[idx + 1..]),
+        };
+        #[repr(C)]
+        struct StrPair {
+            a: i64,
+            b: i64,
+        }
+        Box::into_raw(Box::new(StrPair {
+            a: alloc_cstring(dir.as_bytes()) as i64,
+            b: alloc_cstring(file.as_bytes()) as i64,
+        }))
+        .cast()
     })
 }
 

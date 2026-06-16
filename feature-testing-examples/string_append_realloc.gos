@@ -1,0 +1,30 @@
+// Builds a string large enough to cross several growable-builder
+// reallocations through a `&mut String` deref accumulator, mixing inlined
+// literal appends (gos_rt_str_append_bytes) with numeric appends. Guards the
+// self-consuming copy-back: the append result must not be retained/released as
+// a fresh value, or the builder's rc leaves 1 and every append degrades to a
+// copy-on-write reallocation (unbounded growth) instead of an in-place append.
+fn build(out: &mut String, n: i64) {
+    let mut i = 0
+    while i < n {
+        *out += "k"
+        *out += format!("{}", i)
+        *out += ","
+        i += 1
+    }
+}
+
+fn main() {
+    let mut s = String::new()
+    build(&mut s, 20000)
+    // Length plus a cheap rolling checksum: both diverge if any append landed
+    // in the wrong buffer or dropped bytes.
+    let mut sum: i64 = 0
+    let mut j = 0
+    let len = s.len()
+    while j < len {
+        sum += s.byte_at(j)
+        j += 1
+    }
+    println!("len={} sum={}", len, sum)
+}

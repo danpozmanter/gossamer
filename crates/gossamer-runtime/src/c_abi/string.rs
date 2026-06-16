@@ -318,7 +318,7 @@ pub unsafe extern "C" fn gos_rt_vec_clone(src: *const GosVec) -> *mut GosVec {
         // Ledger + initial strong count, symmetric with `alloc_vec_header`
         // (gos_rt_vec_free always decrements the ledger).
         crate::c_abi::ledger::vec_inc();
-        let mut cloned = GosVec {
+        let cloned = GosVec {
             len: s.len,
             cap: s.len,
             elem_bytes: s.elem_bytes,
@@ -326,7 +326,7 @@ pub unsafe extern "C" fn gos_rt_vec_clone(src: *const GosVec) -> *mut GosVec {
             _reserved: [0; 3],
             ptr: SyncRawPtr::new(data),
         };
-        crate::c_abi::vec::vec_set_rc(&mut cloned, 1);
+        crate::c_abi::vec::vec_set_rc(&cloned, 1);
         let out = Box::into_raw(Box::new(cloned));
         // A clone of a guarded-aggregate vec shares every element's
         // copy-blob children with the source; register the same meta and
@@ -554,7 +554,12 @@ pub unsafe extern "C" fn gos_rt_str_concat_drop_a(
     a: *const c_char,
     b: *const c_char,
 ) -> *mut c_char {
-    ffi_entry!(std::ptr::null_mut(), {
+    // Bare (no `ffi_entry!`): like the RC primitives, this is on the hot
+    // string-accumulation path (one call per appended fragment) where the
+    // per-call catch_unwind setup dominates, and it is panic-free across the
+    // FFI boundary - pointer arithmetic, memcpy, and a stack `write!` never
+    // unwind; the only failure path (`alloc_growable` OOM) aborts.
+    {
         let a_empty = a.is_null() || unsafe { *a.cast::<u8>() } == 0;
         let b_empty = b.is_null() || unsafe { *b.cast::<u8>() } == 0;
 
@@ -635,7 +640,75 @@ pub unsafe extern "C" fn gos_rt_str_concat_drop_a(
             }
         }
         result
-    })
+    }
+}
+
+/// Appends `len` bytes at `b` onto growable string `acc`, freeing/reusing
+/// `acc`, and returns the result. The byte-counted counterpart of
+/// [`gos_rt_str_concat_drop_a`]: the caller supplies the fragment length
+/// (a compile-time constant for string-literal appends), so the hot path
+/// skips the `strlen` (`CStr::from_ptr`) that `concat_drop_a` pays per call.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_str_append_bytes(
+    acc: *const c_char,
+    b: *const u8,
+    len: i64,
+) -> *mut c_char {
+    let len_b = if len < 0 { 0 } else { len as usize };
+    if len_b == 0 {
+        return unsafe { gos_rt_str_concat_drop_a(acc, c"".as_ptr()) };
+    }
+    let b_bytes: &[u8] = unsafe { std::slice::from_raw_parts(b, len_b) };
+
+    // Fast path mirrors concat_drop_a: in-place append when `acc` is a
+    // sole-owner growable builder (or a region builder) with spare capacity.
+    if !acc.is_null() {
+        let tag = unsafe { *acc.cast::<u8>().sub(1) };
+        if tag == STR_BUILDER_TAG || tag == STR_REGION_TAG {
+            let hdr = unsafe { acc.cast::<u8>().sub(13) };
+            let rc = u32::from_le_bytes(unsafe { [*hdr, *hdr.add(1), *hdr.add(2), *hdr.add(3)] });
+            let cap =
+                u32::from_le_bytes(unsafe { [*hdr.add(4), *hdr.add(5), *hdr.add(6), *hdr.add(7)] })
+                    as usize;
+            let len_a = u32::from_le_bytes(unsafe {
+                [*hdr.add(8), *hdr.add(9), *hdr.add(10), *hdr.add(11)]
+            }) as usize;
+            let new_len = len_a + len_b;
+            if new_len <= cap && (rc == 1 || tag == STR_REGION_TAG) {
+                unsafe {
+                    let dst = (acc as *mut u8).add(len_a);
+                    std::ptr::copy_nonoverlapping(b_bytes.as_ptr(), dst, len_b);
+                    *dst.add(len_b) = 0;
+                    let hdr_mut = hdr.cast_mut();
+                    std::ptr::copy_nonoverlapping(
+                        (new_len as u32).to_le_bytes().as_ptr(),
+                        hdr_mut.add(8),
+                        4,
+                    );
+                }
+                return acc.cast_mut();
+            }
+            let a_content = unsafe { std::slice::from_raw_parts(acc.cast::<u8>(), len_a) };
+            let result = alloc_growable(&[a_content, b_bytes], (new_len * 2).max(64));
+            unsafe { gos_rt_str_free(acc.cast_mut()) };
+            return result;
+        }
+    }
+
+    let a_empty = acc.is_null() || unsafe { *acc.cast::<u8>() } == 0;
+    let a_bytes: &[u8] = if a_empty {
+        &[]
+    } else {
+        unsafe { CStr::from_ptr(acc).to_bytes() }
+    };
+    let result = alloc_growable(&[a_bytes, b_bytes], ((a_bytes.len() + len_b) * 2).max(64));
+    if !acc.is_null() {
+        let tag = unsafe { *acc.cast::<u8>().sub(1) };
+        if tag == STR_ALLOC_TAG {
+            unsafe { gos_rt_str_free(acc.cast_mut()) };
+        }
+    }
+    result
 }
 
 /// Appends the decimal form of `n` straight onto growable string `acc`
@@ -645,15 +718,14 @@ pub unsafe extern "C" fn gos_rt_str_concat_drop_a(
 /// the throwaway result string.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_str_append_i64(acc: *const c_char, n: i64) -> *mut c_char {
-    ffi_entry!(std::ptr::null_mut(), {
-        use std::io::{Cursor, Write};
-        // 20 digits + sign fit in 21 bytes; the buffer stays zero-filled
-        // past the written run so the next byte is the NUL terminator.
-        let mut buf = [0u8; 24];
-        let mut cur = Cursor::new(&mut buf[..23]);
-        let _ = write!(cur, "{n}");
-        unsafe { gos_rt_str_concat_drop_a(acc, buf.as_ptr().cast()) }
-    })
+    // Bare + byte-counted: see gos_rt_str_concat_drop_a / gos_rt_str_append_bytes.
+    use std::io::{Cursor, Write};
+    // 20 digits + sign fit in 21 bytes.
+    let mut buf = [0u8; 24];
+    let mut cur = Cursor::new(&mut buf[..]);
+    let _ = write!(cur, "{n}");
+    let len = cur.position() as i64;
+    unsafe { gos_rt_str_append_bytes(acc, buf.as_ptr(), len) }
 }
 
 /// Appends the decimal form of `x` straight onto growable string `acc`.
@@ -662,17 +734,16 @@ pub unsafe extern "C" fn gos_rt_str_append_i64(acc: *const c_char, n: i64) -> *m
 /// pathological denormal lengths.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_str_append_f64(acc: *const c_char, x: f64) -> *mut c_char {
-    ffi_entry!(std::ptr::null_mut(), {
-        use std::io::{Cursor, Write};
-        let mut buf = [0u8; 512];
-        let mut cur = Cursor::new(&mut buf[..511]);
-        if write!(cur, "{x}").is_ok() {
-            unsafe { gos_rt_str_concat_drop_a(acc, buf.as_ptr().cast()) }
-        } else {
-            let cs = std::ffi::CString::new(format!("{x}")).unwrap_or_default();
-            unsafe { gos_rt_str_concat_drop_a(acc, cs.as_ptr()) }
-        }
-    })
+    use std::io::{Cursor, Write};
+    let mut buf = [0u8; 512];
+    let mut cur = Cursor::new(&mut buf[..]);
+    if write!(cur, "{x}").is_ok() {
+        let len = cur.position() as i64;
+        unsafe { gos_rt_str_append_bytes(acc, buf.as_ptr(), len) }
+    } else {
+        let s = format!("{x}");
+        unsafe { gos_rt_str_append_bytes(acc, s.as_ptr(), s.len() as i64) }
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -1308,6 +1379,41 @@ pub unsafe extern "C" fn gos_rt_str_lines(s: *const c_char) -> *mut GosVec {
             }
         }
         vec
+    })
+}
+
+/// Append a Unicode codepoint to `s`, returning the new string.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_str_push_char(s: *const c_char, c: i32) -> *mut c_char {
+    ffi_entry!(std::ptr::null_mut(), {
+        let base = if s.is_null() {
+            ""
+        } else {
+            unsafe { CStr::from_ptr(s).to_str().unwrap_or("") }
+        };
+        let ch = char::from_u32(c as u32).unwrap_or('\u{FFFD}');
+        let mut out = String::with_capacity(base.len() + 4);
+        out.push_str(base);
+        out.push(ch);
+        alloc_cstring(out.as_bytes())
+    })
+}
+
+/// Append a byte (its Unicode codepoint, identical to ASCII for 0-127)
+/// to `s`, returning the new string.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_str_push_byte(s: *const c_char, b: i32) -> *mut c_char {
+    ffi_entry!(std::ptr::null_mut(), {
+        let base = if s.is_null() {
+            ""
+        } else {
+            unsafe { CStr::from_ptr(s).to_str().unwrap_or("") }
+        };
+        let ch = char::from(b as u8);
+        let mut out = String::with_capacity(base.len() + 4);
+        out.push_str(base);
+        out.push(ch);
+        alloc_cstring(out.as_bytes())
     })
 }
 

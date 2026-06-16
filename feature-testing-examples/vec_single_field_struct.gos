@@ -1,0 +1,16 @@
+// A struct whose only field is a Vec (slot_bytes == 8) stored in a Vec: a
+// `vec[i].field` place must address the element inside the Vec's data buffer,
+// not stride off the GosVec header. Covers read, indexed read, and in-place
+// push through the indexed field.
+struct Bucket { items: Vec<i64> }
+
+fn main() {
+    let mut buckets: Vec<Bucket> = []
+    buckets.push(Bucket { items: [] })
+    buckets.push(Bucket { items: [] })
+    buckets[0].items.push(10)
+    buckets[0].items.push(20)
+    buckets[1].items.push(99)
+    println!("len {} {}", buckets[0].items.len(), buckets[1].items.len())
+    println!("vals {} {} {}", buckets[0].items[0], buckets[0].items[1], buckets[1].items[0])
+}

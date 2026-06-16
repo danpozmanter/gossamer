@@ -234,6 +234,12 @@ of the previous line (`let x = a -\n  b`) or inside parentheses.
 The other binary operators (`+`, `&&`, `|>`, `==`, …) continue across
 newlines unconditionally.
 
+An entry file's top-level statements follow the same termination rules.
+They form the body of an implicit `fn main` (§6.10) and have no
+tail-expression value: a trailing bare expression is an ordinary
+statement whose value is discarded, and the implicit `main` returns
+`()` unless a `?` operator forces `Result<(), errors::Error>`.
+
 ---
 
 ## 3. Types
@@ -984,12 +990,15 @@ A source file is plain Gossamer; it does not declare a package, does
 not declare its module, and contains no boilerplate header.
 
 ```
-SourceFile = { UseDecl } { Item }
+SourceFile = { UseDecl } { Item | Statement }
 ```
 
 A file's module is determined by its location on disk (§6.3). Its
 owning project is determined by the nearest enclosing `project.toml`
 walked upward from the file (§6.4).
+
+Bare `Statement`s at file scope are accepted only in the entry file,
+where they form the body of an implicit `fn main` (§6.10).
 
 ### 6.2 Paths
 
@@ -1068,6 +1077,10 @@ Required fields:
 - `project.version` - semver `MAJOR.MINOR.PATCH`.
 
 Every other key is optional.
+
+Optional keys include `project.output` (binary name override) and
+`project.entry` (path to the entry source, relative to the manifest
+directory), which overrides convention-based entry resolution.
 
 ### 6.5 Project identifiers
 
@@ -1187,9 +1200,24 @@ The design assumes and protects decentralised distribution:
 
 ### 6.10 Entry point
 
-An executable project contains `src/main.gos` with a `fn main()`
-returning either `()` or `Result<(), E>`. No `package main` clause is
-required; presence of `src/main.gos` with a `fn main` is sufficient.
+An executable program's entry is `fn main`, returning either `()` or
+`Result<(), E>`.
+
+The entry file may omit the `fn main` wrapper and instead contain bare
+statements at file scope: the entry file is then **implicitly wrapped in
+`fn main()`**. The compiler collects the file's top-level statements, in
+source order, as the body of a synthesized `fn main`; functions, structs,
+and other items declared alongside them are hoisted to file scope as usual.
+If any statement uses the `?` operator, the synthesized signature is
+`fn main() -> Result<(), errors::Error>`; otherwise it returns `()`. Set a
+process exit code explicitly with `std::process::exit(n)`.
+
+A file may use exactly one entry form. Mixing bare top-level statements with
+an explicit `fn main` is an error. Top-level statements are accepted only at
+the entry file's top level, never inside a `mod { }` body.
+
+The entry file is `src/main.gos` by convention, or whatever `[project] entry`
+names (§6.4); a file passed directly to `gos run` / `gos build` is the entry.
 
 ### 6.11 Rationale
 

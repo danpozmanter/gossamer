@@ -80,6 +80,18 @@ pub fn measure_text(&self, text: &str) -> u32 { ... }
 fn bump(&mut self) { ... }
 ```
 
+## Gossamer source (examples and scripts)
+
+For Gossamer `.gos` files (examples, docs, scripts):
+
+- Prefer the implicit-main form for short scripts and examples: bare
+  statements at the top of the entry file become the body of an implicit
+  `fn main()`. Reserve an explicit `fn main` for programs where the
+  signature or framing earns its place.
+- Set a process exit code with `process::exit(n)`. There is no
+  trailing-expression-to-exit-code inference; a trailing bare expression
+  is an ordinary discarded statement.
+
 ## Comments
 
 No inline comments. No `//` comments inside Rust function bodies and no

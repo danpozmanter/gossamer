@@ -73,6 +73,10 @@ pub struct ProjectTable {
     /// build` writes. Relative paths resolve against the manifest's
     /// directory; absent falls back to the source stem.
     pub output: Option<String>,
+    /// `project.entry` - optional explicit entry source, relative to the
+    /// manifest directory. Overrides convention-based entry resolution and
+    /// designates the file that may carry top-level statements.
+    pub entry: Option<String>,
 }
 
 /// One entry in `[dependencies]`.
@@ -380,6 +384,9 @@ impl Manifest {
         let output = project
             .get("output")
             .and_then(|raw| parse_string(raw).map(str::to_string));
+        let entry = project
+            .get("entry")
+            .and_then(|raw| parse_string(raw).map(str::to_string));
         let bins_parsed: Vec<BinTarget> = bins
             .iter()
             .map(|raw| {
@@ -421,6 +428,7 @@ impl Manifest {
                 authors,
                 license,
                 output,
+                entry,
             },
             dependencies: deps,
             registries,
@@ -1021,5 +1029,25 @@ fn render_dependency(spec: &DependencySpec) -> String {
         DependencySpec::Inline(InlineDependency::Tarball { url, sha256 }) => {
             format!("{{ tarball = \"{url}\", sha256 = \"{sha256}\" }}")
         }
+    }
+}
+
+#[cfg(test)]
+mod entry_field_tests {
+    use super::*;
+
+    #[test]
+    fn parses_optional_entry_field() {
+        let src =
+            "[project]\nid = \"example.com/app\"\nversion = \"0.1.0\"\nentry = \"src/app.gos\"\n";
+        let m = Manifest::parse(src).unwrap();
+        assert_eq!(m.project.entry.as_deref(), Some("src/app.gos"));
+    }
+
+    #[test]
+    fn entry_absent_is_none() {
+        let src = "[project]\nid = \"example.com/app\"\nversion = \"0.1.0\"\n";
+        let m = Manifest::parse(src).unwrap();
+        assert_eq!(m.project.entry, None);
     }
 }

@@ -57,6 +57,8 @@ nav:
   - Install: install.md
   - Running: running.md
   - Syntax: syntax.md
+  - Language:
+      - Top-level statements: language/top_level_statements.md
   - Memory model: memory.md
   - Writing libraries: libraries.md
   - Standard library:

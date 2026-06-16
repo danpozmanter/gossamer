@@ -56,6 +56,23 @@ The default convention is still: `src/main.gos` ⇒ binary,
 path, rename the output, or ship multiple binaries from one
 project.
 
+## Selecting the entry file
+
+For a single-binary project, the optional `[project] entry` key names
+the entry source directly, overriding convention-based resolution:
+
+```toml
+[project]
+id      = "example.com/widget"
+version = "0.1.0"
+entry   = "src/app.gos"
+```
+
+The path is relative to the manifest directory. The resolved entry is
+the only file allowed to carry [top-level
+statements](language/top_level_statements.md); sibling and library
+modules contain items only.
+
 ## Module layout
 
 ```

@@ -401,6 +401,17 @@ impl<'a> Lowerer<'a> {
             self.lower_str_byte_at_inline(args, destination, target)?;
             return Ok(());
         }
+        // Hot path inlining for `*acc += <literal>` (the fused
+        // `gos_rt_str_append_bytes`): a sole-owner growable builder
+        // with spare capacity appends via an inline capacity-check +
+        // memcpy + length bump, skipping the per-fragment FFI call.
+        // Any other shape (null / non-builder / region / shared /
+        // capacity-exhausted) falls back to the runtime shim, which
+        // owns those paths.
+        if name == "gos_rt_str_append_bytes" && args.len() == 3 {
+            self.lower_str_append_bytes_inline(args, destination, target)?;
+            return Ok(());
+        }
         // Hot path inlining for `s.len()` on strings. Lowers
         // to `i64 @strlen(ptr s)` (a libc call LLVM
         // constant-folds for compile-time-known string

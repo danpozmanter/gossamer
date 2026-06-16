@@ -16,6 +16,7 @@ into a handful of rules.
 | `unsafe` blocks. | **Forbidden at the language level.** No `unsafe` keyword in Gossamer source. `std` is safe-Rust too. |
 | `panic!` unwinds by default. | `panic` aborts the current goroutine; handlers observe a 500 but the process keeps running. |
 | `Result<T, E>` + `?` + `thiserror`. | `Result<T, E>` + `?` + `std::errors::Error` (single concrete error type). |
+| `fn main` is required in a binary crate. | The entry file may omit `fn main`: bare statements at file scope become the body of an implicit `fn main()` (items are hoisted out). A top-level `?` makes it return `Result<(), errors::Error>`; set an exit code with `std::process::exit(n)`. See [Top-level statements](../language/top_level_statements.md). |
 
 ## What stays the same
 

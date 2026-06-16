@@ -10,6 +10,7 @@
 
 pub mod autoderive;
 mod diagnostic;
+mod entry_main;
 mod expressions;
 mod format;
 mod generics;
@@ -23,6 +24,7 @@ mod types;
 mod use_decls;
 
 pub use diagnostic::{ParseDiagnostic, ParseError};
+pub use entry_main::synthesize_entry_main;
 pub use format::{FormatError, format_source};
 pub use parser::Parser;
 pub use stream::{DocKind, StoredComment, TokenStream};
@@ -41,14 +43,23 @@ pub fn parse_source_file(source: &str, file: FileId) -> (SourceFile, Vec<ParseDi
         uses.push(use_decl);
     }
     let mut items = Vec::new();
+    let mut top_level_stmts = Vec::new();
     while !parser.at_eof_public() {
         let before = parser.checkpoint_public();
-        let item = parser.parse_item();
-        items.push(item);
+        if crate::recovery::is_item_start(&parser) {
+            items.push(parser.parse_item());
+        } else {
+            // At file scope a non-item token begins a bare statement: the
+            // entry file is implicitly `fn main`, so its top-level code is
+            // collected here and wrapped by `synthesize_entry_main`. In a
+            // non-entry file every such token sits inside a `mod { }` body,
+            // which is parsed elsewhere as items only.
+            top_level_stmts.push(parser.parse_stmt());
+        }
         if parser.checkpoint_public() == before {
-            // parse_item left us where we started - guarantee forward
-            // progress so an adversarial input cannot pin the loop and
-            // blow `items` up to gigabytes of stub allocations.
+            // The item/stmt parser left us where we started - guarantee
+            // forward progress so an adversarial input cannot pin the loop
+            // and blow the buffers up to gigabytes of stub allocations.
             parser.bump_public();
             parser.recover_to_item_start_public();
         }
@@ -66,7 +77,10 @@ pub fn parse_source_file(source: &str, file: FileId) -> (SourceFile, Vec<ParseDi
             .into_iter()
             .filter(|u| !is_local_single_segment_use(u)),
     );
-    let source_file = SourceFile::new(file, uses, items);
+    let next_node_id = parser.ids.issued();
+    let mut source_file = SourceFile::new(file, uses, items);
+    source_file.top_level_stmts = top_level_stmts;
+    source_file.next_node_id = next_node_id;
     let diagnostics = parser.take_diagnostics();
     (source_file, diagnostics)
 }
@@ -120,5 +134,46 @@ impl Parser<'_> {
         if !self.at_eof() {
             self.bump();
         }
+    }
+}
+
+#[cfg(test)]
+mod top_level_stmt_tests {
+    use super::*;
+    use gossamer_lex::SourceMap;
+
+    fn parse(src: &str) -> (SourceFile, Vec<ParseDiagnostic>) {
+        let mut map = SourceMap::new();
+        let file = map.add_file("t.gos", src.to_string());
+        parse_source_file(src, file)
+    }
+
+    #[test]
+    fn top_level_statement_is_collected_not_error() {
+        let (sf, diags) = parse("println!(\"hi\")\n");
+        assert!(diags.is_empty(), "unexpected diagnostics: {diags:?}");
+        assert_eq!(sf.top_level_stmts.len(), 1);
+        assert!(sf.next_node_id > 0);
+    }
+
+    #[test]
+    fn top_level_items_still_parse_alongside_statements() {
+        let src = "fn helper() -> i64 { 1 }\nlet x = helper()\nprintln!(\"{}\", x)\n";
+        let (sf, diags) = parse(src);
+        assert!(diags.is_empty(), "unexpected diagnostics: {diags:?}");
+        assert_eq!(sf.items.len(), 1, "helper() should be a hoisted item");
+        assert_eq!(sf.top_level_stmts.len(), 2, "let + println are statements");
+    }
+
+    #[test]
+    fn statement_in_mod_body_is_clear_error() {
+        let (_sf, diags) = parse("mod helper {\n    println!(\"no\")\n}\n");
+        assert!(!diags.is_empty(), "expected a diagnostic");
+        assert!(
+            diags
+                .iter()
+                .any(|d| matches!(d.error, ParseError::StatementOutsideEntry)),
+            "expected StatementOutsideEntry, got: {diags:?}"
+        );
     }
 }

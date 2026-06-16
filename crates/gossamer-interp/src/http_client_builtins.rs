@@ -463,54 +463,52 @@ pub(crate) fn builtin_http_response_bytes(args: &[Value]) -> RuntimeResult<Value
 use gossamer_std::http::{Client as StdClient, Method, StreamResponse};
 
 /// Process-wide registry of in-flight streaming HTTP responses.
-/// Indices into the vector are stable i64 handles embedded inside
-/// the Gossamer `ResponseStream` value, so the reader can be looked
-/// up across multiple `next_line` calls.
-static STREAM_REGISTRY: parking_lot::Mutex<Vec<Option<Arc<parking_lot::Mutex<StreamResponse>>>>> =
-    parking_lot::Mutex::new(Vec::new());
+/// Handles are allocated monotonically and never reused, so a stale
+/// `ResponseStream` value whose stream was already consumed by
+/// `Response::stream(...)` looks up an absent handle (yielding `None`)
+/// rather than colliding with a later stream that recycled its slot.
+/// Mirrors the compiled tier's `NEXT_STREAM_HANDLE` registry so both
+/// tiers behave identically.
+static NEXT_STREAM_HANDLE: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(1);
+static STREAM_REGISTRY: parking_lot::Mutex<
+    Option<rustc_hash::FxHashMap<i64, Arc<parking_lot::Mutex<StreamResponse>>>>,
+> = parking_lot::Mutex::new(None);
 
 fn stream_register(stream: StreamResponse) -> i64 {
+    let handle = NEXT_STREAM_HANDLE.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     let arc = Arc::new(parking_lot::Mutex::new(stream));
-    let mut reg = STREAM_REGISTRY.lock();
-    for (i, slot) in reg.iter_mut().enumerate() {
-        if slot.is_none() {
-            *slot = Some(arc);
-            return i as i64;
-        }
-    }
-    let id = reg.len() as i64;
-    reg.push(Some(arc));
-    id
+    STREAM_REGISTRY
+        .lock()
+        .get_or_insert_with(rustc_hash::FxHashMap::default)
+        .insert(handle, arc);
+    handle
 }
 
 fn stream_lookup(handle: i64) -> Option<Arc<parking_lot::Mutex<StreamResponse>>> {
-    if handle < 0 {
-        return None;
-    }
-    let reg = STREAM_REGISTRY.lock();
-    reg.get(handle as usize).and_then(std::clone::Clone::clone)
+    STREAM_REGISTRY.lock().as_ref()?.get(&handle).cloned()
 }
 
 /// Streams already claimed by a `Response::stream(...)` value and
 /// waiting to be drained to a client by the server writer. Keyed by
 /// the original registry handle; `stream_take_for_serve` is one-shot.
-static PENDING_SERVE: parking_lot::Mutex<Vec<(i64, Arc<parking_lot::Mutex<StreamResponse>>)>> =
-    parking_lot::Mutex::new(Vec::new());
+static PENDING_SERVE: parking_lot::Mutex<
+    Option<rustc_hash::FxHashMap<i64, Arc<parking_lot::Mutex<StreamResponse>>>>,
+> = parking_lot::Mutex::new(None);
 
 /// Moves `handle` from the client registry into the pending-serve
 /// registry. After this, `next_line` / `next_chunk` on the same
 /// `ResponseStream` yield `None` - the stream now belongs to the
 /// response. No-op when the handle was already consumed.
 pub(crate) fn stream_consume_for_response(handle: i64) {
-    if handle < 0 {
-        return;
-    }
     let taken = {
         let mut reg = STREAM_REGISTRY.lock();
-        reg.get_mut(handle as usize).and_then(Option::take)
+        reg.as_mut().and_then(|map| map.remove(&handle))
     };
     if let Some(arc) = taken {
-        PENDING_SERVE.lock().push((handle, arc));
+        PENDING_SERVE
+            .lock()
+            .get_or_insert_with(rustc_hash::FxHashMap::default)
+            .insert(handle, arc);
     }
 }
 
@@ -519,9 +517,7 @@ pub(crate) fn stream_consume_for_response(handle: i64) {
 pub(crate) fn stream_take_for_serve(
     handle: i64,
 ) -> Option<Arc<parking_lot::Mutex<StreamResponse>>> {
-    let mut pending = PENDING_SERVE.lock();
-    let idx = pending.iter().position(|(h, _)| *h == handle)?;
-    Some(pending.swap_remove(idx).1)
+    PENDING_SERVE.lock().as_mut()?.remove(&handle)
 }
 
 /// Extracts the `__handle` of a `ResponseStream` value.

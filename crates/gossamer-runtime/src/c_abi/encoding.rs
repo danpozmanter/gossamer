@@ -382,7 +382,9 @@ fn base32_encode(data: &[u8]) -> String {
     out
 }
 
-fn base32_decode(s: &str) -> Result<Vec<u8>, String> {
+const BASE32_HEX_ALPHA: &[u8; 32] = b"0123456789ABCDEFGHIJKLMNOPQRSTUV";
+
+fn base32_decode_inner(s: &str, alpha: &[u8; 32]) -> Result<Vec<u8>, String> {
     let mut bits: u64 = 0;
     let mut nbits = 0u32;
     let mut out = Vec::new();
@@ -391,7 +393,7 @@ fn base32_decode(s: &str) -> Result<Vec<u8>, String> {
             break;
         }
         let up = ch.to_ascii_uppercase();
-        let val = BASE32_ALPHA
+        let val = alpha
             .iter()
             .position(|&a| a == up as u8)
             .ok_or_else(|| format!("base32: invalid character '{ch}'"))?;
@@ -403,6 +405,14 @@ fn base32_decode(s: &str) -> Result<Vec<u8>, String> {
         }
     }
     Ok(out)
+}
+
+fn base32_decode(s: &str) -> Result<Vec<u8>, String> {
+    base32_decode_inner(s, BASE32_ALPHA)
+}
+
+fn base32_decode_hex(s: &str) -> Result<Vec<u8>, String> {
+    base32_decode_inner(s, BASE32_HEX_ALPHA)
 }
 
 /// `encoding::base32::encode_string(s)` - RFC 4648 standard alphabet.
@@ -428,6 +438,36 @@ pub unsafe extern "C" fn gos_rt_encoding_base32_decode_string(s: *const c_char) 
                 }
                 Err(e) => err_result(&format!("base32: {e}")),
             },
+            Err(e) => err_result(&e),
+        }
+    })
+}
+
+/// `encoding::base32::decode(s)` - standard RFC 4648 alphabet,
+/// returns `Result<Vec<u8>, errors::Error>` (Ok payload a byte `Vec`).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_encoding_base32_decode(s: *const c_char) -> i128 {
+    ffi_entry!(0i128, {
+        match base32_decode(cstr_to_str(s)) {
+            Ok(bytes) => {
+                let v = bytes_to_gosvec(&bytes);
+                unsafe { super::vec::gos_rt_result_new(0, v as i64) }
+            }
+            Err(e) => err_result(&e),
+        }
+    })
+}
+
+/// `encoding::base32::decode_hex(s)` - hex (extended) RFC 4648
+/// alphabet (0-9 A-V), returns `Result<Vec<u8>, errors::Error>`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_encoding_base32_decode_hex(s: *const c_char) -> i128 {
+    ffi_entry!(0i128, {
+        match base32_decode_hex(cstr_to_str(s)) {
+            Ok(bytes) => {
+                let v = bytes_to_gosvec(&bytes);
+                unsafe { super::vec::gos_rt_result_new(0, v as i64) }
+            }
             Err(e) => err_result(&e),
         }
     })

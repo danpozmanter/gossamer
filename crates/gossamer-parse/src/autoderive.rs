@@ -442,17 +442,6 @@ fn emit_enum_derive_impl(out: &mut String, decl: &EnumDecl, derives: &[String]) 
     if !(want_clone || want_eq || want_default || want_debug) {
         return;
     }
-    // Struct-payload variants (`Rect { w, h }`) are `Value::Struct` on the VM
-    // walker, keyed by the bare variant name, so `==` / `{:?}` can't dispatch
-    // to `Enum::eq` / `Enum::fmt` there. Derive only enums whose variants are
-    // all tuple (`Circle(f64)`) or unit (`Point`) - those work on every tier.
-    if decl
-        .variants
-        .iter()
-        .any(|v| matches!(v.body, StructBody::Named(_)))
-    {
-        return;
-    }
     out.push_str(&format!(
         "// Auto-derived from #[derive(...)] for {name}.\nimpl {name} {{\n"
     ));
@@ -1655,7 +1644,15 @@ fn __gos_http_request_form_file(r: http::Request, name: &String) -> Option<__gos
 /// resolution to work.
 #[must_use]
 pub fn parse_with_autoderive(source: &str, file: FileId) -> (SourceFile, Vec<ParseDiagnostic>) {
-    let (mut sf, diags) = crate::parse_source_file(source, file);
+    let (mut sf, mut diags) = crate::parse_source_file(source, file);
+    // The entry file is implicitly `fn main`: fold its bare top-level
+    // statements into one (or report a conflict with an explicit `fn main`)
+    // before the rewrites below, so the synthesized body receives the same
+    // serde-turbofish and synthetic-use treatment as any function body. This
+    // is the single compile/analysis parse entry - every codegen tier and the
+    // LSP reach the implicit main through here. The REPL and `gos fmt`/`doc`/
+    // `lint` use the raw `parse_source_file` and are unaffected.
+    diags.extend(crate::entry_main::synthesize_entry_main(&mut sf));
     rewrite_serde_generic_calls(&mut sf);
     rewrite_stdlib_struct_surface(&mut sf);
     inject_synthetic_uses(&mut sf, file);

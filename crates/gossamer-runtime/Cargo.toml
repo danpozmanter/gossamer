@@ -58,6 +58,7 @@ parking_lot = { workspace = true }
 # the only mechanism that works on the default release link path.
 backtrace = "0.3"
 thiserror = { workspace = true }
+serde = { workspace = true }
 serde_json = { workspace = true }
 regex = { version = "1", default-features = false, features = ["std", "unicode"] }
 flate2 = "1"

@@ -1,0 +1,15 @@
+fn main() {
+    let mut s = "hello"
+    s.push_char('!')
+    println!("{}", s)
+
+    let mut t = ""
+    t.push_char('A')
+    t.push_char('B')
+    t.push_char('C')
+    println!("{}", t)
+
+    let mut u = "byte"
+    u.push_byte(33)
+    println!("{}", u)
+}

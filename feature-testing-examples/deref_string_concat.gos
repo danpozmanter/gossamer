@@ -1,0 +1,39 @@
+// Recursive serialization through a `&mut String` accumulator: each arm
+// appends via `*out += <expr>` where the expr is a precomputed String
+// (`format!(...)`) rather than an inline literal. The String operand must be
+// loaded through the deref, not passed as the reference itself.
+enum Node { Leaf(i64), Branch(Vec<Node>) }
+
+fn ser(v: &Node, out: &mut String) {
+    match v {
+        Node::Leaf(n) => *out += format!("{}", n),
+        Node::Branch(kids) => {
+            *out += "["
+            let mut first = true
+            for k in kids {
+                if !first { *out += "," }
+                ser(k, out)
+                first = false
+            }
+            *out += "]"
+        }
+    }
+}
+
+// String `==` and `+` where an operand is a `*p` deref of a `&String`.
+fn eq_through_ref(a: &String, b: &String) -> bool {
+    *a == *b
+}
+
+fn main() {
+    let tree = Node::Branch([Node::Leaf(1), Node::Branch([Node::Leaf(2), Node::Leaf(3)]), Node::Leaf(4)])
+    let mut s = String::new()
+    ser(&tree, &mut s)
+    println!("{}", s)
+
+    let x = "hi"
+    let y = "hi"
+    let z = "no"
+    println!("{}", eq_through_ref(&x, &y))
+    println!("{}", eq_through_ref(&x, &z))
+}

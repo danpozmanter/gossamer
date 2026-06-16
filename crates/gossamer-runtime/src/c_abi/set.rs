@@ -57,9 +57,11 @@ pub unsafe extern "C" fn gos_rt_set_contains(s: *const GosSet, key: *const c_cha
         if s.is_null() || key.is_null() {
             return 0;
         }
-        let k = unsafe { CStr::from_ptr(key).to_string_lossy().into_owned() };
+        let bytes = unsafe { CStr::from_ptr(key).to_bytes() };
+        // Gossamer strings are always valid UTF-8 at the source level.
+        let k: &str = unsafe { std::str::from_utf8_unchecked(bytes) };
         let s = unsafe { &*s };
-        i64::from(s.inner.contains(&k))
+        i64::from(s.inner.contains(k))
     })
 }
 
@@ -69,9 +71,11 @@ pub unsafe extern "C" fn gos_rt_set_remove(s: *mut GosSet, key: *const c_char) -
         if s.is_null() || key.is_null() {
             return 0;
         }
-        let k = unsafe { CStr::from_ptr(key).to_string_lossy().into_owned() };
+        let bytes = unsafe { CStr::from_ptr(key).to_bytes() };
+        // Gossamer strings are always valid UTF-8 at the source level.
+        let k: &str = unsafe { std::str::from_utf8_unchecked(bytes) };
         let s = unsafe { &mut *s };
-        i64::from(s.inner.remove(&k))
+        i64::from(s.inner.remove(k))
     })
 }
 

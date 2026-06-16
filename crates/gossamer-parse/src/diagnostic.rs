@@ -100,6 +100,15 @@ pub enum ParseError {
         /// Rendered lexer diagnostic.
         message: String,
     },
+    /// A bare statement appeared inside a `mod { }` body, where only items
+    /// are allowed. Top-level statements belong only to the entry file's
+    /// implicit `fn main`.
+    #[error("statements are only allowed at the top level of the entry file")]
+    StatementOutsideEntry,
+    /// The entry file mixed bare top-level statements with an explicit
+    /// `fn main`; an entry file uses exactly one entry form.
+    #[error("cannot mix top-level statements with an explicit `fn main`")]
+    MixedEntryForms,
 }
 
 /// A diagnostic with its source location.
@@ -142,7 +151,19 @@ impl ParseDiagnostic {
     pub fn to_diagnostic(&self) -> gossamer_diagnostics::Diagnostic {
         use gossamer_diagnostics::{Code, Diagnostic, Location};
         let location = Location::new(self.span.file, self.span);
-        let (code, title, help): (&'static str, String, Option<String>) = match &self.error {
+        let (code, title, help) = self.error.code_title_help();
+        let mut out = Diagnostic::error(Code(code), title.clone()).with_primary(location, title);
+        if let Some(help) = help {
+            out = out.with_help(help);
+        }
+        out
+    }
+}
+
+impl ParseError {
+    /// Diagnostic code, title, and optional help text for this error.
+    fn code_title_help(&self) -> (&'static str, String, Option<String>) {
+        match self {
             ParseError::Unexpected { expected, found } => (
                 "GP0001",
                 format!("unexpected {found}, expected {expected}"),
@@ -219,11 +240,25 @@ impl ParseDiagnostic {
                 Some("split the expression into smaller helpers".to_string()),
             ),
             ParseError::Lex { message } => ("GP0018", message.clone(), None),
-        };
-        let mut out = Diagnostic::error(Code(code), title.clone()).with_primary(location, title);
-        if let Some(help) = help {
-            out = out.with_help(help);
+            ParseError::StatementOutsideEntry => (
+                "GP0019",
+                "statements are only allowed at the top level of the entry file".to_string(),
+                Some(
+                    "a module body contains items only; move executable code into a function, \
+                     or into the entry file's top level (its implicit `fn main`)"
+                        .to_string(),
+                ),
+            ),
+            ParseError::MixedEntryForms => (
+                "GP0020",
+                "cannot mix top-level statements with an explicit `fn main`".to_string(),
+                Some(
+                    "the entry file is already implicitly `fn main` when it carries top-level \
+                     statements; move the statements into your `fn main`, or remove the explicit \
+                     `fn main`"
+                        .to_string(),
+                ),
+            ),
         }
-        out
     }
 }

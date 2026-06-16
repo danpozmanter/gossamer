@@ -109,7 +109,7 @@ unsafe fn alloc_vec_header(mut v: GosVec) -> *mut GosVec {
     let p = crate::c_abi::rc::region_alloc_bytes(std::mem::size_of::<GosVec>());
     if p.is_null() {
         crate::c_abi::ledger::vec_inc();
-        vec_set_rc(&mut v, 1);
+        vec_set_rc(&v, 1);
         Box::into_raw(Box::new(v))
     } else {
         v._reserved[0] = VEC_REGION_FLAG;
@@ -133,6 +133,10 @@ pub(crate) fn vec_elem_meta(v: *const GosVec) -> *const i64 {
 }
 
 pub(crate) fn vec_elem_meta_remove(v: *const GosVec) {
+    // PRIMITIVE vecs never have side-table entries, so skip both locks entirely.
+    if unsafe { (*v).elem_kind } == vec_elem_kind::PRIMITIVE {
+        return;
+    }
     VEC_ELEM_METAS.lock().remove(&(v as usize));
     VEC_SLOT_CHILDREN.lock().remove(&(v as usize));
 }
@@ -268,16 +272,28 @@ pub(crate) unsafe fn vec_retain_header(v: *mut GosVec) {
     if v.is_null() {
         return;
     }
-    let vec = unsafe { &mut *v };
+    let vec = unsafe { &*v };
     if vec_is_region(vec) {
         return;
     }
-    // Headers from constructors that never wrote a count read 0;
-    // `gos_rt_vec_free` treats 0 and 1 identically ("last reference"),
-    // so a retain must land on 2 either way or the second release
-    // would free a live header.
-    let rc = vec_rc(vec).max(1);
-    vec_set_rc(vec, rc.saturating_add(1));
+    // Headers from constructors that never wrote a count read 0; in that
+    // case a simple +1 would bring it to 1, and the next release would
+    // reclaim a still-live header. Use a CAS loop to atomically jump from
+    // 0 to 2 (treating 0 as the same as 1), while a normal retain is +1.
+    let atomic = vec_rc_atomic(vec);
+    let mut current = atomic.load(std::sync::atomic::Ordering::Relaxed);
+    loop {
+        let next = current.max(1).saturating_add(1);
+        match atomic.compare_exchange_weak(
+            current,
+            next,
+            std::sync::atomic::Ordering::Relaxed,
+            std::sync::atomic::Ordering::Relaxed,
+        ) {
+            Ok(_) => break,
+            Err(actual) => current = actual,
+        }
+    }
 }
 
 /// Propagates ownership-bearing element kinds from `src` to `out`
@@ -458,19 +474,29 @@ pub(crate) unsafe fn vec_elem_store_i64(v: &GosVec, idx: i64, value: i64) {
     }
 }
 
-/// Strong refcount of a non-region Vec, stored as a little-endian `u16` in the
-/// otherwise-unused `_reserved[1..3]` bytes (so the struct layout is unchanged).
+/// Shared reference to the atomic refcount in `_reserved[1..3]`.
+///
+/// `_reserved[1]` sits at struct offset 22 (always 2-byte aligned: `GosVec`
+/// has 8-byte alignment, so any instance address is `8k`, giving `8k+22 =
+/// 2(4k+11)`). `AtomicU16` has the same size and alignment as `u16`, so the
+/// reinterpretation is valid and the `GosVec` layout is unchanged.
+#[inline]
+pub fn vec_rc_atomic(v: &GosVec) -> &std::sync::atomic::AtomicU16 {
+    // SAFETY: see the doc comment above for alignment proof and layout guarantee.
+    unsafe { &*((&raw const v._reserved[1]) as *const std::sync::atomic::AtomicU16) }
+}
+
+/// Strong refcount of a non-region Vec, stored atomically in `_reserved[1..3]`.
 /// A Vec aliased > 65535 times is unreachable; the count saturates rather than
 /// wrapping. Region Vecs ignore this (they are freed wholesale at region pop).
 #[inline]
 pub fn vec_rc(v: &GosVec) -> u16 {
-    u16::from_le_bytes([v._reserved[1], v._reserved[2]])
+    vec_rc_atomic(v).load(std::sync::atomic::Ordering::Relaxed)
 }
+
 #[inline]
-pub fn vec_set_rc(v: &mut GosVec, rc: u16) {
-    let b = rc.to_le_bytes();
-    v._reserved[1] = b[0];
-    v._reserved[2] = b[1];
+pub fn vec_set_rc(v: &GosVec, rc: u16) {
+    vec_rc_atomic(v).store(rc, std::sync::atomic::Ordering::Relaxed);
 }
 
 #[unsafe(no_mangle)]
@@ -557,7 +583,7 @@ pub unsafe extern "C" fn gos_rt_vec_with_capacity(elem_bytes: u32, cap: i64) -> 
         // Ledger + initial strong count, symmetric with `alloc_vec_header`
         // (gos_rt_vec_free always decrements the ledger).
         crate::c_abi::ledger::vec_inc();
-        let mut v = GosVec {
+        let v = GosVec {
             len: 0,
             cap,
             elem_bytes,
@@ -565,7 +591,7 @@ pub unsafe extern "C" fn gos_rt_vec_with_capacity(elem_bytes: u32, cap: i64) -> 
             _reserved: [0; 3],
             ptr: SyncRawPtr::new(ptr),
         };
-        vec_set_rc(&mut v, 1);
+        vec_set_rc(&v, 1);
         Box::into_raw(Box::new(v))
     })
 }
@@ -597,7 +623,7 @@ pub unsafe extern "C" fn gos_rt_vec_with_capacity_typed(
         let ptr = alloc_vec_buffer(bytes);
         // Ledger + initial strong count, symmetric with `alloc_vec_header`.
         crate::c_abi::ledger::vec_inc();
-        let mut v = GosVec {
+        let v = GosVec {
             len: 0,
             cap,
             elem_bytes,
@@ -605,7 +631,7 @@ pub unsafe extern "C" fn gos_rt_vec_with_capacity_typed(
             _reserved: [0; 3],
             ptr: SyncRawPtr::new(ptr),
         };
-        vec_set_rc(&mut v, 1);
+        vec_set_rc(&v, 1);
         Box::into_raw(Box::new(v))
     })
 }
@@ -638,7 +664,7 @@ pub unsafe extern "C" fn gos_rt_vec_from_arr(
         };
         // Ledger + initial strong count, symmetric with `alloc_vec_header`.
         crate::c_abi::ledger::vec_inc();
-        let mut v = GosVec {
+        let v = GosVec {
             len,
             cap: len,
             elem_bytes,
@@ -646,7 +672,7 @@ pub unsafe extern "C" fn gos_rt_vec_from_arr(
             _reserved: [0; 3],
             ptr: SyncRawPtr::new(buf_ptr),
         };
-        vec_set_rc(&mut v, 1);
+        vec_set_rc(&v, 1);
         Box::into_raw(Box::new(v))
     })
 }

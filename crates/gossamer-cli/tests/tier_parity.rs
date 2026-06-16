@@ -283,6 +283,7 @@ const SPECS: &[Spec] = &[
     spec("feature-testing-examples/result_struct_payload.gos"),
     spec("feature-testing-examples/vec_literal_coercion.gos"),
     spec("feature-testing-examples/derive_traits.gos"),
+    spec("feature-testing-examples/derive_struct_variant.gos"),
     spec("feature-testing-examples/struct_map_keys.gos"),
     spec("feature-testing-examples/atomic_bool.gos"),
     spec("feature-testing-examples/cycle_collector.gos"),
@@ -301,6 +302,11 @@ const SPECS: &[Spec] = &[
     spec("feature-testing-examples/format_spec.gos"),
     spec("feature-testing-examples/fs_error_text.gos"),
     spec("feature-testing-examples/fs_temp_file_lifecycle.gos"),
+    spec("feature-testing-examples/fs_dir_ops.gos"),
+    spec("feature-testing-examples/path_split.gos"),
+    spec("feature-testing-examples/base32_decode.gos"),
+    spec("feature-testing-examples/json_yaml_encode.gos"),
+    spec("feature-testing-examples/bounded_channel.gos"),
     spec("feature-testing-examples/generic_function_monomorphization.gos"),
     spec("feature-testing-examples/goroutine_panic_isolation.gos"),
     Spec {
@@ -524,6 +530,8 @@ const SPECS: &[Spec] = &[
     spec("feature-testing-examples/literal_forms.gos"),
     spec("feature-testing-examples/loop_continue.gos"),
     spec("feature-testing-examples/match_or_patterns.gos"),
+    spec("feature-testing-examples/or_patterns.gos"),
+    spec("feature-testing-examples/string_match_patterns.gos"),
     spec("feature-testing-examples/string_char_needle.gos"),
     spec("feature-testing-examples/static_items.gos"),
     spec("feature-testing-examples/stdlib_expansion.gos"),
@@ -619,6 +627,27 @@ const SPECS: &[Spec] = &[
             None
         },
         ..spec("feature-testing-examples/exec_signal_group.gos")
+    },
+    spec("feature-testing-examples/vec_runtime_repeat.gos"),
+    spec("feature-testing-examples/range_non_i64.gos"),
+    spec("feature-testing-examples/string_push_char.gos"),
+    spec("feature-testing-examples/vec_deque.gos"),
+    spec("feature-testing-examples/tuple_match_patterns.gos"),
+    spec("feature-testing-examples/clone_builtin_dispatch.gos"),
+    spec("feature-testing-examples/nested_vec_mutation.gos"),
+    spec("feature-testing-examples/deref_string_concat.gos"),
+    spec("feature-testing-examples/vec_single_field_struct.gos"),
+    spec("feature-testing-examples/inline_index_remap.gos"),
+    spec("feature-testing-examples/string_append_realloc.gos"),
+    // Top-level statements (implicit `fn main`): plain, `?`-propagation,
+    // mixed-with-items, and an explicit process exit code.
+    spec("examples/top_level_statements.gos"),
+    spec("feature-testing-examples/top_level_hello.gos"),
+    spec("feature-testing-examples/top_level_question.gos"),
+    spec("feature-testing-examples/top_level_mixed.gos"),
+    Spec {
+        allow_nonzero: true,
+        ..spec("feature-testing-examples/top_level_exit_code.gos")
     },
 ];
 

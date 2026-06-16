@@ -1263,6 +1263,18 @@ fn values_equal(a: &Value, b: &Value) -> bool {
                     .zip(vb.fields.iter())
                     .all(|(x, y)| values_equal(x, y))
         }
+        // Struct-payload enum variants (`Rect { w, h }`) are stored as
+        // `Value::Struct` keyed by the variant name, so a derived enum's
+        // field-wise `==` reaches here: same name, same fields by name+value.
+        (Value::Struct(sa), Value::Struct(sb)) => {
+            sa.name == sb.name
+                && sa.fields.len() == sb.fields.len()
+                && sa
+                    .fields
+                    .iter()
+                    .zip(sb.fields.iter())
+                    .all(|((na, x), (nb, y))| na == nb && values_equal(x, y))
+        }
         // Native enum handles compare structurally through the boxed
         // representation (rare fallback; derived `==` routes through
         // match dispatch instead).
