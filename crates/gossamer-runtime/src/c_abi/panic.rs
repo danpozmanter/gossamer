@@ -110,7 +110,7 @@ pub unsafe extern "C-unwind" fn gos_rt_panic(msg: *const c_char) {
     if !call_user_panic_hook(&text) {
         // Match the unified diagnostic-code prefix the VM /
         // tree-walker use so both execution modes tag panics with
-        // `error[GX0005]` — keeps user-visible stderr identical
+        // `error[GX0005]` - keeps user-visible stderr identical
         // whether `gos run` took the native path or fell back.
         eprintln!("error[GX0005]: panic: {text}");
         // Inline the active goroutine's call stack so the operator
@@ -119,7 +119,7 @@ pub unsafe extern "C-unwind" fn gos_rt_panic(msg: *const c_char) {
         // (e.g. a fall-back tier without stack-push hooks).
         let trace = crate::sigquit::render_active_panic_trace();
         if trace.is_empty() {
-            // Compiled tier keeps no per-call shadow stack — recover the
+            // Compiled tier keeps no per-call shadow stack - recover the
             // call chain by unwinding the real machine stack.
             let native = crate::sigquit::render_native_panic_trace();
             if !native.is_empty() {
@@ -131,7 +131,7 @@ pub unsafe extern "C-unwind" fn gos_rt_panic(msg: *const c_char) {
     }
     // per-goroutine panic isolation. If the
     // panic originates inside a spawned goroutine, raise a Rust
-    // panic the coroutine wrapper catches — the scheduler
+    // panic the coroutine wrapper catches - the scheduler
     // continues running other goroutines. If we're on the main
     // thread (no active coroutine), keep the pre-0.6 behaviour
     // and abort the process: a panic in `fn main()` is fatal,
@@ -145,7 +145,7 @@ pub unsafe extern "C-unwind" fn gos_rt_panic(msg: *const c_char) {
     }
     // Fatal main-goroutine panic: flush buffered stdout (a plain
     // `abort` would drop it) and exit with the pinned panic code 101,
-    // matching Rust — scripts can rely on it, and no core is dumped
+    // matching Rust - scripts can rely on it, and no core is dumped
     // for an ordinary user panic.
     unsafe {
         gos_rt_flush_stdout();
@@ -248,7 +248,7 @@ pub unsafe extern "C" fn gos_rt_exit(code: i32) -> ! {
     crate::sched_global::request_shutdown();
     // Drain the runtime's line-buffered stdout cache before
     // process exit. Without the flush, `println!("...")` followed
-    // by `os::exit(N)` produces no output — `std::process::exit`
+    // by `os::exit(N)` produces no output - `std::process::exit`
     // skips the C++/atexit handlers that would normally drain
     // stdio.
     unsafe {
@@ -267,7 +267,7 @@ pub extern "C" fn gos_rt_process_id() -> u32 {
 
 /// Aborts the current process without unwinding. Wraps
 /// `std::process::abort`. Used by `process::abort()` in Gossamer
-/// source. Doesn't flush stdout — abort semantics.
+/// source. Doesn't flush stdout - abort semantics.
 #[unsafe(no_mangle)]
 pub extern "C" fn gos_rt_process_abort() -> ! {
     std::process::abort();

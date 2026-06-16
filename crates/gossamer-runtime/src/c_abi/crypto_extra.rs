@@ -67,7 +67,7 @@ fn kdf_err(msg: &str) -> i128 {
     super::vec::gos_rt_result_new(1, err as i64)
 }
 
-/// `crypto::insecure::md5_hex(data) -> String` — lowercase-hex MD5
+/// `crypto::insecure::md5_hex(data) -> String` - lowercase-hex MD5
 /// digest of the input c-string's bytes. MD5 is cryptographically
 /// broken; provided for legacy interop only.
 #[unsafe(no_mangle)]
@@ -83,7 +83,7 @@ pub unsafe extern "C" fn gos_rt_crypto_md5_hex(input: *const c_char) -> *mut c_c
     })
 }
 
-/// `crypto::insecure::sha1_hex(data) -> String` — lowercase-hex SHA-1
+/// `crypto::insecure::sha1_hex(data) -> String` - lowercase-hex SHA-1
 /// digest of the input c-string's bytes. SHA-1 is cryptographically
 /// broken for collision resistance; provided for legacy interop only.
 #[unsafe(no_mangle)]
@@ -100,7 +100,7 @@ pub unsafe extern "C" fn gos_rt_crypto_sha1_hex(input: *const c_char) -> *mut c_
 }
 
 /// `crypto::kdf::pbkdf2_sha256(password, salt, iters, dklen) -> [u8]`
-/// — PBKDF2-HMAC-SHA256. Returns a fresh `Vec<u8>` of length `dklen`.
+/// - PBKDF2-HMAC-SHA256. Returns a fresh `Vec<u8>` of length `dklen`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_crypto_pbkdf2_sha256(
     password: *const GosVec,
@@ -122,7 +122,7 @@ pub unsafe extern "C" fn gos_rt_crypto_pbkdf2_sha256(
 }
 
 /// `crypto::kdf::scrypt_interactive(password, salt) -> Result<[u8], _>`
-/// — scrypt at the standard interactive cost, 32-byte derived key.
+/// - scrypt at the standard interactive cost, 32-byte derived key.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_crypto_scrypt_interactive(
     password: *const GosVec,
@@ -144,7 +144,7 @@ pub unsafe extern "C" fn gos_rt_crypto_scrypt_interactive(
     })
 }
 
-/// `crypto::kdf::argon2id_hash(password) -> Result<String, _>` —
+/// `crypto::kdf::argon2id_hash(password) -> Result<String, _>` -
 /// Argon2id PHC hash with default interactive parameters.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_crypto_argon2id_hash(password: *const GosVec) -> i128 {
@@ -171,7 +171,7 @@ pub unsafe extern "C" fn gos_rt_crypto_argon2id_hash(password: *const GosVec) ->
     })
 }
 
-/// `crypto::kdf::argon2id_verify(password, phc) -> Result<bool, _>` —
+/// `crypto::kdf::argon2id_verify(password, phc) -> Result<bool, _>` -
 /// verifies `password` against a PHC string. `Ok(false)` on mismatch,
 /// `Err` only when the PHC string cannot be parsed.
 #[unsafe(no_mangle)]

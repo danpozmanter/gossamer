@@ -139,7 +139,7 @@ pub const ALL_MODULES: &[StdModule] = &[
     ITER,
     OPTION,
     RESULT,
-    // 0.4.0 — HTTP/2 folded into HTTP per the Go model;
+    // 0.4.0 - HTTP/2 folded into HTTP per the Go model;
     // extended HTTP surface, archives, big-int, FNV, XML, base32 /
     // ascii85, insecure crypto, cipher modes.
     HTTP_ROUTER,
@@ -164,7 +164,7 @@ pub const ALL_MODULES: &[StdModule] = &[
     MATH_BIG,
     CRYPTO_INSECURE,
     CRYPTO_CIPHER,
-    // 0.7.0 stdlib expansion — uuid, container module, mime, toml,
+    // 0.7.0 stdlib expansion - uuid, container module, mime, toml,
     // httptest, netip, os::user, plus auto-derive extensions.
     UUID,
     OS_USER,
@@ -179,7 +179,7 @@ pub const ALL_MODULES: &[StdModule] = &[
     CONTAINER_ORDERED_VEC,
     CONTAINER_ORDERED_SET,
     CONTAINER_ORDERED_MAP,
-    // 0.8.0 — HTTP server stack (cookie / csrf / form / health /
+    // 0.8.0 - HTTP server stack (cookie / csrf / form / health /
     // multipart / query / session / state), JWT, lifecycle,
     // validate, argon2id password facade.
     HTTP_COOKIE,
@@ -194,7 +194,7 @@ pub const ALL_MODULES: &[StdModule] = &[
     LIFECYCLE,
     VALIDATE,
     CRYPTO_PASSWORD,
-    // 0.9.0 — observability (metrics, distributed tracing), HTTP/3,
+    // 0.9.0 - observability (metrics, distributed tracing), HTTP/3,
     // Zstandard.
     METRICS,
     TRACE,

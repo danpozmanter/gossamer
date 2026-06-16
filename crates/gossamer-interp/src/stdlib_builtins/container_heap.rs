@@ -160,5 +160,5 @@ pub(crate) fn builtin_heap_len(args: &[Value]) -> RuntimeResult<Value> {
 }
 
 // ----------------------------------------------------------------------
-// container::queue / stack / deque — all share Vec<i64> shape with
+// container::queue / stack / deque - all share Vec<i64> shape with
 // the same `heap_extract_i64s` / `heap_to_value` helpers above.

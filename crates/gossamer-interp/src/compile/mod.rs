@@ -106,7 +106,7 @@ pub(crate) struct TypedReg {
 /// resolve field-access offsets at compile time.
 pub(crate) type StructLayouts = std::collections::HashMap<gossamer_resolve::DefId, Vec<String>>;
 
-/// Returns `true` when `ty` is `&mut Vec<T>` / `&mut [T]` — the
+/// Returns `true` when `ty` is `&mut Vec<T>` / `&mut [T]` - the
 /// parameter / argument shape that rides the write-back cell
 /// protocol (`Op::CellNew` / `Op::CellTake` /
 /// `FnChunk::mut_ref_params`). Fixed `[T; N]` arrays are excluded:
@@ -156,7 +156,7 @@ pub(crate) fn is_mut_ref_writeback(tcx: &TyCtxt, ty: Ty) -> bool {
 /// enough in library code that its call overhead shows up on
 /// profiles), we record the target intrinsic's path segments.
 /// Calls to the wrapper are rewritten to direct intrinsic
-/// calls at compile time — no `Op::Call`, no push/pop of a
+/// calls at compile time - no `Op::Call`, no push/pop of a
 /// frame, no boxing across the call boundary.
 pub(crate) type InlinableWrappers = std::collections::HashMap<String, Vec<String>>;
 
@@ -170,7 +170,7 @@ pub(crate) type InlinableWrappers = std::collections::HashMap<String, Vec<String
 pub(crate) struct InlinableFn {
     /// Parameter binding patterns in declaration order.
     pub(crate) params: Vec<HirPat>,
-    /// The function's tail expression — its sole computation, re-compiled
+    /// The function's tail expression - its sole computation, re-compiled
     /// directly into the caller at each inlined call site.
     pub(crate) tail: HirExpr,
     /// Weighted node count of `tail`, charged against the caller's inline
@@ -189,9 +189,9 @@ pub(crate) type InlinableFns = std::collections::HashMap<String, InlinableFn>;
 /// Top-level `const` items, keyed by name, with their already-
 /// evaluated `Value`. The bytecode compiler inlines a path that
 /// resolves to one of these into a `LoadConst` (constant-pool
-/// fetch — single index) instead of a `LoadGlobal` (string-keyed
+/// fetch - single index) instead of a `LoadGlobal` (string-keyed
 /// `HashMap` lookup). The win shows up on hot loops that close
-/// over constants — fasta's `(state*IA+IC) % IM` LCG step would
+/// over constants - fasta's `(state*IA+IC) % IM` LCG step would
 /// otherwise pay three name lookups per iteration.
 pub(crate) type ConstValues = std::collections::HashMap<String, Value>;
 
@@ -199,7 +199,7 @@ pub(crate) type ConstValues = std::collections::HashMap<String, Value>;
 /// receiver is `&mut self`. A method call on a writeback place
 /// (`obj.bump()`, `(&mut __for_iter).next()`) lowers through the
 /// write-back cell protocol so the method's mutation of `self`
-/// persists in the caller's binding — matching the by-pointer receiver
+/// persists in the caller's binding - matching the by-pointer receiver
 /// the compiled tiers pass. The bytecode compiler reconstructs the
 /// `Type::method` key from the receiver's resolved type at each call
 /// site and consults this set to decide whether the writeback fires.
@@ -248,7 +248,7 @@ pub fn collect_mut_self_methods(program: &gossamer_hir::HirProgram) -> MutSelfMe
     out
 }
 
-/// `true` when `decl`'s first parameter is a `&mut self` receiver — the
+/// `true` when `decl`'s first parameter is a `&mut self` receiver - the
 /// shape (`fn next(&mut self)`, `fn bump(&mut self)`) whose mutation
 /// must flow back to the caller's binding.
 fn method_has_mut_self(decl: &HirFn) -> bool {
@@ -315,7 +315,7 @@ pub fn compile_fn(
         let reg = builder.alloc_reg();
         builder.bind_param(&param.pattern, reg);
         // `&mut Vec<T>` / `&mut [T]` / `&mut <scalar>` parameters
-        // participate in the write-back cell protocol — the callee
+        // participate in the write-back cell protocol - the callee
         // unwraps an incoming `MutCell` into the param register and
         // publishes its final value back on return. See
         // `FnChunk::mut_ref_params`. A `&mut self` receiver (an
@@ -334,7 +334,7 @@ pub fn compile_fn(
         // the same `IntArrayGetI64` / `FloatVecGetF64` fast paths
         // they would for a let-binding. The receiver invariant
         // holds whenever the caller built the argument via
-        // `try_build_int_array` / `try_build_float_vec` — see
+        // `try_build_int_array` / `try_build_float_vec` - see
         // `Op::FloatVecGetF64` for the runtime gate.
         let elem_kind = builder.unwrap_ref(param.ty);
         if let Some(TyKind::Array { elem, .. } | TyKind::Vec(elem) | TyKind::Slice(elem)) =
@@ -367,7 +367,7 @@ pub fn compile_fn(
 /// Compiles a single `const`/`static` initializer expression into a
 /// synthetic nullary [`FnChunk`]. Running the chunk on the VM yields the
 /// item's value, so const/static evaluation reuses the ordinary
-/// compile-and-run path — every initializer shape the VM can lower
+/// compile-and-run path - every initializer shape the VM can lower
 /// (literals, arithmetic, aggregates, prelude/const-fn calls) is
 /// evaluated by the same machinery, with no separate evaluator.
 pub fn compile_initializer(
@@ -430,7 +430,7 @@ pub(crate) struct FnBuilder<'tcx> {
     /// name lookup.
     pub(crate) module_consts: &'tcx ConstValues,
     /// Value registers that are compile-time-proven to hold
-    /// `Value::FloatArray` — populated by `BuildFloatArray`
+    /// `Value::FloatArray` - populated by `BuildFloatArray`
     /// emission and cleared whenever the register is
     /// reassigned. When a read/write op's base is one of
     /// these, we emit `FlatGetF64` / `FlatSetF64` instead of
@@ -441,7 +441,7 @@ pub(crate) struct FnBuilder<'tcx> {
     /// against one of these registers route through
     /// [`Op::IntArrayGetI64`] into a typed `i64` register.
     pub(crate) flat_int_locals: std::collections::HashSet<Reg>,
-    /// Mirror of [`Self::flat_int_locals`] for `Value::FloatVec` —
+    /// Mirror of [`Self::flat_int_locals`] for `Value::FloatVec` -
     /// `[f64; N]` literals built via [`Self::try_build_float_vec`].
     /// Lets indexed reads / writes route through the typed-`f64`
     /// fast path that skips the `Value::Float` round-trip.
@@ -541,8 +541,8 @@ pub(crate) struct LoopCtx {
     pub(crate) continue_patches: Vec<InstrIdx>,
     pub(crate) result_reg: Reg,
     /// `defer_stack` length at loop entry. `break` / `continue` emit the
-    /// defer frames at indices `>= defer_depth` — the blocks nested
-    /// inside the loop body — before jumping, so per-iteration cleanup
+    /// defer frames at indices `>= defer_depth` - the blocks nested
+    /// inside the loop body - before jumping, so per-iteration cleanup
     /// runs on every exit edge while the loop's enclosing frames stay
     /// pending. Mirrors `gossamer-mir`'s `LoopCtx::defer_depth`.
     pub(crate) defer_depth: usize,
@@ -582,7 +582,7 @@ fn expr_diverges(expr: &HirExpr) -> bool {
 }
 
 /// Returns `true` when `expr` is a bare single-segment path.
-/// Used by `let` binding to detect the aliasing case — binding
+/// Used by `let` binding to detect the aliasing case - binding
 /// a local to the reg of an existing local would share storage
 /// and propagate future writes through the alias. Every other
 /// expression produces a freshly-allocated reg we can bind
@@ -595,7 +595,7 @@ fn is_path_expr(expr: &HirExpr) -> bool {
 /// `self`) from a path while more than one segment remains. The global
 /// table is keyed by unqualified or module-joined names, so a
 /// `super::foo` reference inside an inline `#[cfg(test)] mod tests`
-/// resolves the flat parent-module item — matching the resolver's
+/// resolves the flat parent-module item - matching the resolver's
 /// flat-lookup strip (`resolver.rs`) and the walker's `eval_path`.
 pub(crate) fn strip_module_relative(segments: &[Ident]) -> &[Ident] {
     let mut tail = segments;
@@ -608,7 +608,7 @@ pub(crate) fn strip_module_relative(segments: &[Ident]) -> &[Ident] {
 /// Maps a runtime [`Value`] back into the [`ConstKey`] used to
 /// dedupe entries in the per-chunk constant pool. Falls back to a
 /// disambiguating string key for shapes the pool doesn't model
-/// (arrays, maps, etc.) — those still get pooled, but no two
+/// (arrays, maps, etc.) - those still get pooled, but no two
 /// inserts will ever collide because each call uses a fresh
 /// formatter output.
 fn const_key_for_value(value: &Value) -> ConstKey {
@@ -705,17 +705,17 @@ fn resolve_const_count(expr: &HirExpr) -> Option<i64> {
     None
 }
 
-/// Returns `true` when the array-shaped `array_ty`'s element type
-/// — or, when typeck left the array's elem as a still-bound
-/// `TyKind::Var`, the optional `value_ty` of the literal element —
+/// Returns `true` when the array-shaped `array_ty`'s element type -
+/// or, when typeck left the array's elem as a still-bound
+/// `TyKind::Var`, the optional `value_ty` of the literal element -
 /// matches `pred`. Used by every typed-storage `try_build_*`
 /// builder to gate the fast path. Without the value-side fallback,
 /// `let mut perm: [i64; 16] = [0; 16]` and `let mut u: [f64; 6000] =
 /// [1.0; 6000]` failed to specialise: typeck records the element
 /// type on the binding annotation, but the array literal's
 /// `Ty::Array { elem }` keeps a fresh inference var that
-/// `default_unresolved_int_vars` resolves only inside the `InferCtxt`
-/// — never substituted back into the HIR handle compile.rs reads.
+/// `default_unresolved_int_vars` resolves only inside the `InferCtxt` -
+/// never substituted back into the HIR handle compile.rs reads.
 fn is_array_elem_kind(
     tcx: &TyCtxt,
     array_ty: Ty,

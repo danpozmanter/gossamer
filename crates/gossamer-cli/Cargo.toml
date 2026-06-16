@@ -45,7 +45,7 @@ assets = [
 [package.metadata.generate-rpm]
 name = "gossamer"
 license = "Apache-2.0"
-summary = "Gossamer toolchain — parser, checker, interpreter, and tooling"
+summary = "Gossamer toolchain - parser, checker, interpreter, and tooling"
 assets = [
     { source = "target/release/gos", dest = "/usr/bin/gos", mode = "755" },
     { source = "target/release/libgossamer_runtime.a", dest = "/usr/lib/libgossamer_runtime.a", mode = "644" },

@@ -81,7 +81,7 @@ fn recurse(depth: usize) -> usize {
     // A small stack-resident array keeps every frame meaningful
     // even after the optimiser inlines neighbour calls. The
     // `black_box` keeps the compiler from converting this into a
-    // tail call. The recursion is genuinely unbounded — the
+    // tail call. The recursion is genuinely unbounded - the
     // function exists to exhaust the OS stack.
     let buf = [depth; 64];
     std::hint::black_box(&buf);

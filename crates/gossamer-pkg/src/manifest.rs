@@ -26,12 +26,12 @@ pub struct Manifest {
     pub registries: BTreeMap<String, String>,
     /// `[rust-bindings]` map keyed by Cargo crate name.
     pub rust_bindings: BTreeMap<String, RustBindingSpec>,
-    /// `[[bin]]` array-of-tables — explicit binary targets.
+    /// `[[bin]]` array-of-tables - explicit binary targets.
     /// When empty, the implicit `main.gos` / `src/main.gos`
     /// filesystem convention applies (with a deprecation
     /// warning planned for 0.5).
     pub bins: Vec<BinTarget>,
-    /// `[lib]` table — explicit library target. `None` means
+    /// `[lib]` table - explicit library target. `None` means
     /// no library; the implicit `lib.gos` / `src/lib.gos`
     /// convention only applies when no `[[bin]]` is declared
     /// either.
@@ -41,19 +41,19 @@ pub struct Manifest {
 /// One `[[bin]]` entry.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BinTarget {
-    /// `bin.name` — required, used as the artefact filename.
+    /// `bin.name` - required, used as the artefact filename.
     pub name: String,
-    /// `bin.path` — relative to the manifest directory.
+    /// `bin.path` - relative to the manifest directory.
     /// Defaults to `src/bin/<name>.gos` when omitted.
     pub path: Option<String>,
 }
 
-/// `[lib]` table — optional library target.
+/// `[lib]` table - optional library target.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LibTarget {
-    /// `lib.name` — defaults to the project id's leaf.
+    /// `lib.name` - defaults to the project id's leaf.
     pub name: Option<String>,
-    /// `lib.path` — relative to manifest dir. Defaults to
+    /// `lib.path` - relative to manifest dir. Defaults to
     /// `src/lib.gos`.
     pub path: Option<String>,
 }
@@ -69,7 +69,7 @@ pub struct ProjectTable {
     pub authors: Vec<String>,
     /// `project.license`. Empty string when omitted.
     pub license: String,
-    /// `project.output` — optional override for the binary `gos
+    /// `project.output` - optional override for the binary `gos
     /// build` writes. Relative paths resolve against the manifest's
     /// directory; absent falls back to the source stem.
     pub output: Option<String>,
@@ -78,17 +78,17 @@ pub struct ProjectTable {
 /// One entry in `[dependencies]`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DependencySpec {
-    /// Bare version literal — registry source by default.
+    /// Bare version literal - registry source by default.
     Registry(CaretRange),
     /// Inline table form: `git`, `path`, or `tarball`.
     Inline(InlineDependency),
 }
 
-/// One entry in `[rust-bindings]` — a Rust crate to statically
+/// One entry in `[rust-bindings]` - a Rust crate to statically
 /// link into the per-project runner / compiled binary.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RustBindingSpec {
-    /// `{ path = "..." }` — local Cargo path-dep.
+    /// `{ path = "..." }` - local Cargo path-dep.
     Path {
         /// Optional informational version range.
         version: Option<CaretRange>,
@@ -100,7 +100,7 @@ pub enum RustBindingSpec {
         /// Whether `default-features` is enabled.
         default_features: bool,
     },
-    /// `{ git = "..." }` — Cargo git-dep.
+    /// `{ git = "..." }` - Cargo git-dep.
     Git {
         /// Optional informational version range.
         version: Option<CaretRange>,
@@ -113,7 +113,7 @@ pub enum RustBindingSpec {
         /// Whether `default-features` is enabled.
         default_features: bool,
     },
-    /// `{ version = "..." }` — crates.io passthrough.
+    /// `{ version = "..." }` - crates.io passthrough.
     Crates {
         /// Required version range.
         version: CaretRange,
@@ -122,7 +122,7 @@ pub enum RustBindingSpec {
         /// Whether `default-features` is enabled.
         default_features: bool,
     },
-    /// `{ src = "path/to/file.rs", deps = "..." }` — single-file
+    /// `{ src = "path/to/file.rs", deps = "..." }` - single-file
     /// binding (Phase 3 of rustergo.md). The CLI scaffolds a
     /// per-project Cargo crate around the source file with the
     /// supplied Cargo deps (free-form string of TOML key/value
@@ -136,7 +136,7 @@ pub enum RustBindingSpec {
         /// the scaffolded crate's `[dependencies]` table.
         deps: String,
     },
-    /// `{ prebuilt = "path/to/lib.a", abi = "1.0" }` — a
+    /// `{ prebuilt = "path/to/lib.a", abi = "1.0" }` - a
     /// pre-built static archive (Phase 4 of rustergo.md). `gos
     /// build` links the archive directly; `gos run` requires
     /// the JIT-resolvable `gos_binding_*` thunks to be exposed
@@ -291,7 +291,7 @@ impl Manifest {
                 continue;
             }
             if let Some(section) = trimmed.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
-                // Leaving a `[[bin]]` block — flush.
+                // Leaving a `[[bin]]` block - flush.
                 if let Some(prev) = current_bin.take() {
                     bins.push(prev);
                 }
@@ -402,7 +402,7 @@ impl Manifest {
                 .and_then(|v| parse_string(v).map(str::to_string)),
         });
 
-        // Reject duplicate `[[bin]]` names — they would collide
+        // Reject duplicate `[[bin]]` names - they would collide
         // at the artefact-filename level.
         let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
         for b in &bins_parsed {
@@ -433,7 +433,7 @@ impl Manifest {
     /// Returns `true` when the manifest declares any explicit
     /// `[[bin]]` or `[lib]` target. When `false`, the toolchain
     /// falls back to the legacy filesystem convention
-    /// (`main.gos` / `lib.gos`) — and emits a deprecation
+    /// (`main.gos` / `lib.gos`) - and emits a deprecation
     /// warning.
     #[must_use]
     pub fn has_explicit_targets(&self) -> bool {

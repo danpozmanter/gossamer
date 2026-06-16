@@ -1588,7 +1588,7 @@
 
 
 
-<h1 id="prelude-available-without-imports">Prelude — available without imports<a class="headerlink" href="#prelude-available-without-imports" title="Permanent link">&para;</a></h1>
+<h1 id="prelude-available-without-imports">Prelude - available without imports<a class="headerlink" href="#prelude-available-without-imports" title="Permanent link">&para;</a></h1>
 <p>Every Gossamer program starts with these names in scope. No <code>use</code>
 needed.</p>
 <h2 id="output-and-failure">Output and failure<a class="headerlink" href="#output-and-failure" title="Permanent link">&para;</a></h2>
@@ -1634,25 +1634,25 @@ needed.</p>
 </code></pre></div>
 <h2 id="assertions">Assertions<a class="headerlink" href="#assertions" title="Permanent link">&para;</a></h2>
 <ul>
-<li><code>assert(cond)</code> — panics when <code>cond</code> is false.</li>
-<li><code>assert_eq(a, b)</code> — panics when <code>a != b</code>, printing both values.</li>
-<li><code>todo()</code> — panics with a "not yet implemented" marker.</li>
+<li><code>assert(cond)</code> - panics when <code>cond</code> is false.</li>
+<li><code>assert_eq(a, b)</code> - panics when <code>a != b</code>, printing both values.</li>
+<li><code>todo()</code> - panics with a "not yet implemented" marker.</li>
 </ul>
 <h2 id="scalars">Scalars<a class="headerlink" href="#scalars" title="Permanent link">&para;</a></h2>
 <ul>
-<li><code>min(a, b)</code> / <code>max(a, b)</code> — work on any pair of comparable
+<li><code>min(a, b)</code> / <code>max(a, b)</code> - work on any pair of comparable
   scalars. The one-argument collection forms <code>min(xs)</code> / <code>max(xs)</code>
   return <code>Option&lt;T&gt;</code>.</li>
-<li><code>clamp(x, lo, hi)</code> — <code>x</code> limited to <code>[lo, hi]</code>.</li>
+<li><code>clamp(x, lo, hi)</code> - <code>x</code> limited to <code>[lo, hi]</code>.</li>
 </ul>
 <div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="kd">let</span><span class="w"> </span><span class="n">speed</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">clamp</span><span class="p">(</span><span class="n">input</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="mi">120</span><span class="p">)</span>
 <a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="kd">let</span><span class="w"> </span><span class="n">better</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">max</span><span class="p">(</span><span class="n">score_a</span><span class="p">,</span><span class="w"> </span><span class="n">score_b</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="concurrency">Concurrency<a class="headerlink" href="#concurrency" title="Permanent link">&para;</a></h2>
 <ul>
-<li><code>go expr</code> — statement keyword: run <code>expr</code> on a goroutine,
+<li><code>go expr</code> - statement keyword: run <code>expr</code> on a goroutine,
   fire-and-forget.</li>
-<li><code>spawn(f)</code> — run <code>f</code> on a goroutine and get a <code>JoinHandle&lt;T&gt;</code>;
+<li><code>spawn(f)</code> - run <code>f</code> on a goroutine and get a <code>JoinHandle&lt;T&gt;</code>;
   <code>handle.join()</code> blocks for <code>Result&lt;T, String&gt;</code> (<code>Err</code> carries the
   panic message if the goroutine panicked).</li>
 </ul>
@@ -1667,7 +1667,7 @@ needed.</p>
 without an import when they appear in signatures.</p>
 <h2 id="serialization-synthesized-per-struct">Serialization (synthesized per struct)<a class="headerlink" href="#serialization-synthesized-per-struct" title="Permanent link">&para;</a></h2>
 <p>Every user <code>struct</code> automatically gets free functions callable with
-a turbofish — no import, no derive attribute:</p>
+a turbofish - no import, no derive attribute:</p>
 <table>
 <thead>
 <tr>
@@ -1710,7 +1710,7 @@ compile time.</p>
   <code>usize</code>, <code>f32</code>, <code>f64</code>, <code>String</code>, <code>str</code>.</li>
 <li>Wrappers: <code>Option&lt;T&gt;</code> (<code>Some</code> / <code>None</code>), <code>Result&lt;T, E&gt;</code>
   (<code>Ok</code> / <code>Err</code>), <code>Box&lt;T&gt;</code>, <code>Rc&lt;T&gt;</code>, <code>Arc&lt;T&gt;</code> (all three are
-  transparent in a managed runtime — spelling compatibility with
+  transparent in a managed runtime - spelling compatibility with
   Rust), <code>Weak&lt;T&gt;</code>.</li>
 <li>Collections: <code>Vec&lt;T&gt;</code>, <code>HashMap&lt;K, V&gt;</code>, <code>HashSet&lt;T&gt;</code>,
   <code>BTreeMap&lt;K, V&gt;</code>, <code>BTreeSet&lt;T&gt;</code>, <code>VecDeque&lt;T&gt;</code>, <code>Range</code>.</li>
@@ -1720,13 +1720,13 @@ compile time.</p>
 <h2 id="statement-keywords-with-runtime-effects">Statement keywords with runtime effects<a class="headerlink" href="#statement-keywords-with-runtime-effects" title="Permanent link">&para;</a></h2>
 <p>Not functions, but also available everywhere:</p>
 <ul>
-<li><code>defer expr</code> — run <code>expr</code> on every exit path of the enclosing
+<li><code>defer expr</code> - run <code>expr</code> on every exit path of the enclosing
   block.</li>
-<li><code>arena { … }</code> — bump-allocate everything created inside; free it
+<li><code>arena { … }</code> - bump-allocate everything created inside; free it
   wholesale at the block's exit (<a href="../memory/">memory model</a>).</li>
-<li><code>select { … }</code> — multiplex channel operations.</li>
+<li><code>select { … }</code> - multiplex channel operations.</li>
 </ul>
-<p>A user definition with the same name shadows any prelude entry —
+<p>A user definition with the same name shadows any prelude entry -
 prelude bindings never collide with your code.</p>
 
 

@@ -3,7 +3,7 @@
 //! it, OR sit inside an `unsafe fn` whose contract documents the
 //! invariants (the FFI surface).
 //!
-//! The `c_abi/` tree is the FFI boundary — every function there is
+//! The `c_abi/` tree is the FFI boundary - every function there is
 //! `pub unsafe extern "C"`, so the function's own `unsafe` keyword
 //! is the safety contract and inline `unsafe { ... }` blocks
 //! inherit it. The test only enforces SAFETY comments on unsafe
@@ -71,7 +71,7 @@ fn every_unsafe_block_outside_c_abi_has_safety_comment() {
         let rel = path.strip_prefix(&runtime_src).unwrap_or(path);
         let rel_str = rel.to_string_lossy();
 
-        // c_abi/ — every function is `pub unsafe extern "C"`; the
+        // c_abi/ - every function is `pub unsafe extern "C"`; the
         // contract is on the function itself, inline blocks
         // inherit. Skip.
         if rel_str.starts_with("c_abi") {

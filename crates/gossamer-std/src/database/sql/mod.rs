@@ -11,7 +11,7 @@
 //!
 //! The high-level user-facing wrappers (`Conn`, `Stmt`, `Rows`,
 //! `Row`, `Tx`, `Pool`, `migrate`, `query`) stay in `gossamer-std`
-//! — they're convenience layers on top of the relocated traits.
+//! - they're convenience layers on top of the relocated traits.
 
 #![forbid(unsafe_code)]
 

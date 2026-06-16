@@ -9,7 +9,7 @@
 //! 2. polls a future once,
 //! 3. on `Poll::Pending`, parks the goroutine via the existing
 //!    scheduler park primitive,
-//! 4. resumes on `unpark(gid)` — which is what every netpoller
+//! 4. resumes on `unpark(gid)` - which is what every netpoller
 //!    wakeup and every `Waker::wake()` call resolves to.
 //!
 //! There is no nested executor, no `block_on`, no tokio runtime,
@@ -47,7 +47,7 @@ pub fn goroutine_waker(gid: Gid) -> Waker {
 
 /// Internal waker implementation. The `woke` flag exists so the
 /// driver can short-circuit a park if a wake fired during the
-/// poll itself — closing the classic park-after-wake race window
+/// poll itself - closing the classic park-after-wake race window
 /// without depending on the scheduler's `pre_unpark` machinery.
 struct GoroutineWaker {
     gid: Gid,
@@ -70,7 +70,7 @@ impl Wake for GoroutineWaker {
 /// readiness) or the std `Waker` returned from [`goroutine_waker`].
 ///
 /// Both routes call `scheduler::unpark(gid)` which resumes this
-/// driver loop. Idempotent on multiple wakes — the driver simply
+/// driver loop. Idempotent on multiple wakes - the driver simply
 /// re-polls.
 ///
 /// # Panics
@@ -111,7 +111,7 @@ where
             Poll::Pending => {
                 // If a wake landed between poll() entering and
                 // returning Pending, the AcqRel store above
-                // would have been overwritten by the waker — and
+                // would have been overwritten by the waker - and
                 // the scheduler will have called unpark(gid)
                 // before we park. The scheduler's `pre_unpark`
                 // side-set covers that race; we additionally
@@ -144,7 +144,7 @@ mod tests {
 
     #[test]
     fn drives_immediately_ready_future_off_goroutine_path() {
-        // Run the driver inside a goroutine — that's the only
+        // Run the driver inside a goroutine - that's the only
         // legitimate path. We spawn a goroutine, drive a future,
         // and read the result via a channel.
         let result: Arc<Mutex<Option<i64>>> = Arc::new(Mutex::new(None));
@@ -206,7 +206,7 @@ mod tests {
         // lost wake leaves the goroutine parked forever, so only a
         // deadlock-sized ceiling distinguishes "machine saturated by
         // a full-workspace test run" (fine, resolves in ~30ms once
-        // scheduled) from "wake genuinely lost" (regression — see the
+        // scheduled) from "wake genuinely lost" (regression - see the
         // retired-inbox handoff tests in sched/multi.rs). A tight
         // wall-clock bound here flakes under `cargo test --workspace`
         // load without indicating any scheduler bug.
@@ -219,7 +219,7 @@ mod tests {
         }
         assert!(
             done.load(Ordering::Acquire),
-            "external wake not delivered within 120s — parked goroutine \
+            "external wake not delivered within 120s - parked goroutine \
              likely lost its wake (see sched/multi.rs retired-inbox invariant)"
         );
         assert_eq!(*result.lock().unwrap(), Some(7));

@@ -2,7 +2,7 @@
 //! via curl against an h1 server vs an h2c server, same handler
 //! shape, same payload. Gated on `GOS_H2_BENCH=1`.
 //!
-//! This is a smoke benchmark — not a load test. The point is to
+//! This is a smoke benchmark - not a load test. The point is to
 //! verify the h2 path is in the same order of magnitude as h1,
 //! catching catastrophic regressions in either path.
 
@@ -150,7 +150,7 @@ fn h1_vs_h2_latency_smoke() {
     );
 
     // h2 multiplexed must be in the same ballpark as h1
-    // keep-alive — both reuse one TCP connection across many
+    // keep-alive - both reuse one TCP connection across many
     // requests, so curl startup is paid once. 3x bound catches
     // protocol-level regressions while tolerating jitter.
     assert!(

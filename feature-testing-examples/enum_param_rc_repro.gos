@@ -4,7 +4,7 @@
 // caller releases its ctor temp after the call. Before the fix,
 // `register_rc_managed_ty` only fired at constructor-lowering sites,
 // so a body lowered before the enum's first constructor (source
-// order!) skipped every retain/release for that enum — the node was
+// order!) skipped every retain/release for that enum - the node was
 // freed while the returned struct's vec still referenced it, and the
 // churn loop's reuse turned the second element into garbage
 // ("int <huge>" instead of "text alice") on the compiled tiers.

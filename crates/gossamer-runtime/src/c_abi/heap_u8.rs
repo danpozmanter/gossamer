@@ -25,7 +25,7 @@ use super::*;
 //
 // Mirrors `GosI64Vec` but stores one byte per element. The
 // motivating use case is fasta-style scratch buffers where each
-// element is a single ASCII character — using `i64` storage
+// element is a single ASCII character - using `i64` storage
 // blew memory up by 8x with no upside since the workers only
 // ever write 0..=255.
 
@@ -111,7 +111,7 @@ pub unsafe extern "C" fn gos_rt_heap_u8_len(v: *const GosU8Vec) -> i64 {
 /// Materialises the first `len` bytes of a `U8Vec` into a fresh
 /// immutable `String` (NUL-terminated arena allocation). The
 /// canonical "freeze the build buffer" step at the end of an
-/// incremental construction loop — equivalent to F#'s
+/// incremental construction loop - equivalent to F#'s
 /// `StringBuilder.ToString()` or Rust's
 /// `String::from_utf8(vec).unwrap()`.
 ///

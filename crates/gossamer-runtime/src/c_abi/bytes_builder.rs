@@ -8,7 +8,7 @@
 // c_abi shim does; the glob is the established convention here.
 #![allow(clippy::wildcard_imports)]
 
-//! Runtime support for `std::bytes` — the `Builder` (string assembly)
+//! Runtime support for `std::bytes` - the `Builder` (string assembly)
 //! and `Buffer` (byte accumulation) handle types plus the stateless
 //! `index_of` / `split` / `replace` helpers.
 //!
@@ -91,7 +91,7 @@ fn bytes_replace(haystack: &[u8], from: &[u8], to: &[u8]) -> Vec<u8> {
 }
 
 // ---------------------------------------------------------------
-// bytes::Builder — incremental String assembly
+// bytes::Builder - incremental String assembly
 // ---------------------------------------------------------------
 
 /// Opaque heap handle wrapping the accumulated string.
@@ -180,7 +180,7 @@ pub unsafe extern "C" fn gos_rt_bytes_builder_len(b: *mut GosBytesBuilder) -> i6
 }
 
 // ---------------------------------------------------------------
-// bytes::Buffer — byte accumulation (string-oriented surface)
+// bytes::Buffer - byte accumulation (string-oriented surface)
 // ---------------------------------------------------------------
 
 /// Opaque heap handle wrapping the accumulated bytes.
@@ -279,10 +279,10 @@ pub unsafe extern "C" fn gos_rt_bytes_buffer_to_string(buf: *mut GosBytesBuffer)
 }
 
 // ---------------------------------------------------------------
-// Stateless helpers — operate on a string's UTF-8 bytes
+// Stateless helpers - operate on a string's UTF-8 bytes
 // ---------------------------------------------------------------
 
-/// `bytes::index_of(haystack, needle)` — byte index of the first
+/// `bytes::index_of(haystack, needle)` - byte index of the first
 /// occurrence as `Option<i64>` in the 2-word `i128` Result ABI.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_bytes_index_of(
@@ -299,7 +299,7 @@ pub unsafe extern "C" fn gos_rt_bytes_index_of(
     })
 }
 
-/// `bytes::split(haystack, sep)` — chunks as a `Vec<String>`.
+/// `bytes::split(haystack, sep)` - chunks as a `Vec<String>`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_bytes_split(
     haystack: *const c_char,
@@ -322,7 +322,7 @@ pub unsafe extern "C" fn gos_rt_bytes_split(
     })
 }
 
-/// `bytes::replace(haystack, from, to)` — every occurrence rewritten;
+/// `bytes::replace(haystack, from, to)` - every occurrence rewritten;
 /// returns a fresh runtime c-string.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_bytes_replace(

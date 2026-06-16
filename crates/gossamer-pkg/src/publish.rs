@@ -78,7 +78,7 @@ pub struct PublishedArtifact {
 /// into a deterministic tar buffer, and returns the archive plus its
 /// sha256.
 ///
-/// The tar is *uncompressed* USTAR — the publish protocol leaves
+/// The tar is *uncompressed* USTAR - the publish protocol leaves
 /// compression to the registry's storage backend. This keeps the
 /// digest verifiable from the on-the-wire bytes without a decompress
 /// step, and matches the existing fetcher's straight-tar contract.
@@ -224,7 +224,7 @@ pub trait UploadTransport: Send + Sync {
 ///
 /// The transport handles TLS / DNS / status-line parsing itself.
 pub struct HttpUploader<'a> {
-    /// Underlying transport — used as a TLS connector.
+    /// Underlying transport - used as a TLS connector.
     pub transport: &'a dyn Transport,
 }
 
@@ -240,7 +240,7 @@ impl UploadTransport for HttpUploader<'_> {
     }
 }
 
-/// In-memory upload transport for tests — records every POST in
+/// In-memory upload transport for tests - records every POST in
 /// order so assertions can inspect what would have been sent.
 #[derive(Debug, Default)]
 pub struct RecordingUploader {

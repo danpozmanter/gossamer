@@ -7,9 +7,9 @@ module.
 
 Columns:
 
-- **Interp** — `gos run` (register-based bytecode VM).
-- **Compiled** — `gos build` (Cranelift) and `gos build --release` (LLVM).
-- **Tests** — at least one integration test exercising the item.
+- **Interp** - `gos run` (register-based bytecode VM).
+- **Compiled** - `gos build` (Cranelift) and `gos build --release` (LLVM).
+- **Tests** - at least one integration test exercising the item.
 
 Glyphs: ✓ supported · ◑ partial · ✗ missing.
 
@@ -81,6 +81,6 @@ integration / parity / phase test exercises it.
 
 ## Cross-references
 
-- [`stdlib.md`](stdlib.md) — module index with summaries.
-- [`method_support.md`](method_support.md) — per-method
+- [`stdlib.md`](stdlib.md) - module index with summaries.
+- [`method_support.md`](method_support.md) - per-method
 reference for shipped types.

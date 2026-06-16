@@ -46,7 +46,7 @@ use crate::c_abi::{GosHttpRequest, drop_handler_result, extract_response_into, g
 use crate::sched::{Gid, Interest, ParkReason};
 use crate::sched_global;
 
-/// Boots the h2c server. Binds `addr` — a bind failure propagates
+/// Boots the h2c server. Binds `addr` - a bind failure propagates
 /// as `Err` so the C-ABI shim can hand the caller's
 /// `Result<(), http::Error>` match an `Err` value (interp parity).
 /// Each accepted TCP connection is wrapped in an `AsyncTcpStream`
@@ -145,11 +145,11 @@ async fn serve_one_stream(
         // intrinsic at the user's call site. The handler ABI is
         // the same `(env, req) -> i128` shape that
         // `gos_rt_http_serve` uses. Handlers must return
-        // `Result<http::Response, http::Error>` — the runtime
+        // `Result<http::Response, http::Error>` - the runtime
         // reads disc==0 + payload as the GosHttpResponse.
         // SAFETY: fn_addr is the address of a Gossamer handler
         // emitted by the LLVM/Cranelift backend. The signature is
-        // fixed by the HTTP server contract — `unsafe extern "C"
+        // fixed by the HTTP server contract - `unsafe extern "C"
         // fn(*mut env, *mut GosHttpRequest) -> i128`.
         // The transmute reconstructs that typed pointer. The
         // handler is called once and its return value is owned by
@@ -199,7 +199,7 @@ async fn serve_one_stream(
 type HandlerFn = unsafe extern "C" fn(env: *mut u8, req: *mut GosHttpRequest) -> i128;
 
 /// Parses the HTTP/1.1 wire buffer `extract_response_into`
-/// emits — `HTTP/1.1 <status> <reason>\r\n[headers]\r\n\r\n<body>` —
+/// emits - `HTTP/1.1 <status> <reason>\r\n[headers]\r\n\r\n<body>` -
 /// into `(status, body)`.
 fn parse_http1_wire_buf(buf: &[u8]) -> (u16, Vec<u8>) {
     let header_end = buf

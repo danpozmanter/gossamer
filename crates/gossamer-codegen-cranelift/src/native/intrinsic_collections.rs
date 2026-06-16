@@ -1,4 +1,4 @@
-//! Cranelift intrinsic lowering — collections / result / flag /
+//! Cranelift intrinsic lowering - collections / result / flag /
 //! HTTP family. Second partition in the dispatch chain. Holds
 //! `lower_intrinsic_call_collections` plus the `gos_rt_vec_*`,
 //! `gos_rt_map_*`, `gos_rt_result_*`, `gos_rt_flag_*`, and
@@ -81,7 +81,7 @@
 //! the process exit code, so the object file links through a
 //! standard `cc` invocation.
 //! Aggregates (tuples/arrays/structs), strings, closures, and
-//! anything that needs a GC heap are not yet lowered — those
+//! anything that needs a GC heap are not yet lowered - those
 //! constructs fall back to [`crate::emit::emit_module`] for
 //! inspection.
 
@@ -171,7 +171,7 @@ pub(super) fn lower_intrinsic_call_collections(
         }
         "time::sleep" => {
             // `time::sleep(ms: i64)` matches the VM and the Go
-            // reference — argument is milliseconds. Routes
+            // reference - argument is milliseconds. Routes
             // through the runtime's `gos_rt_sleep_ms` shim that
             // multiplies by 1_000_000 internally; before the
             // shim landed the compiled tier called
@@ -204,7 +204,7 @@ pub(super) fn lower_intrinsic_call_collections(
             );
             Ok(true)
         }
-        // `std::strconv::parse_i64(s)` / `parse_f64(s)` — route
+        // `std::strconv::parse_i64(s)` / `parse_f64(s)` - route
         // to the runtime. Ignore the `ok` out-parameter the
         // runtime exposes; callers that care about success take
         // the interpreter path. A real `Result<T, ParseError>`
@@ -455,7 +455,7 @@ pub(super) fn lower_intrinsic_call_collections(
             );
             Ok(true)
         }
-        // `std::http::serve(addr, handler)` — start a blocking
+        // `std::http::serve(addr, handler)` - start a blocking
         // TCP listener on `addr` and dispatch requests through the
         // handler fn-ptr. Returns the packed `Result<(), Error>`:
         // `Err` on bind failure, `Ok(())` if the accept loop exits.
@@ -580,9 +580,9 @@ pub(super) fn lower_intrinsic_call_collections(
             );
             Ok(true)
         }
-        // `os::exit(code)` / `process::exit(code)` — both spellings
+        // `os::exit(code)` / `process::exit(code)` - both spellings
         // route through `gos_rt_exit` (which calls
-        // `std::process::exit` — identical behavior to libc's
+        // `std::process::exit` - identical behavior to libc's
         // `exit`, but keeps every syscall that touches process
         // state inside the runtime crate).
         "os::exit" | "process::exit" => {
@@ -645,7 +645,7 @@ pub(super) fn lower_intrinsic_call_collections(
         // cap)`. The MIR builder passes the actual element width
         // as the leading argument (sized from the binding's
         // `Vec<T>` element type via `elem_bytes_of`). Reading that
-        // arg through — rather than hard-coding 8 — lets multi-
+        // arg through - rather than hard-coding 8 - lets multi-
         // slot elements like `(String, i64)` reach the runtime
         // with the right stride.
         "Vec::new" | "gos_rt_vec_new" => {
@@ -895,7 +895,7 @@ pub(super) fn lower_intrinsic_call_collections(
             Ok(true)
         }
         // HashMap runtime. Key/value widths are hard-coded to 8
-        // bytes (one word each) — matches the codegen's flat-
+        // bytes (one word each) - matches the codegen's flat-
         // slot representation. Real per-type sizing needs MIR
         // plumbing that L3 didn't cover.
         "HashMap::new" | "collections::HashMap::new" | "gos_rt_map_new" => {
@@ -1462,7 +1462,7 @@ pub(super) fn lower_intrinsic_call_collections(
             );
             Ok(true)
         }
-        // `m.inc_at(seq, start, len, by)` — zero-copy slice hash
+        // `m.inc_at(seq, start, len, by)` - zero-copy slice hash
         // for `HashMap<String, i64>`, matching Rust's
         // `*m.entry(&seq[i..i+k]).or_insert(0) += by`.
         _ => Ok(false),

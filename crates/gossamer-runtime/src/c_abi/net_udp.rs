@@ -102,7 +102,7 @@ pub unsafe extern "C" fn gos_rt_udp_send_to(
 }
 
 /// `net::UdpSocket::recv_from(handle, max) -> Result<([u8], String), Error>`.
-/// Ok payload is a heap `#[repr(C)] Pair { bytes: i64, addr: i64 }` —
+/// Ok payload is a heap `#[repr(C)] Pair { bytes: i64, addr: i64 }` -
 /// the 2-slot tuple `([u8]-vec, sender-address-string)`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_udp_recv_from(h: i64, max: i64) -> i128 {

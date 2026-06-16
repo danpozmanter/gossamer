@@ -26,7 +26,7 @@ pub struct Lexer<'src> {
 impl<'src> Lexer<'src> {
     /// Constructs a lexer for `source` tagged with `file`.
     ///
-    /// Token spans are byte offsets into `source` exactly as given —
+    /// Token spans are byte offsets into `source` exactly as given -
     /// the lexer does not strip a leading BOM, because callers (the
     /// parser, the REPL highlighter) slice their own copy of `source`
     /// by those spans and must share one basis. BOM stripping is a

@@ -2,7 +2,7 @@
 // handle surface plus OTLP JSON export. Trace / span identifiers are
 // unguessable per run and span timestamps are zeroed, so the asserted
 // output is substring-shaped (span name, attribute value, status code)
-// — bit-identical across the VM, Cranelift JIT, and LLVM AOT tiers.
+// - bit-identical across the VM, Cranelift JIT, and LLVM AOT tiers.
 use std::trace
 use std::strings
 

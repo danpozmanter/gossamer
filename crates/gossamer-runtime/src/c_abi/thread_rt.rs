@@ -5,7 +5,7 @@
 #![allow(clippy::cast_possible_wrap)]
 #![allow(unused_unsafe)]
 
-/// `thread::num_cpus() -> i64` — logical CPU count, at least 1.
+/// `thread::num_cpus() -> i64` - logical CPU count, at least 1.
 /// Mirrors `gossamer_std::thread::num_cpus` so the compiled tiers
 /// agree bit-for-bit with the interpreter.
 #[unsafe(no_mangle)]

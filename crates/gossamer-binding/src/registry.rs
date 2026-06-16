@@ -41,7 +41,7 @@ pub struct Signature {
 
 /// One module exported by a binding crate.
 ///
-/// Modules are flat — no nesting. A binding that wants nested
+/// Modules are flat - no nesting. A binding that wants nested
 /// structure declares each sub-module as a separate `Module`
 /// (e.g. `tuigoose::layout`, `tuigoose::widgets::block`). The
 /// path is the canonical spelling Gossamer source uses with `use`.

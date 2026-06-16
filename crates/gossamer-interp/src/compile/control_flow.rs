@@ -88,7 +88,7 @@ impl<'tcx> FnBuilder<'tcx> {
             self.patch_jump(patch, after);
         }
         // `continue` in a `while` loop re-evaluates the condition,
-        // so route every recorded patch back to `loop_start` —
+        // so route every recorded patch back to `loop_start` -
         // identical semantics to the previous direct-jump form.
         for patch in ctx.continue_patches {
             self.patch_jump(patch, loop_start);

@@ -119,7 +119,7 @@ fn build_and_run_native(dir: &Path) -> Result<(String, String, Option<i32>), Str
 /// Runs `src` under the bytecode VM **and** the native LLVM AOT tier,
 /// asserting both produce `expected` on stdout (so the compiled tiers
 /// can never silently drift from the VM). A `gos build` failure or a
-/// compiled-output mismatch fails the test — VM-only gaps surface here
+/// compiled-output mismatch fails the test - VM-only gaps surface here
 /// rather than going uncaught.
 fn assert_vm_output(tag: &str, src: &str, expected: &str) {
     let dir = scratch(tag);
@@ -168,7 +168,7 @@ fn assert_vm_only(tag: &str, src: &str, expected: &str, _reason: &str) {
 }
 
 // -----------------------------------------------------------------------
-// std::slog — structured fields must survive the FFI on the compiled
+// std::slog - structured fields must survive the FFI on the compiled
 // tier. slog writes JSON-line records to stderr (not stdout), so this
 // compares stderr across the VM and the native build rather than going
 // through `assert_vm_output`.

@@ -1,8 +1,8 @@
-//! `gos build [PATH]` — emit a linked native executable.
+//! `gos build [PATH]` - emit a linked native executable.
 //!
 //! LLVM is the canonical native codegen backend. `gos build`
 //! (debug) and `gos build --release` both lower MIR to LLVM IR.
-//! The Cranelift backend is no longer a `gos build` target —
+//! The Cranelift backend is no longer a `gos build` target -
 //! `gossamer-codegen-cranelift` is retained solely for the
 //! in-process JIT used by `gossamer-interp` to compile hot
 //! bytecode bodies. Any MIR shape the LLVM lowerer refuses
@@ -297,7 +297,7 @@ impl NativeBuildError {
     }
 }
 
-/// Locates `libgossamer_runtime.a` — the static library produced
+/// Locates `libgossamer_runtime.a` - the static library produced
 /// by the `gossamer-runtime` crate with `crate-type =
 /// ["staticlib", "rlib"]`. First tries `$GOS_RUNTIME_LIB`, then
 /// walks up from the executable looking for `target/<profile>/`,
@@ -542,7 +542,7 @@ fn find_clang_rt_profile() -> Option<PathBuf> {
         }
     }
     eprintln!(
-        "pgo: warning: {lib_name} not found — instrumented binary may fail to link.\n\
+        "pgo: warning: {lib_name} not found - instrumented binary may fail to link.\n\
          Point GOS_LLVM_PROFILE_RT at the archive, or install LLVM 17-20 \
          with the compiler-rt profile component."
     );
@@ -607,7 +607,7 @@ fn build_static_bindings_lib(
 }
 
 /// Renders a `Command` as a single readable line (program + args) for
-/// `GOS_LINK_VERBOSE` diagnostics. Not shell-escaped — meant for a
+/// `GOS_LINK_VERBOSE` diagnostics. Not shell-escaped - meant for a
 /// human reading why a link succeeded or failed, not re-execution.
 fn render_command(cmd: &std::process::Command) -> String {
     let mut s = cmd.get_program().to_string_lossy().into_owned();
@@ -648,8 +648,8 @@ fn link_posix(
     let cc = std::env::var("CC").unwrap_or_else(|_| "cc".to_string());
     let mut cmd = std::process::Command::new(&cc);
     // Prefer a fast linker when available.
-    // Linux: mold (3–8× faster than GNU ld; 0.018 s vs 0.069 s measured).
-    // macOS: ld.lld from brew llvm (2–4× faster than Apple ld64 on large
+    // Linux: mold (3-8× faster than GNU ld; 0.018 s vs 0.069 s measured).
+    // macOS: ld.lld from brew llvm (2-4× faster than Apple ld64 on large
     //   archives; available after `brew install llvm`). `-fuse-ld=lld` tells
     //   Apple's clang driver to pick up ld.lld from PATH.
     if cfg!(target_os = "linux") {
@@ -670,7 +670,7 @@ fn link_posix(
     }
     cmd.arg("-o").arg(out_path);
     // `-ldl` only exists on Linux (libdl). macOS folds `dl*` into
-    // `libSystem` and Windows/mingw has no `libdl` at all — passing
+    // `libSystem` and Windows/mingw has no `libdl` at all - passing
     // it on either fails the link ("cannot find -ldl"). `libpthread`
     // / `libm` resolve as real libs (winpthreads on mingw) or stub-
     // forwarders on every target, so we keep those.
@@ -700,7 +700,7 @@ fn link_posix(
         // Both copies come from the same source tree and are
         // functionally identical, so let the linker keep the first
         // definition rather than failing the link. macOS `ld64`
-        // doesn't accept the GNU-ld spelling — the equivalent
+        // doesn't accept the GNU-ld spelling - the equivalent
         // there is `-Wl,-multiply_defined,suppress`.
         if cfg!(target_os = "macos") {
             cmd.arg("-Wl,-multiply_defined,suppress");
@@ -755,7 +755,7 @@ fn link_posix(
     }
 }
 
-/// Linux static-musl link path — invokes the rustup-shipped `ld.lld`
+/// Linux static-musl link path - invokes the rustup-shipped `ld.lld`
 /// against rustup's self-contained musl CRT/libc/libunwind. Produces
 /// a statically-linked ELF that runs on any `x86_64` Linux host
 /// regardless of glibc/musl install or version. The cli's build
@@ -868,7 +868,7 @@ fn rustc_sysroot() -> std::result::Result<PathBuf, NativeBuildError> {
     ))
 }
 
-/// Windows MSVC link path — invokes `rust-lld -flavor link` with
+/// Windows MSVC link path - invokes `rust-lld -flavor link` with
 /// MSVC-style flags. `cc` on Windows runners typically resolves to
 /// MinGW gcc, which can't link MSVC-ABI rlibs (the runtime is built
 /// against `windows-msvc`). `rust-lld.exe` ships with every rustup

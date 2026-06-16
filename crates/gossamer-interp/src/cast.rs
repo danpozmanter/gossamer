@@ -21,19 +21,19 @@ pub enum CastTarget {
         /// `true` for i8/i16/i32, `false` for u8/u16/u32.
         signed: bool,
     },
-    /// `i64` / `isize` — full-width signed, identity on the bit
+    /// `i64` / `isize` - full-width signed, identity on the bit
     /// pattern.
     I64,
-    /// `u64` / `usize` — full-width with unsigned display provenance.
+    /// `u64` / `usize` - full-width with unsigned display provenance.
     U64,
-    /// `f32` — value rounds through f32 precision (stored as f64).
+    /// `f32` - value rounds through f32 precision (stored as f64).
     F32,
     /// `f64`.
     F64,
-    /// `char` — operand is a `u8` by the whitelist; mask to the
+    /// `char` - operand is a `u8` by the whitelist; mask to the
     /// declared width and take the code point.
     Char,
-    /// `bool` — only the same-type no-op is whitelisted.
+    /// `bool` - only the same-type no-op is whitelisted.
     Bool,
 }
 
@@ -78,7 +78,7 @@ impl CastTarget {
     }
 }
 
-/// Truncates `v` to `width` bits and extends back by `signed` —
+/// Truncates `v` to `width` bits and extends back by `signed` -
 /// the single masking point of the i64 runtime model
 /// (`300 as u8 == 44`, `200 as i8 == -56`).
 fn trunc_extend(v: i64, width: u8, signed: bool) -> i64 {

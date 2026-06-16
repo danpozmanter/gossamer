@@ -1633,7 +1633,7 @@
 
 
 <h1 id="runtime-internals">Runtime internals<a class="headerlink" href="#runtime-internals" title="Permanent link">&para;</a></h1>
-<p>This page is a map — not a specification — of what happens between
+<p>This page is a map - not a specification - of what happens between
 <code>gos run</code> and <code>main</code> returning. Each section links to the crate that
 owns the stage so a new contributor can find the real source.</p>
 <h2 id="stages">Stages<a class="headerlink" href="#stages" title="Permanent link">&para;</a></h2>
@@ -1686,7 +1686,7 @@ owns the stage so a new contributor can find the real source.</p>
 through a copy-on-write helper that allocates a fresh <code>Rc</code> so alias
 bindings never observe each other's mutations.</p>
 <h2 id="memory-management">Memory management<a class="headerlink" href="#memory-management" title="Permanent link">&para;</a></h2>
-<p>Compiled programs manage memory deterministically — there is no
+<p>Compiled programs manage memory deterministically - there is no
 tracing collector and no pause:</p>
 <ul>
 <li><strong>Reference counting</strong> (<code>gossamer-runtime::c_abi::rc</code>). Recursive
@@ -1696,7 +1696,7 @@ tracing collector and no pause:</p>
   value's reference-counted children iteratively and frees the
   payload. Weak references follow the Swift-ARC model.</li>
 <li><strong>Cycle collection.</strong> <code>runtime::collect_cycles()</code> runs an
-  on-demand Bacon–Rajan trial-deletion pass over suspected cycle
+  on-demand Bacon-Rajan trial-deletion pass over suspected cycle
   roots, on every tier.</li>
 <li><strong>Aggregate reclamation.</strong> Structs / tuples / arrays are
   heap-allocated via <code>gos_rt_aggr_alloc</code> (plain zeroed malloc) and
@@ -1746,7 +1746,7 @@ the task into <code>MultiScheduler::parked</code> keyed by gid. The wakeup
 source (poller readiness, channel send, mutex unlock, blocking-pool
 worker, ...) calls <code>MultiScheduler::unpark(gid)</code> which pushes the
 task back onto the injector. Any free worker picks it up and
-resumes the coroutine — possibly on a different OS thread than the
+resumes the coroutine - possibly on a different OS thread than the
 one it suspended on.</p>
 <p>A blocked goroutine costs ~16 KiB of mmap'd stack, not an OS
 thread. 10 000 idle goroutines fit on a 4-worker scheduler in
@@ -1773,22 +1773,22 @@ for it via <code>register_waker(gid, closure)</code>. Default closure: just
 <li>park on the netpoller for accept readiness,</li>
 <li>spawn each accepted connection as a goroutine via
   <code>sched_global::spawn</code>,</li>
-<li>read / write under the netpoller — <code>WouldBlock</code> parks the
+<li>read / write under the netpoller - <code>WouldBlock</code> parks the
   goroutine; the worker thread immediately picks up another
   connection.</li>
 </ul>
 <p>Graceful shutdown is driven by:</p>
 <ul>
-<li><code>GOSSAMER_HTTP_MAX_REQUESTS=N</code> — env var, stop after N requests.</li>
-<li><code>gossamer_interp::set_http_max_requests(N)</code> — safe-Rust test hook.</li>
-<li><code>config.shutdown: Arc&lt;AtomicBool&gt;</code> — for in-process callers.</li>
+<li><code>GOSSAMER_HTTP_MAX_REQUESTS=N</code> - env var, stop after N requests.</li>
+<li><code>gossamer_interp::set_http_max_requests(N)</code> - safe-Rust test hook.</li>
+<li><code>config.shutdown: Arc&lt;AtomicBool&gt;</code> - for in-process callers.</li>
 </ul>
 <h2 id="panic-recovery">Panic recovery<a class="headerlink" href="#panic-recovery" title="Permanent link">&para;</a></h2>
 <p><code>panic!(msg)</code> in user code returns <code>RuntimeError::Panic(msg)</code> from
 the evaluator. The native HTTP server catches that per-request,
 logs it, and returns a 500. A panic inside a goroutine body
 unwinds the coroutine's stack and propagates to the worker M's
-resume site — the worker exits with the panic, but other
+resume site - the worker exits with the panic, but other
 goroutines on other workers continue running. A program-wide
 panic handler can be installed via <code>panic::set_hook</code> from user
 code.</p>

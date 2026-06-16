@@ -1,7 +1,7 @@
 #![allow(clippy::missing_safety_doc)]
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 
-//! Runtime support for `std::sync::RwLock` — a reader-writer lock
+//! Runtime support for `std::sync::RwLock` - a reader-writer lock
 //! guarding a single `i64` value. The handle is an opaque heap
 //! `Box<GosRwLock>`; compiled tiers carry the pointer as an `i64` and
 //! the MIR receiver-kind dispatch tags constructor results
@@ -17,12 +17,12 @@
 //! passes the guarded value and returns the callback's result without
 //! mutating the lock; `with_write` stores the callback's return value
 //! back into the lock and returns it. The guarded value is an `i64`
-//! for this first cut — a String-guarded variant is a documented
+//! for this first cut - a String-guarded variant is a documented
 //! follow-up (it needs a pointer-shaped thunk and a String slot).
 
 use parking_lot::RwLock as PRwLock;
 
-/// `fn(env, value) -> result` — the one-argument value-thunk shape
+/// `fn(env, value) -> result` - the one-argument value-thunk shape
 /// shared with the `MapFn` callbacks in `combinator.rs`.
 type GuardFn = unsafe extern "C" fn(env: *const u8, value: i64) -> i64;
 
@@ -60,7 +60,7 @@ pub unsafe extern "C" fn gos_rt_rwlock_new(value: i64) -> *mut GosRwLock {
     })
 }
 
-/// `lock.get()` — read the guarded value under a shared lock.
+/// `lock.get()` - read the guarded value under a shared lock.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_rwlock_get(lock: *mut GosRwLock) -> i64 {
     ffi_entry!(0, {
@@ -71,7 +71,7 @@ pub unsafe extern "C" fn gos_rt_rwlock_get(lock: *mut GosRwLock) -> i64 {
     })
 }
 
-/// `lock.set(value)` — overwrite the guarded value under an
+/// `lock.set(value)` - overwrite the guarded value under an
 /// exclusive lock.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_rwlock_set(lock: *mut GosRwLock, value: i64) {
@@ -83,7 +83,7 @@ pub unsafe extern "C" fn gos_rt_rwlock_set(lock: *mut GosRwLock, value: i64) {
     });
 }
 
-/// `sync::RwLock::with_read(lock, f)` — run `f(value)` under a shared
+/// `sync::RwLock::with_read(lock, f)` - run `f(value)` under a shared
 /// lock and return its result; the guarded value is unchanged.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_rwlock_with_read(lock: *mut GosRwLock, env: *const u8) -> i64 {
@@ -105,7 +105,7 @@ pub unsafe extern "C" fn gos_rt_rwlock_with_read(lock: *mut GosRwLock, env: *con
     })
 }
 
-/// `sync::RwLock::with_write(lock, f)` — run `f(value)` under an
+/// `sync::RwLock::with_write(lock, f)` - run `f(value)` under an
 /// exclusive lock, store the returned value back, and return it.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_rwlock_with_write(lock: *mut GosRwLock, env: *const u8) -> i64 {

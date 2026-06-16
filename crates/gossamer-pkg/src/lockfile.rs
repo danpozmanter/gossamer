@@ -39,7 +39,7 @@ pub enum LockfileError {
         field: &'static str,
     },
     /// Resolved entry has no matching lockfile entry.
-    #[error("lockfile drift: {id} is not pinned in project.lock — run `gos fetch --update`")]
+    #[error("lockfile drift: {id} is not pinned in project.lock - run `gos fetch --update`")]
     MissingPin {
         /// Project id with no lockfile match.
         id: String,
@@ -64,7 +64,7 @@ pub enum LockfileError {
     },
 }
 
-/// One lockfile entry — a `Resolved` plus the sha256 of the fetched
+/// One lockfile entry - a `Resolved` plus the sha256 of the fetched
 /// source tree (when known). Path sources omit `sha256` because their
 /// contents are read live from disk.
 #[derive(Debug, Clone, PartialEq, Eq)]

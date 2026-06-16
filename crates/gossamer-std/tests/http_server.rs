@@ -1,4 +1,4 @@
-//! Stream A.2 — real HTTP/1.1 server behind the `http::serve` builtin.
+//! Stream A.2 - real HTTP/1.1 server behind the `http::serve` builtin.
 //! The test binds a listener on a loopback address, fires a real
 //! HTTP request over TCP, and asserts the server's response. Uses
 //! `max_requests = 1` from the server config so the accept loop
@@ -225,7 +225,7 @@ fn server_aborts_slowloris_at_header_timeout() {
     let shutdown = Arc::new(AtomicBool::new(false));
     let config = Config {
         read_timeout: Some(Duration::from_secs(5)),
-        // Tight header_timeout — drip-feed must trip it.
+        // Tight header_timeout - drip-feed must trip it.
         read_header_timeout: Some(Duration::from_millis(300)),
         read_body_timeout: Some(Duration::from_secs(5)),
         write_timeout: Some(Duration::from_secs(5)),
@@ -266,7 +266,7 @@ fn server_aborts_slowloris_at_header_timeout() {
     // causing the server to hold the connection open for the full
     // 5 s and the test to stall at stream.read() below.
     let _ = stream.shutdown(std::net::Shutdown::Write);
-    // Server should now close — wait up to 1 s for the RST/EOF.
+    // Server should now close - wait up to 1 s for the RST/EOF.
     let _ = stream.set_read_timeout(Some(Duration::from_secs(1)));
     let mut buf = [0u8; 16];
     let _ = stream.read(&mut buf);
@@ -359,7 +359,7 @@ fn server_rejects_chunked_with_content_length() {
     };
 
     let server_handle = thread::spawn(move || {
-        // Handler should never be invoked — request is malformed.
+        // Handler should never be invoked - request is malformed.
         let result = run(listener, &config, |_request: Request| {
             panic!("handler must not be invoked on malformed request");
         });
@@ -809,7 +809,7 @@ fn server_handles_many_concurrent_connections() {
 
 #[test]
 fn server_request_context_is_not_cancelled_by_default() {
-    // Every Request carries a `context::Context` — verify the
+    // Every Request carries a `context::Context` - verify the
     // default is live and cancellable.
     let (listener, actual) = bind_loopback();
     let shutdown = Arc::new(AtomicBool::new(false));
@@ -984,7 +984,7 @@ fn streamed_response_mid_stream_error_truncates_without_terminal_frame() {
     );
     assert!(
         !body.ends_with(b"0\r\n\r\n"),
-        "a truncated stream must NOT write the terminal frame — closing \
+        "a truncated stream must NOT write the terminal frame - closing \
          early is the RFC 7230 §4.1 truncation signal"
     );
     assert!(

@@ -82,7 +82,7 @@ pub const REGISTRY: &[(&str, &str)] = &[
     (
         "GL0014",
         "Assigning a variable to itself does nothing. The statement is\n\
-            usually the residue of a refactor — remove it.",
+            usually the residue of a refactor - remove it.",
     ),
     (
         "GL0015",
@@ -91,7 +91,7 @@ pub const REGISTRY: &[(&str, &str)] = &[
     ),
     (
         "GL0016",
-        "`if true { ... }` / `while false { ... }` — the branch is\n\
+        "`if true { ... }` / `while false { ... }` - the branch is\n\
             decided at compile time. Drop the control-flow construct.",
     ),
     (
@@ -115,7 +115,7 @@ pub const REGISTRY: &[(&str, &str)] = &[
     ),
     (
         "GL0021",
-        "`if cond { return X } else { Y }` — the `else` is unreachable\n\
+        "`if cond { return X } else { Y }` - the `else` is unreachable\n\
             fall-through. Un-nest the `else` body.",
     ),
     (
@@ -135,7 +135,7 @@ pub const REGISTRY: &[(&str, &str)] = &[
     ),
     (
         "GL0025",
-        "Equality against a float literal is almost never what you want —\n\
+        "Equality against a float literal is almost never what you want -\n\
             floating-point arithmetic rarely produces the exact bit pattern.\n\
             Compare `(x - y).abs() < eps` with an explicit tolerance.",
     ),
@@ -151,7 +151,7 @@ pub const REGISTRY: &[(&str, &str)] = &[
     ),
     (
         "GL0028",
-        "`(x)` without a trailing comma is a needless pair of parens —\n\
+        "`(x)` without a trailing comma is a needless pair of parens -\n\
             `x` reads the same. `(x,)` is a one-tuple and means something\n\
             different.",
     ),
@@ -204,7 +204,7 @@ pub const REGISTRY: &[(&str, &str)] = &[
     ),
     (
         "GL0039",
-        "Two back-to-back assignments to the same place — the earlier\n\
+        "Two back-to-back assignments to the same place - the earlier\n\
             value is dead before it's read. Drop the first or consolidate\n\
             the logic into one statement.",
     ),
@@ -237,12 +237,12 @@ pub const REGISTRY: &[(&str, &str)] = &[
         "GL0045",
         "`let _: () = expr` annotates the binding with the unit type. If\n\
             `expr` was going to return `()` anyway, the annotation is noise.\n\
-            If it wasn't, the annotation forces a coercion — use a plain\n\
+            If it wasn't, the annotation forces a coercion - use a plain\n\
             statement instead.",
     ),
     (
         "GL0046",
-        "`match x { _ => expr }` always runs `expr` — the `match` adds\n\
+        "`match x { _ => expr }` always runs `expr` - the `match` adds\n\
             nothing. Drop the `match` (and add `let _ = x` if evaluating\n\
             the scrutinee has side effects).",
     ),
@@ -269,7 +269,7 @@ pub const REGISTRY: &[(&str, &str)] = &[
     (
         "GM0001",
         "Generic monomorphization received a type substitution that the\n\
-                     compiler does not yet support — typically a generic parameter\n\
+                     compiler does not yet support - typically a generic parameter\n\
                      instantiated with a non-scalar (Vec, HashMap, struct). Track\n\
                      A's P8 widens this; in the meantime, instantiate the generic\n\
                      with a scalar (i64 / bool / f64) or write a non-generic\n\
@@ -291,7 +291,7 @@ pub const REGISTRY: &[(&str, &str)] = &[
     (
         "GP0002",
         "The parser reached end-of-file in the middle of a construct.\n\
-                     Finish the expression, statement, or item — or remove it.",
+                     Finish the expression, statement, or item - or remove it.",
     ),
     (
         "GP0003",
@@ -376,7 +376,7 @@ pub const REGISTRY: &[(&str, &str)] = &[
     ),
     (
         "GR0002",
-        "A path was found in the wrong namespace — for example a value\n\
+        "A path was found in the wrong namespace - for example a value\n\
                      where a type was expected, or a module where a value was\n\
                      expected. Re-check the import target.",
     ),
@@ -425,7 +425,7 @@ pub const REGISTRY: &[(&str, &str)] = &[
         "GT0006",
         "A struct field access (`x.field`) referenced a name that the\n\
                      receiver type does not declare. Check the field name or the\n\
-                     receiver's actual type — generics and inference often resolve\n\
+                     receiver's actual type - generics and inference often resolve\n\
                      this once the surrounding code is more constrained.",
     ),
     (
@@ -437,7 +437,7 @@ pub const REGISTRY: &[(&str, &str)] = &[
                      - Propagate with `?`: `do_something()?` (requires the\n\
                        enclosing function to return `Result`).\n\
                      - Match explicitly: `match do_something() { Ok(v) => …, Err(e) => … }`.\n\
-                     - Acknowledge and discard: `let _ = do_something()` — this\n\
+                     - Acknowledge and discard: `let _ = do_something()` - this\n\
                        silences GT0007 but leaves the error unhandled; only\n\
                        appropriate when the operation is best-effort.\n\n\
                      SPEC §9 requires every `Result` value to be handled.",

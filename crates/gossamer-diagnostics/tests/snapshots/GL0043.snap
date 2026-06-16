@@ -3,7 +3,7 @@ source: crates/gossamer-diagnostics/tests/snapshots.rs
 expression: rendered
 ---
 --- plain ---
-error[GL0043]: `match b { true => 1, false => 0 }` is an `if` in disguise that — here
+error[GL0043]: `match b { true => 1, false => 0 }` is an `if` in disguise that - here
 --- framed ---
 error[GL0043]: `match b { true => 1, false => 0 }` is an `if` in disguise that
   --> snap.gos:2:5

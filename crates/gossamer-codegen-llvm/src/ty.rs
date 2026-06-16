@@ -4,7 +4,7 @@
 //! the short strings LLVM expects (`i64`, `double`, `i1`,
 //! `ptr`, …). Aggregates that don't fit in a register
 //! (strings, slices, arbitrary structs) flow through the
-//! runtime as opaque `ptr` — same choice the Cranelift
+//! runtime as opaque `ptr` - same choice the Cranelift
 //! backend makes in `lower_ty`.
 
 use gossamer_types::{FloatTy, IntTy, Ty, TyCtxt, TyKind};
@@ -17,7 +17,7 @@ use gossamer_types::{FloatTy, IntTy, Ty, TyCtxt, TyKind};
 /// all integer arithmetic at i64 width) and the 8-byte GosVec /
 /// flat-slot storage convention. Narrow declared widths (u8/i8/
 /// u16/i16/u32/i32) only matter at explicit `as` casts, which mask
-/// to the target width — see `lower_cast`. Rendering them as
+/// to the target width - see `lower_cast`. Rendering them as
 /// narrow LLVM types made arithmetic wrap at the declared width
 /// (`sum += b` over `[u8]` gave sum mod 256) and produced invalid
 /// mixed-width IR when MIR pairs an i64 local with a u8 operand.
@@ -43,7 +43,7 @@ pub(crate) fn render_ty(tcx: &TyCtxt, ty: Ty) -> String {
         Some(TyKind::Char) => "i32".to_string(),
         // `Result<T,E>` (sentinel def `u32::MAX`) and `Option<T>`
         // (`u32::MAX - 1`) are a 2-word by-value `i128` (disc + payload),
-        // not a heap box — see `gos_rt_result_new`.
+        // not a heap box - see `gos_rt_result_new`.
         Some(TyKind::Adt { def, .. }) if def.local == u32::MAX || def.local == u32::MAX - 1 => {
             "i128".to_string()
         }
@@ -51,7 +51,7 @@ pub(crate) fn render_ty(tcx: &TyCtxt, ty: Ty) -> String {
         Some(TyKind::Adt { .. }) if tcx.is_inline_enum_ty(ty) => "i128".to_string(),
         Some(TyKind::String) => "ptr".to_string(),
         // A reference to a 2-word by-value enum (`&Option` / `&Result` /
-        // `&InlineEnum`) carries the i128 value itself — the reference is
+        // `&InlineEnum`) carries the i128 value itself - the reference is
         // transparent in this codegen. Rendering it as `ptr` would truncate
         // the aggregate to its low word at every call / field / return
         // boundary, discarding the payload.
@@ -71,7 +71,7 @@ pub(crate) fn render_ty(tcx: &TyCtxt, ty: Ty) -> String {
             | TyKind::JoinHandle(_),
         ) => "ptr".to_string(),
         // `Never` / `Error` / `Var` / `Param` / `Closure` /
-        // `Alias` — treated as opaque pointers by the runtime
+        // `Alias` - treated as opaque pointers by the runtime
         // so the backend can still emit a signature that
         // typechecks.
         _ => "ptr".to_string(),
@@ -106,7 +106,7 @@ pub(crate) fn int_width(int_ty: IntTy) -> u32 {
     }
 }
 
-/// Returns `true` when the integer type is signed — controls
+/// Returns `true` when the integer type is signed - controls
 /// `sdiv`/`udiv`, `srem`/`urem`, `icmp slt` vs `icmp ult`
 /// selection.
 pub(crate) fn int_signed(int_ty: IntTy) -> bool {
@@ -134,7 +134,7 @@ pub(crate) fn numeric_kind(tcx: &TyCtxt, ty: Ty) -> NumericKind {
 }
 
 /// Size in 8-byte slots of a `Ty` when it's laid out as a
-/// flat aggregate (matches what the Cranelift backend does —
+/// flat aggregate (matches what the Cranelift backend does -
 /// every scalar field takes one i64-wide slot, structs /
 /// tuples chain their fields, arrays stride by
 /// `elem_count × elem_slots`). Scalars / opaque pointers
@@ -191,7 +191,7 @@ pub(crate) fn slot_count(tcx: &TyCtxt, ty: Ty) -> Option<u32> {
             // `Result<T,E>` (sentinel `u32::MAX`) and `Option<T>`
             // (`u32::MAX - 1`) are the 2-word by-value `i128` (16-byte)
             // representation: 2 flat slots. Inside an aggregate (array/Vec/
-            // struct element) they occupy two i64 slots, not one — sizing
+            // struct element) they occupy two i64 slots, not one - sizing
             // them at one slot makes adjacent elements overlap and clobber
             // the payload (every-other Some loses its value).
             if def.local == u32::MAX || def.local == u32::MAX - 1 || tcx.is_inline_enum_ty(ty) {
@@ -211,7 +211,7 @@ pub(crate) fn slot_count(tcx: &TyCtxt, ty: Ty) -> Option<u32> {
             // The sibling sentinels (DirInfo @ u32::MAX-2, Output @
             // u32::MAX-3, ResponseStream @ u32::MAX-4) ARE inline
             // heap blobs the runtime allocates with raw `*mut i64`
-            // sized for the declared field count — their fields are
+            // sized for the declared field count - their fields are
             // read by `Field(idx)` projection, so the existing
             // inline slot_count path is correct.
             if def.local == u32::MAX - 5 {
@@ -219,7 +219,7 @@ pub(crate) fn slot_count(tcx: &TyCtxt, ty: Ty) -> Option<u32> {
             }
             // `struct_field_tys` returning `None` is the
             // genuinely-unknown-layout case (recursive enum, opaque
-            // sentinel) — keep that as `None` so the caller falls
+            // sentinel) - keep that as `None` so the caller falls
             // through to the heap-pointer path. When the field list
             // exists but a single field has a `Var` type, mirror
             // the `Tuple` fallback above so the alloca still gets
@@ -235,7 +235,7 @@ pub(crate) fn slot_count(tcx: &TyCtxt, ty: Ty) -> Option<u32> {
     }
 }
 
-/// Size in slots of a *single element* of an aggregate type —
+/// Size in slots of a *single element* of an aggregate type -
 /// 1 for scalar arrays, `fields.len()` for arrays of structs,
 /// used to compute the array stride when lowering
 /// `a[i].field` projections.
@@ -249,7 +249,7 @@ pub(crate) fn elem_slots(tcx: &TyCtxt, ty: Ty) -> u32 {
 }
 
 /// Returns the slot offset (in 8-byte words) of field `idx` of
-/// `ty` — the sum of `slot_count` for every preceding field. Used
+/// `ty` - the sum of `slot_count` for every preceding field. Used
 /// by the projection lowerers so a nested struct/tuple field
 /// (`outer.inner.x`) lands past the inline-flattened sub-aggregate
 /// instead of overlapping its first scalar.
@@ -288,7 +288,7 @@ pub(crate) fn is_pure_primitive_aggregate(tcx: &TyCtxt, ty: Ty) -> bool {
         Some(TyKind::Array { elem, .. }) => is_pure_primitive_aggregate(tcx, *elem),
         Some(TyKind::Tuple(elems)) => elems.iter().all(|t| is_pure_primitive_aggregate(tcx, *t)),
         Some(TyKind::Adt { def, .. }) => {
-            // Reject the Result/Option sentinel Adts up front —
+            // Reject the Result/Option sentinel Adts up front -
             // they are pointer-shaped and not really aggregates.
             if def.local == u32::MAX || def.local == u32::MAX - 1 || tcx.is_inline_enum_ty(ty) {
                 return false;
@@ -314,7 +314,7 @@ pub(crate) fn is_aggregate(tcx: &TyCtxt, ty: Ty) -> bool {
         // aggregates here makes `emit_named_call` memcpy the first
         // 8 bytes of the runtime's 16-byte struct into a
         // `[1 x i64]` alloca and then pass `ptr %alloca` to the
-        // next helper — which reads stack garbage as the payload.
+        // next helper - which reads stack garbage as the payload.
         // Treat them as scalar `ptr`s so the caller stores the
         // returned pointer directly into the local slot.
         if def.local == u32::MAX || def.local == u32::MAX - 1 || tcx.is_inline_enum_ty(ty) {

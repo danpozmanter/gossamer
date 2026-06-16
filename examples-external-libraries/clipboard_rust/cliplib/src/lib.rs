@@ -8,7 +8,7 @@
 //!
 //! On Linux the native arboard path (X11 protocol) is tried first;
 //! when it fails (Wayland-only session, Termux, headless), the
-//! binding falls back to the common clipboard utilities — wl-copy /
+//! binding falls back to the common clipboard utilities - wl-copy /
 //! wl-paste, xclip, xsel, termux-clipboard-get/set. Only when none
 //! of those exist does an operation fail, with a message asking for
 //! a clipboard utility to be installed.
@@ -117,7 +117,7 @@ fn hold_clipboard(text: String) -> Result<(), String> {
 /// X11 clipboard contents die with the process that set them, so a
 /// short-lived CLI cannot set-and-exit: without a clipboard manager
 /// in the session, nothing remains to answer paste requests. The
-/// standard fix — what xclip and arboard's `daemonize` example do —
+/// standard fix - what xclip and arboard's `daemonize` example do -
 /// is to detach a holder process that owns the selection until
 /// another application replaces it. The holder here is this same
 /// program re-executed with `HOLD_ENV` set: the re-run reaches

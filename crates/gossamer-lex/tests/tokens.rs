@@ -48,7 +48,7 @@ fn every_keyword_is_recognized() {
     }
 }
 
-/// `import` is not a Gossamer keyword — it lexes as a plain identifier.
+/// `import` is not a Gossamer keyword - it lexes as a plain identifier.
 #[test]
 fn import_is_a_plain_identifier() {
     assert!(Keyword::from_ident("import").is_none());
@@ -289,7 +289,7 @@ fn hello_world_tokenises_cleanly() {
     );
 }
 
-/// The lexer keeps token spans relative to its literal input — it does
+/// The lexer keeps token spans relative to its literal input - it does
 /// NOT strip a leading BOM (that is `Parser::new`'s job), because
 /// `tokenize` callers slice their own copy of `source` by these spans.
 /// A raw `tokenize` of BOM-prefixed input therefore flags the U+FEFF.

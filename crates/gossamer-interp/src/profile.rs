@@ -23,7 +23,7 @@ use crate::bytecode::Op;
 /// variants; 256 leaves room for several years of growth.
 pub(crate) const MAX_OPS: usize = 256;
 
-/// Sentinel for "no previous opcode" — the very first op of
+/// Sentinel for "no previous opcode" - the very first op of
 /// every chunk doesn't have a real predecessor.
 const NO_PREV: usize = MAX_OPS;
 
@@ -47,7 +47,7 @@ struct Counters {
     arith_ic_hit: u64,
     arith_ic_miss: u64,
 
-    // FramePool metrics — warm reuse vs cold alloc.
+    // FramePool metrics - warm reuse vs cold alloc.
     pool_value_hit: u64,
     pool_value_miss: u64,
     pool_float_hit: u64,
@@ -61,7 +61,7 @@ struct Counters {
     // dispatch path (`dispatch_call`).
     slow_call_dispatch: u64,
     /// One per call frame entered from the bytecode VM. Lets us
-    /// compute "instructions per call" — a useful denominator
+    /// compute "instructions per call" - a useful denominator
     /// for "is dispatch the bottleneck or is per-op work?".
     frame_enters: u64,
 }
@@ -149,7 +149,7 @@ pub(crate) fn record_op(op: Op) {
 #[cfg(not(feature = "profile"))]
 pub(crate) fn record_op(_op: Op) {}
 
-/// Reset the dispatch loop's prev-op tracker — called on entry
+/// Reset the dispatch loop's prev-op tracker - called on entry
 /// to each frame so cross-call pairs are dropped.
 #[inline]
 #[cfg(feature = "profile")]
@@ -324,7 +324,7 @@ pub fn dump_report() -> String {
         );
         let _ = writeln!(out);
 
-        // Layout sizes — useful to see drift.
+        // Layout sizes - useful to see drift.
         let _ = writeln!(out, "### Layout sizes (bytes)");
         let _ = writeln!(out, "  size_of::<Op>     = {}", std::mem::size_of::<Op>());
         let _ = writeln!(
@@ -362,7 +362,7 @@ fn op_label(tag: usize) -> &'static str {
         let zero = 0u16;
         let r = |op: O| op_tag(op);
         // Emit a prototype variant for each known opcode. Most
-        // payloads are `Reg` (`u16`) — we use 0 as a stand-in
+        // payloads are `Reg` (`u16`) - we use 0 as a stand-in
         // since we only care about the discriminant.
         let entries: &[(O, &str)] = &[
             (O::LoadConst { dst: 0, idx: 0 }, "LoadConst"),

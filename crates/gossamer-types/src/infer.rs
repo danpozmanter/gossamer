@@ -28,9 +28,9 @@ enum VarSlot {
 /// substitution table.
 ///
 /// Variables come in two flavours:
-/// * **Plain** — produced by [`InferCtxt::fresh_var`]; unifies with
+/// * **Plain** - produced by [`InferCtxt::fresh_var`]; unifies with
 ///   any type.
-/// * **Integer-constrained** — produced by
+/// * **Integer-constrained** - produced by
 ///   [`InferCtxt::fresh_int_var`]; only unifies with concrete integer
 ///   types. Used by the typechecker to give unsuffixed integer
 ///   literals (`42`, `0`, `0x2a`) Go-style "untyped constant"
@@ -51,7 +51,7 @@ pub struct InferCtxt {
     /// unsuffixed float literals (`3.0`, `1.5`). A float-literal var
     /// takes the float type its use site requires (`f32` / `f64`) and
     /// falls back to `f64` via [`Self::default_unresolved_float_vars`]
-    /// when nothing constrains it — without this an unsuffixed float
+    /// when nothing constrains it - without this an unsuffixed float
     /// fed into a generic position (`Triple { third: 3.0 }`) leaks an
     /// unresolved `Var` into lowering, which then prints the value's
     /// bit pattern as an integer.
@@ -90,7 +90,7 @@ impl InferCtxt {
     }
 
     /// Allocates a fresh inference variable for an unsuffixed float
-    /// literal. Defaults to `f64` when unconstrained — see the
+    /// literal. Defaults to `f64` when unconstrained - see the
     /// `float_literal` field doc.
     pub fn fresh_float_var(&mut self, tcx: &mut TyCtxt) -> Ty {
         self.alloc_var(tcx, false, true)
@@ -191,7 +191,7 @@ impl InferCtxt {
                     // historical full-interner scan in `lookup_var`.
                     // Falls back to the scan for the impossible case
                     // where a var slot exists without a side-table
-                    // entry — keeps the function total under any
+                    // entry - keeps the function total under any
                     // future churn.
                     return Some(
                         self.var_to_ty
@@ -339,7 +339,7 @@ impl InferCtxt {
             | (TyKind::JoinHandle(a), TyKind::JoinHandle(b)) => self.unify(tcx, *a, *b),
             // A `[a, b, c]` literal is typed bottom-up as a fixed
             // `[T; N]`; it coerces into a growable `Vec<T>` / `[T]`
-            // (slice) when the expected type wants one — `let x:
+            // (slice) when the expected type wants one - `let x:
             // Vec<String> = ["a", "b"]`, a `-> Vec<T>` return, a
             // Vec-typed struct field, or a Vec/slice parameter.
             // Directional: the expected type is the unifier's left
@@ -370,7 +370,7 @@ impl InferCtxt {
             // closure (capturing or not). The MIR coercion site
             // wraps the source value in the env+code shape the
             // codegen expects. The reverse direction (`Fn(_)`
-            // assigned to a bare `fn(_)`) is rejected — capturing
+            // assigned to a bare `fn(_)`) is rejected - capturing
             // closures need an env that bare `fn` can't carry. See
             // closure_fn_trait_plan.md.
             (TyKind::FnTrait(t), TyKind::FnPtr(s)) | (TyKind::FnPtr(s), TyKind::FnTrait(t)) => {
@@ -378,7 +378,7 @@ impl InferCtxt {
             }
             (TyKind::FnTrait(t), TyKind::FnDef { .. })
             | (TyKind::FnDef { .. }, TyKind::FnTrait(t)) => {
-                // FnDef has no signature on the type itself — the
+                // FnDef has no signature on the type itself - the
                 // signature lives at the def. We accept the
                 // conversion structurally; the typeck-level
                 // arity/sig check happens at the call site.

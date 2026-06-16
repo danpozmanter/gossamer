@@ -58,7 +58,7 @@ impl<'a> Builder<'a> {
         span: Span,
     ) -> Option<Local> {
         use gossamer_types::TyKind;
-        // `x.downgrade()` — create a `Weak<T>` from a strong RC value.
+        // `x.downgrade()` - create a `Weak<T>` from a strong RC value.
         // `gos_rt_rc_downgrade` bumps the weak count and returns the same
         // payload pointer, now typed `Weak<T>` so the drop pass releases
         // it through `gos_rt_rc_weak_release`.
@@ -77,7 +77,7 @@ impl<'a> Builder<'a> {
             self.set_current(next);
             return Some(dest);
         }
-        // `w.upgrade()` — turn a `Weak<T>` back into `Option<T>`.
+        // `w.upgrade()` - turn a `Weak<T>` back into `Option<T>`.
         // `gos_rt_rc_weak_upgrade_opt` boxes `Some(payload)` when the
         // referent is still alive (`strong > 0`) and `None` otherwise,
         // returning a `*mut GosResult` so the standard match / if-let
@@ -101,7 +101,7 @@ impl<'a> Builder<'a> {
             self.set_current(next);
             return Some(dest);
         }
-        // `d.as_millis()` / `d.as_secs()` / `d.as_micros()` — method
+        // `d.as_millis()` / `d.as_secs()` / `d.as_micros()` - method
         // form of the `time::Duration` accessors. The receiver's static
         // type carries the transparent Duration tag (its runtime value is
         // a bare `i64`), so route to the same `gos_rt_duration_*` helper
@@ -142,7 +142,7 @@ impl<'a> Builder<'a> {
                 return Some(dest);
             }
         }
-        // `inst.elapsed_ms()` — method form of the `time::Instant`
+        // `inst.elapsed_ms()` - method form of the `time::Instant`
         // accessor. The receiver's static type carries the transparent
         // Instant tag (its runtime value is a bare `i64` of monotonic ms),
         // so route to `gos_rt_time_since_ms`, the same helper the
@@ -167,7 +167,7 @@ impl<'a> Builder<'a> {
                 return Some(dest);
             }
         }
-        // `h.join()` — block on a spawned goroutine's outcome.
+        // `h.join()` - block on a spawned goroutine's outcome.
         // `gos_rt_join` recvs the SpawnOutcome over the handle's
         // one-shot channel and packs it into `Result<T, String>` (Ok
         // value, or Err panic message). Gated on a `JoinHandle`
@@ -214,7 +214,7 @@ impl<'a> Builder<'a> {
         // generic identity-copy arm later falls through to a Var dest
         // for `tcs[k].clone()` shapes and downstream json helpers stop
         // dispatching). Only lower the receiver when we know we'll
-        // consume it here — falling through after the lower would
+        // consume it here - falling through after the lower would
         // leave behind the receiver's lowered Call as dead but live
         // MIR, and any heap-container result (e.g. `gos_rt_vec_get_i64`
         // producing a `Vec<T>`-typed dest) would be marked twice for
@@ -253,7 +253,7 @@ impl<'a> Builder<'a> {
                 }
             }
         }
-        // `let entries = m.iter()` on a HashMap — materialise a real
+        // `let entries = m.iter()` on a HashMap - materialise a real
         // `Vec<(K, V)>` of entries. The `for (k, v) in m.iter()` form
         // is lowered earlier in `try_lower_for_hashmap_iter`; this
         // direct-binding form would otherwise fall through to the
@@ -269,7 +269,7 @@ impl<'a> Builder<'a> {
                 return self.materialize_hashmap_entries(receiver, recv_ty_for_kind, span);
             }
         }
-        // `[].to_vec()` — the empty-array literal carries no
+        // `[].to_vec()` - the empty-array literal carries no
         // element type, so the generic `gos_rt_vec_clone` arm
         // produces a `GosVec { elem_bytes: 0, … }`. Subsequent
         // `.push(t)` allocates `0 * cap` bytes for the data
@@ -320,7 +320,7 @@ impl<'a> Builder<'a> {
         // expects a real `*const GosVec` header (len/cap/
         // elem_bytes/ptr). The lowered receiver is a stack
         // `[T; N]` aggregate whose first 24 bytes are the raw
-        // payload — `gos_rt_vec_clone` then reads `elems[0]` as
+        // payload - `gos_rt_vec_clone` then reads `elems[0]` as
         // `len`, `elems[1]` as `cap`, etc. and either segfaults
         // or panics with a bogus `memory allocation of <huge>
         // bytes failed` when the runtime tries to copy that
@@ -375,7 +375,7 @@ impl<'a> Builder<'a> {
         // `arr.swap(i, j)` super-instruction. The generic Call
         // fallback at the end of this function would lower this as
         // `Call(Const(Str("swap")), …)` which the cranelift backend
-        // can't resolve — JIT- and AOT-compiled bodies silently
+        // can't resolve - JIT- and AOT-compiled bodies silently
         // produced a typed-zero stub, leaving the receiver
         // unmutated. Inlining as four index ops (read i, read j,
         // write j-into-i, write i-into-j) keeps the semantics
@@ -548,13 +548,13 @@ impl<'a> Builder<'a> {
         }
 
         // Prefer the MIR local's pinned type over the HIR receiver
-        // type when the receiver is a Path bound to a local — the
+        // type when the receiver is a Path bound to a local - the
         // type checker may have left the HIR type as an inference
         // variable, but we pin runtime-helper return types
         // (`gos_rt_stream_read_to_string` → `String`, etc.) on the
         // MIR side at line ~2026. Without this lookup `s.len()`
         // for `let s = stdin.read_to_string()` falls through the
-        // `len` dispatch's default arm to `gos_rt_len` — which
+        // `len` dispatch's default arm to `gos_rt_len` - which
         // misinterprets the C-string pointer as a length-prefixed
         // buffer and returns the first 8 data bytes.
         let receiver_ty = self
@@ -567,7 +567,7 @@ impl<'a> Builder<'a> {
             TyKind::Ref { inner, .. } => self.tcx.kind_of(*inner).clone(),
             other => other.clone(),
         };
-        // `(*flags.<long>).method(...)` — the HIR receiver type is
+        // `(*flags.<long>).method(...)` - the HIR receiver type is
         // an unresolved inference variable, but the underlying cell
         // kind is known statically from `local_define_layout`.
         // Promote the receiver kind so method dispatch (`to_string`,
@@ -577,7 +577,7 @@ impl<'a> Builder<'a> {
                 receiver_kind_flat = kind;
             }
         }
-        // `<chain>.method().to_string()` — when the chain ends in
+        // `<chain>.method().to_string()` - when the chain ends in
         // a call whose return shape is pinned (`len`, `parse`,
         // `to_string`, integer-yielding helpers), surface that
         // shape so downstream `.to_string()` dispatches through
@@ -593,7 +593,7 @@ impl<'a> Builder<'a> {
         // the field expression's HIR type is an inference Var (the
         // structs are checker-opaque), but the field-accessor table
         // knows the static type. Without this, `.len()` falls to the
-        // len-prefixed `gos_rt_len` and dereferences a c-string —
+        // len-prefixed `gos_rt_len` and dereferences a c-string -
         // a misaligned-pointer abort on the first proxied request.
         if matches!(receiver_kind_flat, TyKind::Var(_))
             && let HirExprKind::Field {
@@ -608,7 +608,7 @@ impl<'a> Builder<'a> {
         {
             receiver_kind_flat = self.tcx.kind_of(field_ty).clone();
         }
-        // `args[i].method()` — when typeck resolves the Index
+        // `args[i].method()` - when typeck resolves the Index
         // expression to its base collection (Vec / Slice / Array)
         // instead of the element type (a multi-module typeck
         // regression: single-file builds correctly type
@@ -644,12 +644,12 @@ impl<'a> Builder<'a> {
             }
         }
 
-        // `<recv>.<field>.method()` — the field-access HIR type can
+        // `<recv>.<field>.method()` - the field-access HIR type can
         // be wrongly resolved to `String` (e.g. a `match Ok(q) =>
         // q.bytes.len()` binding where the field came back as
         // `String` instead of `[u8]`, sending `.len()` to strlen and
         // reading the i64-per-element Vec as a c-string). The parent
-        // struct's *declared* field type is ground truth — recover it
+        // struct's *declared* field type is ground truth - recover it
         // via the parent local's MIR `Adt` def and override the
         // receiver kind. Ungated (the HIR type may be a concrete-but-
         // wrong `String`, not just `Var`).
@@ -754,7 +754,7 @@ impl<'a> Builder<'a> {
             }
         }
 
-        // Stdlib dispatch table. First by method name alone —
+        // Stdlib dispatch table. First by method name alone -
         // covers receivers whose HIR type is still an unresolved
         // inference variable (common post-checker). The runtime
         // helpers accept any receiver shape and return a safe
@@ -763,10 +763,10 @@ impl<'a> Builder<'a> {
         //
         // When the callee name is empty the method is identity
         // (currently `.to_string()` / `.clone()` on any scalar or
-        // string-shaped receiver — the GC already aliases the
+        // string-shaped receiver - the GC already aliases the
         // buffer).
         // `.len()` on a fixed-size `[T; N]` array is a compile-time
-        // constant — the inline stack aggregate has no GosVec header
+        // constant - the inline stack aggregate has no GosVec header
         // for `gos_rt_len` to read (routing it there returned header
         // garbage, e.g. `[1, 2, 3].len() == 1` natively).
         if method.name.as_str() == "len"
@@ -787,11 +787,11 @@ impl<'a> Builder<'a> {
             // `.to_string()` routes to the runtime numeric
             // formatter for integer / float receivers. String
             // receivers fall through to the identity copy.
-            // `to_string()` (no args) — scalar-to-string for
+            // `to_string()` (no args) - scalar-to-string for
             // integer / float receivers; identity copy for the
             // others.
             //
-            // `to_string(len)` (1 arg) — the canonical "freeze the
+            // `to_string(len)` (1 arg) - the canonical "freeze the
             // build buffer" step at the end of a `U8Vec`-backed
             // incremental construction loop. Mirrors F#'s
             // `StringBuilder.ToString()` and Rust's
@@ -821,7 +821,7 @@ impl<'a> Builder<'a> {
             // payload (or default) as a raw 64-bit slot. The
             // older identity-copy path was a leftover from the
             // pre-discriminator layout and silently returned the
-            // aggregate pointer for callers expecting an i64 —
+            // aggregate pointer for callers expecting an i64 -
             // see e.g. fasta's `args[0].parse().unwrap_or(1000)`,
             // which yielded an arena address instead of 10. Fall
             // back to identity for non-Result receivers (e.g.
@@ -893,7 +893,7 @@ impl<'a> Builder<'a> {
                 TyKind::JsonValue => Some("gos_rt_json_len"),
                 TyKind::Vec(_) | TyKind::Array { .. } | TyKind::Slice(_) => Some("gos_rt_len"),
                 // The MIR type didn't resolve. Inspect the HIR
-                // expression's static type as a fallback — common
+                // expression's static type as a fallback - common
                 // shape is `let s = fs::read_to_string(...)?; s.len()`
                 // where the typechecker leaves `s` as `Var(...)` but
                 // the HIR `Path(s)` node still carries `String`.
@@ -925,7 +925,7 @@ impl<'a> Builder<'a> {
             }
             "replace" => Some("gos_rt_str_replace"),
             "split" => Some("gos_rt_str_split"),
-            // 0.7.0 string surface — split_once / rsplit_once return
+            // 0.7.0 string surface - split_once / rsplit_once return
             // `Option<(String, String)>` packed as a `*mut GosResult`
             // pair payload (see `gos_rt_str_split_once`).
             "split_once" if matches!(&receiver_kind_flat, TyKind::String) => {
@@ -946,7 +946,7 @@ impl<'a> Builder<'a> {
             "substring" if matches!(&receiver_kind_flat, TyKind::String) => {
                 Some("gos_rt_str_substring")
             }
-            // 0.14.0 — the remaining canonical String method surface.
+            // 0.14.0 - the remaining canonical String method surface.
             // Each already exists as a `strings::*` free fn (see
             // `stdlib_free.rs`); wiring the method form here lets
             // `s.method(...)` and the `_.method` pipe placeholder dispatch
@@ -1000,7 +1000,7 @@ impl<'a> Builder<'a> {
             // return Option<T>; `xs.reversed()` returns a fresh Vec;
             // `xs.contains` / `xs.index_of` / `xs.count_of` need
             // element-type dispatch (String vs i64).
-            // `xs.slice(a, b)?` — receiver shape decides which
+            // `xs.slice(a, b)?` - receiver shape decides which
             // helper handles the buffer layout. Vec receivers
             // (`Vec<T>` and `&[T]` after the `to_vec` route) carry
             // a `GosVec` header; raw `[T; N]` array literals are
@@ -1044,7 +1044,7 @@ impl<'a> Builder<'a> {
             {
                 Some("gos_rt_vec_reversed")
             }
-            // `parts.join(sep)` on a `Vec<String>` — the method form of
+            // `parts.join(sep)` on a `Vec<String>` - the method form of
             // `strings::join(parts, sep)`, routed to the same shim so the
             // compiled tiers match the VM. Guarded on a String element so it
             // never shadows `JoinHandle::join` (handled above, zero args) or a
@@ -1098,7 +1098,7 @@ impl<'a> Builder<'a> {
                     "gos_rt_vec_count_of_i64"
                 })
             }
-            // 0.7.0 HashMap method surface — keys / values yield
+            // 0.7.0 HashMap method surface - keys / values yield
             // Vec<K> / Vec<V>; pop returns Option<V>.
             "keys" if matches!(&receiver_kind_flat, TyKind::HashMap { .. }) => {
                 Some("gos_rt_map_keys_vec")
@@ -1117,7 +1117,7 @@ impl<'a> Builder<'a> {
             "lines" => Some("gos_rt_str_lines"),
             "repeat" => Some("gos_rt_str_repeat"),
             "byte_at" => Some("gos_rt_str_byte_at"),
-            // `s.chars()` — materialise the Unicode scalars as a
+            // `s.chars()` - materialise the Unicode scalars as a
             // `Vec<char>` (one i64 codepoint per slot) so the
             // for-loop reads each via `gos_rt_vec_get_i64` and binds
             // a `char`. Gated on a String receiver: a user struct
@@ -1150,7 +1150,7 @@ impl<'a> Builder<'a> {
             // one line from the registered Vec.
             "next_line" => Some("gos_rt_http_stream_next_line"),
             // `ResponseStream::next_chunk(max_bytes) ->
-            // Option<[u8]>` — same blob receiver as `next_line`;
+            // Option<[u8]>` - same blob receiver as `next_line`;
             // the Some payload is a packed `elem_bytes = 1` byte
             // vec (the `raw_bytes` representation contract).
             "next_chunk" => Some("gos_rt_http_stream_next_chunk"),
@@ -1160,7 +1160,7 @@ impl<'a> Builder<'a> {
             // http builder. The kind-dispatch above already routes
             // tagged `http::Request` receivers for `.header(k, v)`
             // builder calls; this name-only arm catches untagged
-            // ones — `.send` falls below to the channel default
+            // ones - `.send` falls below to the channel default
             // because channel sends are far more common in user
             // code than untagged-http requests.
             "header" => Some("gos_rt_http_request_header"),
@@ -1168,7 +1168,7 @@ impl<'a> Builder<'a> {
             // a header and return the same response pointer.
             "with_header" => Some("gos_rt_http_response_with_header"),
             "send" => Some("gos_rt_chan_send"),
-            // string parsing — `text.parse()` for an i64 binding
+            // string parsing - `text.parse()` for an i64 binding
             // routes to gos_rt_parse_i64 with a discarded ok flag.
             // Pin return to i64 for the common case; users with
             // f64 / float must annotate explicitly today.
@@ -1223,7 +1223,7 @@ impl<'a> Builder<'a> {
             },
             "to_vec" => match &receiver_kind_flat {
                 // Vec/Slice/Array `.to_vec()` must produce an
-                // independent copy — bubble_sort's `out.swap(...)`
+                // independent copy - bubble_sort's `out.swap(...)`
                 // was mutating the caller's slice through the
                 // aliased pointer. Other types fall through to
                 // the identity copy.
@@ -1259,7 +1259,7 @@ impl<'a> Builder<'a> {
                 _ => None,
             },
             "recv" => Some("gos_rt_chan_recv_option"),
-            // `rx.recv_ctx(&ctx)` — same shape as `recv`, but
+            // `rx.recv_ctx(&ctx)` - same shape as `recv`, but
             // takes a Context handle as the second arg. The
             // runtime helper polls cancellation on both the
             // goroutine park path and the OS-thread condvar
@@ -1270,7 +1270,7 @@ impl<'a> Builder<'a> {
             // `close` is also a user-facing method on structs (the
             // injected sql `Rows` / `Conn` wrappers). Route to the
             // channel helper only when the receiver is not a struct
-            // carrying its own `close` impl — the same receiver gate
+            // carrying its own `close` impl - the same receiver gate
             // as `insert` / `get` below. Without it, `rows.close()`
             // closed a bogus channel handle instead of dispatching
             // to `__gos_sql_Rows::close`.
@@ -1294,7 +1294,7 @@ impl<'a> Builder<'a> {
             "flush" => Some("gos_rt_stream_flush"),
             "read_line" => Some("gos_rt_stream_read_line"),
             "read_to_string" => Some("gos_rt_stream_read_to_string"),
-            // HashMap method dispatch — gated on the receiver
+            // HashMap method dispatch - gated on the receiver
             // actually being a `HashMap`, not just on having a
             // matching method name. Without the gate, a user
             // struct with an `impl Foo { fn get(...) }` would
@@ -1313,7 +1313,7 @@ impl<'a> Builder<'a> {
                         _ => Some("gos_rt_map_insert_i64_str"),
                     },
                     // Aggregate value (Vec / struct): stored as an
-                    // 8-byte handle word, so route by KEY kind — a
+                    // 8-byte handle word, so route by KEY kind - a
                     // String key must still use the str path, not the
                     // i64/i64 path that reinterprets the key pointer.
                     _ => match self.hash_map_key_kind(receiver_ty) {
@@ -1328,7 +1328,7 @@ impl<'a> Builder<'a> {
                 // HashMap::get now uniformly returns Option<V> packed
                 // in a *mut GosResult. The MIR pin restores V from the
                 // call's Option<V> substs so `if let Some(p) = m.get(&k)`
-                // binds `p` with the right element type — struct refs
+                // binds `p` with the right element type - struct refs
                 // included. Pre-0.8.0 the bare i64-returning helpers
                 // collided None with stored-0 (HashMap<_, i64>) and
                 // produced a silent miscompile on field access through
@@ -1355,7 +1355,7 @@ impl<'a> Builder<'a> {
             },
             // `or_insert` stores an 8-byte value word (i64 scalar or
             // an aggregate handle: Vec / struct), so route purely by
-            // KEY kind — a String-keyed, Vec-valued map needs the str
+            // KEY kind - a String-keyed, Vec-valued map needs the str
             // path, not the absent value-kind branch that emitted an
             // undefined `@or_insert` call.
             "or_insert" => match &receiver_kind_flat {
@@ -1384,9 +1384,9 @@ impl<'a> Builder<'a> {
                 TyKind::HashMap { .. } => Some("gos_rt_map_clear"),
                 _ => None,
             },
-            // `m.inc_at(seq, start, len, by)` — zero-copy slice
+            // `m.inc_at(seq, start, len, by)` - zero-copy slice
             // hash for `HashMap<String, i64>`. Single hash lookup
-            // per call, no per-iteration scratch allocation —
+            // per call, no per-iteration scratch allocation -
             // mirrors `*m.entry(&seq[i..i+k]).or_insert(0) += by`.
             "inc_at" => match self.hash_map_value_kind(receiver_ty) {
                 Some(MapValueKind::I64) => match self.hash_map_key_kind(receiver_ty) {
@@ -1416,7 +1416,7 @@ impl<'a> Builder<'a> {
                 _ => None,
             },
             // Mutex<T> / WaitGroup / Atomic / heap-Vec
-            // primitives. Each method dispatches by name —
+            // primitives. Each method dispatches by name -
             // the runtime function takes the receiver
             // pointer as its first arg, matching the rest of
             // the table.
@@ -1435,7 +1435,7 @@ impl<'a> Builder<'a> {
             "write_lines_to_stdout" => Some("gos_rt_heap_i64_write_lines_to_stdout"),
             // U8Vec methods. Distinct names from the I64Vec
             // family because MIR's method dispatch is by name
-            // alone — sharing `set_at` between i64 and u8
+            // alone - sharing `set_at` between i64 and u8
             // receivers would silently write through the
             // i64-stride helper to a u8 buffer, corrupting
             // adjacent bytes.
@@ -1488,7 +1488,7 @@ impl<'a> Builder<'a> {
                 (Some("flag::Set"), "short") => Some("gos_rt_flag_set_short"),
                 (Some("flag::Set"), "usage") => Some("gos_rt_flag_set_usage"),
                 (Some("flag::Set"), "parse") => Some("gos_rt_flag_set_parse"),
-                // 0.4.0 stateful HTTP types — method-call dispatch.
+                // 0.4.0 stateful HTTP types - method-call dispatch.
                 (Some("http::Router"), "add") => Some("gos_rt_router_add"),
                 (Some("http::Router"), "get") => Some("gos_rt_router_get"),
                 (Some("http::Router"), "post") => Some("gos_rt_router_post"),
@@ -1658,7 +1658,7 @@ impl<'a> Builder<'a> {
             // Splice the constant N read from the receiver's MIR
             // type before the user-supplied start/end args.
             // Router HTTP-verb methods take (router, pattern,
-            // env, fn_addr) — synthesize the handler's env+fn_addr
+            // env, fn_addr) - synthesize the handler's env+fn_addr
             // from the trailing user argument (must be a struct
             // whose impl Handler { fn serve(...) }).
             let router_handler_method = matches!(
@@ -1877,7 +1877,7 @@ impl<'a> Builder<'a> {
             // Tag chained dest locals so further method calls
             // dispatch correctly: get/post return Request, and
             // header/body return Request again. `send` returns a
-            // Result<Response, errors::Error> Adt (no tag — the
+            // Result<Response, errors::Error> Adt (no tag - the
             // sentinel Ok payload drives downstream dispatch, same
             // as `http::get`).
             let dest_kind: Option<&'static str> = match rt {
@@ -1931,7 +1931,7 @@ impl<'a> Builder<'a> {
         // For non-Result receivers (legacy intrinsics that still
         // return raw inner values tagged Result-shaped) fall back
         // to the constant-true/false synthesis so the previous
-        // lowering shape is preserved — those call sites assume
+        // lowering shape is preserved - those call sites assume
         // the happy path is always taken.
         if let name @ ("is_some" | "is_ok" | "is_none" | "is_err") = method.name.as_str() {
             let receiver_local = self.lower_expr(receiver)?;
@@ -1984,7 +1984,7 @@ impl<'a> Builder<'a> {
             (Some("flag::Set"), "short") => Some("gos_rt_flag_set_short"),
             (Some("flag::Set"), "usage") => Some("gos_rt_flag_set_usage"),
             (Some("flag::Set"), "parse") => Some("gos_rt_flag_set_parse"),
-            // 0.4.0 stateful HTTP types — method-call dispatch.
+            // 0.4.0 stateful HTTP types - method-call dispatch.
             (Some("http::Router"), "add") => Some("gos_rt_router_add"),
             (Some("http::Router"), "get") => Some("gos_rt_router_get"),
             (Some("http::Router"), "post") => Some("gos_rt_router_post"),
@@ -2135,7 +2135,7 @@ impl<'a> Builder<'a> {
             let mut arg_operands = Vec::with_capacity(args.len() + 1);
             arg_operands.push(Operand::Copy(Place::local(receiver_local)));
             // Router HTTP-verb methods take (router, pattern,
-            // env, fn_addr) — synthesize the handler's env+fn_addr
+            // env, fn_addr) - synthesize the handler's env+fn_addr
             // from the last user argument (must be a struct whose
             // impl Handler { fn serve(...) }).
             let router_handler_method = matches!(
@@ -2485,7 +2485,7 @@ impl<'a> Builder<'a> {
         // the runtime helper reads as a `*const c_char`. A `char`
         // literal (`s.contains('e')`, `s.replace('l', "L")`) lowers to
         // an i32 codepoint, so it must be converted to a one-char
-        // String via `gos_rt_char_to_str` before the call — otherwise
+        // String via `gos_rt_char_to_str` before the call - otherwise
         // the helper dereferences the codepoint as a pointer. Mirrors
         // the front-end coercion the free-function form already gets.
         let coerce_char_needle = matches!(
@@ -2511,7 +2511,7 @@ impl<'a> Builder<'a> {
         );
         for arg in args {
             let a = self.lower_expr(arg)?;
-            // 0.7.0 flag::Cell auto-deref at the call boundary —
+            // 0.7.0 flag::Cell auto-deref at the call boundary -
             // mirrors the bytecode VM's auto-unwrap shape so
             // `get_comic(flags.number)` works without `*`.
             let a = self.auto_deref_cell(a, span);
@@ -2538,7 +2538,7 @@ impl<'a> Builder<'a> {
         // function's address. The HIR lift pass turns
         // non-capturing closures into a bare-name path
         // (`__closure_N`) which lowers to a string-literal pointer
-        // — passing that to the helper segfaults the moment it
+        // - passing that to the helper segfaults the moment it
         // transmutes the first 8 ASCII bytes into a function
         // pointer. Wrap the arg as a 16-byte heap blob
         // `[fn_addr, _]` so the helper's first-word load resolves
@@ -2555,7 +2555,7 @@ impl<'a> Builder<'a> {
         //     `gos_rt_result_map` / `_map_err` (env-first ABI).
         //
         //   - **Non-capturing closures** lift to `extern "C" fn
-        //     (payload) -> ret` — no env. The HIR lift pass turns
+        //     (payload) -> ret` - no env. The HIR lift pass turns
         //     them into a bare `Path` that lowers to a fn-name
         //     constant; `local_fn_name` is then set on the local.
         //     Dispatched through `gos_rt_result_map_bare` /
@@ -2566,7 +2566,7 @@ impl<'a> Builder<'a> {
         // with the call site wrapping the bare fn-pointer in a
         // 16-byte `[fn_addr, _]` blob and praying the C ABI's
         // unused-arg semantics would let the closure's first
-        // param shadow the env pointer. On x86_64 it didn't —
+        // param shadow the env pointer. On x86_64 it didn't -
         // RDI/RSI assignment matched the helper's perspective
         // (env_ptr, payload), so the closure's `v` param shadowed
         // RDI = env_ptr while the actual payload sat unread in
@@ -2589,7 +2589,7 @@ impl<'a> Builder<'a> {
             {
                 // Non-capturing path: pass the lifted fn addr as a
                 // raw i64 and dispatch through the `_bare` helper
-                // that calls it as `f(payload)` — single arg, no
+                // that calls it as `f(payload)` - single arg, no
                 // env. Switch the dispatched symbol to the bare
                 // variant.
                 let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
@@ -2631,9 +2631,9 @@ impl<'a> Builder<'a> {
         // typechecker thought the receiver was a Result/Option Adt
         // (because the call site chained `.unwrap_or(...)` /
         // `.unwrap()` / `.ok()` / `.err()`) but the lowered MIR type
-        // is a real scalar — `json::as_i64(v).unwrap_or(0)` is the
+        // is a real scalar - `json::as_i64(v).unwrap_or(0)` is the
         // canonical case, where `gos_rt_json_as_i64` returns a raw
-        // `i64` — fall back to identity. The runtime helpers picked
+        // `i64` - fall back to identity. The runtime helpers picked
         // by the original dispatch (`gos_rt_result_unwrap_or` etc.)
         // would treat the i64 as a `*mut GosResult` pointer, read
         // garbage as the `disc`, and return the receiver itself
@@ -2655,7 +2655,7 @@ impl<'a> Builder<'a> {
         // `gos_rt_result_*` helpers don't dereference the scalar
         // value as a `*mut GosResult`. The askq tool-call name
         // corruption (`json_escape ← strlen_evex`) was the canonical
-        // case — see
+        // case - see
         // ~/dev/contexts/lang/fix_architecture_ownership.md.
         let mut runtime_symbol = if lowered_is_scalar
             && matches!(
@@ -2698,7 +2698,7 @@ impl<'a> Builder<'a> {
         // The top-of-method dispatch table (`runtime_symbol = match
         // method.name.as_str() { … }`) keys on the HIR receiver kind,
         // which is still a `Var` for chained `Index<i>.clone()` shapes
-        // — `lowered_recv_ty` is the resolved MIR-side type.
+        // - `lowered_recv_ty` is the resolved MIR-side type.
         if method.name.as_str() == "clone"
             && matches!(
                 self.tcx.kind_of(lowered_recv_ty),

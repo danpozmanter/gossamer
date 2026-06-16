@@ -115,8 +115,8 @@ pub(crate) struct Builder<'a> {
     /// mutation method (`push`, `pop`, `insert`, `remove`, `sort`,
     /// `sort_by`, `extend`, `truncate`, `clear`, `retain`, `swap`)
     /// somewhere in the function body. A `let mut xs = [literal]`
-    /// is only promoted to a heap `Vec` when its name is in this set
-    /// — an explicitly-sized `let mut bodies: [Body; 5]` that is only
+    /// is only promoted to a heap `Vec` when its name is in this set -
+    /// an explicitly-sized `let mut bodies: [Body; 5]` that is only
     /// indexed / field-mutated / passed to a `[T; N]`-typed parameter
     /// must stay a fixed inline array so the layout matches at every
     /// use site.
@@ -137,7 +137,7 @@ pub(crate) struct Builder<'a> {
     /// One frame per lexical block currently being lowered; each frame holds
     /// that block's `defer`red expressions in registration order. Block-scoped
     /// `defer` (Swift/Zig semantics) emits a frame's expressions in LIFO order
-    /// at every edge that leaves the block — normal fall-through, `return`
+    /// at every edge that leaves the block - normal fall-through, `return`
     /// (all frames), and `break`/`continue` (frames down to the loop's frame).
     pub(crate) defer_stack: Vec<Vec<gossamer_hir::HirExpr>>,
 }

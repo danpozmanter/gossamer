@@ -22,7 +22,7 @@ use std::os::raw::c_char;
 use super::GosVec;
 
 // ---------------------------------------------------------------
-// slog — structured JSON-line logger on stderr.
+// slog - structured JSON-line logger on stderr.
 //
 // Emits one `{"level":"L","msg":"...","k":"v",...}` record per call
 // so the compiled tier is byte-identical to the bytecode VM's

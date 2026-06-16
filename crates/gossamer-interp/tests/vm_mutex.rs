@@ -4,8 +4,8 @@
 //! `unlock()`, so a non-atomic read-modify-write performed by user code
 //! between the two is serialized across goroutines. `tick()` spawns two
 //! goroutines that each bump a shared `static mut` 1000 times under the
-//! lock — both spawned before either is joined, so they genuinely
-//! overlap on a pool thread each — and must total exactly 2000. Without
+//! lock - both spawned before either is joined, so they genuinely
+//! overlap on a pool thread each - and must total exactly 2000. Without
 //! real exclusion the concurrent read-modify-write loses updates and
 //! the total falls short of 2000.
 //!

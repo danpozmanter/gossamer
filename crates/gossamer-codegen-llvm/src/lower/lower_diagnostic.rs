@@ -131,8 +131,8 @@ impl<'a> Lowerer<'a> {
         declare_rt(&mut self.runtime_refs, "gos_rt_panic");
         // Intern the message through the module-scoped string pool so a
         // function with several asserts of the same kind (e.g. repeated
-        // `%` in gcd) — and asserts across different functions in the
-        // module — all reference one shared global instead of each
+        // `%` in gcd) - and asserts across different functions in the
+        // module - all reference one shared global instead of each
         // emitting a colliding `@.assert_msg_*` definition.
         let (msg_name, _) = self.strings.borrow_mut().intern(msg_text);
         writeln!(self.out, "{fail_label}:").unwrap();
@@ -183,7 +183,7 @@ impl<'a> Lowerer<'a> {
                 writeln!(self.out, "  call void @gos_rt_eprintln()").unwrap();
             }
         } else {
-            // Hold the stdout lock for the whole sequence — every
+            // Hold the stdout lock for the whole sequence - every
             // per-arg print + the trailing newline is one atomic
             // unit so concurrent goroutines on other OS threads
             // can't interleave their output mid-line. The lock is
@@ -191,7 +191,7 @@ impl<'a> Lowerer<'a> {
             // acquire) coexist with this outer acquire on the same
             // thread. On `Unsupported` we abandon the whole build
             // and fall back to Cranelift, so the dangling acquire
-            // is harmless — the LLVM module itself is dropped.
+            // is harmless - the LLVM module itself is dropped.
             writeln!(self.out, "  call void @gos_rt_stdout_acquire()").unwrap();
             // Spec: each arg is space-separated. Mirrors the
             // interpreter's `render_args` (which inserts a `' '`

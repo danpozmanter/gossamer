@@ -1,8 +1,8 @@
 //! Token-stream formatter: the comment- and macro-preserving engine
 //! behind `gos fmt`.
 //!
-//! The formatter works from the raw lexer token stream — which retains
-//! comments and whitespace trivia with exact byte spans — rather than
+//! The formatter works from the raw lexer token stream - which retains
+//! comments and whitespace trivia with exact byte spans - rather than
 //! from the parsed AST, so output keeps every comment, macro call, and
 //! surface construct exactly as authored. The parser is consulted only
 //! to validate the input (unparseable sources are refused). Authored
@@ -500,7 +500,7 @@ fn operand_keyword(kw: Keyword) -> bool {
     )
 }
 
-/// `true` for `<`, `>`, `<<`, `>>` — ambiguous between generics and
+/// `true` for `<`, `>`, `<<`, `>>` - ambiguous between generics and
 /// comparison/shift, so spacing around them is preserved as authored.
 fn angle_like(kind: TokenKind) -> bool {
     matches!(

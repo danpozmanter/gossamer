@@ -1,4 +1,4 @@
-//! Runtime support for `std::testing` — assertions and sub-test
+//! Runtime support for `std::testing` - assertions and sub-test
 //! harness helpers exposed alongside the `gos test` runner.
 //! Prefer writing assertions in the direct form:
 //! ```gos
@@ -51,7 +51,7 @@ pub fn check_ok<T, E: std::fmt::Debug>(result: Result<T, E>, message: &str) -> R
 /// calibrates iteration counts itself and forwards `iter_count` so a
 /// body that wraps its work in `b.iter(|| ...)` runs the inner
 /// closure exactly that many times. `Bencher` is a thin Rust-side
-/// shim today — the harness does the heavy lifting (timing + alloc
+/// shim today - the harness does the heavy lifting (timing + alloc
 /// delta + reporting) outside the user's bench fn, so existing
 /// zero-argument `#[bench]` fns keep working unchanged.
 #[derive(Debug, Default)]

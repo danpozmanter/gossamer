@@ -166,7 +166,7 @@ fn assert_three_tier_parity(tag: &str, source: &str, expected: &str) {
 #[test]
 fn static_method_dispatch_on_concrete_struct() {
     // Methods on a concrete struct type are dispatched directly.
-    // No trait, no dyn — the simplest case.
+    // No trait, no dyn - the simplest case.
     let src = r#"
 struct Counter { n: i64 }
 
@@ -221,7 +221,7 @@ fn trait_with_multi_field_self_routes_each_field() {
     // Trait impl on a multi-field struct (String + two i64s).
     // The 2026-04-28 memo's "aggregate param ABI" fix had the
     // wrong receiver field reaching the impl method when self
-    // had ≥2 slots — the trait method read field 0 for every
+    // had ≥2 slots - the trait method read field 0 for every
     // field access. Test verifies each field threads through.
     let src = r#"
 struct Inventory {

@@ -76,7 +76,7 @@ fn document_symbols_returns_impl_methods() {
     let response = server.document_symbols(&document_params("file:///i.gos"));
     let names = walk_symbol_names(&response);
     // The methods may appear either as top-level entries or as
-    // children of the impl block — either is acceptable.
+    // children of the impl block - either is acceptable.
     let has_bump = names.iter().any(|n| n == "bump");
     let has_reset = names.iter().any(|n| n == "reset");
     assert!(

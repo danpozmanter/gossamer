@@ -3,7 +3,7 @@
 // request-security bundle defines `enum RouteAuth { BearerOnly,
 // CookieSession, None }`, whose `None` sits at variant index 2. A
 // `match` on a real `Option` must still dispatch on the option's own
-// discriminant, not the colliding user-enum index — otherwise the
+// discriminant, not the colliding user-enum index - otherwise the
 // `None` arm compares the whole option value to `2`, never matches,
 // and the arm falls through to a stale local.
 //

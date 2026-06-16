@@ -92,7 +92,7 @@ impl<'a> Lowerer<'a> {
         }
     }
 
-    /// Main entry point — emits the function's IR text in its
+    /// Main entry point - emits the function's IR text in its
     /// entirety. The module-level global declarations (panic
     /// message constants, etc.) accumulated during lowering
     /// remain in `self.runtime_refs` and are read by the
@@ -202,7 +202,7 @@ impl<'a> Lowerer<'a> {
                     // disagree about the slot's alignment (the module
                     // carries no datalayout string) and opt's memcpy
                     // expansion then emits 16-byte *aligned* vector ops
-                    // against a frame slot llc placed at 8-mod-16 — a
+                    // against a frame slot llc placed at 8-mod-16 - a
                     // SIGSEGV at the first `vmovaps`.
                     writeln!(self.out, "  {slot} = alloca i128, align 16").unwrap();
                 } else {
@@ -224,7 +224,7 @@ impl<'a> Lowerer<'a> {
                 // Aggregates are passed by pointer (the caller hands us
                 // the address of its flat-slot storage). Copy that data
                 // into our own slot so subsequent reads land on the
-                // aggregate's inline data — matching how locally-built
+                // aggregate's inline data - matching how locally-built
                 // aggregates are populated by `emit_aggregate_store`.
                 let bytes = u64::from(slot_count(self.tcx, local_ty).unwrap_or(1).max(1)) * 8;
                 writeln!(

@@ -12,7 +12,7 @@
     clippy::must_use_candidate,
     clippy::single_call_fn
 )]
-//! Interp-tier `http::websocket::accept` — the RFC 6455 server-side
+//! Interp-tier `http::websocket::accept` - the RFC 6455 server-side
 //! handshake. Validates the upgrade headers, computes the
 //! Sec-WebSocket-Accept token, and returns a `Result<Response, Error>`
 //! whose Ok payload is a 101 Switching Protocols Response. Mirrors
@@ -117,7 +117,7 @@ pub(crate) fn builtin_ws_accept(args: &[Value]) -> RuntimeResult<Value> {
         return Ok(err_variant("missing Sec-WebSocket-Key"));
     };
 
-    // base64(sha1(key + GUID)) — identical derivation to
+    // base64(sha1(key + GUID)) - identical derivation to
     // `builtin_ws_accept_key` so accept_key and accept never drift.
     let mut input = key.into_bytes();
     input.extend_from_slice(super::http_websocket::WS_GUID);

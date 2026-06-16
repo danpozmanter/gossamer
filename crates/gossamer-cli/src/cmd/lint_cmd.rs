@@ -1,4 +1,4 @@
-//! `gos lint [PATH] [--deny-warnings] [--explain ID] [--fix]` —
+//! `gos lint [PATH] [--deny-warnings] [--explain ID] [--fix]` -
 //! runs the lint suite and applies / reports findings.
 
 use std::fs;

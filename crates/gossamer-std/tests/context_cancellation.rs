@@ -30,7 +30,7 @@ where
     F: FnOnce() + Send + 'static,
 {
     // Use the runtime's scheduler so the spawned closure runs as
-    // a real goroutine — `current_gid()` inside the closure
+    // a real goroutine - `current_gid()` inside the closure
     // returns a valid id, which `sleep_ctx` requires.
     let (tx, rx) = std::sync::mpsc::channel();
     gossamer_runtime::sched_global::spawn(Box::new(move || {
@@ -74,16 +74,16 @@ fn cancel_wakes_sleep_ctx_within_bound() {
     // window. Bound generously to avoid flakiness on slow runners.
     assert!(
         wait_with_timeout(done, StdDuration::from_secs(3)),
-        "goroutine did not return within 3s of cancel — wait-list unpark broken",
+        "goroutine did not return within 3s of cancel - wait-list unpark broken",
     );
     assert!(
         cancelled_observed.load(Ordering::Acquire),
-        "sleep_ctx returned Ok despite cancel — cancel propagation broken",
+        "sleep_ctx returned Ok despite cancel - cancel propagation broken",
     );
     let elapsed = elapsed_micros.load(Ordering::Acquire);
     assert!(
         elapsed < 3_000_000,
-        "sleep_ctx took {elapsed}us — expected wake-up within 3s of cancel",
+        "sleep_ctx took {elapsed}us - expected wake-up within 3s of cancel",
     );
 }
 
@@ -102,7 +102,7 @@ fn with_timeout_fires_active_deadline() {
     });
     assert!(
         wait_with_timeout(done, StdDuration::from_secs(3)),
-        "deadline did not fire within 3s — active timer broken",
+        "deadline did not fire within 3s - active timer broken",
     );
     assert!(
         cancelled_observed.load(Ordering::Acquire),
@@ -111,7 +111,7 @@ fn with_timeout_fires_active_deadline() {
     let elapsed = start.elapsed();
     assert!(
         elapsed < StdDuration::from_secs(3),
-        "deadline took {elapsed:?} — expected sub-3s",
+        "deadline took {elapsed:?} - expected sub-3s",
     );
 }
 

@@ -37,7 +37,7 @@ pub enum JitKind {
     Bool,
     /// The unit value (no representation; the body has no return).
     Unit,
-    /// A runtime [`gossamer_runtime::GossamerValue`] — the u64-packed shape the
+    /// A runtime [`gossamer_runtime::GossamerValue`] - the u64-packed shape the
     /// codegen uses for any non-scalar type (String, Tuple, Array,
     /// Struct, Variant, Closure, Channel). Aggregate values cross
     /// the JIT boundary as `gossamer_runtime::GossamerValue`
@@ -71,7 +71,7 @@ pub struct JitFn {
 
 // SAFETY: `ptr` is read-only from any thread, but the VM is
 // single-threaded today. We do not implement Send/Sync for `JitFn`
-// — anyone who copies it must keep it on the owning thread.
+// - anyone who copies it must keep it on the owning thread.
 
 /// Owns a finalised [`JITModule`] and a name → [`JitFn`] map.
 /// Dropping the artifact frees every page that backs the function
@@ -87,7 +87,7 @@ pub struct JitArtifact {
 
 impl std::fmt::Debug for JitArtifact {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // The `module` field is intentionally omitted — its
+        // The `module` field is intentionally omitted - its
         // pointer-shaped `Debug` output churns across runs and
         // adds no signal. `finish_non_exhaustive` documents the
         // skip in a clippy-blessed way.
@@ -113,7 +113,7 @@ impl Drop for JitArtifact {
 /// User-function callees of `body`: by-name calls into known bodies
 /// plus `FnRef` calls resolved through the def -> body-name map. The
 /// second tuple slot reports an UNRESOLVABLE `FnRef` (a def with no
-/// MIR body — e.g. a prelude scalar): such a body cannot be compiled
+/// MIR body - e.g. a prelude scalar): such a body cannot be compiled
 /// (the lowering refuses zero-stubs) and must be excluded.
 fn body_user_calls<'a>(
     body: &'a Body,
@@ -145,7 +145,7 @@ fn body_user_calls<'a>(
 ///
 /// Starts from bodies whose param/return types support JIT promotion
 /// (scalar scalars only), then BFS-expands to include every user body
-/// they transitively call — those need to be compiled too so that
+/// they transitively call - those need to be compiled too so that
 /// intra-module call references resolve at finalize time.
 fn jit_compile_set<'a>(
     bodies: &'a [Body],
@@ -169,7 +169,7 @@ fn jit_compile_set<'a>(
         b.locals.iter().any(|l| match tcx.kind_of(l.ty) {
             // Inline Option/Result sentinels are two-word i128 values.
             // Non-enum Adts (structs) are also declined: the JIT-side
-            // struct lowering is unexercised — bodies holding struct
+            // struct lowering is unexercised - bodies holding struct
             // locals stay on bytecode until that lands.
             TyKind::Adt { def, .. } => {
                 def.local == u32::MAX || def.local == u32::MAX - 1 || !tcx.is_rc_managed(l.ty)
@@ -239,7 +239,7 @@ fn jit_compile_set<'a>(
 /// Compiles every body in `bodies` through cranelift-jit and returns
 /// the resulting handle table. Functions whose codegen path errors,
 /// or whose ABI shape is not supported by the dispatch trampoline,
-/// are silently skipped — the VM's existing bytecode dispatch picks
+/// are silently skipped - the VM's existing bytecode dispatch picks
 /// them up.
 #[allow(
     clippy::implicit_hasher,
@@ -265,14 +265,14 @@ pub fn compile_to_jit(
 
     // Pre-filter: only compile bodies reachable from JIT-promotable roots.
     // Bodies whose param/return types can't be marshalled through the
-    // trampoline (aggregates, closures) will never be promoted — compiling
+    // trampoline (aggregates, closures) will never be promoted - compiling
     // them wastes Cranelift IR capacity and inflates peak RSS.  The BFS
     // below finds the transitive closure of user-function calls from the
     // promotable roots so inter-body calls inside the compiled set resolve.
     let compile_set = jit_compile_set(bodies, tcx, enum_shapes);
     // Clone only the bodies we'll actually compile. Skipping bodies
     // that can never be promoted (aggregate params/returns) saves
-    // tens of megabytes of peak RSS without affecting correctness —
+    // tens of megabytes of peak RSS without affecting correctness -
     // the bytecode VM handles any body the JIT doesn't cover.
     let filtered: Vec<Body> = bodies
         .iter()
@@ -300,7 +300,7 @@ pub fn compile_to_jit(
             continue;
         };
         let Some((params, returns)) = body_kinds(body, tcx, enum_shapes) else {
-            // Some param/return type isn't a primitive scalar — the
+            // Some param/return type isn't a primitive scalar - the
             // dispatch trampoline can't marshal it, so the VM will
             // fall back to bytecode for this fn.
             continue;
@@ -339,7 +339,7 @@ pub fn compile_to_jit(
 
 /// Returns `true` when `body` contains a `Call(Const(Str(name)))`
 /// whose `name` cranelift would lower as the "soft-zero stub"
-/// (native.rs ~line 2099) — i.e. neither a registered runtime
+/// (native.rs ~line 2099) - i.e. neither a registered runtime
 /// symbol nor a user-defined body name nor a recognised
 /// variant-constructor / qualified-path shape. The stub silently
 /// zeroes the destination, so JIT-promoting such a body would
@@ -373,7 +373,7 @@ fn body_calls_jit_unsafe(
         // Variant-constructor / qualified-path shape: the cranelift
         // backend handles these explicitly (Ok/Err/Some pass-through;
         // anything qualified or capitalised falls through to a sound
-        // zero-default semantics — uncommon but well-formed).
+        // zero-default semantics - uncommon but well-formed).
         let starts_uppercase = n.chars().next().is_some_and(char::is_uppercase);
         // Compiler-internal intrinsics (double-underscore prefix, e.g.
         // `__concat` for `format!`) always have a dedicated cranelift
@@ -403,7 +403,7 @@ fn body_kinds(
 
 fn ty_to_kind(tcx: &TyCtxt, ty: Ty, enum_shapes: &HashMap<u32, u32>) -> Option<JitKind> {
     // References to heap enums are the same native pointer at the ABI
-    // (compiled convention) — peel before classifying.
+    // (compiled convention) - peel before classifying.
     let mut ty = ty;
     while let TyKind::Ref { inner, .. } = tcx.kind_of(ty) {
         ty = *inner;
@@ -435,7 +435,7 @@ fn ty_to_kind(tcx: &TyCtxt, ty: Ty, enum_shapes: &HashMap<u32, u32>) -> Option<J
 /// Registers every `gos_rt_*` C-ABI symbol the codegen may emit
 /// against the JIT builder so that compiled bodies can call into the
 /// runtime in-process. Kept in lock-step with the symbol set the
-/// AOT object backend imports — anything the codegen knows how to
+/// AOT object backend imports - anything the codegen knows how to
 /// emit must resolve here.
 ///
 /// Returns the set of registered symbol names so the JIT-eligibility
@@ -443,7 +443,7 @@ fn ty_to_kind(tcx: &TyCtxt, ty: Ty, enum_shapes: &HashMap<u32, u32>) -> Option<J
 /// resolve (and would silently lower to a typed-zero stub).
 #[allow(
     clippy::too_many_lines,
-    reason = "flat-shape dispatch / lowering — splitting hides the per-arm intent"
+    reason = "flat-shape dispatch / lowering - splitting hides the per-arm intent"
 )]
 fn register_runtime_symbols(builder: &mut JITBuilder) -> std::collections::HashSet<&'static str> {
     use gossamer_runtime::c_abi as rt;
@@ -1167,7 +1167,7 @@ fn register_runtime_symbols(builder: &mut JITBuilder) -> std::collections::HashS
         "gos_rt_time_now_ms"         => rt::gos_rt_time_now_ms,
         // Fn-trait coercion trampolines (closure_fn_trait_plan.md).
         // Emitted by the cranelift codegen when a bare `fn`/`fn item`
-        // value is wrapped into a `Fn(args) -> ret` slot — the env
+        // value is wrapped into a `Fn(args) -> ret` slot - the env
         // blob's offset 0 holds one of these, offset 8 holds the
         // real fn ptr.
         "gos_rt_fn_tramp_0"          => rt::gos_rt_fn_tramp_0,
@@ -1187,7 +1187,7 @@ fn register_runtime_symbols(builder: &mut JITBuilder) -> std::collections::HashS
         // Block-write helpers used by `Stream::write_byte_array`
         // for bulk per-line byte dumps.
         "gos_rt_stream_write_byte_array" => rt::gos_rt_stream_write_byte_array,
-        // Heap-allocated i64 vector — `I64Vec` in source.
+        // Heap-allocated i64 vector - `I64Vec` in source.
         // Used as a shared scratch buffer by goroutine workers.
         "gos_rt_heap_i64_new"        => rt::gos_rt_heap_i64_new,
         "gos_rt_heap_i64_free"       => rt::gos_rt_heap_i64_free,
@@ -1198,7 +1198,7 @@ fn register_runtime_symbols(builder: &mut JITBuilder) -> std::collections::HashS
                                      => rt::gos_rt_heap_i64_write_lines_to_stdout,
         "gos_rt_heap_i64_write_bytes_to_stdout"
                                      => rt::gos_rt_heap_i64_write_bytes_to_stdout,
-        // U8Vec — 1-byte-per-element heap vec for byte-oriented
+        // U8Vec - 1-byte-per-element heap vec for byte-oriented
         // scratch buffers. Same shape as the i64 family but
         // with byte-aligned storage.
         "gos_rt_heap_u8_new"         => rt::gos_rt_heap_u8_new,
@@ -1285,17 +1285,17 @@ fn register_runtime_symbols(builder: &mut JITBuilder) -> std::collections::HashS
 /// Walks both binding-symbol registration paths and registers each
 /// `(name, addr)` with the JIT builder.
 ///
-/// - [`crate::native_symbols::NATIVE_SYMBOLS`] — the link-time
+/// - [`crate::native_symbols::NATIVE_SYMBOLS`] - the link-time
 ///   `linkme::distributed_slice` populated by
 ///   `gossamer_binding::register_module!` for every binding item.
-/// - [`crate::native_symbols::native_symbols_snapshot`] — the
+/// - [`crate::native_symbols::native_symbols_snapshot`] - the
 ///   runtime `Mutex<Vec>` registry populated by the legacy
 ///   `force_link()` path. Kept for backward compatibility with
 ///   bindings that publish from a runtime hook.
 ///
 /// Returns the leaked `&'static str` names so the caller can fold
-/// them into the runtime-symbol set used by [`body_calls_jit_unsafe`]
-/// — that keeps bodies that call bindings eligible for JIT
+/// them into the runtime-symbol set used by [`body_calls_jit_unsafe`] -
+/// that keeps bodies that call bindings eligible for JIT
 /// promotion (the `body_kinds` primitive-only filter still vetoes
 /// anything the dispatch trampoline can't marshal).
 fn register_binding_symbols(builder: &mut JITBuilder) -> Vec<&'static str> {

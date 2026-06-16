@@ -4,14 +4,14 @@
 //! interpolation and conditional flows, without dragging in a full
 //! action language. Supported syntax:
 //!
-//! - `{{ .field }}` — looks up `field` in the data map.
-//! - `{{ .a.b }}` — chained map lookups.
-//! - `{{ if .x }}…{{ else }}…{{ end }}` — boolean branch.
-//! - `{{ range .items }}…{{ end }}` — iterate a sequence; inside the
+//! - `{{ .field }}` - looks up `field` in the data map.
+//! - `{{ .a.b }}` - chained map lookups.
+//! - `{{ if .x }}…{{ else }}…{{ end }}` - boolean branch.
+//! - `{{ range .items }}…{{ end }}` - iterate a sequence; inside the
 //!   loop, `.` refers to the current item and parent fields are still
 //!   reachable via stack-search.
-//! - `{{ "literal" }}` — string literal.
-//! - `{{- .x -}}` / `{{- if -}}` — strip surrounding whitespace.
+//! - `{{ "literal" }}` - string literal.
+//! - `{{- .x -}}` / `{{- if -}}` - strip surrounding whitespace.
 //! - Comments: `{{/* anything */}}`.
 //!
 //! No custom function pipelines, no auto-escape (use
@@ -220,7 +220,7 @@ impl FuncMap {
             _ => Ok(Value::Int(0)),
         });
         m.add("default", |args| {
-            // `{{ .x | default "fallback" }}` — return arg if .x
+            // `{{ .x | default "fallback" }}` - return arg if .x
             // is falsy / missing, else .x.
             let value = args.first().cloned().unwrap_or(Value::Null);
             let fallback = args.get(1).cloned().unwrap_or(Value::Null);
@@ -768,7 +768,7 @@ mod tests {
 
     #[test]
     fn pipeline_passes_through_when_no_stages() {
-        // Just a substitution — no pipeline functions.
+        // Just a substitution - no pipeline functions.
         let data = map(&[("x", Value::String("plain".into()))]);
         let out = render("{{ .x }}", &data).unwrap();
         assert_eq!(out, "plain");

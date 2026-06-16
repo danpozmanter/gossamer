@@ -1,13 +1,16 @@
 //! UTF-8 fidelity through string literals + `format!()` templates.
 //!
 //! Regression coverage for the 2026-05-07 report: a `format!()`
-//! template containing an em-dash (`—`, U+2014, 3 UTF-8 bytes)
-//! printed as `â` followed by two control codes because the
-//! parse-time `parse_format_template` walk pushed every UTF-8 byte
-//! as a separate `char`, double-encoding multi-byte sequences.
-//! Each test asserts that the same source produces byte-identical
-//! stdout across `gos run` (VM), `gos build` (Cranelift), and `gos
-//! build --release` (LLVM) and matches the expected UTF-8 output.
+//! template containing a 3-byte UTF-8 code point printed as `â`
+//! followed by two control codes because the parse-time
+//! `parse_format_template` walk pushed every UTF-8 byte as a
+//! separate `char`, double-encoding multi-byte sequences. The bug
+//! first surfaced with an em dash; any 3-byte code point exercises
+//! the same path, so these tests use the euro sign (`€`, U+20AC,
+//! 3 UTF-8 bytes). Each test asserts that the same source produces
+//! byte-identical stdout across `gos run` (VM), `gos build`
+//! (Cranelift), and `gos build --release` (LLVM) and matches the
+//! expected UTF-8 output.
 
 #![allow(missing_docs)]
 
@@ -168,26 +171,27 @@ fn assert_three_tier_utf8(tag: &str, source: &str, expected: &str) {
 }
 
 #[test]
-fn em_dash_in_format_template_round_trips_uncorrupted() {
-    // The 2026-05-07 report: a format!() template with an em-dash
-    // printed as `â\u{80}\u{94}` because the parse-time template
-    // walk pushed each UTF-8 byte as its own char, double-encoding
-    // 3-byte code points into 6-byte garbage.
+fn multibyte_in_format_template_round_trips_uncorrupted() {
+    // The 2026-05-07 report: a format!() template with a 3-byte
+    // UTF-8 code point printed as `â\u{80}\u{94}` because the
+    // parse-time template walk pushed each UTF-8 byte as its own
+    // char, double-encoding 3-byte code points into 6-byte garbage.
+    // The euro sign is 3 UTF-8 bytes, exercising the same path.
     let src = r#"
 fn main() {
-    let port = 8081
-    let msg = format!("not reachable on :{} after 30s — start it manually", port)
+    let balance = 5
+    let msg = format!("balance is €{} after fees", balance)
     println!("{}", msg)
 }
 "#;
-    let expected = "not reachable on :8081 after 30s — start it manually";
-    assert_three_tier_utf8("em_dash_format", src, expected);
+    let expected = "balance is €5 after fees";
+    assert_three_tier_utf8("multibyte_format", src, expected);
 }
 
 #[test]
 fn ascii_only_format_template_round_trips_uncorrupted() {
     // Sanity check that the same dispatch path doesn't perturb
-    // ASCII-only templates — the fix must not regress the
+    // ASCII-only templates - the fix must not regress the
     // common case.
     let src = r#"
 fn main() {
@@ -202,15 +206,15 @@ fn main() {
 #[test]
 fn multibyte_glyphs_in_println_round_trip() {
     // String literal with assorted multi-byte UTF-8 chars
-    // (em-dash, en-dash, copyright, ellipsis, accented latin).
-    // Each fully-3-byte and 2-byte char path must survive
-    // parse-time + lower-time + runtime emission untouched.
+    // (euro sign, trademark, copyright, ellipsis, accented latin).
+    // Each 3-byte and 2-byte char path must survive parse-time +
+    // lower-time + runtime emission untouched.
     let src = r#"
 fn main() {
-    println!("— ™ © … é á")
+    println!("€ ™ © … é á")
 }
 "#;
-    assert_three_tier_utf8("multibyte_glyphs", src, "— ™ © … é á");
+    assert_three_tier_utf8("multibyte_glyphs", src, "€ ™ © … é á");
 }
 
 #[test]
@@ -218,8 +222,8 @@ fn unicode_in_format_with_named_arg_round_trips() {
     let src = r#"
 fn main() {
     let n = 7
-    println!("{n} — done")
+    println!("{n} € total")
 }
 "#;
-    assert_three_tier_utf8("named_arg_unicode", src, "7 — done");
+    assert_three_tier_utf8("named_arg_unicode", src, "7 € total");
 }

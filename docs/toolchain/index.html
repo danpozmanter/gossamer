@@ -1668,7 +1668,7 @@
 
 <h1 id="toolchain-reference">Toolchain reference<a class="headerlink" href="#toolchain-reference" title="Permanent link">&para;</a></h1>
 <p>Every subcommand of <code>gos</code>. Auto-generated output coming with
-Stream H polish — for now this page is hand-written and may lag
+Stream H polish - for now this page is hand-written and may lag
 the implementation by a rev.</p>
 <h2 id="front-end">Front-end<a class="headerlink" href="#front-end" title="Permanent link">&para;</a></h2>
 <table>
@@ -1685,7 +1685,7 @@ the implementation by a rev.</p>
 </tr>
 <tr>
 <td><code>gos check [--timings] FILE</code></td>
-<td>Parse + resolve + typecheck + exhaustiveness. With <code>--timings</code>, prints per-stage wall-clock times. Parse output is cached by source hash — re-invocations on an unchanged file reuse the parsed AST. Set <code>GOSSAMER_CACHE_TRACE=1</code> to log cache hits.</td>
+<td>Parse + resolve + typecheck + exhaustiveness. With <code>--timings</code>, prints per-stage wall-clock times. Parse output is cached by source hash - re-invocations on an unchanged file reuse the parsed AST. Set <code>GOSSAMER_CACHE_TRACE=1</code> to log cache hits.</td>
 </tr>
 <tr>
 <td><code>gos run [--vm] FILE</code></td>
@@ -1813,7 +1813,7 @@ the implementation by a rev.</p>
 </tbody>
 </table>
 <h2 id="repl">REPL<a class="headerlink" href="#repl" title="Permanent link">&para;</a></h2>
-<p><code>gos</code> with no arguments — or <code>gos repl</code> — drops into an
+<p><code>gos</code> with no arguments - or <code>gos repl</code> - drops into an
 interactive session. The first-slice supports:</p>
 <ul>
 <li>Numbered <code>In [N]:</code> / <code>Out[N]:</code> prompts, coloured green / red
@@ -1848,25 +1848,25 @@ completion, persistent history file, <code>%time</code> / <code>%timeit</code> /
 <p><code>gos lsp</code> is intended for editors, not humans. Shipped
 capabilities:</p>
 <ul>
-<li><code>textDocument/publishDiagnostics</code> on <code>didOpen</code> / <code>didChange</code> —
+<li><code>textDocument/publishDiagnostics</code> on <code>didOpen</code> / <code>didChange</code> -
   every open document runs through parse + resolve + typecheck and
   diagnostics are published inline.</li>
-<li><code>textDocument/hover</code> — renders a small markdown card with the
+<li><code>textDocument/hover</code> - renders a small markdown card with the
   identifier under the cursor and its interned type when the
   type checker can resolve it.</li>
-<li><code>textDocument/definition</code> — jumps to the declaring item for
+<li><code>textDocument/definition</code> - jumps to the declaring item for
   identifiers that resolve to a top-level <code>fn</code> / <code>struct</code> / <code>enum</code>
   / <code>trait</code> / <code>type</code> / <code>const</code> / <code>static</code> / <code>mod</code>.</li>
-<li><code>textDocument/completion</code> — completion provider for top-level
+<li><code>textDocument/completion</code> - completion provider for top-level
   items and keywords in scope.</li>
-<li><code>textDocument/references</code> — every whole-word occurrence of the
+<li><code>textDocument/references</code> - every whole-word occurrence of the
   symbol under the cursor, in the same document. Matched
   syntactically; shadowed locals are reported alongside the real
   references until the semantic use-to-def map lands.</li>
-<li><code>textDocument/prepareRename</code> + <code>textDocument/rename</code> — returns
+<li><code>textDocument/prepareRename</code> + <code>textDocument/rename</code> - returns
   a <code>WorkspaceEdit</code> that renames every occurrence of the symbol
   in the file. Rejects non-identifier <code>newName</code> inputs.</li>
-<li><code>textDocument/inlayHint</code> — emits a <code>: &lt;type&gt;</code> ghost-text hint
+<li><code>textDocument/inlayHint</code> - emits a <code>: &lt;type&gt;</code> ghost-text hint
   after every <code>let</code> binding and closure parameter whose type the
   user did not spell out. Same shape rust-analyzer uses for Rust.</li>
 </ul>
@@ -1876,7 +1876,7 @@ capabilities:</p>
 <p>Plug-ins that wire <code>gos lsp</code> into common editors live in a separate
 repo:
 <a href="https://github.com/danpozmanter/gossamer-editor-support"><code>danpozmanter/gossamer-editor-support</code></a>
-— ships VSCode, Vim, Neovim, Helix, Emacs, Sublime, Zed clients
+- ships VSCode, Vim, Neovim, Helix, Emacs, Sublime, Zed clients
 plus a tree-sitter grammar.</p>
 <h2 id="smoke-test">Smoke-test<a class="headerlink" href="#smoke-test" title="Permanent link">&para;</a></h2>
 <div class="language-sh highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>python3<span class="w"> </span>-<span class="w"> </span><span class="s">&lt;&lt;&#39;PY&#39;</span>

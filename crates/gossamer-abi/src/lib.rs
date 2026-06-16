@@ -8,7 +8,7 @@
 /// Reference-counting type-meta ABI (kind tags + blob layout) shared by
 /// the MIR lowerer and the runtime.
 pub mod rc;
-/// ABI registry — the typed list of all `gos_rt_*` symbols.
+/// ABI registry - the typed list of all `gos_rt_*` symbols.
 pub mod registry;
 /// Core ABI types: [`AbiType`], [`AbiSig`], [`RuntimeEntry`].
 pub mod types;
@@ -110,7 +110,7 @@ mod tests {
     fn registry_size_sanity() {
         assert!(
             REGISTRY.len() > 200,
-            "only {} entries — registry likely truncated",
+            "only {} entries - registry likely truncated",
             REGISTRY.len()
         );
     }

@@ -9,10 +9,10 @@
 //
 // Body "Aÿ™zABC" = 41 C3 BF E2 84 A2 7A 41 42 43 (10 bytes;
 // values above 0x7F catch sign-extension and word-stride bugs).
-// Chunks: 41c3bfe2 / 84a27a41 / 4243 — byte sum 1291.
+// Chunks: 41c3bfe2 / 84a27a41 / 4243 - byte sum 1291.
 //
 // Self-terminating: the client runs in main and exits explicitly.
-// Binds a fixed loopback port — serialized under SERVER_PORT_LOCK
+// Binds a fixed loopback port - serialized under SERVER_PORT_LOCK
 // by `http_next_chunk_parity_across_tiers` in
 // crates/gossamer-cli/tests/tier_parity.rs.
 

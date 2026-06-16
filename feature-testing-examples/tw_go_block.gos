@@ -3,7 +3,7 @@
 // pool on every tier (the bytecode VM, the Cranelift JIT, and the
 // LLVM AOT backend). A single producer sends an ordered sequence and
 // closes the channel, so the `while let` drain observes the values in
-// send order — byte-identical across all three tiers.
+// send order - byte-identical across all three tiers.
 
 use std::sync::channel
 

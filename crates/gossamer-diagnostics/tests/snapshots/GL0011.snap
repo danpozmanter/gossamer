@@ -3,7 +3,7 @@ source: crates/gossamer-diagnostics/tests/snapshots.rs
 expression: rendered
 ---
 --- plain ---
-error[GL0011]: `panic!` inside `main` aborts without a clean exit code. Return a — here
+error[GL0011]: `panic!` inside `main` aborts without a clean exit code. Return a - here
 --- framed ---
 error[GL0011]: `panic!` inside `main` aborts without a clean exit code. Return a
   --> snap.gos:2:5

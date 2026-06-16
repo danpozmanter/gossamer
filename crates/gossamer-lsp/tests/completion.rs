@@ -37,7 +37,7 @@ fn method_completion_on_string_receiver() {
     );
     // The builtin String method table should include `to_string` and
     // `to_lower`/`to_upper`. Any one of the documented prefix matches
-    // is enough — assert at least one method survives.
+    // is enough - assert at least one method survives.
     let has_to_method = labels
         .iter()
         .any(|l| l.starts_with("to_") || l == "to_string");
@@ -56,7 +56,7 @@ fn type_qualified_completion_vec_associated() {
     let labels = completion_labels(&response);
     // The completion may surface zero items if the stdlib index does
     // not register `Vec` as a member-bearing type. We tolerate that
-    // — but if any items come back, none of them should be unrelated
+    // - but if any items come back, none of them should be unrelated
     // bare functions like `println`.
     for label in &labels {
         assert!(
@@ -77,7 +77,7 @@ fn stdlib_module_completion_after_path() {
         !labels.is_empty(),
         "expected std::fs members in use context, got {labels:?}"
     );
-    // `read_to_string` is one of the most-used fs entries — must be
+    // `read_to_string` is one of the most-used fs entries - must be
     // there as long as the stdlib index has any fs members.
     let has_read = labels.iter().any(|l| l == "read_to_string" || l == "read");
     assert!(

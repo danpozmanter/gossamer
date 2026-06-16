@@ -2,7 +2,7 @@
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 #![allow(clippy::cast_sign_loss)]
 
-//! Runtime support for `std::context` — request-scoped cancellation
+//! Runtime support for `std::context` - request-scoped cancellation
 //! and deadlines, modeled after Go's `context.Context`.
 //!
 //! This is the standalone all-tier handle surface:
@@ -10,7 +10,7 @@
 //! `cancel` / `is_cancelled` / `done` methods. Cancellation is eager
 //! down the tree (a `cancel` flips every descendant's flag) and
 //! `is_cancelled` also walks up the parent chain and honours an
-//! optional deadline. Deadlines use `std::time::Instant` only — no
+//! optional deadline. Deadlines use `std::time::Instant` only - no
 //! OS-specific timer code, so the shim is identical on every target.
 //!
 //! The closure-returning `with_cancel -> (ctx, cancel)` shape from the
@@ -96,14 +96,14 @@ fn close_done_chan(node: &GosCtx) {
     super::chan::chan_close_idempotent(chan);
 }
 
-/// `context::Context::background()` — a root context, never cancelled,
+/// `context::Context::background()` - a root context, never cancelled,
 /// no deadline.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_ctx_background() -> *mut GosCtx {
     ffi_entry!(std::ptr::null_mut(), { alloc_ctx(None, 0) })
 }
 
-/// `context::Context::with_cancel(parent)` — a child whose
+/// `context::Context::with_cancel(parent)` - a child whose
 /// cancellation can be triggered via `cancel`; cancelling an ancestor
 /// also cancels it.
 #[unsafe(no_mangle)]
@@ -111,7 +111,7 @@ pub unsafe extern "C" fn gos_rt_ctx_with_cancel(parent: *mut GosCtx) -> *mut Gos
     ffi_entry!(std::ptr::null_mut(), { alloc_ctx(None, parent as usize) })
 }
 
-/// `context::Context::with_timeout(parent, millis)` — a child whose
+/// `context::Context::with_timeout(parent, millis)` - a child whose
 /// `is_cancelled` flips `true` once `millis` have elapsed.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_ctx_with_timeout(parent: *mut GosCtx, millis: i64) -> *mut GosCtx {
@@ -133,7 +133,7 @@ fn cancel_node(addr: usize) {
     }
 }
 
-/// `ctx.cancel()` — cancel this context and every descendant.
+/// `ctx.cancel()` - cancel this context and every descendant.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_ctx_cancel(ctx: *mut GosCtx) {
     ffi_entry!((), {
@@ -158,7 +158,7 @@ fn node_is_cancelled(addr: usize) -> bool {
     node_is_cancelled(node.parent)
 }
 
-/// `ctx.is_cancelled()` — `1` when this context (or an ancestor) is
+/// `ctx.is_cancelled()` - `1` when this context (or an ancestor) is
 /// cancelled or its deadline has passed, else `0`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_ctx_is_cancelled(ctx: *mut GosCtx) -> i64 {
@@ -170,7 +170,7 @@ pub unsafe extern "C" fn gos_rt_ctx_is_cancelled(ctx: *mut GosCtx) -> i64 {
     })
 }
 
-/// `ctx.done()` — non-blocking cancellation check; identical to
+/// `ctx.done()` - non-blocking cancellation check; identical to
 /// `is_cancelled`. For the `select`-arm channel form, see
 /// `gos_rt_ctx_cancelled` / `ctx.done_chan()`.
 #[unsafe(no_mangle)]
@@ -183,7 +183,7 @@ pub unsafe extern "C" fn gos_rt_ctx_done(ctx: *mut GosCtx) -> i64 {
     })
 }
 
-/// `ctx.done_chan()` — returns the context's "done" channel as a
+/// `ctx.done_chan()` - returns the context's "done" channel as a
 /// receive endpoint. `cancel` (this context or any ancestor) closes
 /// the channel, so a `select { _ = ctx.done_chan().recv() => … }` arm
 /// fires on cancellation via closed-channel select readiness. Returns

@@ -1,4 +1,4 @@
-//! Runtime support for `std::slog` — structured, levelled logging.
+//! Runtime support for `std::slog` - structured, levelled logging.
 //! The core type is [`Logger`]: threads key/value pairs through
 //! `with`, emits records via `info`/`warn`/`error`, and delegates
 //! rendering to a pluggable [`Handler`].
@@ -79,7 +79,7 @@ pub struct Record {
     pub fields: Vec<Field>,
 }
 
-/// Logger handle — cheap to clone.
+/// Logger handle - cheap to clone.
 #[derive(Clone)]
 pub struct Logger {
     handler: Arc<dyn Handler>,

@@ -19,7 +19,7 @@ use bzip2::Compression;
 use bzip2::read::{BzDecoder, BzEncoder};
 
 // ---------------------------------------------------------------
-// bzip2 module — `std::compress::bzip2::{compress, decompress}`.
+// bzip2 module - `std::compress::bzip2::{compress, decompress}`.
 // Input is a `Vec<u8>` (GosVec), output is a
 // `Result<Vec<u8>, errors::Error>` (GosResult: disc 0 Ok with a
 // GosVec payload, disc 1 Err with a gos error handle). Byte-output
@@ -44,7 +44,7 @@ fn err_bytes_result(msg: &str) -> i128 {
     unsafe { super::vec::gos_rt_result_new(1, err as i64) }
 }
 
-/// `compress::bzip2::compress(data, level) -> Result<[u8], Error>` —
+/// `compress::bzip2::compress(data, level) -> Result<[u8], Error>` -
 /// `level` clamped to 0..=9 (0 fastest, 9 best), matching the std impl.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_compress_bzip2_compress(

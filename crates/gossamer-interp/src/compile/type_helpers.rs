@@ -102,7 +102,7 @@ impl<'tcx> FnBuilder<'tcx> {
     }
 
     /// `true` when `ty` (through `&` / `&mut` layers) is an array, vec,
-    /// or slice — a collection the for-loop fast path can drive by index
+    /// or slice - a collection the for-loop fast path can drive by index
     /// via `len()` + `IndexGet`. User `impl Iterator` types (`Adt`) are
     /// excluded so their stateful `next()` keeps its own desugar.
     pub(crate) fn is_indexable_collection_ty(&self, ty: gossamer_types::Ty) -> bool {
@@ -237,7 +237,7 @@ impl<'tcx> FnBuilder<'tcx> {
     }
 
     /// `true` when the `for`-loop receiver `expr` is an indexable
-    /// collection — either by its resolved type or, for a pattern-bound
+    /// collection - either by its resolved type or, for a pattern-bound
     /// local whose inferred type stayed an unresolved var, by the
     /// `collection_locals` tag recorded at bind time.
     pub(crate) fn receiver_is_collection(&self, expr: &HirExpr) -> bool {

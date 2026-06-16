@@ -75,7 +75,7 @@
 //! the process exit code, so the object file links through a
 //! standard `cc` invocation.
 //! Aggregates (tuples/arrays/structs), strings, closures, and
-//! anything that needs a GC heap are not yet lowered — those
+//! anything that needs a GC heap are not yet lowered - those
 //! constructs fall back to [`crate::emit::emit_module`] for
 //! inspection.
 

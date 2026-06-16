@@ -2,7 +2,7 @@
 
 Status: experimental
 
-Context-aware HTML templates with auto-escape (text/attr/URL/JS). The context classifier is heuristic — sound for typical server-rendered responses but NOT a content-security-policy substitute; sanitize untrusted HTML fragments with a dedicated sanitizer.
+Context-aware HTML templates with auto-escape (text/attr/URL/JS). The context classifier is heuristic - sound for typical server-rendered responses but NOT a content-security-policy substitute; sanitize untrusted HTML fragments with a dedicated sanitizer.
 
 ## Public items
 

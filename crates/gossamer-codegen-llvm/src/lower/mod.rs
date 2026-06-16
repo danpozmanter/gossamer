@@ -87,7 +87,7 @@ use crate::ty::{
 ///
 /// This is the single source of truth for every `gos_rt_*`
 /// declaration in the emitted LLVM IR. Panics if `name` is not in
-/// the registry — that surface is intentional: a missing entry is a
+/// the registry - that surface is intentional: a missing entry is a
 /// compiler bug (the lowerer is about to emit a call whose ABI the
 /// codebase has not committed to), and failing at LLVM IR emission
 /// time gives a clearer signal than waiting for the verifier or
@@ -95,7 +95,7 @@ use crate::ty::{
 fn declare_rt(refs: &mut std::collections::BTreeSet<String>, name: &str) {
     let entry = gossamer_abi::lookup(name).unwrap_or_else(|| {
         panic!(
-            "declare_rt: unknown runtime symbol {name:?} — add it to gossamer-abi/src/registry.rs"
+            "declare_rt: unknown runtime symbol {name:?} - add it to gossamer-abi/src/registry.rs"
         )
     });
     refs.insert(entry.llvm_declare_for(crate::emit::target_is_windows()));
@@ -109,7 +109,7 @@ pub(crate) struct Lowerer<'a> {
     /// Accumulator for the function body text.
     pub(crate) out: String,
     /// Monotonically increasing counter for SSA value names
-    /// (`%t0`, `%t1`, …) — LLVM requires unique numbering
+    /// (`%t0`, `%t1`, …) - LLVM requires unique numbering
     /// within a function.
     pub(crate) next_ssa: u32,
     /// Runtime function signatures we've referenced so the
@@ -124,7 +124,7 @@ pub(crate) struct Lowerer<'a> {
     /// (e.g. load the heap pointer from a slot when the param
     /// is `&Adt` rather than passing the slot address).
     pub(crate) param_tys_by_name: std::collections::HashMap<String, Vec<Ty>>,
-    /// String-constant pool — the emitter materialises each
+    /// String-constant pool - the emitter materialises each
     /// entry as a `@.str_N = private unnamed_addr constant
     /// [len x i8] c"..."` module-level global so
     /// `ConstValue::Str(_)` operands can reference real
@@ -152,7 +152,7 @@ pub(crate) struct Lowerer<'a> {
     /// rustc-compiled runtime through the `extern "C" fn(..) -> i128`
     /// ABI. On Win64 that ABI returns the 2-word `i128` in a vector
     /// register (xmm0), but a gossamer `define i128`/`ret i128` returns
-    /// it in the GP-register pair — so `gos_fn_addr` on these names is
+    /// it in the GP-register pair - so `gos_fn_addr` on these names is
     /// redirected to a `<16 x i8>` C-ABI return thunk (`name$cabi`).
     /// Maps the handler name to its parameter arity. Empty off Windows.
     pub(crate) cabi_handlers: std::collections::BTreeMap<String, usize>,
@@ -188,7 +188,7 @@ impl StringPool {
     /// global *alias* pointing at the byte body (`base + 5`). Every
     /// existing `@.gstr_N` reference therefore still resolves to the
     /// NUL-terminated bytes, while `ptr[-1]` is the tag and `ptr[-5]` the
-    /// length — the same header shape the heap allocator writes. The
+    /// length - the same header shape the heap allocator writes. The
     /// emitter calls this after every body has lowered.
     ///
     /// The backing constant is deliberately *not* `unnamed_addr`: the
@@ -197,7 +197,7 @@ impl StringPool {
     /// lets the Mach-O backend file 4/8/16-byte constants into the
     /// mergeable `__literal{4,8,16}` pools, where ld64 coalesces and
     /// reorders individual literals and does not honour the interior
-    /// `.alt_entry` body symbol — the alias then resolves into the wrong
+    /// `.alt_entry` body symbol - the alias then resolves into the wrong
     /// literal and the runtime reads a corrupt length/tag header
     /// (SIGSEGV/SIGBUS on macOS). Plain `constant` keeps it in `__const`,
     /// which preserves interior symbols on every target.
@@ -290,7 +290,7 @@ mod vec_elem_kind_llvm {
 /// local. Inspects the local's MIR type and returns the tag the
 /// runtime's deep-free path uses to reclaim element payloads.
 ///
-/// Returns `PRIMITIVE` for unresolved types and non-Vec shapes —
+/// Returns `PRIMITIVE` for unresolved types and non-Vec shapes -
 /// the runtime treats PRIMITIVE as shallow-free, which is correct
 /// for any element type that owns no further heap memory.
 fn llvm_vec_elem_kind_from_local(body: &Body, tcx: &TyCtxt, dest_local: Local) -> i32 {
@@ -333,7 +333,7 @@ fn render_const(cv: &ConstValue) -> String {
         ConstValue::Float(bits) => {
             // `ConstValue::Float` already stores the bit
             // pattern of an IEEE-754 binary64. LLVM accepts
-            // hex-encoded literals via `0xH…` — use that for
+            // hex-encoded literals via `0xH…` - use that for
             // exact round-tripping.
             format!("0x{bits:016X}")
         }
@@ -467,7 +467,7 @@ fn map_prelude_symbol(name: &str) -> &str {
         "math::pow" => "gos_rt_math_pow",
         "math::abs" => "gos_rt_math_abs",
         "math::sqrt" => "gos_rt_math_sqrt",
-        // 0.7.0 scalar cmp helpers — MIR routes user calls
+        // 0.7.0 scalar cmp helpers - MIR routes user calls
         // through `gos_rt_{min,max,clamp}_{i64,f64}` directly via
         // `lower_stdlib_free_call`, so the LLVM tier never reaches
         // these mappings via name lookup. They are listed here so
@@ -491,7 +491,7 @@ fn map_prelude_symbol(name: &str) -> &str {
         "WaitGroup::new" | "sync::WaitGroup::new" | "wg::new" => "gos_rt_wg_new",
         "I64Vec::new" | "heap_i64::new" => "gos_rt_heap_i64_new",
         "U8Vec::new" | "heap_u8::new" => "gos_rt_heap_u8_new",
-        // HeapU8 (U8Vec) method calls — already named correctly; listed
+        // HeapU8 (U8Vec) method calls - already named correctly; listed
         // explicitly so the dispatch-parity test sees a text reference.
         "gos_rt_heap_u8_new" => "gos_rt_heap_u8_new",
         "gos_rt_heap_u8_get" => "gos_rt_heap_u8_get",
@@ -562,7 +562,7 @@ mod tests {
         // A 2-char literal is an 8-byte header'd constant. With
         // `unnamed_addr` the Mach-O backend files it into the mergeable
         // `__literal8` pool, where ld64 coalesces/reorders literals and
-        // ignores the interior `.alt_entry` body symbol — corrupting the
+        // ignores the interior `.alt_entry` body symbol - corrupting the
         // `base + 5` body pointer (SIGSEGV/SIGBUS on macOS). The backing
         // constant must therefore stay a plain (address-significant)
         // `constant` so it lands in `__const`.

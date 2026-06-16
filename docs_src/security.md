@@ -16,7 +16,7 @@ the hardening roadmap. Reporting details are in
   plus an on-demand cycle collector), so use-after-free and
   double-free are not expressible in safe Gossamer code.
 - Minimal external dependencies: `anyhow`, `clap`,
-  `codespan-reporting`, `parking_lot`, `thiserror` — plus
+  `codespan-reporting`, `parking_lot`, `thiserror` - plus
   `insta` as a dev-only snapshot tool.
 
 ## Known gaps
@@ -47,7 +47,7 @@ know:
 Open caveats:
 
 - HTTP/2 + WebSockets are deferred to v1.x.
-- Per-line coverage instrumentation (Phase 2 follow-up) —
+- Per-line coverage instrumentation (Phase 2 follow-up) -
   the `--coverage` output today is at the test-file
   granularity.
 - Postgres / MySQL drivers belong to the package ecosystem
@@ -61,9 +61,9 @@ the 1.0.0 release.
 
 ## CI automation (planned)
 
-- `cargo deny` — license + advisory gate.
-- `cargo audit` — weekly vulnerability scan.
-- `cargo geiger` — unsafe-transitive usage snapshot.
-- `cargo fuzz` — targets for lexer, parser, HTTP parser,
+- `cargo deny` - license + advisory gate.
+- `cargo audit` - weekly vulnerability scan.
+- `cargo geiger` - unsafe-transitive usage snapshot.
+- `cargo fuzz` - targets for lexer, parser, HTTP parser,
   manifest parser. Nightly run.
-- `miri` — pure-Rust phases (diagnostics, MIR, lint) every PR.
+- `miri` - pure-Rust phases (diagnostics, MIR, lint) every PR.

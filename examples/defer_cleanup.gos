@@ -1,7 +1,7 @@
 // Block-scoped `defer` (Swift/Zig style).
 //
-// A `defer`red expression runs when control leaves its *enclosing block* —
-// whether by falling off the end, `return`, `break`, or `continue` — in
+// A `defer`red expression runs when control leaves its *enclosing block* -
+// whether by falling off the end, `return`, `break`, or `continue` - in
 // last-in-first-out order. Unlike Go's function-scoped defer, the unit of
 // scope is the nearest `{ }` block, so a defer inside a loop body runs at the
 // end of every iteration. Deferred expressions read the current value of any

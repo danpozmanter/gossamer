@@ -1,4 +1,4 @@
-//! Stream A.2 — end-to-end test that a Gossamer handler is actually
+//! Stream A.2 - end-to-end test that a Gossamer handler is actually
 //! dispatched when a real HTTP request lands on `http::serve`.
 //! The test drives the VM on a small source program. It
 //! picks a free port, launches the server in a background thread via
@@ -346,7 +346,7 @@ fn server_request_raw_body_preserves_binary_post_bytes() {
     // payload [0x68, 0xFF, 0x00, 0x69] contains an invalid-UTF-8
     // byte (the lossy `body` field would inflate it to a 3-byte
     // replacement char) and a NUL (which truncates c-strings on the
-    // compiled tier) — `raw_body` must survive both: len 4, sum 464.
+    // compiled tier) - `raw_body` must survive both: len 4, sum 464.
     let source = format!(
         "struct App {{ }}\n\
          impl App {{\n\

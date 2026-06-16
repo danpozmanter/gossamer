@@ -326,7 +326,7 @@ fn decode_query_component(s: &str) -> String {
     out
 }
 
-/// Lazily-read response body — the server drains it to the wire in
+/// Lazily-read response body - the server drains it to the wire in
 /// chunked frames instead of buffering it in memory.
 pub struct BodyStream(pub Box<dyn std::io::Read + Send>);
 
@@ -347,7 +347,7 @@ pub struct Response {
     pub body: Vec<u8>,
     /// Streamed body. When `Some`, the server ignores `body` and
     /// drains this reader to the client as `Transfer-Encoding:
-    /// chunked` frames without buffering — the proxy-passthrough
+    /// chunked` frames without buffering - the proxy-passthrough
     /// shape. A stream can only be served once, so `Response` is
     /// deliberately not `Clone`.
     pub body_stream: Option<BodyStream>,
@@ -376,7 +376,7 @@ impl Response {
         }
     }
 
-    /// Builds a JSON response — body bytes are inserted verbatim.
+    /// Builds a JSON response - body bytes are inserted verbatim.
     #[must_use]
     pub fn json(status: StatusCode, body: impl Into<Vec<u8>>) -> Self {
         let body = body.into();
@@ -499,7 +499,7 @@ pub mod server {
         /// `read_header_timeout` / `read_body_timeout` are
         /// `None`). Maintained for backwards compatibility.
         pub read_timeout: Option<Duration>,
-        /// Slowloris protection — bounds how long the server
+        /// Slowloris protection - bounds how long the server
         /// waits for the request line + headers to arrive. The
         /// counter resets per request on a keep-alive connection.
         pub read_header_timeout: Option<Duration>,
@@ -583,7 +583,7 @@ pub mod server {
     }
 
     /// Runs the accept loop on `listener`. Each accepted connection
-    /// gets its own worker thread — Gossamer's goroutine-per-
+    /// gets its own worker thread - Gossamer's goroutine-per-
     /// connection story for the single-threaded interpreter. The
     /// worker reads requests (potentially slow) on its own thread,
     /// forwards each parsed [`Request`] plus a one-shot response
@@ -592,8 +592,8 @@ pub mod server {
     /// subsequent requests unless the peer (or handler) asked to
     /// close.
     ///
-    /// The handler still runs on the main thread — the interpreter
-    /// is not `Send` — so handler invocation remains serialised.
+    /// The handler still runs on the main thread - the interpreter
+    /// is not `Send` - so handler invocation remains serialised.
     /// The important part is that slow clients no longer block
     /// accept or other in-flight handlers during their read / write
     /// phases, and a single TCP connection is reused across
@@ -636,7 +636,7 @@ pub mod server {
 
         let mut served: u64 = 0;
         let wake_self = || {
-            // Best-effort wake — acceptor is stuck in `accept()`.
+            // Best-effort wake - acceptor is stuck in `accept()`.
             let _ = TcpStream::connect_timeout(&bound_addr, Duration::from_millis(500));
         };
 
@@ -721,7 +721,7 @@ pub mod server {
                     // deliver readiness, and a fraction of those
                     // waits stretched past the client's 10 s
                     // timeout. Per-connection threads sidestep the
-                    // problem entirely — blocking I/O is fine when
+                    // problem entirely - blocking I/O is fine when
                     // each connection owns its own thread.
                     let _ = std::thread::Builder::new()
                         .name("gossamer-http-conn".into())
@@ -810,7 +810,7 @@ pub mod server {
                 payload.extend_from_slice(&tmp[..n]);
             }
             // Promote trailer headers into the main header bag
-            // per RFC 7230 §4.1.2 — handler code sees them on
+            // per RFC 7230 §4.1.2 - handler code sees them on
             // request.headers.
             let trailers: Vec<(String, String)> = decoder.trailers.clone();
             for (name, value) in trailers {
@@ -930,7 +930,7 @@ pub mod server {
                         break;
                     }
                     let result = resp_rx.recv();
-                    // Handler returned — clear the active cancel so the
+                    // Handler returned - clear the active cancel so the
                     // watcher doesn't fire on a stale token.
                     active_cancel.lock().take();
 
@@ -1002,7 +1002,7 @@ pub mod server {
     /// parsed request; `http10` is true when the request line said
     /// HTTP/1.0, and `client_close` is true when the peer sent
     /// `Connection: close`.
-    /// Parsed head of a request — everything before the body.
+    /// Parsed head of a request - everything before the body.
     pub(crate) struct RequestHead {
         pub method: Method,
         pub path: String,
@@ -1026,7 +1026,7 @@ pub mod server {
         if head.expects_continue {
             // RFC 7231 §5.1.1: send 100 Continue before reading
             // the body when the client signalled `Expect:
-            // 100-continue`. We send unconditionally — handlers
+            // 100-continue`. We send unconditionally - handlers
             // that want to short-circuit (4xx before body) can
             // simply not consume `request.body`.
             let stream = reader.get_mut();
@@ -1051,7 +1051,7 @@ pub mod server {
     /// `header_deadline` enforces a TOTAL elapsed-time deadline
     /// for the head phase; once it passes the function returns
     /// `TimedOut` even if individual syscalls are still
-    /// progressing. This is the slowloris guard — per-syscall
+    /// progressing. This is the slowloris guard - per-syscall
     /// timeouts (set by the worker via
     /// `TcpStream::set_read_timeout`) protect against zero-byte
     /// stalls; this deadline protects against drip-feed attacks.
@@ -1143,7 +1143,7 @@ pub mod server {
         )?;
         let client_close = wants_close(&head.headers);
         // Per-request cancellable context. Parented on
-        // background — the worker_loop cancels via the Cancel
+        // background - the worker_loop cancels via the Cancel
         // handle when the connection closes or the server
         // shutdown signal trips.
         let (ctx, cancel) = crate::context::with_cancel(&crate::context::Context::background());
@@ -1270,7 +1270,7 @@ pub mod server {
     /// scheduler; if the peer negotiated `h2`, the connection is
     /// served via [`crate::http_h2::serve_connection_async`]. A
     /// peer that negotiated `http/1.1` (or no ALPN at all) is
-    /// closed with a TLS-level shutdown — use [`bind_and_run_tls`]
+    /// closed with a TLS-level shutdown - use [`bind_and_run_tls`]
     /// for the h1-over-TLS path until the unified dispatch lands.
     pub fn bind_and_run_tls_h2<H>(
         addr: &str,
@@ -1319,7 +1319,7 @@ pub mod server {
                     };
                     let alpn = tls_stream.get_ref().1.alpn_protocol().map(<[u8]>::to_vec);
                     if alpn.as_deref() != Some(b"h2") {
-                        // Peer did not negotiate h2 — close cleanly.
+                        // Peer did not negotiate h2 - close cleanly.
                         // Future: dispatch into an async h1 loop.
                         return Ok(());
                     }
@@ -1462,7 +1462,7 @@ pub mod server {
     }
 
     /// A header value is safe to write only if it carries no CR, LF, or
-    /// NUL — the bytes that would terminate the line and split the
+    /// NUL - the bytes that would terminate the line and split the
     /// response.
     fn is_valid_header_value(value: &str) -> bool {
         !value.bytes().any(|b| b == b'\r' || b == b'\n' || b == 0)
@@ -1515,7 +1515,7 @@ pub mod server {
         {
             headers.insert("date", &now);
         }
-        // Server header — configurable per Config. Skip if the
+        // Server header - configurable per Config. Skip if the
         // handler set one or if `server_name` is None.
         if !headers.contains("server")
             && let Some(name) = server_name
@@ -1580,7 +1580,7 @@ pub mod server {
     /// produces them rather than after the body completes.
     ///
     /// On a mid-stream read error the connection is aborted WITHOUT
-    /// the terminal frame — per RFC 7230 §4.1 a chunked message that
+    /// the terminal frame - per RFC 7230 §4.1 a chunked message that
     /// ends before the zero-length chunk is incomplete, so closing
     /// early is the standard signal that lets clients detect
     /// truncation instead of mistaking a partial body for success.
@@ -1666,7 +1666,7 @@ pub mod server {
 /// caller's goroutine submits a job and parks on a result channel,
 /// so blocking sockets never strand the goroutine's worker thread.
 /// When the netpoller from Track A lands, the only change required
-/// is replacing `client_pool` with a poller-aware executor — the
+/// is replacing `client_pool` with a poller-aware executor - the
 /// public surface here is unaffected.
 #[derive(Debug, Clone)]
 pub struct Client {
@@ -1734,7 +1734,7 @@ impl Client {
         )
     }
 
-    /// Issues an OPTIONS request — typically a preflight or
+    /// Issues an OPTIONS request - typically a preflight or
     /// capability probe with no body.
     pub fn options(&self, url: &str, headers: &[(&str, &str)]) -> Result<Response, ClientError> {
         self.do_request(Method::Options, url, None, headers)
@@ -1922,7 +1922,7 @@ fn move_owned(
         let status = StatusCode(resp.status().as_u16());
         let mut headers = Headers::new();
         // `raw_header_pairs` keeps the wire sequence (order +
-        // duplicates — `set-cookie` repeats); the `Headers` map is
+        // duplicates - `set-cookie` repeats); the `Headers` map is
         // the deduplicating lookup view of the same pairs. Names are
         // lowercased to match the compiled tiers' client shims.
         let mut raw_header_pairs = Vec::new();
@@ -2013,7 +2013,7 @@ impl StreamResponse {
         }
     }
 
-    /// Raw `Read` access to the buffered body reader — the adapter
+    /// Raw `Read` access to the buffered body reader - the adapter
     /// hook for [`BodyStream`] proxy passthrough. Reads share the
     /// same `BufReader` as [`Self::next_line`] / [`Self::next_chunk`],
     /// so interleaving stays coherent.
@@ -2029,7 +2029,7 @@ impl Client {
     ///
     /// Like [`Self::do_request`], the dial+TLS handshake runs on the
     /// blocking I/O pool. Subsequent reads through `next_line` are
-    /// blocking on the calling thread — fine for the interpreter's
+    /// blocking on the calling thread - fine for the interpreter's
     /// goroutine model where each goroutine has its own host worker.
     pub fn stream(
         &self,
@@ -2080,7 +2080,7 @@ impl Client {
 
 /// Convenience streaming request. See [`Client::stream`]. Accepts
 /// any of `"GET"`, `"POST"`, `"PUT"`, `"DELETE"`, `"PATCH"`,
-/// `"HEAD"`, `"OPTIONS"` — unknown methods return
+/// `"HEAD"`, `"OPTIONS"` - unknown methods return
 /// `Err(ClientError::Transport(...))`.
 pub fn stream(
     method: &str,
@@ -2220,11 +2220,11 @@ impl ClientBuilder {
             // ureq v3's cookie jar is on by default when the
             // `cookies` cargo feature is enabled. Disabling at
             // runtime requires routing every request through a
-            // jar-less agent — for ABI 0.4 we surface a typed
+            // jar-less agent - for ABI 0.4 we surface a typed
             // error rather than silently ignoring the request.
             // Callers that want zero-cookies behaviour must
             // disable the `cookies` cargo feature at build time.
-            // (Documented; not a security defect — cookies are
+            // (Documented; not a security defect - cookies are
             // per-agent so user sessions don't leak across
             // client instances.)
         }
@@ -2253,7 +2253,7 @@ pub enum ClientError {
 /// Routes blocking HTTP I/O onto Track A's shared
 /// [`crate::blocking_pool`]. The pool parks the calling goroutine on
 /// a one-shot channel while a worker thread performs the
-/// system-level network round trip — host workers stay free to
+/// system-level network round trip - host workers stay free to
 /// schedule other goroutines. When the netpoller lands and TLS
 /// dialling becomes non-blocking, this is the single seam to swap.
 mod client_pool {
@@ -2292,8 +2292,8 @@ mod tests {
     fn client_keeps_duplicate_set_cookie_pairs_in_wire_order() {
         // RFC 6265 servers legally repeat `Set-Cookie`. The dedup
         // `Headers` map keeps only the last value, so the transport
-        // must also surface the raw wire sequence — order and
-        // duplicates intact — through `raw_header_pairs` (the view
+        // must also surface the raw wire sequence - order and
+        // duplicates intact - through `raw_header_pairs` (the view
         // the interp tier lifts, matching the compiled tiers).
         use std::io::{Read as _, Write as _};
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -2402,11 +2402,11 @@ mod tests {
     #[test]
     fn client_builder_with_mtls_pem_does_not_silently_drop_cert() {
         // A self-signed PEM pair that ureq can parse. We don't
-        // do a real handshake — the test verifies the PEM round
+        // do a real handshake - the test verifies the PEM round
         // trips through the bridge without being silently
         // discarded. If the bridge ever regresses to `let _ =
         // self.tls`, the build() returns Ok with no client cert
-        // injected and this test still passes — so we
+        // injected and this test still passes - so we
         // additionally read back the cert PEM through the public
         // accessor to prove the path.
         let cert_pem = include_bytes!("../tests/fixtures/test_cert.pem");

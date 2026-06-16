@@ -18,7 +18,7 @@
 //! - `cmd.spawn()` returns a `Child` handle that the caller can
 //!   wait on later.
 //! - `cmd.with_context(ctx)` ties the spawned child to a
-//!   cancellation `Context` — SIGTERM on cancel, SIGKILL after the
+//!   cancellation `Context` - SIGTERM on cancel, SIGKILL after the
 //!   grace window (configurable via `cmd.cancel_grace(ms)`).
 //! - `cmd.process_group(true)` puts the child in a fresh process
 //!   group on Unix (and `CREATE_NEW_PROCESS_GROUP` on Windows) so
@@ -121,25 +121,25 @@ impl ExitStatus {
 /// `TerminateProcess` and rejects the rest.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Signal {
-    /// SIGTERM — polite termination.
+    /// SIGTERM - polite termination.
     Term,
-    /// SIGKILL — unconditional termination.
+    /// SIGKILL - unconditional termination.
     Kill,
-    /// SIGSTOP — pause the process.
+    /// SIGSTOP - pause the process.
     Stop,
-    /// SIGCONT — resume a stopped process.
+    /// SIGCONT - resume a stopped process.
     Cont,
-    /// SIGHUP — terminal hangup.
+    /// SIGHUP - terminal hangup.
     Hup,
-    /// SIGINT — interactive interrupt.
+    /// SIGINT - interactive interrupt.
     Int,
-    /// SIGUSR1 — user-defined signal 1.
+    /// SIGUSR1 - user-defined signal 1.
     Usr1,
-    /// SIGUSR2 — user-defined signal 2.
+    /// SIGUSR2 - user-defined signal 2.
     Usr2,
-    /// SIGPIPE — broken pipe.
+    /// SIGPIPE - broken pipe.
     Pipe,
-    /// SIGQUIT — quit + dump core.
+    /// SIGQUIT - quit + dump core.
     Quit,
 }
 
@@ -149,7 +149,7 @@ impl Signal {
     /// the correct per-OS value (e.g. SIGUSR1 is 10 on Linux but 30 on
     /// macOS / BSD, and SIGSTOP is 19 on Linux but 17 on macOS). A
     /// single hardcoded Linux table silently mis-sent signals on macOS
-    /// — `Stop` resolved to macOS's SIGCONT and resumed the target.
+    /// - `Stop` resolved to macOS's SIGCONT and resumed the target.
     #[cfg(unix)]
     #[must_use]
     pub const fn signum(self) -> i32 {
@@ -238,7 +238,7 @@ impl Child {
 
     /// Waits up to `ms` milliseconds for the child to exit. Returns
     /// `Some(status)` if it finished in time, `None` on timeout
-    /// (the child is left alive). Polls with a 25 ms backoff —
+    /// (the child is left alive). Polls with a 25 ms backoff -
     /// short enough to feel responsive, long enough to avoid burning
     /// CPU on long waits.
     pub fn wait_with_timeout(&mut self, ms: u64) -> Result<Option<ExitStatus>, IoError> {
@@ -846,7 +846,7 @@ fn terminate_pid(pid: u32) -> bool {
 #[cfg(windows)]
 fn wait_pid_timeout_windows(pid: u32, ms: u32) -> i64 {
     // SAFETY: OpenProcess / WaitForSingleObject / GetExitCodeProcess
-    // / CloseHandle — every error path returns a sentinel.
+    // / CloseHandle - every error path returns a sentinel.
     unsafe {
         unsafe extern "system" {
             fn OpenProcess(desired_access: u32, inherit_handle: i32, process_id: u32) -> isize;
@@ -1226,7 +1226,7 @@ mod tests {
         }
         // Parent forks two background sleeps; killing the group
         // should reap them all. We assert the parent exits (via
-        // kill_group) — we can't trivially observe the grandchildren
+        // kill_group) - we can't trivially observe the grandchildren
         // without ps, so the lifecycle assertion is the proxy.
         let mut child = Command::new("sh")
             .args(["-c", "sleep 30 & sleep 30 & wait"].map(String::from))

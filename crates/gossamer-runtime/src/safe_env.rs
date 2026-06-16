@@ -8,8 +8,8 @@
 //! `std::env::set_var` is `unsafe fn` because POSIX `setenv` is not
 //! thread-safe: a concurrent reader can observe a torn pointer or
 //! use-after-free if another thread mutates the env table while the
-//! read is in flight. The standard mitigation — and Gossamer's
-//! contract — is to set environment variables **before any
+//! read is in flight. The standard mitigation - and Gossamer's
+//! contract - is to set environment variables **before any
 //! goroutine spawn or thread creation**.
 //!
 //! Beyond that mitigation, every external library that reads the
@@ -40,7 +40,7 @@ use parking_lot::Mutex;
 /// concurrent Gossamer goroutines / threads can't race their
 /// `setenv` calls against each other. This does NOT help against
 /// third-party C libraries reading the env table without
-/// coordinating through this lock — POSIX `setenv` is
+/// coordinating through this lock - POSIX `setenv` is
 /// fundamentally racy against any reader that doesn't share the
 /// lock, and Rust has no way to retrofit thread-safety onto libc.
 ///

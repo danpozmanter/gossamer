@@ -4,7 +4,7 @@
 # acceptance threshold is the total user+system CPU consumed during
 # those two wall-clock seconds.
 #
-# Threshold rationale: 200 ms locally — we measure single-digit ms
+# Threshold rationale: 200 ms locally - we measure single-digit ms
 # after Track A. CI's hosted runners jitter, so the gate is bumped
 # to 400 ms to absorb that without losing the regression signal
 # (a return to busy-poll would burn 1500 ms+).
@@ -17,7 +17,7 @@ gos="${GOS:-$repo/target/release/gos}"
 threshold_ms="${IDLE_CPU_THRESHOLD_MS:-400}"
 
 if [ ! -x "$gos" ]; then
-    echo "error: gos binary not found at $gos — set GOS or build first" >&2
+    echo "error: gos binary not found at $gos - set GOS or build first" >&2
     exit 2
 fi
 
@@ -52,7 +52,7 @@ printf 'idle empty.gos: user=%ss sys=%ss total=%sms (threshold=%sms)\n' \
     "$user_s" "$sys_s" "$total_ms" "$threshold_ms"
 
 if [ "$total_ms" -gt "$threshold_ms" ]; then
-    echo "FAIL: idle CPU above threshold — runtime is busy-polling somewhere" >&2
+    echo "FAIL: idle CPU above threshold - runtime is busy-polling somewhere" >&2
     exit 1
 fi
 echo "ok"

@@ -1440,7 +1440,7 @@
   <a href="#streamed-responses-responsestream" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Streamed responses — Response::stream
+        Streamed responses - Response::stream
       
     </span>
   </a>
@@ -1543,7 +1543,7 @@
 <tr>
 <td><code>serve</code></td>
 <td>fn</td>
-<td>Convenience: bind and serve an HTTP handler. <code>Result&lt;(), Error&gt;</code> — a bind failure is an Err value.</td>
+<td>Convenience: bind and serve an HTTP handler. <code>Result&lt;(), Error&gt;</code> - a bind failure is an Err value.</td>
 </tr>
 <tr>
 <td><code>Client</code></td>
@@ -1653,7 +1653,7 @@
 <tr>
 <td><code>Trailers</code></td>
 <td>type</td>
-<td>HTTP/2 trailing HEADERS (alias for Headers) — used by <code>ResponseWriter::write_trailers</code> and <code>Request::trailers</code>.</td>
+<td>HTTP/2 trailing HEADERS (alias for Headers) - used by <code>ResponseWriter::write_trailers</code> and <code>Request::trailers</code>.</td>
 </tr>
 <tr>
 <td><code>PushOptions</code></td>
@@ -1708,7 +1708,7 @@
 <tr>
 <td><code>body</code></td>
 <td><code>String</code></td>
-<td>Request body as UTF-8 (lossy — invalid sequences become U+FFFD).</td>
+<td>Request body as UTF-8 (lossy - invalid sequences become U+FFFD).</td>
 </tr>
 <tr>
 <td><code>raw_body</code></td>
@@ -1726,10 +1726,10 @@
 <h2 id="response"><code>Response</code><a class="headerlink" href="#response" title="Permanent link">&para;</a></h2>
 <h3 id="constructors">Constructors<a class="headerlink" href="#constructors" title="Permanent link">&para;</a></h3>
 <ul>
-<li><code>Response::text(status, body)</code> — sets <code>content-type: text/plain; charset=utf-8</code>.</li>
-<li><code>Response::json(status, body)</code> — sets <code>content-type: application/json</code>.</li>
-<li><code>Response::stream(status, content_type, rs)</code> — streamed body; see below.</li>
-<li>Struct literal — every field is optional and defaults sensibly:</li>
+<li><code>Response::text(status, body)</code> - sets <code>content-type: text/plain; charset=utf-8</code>.</li>
+<li><code>Response::json(status, body)</code> - sets <code>content-type: application/json</code>.</li>
+<li><code>Response::stream(status, content_type, rs)</code> - streamed body; see below.</li>
+<li>Struct literal - every field is optional and defaults sensibly:</li>
 </ul>
 <div class="language-text highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>http::Response {
 <a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>    status: 202,
@@ -1777,7 +1777,7 @@ field; with neither set the default is <code>text/plain; charset=utf-8</code>.</
 <tr>
 <td><code>raw_bytes</code></td>
 <td><code>[u8]</code></td>
-<td>Exact body bytes — the binary-safe counterpart of <code>body</code>.</td>
+<td>Exact body bytes - the binary-safe counterpart of <code>body</code>.</td>
 </tr>
 <tr>
 <td><code>content_type</code></td>
@@ -1796,7 +1796,7 @@ field; with neither set the default is <code>text/plain; charset=utf-8</code>.</
 </tr>
 </tbody>
 </table>
-<h2 id="streamed-responses-responsestream">Streamed responses — <code>Response::stream</code><a class="headerlink" href="#streamed-responses-responsestream" title="Permanent link">&para;</a></h2>
+<h2 id="streamed-responses-responsestream">Streamed responses - <code>Response::stream</code><a class="headerlink" href="#streamed-responses-responsestream" title="Permanent link">&para;</a></h2>
 <p><code>Response::stream(status, content_type, rs)</code> takes a <code>ResponseStream</code>
 obtained from <code>http::stream</code> and serves it as a chunked response: the
 server writes the head, then drains the upstream reader to the client in
@@ -1804,7 +1804,7 @@ chunked frames with a flush after each one, so bytes flow end-to-end
 without buffering the body.</p>
 <p>Consume semantics: constructing <code>Response::stream</code> consumes the
 <code>ResponseStream</code>. After construction, <code>next_line</code> / <code>next_chunk</code> on that
-stream return <code>None</code>, and a stream serves exactly one response — handing
+stream return <code>None</code>, and a stream serves exactly one response - handing
 the same stream to a second <code>Response::stream</code> produces an empty body.</p>
 <div class="language-text highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>fn forward_stream(method: String, target: String, body: String,
 <a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>                  headers: [(String, String)]) -&gt; http::Response {
@@ -1828,7 +1828,7 @@ the same stream to a second <code>Response::stream</code> produces an empty body
 <a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a>}
 </code></pre></div>
 <p><code>http::serve(addr, handler) -&gt; Result&lt;(), Error&gt;</code>: a bind failure (port in
-use, bad address) is an <code>Err</code> value for the caller's match — not a panic —
+use, bad address) is an <code>Err</code> value for the caller's match - not a panic -
 and <code>Ok(())</code> is returned on graceful shutdown:</p>
 <div class="language-text highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>if let Err(e) = http::serve(&quot;127.0.0.1:8080&quot;, app) {
 <a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>    eprintln!(&quot;{}&quot;, e)
@@ -1866,7 +1866,7 @@ and <code>Ok(())</code> is returned on graceful shutdown:</p>
 method fails before any connection is dialed:
 <code>Err("http::request: unknown method</code>BOGUS<code>")</code> (same shape for
 <code>request_bytes</code> / <code>stream</code> with their own prefixes). Network-level
-failures render as <code>Err("http: transport: ...")</code> — connection refused,
+failures render as <code>Err("http: transport: ...")</code> - connection refused,
 DNS, TLS, timeouts, and exhausted redirect budgets all use that prefix.</p>
 <p>An empty <code>body</code> / empty byte array sends no request body.</p>
 

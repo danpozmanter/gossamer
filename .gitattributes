@@ -20,7 +20,7 @@
 # under MSYS / Git Bash without CR-induced parse errors.
 *.bash         text eol=lf
 
-# Binary assets — never touch.
+# Binary assets - never touch.
 *.png   binary
 *.ico   binary
 *.woff  binary

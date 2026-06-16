@@ -22,7 +22,7 @@ const LLVM_SPECIAL_DECLS: &[&str] = &[
     "declare void @llvm.lifetime.end.p0(i64, ptr)",
     "@GOS_RT_STDOUT_BYTES = external local_unnamed_addr global [8192 x i8]",
     "@GOS_RT_STDOUT_LEN = external local_unnamed_addr global i64",
-    // Called directly by the @main shim — not reachable via declare_rt().
+    // Called directly by the @main shim - not reachable via declare_rt().
     "declare void @gos_rt_set_args(i32, ptr)",
     "declare void @gos_rt_flush_stdout()",
     "declare i32 @gos_rt_main_exit_code(i64)",
@@ -66,7 +66,7 @@ impl std::error::Error for BuildError {}
 ///
 /// `object` is the LLVM-emitted object containing every body
 /// the lowerer accepted. `fallback_bodies` is the list of body
-/// names the lowerer rejected — the driver feeds those into the
+/// names the lowerer rejected - the driver feeds those into the
 /// Cranelift backend, then links the two objects together.
 #[derive(Debug, Clone)]
 pub struct CompileOutcome {
@@ -156,7 +156,7 @@ const PARALLEL_MAX_THREADS: usize = 8;
 /// benefit from parallel codegen.
 const MIN_BODIES_PER_CHUNK: usize = 10;
 
-/// FNV-1a 64-bit hash — deterministic, no `std` hasher randomisation,
+/// FNV-1a 64-bit hash - deterministic, no `std` hasher randomisation,
 /// so cache keys are stable across process restarts.
 fn fnv1a_64(data: &[u8]) -> u64 {
     const PRIME: u64 = 0x0000_0100_0000_01b3;
@@ -169,7 +169,7 @@ fn fnv1a_64(data: &[u8]) -> u64 {
     h
 }
 
-/// Fingerprint of the running compiler — the package version plus the
+/// Fingerprint of the running compiler - the package version plus the
 /// executable's own size and mtime. Mixed into every cache key so a
 /// rebuilt or upgraded `gos` (whose codegen may emit different IR for
 /// the *same* MIR, e.g. after a runtime-symbol change) never reuses
@@ -178,7 +178,7 @@ fn fnv1a_64(data: &[u8]) -> u64 {
 /// Without this, identical MIR hashes to the same key across compiler
 /// versions, so a stale `.o` referencing a removed runtime symbol (or
 /// carrying retired per-call instrumentation) survives a codegen change
-/// — surfacing as link failures or "fixed-but-still-slow" regressions.
+/// - surfacing as link failures or "fixed-but-still-slow" regressions.
 fn compiler_fingerprint() -> u64 {
     static FP: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
     *FP.get_or_init(|| {
@@ -265,7 +265,7 @@ fn active_cache_dir() -> Option<PathBuf> {
 
 /// Variant of [`render_shape_thunk`] that uses `linkonce_odr` linkage
 /// instead of the default `define`. Required in per-body modules where
-/// the same thunk shape may be emitted by multiple compilation units —
+/// the same thunk shape may be emitted by multiple compilation units -
 /// `linkonce_odr` lets the linker keep one copy and discard the rest
 /// without a duplicate-symbol error.
 fn render_shape_thunk_linkonce(name: &str) -> Option<String> {
@@ -284,7 +284,7 @@ fn render_shape_thunk_linkonce(name: &str) -> Option<String> {
     for (i, t) in input_tys.iter().enumerate() {
         let _ = write!(params, ", {t} %a{i}");
     }
-    // `linkonce_odr` — identical definitions across objects; linker keeps one.
+    // `linkonce_odr` - identical definitions across objects; linker keeps one.
     let _ = writeln!(
         out,
         "define linkonce_odr {header_ret} @\"{name}\"({params}) {{"
@@ -324,7 +324,7 @@ struct ModuleCtx<'a> {
 /// Mixes per-body cache keys for all bodies in a chunk into a single
 /// chunk-level cache key. Stable across process restarts (FNV-1a).
 /// Module data layout for x86-64 targets: the LLVM defaults with one
-/// deviation — `i128` ABI alignment is 8, not 16. The runtime stores
+/// deviation - `i128` ABI alignment is 8, not 16. The runtime stores
 /// every value in flat 8-byte slots, so a by-value `{disc, payload}`
 /// Option/Result living at an odd word offset inside a struct is only
 /// ever 8-aligned; without an explicit layout, opt assumes the target's
@@ -391,7 +391,7 @@ fn render_chunk_module(
     // handed to a runtime server-start shim are called by the rustc
     // runtime through `extern "C" fn(..) -> i128` (xmm0 return), so their
     // `gos_fn_addr` must point at a `<16 x i8>` return thunk. Empty off
-    // Windows — the GP-register-pair `i128` already agrees there.
+    // Windows - the GP-register-pair `i128` already agrees there.
     let cabi_handlers = collect_cabi_handlers(ctx.all_bodies);
 
     for &idx in chunk_indices {
@@ -456,7 +456,7 @@ fn render_chunk_module(
     }
     writeln!(out).unwrap();
 
-    // Runtime declares — dedup by symbol name. Other module globals
+    // Runtime declares - dedup by symbol name. Other module globals
     // (e.g. `static mut` `linkonce_odr` definitions a chunk emits once
     // per referencing body) dedup by their full line, since the same
     // static yields a byte-identical definition at every access site.
@@ -484,14 +484,14 @@ fn render_chunk_module(
         writeln!(out).unwrap();
     }
 
-    // String pool — `private` so sequential IDs are safe within the chunk.
+    // String pool - `private` so sequential IDs are safe within the chunk.
     let pool_text = string_pool.borrow().render();
     if !pool_text.is_empty() {
         out.push_str(&pool_text);
         writeln!(out).unwrap();
     }
 
-    // RC type-meta blobs — one `private constant [N x i64]` per
+    // RC type-meta blobs - one `private constant [N x i64]` per
     // RC-managed allocation shape, referenced by `gos_rc_alloc` sites.
     // Emitted in every chunk that might reference them; `private` makes
     // each object file self-contained and unreferenced copies are
@@ -517,7 +517,7 @@ fn render_chunk_module(
         writeln!(out).unwrap();
     }
 
-    // Closure thunks — `linkonce_odr` so the linker deduplicates across chunks.
+    // Closure thunks - `linkonce_odr` so the linker deduplicates across chunks.
     for name in &thunk_names {
         if let Some(thunk) = render_shape_thunk_linkonce(name) {
             out.push_str(&thunk);
@@ -581,7 +581,7 @@ fn render_chunk_module(
 
 /// Core of the P2+P3 build path.
 ///
-/// **Phase 1 (incremental — P3):** bodies are partitioned into N chunks
+/// **Phase 1 (incremental - P3):** bodies are partitioned into N chunks
 /// where N is capped by both `PARALLEL_MAX_THREADS` and a minimum
 /// bodies-per-chunk threshold (10). The threshold keeps hot callees in
 /// the same module as their callers so opt can inline across them; a
@@ -590,16 +590,16 @@ fn render_chunk_module(
 /// chunks for parallel compilation. Each chunk's cache key mixes the
 /// per-body MIR hashes for all bodies it covers.
 ///
-/// **Phase 2 (rendering — serial):** cache-miss chunks are lowered to
+/// **Phase 2 (rendering - serial):** cache-miss chunks are lowered to
 /// LLVM IR via [`render_chunk_module`]. Each chunk gets one `.ll` with
 /// all its bodies defined plus extern declares for bodies in other chunks.
 /// Rendering is serial because [`Lowerer`] uses `Rc<RefCell<_>>` state
 /// that is not `Send`; at ~microseconds per body the serial cost is
 /// negligible compared to `opt`+`llc`.
 ///
-/// **Phase 3 (compilation — parallel — P2):** one `opt`+`llc` process
+/// **Phase 3 (compilation - parallel - P2):** one `opt`+`llc` process
 /// pair per chunk, all N running concurrently. Process-launch overhead is
-/// bounded to N invocations regardless of program size — for 78 bodies
+/// bounded to N invocations regardless of program size - for 78 bodies
 /// on 8 threads this is 8 launches instead of 78.
 ///
 /// Returns `(object_paths, triple, fallback_body_names)`.
@@ -654,7 +654,7 @@ fn compile_bodies_parallel_incremental(
     let chunk_size = bodies.len().div_ceil(n_chunks);
 
     // ---------------------------------------------------------------
-    // Phase 1 — chunk-level incremental cache check
+    // Phase 1 - chunk-level incremental cache check
     // ---------------------------------------------------------------
     let mut result_objects: Vec<(usize, PathBuf)> = Vec::new(); // (chunk_idx, path)
     // (chunk_idx, body_indices, ll_path, obj_path)
@@ -691,7 +691,7 @@ fn compile_bodies_parallel_incremental(
     }
 
     // ---------------------------------------------------------------
-    // Phase 2 — render chunk .ll files (serial)
+    // Phase 2 - render chunk .ll files (serial)
     // ---------------------------------------------------------------
     for (_, body_indices, ll_path, _) in &chunks_to_compile {
         let ir =
@@ -720,7 +720,7 @@ fn compile_bodies_parallel_incremental(
     }
 
     // ---------------------------------------------------------------
-    // Phase 3 — parallel opt+llc (one process pair per chunk — P2)
+    // Phase 3 - parallel opt+llc (one process pair per chunk - P2)
     // ---------------------------------------------------------------
     let err_slot: parking_lot::Mutex<Option<anyhow::Error>> = parking_lot::Mutex::new(None);
     let compiled: parking_lot::Mutex<Vec<(usize, PathBuf)>> = parking_lot::Mutex::new(Vec::new());
@@ -1064,7 +1064,7 @@ fn render_module_to_path(
     for g in &globals {
         validate_global_decl_shape(g)?;
         if let Some(rest) = g.strip_prefix("declare ") {
-            // Parse "<ret> @<name>(...)" — name is the substring
+            // Parse "<ret> @<name>(...)" - name is the substring
             // between '@' and '('.
             if let Some(at_idx) = rest.find('@')
                 && let Some(open_idx) = rest[at_idx..].find('(')
@@ -1146,7 +1146,7 @@ static REPRODUCIBLE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBo
 /// Default-on as of 0.8.0: any `BuildError::Unsupported` from a
 /// body lowering is a hard error. The historical silent Cranelift
 /// fallback path is forbidden under the user's "no fallbacks"
-/// policy — if something doesn't lower, it's a compiler bug, not
+/// policy - if something doesn't lower, it's a compiler bug, not
 /// a runtime tier-mismatch. Test runners that need to exercise
 /// the legacy permissive path can call
 /// [`set_strict_lowering`] with `false`.
@@ -1213,7 +1213,7 @@ pub fn want_race_instrumentation() -> bool {
     RACE_INSTRUMENTATION.load(std::sync::atomic::Ordering::Acquire)
 }
 
-/// `true` when strict lowering is requested — either by
+/// `true` when strict lowering is requested - either by
 /// [`set_strict_lowering`] or by the legacy
 /// `GOSSAMER_FAIL_ON_LLVM_FALLBACK` env var.
 fn want_strict_lowering() -> bool {
@@ -1358,7 +1358,7 @@ fn emit_dwarf_metadata(out: &mut String, bodies: &[Body]) {
 /// linker can hook them up.
 /// Verifies a single module-level global declaration string has
 /// the structural shape LLVM IR expects. We don't parse the full
-/// grammar — we only check the prefix tokens an entry must lead
+/// grammar - we only check the prefix tokens an entry must lead
 /// with. The check is cheap (string scan, no allocation) and
 /// catches the realistic regression mode: a *bare* identifier
 /// (e.g. `"my_const"` instead of `"@my_const = constant ..."`)
@@ -1400,7 +1400,7 @@ fn collect_thunk_names_in_body(body: &Body, out: &mut std::collections::BTreeSet
 /// server-start shim (`gos_rt_http_serve` / `gos_rt_http2_bind_and_run_h2c`),
 /// mapped to their parameter arity. The rustc-compiled runtime invokes
 /// each through `extern "C" fn(..) -> i128`, whose Win64 ABI returns the
-/// 2-word `i128` in xmm0 — but a gossamer `define i128`/`ret i128` returns
+/// 2-word `i128` in xmm0 - but a gossamer `define i128`/`ret i128` returns
 /// it in the GP-register pair. Each collected function therefore needs a
 /// `<16 x i8>` return thunk taken in place of its raw address. Returns an
 /// empty map off Windows, where both sides already agree on the GP pair.
@@ -1465,8 +1465,8 @@ fn collect_cabi_handlers(all_bodies: &[Body]) -> std::collections::BTreeMap<Stri
     handlers
 }
 
-/// Renders the Win64 handler-return thunk `define <16 x i8> @"name$cabi"`
-/// — it forwards every (pointer) argument to the real handler `@"name"`
+/// Renders the Win64 handler-return thunk `define <16 x i8> @"name$cabi"` -
+/// it forwards every (pointer) argument to the real handler `@"name"`
 /// (which returns the 2-word `i128` in the GP-register pair) and re-emits
 /// the value as `<16 x i8>` so the rustc runtime reads it from xmm0.
 /// Emitted in exactly the one chunk that owns the handler body (never duplicated).
@@ -1667,9 +1667,9 @@ fn invoke_llc_pipeline(
     // rejects them.
     //
     // Debug profile runs only the three passes the lowerer
-    // requires — `mem2reg` (alloca → SSA), `instcombine`
+    // requires - `mem2reg` (alloca → SSA), `instcombine`
     // (canonicalise integer casts), `simplifycfg` (dead-branch
-    // elimination) — saving ~50–80 ms vs the full `default<O1>`
+    // elimination) - saving ~50-80 ms vs the full `default<O1>`
     // pipeline that also runs the loop unroller, SLP vectoriser,
     // and ~40 other passes unused by our IR shapes.
     //
@@ -1697,7 +1697,7 @@ fn invoke_llc_pipeline(
         // host supports them. Without this, `opt` only knows
         // the baseline triple's features.
         //
-        // `GOS_LLVM_MCPU` overrides — `x86-64-v3` is the
+        // `GOS_LLVM_MCPU` overrides - `x86-64-v3` is the
         // documented escape hatch when the host's AVX-512
         // entry/exit transition penalty hurts short-running
         // benchmarks (the §5 release-perf investigation
@@ -1707,7 +1707,7 @@ fn invoke_llc_pipeline(
         // LLVM-O3 + `-mcpu=native` on AVX-512 hosts (Zen 5,
         // Sapphire Rapids, etc.) eagerly widens hot inner loops
         // to ZMM, then has to save/restore them around runtime
-        // calls (`gos_rt_*`) — costing more than it saves on
+        // calls (`gos_rt_*`) - costing more than it saves on
         // small-trip-count loops like fannkuch's `perm.swap`.
         // YMM (256-bit) is the sweet spot: AVX2 and FMA still
         // fire on workloads that genuinely benefit (nbody,
@@ -1716,7 +1716,7 @@ fn invoke_llc_pipeline(
         // recommendation for AVX-512 codegen on cores where
         // 512-bit ops down-clock or share execution-port budget
         // with scalar work.
-        // `+prefer-256-bit` is an x86 AVX-512 feature flag — only
+        // `+prefer-256-bit` is an x86 AVX-512 feature flag - only
         // meaningful on x86_64 hosts. Passing it to an aarch64
         // target produces a warning but otherwise no-ops; we keep
         // it scoped to x86 so non-x86 hosts (Apple Silicon, etc.)
@@ -1753,7 +1753,7 @@ fn invoke_llc_pipeline(
     // feeds a previously collected and merged profile into the `opt`
     // mid-end so branch weights, inlining thresholds, and the loop /
     // SLP vectorisers are guided by real execution frequencies.
-    // Typical speedup: 5–10% on compute-heavy workloads. The two
+    // Typical speedup: 5-10% on compute-heavy workloads. The two
     // modes are mutually exclusive; setting both is undefined.
     if let Ok(profdata) = std::env::var("GOS_PGO_PROFILE") {
         opt_cmd
@@ -1771,7 +1771,7 @@ fn invoke_llc_pipeline(
             "opt failed ({status}): {stderr}\n\
              hint: if the error begins with 'Broken module' it is an IR \
              shape regression in the lowerer (dump with GOS_LLVM_DUMP=1); \
-             otherwise it is an opt mid-end blowup — largest IR usually \
+             otherwise it is an opt mid-end blowup - largest IR usually \
              drives those, inspect the function names in the IR.",
             status = opt_output.status,
             stderr = String::from_utf8_lossy(&opt_output.stderr)
@@ -1781,7 +1781,7 @@ fn invoke_llc_pipeline(
     // (matches the rest of the build pipeline; the linker
     // refuses non-PIC objects for default PIE binaries).
     // `-mcpu=native` lets LLVM target the host's full
-    // instruction set (AVX2 / FMA / etc. on modern Ryzen) —
+    // instruction set (AVX2 / FMA / etc. on modern Ryzen) -
     // matches what `rustc -C target-cpu=native` does for the
     // bench-game references.
     let llc = find_llc()?;
@@ -1806,7 +1806,7 @@ fn invoke_llc_pipeline(
         // the late-stage vectoriser at 256-bit too so any
         // remaining post-`opt` codegen (slow-path lowering,
         // memcpy/memset expansion) doesn't reach for ZMM.
-        // `+prefer-256-bit` is an x86 AVX-512 feature flag — only
+        // `+prefer-256-bit` is an x86 AVX-512 feature flag - only
         // meaningful on x86_64 hosts. Passing it to an aarch64
         // target produces a warning but otherwise no-ops; we keep
         // it scoped to x86 so non-x86 hosts (Apple Silicon, etc.)
@@ -1849,7 +1849,7 @@ fn invoke_llc_pipeline(
 /// instead of a process holding the runner forever.
 /// Target CPU passed to `opt` and `llc`. Defaults to `native`
 /// (matching `rustc -C target-cpu=native`); `GOS_LLVM_MCPU` lets
-/// callers override — `x86-64-v3` is the documented escape hatch
+/// callers override - `x86-64-v3` is the documented escape hatch
 /// for short-running benchmarks where the AVX-512 dirty-state
 /// transition penalty dominates the savings (§5 release-perf
 /// investigation, fannkuch).
@@ -2000,7 +2000,7 @@ fn find_llc() -> Result<PathBuf> {
 /// Cross-platform candidate list for the LLVM `opt` driver. Order
 /// matters: PATH-resolvable bare names first (cheap), then well-known
 /// system locations on Linux (apt), macOS (Homebrew, both Apple Silicon
-/// and Intel prefixes), and Windows (MSYS2 mingw — which is the only
+/// and Intel prefixes), and Windows (MSYS2 mingw - which is the only
 /// commonly-installed source that actually ships `opt.exe` / `llc.exe`
 /// on Windows, since the upstream LLVM installer ships only the clang
 /// front-end). Version-suffixed entries cover 18 first (target),
@@ -2031,13 +2031,13 @@ const OPT_CANDIDATES: &[&str] = &[
     "/usr/local/opt/llvm@17/bin/opt",
     "/usr/local/opt/llvm/bin/opt",
     "/usr/local/bin/opt",
-    // Windows (MSYS2 mingw — full LLVM via `pacman -S
+    // Windows (MSYS2 mingw - full LLVM via `pacman -S
     // mingw-w64-x86_64-llvm`; also `mingw-w64-clang-x86_64-llvm`
     // under `clang64/`).
     "C:\\msys64\\mingw64\\bin\\opt.exe",
     "C:\\msys64\\clang64\\bin\\opt.exe",
     "C:\\msys64\\ucrt64\\bin\\opt.exe",
-    // Windows (LLVM upstream installer — usually clang-only,
+    // Windows (LLVM upstream installer - usually clang-only,
     // but a custom-built distribution may include opt; kept as a
     // last-resort path).
     "C:\\Program Files\\LLVM\\bin\\opt.exe",
@@ -2123,7 +2123,7 @@ fn host_triple() -> String {
     // uses this to pick the object-file format (ELF on Linux,
     // Mach-O on Darwin, COFF on Windows); getting the OS portion
     // wrong produces an object the host's `ld` rejects as
-    // "unknown file type" — the exact symptom seen on macOS when
+    // "unknown file type" - the exact symptom seen on macOS when
     // this helper hardcoded `unknown-linux-gnu`.
     //
     // `TARGET` (set by cargo build scripts) takes precedence so
@@ -2139,7 +2139,7 @@ fn host_triple() -> String {
         "windows" => "pc-windows-msvc",
         "freebsd" => "unknown-freebsd",
         "ios" => "apple-ios",
-        // Conservative default — Linux is the dev host. Any
+        // Conservative default - Linux is the dev host. Any
         // unrecognised target will produce a clear `llc` error
         // rather than a silently mis-formatted object.
         _ => "unknown-linux-gnu",
@@ -2152,7 +2152,7 @@ fn host_triple() -> String {
 /// `gos_rt_*` C-ABI boundary. Derived from the resolved target triple
 /// ([`host_triple`], which honours `TARGET`) rather than `cfg!(windows)`
 /// so a Linux-hosted cross-build to a Windows triple emits the Win64
-/// marshalling instead of the host's SysV shape — the two disagree on
+/// marshalling instead of the host's SysV shape - the two disagree on
 /// how `extern "C"` returns/passes a 2-word `i128` (xmm `<16 x i8>` vs
 /// a GP-register pair), and keying off the host silently miscompiled
 /// every cross-target build.
@@ -2207,7 +2207,7 @@ mod host_triple_tests {
     use super::host_triple;
 
     /// `llc` selects the object-file format from the OS portion of
-    /// the triple — ELF on a Linux triple, Mach-O on `apple-darwin`,
+    /// the triple - ELF on a Linux triple, Mach-O on `apple-darwin`,
     /// COFF on `pc-windows-msvc`. If `host_triple` hardcoded
     /// `unknown-linux-gnu` on every host (as it used to), macOS /
     /// Windows builds linked with `ld: unknown file type` because
@@ -2217,13 +2217,13 @@ mod host_triple_tests {
     /// time.
     ///
     /// Cargo sets `TARGET` for build scripts, not for normal test
-    /// binaries — in `cargo test` runs the env var is unset and
+    /// binaries - in `cargo test` runs the env var is unset and
     /// the function exercises its OS-detection branch, which is
     /// exactly what we want to cover here.
     #[test]
     fn host_triple_matches_running_os() {
         if std::env::var("TARGET").is_ok() {
-            // Cross-compilation override is active — the function
+            // Cross-compilation override is active - the function
             // is just echoing back `TARGET` and the host-detection
             // branch isn't covered. Skip rather than assert a
             // mismatch we can't control.
@@ -2263,7 +2263,7 @@ mod cabi_thunk_tests {
     /// explicit COMDAT section for dedup and treats bare `linkonce_odr` as a
     /// duplicate strong symbol when the same thunk appears in multiple chunks.
     /// The fix emits the thunk once (in the chunk that owns the handler body),
-    /// so `linkonce_odr` is no longer needed — and no longer safe on COFF.
+    /// so `linkonce_odr` is no longer needed - and no longer safe on COFF.
     #[test]
     fn cabi_thunk_uses_plain_define_not_linkonce_odr() {
         let ir = render_cabi_handler_thunk("App::serve", 2);

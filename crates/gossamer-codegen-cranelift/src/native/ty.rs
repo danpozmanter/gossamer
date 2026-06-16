@@ -75,7 +75,7 @@
 //! the process exit code, so the object file links through a
 //! standard `cc` invocation.
 //! Aggregates (tuples/arrays/structs), strings, closures, and
-//! anything that needs a GC heap are not yet lowered — those
+//! anything that needs a GC heap are not yet lowered - those
 //! constructs fall back to [`crate::emit::emit_module`] for
 //! inspection.
 
@@ -155,7 +155,7 @@ pub(super) fn cl_type_of(tcx: &TyCtxt, ty: Ty, module: &dyn Module) -> ir::Type 
         // all integer arithmetic at i64 width) and the C-ABI map
         // in `mir_ty_to_cabi`. Narrow declared widths only become
         // observable at explicit `as` casts, which mask to the
-        // target width — see the `Rvalue::Cast` lowering. Modelling
+        // target width - see the `Rvalue::Cast` lowering. Modelling
         // narrow ints as I8/I16/I32 made arithmetic wrap at the
         // declared width (`sum += b` over `[u8]` gave sum mod 256
         // once the JIT tiered up), diverging from the VM.

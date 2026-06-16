@@ -203,7 +203,7 @@ pub enum ExprKind {
     },
     /// `unsafe { ... }` block.
     Unsafe(Block),
-    /// `expr?` — the `?` operator.
+    /// `expr?` - the `?` operator.
     Try(Box<Expr>),
     /// `select { arms }` expression.
     Select(Vec<SelectArm>),

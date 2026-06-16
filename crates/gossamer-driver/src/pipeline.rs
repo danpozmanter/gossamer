@@ -219,7 +219,7 @@ pub fn compile_source_native_release_with_fallback(
         // LLVM-lowered helper) still resolve to a declared
         // function id. Use `define_only` so Cranelift emits
         // bodies for the fallback set and `Linkage::Import`
-        // declarations for the rest — the linker stitches them
+        // declarations for the rest - the linker stitches them
         // back to the LLVM-built primary.
         //
         // The companion also matches the LLVM module's

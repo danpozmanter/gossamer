@@ -4,9 +4,9 @@
 //! bugs because the test surface had only one closure shape
 //! (`crates/gossamer-codegen-cranelift/tests/correct/p49_closure.gos`,
 //! `let add5 = |y| 5 + y`) and a few feature-testing examples.
-//! Anything more interesting — multi-capture, nested env,
+//! Anything more interesting - multi-capture, nested env,
 //! closure across channel, closure as goroutine body, closure
-//! interacting with built-in helpers like `__concat` — only
+//! interacting with built-in helpers like `__concat` - only
 //! existed in tier-parity examples that compare output across
 //! tiers, not against a known-correct expected stdout.
 //!
@@ -266,7 +266,7 @@ fn main() {
 fn closure_returns_closure_with_outer_capture() {
     // Closure-returning-closure. The inner closure captures
     // *both* the outer closure's parameter and the outer fn's
-    // local — exercises nested env layout. The 2026-05-05
+    // local - exercises nested env layout. The 2026-05-05
     // closure overhaul memo specifically called out
     // closure-returning-closure as a regression hot spot.
     let src = r#"
@@ -294,7 +294,7 @@ fn closure_as_goroutine_body_with_captures() {
     // The 2026-05-05 `closure_goroutine_landed` fix routed
     // capturing closures through `gos_rt_go_spawn_closure`.
     // The smallest closure-as-goroutine case that actually
-    // captures is below — `base + i` where `base` is captured
+    // captures is below - `base + i` where `base` is captured
     // and the goroutine sends three values back through a
     // channel. The capture must outlive the spawner.
     let src = r#"

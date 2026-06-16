@@ -79,7 +79,7 @@ fn registry_fetch_without_catalogue_entry_reports_unsupported() {
 
 #[test]
 fn offline_mode_refuses_unseen_entries() {
-    // Use a tarball pin (whose transport is empty) — its initial
+    // Use a tarball pin (whose transport is empty) - its initial
     // fetch fails, then offline mode reports the entry-absent error.
     let resolved = synth_resolved(
         "example.com/tar",

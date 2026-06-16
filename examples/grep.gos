@@ -1,5 +1,5 @@
 /*
- * Minimal grep — Unix-style line-matching CLI.
+ * Minimal grep - Unix-style line-matching CLI.
  *
  * Reads stdin and prints every line that contains the pattern.
  * Exits non-zero when no match is found, matching the POSIX

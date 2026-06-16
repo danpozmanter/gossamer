@@ -1,4 +1,4 @@
-//! `gos watch CMD PATH` — re-runs `gos CMD <file>` for every
+//! `gos watch CMD PATH` - re-runs `gos CMD <file>` for every
 //! `.gos` under `PATH` whenever any of them is modified.
 
 use std::fs;

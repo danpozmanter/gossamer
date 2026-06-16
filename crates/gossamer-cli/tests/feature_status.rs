@@ -164,7 +164,7 @@ fn check_mode_fails_when_shipped_lacks_test() {
     let tmp = scratch("missing-test");
     let docs = tmp.join("docs_src");
     fs::create_dir_all(docs.join("language")).unwrap();
-    // Doc page exists, but no sidecar — `--check` should bail.
+    // Doc page exists, but no sidecar - `--check` should bail.
     fs::write(docs.join("language/match.md"), "Status: shipped\n").unwrap();
 
     let sidecar = tmp.join("sidecar.json");

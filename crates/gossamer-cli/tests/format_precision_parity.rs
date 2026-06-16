@@ -6,7 +6,7 @@
 //! and any future regression that lands the same way.
 //!
 //! Each test runs the same program through `gos run` (interp) and
-//! `gos build && ./bin` (native — Cranelift / LLVM depending on the
+//! `gos build && ./bin` (native - Cranelift / LLVM depending on the
 //! build), asserting byte-identical stdout. Skips silently when the
 //! `gos` binary, `cc`, or the LLVM toolchain isn't available.
 

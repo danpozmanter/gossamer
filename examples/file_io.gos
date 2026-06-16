@@ -1,5 +1,5 @@
 /*
- * File read/write — text and JSON.
+ * File read/write - text and JSON.
  *
  * Uses `std::fs` for filesystem primitives and
  * `std::encoding::json` for structured payloads. Every call

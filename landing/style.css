@@ -57,7 +57,7 @@ p code, li code, h3 code {
     background: radial-gradient(62% 52% at 50% -8%, rgba(56, 189, 248, 0.18), transparent 60%);
 }
 
-/* Faint woven filaments — the "gossamer" thread motif — fading out
+/* Faint woven filaments - the "gossamer" thread motif - fading out
  * toward the edges so they never compete with the text. */
 .hero-threads {
     position: absolute;

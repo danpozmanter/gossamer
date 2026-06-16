@@ -21,7 +21,7 @@ use std::sync::atomic::{AtomicI64, Ordering};
 // Mutex<T> primitive
 // ---------------------------------------------------------------
 //
-// Naked synchronisation primitive — no payload, no RAII guard,
+// Naked synchronisation primitive - no payload, no RAII guard,
 // the user follows lock/unlock discipline. Backed by
 // `parking_lot::Mutex<()>` so contention uses futexes on
 // Linux. The pointer is heap-allocated and shared by every
@@ -35,7 +35,7 @@ pub struct GosMutex {
     last_unlocker: AtomicI64,
     /// Goroutine id of the current owner (the goroutine that took
     /// the lock). `-1` means unlocked. Read by `unlock` to refuse
-    /// a cross-goroutine release — `force_unlock` on a mutex held
+    /// a cross-goroutine release - `force_unlock` on a mutex held
     /// by another goroutine is `parking_lot` UB.
     owner: AtomicI64,
 }
@@ -58,7 +58,7 @@ pub unsafe extern "C" fn gos_rt_mutex_lock(m: *mut GosMutex) {
             return;
         }
         let m = unsafe { &*m };
-        // Forget the guard — the user calls unlock explicitly.
+        // Forget the guard - the user calls unlock explicitly.
         let guard = m.inner.lock();
         std::mem::forget(guard);
         m.owner
@@ -86,7 +86,7 @@ pub unsafe extern "C" fn gos_rt_mutex_unlock(m: *mut GosMutex) {
             );
             std::process::abort();
         }
-        // SAFETY: matched with the `forget` in lock — the lock is
+        // SAFETY: matched with the `forget` in lock - the lock is
         // held by this goroutine (owner check above) and we now
         // release it. Releasing an unlocked mutex is undefined;
         // the owner check ensures the lock is currently held.

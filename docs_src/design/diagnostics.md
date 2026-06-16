@@ -1,11 +1,11 @@
-# Gossamer diagnostics — style guide
+# Gossamer diagnostics - style guide
 
 Every diagnostic the compiler emits goes through
 `gossamer-diagnostics`. A diagnostic has exactly four things the user
 sees:
 
-1. A **severity** — `error`, `warning`, `note`, or `help`.
-2. A **code** — a stable four-character prefix plus a four-digit
+1. A **severity** - `error`, `warning`, `note`, or `help`.
+2. A **code** - a stable four-character prefix plus a four-digit
    number (`GP0001`, `GR0003`, `GT0004`, …).
 3. A one-line **title** that fits in ~72 columns.
 4. A list of **labels**, **notes**, **helps**, and optional
@@ -30,15 +30,15 @@ Never emit a bare `error` / `warning`. Always carry a code.
 Allocate from the phase-scoped namespace. New codes go in the next
 unused slot for that phase.
 
-- `GP` — parser and lexer.
-- `GR` — name resolution.
-- `GT` — type checker.
-- `GM` — match exhaustiveness.
-- `GL` — lints.
-- `GK` — package manager.
+- `GP` - parser and lexer.
+- `GR` - name resolution.
+- `GT` - type checker.
+- `GM` - match exhaustiveness.
+- `GL` - lints.
+- `GK` - package manager.
 
 Once published, **never reuse** a code. If a diagnostic is removed,
-its code is retired — `gos explain <CODE>` will say "retired in
+its code is retired - `gos explain <CODE>` will say "retired in
 version X, see <CODE>".
 
 ## Titles
@@ -48,9 +48,9 @@ version X, see <CODE>".
 - Lowercase (the severity in front capitalises for you).
 - Under 72 characters. If you cannot say it in 72, split into a
   title + note.
-- Do not mention the error code in the title — the renderer prints
+- Do not mention the error code in the title - the renderer prints
   both.
-- Do not mention the file name — the renderer prints the location.
+- Do not mention the file name - the renderer prints the location.
 
 ## Labels
 
@@ -86,7 +86,7 @@ editors consume them.
   silently during `gos check`.
 - Suggestion messages start with a verb: `"rename to `new_name`"`,
   `"remove this clone"`, `"wrap in `Some(...)`"`.
-- The replacement string replaces exactly `Location.span` — no more,
+- The replacement string replaces exactly `Location.span` - no more,
   no less. If more context is needed, widen the location.
 
 ## Did-you-mean
@@ -101,7 +101,7 @@ shared helper.
 - No stack traces. The compiler is not a runtime.
 - No "internal error" shown to the user without an issue-report
   link. Prefer an `assert` over a vague panic.
-- No diagnostic without a location — even "could not open file"
+- No diagnostic without a location - even "could not open file"
   should carry a synthetic zero-length span at offset 0.
 - No chained `.context(...)` via `anyhow` at the user-facing layer.
   `anyhow` is for internal wiring; user-facing errors go through

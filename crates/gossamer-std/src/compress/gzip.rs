@@ -23,13 +23,13 @@ use crate::io::IoError;
 pub struct Level(u32);
 
 impl Level {
-    /// `0` — store-only (no compression).
+    /// `0` - store-only (no compression).
     pub const NONE: Self = Self(0);
-    /// `1` — fastest.
+    /// `1` - fastest.
     pub const FASTEST: Self = Self(1);
-    /// `6` — gzip(1) default.
+    /// `6` - gzip(1) default.
     pub const DEFAULT: Self = Self(6);
-    /// `9` — best (slowest).
+    /// `9` - best (slowest).
     pub const BEST: Self = Self(9);
 
     /// Constructs an arbitrary level. Returns `Err` if the level is

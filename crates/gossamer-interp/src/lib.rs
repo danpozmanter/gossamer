@@ -138,7 +138,7 @@ pub(crate) fn set_runtime_program_name(name: &str) {
 /// no-op when nothing was buffered.
 pub fn flush_runtime_stdout() {
     // SAFETY: `gos_rt_flush_stdout` is `unsafe extern "C"` for
-    // FFI uniformity but has no preconditions — it just drains
+    // FFI uniformity but has no preconditions - it just drains
     // the per-thread `STDOUT_BUF` and writes to FD 1.
     #[allow(unsafe_code)]
     unsafe {

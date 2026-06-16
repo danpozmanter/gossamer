@@ -14,7 +14,7 @@ use super::task::Gid;
 /// Result of a non-blocking send.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SendResult {
-    /// Value accepted — stored in the buffer or handed off to a
+    /// Value accepted - stored in the buffer or handed off to a
     /// parked receiver.
     Sent,
     /// Buffer is full (and no receiver is waiting); the caller should
@@ -141,7 +141,7 @@ impl<T> Channel<T> {
 
     /// Closes the channel and removes every parked goroutine. The
     /// caller (the scheduler) is responsible for waking the drained
-    /// goroutines — they will observe `RecvResult::Closed` /
+    /// goroutines - they will observe `RecvResult::Closed` /
     /// `SendResult::Closed` when they retry. Returns
     /// `(senders, receivers)` so the caller can wake them in one
     /// pass without a follow-up `wake_*` loop.
@@ -210,7 +210,7 @@ impl<T> Drop for Channel<T> {
     /// [`Channel::close_and_drain_parked`] before dropping the
     /// channel so it can wake them. The Drop impl exists so that
     /// the closed flag flips even when a test drops a channel
-    /// without going through the scheduler — `is_closed()` then
+    /// without going through the scheduler - `is_closed()` then
     /// observes the right value before the memory is reclaimed.
     fn drop(&mut self) {
         self.closed = true;

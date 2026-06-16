@@ -8,7 +8,7 @@ guarantees. Earlier shapes (`Unit`, `Bool`, `I64`, `F64`, `Char`,
 `String`, `Tuple`, `Vec`, `Option`, `Result`, `Opaque`, `Any`)
 are unchanged.
 
-The ABI is additive only — 0.4 does not remove or rename any
+The ABI is additive only - 0.4 does not remove or rename any
 0.3 shape, and the C-ABI struct layouts of all 0.3 types are
 preserved.
 
@@ -73,7 +73,7 @@ reference count reclaims the buffer when the last reference drops.
 
 Compiled tier: stored as `*mut GosBytes`. The runtime's
 `gos_rt_bytes_free` reclaims the header (`Box::from_raw`) and the
-data buffer (`Vec::from_raw_parts`), the same way `GosVec` is freed —
+data buffer (`Vec::from_raw_parts`), the same way `GosVec` is freed -
 emitted deterministically by the compiler's drop pass, not by a
 collector tick.
 
@@ -126,7 +126,7 @@ trait.
 
 The `BindingAbi` and `FromGos`/`ToGos` impls pin to
 `std::collections::HashMap`'s default hasher (`RandomState`).
-Generic-over-hasher impls are deliberately not provided — the
+Generic-over-hasher impls are deliberately not provided - the
 ABI surface is per-collection-type, not per-hasher.
 
 ## Variant (DynValue)
@@ -172,7 +172,7 @@ pub enum DynValue {
 Same model as the existing `GosVariant`. Header + payload buffer are
 heap-allocated. The tracing collector and its `gos_rt_gc_reset` tick
 were removed (`gos_rt_gc_reset` is now a no-op), so these are reclaimed
-deterministically by the compiler's drop pass — or persist until
+deterministically by the compiler's drop pass - or persist until
 process exit if they escape that analysis. Arm-name strings are
 arena-allocated and escape with the variant.
 
@@ -210,7 +210,7 @@ Bindings that need to work in both tiers should declare two
 overload-like fns, one per tier, OR accept `BindingCallback`
 (works in interp; compiled tier currently traps).
 
-### Lifetime — STRICT
+### Lifetime - STRICT
 
 **Call-scoped.** A `BindingCallback` / `NativeCallback` is valid
 only for the duration of the binding fn that received it.
@@ -225,14 +225,14 @@ Retaining it past the return is undefined behaviour:
 
 Persistent callbacks (e.g. event handlers stored on a
 binding-owned struct, called from a later goroutine) require a
-different shape — coming in a future ABI bump via
+different shape - coming in a future ABI bump via
 opaque-handle-backed callback registration.
 
 ### Coroutine / async safety
 
 The interp-tier `invoke` re-enters the interpreter via
 `NativeDispatch::call_value`. Goroutine yielding inside the
-callback works the same as any other Gossamer fn call —
+callback works the same as any other Gossamer fn call -
 scheduling is the interpreter's concern.
 
 The compiled-tier `invoke_raw` is `unsafe`; binding authors

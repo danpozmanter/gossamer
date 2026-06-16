@@ -75,7 +75,7 @@
 //! the process exit code, so the object file links through a
 //! standard `cc` invocation.
 //! Aggregates (tuples/arrays/structs), strings, closures, and
-//! anything that needs a GC heap are not yet lowered — those
+//! anything that needs a GC heap are not yet lowered - those
 //! constructs fall back to [`crate::emit::emit_module`] for
 //! inspection.
 
@@ -159,7 +159,7 @@ pub(super) fn lower_statement(
                 // The MIR lowerer has been audited to never emit
                 // names without a matching cranelift dispatch, so
                 // hitting this path is a real gap in the runtime
-                // table — surface it loudly rather than silently
+                // table - surface it loudly rather than silently
                 // miscompiling.
                 let fn_name = &body.name;
                 bail!(
@@ -369,7 +369,7 @@ pub(super) fn lower_terminator(
             // (`gos_rt_heap_*_new` / `gos_rt_chan_new`) and the MIR
             // escape analysis confirmed the value never leaves this
             // body. Without this loop the `_free` symbols ship in
-            // the runtime but are never called — every owning Vec /
+            // the runtime but are never called - every owning Vec /
             // Channel leaks to process exit.
             let cleanup = gossamer_mir::plan_cleanup(body);
             if !cleanup.is_empty() {
@@ -406,7 +406,7 @@ pub(super) fn lower_terminator(
             // / pointer / scalar). Copying through them by
             // dereferencing the local would treat the value as
             // a *pointer to data* and load 8 bytes from the
-            // pointee — corrupting any function returning a
+            // pointee - corrupting any function returning a
             // user-defined enum (heap pointer to a `[disc, ...]`
             // aggregate). Only the multi-slot aggregate cases
             // (real Tuple, Array, struct Adt) need the heap
@@ -415,7 +415,7 @@ pub(super) fn lower_terminator(
             if ret_is_aggregate {
                 // Arrays are always heap-allocated (calloc'd by Rvalue::Repeat /
                 // Rvalue::Aggregate). The local already holds a dedicated heap
-                // pointer, so returning it directly is safe — no second copy
+                // pointer, so returning it directly is safe - no second copy
                 // needed. Tuples and Adts may carry pointers into a containing
                 // aggregate's buffer (field-projection assignments), so those
                 // still need the gc_alloc + memcpy escape path.
@@ -471,7 +471,7 @@ pub(super) fn lower_terminator(
             target,
         } => {
             // Runtime-intrinsic shortcut: calls to the prelude
-            // `println` / `panic` don't reach user code — they land
+            // `println` / `panic` don't reach user code - they land
             // in a C-ABI runtime function. MIR lowering carries the
             // callee name as a `Const(Str(...))` when the resolver
             // hasn't assigned a `DefId` (prelude values fall into
@@ -521,7 +521,7 @@ pub(super) fn lower_terminator(
                 //      first arg.
                 //   2. Plain function pointer: local is a
                 //      `FnDef`-typed value obtained from an
-                //      `Operand::FnRef` — its value IS the function
+                //      `Operand::FnRef` - its value IS the function
                 //      address directly. No `env` prelude, no
                 //      leading load. `f(x)` becomes a straight
                 //      `call_indirect(addr, x)`.
@@ -535,7 +535,7 @@ pub(super) fn lower_terminator(
                 // an `Operand::FnRef` (a `FnDef`-typed value): the
                 // value IS the function address. `FnPtr` and
                 // `FnTrait` locals are now uniformly env_ptr-shaped
-                // — the MIR's coercion at let / return / assign
+                // - the MIR's coercion at let / return / assign
                 // boundaries wraps every bare fn item into an
                 // `[fn_addr, captures…]` heap blob first. Loading
                 // through env[0] and forwarding `(env, args…)` is
@@ -633,7 +633,7 @@ pub(super) fn lower_terminator(
                 return Ok(());
             }
             // First try resolving a `Const(Str("name"))` callee
-            // against the module's function table — closures lifted
+            // against the module's function table - closures lifted
             // by `lift_closures` appear here as `Const(Str)` when the
             // MIR lowerer records them via `local_fn_name`. Only fall
             // through to the runtime diagnostic stub when the name
@@ -659,7 +659,7 @@ pub(super) fn lower_terminator(
                         // `String` was expected (`s.split(',')`,
                         // `s.contains('-')`, …). The existing
                         // coerce extends i32 to i64 which is
-                        // wrong — the runtime would dereference
+                        // wrong - the runtime would dereference
                         // the char value as a pointer. Route
                         // through `gos_rt_char_to_str` instead.
                         if let Some(want) = expected.get(idx).copied() {
@@ -812,16 +812,16 @@ pub(super) fn lower_terminator(
                     return Ok(());
                 }
                 // 0.8.0: no soft-zero fallback. An unknown call
-                // name is a hard error — silent zero stubs hide
+                // name is a hard error - silent zero stubs hide
                 // typos and miscompiled stdlib paths. The legacy
                 // `GOSSAMER_STRICT_LOWER=1` env var was the opt-in;
                 // it is now the only behaviour.
                 bail!(
-                    "native codegen: refusing to emit zero-stub for unknown call '{name}' — \
+                    "native codegen: refusing to emit zero-stub for unknown call '{name}' - \
                     typos and missing dispatch entries are a compile error, not a runtime crash"
                 );
             }
-            // 0.8.0: same policy as the unknown-name path above —
+            // 0.8.0: same policy as the unknown-name path above -
             // an unresolved FnRef callee is a hard error rather
             // than a silent zero. The historical zero-stub bypass
             // was the opt-in under `GOSSAMER_STRICT_LOWER=1`; it

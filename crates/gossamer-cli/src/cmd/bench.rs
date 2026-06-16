@@ -1,4 +1,4 @@
-//! `gos bench [PATH] [--parallel N]` — discovers every
+//! `gos bench [PATH] [--parallel N]` - discovers every
 //! `#[bench]`-annotated function under `PATH` and times each one,
 //! reporting `ns/op` per benchmark.
 //!
@@ -53,6 +53,7 @@ const CALIBRATION_NANOS: u128 = 50_000_000;
 const MAX_ITERATIONS: u64 = 1 << 20;
 
 /// One discovered bench fn and its source file.
+#[derive(Clone)]
 struct BenchTarget {
     file: PathBuf,
     name: String,
@@ -179,6 +180,14 @@ fn run_parallel(targets: Vec<BenchTarget>, parallel: usize) -> Vec<BenchRecord> 
 /// re-created per-target so cross-bench JIT state cannot perturb
 /// the timing of a later bench.
 fn run_one(target: &BenchTarget) -> Result<BenchRecord> {
+    // Execute on a thread with a large native stack so a deeply
+    // recursive `#[bench]` does not overflow the host's default
+    // main-thread stack (see `cmd::with_vm_stack`).
+    let target = target.clone();
+    crate::cmd::with_vm_stack(move || run_one_inner(&target))
+}
+
+fn run_one_inner(target: &BenchTarget) -> Result<BenchRecord> {
     let source = read_source(&target.file)?;
     let mut map = gossamer_lex::SourceMap::new();
     let file_id = map.add_file(target.file.to_string_lossy().into_owned(), source.clone());
@@ -239,10 +248,10 @@ fn auto_tune_iterations(vm: &gossamer_interp::Vm, name: &str) -> Result<u64> {
         // The calibration window doubles N until the bench fn's
         // wall-clock per trial overtakes CALIBRATION_NANOS. A
         // no-op fn never crosses the threshold within
-        // MAX_ITERATIONS — that path falls through to the cap.
+        // MAX_ITERATIONS - that path falls through to the cap.
         n = n.saturating_mul(2).min(MAX_ITERATIONS);
         if elapsed > Duration::from_secs(2) {
-            // Safety hatch — one trial took longer than the
+            // Safety hatch - one trial took longer than the
             // entire bench budget. Stop here rather than doubling
             // again.
             return Ok(n / 2);

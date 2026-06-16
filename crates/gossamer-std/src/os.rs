@@ -184,7 +184,7 @@ pub fn temp_dir() -> String {
     std::env::temp_dir().to_string_lossy().into_owned()
 }
 
-/// Returns the OS family — `"unix"` or `"windows"`. Mirrors
+/// Returns the OS family - `"unix"` or `"windows"`. Mirrors
 /// Go's `runtime.GOOS` and the family component of Rust's
 /// `std::env::consts::FAMILY`.
 #[must_use]

@@ -85,7 +85,7 @@ pub unsafe extern "C" fn gos_rt_hmac_sha256_hex(
     })
 }
 
-/// `crypto::hmac::sha256_mac(key, message) -> [u8]` — the raw 32-byte
+/// `crypto::hmac::sha256_mac(key, message) -> [u8]` - the raw 32-byte
 /// MAC as a byte vector (vs the hex string from `sha256_hex`). Both
 /// arguments are Gossamer `[u8]` values (`GosVec`), not c-strings:
 /// the MAC must cover arbitrary binary key / message bytes, including
@@ -147,7 +147,7 @@ fn nibble_char(n: u8) -> char {
     }
 }
 
-/// `crypto::rand::bytes(n) -> Vec<u8>` — fill a fresh Vec with
+/// `crypto::rand::bytes(n) -> Vec<u8>` - fill a fresh Vec with
 /// `n` cryptographically-strong random bytes from the OS RNG.
 /// On RNG failure (extremely rare; usually only on early-boot
 /// systems with no entropy source) the returned Vec is zero-
@@ -160,7 +160,7 @@ pub unsafe extern "C" fn gos_rt_crypto_rand_bytes(n: i64) -> *mut GosVec {
         return v;
     }
     // Fill the freshly-allocated buffer with OS randomness and pin
-    // `len` so `b.len()` reads `n`. Unsafe is justified — GosVec
+    // `len` so `b.len()` reads `n`. Unsafe is justified - GosVec
     // exposes its backing buffer as a raw pointer at the C ABI
     // boundary, and there is no safe Rust way to fill it.
     let vref = unsafe { &mut *v };
@@ -183,8 +183,8 @@ fn password_err(msg: &str) -> i128 {
     super::vec::gos_rt_result_new(1, err as i64)
 }
 
-/// `crypto::password::hash(plaintext) -> Result<String, errors::Error>`
-/// — Argon2id PHC hash. Same defaults as `kdf::argon2id_hash`
+/// `crypto::password::hash(plaintext) -> Result<String, errors::Error>` -
+/// Argon2id PHC hash. Same defaults as `kdf::argon2id_hash`
 /// (Argon2id, V0x13, `Params::default()`), so a hash minted on one
 /// tier verifies on another.
 #[unsafe(no_mangle)]
@@ -216,8 +216,8 @@ pub unsafe extern "C" fn gos_rt_crypto_password_hash(plaintext: *const c_char) -
     })
 }
 
-/// `crypto::password::verify(plaintext, phc) -> Result<bool, errors::Error>`
-/// — constant-time-ish verify using the parameters embedded in the
+/// `crypto::password::verify(plaintext, phc) -> Result<bool, errors::Error>` -
+/// constant-time-ish verify using the parameters embedded in the
 /// PHC string.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_crypto_password_verify(
@@ -246,7 +246,7 @@ pub unsafe extern "C" fn gos_rt_crypto_password_verify(
     })
 }
 
-/// `crypto::password::needs_rehash(phc) -> bool` — replicates
+/// `crypto::password::needs_rehash(phc) -> bool` - replicates
 /// `kdf::needs_rehash` exactly (non-argon2id or weaker-than-default
 /// params → true).
 #[unsafe(no_mangle)]

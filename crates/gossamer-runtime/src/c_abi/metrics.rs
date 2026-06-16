@@ -5,7 +5,7 @@
 #![allow(clippy::cast_possible_truncation)]
 #![allow(clippy::cast_precision_loss)]
 
-//! Runtime support for `std::metrics` — Prometheus-compatible
+//! Runtime support for `std::metrics` - Prometheus-compatible
 //! Counter / Gauge / Histogram primitives and a Registry that renders
 //! the text-exposition format.
 //!
@@ -320,7 +320,7 @@ unsafe extern "C" fn metrics_handler(env: *mut u8, req: *mut GosHttpRequest) -> 
 }
 
 /// A buffered `404 not found` response packed as the handler's `Ok`
-/// result — the non-`/metrics` path on the metrics endpoint.
+/// result - the non-`/metrics` path on the metrics endpoint.
 fn metrics_not_found() -> i128 {
     let resp = Box::into_raw(Box::new(GosHttpResponse {
         status: 404,
@@ -333,7 +333,7 @@ fn metrics_not_found() -> i128 {
     super::vec::pack_result(0, resp as i64)
 }
 
-/// `metrics::serve_metrics(addr, registry)` — serves the registry's
+/// `metrics::serve_metrics(addr, registry)` - serves the registry's
 /// Prometheus exposition on `/metrics` over the runtime's own HTTP
 /// server. Blocks the calling goroutine until shutdown. Returns the
 /// Gossamer `Result<(), errors::Error>` shape (Err on bind failure),

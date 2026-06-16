@@ -39,7 +39,7 @@ F#:
 |> List.sum
 ```
 
-Gossamer (data-last — each combinator's collection arg is last):
+Gossamer (data-last - each combinator's collection arg is last):
 
 ```gos
 [1, 2, 3, 4]
@@ -69,7 +69,7 @@ left-to-right visual shape.
 | `Map.ofList [("a", 1)]` | `HashMap::from([("a", 1)])` | |
 | `async { … }` | `go fn() { … }()` | Goroutine. |
 | `let! x = task` | `let (tx, rx) = channel(); let x = rx.recv()` | Channel receive. |
-| `do!` / `return!` | — | Not applicable; goroutines block freely. |
+| `do!` / `return!` | - | Not applicable; goroutines block freely. |
 
 ## Discriminated unions → enums
 
@@ -164,7 +164,7 @@ let parsed = input
 ## Async / concurrency
 
 F# has `async { }` workflows and `Task` for .NET TPL interop.
-Gossamer has goroutines — stackful coroutines scheduled by the
+Gossamer has goroutines - stackful coroutines scheduled by the
 M:N runtime. Blocking IO doesn't block the OS thread.
 
 F#:
@@ -224,7 +224,7 @@ for _ in urls {
 F# uses structural typing for interfaces; any type with the right
 methods satisfies the interface automatically.
 
-Gossamer traits are nominal — you explicitly write `impl Trait
+Gossamer traits are nominal - you explicitly write `impl Trait
 for Type { … }`:
 
 F#:
@@ -360,8 +360,8 @@ let evens = iter::range_inclusive(0, 100)
 
 ## Cross-references
 
-- [`../syntax.md`](../syntax.md) — full language tour.
-- [`../stdlib_coverage.md`](../stdlib_coverage.md) — every
+- [`../syntax.md`](../syntax.md) - full language tour.
+- [`../stdlib_coverage.md`](../stdlib_coverage.md) - every
   stdlib module, support state.
-- [`../codegen_abi.md`](../codegen_abi.md) — generic
+- [`../codegen_abi.md`](../codegen_abi.md) - generic
   instantiation constraints in v1.

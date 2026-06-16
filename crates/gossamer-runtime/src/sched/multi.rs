@@ -9,7 +9,7 @@
 //!
 //! The model follows Go's P/M split:
 //!
-//! - A `Worker<SendTask>` is the "P" — the run-queue half a worker
+//! - A `Worker<SendTask>` is the "P" - the run-queue half a worker
 //!   thread owns exclusively.
 //! - The OS thread driving a `Worker` is the "M".
 //! - Goroutines (`SendTask`) are the "G".
@@ -67,7 +67,7 @@ pub type SendTask = Box<dyn SchedTask + Send>;
 /// the wait.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ParkReason {
-    /// Generic park — the runtime did not specify a more specific
+    /// Generic park - the runtime did not specify a more specific
     /// reason.
     Other,
     /// Waiting on a channel send / receive.
@@ -146,7 +146,7 @@ struct WorkerSlot {
     /// `true` while the OS thread for this worker is parked on the
     /// `cv` waiting for new work.
     parked: AtomicBool,
-    /// Mutex/condvar pair — workers park here when their deque is
+    /// Mutex/condvar pair - workers park here when their deque is
     /// empty; spawn / unpark calls notify this condvar.
     cv: Condvar,
     cv_mu: Mutex<()>,
@@ -218,7 +218,7 @@ struct Shared {
     // `last_yield_micros: AtomicU64` on each `WorkerSlot` is the
     // replacement: lock-free read in the watchdog, lock-free write
     // in the worker.
-    /// Idle signal — workers notify when they reach a quiescent
+    /// Idle signal - workers notify when they reach a quiescent
     /// state (deque empty + no peer work + no parked tasks). The
     /// orchestrator's `wait_until_idle` parks on this Condvar
     /// instead of polling, so an empty `gos run` does not consume
@@ -300,7 +300,7 @@ impl MultiScheduler {
     ///
     /// Returns `None` when the live-goroutine cap (set via
     /// `runtime::set_max_procs` or `GOSSAMER_MAX_PROCS`) would be
-    /// exceeded — surface the refusal to user code instead of
+    /// exceeded - surface the refusal to user code instead of
     /// silently overcommitting kernel resources.
     pub fn try_spawn<T: SchedTask + 'static>(&self, task: T) -> Option<Gid> {
         let max = self.inner.max_live.load(Ordering::Relaxed);
@@ -458,8 +458,8 @@ impl MultiScheduler {
     /// Resurrects a previously parked goroutine. Returns `true` when a
     /// parked entry was found and re-enqueued.
     ///
-    /// If the gid is not yet in `parked` — because the goroutine has
-    /// armed its wakeup source but hasn't suspended yet — the gid is
+    /// If the gid is not yet in `parked` - because the goroutine has
+    /// armed its wakeup source but hasn't suspended yet - the gid is
     /// recorded in `pre_unpark`. The worker that's about to park the
     /// task checks this set and, if the gid is present, re-ejects
     /// the task to the injector instead of leaving it parked.
@@ -473,7 +473,7 @@ impl MultiScheduler {
         // check pre_unpark" sequence (in `worker_loop`) cannot
         // complete between our miss and our pre_unpark write. If we
         // released `parked` first, a worker could insert + check +
-        // proceed before our pre_unpark.insert landed — leaving the
+        // proceed before our pre_unpark.insert landed - leaving the
         // gid parked indefinitely. (Windows surfaces the race more
         // often because of the coarser timer-wake granularity that
         // widens the netpoller's deliver→worker park interleaving.)
@@ -494,11 +494,11 @@ impl MultiScheduler {
         // set, so every push either happens before the drain (and
         // is moved by it) or observes `retired == true` and routes
         // to the injector directly. Violating this strands the
-        // task in a dead slot's inbox — a permanently lost wake.
+        // task in a dead slot's inbox - a permanently lost wake.
         let workers = self.inner.workers.lock();
         match workers.get(home) {
             Some(slot) if !slot.retired.load(Ordering::Acquire) => {
-                // Pin the resumed goroutine to the home worker —
+                // Pin the resumed goroutine to the home worker -
                 // stackful coroutines are not safe to migrate across
                 // OS threads while suspended. Push onto the worker's
                 // private inbox; the worker drains it before its main
@@ -617,7 +617,7 @@ impl MultiScheduler {
     /// `spawned == finished`), or `timeout` passes. Returns whether the
     /// pool quiesced. The bound is a liveness guarantee for process
     /// exit: a goroutine blocked forever (say, on a channel nobody
-    /// sends to) must not wedge the process. Waits on `idle_cv` — the
+    /// sends to) must not wedge the process. Waits on `idle_cv` - the
     /// workers notify it on every transition that could make the pool
     /// idle, and the 200 ms re-check cap covers the same missed-wake
     /// races `wait_until_idle` documents.
@@ -648,7 +648,7 @@ impl MultiScheduler {
             // Bounded wait so a missed wake-up never strands the
             // orchestrator. The bound is loose (200 ms) because
             // workers actively notify on every transition that
-            // could make us idle — the timeout is only a safety
+            // could make us idle - the timeout is only a safety
             // net for races during scheduler resize / shutdown.
             self.inner
                 .idle_cv
@@ -694,7 +694,7 @@ impl Drop for WorkerHandleGuard {
 
 fn worker_loop(index: usize, deque: Deque<SendTask>, slot: Arc<WorkerSlot>, shared: Arc<Shared>) {
     crate::stack_guard::install_stack_guard();
-    // Round-robin steal cursor — biases away from always poking the
+    // Round-robin steal cursor - biases away from always poking the
     // same peer first, which would imbalance work.
     let mut steal_cursor = index.wrapping_add(1);
     // Publish this thread's pthread_t so the watchdog can pthread_kill
@@ -712,7 +712,7 @@ fn worker_loop(index: usize, deque: Deque<SendTask>, slot: Arc<WorkerSlot>, shar
     loop {
         if slot.retired.load(Ordering::Acquire) {
             // Hand off every task still queued for this worker
-            // before the thread exits — anything left behind would
+            // before the thread exits - anything left behind would
             // never run again (a permanently lost wake). The inbox
             // drain holds the `workers` lock to pair with the
             // retired-inbox handoff invariant in
@@ -815,7 +815,7 @@ fn worker_loop(index: usize, deque: Deque<SendTask>, slot: Arc<WorkerSlot>, shar
                             shared.injector.push(entry.task);
                             shared.stats.unparks.fetch_add(1, Ordering::Relaxed);
                             // Wake any worker that may have parked
-                            // while there was no work — we just
+                            // while there was no work - we just
                             // produced some.
                             let workers = shared.workers.lock();
                             for slot in workers.iter() {
@@ -840,7 +840,7 @@ fn worker_loop(index: usize, deque: Deque<SendTask>, slot: Arc<WorkerSlot>, shar
     }
 }
 
-/// Default `MultiScheduler::max_live` — 1M live goroutines, or
+/// Default `MultiScheduler::max_live` - 1M live goroutines, or
 /// `GOSSAMER_MAX_GOROUTINES` if set. Surfaces a
 /// `for _ in 0.. { go work() }` runaway as a refused spawn rather
 /// than a kernel-thread OOM.
@@ -917,7 +917,7 @@ fn watchdog_loop(shared: Arc<Shared>) {
             let workers = shared.workers.lock();
             for i in kill_indices {
                 if let Some(slot) = workers.get(i) {
-                    // Skip retired slots — the thread may have already
+                    // Skip retired slots - the thread may have already
                     // exited and the pthread_t would be dangling.
                     if slot.retired.load(Ordering::Acquire) {
                         continue;
@@ -940,7 +940,7 @@ fn next_task(
     if let Some(task) = deque.pop() {
         return Some(task);
     }
-    // 1) own inbox — unparked goroutines pinned to this worker
+    // 1) own inbox - unparked goroutines pinned to this worker
     loop {
         match self_slot.inbox.steal_batch_and_pop(deque) {
             Steal::Success(task) => {
@@ -1093,7 +1093,7 @@ mod tests {
         });
         let gid = Gid(7);
         // Park with home = 3, then retire that worker before the
-        // wake arrives — the exact interleaving `set_max_procs`
+        // wake arrives - the exact interleaving `set_max_procs`
         // round-trips produce while a goroutine is parked.
         sched.park(gid, ParkReason::Io, 3, task);
         sched.set_worker_count(1);
@@ -1122,7 +1122,7 @@ mod tests {
             budget: 1,
         });
         // Push directly into worker 1's inbox, then retire it before
-        // it necessarily noticed the push — the task must migrate to
+        // it necessarily noticed the push - the task must migrate to
         // a surviving worker instead of dying with the slot.
         {
             let workers = sched.inner.workers.lock();

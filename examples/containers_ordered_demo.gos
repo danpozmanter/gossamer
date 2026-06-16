@@ -1,5 +1,5 @@
 /*
- * Sorted-on-insert container — `ordered_vec`. The earlier
+ * Sorted-on-insert container - `ordered_vec`. The earlier
  * `list` / `ordered_list` variants were removed because they
  * duplicated Vec / ordered_vec behaviour without adding anything.
  */

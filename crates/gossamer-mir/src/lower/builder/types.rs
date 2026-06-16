@@ -104,7 +104,7 @@ impl<'a> Builder<'a> {
     /// the element type the binding was pinned to; when that element
     /// came from an unannotated `let mut xs = []` the int-literal
     /// fields can still be `Var`, and a `Var` field lowers to a `ptr`
-    /// load — so `v[i].0` is reinterpreted as a string pointer. This
+    /// load - so `v[i].0` is reinterpreted as a string pointer. This
     /// mirrors the i64 fallback the for-loop tuple-destructuring path
     /// already applies. Non-tuple types and tuples with all-concrete
     /// fields pass through unchanged.
@@ -368,7 +368,7 @@ impl<'a> Builder<'a> {
         }
     }
 
-    /// True when `ty` (through a leading `&`) is a struct or tuple — the only
+    /// True when `ty` (through a leading `&`) is a struct or tuple - the only
     /// shapes that route through the content-hashing map key path. Bare
     /// scalars / `String` / enums keep their own paths.
     pub(crate) fn is_aggregate_key(&self, ty: Ty) -> bool {
@@ -564,7 +564,7 @@ impl<'a> Builder<'a> {
         }
     }
 
-    /// `Vec<(String, String)>` — ordered string key/value pairs, the
+    /// `Vec<(String, String)>` - ordered string key/value pairs, the
     /// shape of `http::Request`/`Response` headers and the
     /// `http::cookie::parse_cookie_header` result.
     pub(crate) fn string_pair_vec_ty(&mut self) -> Ty {
@@ -592,7 +592,7 @@ impl<'a> Builder<'a> {
         })
     }
 
-    /// `Option<(String, String)>` sentinel Adt — the packed shape the
+    /// `Option<(String, String)>` sentinel Adt - the packed shape the
     /// `gos_rt_http_request_basic_auth` / `decode_basic_auth` /
     /// `gos_rt_str_split_once` family return.
     pub(crate) fn option_pair_string_adt_ty(&mut self) -> Ty {
@@ -767,7 +767,7 @@ impl<'a> Builder<'a> {
         })
     }
 
-    /// `Result<ok, String>` — the shape `gos_rt_join` produces (Ok
+    /// `Result<ok, String>` - the shape `gos_rt_join` produces (Ok
     /// value, or Err panic message as a String).
     pub(crate) fn result_payload_string_error_ty(&mut self, ok: Ty) -> Ty {
         let s = self.tcx.string_ty();
@@ -848,7 +848,7 @@ impl<'a> Builder<'a> {
     }
 
     /// Recovers the runtime-kind tag of an opaque-handle stdlib type from
-    /// the receiver's *type* when the construction-site tag was lost — e.g.
+    /// the receiver's *type* when the construction-site tag was lost - e.g.
     /// a `HashSet<String>` flowing in as a function parameter or out as a
     /// return value carries no `local_runtime_kind` entry, so method
     /// dispatch on it would miss without this fallback.
@@ -902,7 +902,7 @@ impl<'a> Builder<'a> {
             }
             ("http::ClientBuilder", "build") => Some("http::Client"),
             ("http::Request", "header" | "body") => Some("http::Request"),
-            // `.send()` yields `Result<Response, errors::Error>` —
+            // `.send()` yields `Result<Response, errors::Error>` -
             // a dedicated tag so chained `.map_err(..)` / `.map(..)`
             // route through the result helpers instead of the
             // identity copy.
@@ -912,7 +912,7 @@ impl<'a> Builder<'a> {
     }
 
     /// True when `expr` is a chained `.send()` whose result is the
-    /// packed `Result<Response, errors::Error>` — the HIR type is an
+    /// packed `Result<Response, errors::Error>` - the HIR type is an
     /// inference Var there, so result-combinator dispatch consults
     /// this structural probe as a fallback.
     pub(crate) fn expr_is_send_result(&self, expr: &HirExpr) -> bool {
@@ -1034,7 +1034,7 @@ impl<'a> Builder<'a> {
 
     /// Registers (idempotently) the `RC_KIND_STRUCT_GUARDED` copy-blob
     /// meta for `ty` and returns its symbol, or `None` when the type has
-    /// no guarded child slots (a leaf — its copies need no meta and no
+    /// no guarded child slots (a leaf - its copies need no meta and no
     /// drop-pass walks).
     pub(crate) fn ensure_aggr_copy_meta(&mut self, ty: Ty) -> Option<String> {
         if let Some(sym) = self.tcx.aggr_copy_meta(ty) {

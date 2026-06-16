@@ -34,13 +34,13 @@ fn main() -> Result<(), errors::Error> {
     let n = load_setting(&"port", &"8080")?
     println!("port = {n}")
 
-    // Failure path — propagate with `?` or inspect directly.
+    // Failure path - propagate with `?` or inspect directly.
     let attempt = load_setting(&"port", &"oops")
     match attempt {
         Ok(v) => println!("parsed {v}"),
         Err(e) => {
             println!("top-level: {}", e.message())
-            // Walk the cause chain — the natural `while let` shape.
+            // Walk the cause chain - the natural `while let` shape.
             // `cursor: Option<errors::Error>` falls through to `None`
             // once the cause chain is exhausted.
             let mut cursor = e.cause()

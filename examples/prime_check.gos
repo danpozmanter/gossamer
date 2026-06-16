@@ -1,5 +1,5 @@
 /*
- * Primality test — trial division up to sqrt(n).
+ * Primality test - trial division up to sqrt(n).
  *
  * `is_prime` is a pure function: it inspects `n` and returns a
  * `bool` without changing any caller state. Demonstrates `for

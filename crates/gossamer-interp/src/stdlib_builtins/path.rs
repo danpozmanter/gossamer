@@ -116,7 +116,7 @@ pub(crate) fn install_path(globals: &mut Vec<(&'static str, Value)>) {
             ("extension", builtin_path_ext),
             ("is_absolute", builtin_path_is_absolute),
             ("normalize", builtin_path_normalize),
-            // 0.7.0 — `base`, `dir`, `join`, `clean`,
+            // 0.7.0 - `base`, `dir`, `join`, `clean`,
             // `has_prefix` matching the doc surface in SKILL.md and
             // the compiled-tier runtime helpers. Note `split` is
             // qualified-only (registered manually below) because
@@ -131,7 +131,7 @@ pub(crate) fn install_path(globals: &mut Vec<(&'static str, Value)>) {
         ],
         globals,
     );
-    // Qualified-only `path::split` — install_module_pub above would
+    // Qualified-only `path::split` - install_module_pub above would
     // also register a bare `split` which silently overwrote the
     // string `split`, making `"a\nb".split("\n")` return a tuple.
     let joined: &'static str = "path::split";

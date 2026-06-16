@@ -75,7 +75,7 @@
 //! the process exit code, so the object file links through a
 //! standard `cc` invocation.
 //! Aggregates (tuples/arrays/structs), strings, closures, and
-//! anything that needs a GC heap are not yet lowered — those
+//! anything that needs a GC heap are not yet lowered - those
 //! constructs fall back to [`crate::emit::emit_module`] for
 //! inspection.
 
@@ -172,7 +172,7 @@ pub(super) fn resolve_callee(
             if let Some(r) = callees_by_name.get(&format!("fn#{}", def.local)).copied() {
                 return Ok(r);
             }
-            // Unknown DefId — fall back to a "missing-fn" stub so
+            // Unknown DefId - fall back to a "missing-fn" stub so
             // the program still builds. The stub returns zero,
             // which is the right default for primitive returns
             // and a null pointer for callable shapes. Programs
@@ -291,7 +291,7 @@ pub(super) fn define_shape_thunk(
             ir::immediates::Offset32::new(8),
         );
         // Build the call_indirect signature with the actual typed
-        // args / return — no env, since the real fn is a bare fn
+        // args / return - no env, since the real fn is a bare fn
         // item that doesn't take an environment.
         let mut call_sig = module.make_signature();
         for t in &input_tys {

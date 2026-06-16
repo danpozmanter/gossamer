@@ -3,7 +3,7 @@ source: crates/gossamer-diagnostics/tests/snapshots.rs
 expression: rendered
 ---
 --- plain ---
-error[GL0044]: `fn f() -> () { ... }` is the same as `fn f() { ... }`. The — here
+error[GL0044]: `fn f() -> () { ... }` is the same as `fn f() { ... }`. The - here
 --- framed ---
 error[GL0044]: `fn f() -> () { ... }` is the same as `fn f() { ... }`. The
   --> snap.gos:2:5

@@ -3,7 +3,7 @@
 // sequence so they never overlap on the non-atomic read-modify-write,
 // which keeps the total deterministic. Each goroutine runs on the
 // scheduler and shares the one backing cell, so goroutine 2 observes
-// goroutine 1's writes and `main` observes both — identical on every
+// goroutine 1's writes and `main` observes both - identical on every
 // tier (bytecode VM, JIT, LLVM AOT).
 
 static mut COUNTER: i64 = 0

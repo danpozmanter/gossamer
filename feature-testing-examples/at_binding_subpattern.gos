@@ -1,4 +1,4 @@
-// `@`-binding patterns — `x @ 1..=3` binds AND constrains.
+// `@`-binding patterns - `x @ 1..=3` binds AND constrains.
 // Exercises that the subpattern actually filters arms so the
 // catch-all is reachable.
 

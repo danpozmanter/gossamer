@@ -1,4 +1,4 @@
-// Offline cross-tier probe of the constructible HTTP surface — no
+// Offline cross-tier probe of the constructible HTTP surface - no
 // sockets, no server. Covers: `Response::text` + chained
 // `with_header` (replace-then-push, case-insensitive) read back via
 // field access on the constructed value; the `http::Response { … }`
@@ -7,7 +7,7 @@
 // unknown-method error text of `http::request`, which fails before
 // any connection is dialed.
 //
-// Deterministic output — registered as a plain SPECS row in
+// Deterministic output - registered as a plain SPECS row in
 // crates/gossamer-cli/tests/tier_parity.rs and gated byte-exact by
 // `release_http_surface_offline_probe` in
 // crates/gossamer-cli/tests/release_stability.rs.

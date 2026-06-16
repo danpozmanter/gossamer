@@ -1,4 +1,4 @@
-// Runtime support for `std::crypto::insecure` — legacy/insecure hash algorithms.
+// Runtime support for `std::crypto::insecure` - legacy/insecure hash algorithms.
 //
 // These algorithms are cryptographically broken and MUST NOT be used for
 // security-sensitive purposes. They are provided solely for interoperability

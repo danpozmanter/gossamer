@@ -8,9 +8,9 @@
 // scoping unsafe blocks inside that module.
 
 // Process-wide allocator for the Gossamer toolchain and every compiled
-// program. Replacing the platform default — notably musl's malloc on the
+// program. Replacing the platform default - notably musl's malloc on the
 // static-musl release link path and Windows ucrt HeapAlloc, both slow under
-// goroutine-heavy allocation contention — equalises allocator performance
+// goroutine-heavy allocation contention - equalises allocator performance
 // across Linux, macOS, and Windows. Defined here so the single definition
 // covers both the `gos` binary (which links this crate as an rlib) and every
 // program `gos build` links against libgossamer_runtime.a.
@@ -19,18 +19,18 @@
 // lock with no synchronisation on a thread's first allocation, which
 // TSan correctly flags as a data race, and an uninstrumented allocator
 // blinds TSan to real heap races regardless. Under `-Zsanitizer=thread`
-// fall back to the default system allocator, which TSan instruments —
+// fall back to the default system allocator, which TSan instruments -
 // the standard practice for custom allocators under sanitizers
 // (jemalloc / mimalloc document the same). Miri cannot execute
-// mimalloc's foreign allocation functions at all — it models the
+// mimalloc's foreign allocation functions at all - it models the
 // default Rust allocator and rejects the C `mi_malloc_aligned`
-// call — so it falls back to the system allocator for the same
+// call - so it falls back to the system allocator for the same
 // reason. The cargo-fuzz harness (`--cfg fuzzing`) likewise falls
 // back: it runs many independent programs in one long-lived process
 // under ASan, where the system allocator keeps RSS bounded across
 // iterations and lets ASan instrument the heap (a custom global
-// allocator blinds it). Every other build — release, debug, the
-// standalone ASan job, every compiled program — keeps mimalloc.
+// allocator blinds it). Every other build - release, debug, the
+// standalone ASan job, every compiled program - keeps mimalloc.
 #[cfg(not(any(tsan, miri, fuzzing)))]
 #[global_allocator]
 static GLOBAL_ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
@@ -39,8 +39,8 @@ static GLOBAL_ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
 ///
 /// Sets mimalloc's purge delay to zero so freed pages return to the OS
 /// promptly. mimalloc's default (1000 ms in v3) defers the `madvise`
-/// purge to batch it; on a phase-structured program — build a large map,
-/// drop it, build the next — every dropped phase's pages stay resident
+/// purge to batch it; on a phase-structured program - build a large map,
+/// drop it, build the next - every dropped phase's pages stay resident
 /// until process exit, so peak RSS becomes the SUM of all phases instead
 /// of the largest live set (measured: k-nucleotide `--release` 52.6 MB
 /// -> 28.8 MB, wall-clock unchanged). This trades mimalloc's
@@ -59,8 +59,8 @@ static GLOBAL_ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
 /// Also disables mimalloc's transparent-huge-page request. By default
 /// mimalloc `madvise(MADV_HUGEPAGE)`s its arena memory, so on Linux with
 /// THP in `madvise` mode the kernel backs even a tiny live set with
-/// 2 MiB pages — a process whose heap fits in tens of KiB stays several
-/// MiB resident — and mimalloc widens its minimal purge size to 2 MiB to
+/// 2 MiB pages - a process whose heap fits in tens of KiB stays several
+/// MiB resident - and mimalloc widens its minimal purge size to 2 MiB to
 /// match, which defeats the prompt purge above. Disabling it costs no
 /// measurable wall-clock on our workloads and keeps RSS proportional to
 /// the live set.
@@ -125,7 +125,7 @@ mod allocator_tests {
     /// documented defaults are 1000 ms and 1 (Android, the one platform
     /// defaulting `allow_thp` to 0, is not a target); if a mimalloc bump
     /// shifts the enum so either index names a different option, its
-    /// default check fails loudly — the signal to re-verify the indices
+    /// default check fails loudly - the signal to re-verify the indices
     /// for the new version. Single test because the defaults must be read
     /// before any test calls the init; option state is process-global.
     #[test]
@@ -138,14 +138,14 @@ mod allocator_tests {
         assert_eq!(
             purge_default, 1000,
             "mimalloc option 15 default is {purge_default}, expected the 1000 ms \
-             purge_delay default — the enum likely shifted; re-verify the \
+             purge_delay default - the enum likely shifted; re-verify the \
              mi_option_purge_delay index for the current mimalloc version",
         );
         let thp_default = unsafe { libmimalloc_sys::mi_option_get(MI_OPTION_ALLOW_THP) };
         assert_eq!(
             thp_default, 1,
             "mimalloc option 43 default is {thp_default}, expected the allow_thp \
-             default of 1 — the enum likely shifted; re-verify the \
+             default of 1 - the enum likely shifted; re-verify the \
              mi_option_allow_thp index for the current mimalloc version",
         );
         super::init_process_allocator();

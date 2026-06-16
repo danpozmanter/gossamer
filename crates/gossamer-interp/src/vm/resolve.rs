@@ -12,7 +12,7 @@ impl Vm {
             Global::MutStatic(cell) => Ok(cell.lock().clone()),
             Global::Fn(_) => {
                 // Bytecode chunk (possibly with a deferred JIT
-                // override) — surface as the function's name
+                // override) - surface as the function's name
                 // string so `dispatch_call` looks the entry up
                 // again and routes through `apply`, which checks
                 // the JIT override map before falling back to
@@ -35,7 +35,7 @@ impl Vm {
     /// `&self` and stays valid for the lifetime of the `Vm`.
     ///
     /// SAFETY (the localized `unsafe { &*ptr }` below): the arena
-    /// is append-only — entries are inserted on first encounter
+    /// is append-only - entries are inserted on first encounter
     /// and never removed, so the `Box<ChunkState>` stays at a
     /// stable heap address. The `Vec<Box<...>>` may reallocate
     /// when growing, but only the `Box` slots in the spine move;
@@ -62,7 +62,7 @@ impl Vm {
         }
         // Miss: allocate a fresh `ChunkState`, pin it in the
         // arena, register the side-index reference. `jit_disabled`
-        // is read once per chunk and frozen — the JIT can't be
+        // is read once per chunk and frozen - the JIT can't be
         // toggled mid-run.
         let jit_disabled = !jit_call::jit_enabled();
         let state_box = Box::new(ChunkState::new(

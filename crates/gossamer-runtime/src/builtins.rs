@@ -6,7 +6,7 @@
 //! the interpreter from carrying interpreter-specific logic for
 //! things that ought to behave the same in compiled code.
 //!
-//! Functions here are **pure** — they take Rust values and return
+//! Functions here are **pure** - they take Rust values and return
 //! `String` / primitive outputs. Anything that needs heap
 //! allocation or I/O belongs in a later slice that wires the
 //! internal ABI through Cranelift.
@@ -14,7 +14,7 @@
 #![forbid(unsafe_code)]
 
 /// Canonical decimal rendering of a 64-bit signed integer, used
-/// wherever Gossamer programs observe an `i64` as text — `println`,
+/// wherever Gossamer programs observe an `i64` as text - `println`,
 /// `format!("{n}")`, `to_string`, assertion diffs, etc.
 #[must_use]
 pub fn format_int(n: i64) -> String {
@@ -22,7 +22,7 @@ pub fn format_int(n: i64) -> String {
 }
 
 /// Canonical rendering of a 64-bit float. Matches Rust's `{f}`
-/// format — the interpreter and native backend must not diverge on
+/// format - the interpreter and native backend must not diverge on
 /// NaN / infinity / negative-zero output, so the single
 /// implementation lives here.
 #[must_use]
@@ -31,8 +31,8 @@ pub fn format_float(f: f64) -> String {
 }
 
 /// Canonical rendering of a boolean: `"true"` / `"false"`. The
-/// constant is shared so both paths format the value identically
-/// — subtle case differences would otherwise cause parity-harness
+/// constant is shared so both paths format the value identically -
+/// subtle case differences would otherwise cause parity-harness
 /// divergences.
 #[must_use]
 pub const fn format_bool(b: bool) -> &'static str {

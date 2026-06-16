@@ -1,4 +1,4 @@
-// Runtime support for `std::hash::adler32` — Adler-32 checksums.
+// Runtime support for `std::hash::adler32` - Adler-32 checksums.
 //
 // Adler-32 is used in zlib (RFC 1950) streams. It is faster than CRC-32
 // but offers weaker error detection for short messages.

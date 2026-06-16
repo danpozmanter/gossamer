@@ -4,7 +4,7 @@
 //! short loops.
 //!
 //! Default `cargo test` runs each bench at a smoke-test iteration
-//! count so the suite stays under a minute even in debug mode —
+//! count so the suite stays under a minute even in debug mode -
 //! these tests gate "the dispatch path doesn't crash on this
 //! shape", not absolute timing. For real numbers, set
 //! `GOSSAMER_TESTS_FULL=1` (or invoke the workspace-root
@@ -186,7 +186,7 @@ fn main() -> i64 {{
     eprintln!("pair_sum {n:>7}   : {dur:?}");
 }
 
-/// Cast in a hot loop — defers when the cast isn't natively
+/// Cast in a hot loop - defers when the cast isn't natively
 /// lowered.
 #[test]
 fn bench_cast_loop() {

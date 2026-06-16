@@ -3,7 +3,7 @@ source: crates/gossamer-diagnostics/tests/snapshots.rs
 expression: rendered
 ---
 --- plain ---
-error[GT0006]: A struct field access (`x.field`) referenced a name that the — here
+error[GT0006]: A struct field access (`x.field`) referenced a name that the - here
 --- framed ---
 error[GT0006]: A struct field access (`x.field`) referenced a name that the
   --> snap.gos:2:5

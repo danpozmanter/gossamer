@@ -89,7 +89,7 @@ impl<'a> Builder<'a> {
         // OR a local that the MIR builder marked as holding a
         // function-name string constant (the lift-closures pass
         // produces these for non-capturing closures: the local
-        // ends up Copy(Const(Str("__closure_N"))) — a rodata
+        // ends up Copy(Const(Str("__closure_N"))) - a rodata
         // pointer, NOT a callable address). FnPtr-typed locals
         // are already env_ptr-shaped after this round of fixes,
         // so re-wrapping them would double-indirect; FnTrait and
@@ -257,14 +257,14 @@ impl<'a> Builder<'a> {
         Some(dest)
     }
 
-    /// Lowers `go <closure>` — a fire-and-forget goroutine. The
+    /// Lowers `go <closure>` - a fire-and-forget goroutine. The
     /// front-end (`lift_go_inner`) wraps any `go <expr>` that the
     /// named-function fast path can't spawn (a stdlib free call, a
     /// method call, a block, …) into a zero-argument closure; this
     /// routes that closure through the runtime's fire-and-forget
     /// goroutine spawn. The wrapped call runs on the spawned
     /// goroutine with its own calling convention, so a stdlib free
-    /// call is asynchronous on every compiled tier — matching the
+    /// call is asynchronous on every compiled tier - matching the
     /// bytecode VM's `compile_non_call_go`. Mirrors `lower_spawn`'s
     /// env-blob construction but discards the join handle and uses
     /// `gos_rt_go_spawn`, which carries no outcome channel.
@@ -427,7 +427,7 @@ impl<'a> Builder<'a> {
         span: Span,
     ) -> Option<Local> {
         // Only handle the inline-array literal form. Dynamic specs
-        // would need real runtime support — fall through to the
+        // would need real runtime support - fall through to the
         // generic call dispatch (which produces a stub) so the rest
         // of the program still compiles.
         let HirExprKind::Array(gossamer_hir::HirArrayExpr::List(specs)) = &specs_expr.kind else {
@@ -632,7 +632,7 @@ impl<'a> Builder<'a> {
         );
         // Pin the dest to the i128 Result/Option representation even
         // when inference left `ty` an unresolved `Var` (else the
-        // i128 truncates through a `ptr` slot) — mirrors
+        // i128 truncates through a `ptr` slot) - mirrors
         // `lower_result_ctor`.
         let ty = self.result_repr_ty(ty);
         let dest = self.fresh(ty);
@@ -664,7 +664,7 @@ impl<'a> Builder<'a> {
         let bytes = (n_args.max(1) * 8) as i128;
 
         // Inline-able enums (every variant <=1 field that fits in 8 bytes) use
-        // the 2-word by-value `i128` [disc, payload] representation — pack the
+        // the 2-word by-value `i128` [disc, payload] representation - pack the
         // discriminant and the single field inline, no heap node. Mirrors the
         // Result/Option lowering and eliminates the per-node allocation storm
         // for JSON-DOM-shaped enums.
@@ -717,12 +717,12 @@ impl<'a> Builder<'a> {
 
         // Payload-less variants (e.g. `Tree::Leaf`) carry only a discriminant
         // and are never mutated, so every construction shares one pinned
-        // per-tag singleton instead of allocating a fresh 8-byte node — a
+        // per-tag singleton instead of allocating a fresh 8-byte node - a
         // large RAM win for recursive enums (a full binary tree is ~half
         // leaves). The runtime returns a borrow; the enclosing aggregate's
         // store retains it and teardown releases it (balanced).
         if n_args == 0 {
-            // Tagged repr: a unit variant needs no object at all — the
+            // Tagged repr: a unit variant needs no object at all - the
             // value is a TAGGED NULL (`disc << 1`, base pointer zero),
             // the niche encoding Rust uses for `Option<Box<T>>`. No
             // allocation, no singleton cache, and every accounting
@@ -777,7 +777,7 @@ impl<'a> Builder<'a> {
 
         // Register this variant's child-layout meta and obtain the
         // codegen symbol to reference. A variant with no RC-pointer
-        // children needs no descriptor — the empty symbol lowers to a
+        // children needs no descriptor - the empty symbol lowers to a
         // null meta pointer, which the runtime treats as a leaf.
         let meta_symbol = if child_offsets.is_empty() {
             String::new()
@@ -876,13 +876,13 @@ impl<'a> Builder<'a> {
     /// and registers it on the `TyCtxt` under a stable codegen symbol,
     /// returning that symbol. Because each allocation stores its own
     /// meta pointer, the descriptor only needs to describe *this*
-    /// variant's children — so it uses the struct-kind shape (one
+    /// variant's children - so it uses the struct-kind shape (one
     /// record, discriminant ignored at release time). See the blob
     /// format in `gossamer-runtime` `c_abi::rc`.
     /// True when `enum_name`'s heap representation carries the
     /// discriminant in pointer bits 1-2 instead of a header byte:
-    /// at most 4 variants. Bit 0 stays 0 — odd pointers are string
-    /// bodies — and 8-byte alignment frees exactly bits 0-2. Larger
+    /// at most 4 variants. Bit 0 stays 0 - odd pointers are string
+    /// bodies - and 8-byte alignment frees exactly bits 0-2. Larger
     /// enums keep the header-disc representation. Every construction
     /// and match site for a type must agree, so both consult this.
     pub(crate) fn enum_repr_tagged(&self, enum_name: &str) -> bool {

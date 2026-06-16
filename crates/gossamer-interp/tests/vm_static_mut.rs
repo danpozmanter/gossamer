@@ -1,8 +1,8 @@
 //! Bytecode-VM coverage for `static mut` storage.
 //!
 //! A mutable static is backed by a single shared cell (`Global::MutStatic`)
-//! that every reader and writer — including spawned goroutines, which clone
-//! the globals `Arc` — observes. These tests pin the single-threaded
+//! that every reader and writer - including spawned goroutines, which clone
+//! the globals `Arc` - observes. These tests pin the single-threaded
 //! read/write semantics and the cross-goroutine sharing.
 
 use std::cell::RefCell;

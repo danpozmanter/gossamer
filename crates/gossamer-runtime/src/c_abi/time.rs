@@ -16,7 +16,7 @@
 #![allow(clippy::wildcard_imports)]
 
 // ---------------------------------------------------------------
-// Time (seconds since UNIX epoch as f64 — interpreter parity)
+// Time (seconds since UNIX epoch as f64 - interpreter parity)
 // ---------------------------------------------------------------
 
 #[unsafe(no_mangle)]
@@ -46,7 +46,7 @@ pub unsafe extern "C" fn gos_rt_monotonic_ms() -> i64 {
     })
 }
 
-/// `time::now_nanos() -> i64` — nanoseconds since the UNIX epoch.
+/// `time::now_nanos() -> i64` - nanoseconds since the UNIX epoch.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_time_now_nanos() -> i64 {
     ffi_entry!(-1, {
@@ -58,7 +58,7 @@ pub unsafe extern "C" fn gos_rt_time_now_nanos() -> i64 {
     })
 }
 
-/// `time::since_ms(start) -> i64` — monotonic milliseconds elapsed
+/// `time::since_ms(start) -> i64` - monotonic milliseconds elapsed
 /// since the `start` value previously returned by `monotonic_ms`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_time_since_ms(start: i64) -> i64 {
@@ -75,7 +75,7 @@ pub unsafe extern "C" fn gos_rt_monotonic_nanos() -> i64 {
     })
 }
 
-// `time::Duration` accessors — Duration is stored as i64
+// `time::Duration` accessors - Duration is stored as i64
 // milliseconds in the compiled tier (matches the existing
 // `gos_rt_duration_from_secs`/`from_millis` constructors in
 // `string.rs`). These accessors complete the surface so callers

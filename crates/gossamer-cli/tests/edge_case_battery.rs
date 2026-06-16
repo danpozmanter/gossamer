@@ -85,7 +85,7 @@ fn double_close_channel_panics_with_clear_message() {
 
 #[test]
 fn stack_overflow_diagnostic_or_clean_abort() {
-    // Use a hard wall-clock cap — unbounded recursion must either
+    // Use a hard wall-clock cap - unbounded recursion must either
     // produce a stack-overflow diagnostic and exit, or be aborted
     // by the OS within the timeout. Silently looping is the
     // failure mode we're pinning against.

@@ -22,13 +22,13 @@ use std::os::raw::c_char;
 use super::*;
 
 // ---------------------------------------------------------------
-// Streams — io::stdout / io::stderr / io::stdin
+// Streams - io::stdout / io::stderr / io::stdin
 // ---------------------------------------------------------------
 //
 // Each stream is an opaque handle returned by the corresponding
 // constructor. Internally it's a `*GosStream` whose `fd` field
 // is 0 (stdin), 1 (stdout), or 2 (stderr). The same three
-// pointers are returned on every call — they live in static
+// pointers are returned on every call - they live in static
 // rodata, so `io::stdout()` is effectively a no-op that returns
 // an already-interned handle.
 //
@@ -63,7 +63,7 @@ pub unsafe extern "C" fn gos_rt_io_stderr() -> *const GosStream {
     ffi_entry!(std::ptr::null(), { std::ptr::addr_of!(STREAM_STDERR) })
 }
 
-/// `io::Copy(dst, src)` — drains `src` (the stdin stream) to EOF,
+/// `io::Copy(dst, src)` - drains `src` (the stdin stream) to EOF,
 /// writing every byte to `dst`, and returns the byte count. Mirrors
 /// Go's `io.Copy`. Only stdin -> stdout/stderr is wired today; any
 /// other source fd is a no-op returning 0, matching the interpreter
@@ -88,7 +88,7 @@ pub unsafe extern "C" fn gos_rt_io_copy(dst: *const GosStream, src: *const GosSt
     })
 }
 
-/// `io::ReadAll(reader)` — drains `reader` (the stdin stream) to EOF
+/// `io::ReadAll(reader)` - drains `reader` (the stdin stream) to EOF
 /// and returns the accumulated bytes as a freshly-allocated
 /// GC-arena string. Mirrors Go's `io.ReadAll`. Non-stdin readers
 /// return an empty string, matching the interpreter builtin.
@@ -120,7 +120,7 @@ unsafe fn write_fd(fd: i32, bytes: &[u8]) {
     if fd == 1 {
         unsafe { write_stdout(bytes) };
     } else {
-        // Unbuffered direct write — fine for stderr and for any
+        // Unbuffered direct write - fine for stderr and for any
         // user-opened fd once we add `open`. stdout is the only
         // buffered sink today.
         raw_write_fd(fd, bytes);
@@ -133,7 +133,7 @@ fn raw_write_fd(fd: i32, bytes: &[u8]) {
     }
     use std::io::Write;
     // Today the runtime only routes fds 1 and 2; fd 0 is read-only.
-    // Other fds will land here once `open()` is wired — at that
+    // Other fds will land here once `open()` is wired - at that
     // point this dispatch grows. Going through `std::io` keeps the
     // call cross-platform (no `extern "C" fn write` symbol on
     // Windows MSVC).
@@ -175,7 +175,7 @@ pub unsafe extern "C" fn gos_rt_stream_write_byte(stream: *const GosStream, b: i
                 }
                 return;
             }
-            // Buffer full — flush and stash the new byte.
+            // Buffer full - flush and stash the new byte.
             unsafe {
                 raw_write_stdout(std::slice::from_raw_parts((*bytes_ptr).as_ptr(), len));
                 *(*bytes_ptr).as_mut_ptr() = b as u8;
@@ -227,7 +227,7 @@ pub unsafe extern "C" fn gos_rt_stream_write_byte_array(
         if fd == 1 {
             // Stdout fast path. We always check capacity ONCE
             // up front and (if it fits) do a tight pack that the
-            // optimiser is happy to vectorise — no per-iteration
+            // optimiser is happy to vectorise - no per-iteration
             // bounds branch. The slow path (block doesn't fit
             // remaining capacity) flushes and retries; for the
             // small-block case (fasta's 61-byte lines) the buffer
@@ -249,7 +249,7 @@ pub unsafe extern "C" fn gos_rt_stream_write_byte_array(
             // Slow path: block doesn't fit. Flush and either pack
             // an oversized payload directly, or recurse so the
             // first arm fires with an empty buffer. The recursion
-            // case has to drop the guard first — `STDOUT_LOCK` is
+            // case has to drop the guard first - `STDOUT_LOCK` is
             // a non-recursive `RawMutex`, so re-entering on the
             // same OS thread would deadlock.
             unsafe {
@@ -349,7 +349,7 @@ pub unsafe extern "C" fn gos_rt_stream_read_to_string(stream: *const GosStream) 
 pub unsafe extern "C" fn gos_rt_println() {
     ffi_entry!((), {
         unsafe { write_stdout(b"\n") };
-        // Flush on every newline — matches Rust's LineWriter<StdoutRaw> contract
+        // Flush on every newline - matches Rust's LineWriter<StdoutRaw> contract
         // so that `println!` output appears immediately, as it does in Go and
         // on the JVM. Programs that need high-throughput output should use
         // stream write methods directly rather than `println!`.

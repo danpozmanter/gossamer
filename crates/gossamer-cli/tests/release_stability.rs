@@ -1,8 +1,8 @@
 //! Release-tier stability gauge.
 //!
 //! Each test below writes a small deterministic Gossamer program,
-//! builds it with `gos build --release` (LLVM + Cranelift fallback
-//! — the production tier), runs the binary, and asserts the
+//! builds it with `gos build --release` (LLVM + Cranelift fallback -
+//! the production tier), runs the binary, and asserts the
 //! produced stdout byte-for-byte against a fixed expected string.
 //!
 //! The `--release` pipeline is the gold-standard target: interp
@@ -15,8 +15,8 @@
 //! in the release tier will turn this suite red. Tests carrying
 //! `#[ignore = "release-tier wiring gap: …"]` document a known
 //! wiring failure where `gos build --release` accepts the program
-//! but the produced binary diverges from the language semantics
-//! — those entries form the today-snapshot of the gauge. Removing
+//! but the produced binary diverges from the language semantics -
+//! those entries form the today-snapshot of the gauge. Removing
 //! the `#[ignore]` is the right way to claim a gap is closed.
 
 #![allow(missing_docs)]
@@ -109,7 +109,7 @@ fn assert_release_stdout_eq(name: &str, body: &str, expected: &str) {
 }
 
 // ---------------------------------------------------------------
-// Passing checks — these are the regression gates. Each one
+// Passing checks - these are the regression gates. Each one
 // covers a behaviour that the release pipeline is supposed to
 // honour and has been confirmed working at the time of writing.
 // A red light here means a recent change broke something.
@@ -122,7 +122,7 @@ fn release_request_field_string_methods_dispatch_correctly() {
     // fields: `r.query` / `r.path` are checker-opaque (inference
     // Vars), and without the MIR field-type promotion `.len()`
     // lands on the len-prefixed `gos_rt_len`, dereferencing the
-    // c-string pointer — a misaligned-pointer abort on the first
+    // c-string pointer - a misaligned-pointer abort on the first
     // request (the locurlfwd proxy crash shape).
     assert_release_stdout_eq(
         "request_field_methods",
@@ -380,7 +380,7 @@ fn main() {
 
 #[test]
 fn release_channel_send_recv_drains_in_order() {
-    // FIFO channel semantics — main pushes 5 values, drains 5 via
+    // FIFO channel semantics - main pushes 5 values, drains 5 via
     // `if let Some(v) = rx.recv()`. Catches Option<T> aggregate
     // construction from runtime returns + channel ABI.
     assert_release_stdout_eq(
@@ -440,7 +440,7 @@ fn main() {
 
 #[test]
 fn release_hashmap_inc_idiom_counts_words() {
-    // Catches the HashMap.inc counter idiom — a known weak point:
+    // Catches the HashMap.inc counter idiom - a known weak point:
     // a recent fix landed for the round-2 String<->i64 lowering.
     // Verifies inc() defaults to +1, increments persist across
     // calls, and `get_or(default)` reads the right slot.
@@ -467,7 +467,7 @@ fn main() {
 
 #[test]
 fn release_btreemap_iter_yields_sorted_pairs() {
-    // BTreeMap's `for (k, v) in m.iter()` shape — destructured
+    // BTreeMap's `for (k, v) in m.iter()` shape - destructured
     // iteration over an ordered map. Catches both the
     // tuple-destructuring binding and the sorted-by-key
     // invariant.
@@ -586,7 +586,7 @@ fn main() {
 
 #[test]
 fn release_recursive_fib_returns_correct_value() {
-    // Naive recursive `fib(25)` — a smoke test for stack-rooted
+    // Naive recursive `fib(25)` - a smoke test for stack-rooted
     // values, register reuse, and call-conv across deep call
     // chains.
     assert_release_stdout_eq(
@@ -662,7 +662,7 @@ fn main() {
 
 #[test]
 fn release_nested_format_macro_handles_precision() {
-    // `format!("{:.4}", pi)` nested inside another `format!` —
+    // `format!("{:.4}", pi)` nested inside another `format!` -
     // catches the LLVM `__concat` buffering fix and precision
     // wiring on the inner string boundary.
     assert_release_stdout_eq(
@@ -780,7 +780,7 @@ fn release_owned_string_push_str_holds_value() {
     // `b.push_str(s)` is rewritten to `b = __concat(b, s)`
     // (gossamer-mir/src/lower.rs::lower_method_call). Owned
     // `String` is the runtime's `*const c_char` representation
-    // — concat-and-reassign keeps the receiver local rooted to
+    // - concat-and-reassign keeps the receiver local rooted to
     // the new bytes pointer.
     assert_release_stdout_eq(
         "owned_str",
@@ -826,7 +826,7 @@ fn main() {
 #[test]
 fn release_eprintln_goes_to_stderr() {
     // Until 2026-04-30 the cranelift + LLVM lowering of
-    // `eprint`/`eprintln` shared the buffered stdout writer —
+    // `eprint`/`eprintln` shared the buffered stdout writer -
     // the comment at native.rs:3541 acknowledged the gap. This
     // test gates the fix: stderr-bound output must not appear
     // on stdout, and stdout output must still flush before
@@ -851,7 +851,7 @@ fn main() {
 fn release_u64_values_print_like_the_vm() {
     // Under the i64 runtime model every <=64-bit int is a signed
     // i64 value, so a `u64` literal at 2^64-1 aliases `-1` and
-    // prints signed — matching the VM. The single exception is
+    // prints signed - matching the VM. The single exception is
     // display provenance: a value produced by an explicit
     // `as u64` / `as usize` cast renders unsigned (the VM's
     // `Value::Uint`). This test gates both halves of the
@@ -990,7 +990,7 @@ fn main() {
 #[test]
 fn release_read_file_bytes_for_loop_mixed_width_sum() {
     // `total: i64 += b: u8` used to emit `add i64 %a, %b` with an
-    // i8 operand — invalid IR that failed the `opt` stage. The
+    // i8 operand - invalid IR that failed the `opt` stage. The
     // file roundtrip also hands the compiled tier a packed
     // elem_bytes=1 vec, so indexing and element writes must honour
     // the header stride.
@@ -1124,7 +1124,7 @@ fn release_http_surface_offline_probe_is_byte_exact() {
 #[test]
 fn release_error_chain_renders_outer_mid_root() {
     // `errors::wrap` chains must Display as "outer: mid: root" on
-    // the release tier — the cause chain renders colon-separated
+    // the release tier - the cause chain renders colon-separated
     // from the outermost wrap inward, matching the VM.
     assert_release_stdout_eq(
         "error_chain_render",
@@ -1209,7 +1209,7 @@ fn main() {
 #[test]
 fn release_rejects_unrowed_combinator_closure_with_gt0013() {
     // `iter::count` exists but has no checker signature row, so a
-    // closure argument's parameter type cannot be inferred — the
+    // closure argument's parameter type cannot be inferred - the
     // realistic mistake is reaching for `count` where `count_by`
     // is the predicate-taking form.
     assert_release_build_rejects(

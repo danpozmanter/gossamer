@@ -3,7 +3,7 @@ source: crates/gossamer-diagnostics/tests/snapshots.rs
 expression: rendered
 ---
 --- plain ---
-error[GL0010]: An empty `{}` block is almost always a mistake. Add an explicit — here
+error[GL0010]: An empty `{}` block is almost always a mistake. Add an explicit - here
 --- framed ---
 error[GL0010]: An empty `{}` block is almost always a mistake. Add an explicit
   --> snap.gos:2:5

@@ -3,7 +3,7 @@ source: crates/gossamer-diagnostics/tests/snapshots.rs
 expression: rendered
 ---
 --- plain ---
-error[GL0045]: `let _: () = expr` annotates the binding with the unit type. If — here
+error[GL0045]: `let _: () = expr` annotates the binding with the unit type. If - here
 --- framed ---
 error[GL0045]: `let _: () = expr` annotates the binding with the unit type. If
   --> snap.gos:2:5

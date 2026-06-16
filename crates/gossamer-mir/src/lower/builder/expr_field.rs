@@ -78,7 +78,7 @@ impl<'a> Builder<'a> {
         // lives in the RC header byte).
         // Mixing the flat-tuple lowering with the disc-prefixed
         // match was the root cause of the
-        // control_flow / data_structures crash — the match read
+        // control_flow / data_structures crash - the match read
         // disc from offset 0 of a value that didn't have one.
         let is_free_struct = self.structs.contains_key(struct_name);
         let mut variant_idx: Option<usize> = None;
@@ -94,7 +94,7 @@ impl<'a> Builder<'a> {
                 variant_enum_name = Some(enum_name);
             }
         }
-        // `http::Response { … }` — the type is an opaque runtime handle
+        // `http::Response { … }` - the type is an opaque runtime handle
         // on the compiled tiers (a `GosHttpResponse` ptr), so the
         // generic aggregate lowering can't apply (it would emit an
         // undefined `__struct` call). Lower to the runtime constructor
@@ -173,7 +173,7 @@ impl<'a> Builder<'a> {
         // DefId) let us coerce a flat `[T; N]` array-literal value into
         // a heap `GosVec` when the field is declared `[T]` (Vec) /
         // `[T]`-slice. Without this, `Q { bytes: [1, 2, 3] }` stores the
-        // 3-slot inline array straight into the 1-slot Vec field — the
+        // 3-slot inline array straight into the 1-slot Vec field - the
         // struct alloca overflows and a later `q.bytes.len()` reads
         // element[0] as the Vec pointer (misaligned-deref crash).
         let field_tys: Option<Vec<Ty>> = match self.tcx.kind_of(ty) {
@@ -249,7 +249,7 @@ impl<'a> Builder<'a> {
         // lost-struct-name fallback to the unsupported placeholder).
         if let Some(mut place) = self.lower_place_expr(receiver) {
             // Recover the runtime-handle kind from the local's *type* when
-            // its construction-site tag was lost — e.g. an `http::Response`
+            // its construction-site tag was lost - e.g. an `http::Response`
             // returned from a user function (`let r = attach(r)`) or bound
             // through a `let`. Without this the `.headers` / `.body` field
             // projection falls through to a positional struct read against a
@@ -364,8 +364,8 @@ impl<'a> Builder<'a> {
                         // pinning time (e.g. `body_f.value` after
                         // `let body_f = body.to_fahrenheit()`). Fall
                         // through to the struct's declared field type
-                        // — looked up via the receiver local's MIR
-                        // `Adt` def — so downstream printing and
+                        // - looked up via the receiver local's MIR
+                        // `Adt` def - so downstream printing and
                         // temp-local typing see the real `f64` /
                         // `String` / etc. Without this, the lower
                         // tier alloca's the temp as `ptr` and stores
@@ -384,7 +384,7 @@ impl<'a> Builder<'a> {
                         // its bit pattern) or strlen's a non-pointer.
                         // The struct's *declared* field type (looked up
                         // via the receiver local's MIR `Adt` def) is
-                        // authoritative — the HIR-recorded `ty` is
+                        // authoritative - the HIR-recorded `ty` is
                         // unreliable here: it can be an unresolved
                         // inference var, a bound `Param(n)`, OR a
                         // wrongly-resolved concrete type (e.g. a
@@ -441,7 +441,7 @@ impl<'a> Builder<'a> {
         // Fallback: recurse into the receiver and use its local's
         // recorded struct name (the original path, kept for cases
         // where the receiver is an expression rather than a place
-        // — e.g. a call that returns a struct).
+        // - e.g. a call that returns a struct).
         let receiver_local = self.lower_expr(receiver)?;
 
         // `flags.<long>` for the synthesised `flag::define(...)`
@@ -458,7 +458,7 @@ impl<'a> Builder<'a> {
         // when its element-struct propagated through the
         // `entries[i]` index. Resolve the field name to a
         // positional `Field(idx)` against the registered shape
-        // BEFORE the JsonValue fallback fires — otherwise a
+        // BEFORE the JsonValue fallback fires - otherwise a
         // typechecker-opaque ADT routes through `gos_rt_json_get`
         // and crashes inside serde_json.
         if let Some(struct_name) = self.local_struct.get(&receiver_local).cloned() {
@@ -480,7 +480,7 @@ impl<'a> Builder<'a> {
             }
         }
 
-        // `value.field` on a `json::Value` receiver — rewrite to a
+        // `value.field` on a `json::Value` receiver - rewrite to a
         // runtime `gos_rt_json_get(value, "field")` call. The
         // result is itself a `json::Value` that downstream code
         // chains further field access / cast through.
@@ -621,7 +621,7 @@ impl<'a> Builder<'a> {
             // we fall back to the JSON-get path; that produces the
             // right answer for json::Value carriers and a null for
             // genuinely missing fields. Other receiver kinds reach
-            // here only on a checker bug — promote to a JSON-get
+            // here only on a checker bug - promote to a JSON-get
             // soft fallback so the build still succeeds.
             return Some(self.emit_json_get(receiver_local, &name.name, span));
         };
@@ -638,7 +638,7 @@ impl<'a> Builder<'a> {
         // names, so this lookup must succeed for any program that
         // reaches MIR. If a future refactor relaxes that check,
         // route the read through `gos_rt_json_get` so the build
-        // still produces a value — null for absent fields — rather
+        // still produces a value - null for absent fields - rather
         // than refusing to lower.
         let Some(idx) = idx else {
             return Some(self.emit_json_get(receiver_local, &name.name, span));
@@ -683,7 +683,7 @@ impl<'a> Builder<'a> {
     /// literal arrays, a MIR-level loop for dynamic ones).
     ///
     /// Field subsets mirror the interp's `value_to_response`: every
-    /// field is optional — status defaults to 200, body to empty,
+    /// field is optional - status defaults to 200, body to empty,
     /// content_type to text/plain (via `text_new`), headers to none.
     /// Unknown fields are evaluated and discarded, and a functional
     ///-update `..base` fills omitted fields by reading them back off
@@ -803,7 +803,7 @@ impl<'a> Builder<'a> {
             Some(self.lower_expr(e)?)
         } else {
             // Without a base the `text_new` constructor already
-            // records the text/plain default — matching the interp's
+            // records the text/plain default - matching the interp's
             // no-content_type behavior.
             base_local.map(|base| {
                 self.emit_rt_call_local(
@@ -838,7 +838,7 @@ impl<'a> Builder<'a> {
                 _ => e,
             };
             if let HirExprKind::Array(gossamer_hir::HirArrayExpr::List(elems)) = &e.kind {
-                // Literal array — unroll one `with_header` per pair.
+                // Literal array - unroll one `with_header` per pair.
                 for elem in elems {
                     let (k, v) = if let HirExprKind::Tuple(items) = &elem.kind {
                         if items.len() != 2 {
@@ -879,7 +879,7 @@ impl<'a> Builder<'a> {
                     );
                 }
             } else {
-                // Dynamic header list — loop over the runtime vec.
+                // Dynamic header list - loop over the runtime vec.
                 let hv = self.lower_expr(e)?;
                 let hv_ty = self.locals[hv.0 as usize].ty;
                 let hv = if let TyKind::Array { elem, len } = self.tcx.kind_of(hv_ty).clone() {
@@ -921,7 +921,7 @@ impl<'a> Builder<'a> {
     /// `gos_rt_http_response_with_header`. Same element-access recipe
     /// as `lower_for_vec`'s tuple destructure: `gos_rt_vec_get_ptr`
     /// for the 16-byte slot, `gos_load` at word offsets 0 / 8 for the
-    /// name / value c-strings (borrowed — `with_header` copies).
+    /// name / value c-strings (borrowed - `with_header` copies).
     fn emit_response_header_copy_loop(&mut self, resp: Local, headers_vec: Local, span: Span) {
         let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
         let string_ty = self.tcx.string_ty();

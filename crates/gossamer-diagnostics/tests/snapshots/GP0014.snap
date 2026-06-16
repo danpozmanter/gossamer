@@ -3,7 +3,7 @@ source: crates/gossamer-diagnostics/tests/snapshots.rs
 expression: rendered
 ---
 --- plain ---
-error[GP0014]: A `use` declaration could not be parsed. Check the path for — here
+error[GP0014]: A `use` declaration could not be parsed. Check the path for - here
 --- framed ---
 error[GP0014]: A `use` declaration could not be parsed. Check the path for
   --> snap.gos:2:5

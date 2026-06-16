@@ -36,7 +36,7 @@ impl Vm {
     /// `Op::Spawn` so a freshly spawned goroutine runs the callee
     /// through the bytecode VM with the parent's `Arc<FnChunk>`
     /// graph shared (chunks are immutable + `Sync`). The child has
-    /// its own per-`Vm` cache state and JIT slot — see [`Self::jit`]
+    /// its own per-`Vm` cache state and JIT slot - see [`Self::jit`]
     /// for why JIT state can't cross threads.
     #[must_use]
     pub(crate) fn with_globals(
@@ -111,7 +111,7 @@ impl Vm {
         self.prelude.get(name).cloned()
     }
 
-    /// Borrowed two-tier lookup — caller doesn't need a clone.
+    /// Borrowed two-tier lookup - caller doesn't need a clone.
     #[inline]
     #[must_use]
     pub(crate) fn lookup_global_ref(&self, name: &str) -> Option<&Global> {
@@ -130,7 +130,7 @@ impl Vm {
         let next = self.globals_generation.get().wrapping_add(1);
         // Skip 0 on wrap so the empty-slot sentinel stays distinct
         // from a real generation. Wrapping after 4 billion mutations
-        // is purely defensive — we never expect to get there in a
+        // is purely defensive - we never expect to get there in a
         // single program run.
         let next = if next == 0 { 1 } else { next };
         self.globals_generation.set(next);
@@ -149,7 +149,7 @@ impl Vm {
     /// Test-only override that lets the test suite drive the
     /// generation counter to a specific value (e.g. `u32::MAX` to
     /// force the wrap-skips-zero path). Production code never needs
-    /// this — it always uses [`Self::bump_globals_generation`].
+    /// this - it always uses [`Self::bump_globals_generation`].
     #[doc(hidden)]
     pub fn set_globals_generation_for_test(&self, value: u32) {
         self.globals_generation.set(value);
@@ -175,7 +175,7 @@ impl Vm {
 
     /// Frees MIR bodies and the `TyCtxt` snapshot retained for deferred JIT.
     /// After JIT compilation fires (or is skipped), these are never read
-    /// again on the main `Vm` — goroutines have already cloned their own Arcs.
+    /// again on the main `Vm` - goroutines have already cloned their own Arcs.
     /// Call once after `vm.call()` returns to reclaim the per-program MIR
     /// allocation before the goroutine-join phase.
     pub fn release_jit_prelude(&mut self) {
@@ -307,7 +307,7 @@ impl Vm {
         // through `apply`; the resulting value registers in `globals`. A
         // `static mut` gets a shared `Global::MutStatic` cell so writes
         // from `Op::StoreStatic` persist and are observable. Immutable
-        // consts/statics also feed `module_consts` for the inline path —
+        // consts/statics also feed `module_consts` for the inline path -
         // mutable statics are deliberately excluded: their reads flow
         // through `LoadGlobal` to the live cell so every store is seen.
         for item in &program.items {
@@ -379,7 +379,7 @@ impl Vm {
                 )?;
             }
         }
-        // Tier D2 — deferred JIT. Lower MIR up front so the
+        // Tier D2 - deferred JIT. Lower MIR up front so the
         // tier-up trigger (in `apply`) can dispatch a compile via
         // `&self`, but don't compile yet: short-running programs
         // (`hello.gos`, REPL one-liners) never trip the per-chunk
@@ -402,7 +402,7 @@ impl Vm {
             gossamer_mir::inline_small_callees(&mut bodies);
             gossamer_mir::inline_general(&mut bodies);
             self.mir_bodies = Some(Arc::new(bodies));
-            // Move the owned type context into the snapshot — no clone.
+            // Move the owned type context into the snapshot - no clone.
             // `load` takes `tcx` by value precisely so this hand-off is
             // a move: it duplicated the entire `TyCtxt` at load time
             // (the high-water allocation that set a small program's
@@ -431,7 +431,7 @@ impl Vm {
     /// counter trips. The state machine on `JitState::compiled`
     /// short-circuits concurrent goroutine trips so `compile_to_jit`
     /// runs at most once per `Arc<RwLock<JitState>>`. Failures
-    /// transition to `Failed` and stay there — no observable
+    /// transition to `Failed` and stay there - no observable
     /// behaviour change for the bytecode path.
     pub(crate) fn try_compile_jit_lazy(&self) {
         // Fast read-only check first: avoids exclusive locks once
@@ -495,7 +495,7 @@ impl Vm {
         // skip `main` because the cranelift intrinsic table
         // doesn't cover every stdlib call wired through the
         // interp's builtins (slog::info, exec::run,
-        // compress::gzip::*, bufio::read_lines, etc. — anything
+        // compress::gzip::*, bufio::read_lines, etc. - anything
         // newly registered via `install_module` in `builtins.rs`).
         // When a JIT-compiled `main` hits one of those, the
         // codegen silently emits a no-op call instead of routing
@@ -526,7 +526,7 @@ impl Vm {
             // Admitting these would also be unsound for side-effecting
             // helpers: the trampoline catches the unwind and falls back
             // to the bytecode chunk, which re-runs the body from the
-            // start — any effect performed before the panic in the
+            // start - any effect performed before the panic in the
             // native body would happen twice. The bytecode path renders
             // the same trace (exit 101, `main` -> helper) with neither
             // hazard, so the exclusion stays.
@@ -539,7 +539,7 @@ impl Vm {
             // `JitFn` carries a raw `*const u8` so it isn't
             // `Send + Sync`. The VM is single-threaded today, so
             // an `Arc` is the right shape for the override map's
-            // shared ownership semantics — a `Rc` would prevent
+            // shared ownership semantics - a `Rc` would prevent
             // the artifact's `Drop` from waiting for outstanding
             // override references on shutdown.
             #[allow(

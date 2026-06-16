@@ -29,85 +29,85 @@ version. This page is auto-generated from the catalogue in
 
 ## `GP0001` <a id="gp0001"></a>
 
-**Parser** — unexpected token
+**Parser** - unexpected token
 
 The parser saw a token where it expected a different one. Check for missing punctuation, an unmatched delimiter, or an out-of-place keyword.
 
 ## `GP0002` <a id="gp0002"></a>
 
-**Parser** — unexpected end of input
+**Parser** - unexpected end of input
 
-The parser reached end-of-file in the middle of a construct. Finish the expression, statement, or item — or remove it.
+The parser reached end-of-file in the middle of a construct. Finish the expression, statement, or item - or remove it.
 
 ## `GP0003` <a id="gp0003"></a>
 
-**Parser** — unterminated delimiter
+**Parser** - unterminated delimiter
 
 A balanced construct (block, tuple, array, string literal) was left unterminated. Add the matching closing delimiter.
 
 ## `GP0004` <a id="gp0004"></a>
 
-**Parser** — chained comparison without parentheses
+**Parser** - chained comparison without parentheses
 
 Comparison operators like `==` / `!=` / `<` are not associative. Parenthesise the operands: `(a == b) && (b == c)`.
 
 ## `GR0001` <a id="gr0001"></a>
 
-**Resolve** — unresolved name
+**Resolve** - unresolved name
 
 A name used in source could not be resolved to a declaration. Check the spelling, whether a `use` brings the name into scope, and whether the item is visible at this location.
 
 ## `GR0002` <a id="gr0002"></a>
 
-**Resolve** — wrong namespace
+**Resolve** - wrong namespace
 
 A name was resolved to the wrong namespace (value vs. type). Check the declaration and the spelling.
 
 ## `GR0003` <a id="gr0003"></a>
 
-**Resolve** — duplicate item
+**Resolve** - duplicate item
 
 Two items in the same module share a name. Rename one of them or move it into a distinct `mod`.
 
 ## `GR0004` <a id="gr0004"></a>
 
-**Resolve** — duplicate import
+**Resolve** - duplicate import
 
 The same path was imported twice in the same `use` list. Drop the duplicate.
 
 ## `GT0001` <a id="gt0001"></a>
 
-**Types** — type mismatch
+**Types** - type mismatch
 
 The type checker could not reconcile two types it expected to match. The primary label shows the location of the mismatch; the `note:` line names the conflicting types.
 
 ## `GT0002` <a id="gt0002"></a>
 
-**Types** — unresolved method
+**Types** - unresolved method
 
 The type checker could not find a method with the supplied name on the receiver type. Check for a typo, a missing `use`, or a trait impl that lives in an unreachable module.
 
 ## `GT0003` <a id="gt0003"></a>
 
-**Types** — unresolved operator
+**Types** - unresolved operator
 
 The operator is not defined for the operand types. Check the operand types and use the correct operator.
 
 ## `GT0004` <a id="gt0004"></a>
 
-**Match exhaustiveness** — non-exhaustive match
+**Match exhaustiveness** - non-exhaustive match
 
 A `match` expression does not cover every possible value. Add an arm for the pattern(s) listed under `help:`.
 
 ## `GT0005` <a id="gt0005"></a>
 
-**Types** — non-primitive cast
+**Types** - non-primitive cast
 
 The `as` cast is restricted to a whitelist: numeric ↔ numeric, `bool`/`char` → integer, `u8` → `char`, and same-type no-ops. Struct / enum / String sources are rejected. Use a conversion method when you need serialisation; `as` does not run code.
 
 ## `GK0001` <a id="gk0001"></a>
 
-**Package manager** — manifest parse error
+**Package manager** - manifest parse error
 
 The package manifest (`gos.toml`) could not be parsed. Check the TOML syntax and required fields.
 

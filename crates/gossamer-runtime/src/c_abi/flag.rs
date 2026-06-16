@@ -22,7 +22,7 @@ use std::sync::atomic::Ordering;
 use super::*;
 
 // ---------------------------------------------------------------
-// flag::Set — minimal CLI-flag parser. The compiled tier exposes
+// flag::Set - minimal CLI-flag parser. The compiled tier exposes
 // a single mutable `*mut GosFlagSet` with `.string`, `.uint`,
 // `.bool` registration and `.parse(args)`. Each registration
 // returns a `*mut Cell<T>` so user code does `*name` to read
@@ -53,7 +53,7 @@ pub enum FlagKind {
     Uint,
     Float,
     Bool,
-    /// Duration cell stores `i64` milliseconds — same wire shape as
+    /// Duration cell stores `i64` milliseconds - same wire shape as
     /// `time::Duration` in the compiled tier.
     Duration,
     /// String-list cell stores `*mut GosVec` of c-string pointers.
@@ -275,7 +275,7 @@ pub unsafe extern "C" fn gos_rt_flag_set_string_list(
 }
 
 /// Attaches a one-character short alias to the most recently
-/// registered flag — mirrors `Set::short` in `gossamer-std`.
+/// registered flag - mirrors `Set::short` in `gossamer-std`.
 /// `letter` is passed as i64 to match how single-char literals
 /// flow through the compiled-tier C ABI.
 #[unsafe(no_mangle)]
@@ -465,7 +465,7 @@ pub unsafe extern "C" fn gos_rt_flag_set_parse(
         }
         // Two callers reach this function: the runner-build path
         // passes a real `*mut GosVec` of c-string pointers; the
-        // compiled path passes the `os::args()` sentinel — a raw
+        // compiled path passes the `os::args()` sentinel - a raw
         // `argv + 1` pointer with `argc - 1` length stashed in the
         // process-global ARGS_PTR / ARGS_LEN. Detect the sentinel by
         // pointer-equality and route to a separate iteration path

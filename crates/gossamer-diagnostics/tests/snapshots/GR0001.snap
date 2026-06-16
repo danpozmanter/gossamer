@@ -3,7 +3,7 @@ source: crates/gossamer-diagnostics/tests/snapshots.rs
 expression: rendered
 ---
 --- plain ---
-error[GR0001]: A name used in source could not be resolved to a declaration. — here
+error[GR0001]: A name used in source could not be resolved to a declaration. - here
 --- framed ---
 error[GR0001]: A name used in source could not be resolved to a declaration.
   --> snap.gos:2:5

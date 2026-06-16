@@ -108,9 +108,9 @@ impl FloatTy {
 /// Reference mutability marker used by [`TyKind::Ref`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Mutbl {
-    /// `&T` — shared GC reference.
+    /// `&T` - shared GC reference.
     Not,
-    /// `&mut T` — exclusive GC reference.
+    /// `&mut T` - exclusive GC reference.
     Mut,
 }
 
@@ -190,15 +190,15 @@ pub enum TyKind {
     Bool,
     /// `char`.
     Char,
-    /// `String` — GC-backed UTF-8 string.
+    /// `String` - GC-backed UTF-8 string.
     String,
     /// Signed or unsigned integer types `i8`..`usize`.
     Int(IntTy),
     /// Floating-point types `f32` / `f64`.
     Float(FloatTy),
-    /// `()` — the unit type.
+    /// `()` - the unit type.
     Unit,
-    /// `!` — the never type.
+    /// `!` - the never type.
     Never,
     /// Tuple type `(T1, ..., Tn)` with two or more elements.
     Tuple(Vec<Ty>),
@@ -211,43 +211,43 @@ pub enum TyKind {
     },
     /// Unsized slice `[T]`, always seen through a reference at runtime.
     Slice(Ty),
-    /// `Vec<T>` — built-in growable sequence.
+    /// `Vec<T>` - built-in growable sequence.
     Vec(Ty),
-    /// `HashMap<K, V>` — built-in hash map.
+    /// `HashMap<K, V>` - built-in hash map.
     HashMap {
         /// Key type.
         key: Ty,
         /// Value type.
         value: Ty,
     },
-    /// `Sender<T>` — channel send endpoint.
+    /// `Sender<T>` - channel send endpoint.
     Sender(Ty),
-    /// `Receiver<T>` — channel receive endpoint.
+    /// `Receiver<T>` - channel receive endpoint.
     Receiver(Ty),
-    /// `JoinHandle<T>` — handle returned by `spawn(f)`; `.join()`
+    /// `JoinHandle<T>` - handle returned by `spawn(f)`; `.join()`
     /// blocks for the goroutine's `Result<T, String>` outcome.
     /// Carried as a one-shot channel pointer at runtime.
     JoinHandle(Ty),
-    /// `time::Duration` — a transparent `i64`-of-milliseconds newtype.
+    /// `time::Duration` - a transparent `i64`-of-milliseconds newtype.
     /// The runtime representation is exactly an `i64`; the distinct
     /// kind exists only so method-form accessors (`d.as_millis()`)
     /// resolve against the receiver's static type. MIR lowering
     /// normalizes it back to `i64`, so codegen never observes it.
     Duration,
-    /// `time::Instant` — a transparent `i64`-of-monotonic-milliseconds
+    /// `time::Instant` - a transparent `i64`-of-monotonic-milliseconds
     /// newtype. Like `Duration`, the runtime value is exactly an `i64`
     /// (the monotonic-ms reading at `Instant::now()`); the distinct
     /// kind only steers the method-form accessor (`inst.elapsed_ms()`)
     /// against the receiver's static type. MIR lowering normalizes it
     /// back to `i64`, so codegen never observes it.
     Instant,
-    /// `json::Value` — opaque dynamic JSON node. Carries no
+    /// `json::Value` - opaque dynamic JSON node. Carries no
     /// generic parameters; the runtime backs every node with a
     /// boxed `serde_json::Value`. Field access on a `JsonValue`
     /// receiver is rewritten by MIR lowering into a runtime
     /// `gos_rt_json_get(receiver, "field")` call.
     JsonValue,
-    /// `errors::Error` — opaque heap error value with a message
+    /// `errors::Error` - opaque heap error value with a message
     /// string and optional cause chain. Used as the default Err
     /// type for `Result<T>` so the `?` operator and error
     /// propagation work across the standard library without
@@ -269,7 +269,7 @@ pub enum TyKind {
     },
     /// Anonymous function-pointer type `fn(...) -> ...`.
     FnPtr(FnSig),
-    /// Callable trait type `Fn(args) -> ret` — accepts both bare
+    /// Callable trait type `Fn(args) -> ret` - accepts both bare
     /// `fn` items and capturing closures via implicit coercion.
     /// Lowered as a `(env_ptr, code_ptr)` fat pointer (two
     /// consecutive `i64` slots) so the env that a capturing
@@ -315,7 +315,7 @@ pub enum TyKind {
         /// Source-level name for diagnostics (`T`, `U`, ...). Owned
         /// so the previous `Box::leak`-into-`&'static str` pattern
         /// can't strand allocations on the heap when the surrounding
-        /// `TyCtxt` is dropped — leaksanitizer flagged the strand
+        /// `TyCtxt` is dropped - leaksanitizer flagged the strand
         /// on the fuzz harness.
         name: Box<str>,
     },

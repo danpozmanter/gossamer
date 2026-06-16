@@ -16,7 +16,7 @@
 #![allow(clippy::wildcard_imports)]
 
 // ---------------------------------------------------------------
-// SyncI64Vec / SyncU8Vec — cross-goroutine-safe vec wrappers
+// SyncI64Vec / SyncU8Vec - cross-goroutine-safe vec wrappers
 // ---------------------------------------------------------------
 //
 // Same conceptual shape as `GosI64Vec` / `GosU8Vec` but with the

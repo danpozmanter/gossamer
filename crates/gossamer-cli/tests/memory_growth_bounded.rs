@@ -98,7 +98,7 @@ fn main() {
 /// values. A loop builds and discards a depth-14 binary tree on every
 /// iteration; each per-iteration temporary must be released. Before RC
 /// landed these `gos_rc_alloc`'d (formerly `malloc`'d) nodes leaked
-/// unboundedly — 200 iterations would accumulate well over 100 MiB and
+/// unboundedly - 200 iterations would accumulate well over 100 MiB and
 /// keep growing with depth. With deterministic RC release the peak stays
 /// near a single tree's footprint. Runs under the full `-O3` release
 /// pipeline, where the old tracing GC was unsound.
@@ -201,7 +201,7 @@ fn main() {
 /// (the release fired only at function return), so 200 depth-14 trees stayed
 /// resident (~hundreds of MB). The earlier test only exercised the
 /// *temporary* shape (`checksum(&build(14))`), which the single-use path
-/// already released — this is the gap it missed.
+/// already released - this is the gap it missed.
 #[test]
 fn compiled_named_binding_loop_stays_under_rss_cap() {
     if !std::path::Path::new("/usr/bin/time").exists() {

@@ -1,4 +1,4 @@
-//! Distributed tracing — lean in-tree subset compatible with the
+//! Distributed tracing - lean in-tree subset compatible with the
 //! OpenTelemetry W3C trace-context specification.
 //!
 //! Provides identifier types ([`crate::trace::TraceId`],
@@ -20,7 +20,7 @@
 //! All registry state is lock-free where possible: span sequence
 //! numbers use `AtomicU64`; the global tracer slot is an
 //! `OnceLock`. The per-tracer list of ended spans takes a short
-//! `Mutex` lock — that path is off the hot per-request flow and
+//! `Mutex` lock - that path is off the hot per-request flow and
 //! is the simplest correct shape until profiling justifies a
 //! lock-free ring.
 
@@ -41,7 +41,7 @@ pub struct TraceId(pub u128);
 
 impl TraceId {
     /// Returns a freshly-generated random trace ID. Never returns
-    /// the all-zero sentinel — on the astronomically-unlikely zero
+    /// the all-zero sentinel - on the astronomically-unlikely zero
     /// draw, the call retries once with a fresh sample.
     #[must_use]
     pub fn new_random() -> Self {
@@ -277,7 +277,7 @@ impl Span {
     }
 }
 
-/// Finalised span — the immutable record produced by
+/// Finalised span - the immutable record produced by
 /// [`Span::end`] and accumulated by [`Tracer::ended_spans`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EndedSpan {
@@ -434,7 +434,7 @@ impl Tracer {
     }
 
     /// Returns a snapshot of every span ended through this
-    /// tracer. Clears nothing — repeated calls observe the
+    /// tracer. Clears nothing - repeated calls observe the
     /// accumulated history. Use [`Tracer::drain_ended_spans`] to consume.
     #[must_use]
     pub fn ended_spans(&self) -> Vec<EndedSpan> {
@@ -491,7 +491,7 @@ thread_local! {
 }
 
 /// Pushes `ctx` onto the thread-local active-span stack. Returns
-/// a guard whose `Drop` pops the entry — call sites can use
+/// a guard whose `Drop` pops the entry - call sites can use
 /// `let _g = enter_span(ctx);` and rely on RAII to balance.
 ///
 /// This is the integration point for goroutine-style propagation

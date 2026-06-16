@@ -1,4 +1,4 @@
-//! `gos fmt [PATH] [--check]` — re-renders source files through the
+//! `gos fmt [PATH] [--check]` - re-renders source files through the
 //! token-stream formatter, which preserves comments, macro calls, and
 //! authored line structure while normalising spacing and indentation.
 //! With no path, walks every `.gos` under the project root.

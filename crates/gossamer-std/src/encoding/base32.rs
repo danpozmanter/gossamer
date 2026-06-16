@@ -1,4 +1,4 @@
-// Runtime support for `std::encoding::base32` — RFC 4648 Base32.
+// Runtime support for `std::encoding::base32` - RFC 4648 Base32.
 //
 // Two alphabets are provided:
 //   - Standard (A-Z 2-7, padded with `=`)

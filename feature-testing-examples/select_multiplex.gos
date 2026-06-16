@@ -2,7 +2,7 @@
 //
 // Every selection point here has at most one ready arm (or falls to the
 // default), so the chosen arm is deterministic and the output is bit-identical
-// on the VM walker, the Cranelift JIT, and the LLVM AOT backend — no goroutine
+// on the VM walker, the Cranelift JIT, and the LLVM AOT backend - no goroutine
 // scheduling race is involved.
 
 use std::sync::channel

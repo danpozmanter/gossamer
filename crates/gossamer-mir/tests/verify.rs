@@ -104,7 +104,7 @@ fn optimise_preserves_verify_invariants() {
 }
 
 // ----------------------------------------------------------------
-// Negative cases — hand-corrupted bodies.
+// Negative cases - hand-corrupted bodies.
 // ----------------------------------------------------------------
 
 #[test]
@@ -312,7 +312,7 @@ fn switch_int_non_integer_discriminant_is_detected() {
 fn drop_of_non_owning_is_detected() {
     let (mut bodies, tcx) = build("fn id(x: i64) -> i64 { x }\n");
     let body = &mut bodies[0];
-    // x is i64 — not a heap pointer. Inject a Drop targeting it
+    // x is i64 - not a heap pointer. Inject a Drop targeting it
     // and a fresh dummy block to satisfy block-id contiguity.
     let span = body.span;
     let new_id = BlockId(body.blocks.len() as u32);

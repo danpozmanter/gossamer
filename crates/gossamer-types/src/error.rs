@@ -93,7 +93,7 @@ pub enum TypeError {
     /// A `Result<T, E>` expression was used as a statement without
     /// binding or propagating the value. SPEC §9: discarded Results
     /// are a compile error unless explicitly suppressed with `let _ =`.
-    #[error("unused `Result` value — the `Err` variant may go unhandled")]
+    #[error("unused `Result` value - the `Err` variant may go unhandled")]
     DiscardedResult,
     /// An expression, type, or pattern nested past the type-checker's
     /// hard recursion limit. Emitted on adversarial input that
@@ -182,7 +182,7 @@ pub enum TypeError {
         /// Qualified std path as written, e.g. `strings::repeat`.
         path: String,
     },
-    /// `json::render` / `json::encode` was handed an enum value — most
+    /// `json::render` / `json::encode` was handed an enum value - most
     /// often a `Result` from `json::parse(..)` that is missing its `?`,
     /// or an `Option`. Enums have no JSON serialization; the VM
     /// tolerated the misuse while the compiled tiers silently produced
@@ -248,8 +248,8 @@ impl TypeError {
 }
 
 /// Maps the most common `expected X, found Y` pairs to a one-line
-/// "did you mean" hint. Pure string compare on the rendered types
-/// — keeps the table small and avoids re-deriving structure here.
+/// "did you mean" hint. Pure string compare on the rendered types -
+/// keeps the table small and avoids re-deriving structure here.
 /// Attaches the GT0014 help + note to an `Int128Unsupported`
 /// diagnostic. Split out of `to_diagnostic` to keep that match
 /// within the line-count lint budget.
@@ -272,7 +272,7 @@ fn mismatch_suggestion(expected: &str, found: &str) -> Option<String> {
     if expected.ends_with("&str") && found == "String" {
         return Some("did you mean to call `.as_str()` on the value?".to_string());
     }
-    // Numeric width — i32 ↔ i64, u32 ↔ u64, etc.
+    // Numeric width - i32 ↔ i64, u32 ↔ u64, etc.
     let int_suffixes = [
         "i8", "i16", "i32", "i64", "i128", "u8", "u16", "u32", "u64", "u128", "isize", "usize",
     ];
@@ -413,8 +413,8 @@ impl TypeDiagnostic {
                         "`{ty}` is an enum, which has no JSON representation"
                     ))
                     .with_help(format!(
-                        "unwrap the value before encoding — e.g. `let v = …?` then \
-                         `json::{op}(&v)` — or build a `json::Value`"
+                        "unwrap the value before encoding - e.g. `let v = …?` then \
+                         `json::{op}(&v)` - or build a `json::Value`"
                     ));
             }
         }

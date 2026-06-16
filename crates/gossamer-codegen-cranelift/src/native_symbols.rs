@@ -5,11 +5,11 @@
 //! that calls a binding from a JIT-compiled body resolves to the
 //! real entry point:
 //!
-//! - [`NATIVE_SYMBOLS`] — a `linkme::distributed_slice` populated
+//! - [`NATIVE_SYMBOLS`] - a `linkme::distributed_slice` populated
 //!   at link time by the `register_module!` macro. This is the
 //!   normal path: each binding item lands one entry, no runtime
 //!   call is required.
-//! - [`register_native_symbol`] / [`native_symbols_snapshot`] — a
+//! - [`register_native_symbol`] / [`native_symbols_snapshot`] - a
 //!   `Mutex<Vec>` populated at runtime. Kept for backward
 //!   compatibility with bindings that call into the legacy
 //!   per-module `force_link()` thunk, plus tests.
@@ -35,7 +35,7 @@ pub struct NativeSymbol {
     pub addr: *const u8,
 }
 
-// SAFETY: `addr` points at an `extern "C" fn` with `'static` linkage —
+// SAFETY: `addr` points at an `extern "C" fn` with `'static` linkage -
 // the binding crate retains the function for the entire process
 // lifetime via `linkme`. The pointer is read-only from any thread.
 unsafe impl Send for NativeSymbol {}
@@ -45,7 +45,7 @@ unsafe impl Sync for NativeSymbol {}
 ///
 /// Stored in [`NATIVE_SYMBOLS`] via `linkme::distributed_slice`.
 /// `addr_fn` is a thunk that returns the `*const u8` address of
-/// the C-ABI export — using a fn pointer rather than a raw
+/// the C-ABI export - using a fn pointer rather than a raw
 /// pointer keeps the entry constructible in a `static`
 /// initializer without unsafe.
 pub struct NativeSymbolEntry {

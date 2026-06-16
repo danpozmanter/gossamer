@@ -16,7 +16,7 @@
 //!   correctly (and the hooks don't corrupt anything when
 //!   the recv completes the happy way).
 //! - `chan_recv_ctx_i64` returns `None` immediately when the
-//!   context is already cancelled at entry — the early-check
+//!   context is already cancelled at entry - the early-check
 //!   short-circuit fires before any park / hook registration.
 
 #![allow(missing_docs)]
@@ -86,7 +86,7 @@ fn chan_recv_ctx_returns_none_when_cancel_fires_mid_recv_from_os_thread() {
     // Confirms the OS-thread condvar path observes context
     // cancellation. Without the bounded-timeout cancel poll
     // in `gos_rt_chan_recv_ctx_option`, this test would hang
-    // forever — the recv would sit in `not_empty.wait()` with
+    // forever - the recv would sit in `not_empty.wait()` with
     // no sender ever arriving and no goroutine-side unpark to
     // route the cancel through.
     use std::sync::Arc;
@@ -138,7 +138,7 @@ fn chan_recv_ctx_returns_none_when_channel_is_closed_with_no_value() {
     let ctx = Context::background();
     let result = gossamer_std::context::chan_recv_ctx_i64(chan, &ctx);
     assert_eq!(result, None, "closed channel must yield None");
-    // Skip chan_drop here — it closes again and aborts. The
+    // Skip chan_drop here - it closes again and aborts. The
     // channel allocation leaks for the test process lifetime,
     // which is fine for a single-test process.
 }

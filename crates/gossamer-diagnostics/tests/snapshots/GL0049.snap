@@ -3,7 +3,7 @@ source: crates/gossamer-diagnostics/tests/snapshots.rs
 expression: rendered
 ---
 --- plain ---
-error[GL0049]: `panic()` with no argument leaves the post-mortem with nothing — here
+error[GL0049]: `panic()` with no argument leaves the post-mortem with nothing - here
 --- framed ---
 error[GL0049]: `panic()` with no argument leaves the post-mortem with nothing
   --> snap.gos:2:5

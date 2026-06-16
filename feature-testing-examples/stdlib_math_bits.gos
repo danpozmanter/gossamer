@@ -1,4 +1,4 @@
-// Cross-tier parity for math::bits previously VM-only — scalar
+// Cross-tier parity for math::bits previously VM-only - scalar
 // primitives plus the carrying add/sub/mul/div tuple returns.
 use std::math
 

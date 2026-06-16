@@ -117,7 +117,7 @@ pub(crate) fn install_encoding_pem(globals: &mut Vec<(&'static str, Value)>) {
     );
     // Leaf intrinsics for the injected-source `Block` wrappers
     // (gossamer-parse autoderive). They return tuples / Vec-of-tuples
-    // / String — the wrappers fold those into real `Block` structs,
+    // / String - the wrappers fold those into real `Block` structs,
     // so the same Gossamer code runs on every tier.
     for (name, call) in [
         (

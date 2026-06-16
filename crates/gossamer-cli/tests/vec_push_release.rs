@@ -162,7 +162,7 @@ fn assert_three_tier_stdout(tag: &str, source: &str, expected: &str) {
 
 #[test]
 fn empty_vec_push_then_index_works_in_all_tiers() {
-    // The smallest repro — `let mut v: [i64] = [].to_vec();
+    // The smallest repro - `let mut v: [i64] = [].to_vec();
     // v.push(42); v[0]`. The empty-vec path used to allocate a
     // zero-cap `GosVec` whose backing buffer was null; the
     // first push grew it but the LLVM tier passed the i64
@@ -180,7 +180,7 @@ fn main() {
 
 #[test]
 fn vec_push_string_then_index_works_in_all_tiers() {
-    // String elements take the same dispatch — the runtime's
+    // String elements take the same dispatch - the runtime's
     // `gos_rt_vec_push` writes the i64-shaped pointer through
     // a stack slot. Catches a regression where the slot's
     // i64 cast loses the pointer's bytes.

@@ -1,4 +1,4 @@
-// `std::uuid` — UUID v4 (random) and v7 (timestamp-ordered) generation,
+// `std::uuid` - UUID v4 (random) and v7 (timestamp-ordered) generation,
 // parsing, and formatting. Backed by the `uuid` crate.
 //
 // Logic also lives in `gossamer_runtime::c_abi::gos_rt_uuid_*` so the
@@ -16,7 +16,7 @@ pub fn v4() -> String {
     Uuid::new_v4().hyphenated().to_string()
 }
 
-/// Generates a fresh v7 UUID — a timestamp-ordered UUID whose
+/// Generates a fresh v7 UUID - a timestamp-ordered UUID whose
 /// leading bits encode the current unix epoch milliseconds.
 /// Useful as a primary key when insertion order matters.
 #[must_use]

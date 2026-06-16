@@ -1,4 +1,4 @@
-//! Runtime support for `std::flag` — batteries-included CLI parsing.
+//! Runtime support for `std::flag` - batteries-included CLI parsing.
 //! GNU-style long + short flags (`--verbose`, `-v`), equals-form
 //! (`--port=8080`), value-follows (`--port 8080`), bool flags,
 //! `--`-terminator, auto-generated `--help`, and friendly error

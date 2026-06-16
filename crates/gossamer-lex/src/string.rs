@@ -205,7 +205,7 @@ fn consume_raw_body(cursor: &mut Cursor<'_>, hashes: u8) -> bool {
 }
 
 /// Returns `true` when the cursor sits at `"` followed by `hashes` more
-/// `#` characters — the valid raw-string closing sequence.
+/// `#` characters - the valid raw-string closing sequence.
 fn lookahead_matches_closing(cursor: &Cursor<'_>, hashes: u8) -> bool {
     debug_assert_eq!(cursor.peek(), '"');
     let rest = &cursor.rest()[1..];

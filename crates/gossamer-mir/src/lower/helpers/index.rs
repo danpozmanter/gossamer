@@ -89,12 +89,12 @@ pub(crate) struct EnumIndex {
     pub(crate) variant_fields: HashMap<String, Vec<String>>,
     /// `variant_name -> [field_ty]`, parallel to `variant_fields`.
     /// Used by struct-pattern matching so `Shape::Rect { w, h }`
-    /// declares `w` / `h` MIR locals at the right MIR type — the
+    /// declares `w` / `h` MIR locals at the right MIR type - the
     /// generic `gos_load` helper returns i64 and a missing
     /// f64-typed binding made the cranelift codegen skip the
     /// I64→F64 bitcast in `define_var_to_with`.
     pub(crate) variant_field_tys: HashMap<String, Vec<Ty>>,
-    /// `variant_name -> bool` — true when the variant carries any
+    /// `variant_name -> bool` - true when the variant carries any
     /// payload (struct fields OR tuple-payload constructor calls
     /// observed elsewhere in the program). Match dispatch keys off
     /// this to decide whether the scrutinee is a heap pointer.
@@ -139,7 +139,7 @@ impl EnumIndex {
 pub(crate) enum VecElemKind {
     /// Element / map-key type is `String` (or `&String`).
     Str,
-    /// Default — anything else; treated as i64-shaped at the FFI.
+    /// Default - anything else; treated as i64-shaped at the FFI.
     Int,
 }
 
@@ -173,7 +173,7 @@ pub(crate) fn arg_is_float(tcx: &gossamer_types::TyCtxt, expr: &HirExpr) -> bool
 }
 
 /// True when `expr` types as `Vec<u8>` / `&Vec<u8>` / `&[u8]` /
-/// `[u8]` — used by the `os::write_file` dispatcher to pick the
+/// `[u8]` - used by the `os::write_file` dispatcher to pick the
 /// bytes-shaped runtime helper for binary writes (preserves NUL
 /// bytes that the c-string variant would truncate at).
 pub(crate) fn is_vec_u8_arg(tcx: &gossamer_types::TyCtxt, expr: &HirExpr) -> bool {

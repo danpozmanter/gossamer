@@ -175,7 +175,7 @@ fn install_native_handlers() {
     }
     // Win32 invokes the handler on a fresh worker thread per
     // event, so taking parking_lot locks + writing to stderr is
-    // safe — this is not an async-signal context like Unix.
+    // safe - this is not an async-signal context like Unix.
     // CTRL_CLOSE / LOGOFF / SHUTDOWN are last-chance: returning
     // TRUE keeps the process alive for the system-imposed
     // ~5-second shutdown deadline so registered shutdown hooks

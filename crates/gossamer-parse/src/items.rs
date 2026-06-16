@@ -59,7 +59,7 @@ impl Parser<'_> {
         if self.at_keyword(Keyword::Mod) {
             return ItemKind::Mod(self.parse_mod_decl());
         }
-        // `extern "C" { ... }` and `unsafe extern "C" { ... }` — GP0016.
+        // `extern "C" { ... }` and `unsafe extern "C" { ... }` - GP0016.
         // The keyword is recognised as an item start by the recovery
         // helper, so we must handle it here to avoid the infinite loop
         // where recovery returns without advancing past `extern`.
@@ -102,7 +102,7 @@ impl Parser<'_> {
             },
             self.peek_span(),
         );
-        // Force progress past the bad token before re-syncing — otherwise
+        // Force progress past the bad token before re-syncing - otherwise
         // a token that is *itself* an item-start keyword (e.g. a stray
         // `use` after the first item) traps `recover_to_item_start` in a
         // no-op and the caller's progress check loops forever.

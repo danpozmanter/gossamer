@@ -1,7 +1,7 @@
 // Cross-tier regression for the `http::serve` Result surface.
 // Matching the serve call and formatting the Err payload
 // (`println!("{}", e)`) historically broke LLVM lowering with
-// "sext void to i64" — the call lowered to a unit dest, so the Err
+// "sext void to i64" - the call lowered to a unit dest, so the Err
 // binding had no type. The serve expression is typed
 // `Result<(), errors::Error>` and a bind failure is the caller's
 // `Err` value on every tier: this program prints

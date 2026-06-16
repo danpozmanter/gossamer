@@ -7,7 +7,7 @@
 //! 1. A global atomic *preempt phase* counter. Application code
 //!    polls [`should_yield`] at safepoints (function entry, loop
 //!    back-edges, allocation sites). If it returns `true`, the
-//!    caller jumps to its yield handler — interpreter calls into
+//!    caller jumps to its yield handler - interpreter calls into
 //!    the scheduler, compiled code calls [`gos_rt_preempt_check`].
 //!
 //! 2. A real OS signal (`SIGURG` on Unix; a thread-targeted APC on
@@ -17,7 +17,7 @@
 //!    flips the atomic and the next safepoint poll observes it.
 //!
 //! The signal handler itself does only async-signal-safe work
-//! (atomic store) — no allocations, no locks.
+//! (atomic store) - no allocations, no locks.
 
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 
@@ -35,7 +35,7 @@ thread_local! {
     static LOCAL_PHASE: AtomicU64 = const { AtomicU64::new(0) };
 }
 
-/// Number of cooperative yields recorded — exposed for tests.
+/// Number of cooperative yields recorded - exposed for tests.
 static YIELD_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 /// Initialises the SIGURG handler. Idempotent.
@@ -69,7 +69,7 @@ fn install_signal_handler() {
     // signal-style dispatcher thread is needed because APCs deliver
     // directly to the targeted worker thread; the APC routine
     // simply calls `request_yield_all`, mirroring the Unix SIGURG
-    // handler. Initialisation is a no-op — the work happens at
+    // handler. Initialisation is a no-op - the work happens at
     // `signal_thread_sigurg`-equivalent time inside
     // [`signal_thread_sigurg`].
 }
@@ -99,7 +99,7 @@ pub fn request_yield_self() {
 /// Returns `true` when the calling thread should yield at the next
 /// safepoint. Reads the global phase with `Acquire` ordering so a
 /// `request_yield_all`'s `fetch_add(AcqRel)` on any architecture
-/// (including weak-memory ARM/AArch64) is observed promptly — a
+/// (including weak-memory ARM/AArch64) is observed promptly - a
 /// `Relaxed` load admits unbounded staleness on weak-memory CPUs
 /// even though x86 happens to retire the update synchronously.
 #[inline]
@@ -113,7 +113,7 @@ pub fn should_yield() -> bool {
     LOCAL_YIELD.with(|f| f.swap(false, Ordering::Acquire))
 }
 
-/// Total cooperative yields recorded — for tests / diagnostics.
+/// Total cooperative yields recorded - for tests / diagnostics.
 #[must_use]
 pub fn yields_observed() -> usize {
     YIELD_COUNT.load(Ordering::Relaxed)
@@ -126,7 +126,7 @@ pub fn note_yield() {
     YIELD_COUNT.fetch_add(1, Ordering::Relaxed);
 }
 
-/// Number of phase changes seen by [`should_yield`] — diagnostic.
+/// Number of phase changes seen by [`should_yield`] - diagnostic.
 #[must_use]
 pub fn current_phase() -> u64 {
     GLOBAL_PHASE.load(Ordering::Relaxed)
@@ -266,8 +266,8 @@ pub fn release_thread_handle(handle: u64) {
 /// Sends `SIGURG` to the OS thread identified by `handle`. Used by
 /// the scheduler watchdog when cooperative preemption alone has not
 /// landed (worker has not hit a safepoint inside its budget). The
-/// SIGURG handler installed by [`init`] flips the global phase, and
-/// — crucially — the kernel-level signal delivery interrupts any
+/// SIGURG handler installed by [`init`] flips the global phase, and -
+/// crucially - the kernel-level signal delivery interrupts any
 /// blocking syscall the worker is currently inside.
 ///
 /// Returns `true` if the signal was issued, `false` if the platform
@@ -282,7 +282,7 @@ pub fn signal_thread_sigurg(handle: u64) -> bool {
         // SAFETY: SIGURG is async-signal-safe; the SIGURG iterator
         // installed in `install_signal_handler` only does atomic
         // stores. `handle` is a `pthread_t` produced by an earlier
-        // call on a still-live worker — the scheduler nulls the
+        // call on a still-live worker - the scheduler nulls the
         // slot before joining the thread.
         let rc = unsafe { libc::pthread_kill(handle as libc::pthread_t, libc::SIGURG) };
         rc == 0
@@ -292,7 +292,7 @@ pub fn signal_thread_sigurg(handle: u64) -> bool {
         // queue a user-mode APC into the
         // targeted worker thread. The APC routine bumps the
         // global preempt phase, mirroring the Unix SIGURG handler.
-        // APCs only fire at alertable wait points by default — for
+        // APCs only fire at alertable wait points by default - for
         // tight CPU loops the cooperative `gos_rt_preempt_check`
         // emitted by codegen still handles preemption. The APC is
         // the mechanism that handles blocking syscalls; without

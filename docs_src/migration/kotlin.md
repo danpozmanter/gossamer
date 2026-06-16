@@ -191,7 +191,7 @@ let msg = format!("Hello, {name}! You are {} next year.", age + 1)
 
 Kotlin coroutines are cooperative and tied to a `CoroutineScope`.
 Gossamer goroutines are stackful and scheduled by an M:N
-work-stealing runtime — blocking IO doesn't block the OS thread.
+work-stealing runtime - blocking IO doesn't block the OS thread.
 
 Kotlin:
 
@@ -364,8 +364,8 @@ fn read_config(path: &String) -> Result<Config, errors::Error> {
 
 ## Cross-references
 
-- [`../syntax.md`](../syntax.md) — full language tour.
-- [`../stdlib_coverage.md`](../stdlib_coverage.md) — every
+- [`../syntax.md`](../syntax.md) - full language tour.
+- [`../stdlib_coverage.md`](../stdlib_coverage.md) - every
   stdlib module, support state.
-- [`../codegen_abi.md`](../codegen_abi.md) — generic
+- [`../codegen_abi.md`](../codegen_abi.md) - generic
   instantiation constraints in v1.

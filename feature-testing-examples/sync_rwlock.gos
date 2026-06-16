@@ -1,4 +1,4 @@
-// std::sync::RwLock — reader-writer lock guarding an i64.
+// std::sync::RwLock - reader-writer lock guarding an i64.
 //
 // Covers: RwLock::new, get/set methods, and the closure-taking
 // with_read / with_write combinators. with_read returns the callback

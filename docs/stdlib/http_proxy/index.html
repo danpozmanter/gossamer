@@ -1477,7 +1477,7 @@
 <h2 id="writing-a-passthrough-proxy-in-gossamer">Writing a passthrough proxy in Gossamer<a class="headerlink" href="#writing-a-passthrough-proxy-in-gossamer" title="Permanent link">&para;</a></h2>
 <p>The whole proxy shape is expressible directly on the <code>std::http</code>
 surface: forward the inbound <code>raw_body</code> and headers upstream, relay the
-upstream response back. Two modes cover the spectrum — buffered (whole
+upstream response back. Two modes cover the spectrum - buffered (whole
 response in memory, simplest) and streamed (chunked passthrough, no
 buffering).</p>
 <p>Hop-by-hop and engine-managed headers must not be relayed; strip them
@@ -1519,7 +1519,7 @@ relayed to the caller (with its <code>location</code> header intact) instead of
 being chased by the proxy.</p>
 <h3 id="streamed-forward">Streamed forward<a class="headerlink" href="#streamed-forward" title="Permanent link">&para;</a></h3>
 <p><code>http::stream</code> + <code>Response::stream</code> connect the upstream body straight
-to the downstream socket as chunked frames — no buffering, first bytes
+to the downstream socket as chunked frames - no buffering, first bytes
 flow immediately:</p>
 <div class="language-text highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>fn forward_stream(method: String, target: String, body: String,
 <a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>                  headers: [(String, String)]) -&gt; http::Response {
@@ -1530,7 +1530,7 @@ flow immediately:</p>
 <a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>}
 </code></pre></div>
 <p>In stream mode, ask the upstream for an identity body
-(<code>("Accept-Encoding", "identity")</code>) — the proxy relays bytes it does not
+(<code>("Accept-Encoding", "identity")</code>) - the proxy relays bytes it does not
 decode.</p>
 <h3 id="the-handler">The handler<a class="headerlink" href="#the-handler" title="Permanent link">&para;</a></h3>
 <div class="language-text highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>struct App { target_base: String }
@@ -1550,8 +1550,8 @@ decode.</p>
 <a id="__codelineno-3-15" name="__codelineno-3-15" href="#__codelineno-3-15"></a>    }
 <a id="__codelineno-3-16" name="__codelineno-3-16" href="#__codelineno-3-16"></a>}
 </code></pre></div>
-<p>A complete worked proxy — path-prefix routing, gzip/brotli decode in
-buffered mode, streaming flag, CLI parsing — ships as the <code>locurlfwd</code>
+<p>A complete worked proxy - path-prefix routing, gzip/brotli decode in
+buffered mode, streaming flag, CLI parsing - ships as the <code>locurlfwd</code>
 port; the same pattern at production size.</p>
 
 

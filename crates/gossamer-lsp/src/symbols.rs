@@ -46,7 +46,7 @@ const SYMBOL_ENUM_MEMBER: f64 = 22.0;
 const SYMBOL_STRUCT: f64 = 23.0;
 const SYMBOL_TYPE_PARAMETER: f64 = 26.0;
 
-/// Builds the `textDocument/documentSymbol` response — a hierarchical
+/// Builds the `textDocument/documentSymbol` response - a hierarchical
 /// outline of every top-level item, with impl methods nested under
 /// their type.
 pub(crate) fn document_symbols(doc: &DocumentAnalysis) -> Value {
@@ -57,7 +57,7 @@ pub(crate) fn document_symbols(doc: &DocumentAnalysis) -> Value {
     Value::Array(out)
 }
 
-/// Builds the `workspace/symbol` response — flat list of every
+/// Builds the `workspace/symbol` response - flat list of every
 /// top-level (or impl-method) symbol across `documents` whose name
 /// contains the query case-insensitively.
 pub(crate) fn workspace_symbols(documents: &[&DocumentAnalysis], query: &str) -> Value {
@@ -274,7 +274,7 @@ fn emit_impl(doc: &DocumentAnalysis, item: &Item, decl: &ImplDecl, out: &mut Vec
 
 #[allow(
     clippy::too_many_lines,
-    reason = "flat-shape dispatch / lowering — splitting hides the per-arm intent"
+    reason = "flat-shape dispatch / lowering - splitting hides the per-arm intent"
 )]
 fn collect_workspace_symbols(
     doc: &DocumentAnalysis,
@@ -412,7 +412,7 @@ fn workspace_symbol_entry(
 
 #[allow(
     clippy::too_many_arguments,
-    reason = "lowering plumbing — every parameter is needed by the surrounding pipeline"
+    reason = "lowering plumbing - every parameter is needed by the surrounding pipeline"
 )]
 fn symbol(
     doc: &DocumentAnalysis,

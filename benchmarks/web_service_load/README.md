@@ -5,18 +5,18 @@ Joint Track A + Track B load validation. Runs the
 synthetic load generator, asserts:
 
 1. **OS thread count** stays bounded by `GOMAXPROCS` (≈ `nproc`)
-   — proves the netpoller is doing its job and we are not a
+   - proves the netpoller is doing its job and we are not a
    thread-per-connection server.
-2. **No goroutine leak** across a 30-minute soak — proves
+2. **No goroutine leak** across a 30-minute soak - proves
    parked goroutines on I/O wake correctly when the kernel
    reports readiness.
 3. **Resident memory stays bounded** under continuous
-   allocation pressure — proves deterministic reference counting
+   allocation pressure - proves deterministic reference counting
    reclaims request-scoped allocations promptly, with no
    unbounded growth and no collector pauses (there is no
    tracing GC).
 
-If any assertion fails, file the regression back to Track A — this
+If any assertion fails, file the regression back to Track A - this
 is the proof their work composes with Track B's HTTP/sqlite stack.
 
 ## Quickstart
@@ -39,7 +39,7 @@ in a steady loop. Metrics are scraped from the service's
 Vegeta (Go) and wrk (C) are great but they pin extra runtime
 deps; CI runners that need to install them on every job spend
 more time installing than testing. The bundled harness is a
-Gossamer program — same toolchain — so the soak is one
+Gossamer program - same toolchain - so the soak is one
 `gos run benchmarks/web_service_load/harness.gos` away. The
 `./run.sh --vegeta` path is wired for users who already have
 vegeta and want richer percentile output.

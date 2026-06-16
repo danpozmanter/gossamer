@@ -1,4 +1,4 @@
-// Runtime support for `std::archive::zip` — ZIP archive reading and writing.
+// Runtime support for `std::archive::zip` - ZIP archive reading and writing.
 //
 // Wraps the `zip` crate. The read API extracts files into memory; the write API
 // builds an in-memory ZIP archive from name/content pairs. Both return IoError on
@@ -53,7 +53,7 @@ pub fn read(data: &[u8]) -> Result<Vec<ZipEntry>, IoError> {
     Ok(entries)
 }
 
-/// Builds an in-memory ZIP archive from `files` — a list of `(name, data)` pairs.
+/// Builds an in-memory ZIP archive from `files` - a list of `(name, data)` pairs.
 ///
 /// Files are stored with deflate compression at the default level. Returns the
 /// raw ZIP bytes on success.

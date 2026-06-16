@@ -3,7 +3,7 @@ source: crates/gossamer-diagnostics/tests/snapshots.rs
 expression: rendered
 ---
 --- plain ---
-error[GL0033]: `-(-x)` is `x`. The extra unary does nothing. — here
+error[GL0033]: `-(-x)` is `x`. The extra unary does nothing. - here
 --- framed ---
 error[GL0033]: `-(-x)` is `x`. The extra unary does nothing.
   --> snap.gos:2:5

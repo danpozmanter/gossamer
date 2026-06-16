@@ -3,16 +3,16 @@
 //! Goroutine-aware synchronisation primitives. The earlier
 //! placeholder implementations wrapped `std::sync::*` directly,
 //! which meant a goroutine that contended on a `Mutex` blocked the
-//! underlying OS worker thread — destroying the M:N concurrency the
+//! underlying OS worker thread - destroying the M:N concurrency the
 //! scheduler was supposed to provide. This pass migrates every
 //! primitive to either:
 //!
-//! - **`parking_lot::*`** — for primitives whose contention path
+//! - **`parking_lot::*`** - for primitives whose contention path
 //!   the goroutine model doesn't materially improve (read/write
 //!   locks, OnceLock-style barriers). `parking_lot` is non-poisoned,
 //!   spin-then-park, and ~2x faster than `std::sync` under low
 //!   contention without changing the public API.
-//! - **`Condvar`-backed wait** — for `WaitGroup` and `Barrier`,
+//! - **`Condvar`-backed wait** - for `WaitGroup` and `Barrier`,
 //!   which previously spun on `std::thread::yield_now` and now
 //!   block on a condvar that wakes when the count reaches zero.
 //!
@@ -35,7 +35,7 @@ use parking_lot::{Condvar, Mutex as PMutex, Once as POnce, RwLock as PRwLock};
 /// On contention from a goroutine, parks the calling goroutine on
 /// the lock's wait queue and lets the worker thread run other
 /// goroutines. From a non-goroutine OS thread the lock falls back
-/// to `parking_lot::Mutex::lock`. Acquisition is unfair — no
+/// to `parking_lot::Mutex::lock`. Acquisition is unfair - no
 /// queue ordering guarantee.
 #[derive(Debug, Default)]
 pub struct Mutex<T: ?Sized> {
@@ -82,7 +82,7 @@ impl<T> Mutex<T> {
                 return result;
             }
             if !gossamer_coro::in_goroutine() {
-                // OS-thread fallback. Block on the inner mutex —
+                // OS-thread fallback. Block on the inner mutex -
                 // no goroutine concurrency to preserve here.
                 let mut guard = self.inner.lock();
                 let from = self.last_unlocker.load(Ordering::Acquire);
@@ -133,9 +133,9 @@ impl<T> Mutex<T> {
     /// Cancellation-aware variant of [`Self::with`].
     ///
     /// Polls `try_lock` and yields to the scheduler between
-    /// attempts (or briefly sleeps on OS threads). On cancellation
-    /// — including a deadline elapsing on a `with_deadline` ctx
-    /// — returns `Err` *before* invoking `f`. The closure runs
+    /// attempts (or briefly sleeps on OS threads). On cancellation -
+    /// including a deadline elapsing on a `with_deadline` ctx -
+    /// returns `Err` *before* invoking `f`. The closure runs
     /// only on a successful acquisition.
     pub fn with_ctx<R>(
         &self,
@@ -200,7 +200,7 @@ impl<T> Mutex<T> {
 /// Earlier releases shipped a separate "goroutine-aware" mutex that
 /// spin-then-`yield_now`'d on contention. With true goroutines, the
 /// regular [`Mutex<T>`] now parks the calling coroutine on
-/// contention via the M:N scheduler — exactly the semantics
+/// contention via the M:N scheduler - exactly the semantics
 /// `GoMutex<T>` was approximating. The two types are identical.
 pub type GoMutex<T> = Mutex<T>;
 
@@ -500,7 +500,7 @@ impl WaitGroup {
     }
 
     /// Fallible counter adjust. Returns the new counter value on
-    /// success, or [`WgError`] on misuse — never panics, never
+    /// success, or [`WgError`] on misuse - never panics, never
     /// holds the lock past the unwind.
     pub fn try_add(&self, n: i64) -> Result<i64, WgError> {
         let mut count = self.state.lock();
@@ -531,8 +531,8 @@ impl WaitGroup {
         self.try_add(-1)
     }
 
-    /// Increments the pending count by `n`. `n` may be negative —
-    /// matching Go's semantics — but bringing the count below zero
+    /// Increments the pending count by `n`. `n` may be negative -
+    /// matching Go's semantics - but bringing the count below zero
     /// panics, since that signals a programming error. The lock is
     /// released before the panic unwinds.
     pub fn add(&self, n: i64) {
@@ -552,8 +552,8 @@ impl WaitGroup {
     ///
     /// Behaves identically to `wait()` when `ctx` is not
     /// cancelled. If `ctx` is cancelled while the goroutine is
-    /// parked — either via `Cancel::cancel_with` or via a
-    /// `with_deadline` elapsing — `wait_ctx` returns
+    /// parked - either via `Cancel::cancel_with` or via a
+    /// `with_deadline` elapsing - `wait_ctx` returns
     /// `Err(context error)`. Mirrors the
     /// [`crate::time::sleep_ctx`] pattern: check before park,
     /// register the goroutine with the context's wait-list,
@@ -748,7 +748,7 @@ impl SyncIntVec {
 }
 
 /// Cross-goroutine-safe vector of `u8` bytes. Same shape as
-/// [`SyncIntVec`] but with byte slots — for shared output
+/// [`SyncIntVec`] but with byte slots - for shared output
 /// buffers, ring buffers, etc. Mutating the underlying vec
 /// concurrently across goroutines via a bare `Vec<u8>` is
 /// undefined; use this wrapper instead.
@@ -833,7 +833,7 @@ pub struct Barrier {
 struct BarrierState {
     expected: usize,
     arrived: usize,
-    /// Generation counter — incremented every time the barrier
+    /// Generation counter - incremented every time the barrier
     /// fires. Waiters wake up and check that their captured
     /// generation differs from the current one.
     generation: u64,
@@ -940,7 +940,7 @@ impl<K: std::hash::Hash + Eq, V: Clone> SyncMap<K, V> {
 
     /// Calls `f` once per `(key, value)` pair. Iteration order
     /// is unspecified. The map cannot be mutated from inside
-    /// `f` — `f` takes shared references.
+    /// `f` - `f` takes shared references.
     pub fn range(&self, mut f: impl FnMut(&K, &V) -> bool) {
         let g = self.inner.read();
         for (k, v) in g.iter() {
@@ -1007,7 +1007,7 @@ impl<T: Send + 'static> Pool<T> {
 // --- sync::Cond (condition variable) ---------------------------------
 
 /// Condition variable for goroutine signalling. Pairs with a
-/// [`Mutex`] (caller-provided) — `wait` releases the mutex
+/// [`Mutex`] (caller-provided) - `wait` releases the mutex
 /// while parked and re-acquires it on wake.
 pub struct Cond {
     cv: parking_lot::Condvar,
@@ -1084,7 +1084,7 @@ mod tests {
     fn wait_group_try_done_returns_underflow_without_panic() {
         let wg = WaitGroup::new();
         assert!(matches!(wg.try_done(), Err(WgError::Underflow)));
-        // Lock must still be reusable — proves the failure released
+        // Lock must still be reusable - proves the failure released
         // it cleanly.
         wg.add(1);
         assert_eq!(wg.try_done(), Ok(0));

@@ -4,7 +4,7 @@ A small multi-endpoint HTTP service laid out as a real Gossamer
 project (with a `project.toml`). Demonstrates:
 
 - An `http::Handler` impl that dispatches on `request.path()`.
-- Pure render helpers for each route — directly unit-testable
+- Pure render helpers for each route - directly unit-testable
   without spinning up a real socket.
 - `#[cfg(test)] mod tests` exercising every endpoint helper.
 

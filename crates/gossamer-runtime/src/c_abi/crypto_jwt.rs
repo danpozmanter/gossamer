@@ -20,7 +20,7 @@
 //!   `Claims::from_json` + `Claims::to_json`: registered claims are
 //!   type-validated, a single-element `aud` collapses to a bare
 //!   string, `exp`/`nbf`/`iat` coerce to integer seconds, and every
-//!   key sorts (`serde_json::Map` is a `BTreeMap` — no `preserve_order`
+//!   key sorts (`serde_json::Map` is a `BTreeMap` - no `preserve_order`
 //!   in the workspace `serde_json`).
 //! - The JOSE header is `{"alg":<alg>,"typ":"JWT"}`, serialized
 //!   through `serde_json` (keys sort to `alg`, `typ`).
@@ -32,7 +32,7 @@
 //!   constant-time.
 //!
 //! Returns are packed as the runtime's `i128` Result:
-//! `Result<String, errors::Error>` for every entry — `Ok` (disc 0)
+//! `Result<String, errors::Error>` for every entry - `Ok` (disc 0)
 //! carries a runtime c-string pointer, `Err` (disc 1) a fresh
 //! `errors::Error`.
 
@@ -354,7 +354,7 @@ fn decode_token(token: &str) -> Result<Decoded, String> {
         .ok_or_else(|| "jwt: header is not a JSON object".to_string())?;
     if obj.contains_key("crit") {
         return Err(
-            "jwt: header carries crit; refusing (RFC 7515 §4.1.11 — unknown critical extensions)"
+            "jwt: header carries crit; refusing (RFC 7515 §4.1.11 - unknown critical extensions)"
                 .to_string(),
         );
     }
@@ -391,8 +391,8 @@ fn now_unix_secs() -> i64 {
         .map_or(0, |d| d.as_secs() as i64)
 }
 
-/// Mirrors `validate_claims` with `VerifyOpts::new().leeway(leeway)`
-/// — only `exp` / `nbf` are checked (required iss/aud/sub are left to
+/// Mirrors `validate_claims` with `VerifyOpts::new().leeway(leeway)` -
+/// only `exp` / `nbf` are checked (required iss/aud/sub are left to
 /// the caller, who inspects the returned claims JSON).
 fn validate_claims(claims: &serde_json::Value, leeway: i64) -> Result<(), String> {
     let now = now_unix_secs();
@@ -445,7 +445,7 @@ pub unsafe extern "C" fn gos_rt_jwt_sign_hs(
 }
 
 /// `jwt::verify_hs(token, alg, key, leeway_secs)
-/// -> Result<String, errors::Error>` — returns the canonical claims
+/// -> Result<String, errors::Error>` - returns the canonical claims
 /// JSON on success.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_jwt_verify_hs(
@@ -478,7 +478,7 @@ pub unsafe extern "C" fn gos_rt_jwt_verify_hs(
         }
         if dec.alg != expected {
             return jwt_err(&format!(
-                "jwt: alg mismatch — token says {} but verifier expected {}",
+                "jwt: alg mismatch - token says {} but verifier expected {}",
                 dec.alg.as_str(),
                 expected.as_str()
             ));
@@ -549,7 +549,7 @@ pub unsafe extern "C" fn gos_rt_jwt_verify_es256(
         }
         if dec.alg != Alg::Es256 {
             return jwt_err(&format!(
-                "jwt: alg mismatch — token says {} but verifier expected ES256",
+                "jwt: alg mismatch - token says {} but verifier expected ES256",
                 dec.alg.as_str()
             ));
         }
@@ -636,7 +636,7 @@ pub unsafe extern "C" fn gos_rt_jwt_verify_eddsa(
         }
         if dec.alg != Alg::EdDsa {
             return jwt_err(&format!(
-                "jwt: alg mismatch — token says {} but verifier expected EdDSA",
+                "jwt: alg mismatch - token says {} but verifier expected EdDSA",
                 dec.alg.as_str()
             ));
         }

@@ -132,7 +132,7 @@ fn register_inline_enums(program: &HirProgram, tcx: &mut TyCtxt) {
 }
 
 /// True when a value of `ty` occupies a single 8-byte slot and is never itself
-/// an inline (2-word) enum — the safe set for an inline enum payload word.
+/// an inline (2-word) enum - the safe set for an inline enum payload word.
 /// Conservatively excludes `Adt` / `Tuple` / `Array` (which may be multi-slot
 /// or themselves inline enums, which would not fit in one payload word).
 fn field_fits_inline(tcx: &TyCtxt, ty: gossamer_types::Ty) -> bool {

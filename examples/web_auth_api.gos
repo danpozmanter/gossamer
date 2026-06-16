@@ -1,5 +1,5 @@
 // Canonical authenticated JSON API: the three pieces a real service
-// wires together — a path-parameter router, a bearer-token auth
+// wires together - a path-parameter router, a bearer-token auth
 // check, and signed session cookies.
 //
 //   POST /login        issues a signed session cookie (session::sign)
@@ -9,7 +9,7 @@
 // Self-terminating: a server goroutine plus a client in `main` that
 // exits explicitly, so the whole run is a plain stdout comparison.
 // Signing is deterministic (no nonce), the router matches Rust-side,
-// and the 401/200 shaping is plain Gossamer — so the output is
+// and the 401/200 shaping is plain Gossamer - so the output is
 // bit-identical under `gos run` (bytecode VM) and `gos build` (LLVM
 // AOT). Binds a fixed loopback port (serialized in CI).
 
@@ -19,13 +19,13 @@ use std::http::router
 use std::process
 use std::time
 
-// POST /login — frame the posted user as a signed session cookie.
+// POST /login - frame the posted user as a signed session cookie.
 fn login(r: http::Request) -> http::Response {
     let payload = format!("{{\"user\":\"{}\"}}", r.body)
     http::Response::text(200, http::session::sign(payload, [9, 8, 7, 6, 5, 4, 3, 2]))
 }
 
-// GET /orders/{id} — bearer-gated, with a typed path parameter.
+// GET /orders/{id} - bearer-gated, with a typed path parameter.
 fn get_order(r: http::Request) -> http::Response {
     if !middleware::bearer_ok(&r, |tok| tok == "s3cret-token") {
         return http::Response::text(401, "unauthorized")

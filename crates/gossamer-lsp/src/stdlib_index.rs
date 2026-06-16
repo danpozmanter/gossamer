@@ -1,15 +1,15 @@
 //! Stdlib symbol index used by the LSP completion / import-assist
 //! paths.
 //!
-//! The bulk of the data already lives in `gossamer_std::registry` —
+//! The bulk of the data already lives in `gossamer_std::registry` -
 //! this module wraps it with two extra lookup tables tuned for the
 //! shapes the LSP asks for:
 //!
-//! * `members_of(qualifier)` — list every top-level item exported from
+//! * `members_of(qualifier)` - list every top-level item exported from
 //!   the module identified by a `::`-segment slice. Tolerant of three
 //!   spellings: the canonical `std::fmt`, the user-facing `fmt`, and
 //!   any segment-aliased `use` rebinding the calling site supplies.
-//! * `fuzzy_paths_for(name)` — given a bare identifier, return every
+//! * `fuzzy_paths_for(name)` - given a bare identifier, return every
 //!   fully-qualified path that exports it. Powers the auto-import
 //!   suggestion in Phase 4.
 
@@ -23,7 +23,7 @@ use gossamer_std::registry::{StdItemKind, modules};
 /// constant, …).
 #[derive(Debug, Clone)]
 pub(crate) struct MemberSpec {
-    /// Bare identifier — what the editor inserts after the user picks
+    /// Bare identifier - what the editor inserts after the user picks
     /// the completion.
     pub name: String,
     /// LSP `CompletionItemKind` (matches the protocol's wire numbers).

@@ -3,9 +3,9 @@ source: crates/gossamer-diagnostics/tests/snapshots.rs
 expression: rendered
 ---
 --- plain ---
-error[GL0021]: `if cond { return X } else { Y }` — the `else` is unreachable — here
+error[GL0021]: `if cond { return X } else { Y }` - the `else` is unreachable - here
 --- framed ---
-error[GL0021]: `if cond { return X } else { Y }` — the `else` is unreachable
+error[GL0021]: `if cond { return X } else { Y }` - the `else` is unreachable
   --> snap.gos:2:5
      2 |     let x = 1
        |     ^^^^^

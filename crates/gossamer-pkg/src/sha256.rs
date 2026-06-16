@@ -1,6 +1,6 @@
 //! Minimal pure-Rust SHA-256.
 //! Used by the fetcher to fingerprint downloaded source trees. Phase
-//! 28 keeps the cryptographic surface tiny — we hash file contents to
+//! 28 keeps the cryptographic surface tiny - we hash file contents to
 //! produce the cache key and verify tarball downloads. A full crypto
 //! crate would be overkill for a single hash function and pulls in
 //! transitive `unsafe` we'd rather avoid.
@@ -87,7 +87,7 @@ const H0: [u32; 8] = [
 ];
 
 /// Computes the SHA-256 digest of `bytes` and returns its 64-character
-/// lowercase hex form — the canonical representation used by the
+/// lowercase hex form - the canonical representation used by the
 /// fetcher and the lockfile.
 #[must_use]
 pub fn hex(bytes: &[u8]) -> String {

@@ -1,4 +1,4 @@
-//! Runtime support for `std::context` — request-scoped cancellation
+//! Runtime support for `std::context` - request-scoped cancellation
 //! and deadlines, modeled after Go's `context.Context`.
 //!
 //! A `Context` is a cheap-to-clone handle carrying a shared
@@ -53,7 +53,7 @@ fn ensure_hooks_installed() {
         // SAFETY: hook fn pointers have C-ABI signatures matching
         // the runtime's declared `CtxRegisterFn` /
         // `CtxDeregisterFn` / `CtxIsCancelledFn`. The runtime
-        // never dereferences `ctx_handle` directly — only these
+        // never dereferences `ctx_handle` directly - only these
         // hooks do, and they downcast back to `&Inner` knowing
         // the handle came from a live `Arc<Inner>`.
         unsafe {
@@ -175,7 +175,7 @@ struct Inner {
     /// Children whose cancellation should fire when this context
     /// cancels. Held as weak pointers so a descendant that is
     /// otherwise unreferenced (no outstanding `Cancel` handle, no
-    /// active goroutine) can be dropped — `cancel_with` skips
+    /// active goroutine) can be dropped - `cancel_with` skips
     /// upgrade failures rather than treating them as errors.
     children: Mutex<Vec<Weak<Inner>>>,
 }
@@ -187,7 +187,7 @@ pub struct Context {
 }
 
 impl Context {
-    /// Background context — never cancelled, no deadline. Use as the
+    /// Background context - never cancelled, no deadline. Use as the
     /// root of every request pipeline.
     #[must_use]
     pub fn background() -> Self {
@@ -210,7 +210,7 @@ impl Context {
     /// to unpark.
     ///
     /// If the context is already cancelled at registration time,
-    /// the gid is not added — the caller should check
+    /// the gid is not added - the caller should check
     /// `is_cancelled` before parking.
     pub fn register_waiter(&self, gid: Gid) {
         if self.is_cancelled() {
@@ -233,14 +233,14 @@ impl Context {
         }
     }
 
-    /// Returns a [`Done`] handle — a receive-only,
+    /// Returns a [`Done`] handle - a receive-only,
     /// channel-shaped surface that exposes the context's
     /// cancellation state.
     ///
     /// [`Done::try_recv`] checks the cancellation flag without
     /// blocking; [`Done::recv`] parks the calling goroutine
     /// until cancellation fires (the same mechanism as
-    /// [`Context::wait`]). The handle is cheap — it carries a
+    /// [`Context::wait`]). The handle is cheap - it carries a
     /// cloned [`Arc`] reference to the context's inner state
     /// and adds no per-call allocation.
     ///
@@ -291,7 +291,7 @@ impl Context {
             .unwrap_or_else(|| Error::new("context cancelled"))
     }
 
-    /// Placeholder context — semantically identical to
+    /// Placeholder context - semantically identical to
     /// [`Self::background`] today, but marks call sites that should
     /// eventually thread a real context through.
     #[must_use]
@@ -357,7 +357,7 @@ impl Context {
     }
 }
 
-/// `with_cancel(parent)` returns `(child, cancel)` — invoking
+/// `with_cancel(parent)` returns `(child, cancel)` - invoking
 /// `cancel` cancels the child and every descendant.
 #[must_use]
 pub fn with_cancel(parent: &Context) -> (Context, Cancel) {
@@ -444,7 +444,7 @@ pub fn with_timeout(parent: &Context, duration: Duration) -> Context {
 ///   `<-ctx.Done()` shape. Parks the current goroutine via
 ///   the same wait-list mechanism as [`Context::wait`].
 ///
-/// `Done` is cheap to clone — it holds a single `Arc`
+/// `Done` is cheap to clone - it holds a single `Arc`
 /// reference to the context's inner state.
 #[derive(Clone)]
 pub struct Done {
@@ -486,7 +486,7 @@ impl Cancel {
     /// walk is depth-first; descendants are discovered through the
     /// per-context `children` list. Repeated calls on the same
     /// cancel handle are no-ops on the cancelled state but each
-    /// call still publishes its reason — the first reason wins.
+    /// call still publishes its reason - the first reason wins.
     pub fn cancel_with(&self, reason: impl Into<String>) {
         propagate_cancel(&self.inner, reason.into());
     }

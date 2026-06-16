@@ -3,7 +3,7 @@ source: crates/gossamer-diagnostics/tests/snapshots.rs
 expression: rendered
 ---
 --- plain ---
-error[GT0005]: The `as` cast is restricted to a whitelist of conversions: — here
+error[GT0005]: The `as` cast is restricted to a whitelist of conversions: - here
 --- framed ---
 error[GT0005]: The `as` cast is restricted to a whitelist of conversions:
   --> snap.gos:2:5

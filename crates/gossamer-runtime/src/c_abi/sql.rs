@@ -35,7 +35,7 @@ use crate::sql::{
 // with `[rust-bindings]` links TWO copies of gossamer-runtime (the
 // runtime staticlib and the bindings staticlib) under
 // `--allow-multiple-definition`. Identical code is harmless, but a
-// crate-internal static would exist once per copy — the binding's
+// crate-internal static would exist once per copy - the binding's
 // `register()` would write one registry while `gos_rt_sql_open`
 // reads the other. An unmangled symbol is deduplicated by the
 // linker, so every copy shares this one storage location.
@@ -133,7 +133,7 @@ struct StmtEntry {
     conn: i64,
 }
 
-/// A live transaction; `conn` is the owning connection handle —
+/// A live transaction; `conn` is the owning connection handle -
 /// result-set cursors opened inside the transaction register under
 /// it, and closing the connection sweeps surviving transactions
 /// (driver `Drop` rolls back).
@@ -427,7 +427,7 @@ pub fn sql_conn_close(handle: i64) -> i64 {
 }
 
 /// Releases every Rows cursor (and its current Row) opened on
-/// `conn`. Driver-side drops run outside the registry lock — a
+/// `conn`. Driver-side drops run outside the registry lock - a
 /// blocking driver Drop must not stall unrelated SQL calls.
 /// Releases every prepared statement and live transaction opened on
 /// `conn`, plus its pending-notification slot. Driver-side drops run
@@ -514,7 +514,7 @@ pub fn sql_rows_next_row(handle: i64) -> i64 {
             row
         }
         // End-of-set: release the final Row and drop the entry (not
-        // reinserted) — the natural completion path reclaims both.
+        // reinserted) - the natural completion path reclaims both.
         Ok(None) => {
             row_unregister(entry.current_row);
             0
@@ -1614,7 +1614,7 @@ mod tests {
     }
 
     /// Serializes the stub-driver tests: they all read or drain the
-    /// process-global `LAST_ERROR` slot (errno-style by design — see
+    /// process-global `LAST_ERROR` slot (errno-style by design - see
     /// its doc), so parallel test threads race on take/overwrite.
     static ERROR_SLOT_LOCK: Mutex<()> = Mutex::new(());
 

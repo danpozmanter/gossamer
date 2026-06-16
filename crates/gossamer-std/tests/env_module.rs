@@ -1,4 +1,4 @@
-//! Rust-level coverage for the new `std::env` module — proves the
+//! Rust-level coverage for the new `std::env` module - proves the
 //! Rust surface compiles and behaves; the Gossamer-level dispatch
 //! test lives in the interp crate.
 

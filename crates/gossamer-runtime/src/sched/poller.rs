@@ -4,9 +4,9 @@
 //! I/O readiness and the OS-level mechanism that delivers it. Two
 //! concrete implementations live here:
 //!
-//! - [`MockPoller`] — deterministic, in-memory; readiness events are
+//! - [`MockPoller`] - deterministic, in-memory; readiness events are
 //!   synthesised by the caller. Used by unit tests.
-//! - [`OsPoller`] — `mio`-backed, wraps `epoll` (Linux), `kqueue`
+//! - [`OsPoller`] - `mio`-backed, wraps `epoll` (Linux), `kqueue`
 //!   (macOS/BSD), or IOCP (Windows). Production runtime path.
 //!
 //! Both implementations satisfy the [`Poller`] trait. The scheduler
@@ -70,7 +70,7 @@ pub trait Poller: Send {
     /// return early if `timeout` is `Some(Duration::ZERO)`.
     fn poll(&mut self, timeout: Option<Duration>) -> io::Result<Vec<Readiness>> {
         // Default fallback for pollers that do not have a real
-        // blocking primitive — sleeps and then drains.
+        // blocking primitive - sleeps and then drains.
         if let Some(t) = timeout {
             std::thread::sleep(t);
         }
@@ -179,7 +179,7 @@ pub struct OsPoller {
     poll: mio::Poll,
     events: mio::Events,
     /// `mio::Waker` bound to this poll. Calling `.wake()` from any
-    /// thread unblocks an in-flight `poll()` call immediately —
+    /// thread unblocks an in-flight `poll()` call immediately -
     /// used by `register_io` to let a freshly registered source
     /// take effect without waiting for the current poll cycle's
     /// timeout to expire.
@@ -244,7 +244,7 @@ impl OsPoller {
     /// the OS poller (epoll/kqueue reject re-`register` with
     /// `AlreadyExists`). Without this fallback, the second `wait_io`
     /// call on a long-lived connection silently parks the goroutine
-    /// with no netpoller subscription — every keep-alive connection
+    /// with no netpoller subscription - every keep-alive connection
     /// would stall on its second request until the client timeout
     /// fired, surfacing as ~200+ "deadline exceeded" failures per
     /// 30-second bench run.
@@ -371,7 +371,7 @@ impl Poller for OsPoller {
 
     fn poll(&mut self, timeout: Option<Duration>) -> io::Result<Vec<Readiness>> {
         // mio's `poll` can return early without events on every
-        // platform — spurious wakeups, signal interruption, or
+        // platform - spurious wakeups, signal interruption, or
         // simply rounding the remaining timeout down to zero.
         // Loop until we have at least one event ready or the
         // caller-supplied deadline passes; recompute `combined`
@@ -392,7 +392,7 @@ impl Poller for OsPoller {
             for event in &self.events {
                 let token = event.token();
                 if token == INTERRUPT_TOKEN {
-                    // Interrupt waker fired — drain any expired
+                    // Interrupt waker fired - drain any expired
                     // timers + return so the caller can re-poll with
                     // up-to-date registrations.
                     continue;
@@ -423,7 +423,7 @@ impl Poller for OsPoller {
                     return Ok(self.drain());
                 }
             } else if self.timers.peek().is_none() {
-                // No deadline and no timer pending — re-polling
+                // No deadline and no timer pending - re-polling
                 // would block forever. Return empty.
                 return Ok(self.drain());
             }

@@ -1,4 +1,4 @@
-// Runtime support for `std::net::ip` — IP address types and utilities.
+// Runtime support for `std::net::ip` - IP address types and utilities.
 //
 // Wraps Rust's `std::net::{IpAddr, Ipv4Addr, Ipv6Addr}`. All parsing
 // and comparison goes through Rust's battle-tested implementation.
@@ -8,7 +8,7 @@
 use std::fmt;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
-/// Parsed IP address — either v4 or v6.
+/// Parsed IP address - either v4 or v6.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Ip {
     /// An IPv4 address.

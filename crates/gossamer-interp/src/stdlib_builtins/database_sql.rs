@@ -10,7 +10,7 @@
 //!
 //! Every builtin delegates to the safe core in
 //! `gossamer_runtime::c_abi::sql`, the same functions the compiled
-//! tiers' `gos_rt_sql_*` shims marshal to — one implementation, one
+//! tiers' `gos_rt_sql_*` shims marshal to - one implementation, one
 //! handle registry, identical semantics on every tier.
 
 use std::sync::Arc;

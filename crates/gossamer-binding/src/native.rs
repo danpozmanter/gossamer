@@ -34,7 +34,7 @@ use crate::types::Type;
 // `gossamer-runtime`'s `c_abi.rs`; the binding crate links it
 // transitively via `gossamer-interp`. Allocations from this
 // arena are what the runtime expects to read past for compound
-// types — matching domains is what makes Vec/String/Option/etc.
+// types - matching domains is what makes Vec/String/Option/etc.
 // flow correctly through the compiled-mode boundary.
 unsafe extern "C" {
     fn gos_rt_gc_alloc(size: u64) -> *mut u8;
@@ -75,7 +75,7 @@ fn arena_box<T>(value: T) -> *mut T {
         // SAFETY: `p` is a fresh arena allocation aligned for
         // `T` (the runtime's bump arena returns word-aligned
         // pointers, which suffices for every shape we
-        // manufacture here — `GosVec`, `GosVariant`, etc. all
+        // manufacture here - `GosVec`, `GosVariant`, etc. all
         // have alignment ≤ 8).
         unsafe {
             std::ptr::write(p, value);
@@ -109,7 +109,7 @@ pub struct GosVec {
 #[repr(C)]
 #[derive(Debug)]
 pub struct GosVariant {
-    /// Variant tag — the macro encodes:
+    /// Variant tag - the macro encodes:
     /// - `0` for `None` / `Err`
     /// - `1` for `Some` / `Ok`
     ///
@@ -132,7 +132,7 @@ pub struct GosVariantValue {
     /// `4` = string, `5` = vec, `6` = variant, `7` = tuple,
     /// `8` = opaque).
     pub tag: i32,
-    /// Payload data — readers consult `tag` to pick the live
+    /// Payload data - readers consult `tag` to pick the live
     /// member.
     pub data: GosVariantPayload,
 }
@@ -209,7 +209,7 @@ pub struct GosBytes {
 /// side layout is a wire shape: it crosses the C-ABI between
 /// generated thunks and the Gossamer runtime only at well-defined
 /// transfer points. Pointers of this type MUST NOT be handed to
-/// `gos_rt_map_free` — that helper `Box::from_raw`s the runtime
+/// `gos_rt_map_free` - that helper `Box::from_raw`s the runtime
 /// layout and would drop a `parking_lot::Mutex` over garbage. Use
 /// `gossamer_runtime::c_abi::gos_rt_binding_map_free` or let the
 /// GC arena reclaim the allocation.
@@ -258,7 +258,7 @@ pub struct GosDynVariant {
 /// is registered into a per-call dispatch table by the codegen at
 /// the binding call site; the binding invokes through
 /// `gos_rt_callback_invoke(handle, ...)`. The handle is INVALID
-/// after the binding fn returns — bindings MUST NOT retain it
+/// after the binding fn returns - bindings MUST NOT retain it
 /// past the call.
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
@@ -327,7 +327,7 @@ impl BindingAbi for i64 {
 impl BindingAbi for u64 {
     type Input = u64;
     type Output = u64;
-    // u64 maps to the same Gossamer-source type as i64 — both
+    // u64 maps to the same Gossamer-source type as i64 - both
     // are 64-bit integers; the difference is unsigned display
     // semantics, not wire shape.
     const TYPE: Type = Type::I64;
@@ -458,7 +458,7 @@ fn make_gos_vec<T: Copy>(elements: &[T]) -> *mut GosVec {
 }
 
 /// Length and element stride of a vec header. The runtime emits
-/// packed buffers for narrow element types (`elem_bytes` 1 / 2 / 4 —
+/// packed buffers for narrow element types (`elem_bytes` 1 / 2 / 4 -
 /// e.g. `resp.raw_bytes` arrives at stride 1); a zero `elem_bytes`
 /// from a legacy producer means word-width.
 fn vec_len_stride(header: &GosVec) -> (usize, usize) {
@@ -527,7 +527,7 @@ unsafe fn read_gos_vec_strings(p: *const GosVec) -> Vec<String> {
     if header.ptr.is_null() || len == 0 {
         return Vec::new();
     }
-    // String slots are pointers — no real producer packs them below
+    // String slots are pointers - no real producer packs them below
     // word width. A sub-word stride is a corrupt header; reading the
     // low bytes as a pointer would be UB, so bail to an empty vec.
     if stride < 8 {
@@ -564,7 +564,7 @@ unsafe fn read_gos_vec_vec_i64(p: *const GosVec) -> Vec<Vec<i64>> {
     if header.ptr.is_null() || len == 0 {
         return Vec::new();
     }
-    // Inner-vec slots are pointers — same corrupt-header guard as
+    // Inner-vec slots are pointers - same corrupt-header guard as
     // `read_gos_vec_strings`.
     if stride < 8 {
         return Vec::new();
@@ -805,7 +805,7 @@ impl BindingAbi for Bytes {
 /// Builds a `BindingGosMap` from parallel-vec halves. Each half is
 /// a heap-owned `GosVec` produced through [`make_gos_vec`]; the
 /// outer `BindingGosMap` is heap-allocated via `Box::into_raw`.
-/// Reclamation is the consumer's responsibility — bindings MUST
+/// Reclamation is the consumer's responsibility - bindings MUST
 /// NOT call `gos_rt_map_free` on this pointer (that helper
 /// targets the runtime's incompatible `GosMap` layout); use
 /// `gos_rt_binding_map_free` instead.
@@ -1152,7 +1152,7 @@ fn read_variant_value(v: &GosVariantValue) -> DynValue {
                 let vec = v.data.vec;
                 let items = read_gos_vec_i64(vec);
                 // Heuristic: an i64-vec whose every element is in
-                // u8 range is treated as Bytes — matching the
+                // u8 range is treated as Bytes - matching the
                 // interp-tier policy in `conv.rs::value_to_dyn`.
                 if items.iter().all(|x| (0..=255).contains(x)) {
                     DynValue::Bytes(items.iter().map(|x| *x as u8).collect())
@@ -1233,7 +1233,7 @@ impl BindingAbi for DynValue {
 // On the compiled tier, a Gossamer-side callable is represented
 // as a u64 handle into a per-call dispatch table. The codegen
 // emits the registration before the binding call and the cleanup
-// after — bindings receive only the handle.
+// after - bindings receive only the handle.
 //
 // For ABI 0.4, the compiled-tier invocation surface is the
 // runtime helper `gos_rt_callback_invoke` declared below. Calling
@@ -1386,7 +1386,7 @@ unsafe fn read_gos_vec_u8(p: *const GosVec) -> Vec<u8> {
 // or `u64`, both `Default`. No additional code needed.
 
 // ---------------------------------------------------------------------
-// Phase 1 — expanded type vocabulary.
+// Phase 1 - expanded type vocabulary.
 //
 // Helpers + impls for the most-asked-for binding shapes the
 // pre-1.0 allowlist did not cover. See `~/dev/contexts/gos/rustergo.md`
@@ -1947,7 +1947,7 @@ impl BindingAbi for std::collections::HashMap<String, f64> {
 // Each field's type tag picks the live `GosVariantPayload` member.
 // Supported field types per element: i64, f64, bool, char, String.
 // Nested aggregates inside a tuple field go via `Type::Tuple/Vec/etc.`
-// — bindings author the explicit `BindingAbi` for the outer tuple
+// - bindings author the explicit `BindingAbi` for the outer tuple
 // shape.
 
 fn make_gos_tuple(fields: Vec<GosVariantValue>) -> *mut GosTuple {
@@ -2133,7 +2133,7 @@ impl BindingAbi for (String, String) {
 
 // --- Result<T, GosError> impls (Phase 2) -----------------------------
 //
-// Wire-equivalent to `Result<T, String>` — the rendered message
+// Wire-equivalent to `Result<T, String>` - the rendered message
 // is the Err payload. Cause chains are flattened at the boundary
 // by `GosError::render()`. Bindings get `?`-propagation with rich
 // causes (interp tier preserves the full chain via the Variant

@@ -30,7 +30,7 @@ use gossamer_types::{TyCtxt, TyKind, TypeTable};
 use crate::session::DocumentAnalysis;
 
 /// Single workspace entry. Stays in sync with the document's
-/// definition index — kind, signature, and doc string are mirrored
+/// definition index - kind, signature, and doc string are mirrored
 /// here so completion can skip a hop when surfacing a cross-file item.
 #[derive(Debug, Clone)]
 pub(crate) struct WorkspaceItem {
@@ -111,7 +111,7 @@ impl SymbolKey {
         }
     }
 
-    /// Returns the leaf identifier — the substring after the last
+    /// Returns the leaf identifier - the substring after the last
     /// separator. Used by rename to emit edits that touch only the
     /// leaf, never the qualifier.
     pub(crate) fn leaf(&self) -> &str {
@@ -352,7 +352,7 @@ fn collect_occurrences(doc: &DocumentAnalysis) -> Vec<SymbolOccurrence> {
             // `Import` (when imported via `use`) or `Err` (when the
             // name is referenced bare without a matching local
             // DefId). Record the bare name as an item-bucket
-            // candidate — the workspace lookup narrows by
+            // candidate - the workspace lookup narrows by
             // `(bucket, name)`, so unrelated identifiers harmlessly
             // join unrelated keys.
             Some(Resolution::Import { .. } | Resolution::Err) | None

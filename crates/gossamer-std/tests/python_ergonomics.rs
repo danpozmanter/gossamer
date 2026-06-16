@@ -39,7 +39,7 @@ fn tempdir_creates_and_removes_on_drop() {
         let td = fs::TempDir::new().expect("tempdir");
         path = td.path().to_path_buf();
         assert!(path.exists(), "tempdir not created");
-        // Drop the wrapper — path should be removed.
+        // Drop the wrapper - path should be removed.
     }
     assert!(!path.exists(), "tempdir not cleaned up on drop");
 }

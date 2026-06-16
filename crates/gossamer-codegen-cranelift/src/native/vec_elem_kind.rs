@@ -75,7 +75,7 @@
 //! the process exit code, so the object file links through a
 //! standard `cc` invocation.
 //! Aggregates (tuples/arrays/structs), strings, closures, and
-//! anything that needs a GC heap are not yet lowered — those
+//! anything that needs a GC heap are not yet lowered - those
 //! constructs fall back to [`crate::emit::emit_module`] for
 //! inspection.
 
@@ -157,7 +157,7 @@ pub(super) fn vec_elem_kind_from_dest(
         TyKind::Adt { .. } => {
             // No structural way to tell "this Adt is `errors::Error`"
             // from a TyKind::Adt without DefId comparison. Default
-            // to PRIMITIVE — Adts whose payload is reference-only
+            // to PRIMITIVE - Adts whose payload is reference-only
             // (i.e. every field is a primitive) won't leak, and
             // Adts containing heap fields will leak the inner
             // payload either way (the codegen doesn't currently

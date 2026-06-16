@@ -2,18 +2,18 @@
 // `r.headers` on an `http::Request` must be a real
 // `Vec<(String, String)>` on every tier: the compiled h1 server
 // eagerly parses the header section (lowercase names, trimmed
-// values, last-wins dedupe, name-sorted — the interp `Headers`
+// values, last-wins dedupe, name-sorted - the interp `Headers`
 // map view), and the `for (name, value) in r.headers` tuple
 // destructure must lower without the historical MIR panic /
 // first-request segfault. Also pins `r.path` query-stripping and
 // `r.query` parity for request-targets with a query component.
 //
-// Only intentionally-sent `x-*` headers are inspected — client
+// Only intentionally-sent `x-*` headers are inspected - client
 // engines add differing default headers (user-agent, accept), so
 // totals over the full bag would be nondeterministic.
 //
 // Self-terminating: the client runs in main and exits explicitly.
-// Binds a fixed loopback port — serialized under SERVER_PORT_LOCK
+// Binds a fixed loopback port - serialized under SERVER_PORT_LOCK
 // by `http_request_headers_parity_across_tiers` in
 // crates/gossamer-cli/tests/tier_parity.rs.
 
@@ -21,7 +21,7 @@ use std::http
 use std::process
 use std::time
 
-// Selected-header lookup through a borrowed header list — the
+// Selected-header lookup through a borrowed header list - the
 // historical segfault shape (no native lowering existed for the
 // ("http::Request", "headers") field projection).
 fn header_of(headers: &[(String, String)], want: String) -> String {

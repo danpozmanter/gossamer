@@ -34,7 +34,7 @@ fn stringify_panic(payload: &Box<dyn std::any::Any + Send>) -> String {
     "panic".to_string()
 }
 
-/// Immediate panic helper — callers use `panic!(...)` at the source
+/// Immediate panic helper - callers use `panic!(...)` at the source
 /// level; this function exists so derived traits can invoke it
 /// without going through the macro.
 pub fn panic(message: impl Into<String>) -> ! {

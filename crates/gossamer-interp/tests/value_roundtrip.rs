@@ -8,7 +8,7 @@ use gossamer_ast::Ident;
 use gossamer_interp::{Channel, SmolStr, Value};
 
 /// Manual structural equality for `Value`.  Needed because `Value`
-/// does not (yet) derive `PartialEq` — function pointers, `Mutex`,
+/// does not (yet) derive `PartialEq` - function pointers, `Mutex`,
 /// and HIR types prevent a blanket derive.
 fn values_equal(a: &Value, b: &Value) -> bool {
     match (a, b) {

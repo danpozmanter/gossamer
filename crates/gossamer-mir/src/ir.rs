@@ -1,7 +1,7 @@
 //! Mid-level IR (MIR) data types.
 //! MIR is the **single source of truth** for all language semantics.
 //! The interpreter executes MIR directly; the compiler lowers MIR to
-//! machine code. No semantic logic lives outside this IR — if a
+//! machine code. No semantic logic lives outside this IR - if a
 //! behaviour is not expressible as a [`StatementKind`], [`Terminator`],
 //! [`Rvalue`], or [`ConstValue`], it does not exist at this layer.
 //! Mirrors rustc's MIR in spirit: a per-function control-flow graph of
@@ -24,7 +24,7 @@ use gossamer_types::Ty;
 pub struct Local(pub u32);
 
 impl Local {
-    /// Index `0` — reserved for the function's return value.
+    /// Index `0` - reserved for the function's return value.
     pub const RETURN: Self = Self(0);
 
     /// Raw numeric index.
@@ -113,7 +113,7 @@ pub struct LocalDecl {
     /// `true` when the local was created inside an arena region
     /// (`runtime::arena_push` .. `arena_pop`). Its RC value is freed
     /// wholesale at region pop, so the drop pass must NOT emit a
-    /// retain/release for it — doing so would touch freed memory after the
+    /// retain/release for it - doing so would touch freed memory after the
     /// pop (use-after-free).
     pub region: bool,
 }
@@ -242,7 +242,7 @@ pub enum Terminator {
     },
 }
 
-/// Assertion message category — used by the runtime to produce
+/// Assertion message category - used by the runtime to produce
 /// human-readable panic text without interpolating strings in emitted
 /// code.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -255,7 +255,7 @@ pub enum AssertMessage {
     DivideByZero,
 }
 
-/// An lvalue — a place the IR can read from or write to.
+/// An lvalue - a place the IR can read from or write to.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Place {
     /// Local the place is rooted in.
@@ -284,13 +284,13 @@ impl Place {
 /// One step in a place projection.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Projection {
-    /// `*place` — dereference.
+    /// `*place` - dereference.
     Deref,
     /// `place.field` with the field's numeric index.
     Field(u32),
-    /// `place[index]` — runtime array indexing.
+    /// `place[index]` - runtime array indexing.
     Index(Local),
-    /// `place as variant` — access an enum's payload through an
+    /// `place as variant` - access an enum's payload through an
     /// already-discriminated variant.
     Downcast(u32),
     /// The discriminant word of an enum place (read-only projection).
@@ -378,7 +378,7 @@ pub enum Rvalue {
         /// Element operands in declaration order.
         operands: Vec<Operand>,
     },
-    /// `len(place)` — length of an array/vec/slice.
+    /// `len(place)` - length of an array/vec/slice.
     Len(Place),
     /// `[value; count]` repeat constructor.
     Repeat {
@@ -409,7 +409,7 @@ pub enum Rvalue {
 /// Reference to a `static mut` global. Every access (load or store)
 /// carries the static's mangled symbol, value type, and const
 /// initializer so any backend can materialise the backing global
-/// locally — the native linker coalesces duplicate `linkonce_odr`
+/// locally - the native linker coalesces duplicate `linkonce_odr`
 /// definitions emitted across object files into one shared cell.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StaticRef {
@@ -484,7 +484,7 @@ pub enum UnOp {
 }
 
 /// Returns `true` when every write to `local` is an `as u64` /
-/// `as usize` cast result (or a copy of another such local) — the
+/// `as usize` cast result (or a copy of another such local) - the
 /// static analog of the VM's `Value::Uint` display provenance, used
 /// by the compiled backends to decide between the signed and the
 /// unsigned integer printer.

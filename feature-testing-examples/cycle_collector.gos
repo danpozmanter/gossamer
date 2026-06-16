@@ -1,4 +1,4 @@
-// runtime::collect_cycles() — the trial-deletion cycle collector must
+// runtime::collect_cycles() - the trial-deletion cycle collector must
 // lower and run identically on every tier. Here the data is acyclic, so
 // the collector is a no-op (RC frees everything deterministically); the
 // fixture proves the call path is wired through VM, Cranelift, and LLVM

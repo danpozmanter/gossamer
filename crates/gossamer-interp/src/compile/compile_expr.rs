@@ -170,7 +170,7 @@ impl<'tcx> FnBuilder<'tcx> {
                             Some(TyKind::Int(gossamer_types::IntTy::U8)) => (56u8, false),
                             Some(TyKind::Int(gossamer_types::IntTy::U16)) => (48u8, false),
                             Some(TyKind::Int(gossamer_types::IntTy::U32)) => (32u8, false),
-                            // i64/isize: same bit width — identity.
+                            // i64/isize: same bit width - identity.
                             _ => {
                                 return self.compile_expr_ex(value);
                             }
@@ -190,8 +190,8 @@ impl<'tcx> FnBuilder<'tcx> {
                         })
                     }
                     _ => {
-                        // Remaining whitelisted combos — f32 / bool /
-                        // char sources, `char` / `f32` targets — lower
+                        // Remaining whitelisted combos - f32 / bool /
+                        // char sources, `char` / `f32` targets - lower
                         // to the generic scalar-cast op so every
                         // GT0005-whitelisted cast is handled natively.
                         let target = self
@@ -201,7 +201,7 @@ impl<'tcx> FnBuilder<'tcx> {
                             // `as` only typechecks (passes the GT0005
                             // whitelist) for scalar targets, so a resolved
                             // cast always maps to a `CastTarget`. Reaching
-                            // here means the target type never resolved — a
+                            // here means the target type never resolved - a
                             // frontend invariant violation, surfaced as a
                             // compile error.
                             .ok_or(RuntimeError::Unsupported(
@@ -223,7 +223,7 @@ impl<'tcx> FnBuilder<'tcx> {
             // `Value::IntArray` (built via `try_build_int_array`)
             // and the parent expects an i64, we emit
             // `Op::IntArrayGetI64` which feeds the typed `i64`
-            // register file directly — no `Value::Int` box/unbox.
+            // register file directly - no `Value::Int` box/unbox.
             HirExprKind::Index { base, index }
                 if matches!(self.tcx.kind(expr.ty), Some(TyKind::Int(_))) =>
             {
@@ -256,7 +256,7 @@ impl<'tcx> FnBuilder<'tcx> {
                 })
             }
             // Typed flat-f64 indexed read fast path. Same shape as
-            // the flat-i64 path above but for `Value::FloatVec` —
+            // the flat-i64 path above but for `Value::FloatVec` -
             // the inner-loop scratch arrays in nbody-style code
             // ride this branch.
             HirExprKind::Index { base, index }
@@ -366,7 +366,7 @@ impl<'tcx> FnBuilder<'tcx> {
                 else_branch,
             } => self.compile_if(condition, then_branch, else_branch.as_deref()),
             HirExprKind::While { condition, body } => self.compile_while(condition, body),
-            // `Loop { body }` — native register-VM lowering. The typed
+            // `Loop { body }` - native register-VM lowering. The typed
             // for-loop fast paths (`for i in a..b`, `for x in xs.iter()`,
             // `for (k, v) in map.iter()`) are tried first as an
             // allocation-free index walk; otherwise the generic loop
@@ -393,7 +393,7 @@ impl<'tcx> FnBuilder<'tcx> {
             }
             HirExprKind::Return(value) => self.compile_return(value.as_deref()),
             HirExprKind::Break(value) => self.compile_break(value.as_deref()),
-            // Native `continue` — emit a forward jump that the
+            // Native `continue` - emit a forward jump that the
             // enclosing loop emitter patches once it knows the
             // address of its per-iteration step op. Routing through
             // a patch list (rather than jumping straight to
@@ -420,7 +420,7 @@ impl<'tcx> FnBuilder<'tcx> {
                     .push(patch);
                 Ok(self.load_unit())
             }
-            // Native method dispatch — emits an `Op::MethodCall`
+            // Native method dispatch - emits an `Op::MethodCall`
             // for the most common hot-path shape
             // (fasta's inner `out.write_byte(…)` etc.).
             HirExprKind::MethodCall {
@@ -469,14 +469,14 @@ impl<'tcx> FnBuilder<'tcx> {
                 });
                 Ok(dst)
             }
-            // Cast — delegate to the typed compile path so the
+            // Cast - delegate to the typed compile path so the
             // typed-numeric arms fire, then box back into a
             // Value reg for whoever asked for one.
             HirExprKind::Cast { .. } => {
                 let tr = self.compile_expr_ex(expr)?;
                 Ok(self.as_value(tr))
             }
-            // Native tuple literal — `(a, b, c)` lands in
+            // Native tuple literal - `(a, b, c)` lands in
             // `count` consecutive value registers, then
             // `Op::BuildTuple` packs them.
             HirExprKind::Tuple(elems) => {
@@ -518,7 +518,7 @@ impl<'tcx> FnBuilder<'tcx> {
                 self.emit(Op::BuildTuple { dst, first, count });
                 Ok(dst)
             }
-            // Native `match` — test-and-branch chain per arm, including
+            // Native `match` - test-and-branch chain per arm, including
             // or-patterns that bind (shared binding registers).
             HirExprKind::Match { scrutinee, arms } => self.compile_match(scrutinee, arms, expr),
             // Native closure: compile the body to its own `FnChunk`
@@ -555,7 +555,7 @@ impl<'tcx> FnBuilder<'tcx> {
             }
             // Native standalone range value (`a..b` / `a..=b`): an eager
             // `Value::Array` of `Value::Int`. For-range loops never reach
-            // here — they ride the desugar fast paths above.
+            // here - they ride the desugar fast paths above.
             HirExprKind::Range {
                 start,
                 end,
@@ -673,7 +673,7 @@ impl<'tcx> FnBuilder<'tcx> {
     /// sequence of shape tests (`VariantIs` / `StructIs` / literal
     /// `Eq` / range compares) that branch to the next arm on failure
     /// and extract sub-values into freshly-bound registers on
-    /// success. Every pattern shape — including or-patterns that bind —
+    /// success. Every pattern shape - including or-patterns that bind -
     /// lowers natively via [`Self::emit_pattern_test`].
     pub(crate) fn compile_match(
         &mut self,
@@ -716,7 +716,7 @@ impl<'tcx> FnBuilder<'tcx> {
                 self.patch_jump(f, next);
             }
         }
-        // No arm matched — exhaustiveness guarantees this is dead for
+        // No arm matched - exhaustiveness guarantees this is dead for
         // well-typed programs, but the register file must stay valid.
         let unit = self.load_unit();
         self.emit(Op::Move {
@@ -983,7 +983,7 @@ impl<'tcx> FnBuilder<'tcx> {
                     let elem = self.alloc_reg();
                     match rest_pos {
                         Some(rp) if i > rp => {
-                            // Element after `..` — index from the end.
+                            // Element after `..` - index from the end.
                             let from_end = parts.len() - 1 - i;
                             self.emit(Op::TupleTailIndex {
                                 dst: elem,
@@ -1013,9 +1013,9 @@ impl<'tcx> FnBuilder<'tcx> {
                 for alt in alts {
                     let mut alt_fails: Vec<InstrIdx> = Vec::new();
                     self.emit_pattern_test(scrut, alt, &mut alt_fails)?;
-                    // This alt matched — jump to the continuation.
+                    // This alt matched - jump to the continuation.
                     matched.push(self.emit(Op::Jump { target: 0 }));
-                    // This alt failed — next alt starts here.
+                    // This alt failed - next alt starts here.
                     let next_alt = self.cur_idx();
                     for f in alt_fails {
                         self.patch_jump(f, next_alt);
@@ -1033,7 +1033,7 @@ impl<'tcx> FnBuilder<'tcx> {
                 // Binding or-pattern: every alternative binds the same
                 // set of names (a typecheck invariant). One shared
                 // register per name is the single home the arm body
-                // reads, regardless of which alternative won — so each
+                // reads, regardless of which alternative won - so each
                 // alternative copies its freshly-extracted bindings
                 // into those shared registers on its match path before
                 // jumping to the continuation. Mirrors the MIR lowering
@@ -1074,9 +1074,9 @@ impl<'tcx> FnBuilder<'tcx> {
                         }
                     }
                     self.pop_scope();
-                    // This alt matched — jump to the continuation.
+                    // This alt matched - jump to the continuation.
                     matched.push(self.emit(Op::Jump { target: 0 }));
-                    // This alt failed — next alt starts here.
+                    // This alt failed - next alt starts here.
                     let next_alt = self.cur_idx();
                     for f in alt_fails {
                         self.patch_jump(f, next_alt);
@@ -1131,7 +1131,7 @@ impl<'tcx> FnBuilder<'tcx> {
         }
         let lk = self.expr_kind(lhs);
         let rk = self.expr_kind(rhs);
-        // Both operands f64 — emit a typed f64 op. For `+-*/`
+        // Both operands f64 - emit a typed f64 op. For `+-*/`
         // the result is also f64; for comparisons it's a
         // `Bool` Value.
         if lk == RegKind::F64 && rk == RegKind::F64 {
@@ -1328,7 +1328,7 @@ impl<'tcx> FnBuilder<'tcx> {
     /// Phase-2 field-read fast path. When the field's own
     /// type is `f64`, emit `IndexedFieldGetF64` /
     /// `FieldGetF64` so the scalar skips a `Value::Float`
-    /// wrap and lands directly in the float register file —
+    /// wrap and lands directly in the float register file -
     /// critical for nbody's inner loop, where every
     /// `bodies[i].x` read feeds straight into f64 math.
     pub(crate) fn compile_field_ex(
@@ -1351,7 +1351,7 @@ impl<'tcx> FnBuilder<'tcx> {
             ConstKey::String(name.name.clone()),
             Value::String(SmolStr::from(name.name.clone())),
         );
-        // Fused `base[i].field` — avoids cloning the inner
+        // Fused `base[i].field` - avoids cloning the inner
         // struct `Arc`.
         if let HirExprKind::Index { base, index } = &receiver.kind {
             let base_reg = self.compile_expr(base)?;
@@ -1429,7 +1429,7 @@ impl<'tcx> FnBuilder<'tcx> {
                 kind: RegKind::Value,
             });
         }
-        // Plain `value.field` — the receiver itself is a
+        // Plain `value.field` - the receiver itself is a
         // single value, so we already avoid the indexed
         // clone. The remaining win is unboxing the scalar
         // into a float reg.
@@ -1513,14 +1513,14 @@ impl<'tcx> FnBuilder<'tcx> {
     ) -> RuntimeResult<Reg> {
         // A `&mut self` user method on a writeback place rides the cell
         // protocol so its mutation of `self` reaches the caller's
-        // binding — the mechanism `for x in <custom iterator>` and every
+        // binding - the mechanism `for x in <custom iterator>` and every
         // stateful `obj.advance()` depend on. Tried first so a user
         // struct whose `&mut self` method shadows a builtin name (`pop`,
         // `swap`, `insert`) routes to the user method.
         if let Some(reg) = self.try_compile_mut_self_method(receiver, name, args)? {
             return Ok(reg);
         }
-        // `d.as_millis()` / `d.as_secs()` / `d.as_micros()` — method form
+        // `d.as_millis()` / `d.as_secs()` / `d.as_micros()` - method form
         // of the `time::Duration` accessors. A Duration value is a bare
         // `Value::Int` at runtime with no qualified-key receiver, so the
         // generic `MethodCall` dispatch cannot reach the accessor by name.
@@ -1569,7 +1569,7 @@ impl<'tcx> FnBuilder<'tcx> {
                 return Ok(dst);
             }
         }
-        // `inst.elapsed_ms()` — method form of the `time::Instant`
+        // `inst.elapsed_ms()` - method form of the `time::Instant`
         // accessor. An Instant value is a bare `Value::Int` of monotonic
         // ms at runtime with no qualified-key receiver, so resolve it
         // statically from the receiver's Instant type and emit a direct
@@ -1688,7 +1688,7 @@ impl<'tcx> FnBuilder<'tcx> {
         // which returns a fresh aggregate, then the writeback `Op::Move`
         // copies it back into the receiver's slot. That works under
         // pure bytecode but the cranelift JIT lowers MIR for the
-        // function body and has no intrinsic for the writeback —
+        // function body and has no intrinsic for the writeback -
         // the JIT silently drops the mutation, leaving callers
         // looping on stale data. Inlining the swap as
         // `t = recv[i]; recv[i] = recv[j]; recv[j] = t` keeps the
@@ -1872,7 +1872,7 @@ impl<'tcx> FnBuilder<'tcx> {
         // downstream `Op::Add` etc. picks the result up without an
         // intermediate `Value::Int` round-trip. Caller still
         // expects a `Value` register, so we box back through
-        // `Op::BoxI64` — the register allocator and downstream
+        // `Op::BoxI64` - the register allocator and downstream
         // typed-arith specialisation usually elide that pair.
         if name.name == "get_byte" && args.len() == 1 {
             let idx_tr = self.compile_expr_ex(&args[0])?;
@@ -2163,7 +2163,7 @@ impl<'tcx> FnBuilder<'tcx> {
     }
 
     /// Returns the home register of a `&mut Vec<T>` / `&mut [T]`
-    /// call argument when the argument is a plain local place —
+    /// call argument when the argument is a plain local place -
     /// either `&mut x` over a local or a bare path forwarding a
     /// `&mut` parameter. Non-local places (fields, indexes) and
     /// non-`&mut`-vec types return `None` and take the ordinary

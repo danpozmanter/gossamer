@@ -2,9 +2,9 @@
 //!
 //! Wraps the upstream `regex` crate so Gossamer programs get a
 //! first-party regex engine without pulling a whole C library.
-//! The Gossamer-side API is intentionally minimal — `compile`,
+//! The Gossamer-side API is intentionally minimal - `compile`,
 //! `is_match`, `find`, `find_all`, `captures`, `replace`,
-//! `replace_all` — matching the surface a typical script actually
+//! `replace_all` - matching the surface a typical script actually
 //! uses. Pattern syntax is Rust regex syntax (PCRE-like subset;
 //! no backreferences or look-around, Unicode-aware character
 //! classes).

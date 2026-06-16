@@ -1,5 +1,5 @@
 /*
- * Range arithmetic — sum, product, max via simple folds.
+ * Range arithmetic - sum, product, max via simple folds.
  *
  * Each helper takes a `&[i64]` and returns a fresh value. The
  * caller binds with a plain `let`. The mutation is local to

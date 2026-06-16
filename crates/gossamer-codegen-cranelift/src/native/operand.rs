@@ -75,7 +75,7 @@
 //! the process exit code, so the object file links through a
 //! standard `cc` invocation.
 //! Aggregates (tuples/arrays/structs), strings, closures, and
-//! anything that needs a GC heap are not yet lowered — those
+//! anything that needs a GC heap are not yet lowered - those
 //! constructs fall back to [`crate::emit::emit_module`] for
 //! inspection.
 
@@ -187,9 +187,9 @@ pub(super) enum PrintKind {
     ArrBool(i64),
     /// `[String; N]` flat-buffer literal.
     ArrString(i64),
-    /// `json::Value` — rendered via `gos_rt_json_render`.
+    /// `json::Value` - rendered via `gos_rt_json_render`.
     JsonValue,
-    /// `errors::Error` — calls `gos_rt_error_message` then prints as string.
+    /// `errors::Error` - calls `gos_rt_error_message` then prints as string.
     ErrorMessage,
     Unsupported(&'static str),
 }
@@ -235,7 +235,7 @@ pub(super) fn operand_print_kind(body: &Body, tcx: &TyCtxt, operand: &Operand) -
                 TyKind::Char => PrintKind::Char,
                 TyKind::Int(int_ty) => {
                     // Every ≤64-bit int lives as a signed i64 at
-                    // runtime and prints signed — the VM renders
+                    // runtime and prints signed - the VM renders
                     // `0u64 - 1` as `-1`. The one exception the VM
                     // makes is display provenance: an explicit
                     // `as u64`/`as usize` cast result becomes
@@ -261,7 +261,7 @@ pub(super) fn operand_print_kind(body: &Body, tcx: &TyCtxt, operand: &Operand) -
                 // this operand's type. The dominant producer of
                 // unresolved-typed locals that flow into println
                 // is `__concat` (whose return type is currently
-                // not pinned by the typechecker — it returns a
+                // not pinned by the typechecker - it returns a
                 // String pointer at runtime). Falling back to
                 // StrPtr keeps `println!("a={n}")` correct;
                 // falling back to Int (the previous default)
@@ -284,7 +284,7 @@ pub(super) fn operand_print_kind(body: &Body, tcx: &TyCtxt, operand: &Operand) -
                 // arrays through the same Vec print kind works
                 // because `nums` ends up as a `*mut GosVec` after
                 // the typed-array promotion (`BuildIntArray` etc.)
-                // — without this, `let nums = [1, 2, 3]; println!
+                // - without this, `let nums = [1, 2, 3]; println!
                 // ("{:?}", nums)` printed `<value>` even though
                 // the array is fully typed and the helper exists.
                 TyKind::Array { elem, len } => {

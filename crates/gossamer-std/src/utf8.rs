@@ -1,4 +1,4 @@
-//! Runtime support for `std::utf8` — UTF-8 validation, scalar decoding,
+//! Runtime support for `std::utf8` - UTF-8 validation, scalar decoding,
 //! and encoding with Go-parity surface.
 
 #![forbid(unsafe_code)]
@@ -40,7 +40,7 @@ pub fn full_rune(p: &[u8]) -> bool {
     let width = if first < 0x80 {
         1
     } else if first < 0xC0 {
-        return false; // continuation byte — not a valid start
+        return false; // continuation byte - not a valid start
     } else if first < 0xE0 {
         2
     } else if first < 0xF0 {
@@ -136,7 +136,7 @@ pub fn decode_last_rune_in_string(s: &str) -> (char, usize) {
 }
 
 /// Encodes `scalar` as UTF-8 into `out`. Returns the number of bytes
-/// written (1–4). Panics if `out` is shorter than `UTF_MAX`.
+/// written (1-4). Panics if `out` is shorter than `UTF_MAX`.
 pub fn encode_rune(scalar: char, out: &mut [u8]) -> usize {
     scalar.encode_utf8(out).len()
 }

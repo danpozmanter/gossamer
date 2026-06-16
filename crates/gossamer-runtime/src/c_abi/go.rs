@@ -16,7 +16,7 @@
 #![allow(clippy::wildcard_imports)]
 
 // ---------------------------------------------------------------
-// Scheduler — every `go fn(args)` lands on the M:N pool
+// Scheduler - every `go fn(args)` lands on the M:N pool
 // ---------------------------------------------------------------
 
 #[unsafe(no_mangle)]
@@ -50,7 +50,7 @@ pub unsafe extern "C" fn gos_rt_go_spawn_call_0(fn_addr: usize) {
         );
         spawn_task(Box::new(move || {
             // SAFETY: the caller promises `fn_addr` is the address of
-            // an `extern "C" fn() -> i64` — the SysV-ABI convention
+            // an `extern "C" fn() -> i64` - the SysV-ABI convention
             // native codegen emits for every Gossamer function. The
             // typed registry verify above rejects mismatched kinds.
             type Fn0 = unsafe extern "C" fn() -> i64;
@@ -199,7 +199,7 @@ pub unsafe extern "C" fn gos_rt_go_spawn_call_6(
 }
 
 // ---------------------------------------------------------------
-// Join handles — `spawn(f)` captures the goroutine's outcome
+// Join handles - `spawn(f)` captures the goroutine's outcome
 // ---------------------------------------------------------------
 
 /// Heap-boxed result of a spawned goroutine, carried over the
@@ -250,7 +250,7 @@ impl Drop for SpawnOutcomeGuard {
     }
 }
 
-/// `spawn(f) -> handle` — runs the callable `code`/`env` pair on the
+/// `spawn(f) -> handle` - runs the callable `code`/`env` pair on the
 /// goroutine pool and returns a one-shot channel handle. The outcome
 /// (returned value, or panic message) is delivered to `gos_rt_join`.
 /// `code` is the per-shape thunk / lifted-closure address; `env` is
@@ -294,7 +294,7 @@ pub unsafe extern "C" fn gos_rt_spawn(code: usize, env: usize) -> *mut super::ch
     })
 }
 
-/// `handle.join() -> Result<T, String>` — blocks (parking the caller
+/// `handle.join() -> Result<T, String>` - blocks (parking the caller
 /// cooperatively in a goroutine, or condvar-blocking on an OS thread)
 /// until the spawned goroutine deposits its outcome, then unpacks it
 /// into the 2-word Result aggregate.
@@ -324,7 +324,7 @@ pub unsafe extern "C" fn gos_rt_join(ch: *mut super::chan::GosChan) -> i128 {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_go_yield() {
     ffi_entry!((), {
-        // Real coroutine yield — suspend this goroutine and let the
+        // Real coroutine yield - suspend this goroutine and let the
         // worker M run another. The scheduler immediately re-enqueues
         // the suspended goroutine because we don't set the
         // pending-park flag, so this is a "give up the slice"
@@ -354,7 +354,7 @@ pub unsafe extern "C" fn gos_rt_sleep_ns(ns: i64) {
     });
 }
 
-/// `time::sleep(ms: i64)` — the millisecond-units variant
+/// `time::sleep(ms: i64)` - the millisecond-units variant
 /// surfaced to Gossamer code. The bytecode VM uses
 /// `Duration::from_millis(ms)`; this helper gives the cranelift
 /// / LLVM dispatch the same units so `time::sleep(1000)` waits

@@ -242,7 +242,7 @@ pub fn dim(x: f64, y: f64) -> f64 {
     if d > 0.0 { d } else { 0.0 }
 }
 
-/// Alias for [`fmod`] — floating-point remainder of `x / y`.
+/// Alias for [`fmod`] - floating-point remainder of `x / y`.
 #[must_use]
 pub fn mod_float(x: f64, y: f64) -> f64 {
     fmod(x, y)

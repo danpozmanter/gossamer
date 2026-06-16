@@ -1,4 +1,4 @@
-//! Cranelift intrinsic lowering — opaque-handle family (close,
+//! Cranelift intrinsic lowering - opaque-handle family (close,
 //! JSON, BTreeMap, arena/array iterators). Third partition in
 //! the dispatch chain. Holds `lower_intrinsic_call_handles`.
 
@@ -79,7 +79,7 @@
 //! the process exit code, so the object file links through a
 //! standard `cc` invocation.
 //! Aggregates (tuples/arrays/structs), strings, closures, and
-//! anything that needs a GC heap are not yet lowered — those
+//! anything that needs a GC heap are not yet lowered - those
 //! constructs fall back to [`crate::emit::emit_module`] for
 //! inspection.
 
@@ -231,7 +231,7 @@ pub(super) fn lower_intrinsic_call_handles(
             );
             Ok(true)
         }
-        // HashMap iteration helpers — each returns a *mut GosVec
+        // HashMap iteration helpers - each returns a *mut GosVec
         // snapshot of the requested column so the for-loop lowerer
         // can iterate it through the regular gos_rt_vec_* helpers.
         // The btmap_keys helper is the BTreeMap equivalent and
@@ -637,7 +637,7 @@ pub(super) fn lower_intrinsic_call_handles(
             );
             Ok(true)
         }
-        // JSON runtime — every helper accepts an opaque
+        // JSON runtime - every helper accepts an opaque
         // `*mut GosJson` pointer so the codegen treats them as
         // pointer-sized values. The MIR rewriter routes
         // `value.field` on a `json::Value` receiver into a
@@ -1052,12 +1052,12 @@ pub(super) fn lower_intrinsic_call_handles(
             Ok(true)
         }
         // Channels delegate to the gossamer-runtime staticlib.
-        // Element size is hard-coded to i64-equivalent (8 bytes) —
+        // Element size is hard-coded to i64-equivalent (8 bytes) -
         // every scalar and every GC pointer fits in that word.
         // Unbounded capacity via `cap = 0`.
         //
         // The frontend types `channel()` as a tuple
-        // `(Sender<T>, Receiver<T>)` — two slots — so the user's
+        // `(Sender<T>, Receiver<T>)` - two slots - so the user's
         // `let (tx, rx) = channel()` / `pair.0` / `pair.1`
         // pattern projects with a 0/8-byte offset. We allocate
         // a 16-byte stack slot here and store the channel

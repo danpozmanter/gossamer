@@ -1,7 +1,7 @@
 //! Scheduler stress tests.
 //!
 //! The pre-existing `basic.rs` and `multi.rs` test files cap out at
-//! 50–100 goroutines per case. The runtime is documented to handle
+//! 50-100 goroutines per case. The runtime is documented to handle
 //! 10k true goroutines (`true_goroutines_landed.md` 2026-04-30) but
 //! nothing in CI exercises that scale. A regression that only
 //! surfaces past ~1k tasks (queue overflow, starvation, parking
@@ -70,7 +70,7 @@ fn cooperative_scheduler_runs_ten_thousand_tasks_to_completion() {
 fn cooperative_scheduler_handles_yield_intensive_load() {
     // Each of 1_000 tasks yields 100 times before completing
     // (100_000 total step calls). Tests the yield-then-requeue
-    // path under sustained churn — the regression class is a
+    // path under sustained churn - the regression class is a
     // queue implementation that turns O(N) per yield instead
     // of O(1).
     within_deadline("coop_1k_x_100_yields", || {
@@ -99,7 +99,7 @@ fn cooperative_scheduler_handles_yield_intensive_load() {
 fn multi_scheduler_runs_ten_thousand_tasks_across_workers() {
     // 10_000 tasks across a 4-worker pool. Catches work-steal
     // imbalance and the past per-worker queue overflow class.
-    // Counter must equal exactly 10_000 — the worker pool is
+    // Counter must equal exactly 10_000 - the worker pool is
     // the most likely place a wakeup is dropped at scale.
     within_deadline("multi_10k_done", || {
         let sched = MultiScheduler::new(4);
@@ -152,7 +152,7 @@ fn multi_scheduler_with_one_worker_handles_5k_tasks_serial() {
     // Pinning to a single worker forces serial execution of
     // 5_000 tasks. Catches a regression where the single-
     // worker fast path skips the proper completion / wakeup
-    // sequencing — past M:N landings have had this class.
+    // sequencing - past M:N landings have had this class.
     within_deadline("multi_1w_5k_serial", || {
         let sched = MultiScheduler::new(1);
         let counter = Arc::new(AtomicU32::new(0));
@@ -173,7 +173,7 @@ fn multi_scheduler_with_one_worker_handles_5k_tasks_serial() {
 #[test]
 fn cooperative_scheduler_spawn_during_run_to_scale() {
     // Each of 1_000 parent tasks spawns one child. Both must
-    // complete in the same `run()` call — catches a regression
+    // complete in the same `run()` call - catches a regression
     // where spawned children get stranded after the parent
     // completes (a real bug class on the M:N transition).
     within_deadline("coop_spawn_during_run_2k", || {

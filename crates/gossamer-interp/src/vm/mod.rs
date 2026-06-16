@@ -104,7 +104,7 @@ pub struct Vm {
     /// share one immutable copy. Keys are `&'static str` interned
     /// via [`intern_type_name`] / [`intern_qualified`].
     pub(crate) globals: Arc<rustc_hash::FxHashMap<&'static str, Global>>,
-    /// Process-shared prelude of built-in callables — built once
+    /// Process-shared prelude of built-in callables - built once
     /// from a `OnceLock` and `Arc::clone`d into every Vm at
     /// construction. Pre-lazy: every `Vm::new` cloned all ~330
     /// entries into its own HashMap. Post-lazy: a refcount bump.
@@ -136,12 +136,12 @@ pub struct Vm {
     /// pointers and `dyn Fn` boxes that aren't `Send + Sync`.
     /// Goroutines spawned via [`Op::Spawn`] start with an empty
     /// JIT and stay on bytecode unless their own per-`Vm` hot
-    /// counter trips — which only happens for genuinely long-lived
+    /// counter trips - which only happens for genuinely long-lived
     /// child VMs, where the per-thread compile cost amortises.
     pub(crate) jit: parking_lot::RwLock<JitState>,
     /// Hot-path fast flag: number of installed JIT overrides. When
-    /// zero, `apply()` skips the `jit.read()` `RwLock` probe entirely
-    /// — every call is a bytecode dispatch, and probing the `RwLock`
+    /// zero, `apply()` skips the `jit.read()` `RwLock` probe entirely -
+    /// every call is a bytecode dispatch, and probing the `RwLock`
     /// per call costs ~6-8 ns of atomic CAS that adds up across
     /// tight recursive workloads. Updated by
     /// `try_compile_jit_lazy` once the deferred compile installs
@@ -187,7 +187,7 @@ pub struct Vm {
     /// independently, mirroring the per-`Vm` `ChunkState` ownership.
     pub(crate) globals_generation: Cell<u32>,
     /// Call-stack snapshot for runtime-error diagnostics. Push on
-    /// chunk entry, pop on success — on error the frame stays so
+    /// chunk entry, pop on success - on error the frame stays so
     /// `call_stack_snapshot` reports the failing chain.
     /// Names are interned `&'static str`; recursive programs do not
     /// allocate a heap String per frame.
@@ -215,8 +215,8 @@ pub struct Vm {
 /// owning `Vm`.
 /// Memoised JIT-override resolution for a chunk. `Unresolved` until
 /// the first call after the one-shot JIT install; then fixed (the
-/// override map only shrinks afterward, so a cached resolution — even
-/// an `Arc`-held evicted entry — stays valid).
+/// override map only shrinks afterward, so a cached resolution - even
+/// an `Arc`-held evicted entry - stays valid).
 #[derive(Clone, Default)]
 pub(crate) enum JitResolve {
     /// Not yet resolved against the installed override map.
@@ -232,7 +232,7 @@ pub(crate) struct ChunkState {
     /// Inline-cache slots for `Op::Call` / `Op::MethodCall` sites.
     /// One slot per `cache_idx`. `RefCell` because the dispatch
     /// arms read the slot, then on miss take a brief `borrow_mut`
-    /// to refill it — never held across a sub-call.
+    /// to refill it - never held across a sub-call.
     pub(crate) call_caches: RefCell<Vec<crate::bytecode::CacheSlot>>,
     /// Adaptive-arith cache slots. The outer `Vec` is fixed at
     /// chunk-construction time so no outer cell is needed; each
@@ -244,9 +244,9 @@ pub(crate) struct ChunkState {
     /// the named field resolved to, so hot-path field reads
     /// skip the linear name scan.
     pub(crate) field_caches: Vec<crate::bytecode::FieldCacheSlot>,
-    /// Tier-D2 hot counter — decremented on every call into the
+    /// Tier-D2 hot counter - decremented on every call into the
     /// chunk; trips a deferred whole-program JIT compile at zero.
-    /// `Cell<i32>` (single-thread mutation only — each `Vm` owns
+    /// `Cell<i32>` (single-thread mutation only - each `Vm` owns
     /// its own counter, so cross-thread atomicity is unneeded).
     pub(crate) hot_counter: Cell<i32>,
     /// Per-chunk memoised JIT override (see [`JitResolve`]). Lets the
@@ -290,7 +290,7 @@ impl ChunkState {
 /// `overrides` map lets `apply` route a `Global::Fn(chunk)` call
 /// through native dispatch by name. `compiled` collapses the
 /// previous `jit_attempted` flag so two goroutines tripping the
-/// hot counter concurrently can't both kick a compile — the
+/// hot counter concurrently can't both kick a compile - the
 /// first transitions `Pending → InProgress`, the others see
 /// `InProgress` / `Done` / `Failed` and skip.
 #[derive(Default)]
@@ -308,7 +308,7 @@ pub(crate) struct JitState {
     pub(crate) overrides: HashMap<String, Arc<JitFn>>,
     /// FIFO record of insertion order for `overrides`. On every
     /// insert that pushes the map past [`JIT_OVERRIDE_CAP`] entries
-    /// the front name is popped and its entry dropped — releasing
+    /// the front name is popped and its entry dropped - releasing
     /// the `Arc<JitFn>`. Cheaper to maintain than a true LRU
     /// (no per-hit reordering on the dispatch hot path) and
     /// sufficient for the long-running-daemon shape that motivates
@@ -416,7 +416,7 @@ impl FramePool {
         v
     }
     fn give_values(&mut self, mut v: Vec<Value>) {
-        // Drop Arc-payload registers eagerly — otherwise the
+        // Drop Arc-payload registers eagerly - otherwise the
         // pool would hold strings, arrays, and structs captive
         // for the lifetime of the VM, defeating ref-count
         // collection. clear() iterates dropping each; for a
@@ -476,7 +476,7 @@ impl FramePool {
     }
     fn take_args(&mut self, capacity: usize) -> Vec<Value> {
         let mut v = self.args.pop().unwrap_or_default();
-        // `clear()` drops any leftovers (paranoia — `give_args`
+        // `clear()` drops any leftovers (paranoia - `give_args`
         // already empties), then reserve so the upcoming pushes
         // don't reallocate.
         v.clear();
@@ -498,7 +498,7 @@ impl FramePool {
     /// with sub-50% utilisation across every kind, surviving
     /// buffers are shrunk to `max(peak * 2, SHRINK_FLOOR)`. Without
     /// this, one large goroutine permanently fattens every
-    /// subsequent task on this worker — the per-buffer capacity
+    /// subsequent task on this worker - the per-buffer capacity
     /// stays at the high-water mark even though the task that
     /// needed it has long since returned.
     fn shrink_to(&mut self, keep_per_kind: usize) {
@@ -563,7 +563,7 @@ impl FramePool {
 
 /// RAII guard that lends three register-file `Vec`s out of the
 /// pool for the duration of one `run()` call. On `Drop`, the
-/// buffers go back to the pool — including on early returns or
+/// buffers go back to the pool - including on early returns or
 /// `?` propagation from inside the dispatch loop. Without this,
 /// every `?` in the loop body would have to be hand-rewritten
 /// to reunite with the buffers before bubbling out.
@@ -621,7 +621,7 @@ impl std::fmt::Debug for Vm {
 
 /// Entries in the global table. Visible to `bytecode::CacheSlot`
 /// so inline-cache slots can hold a resolved dispatch target
-/// directly — no downcast on the hit path.
+/// directly - no downcast on the hit path.
 #[derive(Debug, Clone)]
 pub(crate) enum Global {
     Fn(Arc<FnChunk>),
@@ -678,7 +678,7 @@ fn debug_validate_chunk(chunk: &FnChunk) -> RuntimeResult<()> {
         .map_err(|e| RuntimeError::Type(format!("invalid bytecode for `{}`: {e}", chunk.name)))
 }
 
-/// Release-build stub — production execution trusts the unverified
+/// Release-build stub - production execution trusts the unverified
 /// "compiler emits in-bounds indices" invariant for speed.
 #[cfg(not(debug_assertions))]
 #[inline]
@@ -748,7 +748,7 @@ fn index_get(base: &Value, idx: &Value) -> RuntimeResult<Value> {
         _ => return Err(RuntimeError::Type("index must be integer".to_string())),
     };
     // Lenient indexing, matching the compiled tier (the canonical
-    // behaviour): any index outside `[0, len)` — negative or past the end —
+    // behaviour): any index outside `[0, len)` - negative or past the end -
     // yields the element zero value rather than aborting, exactly as the
     // runtime `gos_rt_vec_get_*` helpers do. This keeps `gos run`
     // bit-identical to `gos build` on out-of-bounds access.
@@ -839,7 +839,7 @@ pub(crate) fn type_token(v: &Value) -> u64 {
             // `inner.name` is already a globally-interned `&'static str`
             // (every `Value::struct_` routes the name through
             // `value::intern_type_name`), so its pointer is canonical and
-            // stable across every clone of any instance of this type — the
+            // stable across every clone of any instance of this type - the
             // same identity `Op::StructIs` relies on via `ptr::eq`. Use it
             // directly instead of re-hashing through a second pool.
             TAG_STRUCT | (inner.name.as_ptr() as u64 & 0x00FF_FFFF_FFFF_FFFF)
@@ -885,17 +885,17 @@ fn fill_cache_slot(token: u64, generation: u32, g: &Global) -> crate::bytecode::
     }
 }
 
-/// Stable identity for an `Op::Call` callee — keyed by the
+/// Stable identity for an `Op::Call` callee - keyed by the
 /// resolved-name string for `Value::String` callees (the bytecode
 /// VM's idiom for "named global function"). Other callee shapes
 /// (closures, builtins-passed-as-values, etc.) return `0` so the
-/// IC slot stays cold and the slow path is taken every time —
+/// IC slot stays cold and the slow path is taken every time -
 /// those receivers don't have a stable identity worth caching.
 pub(crate) fn call_token(v: &Value) -> u64 {
     const TAG_NAMED: u64 = 1 << 56;
     match v {
         Value::String(s) => {
-            // Intern once per program — the leaked `&'static str`
+            // Intern once per program - the leaked `&'static str`
             // is identity-stable across the run, so the cache hit
             // path is one u64 compare.
             let interned = intern_type_name(s);
@@ -972,7 +972,7 @@ fn bin_arith(
     }
 }
 
-/// Tier C2 — classify `(a, b)` into one of the `ARITH_*` shape
+/// Tier C2 - classify `(a, b)` into one of the `ARITH_*` shape
 /// constants for the purposes of inline-cache specialisation.
 /// Anything outside the four narrow shapes (II, FF, SS, II/FF
 /// mixed) ends up [`bytecode::ARITH_POLYMORPHIC`].
@@ -1049,7 +1049,7 @@ fn adaptive_add(
 /// fallback path's error message.
 #[allow(
     clippy::too_many_arguments,
-    reason = "lowering plumbing — every parameter is needed by the surrounding pipeline"
+    reason = "lowering plumbing - every parameter is needed by the surrounding pipeline"
 )]
 fn adaptive_arith(
     state: &ChunkState,

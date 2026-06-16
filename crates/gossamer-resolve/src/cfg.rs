@@ -1,11 +1,11 @@
 //! `#[cfg(...)]` attribute evaluation.
 //! Understands the subset of Rust's `cfg` expression grammar the
 //! standard library and examples use:
-//! - `#[cfg(flag)]` — `true` when the flag is active.
-//! - `#[cfg(key = "value")]` — `true` when `key` maps to `value`.
-//! - `#[cfg(not(expr))]` — logical negation.
-//! - `#[cfg(all(a, b, …))]` — logical and.
-//! - `#[cfg(any(a, b, …))]` — logical or.
+//! - `#[cfg(flag)]` - `true` when the flag is active.
+//! - `#[cfg(key = "value")]` - `true` when `key` maps to `value`.
+//! - `#[cfg(not(expr))]` - logical negation.
+//! - `#[cfg(all(a, b, …))]` - logical and.
+//! - `#[cfg(any(a, b, …))]` - logical or.
 //!
 //! The active flags and key/value pairs come from the compilation
 //! host; `test` is never considered active from `gos check` /
@@ -35,7 +35,7 @@ pub fn item_is_active(attrs: &Attrs) -> bool {
             continue;
         };
         let Some(expr) = parse_cfg_expr(tokens) else {
-            // Malformed cfg — leave the item visible rather than
+            // Malformed cfg - leave the item visible rather than
             // silently drop it.
             continue;
         };

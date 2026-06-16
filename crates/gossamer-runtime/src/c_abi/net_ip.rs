@@ -9,7 +9,7 @@
 //! (`is_valid` / `is_v4` / `is_v6` / `is_loopback` / `is_private` /
 //! `is_multicast` / `is_unspecified`) takes a c-string IP and returns
 //! an i64 truthiness, identical in shape and result to the already-wired
-//! `gos_rt_netip_*` family — so those reuse the `netip` shims directly
+//! `gos_rt_netip_*` family - so those reuse the `netip` shims directly
 //! (see the stdlib_free dispatch). The only genuinely new shapes are:
 //!
 //! - `parse(s) -> Result<Ip, Error>`: on the compiled tier the `Ip`
@@ -48,7 +48,7 @@ fn ip_err(msg: &str) -> i128 {
     super::vec::gos_rt_result_new(1, err as i64)
 }
 
-/// `net::ip::parse(s) -> Result<Ip, errors::Error>` — the compiled-tier
+/// `net::ip::parse(s) -> Result<Ip, errors::Error>` - the compiled-tier
 /// `Ip` payload is its canonical string form. `Err` mirrors the VM's
 /// `net::ip: <reason>` message.
 #[unsafe(no_mangle)]
@@ -65,7 +65,7 @@ pub unsafe extern "C" fn gos_rt_net_ip_parse(s: *const c_char) -> i128 {
     })
 }
 
-/// `net::ip::octets(ip) -> [u8]` — raw address bytes (4 for v4, 16 for
+/// `net::ip::octets(ip) -> [u8]` - raw address bytes (4 for v4, 16 for
 /// v6). Empty vector on parse failure. The argument is the canonical
 /// string produced by `parse` (or any valid IP literal).
 #[unsafe(no_mangle)]

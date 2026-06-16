@@ -3,7 +3,7 @@
 //! Two parser entry points cover the wire shapes:
 //!
 //! - `parse_cookie_header` reads the client-sent `Cookie:` header
-//!   (`name1=value1; name2=value2`) and is lenient — malformed pairs
+//!   (`name1=value1; name2=value2`) and is lenient - malformed pairs
 //!   are skipped silently.
 //! - `parse_set_cookie` reads a server-sent `Set-Cookie:` header
 //!   (`name=value; Path=/; HttpOnly`) and is strict on the name=value
@@ -67,7 +67,7 @@ impl SameSite {
 /// Field shapes follow RFC 6265 §4.1. `max_age` is in seconds;
 /// a negative value instructs the user agent to delete the cookie.
 /// `expires` is held as the raw RFC 1123 date string for round-trip
-/// fidelity — interpretation is left to the caller.
+/// fidelity - interpretation is left to the caller.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Cookie {
     /// Cookie name (the token before `=`).
@@ -221,7 +221,7 @@ impl CookieBuilder {
 
 /// Parses a `Cookie:` request header into `(name, value)` pairs.
 ///
-/// Lenient — malformed pairs (missing `=`, empty name) are skipped
+/// Lenient - malformed pairs (missing `=`, empty name) are skipped
 /// rather than reported. Values that are wrapped in `"..."` are
 /// unquoted. Order is preserved.
 pub fn parse_cookie_header(header: &str) -> Vec<(String, String)> {

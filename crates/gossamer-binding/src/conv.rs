@@ -19,7 +19,7 @@ pub trait FromGos: Sized {
 
 /// Boxes a Rust value into a Gossamer [`Value`].
 pub trait ToGos {
-    /// Performs the conversion (infallible — panics on
+    /// Performs the conversion (infallible - panics on
     /// representation overflow, which can only happen if a
     /// binding violates its declared signature).
     fn to_gos(self) -> Value;
@@ -420,7 +420,7 @@ impl<T: ToGos> ToGos for Vec<T> {
 ///   `&[u8]` to FFI consumers that require a stable address
 ///   beyond the borrow.
 /// - **GC**: the buffer is GC-tracked when stored as a
-///   `Value::IntArray` (interp tier) — the same as `Vec<i64>`.
+///   `Value::IntArray` (interp tier) - the same as `Vec<i64>`.
 ///   On the compiled tier, the [`crate::native::GosBytes`]
 ///   header lives on the arena and is reclaimed at the next
 ///   `gos_rt_gc_reset` tick.
@@ -673,7 +673,7 @@ pub enum DynValue {
     List(Vec<DynValue>),
     /// Heterogeneous key/value pairs (preserves insertion order).
     Map(Vec<(DynValue, DynValue)>),
-    /// Tagged arm — name + positional payload.
+    /// Tagged arm - name + positional payload.
     Tagged {
         /// Variant arm name.
         name: String,
@@ -833,7 +833,7 @@ fn intern_arm_name(name: &str) -> &'static str {
             eprintln!(
                 "gossamer-binding: intern_arm_name pool reached its {INTERN_ARM_NAME_LIMIT}-entry \
                 cap. Subsequent unseen arm names return the `<arm-name-pool-exhausted>` \
-                sentinel. Variant arm names must be a small, stable set — bindings that \
+                sentinel. Variant arm names must be a small, stable set - bindings that \
                 synthesise names dynamically (e.g. `format!(\"Item-{{n}}\")`) leak \
                 unboundedly. Switch to `Type::Opaque` or a stable name set."
             );
@@ -938,7 +938,7 @@ impl ToGos for BindingCallback {
 ///
 /// # Lifetime / GC
 ///
-/// The wrapped `Value` is an `Arc`-shared closure / native — the
+/// The wrapped `Value` is an `Arc`-shared closure / native - the
 /// underlying callable stays alive as long as the
 /// `PersistentCallback` does. The Gossamer-side GC scans the
 /// binding's `Registry` so the captured environment is kept

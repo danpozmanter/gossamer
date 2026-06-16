@@ -93,7 +93,7 @@ fn assert_release_stdout_eq(name: &str, body: &str, expected: &str) {
 }
 
 // ===============================================================
-// strconv free-fn dispatch — `parse_*` return Result<T,Error>,
+// strconv free-fn dispatch - `parse_*` return Result<T,Error>,
 // `format_*` / `itoa` return String directly.
 // ===============================================================
 
@@ -216,7 +216,7 @@ fn main() {
 }
 
 // ===============================================================
-// strings free-fn dispatch — every entry has a `gos_rt_str_*`
+// strings free-fn dispatch - every entry has a `gos_rt_str_*`
 // runtime shim, the MIR free-fn table just doesn't route to it.
 // ===============================================================
 
@@ -407,7 +407,7 @@ fn main() {
 }
 
 // ===============================================================
-// math free-fn dispatch — extended trig / log / round entries.
+// math free-fn dispatch - extended trig / log / round entries.
 // ===============================================================
 
 #[test]
@@ -580,7 +580,7 @@ fn main() {
 
 #[test]
 fn aot_crypto_rand_bytes() {
-    // 16 bytes random — content non-deterministic; assert len only.
+    // 16 bytes random - content non-deterministic; assert len only.
     assert_release_stdout_eq(
         "crypto_rand_bytes",
         r#"
@@ -701,7 +701,7 @@ fn main() {
 }
 
 // ===============================================================
-// Sync types — atomic widths beyond i64.
+// Sync types - atomic widths beyond i64.
 // ===============================================================
 
 #[test]
@@ -761,7 +761,7 @@ fn main() {
 }
 
 // ===============================================================
-// LLVM SIGSEGV / silent-miscompile gates — these tests catch the
+// LLVM SIGSEGV / silent-miscompile gates - these tests catch the
 // worst category: clean build, runtime crash.
 // ===============================================================
 

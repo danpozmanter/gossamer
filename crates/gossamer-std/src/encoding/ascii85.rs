@@ -1,4 +1,4 @@
-// Runtime support for `std::encoding::ascii85` — Adobe ASCII85 / btoa.
+// Runtime support for `std::encoding::ascii85` - Adobe ASCII85 / btoa.
 //
 // Encodes arbitrary binary data as printable ASCII using characters in
 // the range `!` (0x21) through `u` (0x75). The special case `z`

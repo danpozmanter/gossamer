@@ -14,8 +14,8 @@ once it is committed.
 
 Two forms, no others:
 
-- `// ...` — line comment to end of line.
-- `/* ... */` — block comment. Does **not** nest.
+- `// ...` - line comment to end of line.
+- `/* ... */` - block comment. Does **not** nest.
 
 There is no separate `///` or `//!` doc-comment syntax. A run
 of `//` lines immediately above an item (no blank line
@@ -54,7 +54,7 @@ impl Area for Shape {
 
 A struct may carry one or more type parameters. The typechecker
 infers each parameter from the field values at the construction
-site — no turbofish annotation is needed:
+site - no turbofish annotation is needed:
 
 ```gossamer
 struct Pair<A, B> { fst: A, snd: B }
@@ -76,7 +76,7 @@ fn main() {
 
 Field reads carry the per-instance concrete type. When two fields
 share the same parameter (`Pair<i64, i64>`), arithmetic across
-them typechecks directly — no extra annotation required.
+them typechecks directly - no extra annotation required.
 
 Up to three type parameters are supported in 0.5.0. Generic
 methods (`impl Pair<A, B> { ... }`) are tracked for a later
@@ -99,7 +99,7 @@ let label = match status {
 
 The forward-pipe operator threads a value through a chain of
 calls. `x |> f` desugars to `f(x)`; `x |> f(a, b)` to
-`f(a, b, x)` — the piped value lands in the last positional
+`f(a, b, x)` - the piped value lands in the last positional
 slot. Methods work the same way: `x |> recv.m(a)` becomes
 `recv.m(a, x)`. `|>` is left-associative with very low
 precedence, so `a |> f |> g` reads as `g(f(a))` with no
@@ -121,15 +121,15 @@ let same = clamp(0, 100, add(10, double(3)))
 
 ## Pattern matching
 
-- `_` — wildcard.
-- `name` / `mut name` — bind.
-- `Some(inner)` / `None` — variant destructure.
-- `Point { x, y }` — struct destructure.
-- `(a, b)` — tuple destructure.
-- `1..=5` — range.
-- `a | b` — or-pattern.
-- `x @ 1..=3` — `@`-binding.
-- `..` — rest.
+- `_` - wildcard.
+- `name` / `mut name` - bind.
+- `Some(inner)` / `None` - variant destructure.
+- `Point { x, y }` - struct destructure.
+- `(a, b)` - tuple destructure.
+- `1..=5` - range.
+- `a | b` - or-pattern.
+- `x @ 1..=3` - `@`-binding.
+- `..` - rest.
 
 Guards: `Some(n) if n > 0 => ...`
 
@@ -166,7 +166,7 @@ arena {
 ```
 
 Everything allocated inside an `arena { }` block is bump-allocated
-and freed wholesale when the block exits — on every exit path,
+and freed wholesale when the block exits - on every exit path,
 including early `return` and `?`. Allocation becomes a pointer bump;
 reclamation is O(slabs) with no per-object teardown; small-enum nodes
 drop their runtime header entirely (a two-pointer tree node is exactly
@@ -188,7 +188,7 @@ select {
 }
 ```
 
-`go expr` spawns a goroutine — a real stackful coroutine on the
+`go expr` spawns a goroutine - a real stackful coroutine on the
 M:N scheduler. Blocking primitives (channel ops, mutex contention,
 `time::sleep`, network reads, filesystem syscalls) park the
 goroutine, freeing the worker thread to run other goroutines.
@@ -215,12 +215,12 @@ fn main() {
     println!("{}", apply(scaled, 5))   // 50
 
     fn add_one(y: i64) -> i64 { y + 1 }
-    println!("{}", apply(add_one, 41)) // 42 — bare fn coerces
+    println!("{}", apply(add_one, 41)) // 42 - bare fn coerces
 }
 ```
 
 The conversion at the call boundary is implicit. Single trait
-variant — `FnMut` / `FnOnce` parse but lower to the same
+variant - `FnMut` / `FnOnce` parse but lower to the same
 `Fn(_)` shape (the borrow-style split Rust draws is unnecessary
 with automatic memory management).
 
@@ -254,24 +254,24 @@ Write bare literals by default. Inference picks the type from the
 binding, the call site, or the return type; suffixes are reserved
 for the rare standalone case with no contextual hint.
 
-- `42` — plain int, inferred type. Defaults to `i64`.
-- `42i32` / `42u64` — explicit width when context can't pin it.
-- `0xff` / `0b1010` / `0o777` — bases.
-- `1_000_000` — underscore separator.
-- `1.0` — plain float, inferred type. Defaults to `f64`.
-- `1.0f32` — explicit float width.
+- `42` - plain int, inferred type. Defaults to `i64`.
+- `42i32` / `42u64` - explicit width when context can't pin it.
+- `0xff` / `0b1010` / `0o777` - bases.
+- `1_000_000` - underscore separator.
+- `1.0` - plain float, inferred type. Defaults to `f64`.
+- `1.0f32` - explicit float width.
 
 ## String literals
 
-- `"hello"` — ordinary double-quoted string. Spans multiple lines
+- `"hello"` - ordinary double-quoted string. Spans multiple lines
   without extra syntax; embedded newlines are preserved.
-- `"\n"` / `"\t"` / `"\\"` / `"\""` — standard escapes.
-- `r"raw"` / `r#"with embedded "quotes""#` — raw strings.
-- `b"bytes"` / `b'c'` — byte literals for binary protocols.
+- `"\n"` / `"\t"` / `"\\"` / `"\""` - standard escapes.
+- `r"raw"` / `r#"with embedded "quotes""#` - raw strings.
+- `b"bytes"` / `b'c'` - byte literals for binary protocols.
 
 ## Formatted output
 
-Formatted output goes through six format macros — the only macros
+Formatted output goes through six format macros - the only macros
 in the language. Each takes a Rust-style format string with `{}`
 placeholders, plus named captures `{ident}` for bindings in scope:
 
@@ -291,8 +291,8 @@ let greeting = format!("welcome, {}", name)
 | `eprint!("…", a, b)` | Writes to stderr, no newline. |
 | `panic!("…", a, b)` | Unwinds with the rendered message. |
 
-Every other `name!(…)` is a parse error — there is no user macro
-system. Format specs follow Rust's `{:spec}` grammar — width,
+Every other `name!(…)` is a parse error - there is no user macro
+system. Format specs follow Rust's `{:spec}` grammar - width,
 alignment, fill, zero-pad, radix, and precision (`{:>8}`,
 `{:08x}`, `{:^6}`, `{:.2}`).
 
@@ -303,5 +303,5 @@ adding a separator:
 let greeting = "hello, " + &name
 ```
 
-Writing `name!(…)` is a hard parse error — the `!` suffix is
+Writing `name!(…)` is a hard parse error - the `!` suffix is
 reserved for no purpose today.

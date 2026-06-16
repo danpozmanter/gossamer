@@ -5,7 +5,7 @@ and tooling are all in flux.
 
 ## Before you open a PR
 
-- Read `SPEC.md` (language specification) and `GUIDELINES.md` — the
+- Read `SPEC.md` (language specification) and `GUIDELINES.md` - the
   project style guide. CI enforces every rule in the style guide. No
   exceptions without a written justification in the PR.
 

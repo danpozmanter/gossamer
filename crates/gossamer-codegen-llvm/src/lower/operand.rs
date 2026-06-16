@@ -84,7 +84,7 @@ impl<'a> Lowerer<'a> {
             }
             Operand::Const(value) => Ok(render_const(value)),
             Operand::FnRef { def, .. } => {
-                // Emit the function symbol as a `ptr` value — that
+                // Emit the function symbol as a `ptr` value - that
                 // matches `operand_llvm_ty(FnRef) = "ptr"` and the
                 // `FnDef → ptr` rendering of the destination slot.
                 // The MIR lowerer also stuffs fn addresses into
@@ -103,7 +103,7 @@ impl<'a> Lowerer<'a> {
                     // inside `opt`.
                     if gossamer_resolve::lookup_external_item(&name).is_some() {
                         return Err(BuildError::Unsupported(
-                            "a [rust-bindings] function cannot be passed as a value yet — \
+                            "a [rust-bindings] function cannot be passed as a value yet - \
                              wrap it in a closure: `|x| f(x)`",
                         ));
                     }
@@ -119,7 +119,7 @@ impl<'a> Lowerer<'a> {
     /// against the stack slot. For `a[i].field` chains we
     /// compute the byte-offset address via `getelementptr i64`
     /// steps and then `load` the leaf scalar at its native
-    /// type — matching the flat-slot layout the Cranelift
+    /// type - matching the flat-slot layout the Cranelift
     /// backend emits. String byte indexing (`s[i]` where `s`
     /// is `String` or `&String`) is short-circuited through
     /// `gos_rt_str_byte_at`.
@@ -134,7 +134,7 @@ impl<'a> Lowerer<'a> {
         }
         if place.projection.is_empty() {
             // Multi-slot aggregates (`[Body; 5]`, structs, tuples)
-            // are stored as a flat `[N x i64]` slab — the "value"
+            // are stored as a flat `[N x i64]` slab - the "value"
             // downstream code expects is the slot address itself.
             //
             // Exception: enum (Adt) types whose field layout is unknown
@@ -201,7 +201,7 @@ impl<'a> Lowerer<'a> {
         // so we leave `current` pointing at the alloca.
         //
         // Skip this auto-deref when the first projection is itself
-        // an explicit `Deref` — the projection performs the same
+        // an explicit `Deref` - the projection performs the same
         // pointer-load, and applying both produces a double-deref
         // that lands on garbage (the case `*s = expr` where
         // `s: &mut i64`).
@@ -220,7 +220,7 @@ impl<'a> Lowerer<'a> {
                     // struct field (`outer.inner.x`) lands past
                     // the embedded inner's full layout instead of
                     // overlapping it. Falls back to `idx` when the
-                    // type is opaque (sentinel Adt, references) —
+                    // type is opaque (sentinel Adt, references) -
                     // in those cases each field is exactly one
                     // slot and `idx == slot_offset`.
                     let slot_offset = field_slot_offset(self.tcx, current_ty, *idx);
@@ -256,7 +256,7 @@ impl<'a> Lowerer<'a> {
                     writeln!(self.out, "  {idx_raw} = load i64, ptr {idx_slot}").unwrap();
                     // Audit C6: bounds-check the dynamic index
                     // against the statically-known fixed-array
-                    // length. Skipped for non-Array shapes — Vec /
+                    // length. Skipped for non-Array shapes - Vec /
                     // Slice indexing routes through the runtime
                     // intrinsics which validate independently.
                     self.emit_array_bounds_check(current_ty, &idx_raw);
@@ -283,7 +283,7 @@ impl<'a> Lowerer<'a> {
                     // field, …) see the right shape. Without this,
                     // `arr[i][j]` over `[[T; N]; M]` would use the
                     // outer-array's stride/bounds for the inner index
-                    // and panic / corrupt data — the underlying
+                    // and panic / corrupt data - the underlying
                     // 3D-array bug from iron_knight's `make_zobrist`.
                     current_ty = match self.tcx.kind(current_ty) {
                         Some(

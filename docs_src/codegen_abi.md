@@ -19,7 +19,7 @@ type parameter `T` is representable in 64 bits**:
   `isize`, `usize`).
 - `f32`, `f64`.
 - `bool`, `char`.
-- `&T` and `&mut T` references — references are pointers, which
+- `&T` and `&mut T` references - references are pointers, which
   are 64 bits on the platforms we ship.
 - Heap-managed aggregate **handles**: `String`, `Vec<T>`,
   `HashMap<K, V>`, channel halves, `I64Vec`, `Mutex<T>`,
@@ -62,7 +62,7 @@ instruction, not a polymorphic dispatch.
 
 A by-value `MyStruct` argument needs the codegen to know its
 layout (offsets, alignment, padding) at every monomorphic call
-site. We have that information at MIR — but we don't yet
+site. We have that information at MIR - but we don't yet
 **propagate** it into the codegen call ABI. That work is parity
 plan §P4 ("layout-driven specialisation"), tracked separately.
 
@@ -72,7 +72,7 @@ In practice, idiomatic Gossamer code rarely needs `T = struct`
 because:
 
 - `Vec<T>`, `HashMap<K, V>`, channels are runtime-provided and
-  are *not* monomorphised by the user — they are a single
+  are *not* monomorphised by the user - they are a single
   generic implementation in the runtime that takes a `T` slot.
   The runtime handles arbitrarily-sized elements internally
   by allocating each `T` on the managed heap and the slot it stores
@@ -104,16 +104,16 @@ Layout-driven specialisation will:
 1. Propagate layout (size, align, field offsets) for each `T`
    from MIR through to Cranelift / LLVM.
 2. Switch the codegen call ABI to "by-value where the layout
-   fits in registers; by-reference where it doesn't" — matching
+   fits in registers; by-reference where it doesn't" - matching
    what `rustc` does.
 3. Drop the `GT0042` diagnostic; turn the constraint off.
 
 Until then, the diagnostic is the safety net that prevents
-"compiles, segfaults at runtime" — a class of bug Gossamer is
+"compiles, segfaults at runtime" - a class of bug Gossamer is
 deliberately willing to accept compile-time pain to avoid.
 
 ## See also
 
-- `gos explain GT0042` — full long-form diagnostic text.
+- `gos explain GT0042` - full long-form diagnostic text.
 - Internal notes: `parity.md` §P4 and
   `compiler_tier_plan.md`.

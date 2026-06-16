@@ -1,13 +1,13 @@
 /*
- * Caesar cipher — over an integer code-point array.
+ * Caesar cipher - over an integer code-point array.
  *
  * The shift function is pure: each call returns a fresh `[i64]`,
  * the caller binds with `let`. The example also verifies that
  * encrypting then decrypting with the inverse key reproduces
- * the input — the program prints `ok` when the round-trip
+ * the input - the program prints `ok` when the round-trip
  * holds and `mismatch` otherwise.
  *
- * Teaching cipher only — for production confidentiality reach
+ * Teaching cipher only - for production confidentiality reach
  * for `std::crypto::aead`.
  */
 

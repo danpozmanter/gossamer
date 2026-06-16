@@ -1379,7 +1379,7 @@
   <a href="#configured-clients-clientbuilder" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Configured clients — Client::builder()
+        Configured clients - Client::builder()
       
     </span>
   </a>
@@ -1412,7 +1412,7 @@
   <a href="#streaming-reads-responsestream" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Streaming reads — ResponseStream
+        Streaming reads - ResponseStream
       
     </span>
   </a>
@@ -1483,7 +1483,7 @@
 </table>
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
 
-<h2 id="configured-clients-clientbuilder">Configured clients — <code>Client::builder()</code><a class="headerlink" href="#configured-clients-clientbuilder" title="Permanent link">&para;</a></h2>
+<h2 id="configured-clients-clientbuilder">Configured clients - <code>Client::builder()</code><a class="headerlink" href="#configured-clients-clientbuilder" title="Permanent link">&para;</a></h2>
 <p>The Gossamer-visible client surface lives on <code>http::Client</code>. A client is
 configured through a builder chain and then reused for any number of
 requests:</p>
@@ -1497,24 +1497,24 @@ requests:</p>
 </code></pre></div>
 <ul>
 <li><code>client.request(method: String, url: String, body: String, headers:
-  [(String, String)]) -&gt; Result&lt;Response, Error&gt;</code> — string body.</li>
+  [(String, String)]) -&gt; Result&lt;Response, Error&gt;</code> - string body.</li>
 <li><code>client.request_bytes(method, url, body: [u8], headers) -&gt;
-  Result&lt;Response, Error&gt;</code> — byte-exact body for uploads.</li>
+  Result&lt;Response, Error&gt;</code> - byte-exact body for uploads.</li>
 </ul>
 <p>Method strings are case-insensitive; an unknown method is an immediate
 <code>Err</code> (<code>"Client::request: unknown method</code>BOGUS<code>"</code>) with no connection
 dialed. The returned <code>Response</code> carries <code>status</code>, <code>body</code>, <code>raw_bytes</code>,
 <code>content_type</code>, <code>location</code>, and <code>headers</code> (lowercase names, wire order,
-duplicates preserved) — see the <code>std::http</code> page.</p>
+duplicates preserved) - see the <code>std::http</code> page.</p>
 <h2 id="redirect-policy">Redirect policy<a class="headerlink" href="#redirect-policy" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>Default</strong>: up to 10 redirects are followed automatically.</li>
-<li><strong><code>max_redirects(0)</code></strong>: never follow — a 3xx response is returned raw,
+<li><strong><code>max_redirects(0)</code></strong>: never follow - a 3xx response is returned raw,
   with <code>status</code>, the <code>location</code> field, and all response headers intact.
   This is the proxy-correct mode: a reverse proxy relays the 3xx to its
   own client instead of chasing it.</li>
 <li><strong>Budget exhausted</strong>: following more redirects than the configured
-  budget is a transport error — <code>Err("http: transport: ... too many
+  budget is a transport error - <code>Err("http: transport: ... too many
   redirects")</code>.</li>
 </ul>
 <h2 id="legacy-builder-chain">Legacy builder chain<a class="headerlink" href="#legacy-builder-chain" title="Permanent link">&para;</a></h2>
@@ -1529,19 +1529,19 @@ duplicates preserved) — see the <code>std::http</code> page.</p>
 <code>client.request</code>, and the chained headers and body are honored on the
 wire. An unknown method at <code>send()</code> time is
 <code>Err("Request::send: unknown method ...")</code>.</p>
-<h2 id="streaming-reads-responsestream">Streaming reads — <code>ResponseStream</code><a class="headerlink" href="#streaming-reads-responsestream" title="Permanent link">&para;</a></h2>
+<h2 id="streaming-reads-responsestream">Streaming reads - <code>ResponseStream</code><a class="headerlink" href="#streaming-reads-responsestream" title="Permanent link">&para;</a></h2>
 <p><code>http::stream(method, url, body, headers) -&gt; Result&lt;ResponseStream, Error&gt;</code>
 issues the request and hands back the body as an incremental reader
 instead of a buffered response. The <code>ResponseStream</code> value carries
 <code>status</code> and <code>content_type</code> fields plus two reading methods:</p>
 <ul>
-<li><code>next_line() -&gt; Option&lt;String&gt;</code> — one line at a time, terminator
+<li><code>next_line() -&gt; Option&lt;String&gt;</code> - one line at a time, terminator
   stripped; the natural shape for SSE and line-oriented protocols.</li>
-<li><code>next_chunk(max_bytes) -&gt; Option&lt;[u8]&gt;</code> — up to <code>max_bytes</code> raw bytes
+<li><code>next_chunk(max_bytes) -&gt; Option&lt;[u8]&gt;</code> - up to <code>max_bytes</code> raw bytes
   (clamped to 1 MiB); the shape for binary bodies.</li>
 </ul>
 <p>Both return <code>None</code> at end of body. They read through the same buffered
-reader, so interleaving line and chunk reads stays coherent — a parser
+reader, so interleaving line and chunk reads stays coherent - a parser
 can read header lines with <code>next_line</code> and switch to <code>next_chunk</code> for a
 binary payload.</p>
 <div class="language-text highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>match http::stream(&quot;GET&quot;, url, &quot;&quot;, []) {

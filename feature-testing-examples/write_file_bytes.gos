@@ -1,4 +1,4 @@
-// `os::write_file(path, &Vec<u8>)` — the bytes-shaped variant
+// `os::write_file(path, &Vec<u8>)` - the bytes-shaped variant
 // chosen by the dispatcher when the contents argument types as
 // `Vec<u8>` / `&[u8]`. The c-string-shaped helper would truncate
 // at the first NUL byte and silently corrupt binary writes
@@ -15,7 +15,7 @@ use std::os
 use std::path
 
 fn main() -> Result<(), errors::Error> {
-    // Build a Vec<u8> containing an embedded NUL — the failure
+    // Build a Vec<u8> containing an embedded NUL - the failure
     // mode is "saved file is 3 bytes" when the dispatcher picks
     // the c-string helper. NUL at index 5 truncates everything
     // after it; the length check below catches both shapes.

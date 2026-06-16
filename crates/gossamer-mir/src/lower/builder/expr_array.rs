@@ -60,7 +60,7 @@ impl<'a> Builder<'a> {
         // Size the vec slot by its declared element type. An empty
         // `let xs: [(String, i64)] = []` would otherwise pass 8 to
         // `Vec::new`, which makes the byte-erased `gos_rt_vec_push`
-        // copy only the first 8 bytes of each tuple — every i64 in
+        // copy only the first 8 bytes of each tuple - every i64 in
         // a `(String, i64)` element is then lost on push and reread
         // as the next entry's String pointer on iteration. Extract
         // the inner element type from the binding's `Vec(_)` /
@@ -110,7 +110,7 @@ impl<'a> Builder<'a> {
             // If an element is itself a flat Array{T,N} (e.g. the inner
             // arrays in `[[i64]]`), coerce it to a heap GosVec so the
             // outer Vec stores *mut GosVec pointers, not flat aggregates
-            // — unless the binding's element type is a fixed-size array,
+            // - unless the binding's element type is a fixed-size array,
             // in which case the inner array stays inline.
             if !binding_elem_is_fixed_array {
                 let lt = self.locals[elem_local.0 as usize].ty;
@@ -168,7 +168,7 @@ impl<'a> Builder<'a> {
             }
             // The HIR-side `expr.ty` for an array literal is often a
             // leaked inference variable (e.g. `Var(...)`), which sizes
-            // every aggregate alloca to a single i64 slot — and a
+            // every aggregate alloca to a single i64 slot - and a
             // 3-element array literal then writes 24 B into 8 B of
             // stack and clobbers adjacent locals (the recurring
             // "for x in [1, 2, 3] { ... if !flag ... }" miscompile).
@@ -186,7 +186,7 @@ impl<'a> Builder<'a> {
         // codegen sees the full slot count. When the typeck left the
         // outer Array's elem as `Var`/`Error`, the print/format
         // dispatch can't classify the elem and falls back to the
-        // `<value>` placeholder — refresh elem from the lowered
+        // `<value>` placeholder - refresh elem from the lowered
         // element local's concrete MIR type when available.
         let dest_ty = match self.tcx.kind_of(ty) {
             TyKind::Array { elem, .. } => {
@@ -233,7 +233,7 @@ impl<'a> Builder<'a> {
         use gossamer_types::TyKind;
         // A `[value; N]` literal whose context wants a growable Vec/Slice
         // builds a heap GosVec of N copies, byte-correct for the element
-        // type — not a fixed inline array. Mirrors `lower_array_list`'s
+        // type - not a fixed inline array. Mirrors `lower_array_list`'s
         // Vec promotion and covers both a literal and a runtime count.
         let wants_vec = matches!(self.tcx.kind_of(ty), TyKind::Vec(_) | TyKind::Slice(_));
         if !wants_vec {

@@ -11,8 +11,8 @@ Cranelift JIT, LLVM AOT):
 - Server-side HTML rendering (HTML-escaped) for the browser view
 
 The notes "store" is an in-memory seeded dataset. The language ships
-no in-the-box SQL driver — a driver is wired per project through the
-`[rust-bindings]` mechanism — so this example keeps the data in
+no in-the-box SQL driver - a driver is wired per project through the
+`[rust-bindings]` mechanism - so this example keeps the data in
 process to stay self-contained and runnable everywhere. Reads come
 from the seed; create/delete return the operation result the way a
 REST front end does.

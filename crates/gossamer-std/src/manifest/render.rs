@@ -135,7 +135,7 @@ this index is regenerated from `manifest::ALL_MODULES` by \
     out
 }
 
-/// Canonical slug for a module path — `std::http::router`
+/// Canonical slug for a module path - `std::http::router`
 /// becomes `http_router`.
 #[must_use]
 pub fn module_slug(path: &str) -> String {
@@ -144,7 +144,7 @@ pub fn module_slug(path: &str) -> String {
         .replace("::", "_")
 }
 
-/// Canonical slug for a language-feature path — `lang::if_let`
+/// Canonical slug for a language-feature path - `lang::if_let`
 /// becomes `if_let`.
 #[must_use]
 pub fn language_slug(path: &str) -> String {

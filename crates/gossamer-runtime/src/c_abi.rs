@@ -1,7 +1,7 @@
 //! C-ABI runtime surface linked into every native Gossamer program.
 //! Every symbol in this module is exported under the `gos_rt_*`
 //! prefix so the Cranelift codegen can call them by name. All
-//! `extern "C"` functions run in unsafe context — the compiler emits
+//! `extern "C"` functions run in unsafe context - the compiler emits
 //! raw pointers and trusts the contract described next to each
 //! symbol. Failure modes are documented per symbol; they never
 //! panic across the FFI boundary.
@@ -37,7 +37,7 @@
 #![allow(clippy::cast_ptr_alignment)]
 #![allow(clippy::ptr_as_ptr)]
 // Mutable statics back the C-ABI / LLVM-inlined surface (`STDOUT_BUF`,
-// `STDOUT_LEN`, etc. — see `stdout_buffer_globals.md`). The lowerer
+// `STDOUT_LEN`, etc. - see `stdout_buffer_globals.md`). The lowerer
 // emits load/store directly against these symbols, so they have to
 // remain `static mut`; the lint flags every read but the contract
 // is documented at each declaration.
@@ -47,7 +47,7 @@
 // `Box::into_raw`-leaked storage, or wrapped `Vec::from_raw_parts`
 // reclamation. The migration to `Box::into_raw`-only allocation
 // (fix_architecture_ownership.md Stage 4) made several call paths
-// safe at the function level — `gos_rt_result_new` is the
+// safe at the function level - `gos_rt_result_new` is the
 // loudest. Keep the existing `unsafe { ... }` wrappers in callers
 // for now; the rustc warning is silenced here so the lint comes
 // back when we tighten the fn-level `unsafe` story (Stage 6).
@@ -70,7 +70,7 @@ macro_rules! ffi_entry {
                     "(non-string panic payload)".to_string()
                 };
                 eprintln!(
-                    "gossamer runtime: panic at FFI entry caught — {msg}; \
+                    "gossamer runtime: panic at FFI entry caught - {msg}; \
                      returning sentinel"
                 );
                 $sentinel
@@ -80,7 +80,7 @@ macro_rules! ffi_entry {
 }
 
 // ---------------------------------------------------------------
-// SyncRawPtr<T> — `repr(transparent)` newtype around `*mut T` that
+// SyncRawPtr<T> - `repr(transparent)` newtype around `*mut T` that
 // is structurally `Send + Sync`. Used as the field type wherever a
 // Gossamer runtime container holds a raw pointer that needs to
 // cross goroutine / thread boundaries (channels, scheduler queues,
@@ -88,11 +88,11 @@ macro_rules! ffi_entry {
 // declaration into one audited site so individual container types
 // (`GosVec`, `GosArrIter`, `GosError`, ...) auto-derive Send+Sync
 // from their field composition without each one writing its own
-// `unsafe impl`. Layout equals `*mut T` exactly — codegen field
+// `unsafe impl`. Layout equals `*mut T` exactly - codegen field
 // offsets are unchanged. Method surface mirrors `*mut T` and a
 // `Deref<Target = *mut T>` impl makes most read-call sites compile
 // unchanged. Pointer-validity / aliasing contracts remain the
-// caller's responsibility — this newtype only declares thread-
+// caller's responsibility - this newtype only declares thread-
 // transferability, not freedom from data races.
 #[repr(transparent)]
 #[derive(Copy, Clone, Debug)]
@@ -100,7 +100,7 @@ pub struct SyncRawPtr<T>(pub *mut T);
 
 // SAFETY: see the type-level documentation above. All cross-thread
 // transfer sites are audited by inspection of the containing
-// struct's API — this impl declares the FFI handle can move
+// struct's API - this impl declares the FFI handle can move
 // between threads, not that the pointee can be mutated concurrently.
 unsafe impl<T> Send for SyncRawPtr<T> {}
 unsafe impl<T> Sync for SyncRawPtr<T> {}

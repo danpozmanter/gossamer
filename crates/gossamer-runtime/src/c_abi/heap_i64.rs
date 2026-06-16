@@ -35,7 +35,7 @@ use super::*;
 // by reallocating `data`, so two goroutines that both observe
 // `len == cap` and both reallocate corrupt the heap. For
 // cross-goroutine sharing use the `GosSyncI64Vec` / `GosSyncU8Vec`
-// types defined below — same conceptual shape, every operation
+// types defined below - same conceptual shape, every operation
 // guarded by an internal `parking_lot` mutex.
 
 #[repr(C)]
@@ -105,7 +105,7 @@ pub unsafe extern "C" fn gos_rt_heap_i64_set(v: *mut GosI64Vec, idx: i64, val: i
     });
 }
 
-/// Length accessor for the heap vec — separate from
+/// Length accessor for the heap vec - separate from
 /// `gos_rt_arr_len` so the codegen can route by symbol.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_heap_i64_len(v: *const GosI64Vec) -> i64 {

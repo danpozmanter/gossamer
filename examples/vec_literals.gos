@@ -1,7 +1,7 @@
 // Collection literals: `[a, b, c]` and `[value; count]` build a growable
 // `Vec<T>` / `[T]` wherever the expected type calls for one. The same literal
 // syntax serves a `let` annotation, a function return, a struct field, and a
-// Vec or slice argument — no separate constructor needed.
+// Vec or slice argument - no separate constructor needed.
 
 struct Basket { fruits: Vec<String> }
 

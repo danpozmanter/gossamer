@@ -3,7 +3,7 @@ source: crates/gossamer-diagnostics/tests/snapshots.rs
 expression: rendered
 ---
 --- plain ---
-error[GP0007]: The right-hand side of `|>` must be a callable: a function — here
+error[GP0007]: The right-hand side of `|>` must be a callable: a function - here
 --- framed ---
 error[GP0007]: The right-hand side of `|>` must be a callable: a function
   --> snap.gos:2:5

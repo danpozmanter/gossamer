@@ -3,7 +3,7 @@ source: crates/gossamer-diagnostics/tests/snapshots.rs
 expression: rendered
 ---
 --- plain ---
-error[GL0038]: Three consecutive statements `let tmp = a; a = b; b = tmp` swap — here
+error[GL0038]: Three consecutive statements `let tmp = a; a = b; b = tmp` swap - here
 --- framed ---
 error[GL0038]: Three consecutive statements `let tmp = a; a = b; b = tmp` swap
   --> snap.gos:2:5

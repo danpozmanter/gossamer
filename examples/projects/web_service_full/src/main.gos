@@ -1,5 +1,5 @@
 /*
- * web_service_full — a complete, runnable HTTP service.
+ * web_service_full - a complete, runnable HTTP service.
  *
  * Demonstrates the production-stack shape that works identically on
  * every tier (bytecode VM via `gos run`, Cranelift JIT, and LLVM AOT
@@ -87,7 +87,7 @@ fn render_notes_html(notes: &[Note]) -> String {
 
 // Renders the single note whose id matches, or None. Returns the
 // JSON string rather than the `Note` so nothing escapes the seed
-// vector's ownership — the value model frees the vector at function
+// vector's ownership - the value model frees the vector at function
 // exit on every tier.
 fn find_note_json(id: i64) -> Option<String> {
     for note in seed_notes() {
@@ -152,7 +152,7 @@ fn extract_body(body: &String) -> String {
     out
 }
 
-// --- Handlers — each is a one-job function with the standard
+// --- Handlers - each is a one-job function with the standard
 //     `fn(http::Request) -> Result<http::Response, http::Error>`
 //     signature the router dispatches to. ---
 

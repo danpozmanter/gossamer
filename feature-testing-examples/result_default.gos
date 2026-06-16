@@ -1,5 +1,5 @@
 // result::default across payload shapes: the Ok payload passes
-// through, the fallback replaces an Err — for i64, f64, and String
+// through, the fallback replaces an Err - for i64, f64, and String
 // payloads, both direct-call and |>-piped spellings.
 
 use std::result

@@ -3,7 +3,7 @@ source: crates/gossamer-diagnostics/tests/snapshots.rs
 expression: rendered
 ---
 --- plain ---
-error[GR0004]: A `use` declaration imported the same name twice. Drop the — here
+error[GR0004]: A `use` declaration imported the same name twice. Drop the - here
 --- framed ---
 error[GR0004]: A `use` declaration imported the same name twice. Drop the
   --> snap.gos:2:5

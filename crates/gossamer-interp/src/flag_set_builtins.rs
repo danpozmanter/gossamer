@@ -183,7 +183,7 @@ pub(crate) fn builtin_flag_set_float(args: &[Value]) -> RuntimeResult<Value> {
     Ok(make_cell(id, flag_name, Value::Float(default)))
 }
 
-/// Duration cell — interp stores durations as i64 milliseconds, so
+/// Duration cell - interp stores durations as i64 milliseconds, so
 /// the default is whatever `time::Duration::from_secs(n)` /
 /// `from_millis(n)` produced.
 pub(crate) fn builtin_flag_set_duration(args: &[Value]) -> RuntimeResult<Value> {

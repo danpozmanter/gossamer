@@ -139,7 +139,7 @@ fn build_subcommand_produces_runnable_output() {
     // host `cc`. The happy-path output is a real executable that
     // exits with the Gossamer `main`'s return code. If native
     // codegen falls back (e.g. unsupported MIR), a launcher-script
-    // takes over — both shapes are accepted here.
+    // takes over - both shapes are accepted here.
     let dir = env::temp_dir().join(format!("gos-build-magic-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let source_path = dir.join("build_magic.gos");
@@ -504,7 +504,7 @@ fn build_honours_project_output_field_in_manifest() {
 fn build_inside_project_names_binary_after_project_id_tail() {
     // Rust's convention: `cargo build` writes `target/debug/<package>`,
     // not `target/debug/main`. Gossamer follows the same rule when a
-    // `project.toml` is present — the binary takes the last segment
+    // `project.toml` is present - the binary takes the last segment
     // of `[project] id`, regardless of which source file holds `main`.
     let dir = env::temp_dir().join(format!("gos-build-id-tail-{}", std::process::id()));
     std::fs::create_dir_all(dir.join("src")).unwrap();
@@ -585,7 +585,7 @@ fn run_executes_every_terminating_example() {
 /// drives a real HTTP/1.1 request, and inspects the response.
 ///
 /// The example hardcodes port 8080. If that port is already bound
-/// the test is skipped rather than marked as failing — CI sandboxes
+/// the test is skipped rather than marked as failing - CI sandboxes
 /// commonly have port collisions, and the interpreter-level
 /// `crates/gossamer-interp/tests/http_end_to_end.rs` already
 /// validates the full dispatch path without needing a subprocess.
@@ -612,7 +612,7 @@ fn web_server_example_binds_and_serves_real_requests() {
     {
         Ok(c) => c,
         Err(err) => {
-            eprintln!("skipping — could not spawn gos run: {err}");
+            eprintln!("skipping - could not spawn gos run: {err}");
             return;
         }
     };
@@ -638,12 +638,12 @@ fn web_server_example_binds_and_serves_real_requests() {
     let _ = child.wait();
 
     let Some(body) = response else {
-        eprintln!("skipping — port 8080 unreachable (likely taken by another process)");
+        eprintln!("skipping - port 8080 unreachable (likely taken by another process)");
         return;
     };
     let text = String::from_utf8_lossy(&body);
     if !text.starts_with("HTTP/1.1 ") {
-        eprintln!("skipping — response not HTTP/1.1: {text}");
+        eprintln!("skipping - response not HTTP/1.1: {text}");
         return;
     }
     // Concurrent test runs can collide on port 8080 (e.g. another
@@ -654,7 +654,7 @@ fn web_server_example_binds_and_serves_real_requests() {
     // (`crates/gossamer-interp/tests/http_end_to_end.rs`) covers
     // the dispatch path without requiring an exclusive port grab.
     if !(text.contains("method") && text.contains("GET")) {
-        eprintln!("skipping — port 8080 served unrelated content: {text}");
+        eprintln!("skipping - port 8080 served unrelated content: {text}");
         return;
     }
     assert!(
@@ -748,7 +748,7 @@ fn test_subcommand_reports_no_tests_when_absent() {
 
 #[test]
 fn bench_subcommand_reports_ns_per_op() {
-    // No-op bench fn — exercises the formatter and the calibration
+    // No-op bench fn - exercises the formatter and the calibration
     // cap on a fn that never crosses the 50ms trial threshold.
     let fixture = write_fixture(
         "benchharness_noop",
@@ -778,7 +778,7 @@ fn bench_subcommand_reports_ns_per_op() {
 
 #[test]
 fn bench_subcommand_handles_microsecond_workload() {
-    // Microsecond-class bench — exercises the per-op timing on a
+    // Microsecond-class bench - exercises the per-op timing on a
     // fn that does observable arithmetic work each call.
     let fixture = write_fixture(
         "benchharness_micro",
@@ -828,7 +828,7 @@ fn bench_subcommand_reports_no_benches_when_none_present() {
     let _ = std::fs::remove_file(&fixture);
 }
 
-/// Stream A.3 — examples quality gate.
+/// Stream A.3 - examples quality gate.
 ///
 /// Every `.gos` file directly under `examples/` must parse cleanly
 /// through `gos parse`. The runnable subset (`hello_world`,
@@ -870,7 +870,7 @@ fn every_top_level_example_parses() {
     }
 }
 
-/// Stream C.3 — the `gos lint` subcommand runs against a single
+/// Stream C.3 - the `gos lint` subcommand runs against a single
 /// file and reports at least one warning for code that trips a
 /// day-one lint.
 #[test]
@@ -1044,7 +1044,7 @@ fn lint_fix_applies_auto_suggestions_and_writes_back() {
     let _ = std::fs::remove_file(&fixture);
 }
 
-/// Stream C.3 — `--deny-warnings` upgrades every lint hit to an
+/// Stream C.3 - `--deny-warnings` upgrades every lint hit to an
 /// error and makes the command fail.
 #[test]
 fn lint_deny_warnings_fails_on_lint_hit() {
@@ -1059,7 +1059,7 @@ fn lint_deny_warnings_fails_on_lint_hit() {
     let _ = std::fs::remove_file(&fixture);
 }
 
-/// Stream C.3 — `--explain <lint>` prints the long-form description.
+/// Stream C.3 - `--explain <lint>` prints the long-form description.
 #[test]
 fn lint_explain_prints_description() {
     let out = Command::new(gos_bin())
@@ -1075,7 +1075,7 @@ fn lint_explain_prints_description() {
     assert!(stdout.contains("Prefix the name with `_`"));
 }
 
-/// Stream C.4 — walking the `examples/` tree produces at most a
+/// Stream C.4 - walking the `examples/` tree produces at most a
 /// warning-level output and exits zero.
 #[test]
 fn lint_walks_examples_directory_without_failing() {
@@ -1091,7 +1091,7 @@ fn lint_walks_examples_directory_without_failing() {
     );
 }
 
-/// Stream H.3 — `gos fmt` must be idempotent: formatting an
+/// Stream H.3 - `gos fmt` must be idempotent: formatting an
 /// already-formatted file must produce zero diffs on a second pass.
 #[test]
 fn fmt_is_idempotent_on_the_full_examples_tree() {
@@ -1131,7 +1131,7 @@ fn fmt_is_idempotent_on_the_full_examples_tree() {
         let stdout = String::from_utf8_lossy(&out.stdout);
         assert!(
             out.status.success(),
-            "fmt --check failed on already-formatted {} — stderr: {stderr} stdout: {stdout}",
+            "fmt --check failed on already-formatted {} - stderr: {stderr} stdout: {stdout}",
             entry.path().display()
         );
         let rechecked = std::fs::read_to_string(&temp).unwrap();
@@ -1145,7 +1145,7 @@ fn fmt_is_idempotent_on_the_full_examples_tree() {
     }
 }
 
-/// Stream H.6 — `gos explain <code>` prints the long-form
+/// Stream H.6 - `gos explain <code>` prints the long-form
 /// explanation for a diagnostic code.
 #[test]
 fn explain_prints_description_for_known_code() {
@@ -1160,7 +1160,7 @@ fn explain_prints_description_for_known_code() {
 }
 
 /// Every GT rejection code the checker gained this cycle has an
-/// `explain` entry — a refusal pointing at an unexplained code is
+/// `explain` entry - a refusal pointing at an unexplained code is
 /// a docs gap.
 #[test]
 fn explain_covers_checker_rejection_codes() {
@@ -1175,7 +1175,7 @@ fn explain_covers_checker_rejection_codes() {
     }
 }
 
-/// Stream H.6 — unknown codes produce a clear error.
+/// Stream H.6 - unknown codes produce a clear error.
 #[test]
 fn explain_rejects_unknown_code() {
     let out = Command::new(gos_bin())
@@ -1187,7 +1187,7 @@ fn explain_rejects_unknown_code() {
     assert!(stderr.contains("G99999"));
 }
 
-/// Stream H.7 — panics surface a call-stack snapshot to stderr.
+/// Stream H.7 - panics surface a call-stack snapshot to stderr.
 #[test]
 fn panic_error_includes_call_stack() {
     let fixture = write_fixture(
@@ -1207,7 +1207,7 @@ fn panic_error_includes_call_stack() {
     let _ = std::fs::remove_file(&fixture);
 }
 
-/// Stream A.3 — every terminating runnable example must execute
+/// Stream A.3 - every terminating runnable example must execute
 /// under the tree-walker without a runtime error. `web_server.gos`
 /// is a real server; it is covered by
 /// `web_server_example_binds_and_serves_real_requests`.
@@ -1444,7 +1444,7 @@ fn test_refuses_statically_invalid_program_with_diagnostic() {
     let _ = std::fs::remove_file(&fixture);
 }
 
-// Post-L4 there's no launcher path — the old
+// Post-L4 there's no launcher path - the old
 // `unsupported_native_path_fails_loudly_by_default` /
 // `allow_launcher_emits_shell_launcher_when_codegen_bails` tests
 // exercised a flag that no longer exists. Every program the
@@ -1497,7 +1497,7 @@ fn runtime_panic_stderr_carries_gx_code_prefix() {
 fn test_subcommand_with_no_args_walks_up_to_project_toml() {
     // `gos test` with no path argument should locate the nearest
     // ancestor `project.toml` and discover every `.gos` file under
-    // its `src/` tree — mimicking `cargo test` ergonomics.
+    // its `src/` tree - mimicking `cargo test` ergonomics.
     let dir = pkg_workdir("test-default");
     let init = Command::new(gos_bin())
         .args(["init", "example.com/svc"])
@@ -1707,7 +1707,7 @@ fn main() {
 #[test]
 fn let_underscore_result_is_not_an_error() {
     // `let _ = expr` is the explicit-discard form for Result. It must
-    // NOT trigger GT0007 — the user has consciously chosen to ignore
+    // NOT trigger GT0007 - the user has consciously chosen to ignore
     // the Result (best-effort operations, etc.).
     let src = r#"
 use std::errors
@@ -1775,7 +1775,7 @@ fn bare_manifest_id_is_a_hard_error_for_project_commands() {
 #[test]
 fn unbound_binding_module_call_fails_with_gx0002() {
     // A declared-but-unresolved binding fn (`use brotli` with no
-    // engaged runner) must raise GX0002 when called — never silently
+    // engaged runner) must raise GX0002 when called - never silently
     // return Unit (which let tests "pass" with zero real coverage)
     // and never hijack an unrelated builtin sharing the tail name.
     let dir = env::temp_dir().join(format!("gos-unbound-binding-{}", std::process::id()));

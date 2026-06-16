@@ -21,7 +21,7 @@ use std::os::raw::c_char;
 use super::*;
 
 // ---------------------------------------------------------------
-// Concat buffer — backing store for `__concat` / `format!`.
+// Concat buffer - backing store for `__concat` / `format!`.
 // Thread-local so `go { format!(...) }` calls don't trample
 // each other.
 // ---------------------------------------------------------------

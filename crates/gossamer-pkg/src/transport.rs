@@ -1,9 +1,9 @@
 //! HTTP(S) transport for the package fetcher.
 //! Two real implementations plus a test double:
-//! - [`HttpTransport`] — plain `http://` over [`std::net::TcpStream`].
-//! - [`HttpsTransport`] — `https://` over a `rustls` client session
+//! - [`HttpTransport`] - plain `http://` over [`std::net::TcpStream`].
+//! - [`HttpsTransport`] - `https://` over a `rustls` client session
 //!   pinned to the Mozilla-maintained root CAs from `webpki-roots`.
-//! - [`StaticTransport`] — in-memory URL → bytes map. Used by tests
+//! - [`StaticTransport`] - in-memory URL → bytes map. Used by tests
 //!   and by the registry resolver's synthetic path.
 //!
 //! Downloaded bytes are always paired with a SHA-256 digest that the

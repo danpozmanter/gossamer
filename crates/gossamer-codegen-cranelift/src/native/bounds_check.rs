@@ -75,7 +75,7 @@
 //! the process exit code, so the object file links through a
 //! standard `cc` invocation.
 //! Aggregates (tuples/arrays/structs), strings, closures, and
-//! anything that needs a GC heap are not yet lowered — those
+//! anything that needs a GC heap are not yet lowered - those
 //! constructs fall back to [`crate::emit::emit_module`] for
 //! inspection.
 
@@ -165,7 +165,7 @@ pub(super) fn emit_array_bounds_check(
     };
     let len_val = builder.ins().iconst(types::I64, len_i64);
     // Unsigned >=: i64 compared as u64 also catches negative idx
-    // (which wrap to >= 2^63 — strictly greater than any sane len).
+    // (which wrap to >= 2^63 - strictly greater than any sane len).
     let oob = builder
         .ins()
         .icmp(IntCC::UnsignedGreaterThanOrEqual, idx64, len_val);

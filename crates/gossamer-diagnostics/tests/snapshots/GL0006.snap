@@ -3,7 +3,7 @@ source: crates/gossamer-diagnostics/tests/snapshots.rs
 expression: rendered
 ---
 --- plain ---
-error[GL0006]: `x == true` reads worse than `x`, and `x == false` reads worse — here
+error[GL0006]: `x == true` reads worse than `x`, and `x == false` reads worse - here
 --- framed ---
 error[GL0006]: `x == true` reads worse than `x`, and `x == false` reads worse
   --> snap.gos:2:5

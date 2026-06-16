@@ -1,4 +1,4 @@
-//! — incremental build graph.
+//! - incremental build graph.
 
 use std::env;
 use std::path::PathBuf;
@@ -129,7 +129,7 @@ fn no_op_rebuild_completes_within_the_phase_29_budget() {
 fn fingerprints_partition_cleanly_per_target() {
     // Pick a cross triple that is guaranteed to differ from the
     // host. A hard-coded `aarch64-apple-darwin` collides with the
-    // host on Apple Silicon CI runners — pick the opposite arch
+    // host on Apple Silicon CI runners - pick the opposite arch
     // for that case.
     let mut graph = simple_graph();
     let host = TargetTriple::host();

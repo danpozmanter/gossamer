@@ -1,4 +1,4 @@
-// Runtime support for `std::compress::zlib` — zlib (RFC 1950) encoding/decoding.
+// Runtime support for `std::compress::zlib` - zlib (RFC 1950) encoding/decoding.
 //
 // Uses flate2 (pure-Rust miniz_oxide backend). The zlib format wraps raw DEFLATE
 // with a two-byte header and an Adler-32 checksum trailer.
@@ -13,7 +13,7 @@ use flate2::write::ZlibEncoder;
 
 use crate::io::IoError;
 
-/// Compresses `input` using zlib at the given `level` (0–9).
+/// Compresses `input` using zlib at the given `level` (0-9).
 /// `level = 0` is store-only; `level = 9` is maximum.
 pub fn compress(input: &[u8], level: u32) -> Result<Vec<u8>, IoError> {
     let level = level.clamp(0, 9);

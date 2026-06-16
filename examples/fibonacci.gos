@@ -1,5 +1,5 @@
 /*
- * Fibonacci — recursive vs. iterative, both immutable at the
+ * Fibonacci - recursive vs. iterative, both immutable at the
  * call site.
  *
  * `fib_recursive` is the textbook definition; `fib_iterative`

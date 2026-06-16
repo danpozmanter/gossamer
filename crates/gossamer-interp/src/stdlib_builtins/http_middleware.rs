@@ -154,7 +154,7 @@ pub(crate) fn builtin_mw_decode_basic_auth(args: &[Value]) -> RuntimeResult<Valu
     Ok(some_variant(pair))
 }
 
-/// `http::middleware::tag(inner) -> Handler` — wraps a handler into a
+/// `http::middleware::tag(inner) -> Handler` - wraps a handler into a
 /// `Middleware` value carrying the inner handler; `Middleware::serve`
 /// runs the inner serve and prepends `mw:` to the response body. The
 /// deterministic interp twin of the compiled `gos_rt_middleware_new` /
@@ -182,7 +182,7 @@ fn prepend_mw(body: &Value) -> Value {
     }
 }
 
-/// `Middleware::serve(mw, request)` — invoked by `http::serve`'s dispatch
+/// `Middleware::serve(mw, request)` - invoked by `http::serve`'s dispatch
 /// when the handler is a composed `Middleware`. Runs the wrapped handler
 /// (a struct handler's `{T}::serve` or a nested `Middleware::serve`) then
 /// applies the `mw:` body transform.

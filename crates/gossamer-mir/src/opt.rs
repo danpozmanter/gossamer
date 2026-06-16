@@ -154,7 +154,7 @@ fn detect_wrapper_callee(body: &Body) -> Option<Operand> {
 const INLINE_COST_LIMIT: usize = 24;
 
 /// Total weighted growth one caller may accrue from inlining before
-/// further inlines into it are skipped — caps caller blow-up when a
+/// further inlines into it are skipped - caps caller blow-up when a
 /// hot function calls many small helpers.
 const INLINE_CALLER_BUDGET: usize = 96;
 
@@ -233,7 +233,7 @@ fn try_build_inlineable(body: &Body) -> Option<InlineableCallee> {
         // it remaps the return slot to the caller's destination without
         // copying the callee's typed return local, so a later nested
         // field read would resolve its leaf type against an untyped
-        // local. `inline_general` is the aggregate-capable path — it
+        // local. `inline_general` is the aggregate-capable path - it
         // copies every callee `LocalDecl` (with its `ty`), preserving
         // the return type by construction.
         if matches!(rvalue, Rvalue::Aggregate { .. } | Rvalue::Repeat { .. }) {
@@ -283,7 +283,7 @@ fn inline_into_body(
 ) {
     // Iterate over block indices because we mutate `body.locals` (to
     // add callee temps) during the loop. The block list itself does
-    // not grow — we splice statements into existing blocks.
+    // not grow - we splice statements into existing blocks.
     let mut budget = INLINE_CALLER_BUDGET;
     let mut bi = 0;
     while bi < body.blocks.len() {
@@ -339,7 +339,7 @@ fn inline_into_body(
             bi += 1;
             continue;
         }
-        // All guards passed — inline.
+        // All guards passed - inline.
         budget -= ic.cost;
         let orig_local_count = body.locals.len() as u32;
         body.locals.extend(ic.extra_locals.iter().cloned());
@@ -483,7 +483,7 @@ fn try_build_general(body: &Body) -> Option<GeneralCallee> {
 }
 
 /// Inlines user-function call sites whose callee is a registered
-/// `GeneralCallee` — splicing the callee's whole CFG so multi-block,
+/// `GeneralCallee` - splicing the callee's whole CFG so multi-block,
 /// call-containing, and aggregate-returning callees flatten into the
 /// caller. This is the strongest safe lever for JIT coverage: the JIT
 /// compile-set BFS drops any body that calls an excluded body, so
@@ -639,7 +639,7 @@ fn splice_callee(
 
 /// Full statement remap that, unlike [`remap_statement`], also remaps
 /// `StorageLive`/`StorageDead`/`SetDiscriminant` locals and every
-/// `Projection::Index` local — required for general inlining where the
+/// `Projection::Index` local - required for general inlining where the
 /// callee may carry storage annotations and indexed accesses.
 fn remap_statement_full(stmt: &Statement, remap: &impl Fn(Local) -> Local) -> Statement {
     let kind = match &stmt.kind {
@@ -666,7 +666,7 @@ fn remap_statement_full(stmt: &Statement, remap: &impl Fn(Local) -> Local) -> St
 }
 
 /// Remaps a place's root local AND any `Projection::Index` local, which
-/// [`remap_place`] does not — needed for indexed accesses in a spliced
+/// [`remap_place`] does not - needed for indexed accesses in a spliced
 /// callee.
 fn remap_place_full(place: &Place, remap: &impl Fn(Local) -> Local) -> Place {
     let projection = place
@@ -806,7 +806,7 @@ fn remap_terminator_full(
 /// bail on aggregate-typed locals.
 ///
 /// Factored out of [`copy_propagate`] so [`dead_store_elim`] and
-/// any future GVN/CSE pass can share one source of truth — the
+/// any future GVN/CSE pass can share one source of truth - the
 /// previous one-pass-only encoding had been a copy-prop fix that
 /// the audit flagged as too narrow.
 pub(crate) fn aggregate_locals(body: &Body, tcx: &TyCtxt) -> Vec<bool> {
@@ -865,7 +865,7 @@ pub fn const_branch_elim(body: &mut Body) {
 fn const_int_locals(body: &Body) -> HashMap<u32, i128> {
     // A local is treated as a known constant only when *every*
     // store to it (across all blocks) writes the same constant
-    // value — otherwise control-flow-sensitive code such as
+    // value - otherwise control-flow-sensitive code such as
     // `let mut neg = false; if cond { neg = true }; if neg { ... }`
     // would mistake the second assignment for unconditional and
     // collapse the second `if` into a direct goto, miscompiling
@@ -984,7 +984,7 @@ fn fold_binary(op: BinOp, lhs: &ConstValue, rhs: &ConstValue) -> Option<ConstVal
 /// float identities are unsound under IEEE-754 (`-0.0 + 0.0 == +0.0`,
 /// `x * 0.0` with NaN/∞), and a non-constant divisor keeps its
 /// runtime division so `0 / x` still faults when `x == 0`. Width
-/// independence: only the constants `0` and `1` qualify — an
+/// independence: only the constants `0` and `1` qualify - an
 /// all-ones mask (`x & !0`) would depend on the operand's bit width,
 /// which `ConstValue::Int(i128)` does not carry.
 fn try_identity_fold(rvalue: &Rvalue) -> Option<Rvalue> {
@@ -1087,7 +1087,7 @@ pub fn copy_propagate(body: &mut Body, tcx: &TyCtxt) {
                     continue;
                 }
                 // Any assignment to `place.local` invalidates its prior
-                // binding and any binding that referenced it — otherwise
+                // binding and any binding that referenced it - otherwise
                 // a stale value (e.g. a null-init constant) would be
                 // propagated past the reassignment into later uses.
                 bindings.remove(&place.local);
@@ -1302,7 +1302,7 @@ pub fn const_value_of(body: &Body, local: Local) -> Option<ConstValue> {
     // A local is a known constant only if it is assigned EXACTLY ONCE,
     // and that single assignment is `Use(Const)`. A local reassigned
     // later (e.g. zeroed for null-safety then overwritten by a heap
-    // allocation) is not constant — propagating the first const value
+    // allocation) is not constant - propagating the first const value
     // past the reassignment would miscompile every later use.
     let mut found: Option<ConstValue> = None;
     for block in &body.blocks {

@@ -2,7 +2,7 @@
 //!
 //! The Go specification requires that, when more than one arm of a
 //! `select` is ready, the runtime picks one of the ready arms
-//! uniformly at random — never deterministically. [`poll_select`]
+//! uniformly at random - never deterministically. [`poll_select`]
 //! enforces that by walking the arms in a permuted order seeded from
 //! a fast thread-local PRNG. The randomisation is deliberately cheap
 //! (xorshift64 over a thread-local seed) so a hot select loop does
@@ -33,7 +33,7 @@ fn next_random() -> u64 {
                 .duration_since(UNIX_EPOCH)
                 .map_or(0u128, |d| d.as_nanos());
             let tid = std::thread::current().id();
-            // ThreadId Debug format like "ThreadId(N)" — hash the
+            // ThreadId Debug format like "ThreadId(N)" - hash the
             // string representation rather than rely on an unstable
             // accessor.
             let mut h: u64 = 0xcbf2_9ce4_8422_2325;

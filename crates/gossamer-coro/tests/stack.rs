@@ -7,19 +7,19 @@
 //! `resume()` without poisoning the worker?). Both classes
 //! have shipped past regressions in similar runtimes.
 //!
-//! These tests are deliberately conservative — they don't
+//! These tests are deliberately conservative - they don't
 //! attempt to exercise migration across worker threads (that's
 //! `gossamer-runtime::sched`'s domain) or stack growth (the
 //! coro crate uses a fixed `DefaultStack`). They pin the two
 //! invariants the crate documents:
 //!
 //!   1. A panic on the goroutine's stack propagates to the
-//!      `resume()` caller as a Rust panic — no UB, no silent
+//!      `resume()` caller as a Rust panic - no UB, no silent
 //!      swallow.
 //!   2. Deep recursion that touches the guard page traps via
 //!      the OS, not via undefined behaviour. We don't actually
-//!      trigger the guard page here — that would terminate the
-//!      test binary — but we exercise the next-best signal:
+//!      trigger the guard page here - that would terminate the
+//!      test binary - but we exercise the next-best signal:
 //!      large-but-bounded recursion completes cleanly with
 //!      the configured stack size.
 
@@ -51,7 +51,7 @@ fn panic_inside_goroutine_is_isolated_per_audit_m9() {
     // CAUGHT inside the coroutine body so the scheduler's
     // resume call returns cleanly. The panicked flag flips for
     // observation. Pre-0.6 behaviour (panic propagated to the
-    // resume caller) is intentionally inverted — it abort'd the
+    // resume caller) is intentionally inverted - it abort'd the
     // worker thread and killed sibling goroutines on it.
     let mut g = Goroutine::new(Box::new(|| {
         panic!("expected panic from goroutine");
@@ -78,7 +78,7 @@ fn many_short_lived_goroutines_complete_serially() {
     // Spawn 1_000 short-lived goroutines back-to-back. A
     // regression in stack allocation/teardown (corosensei or
     // our wrapper) shows up as either a memory leak or a
-    // crash by the 100th iteration. The test is bounded — we
+    // crash by the 100th iteration. The test is bounded - we
     // don't run 10k here because each goroutine is a 1 MiB
     // stack `mmap`, and the test runner doesn't need that much
     // address-space churn to catch the regression class.
@@ -126,7 +126,7 @@ fn yield_loop_through_many_resumes_does_not_corrupt_state() {
     // pushing a per-iteration value into a shared counter.
     // Past stackful-coroutine regressions (`corosensei` 0.x)
     // had a class of bug where alternate resumes would lose
-    // the yielder pointer — symptom was every other yield
+    // the yielder pointer - symptom was every other yield
     // running twice or zero times. The strict equality check
     // below catches it.
     let counter = Arc::new(AtomicU64::new(0));

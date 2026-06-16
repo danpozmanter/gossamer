@@ -1443,8 +1443,8 @@ whole arena is freed at once when the block exits.</p>
 <a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a><span class="p">}</span>
 </code></pre></div>
 <h2 id="why">Why<a class="headerlink" href="#why" title="Permanent link">&para;</a></h2>
-<p>For object graphs that die together — a parse tree, a request's
-working set, a per-iteration data structure — individual reference
+<p>For object graphs that die together - a parse tree, a request's
+working set, a per-iteration data structure - individual reference
 counting does work the program does not need. Inside an arena:</p>
 <ul>
 <li><strong>allocation is a pointer bump</strong> (compare + add);</li>

@@ -41,41 +41,41 @@ fn main() {
 
 ## Running today
 
-- **`hello_world.gos`** — one-liner that prints via `fmt::println`.
+- **`hello_world.gos`** - one-liner that prints via `fmt::println`.
   Runs under `gos run`.
-- **`function_piping.gos`** — tour of the `|>` forward-pipe
+- **`function_piping.gos`** - tour of the `|>` forward-pipe
   operator plus the `std::iter` / `std::option` combinator
   surface (`filter`, `sum_by`, `find`, `option::default`, …).
   Runs under `gos run`, `gos build` (cranelift), and
   `gos build --release` (LLVM); the tier_parity test confirms
   identical output across all three.
-- **`generic_struct.gos`** — three generic struct shapes: `Pair<A, B>`
+- **`generic_struct.gos`** - three generic struct shapes: `Pair<A, B>`
   (two independent parameters), `SameType<T>` (one parameter shared by
   both fields, enabling field arithmetic), and `Triple<A, B, C>` (three
   parameters). Each construction site is a separate monomorphisation;
   parameters are inferred from the field values at the call site.
   Runs under `gos run` and `gos build`.
-- **`go_spawn.gos`** — goroutine fan-out with no channels.
+- **`go_spawn.gos`** - goroutine fan-out with no channels.
   Every construct lowers through native codegen, so `gos build`
   produces a working binary.
-- **`concurrency.gos`** — goroutines plus a `(Sender, Receiver)`
+- **`concurrency.gos`** - goroutines plus a `(Sender, Receiver)`
   channel, producer / consumer shape. Runs under `gos run`
   (bytecode VM) and `gos build` (native), with channel operations
   lowered natively on every tier.
-- **`line_count.gos`** — walks a directory via `os::read_dir`,
+- **`line_count.gos`** - walks a directory via `os::read_dir`,
   counts plain-text lines per file, fans out through a channel.
   Uses goroutines and `select`.
-- **`web_server.gos`** — HTTP/1.1 echo server mirroring FastAPI's
+- **`web_server.gos`** - HTTP/1.1 echo server mirroring FastAPI's
   `/echo` handler. Accepts any method, returns method / path /
   query / body as JSON. Runs under `gos run`; `curl
   http://localhost:8080/echo?name=jane` exercises it.
 
 ## Parse-only today (run once the stdlib wiring lands)
 
-- **`kv_cache.gos`** — in-memory TTL cache with a background
+- **`kv_cache.gos`** - in-memory TTL cache with a background
   expiry sweeper. Exercises goroutines, `Mutex<T>`, channels,
   graceful shutdown via `std::context`.
-- **`json_pipeline.gos`** — streaming JSONL transformer. Reads
+- **`json_pipeline.gos`** - streaming JSONL transformer. Reads
   line-delimited JSON from stdin, applies a transform, writes
   JSONL to stdout. Exercises `std::io`, `std::encoding::json`,
   `std::errors::wrap`.
@@ -85,7 +85,7 @@ fn main() {
 `examples/selfhost/` holds parse-only ports of Gossamer's own
 lexer and parser, as described in
 [`docs/selfhosting.md`](design/selfhosting.md). These are a
-feasibility study — they will *build* once the stdlib covers
+feasibility study - they will *build* once the stdlib covers
 growable collections, hashmaps, and generics through codegen.
 
 ## Try it

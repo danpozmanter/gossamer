@@ -3,12 +3,12 @@
 Two end-to-end demonstrations of `[rust-bindings]` in a Gossamer
 project:
 
-- `01-gossamer-aware/` — a local Rust crate that depends on
+- `01-gossamer-aware/` - a local Rust crate that depends on
   `gossamer-binding` and uses `register_module!` to expose three
   helpers (`shout`, `sum`, `stats`) under the `echo` Gossamer
   module. This is the path tuigoose, sqlite-binding, etc. take.
 
-- `02-plain-rust-wrapped/` — wraps the published `unic-segment`
+- `02-plain-rust-wrapped/` - wraps the published `unic-segment`
   crate (which knows nothing about Gossamer) by introducing a
   thin `gos-unic-segment` wrapper crate under
   `.gos-bindings/unic-segment/`. The wrapper does the
@@ -36,7 +36,7 @@ cargo build -p gossamer-cli
 bash run_examples.sh
 ```
 
-The first invocation against a project takes ~30–60 s while
+The first invocation against a project takes ~30-60 s while
 Cargo builds the runner; subsequent runs reuse the cached build
 under `$XDG_CACHE_HOME/gossamer/runners/`.
 
@@ -45,7 +45,7 @@ under `$XDG_CACHE_HOME/gossamer/runners/`.
 `gos build src/main.gos` links the runtime, the user code, and
 `libgos_static_bindings.a` (built per-project from the same
 binding spec) into a single static binary. Codegen lowering for
-binding calls is incremental — the binary builds and runs, and
+binding calls is incremental - the binary builds and runs, and
 calls that go through the runtime VM (the `gos run` path) work
 end-to-end. Direct compiled-tier dispatch into binding C-ABI
 thunks is wired through cranelift / LLVM as more binding shapes

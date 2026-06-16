@@ -10,12 +10,12 @@
 //! at word 0.
 //!
 //! ```text
-//! [0] kind            — RC_KIND_*
+//! [0] kind            - RC_KIND_*
 //! [1] variant_count V
 //! then V variant records, each variable-length:
-//!     disc            — discriminant this record describes
-//!     child_count C   — number of RC-pointer child words
-//!     off_0 .. off_C  — payload WORD indices (byte offset / 8) holding
+//!     disc            - discriminant this record describes
+//!     child_count C   - number of RC-pointer child words
+//!     off_0 .. off_C  - payload WORD indices (byte offset / 8) holding
 //!                       RC-managed child pointers to release
 //! ```
 //!
@@ -43,7 +43,7 @@ pub const RC_KIND_CLOSURE: i64 = 5;
 /// Guarded struct layout for escaped value-aggregate heap copies. Entries
 /// are `(disc_word, payload_word)` pairs instead of bare offsets: the
 /// child at `payload_word` is live only when the word at `disc_word`
-/// reads 0 (the `Some`/`Ok` discriminant) — or unconditionally when
+/// reads 0 (the `Some`/`Ok` discriminant) - or unconditionally when
 /// `disc_word` is negative. Every child pointer is additionally checked
 /// against the copy-blob provenance set before retain/release, so a
 /// payload that came from a non-RC producer (map get, borrow, the

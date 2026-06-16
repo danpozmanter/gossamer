@@ -2,7 +2,7 @@
 
 Gossamer manages memory for you automatically: there is no borrow
 checker, no lifetime annotations, and no manual ownership transfer.
-`&` and `&mut` exist — but they express *aliasing intent*, not
+`&` and `&mut` exist - but they express *aliasing intent*, not
 ownership.
 
 Under the hood the compiled tiers use **deterministic reference
@@ -41,7 +41,7 @@ write `'a`.
   at their *last use* rather than at function exit, so a large
   structure does not pin memory while unrelated code runs.
 - **Cycle collector.** Reference cycles (`a.next = Some(b);
-  b.next = Some(a)`) are reclaimed by a Bacon–Rajan style cycle
+  b.next = Some(a)`) are reclaimed by a Bacon-Rajan style cycle
   collector that runs on demand (`runtime::collect_cycles()`) and from
   allocation pressure. Acyclic data never pays for it.
 - **Weak references.** `Weak<T>` observes a value without keeping it
@@ -50,7 +50,7 @@ write `'a`.
 - **Compact representation.** A heap enum node carries an 8-byte
   runtime header. Enums with at most 4 variants store their
   discriminant in pointer tag bits, so a two-pointer tree node costs
-  24 bytes — and only 16 inside an arena.
+  24 bytes - and only 16 inside an arena.
 
 ## Arenas: `arena { }`
 
@@ -74,9 +74,9 @@ fn main() {
 
 Semantics:
 
-- **Allocation is a pointer bump** — a compare and an add, roughly an
+- **Allocation is a pointer bump** - a compare and an add, roughly an
   order of magnitude cheaper than a general heap allocation.
-- **Reclamation is wholesale** — the arena's slabs are released in
+- **Reclamation is wholesale** - the arena's slabs are released in
   O(slabs) when the block exits, with no per-object teardown walk. The
   exit is exact on every path: early `return`, `?`, `break`, and
   normal fall-through all release the arena (the block desugars to a
@@ -88,7 +88,7 @@ Semantics:
   the outer arena is unaffected. Slabs from finished arenas are
   recycled, so an arena per loop iteration costs a bump-pointer reset,
   not an `mmap`.
-- **Retain/release become no-ops** for arena values — the accounting
+- **Retain/release become no-ops** for arena values - the accounting
   entries recognize arena memory with a two-instruction range check.
 
 ### The contract
@@ -105,7 +105,7 @@ leak a pointer out are yours to avoid:
 - capturing them in a closure or goroutine that outruns the block.
 
 Use an arena when the block is *pure computation over data that dies
-together* — build, traverse, summarize, exit. If a value must survive,
+together* - build, traverse, summarize, exit. If a value must survive,
 let the block compute a scalar/string summary, or build the surviving
 value before (outside) the arena.
 
@@ -129,7 +129,7 @@ You generally don't. Shared aliasing works directly. If you need to
 mutate through a shared handle across goroutines, hold the value in a
 `Mutex<T>` (from `std::sync`) and lock around every mutation.
 
-## Stack vs heap — the pragmatic answer
+## Stack vs heap - the pragmatic answer
 
 - Small value types live on the stack or inline inside their
   aggregate.

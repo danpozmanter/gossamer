@@ -21,7 +21,7 @@ use std::os::raw::c_char;
 use super::*;
 
 // ---------------------------------------------------------------
-// net::netip — typed IP address parsing / classification. All
+// net::netip - typed IP address parsing / classification. All
 // inputs are c-string IPs ("127.0.0.1", "::1", "addr:port"); outputs
 // are scalars (i64 truthiness or i64 component) or canonical-form
 // c-strings. Backed by std::net::IpAddr / SocketAddr.

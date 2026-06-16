@@ -8,7 +8,7 @@ Driver-pluggable SQL database access. No driver ships in the box; bring your own
 
 | Name | Kind | Description |
 |---|---|---|
-| `Driver` | trait | Database driver — opens connections. Implementations call `register` at startup. |
+| `Driver` | trait | Database driver - opens connections. Implementations call `register` at startup. |
 | `register` | fn | Registers a `Driver` under its canonical name in the process-wide registry. |
 | `drivers` | fn | Lists every currently-registered driver name. |
 | `open` | fn | Opens a database connection by driver name + URL. |

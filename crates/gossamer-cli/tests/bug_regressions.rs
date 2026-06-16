@@ -3,7 +3,7 @@
 //! a small Gossamer program through `gos run` (or `gos build`)
 //! and asserts the user-visible output. A regression in any of
 //! the underlying fixes turns the test red. Tests are named
-//! after the property under test, not after a bug number — the
+//! after the property under test, not after a bug number - the
 //! file location is the regression-guard context.
 
 #![allow(missing_docs)]
@@ -168,7 +168,7 @@ fn impl_method_self_field_iteration_binds_element_type() {
     // Bug fixed in 0.10.0: inside an `impl` method the `self` receiver
     // was bound to a fresh inference var instead of the impl's `Self`
     // type, so `for x in self.items` over a `[String]` field bound `x`
-    // at the i64 default — printing element pointers as integers (the
+    // at the i64 default - printing element pointers as integers (the
     // auto-derived `to_json` serialised a `[String]` field as numbers).
     // `self` now binds to the concrete `Self` type.
     let src = r#"
@@ -391,7 +391,7 @@ fn main() { try_it() }
 fn indexing_tuple_slices_with_usize_works() {
     // `&[(String, String)]` indexed with `i: usize` must use the
     // index helper that accepts both `Value::Int` and
-    // `Value::U64` — the tuple-of-String case fell through the
+    // `Value::U64` - the tuple-of-String case fell through the
     // same `Value::Int`-only match as the string-array case
     // above.
     let src = r#"
@@ -650,7 +650,7 @@ fn main() {
 fn regex_captures_indexing_works() {
     // `caps[0]` / `caps[i]` must succeed via the same
     // `index_to_usize` helper that handles `Value::U64` and
-    // `Value::Int` uniformly — the regex captures shape
+    // `Value::Int` uniformly - the regex captures shape
     // previously panicked with "index must be integer".
     let src = r#"
 use std::regex
@@ -740,7 +740,7 @@ fn main() {
 fn variant_constructors_pin_call_result_to_adt() {
     // `let first = Some(10)` previously typed `first` as
     // `Int(I64)` because the typechecker had no signature for
-    // the `Some` constructor — the call expression fell back to
+    // the `Some` constructor - the call expression fell back to
     // a fresh `Var`, and the `let` binding's type promotion only
     // kicked in for primitives, dropping the Adt wrapper. Match
     // dispatch later treated the 8-byte `*mut GosResult` pointer
@@ -797,7 +797,7 @@ fn main() {
 #[test]
 fn str_find_returns_option_in_compiled_mode() {
     // `s.find("missing")` previously returned Some(_) instead
-    // of None in cranelift — the dispatch routed straight to
+    // of None in cranelift - the dispatch routed straight to
     // `gos_rt_str_find` (returns raw i64 with -1 sentinel)
     // and the SwitchInt on the Option discriminant defaulted
     // to the Some arm because -1 didn't match either disc=0
@@ -1196,7 +1196,7 @@ fn main() {
 
 #[test]
 fn try_operator_in_macro_arg_propagates_early_return() {
-    // `?` inside a macro argument — e.g. `print!("{}", expr?)` —
+    // `?` inside a macro argument - e.g. `print!("{}", expr?)` -
     // must propagate the early-return from the enclosing function,
     // not silently pass the `Err(...)` value through to the macro.
     // The bug: eval_expr_to_value was converting Flow::Return(v)
@@ -1312,7 +1312,7 @@ fn main() {
 #[test]
 fn llvm_tuple_return_from_nested_loop_keeps_second_slot() {
     // `return (a, b)` from inside a nested loop used to drop the
-    // second slot — the temporary `(Var, Var)` tuple's alloca
+    // second slot - the temporary `(Var, Var)` tuple's alloca
     // sized to one slot, so the aggregate-store overflowed and
     // the memcpy into the return slot only carried 8 valid bytes.
     // fannkuch-shaped programs lost the checksum value (always 0).
@@ -1373,7 +1373,7 @@ fn main() {
     let _ = fs::remove_dir_all(&dir);
     assert_eq!(out.2, Some(0), "native: stderr: {}", out.1);
     assert_eq!(out.0, vm.0, "native diverged from VM");
-    // The exact value can't be 0 — that's the bug shape we're
+    // The exact value can't be 0 - that's the bug shape we're
     // guarding against.
     assert!(!out.0.contains("checksum=0\n"), "second slot dropped");
 }
@@ -1382,7 +1382,7 @@ fn main() {
 fn json_render_adt_text_branch_does_not_free_uninit_pairs_vec() {
     // json::render(&adt) builds a temporary GosVec (pairs_vec) inside
     // lower_json_render_adt.  The insert_drops_at_returns pass used to
-    // emit a gos_rt_vec_free for pairs_vec at every Return block —
+    // emit a gos_rt_vec_free for pairs_vec at every Return block -
     // including the text-mode arm where pairs_vec was never initialised.
     // That produced gos_rt_vec_free(stack_garbage) → segfault in
     // __GI___libc_free.  The fix: emit the free immediately in the JSON
@@ -1467,12 +1467,12 @@ fn local_var_shadowing_module_does_not_capture_qualified_path() {
     // looked up the head segment in the env first, returning the
     // local's value (a String), and `apply()` of a non-callable
     // degraded to Unit. The LLVM AOT tier resolved correctly; the
-    // VM tier did not — a parity gap that broke askq's
+    // VM tier did not - a parity gap that broke askq's
     // `provider::provider_endpoint_and_auth(&cfg, &provider)` call
     // (the local `provider: String` captured the call).
     //
     // The fix: multi-segment paths bypass the env-first lookup.
-    // A path's head can only resolve to a module / type / trait —
+    // A path's head can only resolve to a module / type / trait -
     // never a local binding.
     let dir = fresh_dir("local_shadow_mod_path");
     fs::write(
@@ -2046,7 +2046,7 @@ fn vec_pop_on_typed_storage_shrinks_by_one() {
     // Bug fixed in 0.10.0: VM `builtin_pop` fell into the
     // `_ => empty_array` catch-all for `Value::IntArray` /
     // `Value::FloatVec` receivers, and the writeback then moved
-    // the empty result into the receiver — clobbering every
+    // the empty result into the receiver - clobbering every
     // element instead of removing only the last one.
     let src = r#"
 fn main() {
@@ -2076,7 +2076,7 @@ fn hashmap_keys_router_does_not_get_shadowed_by_json() {
     // registered `("keys", builtin_map_keys)`. The later json push
     // overrode the bare-name registry, so every `m.keys()` on a
     // HashMap silently dispatched to the JSON helper which returns
-    // `None` for non-Struct receivers — surfacing as `ks.len() == 0`
+    // `None` for non-Struct receivers - surfacing as `ks.len() == 0`
     // even with multiple inserts. Receiver-routing wrapper now
     // dispatches by Value shape.
     let src = r#"
@@ -2103,7 +2103,7 @@ fn return_array_literal_coerces_to_slice() {
     // Bug fixed in 0.10.0: `fn f() -> [String] { return ["a", "b"] }`
     // lowered the array literal as a flat `Array<String; 2>` and
     // returned the stack-aggregate bytes through the slot that the
-    // caller dereferenced as a `*mut GosVec` — len read as garbage
+    // caller dereferenced as a `*mut GosVec` - len read as garbage
     // bits, then `for s in xs` ran zero iterations. The Return
     // path now coerces `Array<T; N>` → `Vec<T>` via
     // `gos_rt_vec_from_arr` whenever the declared return type is
@@ -2137,7 +2137,7 @@ fn main() {
 fn typed_int_array_get_falls_back_to_generic_array() {
     // Bug fixed in 0.10.0: when `fn slide(arr: [i64; 4]) -> i64`
     // was called from a loop body, the bytecode compiler tracked
-    // `arr` as a `flat_int_local` (Value::IntArray) — but the
+    // `arr` as a `flat_int_local` (Value::IntArray) - but the
     // call-args ABI didn't always preserve that shape across the
     // boundary, so the second iteration saw a Value::Array of
     // boxed Value::Int instead and panicked with "IntArrayGetI64:
@@ -2175,7 +2175,7 @@ fn logical_and_or_short_circuit_in_compiled_tier() {
     // Bug fixed in 0.10.0: `lower_binary` evaluated both sides of
     // `&&` / `||` unconditionally in the MIR lowering, so a guarded
     // bounds check like `while j > 0 && arr[j - 1] < x` panicked
-    // with `the index is -1` once j reached 0 — the RHS fired
+    // with `the index is -1` once j reached 0 - the RHS fired
     // even though the LHS was already false. The lowering now
     // branches on the LHS and evaluates the RHS only on the path
     // that needs it.
@@ -2216,8 +2216,8 @@ fn main() {
 #[test]
 fn vec_of_struct_index_field_reads_and_writes_through_data_buffer() {
     // Bug fixed in 0.10.0: indexing a `Vec<Body>` (multi-slot struct
-    // elements) in a place expression — `bodies[i].x` for a read or
-    // `bodies[i].vx = v` for a write — built a flat `Projection::Index`
+    // elements) in a place expression - `bodies[i].x` for a read or
+    // `bodies[i].vx = v` for a write - built a flat `Projection::Index`
     // that strode off the `*mut GosVec` *header* instead of the data
     // buffer, so every element past index 0 read/wrote garbage. The
     // place lowerer now routes Vec-with-multi-slot-element indexing
@@ -2331,7 +2331,7 @@ fn sort_by_on_tuple_vec_orders_by_comparator() {
     // offset off a junk integer instead of the element pointer the
     // runtime sort hands it. The lift pass now skips the i64 pin for
     // params used through `TupleIndex` / `Field` / method-call
-    // receivers — those are aggregates passed by pointer.
+    // receivers - those are aggregates passed by pointer.
     let src = r#"
 fn main() {
     let mut xs: [(String, i64)] = []
@@ -2375,7 +2375,7 @@ fn vec_of_enum_for_loop_dereferences_slot_pointer() {
     // body needs the pointer value (one `gos_load` away), not the
     // slot address. Without the load, every `match e { … }` saw the
     // first 8 bytes of the heap allocation interpreted as the
-    // pattern scrutinee — and fell through every variant arm.
+    // pattern scrutinee - and fell through every variant arm.
     let src = r#"
 enum Sv {
     SvInt(i64),
@@ -2468,7 +2468,7 @@ fn regex_captures_all_option_string_match_reads_real_discriminant() {
     // typed as a concrete `Option<String>` (e.g. through a function
     // whose declared return is `[[Option<String>]]`), the compiled-tier
     // `match group { Some(k) => ..., None => ... }` reads the tagged-
-    // union discriminant via `gos_rt_result_disc` off the pointer — a
+    // union discriminant via `gos_rt_result_disc` off the pointer - a
     // raw c-string's first bytes are not a valid discriminant, so the
     // match fell through and printed nothing. Fix: the runtime now
     // pushes canonical `gos_rt_result_new(disc, payload)` Options and

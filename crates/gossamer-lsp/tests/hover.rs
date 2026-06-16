@@ -32,7 +32,7 @@ fn hover_on_struct_name_shows_type() {
     let params = position_params("file:///s.gos", 1, 21);
     let response = server.hover(&params);
     // The hover may resolve to the struct definition or to the type
-    // name — either is acceptable. The point of this assertion is
+    // name - either is acceptable. The point of this assertion is
     // that the response is a JSON value of any shape (Null included
     // means "no hover available"). We accept everything; we just
     // refuse to silently drop the call.
@@ -72,7 +72,7 @@ fn hover_on_stdlib_symbol_shows_doc() {
     let response = server.hover(&params);
     let text = hover_text(&response);
     // Stdlib hover may not have a manifest doc for the println macro
-    // — accept either a populated response or null.
+    // - accept either a populated response or null.
     if !matches!(response, Value::Null) {
         assert!(
             text.contains("println") || !text.is_empty(),
@@ -87,7 +87,7 @@ fn hover_on_unknown_position_returns_null_or_word_hover() {
     // Cursor on whitespace inside the empty body (line 0, column 11).
     let params = position_params("file:///x.gos", 0, 11);
     let response = server.hover(&params);
-    // Whitespace hover may return null or a word-based fallback —
+    // Whitespace hover may return null or a word-based fallback -
     // either is acceptable as long as it doesn't panic.
     let _ = response;
 }

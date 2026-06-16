@@ -1,5 +1,5 @@
 // Module-level allows for ABI 0.4 HTTP router. Pedantic
-// lints here trade off against readability — surface is small
+// lints here trade off against readability - surface is small
 // and intentional.
 #![allow(
     clippy::similar_names,
@@ -21,10 +21,10 @@
 //! 1.22 method-gated pattern syntax):
 //!
 //! ```text
-//!   /users/{id}          — single-segment capture (no `/`).
-//!   /files/{path...}     — trailing greedy capture (matches the rest).
-//!   /static/*            — wildcard (any path under /static/).
-//!   /health              — literal exact match.
+//!   /users/{id}          - single-segment capture (no `/`).
+//!   /files/{path...}     - trailing greedy capture (matches the rest).
+//!   /static/*            - wildcard (any path under /static/).
+//!   /health              - literal exact match.
 //! ```
 //!
 //! Patterns may be prefixed with a method:
@@ -97,11 +97,11 @@ pub type Handler = Arc<dyn Fn(&Request, &Params) -> Response + Send + Sync>;
 enum Segment {
     /// Literal text. Matches exactly.
     Literal(String),
-    /// `{name}` — single-segment capture.
+    /// `{name}` - single-segment capture.
     Capture(String),
-    /// `{name...}` — greedy capture to end of path.
+    /// `{name...}` - greedy capture to end of path.
     Rest(String),
-    /// `*` — wildcard, matches any remaining path.
+    /// `*` - wildcard, matches any remaining path.
     Wildcard,
 }
 
@@ -565,7 +565,7 @@ mod tests {
         assert_eq!(resp.status, StatusCode(200));
         // Empty string is still a valid capture; we register
         // this as documented behaviour (Go's mux behaves the
-        // same — empty `{id}` matches).
+        // same - empty `{id}` matches).
     }
 
     #[test]

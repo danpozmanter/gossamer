@@ -136,7 +136,7 @@ impl Parser<'_> {
         TypeKind::Fn { kind, params, ret }
     }
 
-    /// Parses a `TypePath` — a path in type position (no turbofish `::<>`).
+    /// Parses a `TypePath` - a path in type position (no turbofish `::<>`).
     pub(crate) fn parse_type_path(&mut self) -> TypePath {
         let first = self.parse_type_path_segment();
         let mut segments = vec![first];
@@ -150,7 +150,7 @@ impl Parser<'_> {
         let name = self.parse_path_ident_text();
         // Primitive type names never carry generic arguments. Refusing
         // to consume `<` after a primitive disambiguates the ambiguity
-        // exposed by `expr as i64 < width` — without this guard the
+        // exposed by `expr as i64 < width` - without this guard the
         // parser greedily opens a generic-argument list, fails when it
         // sees `width {`, and rejects perfectly valid comparison code
         // (and the formatter, which strips redundant parens, can
@@ -239,7 +239,7 @@ fn is_const_arg_start(parser: &Parser<'_>) -> bool {
 /// Returns `true` for built-in scalar / primitive type names that
 /// can never carry generic arguments. Used by
 /// [`Parser::parse_type_path_segment`] to skip a `<…>` lookahead
-/// after a primitive — required so `expr as i64 < width` parses as
+/// after a primitive - required so `expr as i64 < width` parses as
 /// the comparison the user wrote rather than as an opening generic
 /// argument list. The list is intentionally narrow; user-defined
 /// types and stdlib types like `Vec` / `Result` / `Option` are not

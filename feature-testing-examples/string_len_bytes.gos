@@ -3,7 +3,7 @@
 // compiled `gos_rt_str_len` shim). Codepoint counts come from
 // `utf8::rune_count_in_string`. Before this was reconciled the VM
 // returned codepoints (5/3) while the compiled tiers returned bytes
-// (6/9) for multibyte input — a silent divergence on a green build.
+// (6/9) for multibyte input - a silent divergence on a green build.
 
 use std::utf8
 

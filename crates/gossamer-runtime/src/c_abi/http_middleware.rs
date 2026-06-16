@@ -4,7 +4,7 @@
 #![allow(clippy::must_use_candidate)]
 #![allow(clippy::wildcard_imports)]
 
-//! Compiled-tier `http::middleware::bearer_ok` — the minimal
+//! Compiled-tier `http::middleware::bearer_ok` - the minimal
 //! cross-tier auth-check middleware primitive.
 //!
 //! `bearer_ok(req, verify)` extracts the `Authorization: Bearer
@@ -18,7 +18,7 @@
 //!
 //! Closure ABI: the `verify` closure crosses the C-ABI through the
 //! same env-thunk convention used by the `iter::*` / `Once::call` /
-//! `RwLock::with_read` combinators — `env[0]` is the callable address,
+//! `RwLock::with_read` combinators - `env[0]` is the callable address,
 //! and the body is invoked as `f(env, token)` where `token` is a
 //! freshly allocated gos String pointer (the `String`-parameter
 //! lowering treats it exactly as a `String`). Bit-identical to the
@@ -27,7 +27,7 @@
 
 use super::*;
 
-/// `fn(env, token) -> bool` — the one-argument value-thunk shape, with
+/// `fn(env, token) -> bool` - the one-argument value-thunk shape, with
 /// the closure's `String` parameter carried as a gos C-string pointer
 /// (pointer-width, same slot the `i64` combinator thunks use).
 type VerifyFn = unsafe extern "C" fn(env: *const u8, token: *mut std::os::raw::c_char) -> i64;

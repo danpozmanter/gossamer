@@ -2,7 +2,7 @@
 //!
 //! `llvm_release_lowers_every_example_without_fallback` (in
 //! `tier_parity.rs`) catches a body that *errored* during
-//! lowering — it asserts no per-fn fallback fired. That gate
+//! lowering - it asserts no per-fn fallback fired. That gate
 //! is necessary but not sufficient: a body can also be lowered
 //! to an empty stub that compiles cleanly, links, and runs but
 //! computes the wrong answer. The fallback gate sees nothing;
@@ -13,7 +13,7 @@
 //! a representative set of source shapes, the LLVM IR emitted
 //! to `unit.ll` must contain a real `define` for each user
 //! function with a non-trivial body. We don't snapshot the
-//! whole IR (too noisy) — just confirm the body landed.
+//! whole IR (too noisy) - just confirm the body landed.
 //!
 //! Triggered via `GOS_LLVM_DUMP=1`, which makes `invoke_llc`
 //! print `llvm backend: IR at <path>` to stderr and keep the
@@ -121,7 +121,7 @@ fn is_executable(p: &Path) -> bool {
 /// the function body (i.e. it actually returns something) by
 /// looking inside the next ~200 lines for a `ret ` opcode. A
 /// fully empty stub like `define void @"foo"() { ret void }`
-/// would still pass this check — the more interesting assertion
+/// would still pass this check - the more interesting assertion
 /// is paired below: the body must not be the trivial `ret`-only
 /// shape when the source has user-visible side effects.
 fn ir_contains_define(ir: &str, fn_name: &str) -> bool {
@@ -137,7 +137,7 @@ fn ir_contains_define(ir: &str, fn_name: &str) -> bool {
 
 /// Counts non-empty lines inside the body of the named function.
 /// Returns `None` if the body cannot be located. Used to assert
-/// "this body is more than just `ret void`" — the cheap
+/// "this body is more than just `ret void`" - the cheap
 /// proxy for "lowering produced real instructions, not a stub".
 fn ir_body_line_count(ir: &str, fn_name: &str) -> Option<usize> {
     let needle = format!("@\"{fn_name}\"");
@@ -180,7 +180,7 @@ fn ir_body_line_count(ir: &str, fn_name: &str) -> Option<usize> {
 struct Shape {
     tag: &'static str,
     source: &'static str,
-    /// `(fn_name, min_body_lines)` — `fn_name` is the unmangled
+    /// `(fn_name, min_body_lines)` - `fn_name` is the unmangled
     /// Gossamer name; `mangle_fn_name` rewrites only `main`.
     expect: &'static [(&'static str, usize)],
 }
@@ -439,7 +439,7 @@ fn main() {
 
 #[test]
 fn llvm_lowers_each_shape_to_a_real_define() {
-    // The sub-build is the slow part — limit the scope of this
+    // The sub-build is the slow part - limit the scope of this
     // test by skipping when LLVM tooling is missing rather than
     // forcing a noisy environment failure. Match the tier-parity
     // suite's behaviour.
@@ -459,7 +459,7 @@ fn llvm_lowers_each_shape_to_a_real_define() {
         for (fn_name, min_lines) in shape.expect {
             assert!(
                 ir_contains_define(&ir, fn_name),
-                "shape {tag}: LLVM IR is missing `define ... @\"{fn_name}\"(...)` — \
+                "shape {tag}: LLVM IR is missing `define ... @\"{fn_name}\"(...)` - \
                  the body silently fell through to a Cranelift fallback or was \
                  skipped entirely. \n\nIR head:\n{head}",
                 tag = shape.tag,

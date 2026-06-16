@@ -30,7 +30,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 //
 // Recursive heap enums are reference counted (see `c_abi::rc`);
 // the raw-pointer tracing collector that formerly backstopped
-// escaped aggregates was removed — it could not discover live
+// escaped aggregates was removed - it could not discover live
 // roots precisely under optimised LLVM. Today an aggregate that
 // escapes the drop pass's analysis (stored in a long-lived
 // container, returned through an opaque chain) leaks until process
@@ -172,7 +172,7 @@ pub extern "C" fn gos_rt_aggr_free(ptr: *mut u8, size: u64) {
     });
 }
 
-/// Retained for ABI compatibility — the tracing collector it drove
+/// Retained for ABI compatibility - the tracing collector it drove
 /// is removed, so this is a no-op (the drop pass reclaims
 /// aggregates deterministically; escaped ones leak until exit).
 #[unsafe(no_mangle)]
@@ -182,13 +182,13 @@ pub extern "C" fn gos_rt_gc_reset() {
 
 /// Retained for ABI compatibility (called after `Vec::from_raw_parts`
 /// takes ownership of a `gos_rt_gc_alloc` buffer). With the tracing
-/// registry removed there is nothing to deregister — no-op.
+/// registry removed there is nothing to deregister - no-op.
 #[unsafe(no_mangle)]
 pub extern "C" fn gos_rt_gc_deregister(_ptr: *mut u8) {
     ffi_entry!((), {});
 }
 
-/// `std::runtime::gc_collect()` — retained as a no-op (returns 0
+/// `std::runtime::gc_collect()` - retained as a no-op (returns 0
 /// bytes reclaimed). Recursive enums are reference counted and
 /// aggregates are freed deterministically, so there is no
 /// stop-the-world collection to trigger; a manual collect is a
@@ -198,21 +198,21 @@ pub extern "C" fn gos_rt_gc_collect() -> u64 {
     ffi_entry!(0, { 0 })
 }
 
-/// `std::runtime` allocation-count hook — returns 0 now that the
+/// `std::runtime` allocation-count hook - returns 0 now that the
 /// tracking registry is gone. Diagnostic only.
 #[unsafe(no_mangle)]
 pub extern "C" fn gos_rt_gc_alloc_count() -> u64 {
     ffi_entry!(0, { 0 })
 }
 
-/// Legacy arena watermark — no-op (returns the "no checkpoint"
+/// Legacy arena watermark - no-op (returns the "no checkpoint"
 /// value). Existing compiled artefacts may still reference it.
 #[unsafe(no_mangle)]
 pub extern "C" fn gos_rt_arena_save() -> u64 {
     ffi_entry!(0, { 0 })
 }
 
-/// Legacy arena rewind — no-op. See `gos_rt_arena_save`.
+/// Legacy arena rewind - no-op. See `gos_rt_arena_save`.
 #[unsafe(no_mangle)]
 pub extern "C" fn gos_rt_arena_restore(_saved: u64) {
     ffi_entry!((), {});

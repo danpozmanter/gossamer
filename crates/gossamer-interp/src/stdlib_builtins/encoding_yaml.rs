@@ -106,7 +106,7 @@ use crate::value::{MapKey, NativeCall, NativeDispatch, RuntimeResult, Value};
 use super::*;
 
 pub(crate) fn install_encoding_yaml(globals: &mut Vec<(&'static str, Value)>) {
-    // Register only qualified names — bare `parse` and `encode` shadow
+    // Register only qualified names - bare `parse` and `encode` shadow
     // built-in string/value method dispatch.
     for (short, call) in [
         ("parse", builtin_yaml_parse as BuiltinFnPub),
@@ -211,7 +211,7 @@ pub(crate) fn gossamer_value_to_yaml(v: &Value) -> gossamer_std::encoding::yaml:
 pub(crate) fn builtin_yaml_parse(args: &[Value]) -> RuntimeResult<Value> {
     let src = args.first().and_then(as_str).unwrap_or("");
     // Project YAML onto the JSON value tree so `yaml::parse` returns a
-    // `json::Value` — the same dynamic-document type the compiled tier
+    // `json::Value` - the same dynamic-document type the compiled tier
     // produces (`gos_rt_yaml_parse`), keeping the surface bit-identical.
     match gossamer_std::encoding::yaml::to_json(src) {
         Ok(json_text) => match gossamer_std::json::parse(&json_text) {

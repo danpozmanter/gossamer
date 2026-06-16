@@ -21,7 +21,7 @@ use std::os::raw::c_char;
 use super::*;
 
 // ---------------------------------------------------------------
-// mime — RFC 2045 media type parsing + extension lookup.
+// mime - RFC 2045 media type parsing + extension lookup.
 // All inputs are c-strings; outputs are c-strings or i64 booleans.
 // ---------------------------------------------------------------
 

@@ -1,7 +1,7 @@
 //! Opaque handles for binding-owned Rust values.
 //!
 //! Bindings that want to expose a Rust struct (e.g.
-//! `tuigoose::Terminal`) to Gossamer code can't pass it directly —
+//! `tuigoose::Terminal`) to Gossamer code can't pass it directly -
 //! the interpreter's `Value` type does not have a `dyn Any`
 //! variant. Instead, the binding stores the value in a
 //! [`Registry<T>`] and gives Gossamer code an `i64` handle that

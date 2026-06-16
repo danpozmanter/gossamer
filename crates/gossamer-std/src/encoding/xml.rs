@@ -1,4 +1,4 @@
-// Runtime support for `std::encoding::xml` — XML parsing and encoding.
+// Runtime support for `std::encoding::xml` - XML parsing and encoding.
 //
 // Exposes a simple tree-based XML value type that covers the common
 // cases: elements with attributes and mixed text/element children.

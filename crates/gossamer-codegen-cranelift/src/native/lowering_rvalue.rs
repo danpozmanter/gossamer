@@ -75,7 +75,7 @@
 //! the process exit code, so the object file links through a
 //! standard `cc` invocation.
 //! Aggregates (tuples/arrays/structs), strings, closures, and
-//! anything that needs a GC heap are not yet lowered — those
+//! anything that needs a GC heap are not yet lowered - those
 //! constructs fall back to [`crate::emit::emit_module`] for
 //! inspection.
 
@@ -151,7 +151,7 @@ pub(super) fn lower_rvalue(
         Rvalue::BinaryOp { op, lhs, rhs } => {
             // For arithmetic, both operands share the result's cl
             // type, so forward `dst_hint` down. For comparisons the
-            // result is I8 (bool) but operands aren't — fall through
+            // result is I8 (bool) but operands aren't - fall through
             // to MIR-local inference by leaving `hint` as None. An
             // operand-side cross-hint (lhs's lowered type seeds
             // rhs's hint) handles comparisons of projected places
@@ -242,7 +242,7 @@ pub(super) fn lower_rvalue(
                 }
                 UnOp::Not => {
                     // For booleans (cranelift `I8`) `!` is *logical*
-                    // negation — flip bit 0 only. `bnot` flips
+                    // negation - flip bit 0 only. `bnot` flips
                     // every bit (1 → 0xfe), which the downstream
                     // `if !flag` non-zero test then misreads as
                     // true and the user code's `if !first` arm
@@ -309,7 +309,7 @@ pub(super) fn lower_rvalue(
                 // Rust's `as` (NaN → 0, ±Inf clamps to bounds).
                 (s, d) if s.is_float() && d.is_int() => builder.ins().fcvt_to_sint_sat(d, src_v),
                 // `u8 as char`: mask to the declared u8 width before
-                // narrowing into the char's i32 code-point slot —
+                // narrowing into the char's i32 code-point slot -
                 // matches the VM's `cast_scalar` and the LLVM tier.
                 (s, d)
                     if s.is_int() && d.is_int() && matches!(tcx.kind_of(*target), TyKind::Char) =>
@@ -403,7 +403,7 @@ pub(super) fn lower_rvalue(
             //
             // Structs (`AggregateKind::Adt`) with struct variant
             // shapes use the flat-slot layout where every nested
-            // struct/tuple field expands inline — the running byte
+            // struct/tuple field expands inline - the running byte
             // offset is summed from `type_slot_count` of each prior
             // operand's source, so `outer.tag` lands past the
             // embedded `inner` instead of overlapping it.
@@ -495,7 +495,7 @@ pub(super) fn lower_rvalue(
             // Heap-allocate (zeroed) via `gos_rt_aggr_alloc`. Stack-slot
             // allocation breaks the moment the aggregate address
             // escapes the constructing frame (returning a struct
-            // from a method, storing it in a vec, …) — the slot
+            // from a method, storing it in a vec, …) - the slot
             // dies on epilogue and the next call overwrites it.
             // The runtime helper tracks every allocation so the
             // MIR drop pass can reclaim it via `gos_rt_aggr_free`
@@ -517,7 +517,7 @@ pub(super) fn lower_rvalue(
                 // Variable's value is the source's base address, not
                 // its contents. The simple `store` path is only
                 // correct for scalar operands (ints/floats/booleans
-                // — values that live directly in the local's SSA
+                // - values that live directly in the local's SSA
                 // Variable).
                 let operand_aggregate_slots: Option<u32> = match operand {
                     Operand::Copy(place) if place.projection.is_empty() => {
@@ -579,7 +579,7 @@ pub(super) fn lower_rvalue(
         Rvalue::Len(place) => {
             // With the flat-8-byte layout we can't recover the
             // aggregate length from the pointer alone. Emit a
-            // placeholder zero — callers that actually need `len`
+            // placeholder zero - callers that actually need `len`
             // will use it with arrays of known size via MIR opt.
             let _ = place;
             builder.ins().iconst(types::I64, 0)
@@ -609,7 +609,7 @@ pub(super) fn lower_rvalue(
             let base = builder.inst_results(alloc_call)[0];
             // Threshold for switching from unrolled stores to a counted
             // loop. Unrolling beyond this generates O(count) Cranelift
-            // instructions — for `[f64; 6000]` that inflates the JIT IR
+            // instructions - for `[f64; 6000]` that inflates the JIT IR
             // to tens of thousands of ops, pushing peak RSS ~30 MB for a
             // single compilation. A loop keeps the IR size O(1).
             const UNROLL_LIMIT: u64 = 16;
@@ -684,7 +684,7 @@ pub(super) fn lower_rvalue(
             } else {
                 // Scalar repeat (`[v; N]` where v is one slot wide).
                 // calloc already zeroed the buffer, so zero constants need
-                // no stores at all — skip the init entirely.
+                // no stores at all - skip the init entirely.
                 let is_zero = matches!(
                     value,
                     Operand::Const(
@@ -757,7 +757,7 @@ pub(super) fn lower_rvalue(
                 // Scalar locals (i64 / f64 / bool / char from primitive
                 // HIR types) and `String` locals (a flat `*mut c_char`
                 // pointer-value) live in SSA Variables that have no
-                // machine address — `use_var` returns the *value*. When
+                // machine address - `use_var` returns the *value*. When
                 // the caller asks for `&x`, we need an actual pointer.
                 // Materialise a fresh stack slot, store the current
                 // value (8 bytes for either a scalar or a pointer), and
@@ -772,7 +772,7 @@ pub(super) fn lower_rvalue(
                 // value back into the Variable, completing the
                 // round-trip. Aggregate locals (Vec / struct / map) are
                 // already pointer-to-header, so `&x` is the value
-                // itself — no slot needed.
+                // itself - no slot needed.
                 let ty = body.local_ty(place.local);
                 let is_addressable_value = matches!(
                     tcx.kind_of(ty),
@@ -829,7 +829,7 @@ pub(super) fn lower_operand(
         Operand::Copy(place) => {
             // For projected reads through a known aggregate root,
             // prefer the root's recorded element type over any
-            // hint from the caller — the hint is an approximation,
+            // hint from the caller - the hint is an approximation,
             // the element table is ground truth.
             let effective_hint = if place.projection.is_empty() {
                 hint
@@ -933,7 +933,7 @@ pub(super) fn lower_binop(
             // Integer width mismatch: extend the narrower side up
             // to the wider one. Common cause is a closure capture
             // whose env-stored value was loaded with a wider type
-            // than its source bool/i8 width — `if pred(x)` or a
+            // than its source bool/i8 width - `if pred(x)` or a
             // comparison whose other operand is a full i64.
             if a_ty.bits() < b_ty.bits() {
                 a = builder.ins().sextend(b_ty, a);
@@ -956,7 +956,7 @@ pub(super) fn lower_binop(
             // Float `%` is intercepted in lower_rvalue and routed
             // through libc::fmod before this match runs; reaching
             // here on a float means the caller bypassed that path
-            // — a compiler bug.
+            // - a compiler bug.
             BinOp::Rem => unreachable!("float Rem handled in lower_rvalue"),
             BinOp::Eq => fcmp_bool(builder, ir::condcodes::FloatCC::Equal, a, b),
             BinOp::Ne => fcmp_bool(builder, ir::condcodes::FloatCC::NotEqual, a, b),
@@ -967,7 +967,7 @@ pub(super) fn lower_binop(
             // Bitwise on float is a typecheck error; reaching
             // here is a compiler bug.
             BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor | BinOp::Shl | BinOp::Shr => {
-                unreachable!("bitwise op on float — should be a type error")
+                unreachable!("bitwise op on float - should be a type error")
             }
         });
     }

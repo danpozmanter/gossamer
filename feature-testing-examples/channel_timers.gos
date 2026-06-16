@@ -1,5 +1,5 @@
 // `time::after(d)` returns a `Receiver` that yields once after `d`, firing on a
-// goroutine that then completes — so it composes with `select` (timeout) and
+// goroutine that then completes - so it composes with `select` (timeout) and
 // `while let` (drain). Output is made deterministic (counting / fixed winner)
 // rather than racing the clock, so it is bit-identical on the VM, Cranelift,
 // and LLVM tiers.

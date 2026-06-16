@@ -6,7 +6,7 @@
 //! C-ABI shims for `std::encoding::*` free functions so the compiled
 //! tier lowers them instead of emitting an undefined `@encoding::*`
 //! reference. The pure codec logic is small enough to live here
-//! directly — `gossamer-runtime` cannot depend on `gossamer-std`
+//! directly - `gossamer-runtime` cannot depend on `gossamer-std`
 //! (that would be a dependency cycle), so the bytes mirror
 //! `gossamer_std::encoding::{xml,base32}` exactly.
 
@@ -34,7 +34,7 @@ fn cstr_to_str<'a>(s: *const c_char) -> &'a str {
     std::str::from_utf8(bytes).unwrap_or("")
 }
 
-/// `encoding::xml::escape(s)` — replaces XML metacharacters with their
+/// `encoding::xml::escape(s)` - replaces XML metacharacters with their
 /// entity forms. Mirrors `gossamer_std::encoding::xml::escape`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_encoding_xml_escape(s: *const c_char) -> *mut c_char {
@@ -57,7 +57,7 @@ pub unsafe extern "C" fn gos_rt_encoding_xml_escape(s: *const c_char) -> *mut c_
 
 /// Reads a `*mut GosVec` of `u8` into an owned `Vec<u8>`. A Gossamer
 /// `Vec<u8>` stores each byte as a zero-extended `i64` (8-byte slots)
-/// so `bytes[i]` indexing lowers through `gos_rt_vec_get_i64` — read
+/// so `bytes[i]` indexing lowers through `gos_rt_vec_get_i64` - read
 /// each slot as an i64 and take the low byte.
 pub(crate) unsafe fn gosvec_u8(v: *const super::vec::GosVec) -> Vec<u8> {
     if v.is_null() {
@@ -91,7 +91,7 @@ pub(crate) fn bytes_to_gosvec(bytes: &[u8]) -> *mut super::vec::GosVec {
     v
 }
 
-/// `encoding::hex::encode(data)` — lowercase hex of a byte vector.
+/// `encoding::hex::encode(data)` - lowercase hex of a byte vector.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_encoding_hex_encode(
     data: *const super::vec::GosVec,
@@ -107,7 +107,7 @@ pub unsafe extern "C" fn gos_rt_encoding_hex_encode(
     })
 }
 
-/// `encoding::base32::encode(data)` — RFC 4648 of a byte vector.
+/// `encoding::base32::encode(data)` - RFC 4648 of a byte vector.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_encoding_base32_encode(
     data: *const super::vec::GosVec,
@@ -118,7 +118,7 @@ pub unsafe extern "C" fn gos_rt_encoding_base32_encode(
     })
 }
 
-/// `html::escape(s)` — HTML entity-escapes `& < > " '`. Mirrors
+/// `html::escape(s)` - HTML entity-escapes `& < > " '`. Mirrors
 /// `gossamer_std::html::escape`, which uses `&#39;` for the apostrophe
 /// (XML uses `&apos;`).
 #[unsafe(no_mangle)]
@@ -142,7 +142,7 @@ pub unsafe extern "C" fn gos_rt_html_escape(s: *const c_char) -> *mut c_char {
     })
 }
 
-/// `encoding::base64::encode(data)` — RFC 4648 standard alphabet
+/// `encoding::base64::encode(data)` - RFC 4648 standard alphabet
 /// with padding. Mirrors `gossamer_std::encoding::base64::encode`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_encoding_base64_encode(
@@ -154,7 +154,7 @@ pub unsafe extern "C" fn gos_rt_encoding_base64_encode(
     })
 }
 
-/// `encoding::base64::decode(s)` — returns `Result<Vec<u8>,
+/// `encoding::base64::decode(s)` - returns `Result<Vec<u8>,
 /// errors::Error>`. Ok payload is a `*mut GosVec` of bytes
 /// (i64-per-element); Err payload is a gos error handle.
 #[unsafe(no_mangle)]
@@ -170,7 +170,7 @@ pub unsafe extern "C" fn gos_rt_encoding_base64_decode(s: *const c_char) -> i128
     })
 }
 
-/// `encoding::hex::decode(s)` — returns `Result<Vec<u8>,
+/// `encoding::hex::decode(s)` - returns `Result<Vec<u8>,
 /// errors::Error>` (Ok payload is a byte `Vec`).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_encoding_hex_decode(s: *const c_char) -> i128 {
@@ -185,7 +185,7 @@ pub unsafe extern "C" fn gos_rt_encoding_hex_decode(s: *const c_char) -> i128 {
     })
 }
 
-/// `html::unescape(s)` — inverse of `gos_rt_html_escape`. Decodes the
+/// `html::unescape(s)` - inverse of `gos_rt_html_escape`. Decodes the
 /// named entities Gossamer emits (`&amp; &lt; &gt; &quot; &#39;
 /// &apos;`) plus decimal / hex numeric character references.
 #[unsafe(no_mangle)]
@@ -196,7 +196,7 @@ pub unsafe extern "C" fn gos_rt_html_unescape(s: *const c_char) -> *mut c_char {
     })
 }
 
-/// `html::template::render_json(source, json_data)` — renders the
+/// `html::template::render_json(source, json_data)` - renders the
 /// context-aware HTML template `source` against a JSON-encoded data
 /// context, returning `Result<String, errors::Error>`. The `GosResult`
 /// disc is 0 for `Ok` (the rendered text), 1 for `Err` (the parse /
@@ -405,7 +405,7 @@ fn base32_decode(s: &str) -> Result<Vec<u8>, String> {
     Ok(out)
 }
 
-/// `encoding::base32::encode_string(s)` — RFC 4648 standard alphabet.
+/// `encoding::base32::encode_string(s)` - RFC 4648 standard alphabet.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_encoding_base32_encode_string(s: *const c_char) -> *mut c_char {
     ffi_entry!(std::ptr::null_mut(), {
@@ -414,7 +414,7 @@ pub unsafe extern "C" fn gos_rt_encoding_base32_encode_string(s: *const c_char) 
     })
 }
 
-/// `encoding::base32::decode_string(s)` — returns `Result<String,
+/// `encoding::base32::decode_string(s)` - returns `Result<String,
 /// errors::Error>`. The `GosResult` disc is 0 for `Ok`, 1 for `Err`;
 /// the payload is a c-string pointer (decoded text or error message).
 #[unsafe(no_mangle)]
@@ -434,7 +434,7 @@ pub unsafe extern "C" fn gos_rt_encoding_base32_decode_string(s: *const c_char) 
 }
 
 // ---------------------------------------------------------------
-// encoding::ascii85 (Adobe ASCII85 / btoa) — mirrors
+// encoding::ascii85 (Adobe ASCII85 / btoa) - mirrors
 // gossamer_std::encoding::ascii85 exactly.
 // ---------------------------------------------------------------
 
@@ -544,7 +544,7 @@ pub unsafe extern "C" fn gos_rt_encoding_ascii85_decode(s: *const c_char) -> i12
 }
 
 // ---------------------------------------------------------------
-// encoding::binary — fixed-width put/get + varint decode.
+// encoding::binary - fixed-width put/get + varint decode.
 // The `put_*` shims mirror the VM builtin shape: the first
 // argument (a buffer) is ignored; a fresh byte vector is returned.
 // ---------------------------------------------------------------

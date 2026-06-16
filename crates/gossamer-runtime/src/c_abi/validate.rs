@@ -8,7 +8,7 @@
 // established convention here.
 #![allow(clippy::wildcard_imports)]
 
-//! Runtime support for `std::validate` — the `FieldError` and
+//! Runtime support for `std::validate` - the `FieldError` and
 //! `Errors` data handles (the trait-driven surface is documented as a
 //! follow-up; see the module note in the interp builtin).
 //!
@@ -39,7 +39,7 @@ fn cstr_to_string(p: *const c_char) -> String {
 }
 
 // ---------------------------------------------------------------
-// validate::FieldError — a single field-level failure
+// validate::FieldError - a single field-level failure
 // ---------------------------------------------------------------
 
 /// Opaque heap handle for one field-level validation failure.
@@ -66,7 +66,7 @@ pub unsafe extern "C" fn gos_rt_field_error_new(
     })
 }
 
-/// `fe.path()` — the field path, as a fresh runtime c-string.
+/// `fe.path()` - the field path, as a fresh runtime c-string.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_field_error_path(fe: *mut GosFieldError) -> *mut c_char {
     ffi_entry!(std::ptr::null_mut(), {
@@ -77,7 +77,7 @@ pub unsafe extern "C" fn gos_rt_field_error_path(fe: *mut GosFieldError) -> *mut
     })
 }
 
-/// `fe.message()` — the failure message, as a fresh runtime c-string.
+/// `fe.message()` - the failure message, as a fresh runtime c-string.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_field_error_message(fe: *mut GosFieldError) -> *mut c_char {
     ffi_entry!(std::ptr::null_mut(), {
@@ -88,7 +88,7 @@ pub unsafe extern "C" fn gos_rt_field_error_message(fe: *mut GosFieldError) -> *
     })
 }
 
-/// `fe.code()` — the machine-readable rule code, as a fresh
+/// `fe.code()` - the machine-readable rule code, as a fresh
 /// runtime c-string.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_field_error_code(fe: *mut GosFieldError) -> *mut c_char {
@@ -101,7 +101,7 @@ pub unsafe extern "C" fn gos_rt_field_error_code(fe: *mut GosFieldError) -> *mut
 }
 
 // ---------------------------------------------------------------
-// validate::Errors — per-field collection of failures
+// validate::Errors - per-field collection of failures
 // ---------------------------------------------------------------
 
 /// Opaque heap handle: all failures for one struct, keyed by field
@@ -121,7 +121,7 @@ pub unsafe extern "C" fn gos_rt_validate_errors_new() -> *mut GosErrors {
     })
 }
 
-/// `errs.add(field, fe)` — append a copy of `fe` to `field`'s list.
+/// `errs.add(field, fe)` - append a copy of `fe` to `field`'s list.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_validate_errors_add(
     errs: *mut GosErrors,
@@ -142,7 +142,7 @@ pub unsafe extern "C" fn gos_rt_validate_errors_add(
     });
 }
 
-/// `errs.is_empty()` — `1` when no failures recorded, else `0`.
+/// `errs.is_empty()` - `1` when no failures recorded, else `0`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_validate_errors_is_empty(errs: *mut GosErrors) -> i64 {
     ffi_entry!(1, {
@@ -153,7 +153,7 @@ pub unsafe extern "C" fn gos_rt_validate_errors_is_empty(errs: *mut GosErrors) -
     })
 }
 
-/// `errs.len()` — total `FieldError` count across every field.
+/// `errs.len()` - total `FieldError` count across every field.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_validate_errors_len(errs: *mut GosErrors) -> i64 {
     ffi_entry!(0, {
@@ -168,7 +168,7 @@ pub unsafe extern "C" fn gos_rt_validate_errors_len(errs: *mut GosErrors) -> i64
     })
 }
 
-/// `errs.count(field)` — number of failures recorded for `field`.
+/// `errs.count(field)` - number of failures recorded for `field`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_validate_errors_count(
     errs: *mut GosErrors,
@@ -186,7 +186,7 @@ pub unsafe extern "C" fn gos_rt_validate_errors_count(
     })
 }
 
-/// `errs.get(field)` — the field's messages joined with `"; "`, or
+/// `errs.get(field)` - the field's messages joined with `"; "`, or
 /// `""` when the field has no recorded failures.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_validate_errors_get(
@@ -212,7 +212,7 @@ pub unsafe extern "C" fn gos_rt_validate_errors_get(
     })
 }
 
-/// `errs.collect()` — every failure rendered `field: message`,
+/// `errs.collect()` - every failure rendered `field: message`,
 /// sorted by field, joined with `"; "`. Mirrors the
 /// `gossamer_std::validate::Errors` `Display` impl.
 #[unsafe(no_mangle)]

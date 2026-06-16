@@ -3,7 +3,7 @@ source: crates/gossamer-diagnostics/tests/snapshots.rs
 expression: rendered
 ---
 --- plain ---
-error[GP0015]: Two consecutive tokens formed something the parser does not — here
+error[GP0015]: Two consecutive tokens formed something the parser does not - here
 --- framed ---
 error[GP0015]: Two consecutive tokens formed something the parser does not
   --> snap.gos:2:5

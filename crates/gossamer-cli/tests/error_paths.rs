@@ -160,7 +160,7 @@ fn assert_three_tier_parity(tag: &str, source: &str, expected: &str) {
 
 #[test]
 fn question_mark_propagation_through_nested_callers() {
-    // `?` propagation across multiple frame depths — the canonical
+    // `?` propagation across multiple frame depths - the canonical
     // shape from the existing example, repinned here as a five-
     // deep call chain so an early-return regression at any frame
     // surfaces.
@@ -230,7 +230,7 @@ fn map_err_closure_translates_error_payload() {
     // (see `release_stability_gauge.md`) where the closure
     // handle wasn't wrapped properly and the `Err` arm came
     // through with garbage. The closure here captures `prefix`
-    // and tags the error message — a regression in the closure-
+    // and tags the error message - a regression in the closure-
     // handle wrapping shows up as missing prefix or extra null.
     // Capturing closure that scales an error code by a captured
     // factor. The 2026-04-30 release-stability fix wrapped the
@@ -302,7 +302,7 @@ fn main() {
 #[test]
 fn nested_question_mark_through_option_and_result() {
     // Mixed Option/Result `?` propagation. The regression class
-    // is "discriminant arm picked the wrong handler" — Option's
+    // is "discriminant arm picked the wrong handler" - Option's
     // `None` early-return must produce the *outer* function's
     // return type, not the inner Option's.
     let src = r#"

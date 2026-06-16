@@ -33,7 +33,7 @@ fn main() {
 
     // NOT ELIGIBLE: `kept` is an outer binding that accumulates trees
     // across iterations (escapes the loop body), so the loop must NOT be
-    // regioned — the trees have to survive. A wrong escape decision here
+    // regioned - the trees have to survive. A wrong escape decision here
     // would free `kept`'s nodes mid-build.
     let mut kept: Vec<Tree> = []
     let mut j: i64 = 0

@@ -18,7 +18,7 @@ Reverse proxy on top of http::Client. Director-style request mutator + hop-by-ho
 
 The whole proxy shape is expressible directly on the `std::http`
 surface: forward the inbound `raw_body` and headers upstream, relay the
-upstream response back. Two modes cover the spectrum — buffered (whole
+upstream response back. Two modes cover the spectrum - buffered (whole
 response in memory, simplest) and streamed (chunked passthrough, no
 buffering).
 
@@ -70,7 +70,7 @@ being chased by the proxy.
 ### Streamed forward
 
 `http::stream` + `Response::stream` connect the upstream body straight
-to the downstream socket as chunked frames — no buffering, first bytes
+to the downstream socket as chunked frames - no buffering, first bytes
 flow immediately:
 
 ```text
@@ -84,7 +84,7 @@ fn forward_stream(method: String, target: String, body: String,
 ```
 
 In stream mode, ask the upstream for an identity body
-(`("Accept-Encoding", "identity")`) — the proxy relays bytes it does not
+(`("Accept-Encoding", "identity")`) - the proxy relays bytes it does not
 decode.
 
 ### The handler
@@ -108,6 +108,6 @@ fn main() {
 }
 ```
 
-A complete worked proxy — path-prefix routing, gzip/brotli decode in
-buffered mode, streaming flag, CLI parsing — ships as the `locurlfwd`
+A complete worked proxy - path-prefix routing, gzip/brotli decode in
+buffered mode, streaming flag, CLI parsing - ships as the `locurlfwd`
 port; the same pattern at production size.

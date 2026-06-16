@@ -1,4 +1,4 @@
-//! Runtime support for `std::tls` — TLS termination and dialling.
+//! Runtime support for `std::tls` - TLS termination and dialling.
 //! Backed by [`rustls`] + the Mozilla root-CA bundle from
 //! `webpki-roots`.
 //!
@@ -196,7 +196,7 @@ pub fn server_config_with_client_auth(
 
 /// Sets the ALPN protocol list negotiated with each connecting
 /// client. Standard values: `b"h2"`, `b"http/1.1"`. Returns a fresh
-/// [`ServerConfig`] — the input is not mutated.
+/// [`ServerConfig`] - the input is not mutated.
 #[must_use]
 pub fn server_with_alpn(config: ServerConfig, protocols: &[&[u8]]) -> ServerConfig {
     let mut inner = (*config.inner).clone();

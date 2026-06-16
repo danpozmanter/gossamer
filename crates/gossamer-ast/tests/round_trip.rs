@@ -1,6 +1,6 @@
 //! Stability tests: build an AST, print twice, assert the outputs match.
 //! Until a parser is available, a proxy for round-tripping is printing the
-//! same AST twice and asserting byte equality — this confirms the printer is
+//! same AST twice and asserting byte equality - this confirms the printer is
 //! deterministic and that repeated renders produce identical output.
 
 #![forbid(unsafe_code)]

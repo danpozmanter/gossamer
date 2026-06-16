@@ -1,7 +1,7 @@
 // Struct / tuple values as HashMap and HashSet keys. The VM keys aggregates by
 // value (recursively); the compiled tiers key by the aggregate's content (via a
 // per-slot layout descriptor that dereferences `String` fields), so two equal
-// values at distinct allocations share a slot on every tier — flat structs,
+// values at distinct allocations share a slot on every tier - flat structs,
 // `String`-field structs, nested structs, and tuples alike.
 
 use std::collections::HashMap
@@ -23,7 +23,7 @@ fn get_or(m: &HashMap<Point, i64>, k: &Point) -> i64 {
     }
 }
 
-// Length after inserting two equal-valued keys (one slot) — for the tests,
+// Length after inserting two equal-valued keys (one slot) - for the tests,
 // which can't name `super::Point` inside a generic argument.
 fn equal_keys_len() -> i64 {
     let mut m: HashMap<Point, i64> = HashMap::new()

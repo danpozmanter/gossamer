@@ -351,7 +351,7 @@ fn main() {
 /// &[a, b, c].to_vec())` reached the runtime via the
 /// literal-array `.to_vec()` shape (not the empty-array +
 /// push pattern). Two distinct root causes converged here:
-/// 1. `exec::run` had no compiled-tier binding — the call
+/// 1. `exec::run` had no compiled-tier binding - the call
 ///    fell through to a non-existent symbol and the
 ///    destination held an undefined Result pointer.
 /// 2. `[a, b, c].to_vec()` lowered to
@@ -385,7 +385,7 @@ fn main() {
     assert_eq!(
         run.2,
         Some(0),
-        "process aborted (likely the [..].to_vec() segfault) — stdout: {:?}, stderr: {:?}",
+        "process aborted (likely the [..].to_vec() segfault) - stdout: {:?}, stderr: {:?}",
         run.0,
         run.1,
     );
@@ -538,7 +538,7 @@ fn main() {
 
 /// Regression for the askq tool-call accumulator. The compiled
 /// chat round did `tc_names[idx] = s` where `idx` came from
-/// `json::as_i64(v).unwrap_or(0)` — both pieces were broken in
+/// `json::as_i64(v).unwrap_or(0)` - both pieces were broken in
 /// compiled mode:
 /// 1. `Vec<String>[idx] = s` assignment was a no-op (the projection
 ///    machinery treated the Vec as a flat array; the data lives at
@@ -610,7 +610,7 @@ fn main() {
     assert_eq!(
         run.2,
         Some(0),
-        "process aborted — stdout: {:?}, stderr: {:?}",
+        "process aborted - stdout: {:?}, stderr: {:?}",
         run.0,
         run.1,
     );
@@ -732,7 +732,7 @@ fn main() {
 fn test_runner_assertions_persist_after_jit_warmup() {
     // First test runs a regex-heavy body that triggers the JIT.
     // Subsequent string-comparing assertions must continue to be
-    // observed and counted against each test's tally — otherwise
+    // observed and counted against each test's tally - otherwise
     // the runner reports a false PASS with 0 assertions for any
     // test that ran after the JIT became hot.
     let src = r#"
@@ -861,7 +861,7 @@ fn param_named_client_with_user_type_is_not_tagged_as_http_client() {
     // `fn render(client: User)`: the param is *user-typed* but
     // its name collides with the stdlib heuristic. Previously
     // the MIR tagged `client`'s local with `http::Client`, and
-    // any method dispatched through `gos_rt_http_client_*` —
+    // any method dispatched through `gos_rt_http_client_*` -
     // reading bytes past the user struct. The heuristic now only
     // applies when the parameter's declared type is unresolved.
     let src = r#"
@@ -1197,7 +1197,7 @@ fn main() {}
 /// fix the pass only saw `callee` / `receiver`, so a literal
 /// passed directly to a builtin (e.g. `println!("hello")`,
 /// `println!(42)`, `format!("{}", "x")`) had its `LoadConst`
-/// dropped — the call then read `Value::Void` from the
+/// dropped - the call then read `Value::Void` from the
 /// not-yet-written argument slot. The user-visible symptom was
 /// `<void>` printed instead of the literal.
 #[test]

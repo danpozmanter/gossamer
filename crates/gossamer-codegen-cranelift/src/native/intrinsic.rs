@@ -75,7 +75,7 @@
 //! the process exit code, so the object file links through a
 //! standard `cc` invocation.
 //! Aggregates (tuples/arrays/structs), strings, closures, and
-//! anything that needs a GC heap are not yet lowered — those
+//! anything that needs a GC heap are not yet lowered - those
 //! constructs fall back to [`crate::emit::emit_module`] for
 //! inspection.
 
@@ -326,7 +326,7 @@ impl IntrinsicContext {
     /// Declares an imported `gos_rt_*` C-ABI function using the
     /// typed signature from the ABI registry.
     ///
-    /// Panics if `name` is not in the registry — this turns typos in
+    /// Panics if `name` is not in the registry - this turns typos in
     /// symbol names into a build-time panic instead of a silent
     /// wrong-code or segfault at runtime.
     pub(super) fn extern_fn_by_name(
@@ -338,7 +338,7 @@ impl IntrinsicContext {
             return Ok(id);
         }
         let entry = gossamer_abi::lookup(name).unwrap_or_else(|| {
-            panic!("extern_fn_by_name: unknown runtime symbol {name:?} — add it to gossamer-abi/src/registry.rs")
+            panic!("extern_fn_by_name: unknown runtime symbol {name:?} - add it to gossamer-abi/src/registry.rs")
         });
         let mut sig = module.make_signature();
         for abi_ty in entry.sig.params {

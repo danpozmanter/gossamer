@@ -1,4 +1,4 @@
-//! Runtime support for `std::archive` — archive format readers and writers.
+//! Runtime support for `std::archive` - archive format readers and writers.
 
 #![forbid(unsafe_code)]
 

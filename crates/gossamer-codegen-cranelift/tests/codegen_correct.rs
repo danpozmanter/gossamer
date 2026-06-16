@@ -159,7 +159,7 @@ fn collect_programs() -> Vec<PathBuf> {
 /// a representative slice of the codegen-correct corpus without
 /// shelling out to `gos build --release` for every entry. The
 /// `GOSSAMER_TESTS_FULL=1` env var (set by `exhaustive_test.sh`)
-/// short-circuits the stride and runs the whole suite — the same
+/// short-circuits the stride and runs the whole suite - the same
 /// flag is also consulted by the parity tests in
 /// `crates/gossamer-cli/tests/parity.rs`.
 fn sample_programs(all: Vec<PathBuf>) -> Vec<PathBuf> {
@@ -167,7 +167,7 @@ fn sample_programs(all: Vec<PathBuf>) -> Vec<PathBuf> {
         return all;
     }
     // Stride 8 over the alphabetically-sorted list yields ~13 of
-    // the 101 programs — enough variety to catch a regression
+    // the 101 programs - enough variety to catch a regression
     // touching most lowering paths, fast enough that the test
     // routinely finishes inside ~30 seconds on a laptop.
     all.into_iter().step_by(8).collect()

@@ -114,7 +114,7 @@ pub(crate) fn install_html(globals: &mut Vec<(&'static str, Value)>) {
         ],
         globals,
     );
-    // `html::template::render_json(source, json_data)` — the
+    // `html::template::render_json(source, json_data)` - the
     // stateless cross-tier template renderer. Registered under its
     // fully-qualified path so the resolver's `html::template::render_json`
     // call binds here, matching the compiled tier's shim.

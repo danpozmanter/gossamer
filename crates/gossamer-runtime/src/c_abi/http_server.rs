@@ -48,7 +48,7 @@ const RESPONSE_413_BYTES: &[u8] =
 // Upper bound on a request body, Content-Length-declared or
 // de-chunked. Parity source of truth: the interp server's
 // `Config::default().max_body_bytes` (gossamer-std/src/http.rs,
-// 1 MiB) — interp `http::serve` builds that default config
+// 1 MiB) - interp `http::serve` builds that default config
 // (gossamer-interp builtins.rs, `http_std::server::Config::default()`)
 // with no Gossamer-level or env override, so the compiled tier
 // enforces the same fixed cap. Also keeps `header_end +
@@ -62,7 +62,7 @@ const MAX_REQUEST_BODY_BYTES: usize = 1024 * 1024;
 const MAX_CHUNK_SIZE_LINE_BYTES: usize = 1024;
 
 // Cap on the trailer block after the terminal 0-chunk. Mirrors the
-// interp server's 8 KiB `max_header_bytes` header-block cap —
+// interp server's 8 KiB `max_header_bytes` header-block cap -
 // trailers are headers.
 const MAX_TRAILER_BYTES: usize = 8 * 1024;
 
@@ -135,7 +135,7 @@ const DEFAULT_HTTP_MAX_CONN: usize = 4096;
 
 fn http_max_conn() -> usize {
     static CACHE: AtomicUsize = AtomicUsize::new(0);
-    // Sentinel 0 means "not yet read" — the cap can never legally
+    // Sentinel 0 means "not yet read" - the cap can never legally
     // be zero (that would refuse every connection). Resolve once
     // per process and cache.
     let cached = CACHE.load(Ordering::Relaxed);
@@ -154,7 +154,7 @@ fn http_max_conn() -> usize {
 const RESPONSE_503_BYTES: &[u8] =
     b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
 
-/// Packs an `Err(errors::Error)` runtime `Result` carrying `msg` —
+/// Packs an `Err(errors::Error)` runtime `Result` carrying `msg` -
 /// the bind-failure value `gos_rt_http_serve` and
 /// `gos_rt_http2_bind_and_run_h2c` hand back to the caller's
 /// `Result<(), http::Error>` match.
@@ -170,7 +170,7 @@ fn http_serve_err_result(msg: &str) -> i128 {
 /// `200 OK\r\n\r\nok` when `handler_fn` is null (legacy stub).
 ///
 /// Returns the Gossamer-visible `Result<(), http::Error>`: a
-/// packed `Err` when the address cannot be bound (interp parity —
+/// packed `Err` when the address cannot be bound (interp parity -
 /// the VM hands the same `Err` to the caller's match), or a packed
 /// `Ok(())` if the accept loop ever exits (graceful shutdown).
 ///
@@ -217,11 +217,11 @@ pub unsafe extern "C-unwind" fn gos_rt_http_serve(
         // empty or full, the goroutine parks via
         // [`crate::sched_global::wait_io`] and the worker thread is
         // freed to run other goroutines. The netpoller wakes the
-        // waker when the kernel reports readiness — the same shape as
+        // waker when the kernel reports readiness - the same shape as
         // Go's `netpoll`.
         //
         // When [`crate::sched_global::try_spawn`] refuses (live-
-        // goroutine cap reached — default 1M, set by
+        // goroutine cap reached - default 1M, set by
         // `GOSSAMER_MAX_GOROUTINES`), the connection is dropped and
         // the refusal is logged to stderr. Hitting that cap means
         // something pathological is happening upstream, so refusing
@@ -242,7 +242,7 @@ pub unsafe extern "C-unwind" fn gos_rt_http_serve(
         // worker and are not supported under this server. Keep
         // handlers CPU-bound; offload blocking work to a separate
         // goroutine and pass results back via a channel.
-        // Thread-per-connection — matches Go's `net/http` shape.
+        // Thread-per-connection - matches Go's `net/http` shape.
         // Each accepted socket gets a dedicated OS thread that runs
         // `handle_http_conn` to completion (blocking reads/writes
         // are safe because they only stall their own thread, not a
@@ -283,7 +283,7 @@ pub unsafe extern "C-unwind" fn gos_rt_http_serve(
             let current = HTTP_ACTIVE_CONNS.fetch_add(1, Ordering::AcqRel);
             if current >= cap {
                 HTTP_ACTIVE_CONNS.fetch_sub(1, Ordering::AcqRel);
-                // Best-effort 503 + close; ignore write errors —
+                // Best-effort 503 + close; ignore write errors -
                 // the client might already be gone.
                 let mut stream = stream;
                 use std::io::Write;
@@ -294,7 +294,7 @@ pub unsafe extern "C-unwind" fn gos_rt_http_serve(
             // Spawn a dedicated OS thread for this connection. On
             // EAGAIN (extremely rare; would mean the system is out
             // of thread quota), roll back the cap counter and drop
-            // the socket — the kernel will RST it.
+            // the socket - the kernel will RST it.
             let spawn_result = std::thread::Builder::new()
                 .name("gos-http-conn".to_string())
                 .spawn(move || {
@@ -310,7 +310,7 @@ pub unsafe extern "C-unwind" fn gos_rt_http_serve(
         }
     }
     // The accept loop exited: graceful shutdown request or a fatal
-    // listener error. Either way the server ran — report `Ok(())`,
+    // listener error. Either way the server ran - report `Ok(())`,
     // matching the interp's `bind_and_run` return shape.
     super::vec::pack_result(0, 0)
 }
@@ -318,7 +318,7 @@ pub unsafe extern "C-unwind" fn gos_rt_http_serve(
 type HandlerFn = unsafe extern "C" fn(env: *mut u8, req: *mut GosHttpRequest) -> i128;
 
 /// HTTP/2 cleartext server. Mirror of [`gos_rt_http_serve`] for
-/// HTTP/2 — the MIR lowerer emits this call when the compiled
+/// HTTP/2 - the MIR lowerer emits this call when the compiled
 /// program invokes `http2::bind_and_run_h2c(addr, app, config)`.
 /// The h2 server implementation lives in
 /// [`crate::http2_server`]; this thunk just adapts the C-ABI
@@ -343,7 +343,7 @@ pub unsafe extern "C" fn gos_rt_http2_bind_and_run_h2c(
 }
 
 /// Pulls one read's worth of bytes into `accum`. Returns `false`
-/// on clean EOF or a socket error — the caller closes the
+/// on clean EOF or a socket error - the caller closes the
 /// connection.
 fn read_more(conn: &mut HttpConn, accum: &mut Vec<u8>, buf: &mut [u8]) -> bool {
     match conn.read(buf) {
@@ -369,14 +369,14 @@ fn handle_http_conn(conn: &mut HttpConn, env_addr: usize, fn_addr: usize) {
         // Consume the body too: `req_end` covers the header section
         // plus the body bytes (Content-Length-declared, or the full
         // chunked frame). Anything past it is the next pipelined
-        // request — keep it in `accum` for the next iteration.
+        // request - keep it in `accum` for the next iteration.
         let mut chunked_req: Option<ChunkedRequest> = None;
         let req_end;
         if transfer_encoding_is_chunked(&accum[..header_end]) {
             // RFC 9112 §6.3.3 + interp-server parity (gossamer-std
             // http.rs `read_request_body`): a request carrying both
             // `Transfer-Encoding: chunked` and `Content-Length` is
-            // request-smuggling-shaped — reject it.
+            // request-smuggling-shaped - reject it.
             if header_value(&accum[..header_end], b"content-length").is_some() {
                 let _ = conn.write_all(RESPONSE_400_BYTES);
                 return;
@@ -437,7 +437,7 @@ fn handle_http_conn(conn: &mut HttpConn, env_addr: usize, fn_addr: usize) {
             if !parsed {
                 // Malformed request: send 400 and close. Keeping
                 // the connection open after an unparseable request
-                // is unsafe — we don't know how many bytes the
+                // is unsafe - we don't know how many bytes the
                 // bogus request claimed, so the next request would
                 // be misaligned. The connection will be reopened
                 // by the client.
@@ -461,7 +461,7 @@ fn handle_http_conn(conn: &mut HttpConn, env_addr: usize, fn_addr: usize) {
             if let Some(handle) = streamed_ok_handle(result_ptr) {
                 // Streamed response (`Response::stream`): write the
                 // head, then drain the upstream reader straight to
-                // the connection in chunked frames — no buffering.
+                // the connection in chunked frames - no buffering.
                 extract_stream_head_into(result_ptr, &mut scratch.response_buf);
                 unsafe { drop_handler_result(result_ptr) };
                 unsafe { gos_rt_gc_reset() };
@@ -471,7 +471,7 @@ fn handle_http_conn(conn: &mut HttpConn, env_addr: usize, fn_addr: usize) {
                 if !drain_stream_chunked(conn, handle) {
                     // Mid-stream failure: close WITHOUT the terminal
                     // frame so the client detects truncation
-                    // (RFC 7230 §4.1 — an unterminated chunked body
+                    // (RFC 7230 §4.1 - an unterminated chunked body
                     // is incomplete). Mirrors the std server.
                     return;
                 }
@@ -519,7 +519,7 @@ impl HttpConn {
     fn wrap(stream: TcpStream) -> Option<Self> {
         // Blocking I/O on the std fd. Compiled-mode HTTP runs each
         // connection on a dedicated OS thread (see `gos_rt_http_serve`),
-        // so blocking reads are fine — they only stall the per-
+        // so blocking reads are fine - they only stall the per-
         // connection thread, not a shared goroutine pool. The mio
         // clone is retained so any other path that needs non-blocking
         // semantics can still register it with the netpoller.
@@ -618,7 +618,7 @@ pub(crate) unsafe fn drop_handler_result(result: i128) {
         }
     }
     // Result is now a 2-word by-value `i128` (no heap box), so there is
-    // nothing to free here — this is exactly the per-request box leak that
+    // nothing to free here - this is exactly the per-request box leak that
     // the by-value representation eliminated everywhere.
 }
 
@@ -640,7 +640,7 @@ fn header_value<'a>(header_section: &'a [u8], name: &[u8]) -> Option<&'a [u8]> {
 }
 
 /// Parses the `Content-Length` value out of a raw header section.
-/// Returns 0 when the header is absent or unparseable — the
+/// Returns 0 when the header is absent or unparseable - the
 /// no-body fast path.
 fn content_length(header_section: &[u8]) -> usize {
     header_value(header_section, b"content-length")
@@ -662,7 +662,7 @@ fn transfer_encoding_is_chunked(header_section: &[u8]) -> bool {
 /// A fully decoded inbound chunked request, ready for dispatch.
 struct ChunkedRequest {
     /// One past the final CRLF of the chunked frame in the
-    /// accumulator — everything beyond it is the next pipelined
+    /// accumulator - everything beyond it is the next pipelined
     /// request and must stay in the accumulator.
     raw_end: usize,
     /// Canonical rewrite of the request: the original header
@@ -678,7 +678,7 @@ struct ChunkedRequest {
 
 /// Outcome of scanning the accumulator for a complete chunked frame.
 enum ChunkedAssembly {
-    /// The frame has not terminated yet — read more bytes.
+    /// The frame has not terminated yet - read more bytes.
     Incomplete,
     /// Protocol violation or cap breach: write these response
     /// bytes and close the connection.
@@ -703,7 +703,7 @@ fn find_crlf(buf: &[u8], from: usize, cap: usize) -> Option<usize> {
 /// `accum` (RFC 7230 §4.1): hex size lines with optional ignored
 /// chunk extensions, CRLF-framed data, terminal 0-chunk, then a
 /// trailer block up to a blank line. The decoded body is capped at
-/// `max_body` — declared chunk sizes count against the cap the
+/// `max_body` - declared chunk sizes count against the cap the
 /// moment the size line is parsed, so a hostile declaration is
 /// rejected before its data arrives. The still-encoded frame is
 /// capped at [`MAX_CHUNKED_RAW_BYTES`] while incomplete.
@@ -780,7 +780,7 @@ fn assemble_chunked_request(accum: &[u8], header_end: usize, max_body: usize) ->
                         header_end: canonical_header_end,
                     });
                 }
-                // Trailer lines without a colon are ignored —
+                // Trailer lines without a colon are ignored -
                 // interp `read_trailers_block` parity.
                 if let Ok(text) = std::str::from_utf8(&accum[pos..line_end])
                     && let Some((name, value)) = text.split_once(':')
@@ -891,7 +891,7 @@ pub(crate) fn normalize_header_bag(headers: &mut Vec<(String, String)>) {
 }
 
 /// A header value is safe to write only if it carries no CR, LF, or
-/// NUL — the bytes that would terminate the line and split the
+/// NUL - the bytes that would terminate the line and split the
 /// response. Mirrors the interpreter server's gate.
 fn is_valid_header_value(value: &str) -> bool {
     !value.bytes().any(|b| b == b'\r' || b == b'\n' || b == 0)
@@ -920,7 +920,7 @@ pub(crate) fn extract_response_into(result: i128, out: &mut Vec<u8>) -> bool {
     let response = unsafe { &*response_ptr };
     // Streamed responses are handled by the h1 server's chunked
     // drain before this function is reached. Callers that buffer
-    // (the h2c bridge) serve the empty `body` instead — release the
+    // (the h2c bridge) serve the empty `body` instead - release the
     // pending reader here so the upstream connection closes rather
     // than leaking in the registry, matching the interp tier.
     if response.stream_handle >= 0 {
@@ -947,7 +947,7 @@ pub(crate) fn extract_response_into(result: i128, out: &mut Vec<u8>) -> bool {
     let mut has_content_type = false;
     for (k, v) in &response.headers {
         // Never emit a header whose name or value carries a CR, LF, or
-        // NUL — those bytes would split the response and let an attacker
+        // NUL - those bytes would split the response and let an attacker
         // inject headers or a body (HTTP response splitting). Drop the
         // malformed header rather than write it, matching the interp
         // server so untrusted input reflected into a header or cookie
@@ -1009,7 +1009,7 @@ fn streamed_ok_handle(result: i128) -> Option<i64> {
 /// `Transfer-Encoding: chunked` + keep-alive) into `out`. Handler
 /// headers are honored with the same content-type precedence as
 /// `extract_response_into`; any handler-set `Content-Length` or
-/// `Transfer-Encoding` is dropped — chunked framing is unconditional
+/// `Transfer-Encoding` is dropped - chunked framing is unconditional
 /// and RFC 7230 §3.3.3 forbids carrying both.
 fn extract_stream_head_into(result: i128, out: &mut Vec<u8>) {
     let response_ptr = super::vec::gos_rt_result_payload(result) as *const GosHttpResponse;
@@ -1022,7 +1022,7 @@ fn extract_stream_head_into(result: i128, out: &mut Vec<u8>) {
     out.extend_from_slice(b"\r\n");
     let mut has_content_type = false;
     for (k, v) in &response.headers {
-        // Drop CR/LF/NUL-bearing headers — see `extract_response_into`.
+        // Drop CR/LF/NUL-bearing headers - see `extract_response_into`.
         if !is_valid_header_name(k) || !is_valid_header_value(v) {
             continue;
         }
@@ -1032,7 +1032,7 @@ fn extract_stream_head_into(result: i128, out: &mut Vec<u8>) {
         if k.eq_ignore_ascii_case("content-type") {
             has_content_type = true;
         }
-        // Lowercase wire casing — same rule as `extract_response_into`.
+        // Lowercase wire casing - same rule as `extract_response_into`.
         out.extend_from_slice(k.to_ascii_lowercase().as_bytes());
         out.extend_from_slice(b": ");
         out.extend_from_slice(v.as_bytes());
@@ -1053,7 +1053,7 @@ fn extract_stream_head_into(result: i128, out: &mut Vec<u8>) {
 /// Drains the pending stream for `handle` to `conn` as chunked
 /// frames of at most 8 KiB (`{len:x}\r\n{bytes}\r\n`), ending with
 /// the `0\r\n\r\n` terminal frame on clean EOF. Returns `false` on
-/// any failure — the caller closes the connection without the
+/// any failure - the caller closes the connection without the
 /// terminal frame so the client sees the truncation. A handle that
 /// was already served (or never registered) drains as an empty
 /// chunked body, matching the interp tier.
@@ -1082,7 +1082,7 @@ fn drain_stream_chunked(conn: &mut HttpConn, handle: i64) -> bool {
 }
 
 /// Maps a status code to its canonical reason phrase.
-/// Falls back to `"OK"` for unknown codes — caller is
+/// Falls back to `"OK"` for unknown codes - caller is
 /// expected to use a sensible status; this is best-effort.
 const fn status_reason(status: i64) -> &'static str {
     match status {
@@ -1394,7 +1394,7 @@ mod tests {
         expected.extend_from_slice(b"\r\n0\r\n\r\n");
         assert_eq!(raw, expected, "exact chunked framing with terminal frame");
 
-        // The handle was taken at serve time — a second drain answers
+        // The handle was taken at serve time - a second drain answers
         // only the terminal frame (empty chunked body).
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
@@ -1490,7 +1490,7 @@ mod tests {
             b"POST / HTTP/1.1\r\ntransfer-encoding:chunked\r\n\r\n"
         ));
         // Multi-coding values are not "chunked" on the interp tier
-        // (whole-value match) — same here.
+        // (whole-value match) - same here.
         assert!(!transfer_encoding_is_chunked(
             b"POST / HTTP/1.1\r\nTransfer-Encoding: gzip, chunked\r\n\r\n"
         ));
@@ -1642,7 +1642,7 @@ mod tests {
     fn chunked_assembly_rejects_runaway_raw_framing() {
         // Endless 1-byte chunks with no terminal frame: the decoded
         // size stays under the cap, but the raw frame keeps growing
-        // — the raw cap must stop it while still Incomplete.
+        // - the raw cap must stop it while still Incomplete.
         let mut raw = chunked_head();
         let header_end = raw.len();
         while raw.len() - header_end <= MAX_CHUNKED_RAW_BYTES {
@@ -1716,7 +1716,7 @@ mod tests {
         let responses = text.matches("HTTP/1.1 ").count();
         assert_eq!(
             responses, 2,
-            "one response per request — chunked body must not be misparsed as a pipelined request: {text}"
+            "one response per request - chunked body must not be misparsed as a pipelined request: {text}"
         );
         assert!(
             text.contains("len=9;body=Wikipedia;trailer=tval"),
@@ -1763,7 +1763,7 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)] // network round-trip: Miri has no socket syscalls
     fn declared_chunk_over_cap_rejected_413_mid_stream() {
-        // The hostile size line alone triggers the reject — the
+        // The hostile size line alone triggers the reject - the
         // server must not wait for (or buffer) the declared body.
         let mut wire = chunked_head();
         wire.extend_from_slice(format!("{:x}\r\nAA", MAX_REQUEST_BODY_BYTES + 1).as_bytes());
@@ -1809,7 +1809,7 @@ mod tests {
         let mut out = Vec::new();
         assert!(extract_response_into(result, &mut out));
         unsafe { drop_handler_result(result) };
-        // Raw bytes — no case folding before the assertions.
+        // Raw bytes - no case folding before the assertions.
         let text = String::from_utf8_lossy(&out).into_owned();
         assert!(text.contains("x-custom-thing: v\r\n"), "wire: {text}");
         assert!(!text.contains("X-Custom-Thing"), "wire: {text}");

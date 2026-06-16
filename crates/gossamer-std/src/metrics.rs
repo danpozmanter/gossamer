@@ -217,7 +217,7 @@ impl Histogram {
     }
 
     /// Returns a snapshot of `(upper_bound, cumulative_count)` pairs
-    /// for every configured bucket (the `+Inf` bucket is omitted —
+    /// for every configured bucket (the `+Inf` bucket is omitted -
     /// callers can read it from `count()`).
     #[must_use]
     pub fn buckets(&self) -> Vec<(f64, u64)> {
@@ -274,7 +274,7 @@ impl From<Histogram> for Metric {
 }
 
 /// Holds a collection of metrics and renders them in Prometheus
-/// text exposition format. Cheap to clone — internally an
+/// text exposition format. Cheap to clone - internally an
 /// `Arc<Mutex<Vec<Metric>>>`.
 #[derive(Clone, Default)]
 pub struct Registry {

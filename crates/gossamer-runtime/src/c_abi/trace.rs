@@ -4,7 +4,7 @@
 #![allow(clippy::cast_sign_loss)]
 #![allow(dead_code)]
 
-//! Runtime support for `std::trace` — the explicit Tracer / Span
+//! Runtime support for `std::trace` - the explicit Tracer / Span
 //! handle surface and OTLP JSON export.
 //!
 //! `Tracer`, `Span`, and `EndedSpan` are opaque heap handles
@@ -16,7 +16,7 @@
 //! Cross-tier determinism: trace / span identifiers are minted from a
 //! process-global counter (not asserted by any fixture) and span
 //! timestamps are zeroed, so the serialized OTLP JSON differs from
-//! the VM tier only in the unguessable id fields — the asserted
+//! the VM tier only in the unguessable id fields - the asserted
 //! substrings (span name, attribute key/value) are identical on every
 //! tier. The implicit `thread_local` active-span stack from
 //! `gossamer_std::trace` is intentionally not wired: goroutines run

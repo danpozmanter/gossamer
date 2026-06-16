@@ -5,16 +5,16 @@
 //! The renderer is hand-rolled (no external templating crate) and
 //! supports the subset of placeholders we need:
 //!
-//! - `{{ key }}` — substituted with the value of `key` on the
+//! - `{{ key }}` - substituted with the value of `key` on the
 //!   render input.
-//! - `{{#each bindings}} … {{/each}}` — repeated once per binding,
+//! - `{{#each bindings}} … {{/each}}` - repeated once per binding,
 //!   with `{{ this.<field> }}` resolving against the entry.
 //!
 //! The two binding-entry fields the templates use are:
 //!
-//! - `cargo_dep_line` — a fully rendered Cargo dep line such as
+//! - `cargo_dep_line` - a fully rendered Cargo dep line such as
 //!   `echo-binding = { path = "..." }`.
-//! - `crate_name_ident` — the binding's Cargo package name with
+//! - `crate_name_ident` - the binding's Cargo package name with
 //!   hyphens replaced by underscores so it forms a valid Rust
 //!   `extern crate` ident (e.g. `echo_binding`).
 

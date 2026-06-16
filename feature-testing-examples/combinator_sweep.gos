@@ -4,7 +4,7 @@
 // least once, grouped one print line per family cluster, so a
 // regression in any single row's closure typing, payload packing,
 // or dispatch turns exactly one line red. Closure params are typed
-// explicitly — the unannotated-inference shapes live in
+// explicitly - the unannotated-inference shapes live in
 // closure_payload_typing.gos.
 
 use std::{errors, iter, option, result}

@@ -3,7 +3,7 @@ source: crates/gossamer-diagnostics/tests/snapshots.rs
 expression: rendered
 ---
 --- plain ---
-error[GL0026]: `else {}` adds no information. Drop the else and let the `if` — here
+error[GL0026]: `else {}` adds no information. Drop the else and let the `if` - here
 --- framed ---
 error[GL0026]: `else {}` adds no information. Drop the else and let the `if`
   --> snap.gos:2:5

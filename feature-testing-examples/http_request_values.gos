@@ -8,7 +8,7 @@
 // `set_value` mutates the request in place and returns it on the
 // compiled tiers; on the VM it returns a rebuilt request (structs are
 // immutable values). Threading the returned request is therefore the
-// rule on every tier — this fixture shadows `r` at each step.
+// rule on every tier - this fixture shadows `r` at each step.
 //
 // Self-terminating: the client runs in main and exits explicitly, so
 // the run is a plain stdout-parity comparison. Binds a fixed loopback

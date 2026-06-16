@@ -347,7 +347,7 @@ fn visit_pattern(pattern: &Pattern, kind: TokenKind, out: &mut Vec<RawToken>) {
 
 #[allow(
     clippy::too_many_lines,
-    reason = "flat-shape dispatch / lowering — splitting hides the per-arm intent"
+    reason = "flat-shape dispatch / lowering - splitting hides the per-arm intent"
 )]
 fn visit_expr(expr: &Expr, out: &mut Vec<RawToken>) {
     match &expr.kind {

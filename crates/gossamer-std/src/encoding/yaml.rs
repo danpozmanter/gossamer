@@ -103,7 +103,7 @@ impl Value {
         }
     }
 
-    /// Returns the float when `self` is a float scalar (or int —
+    /// Returns the float when `self` is a float scalar (or int -
     /// numeric promotion).
     #[must_use]
     pub fn as_f64(&self) -> Option<f64> {
@@ -257,7 +257,7 @@ fn from_serde(value: serde_yaml::Value) -> Value {
         }
         serde_yaml::Value::Tagged(boxed) => {
             // Drop tag, preserve the inner value. Track B doesn't
-            // expose explicit tag handling yet — most user code uses
+            // expose explicit tag handling yet - most user code uses
             // YAML as a JSON-shaped data format.
             from_serde(boxed.value)
         }

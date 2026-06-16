@@ -236,7 +236,7 @@ fn const_branch_elim_keeps_switch_for_conditionally_assigned_local() {
         .count();
     assert_eq!(
         switch_count, 2,
-        "both `if v < 0` and `if neg` SwitchInts must survive — \
+        "both `if v < 0` and `if neg` SwitchInts must survive - \
          conditionally assigned locals are not constants"
     );
 }
@@ -308,7 +308,7 @@ fn match_on_int_literal_lowers_to_switchint() {
 #[test]
 fn optimise_preserves_match_result_local_across_blocks() {
     // Post-optimise each arm block must still write its const value
-    // into the shared result local — a block-local dead-store-elim
+    // into the shared result local - a block-local dead-store-elim
     // would drop them because the only use is in a later join block.
     let source = r"fn main() -> i64 {
     let n = 1i64
@@ -728,7 +728,7 @@ fn optimise_preserves_index_const_behind_projection_read() {
     });
     assert!(
         has_index_const,
-        "index-holding Const(2) was dropped by dead-store-elim — projection reads must count as a use of the index local"
+        "index-holding Const(2) was dropped by dead-store-elim - projection reads must count as a use of the index local"
     );
 }
 
@@ -789,7 +789,7 @@ fn main() -> i64 {
 #[test]
 fn monomorphise_leaves_calls_to_non_generic_functions_untouched() {
     // A fn with no type parameters must keep empty substs and never
-    // emit a specialised copy — specialisation must be driven by
+    // emit a specialised copy - specialisation must be driven by
     // substs, not by every Call terminator.
     let source = r"fn double(n: i64) -> i64 { n * 2i64 }
 
@@ -892,7 +892,7 @@ fn maybe_build(flag: bool) -> i64 {
 /// and a `gos_rt_rc_release` on the binding. Without the
 /// `mints_owned_string` entry the call temp is treated as a borrow,
 /// the copy retains (+1), the binding releases (-1), and the minted
-/// reference itself is never dropped — one leaked string per
+/// reference itself is never dropped - one leaked string per
 /// `.content_type` read in compiled code.
 #[test]
 fn drop_pass_releases_http_response_content_type_string() {
@@ -979,13 +979,13 @@ fn ct(url: &String) -> i64 {
     assert_eq!(
         alias_rc_calls("gos_rt_rc_retain"),
         0,
-        "the minted reference must move into the binding, not be retained — \
+        "the minted reference must move into the binding, not be retained - \
          a retain here means the call temp was treated as a borrow and the \
          minted string leaks (aliases: {aliases:?})"
     );
 }
 
-/// C18 — drop pass keeps unconditional drops intact.
+/// C18 - drop pass keeps unconditional drops intact.
 ///
 /// When a `HashMap` is allocated at the top of the function and
 /// every path through the body keeps it owned by this frame, the
@@ -1070,8 +1070,8 @@ fn rc_calls_on(body: &gossamer_mir::Body, name: &str, local: Local) -> usize {
 
 /// A by-value tuple is a stack slot whose RC-managed elements are owned
 /// per-field: `let (t, n) = make()` (where `make -> (String, i64)`) must
-/// retain the extracted `String` at the field-0 copy — the binding holds
-/// a fresh reference — and release it at end of life. Without it every
+/// retain the extracted `String` at the field-0 copy - the binding holds
+/// a fresh reference - and release it at end of life. Without it every
 /// round of a tuple-returning allocator leaks one element.
 #[test]
 fn drop_pass_retains_and_releases_tuple_extracted_rc_field() {
@@ -1548,7 +1548,7 @@ fn result_map_err_free_call_lowers_to_runtime_shim() {
 }
 
 // ---------------------------------------------------------------
-// http::Response struct literals — must lower to the runtime
+// http::Response struct literals - must lower to the runtime
 // constructor + setter chain on compiled tiers, never to the
 // undefined `__struct` symbol (which fails the native build).
 // ---------------------------------------------------------------
@@ -1702,7 +1702,7 @@ fn user_defined_response_struct_still_lowers_as_aggregate() {
 }
 
 // ---------------------------------------------------------------
-// Task 22 — per-name combinator matrix: every closure-taking std
+// Task 22 - per-name combinator matrix: every closure-taking std
 // combinator the checker has a signature row for must lower its
 // free data-last call to a concrete gos_rt_* shim, never to an
 // undefined `@module::name` symbol.
@@ -1913,7 +1913,7 @@ fn combinator_free_calls_lower_to_runtime_shims() {
 }
 
 // ---------------------------------------------------------------
-// Task 22 — std fns as values (eta-expansion): a tabled std fn in
+// Task 22 - std fns as values (eta-expansion): a tabled std fn in
 // a callable slot must resolve to its runtime symbol; the source
 // path must not survive into MIR (it has no native symbol).
 // ---------------------------------------------------------------

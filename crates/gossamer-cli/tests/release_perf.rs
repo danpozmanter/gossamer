@@ -3,7 +3,7 @@
 //! The 2026-04-30 spectral-norm incident (`spectral_norm_regression_fix.md`)
 //! shipped a malformed `runtime_refs` entry that corrupted the LLVM IR
 //! and forced a silent per-fn Cranelift fallback for unrelated bodies.
-//! Spectral-norm slowed from 0.93s to 21.6s — a 23× regression — and
+//! Spectral-norm slowed from 0.93s to 21.6s - a 23× regression - and
 //! the existing test suite was *green*. The same shape regressed again
 //! a few weeks later (`spectral_norm_regression_fix.md` 2026-04-30).
 //!
@@ -15,8 +15,8 @@
 //! the release tier should not be markedly slower than the debug tier
 //! on a workload where LLVM -O3 has a real edge over Cranelift -O2.
 //!
-//! This test builds a numeric-loop workload twice — `gos build` (debug
-//! Cranelift) and `gos build --release` (LLVM) — runs each, and
+//! This test builds a numeric-loop workload twice - `gos build` (debug
+//! Cranelift) and `gos build --release` (LLVM) - runs each, and
 //! asserts the release wall-clock is no worse than the debug one. A
 //! small noise margin is allowed because LLVM compile time can dwarf
 //! the program's runtime on tiny workloads. The workload is sized so
@@ -129,7 +129,7 @@ fn main() {
 
 #[test]
 fn release_tier_is_at_least_as_fast_as_debug_on_numeric_loop() {
-    // Skip silently when LLVM tooling isn't on PATH — matches the
+    // Skip silently when LLVM tooling isn't on PATH - matches the
     // existing pattern in tier_parity. Without LLVM the release
     // build is just Cranelift again, so the comparison is
     // meaningless.
@@ -160,10 +160,10 @@ fn release_tier_is_at_least_as_fast_as_debug_on_numeric_loop() {
     // remaining time is process-startup noise (binary load +
     // `println!` flush). The silent-fallback regression this
     // test guards against produced 21+s release times against
-    // a 0.93s baseline — it cannot hide inside sub-50ms noise,
+    // a 0.93s baseline - it cannot hide inside sub-50ms noise,
     // so a strict ratio assertion here only catches jitter.
     if dbg_time < Duration::from_millis(50) && rel_time < Duration::from_millis(50) {
-        eprintln!("both backends folded the loop — startup-noise regime, skipping ratio check");
+        eprintln!("both backends folded the loop - startup-noise regime, skipping ratio check");
         return;
     }
 
@@ -176,7 +176,7 @@ fn release_tier_is_at_least_as_fast_as_debug_on_numeric_loop() {
     let bound = dbg_time.mul_f64(1.25);
     assert!(
         rel_time <= bound,
-        "release tier ({rel_time:?}) is slower than debug tier ({dbg_time:?}) — \
+        "release tier ({rel_time:?}) is slower than debug tier ({dbg_time:?}) - \
          this is the silent-fallback fingerprint from `spectral_norm_regression_fix.md`. \
          Re-run with `GOS_LLVM_DUMP=1` and inspect /tmp/gos-llvm-*/unit.ll for missing \
          user-fn `define` blocks or stale runtime_refs entries.",

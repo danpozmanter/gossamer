@@ -216,4 +216,4 @@ pub(crate) fn builtin_d_len(args: &[Value]) -> RuntimeResult<Value> {
 }
 
 // ----------------------------------------------------------------------
-// container::list / ordered_vec / ordered_list — same Vec<i64> shape.
+// container::list / ordered_vec / ordered_list - same Vec<i64> shape.

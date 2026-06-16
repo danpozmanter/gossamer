@@ -476,7 +476,7 @@ impl TcpStream {
     pub fn set_keepalive(&self, dur: Option<Duration>) -> Result<(), IoError> {
         // std exposes only the boolean; the per-interval knobs
         // live behind `socket2`. For v1 we toggle the
-        // boolean — fine for keep-the-connection-alive use
+        // boolean - fine for keep-the-connection-alive use
         // cases that don't need custom intervals.
         let on = dur.is_some();
         socket_option::set_keepalive(&self.inner, on)
@@ -672,7 +672,7 @@ impl UnixStream {
 // the import resolves and `use std::net::UnixListener` doesn't
 // fail at compile time on Gossamer code that conditionally falls
 // back to TcpListener at runtime. Real AF_UNIX support on Windows
-// 10 1803+ is a separate work item — std's `os::windows::net` has
+// 10 1803+ is a separate work item - std's `os::windows::net` has
 // no UnixListener and the surface needs path-prefix coercion and
 // abstract-namespace handling that the unix path doesn't share.
 #[cfg(not(unix))]
@@ -801,7 +801,7 @@ mod p9_tests {
             Duration::from_millis(500),
         )
         .unwrap_err();
-        let _ = err; // any IoError is fine — we just need this not to hang.
+        let _ = err; // any IoError is fine - we just need this not to hang.
     }
 
     #[cfg(unix)]

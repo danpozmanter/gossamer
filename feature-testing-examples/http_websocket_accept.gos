@@ -1,4 +1,4 @@
-// Cross-tier regression for http::websocket::accept — the RFC 6455
+// Cross-tier regression for http::websocket::accept - the RFC 6455
 // server-side upgrade handshake. accept(req) validates the
 // Upgrade / Connection / Sec-WebSocket-Version headers, computes
 // Sec-WebSocket-Accept = base64(sha1(key + GUID)), and returns a

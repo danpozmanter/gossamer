@@ -1,4 +1,4 @@
-//! Stream C.2 — per-lint regression coverage.
+//! Stream C.2 - per-lint regression coverage.
 //! Each lint is exercised by a small Gossamer snippet and asserted
 //! to fire (or not fire) at the expected place. New lints must add a
 //! matching test here.

@@ -5,7 +5,7 @@
 #![allow(clippy::cast_possible_truncation)]
 #![allow(clippy::cast_precision_loss)]
 
-//! Runtime support for `std::math::rand` — the deterministic
+//! Runtime support for `std::math::rand` - the deterministic
 //! SplitMix64 `Rng`. The handle is an opaque heap `Box<GosRng>`;
 //! compiled tiers carry the pointer as an `i64` and the MIR
 //! receiver-kind dispatch tags constructor results `math::rand::Rng`

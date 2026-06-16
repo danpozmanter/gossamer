@@ -35,7 +35,7 @@ on-demand cycle collector handles reference cycles, and there is no
 tracing collector and no stop-the-world pause.
 
 Plus `arena { }` blocks, inspired by Zig: everything allocated inside
-the block is bump-allocated and freed wholesale when the block exits —
+the block is bump-allocated and freed wholesale when the block exits -
 pointer-bump allocation, O(slabs) reclamation, and headerless 16-byte
 nodes for small enums. See the
 [memory model](https://danpozmanter.github.io/gossamer/memory/) chapter.
@@ -44,7 +44,7 @@ nodes for small enums. See the
 
 - Language spec: [`SPEC.md`](SPEC.md)
 - Project style guide: [`GUIDELINES.md`](GUIDELINES.md)
-- AI skill card: [`SKILL.md`](SKILL.md) — drop this file into a model's context to teach it how to write idiomatic Gossamer (also embedded in `gos skill-prompt`).
+- AI skill card: [`SKILL.md`](SKILL.md) - drop this file into a model's context to teach it how to write idiomatic Gossamer (also embedded in `gos skill-prompt`).
 - Editor integrations: [`danpozmanter/gossamer-editor-support`](https://github.com/danpozmanter/gossamer-editor-support) (VSCode, Vim, Neovim, Helix, Emacs, Sublime, Zed, plus a tree-sitter grammar)
 - Contributing: [`CONTRIBUTING.md`](CONTRIBUTING.md)
 
@@ -107,7 +107,7 @@ fn main() {
 }
 ```
 
-Or spawn a goroutine and join its result — `Ok(value)`, or `Err(message)`
+Or spawn a goroutine and join its result - `Ok(value)`, or `Err(message)`
 if it panicked:
 
 ```gossamer

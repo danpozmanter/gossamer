@@ -13,8 +13,8 @@ workspace = true
 
 # Gossamer standard library modules are NEVER feature-gated. Every
 # module in this crate is part of the language surface and always
-# compiled. Consumers depend on `gossamer-std` plain — no feature
-# selection — so that a script using `std::tls` or `std::crypto`
+# compiled. Consumers depend on `gossamer-std` plain - no feature
+# selection - so that a script using `std::tls` or `std::crypto`
 # always works regardless of the host build.
 
 [dependencies]
@@ -73,12 +73,12 @@ futures-core = { version = "0.3", default-features = false }
 futures-task = { version = "0.3", default-features = false, features = ["alloc"] }
 pin-project-lite = "0.2"
 
-# HTTP/3 stack (`std::http_h3` — quinn + h3 + h3-quinn).
+# HTTP/3 stack (`std::http_h3` - quinn + h3 + h3-quinn).
 quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
 h3 = "0.0.8"
 h3-quinn = "0.0.10"
 
-# Crypto primitives (`std::crypto`). RSA is intentionally excluded —
+# Crypto primitives (`std::crypto`). RSA is intentionally excluded -
 # the `rsa 0.9.x` crate is the only pure-Rust option and carries
 # RUSTSEC-2023-0071 (Marvin Attack timing sidechannel, no upstream
 # fix). Re-enable once a constant-time replacement lands.
@@ -148,7 +148,7 @@ nix = { version = "0.29", default-features = false, features = ["user", "fs", "p
 
 # Unicode property tables (`std::unicode`). Real general-category
 # tests, normalization forms, and grapheme/word/sentence
-# segmentation — replaces the hand-rolled ASCII-only stubs that
+# segmentation - replaces the hand-rolled ASCII-only stubs that
 # shipped through 0.7.0. Platform-agnostic; pure Rust.
 unicode-properties = { workspace = true }
 unicode-normalization = { workspace = true }

@@ -1,4 +1,4 @@
-// Cross-tier parity for std::http::csrf — the signed double-submit
+// Cross-tier parity for std::http::csrf - the signed double-submit
 // token primitives. Wire shape: base64url(nonce).base64url(hmac(key,
 // nonce)). issue_token carries a fresh random nonce, so (like a salted
 // hash) the fixture asserts the verify OUTCOMES (ok / err) rather than

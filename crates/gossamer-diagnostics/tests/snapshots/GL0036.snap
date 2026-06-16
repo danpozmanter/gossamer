@@ -3,7 +3,7 @@ source: crates/gossamer-diagnostics/tests/snapshots.rs
 expression: rendered
 ---
 --- plain ---
-error[GL0036]: `println("")` already writes a newline. Don't pass `"\n"` — here
+error[GL0036]: `println("")` already writes a newline. Don't pass `"\n"` - here
 --- framed ---
 error[GL0036]: `println("")` already writes a newline. Don't pass `"\n"`
   --> snap.gos:2:5

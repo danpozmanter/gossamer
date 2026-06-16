@@ -518,7 +518,7 @@
   <a href="#stack-vs-heap-the-pragmatic-answer" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Stack vs heap — the pragmatic answer
+        Stack vs heap - the pragmatic answer
       
     </span>
   </a>
@@ -1596,7 +1596,7 @@
   <a href="#stack-vs-heap-the-pragmatic-answer" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Stack vs heap — the pragmatic answer
+        Stack vs heap - the pragmatic answer
       
     </span>
   </a>
@@ -1623,7 +1623,7 @@
 <h1 id="memory-model">Memory model<a class="headerlink" href="#memory-model" title="Permanent link">&para;</a></h1>
 <p>Gossamer manages memory for you automatically: there is no borrow
 checker, no lifetime annotations, and no manual ownership transfer.
-<code>&amp;</code> and <code>&amp;mut</code> exist — but they express <em>aliasing intent</em>, not
+<code>&amp;</code> and <code>&amp;mut</code> exist - but they express <em>aliasing intent</em>, not
 ownership.</p>
 <p>Under the hood the compiled tiers use <strong>deterministic reference
 counting</strong> with a cycle collector, not a tracing collector: most
@@ -1658,7 +1658,7 @@ write <code>'a</code>.</p>
   at their <em>last use</em> rather than at function exit, so a large
   structure does not pin memory while unrelated code runs.</li>
 <li><strong>Cycle collector.</strong> Reference cycles (<code>a.next = Some(b);
-  b.next = Some(a)</code>) are reclaimed by a Bacon–Rajan style cycle
+  b.next = Some(a)</code>) are reclaimed by a Bacon-Rajan style cycle
   collector that runs on demand (<code>runtime::collect_cycles()</code>) and from
   allocation pressure. Acyclic data never pays for it.</li>
 <li><strong>Weak references.</strong> <code>Weak&lt;T&gt;</code> observes a value without keeping it
@@ -1667,7 +1667,7 @@ write <code>'a</code>.</p>
 <li><strong>Compact representation.</strong> A heap enum node carries an 8-byte
   runtime header. Enums with at most 4 variants store their
   discriminant in pointer tag bits, so a two-pointer tree node costs
-  24 bytes — and only 16 inside an arena.</li>
+  24 bytes - and only 16 inside an arena.</li>
 </ul>
 <h2 id="arenas-arena">Arenas: <code>arena { }</code><a class="headerlink" href="#arenas-arena" title="Permanent link">&para;</a></h2>
 <p>An <code>arena</code> block bump-allocates everything created while it runs and
@@ -1687,9 +1687,9 @@ frees the whole lot at once when the block exits:</p>
 </code></pre></div>
 <p>Semantics:</p>
 <ul>
-<li><strong>Allocation is a pointer bump</strong> — a compare and an add, roughly an
+<li><strong>Allocation is a pointer bump</strong> - a compare and an add, roughly an
   order of magnitude cheaper than a general heap allocation.</li>
-<li><strong>Reclamation is wholesale</strong> — the arena's slabs are released in
+<li><strong>Reclamation is wholesale</strong> - the arena's slabs are released in
   O(slabs) when the block exits, with no per-object teardown walk. The
   exit is exact on every path: early <code>return</code>, <code>?</code>, <code>break</code>, and
   normal fall-through all release the arena (the block desugars to a
@@ -1701,7 +1701,7 @@ frees the whole lot at once when the block exits:</p>
   the outer arena is unaffected. Slabs from finished arenas are
   recycled, so an arena per loop iteration costs a bump-pointer reset,
   not an <code>mmap</code>.</li>
-<li><strong>Retain/release become no-ops</strong> for arena values — the accounting
+<li><strong>Retain/release become no-ops</strong> for arena values - the accounting
   entries recognize arena memory with a two-instruction range check.</li>
 </ul>
 <h3 id="the-contract">The contract<a class="headerlink" href="#the-contract" title="Permanent link">&para;</a></h3>
@@ -1717,7 +1717,7 @@ leak a pointer out are yours to avoid:</p>
 <li>capturing them in a closure or goroutine that outruns the block.</li>
 </ul>
 <p>Use an arena when the block is <em>pure computation over data that dies
-together</em> — build, traverse, summarize, exit. If a value must survive,
+together</em> - build, traverse, summarize, exit. If a value must survive,
 let the block compute a scalar/string summary, or build the surviving
 value before (outside) the arena.</p>
 <p>Two deliberate edge-case rules: <code>Weak</code> references to arena values
@@ -1734,7 +1734,7 @@ reference-counted exactly as regular struct fields would be.</p>
 <p>You generally don't. Shared aliasing works directly. If you need to
 mutate through a shared handle across goroutines, hold the value in a
 <code>Mutex&lt;T&gt;</code> (from <code>std::sync</code>) and lock around every mutation.</p>
-<h2 id="stack-vs-heap-the-pragmatic-answer">Stack vs heap — the pragmatic answer<a class="headerlink" href="#stack-vs-heap-the-pragmatic-answer" title="Permanent link">&para;</a></h2>
+<h2 id="stack-vs-heap-the-pragmatic-answer">Stack vs heap - the pragmatic answer<a class="headerlink" href="#stack-vs-heap-the-pragmatic-answer" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Small value types live on the stack or inline inside their
   aggregate.</li>

@@ -109,7 +109,7 @@ pub(crate) fn install_strings(globals: &mut Vec<(&'static str, Value)>) {
     // The canonical string surface, registered under both `strings::`
     // (the free-function path) and `String::` (the method path). The
     // `String::` keys give receiver-typed method dispatch a name that
-    // can't collide with another module's bare free function — e.g.
+    // can't collide with another module's bare free function - e.g.
     // `s.to_title()` resolves to the string-wise title-caser instead of
     // `unicode::to_title`, which titlecases a single char.
     const TABLE: &[(&str, BuiltinFnPub)] = &[
@@ -162,7 +162,7 @@ pub(crate) fn install_strings(globals: &mut Vec<(&'static str, Value)>) {
 /// String form of a separator / needle argument. A `char`
 /// (`s.split(',')`, `s.contains('x')`, `s.trim_matches('"')`) coerces
 /// to its single-character string so char and string patterns behave
-/// identically — matching the compiled tiers, where `gos_rt_str_*`
+/// identically - matching the compiled tiers, where `gos_rt_str_*`
 /// shims receive the char as a one-byte string. A missing or
 /// non-stringy argument is the empty string, preserving the prior
 /// `as_str().unwrap_or("")` default.

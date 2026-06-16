@@ -1,14 +1,14 @@
 //! Cranelift-backed codegen for the Gossamer compiler.
 //! Three entry points are exported:
-//! - [`emit_module`] — MIR → textual CLIF-style IR. Human-readable,
+//! - [`emit_module`] - MIR → textual CLIF-style IR. Human-readable,
 //!   no native codegen, always available.
-//! - [`compile_to_object`] — MIR → native object bytes (ELF on
+//! - [`compile_to_object`] - MIR → native object bytes (ELF on
 //!   Linux, Mach-O on macOS). Drives the real `cranelift-object`
 //!   pipeline and supports integer arithmetic + direct calls +
 //!   `return` today. A C-ABI `main(argc, argv) -> i32` shim is
 //!   inserted automatically so the resulting object links through a
 //!   standard `cc` invocation to produce an executable.
-//! - [`compile_to_jit`] — MIR → in-process native code via the
+//! - [`compile_to_jit`] - MIR → in-process native code via the
 //!   `cranelift-jit` backend. Returns a [`JitArtifact`] of raw fn
 //!   pointers the bytecode VM dispatches into so `gos run --vm`
 //!   executes hot user functions natively while still falling back

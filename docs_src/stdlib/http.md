@@ -14,7 +14,7 @@ HTTP/1.1 and HTTP/2 client and server. HTTP/2 negotiates via ALPN over TLS autom
 | `StatusCode` | type | HTTP status code. |
 | `Headers` | type | Case-insensitive header map. |
 | `Server` | type | HTTP server bound to a TCP listener. |
-| `serve` | fn | Convenience: bind and serve an HTTP handler. `Result<(), Error>` — a bind failure is an Err value. |
+| `serve` | fn | Convenience: bind and serve an HTTP handler. `Result<(), Error>` - a bind failure is an Err value. |
 | `Client` | type | HTTP client; configure redirects and timeout via `Client::builder()`. |
 | `ResponseStream` | type | Streaming response body from `http::stream`; `next_line` / `next_chunk`, consumed by `Response::stream`. |
 | `request` | fn | One-shot request with a string body: `(method, url, body, headers) -> Result<Response, Error>`. |
@@ -36,7 +36,7 @@ HTTP/1.1 and HTTP/2 client and server. HTTP/2 negotiates via ALPN over TLS autom
 | `serve_h2_connection_streaming` | fn | Same shape for Http2StreamingHandler. |
 | `serve_h2c` | fn | Bind a plain-TCP listener and serve h2c (HTTP/2 cleartext). |
 | `serve_h2c_streaming` | fn | Same shape for Http2StreamingHandler. |
-| `Trailers` | type | HTTP/2 trailing HEADERS (alias for Headers) — used by `ResponseWriter::write_trailers` and `Request::trailers`. |
+| `Trailers` | type | HTTP/2 trailing HEADERS (alias for Headers) - used by `ResponseWriter::write_trailers` and `Request::trailers`. |
 | `PushOptions` | type | Prioritization knobs for `ResponseWriter::push_promise` (weight, depends_on, exclusive). |
 | `PushStream` | type | Server-initiated push stream returned by `ResponseWriter::push_promise`. Supports send_head / write / write_trailers / end. |
 
@@ -53,7 +53,7 @@ The value a handler receives. Identical fields on every tier.
 | `query` | `String` | Raw query string without the leading `?`; empty when absent. |
 | `query_pairs` | `[(String, String)]` | Percent-decoded `(key, value)` pairs in query order; repeated keys preserved. |
 | `headers` | `[(String, String)]` | Inbound headers; names lowercased, values trimmed. Repeats of the same name collapse to the last value. |
-| `body` | `String` | Request body as UTF-8 (lossy — invalid sequences become U+FFFD). |
+| `body` | `String` | Request body as UTF-8 (lossy - invalid sequences become U+FFFD). |
 | `raw_body` | `[u8]` | Exact body bytes; use this for binary uploads or NUL-embedded payloads. |
 
 ```text
@@ -68,10 +68,10 @@ fn serve(&self, r: http::Request) -> http::Response {
 
 ### Constructors
 
-- `Response::text(status, body)` — sets `content-type: text/plain; charset=utf-8`.
-- `Response::json(status, body)` — sets `content-type: application/json`.
-- `Response::stream(status, content_type, rs)` — streamed body; see below.
-- Struct literal — every field is optional and defaults sensibly:
+- `Response::text(status, body)` - sets `content-type: text/plain; charset=utf-8`.
+- `Response::json(status, body)` - sets `content-type: application/json`.
+- `Response::stream(status, content_type, rs)` - streamed body; see below.
+- Struct literal - every field is optional and defaults sensibly:
 
 ```text
 http::Response {
@@ -111,12 +111,12 @@ Responses returned by the client carry:
 |---|---|---|
 | `status` | `i64` | Numeric status code. |
 | `body` | `String` | Body as UTF-8 (lossy). |
-| `raw_bytes` | `[u8]` | Exact body bytes — the binary-safe counterpart of `body`. |
+| `raw_bytes` | `[u8]` | Exact body bytes - the binary-safe counterpart of `body`. |
 | `content_type` | `String` | The `content-type` header, `"text/plain"` when absent. |
 | `location` | `String` | The `location` header (useful with redirect-following disabled). |
 | `headers` | `[(String, String)]` | Response headers: lowercase names, wire order, duplicates preserved (`set-cookie` repeats survive). |
 
-## Streamed responses — `Response::stream`
+## Streamed responses - `Response::stream`
 
 `Response::stream(status, content_type, rs)` takes a `ResponseStream`
 obtained from `http::stream` and serves it as a chunked response: the
@@ -126,7 +126,7 @@ without buffering the body.
 
 Consume semantics: constructing `Response::stream` consumes the
 `ResponseStream`. After construction, `next_line` / `next_chunk` on that
-stream return `None`, and a stream serves exactly one response — handing
+stream return `None`, and a stream serves exactly one response - handing
 the same stream to a second `Response::stream` produces an empty body.
 
 ```text
@@ -157,7 +157,7 @@ impl http::Handler for Api {
 ```
 
 `http::serve(addr, handler) -> Result<(), Error>`: a bind failure (port in
-use, bad address) is an `Err` value for the caller's match — not a panic —
+use, bad address) is an `Err` value for the caller's match - not a panic -
 and `Ok(())` is returned on graceful shutdown:
 
 ```text
@@ -201,7 +201,7 @@ Method strings are case-insensitive (`"GET"`, `"post"`, ...). An unknown
 method fails before any connection is dialed:
 `Err("http::request: unknown method `BOGUS`")` (same shape for
 `request_bytes` / `stream` with their own prefixes). Network-level
-failures render as `Err("http: transport: ...")` — connection refused,
+failures render as `Err("http: transport: ...")` - connection refused,
 DNS, TLS, timeouts, and exhausted redirect budgets all use that prefix.
 
 An empty `body` / empty byte array sends no request body.

@@ -21,7 +21,7 @@ use std::os::raw::c_char;
 use super::*;
 
 // ---------------------------------------------------------------
-// gzip module — encode / decode using `flate2`.
+// gzip module - encode / decode using `flate2`.
 // ---------------------------------------------------------------
 
 #[unsafe(no_mangle)]
@@ -59,7 +59,7 @@ pub unsafe extern "C" fn gos_rt_gzip_decode(data: *const c_char) -> *mut c_char 
 }
 
 // ---------------------------------------------------------------
-// flate (raw DEFLATE) module — `std::compress::flate::{compress,
+// flate (raw DEFLATE) module - `std::compress::flate::{compress,
 // decompress}`. Input is a `Vec<u8>` (GosVec), output is a
 // `Result<Vec<u8>, errors::Error>` (GosResult: disc 0 Ok with a
 // GosVec payload, disc 1 Err with a gos error handle).
@@ -198,7 +198,7 @@ pub unsafe extern "C" fn gos_rt_compress_zlib_decompress(data: *const super::vec
     })
 }
 
-/// `compress::zstd::encode(data) -> Result<[u8], Error>` — Zstandard at
+/// `compress::zstd::encode(data) -> Result<[u8], Error>` - Zstandard at
 /// the default level (3).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_compress_zstd_encode(data: *const super::vec::GosVec) -> i128 {
@@ -211,7 +211,7 @@ pub unsafe extern "C" fn gos_rt_compress_zstd_encode(data: *const super::vec::Go
     })
 }
 
-/// `compress::zstd::encode_level(data, level) -> Result<[u8], Error>` —
+/// `compress::zstd::encode_level(data, level) -> Result<[u8], Error>` -
 /// `level` clamped to 1..=22.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_compress_zstd_encode_level(

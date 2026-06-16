@@ -1,6 +1,6 @@
 #![allow(
     clippy::too_many_lines,
-    reason = "VM dispatch loop — see vm/run.rs roadmap for arm-group decomp"
+    reason = "VM dispatch loop - see vm/run.rs roadmap for arm-group decomp"
 )]
 use super::*;
 
@@ -30,7 +30,7 @@ impl Vm {
         let floats = &mut guard.floats;
         let ints = &mut guard.ints;
         // Drain (not consume) so the empty Vec can go back to
-        // the pool's `args` free list — most arg Vecs are
+        // the pool's `args` free list - most arg Vecs are
         // pool-borrowed in `Op::Call`, and reclaiming them here
         // closes the loop without an extra allocation per call.
         let mut args = args;
@@ -73,7 +73,7 @@ impl Vm {
             // SAFETY: every chunk emitted by `compile.rs` ends
             // with a `Return` / `ReturnUnit`, and every jump /
             // branch target is computed from the same emit-
-            // counter that placed the op — so `pc` can never
+            // counter that placed the op - so `pc` can never
             // exceed `instr_count` at this point. We keep a
             // `debug_assert!` so a corrupted chunk fails loudly
             // in debug builds, but skip the runtime branch in
@@ -304,13 +304,13 @@ impl Vm {
                     // *callee* identity (the resolved name for a
                     // `Value::String(SmolStr::from("foo"))` callee). Cache hit
                     // skips the `self.globals.get(name)` HashMap
-                    // probe — typically the dominant cost in tight
+                    // probe - typically the dominant cost in tight
                     // loops calling small helper functions.
                     let token = call_token(callee_val);
                     let live_generation = self.globals_generation();
                     // Two-tier IC probe (same shape as MethodCall): a
                     // resolved builtin is returned as a raw `fn` pointer so
-                    // the hit path calls it directly — no per-call
+                    // the hit path calls it directly - no per-call
                     // `Arc<BuiltinInner>` allocation just to thread it
                     // through `apply`.
                     type BuiltinFn = fn(&[Value]) -> RuntimeResult<Value>;
@@ -341,7 +341,7 @@ impl Vm {
                     let result = if let Some(call_fn) = cached_builtin {
                         // Hottest hit: direct fn-ptr call. Unwrap any `&mut`
                         // write-back cells (free builtins take aggregates by
-                        // value) and return the pooled arg buffer — both
+                        // value) and return the pooled arg buffer - both
                         // things `apply`'s builtin arm does, minus the alloc.
                         let call_args = crate::value::unwrap_mut_cells(arg_values);
                         let r = call_fn(&call_args)?;
@@ -443,7 +443,7 @@ impl Vm {
                         buf[0] = registers[receiver as usize].clone();
                         for i in 0..argc_usz {
                             // 0.7.0 flag::Cell auto-deref at the
-                            // call boundary — same rule as `Op::Call`.
+                            // call boundary - same rule as `Op::Call`.
                             let raw = registers[args as usize + i].clone();
                             buf[i + 1] = auto_deref_cell(&raw).unwrap_or(raw);
                         }
@@ -486,7 +486,7 @@ impl Vm {
                         call_args.push(recv);
                         for i in 0..argc_usz {
                             // 0.7.0 flag::Cell auto-deref at the
-                            // call boundary — same rule as `Op::Call`.
+                            // call boundary - same rule as `Op::Call`.
                             let raw = registers[args as usize + i].clone();
                             call_args.push(auto_deref_cell(&raw).unwrap_or(raw));
                         }
@@ -601,7 +601,7 @@ impl Vm {
                     // Same fast-path / fallback shape as
                     // [`Op::StreamWriteByte`]. The inline helper
                     // returns `false` when the handle has been
-                    // dropped (extremely rare — U8Vec is held by
+                    // dropped (extremely rare - U8Vec is held by
                     // the user-side struct for its full lifetime),
                     // letting us fall through to the generic
                     // dispatch path for correctness.
@@ -922,7 +922,7 @@ impl Vm {
                         }
                         Value::IntArray(data) => {
                             // Mutate the underlying `Vec<i64>` in place.
-                            // `Arc::make_mut` clones if shared (rare —
+                            // `Arc::make_mut` clones if shared (rare -
                             // a fresh `BuildIntArray` usually leaves
                             // the array uniquely owned).
                             let v = Arc::make_mut(data);
@@ -973,14 +973,14 @@ impl Vm {
                     // PEP 659-style inline cache. Fast path: when the
                     // observed receiver shape (struct-name interned
                     // pointer) matches the slot's `type_token`, jump
-                    // straight to `inner.fields[offset].1.clone()` —
+                    // straight to `inner.fields[offset].1.clone()` -
                     // skipping the linear name-scan in `field_get`.
                     let recv = &registers[receiver as usize];
                     if let Value::Struct(inner) = recv {
                         // `inner.name` is a globally-interned `&'static str`
                         // (canonical, pointer-stable across every clone of
                         // any instance of this type), so its address is a
-                        // ready-made guard token — no second hash needed.
+                        // ready-made guard token - no second hash needed.
                         let token = inner.name.as_ptr() as u64;
                         let slot = &state.field_caches[cache_idx as usize];
                         if slot.type_token.get() == token {
@@ -1168,7 +1168,7 @@ impl Vm {
                 // ----- Phase 1 typed ops -----
                 //
                 // All float/int register accesses use
-                // `get_unchecked` — the register slot index is
+                // `get_unchecked` - the register slot index is
                 // always less than `chunk.float_count` /
                 // `chunk.int_count` by construction of the
                 // bytecode (the compiler emits a fresh index for
@@ -1650,7 +1650,7 @@ impl Vm {
                         ));
                     };
                     let b = &registers[base as usize];
-                    // FloatArray fast path — resolve the field
+                    // FloatArray fast path - resolve the field
                     // name against the stored declaration order
                     // and pull the f64 directly out of flat data.
                     if let Value::FloatArray(fa_inner) = b {
@@ -1834,7 +1834,7 @@ impl Vm {
                     // plus a direct memory store. The common
                     // case is a refcount-1 Arc, so `make_mut`
                     // returns the inner mut ref without cloning
-                    // — still one acquire-load per write, but no
+                    // - still one acquire-load per write, but no
                     // struct clone and no field scan.
                     if let Value::FloatArray(fa_arc) = b {
                         let fa_inner = Arc::make_mut(fa_arc);
@@ -2275,7 +2275,7 @@ impl Vm {
                     // call shape like `fn slide(arr: [i64; 4])`,
                     // `arr` is a parameter register whose tracking
                     // can outlive its actual `Value::IntArray`
-                    // payload — e.g. when the caller passes a
+                    // payload - e.g. when the caller passes a
                     // generic `Value::Array` (an ABI shape the
                     // call-args path doesn't typed-promote). Rather
                     // than panic, fall back to a generic array read
@@ -2435,7 +2435,7 @@ impl Vm {
                     let i = idx as usize;
                     let b = registers.get_unchecked(base as usize);
                     // Tolerate generic `Value::Array(Vec<Value::Float>)`
-                    // alongside `Value::FloatVec(Vec<f64>)` — same
+                    // alongside `Value::FloatVec(Vec<f64>)` - same
                     // tracking-vs-actual-shape skew the IntArray fast
                     // path has to handle when a typed receiver passes
                     // through a non-promoting ABI boundary.
@@ -2633,8 +2633,8 @@ fn publish_ref_cells(cells: &[(usize, Arc<parking_lot::Mutex<Value>>)], register
 }
 
 /// One non-blocking poll over every `select` arm in source order.
-/// Returns the chosen arm's `body_block` — writing a received value
-/// into the recv arm's `bind_reg`, or completing a send — or `None`
+/// Returns the chosen arm's `body_block` - writing a received value
+/// into the recv arm's `bind_reg`, or completing a send - or `None`
 /// when no arm (including `default`) is ready. The two-pass scan
 /// (recv/send first, then `default`) chooses a `default` arm only once
 /// every recv/send arm has been found not-ready.
@@ -2687,7 +2687,7 @@ fn select_try_once(
 /// Polls every `select` arm, parking on the receive arms' condvar when
 /// nothing is ready and no `default` exists, and re-polling on each
 /// wake. Returns the chosen arm's `body_block`. Blocking semantics over
-/// `Value::Channel` — `Channel::send`/`close` notify every waiter, so
+/// `Value::Channel` - `Channel::send`/`close` notify every waiter, so
 /// the first push wakes the park; the bounded wait keeps a missed
 /// notify from stranding the goroutine, and a (spec-disallowed)
 /// send-only select with no default yields briefly rather than

@@ -74,7 +74,7 @@ pub struct BuildGraph {
     pub target: TargetTriple,
     /// Build profile.
     pub profile: Profile,
-    /// Toolchain identifier — typically `CARGO_PKG_VERSION` of the
+    /// Toolchain identifier - typically `CARGO_PKG_VERSION` of the
     /// driver crate.
     pub toolchain: String,
 }

@@ -21,7 +21,7 @@ use std::os::raw::c_char;
 use super::*;
 
 // ---------------------------------------------------------------
-// net::url — percent-encoding helpers (query_escape / path_escape /
+// net::url - percent-encoding helpers (query_escape / path_escape /
 // query_unescape / path_unescape). RFC 3986 unreserved set is
 // preserved; everything else encodes to %HH.
 // ---------------------------------------------------------------

@@ -1,5 +1,5 @@
 // Cross-tier parity for crypto::ecdsa (P-256). The keypair is fresh
-// per run, so the printed output is booleans only — deterministic and
+// per run, so the printed output is booleans only - deterministic and
 // bit-identical across the bytecode VM, Cranelift, and LLVM tiers.
 use std::crypto
 

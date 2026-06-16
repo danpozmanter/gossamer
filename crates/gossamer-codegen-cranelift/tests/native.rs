@@ -1,24 +1,17 @@
-//! End-to-end test that the Cranelift backend produces a linker-
-//! ready object file capable of yielding a runnable executable.
+//! End-to-end tests that `gos build` lowers a range of language
+//! constructs to a runnable native executable.
+//!
+//! These drive the real `gos build` pipeline (LLVM is the only
+//! native codegen backend; the Cranelift backend is JIT-only and is
+//! exercised through `gos run` in the tier-parity suite). Each test
+//! compiles a `.gos` fixture, runs the produced binary, and asserts
+//! its exit code. A build that falls back to a launcher script, or
+//! cannot link on the runner, makes the test skip rather than fail.
 
 #![allow(missing_docs)]
 
 use std::path::PathBuf;
 use std::process::Command;
-
-use gossamer_codegen_cranelift::compile_to_object;
-use gossamer_lex::SourceMap;
-use gossamer_mir::{
-    BasicBlock, BinOp, Body, ConstValue, LocalDecl, Operand, Place, Projection, Rvalue, Statement,
-    StatementKind, Terminator,
-};
-use gossamer_types::TyCtxt;
-
-fn dummy_span() -> gossamer_lex::Span {
-    let mut map = SourceMap::new();
-    let file = map.add_file("fuzz.gos", "");
-    gossamer_lex::Span::new(file, 0, 0)
-}
 
 fn workspace_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -35,324 +28,6 @@ fn debug_bin(dir: &std::path::Path, stem: &str) -> PathBuf {
         p.set_extension(std::env::consts::EXE_EXTENSION);
     }
     p
-}
-
-/// Locates the runtime staticlib that `gossamer-cli`'s build script
-/// emits into the workspace target dir. Returns `None` when it hasn't
-/// been built (e.g. running this crate's tests in isolation) so the
-/// caller skips rather than fails.
-fn runtime_staticlib() -> Option<PathBuf> {
-    let names: &[&str] = if cfg!(windows) {
-        &["gossamer_runtime.lib", "libgossamer_runtime.a"]
-    } else {
-        &["libgossamer_runtime.a", "gossamer_runtime.lib"]
-    };
-    let root = workspace_root();
-    for profile in ["debug", "release"] {
-        for name in names {
-            let candidate = root.join("target").join(profile).join(name);
-            if candidate.exists() {
-                return Some(candidate);
-            }
-        }
-    }
-    None
-}
-
-/// Links a Cranelift-emitted object against the runtime staticlib with
-/// the host `cc`. A Cranelift `main` object references the runtime's
-/// main-shim symbols (`gos_rt_set_args` / `gos_rt_flush_stdout` /
-/// `gos_rt_main_exit_code`), so linking the bare object alone always
-/// fails with undefined references — the staticlib must be on the line.
-///
-/// Returns `false` and prints a skip reason — never fails — when the
-/// runtime isn't built or the host `cc` can't link it (e.g. a MinGW
-/// `cc` against an MSVC `.lib` on the Windows runner; that toolchain
-/// combination is covered by the `gos build` tests below instead). This
-/// is the minimal link `gos build` performs minus the `-dead_strip` /
-/// strip pass, so a pass here isolates codegen + symbol resolution from
-/// the strip flags.
-fn link_with_runtime(object_path: &std::path::Path, exe_path: &std::path::Path) -> bool {
-    let Some(runtime) = runtime_staticlib() else {
-        eprintln!("skipping — runtime staticlib not built (build gossamer-cli first)");
-        return false;
-    };
-    // This helper always links with `cc` (GNU/Clang). A `.lib` is an
-    // MSVC-format archive whose objects reference MSVC CRT intrinsics
-    // (`__chkstk`, `__security_cookie`, `__security_check_cookie`,
-    // `__GSHandlerCheck`, the `type_info` vtable) and carry MSVC linker
-    // `.drectve` directives that GNU `ld` cannot consume — so a `cc`-driven
-    // link of an MSVC `.lib` ALWAYS fails with undefined references. That is a
-    // permanent toolchain incompatibility (MSVC objects cannot be linked by
-    // GNU `ld`), not a Gossamer regression, so skip it — loudly. The
-    // Windows-MSVC native link IS exercised by the `gos build` tests below,
-    // which dispatch to the MSVC linker (`link_windows_msvc`).
-    //
-    // The skip is keyed on the *archive format* (`.lib`), NOT the test's own
-    // `target_env`: the Windows CI builds Gossamer for `windows-msvc` (so the
-    // archive is `gossamer_runtime.lib`) yet links this helper with mingw `cc`,
-    // so gating on `target_env = "msvc"` wrongly suppressed the skip. A real
-    // link regression on a *compatible* toolchain (Linux/macOS, or Windows-GNU
-    // against a mingw `.a`) has `is_msvc_lib == false` and still fails loudly,
-    // which is how the `-ldl` break gets caught.
-    let is_msvc_lib = runtime
-        .extension()
-        .is_some_and(|e| e.eq_ignore_ascii_case("lib"));
-    if is_msvc_lib {
-        eprintln!(
-            "skipping — `cc` (GNU/Clang) cannot link the MSVC-format runtime archive \
-             {} (unresolved MSVC CRT intrinsics: __chkstk / __security_cookie / …); the \
-             Windows-MSVC native link is covered by the `gos build` tests via the MSVC linker",
-            runtime.display()
-        );
-        return false;
-    }
-    let mut cmd = Command::new("cc");
-    cmd.arg(object_path).arg(&runtime).arg("-o").arg(exe_path);
-    cmd.arg("-lpthread").arg("-lm");
-    // Mirror `gos build`'s link line: `-ldl` only exists on Linux
-    // (libdl); macOS folds dl* into libSystem and mingw has no libdl.
-    if cfg!(target_os = "linux") {
-        cmd.arg("-ldl");
-    }
-    // On Windows-GNU name the Win32 import libs the runtime references
-    // but mingw's default specs don't auto-link (mirrors `link_posix`).
-    if cfg!(windows) {
-        for lib in ["ws2_32", "bcrypt", "advapi32", "userenv", "ntdll"] {
-            cmd.arg(format!("-l{lib}"));
-        }
-    }
-    match cmd.output() {
-        Ok(out) if out.status.success() => true,
-        Ok(out) => panic!(
-            "linking the runtime staticlib failed — a real codegen/link regression, \
-             not a skip.\n  cc {obj} {rt} -o {exe} -lpthread -lm ...\nstderr:\n{err}",
-            obj = object_path.display(),
-            rt = runtime.display(),
-            exe = exe_path.display(),
-            err = String::from_utf8_lossy(&out.stderr),
-        ),
-        Err(e) => {
-            eprintln!("skipping — cc unavailable: {e}");
-            false
-        }
-    }
-}
-
-fn main_returns(expr_build: impl FnOnce(&mut Builder)) -> (Body, TyCtxt) {
-    let mut tcx = TyCtxt::new();
-    let unit = tcx.unit();
-    let mut builder = Builder {
-        body: Body {
-            name: "main".to_string(),
-            def: None,
-            arity: 0,
-            locals: vec![LocalDecl {
-                ty: unit,
-                debug_name: None,
-                mutable: false,
-                region: false,
-            }],
-            blocks: vec![BasicBlock {
-                id: gossamer_mir::BlockId(0),
-                stmts: Vec::new(),
-                terminator: Terminator::Return,
-                span: dummy_span(),
-            }],
-            span: dummy_span(),
-        },
-    };
-    expr_build(&mut builder);
-    (builder.body, tcx)
-}
-
-struct Builder {
-    body: Body,
-}
-
-impl Builder {
-    fn push(&mut self, stmt: StatementKind) {
-        self.body.blocks[0].stmts.push(Statement {
-            span: dummy_span(),
-            kind: stmt,
-        });
-    }
-}
-
-fn place(local: u32) -> Place {
-    Place {
-        local: gossamer_mir::Local(local),
-        projection: Vec::<Projection>::new(),
-    }
-}
-
-#[test]
-fn cranelift_compiles_integer_constant_main_to_runnable_binary() {
-    // fn main() -> i64 { 42 }
-    let (body, tcx) = main_returns(|b| {
-        b.push(StatementKind::Assign {
-            place: place(0),
-            rvalue: Rvalue::Use(Operand::Const(ConstValue::Int(42))),
-        });
-    });
-    let object = compile_to_object(&[body], &tcx).expect("codegen");
-
-    let dir = std::env::temp_dir().join(format!("gossamer-cranelift-test-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
-    let object_path = dir.join("main.o");
-    std::fs::write(&object_path, &object.bytes).unwrap();
-    let exe_path = dir.join("main");
-
-    if !link_with_runtime(&object_path, &exe_path) {
-        let _ = std::fs::remove_dir_all(&dir);
-        return;
-    }
-
-    let run = Command::new(&exe_path)
-        .output()
-        .expect("run generated binary");
-    assert_eq!(
-        run.status.code(),
-        Some(42),
-        "expected exit code 42; stderr={}",
-        String::from_utf8_lossy(&run.stderr)
-    );
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
-#[test]
-fn cranelift_heap_allocator_roundtrips_value_through_gos_store_and_load() {
-    // fn main() -> i64 {
-    //     let p = gos_alloc(8)
-    //     gos_store(p, 0, 42)
-    //     gos_load(p, 0)
-    // }
-    let (body, tcx) = main_returns(|b| {
-        // locals: 0 = return, 1 = ptr, 2 = size const, 3 = zero const,
-        // 4 = value const, 5 = store result sink.
-        let mut tcx = TyCtxt::new();
-        let unit = tcx.unit();
-        for _ in 0..5 {
-            b.body.locals.push(LocalDecl {
-                ty: unit,
-                debug_name: None,
-                mutable: false,
-                region: false,
-            });
-        }
-        // size = 8
-        b.push(StatementKind::Assign {
-            place: place(2),
-            rvalue: Rvalue::Use(Operand::Const(ConstValue::Int(8))),
-        });
-        // p = gos_alloc(size)
-        b.push(StatementKind::Assign {
-            place: place(1),
-            rvalue: Rvalue::CallIntrinsic {
-                name: "gos_alloc",
-                args: vec![Operand::Copy(place(2))],
-            },
-        });
-        // zero = 0
-        b.push(StatementKind::Assign {
-            place: place(3),
-            rvalue: Rvalue::Use(Operand::Const(ConstValue::Int(0))),
-        });
-        // value = 42
-        b.push(StatementKind::Assign {
-            place: place(4),
-            rvalue: Rvalue::Use(Operand::Const(ConstValue::Int(42))),
-        });
-        // gos_store(p, 0, 42)
-        b.push(StatementKind::Assign {
-            place: place(5),
-            rvalue: Rvalue::CallIntrinsic {
-                name: "gos_store",
-                args: vec![
-                    Operand::Copy(place(1)),
-                    Operand::Copy(place(3)),
-                    Operand::Copy(place(4)),
-                ],
-            },
-        });
-        // return_slot = gos_load(p, 0)
-        b.push(StatementKind::Assign {
-            place: place(0),
-            rvalue: Rvalue::CallIntrinsic {
-                name: "gos_load",
-                args: vec![Operand::Copy(place(1)), Operand::Copy(place(3))],
-            },
-        });
-    });
-    let object = compile_to_object(&[body], &tcx).expect("codegen");
-
-    let dir = std::env::temp_dir().join(format!("gossamer-cranelift-heap-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
-    let object_path = dir.join("main.o");
-    std::fs::write(&object_path, &object.bytes).unwrap();
-    let exe_path = dir.join("main");
-
-    if !link_with_runtime(&object_path, &exe_path) {
-        let _ = std::fs::remove_dir_all(&dir);
-        return;
-    }
-
-    let run = Command::new(&exe_path).output().expect("run heap binary");
-    assert_eq!(run.status.code(), Some(42), "gos_store/load round-trip");
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
-#[test]
-fn cranelift_compiles_arithmetic_main_to_runnable_binary() {
-    // fn main() -> i64 { 6 * 7 }
-    let (body, tcx) = main_returns(|b| {
-        b.body.locals.push(LocalDecl {
-            ty: TyCtxt::new().unit(),
-            debug_name: None,
-            mutable: false,
-            region: false,
-        });
-        b.body.locals.push(LocalDecl {
-            ty: TyCtxt::new().unit(),
-            debug_name: None,
-            mutable: false,
-            region: false,
-        });
-        b.push(StatementKind::Assign {
-            place: place(1),
-            rvalue: Rvalue::Use(Operand::Const(ConstValue::Int(6))),
-        });
-        b.push(StatementKind::Assign {
-            place: place(2),
-            rvalue: Rvalue::Use(Operand::Const(ConstValue::Int(7))),
-        });
-        b.push(StatementKind::Assign {
-            place: place(0),
-            rvalue: Rvalue::BinaryOp {
-                op: BinOp::Mul,
-                lhs: Operand::Copy(place(1)),
-                rhs: Operand::Copy(place(2)),
-            },
-        });
-    });
-    let object = compile_to_object(&[body], &tcx).expect("codegen");
-
-    let dir = std::env::temp_dir().join(format!("gossamer-cranelift-arith-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
-    let object_path = dir.join("main.o");
-    std::fs::write(&object_path, &object.bytes).unwrap();
-    let exe_path = dir.join("main");
-
-    if !link_with_runtime(&object_path, &exe_path) {
-        let _ = std::fs::remove_dir_all(&dir);
-        return;
-    }
-
-    let run = Command::new(&exe_path).output().expect("run binary");
-    assert_eq!(run.status.code(), Some(42));
-    let _ = std::fs::remove_dir_all(&dir);
-
-    let _ = PathBuf::new;
 }
 
 #[test]
@@ -437,7 +112,7 @@ fn gos_build_handles_int_literal_match() {
         .expect("spawn gos build");
     if !build.status.success() {
         eprintln!(
-            "skipping — gos build failed: {}",
+            "skipping - gos build failed: {}",
             String::from_utf8_lossy(&build.stderr)
         );
         let _ = std::fs::remove_dir_all(&fixture_dir);
@@ -445,7 +120,7 @@ fn gos_build_handles_int_literal_match() {
     }
     let stdout = String::from_utf8_lossy(&build.stdout);
     if stdout.contains("launcher") {
-        eprintln!("skipping — match build fell back to launcher: {stdout}");
+        eprintln!("skipping - match build fell back to launcher: {stdout}");
         let _ = std::fs::remove_dir_all(&fixture_dir);
         return;
     }
@@ -478,7 +153,7 @@ fn gos_build_handles_tuples_and_arrays() {
         .expect("spawn gos build");
     if !build.status.success() {
         eprintln!(
-            "skipping — gos build failed: {}",
+            "skipping - gos build failed: {}",
             String::from_utf8_lossy(&build.stderr)
         );
         let _ = std::fs::remove_dir_all(&fixture_dir);
@@ -486,7 +161,7 @@ fn gos_build_handles_tuples_and_arrays() {
     }
     let stdout = String::from_utf8_lossy(&build.stdout);
     if stdout.contains("launcher") {
-        eprintln!("skipping — tuple build fell back to launcher: {stdout}");
+        eprintln!("skipping - tuple build fell back to launcher: {stdout}");
         let _ = std::fs::remove_dir_all(&fixture_dir);
         return;
     }
@@ -532,13 +207,13 @@ fn gos_build_handles_tuples_and_arrays() {
         .output()
         .expect("spawn gos build");
     if !build.status.success() {
-        eprintln!("skipping arr — gos build failed");
+        eprintln!("skipping arr - gos build failed");
         let _ = std::fs::remove_dir_all(&fixture_dir);
         return;
     }
     let stdout = String::from_utf8_lossy(&build.stdout);
     if stdout.contains("launcher") {
-        eprintln!("skipping arr — fell back to launcher: {stdout}");
+        eprintln!("skipping arr - fell back to launcher: {stdout}");
         let _ = std::fs::remove_dir_all(&fixture_dir);
         return;
     }
@@ -598,7 +273,7 @@ fn gos_build_handles_first_class_closure_passed_to_higher_order_function() {
     // (heap blob `[fn_addr, captures…]`) produced by
     // `lift_capturing` + the MIR `gos_alloc` / `gos_store`
     // sequence. `Fn(i64) -> i64` is the closure-trait callable
-    // type — it routes through the env+code dispatch in the
+    // type - it routes through the env+code dispatch in the
     // codegen's `Terminator::Call` arm, so `f(x)` inside `apply`
     // loads `fn_addr` from `env+0` and calls it with `(env, x)`.
     //
@@ -619,7 +294,7 @@ fn gos_build_handles_first_class_closure_passed_to_higher_order_function() {
         .expect("spawn gos build");
     if !build.status.success() || String::from_utf8_lossy(&build.stdout).contains("launcher") {
         eprintln!(
-            "skipping — gos build failed/launcher: stdout={} stderr={}",
+            "skipping - gos build failed/launcher: stdout={} stderr={}",
             String::from_utf8_lossy(&build.stdout),
             String::from_utf8_lossy(&build.stderr)
         );
@@ -661,7 +336,7 @@ fn gos_build_handles_capturing_closure_via_heap_allocated_env() {
         .expect("spawn gos build");
     if !build.status.success() || String::from_utf8_lossy(&build.stdout).contains("launcher") {
         eprintln!(
-            "skipping — gos build failed/launcher: stdout={} stderr={}",
+            "skipping - gos build failed/launcher: stdout={} stderr={}",
             String::from_utf8_lossy(&build.stdout),
             String::from_utf8_lossy(&build.stderr)
         );
@@ -805,7 +480,7 @@ fn gos_build_produces_native_println_binary() {
         .expect("spawn gos build");
     if !build.status.success() {
         eprintln!(
-            "skipping — gos build failed: {}",
+            "skipping - gos build failed: {}",
             String::from_utf8_lossy(&build.stderr)
         );
         let _ = std::fs::remove_dir_all(&fixture_dir);
@@ -813,7 +488,7 @@ fn gos_build_produces_native_println_binary() {
     }
     let stdout = String::from_utf8_lossy(&build.stdout);
     if stdout.contains("launcher") {
-        eprintln!("skipping — build fell back to launcher: {stdout}");
+        eprintln!("skipping - build fell back to launcher: {stdout}");
         let _ = std::fs::remove_dir_all(&fixture_dir);
         return;
     }

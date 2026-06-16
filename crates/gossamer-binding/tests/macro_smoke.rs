@@ -179,7 +179,7 @@ gossamer_binding::register_module! {
 
     cb_fn invoke_callable(d, callable: i64) -> i64 {
         // The first arg here is the callable identity, not a Value
-        // — to keep the test simple. Real callbacks come through
+        // - to keep the test simple. Real callbacks come through
         // `d.call_value(...)` which is exercised by a non-test
         // integration below.
         let _ = d;
@@ -262,7 +262,7 @@ fn cb_fn_body_dispatches_to_call_value() {
     let item = module.items.iter().find(|i| i.name == "run").unwrap();
     let mut d = CountingDispatch;
     let out = (item.call)(&mut d, &[Value::Int(0)]).unwrap();
-    // CountingDispatch returns args.len() as i64 — we passed two
+    // CountingDispatch returns args.len() as i64 - we passed two
     // args to call_value, so the binding should report 2.
     assert!(matches!(out, Value::Int(2)));
 }

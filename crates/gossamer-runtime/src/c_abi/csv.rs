@@ -7,7 +7,7 @@
 
 //! `std::encoding::csv` C-ABI shims. Mirrors
 //! `gossamer_std::encoding::csv` exactly. CSV records cross the ABI
-//! as `Vec<Vec<String>>` — an outer `GosVec` of inner `GosVec`
+//! as `Vec<Vec<String>>` - an outer `GosVec` of inner `GosVec`
 //! pointers, each inner holding c-string pointers.
 
 use std::ffi::CStr;
@@ -204,7 +204,7 @@ mod tests {
         assert_eq!(o.elem_kind, crate::c_abi::vec::vec_elem_kind::VEC);
         // Probe-share row 1's first field, then free the outer WITHOUT
         // iterating (the ABI shape of `for row in rows { break }`): the
-        // cascade must release exactly one share — rc 2 -> 1, not 2
+        // cascade must release exactly one share - rc 2 -> 1, not 2
         // (leak) and not 0 (double free).
         // Slots hold child pointers exposed as i64 by the flat-slot ABI;
         // read the address and recover its provenance.

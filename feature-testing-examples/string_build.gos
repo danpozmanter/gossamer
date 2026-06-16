@@ -31,7 +31,7 @@ fn main() {
     println!("s={}", s)
     assert_eq(s.len(), 10)
 
-    // chars() over a multibyte string, rebuilt char-by-char — the
+    // chars() over a multibyte string, rebuilt char-by-char - the
     // round-trip must be identity on every tier.
     let original = "abçd€f"
     let mut rebuilt = String::new()

@@ -1,5 +1,5 @@
 /*
- * String reversal — by byte index.
+ * String reversal - by byte index.
  *
  * Walks the input from the back, appending each byte to a new
  * `String`. The reversal helper returns a fresh value; the
@@ -11,7 +11,7 @@
 use std::iter
 
 // Returns the reversed sequence of byte codes. Treats input
-// as bytes — multi-byte UTF-8 would be split mid-codepoint.
+// as bytes - multi-byte UTF-8 would be split mid-codepoint.
 fn reverse_bytes(text: &String) -> [i64] {
     let bytes = text.as_bytes()
     let mut out: [i64] = []

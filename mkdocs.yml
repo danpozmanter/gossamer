@@ -4,7 +4,7 @@ site_description: A goroutine-powered, fast-compiling systems language with Rust
 site_author: Gossamer contributors
 repo_url: https://github.com/danpozmanter/gossamer
 repo_name: danpozmanter/gossamer
-# `edit_uri` intentionally unset — the Material theme already surfaces
+# `edit_uri` intentionally unset - the Material theme already surfaces
 # the repository via the top-right repo link injected from `repo_url`.
 edit_uri: ""
 

@@ -4,7 +4,7 @@
 //! (Cranelift / LLVM) tier resolves the same calls natively instead of
 //! failing to link.
 //!
-//! Handle model — process-global registries keyed by an `i64` handle,
+//! Handle model - process-global registries keyed by an `i64` handle,
 //! the same shape the SQL handle registry uses (`c_abi/sql.rs`). A
 //! handle is a plain integer at the Gossamer level, so it crosses
 //! goroutine boundaries freely; the underlying `std::net` sockets are
@@ -12,7 +12,7 @@
 //! never holds the registry lock: each op clones the `Arc` under the
 //! lock, releases it, then performs the (possibly blocking) `accept` /
 //! `read` / `write` on the shared handle outside the lock. This is
-//! deadlock-free under the goroutine scheduler — a server parked in
+//! deadlock-free under the goroutine scheduler - a server parked in
 //! `accept()` does not block a peer goroutine from registering its
 //! `connect()`ed stream. `close` drops the registry's `Arc`; any
 //! in-flight clone keeps the socket alive until it too drops (no
@@ -21,7 +21,7 @@
 //! All reads/writes go through `&TcpStream` (`std` implements
 //! `Read`/`Write` for `&TcpStream`), and `TcpListener::accept` /
 //! `local_addr` take `&self`, so no `&mut` ownership is needed past the
-//! `Arc` — the registry never hands out exclusive access.
+//! `Arc` - the registry never hands out exclusive access.
 //!
 //! Cross-platform: built entirely on `std::net` (Linux / macOS /
 //! Windows). `std` performs `WSAStartup` lazily on Windows; there is no
@@ -120,8 +120,8 @@ pub unsafe extern "C" fn gos_rt_tcp_listener_bind(addr: *const c_char) -> i128 {
 }
 
 /// `net::TcpListener::accept(handle) -> Result<(TcpStream, String), Error>`.
-/// The Ok payload is a heap `#[repr(C)] Pair { stream: i64, addr: i64 }`
-/// — the 2-slot tuple `(TcpStream-handle, peer-address-string)` exactly
+/// The Ok payload is a heap `#[repr(C)] Pair { stream: i64, addr: i64 }` -
+/// the 2-slot tuple `(TcpStream-handle, peer-address-string)` exactly
 /// as `gos_rt_regex_find_opt` packs its triple.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_tcp_listener_accept(h: i64) -> i128 {

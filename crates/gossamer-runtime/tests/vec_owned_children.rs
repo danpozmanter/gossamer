@@ -1,7 +1,7 @@
 //! Leak regression tests for the `AGGR_OWNED` slot-children mechanism
 //! and the `STRING`-typed materializer conversions: every vec returned
 //! by a string-bearing materializer shim must reclaim its embedded
-//! c-strings (and nested vecs) when freed WITHOUT full iteration — the
+//! c-strings (and nested vecs) when freed WITHOUT full iteration - the
 //! ABI-level shape of a Gossamer `for … { break }`.
 //!
 //! Leak-freedom is asserted through the allocation ledger
@@ -67,7 +67,7 @@ fn regex_split_vec_is_string_typed_and_free_reclaims_pieces() {
     assert_eq!(vec.len, 4);
     assert_eq!(vec.elem_kind, vec_elem_kind::STRING);
     assert!(str_live() > str_base, "split allocated piece strings");
-    // Free WITHOUT iterating — the early-break shape at the ABI level.
+    // Free WITHOUT iterating - the early-break shape at the ABI level.
     unsafe { gos_rt_vec_free(v) };
     assert_eq!(str_live(), str_base, "split pieces leaked on free");
 }
@@ -240,7 +240,7 @@ fn two_string_slot_vec_partial_read_then_free_reclaims_all_slots() {
     let str_base = str_live();
     let v = build_pair_vec(&[("content-type", "text/plain"), ("x-id", "abc")]);
     assert_eq!(str_live(), str_base + 4);
-    // Borrow slot 0 only (the early-break consumer shape) — reads never
+    // Borrow slot 0 only (the early-break consumer shape) - reads never
     // transfer ownership.
     let name0 = first_slot_cstr(v);
     let got = unsafe { std::ffi::CStr::from_ptr(name0) }.to_str().unwrap();
@@ -254,7 +254,7 @@ fn push_onto_tagged_vec_retains_children_for_balanced_frees() {
     let _guard = LEDGER_LOCK.lock();
     let str_base = str_live();
     let v = build_pair_vec(&[("a", "b")]);
-    // Push a slot whose strings the CALLER keeps holding — the tagged
+    // Push a slot whose strings the CALLER keeps holding - the tagged
     // push must retain so vec free + caller free are both balanced.
     let s1 = alloc_cstring(b"name");
     let s2 = alloc_cstring(b"value");
@@ -280,7 +280,7 @@ fn clone_of_string_typed_vec_shares_then_frees_balanced() {
     let c = unsafe { gos_rt_vec_clone(v) };
     assert_eq!(unsafe { (*c).elem_kind }, vec_elem_kind::STRING);
     unsafe { gos_rt_vec_free(v) };
-    // Clone still holds its shares — the pieces must be readable.
+    // Clone still holds its shares - the pieces must be readable.
     let p0 = first_slot_cstr(c);
     assert_eq!(
         unsafe { std::ffi::CStr::from_ptr(p0) }.to_str().unwrap(),

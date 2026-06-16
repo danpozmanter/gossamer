@@ -185,7 +185,7 @@ impl TokenStream {
     }
 
     /// Returns `true` when the cursor is at a token whose leading `>`
-    /// closes a generic list — a bare `>`, or a compound `>>` / `>=` /
+    /// closes a generic list - a bare `>`, or a compound `>>` / `>=` /
     /// `>>=` produced by the maximal-munch lexer for nested generics
     /// like `Vec<Vec<T>>`.
     #[must_use]
@@ -199,7 +199,7 @@ impl TokenStream {
     /// Consumes a single closing `>` for a generic list. A compound
     /// `>>` / `>=` / `>>=` token is split: the leading `>` is consumed
     /// and the remainder (`>` / `=` / `>=`) is rewritten in place so an
-    /// enclosing generic list — or the trailing operator — still sees
+    /// enclosing generic list - or the trailing operator - still sees
     /// it. Returns `false` when the cursor is not at a closing angle.
     pub fn eat_close_angle(&mut self) -> bool {
         let tok = self.peek();

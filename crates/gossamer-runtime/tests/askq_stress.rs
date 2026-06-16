@@ -9,7 +9,7 @@
 //! allocator the runtime helpers commit when driven through that
 //! shape.
 //!
-//! These are *runtime-level* tests — they call the C-ABI
+//! These are *runtime-level* tests - they call the C-ABI
 //! `gos_rt_*` helpers directly without going through the
 //! compiled Gossamer binary, so they reproduce ownership-domain
 //! bugs without needing the codegen pipeline. If a test segfaults

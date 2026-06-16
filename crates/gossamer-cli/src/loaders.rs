@@ -81,7 +81,7 @@ pub(crate) fn collect_top_level_names(sf: &gossamer_ast::SourceFile) -> Vec<&str
 /// Parses, resolves, type-checks, and exhaustiveness-checks
 /// `source`. Returns the lowered HIR program on success. When any
 /// stage produces error-severity diagnostics, prints them through
-/// the shared renderer and returns `Err` — no subsequent execution
+/// the shared renderer and returns `Err` - no subsequent execution
 /// may happen. Used by every `gos` subcommand that runs user code
 /// so the interpreter, native build, test runner, and bench runner
 /// all reject the same static-invalid programs.

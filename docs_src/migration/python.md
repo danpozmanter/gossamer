@@ -89,7 +89,7 @@ Python:
 names = sorted({name.lower() for name in users if name})
 ```
 
-Gossamer (rough mirror — `|>` threads each stage):
+Gossamer (rough mirror - `|>` threads each stage):
 
 ```gos
 let names = users

@@ -265,4 +265,4 @@ pub(crate) fn native_result_default_with(
 }
 
 // ----------------------------------------------------------------------
-// crypto (sha256, hmac, rand — always enabled in this crate)
+// crypto (sha256, hmac, rand - always enabled in this crate)

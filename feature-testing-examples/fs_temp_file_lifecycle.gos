@@ -1,6 +1,6 @@
 // Filesystem Temp-File Lifecycle
 // Write a file, verify it exists, read it back, append to it,
-// check sizes, and delete it — covering the common create/read/
+// check sizes, and delete it - covering the common create/read/
 // delete lifecycle across fs:: operations.
 
 use std::env

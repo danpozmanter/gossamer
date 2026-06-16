@@ -134,7 +134,7 @@ ensure_dir() {
     fi
 }
 
-# Path 1 — local install from an already-extracted archive.
+# Path 1 - local install from an already-extracted archive.
 script_dir="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
 if [ -f "$script_dir/gos" ]; then
     ensure_dir "$BIN_DIR"
@@ -149,7 +149,7 @@ if [ -f "$script_dir/gos" ]; then
     exit 0
 fi
 
-# Path 2 — remote bootstrap: download the release asset.
+# Path 2 - remote bootstrap: download the release asset.
 if ! command -v curl >/dev/null 2>&1; then
     echo "gossamer-install: curl is required for remote installs" >&2
     exit 1

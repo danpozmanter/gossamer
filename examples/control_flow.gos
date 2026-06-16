@@ -1,5 +1,5 @@
 /*
- * Control flow — loops, conditionals, pattern matching.
+ * Control flow - loops, conditionals, pattern matching.
  *
  * Every control construct is an expression. `if`, `match`,
  * `loop`, and `block` all evaluate to a value.
@@ -60,7 +60,7 @@ fn main() {
     }
     println!("first square > 100: {first_square_over_100}")
 
-    // match with guards (binds the value directly — no `*n` deref)
+    // match with guards (binds the value directly - no `*n` deref)
     for n in [-3, 0, 3, 42] {
         let label = match n {
             x if x < 0 => "negative",
@@ -71,7 +71,7 @@ fn main() {
         println!("{} -> {}", n, label)
     }
 
-    // `if let` over an `Option` — one line where `match` was four.
+    // `if let` over an `Option` - one line where `match` was four.
     let maybe: Option<i64> = Some(7)
     if let Some(n) = maybe {
         println!("got {n}")

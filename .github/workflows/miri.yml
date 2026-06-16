@@ -4,9 +4,9 @@ name: Miri
 # Miri executes Rust at the MIR-interpreter level, catching UB
 # (uninitialised reads, dangling pointers, alignment violations,
 # data races on shared atomics) that escape compile-time and
-# integration-test checks. Recent bug discoveries — invalid IR
+# integration-test checks. Recent bug discoveries - invalid IR
 # bitcasts, wild pointers passed to `chan_send`, single-slot
-# alloca overflows — are exactly the class miri surfaces early.
+# alloca overflows - are exactly the class miri surfaces early.
 #
 # Run weekly rather than per-PR because miri is ~50× slower than
 # native test execution and most fixes don't need that signal on
@@ -15,7 +15,7 @@ name: Miri
 
 on:
   schedule:
-    # Sundays 04:00 UTC — quiet window, doesn't compete with the
+    # Sundays 04:00 UTC - quiet window, doesn't compete with the
     # weekly fuzz cron at 03:00.
     - cron: '0 4 * * 0'
   workflow_dispatch:
@@ -69,7 +69,7 @@ jobs:
         env:
           # Miri flags:
           # - `-Zmiri-disable-isolation`: allow time, env, fs
-          #   reads — the runtime crate inspects clocks and env
+          #   reads - the runtime crate inspects clocks and env
           #   for the GC-mode toggle.
           # - `-Zmiri-permissive-provenance`: allow ptr-int-ptr
           #   roundtrips used by the runtime's flat-slot ABI.

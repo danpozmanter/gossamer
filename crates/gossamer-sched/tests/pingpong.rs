@@ -2,7 +2,7 @@
 //! scheduler under fan-out load. The throughput target is 2x the
 //! original `Mutex<Vec<SendTask>>` implementation; the assertion
 //! here is the looser "every goroutine completes its budget within
-//! 10 seconds" — the 2x measurement runs in the bench harness, not
+//! 10 seconds" - the 2x measurement runs in the bench harness, not
 //! the regression suite.
 
 use std::sync::Arc;

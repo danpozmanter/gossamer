@@ -1,4 +1,4 @@
-//! Tier parity gate — VM, Cranelift debug, LLVM release.
+//! Tier parity gate - VM, Cranelift debug, LLVM release.
 //!
 //! Every `.gos` source under `examples/` and
 //! `feature-testing-examples/` is run in all three tiers and the
@@ -166,7 +166,7 @@ const SPECS: &[Spec] = &[
     spec("examples/hello_world.gos"),
     spec("examples/json_derive_test.gos"),
     Spec {
-        skip_all: Some("needs live web_server.gos on :8080 — covered by web_server smoke tests"),
+        skip_all: Some("needs live web_server.gos on :8080 - covered by web_server smoke tests"),
         ..spec("examples/http_client.gos")
     },
     spec("examples/line_count.gos"),
@@ -184,7 +184,7 @@ const SPECS: &[Spec] = &[
     spec("examples/temperature.gos"),
     Spec {
         skip_parity: Some(
-            "fn main is empty stub — coverage comes from `gos test examples/testing.gos`",
+            "fn main is empty stub - coverage comes from `gos test examples/testing.gos`",
         ),
         ..spec("examples/testing.gos")
     },
@@ -193,7 +193,7 @@ const SPECS: &[Spec] = &[
     Spec {
         // v4/v7 produce fresh random / time-ordered values each run;
         // exit code is 0 and the format checks (lengths, validity,
-        // normalize, simple) deterministic across tiers — but the
+        // normalize, simple) deterministic across tiers - but the
         // raw stdout bytes differ run-to-run.
         nondeterministic: true,
         ..spec("examples/uuid_demo.gos")
@@ -201,7 +201,7 @@ const SPECS: &[Spec] = &[
     spec("examples/vowel_count.gos"),
     Spec {
         skip_all: Some(
-            "binds a fixed loopback port — covered serially by \
+            "binds a fixed loopback port - covered serially by \
              web_auth_api_parity_across_tiers",
         ),
         ..spec("examples/web_auth_api.gos")
@@ -225,7 +225,7 @@ const SPECS: &[Spec] = &[
     spec("feature-testing-examples/jit_enum_char_field.gos"),
     spec("feature-testing-examples/jit_inline_vec_ops.gos"),
     spec("feature-testing-examples/jit_mixed_arity6.gos"),
-    // Bytecode VM user-function inliner — must stay bit-identical to the
+    // Bytecode VM user-function inliner - must stay bit-identical to the
     // MIR-tier inlining already present in the compiled tiers.
     spec("feature-testing-examples/inline_scalar_kernel.gos"),
     spec("feature-testing-examples/temporary_wrap.gos"),
@@ -318,49 +318,49 @@ const SPECS: &[Spec] = &[
     spec("feature-testing-examples/http_form_urlencoded.gos"),
     Spec {
         skip_all: Some(
-            "binds fixed loopback ports — covered serially by \
+            "binds fixed loopback ports - covered serially by \
              http_bare_handler_parity_across_tiers",
         ),
         ..spec("feature-testing-examples/http_bare_handler.gos")
     },
     Spec {
         skip_all: Some(
-            "binds a fixed loopback port — covered serially by \
+            "binds a fixed loopback port - covered serially by \
              http_bare_aliases_parity_across_tiers",
         ),
         ..spec("feature-testing-examples/http_bare_aliases.gos")
     },
     Spec {
         skip_all: Some(
-            "binds a fixed loopback port — covered serially by \
+            "binds a fixed loopback port - covered serially by \
              http_client_cookie_jar_parity_across_tiers",
         ),
         ..spec("feature-testing-examples/http_client_cookie_jar.gos")
     },
     Spec {
         skip_all: Some(
-            "binds a fixed loopback port — covered serially by \
+            "binds a fixed loopback port - covered serially by \
              http_client_verbs_parity_across_tiers",
         ),
         ..spec("feature-testing-examples/http_client_verbs.gos")
     },
     Spec {
         skip_all: Some(
-            "binds a fixed loopback port — covered serially by \
+            "binds a fixed loopback port - covered serially by \
              http_middleware_bearer_parity_across_tiers",
         ),
         ..spec("feature-testing-examples/http_middleware_bearer.gos")
     },
     Spec {
         skip_all: Some(
-            "binds a fixed loopback port — covered serially by \
+            "binds a fixed loopback port - covered serially by \
              http_middleware_compose_parity_across_tiers",
         ),
         ..spec("feature-testing-examples/http_middleware_compose.gos")
     },
     Spec {
         skip_all: Some(
-            "binds a fixed loopback port — covered serially by \
+            "binds a fixed loopback port - covered serially by \
              http_middleware_ws_parity_across_tiers",
         ),
         ..spec("feature-testing-examples/http_middleware_ws.gos")
@@ -368,91 +368,91 @@ const SPECS: &[Spec] = &[
     spec("feature-testing-examples/http_router_lookup.gos"),
     Spec {
         skip_all: Some(
-            "binds a fixed loopback port — covered serially by \
+            "binds a fixed loopback port - covered serially by \
              http_next_chunk_parity_across_tiers",
         ),
         ..spec("feature-testing-examples/http_next_chunk.gos")
     },
     Spec {
         skip_all: Some(
-            "binds fixed loopback ports — covered serially by \
+            "binds fixed loopback ports - covered serially by \
              http_proxy_stream_parity_across_tiers",
         ),
         ..spec("feature-testing-examples/http_proxy_stream.gos")
     },
     Spec {
         skip_all: Some(
-            "binds a fixed loopback port — covered serially by \
+            "binds a fixed loopback port - covered serially by \
              http_raw_bytes_parity_across_tiers",
         ),
         ..spec("feature-testing-examples/http_raw_bytes.gos")
     },
     Spec {
         skip_all: Some(
-            "binds a fixed loopback port — covered serially by \
+            "binds a fixed loopback port - covered serially by \
              http_redirect_policy_parity_across_tiers",
         ),
         ..spec("feature-testing-examples/http_redirect_policy.gos")
     },
     Spec {
         skip_all: Some(
-            "binds a fixed loopback port — covered serially by \
+            "binds a fixed loopback port - covered serially by \
              http_request_headers_parity_across_tiers",
         ),
         ..spec("feature-testing-examples/http_request_headers.gos")
     },
     Spec {
         skip_all: Some(
-            "binds a fixed loopback port — covered serially by \
+            "binds a fixed loopback port - covered serially by \
              http_request_values_parity_across_tiers",
         ),
         ..spec("feature-testing-examples/http_request_values.gos")
     },
     Spec {
         skip_all: Some(
-            "binds a fixed loopback port — covered serially by \
+            "binds a fixed loopback port - covered serially by \
              http_request_form_auth_parity_across_tiers",
         ),
         ..spec("feature-testing-examples/http_request_form_auth.gos")
     },
     Spec {
         skip_all: Some(
-            "binds a fixed loopback port — covered serially by \
+            "binds a fixed loopback port - covered serially by \
              http_form_file_parity_across_tiers",
         ),
         ..spec("feature-testing-examples/http_form_file.gos")
     },
     Spec {
         skip_all: Some(
-            "binds a fixed loopback port — covered serially by \
+            "binds a fixed loopback port - covered serially by \
              http_response_headers_parity_across_tiers",
         ),
         ..spec("feature-testing-examples/http_response_headers.gos")
     },
     Spec {
         skip_all: Some(
-            "binds fixed loopback ports — covered serially by \
+            "binds fixed loopback ports - covered serially by \
              http_roundtrip_parity_across_tiers",
         ),
         ..spec("feature-testing-examples/http_roundtrip.gos")
     },
     Spec {
         skip_all: Some(
-            "binds a fixed loopback port — covered serially by \
+            "binds a fixed loopback port - covered serially by \
              http_static_file_parity_across_tiers",
         ),
         ..spec("feature-testing-examples/http_static_file.gos")
     },
     Spec {
         skip_all: Some(
-            "binds a fixed loopback port — covered serially by \
+            "binds a fixed loopback port - covered serially by \
              http_static_range_parity_across_tiers",
         ),
         ..spec("feature-testing-examples/http_static_range.gos")
     },
     Spec {
         skip_all: Some(
-            "binds a fixed loopback port — covered serially by \
+            "binds a fixed loopback port - covered serially by \
              http_websocket_accept_parity_across_tiers",
         ),
         ..spec("feature-testing-examples/http_websocket_accept.gos")
@@ -484,7 +484,7 @@ const SPECS: &[Spec] = &[
     spec("feature-testing-examples/pipe_placeholder.gos"),
     Spec {
         // The example exercises `exec::run` against `echo`, `printf`,
-        // `sh`, `true`, `false` — all Unix-only standalone executables
+        // `sh`, `true`, `false` - all Unix-only standalone executables
         // (on Windows `echo`/`true`/`false` are `cmd` builtins, not
         // resolvable via `Command::new`, and `sh`/`printf` aren't
         // present at all). Cross-platform shape would defeat the
@@ -849,7 +849,7 @@ fn vm_runs_every_example_without_crashing() {
 // The parity battery is split into `PARITY_GROUPS` round-robin groups
 // per tier so a single failing example fails only its small group test
 // (e.g. `llvm_parity_group_2`) instead of the whole "every example"
-// suite — narrower to find, faster to re-run. The failure message
+// suite - narrower to find, faster to re-run. The failure message
 // still names the exact example. Keep the group tests below in sync
 // with this count.
 const PARITY_GROUPS: usize = 6;
@@ -885,7 +885,7 @@ parity_group_tests! {
 /// Serialises every parity walk so concurrent test functions can't
 /// race on examples whose fixtures share `/tmp/gossamer_test_*`
 /// paths (notably `fs_temp_file_lifecycle.gos`). The grouped tests run
-/// sequentially under this lock — the round-robin split shrinks the
+/// sequentially under this lock - the round-robin split shrinks the
 /// failing unit without reintroducing the cross-test fixture race.
 static PARITY_WALK_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
@@ -1197,7 +1197,7 @@ fn http_middleware_bearer_parity_across_tiers() {
 
 /// Canonical authenticated API example: a path-parameter router, a
 /// `middleware::bearer_ok` auth gate, typed `r.path_int` extraction,
-/// and signed `session::sign` / `verify` cookies — all composed in
+/// and signed `session::sign` / `verify` cookies - all composed in
 /// one program that must behave bit-identically on every tier.
 #[test]
 fn web_auth_api_parity_across_tiers() {
@@ -1228,7 +1228,7 @@ fn http_router_params_parity_across_tiers() {
 
 /// Typed path extractors `r.path_int` / `r.path_float` (Option<T>) must
 /// parse captures and return None on unparseable/absent identically on
-/// every tier — exercises the packed-Option C-ABI.
+/// every tier - exercises the packed-Option C-ABI.
 #[test]
 fn http_router_typed_params_parity_across_tiers() {
     self_terminating_server_parity(
@@ -1239,7 +1239,7 @@ fn http_router_typed_params_parity_across_tiers() {
 
 /// `http::static_files::FileServer` served through `http::serve` must
 /// resolve a real file (200 + body + MIME) and 404 a missing path
-/// bit-identically on every tier — compiled wires `gos_rt_file_server_*`,
+/// bit-identically on every tier - compiled wires `gos_rt_file_server_*`,
 /// interp the `native_file_server_serve` dispatch.
 #[test]
 fn http_static_file_parity_across_tiers() {
@@ -1251,7 +1251,7 @@ fn http_static_file_parity_across_tiers() {
 
 /// `http::websocket::accept` (RFC 6455 server handshake) must validate
 /// the upgrade headers and build a 101 Response identically on every
-/// tier — compiled wires `gos_rt_ws_accept`, interp the native
+/// tier - compiled wires `gos_rt_ws_accept`, interp the native
 /// `websocket::accept`; a request without the headers is rejected with
 /// the handshake error string.
 #[test]
@@ -1270,7 +1270,7 @@ fn http_websocket_accept_parity_across_tiers() {
 /// compile and run identically on every tier. The serve expression
 /// is `Result<(), errors::Error>`-typed (the Err binding used to
 /// lower as void and break LLVM with "sext void to i64"), and a
-/// bind failure is the caller's `Err` value — printed via the match
+/// bind failure is the caller's `Err` value - printed via the match
 /// arm and exit 0 on every tier.
 #[test]
 fn http_serve_err_binding_parity_across_tiers() {
@@ -1282,7 +1282,7 @@ fn http_serve_err_binding_parity_across_tiers() {
         assert_eq!(
             run.code,
             Some(0),
-            "{} must exit 0 — serve failure is the caller's Err value, not a panic\n\
+            "{} must exit 0 - serve failure is the caller's Err value, not a panic\n\
              --- stdout ---\n{}\n--- stderr ---\n{}",
             tier.label(),
             run.stdout,
@@ -1368,12 +1368,12 @@ fn http_next_chunk_parity_across_tiers() {
     );
 }
 
-/// Streamed server responses (`Response::stream` — the
+/// Streamed server responses (`Response::stream` - the
 /// proxy-passthrough shape) must behave identically on every tier:
 /// the proxy opens a fresh upstream `http::stream` per request, the
 /// server drains it as chunked frames, and constructing the
 /// response consumes the `ResponseStream` handle (`next_chunk`
-/// yields `None` afterwards — the /consumed handler answers 500 if
+/// yields `None` afterwards - the /consumed handler answers 500 if
 /// it ever sees leftover data).
 #[test]
 fn http_proxy_stream_parity_across_tiers() {
@@ -1447,7 +1447,7 @@ fn server_smoke(tier: Tier) {
     // Pre-flight: if port 8080 is already bound (stale server from a
     // prior run, an unrelated dev process, etc.) the spawned child's
     // listener will fail to bind but the test would still probe and
-    // hit the *other* process — producing a confusing "status 404"
+    // hit the *other* process - producing a confusing "status 404"
     // panic. Try to acquire the port briefly to fail fast with a
     // clear diagnostic instead.
     if let Err(e) = std::net::TcpListener::bind(server.addr) {
@@ -1508,7 +1508,7 @@ fn server_smoke(tier: Tier) {
     let bind_raced = captured.stderr.contains("bind") && captured.stderr.contains("in use");
     assert!(
         !bind_raced,
-        "{} web_server: bind raced — port {} taken before child could listen\n--- child stderr ---\n{}",
+        "{} web_server: bind raced - port {} taken before child could listen\n--- child stderr ---\n{}",
         tier.label(),
         server.addr,
         captured.stderr,
@@ -1564,7 +1564,7 @@ fn read_child_streams(child: &mut Child) -> ChildOutput {
 /// Probes `addr` with `GET {path}` and returns the status code and
 /// body. Retries the *whole* attempt (connect + write + read) on
 /// any transient error until `deadline`. A single attempt can fail
-/// for reasons that resolve a moment later — the kernel may
+/// for reasons that resolve a moment later - the kernel may
 /// complete a TCP handshake against a not-quite-ready application
 /// (the listen backlog masks slow accept loops), and the read then
 /// times out with EAGAIN even though the server will be serving
@@ -1692,7 +1692,7 @@ fn lowers_without_fallback_group(group: usize) {
         let mut report = String::new();
         if !fallbacks.is_empty() {
             report.push_str(&format!(
-                "{} LLVM fallback site(s) — see ai_driven_gaps.md for the open list:\n",
+                "{} LLVM fallback site(s) - see ai_driven_gaps.md for the open list:\n",
                 fallbacks.len(),
             ));
             for f in &fallbacks {

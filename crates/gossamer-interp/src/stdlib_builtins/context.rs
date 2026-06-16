@@ -8,7 +8,7 @@
     clippy::unnecessary_wraps,
     clippy::needless_pass_by_value
 )]
-//! `std::context` builtins for the bytecode VM — request-scoped
+//! `std::context` builtins for the bytecode VM - request-scoped
 //! cancellation and deadlines. The handle is a struct carrying an
 //! `id`; the node state lives in a process-global registry keyed by
 //! `id` (mirrors `sync::Map` / `math::rand::Rng`), so a context minted
@@ -182,7 +182,7 @@ pub(crate) fn builtin_ctx_done(args: &[Value]) -> RuntimeResult<Value> {
     builtin_ctx_is_cancelled(args)
 }
 
-/// `ctx.done_chan()` — the context's done channel as a `Receiver`.
+/// `ctx.done_chan()` - the context's done channel as a `Receiver`.
 /// `cancel` (this context or an ancestor) closes it, so a closed-channel
 /// `select` recv arm fires on cancellation. Returns the same channel on
 /// every call for a given context.

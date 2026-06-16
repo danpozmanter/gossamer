@@ -10,7 +10,7 @@
 //
 // Self-terminating: the client runs in main and exits explicitly,
 // so the fixture can be compared across tiers as a plain
-// stdout-parity run. Binds fixed loopback ports — serialized under
+// stdout-parity run. Binds fixed loopback ports - serialized under
 // SERVER_PORT_LOCK by `http_bare_handler_parity_across_tiers` in
 // crates/gossamer-cli/tests/tier_parity.rs.
 

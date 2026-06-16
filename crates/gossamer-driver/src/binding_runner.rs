@@ -9,11 +9,11 @@
 //!
 //! Three artefacts can be materialised under the same workdir:
 //!
-//! - `runner/` — the executable runner used by `gos run`.
-//! - `staticlib/` — `libgos_static_bindings.a` (or
+//! - `runner/` - the executable runner used by `gos run`.
+//! - `staticlib/` - `libgos_static_bindings.a` (or
 //!   `gos_static_bindings.lib` on Windows MSVC) used by the
 //!   compiled-mode link step.
-//! - `sigs/signatures.json` — JSON dump of every binding's module
+//! - `sigs/signatures.json` - JSON dump of every binding's module
 //!   + item signature, fed to the resolver / typechecker.
 
 // `deny` rather than `forbid` so `pid_alive` can opt into its FFI liveness
@@ -78,7 +78,7 @@ pub enum BindingRunnerError {
     /// "no bindings".
     #[error("manifest error: {0}")]
     Manifest(String),
-    /// Template rendering failed (unexpected — rendering is total).
+    /// Template rendering failed (unexpected - rendering is total).
     #[error("template render failed: {0}")]
     Render(String),
     /// Signatures dump produced unparseable JSON.
@@ -245,7 +245,7 @@ impl BindingRunner {
     /// Idempotently builds the signatures bin and runs it,
     /// returning the path to `signatures.json`.
     pub fn ensure_signatures(&self) -> Result<PathBuf, BindingRunnerError> {
-        // Reuse the runner's Cargo.toml — the sigs-dump bin lives
+        // Reuse the runner's Cargo.toml - the sigs-dump bin lives
         // alongside the runner bin in the same crate.
         let dir = self.workdir.join(SUBDIR_RUNNER);
         fs::create_dir_all(&dir)?;
@@ -316,7 +316,7 @@ impl BindingRunner {
     /// `std::process::exit`.
     #[must_use]
     pub fn exec(runner: &Path, argv: &[OsString]) -> BindingRunnerError {
-        // We deliberately don't use `unsafe { libc::execvp }` here —
+        // We deliberately don't use `unsafe { libc::execvp }` here -
         // the workspace forbids unsafe outside binding/native. A
         // child-process wait + exit produces the same observable
         // semantics for our callers.
@@ -335,7 +335,7 @@ impl BindingRunner {
         // `BindingEntry` lives in the template crate, but our
         // `RenderedBinding` mirrors it. We have to materialise a
         // matching `Vec<BindingEntry>` and stash it on `self`'s
-        // lifetime via a thread-local — but that's fragile. The
+        // lifetime via a thread-local - but that's fragile. The
         // simpler approach: build the `Vec<BindingEntry>` here and
         // own it via a leaking helper. We side-step that by calling
         // through small adapter helpers on `RenderInput` so we just
@@ -783,7 +783,7 @@ fn render_one(
         }
         RustBindingSpec::Prebuilt { archive, abi: _ } => {
             // Prebuilt-archive binding: the staticlib is supplied
-            // directly. There is no Cargo dep — the link step in
+            // directly. There is no Cargo dep - the link step in
             // `gos build` consumes the archive path. The emitted
             // line is a TOML-friendly comment; the manifest-side
             // record keeps the archive path reachable through the
@@ -803,7 +803,7 @@ fn render_one(
 }
 
 /// Scaffold a wrapper crate around a single-file binding source.
-/// Idempotent — re-rendering is byte-stable, and `write_if_different`
+/// Idempotent - re-rendering is byte-stable, and `write_if_different`
 /// skips the rewrite when the contents match.
 fn materialise_src_binding(
     name: &str,
@@ -1092,7 +1092,7 @@ impl AdvisoryLock {
                             path.display()
                         )));
                     }
-                    // Best-effort: stale lock detection — if the PID
+                    // Best-effort: stale lock detection - if the PID
                     // in the file no longer exists, take it.
                     if let Ok(text) = fs::read_to_string(path)
                         && let Ok(pid) = text.trim().parse::<u32>()
@@ -1218,7 +1218,7 @@ mod tests {
     fn toml_path_kv_uses_literal_string_for_backslash_paths() {
         // Mimics a Windows GitHub runner path. TOML basic strings
         // would interpret `\a`/`\g` as escape sequences and fail
-        // to parse — single-quoted literal strings preserve the
+        // to parse - single-quoted literal strings preserve the
         // bytes verbatim. This is the regression gate for the
         // Windows CI failure observed 2026-04-30.
         let p = PathBuf::from("D:\\a\\gossamer\\gossamer/crates/gossamer-binding");

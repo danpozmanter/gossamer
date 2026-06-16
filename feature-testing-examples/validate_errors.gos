@@ -1,4 +1,4 @@
-// std::validate — FieldError + Errors data handles.
+// std::validate - FieldError + Errors data handles.
 //
 // Covers: FieldError::new + path/message/code accessors, Errors::new,
 // add, is_empty, len, count, get, collect. Errors are keyed by field

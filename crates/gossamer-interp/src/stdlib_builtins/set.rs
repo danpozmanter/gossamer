@@ -263,7 +263,7 @@ pub(crate) fn builtin_set_to_vec(args: &[Value]) -> RuntimeResult<Value> {
         r.borrow()
             .get(&id)
             .map(|s| {
-                // Sort for deterministic, cross-tier-identical order — a
+                // Sort for deterministic, cross-tier-identical order - a
                 // `HashSet`'s iteration order is otherwise unstable
                 // (RandomState) and differs run-to-run and across tiers.
                 let mut keys: Vec<MapKey> = s.iter().cloned().collect();
@@ -392,7 +392,7 @@ pub(crate) static MUTEX_REGISTRY: GlobalReg<StdHashMap<i64, Arc<MutexCell>>> =
 /// Backing state for an interpreter `sync::Mutex`. The lock is held
 /// from a `lock()` call until the matching `unlock()`, so a
 /// read-modify-write on shared state performed by user code between
-/// the two is serialized across goroutines — mirroring the compiled
+/// the two is serialized across goroutines - mirroring the compiled
 /// tier's `gos_rt_mutex_lock`/`gos_rt_mutex_unlock`. Acquisition parks
 /// the contending goroutine's worker thread on the condvar (the same
 /// blocking discipline `Channel::recv` uses) rather than spinning.

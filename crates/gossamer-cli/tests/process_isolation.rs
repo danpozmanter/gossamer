@@ -1,5 +1,5 @@
 //! Process isolation: a panic in a spawned goroutine terminates only that
-//! goroutine — the process keeps running and exits cleanly — while a panic on
+//! goroutine - the process keeps running and exits cleanly - while a panic on
 //! the main goroutine stays fatal (isolation is goroutine-scoped, not
 //! panic-swallowing). Verified on BOTH the bytecode VM (`gos run`) and the
 //! native binary (`gos build`), since isolation is a runtime/scheduler

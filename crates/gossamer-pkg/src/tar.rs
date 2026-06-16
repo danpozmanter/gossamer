@@ -11,7 +11,7 @@
 //!
 //! Implements the single-file strict-read half of
 //! the risks backlog "Real package-registry transport +
-//! signature verification" — the registry-server + publish-flow
+//! signature verification" - the registry-server + publish-flow
 //! half is deliberately out of scope per the plan's staged
 //! recommendation.
 //!
@@ -47,7 +47,7 @@ pub enum TarError {
     /// Gzipped archive detected (first two bytes are the gzip magic).
     /// Callers that want `.tar.gz` support must decompress upstream.
     #[error(
-        "gzipped archive detected — .tar.gz support is a follow-up; decompress before calling [`unpack`]"
+        "gzipped archive detected - .tar.gz support is a follow-up; decompress before calling [`unpack`]"
     )]
     Gzipped,
     /// Entry name escapes the extraction directory: an absolute path,
@@ -94,7 +94,7 @@ pub fn unpack(bytes: &[u8]) -> Result<BTreeMap<String, Vec<u8>>, TarError> {
             }
             '5' => {
                 // POSIX directory. Skip the payload (always zero)
-                // and do not record the entry — our consumers walk
+                // and do not record the entry - our consumers walk
                 // files only.
             }
             other => {
@@ -209,7 +209,7 @@ pub enum PackError {
 
 /// Builds a deterministic USTAR-format tar buffer from `entries`.
 /// Entries are emitted in lexicographic order, modification times
-/// are zero, and ownership is set to root:root — so two runs over
+/// are zero, and ownership is set to root:root - so two runs over
 /// the same input produce byte-identical output. Used by `gos
 /// publish` so the published sha256 is stable across machines.
 pub fn pack(entries: &BTreeMap<String, Vec<u8>>) -> Result<Vec<u8>, PackError> {
@@ -305,7 +305,7 @@ mod tests {
     /// 100 name | 8 mode | 8 uid | 8 gid | 12 size | 12 mtime |
     /// 8 chksum | 1 typeflag | 100 linkname | 6 magic | 2 version |
     /// 32 uname | 32 gname | 8 devmajor | 8 devminor | 155 prefix |
-    /// 12 pad — 512 bytes total.
+    /// 12 pad - 512 bytes total.
     fn build_tar(name: &str, body: &[u8]) -> Vec<u8> {
         let mut header = [0u8; 512];
         for (i, b) in name.as_bytes().iter().take(100).enumerate() {

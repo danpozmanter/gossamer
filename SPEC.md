@@ -1,6 +1,6 @@
 # Gossamer Language Specification
 
-> Status: pre-1.0.0 draft. Models the current Gossamer language —
+> Status: pre-1.0.0 draft. Models the current Gossamer language -
 > a language targeting the 2026+ Rust ecosystem. The CLI toolchain is
 > `gos` (single unified binary in the spirit of `go` or `cargo`).
 > Source files use the extension `.gos`. The manifest file is
@@ -137,7 +137,7 @@ Reserved but currently unused (future extensions): `async`, `await`,
 `crate`, `yield`, `extern`, `package`.
 
 `use` is the sole path-binding keyword; there is no `import`. `package`
-is reserved but has no role — source files do not declare a package;
+is reserved but has no role - source files do not declare a package;
 see §6. `move` is **not** a keyword: Gossamer has no ownership
 transfer, so the Rust-style `move` closure qualifier would be
 meaningless. Closures capture by managed reference for heap types and
@@ -157,7 +157,7 @@ by copy for `Copy` types with no opt-in needed.
 ,  ;  :  ?  #  @
 ```
 
-Unlike Rust, Gossamer does not use `&` to mean "borrow" — `&expr` takes
+Unlike Rust, Gossamer does not use `&` to mean "borrow" - `&expr` takes
 a managed reference (see §4.3). The `*` operator is used only for
 pointer dereference inside `unsafe` blocks; regular method/field access
 auto-dereferences.
@@ -189,8 +189,8 @@ byte_string = "b\"" { byte_char } "\""
 
 Literal suffixes disambiguate type:
 
-- `42i32`, `42u64`, `42usize` — typed integer literals.
-- `3.14f32`, `3.14f64` — typed float literals.
+- `42i32`, `42u64`, `42usize` - typed integer literals.
+- `3.14f32`, `3.14f64` - typed float literals.
 - Untyped literals default to `i64` / `f64` unless context infers otherwise.
 
 Integer literals may contain `_` as a visual separator anywhere after
@@ -242,17 +242,17 @@ newlines unconditionally.
 
 - Signed ints: `i8`, `i16`, `i32`, `i64`, `i128`, `isize`.
 - Unsigned ints: `u8`, `u16`, `u32`, `u64`, `u128`, `usize`.
-  (`i128` / `u128` are reserved spellings, rejected with `GT0014` —
+  (`i128` / `u128` are reserved spellings, rejected with `GT0014` -
   see the conformance note below.)
 - Floats: `f32`, `f64`.
 - `bool` (1 byte).
-- `char` — a 32-bit Unicode scalar value (not a surrogate).
-- `()` — the unit type, inhabited by the value `()`.
-- `!` — the never type (uninhabited; result type of `panic!`, `return`,
+- `char` - a 32-bit Unicode scalar value (not a surrogate).
+- `()` - the unit type, inhabited by the value `()`.
+- `!` - the never type (uninhabited; result type of `panic!`, `return`,
   infinite loops).
 
 **The i64 runtime model.** Every integer type of 64 bits or less
-(`i8`–`i64`, `u8`–`u64`, `isize`, `usize`) is represented at runtime
+(`i8`-`i64`, `u8`-`u64`, `isize`, `usize`) is represented at runtime
 as a 64-bit signed value, on every tier. Arithmetic, comparison,
 division, remainder, and shifts all run at 64-bit signed width; the
 declared narrow or unsigned width is observable only at an explicit
@@ -264,7 +264,7 @@ Consequences of the model:
   width: `200u8 + 200u8 == 400`. Wrap-at-width is opt-in via a cast
   (`(200u8 + 200u8) as u8 == 144`).
 - `u64`/`usize` values at or beyond 2<sup>63</sup> are not
-  representable distinctly — they alias the i64 two's-complement
+  representable distinctly - they alias the i64 two's-complement
   range, so `0u64 - 1` computes, compares, divides, and prints as
   `-1`, and `(0u64 - 1) as f64 == -1.0`. (Display provenance is the
   one exception: a value produced directly by an explicit `as u64` /
@@ -286,15 +286,15 @@ Consequences of the model:
 > **Conformance** `i128` and `u128` are not yet supported on any
 > tier. The checker rejects every spelling of these types at the
 > declaration site with a compile-time error (`GT0014`), so `gos
-> run`, the JIT, and `gos build` all fail identically — there is no
+> run`, the JIT, and `gos build` all fail identically - there is no
 > interpreter-only acceptance and no silent 64-bit narrowing.
 
-Silent surprise is never part of the contract — the behaviour is
+Silent surprise is never part of the contract - the behaviour is
 explicit two's-complement arithmetic at 64-bit width, not
 "undefined."
 
-**No implicit numeric widening.** All numeric conversions — widening or
-narrowing — require an explicit `as` cast. `let bigger: i64 = small_i32`
+**No implicit numeric widening.** All numeric conversions - widening or
+narrowing - require an explicit `as` cast. `let bigger: i64 = small_i32`
 is a type error; write `let bigger = small_i32 as i64`. This prevents
 silent truncation, silent sign changes, and surprise precision loss.
 
@@ -355,7 +355,7 @@ count(["m", "n"])                             // slice argument
 ```
 
 An `if` or `match` whose branches are array literals of differing
-length joins to `Vec<T>` — the only type that holds both — for every
+length joins to `Vec<T>` - the only type that holds both - for every
 element type (`if c { ["a", "b"] } else { ["c"] }` is a
 `Vec<String>`). Equal-length branches stay a fixed `[T; N]` unless the
 surrounding context asks for a Vec. Nested literals follow the element
@@ -363,25 +363,25 @@ type: `let g: Vec<Vec<i64>> = [[1, 2], [3]]` builds a Vec of Vecs.
 
 ### 3.4 Pointers and references
 
-- `T` — a value. For `Copy` types (primitive numerics, `bool`, `char`,
+- `T` - a value. For `Copy` types (primitive numerics, `bool`, `char`,
   small POD structs) pass/return is a copy. For heap-managed types,
-  `T` still names a managed reference — assignment and parameter
+  `T` still names a managed reference - assignment and parameter
   passing create a second reference to the same heap cell. There is no
   ownership transfer and no `move` keyword: the original binding
   remains accessible.
-- `&T` — a **shared managed reference** to a value of type `T`. Not a
+- `&T` - a **shared managed reference** to a value of type `T`. Not a
   raw pointer. Cannot be null. Created by `&expr`. Auto-dereferenced
   for `.` access. Liveness is guaranteed by the runtime; the compiler
   additionally enforces a local aliasing discipline described in §7.5.
-- `&mut T` — an **exclusive managed reference**. Required to mutate
+- `&mut T` - an **exclusive managed reference**. Required to mutate
   through a reference. Cannot coexist with any other reference (shared
   or exclusive) to the same value within a function body. Cannot appear
   as a struct field. Does not carry write-through across a `go` or
   channel boundary (see the parameter-semantics paragraph below).
-- `*const T`, `*mut T` — raw pointers. Only constructible and usable
+- `*const T`, `*mut T` - raw pointers. Only constructible and usable
   inside `unsafe` blocks. Used for FFI.
 
-`&T` and `&mut T` in Gossamer are not borrows in the Rust sense —
+`&T` and `&mut T` in Gossamer are not borrows in the Rust sense -
 automatic memory management already guarantees liveness. They are
 access-mode markers used by a scope-local check (§7.5) to prevent
 simultaneous mutation and reading of the same value. No lifetime
@@ -393,7 +393,7 @@ growth via `push` (a visible reallocation included), `swap`, forwarding
 the reference into a nested call, early-return paths, a struct field as
 the argument place, and writes from a closure taking the parameter are
 all visible in the caller's binding after the call returns. Fixed-size
-`[T; N]` arguments are copied at the call boundary — a fixed array
+`[T; N]` arguments are copied at the call boundary - a fixed array
 passed where a `&mut [T]` / `&mut Vec<T>` parameter is expected mutates
 the copy, and write-through for fixed arrays is not part of the
 contract. Passing the same place twice as `&mut` in a single call
@@ -496,12 +496,12 @@ declare that a type satisfies a trait.
 
 Method receivers:
 
-- `fn m(self)` — receives the value by copy (Copy types) or by
+- `fn m(self)` - receives the value by copy (Copy types) or by
   managed reference (heap types). The caller's binding remains
   usable after the call.
-- `fn m(&self)` — shared access. With managed references this is
+- `fn m(&self)` - shared access. With managed references this is
   just "pass the ref".
-- `fn m(&mut self)` — exclusive access. Same runtime as `&self`; used
+- `fn m(&mut self)` - exclusive access. Same runtime as `&self`; used
   by the type checker and the local borrow check (§7.5) to forbid
   method calls on non-mut bindings and to prevent simultaneous aliases
   within a function body.
@@ -516,7 +516,7 @@ ConstParam = "const" Ident ":" Type [ "=" Expr ]
 ```
 
 Lifetime parameters exist syntactically only for FFI signatures that
-mirror Rust crates — they are parsed and ignored by the type checker in
+mirror Rust crates - they are parsed and ignored by the type checker in
 safe code. In normal code, lifetimes are never written.
 
 Generic instantiation in expressions uses the turbofish `::<T>`:
@@ -548,7 +548,7 @@ on the managed heap.
 let handlers: Vec<dyn Handler> = vec![...]
 ```
 
-Unlike Rust, no explicit `Box<dyn Trait>` is needed — because values in
+Unlike Rust, no explicit `Box<dyn Trait>` is needed - because values in
 heap-allocated collections are already managed references, writing
 `dyn Handler` as an element type is sufficient.
 
@@ -570,13 +570,13 @@ struct Point { x: i64, y: i64 }
 
 The supported traits are:
 
-- `Clone` — `.clone()` returns a field-by-field copy.
-- `PartialEq` / `Eq` — `==` and `!=` compare field-by-field. (`Eq` is a marker
+- `Clone` - `.clone()` returns a field-by-field copy.
+- `PartialEq` / `Eq` - `==` and `!=` compare field-by-field. (`Eq` is a marker
   requiring `PartialEq`.)
-- `Default` — `Type::default()` builds a zero-valued instance (`0` / `false` /
+- `Default` - `Type::default()` builds a zero-valued instance (`0` / `false` /
   `""` / `[]` / each field type's own default; skipped when a field type has no
   derivable default).
-- `Debug` — `{:?}` / `{}` render `Name { field: value, … }`.
+- `Debug` - `{:?}` / `{}` render `Name { field: value, … }`.
 
 The methods are synthesized as ordinary Gossamer `impl` source at parse time,
 so they compile and run identically on every tier. Fields may be primitives,
@@ -584,7 +584,7 @@ so they compile and run identically on every tier. Fields may be primitives,
 struct may be **generic** (`struct Wrap<T> { … }`).
 
 `#[derive(...)]` also works on **enums whose variants are all tuple
-(`Circle(f64)`) or unit (`Point`)** — `Clone`, `PartialEq` / `Eq`, `Debug`
+(`Circle(f64)`) or unit (`Point`)** - `Clone`, `PartialEq` / `Eq`, `Debug`
 (`Circle(5.0)`), and `Default` (which selects the `#[default]` unit variant).
 Enums with struct-payload variants (`Rect { w, h }`) are not yet derivable.
 
@@ -602,11 +602,11 @@ equal-valued keys at distinct allocations resolve to the same entry.
 LetStmt = "let" [ "mut" ] Pattern [ ":" Type ] [ "=" Expr ] ";"
 ```
 
-- `let x = 1` — immutable binding, type inferred.
-- `let mut x = 1` — mutable binding.
-- `let (a, b) = pair` — destructuring.
-- `let Point { x, y } = p` — struct destructuring.
-- `let x: i64 = 1` — annotated.
+- `let x = 1` - immutable binding, type inferred.
+- `let mut x = 1` - mutable binding.
+- `let (a, b) = pair` - destructuring.
+- `let Point { x, y } = p` - struct destructuring.
+- `let x: i64 = 1` - annotated.
 
 Shadowing is permitted.
 
@@ -697,7 +697,7 @@ ArenaStmt = "arena" Block
 `arena` is a contextual keyword (an identifier `arena` not followed by
 `{` is an ordinary name). Every allocation made while the block runs is
 bump-allocated into a fresh arena and freed wholesale when the block
-exits, on every exit path — the construct desugars to
+exits, on every exit path - the construct desugars to
 `runtime::arena_push()` plus a block-scoped
 `defer runtime::arena_pop()`. The block is statement-position only and
 yields `()`; a tail expression is evaluated and discarded.
@@ -715,8 +715,8 @@ DeferStmt = "defer" Expr
 ```
 
 `defer` is **block-scoped**, following Swift and Zig rather than Go: a
-deferred expression runs when control leaves its *enclosing block* — by
-falling off the end, `return`, `break`, or `continue` — not when the whole
+deferred expression runs when control leaves its *enclosing block* - by
+falling off the end, `return`, `break`, or `continue` - not when the whole
 function returns. Within a block, deferred expressions run in LIFO order. The
 argument is any expression, commonly a call or a `{ }` block.
 
@@ -872,7 +872,7 @@ Examples:
 name |> format!("hello {}", ..) |> fmt::println
 ```
 
-Note: the `..` placeholder is **not** required — `|>` implicitly
+Note: the `..` placeholder is **not** required - `|>` implicitly
 targets the last position. The code above would equivalently be
 written:
 
@@ -915,7 +915,7 @@ read_file(path)? |> parse_json::<Config>()?
 ```
 
 Here `?` binds tighter than `|>` (§4.7 precedence), so this parses as
-`(read_file(path)?) |> (parse_json::<Config>()?)` — the inner `?`
+`(read_file(path)?) |> (parse_json::<Config>()?)` - the inner `?`
 unwraps the `Result<String, _>`, pipes the `String` into
 `parse_json`, and the outer `?` unwraps that result.
 
@@ -970,9 +970,9 @@ algorithm, same as Rust).
 Gossamer cleanly separates two concepts that other languages often
 conflate:
 
-- **Module** — how code is *organized* into namespaces. No version, no
+- **Module** - how code is *organized* into namespaces. No version, no
   owner, no network identity.
-- **Project** — how code is *distributed* and *versioned*. Carries a
+- **Project** - how code is *distributed* and *versioned*. Carries a
   stable domain-based identifier, a semver, and dependency
   declarations.
 
@@ -1064,8 +1064,8 @@ license = "Apache-2.0"
 
 Required fields:
 
-- `project.id` — the project identifier (see §6.5).
-- `project.version` — semver `MAJOR.MINOR.PATCH`.
+- `project.id` - the project identifier (see §6.5).
+- `project.version` - semver `MAJOR.MINOR.PATCH`.
 
 Every other key is optional.
 
@@ -1093,7 +1093,7 @@ Properties:
   identifier is discouraged because it couples identity to a service;
   use a domain you control.
 - Ownership is social, not technical. No global authority enforces who
-  may publish under a prefix — disputes are resolved by consumers
+  may publish under a prefix - disputes are resolved by consumers
   choosing which dependency to declare.
 - Short identifiers (single-segment: `math`, `fmt`) are **reserved for
   the standard library**.
@@ -1121,7 +1121,7 @@ use "example.com/math" as m                   // binds `m`
 use "example.com/math"::vector                // binds `vector`
 use "example.com/math"::vector::{Vec3, Vec4}
 
-// Same-project paths use ordinary module syntax — no string.
+// Same-project paths use ordinary module syntax - no string.
 use vector::{Vec3, Vec4}
 use net::http::Server
 
@@ -1226,7 +1226,7 @@ stack-allocated (escape analysis). The escape rules are:
 > deterministic reference counting for heap enums and runtime
 > containers, drop-pass reclamation for value aggregates, weak
 > references, an on-demand cycle collector
-> (`runtime::collect_cycles()`), and `arena { }` regions — on every
+> (`runtime::collect_cycles()`), and `arena { }` regions - on every
 > tier. The earlier tri-colour tracing collector is removed; there
 > is no pacer, no write barrier, and no GC pause.
 
@@ -1242,7 +1242,7 @@ Memory is reclaimed deterministically, without a tracing collector:
   strong count; upgrading after the payload is destroyed yields
   `None` (Swift-ARC model).
 - **Cycle collection.** Reference cycles are reclaimed on demand by
-  `runtime::collect_cycles()` (Bacon–Rajan trial deletion). No
+  `runtime::collect_cycles()` (Bacon-Rajan trial deletion). No
   background collector runs.
 - **Value aggregates.** Structs, tuples, and arrays are
   heap-allocated at construction and freed by the compile-time drop
@@ -1305,7 +1305,7 @@ heap-managed types, a copy for `Copy` types. The cognitive load of "who
 owns this value now" does not exist.
 
 > **Conformance (0.5.0)** `status: not-in-0.5.0`. The scope-local
-> borrow check described in §7.5.1–7.5.4 is the v1 target. `&mut T`
+> borrow check described in §7.5.1-7.5.4 is the v1 target. `&mut T`
 > is parsed and type-checked today, but the exclusivity enforcement
 > pass has not been implemented. Programs that would violate the
 > rule compile and run; the check is deferred to a release that
@@ -1315,7 +1315,7 @@ Automatic memory management already guarantees that no reference
 dangles. Gossamer layers one additional check on top: **within a
 single function body, a value may have many shared `&T` references, or
 exactly one `&mut T` reference, but never both at once.** The analysis
-is strictly scope-local — no lifetime parameters, no cross-function
+is strictly scope-local - no lifetime parameters, no cross-function
 inference, no whole-program data-flow. One linear pass per function.
 
 The check catches the bug class automatic memory management cannot:
@@ -1373,11 +1373,11 @@ Two patterns are outright forbidden to keep the analysis tractable:
 
 - **Struct fields may not have type `&mut T`.** Tracking exclusivity
   through heap-stored references would require lifetime parameters.
-  `&T` fields are fine — they are managed references, not tracked
+  `&T` fields are fine - they are managed references, not tracked
   borrows.
 - **No `&T` or `&mut T` crosses a `go` or channel boundary.** `go`
   and `Sender::send` pass values the same way ordinary assignment does
-  — managed reference for heap types, copy for `Copy` types — and the
+  - managed reference for heap types, copy for `Copy` types - and the
   caller retains access to its bindings. Tracked reference markers
   cannot cross because the local borrow check is scope-local. See
   §8.1 and §8.2. This rules out one source of cross-goroutine bugs
@@ -1418,7 +1418,7 @@ deterministic SIGSEGV instead of clobbering arbitrary memory.
 **Argument discipline.** `go` captures values by managed reference the
 same way an ordinary closure does. `Copy` types (primitive numerics,
 `bool`, `char`, small POD structs) are captured by value. After
-`go f(x)` returns, the caller may continue to use `x` — Gossamer has no
+`go f(x)` returns, the caller may continue to use `x` - Gossamer has no
 ownership transfer, no `move` keyword, and no "value becomes invalid
 after this point" semantics. This matches Go.
 
@@ -1429,7 +1429,7 @@ either require lifetime annotations (which we explicitly avoid) or
 silently weaken the local check. Pass the underlying value (managed
 reference, or `Copy`) instead.
 
-Cross-goroutine data races on shared mutable state are possible — the
+Cross-goroutine data races on shared mutable state are possible - the
 same trade-off Go makes. Detect them at runtime with `gos build
 --race` (post-v1 tooling, tracked in the plan) and prevent them by
 communicating through channels rather than sharing state.
@@ -1459,19 +1459,19 @@ let (tx, rx) = channel::<T>(cap: 16)      // buffered
 
 Channel operations (non-`select`):
 
-- `tx.send(v)` — blocks until a receiver is ready (unbuffered) or
+- `tx.send(v)` - blocks until a receiver is ready (unbuffered) or
   buffer has capacity.
-- `rx.recv() -> Option<T>` — blocks until a sender sends a value or
+- `rx.recv() -> Option<T>` - blocks until a sender sends a value or
   the channel is closed; returns `None` when the channel is closed and
   drained.
-- `rx.try_recv() -> Option<T>` — non-blocking.
-- `tx.close()` — marks the channel closed. Subsequent sends panic.
+- `rx.try_recv() -> Option<T>` - non-blocking.
+- `tx.close()` - marks the channel closed. Subsequent sends panic.
   Receives drain buffered values then return `None`.
 
 Channels are many-to-many. Close only once.
 
 `Sender::send` passes a managed reference for heap-managed types and a
-copy for `Copy` types — the same rules as ordinary assignment or
+copy for `Copy` types - the same rules as ordinary assignment or
 function call. No ownership transfer is implied; the sender retains
 access to whatever bindings it named. Sending a `&T` or `&mut T` on a
 channel is a compile error, for the same reason `go` cannot capture
@@ -1496,8 +1496,8 @@ select {
 
 Deferred expressions are **block-scoped** (see §`defer`): each runs when
 control leaves its enclosing `{ }` block, not when the whole function or
-goroutine unwinds. As a goroutine's stack unwinds — whether by normal return
-or by a panic — every block it leaves runs that block's pending defers in LIFO
+goroutine unwinds. As a goroutine's stack unwinds - whether by normal return
+or by a panic - every block it leaves runs that block's pending defers in LIFO
 order. A panic that is not recovered inside the goroutine ends that goroutine
 (its defers still run as the stack unwinds); a panic on the main goroutine
 crashes the process.
@@ -1523,7 +1523,7 @@ They do **not** disable automatic memory management or affect memory
 reclamation.
 
 > **Conformance (0.5.0)** `status: implemented`. Source-level
-> `extern "C"` items are **not** an `unsafe` power in 0.5.0 — they are
+> `extern "C"` items are **not** an `unsafe` power in 0.5.0 - they are
 > rejected at parse time (GP0016). See §12.
 
 ---
@@ -1564,10 +1564,10 @@ This is an outline; full API docs ship with the first implementation.
 
 ### 10.1 `std::fmt`
 
-- `println(args...)` — variadic print-with-newline. Each argument
+- `println(args...)` - variadic print-with-newline. Each argument
   implements `Display`.
 - `eprintln(args...)`.
-- `format!(fmt_str, args...)` — returns `String`. `fmt_str` is a
+- `format!(fmt_str, args...)` - returns `String`. `fmt_str` is a
   compile-time-validated format string (`{}` placeholders).
 - `print`, `eprint` without newline.
 - `Display`, `Debug` traits with derive support.
@@ -1600,7 +1600,7 @@ applies: data flows through `|>` into free functions; the surface
 stays small and the call shape is uniform. The mutating helpers
 that don't compose with `|>` (`xs.push`, `xs.pop`, `xs.sort`,
 `xs.swap`, `m.inc`, `m.or_insert`, etc.) remain methods because
-they operate by side-effect on the receiver — there is no chain
+they operate by side-effect on the receiver - there is no chain
 to fit them into.
 
 The iterator protocol is one trait. User code declares it as
@@ -1638,7 +1638,7 @@ The HIR desugars to
 }
 ```
 
-— binding the iter once outside the loop so each `.next()`
+- binding the iter once outside the loop so each `.next()`
 call advances the same state. `IntoIterator` is implicit:
 `Vec<T>`, `HashMap<K,V>`, ranges, `Receiver<T>`, and any
 user struct with `fn next(&mut self) -> Option<T>` are all
@@ -1657,12 +1657,12 @@ Free functions in `std::iter`. Argument order is **data-last**
 accept any `Fn(...) -> _` (capturing closures and bare functions
 both qualify).
 
-Transformations (lazy when chained — no intermediate `Vec`
+Transformations (lazy when chained - no intermediate `Vec`
 allocation between stages):
 
-- `map(f, it)` — apply `f` to every element.
-- `filter(p, it)` — keep elements where `p(elem)` is true.
-- `filter_map(f, it)` — apply `f`, keep the `Some` results.
+- `map(f, it)` - apply `f` to every element.
+- `filter(p, it)` - keep elements where `p(elem)` is true.
+- `filter_map(f, it)` - apply `f`, keep the `Some` results.
 - `take(n, it)` / `skip(n, it)`.
 - `take_while(p, it)` / `skip_while(p, it)`.
 - `chain(a, b)`, `zip(a, b)`, `enumerate(it)`.
@@ -1673,7 +1673,7 @@ allocation between stages):
 
 Consumers (force the chain to completion, return a non-iterator):
 
-- `for_each(f, it)` — apply `f` for its side-effects; returns `()`.
+- `for_each(f, it)` - apply `f` for its side-effects; returns `()`.
 - `fold(init, f, it)`, `reduce(f, it) -> Option<T>`.
 - `sum(it)`, `sum_by(f, it)`, `product(it)`, `product_by(f, it)`.
 - `count(it)`.
@@ -1686,7 +1686,7 @@ Consumers (force the chain to completion, return a non-iterator):
 
 Materializers (consumers that build a collection):
 
-- `collect::<C>(it)` — into `Vec<T>`, `HashSet<T>`, `HashMap<K,V>`,
+- `collect::<C>(it)` - into `Vec<T>`, `HashSet<T>`, `HashMap<K,V>`,
   `BTreeMap<K,V>`, `String`, depending on the turbofish.
 - `group_by(key, it) -> HashMap<K, Vec<T>>`.
 - `count_by(key, it) -> HashMap<K, i64>`.
@@ -1700,7 +1700,7 @@ Constructors:
 - `repeat(v, n) -> RepeatIter`, `empty() -> EmptyIter`,
   `once(v) -> OnceIter`.
 
-Example (lazy chain — `iter::filter` and `iter::map` never
+Example (lazy chain - `iter::filter` and `iter::map` never
 allocate intermediate `Vec`s):
 
 ```
@@ -1711,7 +1711,7 @@ let total =
     |> iter::sum::<i64>()
 ```
 
-Example (eager — input `Vec`, output `Vec`):
+Example (eager - input `Vec`, output `Vec`):
 
 ```
 let xs = [3, 1, 4, 1, 5, 9, 2, 6]
@@ -1724,12 +1724,12 @@ Free-function chaining surface for `Option<T>`. Mirrors F# `Option`
 module. Argument order is data-last so every entry threads with `|>`.
 
 - `map(f, opt) -> Option<U>`.
-- `and_then(f, opt) -> Option<U>` — F# `Option.bind`; flat-map.
+- `and_then(f, opt) -> Option<U>` - F# `Option.bind`; flat-map.
 - `filter(p, opt) -> Option<T>`.
-- `default(v, opt) -> T` — F# `Option.defaultValue`.
-- `default_with(f, opt) -> T` — lazy default.
+- `default(v, opt) -> T` - F# `Option.defaultValue`.
+- `default_with(f, opt) -> T` - lazy default.
 - `or(alt, opt) -> Option<T>` / `or_else(f, opt) -> Option<T>`.
-- `iter(f, opt) -> ()` — F# `Option.iter`.
+- `iter(f, opt) -> ()` - F# `Option.iter`.
 - `is_some(opt) -> bool`, `is_none(opt) -> bool`.
 - `flatten(opt: Option<Option<T>>) -> Option<T>`.
 - `zip(a, b) -> Option<(A, B)>`.
@@ -1745,7 +1745,7 @@ Free-function chaining surface for `Result<T, E>`. Mirrors F#
 
 - `map(f, r) -> Result<U, E>`.
 - `map_err(f, r) -> Result<T, F>`.
-- `and_then(f, r) -> Result<U, E>` — F# `Result.bind`.
+- `and_then(f, r) -> Result<U, E>` - F# `Result.bind`.
 - `or_else(f, r) -> Result<T, F>`.
 - `default(v, r) -> T`, `default_with(f, r) -> T`.
 - `ok(r) -> Option<T>`, `err(r) -> Option<E>`.
@@ -1815,7 +1815,7 @@ transformation when the chain doesn't return from the enclosing fn.
 
 ### 10.12 `std::thread`, `std::channel`
 
-- `thread::spawn(|| { ... })` — OS thread (rarely used; prefer `go`).
+- `thread::spawn(|| { ... })` - OS thread (rarely used; prefer `go`).
 - `channel<T>()`, `channel<T>(cap)`.
 
 ### 10.13 `std::panic`
@@ -2063,11 +2063,11 @@ See §6.4. The only required keys are `project.id` and
 
 Four dependency source kinds (§6.7), in order of typical preference:
 
-- **Registry** — HTTP endpoint serving signed tarballs, matched by DNS
+- **Registry** - HTTP endpoint serving signed tarballs, matched by DNS
   prefix via `[registries]`.
-- **Git** — clone and check out a tag, branch, or rev.
-- **Local path** — for side-by-side development of related projects.
-- **URL tarball** — plain archive with mandatory sha256.
+- **Git** - clone and check out a tag, branch, or rev.
+- **Local path** - for side-by-side development of related projects.
+- **URL tarball** - plain archive with mandatory sha256.
 
 No source kind is privileged; all four interoperate.
 
@@ -2092,18 +2092,18 @@ artifacts cached per target under
 
 ### 16.6 Subcommands
 
-- `gos init` — create `project.toml` in the current directory.
-- `gos new NAME` — scaffold a new project directory.
-- `gos add ID[@VERSION]` — add a dependency entry.
-- `gos remove ID` — remove a dependency entry.
-- `gos build` — compile the current project.
-- `gos run` — interpret the current project.
-- `gos test` — run the project's tests.
-- `gos fetch` — resolve and download (but do not build) all deps.
-- `gos update` — update deps within their declared ranges.
-- `gos tidy` — rewrite the manifest to its minimal closure.
-- `gos vendor` — copy deps into `./vendor/`.
-- `gos doc` — generate HTML documentation.
+- `gos init` - create `project.toml` in the current directory.
+- `gos new NAME` - scaffold a new project directory.
+- `gos add ID[@VERSION]` - add a dependency entry.
+- `gos remove ID` - remove a dependency entry.
+- `gos build` - compile the current project.
+- `gos run` - interpret the current project.
+- `gos test` - run the project's tests.
+- `gos fetch` - resolve and download (but do not build) all deps.
+- `gos update` - update deps within their declared ranges.
+- `gos tidy` - rewrite the manifest to its minimal closure.
+- `gos vendor` - copy deps into `./vendor/`.
+- `gos doc` - generate HTML documentation.
 
 ### 16.7 Reproducibility
 
@@ -2143,30 +2143,30 @@ sources is a fully supported, registry-free setup.
 
 ---
 
-## Appendix A — Differences from Go
+## Appendix A - Differences from Go
 
 1. No `nil`. All absence goes through `Option`.
 2. No implicit zero-value for function types.
-3. No interfaces in Go's sense — traits with explicit `impl`.
-4. No `iota` — use `const` or an enum with explicit discriminants.
-5. No type switch `x.(type)` — use `match` on an enum or `match` on
+3. No interfaces in Go's sense - traits with explicit `impl`.
+4. No `iota` - use `const` or an enum with explicit discriminants.
+5. No type switch `x.(type)` - use `match` on an enum or `match` on
    a trait object with `Any::type_id`.
 6. No labeled `goto`.
 7. No implicit newline-as-semicolon rule.
 8. Visibility by `pub`, not by capitalization.
 9. Generics syntax is `<T>`, not `[T]`.
 
-## Appendix B — Differences from Rust
+## Appendix B - Differences from Rust
 
 1. No lifetimes (automatic memory management removes the need).
 2. No borrow checker (automatic memory management removes the need).
-3. No `Drop` trait with deterministic destruction — use `defer` for
+3. No `Drop` trait with deterministic destruction - use `defer` for
    cleanup tied to scope; the runtime reclaims memory.
-4. No `Box<T>` / `Rc<T>` / `Arc<T>` — plain references are
+4. No `Box<T>` / `Rc<T>` / `Arc<T>` - plain references are
    runtime-managed and safe to share across goroutines.
 5. `&T` is a managed reference, not a borrow. `&T` and `&mut T` have the
    same runtime; the distinction is a type-check-only aliasing hint.
-6. No `async`/`await` — goroutines replace the entire async story.
+6. No `async`/`await` - goroutines replace the entire async story.
 7. No macros in v1 (beyond built-ins).
 8. `go` and `select` keywords added.
 9. `defer` keyword added.
@@ -2175,31 +2175,31 @@ sources is a fully supported, registry-free setup.
     operator; Gossamer adds it as a first-class part of the grammar.
 11. **F#-style free-function combinator surface in stdlib.**
     `std::iter`, `std::option`, and `std::result` ship F#-style
-    free-function chaining APIs (see §10.4–§10.4b) with data-last
+    free-function chaining APIs (see §10.4-§10.4b) with data-last
     argument order so they thread cleanly through `|>`. Unlike
     Rust, collections (`Vec<T>`, `HashMap<K, V>`, `HashSet<T>`,
     `BTreeMap<K, V>`) do **not** carry `.map`/`.filter`/`.fold`/
-    `.reduce`/`.partition`/etc. methods — `iter::*` free functions
+    `.reduce`/`.partition`/etc. methods - `iter::*` free functions
     are the one obvious way to chain transformations. `Option<T>`
     and `Result<T, E>` keep their Rust-style methods
     (`opt.map(f)`, `opt.unwrap_or(0)`) alongside the free
     functions because the method form fits how those types are
     commonly used inline.
 
-## Appendix C — Go features not ported
+## Appendix C - Go features not ported
 
 - `iota` (use `enum` discriminants).
 - Embedded structs with method promotion (use explicit delegation or
   traits with default methods).
 - `panic`/`recover` at function level (use `catch_unwind` at closure
   level).
-- Init functions with ordering by import — replaced by explicit
+- Init functions with ordering by import - replaced by explicit
   `fn init()` called in dependency-topological order.
-- Untyped constants with arbitrary precision — literal constants have
+- Untyped constants with arbitrary precision - literal constants have
   a default type and are coerced at use sites; infinite-precision
   compile-time arithmetic is not performed beyond what LLVM/Cranelift
   offer.
-- `goto` — omitted.
+- `goto` - omitted.
 
 ---
 

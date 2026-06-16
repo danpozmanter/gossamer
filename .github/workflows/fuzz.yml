@@ -17,7 +17,7 @@ env:
   # invocation, eliminating the rust-src download race. cargo-fuzz
   # requires nightly; we pin a specific date so the build is
   # reproducible (rolling `nightly` regularly breaks fuzz/miri/
-  # sanitizers). Bump deliberately, not via drift — must match
+  # sanitizers). Bump deliberately, not via drift - must match
   # `toolchain:` on the dtolnay step and the `+<toolchain>` flag
   # on every cargo invocation below.
   RUSTUP_TOOLCHAIN: nightly-2026-04-14

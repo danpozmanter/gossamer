@@ -630,7 +630,7 @@ fn lint_empty_block(sf: &SourceFile) -> Vec<Finding> {
             if let ExprKind::Block(block) = &expr.kind {
                 // Parser-synthesized blocks (the implicit empty else
                 // arm of an else-less `if let`) have no source
-                // spelling — never the user's mistake.
+                // spelling - never the user's mistake.
                 if !block.synthetic && block.stmts.is_empty() && block.tail.is_none() {
                     out.push((
                         expr.span,
@@ -908,7 +908,7 @@ fn lint_collapsible_if(sf: &SourceFile) -> Vec<Finding> {
             {
                 out.push((
                     expr.span,
-                    "collapsible `if` — the outer and inner branches can be combined with `&&`"
+                    "collapsible `if` - the outer and inner branches can be combined with `&&`"
                         .to_string(),
                     Some("rewrite as `if outer && inner { ... }`".to_string()),
                 ));
@@ -967,10 +967,10 @@ fn lint_redundant_field_init(sf: &SourceFile) -> Vec<Finding> {
                     out.push((
                         value.span,
                         format!(
-                            "redundant `{0}: {0}` — field shorthand suffices",
+                            "redundant `{0}: {0}` - field shorthand suffices",
                             field.name.name
                         ),
-                        Some("drop the `: <name>` — shorthand `{ x, y }` works".to_string()),
+                        Some("drop the `: <name>` - shorthand `{ x, y }` works".to_string()),
                     ));
                 }
             }
@@ -996,7 +996,7 @@ fn lint_needless_else_after_return(sf: &SourceFile) -> Vec<Finding> {
                     else_branch.span,
                     "needless `else` after a returning `if`".to_string(),
                     Some(
-                        "un-nest the else body — the fallthrough is already unreachable"
+                        "un-nest the else body - the fallthrough is already unreachable"
                             .to_string(),
                     ),
                 ));
@@ -1050,7 +1050,7 @@ fn lint_self_compare(sf: &SourceFile) -> Vec<Finding> {
             if path_text(lhs_path) == path_text(rhs_path) {
                 out.push((
                     expr.span,
-                    "comparing a value to itself — the result is a constant".to_string(),
+                    "comparing a value to itself - the result is a constant".to_string(),
                     Some(
                         "use the constant `true` / `false` directly if that is what you meant"
                             .to_string(),
@@ -1093,7 +1093,7 @@ fn lint_identity_op(sf: &SourceFile) -> Vec<Finding> {
             if hit {
                 out.push((
                     expr.span,
-                    "arithmetic identity — the result is the other operand".to_string(),
+                    "arithmetic identity - the result is the other operand".to_string(),
                     Some("drop the redundant operation".to_string()),
                 ));
             }
@@ -1149,7 +1149,7 @@ fn lint_unit_let(sf: &SourceFile) -> Vec<Finding> {
                 if elems.is_empty() {
                     out.push((
                         stmt.span,
-                        "binding the unit value `()` — probably not intended".to_string(),
+                        "binding the unit value `()` - probably not intended".to_string(),
                         Some("drop the `let` and keep the expression".to_string()),
                     ));
                 }
@@ -1206,7 +1206,7 @@ fn lint_empty_else(sf: &SourceFile) -> Vec<Finding> {
                     out.push((
                         else_branch.span,
                         "empty `else` block".to_string(),
-                        Some("drop the `else` — an `if` without it is fine".to_string()),
+                        Some("drop the `else` - an `if` without it is fine".to_string()),
                     ));
                 }
             }
@@ -1404,7 +1404,7 @@ fn lint_string_literal_concat(sf: &SourceFile) -> Vec<Finding> {
             {
                 out.push((
                     expr.span,
-                    "concatenating two string literals — merge them at the source level"
+                    "concatenating two string literals - merge them at the source level"
                         .to_string(),
                     Some("write the combined literal directly".to_string()),
                 ));
@@ -1625,7 +1625,7 @@ fn lint_manual_swap(sf: &SourceFile) -> Vec<Finding> {
             {
                 out.push((
                     s1.span,
-                    "manual swap via a temporary — prefer an explicit `(a, b) = (b, a)` tuple destructuring when it lands, or at least document the intent"
+                    "manual swap via a temporary - prefer an explicit `(a, b) = (b, a)` tuple destructuring when it lands, or at least document the intent"
                         .to_string(),
                     Some("three-line temporary swaps are a common refactor residue".to_string()),
                 ));
@@ -1686,7 +1686,7 @@ fn lint_consecutive_assignment(sf: &SourceFile) -> Vec<Finding> {
             if e1.span.end - e1.span.start == e2.span.end - e2.span.start {
                 out.push((
                     stmts[i + 1].span,
-                    "two back-to-back assignments to the same place — the first one is dead"
+                    "two back-to-back assignments to the same place - the first one is dead"
                         .to_string(),
                     Some("drop the earlier assignment or consolidate the logic".to_string()),
                 ));
@@ -1743,7 +1743,7 @@ fn humanize_int_literal(src: &str) -> String {
     format!("{forward}{suffix}")
 }
 
-/// Names introduced by `use` declarations — imported functions
+/// Names introduced by `use` declarations - imported functions
 /// (stdlib or `[rust-bindings]`) have call-site-only lowerings, so
 /// value-position suggestions must leave them alone.
 fn imported_names(sf: &SourceFile) -> BTreeSet<String> {
@@ -1866,7 +1866,7 @@ fn lint_empty_if_body(sf: &SourceFile) -> Vec<Finding> {
             if block.stmts.is_empty() && block.tail.is_none() {
                 out.push((
                     then_branch.span,
-                    "empty `then` branch with a non-empty `else` — invert the condition and drop the `else`".to_string(),
+                    "empty `then` branch with a non-empty `else` - invert the condition and drop the `else`".to_string(),
                     Some("rewrite as `if !cond { <else body> }`".to_string()),
                 ));
             }
@@ -1898,7 +1898,7 @@ fn lint_bool_to_int_match(sf: &SourceFile) -> Vec<Finding> {
             {
                 out.push((
                     expr.span,
-                    "`match b { true => 1, false => 0 }` — use `if b { 1 } else { 0 }` or a numeric cast when the language exposes one".to_string(),
+                    "`match b { true => 1, false => 0 }` - use `if b { 1 } else { 0 }` or a numeric cast when the language exposes one".to_string(),
                     Some("a direct `if` is shorter and intent is clearer".to_string()),
                 ));
             }
@@ -1941,7 +1941,7 @@ fn lint_let_with_unit_type(sf: &SourceFile) -> Vec<Finding> {
             if matches!(ty.kind, gossamer_ast::TypeKind::Unit) {
                 out.push((
                     stmt.span,
-                    "`let _: () = ...` binding carries the unit type explicitly — almost never useful".to_string(),
+                    "`let _: () = ...` binding carries the unit type explicitly - almost never useful".to_string(),
                     Some("drop the `: ()` annotation".to_string()),
                 ));
             }
@@ -1963,7 +1963,7 @@ fn lint_useless_default_only_match(sf: &SourceFile) -> Vec<Finding> {
             if matches!(arms[0].pattern.kind, PatternKind::Wildcard) && arms[0].guard.is_none() {
                 out.push((
                     expr.span,
-                    "`match x { _ => expr }` discards `x` — the scrutinee is evaluated but never inspected".to_string(),
+                    "`match x { _ => expr }` discards `x` - the scrutinee is evaluated but never inspected".to_string(),
                     Some("drop the match and just evaluate `expr` (plus `let _ = x` if the side effect matters)".to_string()),
                 ));
             }
@@ -2009,7 +2009,7 @@ fn lint_pattern_matching_unit(sf: &SourceFile) -> Vec<Finding> {
                 if elems.is_empty() {
                     out.push((
                         expr.span,
-                        "matching on the unit value `()` — there is exactly one possible arm"
+                        "matching on the unit value `()` - there is exactly one possible arm"
                             .to_string(),
                         Some("drop the match and run the body directly".to_string()),
                     ));
@@ -2039,7 +2039,7 @@ fn lint_panic_without_message(sf: &SourceFile) -> Vec<Finding> {
             if last.name.name == "panic" {
                 out.push((
                     expr.span,
-                    "`panic()` without a message — the post-mortem has nothing to go on"
+                    "`panic()` without a message - the post-mortem has nothing to go on"
                         .to_string(),
                     Some("pass a brief explanation as the first argument".to_string()),
                 ));

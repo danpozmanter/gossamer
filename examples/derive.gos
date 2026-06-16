@@ -1,5 +1,5 @@
 /*
- * #[derive(...)] — auto-generated trait methods.
+ * #[derive(...)] - auto-generated trait methods.
  *
  * Annotating a struct with `#[derive(Clone, PartialEq, Eq, Default, Debug)]`
  * synthesizes the matching methods so the natural syntax just works:

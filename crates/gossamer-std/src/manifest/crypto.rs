@@ -362,7 +362,7 @@ pub const HASH_ADLER32: StdModule = StdModule {
 
 pub const CRYPTO_INSECURE: StdModule = StdModule {
     path: "std::crypto::insecure",
-    summary: "Legacy / broken hashes (MD5, SHA-1). Compat only — never use for new code.",
+    summary: "Legacy / broken hashes (MD5, SHA-1). Compat only - never use for new code.",
     items: &[
         StdItem {
             name: "md5",

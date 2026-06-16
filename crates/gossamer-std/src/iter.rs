@@ -64,7 +64,7 @@ pub fn step_by<T: Clone>(step: usize, xs: &[T]) -> Vec<T> {
     xs.iter().step_by(s).cloned().collect()
 }
 
-/// `[item]` — single-element vec. Useful as an `iter::flat_map`
+/// `[item]` - single-element vec. Useful as an `iter::flat_map`
 /// terminator when only one of many call-paths emits a value.
 #[must_use]
 pub fn once<T>(item: T) -> Vec<T> {
@@ -106,7 +106,7 @@ impl<I: Iterator> Lazy<I> {
         Self { inner }
     }
 
-    /// Lazy `map` adapter — yields `f(item)` per pull.
+    /// Lazy `map` adapter - yields `f(item)` per pull.
     pub fn map<U, F: FnMut(I::Item) -> U>(self, f: F) -> Lazy<std::iter::Map<I, F>> {
         Lazy {
             inner: self.inner.map(f),
@@ -120,14 +120,14 @@ impl<I: Iterator> Lazy<I> {
         }
     }
 
-    /// Lazy `take` adapter — yields at most `n` elements.
+    /// Lazy `take` adapter - yields at most `n` elements.
     pub fn take(self, n: usize) -> Lazy<std::iter::Take<I>> {
         Lazy {
             inner: self.inner.take(n),
         }
     }
 
-    /// Lazy `skip` adapter — drops the first `n` elements.
+    /// Lazy `skip` adapter - drops the first `n` elements.
     pub fn skip(self, n: usize) -> Lazy<std::iter::Skip<I>> {
         Lazy {
             inner: self.inner.skip(n),
@@ -141,22 +141,22 @@ impl<I: Iterator> Lazy<I> {
         }
     }
 
-    /// Terminal — collects every yielded element into a `Vec`.
+    /// Terminal - collects every yielded element into a `Vec`.
     pub fn to_vec(self) -> Vec<I::Item> {
         self.inner.collect()
     }
 
-    /// Terminal — sums every element.
+    /// Terminal - sums every element.
     pub fn sum<S: std::iter::Sum<I::Item>>(self) -> S {
         self.inner.sum()
     }
 
-    /// Terminal — multiplies every element.
+    /// Terminal - multiplies every element.
     pub fn product<P: std::iter::Product<I::Item>>(self) -> P {
         self.inner.product()
     }
 
-    /// Terminal — smallest element by `Ord`.
+    /// Terminal - smallest element by `Ord`.
     pub fn min(self) -> Option<I::Item>
     where
         I::Item: Ord,
@@ -164,7 +164,7 @@ impl<I: Iterator> Lazy<I> {
         self.inner.min()
     }
 
-    /// Terminal — largest element by `Ord`.
+    /// Terminal - largest element by `Ord`.
     pub fn max(self) -> Option<I::Item>
     where
         I::Item: Ord,
@@ -172,27 +172,27 @@ impl<I: Iterator> Lazy<I> {
         self.inner.max()
     }
 
-    /// Terminal — number of yielded elements.
+    /// Terminal - number of yielded elements.
     pub fn count(self) -> usize {
         self.inner.count()
     }
 
-    /// Terminal — first element, if any.
+    /// Terminal - first element, if any.
     pub fn first(mut self) -> Option<I::Item> {
         self.inner.next()
     }
 
-    /// Terminal — fold.
+    /// Terminal - fold.
     pub fn fold<A, F: FnMut(A, I::Item) -> A>(self, init: A, f: F) -> A {
         self.inner.fold(init, f)
     }
 
-    /// Terminal — `true` iff every element satisfies `p`.
+    /// Terminal - `true` iff every element satisfies `p`.
     pub fn all<P: FnMut(I::Item) -> bool>(mut self, mut p: P) -> bool {
         self.inner.all(&mut p)
     }
 
-    /// Terminal — `true` iff at least one element satisfies `p`.
+    /// Terminal - `true` iff at least one element satisfies `p`.
     pub fn any<P: FnMut(I::Item) -> bool>(mut self, mut p: P) -> bool {
         self.inner.any(&mut p)
     }

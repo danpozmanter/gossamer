@@ -10,7 +10,7 @@ fn clamp(lo: i64, hi: i64, x: i64) -> i64 {
 }
 
 fn main() {
-    // Pure arithmetic chain — piped value lands in last slot:
+    // Pure arithmetic chain - piped value lands in last slot:
     // double(5)=10; add(3,10)=13; sub(1,13)=-12
     let a = 5 |> double |> add(3) |> sub(1)
     println!("5*2+3-1 via pipe = {}", a)

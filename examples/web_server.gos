@@ -3,7 +3,7 @@
  *
  * Each endpoint is a free function with the standard handler
  * signature: `fn(http::Request) -> Result<http::Response, http::Error>`.
- * Routes are registered directly on `router::Router::new()` — no
+ * Routes are registered directly on `router::Router::new()` - no
  * `struct + impl http::Handler` wrapper needed. The router walks its
  * route table per request and dispatches to the matching function;
  * unmatched paths fall through to a built-in 404 response.
@@ -20,7 +20,7 @@
 use std::http
 use std::http::router
 
-// --- Handlers — each is a one-job function ---
+// --- Handlers - each is a one-job function ---
 
 fn index(_request: http::Request) -> Result<http::Response, http::Error> {
     Ok(http::Response::text(200, "Gossamer web server. Try /health, /users, /echo"))

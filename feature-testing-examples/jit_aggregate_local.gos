@@ -1,4 +1,4 @@
-// Scalar signature, String/Vec locals only — already JIT-eligible
+// Scalar signature, String/Vec locals only - already JIT-eligible
 // (uses_i128_repr does not veto String/Vec locals). Guards against a
 // regression that would exclude it.
 fn count_vowels(seed: i64) -> i64 {

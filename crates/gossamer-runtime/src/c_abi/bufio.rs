@@ -21,7 +21,7 @@ use std::os::raw::c_char;
 use super::*;
 
 // ---------------------------------------------------------------
-// bufio::Scanner — wraps a reader with a buffered line iterator.
+// bufio::Scanner - wraps a reader with a buffered line iterator.
 // `Scanner::new(reader)` returns an opaque handle; `.scan()`
 // advances to the next line and returns `true` when one was
 // available; `.text()` returns the most recently scanned line.

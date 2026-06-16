@@ -1,6 +1,6 @@
 # Cross-Tier HTTP Consolidation Audit (P2)
 
-Date: 2026-05-11. Status: pointer document — full consolidation
+Date: 2026-05-11. Status: pointer document - full consolidation
 deferred pending compiled-tier perf testing.
 
 ## What's duplicated
@@ -16,7 +16,7 @@ its own HTTP/1.1 implementation alongside the interp tier's
 | `find_header_end` | ~5022 | (inlined in parser) |
 | `parse_request_into` | ~5100 | `parse_request_head_generic` |
 | `extract_response_into` | ~5129 | `write_response_generic` |
-| `static_ok_response` | ~4764 | (no equivalent — fast-path bypass) |
+| `static_ok_response` | ~4764 | (no equivalent - fast-path bypass) |
 
 The compiled tier achieves ~270k RPS on the web bench (per
 `web_perf_v2.md`) precisely because it bypasses the std::http
@@ -59,7 +59,7 @@ wrap its `TcpStream` in a `BufReader` and call directly.
    to call. Today they're private to the inner `server` module.
    Either:
    - Re-export them in `crates/gossamer-std/src/lib.rs` under
-     a `pub mod http::wire { ... }` namespace (preferred —
+     a `pub mod http::wire { ... }` namespace (preferred -
      keeps the API stable).
    - Or move them to a new `gossamer-http-wire` crate so the
      stdlib AND the runtime can pull from a shared dep
@@ -69,7 +69,7 @@ wrap its `TcpStream` in a `BufReader` and call directly.
 2. **Adapt `c_abi::handle_http_conn`** to call
    `parse_request_head_generic` followed by
    `finish_request` rather than the inline `parse_request_into`.
-   The handler-trampoline call shape stays the same —
+   The handler-trampoline call shape stays the same -
    c_abi already produces a `GosHttpRequest` from a
    `Request` struct, just under a different code path.
 
@@ -95,7 +95,7 @@ least the same hot-path allocator behaviour:
 
 The std::http path already does the first two (per HTTP P0
 changes). The writev optimisation is a follow-up; until then,
-compiled-tier perf may regress 10–15 % on the bench until the
+compiled-tier perf may regress 10-15 % on the bench until the
 consolidated path catches up.
 
 ## When to schedule
@@ -113,7 +113,7 @@ Order:
 
 After this, the compiled tier ships with the full HTTP/1.1
 feature set (Date/Server, chunked, 100-Continue, timeouts,
-context cancel, graceful shutdown) automatically — no parallel
+context cancel, graceful shutdown) automatically - no parallel
 implementation to maintain.
 
 ## Today's state

@@ -67,7 +67,7 @@ pub enum Part {
         filename: String,
         /// Optional `Content-Type` of the part.
         content_type: Option<String>,
-        /// Payload storage — in-memory or spilled to disk.
+        /// Payload storage - in-memory or spilled to disk.
         data: PartData,
     },
 }
@@ -82,7 +82,7 @@ impl Part {
     }
 }
 
-/// File-part payload — in memory or spilled to disk.
+/// File-part payload - in memory or spilled to disk.
 #[derive(Debug)]
 pub enum PartData {
     /// Buffered fully in memory.
@@ -377,7 +377,7 @@ fn consume_after_boundary<R: BufRead>(br: &mut R) -> Result<AfterBoundary, Error
             let mut nxt = [0u8; 1];
             read_exact(br, &mut nxt)?;
             last = [last[1], nxt[0]];
-            // Bail if we've burned more than 8 bytes of slack — clearly malformed.
+            // Bail if we've burned more than 8 bytes of slack - clearly malformed.
             // (Implicit through the byte budget below.)
             if last[0] != b' ' && last[0] != b'\t' && last[0] != b'\r' {
                 return Err(Error::new(
@@ -489,7 +489,7 @@ fn read_part_body<R: BufRead, S: BodySink>(
                     br.consume(consumed);
                     return Ok(());
                 }
-                // No suffix match — push out the oldest byte.
+                // No suffix match - push out the oldest byte.
                 // But only push out bytes that cannot possibly be
                 // part of an ongoing boundary match. We do this by
                 // sliding the window: shift left while the right-most
@@ -834,7 +834,7 @@ fn parse_disposition(value: &str) -> (Option<String>, Option<String>) {
 }
 
 /// Splits a Content-Disposition value on `;` but only outside quoted
-/// strings (no backslash escapes — RFC 7578 forbids them).
+/// strings (no backslash escapes - RFC 7578 forbids them).
 fn split_params(value: &str) -> Vec<&str> {
     let mut out = Vec::new();
     let bytes = value.as_bytes();

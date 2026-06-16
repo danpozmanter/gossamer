@@ -8,7 +8,7 @@
     clippy::unnecessary_wraps,
     clippy::needless_pass_by_value
 )]
-//! `std::validate` builtins for the bytecode VM — the `FieldError`
+//! `std::validate` builtins for the bytecode VM - the `FieldError`
 //! and `Errors` data handles. Both handles are structs carrying an
 //! `id`; the real state lives in a process-global registry keyed by
 //! `id`, so `&mut self` methods mutate through the registry rather

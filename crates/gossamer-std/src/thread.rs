@@ -1,4 +1,4 @@
-//! Runtime support for `std::thread` — OS thread primitives.
+//! Runtime support for `std::thread` - OS thread primitives.
 //!
 //! Gossamer programs should prefer goroutines (`go fn()`) for most
 //! concurrency. OS threads are provided for interop with C libraries,

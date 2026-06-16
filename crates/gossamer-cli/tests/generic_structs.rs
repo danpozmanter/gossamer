@@ -167,7 +167,7 @@ fn main() {
 fn same_param_twice_in_struct() {
     // Both fields share the same parameter `A`. Construction
     // succeeds when both values have the same concrete type;
-    // a different-type construction would fail unification —
+    // a different-type construction would fail unification -
     // pinned here as the positive case.
     let src = r#"
 struct SameType<A> { left: A, right: A }

@@ -168,7 +168,7 @@ fn os_set_env_round_trips_through_os_env_in_all_tiers() {
     // must hit the runtime's `safe_env::set_env` path so
     // `os::env` (which also routes through libc / safe_env)
     // returns the value just written. No Unix-specific system
-    // calls involved — runs on all platforms.
+    // calls involved - runs on all platforms.
     let src = r#"
 use std::os
 fn main() {

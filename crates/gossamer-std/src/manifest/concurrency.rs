@@ -81,7 +81,7 @@ pub const CONTEXT: StdModule = StdModule {
         StdItem {
             name: "background",
             kind: StdItemKind::Function,
-            doc: "Root context — never cancelled.",
+            doc: "Root context - never cancelled.",
         },
         StdItem {
             name: "with_cancel",

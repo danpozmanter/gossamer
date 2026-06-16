@@ -4,8 +4,8 @@
 //!
 //! Two binding shapes are supported:
 //!
-//! - `fn name(arg: T, ...) -> R { body }` — plain binding fn.
-//! - `cb_fn name(dispatch, arg: T, ...) -> R { body }` — same as
+//! - `fn name(arg: T, ...) -> R { body }` - plain binding fn.
+//! - `cb_fn name(dispatch, arg: T, ...) -> R { body }` - same as
 //!   plain, but the body has access to `dispatch: &mut dyn
 //!   NativeDispatch` so it can re-enter the interpreter through
 //!   [`crate::NativeDispatch::call_value`] (`Terminal::draw` and
@@ -56,11 +56,11 @@ macro_rules! __binding_count {
 /// modules declared this way are not reachable from `gos build`.
 #[macro_export]
 macro_rules! register_module {
-    // New ergonomic form — single-segment path: `name: <ident>`
+    // New ergonomic form - single-segment path: `name: <ident>`
     // doubles as both the Gossamer-side spelling and the symbol
     // prefix. An auto-generated internal mod (`__gos_<name>`)
     // wraps the items. No explicit `__bindings_force_link()`
-    // needed at crate root — the force-link entry is published
+    // needed at crate root - the force-link entry is published
     // through the link-time `__GOS_FORCE_LINK_FNS` distributed
     // slice and the runner walks it automatically.
     (
@@ -107,7 +107,7 @@ macro_rules! register_module {
         }
     };
 
-    // Backwards-compatible form without `symbol_prefix:` — only
+    // Backwards-compatible form without `symbol_prefix:` - only
     // the interpreter thunks are emitted, so binding fns from
     // these modules are reachable from `gos run` but not
     // `gos build`. Documented as the legacy path; new bindings
@@ -422,7 +422,7 @@ macro_rules! __rm_emit_native_export {
 /// cranelift JIT can resolve calls into the binding from
 /// JIT-compiled bodies.
 ///
-/// Skipped (no-op) when `$sym` is the `__nosym` sentinel — that
+/// Skipped (no-op) when `$sym` is the `__nosym` sentinel - that
 /// form of `register_module!` doesn't emit a C-ABI thunk to begin
 /// with, so there's nothing to publish.
 #[doc(hidden)]

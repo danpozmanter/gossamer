@@ -102,7 +102,7 @@ impl GoroutinePool {
                             task();
                             let prev = p.outstanding.fetch_sub(1, Ordering::AcqRel);
                             if prev == 1 {
-                                // Last in-flight task settled —
+                                // Last in-flight task settled -
                                 // wake any drain() waiter.
                                 p.drain_cv.notify_all();
                             }

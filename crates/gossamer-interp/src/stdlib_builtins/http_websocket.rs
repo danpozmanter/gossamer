@@ -181,7 +181,7 @@ pub(crate) struct RouterTable {
 
 // Static router-builtin tables are kept at module scope rather than
 // inside `install_http_router` so clippy's `items-after-statements`
-// doesn't fire — and so we never need `Box::leak(format!(…))` for
+// doesn't fire - and so we never need `Box::leak(format!(…))` for
 // what is conceptually a static lookup. The previous shape leaked
 // process-lifetime strings on first install, which leaksanitizer
 // flagged on fuzz-target exit.

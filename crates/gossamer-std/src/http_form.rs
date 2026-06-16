@@ -130,7 +130,7 @@ impl FormBuilder {
     }
 
     /// Appends a `(name, value)` pair. Repeats are preserved in
-    /// insertion order — the same shape `Form::parse` produces.
+    /// insertion order - the same shape `Form::parse` produces.
     #[must_use]
     pub fn add(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
         self.pairs.push((name.into(), value.into()));

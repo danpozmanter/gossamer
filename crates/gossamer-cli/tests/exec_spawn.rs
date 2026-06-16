@@ -172,7 +172,7 @@ fn assert_three_tier_stdout(tag: &str, source: &str, expected: &str) {
 fn exec_spawn_returns_positive_pid_for_long_running_sleep() {
     // Smoke test: spawn /bin/sleep 30, assert PID is > 0,
     // SIGTERM it via exec::kill, assert kill returned true.
-    // Across all three tiers — the runtime helpers are
+    // Across all three tiers - the runtime helpers are
     // backend-agnostic, so cranelift / LLVM dispatch must
     // resolve to the same gos_rt_exec_spawn / gos_rt_exec_kill
     // symbols and produce the same output.
@@ -215,7 +215,7 @@ fn main() {
 #[test]
 #[cfg(unix)]
 fn exec_spawn_then_kill_round_trips_through_a_named_var() {
-    // The PID is bound to a `let` and used twice — once to print,
+    // The PID is bound to a `let` and used twice - once to print,
     // once to pass to `exec::kill`. Catches any single-use
     // miscompile in the Result<i64, _> unwrap path.
     let src = r#"

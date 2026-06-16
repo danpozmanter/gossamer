@@ -2,7 +2,7 @@
 //! The parser is a hand-written recursive descent driver with a Pratt
 //! loop for expressions. It consumes the lexer's token stream directly
 //! and emits a best-effort `SourceFile` alongside a list of diagnostics.
-//! The parser never panics on malformed input — unexpected tokens
+//! The parser never panics on malformed input - unexpected tokens
 //! resynchronise to the next item or statement boundary and are
 //! reported via `ParseDiagnostic`.
 
@@ -46,7 +46,7 @@ pub fn parse_source_file(source: &str, file: FileId) -> (SourceFile, Vec<ParseDi
         let item = parser.parse_item();
         items.push(item);
         if parser.checkpoint_public() == before {
-            // parse_item left us where we started — guarantee forward
+            // parse_item left us where we started - guarantee forward
             // progress so an adversarial input cannot pin the loop and
             // blow `items` up to gigabytes of stub allocations.
             parser.bump_public();
@@ -72,7 +72,7 @@ pub fn parse_source_file(source: &str, file: FileId) -> (SourceFile, Vec<ParseDi
 }
 
 /// `true` for `use NAME` (no `::` segments, no brace list, no project
-/// id) — these reference an intra-project sibling module that the
+/// id) - these reference an intra-project sibling module that the
 /// sibling auto-bundle already exposes as an inline `mod NAME { ... }`.
 fn is_local_single_segment_use(decl: &gossamer_ast::UseDecl) -> bool {
     if decl.list.is_some() {

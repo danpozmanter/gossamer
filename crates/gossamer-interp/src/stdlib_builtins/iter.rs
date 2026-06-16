@@ -138,7 +138,7 @@ pub(crate) fn install_iter(globals: &mut Vec<(&'static str, Value)>) {
         globals.push((qualified, crate::builtins::builtin_pub(qualified, *call)));
     }
 
-    // Closure-taking functions — must be `native` to access the interpreter.
+    // Closure-taking functions - must be `native` to access the interpreter.
     let native_entries: &[(&str, NativeCall)] = &[
         ("for_each", native_iter_for_each),
         ("map", native_iter_map),
@@ -357,7 +357,7 @@ pub(crate) fn native_iter_fold(
     dispatch: &mut dyn NativeDispatch,
     args: &[Value],
 ) -> RuntimeResult<Value> {
-    // Signature: fold(init, f, xs) — data still last.
+    // Signature: fold(init, f, xs) - data still last.
     let mut acc = args.first().cloned().unwrap_or(Value::Unit);
     let f = args.get(1).cloned().unwrap_or(Value::Unit);
     let xs = collect_array(args.get(2).unwrap_or(&Value::Unit));
@@ -964,7 +964,7 @@ pub(crate) fn compare_values_total(a: &Value, b: &Value) -> std::cmp::Ordering {
 }
 
 // ----------------------------------------------------------------------
-// option — F#-style chaining surface for `Option<T>` (SPEC §10.4a).
+// option - F#-style chaining surface for `Option<T>` (SPEC §10.4a).
 // Data-last argument order. Methods are kept on `Option<T>` itself
 // (Rust-style); these are the free-function siblings for use with
 // `|>`.

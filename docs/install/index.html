@@ -1587,7 +1587,7 @@
 
 
 <h1 id="installing-gossamer">Installing Gossamer<a class="headerlink" href="#installing-gossamer" title="Permanent link">&para;</a></h1>
-<p>Pre-release — the only supported install path today is a source
+<p>Pre-release - the only supported install path today is a source
 build.</p>
 <h2 id="from-source">From source<a class="headerlink" href="#from-source" title="Permanent link">&para;</a></h2>
 <div class="language-sh highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>git<span class="w"> </span>clone<span class="w"> </span>https://github.com/danpozmanter/gossamer
@@ -1601,11 +1601,11 @@ build.</p>
 </code></pre></div>
 <h2 id="dependencies">Dependencies<a class="headerlink" href="#dependencies" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Rust toolchain</strong> — 1.95.0, edition 2024, MSRV 1.95.
+<li><strong>Rust toolchain</strong> - 1.95.0, edition 2024, MSRV 1.95.
   <code>rust-toolchain.toml</code> pins the exact version and <code>profile =
   "minimal"</code>; rustup installs it on first <code>cargo</code> invocation.
   Bumps happen consciously, not via <code>stable</code> drift.</li>
-<li><strong>A C linker</strong> — required by Cargo, not by Gossamer. <code>cc</code> /
+<li><strong>A C linker</strong> - required by Cargo, not by Gossamer. <code>cc</code> /
   <code>gcc</code> / <code>clang</code> will do.</li>
 </ul>
 <h2 id="verifying">Verifying<a class="headerlink" href="#verifying" title="Permanent link">&para;</a></h2>
@@ -1667,7 +1667,7 @@ because corosensei has no context-switch backend for them.</p>
 <p><code>gos build --target &lt;triple&gt;</code> enables cross-compilation. The
 default registered set covers the supported platforms above plus
 the <code>riscv64gc-unknown-linux-gnu</code>, <code>wasm32-unknown-unknown</code>, and
-<code>wasm32-wasi</code> targets — which build but do not run goroutines.</p>
+<code>wasm32-wasi</code> targets - which build but do not run goroutines.</p>
 <p>Musl targets (<code>x86_64-unknown-linux-musl</code>,
 <code>aarch64-unknown-linux-musl</code>) are gated behind the <code>musl</code> Cargo
 feature. Rebuild with:</p>

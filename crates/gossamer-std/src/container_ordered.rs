@@ -1,9 +1,9 @@
-// `std::collections::ordered_vec` — sorted-on-insert `Vec<i64>` with
+// `std::collections::ordered_vec` - sorted-on-insert `Vec<i64>` with
 // binary-search lookups.
 //
 // (Previously also exposed `list` and `ordered_list`. Both were
 // removed in 0.7.0 because they duplicated `Vec` / `ordered_vec`
-// behaviour without adding anything — the linked-list shape was
+// behaviour without adding anything - the linked-list shape was
 // emulated over `Vec` anyway.)
 
 #![forbid(unsafe_code)]

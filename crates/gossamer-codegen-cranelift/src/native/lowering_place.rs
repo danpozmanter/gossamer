@@ -75,7 +75,7 @@
 //! the process exit code, so the object file links through a
 //! standard `cc` invocation.
 //! Aggregates (tuples/arrays/structs), strings, closures, and
-//! anything that needs a GC heap are not yet lowered — those
+//! anything that needs a GC heap are not yet lowered - those
 //! constructs fall back to [`crate::emit::emit_module`] for
 //! inspection.
 
@@ -208,7 +208,7 @@ pub(super) fn lower_place_address(
                 // `>=` test). The check is opt-out via
                 // `GOSSAMER_DISABLE_BOUNDS_CHECK=1` for micro-bench
                 // programs that can prove safety. Vec/Slice indexing
-                // does not reach this path — those go through
+                // does not reach this path - those go through
                 // `gos_rt_vec_get_*` intrinsics which check internally.
                 emit_array_bounds_check(module, builder, intrinsics, current_ty, idx_val, tcx)?;
                 let idx_ptr = match value_type(idx_val, builder) {
@@ -251,7 +251,7 @@ pub(super) fn lower_place_address(
                 // when the source is a heap-pointer-shaped Adt
                 // (slot_count = None). Inline multi-slot
                 // aggregates already hold the slot address in the
-                // Cranelift Variable — loading would dereference
+                // Cranelift Variable - loading would dereference
                 // the stack slot's first 8 bytes (typically a
                 // field, possibly 0) as if it were the pointer,
                 // segfaulting at the next projection. This
@@ -373,7 +373,7 @@ pub(super) fn lower_place_read(
         return Ok(addr);
     }
     let leaf_ty = resolve_place_cl_type(tcx, body, place, module, hint);
-    // Use plain `MemFlags::new()` instead of `trusted()` — without
+    // Use plain `MemFlags::new()` instead of `trusted()` - without
     // it cranelift's alias analysis was load-CSEing reads across
     // unrelated stores, e.g. in
     //   let t = arr[lo]

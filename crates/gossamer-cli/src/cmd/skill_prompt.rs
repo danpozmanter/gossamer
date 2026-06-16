@@ -1,4 +1,4 @@
-//! `gos skill-prompt` — prints the embedded Gossamer skill card for
+//! `gos skill-prompt` - prints the embedded Gossamer skill card for
 //! AI tooling that needs a quick reference. The canonical source is the
 //! repo-root `SKILL.md`; `docs_src/skill_card.md` only transcludes it
 //! for the docs site, so we embed `SKILL.md` directly.

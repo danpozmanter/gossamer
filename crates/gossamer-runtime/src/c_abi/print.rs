@@ -19,7 +19,7 @@ use std::ffi::CStr;
 use std::os::raw::c_char;
 
 // ---------------------------------------------------------------
-// Print helpers (variadic-printf workaround — Cranelift 0.123
+// Print helpers (variadic-printf workaround - Cranelift 0.123
 // has no variadic-call ABI support, so every formatted print
 // routes through a fixed-signature wrapper.)
 // ---------------------------------------------------------------
@@ -34,7 +34,7 @@ use std::os::raw::c_char;
 //
 // Performance: parking_lot's uncontended acquire/release is ~10 ns
 // total. The LLVM lowerer takes the lock once per inline write
-// region (a single byte, or a contiguous range — the array
+// region (a single byte, or a contiguous range - the array
 // writer in `lower_stream_write_byte_array_inline` packs up to
 // 65 K bytes per acquire). For fasta's 60-byte lines that is
 // ~4 M acquires across 250 MB of output → ~40 ms of total mutex
@@ -54,7 +54,7 @@ use std::os::raw::c_char;
 /// Sized for the line-buffered shape of `println!` / `print!`:
 /// 8 KiB holds ~100 lines of typical output between flushes.
 /// Programs that emit one giant block per flush (rare in practice)
-/// take additional spills through `gos_rt_flush_stdout` — still
+/// take additional spills through `gos_rt_flush_stdout` - still
 /// correct, just more syscalls. The previous 64 KiB cost 56 KiB
 /// of BSS in every Gossamer binary for what is almost always wasted
 /// slack.
@@ -109,7 +109,7 @@ fn stdout_lock_release() {
         debug_assert!(n > 0, "stdout_lock_release without acquire");
         if n == 1 {
             use parking_lot::lock_api::RawMutex;
-            // SAFETY: invariant — `stdout_lock_acquire` ran on
+            // SAFETY: invariant - `stdout_lock_acquire` ran on
             // the same thread when `n` was 0, taking the lock.
             unsafe { STDOUT_LOCK.unlock() };
         }
@@ -145,7 +145,7 @@ unsafe impl Sync for GosRtStdoutBytes {}
 #[repr(transparent)]
 pub struct GosRtStdoutLen(pub core::cell::UnsafeCell<usize>);
 
-// SAFETY: same contract as `GosRtStdoutBytes` — all access
+// SAFETY: same contract as `GosRtStdoutBytes` - all access
 // serialised by `STDOUT_LOCK`. The inline LLVM path holds
 // `gos_rt_stdout_acquire` before reaching this symbol.
 unsafe impl Sync for GosRtStdoutLen {}
@@ -153,7 +153,7 @@ unsafe impl Sync for GosRtStdoutLen {}
 /// Process-global stdout buffer storage. The LLVM backend
 /// emits inline fast-path code that loads
 /// `GOS_RT_STDOUT_LEN`, stores the new byte at offset
-/// `bytes[len]`, and bumps the length — bypassing the FFI
+/// `bytes[len]`, and bumps the length - bypassing the FFI
 /// call and saving the per-call overhead that dominates
 /// character-at-a-time output (fasta hot loop). Access from any
 /// thread requires the `STDOUT_LOCK` mutex be held.
@@ -237,7 +237,7 @@ pub unsafe fn write_stdout_locked(bytes: &[u8]) {
     let len_ptr = GOS_RT_STDOUT_LEN.0.get();
     let len = unsafe { *len_ptr };
     // Flush and bypass the buffer entirely for chunks that
-    // don't fit — a single large chunk costs one syscall
+    // don't fit - a single large chunk costs one syscall
     // either way.
     if bytes.len() >= STDOUT_BUF_SIZE {
         if len > 0 {
@@ -312,7 +312,7 @@ pub unsafe extern "C" fn gos_rt_print_str(s: *const c_char) {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_print_i64(n: i64) {
     ffi_entry!((), {
-        // Format on the stack — avoid the per-call heap allocation
+        // Format on the stack - avoid the per-call heap allocation
         // that `n.to_string()` would incur.
         let mut buf = itoa::Buffer::new();
         let text = buf.format(n);
@@ -362,7 +362,7 @@ pub unsafe extern "C" fn gos_rt_print_char(c: i32) {
 
 /// Direct stderr writer used by `eprint`/`eprintln` lowering.
 /// Bypasses the stdout buffer. Flushes stdout first so prior
-/// `println` output isn't reordered with diagnostic output —
+/// `println` output isn't reordered with diagnostic output -
 /// matches the language semantics where stderr appears in the
 /// expected place relative to stdout.
 #[unsafe(no_mangle)]

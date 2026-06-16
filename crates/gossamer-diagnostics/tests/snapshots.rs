@@ -12,7 +12,7 @@ use gossamer_diagnostics::{
 };
 use gossamer_lex::{SourceMap, Span};
 
-/// Codes the snapshot suite covers — parser, resolver, type
+/// Codes the snapshot suite covers - parser, resolver, type
 /// checker, lints. Runtime (`GX`) and exhaustiveness (`GM`) are
 /// out of scope per the deliverable spec.
 fn covers(code: &str) -> bool {

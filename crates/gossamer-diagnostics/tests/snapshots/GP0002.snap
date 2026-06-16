@@ -3,7 +3,7 @@ source: crates/gossamer-diagnostics/tests/snapshots.rs
 expression: rendered
 ---
 --- plain ---
-error[GP0002]: The parser reached end-of-file in the middle of a construct. — here
+error[GP0002]: The parser reached end-of-file in the middle of a construct. - here
 --- framed ---
 error[GP0002]: The parser reached end-of-file in the middle of a construct.
   --> snap.gos:2:5

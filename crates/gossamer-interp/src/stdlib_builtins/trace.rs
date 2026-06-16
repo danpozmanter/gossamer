@@ -7,13 +7,13 @@
     clippy::unnecessary_wraps,
     clippy::needless_pass_by_value
 )]
-//! `std::trace` builtins for the bytecode VM — the explicit
+//! `std::trace` builtins for the bytecode VM - the explicit
 //! Tracer / Span / EndedSpan handle surface and OTLP JSON export.
 //! Span and ended-span state live in process-global registries keyed
 //! by `id`, mirroring `math::rand::Rng`. Identifiers are minted from
 //! `gossamer_std::trace` and span timestamps are zeroed, so the
 //! serialized OTLP JSON differs from the compiled tiers only in the
-//! unguessable id fields — the asserted substrings (span name,
+//! unguessable id fields - the asserted substrings (span name,
 //! attribute key / value) are identical on every tier.
 //!
 //! The implicit `thread_local` active-span stack in

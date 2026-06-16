@@ -6,9 +6,9 @@
 //! chunk-extensions (ignored), CRLF-terminated framing, trailer
 //! parsing, and a final zero-length chunk.
 //!
-//! The reader is a `Read` adapter — callers consume the decoded
+//! The reader is a `Read` adapter - callers consume the decoded
 //! payload bytes; the framing is invisible. The writer is a
-//! `Write` adapter — callers write payload bytes; the framing is
+//! `Write` adapter - callers write payload bytes; the framing is
 //! emitted automatically. `finish()` flushes the terminating
 //! zero-chunk and optional trailers.
 
@@ -20,13 +20,13 @@ use std::io::{self, BufRead, Read, Write};
 ///
 /// State machine:
 ///
-/// - `ReadSize`     — expect a hex size line.
-/// - `ReadData(n)`  — `n` payload bytes still to read for the
+/// - `ReadSize`     - expect a hex size line.
+/// - `ReadData(n)`  - `n` payload bytes still to read for the
 ///   current chunk.
-/// - `ReadDataCrlf` — payload done; consume trailing `\r\n`.
-/// - `ReadTrailers` — final zero-chunk seen; consume any trailer
+/// - `ReadDataCrlf` - payload done; consume trailing `\r\n`.
+/// - `ReadTrailers` - final zero-chunk seen; consume any trailer
 ///   headers up to the blank line.
-/// - `Done`         — terminal; future reads return EOF.
+/// - `Done`         - terminal; future reads return EOF.
 ///
 /// Errors:
 ///
@@ -127,7 +127,7 @@ impl<R: BufRead> ChunkedReader<R> {
             let mut line = String::new();
             let n = self.inner.read_line(&mut line)?;
             if n == 0 {
-                // No trailing CRLF — be permissive (some peers
+                // No trailing CRLF - be permissive (some peers
                 // send the final 0\r\n then close without the
                 // empty line).
                 return Ok(());
@@ -195,7 +195,7 @@ impl<R: BufRead> Read for ChunkedReader<R> {
 /// block.
 ///
 /// Failure to call `finish()` before drop leaves the stream
-/// without a terminator — peers will hang waiting for the
+/// without a terminator - peers will hang waiting for the
 /// zero-chunk. The drop impl emits a best-effort terminator if
 /// `finish()` was not called, but errors there are silently
 /// dropped; production code MUST call `finish()` explicitly.
@@ -295,7 +295,7 @@ pub fn encode_one(payload: &[u8]) -> Vec<u8> {
 /// One-shot decode helper: parses a complete chunked body
 /// (including the terminating zero-chunk) and returns the
 /// concatenated payload bytes. Trailers, if any, are discarded
-/// — callers needing them should use `ChunkedReader` directly.
+/// - callers needing them should use `ChunkedReader` directly.
 pub fn decode_all(payload: &[u8]) -> io::Result<Vec<u8>> {
     use std::io::Read;
     let cursor = std::io::BufReader::new(payload);
@@ -308,7 +308,7 @@ pub fn decode_all(payload: &[u8]) -> io::Result<Vec<u8>> {
 impl<W: Write> Drop for ChunkedWriter<W> {
     fn drop(&mut self) {
         if !self.finished {
-            // Best-effort terminator on drop. Errors swallowed —
+            // Best-effort terminator on drop. Errors swallowed -
             // production paths must call `finish()` explicitly.
             let _ = self.finish_internal(&[]);
         }
@@ -362,7 +362,7 @@ mod tests {
         {
             let mut w = ChunkedWriter::new(&mut buf);
             w.write_all(b"abc").unwrap();
-            // No explicit finish — drop terminator kicks in.
+            // No explicit finish - drop terminator kicks in.
         }
         // Should end with the zero-chunk + blank line.
         assert!(buf.ends_with(b"0\r\n\r\n"), "got: {buf:?}");
@@ -466,7 +466,7 @@ mod tests {
     #[test]
     fn reader_handles_zero_chunk_without_trailer_block_blank_line() {
         // Some peers terminate `0\r\n` without the final empty
-        // line — be permissive.
+        // line - be permissive.
         let body = b"3\r\nabc\r\n0\r\n";
         let mut r = ChunkedReader::new(Cursor::new(body));
         let mut out = String::new();

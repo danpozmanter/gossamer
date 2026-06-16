@@ -7,7 +7,7 @@
 // bit-for-bit across VM / Cranelift / LLVM.
 //
 // Safety contract exercised here: nothing allocated inside a region
-// escapes the pop — only `i64` accumulators (Copy) cross the boundary.
+// escapes the pop - only `i64` accumulators (Copy) cross the boundary.
 
 use std::runtime
 

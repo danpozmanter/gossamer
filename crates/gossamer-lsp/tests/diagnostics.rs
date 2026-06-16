@@ -195,7 +195,7 @@ fn arity_mismatch_response_well_formed() {
     // diagnostic for arity mismatches in a free-function call.
     // When the typechecker grows that check this test should
     // tighten the assertion to require a non-empty diagnostic set
-    // — for now we only verify the response is well-formed when
+    // - for now we only verify the response is well-formed when
     // any diagnostic does come through.
     let uri = "file:///arity.gos";
     let server = server_with(

@@ -1797,8 +1797,8 @@ once it is committed.</p>
 <h2 id="comments">Comments<a class="headerlink" href="#comments" title="Permanent link">&para;</a></h2>
 <p>Two forms, no others:</p>
 <ul>
-<li><code>// ...</code> — line comment to end of line.</li>
-<li><code>/* ... */</code> — block comment. Does <strong>not</strong> nest.</li>
+<li><code>// ...</code> - line comment to end of line.</li>
+<li><code>/* ... */</code> - block comment. Does <strong>not</strong> nest.</li>
 </ul>
 <p>There is no separate <code>///</code> or <code>//!</code> doc-comment syntax. A run
 of <code>//</code> lines immediately above an item (no blank line
@@ -1832,7 +1832,7 @@ the module's. Tooling reads these by position.</p>
 <h2 id="generic-structs">Generic structs<a class="headerlink" href="#generic-structs" title="Permanent link">&para;</a></h2>
 <p>A struct may carry one or more type parameters. The typechecker
 infers each parameter from the field values at the construction
-site — no turbofish annotation is needed:</p>
+site - no turbofish annotation is needed:</p>
 <div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="k">struct</span> <span class="nc">Pair</span><span class="o">&lt;</span><span class="n">A</span><span class="p">,</span><span class="w"> </span><span class="n">B</span><span class="o">&gt;</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">fst</span>: <span class="nc">A</span><span class="p">,</span><span class="w"> </span><span class="n">snd</span>: <span class="nc">B</span><span class="w"> </span><span class="p">}</span>
 <a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="k">struct</span> <span class="nc">Cell</span><span class="o">&lt;</span><span class="n">T</span><span class="o">&gt;</span><span class="w">    </span><span class="p">{</span><span class="w"> </span><span class="n">value</span>: <span class="nc">T</span><span class="w"> </span><span class="p">}</span>
 <a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>
@@ -1851,7 +1851,7 @@ site — no turbofish annotation is needed:</p>
 </code></pre></div>
 <p>Field reads carry the per-instance concrete type. When two fields
 share the same parameter (<code>Pair&lt;i64, i64&gt;</code>), arithmetic across
-them typechecks directly — no extra annotation required.</p>
+them typechecks directly - no extra annotation required.</p>
 <p>Up to three type parameters are supported in 0.5.0. Generic
 methods (<code>impl Pair&lt;A, B&gt; { ... }</code>) are tracked for a later
 release; field access works across all tiers today.</p>
@@ -1867,7 +1867,7 @@ release; field access works across all tiers today.</p>
 <h2 id="forward-pipe">Forward pipe (<code>|&gt;</code>)<a class="headerlink" href="#forward-pipe" title="Permanent link">&para;</a></h2>
 <p>The forward-pipe operator threads a value through a chain of
 calls. <code>x |&gt; f</code> desugars to <code>f(x)</code>; <code>x |&gt; f(a, b)</code> to
-<code>f(a, b, x)</code> — the piped value lands in the last positional
+<code>f(a, b, x)</code> - the piped value lands in the last positional
 slot. Methods work the same way: <code>x |&gt; recv.m(a)</code> becomes
 <code>recv.m(a, x)</code>. <code>|&gt;</code> is left-associative with very low
 precedence, so <code>a |&gt; f |&gt; g</code> reads as <code>g(f(a))</code> with no
@@ -1886,15 +1886,15 @@ parentheses needed:</p>
 </code></pre></div>
 <h2 id="pattern-matching">Pattern matching<a class="headerlink" href="#pattern-matching" title="Permanent link">&para;</a></h2>
 <ul>
-<li><code>_</code> — wildcard.</li>
-<li><code>name</code> / <code>mut name</code> — bind.</li>
-<li><code>Some(inner)</code> / <code>None</code> — variant destructure.</li>
-<li><code>Point { x, y }</code> — struct destructure.</li>
-<li><code>(a, b)</code> — tuple destructure.</li>
-<li><code>1..=5</code> — range.</li>
-<li><code>a | b</code> — or-pattern.</li>
-<li><code>x @ 1..=3</code> — <code>@</code>-binding.</li>
-<li><code>..</code> — rest.</li>
+<li><code>_</code> - wildcard.</li>
+<li><code>name</code> / <code>mut name</code> - bind.</li>
+<li><code>Some(inner)</code> / <code>None</code> - variant destructure.</li>
+<li><code>Point { x, y }</code> - struct destructure.</li>
+<li><code>(a, b)</code> - tuple destructure.</li>
+<li><code>1..=5</code> - range.</li>
+<li><code>a | b</code> - or-pattern.</li>
+<li><code>x @ 1..=3</code> - <code>@</code>-binding.</li>
+<li><code>..</code> - rest.</li>
 </ul>
 <p>Guards: <code>Some(n) if n &gt; 0 =&gt; ...</code></p>
 <h2 id="loops">Loops<a class="headerlink" href="#loops" title="Permanent link">&para;</a></h2>
@@ -1919,7 +1919,7 @@ the top.</p>
 <a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="p">}</span>
 </code></pre></div>
 <p>Everything allocated inside an <code>arena { }</code> block is bump-allocated
-and freed wholesale when the block exits — on every exit path,
+and freed wholesale when the block exits - on every exit path,
 including early <code>return</code> and <code>?</code>. Allocation becomes a pointer bump;
 reclamation is O(slabs) with no per-object teardown; small-enum nodes
 drop their runtime header entirely (a two-pointer tree node is exactly
@@ -1937,7 +1937,7 @@ referenced after it exits. See the
 <a id="__codelineno-7-8" name="__codelineno-7-8" href="#__codelineno-7-8"></a><span class="w">    </span><span class="n">_</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">time</span>::<span class="n">after</span><span class="p">(</span><span class="mi">5000</span><span class="p">)</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="n">timeout</span><span class="p">(),</span>
 <a id="__codelineno-7-9" name="__codelineno-7-9" href="#__codelineno-7-9"></a><span class="p">}</span>
 </code></pre></div>
-<p><code>go expr</code> spawns a goroutine — a real stackful coroutine on the
+<p><code>go expr</code> spawns a goroutine - a real stackful coroutine on the
 M:N scheduler. Blocking primitives (channel ops, mutex contention,
 <code>time::sleep</code>, network reads, filesystem syscalls) park the
 goroutine, freeing the worker thread to run other goroutines.
@@ -1975,11 +1975,11 @@ work transparently (runtime-managed, no <code>move</code>).</p>
 <a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a><span class="w">    </span><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;{}&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">apply</span><span class="p">(</span><span class="n">scaled</span><span class="p">,</span><span class="w"> </span><span class="mi">5</span><span class="p">))</span><span class="w">   </span><span class="c1">// 50</span>
 <a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a>
 <a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a><span class="w">    </span><span class="k">fn</span> <span class="nf">add_one</span><span class="p">(</span><span class="n">y</span>: <span class="kt">i64</span><span class="p">)</span><span class="w"> </span>-&gt; <span class="kt">i64</span> <span class="p">{</span><span class="w"> </span><span class="n">y</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mi">1</span><span class="w"> </span><span class="p">}</span>
-<a id="__codelineno-8-9" name="__codelineno-8-9" href="#__codelineno-8-9"></a><span class="w">    </span><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;{}&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">apply</span><span class="p">(</span><span class="n">add_one</span><span class="p">,</span><span class="w"> </span><span class="mi">41</span><span class="p">))</span><span class="w"> </span><span class="c1">// 42 — bare fn coerces</span>
+<a id="__codelineno-8-9" name="__codelineno-8-9" href="#__codelineno-8-9"></a><span class="w">    </span><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;{}&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">apply</span><span class="p">(</span><span class="n">add_one</span><span class="p">,</span><span class="w"> </span><span class="mi">41</span><span class="p">))</span><span class="w"> </span><span class="c1">// 42 - bare fn coerces</span>
 <a id="__codelineno-8-10" name="__codelineno-8-10" href="#__codelineno-8-10"></a><span class="p">}</span>
 </code></pre></div>
 <p>The conversion at the call boundary is implicit. Single trait
-variant — <code>FnMut</code> / <code>FnOnce</code> parse but lower to the same
+variant - <code>FnMut</code> / <code>FnOnce</code> parse but lower to the same
 <code>Fn(_)</code> shape (the borrow-style split Rust draws is unnecessary
 with automatic memory management).</p>
 <h2 id="attributes">Attributes<a class="headerlink" href="#attributes" title="Permanent link">&para;</a></h2>
@@ -2004,23 +2004,23 @@ with automatic memory management).</p>
 binding, the call site, or the return type; suffixes are reserved
 for the rare standalone case with no contextual hint.</p>
 <ul>
-<li><code>42</code> — plain int, inferred type. Defaults to <code>i64</code>.</li>
-<li><code>42i32</code> / <code>42u64</code> — explicit width when context can't pin it.</li>
-<li><code>0xff</code> / <code>0b1010</code> / <code>0o777</code> — bases.</li>
-<li><code>1_000_000</code> — underscore separator.</li>
-<li><code>1.0</code> — plain float, inferred type. Defaults to <code>f64</code>.</li>
-<li><code>1.0f32</code> — explicit float width.</li>
+<li><code>42</code> - plain int, inferred type. Defaults to <code>i64</code>.</li>
+<li><code>42i32</code> / <code>42u64</code> - explicit width when context can't pin it.</li>
+<li><code>0xff</code> / <code>0b1010</code> / <code>0o777</code> - bases.</li>
+<li><code>1_000_000</code> - underscore separator.</li>
+<li><code>1.0</code> - plain float, inferred type. Defaults to <code>f64</code>.</li>
+<li><code>1.0f32</code> - explicit float width.</li>
 </ul>
 <h2 id="string-literals">String literals<a class="headerlink" href="#string-literals" title="Permanent link">&para;</a></h2>
 <ul>
-<li><code>"hello"</code> — ordinary double-quoted string. Spans multiple lines
+<li><code>"hello"</code> - ordinary double-quoted string. Spans multiple lines
   without extra syntax; embedded newlines are preserved.</li>
-<li><code>"\n"</code> / <code>"\t"</code> / <code>"\\"</code> / <code>"\""</code> — standard escapes.</li>
-<li><code>r"raw"</code> / <code>r#"with embedded "quotes""#</code> — raw strings.</li>
-<li><code>b"bytes"</code> / <code>b'c'</code> — byte literals for binary protocols.</li>
+<li><code>"\n"</code> / <code>"\t"</code> / <code>"\\"</code> / <code>"\""</code> - standard escapes.</li>
+<li><code>r"raw"</code> / <code>r#"with embedded "quotes""#</code> - raw strings.</li>
+<li><code>b"bytes"</code> / <code>b'c'</code> - byte literals for binary protocols.</li>
 </ul>
 <h2 id="formatted-output">Formatted output<a class="headerlink" href="#formatted-output" title="Permanent link">&para;</a></h2>
-<p>Formatted output goes through six format macros — the only macros
+<p>Formatted output goes through six format macros - the only macros
 in the language. Each takes a Rust-style format string with <code>{}</code>
 placeholders, plus named captures <code>{ident}</code> for bindings in scope:</p>
 <div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="kd">let</span><span class="w"> </span><span class="n">name</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">&quot;jane&quot;</span>
@@ -2062,15 +2062,15 @@ placeholders, plus named captures <code>{ident}</code> for bindings in scope:</p
 </tr>
 </tbody>
 </table>
-<p>Every other <code>name!(…)</code> is a parse error — there is no user macro
-system. Format specs follow Rust's <code>{:spec}</code> grammar — width,
+<p>Every other <code>name!(…)</code> is a parse error - there is no user macro
+system. Format specs follow Rust's <code>{:spec}</code> grammar - width,
 alignment, fill, zero-pad, radix, and precision (<code>{:&gt;8}</code>,
 <code>{:08x}</code>, <code>{:^6}</code>, <code>{:.2}</code>).</p>
 <p>For the single-<code>String</code> output shape, <code>+</code> concatenates without
 adding a separator:</p>
 <div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="kd">let</span><span class="w"> </span><span class="n">greeting</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">&quot;hello, &quot;</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="o">&amp;</span><span class="n">name</span>
 </code></pre></div>
-<p>Writing <code>name!(…)</code> is a hard parse error — the <code>!</code> suffix is
+<p>Writing <code>name!(…)</code> is a hard parse error - the <code>!</code> suffix is
 reserved for no purpose today.</p>
 
 

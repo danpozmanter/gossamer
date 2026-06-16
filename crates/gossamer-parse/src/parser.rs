@@ -41,7 +41,7 @@ pub struct Parser<'src> {
     /// `use` declarations encountered inside inline `mod ... { ... }`
     /// bodies. The mod-body grammar collects them into this side
     /// channel so [`crate::parse_source_file`] can hoist them to the
-    /// `SourceFile.uses` list — the resolver only walks the
+    /// `SourceFile.uses` list - the resolver only walks the
     /// file-level `uses` slot, so a `use std::encoding::json` inside
     /// `mod chat { ... }` would otherwise be silently dropped.
     pub(crate) hoisted_uses: Vec<gossamer_ast::UseDecl>,
@@ -53,7 +53,7 @@ impl<'src> Parser<'src> {
     pub fn new(source: &'src str, file: FileId) -> Self {
         // Strip a leading UTF-8 BOM (U+FEFF) once, here, so the stored
         // `source` and the `TokenStream` below are built from the same
-        // text — token spans and `slice` then share one basis. Windows
+        // text - token spans and `slice` then share one basis. Windows
         // editors emit a BOM by default; `SourceMap`'s `SourceFile::new`
         // strips the same prefix so diagnostic line/columns stay aligned.
         let source = source.strip_prefix('\u{feff}').unwrap_or(source);
@@ -279,7 +279,7 @@ impl<'src> Parser<'src> {
     /// Suspends the no-struct-literal restriction for the duration of
     /// `f`. Delimited contexts (call arguments, parentheses, brackets,
     /// blocks, struct-literal fields) re-allow struct literals even
-    /// inside a `match` scrutinee or `if`/`while` condition — the
+    /// inside a `match` scrutinee or `if`/`while` condition - the
     /// surrounding delimiter removes the `{` ambiguity the restriction
     /// exists to resolve.
     pub(crate) fn with_struct_literals_allowed<T>(&mut self, f: impl FnOnce(&mut Self) -> T) -> T {

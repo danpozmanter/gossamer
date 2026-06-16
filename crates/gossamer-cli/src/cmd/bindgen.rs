@@ -1,4 +1,4 @@
-//! `gos bindgen` — scaffold a `#[gos_module]` binding skeleton
+//! `gos bindgen` - scaffold a `#[gos_module]` binding skeleton
 //! from a Rust source file.
 //!
 //! Walks the supplied file's `pub fn` items via the `syn` parser
@@ -11,7 +11,7 @@
 //! `bool`, `char`, `String`, `Vec<T>`, `Option<T>`, `Result<T, E>`,
 //! `Bytes`, tuples of those, `HashMap<K, V>` for declared pairs)
 //! is flagged. User structs that derive `GosStruct` ride through
-//! as `Type::Opaque(name)` — bindgen can't see the derive at this
+//! as `Type::Opaque(name)` - bindgen can't see the derive at this
 //! stage, so any non-primitive bare-ident type is preserved
 //! literally and the author keeps or replaces it.
 
@@ -176,11 +176,11 @@ fn type_to_string(ty: &syn::Type) -> String {
 /// Returns `Some(reason)` if `sig` uses a type the binding ABI
 /// doesn't support. Returns `None` if every type checks out.
 fn classify_unsupported(sig: &syn::Signature) -> Option<String> {
-    // Reject `&self` / `&mut self` — those are for `#[gos_opaque]`,
+    // Reject `&self` / `&mut self` - those are for `#[gos_opaque]`,
     // not free-fn bindings.
     for input in &sig.inputs {
         if let syn::FnArg::Receiver(_) = input {
-            return Some("method receiver — use `#[gos_opaque]` instead".to_string());
+            return Some("method receiver - use `#[gos_opaque]` instead".to_string());
         }
     }
     for input in &sig.inputs {
@@ -222,7 +222,7 @@ fn type_unsupported_reason(ty: &syn::Type) -> Option<String> {
             let last = p.path.segments.last()?;
             let ident = last.ident.to_string();
             if ident == "Self" {
-                return Some("Self return — use `#[gos_opaque]` instead".to_string());
+                return Some("Self return - use `#[gos_opaque]` instead".to_string());
             }
             if SUPPORTED_PRIMITIVES.contains(&ident.as_str()) {
                 return None;
@@ -254,14 +254,14 @@ fn type_unsupported_reason(ty: &syn::Type) -> Option<String> {
             None
         }
         syn::Type::Reference(r) => Some(format!(
-            "reference type `&{}` — pass by value or use `String`/`Bytes` for borrowed payloads",
+            "reference type `&{}` - pass by value or use `String`/`Bytes` for borrowed payloads",
             type_to_string(&r.elem)
         )),
         syn::Type::Array(_) | syn::Type::Slice(_) => {
-            Some("fixed array / slice — use `Vec<T>` or `Bytes` instead".to_string())
+            Some("fixed array / slice - use `Vec<T>` or `Bytes` instead".to_string())
         }
         syn::Type::Ptr(_) | syn::Type::BareFn(_) | syn::Type::TraitObject(_) => Some(
-            "pointer / trait-object / bare-fn type — not supported at the binding boundary"
+            "pointer / trait-object / bare-fn type - not supported at the binding boundary"
                 .to_string(),
         ),
         other => Some(format!("unsupported type shape: {}", type_to_string(other))),
@@ -296,7 +296,7 @@ fn render_lib_rs(
     buf.push_str(&format!(
         "//! Generated bindings for `{module_name}`.\n\
          //!\n\
-         //! Bodies marked `todo!()` are placeholders — fill them in.\n\
+         //! Bodies marked `todo!()` are placeholders - fill them in.\n\
          //! Items flagged `Unsupported` need hand-shaped wrappers\n\
          //! before they can cross the binding boundary.\n\
          \n\

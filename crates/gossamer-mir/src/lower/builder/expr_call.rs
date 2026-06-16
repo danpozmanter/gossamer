@@ -70,7 +70,7 @@ impl<'a> Builder<'a> {
                     return Some(local);
                 }
             }
-            // `http::serve_h2c(addr, handler, config)` — ignore the
+            // `http::serve_h2c(addr, handler, config)` - ignore the
             // config argument in compiled mode and use the runtime
             // default; reuses the same handler-fn-ptr dispatch as
             // http::serve. Renamed from the original `http2::*`
@@ -83,7 +83,7 @@ impl<'a> Builder<'a> {
                 }
             }
             // `flag::define(name, [flag::int(...), flag::string(...),
-            // flag::bool(...)])` — declarative one-shot construction.
+            // flag::bool(...)])` - declarative one-shot construction.
             // Expand to the imperative `flag::Set` builder pattern at
             // MIR level so the compiled tier reuses the now-working
             // cell-load helpers.
@@ -93,7 +93,7 @@ impl<'a> Builder<'a> {
                 }
             }
             // `Box::new(x)` / `Arc::new(x)` / `Rc::new(x)` are
-            // identity wrappers in a fully GC'd language — every
+            // identity wrappers in a fully GC'd language - every
             // value already lives on the GC heap. Without this
             // identity passthrough the call lands on a generic
             // dispatch that returns a typed-zero stub, which then
@@ -185,7 +185,7 @@ impl<'a> Builder<'a> {
         }
         // When the callee's `DefId` is known and its declared
         // return type is on record, prefer the callee's return
-        // type over the call-expression's HIR type — the latter
+        // type over the call-expression's HIR type - the latter
         // may still be an inference variable.
         let ty = if let HirExprKind::Path { def: Some(def), .. } = &callee.kind {
             // Prefer the callee's declared return type over the
@@ -266,7 +266,7 @@ impl<'a> Builder<'a> {
         // signature directly. Without this, `add5(3)` (for
         // `add5: fn(i64) -> i64`) leaves the result as an
         // inference variable, which the print path then treats
-        // as String — producing a `strlen` segfault on the i64
+        // as String - producing a `strlen` segfault on the i64
         // bit pattern returned from the closure body.
         let ty = {
             use gossamer_types::TyKind;
@@ -483,7 +483,7 @@ impl<'a> Builder<'a> {
         // lower to a by-slot-address `Rvalue::Ref`. After the call the callee
         // may have stored a new value through that address; reload the local
         // from `*ref` so the caller's binding sees it. This is mandatory on the
-        // Cranelift tier — its locals are SSA Variables with no machine
+        // Cranelift tier - its locals are SSA Variables with no machine
         // address, so the Ref materialises a throwaway stack slot the callee
         // writes into; without the reload the round-trip is lost. On the LLVM
         // tier the local is alloca-backed and the reload re-reads the same
@@ -498,7 +498,7 @@ impl<'a> Builder<'a> {
                 mut_ref_reloads.push((place_local, local));
             }
             // 0.7.0 flag::Cell auto-deref at the user-fn call
-            // boundary — matches the VM tier's behaviour so
+            // boundary - matches the VM tier's behaviour so
             // `f(flags.output)` passes the unwrapped value.
             let local = self.auto_deref_cell(local, span);
             // Wrap when the source MIR local holds a raw code
@@ -669,7 +669,7 @@ impl<'a> Builder<'a> {
     }
 
     /// For a `&mut <bare local>` argument of a writeback type (scalar /
-    /// `String`), returns the borrowed local — the destination of the
+    /// `String`), returns the borrowed local - the destination of the
     /// post-call `place = *ref` reload. Mirrors the `Rvalue::Ref` emission
     /// gate in `lower_unary`: only `&mut` over a place-expr of a scalar or
     /// `String` operand takes a slot address. A bare path that *forwards* an

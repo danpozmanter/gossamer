@@ -22,7 +22,7 @@ use std::strings
 
 // Previous clipboard text, a placeholder when the clipboard is
 // empty, or an error report (stderr) when no clipboard exists at
-// all — e.g. on Linux with no display server and no clipboard
+// all - e.g. on Linux with no display server and no clipboard
 // utility (xsel, xclip, wl-clipboard, termux-clipboard) installed.
 fn read_previous() -> String {
     match get_text() {

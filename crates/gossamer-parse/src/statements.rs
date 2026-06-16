@@ -32,10 +32,10 @@ impl Parser<'_> {
             self.eat_punct(Punct::Semi);
             return StmtKind::Defer(Box::new(body));
         }
-        // `arena { ... }` — contextual keyword (an identifier `arena` not
+        // `arena { ... }` - contextual keyword (an identifier `arena` not
         // followed by `{` still parses as a normal expression). Every
         // allocation made while the block runs lands in a bump arena and
-        // is freed wholesale when the block exits — desugars to
+        // is freed wholesale when the block exits - desugars to
         // `{ runtime::arena_push(); defer runtime::arena_pop(); ... }`,
         // so the pop runs on every exit path. The matching
         // `use std::runtime` is injected after parse.
@@ -150,7 +150,7 @@ impl Parser<'_> {
         } else {
             None
         };
-        // `let PAT = init else { … }` — desugar to a `match` binding so the
+        // `let PAT = init else { … }` - desugar to a `match` binding so the
         // refutable pattern's bindings escape into the enclosing scope
         // (Rust/Swift semantics), reusing the match lowering on every tier.
         // The else block must diverge; that is enforced by its `!`-typed

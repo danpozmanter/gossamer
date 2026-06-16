@@ -1,4 +1,4 @@
-// `std::os::user` — POSIX user / group lookup. Logic lives in
+// `std::os::user` - POSIX user / group lookup. Logic lives in
 // `gossamer_runtime::c_abi::gos_rt_os_user_*` so the compiled tier
 // (Cranelift / LLVM) reaches the same code via static linkage.
 //
@@ -120,7 +120,7 @@ mod tests {
     fn current_name_nonempty() {
         let n = current_name();
         // CI containers may have unusual setups, so we only check the
-        // function returns without panicking — emptiness is acceptable.
+        // function returns without panicking - emptiness is acceptable.
         let _ = n;
     }
 

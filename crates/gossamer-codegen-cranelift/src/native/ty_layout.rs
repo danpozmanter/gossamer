@@ -75,7 +75,7 @@
 //! the process exit code, so the object file links through a
 //! standard `cc` invocation.
 //! Aggregates (tuples/arrays/structs), strings, closures, and
-//! anything that needs a GC heap are not yet lowered — those
+//! anything that needs a GC heap are not yet lowered - those
 //! constructs fall back to [`crate::emit::emit_module`] for
 //! inspection.
 
@@ -165,7 +165,7 @@ pub(super) fn type_slot_count(tcx: &TyCtxt, ty: Ty) -> u32 {
             // `struct_field_tys`. Both have a 2-slot heap layout:
             // `[disc: i64, payload: i64]`. Without this special
             // case the by-value-aggregate return path copies only
-            // the disc word and zeroes the payload — corrupting
+            // the disc word and zeroes the payload - corrupting
             // every `Ok(v)` returned across a function boundary.
             if def.local == u32::MAX || def.local == u32::MAX - 1 || tcx.is_inline_enum_ty(ty) {
                 return 2;

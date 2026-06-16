@@ -62,7 +62,7 @@ jobs:
           GOS=./target/release/gos
           mkdir -p .perf
 
-          # time_ns LABEL ARGS... — runs the program and appends
+          # time_ns LABEL ARGS... - runs the program and appends
           # "LABEL <nanoseconds>" to .perf/current.txt
           time_ns() {
             local label=$1; shift
@@ -92,7 +92,7 @@ jobs:
           BASELINE=.perf/baseline.txt
 
           if [[ ! -f "$CURRENT" ]]; then
-            echo "No benchmark results — skipping comparison."
+            echo "No benchmark results - skipping comparison."
             exit 0
           fi
 
@@ -105,7 +105,7 @@ jobs:
           }' "$CURRENT"
 
           if [[ ! -f "$BASELINE" ]]; then
-            echo "No baseline yet — this run establishes one."
+            echo "No baseline yet - this run establishes one."
             cp "$CURRENT" "$BASELINE"
             exit 0
           fi
@@ -193,7 +193,7 @@ jobs:
   # `gos run` on Linux; this one builds a `gos build --release` native binary
   # on all three Tier-1 platforms and times it, so an allocator/codegen
   # regression (or a tier silently degrading to the interpreter) is visible on
-  # macOS and Windows too — not just Linux.
+  # macOS and Windows too - not just Linux.
   perf-native:
     name: Perf native (${{ matrix.os }})
     runs-on: ${{ matrix.os }}

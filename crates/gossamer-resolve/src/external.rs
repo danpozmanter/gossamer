@@ -34,7 +34,7 @@ pub enum BindingType {
     Char,
     /// `String`.
     String,
-    /// `Bytes` — opaque byte buffer (ABI 0.4+).
+    /// `Bytes` - opaque byte buffer (ABI 0.4+).
     Bytes,
     /// `(T1, T2, ...)`.
     Tuple(Vec<BindingType>),
@@ -46,13 +46,13 @@ pub enum BindingType {
     Result(Box<BindingType>, Box<BindingType>),
     /// `Map<K, V>` (ABI 0.4+).
     Map(Box<BindingType>, Box<BindingType>),
-    /// `Variant<...>` — tagged-union (ABI 0.4+).
+    /// `Variant<...>` - tagged-union (ABI 0.4+).
     Variant(Vec<BindingVariantArm>),
     /// `Fn(args...) -> ret` callback (ABI 0.4+).
     Callback(Vec<BindingType>, Box<BindingType>),
     /// User-defined opaque struct/enum, identified by name.
     Opaque(String),
-    /// `_` — type checker accepts anything.
+    /// `_` - type checker accepts anything.
     Any,
 }
 

@@ -2,7 +2,7 @@
 //! Spins up the VM-hosted server, fires N sequential
 //! connections from several client threads, and asserts the server
 //! answered each request. The goal is not to saturate a real
-//! production server — it is to catch regressions in the per-
+//! production server - it is to catch regressions in the per-
 //! connection worker path that the single-request end-to-end test
 //! cannot surface.
 
@@ -73,7 +73,7 @@ fn sequential_multi_connection_server_serves_every_request() {
 
     // Wait for the bind to take effect. Rustyline would use a
     // barrier but we are running without one to keep the test dead
-    // simple — the short sleep covers the window where the server
+    // simple - the short sleep covers the window where the server
     // thread has been scheduled but the TcpListener is not yet
     // accepting.
     while !ready.load(Ordering::Relaxed) {
@@ -121,7 +121,7 @@ fn sequential_multi_connection_server_serves_every_request() {
     let _ = server_thread.join().expect("server thread panicked");
 
     // Connections can occasionally race the GOSSAMER_HTTP_MAX_REQUESTS
-    // counter — a client may successfully send a request the server
+    // counter - a client may successfully send a request the server
     // accepted but then exit before fully draining the response. We
     // assert on the lower bound (roughly 80% of attempts) to stay
     // signal-catching without turning the test flaky.

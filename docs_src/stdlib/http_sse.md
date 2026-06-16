@@ -8,7 +8,7 @@ Server-Sent Events (text/event-stream) emitter with heartbeat ticks and retry hi
 
 | Name | Kind | Description |
 |---|---|---|
-| `Stream` | type | Active SSE stream — handler writes events through it (Rust-side). |
+| `Stream` | type | Active SSE stream - handler writes events through it (Rust-side). |
 | `Event` | type | One SSE event (id, event, data, retry). |
 | `serve` | fn | Wraps a handler closure into an SSE response (Rust-side; streaming). |
 | `encode_event` | fn | Render one event block as a string: `(event, data, id) -> String`. Available in interp + compiled. |

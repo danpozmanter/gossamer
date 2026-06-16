@@ -20,10 +20,10 @@ pub mod rand {
     //!
     //! Two surfaces:
     //!
-    //! - [`fill`] / [`bytes()`] / [`nonce_12`] — recoverable. They
+    //! - [`fill`] / [`bytes()`] / [`nonce_12`] - recoverable. They
     //!   return `Result<_, Error>`; callers that can refuse the
     //!   operation surface the failure.
-    //! - [`fill_or_abort`] — non-recoverable. Used by infallible
+    //! - [`fill_or_abort`] - non-recoverable. Used by infallible
     //!   helpers like `OsRng`'s `RngCore` impl, where the
     //!   alternative was a `.expect(...)` panic. The function
     //!   `process::abort()`s on CSPRNG failure rather than
@@ -151,7 +151,7 @@ pub mod rand {
 }
 
 pub mod sha256 {
-    //! SHA-256 hashing — thin wrapper over the in-repo `gossamer-pkg`
+    //! SHA-256 hashing - thin wrapper over the in-repo `gossamer-pkg`
     //! implementation so the crypto module has a stable, pure-Rust
     //! digest without pulling in a crypto crate.
 
@@ -665,7 +665,7 @@ pub mod password {
     /// plaintext via [`hash`] and store the new PHC string.
     ///
     /// Returns `false` (the conservative default) when the PHC
-    /// cannot be parsed — re-hashing an unparseable record is the
+    /// cannot be parsed - re-hashing an unparseable record is the
     /// caller's choice, not ours.
     #[must_use]
     pub fn needs_rehash(phc: &str) -> bool {
@@ -692,7 +692,7 @@ pub mod password {
         "argon2id"
     }
 
-    /// Returns `(m_cost_kib, t_cost_iters, p_cost_parallelism)` —
+    /// Returns `(m_cost_kib, t_cost_iters, p_cost_parallelism)` -
     /// the active argon2id parameters.
     #[must_use]
     pub fn current_params() -> (u32, u32, u32) {
@@ -738,7 +738,7 @@ pub mod password {
 
         #[test]
         fn needs_rehash_true_for_unparseable_input() {
-            // Unparseable returns false (conservative) — caller decides.
+            // Unparseable returns false (conservative) - caller decides.
             assert!(!needs_rehash("not-a-phc-string"));
         }
 
@@ -768,7 +768,7 @@ fn nibble_char(n: u8) -> char {
 }
 
 /// Block-cipher modes: AES-CTR, AES-CBC. Mirrors Go's
-/// `crypto/cipher` surface — `Stream` / `Block` primitives so
+/// `crypto/cipher` surface - `Stream` / `Block` primitives so
 /// downstream code can compose modes that Gossamer doesn't
 /// ship directly (e.g. AES-OFB layered on the same Block).
 pub mod cipher {
@@ -812,7 +812,7 @@ pub mod cipher {
     /// In-place AES-CTR. The same call both encrypts and
     /// decrypts (CTR is symmetric). `iv` must be exactly
     /// [`aes_block_size`] bytes; reusing a `(key, iv)` pair on
-    /// distinct plaintexts is catastrophic — pick a fresh `iv`
+    /// distinct plaintexts is catastrophic - pick a fresh `iv`
     /// per message.
     pub fn aes_ctr_xor(key: &[u8], iv: &[u8], buf: &mut [u8]) -> Result<(), Error> {
         if iv.len() != aes_block_size() {
@@ -840,7 +840,7 @@ pub mod cipher {
     }
 
     /// Encrypts `plaintext` with AES-CBC + PKCS#7 padding.
-    /// Returns the ciphertext; the IV is NOT prepended — pass
+    /// Returns the ciphertext; the IV is NOT prepended - pass
     /// it alongside ciphertext on the wire.
     pub fn aes_cbc_encrypt(key: &[u8], iv: &[u8], plaintext: &[u8]) -> Result<Vec<u8>, Error> {
         if iv.len() != aes_block_size() {
@@ -1043,7 +1043,7 @@ mod tests {
     fn aes_cbc_block_aligned_payload() {
         let key = [0u8; 32];
         let iv = [1u8; 16];
-        let pt = b"exactly sixteen!"; // 16 bytes — full block
+        let pt = b"exactly sixteen!"; // 16 bytes - full block
         assert_eq!(pt.len(), 16);
         let ct = cipher::aes_cbc_encrypt(&key, &iv, pt).unwrap();
         // PKCS#7 adds a full padding block on aligned inputs.

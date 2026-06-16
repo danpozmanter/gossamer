@@ -3,7 +3,7 @@ source: crates/gossamer-diagnostics/tests/snapshots.rs
 expression: rendered
 ---
 --- plain ---
-error[GP0016]: The `extern` keyword is reserved in 0.5.0 but has no — here
+error[GP0016]: The `extern` keyword is reserved in 0.5.0 but has no - here
 --- framed ---
 error[GP0016]: The `extern` keyword is reserved in 0.5.0 but has no
   --> snap.gos:2:5

@@ -182,7 +182,7 @@ fn alpn_falls_back_to_http11_when_h2_not_offered() {
             *server_alpn_clone.lock().expect("lock") = n;
         });
         tokio::time::sleep(Duration::from_millis(100)).await;
-        // Client offers both — server should pick http/1.1.
+        // Client offers both - server should pick http/1.1.
         let n = client_handshake_alpn(
             addr,
             cert_for_client,

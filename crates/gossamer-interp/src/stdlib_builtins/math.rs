@@ -269,7 +269,7 @@ pub(crate) fn builtin_math_hypot(args: &[Value]) -> RuntimeResult<Value> {
     )))
 }
 pub(crate) fn builtin_math_clamp(args: &[Value]) -> RuntimeResult<Value> {
-    // clamp(v, lo, hi) — bare prelude scalar clamp. Matches the
+    // clamp(v, lo, hi) - bare prelude scalar clamp. Matches the
     // compiled tier: below lo -> lo, above hi -> hi, else v.
     if let Some(Value::Float(_)) = args.first() {
         let v = arg_f64(args, 0);

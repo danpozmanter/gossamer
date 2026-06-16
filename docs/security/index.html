@@ -1536,7 +1536,7 @@ the hardening roadmap. Reporting details are in
   plus an on-demand cycle collector), so use-after-free and
   double-free are not expressible in safe Gossamer code.</li>
 <li>Minimal external dependencies: <code>anyhow</code>, <code>clap</code>,
-  <code>codespan-reporting</code>, <code>parking_lot</code>, <code>thiserror</code> — plus
+  <code>codespan-reporting</code>, <code>parking_lot</code>, <code>thiserror</code> - plus
   <code>insta</code> as a dev-only snapshot tool.</li>
 </ul>
 <h2 id="known-gaps">Known gaps<a class="headerlink" href="#known-gaps" title="Permanent link">&para;</a></h2>
@@ -1566,7 +1566,7 @@ know:</p>
 <p>Open caveats:</p>
 <ul>
 <li>HTTP/2 + WebSockets are deferred to v1.x.</li>
-<li>Per-line coverage instrumentation (Phase 2 follow-up) —
+<li>Per-line coverage instrumentation (Phase 2 follow-up) -
   the <code>--coverage</code> output today is at the test-file
   granularity.</li>
 <li>Postgres / MySQL drivers belong to the package ecosystem
@@ -1578,12 +1578,12 @@ severity. A <code>SECURITY.md</code> lands in the repository root alongside
 the 1.0.0 release.</p>
 <h2 id="ci-automation-planned">CI automation (planned)<a class="headerlink" href="#ci-automation-planned" title="Permanent link">&para;</a></h2>
 <ul>
-<li><code>cargo deny</code> — license + advisory gate.</li>
-<li><code>cargo audit</code> — weekly vulnerability scan.</li>
-<li><code>cargo geiger</code> — unsafe-transitive usage snapshot.</li>
-<li><code>cargo fuzz</code> — targets for lexer, parser, HTTP parser,
+<li><code>cargo deny</code> - license + advisory gate.</li>
+<li><code>cargo audit</code> - weekly vulnerability scan.</li>
+<li><code>cargo geiger</code> - unsafe-transitive usage snapshot.</li>
+<li><code>cargo fuzz</code> - targets for lexer, parser, HTTP parser,
   manifest parser. Nightly run.</li>
-<li><code>miri</code> — pure-Rust phases (diagnostics, MIR, lint) every PR.</li>
+<li><code>miri</code> - pure-Rust phases (diagnostics, MIR, lint) every PR.</li>
 </ul>
 
 

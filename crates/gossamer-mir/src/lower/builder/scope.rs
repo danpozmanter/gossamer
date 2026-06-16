@@ -109,7 +109,7 @@ impl<'a> Builder<'a> {
     }
 
     /// Emits every defer frame at index `>= from_depth`, innermost block first,
-    /// without removing them — the owning `lower_block` calls pop their frames
+    /// without removing them - the owning `lower_block` calls pop their frames
     /// as control unwinds. `return` passes `0` (all frames); `break`/`continue`
     /// pass the target loop's `defer_depth` (only the frames inside the loop).
     pub(crate) fn emit_defers_above(&mut self, from_depth: usize) {
@@ -351,7 +351,7 @@ impl<'a> Builder<'a> {
             // genuine depth-bomb HIR shape doesn't silently fall
             // through to the runtime-dispatch path.
             eprintln!(
-                "gossamer-mir: peek_struct_type recursion cap reached ({MAX_PEEK_DEPTH}) — falling back to runtime dispatch"
+                "gossamer-mir: peek_struct_type recursion cap reached ({MAX_PEEK_DEPTH}) - falling back to runtime dispatch"
             );
             return None;
         }
@@ -396,7 +396,7 @@ impl<'a> Builder<'a> {
                 | "is_ok" | "is_err" => Some(TyKind::Bool),
                 _ => None,
             },
-            // `args[i].method()` — the receiver is an `Index`
+            // `args[i].method()` - the receiver is an `Index`
             // projection whose HIR type can be `Var(_)` when
             // multi-module typeck loses contact with the element
             // kind (single-file builds resolve `args[i]` to
@@ -427,13 +427,13 @@ impl<'a> Builder<'a> {
                 }
                 Some(elem_kind)
             }
-            // `<receiver>.<field>.method()` — the field's type is
+            // `<receiver>.<field>.method()` - the field's type is
             // resolvable from the receiver's local_struct (a known
             // stdlib or user struct registered in `self.structs`).
             // The HIR-level type on the field expression itself is
             // often a `Var` that lost contact with the field
             // declaration, so the typechecker route is
-            // insufficient — but the structural lookup is.
+            // insufficient - but the structural lookup is.
             HirExprKind::Field { receiver, name } => {
                 let recv_local = self.receiver_local_from_path(receiver)?;
                 let struct_name = self.local_struct.get(&recv_local).cloned()?;

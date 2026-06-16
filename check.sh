@@ -83,13 +83,13 @@ run_step() {
         fi
     else
         if ! "$@" >"$log" 2>&1; then
-            echo "$label FAILED — full output:" >&2
+            echo "$label FAILED - full output:" >&2
             cat "$log" >&2
             rm -f "$log"
             exit 1
         fi
         # Surface warning / error lines (plus a couple of lines of
-        # following context — diagnostics usually print the source
+        # following context - diagnostics usually print the source
         # excerpt right after the header) so problems aren't silent
         # even when the step succeeds with warnings. Suppressed under
         # --errors-only, which prints output only for a failing step.
@@ -103,19 +103,19 @@ run_step() {
 run_step "cargo fmt"                                       cargo fmt
 run_step "cargo clippy --workspace --all-targets"          cargo clippy --workspace --all-targets -- -D warnings
 run_step "cargo test --workspace --no-fail-fast"           cargo test --workspace --no-fail-fast
-# Stdlib docs drift gate — verifies docs_src/stdlib/ pages match
+# Stdlib docs drift gate - verifies docs_src/stdlib/ pages match
 # what `manifest::ALL_MODULES` would emit. Build the binary first
 # so the check uses the freshly built crate.
 run_step "cargo build --bin gos"                           cargo build --bin gos
 run_step "gos doc --emit-stdlib --check"                   ./target/debug/gos doc --emit-stdlib docs_src/stdlib --check
-# Feature-status sanity — every `Experimental` registry entry has a
+# Feature-status sanity - every `Experimental` registry entry has a
 # doc page on disk. (Shipped items also need a passing tier-parity
 # sidecar; that requires the full cross-tier walk and is gated by
 # the dedicated `gos test --tier-parity --report=status` job rather
 # than this fast pre-commit pass.)
 run_step "gos feature-status --status experimental --check" ./target/debug/gos feature-status --status experimental --check
 
-# Rustdoc broken-intra-doc-links gate — mirrors the docs job in
+# Rustdoc broken-intra-doc-links gate - mirrors the docs job in
 # `.github/workflows/ci.yml`. Wired here so internal-doc drift
 # (links to renamed or now-private items) fails locally instead of
 # surfacing in CI as a red post-push status.
@@ -124,14 +124,14 @@ if [[ $run_rustdoc -eq 1 ]]; then
         run_step "cargo doc --workspace --no-deps" cargo doc --workspace --no-deps
 fi
 
-# Doctest gate — mirrors `cargo test --doc --workspace --release`
+# Doctest gate - mirrors `cargo test --doc --workspace --release`
 # in ci.yml. Catches stale `///` examples that don't compile.
 if [[ $run_doctests -eq 1 ]]; then
     run_step "cargo test --doc --workspace --release" \
         cargo test --doc --workspace --release
 fi
 
-# cargo-deny — license + advisory + bans + sources gate
+# cargo-deny - license + advisory + bans + sources gate
 # (`.github/workflows/ci.yml` deny job). Skip cleanly if
 # `cargo-deny` isn't installed so the local pass keeps moving.
 if [[ $run_deny -eq 1 ]]; then
@@ -142,7 +142,7 @@ if [[ $run_deny -eq 1 ]]; then
     fi
 fi
 
-# cargo-audit — RUSTSEC advisory gate (`.github/workflows/ci.yml`
+# cargo-audit - RUSTSEC advisory gate (`.github/workflows/ci.yml`
 # audit job). Skip cleanly if `cargo-audit` isn't installed.
 if [[ $run_audit -eq 1 ]]; then
     if command -v cargo-audit >/dev/null 2>&1; then
@@ -152,12 +152,12 @@ if [[ $run_audit -eq 1 ]]; then
     fi
 fi
 
-# Cross-target check — mirrors the cross-targets job's wasm32 leg.
+# Cross-target check - mirrors the cross-targets job's wasm32 leg.
 # Just the wasm-portable crates: rustls / corosensei / mio aren't
 # wasm-clean, so runtime / sched / binding / pkg can't be asked to
 # compile there. The Linux cross targets (aarch64-gnu, riscv64-gnu)
 # need a target-prefixed gcc that's hard to expect on dev machines
-# — those stay CI-only.
+# - those stay CI-only.
 if [[ $run_cross -eq 1 ]]; then
     if rustup target list --installed 2>/dev/null | grep -q '^wasm32-unknown-unknown$'; then
         run_step "cargo check --target wasm32-unknown-unknown (wasm-portable crates)" \
@@ -168,7 +168,7 @@ if [[ $run_cross -eq 1 ]]; then
     fi
 fi
 
-# ASan / TSan — mirrors `.github/workflows/sanitizers.yml`. Needs a
+# ASan / TSan - mirrors `.github/workflows/sanitizers.yml`. Needs a
 # nightly toolchain with the `rust-src` component (so `-Z build-std`
 # can recompile std + the sanitizer runtimes). CI pins a specific
 # nightly date for reproducibility; locally we honor that pin when
@@ -178,7 +178,7 @@ fi
 # Discovery order:
 #   1. Pinned `nightly-2026-04-14` toolchain (matches CI exactly).
 #   2. Plain `nightly` (anything `rustup toolchain list` calls
-#      "nightly-..." that isn't the date pin) — runs the same gates,
+#      "nightly-..." that isn't the date pin) - runs the same gates,
 #      just under whatever nightly is on the dev box.
 #   3. Skip with a one-line install hint.
 if [[ $run_sanitizers -eq 1 ]]; then
@@ -194,12 +194,12 @@ if [[ $run_sanitizers -eq 1 ]]; then
             | awk '/^nightly/{ sub(/ .*/, ""); print; exit }')"
         if [[ -n "$asan_toolchain" && "$asan_toolchain" != "$asan_pinned" ]]; then
             echo "sanitizers: pinned $asan_pinned not installed; falling back to $asan_toolchain"
-            echo "            CI uses the pinned date — install with"
+            echo "            CI uses the pinned date - install with"
             echo "              rustup toolchain install $asan_pinned --component rust-src"
         fi
     fi
     if [[ -z "$asan_toolchain" ]]; then
-        echo "sanitizers skipped (no nightly toolchain — install with"
+        echo "sanitizers skipped (no nightly toolchain - install with"
         echo "  rustup toolchain install $asan_pinned --component rust-src)"
     elif ! rustup component list --installed --toolchain "$asan_toolchain" 2>/dev/null \
             | grep -q rust-src; then
@@ -237,7 +237,7 @@ if [[ $run_sanitizers -eq 1 ]]; then
     fi
 fi
 
-# Fuzz smoke — mirrors `.github/workflows/fuzz.yml` so adversarial
+# Fuzz smoke - mirrors `.github/workflows/fuzz.yml` so adversarial
 # inputs that CI would flag also fail locally. Each target runs
 # briefly (10 s by default; override with GOSSAMER_FUZZ_SECS) and
 # replays its seed corpus. Skip cleanly when cargo-fuzz or the

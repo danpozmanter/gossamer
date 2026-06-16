@@ -3,9 +3,9 @@
 //! Every program here runs entirely through the bytecode [`Vm`].
 //! They pin the block-scoped LIFO `defer` contract the
 //! compiler now lowers natively: deferred expressions run when control
-//! leaves their enclosing `{ }` block by any path — normal fall-through,
+//! leaves their enclosing `{ }` block by any path - normal fall-through,
 //! `return`, `break`, `continue`, and the `?` error-propagation early
-//! return — in last-in-first-out order, once per loop iteration.
+//! return - in last-in-first-out order, once per loop iteration.
 
 use std::cell::RefCell;
 

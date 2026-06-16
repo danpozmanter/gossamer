@@ -393,7 +393,7 @@ impl<'a> Lowerer<'a> {
     }
 
     /// True when `op` is a Vec/Slice whose element is itself a
-    /// Vec/Slice — an 8-byte heap-pointer slot. Indexing one returns
+    /// Vec/Slice - an 8-byte heap-pointer slot. Indexing one returns
     /// the borrowed inner-vec pointer, a plain word load with no
     /// retain or copy, so the inline get applies even though the
     /// destination is `ptr`-typed.
@@ -536,7 +536,7 @@ impl<'a> Lowerer<'a> {
     /// null guard and bounds compare/branch: the MIR emits this call only from
     /// the counted-loop element read, where the index is a fresh `0..len`
     /// induction over this same vec and the loop header only branches into the
-    /// body while `counter < len` — so the receiver is non-null and the index
+    /// body while `counter < len` - so the receiver is non-null and the index
     /// is provably in `[0, len)`. Dropping the guard leaves a straight load
     /// (branch-free for word-stride elements) that LLVM keeps in the inner
     /// loop.
@@ -661,7 +661,7 @@ impl<'a> Lowerer<'a> {
         // Word-stride elements skip the header `elem_bytes` load: the
         // index scales by a constant 8 that folds into the address
         // mode, instead of a dependent load + mul on every access.
-        // Other vecs match the store width to the header stride —
+        // Other vecs match the store width to the header stride -
         // an i64-wide store into a packed `elem_bytes == 1` byte
         // buffer (`fs::read` / `crypto::rand_bytes` / HTTP
         // `raw_bytes`) would clobber the seven neighbouring bytes
@@ -1066,7 +1066,7 @@ impl<'a> Lowerer<'a> {
         // the vec's storage. Pass the operand's slot address
         // directly so the memcpy reads the full aggregate.
         // Only *inline* aggregates (structs / tuples / arrays with a
-        // known multi-slot field layout) are pushed by address — the
+        // known multi-slot field layout) are pushed by address - the
         // runtime memcpys their `elem_bytes` of flat field data. A
         // handle-Adt (recursive enum, opaque sentinel; `slot_count ==
         // None`) holds an 8-byte heap pointer in its slot, like a
@@ -1106,7 +1106,7 @@ impl<'a> Lowerer<'a> {
         let val_v = self.lower_operand(&args[1])?;
         let val_ty = self.operand_llvm_ty(&args[1]);
         // A 16-byte by-value `Result`/`Option` element pushes through the
-        // dedicated `i128` helper (the vec's `elem_bytes` is 16) — coercing it
+        // dedicated `i128` helper (the vec's `elem_bytes` is 16) - coercing it
         // to i64 like the scalar path below would truncate the payload.
         if val_ty == "i128" {
             declare_rt(&mut self.runtime_refs, "gos_rt_vec_push_i128");
@@ -1165,8 +1165,8 @@ impl<'a> Lowerer<'a> {
         // increment. The runtime call remains the slow path for growth,
         // null vecs, and narrow-stride vecs built by runtime helpers
         // (byte buffers). The runtime push is itself a plain
-        // `memcpy + len += 1` — RC retains happen at the push site via
-        // the drop pass — so the two paths are semantically identical.
+        // `memcpy + len += 1` - RC retains happen at the push site via
+        // the drop pass - so the two paths are semantically identical.
         declare_rt(&mut self.runtime_refs, "gos_rt_vec_push_i64");
         let s_id = self.next_ssa;
         self.next_ssa += 1;

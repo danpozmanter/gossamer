@@ -21,7 +21,7 @@ use std::os::raw::c_char;
 use super::*;
 
 // ---------------------------------------------------------------
-// regex module — wraps the host `regex` crate with a c-ABI shim.
+// regex module - wraps the host `regex` crate with a c-ABI shim.
 // Patterns compile lazily via `gos_rt_regex_compile`; matches /
 // captures / replacements operate on `*const Regex` handles
 // returned to user code as opaque `*mut GosRegex`.
@@ -33,7 +33,7 @@ pub struct GosRegex {
 }
 
 /// Slot layout of `gos_rt_regex_find_all` elements: 24-byte
-/// `(start i64, end i64, text String)` tuples — the owned match text
+/// `(start i64, end i64, text String)` tuples - the owned match text
 /// lives at word 2, unconditionally.
 static FIND_ALL_SLOT_CHILDREN: [crate::c_abi::vec::VecSlotChild; 1] =
     [crate::c_abi::vec::VecSlotChild {
@@ -45,7 +45,7 @@ static FIND_ALL_SLOT_CHILDREN: [crate::c_abi::vec::VecSlotChild; 1] =
 
 /// Slot layout of the capture-group vecs (`gos_rt_regex_captures` /
 /// `gos_rt_regex_captures_all` inner rows): 16-byte by-value
-/// `Option<String>` slots — the owned group text at word 1 is live
+/// `Option<String>` slots - the owned group text at word 1 is live
 /// only when the discriminant word 0 reads `0` (Some).
 static CAPTURE_SLOT_CHILDREN: [crate::c_abi::vec::VecSlotChild; 1] =
     [crate::c_abi::vec::VecSlotChild {
@@ -252,7 +252,7 @@ pub unsafe extern "C" fn gos_rt_regex_replace_all(
 }
 
 /// Replaces only the first match of `re` in `text` with `repl`.
-/// Companion to [`gos_rt_regex_replace_all`] — separate symbol so
+/// Companion to [`gos_rt_regex_replace_all`] - separate symbol so
 /// the codegen dispatch tables can pick the right semantics.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_regex_replace(
@@ -301,7 +301,7 @@ pub unsafe extern "C" fn gos_rt_regex_split(
     })
 }
 
-/// Returns `Vec<Vec<*c_char>>` — outer Vec has one entry per
+/// Returns `Vec<Vec<*c_char>>` - outer Vec has one entry per
 /// match, inner Vec has one entry per group (group 0 = full
 /// match, group 1+ = sub-captures). Missing groups are NULL
 /// (which user code can pattern-match as `Option::None` because
@@ -322,7 +322,7 @@ pub unsafe extern "C" fn gos_rt_regex_captures_all(
         }
         let s = unsafe { CStr::from_ptr(text).to_str() }.unwrap_or("");
         for caps in unsafe { (*re).inner.captures_iter(s) } {
-            // Each group is an `Option<String>` — the 2-word by-value `i128`
+            // Each group is an `Option<String>` - the 2-word by-value `i128`
             // (16-byte) representation, so the inner Vec stores 16-byte
             // elements (disc 0 = Some, disc 1 = None).
             let inner = unsafe { gos_rt_vec_new(16) };

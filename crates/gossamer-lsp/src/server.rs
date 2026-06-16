@@ -40,7 +40,7 @@ use crate::workspace_index::{
 /// `Ok(())` when the client sends `exit` after `shutdown`.
 #[allow(
     clippy::too_many_lines,
-    reason = "flat-shape dispatch / lowering — splitting hides the per-arm intent"
+    reason = "flat-shape dispatch / lowering - splitting hides the per-arm intent"
 )]
 fn run<R: Read, W: Write>(reader: R, writer: W) -> std::io::Result<()> {
     let mut transport = Transport::new(BufReader::new(reader), BufWriter::new(writer));
@@ -261,7 +261,7 @@ fn semantic_tokens_capability() -> Value {
 /// Converts a `file://...` URI into a filesystem path. Returns
 /// `None` for non-`file://` schemes (e.g. `inmemory://`) and for
 /// URIs that don't decode cleanly. Percent-decoding is not
-/// performed — the discovery path tolerates raw paths the editor
+/// performed - the discovery path tolerates raw paths the editor
 /// hands us.
 fn file_uri_to_path(uri: &str) -> Option<String> {
     let rest = uri.strip_prefix("file://")?;
@@ -663,7 +663,7 @@ impl ServerState {
             // Type-qualified user types (e.g. `MyEnum::V`).
             self.type_qualified_completions(doc, &cursor, prefix, &mut items, &mut seen);
             // No fall-through to bare prefix when the user already
-            // typed `::` — that would surface unrelated names.
+            // typed `::` - that would surface unrelated names.
             return Value::Array(items);
         }
 
@@ -1029,7 +1029,7 @@ impl ServerState {
                     changes.entry(uri.clone()).or_default().extend(edits);
                 }
             }
-            // `use util::foo` re-exports — rewrite only the matching
+            // `use util::foo` re-exports - rewrite only the matching
             // leaf identifier in every importing file. Only items
             // (top-level fn/struct/...) participate; fields, methods,
             // and variants aren't imported via `use`.
@@ -1220,7 +1220,7 @@ fn empty_semantic_tokens() -> Value {
 
 #[allow(
     clippy::too_many_lines,
-    reason = "flat-shape dispatch / lowering — splitting hides the per-arm intent"
+    reason = "flat-shape dispatch / lowering - splitting hides the per-arm intent"
 )]
 fn render_hover(doc: &DocumentAnalysis, loc: &Locate) -> String {
     match loc {
@@ -1640,7 +1640,7 @@ fn symbol_key_for_locate(doc: &DocumentAnalysis, loc: &Locate) -> Option<SymbolK
         }
         Locate::Field { name, owner_id, .. } => {
             let receiver_name = owner_adt_name(doc, *owner_id)?;
-            // Prefer field bucket for `receiver.name` — method-only
+            // Prefer field bucket for `receiver.name` - method-only
             // names still match because the workspace lookup also
             // surfaces method-bucket entries when the field bucket
             // is empty (the test surface exercises both).
@@ -1940,7 +1940,7 @@ fn classify_receiver(doc: &DocumentAnalysis, expr: &str) -> ReceiverDescriptor {
             type_name: None,
         };
     }
-    // Identifier — try resolving via let-binding type annotation.
+    // Identifier - try resolving via let-binding type annotation.
     if let Some(name) = identifier_token(head) {
         if let Some(ty) = lookup_let_annotation(doc.source(), name) {
             return classify_type_string(&ty);
@@ -2675,7 +2675,7 @@ fn import_insert_offset(source: &str) -> u32 {
 
 /// Converts an LSP `Range` value to byte offsets in `doc`'s
 /// source. Missing or malformed ranges return the full document
-/// span — that matches the LSP convention where a request
+/// span - that matches the LSP convention where a request
 /// without an explicit range asks about the entire document.
 fn lsp_range_to_offsets(doc: &DocumentAnalysis, range: &Value) -> (usize, usize) {
     let source_len = doc.source().len();
@@ -3115,7 +3115,7 @@ mod tests {
             Value::String("file:///fmt.gos".to_string()),
         );
         params.insert("textDocument".to_string(), Value::Object(text_doc));
-        // Whatever the formatter emits should be fine — we just need
+        // Whatever the formatter emits should be fine - we just need
         // the call to complete cleanly.
         let _ = state.formatting(&Value::Object(params));
     }
@@ -3190,7 +3190,7 @@ mod tests {
     fn unknown_qualifier_returns_no_member_match() {
         let mut state = ServerState::new();
         let labels = complete_at(&mut state, "fn main() { xyzzy::p| }\n", "file:///x.gos");
-        // Unknown qualifier short-circuits — should produce no matches.
+        // Unknown qualifier short-circuits - should produce no matches.
         assert!(
             labels.iter().all(|l| l != "println"),
             "did not expect bare-prefix items in qualifier completion: {labels:?}"
@@ -3580,7 +3580,7 @@ pub mod testing {
 
     /// Builds the JSON-RPC params payload for `textDocument/codeAction`.
     /// `diagnostics` is the optional diagnostic context the editor
-    /// surfaces for the range — pass `vec![]` when the test has none.
+    /// surfaces for the range - pass `vec![]` when the test has none.
     #[must_use]
     pub fn code_action_params(uri: &str, range: Value, diagnostics: Vec<Value>) -> Value {
         let mut text_doc = BTreeMap::new();

@@ -1,5 +1,5 @@
 /*
- * Process environment — env vars, args, working directory.
+ * Process environment - env vars, args, working directory.
  *
  * Demonstrates the `std::env` surface for inspecting the
  * process state. Falls back gracefully when an env var is

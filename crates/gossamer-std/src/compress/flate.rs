@@ -1,4 +1,4 @@
-// Runtime support for `std::compress::flate` — raw DEFLATE encoding/decoding.
+// Runtime support for `std::compress::flate` - raw DEFLATE encoding/decoding.
 //
 // Uses flate2 (pure-Rust miniz_oxide backend). Go's `compress/flate` package
 // is mirrored here with Gossamer's error shape. Raw DEFLATE is the building
@@ -14,7 +14,7 @@ use flate2::write::DeflateEncoder;
 
 use crate::io::IoError;
 
-/// Compresses `input` using raw DEFLATE at the given `level` (0–9).
+/// Compresses `input` using raw DEFLATE at the given `level` (0-9).
 /// `level = 0` is store-only (no compression); `level = 9` is maximum.
 pub fn compress(input: &[u8], level: u32) -> Result<Vec<u8>, IoError> {
     let level = level.clamp(0, 9);

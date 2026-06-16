@@ -1,4 +1,4 @@
-//! Integration tests for 0.8.0 — real registry / git fetch, persistent
+//! Integration tests for 0.8.0 - real registry / git fetch, persistent
 //! disk cache, mandatory lockfile, publish + yank + credential
 //! round-trips.
 

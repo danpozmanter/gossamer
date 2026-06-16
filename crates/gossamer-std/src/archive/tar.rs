@@ -1,4 +1,4 @@
-// Runtime support for `std::archive::tar` — tar archive reading and writing.
+// Runtime support for `std::archive::tar` - tar archive reading and writing.
 //
 // Wraps the `tar` crate. The read API extracts regular files into memory; the
 // write API builds an in-memory tar archive from name/content pairs.
@@ -50,7 +50,7 @@ pub fn read(data: &[u8]) -> Result<Vec<TarEntry>, IoError> {
     Ok(entries)
 }
 
-/// Builds an in-memory (ustar) tar archive from `files` — `(name, data)` pairs.
+/// Builds an in-memory (ustar) tar archive from `files` - `(name, data)` pairs.
 pub fn write(files: &[(&str, &[u8])]) -> Result<Vec<u8>, IoError> {
     let buf = Vec::new();
     let mut builder = tar::Builder::new(buf);

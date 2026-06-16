@@ -76,7 +76,7 @@ pub const DATABASE_SQL: StdModule = StdModule {
         StdItem {
             name: "Driver",
             kind: StdItemKind::Trait,
-            doc: "Database driver — opens connections. Implementations call `register` at startup.",
+            doc: "Database driver - opens connections. Implementations call `register` at startup.",
         },
         StdItem {
             name: "register",

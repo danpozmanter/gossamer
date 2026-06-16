@@ -3,7 +3,7 @@ source: crates/gossamer-diagnostics/tests/snapshots.rs
 expression: rendered
 ---
 --- plain ---
-error[GL0050]: `loop {}` with no body busy-waits forever at 100% CPU. Add a — here
+error[GL0050]: `loop {}` with no body busy-waits forever at 100% CPU. Add a - here
 --- framed ---
 error[GL0050]: `loop {}` with no body busy-waits forever at 100% CPU. Add a
   --> snap.gos:2:5

@@ -1,4 +1,4 @@
-//! Runtime support for `std::path` — OS-neutral path manipulation.
+//! Runtime support for `std::path` - OS-neutral path manipulation.
 //! All helpers operate on `/`-delimited posix-style paths. The
 //! [`native`] submodule wraps the posix forms for native separators
 //! (backslash on Windows, forward-slash elsewhere); prefer the
@@ -120,7 +120,7 @@ pub mod native {
     //! Convert paths at the OS boundary: read the path back out of
     //! the program in posix form, hand a posix form to the helpers
     //! here, pass the returned native form to system calls. Within
-    //! the program, stick to posix — it avoids a combinatorial
+    //! the program, stick to posix - it avoids a combinatorial
     //! explosion of separator conversions.
     //!
     //! On Windows the native separator is `\`; everywhere else it
@@ -180,7 +180,7 @@ pub mod native {
             // On Unix `to_posix` and `to_native` are both no-ops, so
             // a posix-form input survives the round-trip unchanged.
             // On Windows `to_native` replaces `/` with `\`, breaking
-            // identity for an already-posix input — the assertion is
+            // identity for an already-posix input - the assertion is
             // genuinely unix-only, hence the `#[cfg(not(windows))]`.
             let original = "a/b/c";
             assert_eq!(to_native(&to_posix(original)), original);
@@ -274,15 +274,15 @@ pub const SKIP_DIR: &str = "__SKIP_DIR__";
 pub const SKIP_ALL: &str = "__SKIP_ALL__";
 
 /// `filepath.Match` semantics: tests whether `name` matches the
-/// shell-glob `pattern`. Single-segment matching only — `/`
+/// shell-glob `pattern`. Single-segment matching only - `/`
 /// inside `name` does NOT match `*`.
 ///
 /// Pattern operators:
 ///
-/// - `*` — matches any run of characters except `/`.
-/// - `?` — matches any single character except `/`.
-/// - `[abc]` — character class (no negation, no ranges).
-/// - any other byte — literal.
+/// - `*` - matches any run of characters except `/`.
+/// - `?` - matches any single character except `/`.
+/// - `[abc]` - character class (no negation, no ranges).
+/// - any other byte - literal.
 #[must_use]
 pub fn matches(pattern: &str, name: &str) -> bool {
     matches_inner(pattern.as_bytes(), name.as_bytes())
@@ -400,7 +400,7 @@ where
                 Err(e) if e.to_string().contains(SKIP_DIR) => {
                     skip_remaining = false; // SKIP_DIR only skips THIS entry's contents
                     // We achieve that by not pushing the dir
-                    // onto the stack — which is the same effect.
+                    // onto the stack - which is the same effect.
                 }
                 Err(e) => return Err(e),
             }
@@ -419,7 +419,7 @@ where
 /// (`C:\...`) or UNC (`\\server\share\...`) prefixes mark the
 /// pattern as absolute. The function is the boundary at which
 /// native-form paths cross into the otherwise-posix path
-/// helpers — callers do not need to pre-convert.
+/// helpers - callers do not need to pre-convert.
 pub fn glob(pattern: &str) -> std::io::Result<Vec<String>> {
     if pattern.is_empty() {
         return Ok(Vec::new());
@@ -431,7 +431,7 @@ pub fn glob(pattern: &str) -> std::io::Result<Vec<String>> {
     // metacharacter is a literal prefix. Constructing the
     // starting `PathBuf` from that prefix in one step lets the
     // std::path machinery handle drive letters, UNC shares, and
-    // POSIX roots natively — far more reliable than walking from
+    // POSIX roots natively - far more reliable than walking from
     // a synthetic root one `read_dir` at a time.
     let split_idx = segments
         .iter()
@@ -445,7 +445,7 @@ pub fn glob(pattern: &str) -> std::io::Result<Vec<String>> {
         .copied()
         .collect();
 
-    // Wholly literal pattern — match if the path exists.
+    // Wholly literal pattern - match if the path exists.
     if glob_segments.is_empty() {
         return Ok(match base.to_str() {
             Some(s) if base.exists() => vec![s.to_string()],
@@ -500,7 +500,7 @@ pub fn glob(pattern: &str) -> std::io::Result<Vec<String>> {
 }
 
 /// Replace `\` with `/` on Windows so the glob splitter sees a
-/// single canonical separator. No-op elsewhere — `\` is a valid
+/// single canonical separator. No-op elsewhere - `\` is a valid
 /// filename character on Unix and must stay literal.
 fn normalise_glob_separators(pattern: &str) -> String {
     #[cfg(windows)]
@@ -521,7 +521,7 @@ fn build_glob_base(prefix_segments: &[&str]) -> std::path::PathBuf {
     }
     let joined = prefix_segments.join("/");
     if joined.is_empty() {
-        // All segments empty — pattern was `/` or similar.
+        // All segments empty - pattern was `/` or similar.
         return std::path::PathBuf::from("/");
     }
     // Lone drive letter "C:" is drive-relative on Windows; append

@@ -8,7 +8,7 @@
     clippy::unnecessary_wraps,
     clippy::module_name_repetitions
 )]
-//! Bytecode-VM builtins for request-scoped values — the interp mirror
+//! Bytecode-VM builtins for request-scoped values - the interp mirror
 //! of `gos_rt_http_request_set_value` / `gos_rt_http_request_value`
 //! (Go `context.WithValue`). The bag lives in a hidden `__values`
 //! field on the Request struct (the `__params` / `path_value`
@@ -19,7 +19,7 @@
 //! it rebuilds the Request struct with the updated bag (replace-then-
 //! push) and returns it. A fixture that threads the return value
 //! (`let r = r.set_value("user", "alice")`) therefore behaves
-//! identically on the VM and the compiled tiers — the compiled tiers
+//! identically on the VM and the compiled tiers - the compiled tiers
 //! return the same pointer they mutated.
 
 use std::sync::Arc;
@@ -144,7 +144,7 @@ fn form_lookup(body: &str, key: &str) -> String {
     String::new()
 }
 
-/// `Request::form_value(req, key) -> String` — the first
+/// `Request::form_value(req, key) -> String` - the first
 /// x-www-form-urlencoded body value for `key`, or `""` when absent.
 /// Matches the compiled `gos_rt_http_request_form_value` shim.
 pub(crate) fn builtin_request_form_value(args: &[Value]) -> RuntimeResult<Value> {
@@ -156,7 +156,7 @@ pub(crate) fn builtin_request_form_value(args: &[Value]) -> RuntimeResult<Value>
     ))))
 }
 
-/// `Request::basic_auth(req) -> Option<(String, String)>` — the decoded
+/// `Request::basic_auth(req) -> Option<(String, String)>` - the decoded
 /// `(user, password)` from an `Authorization: Basic <base64>` header,
 /// or `None` when absent or malformed. Matches the compiled
 /// `gos_rt_http_request_basic_auth` shim.
@@ -215,7 +215,7 @@ fn values_lookup(req: &Value, name: &str) -> Option<String> {
     None
 }
 
-/// `Request::value(req, name) -> String` — empty string when absent.
+/// `Request::value(req, name) -> String` - empty string when absent.
 /// Matches the compiled `gos_rt_http_request_value` shim.
 pub(crate) fn builtin_request_value(args: &[Value]) -> RuntimeResult<Value> {
     let name = arg_str(args.get(1));
@@ -226,7 +226,7 @@ pub(crate) fn builtin_request_value(args: &[Value]) -> RuntimeResult<Value> {
     Ok(Value::String(SmolStr::from(found)))
 }
 
-/// `Request::set_value(req, name, value) -> Request` — returns a
+/// `Request::set_value(req, name, value) -> Request` - returns a
 /// Request with the value attached (replace-then-push). Matches the
 /// compiled `gos_rt_http_request_set_value` shim's bag semantics; the
 /// rebuild-and-return is the VM stand-in for the compiled in-place

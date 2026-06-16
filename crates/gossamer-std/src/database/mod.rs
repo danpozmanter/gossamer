@@ -1,4 +1,4 @@
-//! Database access — SQL today, room for a future `NoSQL` surface.
+//! Database access - SQL today, room for a future `NoSQL` surface.
 
 #![forbid(unsafe_code)]
 

@@ -98,7 +98,7 @@ share these methods:
 | `a.store(v)` | `()` | Relaxed ordering. |
 | `a.fetch_add(n)` | `i64` | Returns previous value. |
 
-`I64Vec::new(len)` — heap-allocated atomic-i64 buffer for
+`I64Vec::new(len)` - heap-allocated atomic-i64 buffer for
 goroutine fan-out:
 
 | Method | Returns | Notes |
@@ -121,7 +121,7 @@ If you need a method that isn't listed:
 1. Add the runtime helper in `crates/gossamer-runtime/src/c_abi.rs`
    as a `#[unsafe(no_mangle)] pub unsafe extern "C" fn` (Rust-side
    declaration; this is internal runtime ABI, not the Gossamer
-   source-level FFI surface — see SPEC.md §12 for the latter).
+   source-level FFI surface - see SPEC.md §12 for the latter).
 2. Add the dispatch arm in
    `crates/gossamer-mir/src/lower.rs::lower_method_call`.
 3. Add the LLVM declaration in
@@ -141,7 +141,7 @@ builtins, is a bug.
 
 ## Cross-references
 
-- [`stdlib.md`](stdlib.md) — module index.
-- [`stdlib_coverage.md`](stdlib_coverage.md) — auto-generated
+- [`stdlib.md`](stdlib.md) - module index.
+- [`stdlib_coverage.md`](stdlib_coverage.md) - auto-generated
   coverage matrix.
-- [`codegen_abi.md`](codegen_abi.md) — generic call ABI.
+- [`codegen_abi.md`](codegen_abi.md) - generic call ABI.

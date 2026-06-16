@@ -3,7 +3,7 @@ source: crates/gossamer-diagnostics/tests/snapshots.rs
 expression: rendered
 ---
 --- plain ---
-error[GP0006]: A braced struct literal in the scrutinee of `if`/`while`/`match` — here
+error[GP0006]: A braced struct literal in the scrutinee of `if`/`while`/`match` - here
 --- framed ---
 error[GP0006]: A braced struct literal in the scrutinee of `if`/`while`/`match`
   --> snap.gos:2:5

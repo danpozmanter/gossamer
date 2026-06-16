@@ -9,13 +9,13 @@
 //! transmute.
 //!
 //! Registration sites: every place that produces a function-
-//! pointer slot for later cross-FFI dispatch — closure env
+//! pointer slot for later cross-FFI dispatch - closure env
 //! construction, iter combinator callbacks, scheduler trampolines,
 //! mutex callbacks, router/http handler dispatch, JIT body
 //! entries. The codegen back-ends call [`register`] at body
 //! finalization; manual sites in the runtime call it inline.
 //!
-//! `verify` is hot — called per indirect dispatch. The
+//! `verify` is hot - called per indirect dispatch. The
 //! registry uses a `parking_lot::RwLock<HashMap>` so concurrent
 //! readers don't contend; registration is the rare path.
 
@@ -35,7 +35,7 @@ pub enum FnKind {
     /// `extern "C" fn() -> i64`.
     I64ArgsToI64 { arity: u8 },
     /// `extern "C" fn(env: *const u8, args...) -> i64`. Used by
-    /// the `gos_rt_fn_tramp_N` family — env is the closure env
+    /// the `gos_rt_fn_tramp_N` family - env is the closure env
     /// blob; args are i64 each.
     EnvI64ArgsToI64 { arity: u8 },
     /// `extern "C" fn(*const u8, *mut GosHttpRequest) -> i128`.
@@ -61,7 +61,7 @@ pub enum FnKind {
     /// in the cookie. The interpreter's `jit_call` resolves the
     /// expected shape per call site.
     JitEntry(u32),
-    /// Goroutine entry — `extern "C" fn(...)` of arity `arity`,
+    /// Goroutine entry - `extern "C" fn(...)` of arity `arity`,
     /// args i64 each, no return (the goroutine's task wrapper
     /// discards). The audit-cited transmutes in
     /// `gos_rt_go_spawn_call_N` use this kind.
@@ -69,7 +69,7 @@ pub enum FnKind {
     /// Context-cancellation hook (`AtomicPtr`-installed). Two
     /// shapes today; both i64-result `extern "C"`.
     CtxCancelI64,
-    /// Generic — caller asserts the shape itself. Used as a
+    /// Generic - caller asserts the shape itself. Used as a
     /// fallback while migrating older transmute sites; emits a
     /// diagnostic so unregistered uses are visible.
     Generic,
@@ -84,7 +84,7 @@ fn registry() -> &'static RwLock<Registry> {
 
 /// Records `addr` as a function pointer of `kind`. Idempotent
 /// when re-registered with the same kind; conflicts (different
-/// kind for the same addr) abort with a diagnostic — that is the
+/// kind for the same addr) abort with a diagnostic - that is the
 /// scenario a typed registry exists to catch.
 pub fn register(addr: usize, kind: FnKind) {
     if addr == 0 {
@@ -94,7 +94,7 @@ pub fn register(addr: usize, kind: FnKind) {
     if let Some(existing) = map.get(&addr) {
         if *existing != kind {
             eprintln!(
-                "gossamer runtime: function-pointer kind mismatch — addr {addr:#x} \
+                "gossamer runtime: function-pointer kind mismatch - addr {addr:#x} \
                  was registered as {existing:?} but now requested as {kind:?}; \
                  aborting to prevent transmute UB",
             );
@@ -107,10 +107,10 @@ pub fn register(addr: usize, kind: FnKind) {
 
 /// Verifies that `addr` is registered with `expected`. Returns
 /// the kind on success. If `addr` is not registered at all the
-/// call is admitted (logged once) — registration sites can be
+/// call is admitted (logged once) - registration sites can be
 /// added incrementally without breaking existing call paths. If
 /// `addr` is registered with a *different* kind that is hard
-/// abort — silent transmute UB is the failure mode we are
+/// abort - silent transmute UB is the failure mode we are
 /// defending against and is not survivable.
 pub fn verify(addr: usize, expected: FnKind) {
     if addr == 0 {
@@ -121,7 +121,7 @@ pub fn verify(addr: usize, expected: FnKind) {
     if let Some(actual) = map.get(&addr) {
         if *actual != expected && *actual != FnKind::Generic && expected != FnKind::Generic {
             eprintln!(
-                "gossamer runtime: function-pointer kind mismatch on dispatch — \
+                "gossamer runtime: function-pointer kind mismatch on dispatch - \
                  addr {addr:#x} registered as {actual:?} but call expected {expected:?}; \
                  aborting to prevent transmute UB",
             );
@@ -158,7 +158,7 @@ mod tests {
     #[test]
     fn unregistered_addr_is_admitted() {
         // Verifying an unregistered addr admits the call. This
-        // keeps incremental adoption viable — registration sites
+        // keeps incremental adoption viable - registration sites
         // can be added piecewise without breaking call paths that
         // pre-existed.
         verify(0xfeed_face_usize, FnKind::BinaryI64ToI64);

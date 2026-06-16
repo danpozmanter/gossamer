@@ -516,7 +516,7 @@ pub const STRCONV: StdModule = StdModule {
             kind: StdItemKind::Function,
             doc: "Renders an `f64` as a decimal string.",
         },
-        // Shorter aliases — SKILL.md and Go's `strconv` use these.
+        // Shorter aliases - SKILL.md and Go's `strconv` use these.
         StdItem {
             name: "parse_int",
             kind: StdItemKind::Function,

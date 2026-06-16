@@ -1,5 +1,5 @@
 //! Regression tests for compiled-tier reference counting of enums whose
-//! payloads are containers (`Vec`), tuples, and other enums — the shapes
+//! payloads are containers (`Vec`), tuples, and other enums - the shapes
 //! a JSON-value tree exercises. Each program is run on the interpreter
 //! (the semantic oracle) and as a `gos build --release` binary under
 //! `MALLOC_CHECK_=3`; the two outputs must match and the native binary
@@ -80,7 +80,7 @@ fn assert_vm_matches_native(tag: &str, src: &str) {
         .find(|p| is_executable(p))
         .expect("no built binary");
 
-    // Run native twice: with the recycling RC pool (default — exercises
+    // Run native twice: with the recycling RC pool (default - exercises
     // the pool's reuse path, validated by output equality) and with
     // `GOS_RC_NO_POOL=1` (every free routes through libc so `MALLOC_CHECK_`
     // retains full double-free / use-after-free detection).
@@ -163,7 +163,7 @@ fn main() {
 
 #[test]
 fn deeply_nested_enum_in_vec_in_enum() {
-    // Bug 3: `outer.push(J::Arr(inner))` then `J::Arr(outer)` — the
+    // Bug 3: `outer.push(J::Arr(inner))` then `J::Arr(outer)` - the
     // innermost `Vec` was freed because vec-push escape did not compose
     // with the gos_store escape rule.
     assert_vm_matches_native(

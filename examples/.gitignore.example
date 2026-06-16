@@ -46,5 +46,5 @@ Thumbs.db
 
 # --- Notes ---
 #
-# Do NOT ignore `project.toml` or `project.lock` — both are
+# Do NOT ignore `project.toml` or `project.lock` - both are
 # part of the reproducible build surface.

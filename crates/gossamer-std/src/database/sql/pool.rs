@@ -24,7 +24,7 @@ pub use gossamer_runtime::sql_pool::PoolConfig;
 
 use super::{Conn, Error, IsolationLevel, Value};
 
-/// Connection pool. Cheap to clone — the inner state is reference
+/// Connection pool. Cheap to clone - the inner state is reference
 /// counted, so multiple goroutines / threads can share the same pool.
 #[derive(Clone)]
 pub struct Pool {

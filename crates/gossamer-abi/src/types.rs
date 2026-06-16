@@ -5,20 +5,20 @@
 /// level. `Bool` maps to `i8` in C (zero = false, non-zero = true).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AbiType {
-    /// `void` — only valid as a return type.
+    /// `void` - only valid as a return type.
     Void,
-    /// `i8` — used for bool returns and narrow C types.
+    /// `i8` - used for bool returns and narrow C types.
     I8,
-    /// `i32` — used for C `int` and discriminants.
+    /// `i32` - used for C `int` and discriminants.
     I32,
-    /// `i64` — the default integer width.
+    /// `i64` - the default integer width.
     I64,
     /// `i64` at the IR level; unsigned contract at the Rust level.
     U64,
-    /// `i128` — the 2-word by-value representation of `Result`/`Option`
+    /// `i128` - the 2-word by-value representation of `Result`/`Option`
     /// (discriminant in the low 64 bits, payload in the high 64 bits).
     I128,
-    /// `double` — 64-bit IEEE 754 float.
+    /// `double` - 64-bit IEEE 754 float.
     F64,
     /// Opaque pointer (`ptr` in LLVM opaque-pointer mode).
     Ptr,
@@ -130,7 +130,7 @@ impl RuntimeEntry {
         if self.noreturn {
             // `noreturn` functions never return normally, but one that
             // may unwind (`gos_rt_panic` on the goroutine path) must NOT
-            // be `nounwind` — that would abort the unwind at any cleanup
+            // be `nounwind` - that would abort the unwind at any cleanup
             // frame. LLVM permits `noreturn` together with a may-unwind
             // function.
             let tail = if self.unwinds {
@@ -142,20 +142,20 @@ impl RuntimeEntry {
         } else {
             // Every `gos_rt_*` symbol is an `extern "C"` Rust function, and
             // unwinding out of an `extern "C"` boundary aborts (Rust never
-            // propagates a panic across it) — so the call cannot unwind. The
+            // propagates a panic across it) - so the call cannot unwind. The
             // `nounwind` attribute makes that explicit to LLVM, which would
             // otherwise treat every runtime call as a potential exception
             // edge: that blocks reordering, hoisting (LICM), and CSE of the
             // surrounding loads/stores in every hot loop that calls a runtime
             // helper. (`willreturn`/`memory` are intentionally not blanket-
-            // applied: a helper may abort on a Rust panic — not a return — and
+            // applied: a helper may abort on a Rust panic - not a return - and
             // most touch global allocator state.)
             //
             // A small audited allowlist of pure getters additionally gets
             // `memory(argmem: read)`: they only *read* memory reachable
             // through their pointer arguments (no writes, no global state).
             // This is what lets `opt` hoist a loop-invariant `graph[node]` /
-            // `visited[nb]` read out of a loop and CSE repeated reads —
+            // `visited[nb]` read out of a loop and CSE repeated reads -
             // `nounwind` alone is insufficient because, without a memory-effect
             // bound, LLVM must assume the call clobbers all memory.
             let attrs = if PURE_ARGMEM_READ.contains(&self.name) {
@@ -169,7 +169,7 @@ impl RuntimeEntry {
 }
 
 /// Runtime getters that only read memory reachable through their pointer
-/// arguments — no writes, no global state. Marked `memory(argmem: read)` so
+/// arguments - no writes, no global state. Marked `memory(argmem: read)` so
 /// the optimiser can hoist/CSE them across non-aliasing loop bodies. Keep
 /// this list conservative: a wrong entry (a helper that writes or reads
 /// globals) is a miscompile.

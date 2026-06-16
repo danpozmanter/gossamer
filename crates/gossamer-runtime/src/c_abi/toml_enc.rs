@@ -21,7 +21,7 @@ use std::os::raw::c_char;
 use super::*;
 
 // ---------------------------------------------------------------
-// encoding::toml — TOML 1.0 parsing + emission. Returns
+// encoding::toml - TOML 1.0 parsing + emission. Returns
 // `Result<String, errors::Error>` for fallible operations.
 // ---------------------------------------------------------------
 

@@ -13,11 +13,11 @@ pub use gossamer_template::html as template;
 /// HTML-escapes `s` to the OWASP "CSP-grade" defensive set: `&`, `<`,
 /// `>`, `"`, `'`, `/`, and backtick. Escaping `/` (`&#x2F;`) closes the
 /// closing-tag / attribute-context parser edge cases, and backtick
-/// (`&#x60;`) defuses IE's attribute delimiter — so the result is safe
+/// (`&#x60;`) defuses IE's attribute delimiter - so the result is safe
 /// in HTML element content AND quoted/unquoted attribute values without
 /// the caller needing to know the context. (Context-specific escaping
 /// for URL / JS / CSS sinks still requires the `html::template`
-/// engine — a single escaper cannot be context-aware.)
+/// engine - a single escaper cannot be context-aware.)
 #[must_use]
 pub fn escape(s: &str) -> String {
     let mut out = String::with_capacity(s.len());

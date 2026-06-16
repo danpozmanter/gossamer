@@ -57,7 +57,7 @@ pub(crate) fn bundle_sibling_modules(entry: &Path, source: String) -> String {
     let Some(dir) = entry.parent() else {
         return source;
     };
-    // Auto-bundle only fires inside an actual project — i.e. when a
+    // Auto-bundle only fires inside an actual project - i.e. when a
     // `project.toml` lives next to the entry's directory or one
     // level up (`<root>/src/main.gos` is the canonical case). Loose
     // single-file `gos run /tmp/foo.gos` invocations must NOT pick

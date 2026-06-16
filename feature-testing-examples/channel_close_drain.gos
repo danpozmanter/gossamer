@@ -25,7 +25,7 @@ fn fibonacci_producer(tx: channel::Sender<i64>, limit: i64) {
     tx.close()
 }
 
-// Like count_producer but does not close — used when multiple senders
+// Like count_producer but does not close - used when multiple senders
 // share one channel so only the coordinating side decides when to close.
 fn count_sender(tx: channel::Sender<i64>, n: i64) {
     for i in 0..n {
@@ -67,7 +67,7 @@ fn main() {
     println!("fibs[5] = {}", fibs[5])
 
     // Multiple producers, single consumer. Each producer closes
-    // its own send handle after pushing — but with two senders
+    // its own send handle after pushing - but with two senders
     // sharing one channel the first close would terminate the
     // recv loop before the second producer finishes, so we
     // collect via `try_recv` after a sleep instead. The

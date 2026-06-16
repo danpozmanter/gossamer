@@ -75,7 +75,7 @@
 //! the process exit code, so the object file links through a
 //! standard `cc` invocation.
 //! Aggregates (tuples/arrays/structs), strings, closures, and
-//! anything that needs a GC heap are not yet lowered — those
+//! anything that needs a GC heap are not yet lowered - those
 //! constructs fall back to [`crate::emit::emit_module`] for
 //! inspection.
 
@@ -169,7 +169,7 @@ pub(super) fn emit_per_arg_print(
         if let PrintKind::Unsupported(label) = kind {
             // 0.8.0: no `<value>` placeholder fallback. A type the
             // print path doesn't know how to render is a compile
-            // error, not a runtime "<value>" string — the user
+            // error, not a runtime "<value>" string - the user
             // wants real Display lowering, not a stub.
             bail!(
                 "native codegen: refusing to emit '<value>' placeholder for print of unsupported \
@@ -437,7 +437,7 @@ pub(super) fn emit_args_to_concat_string(
         let kind = operand_print_kind(body, tcx, arg);
         if let PrintKind::Unsupported(label) = kind {
             bail!(
-                "native codegen: cannot stringify a value of {label} type — \
+                "native codegen: cannot stringify a value of {label} type - \
                  the compiled tier has no Display dispatch yet"
             );
         }

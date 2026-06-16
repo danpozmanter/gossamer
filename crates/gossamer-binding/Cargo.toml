@@ -40,7 +40,7 @@ collapsible_if = "allow"
 # Phase 1/2 BindingAbi impls repeat the same `match <single_payload>
 # { Some(x) => x, None => return Err(...) }` shape across every
 # wire-shape. Rewriting to `let-else` or `?` would obscure the per-
-# arm return value (which varies — `Err(GosError::new(""))` vs
+# arm return value (which varies - `Err(GosError::new(""))` vs
 # `Err(String::new())` vs `return None`).
 question_mark = "allow"
 manual_let_else = "allow"

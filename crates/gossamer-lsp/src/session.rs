@@ -2,7 +2,7 @@
 //! A session is cheap: for each open document we keep the source
 //! text, the source-map file id, and the outputs of the last full
 //! front-end pipeline run. Every `didOpen` / `didChange` rebuilds
-//! them — the front end is fast enough that incremental reuse is
+//! them - the front end is fast enough that incremental reuse is
 //! not yet worth its complexity.
 
 #![forbid(unsafe_code)]
@@ -159,7 +159,7 @@ fn collect_top_level_names(sf: &gossamer_ast::SourceFile) -> Vec<&str> {
 impl DocumentAnalysis {
     /// Returns the document's source text. The text lives inside the
     /// embedded `SourceMap`, so this is a borrow into existing
-    /// storage — no extra `String` clone per document.
+    /// storage - no extra `String` clone per document.
     #[must_use]
     pub(crate) fn source(&self) -> &str {
         self.map.source(self.file)
@@ -174,7 +174,7 @@ impl DocumentAnalysis {
         // The index records each definition's `name_span` (the
         // identifier itself) but not the whole-item span. For
         // go-to-def of top-level names the identifier span is the
-        // editor-friendly target — the previous cache returned the
+        // editor-friendly target - the previous cache returned the
         // whole item span, but no caller actually needed that
         // wider range; navigation handlers only consume the
         // identifier position to centre the editor view.
@@ -300,7 +300,7 @@ impl DocumentAnalysis {
         // (or the qualifier head if any).
         let dot_pos = if qualifier.is_empty() { start } else { scan };
         if dot_pos > 0 && bytes[dot_pos - 1] == b'.' {
-            // Make sure it's not a `..` (range op) — if so leave it alone.
+            // Make sure it's not a `..` (range op) - if so leave it alone.
             if !(dot_pos >= 2 && bytes[dot_pos - 2] == b'.') {
                 is_method_position = true;
             }

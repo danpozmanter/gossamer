@@ -4,7 +4,7 @@
 // (this context or an ancestor) closes it, so a `select` recv arm on
 // the channel fires on cancellation via closed-channel select
 // readiness. `is_cancelled()` / `done()` stay boolean. Every decision
-// here is synchronous — no goroutines, no sleeps — so stdout is
+// here is synchronous - no goroutines, no sleeps - so stdout is
 // bit-identical across the bytecode VM (`gos run` / `gos test`), the
 // Cranelift JIT, and the LLVM AOT tier (`gos build`).
 

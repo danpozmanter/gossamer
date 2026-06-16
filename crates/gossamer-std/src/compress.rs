@@ -1,4 +1,4 @@
-//! Runtime support for `std::compress` — compression and decompression codecs.
+//! Runtime support for `std::compress` - compression and decompression codecs.
 
 #![forbid(unsafe_code)]
 

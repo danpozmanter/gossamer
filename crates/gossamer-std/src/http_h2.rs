@@ -1,4 +1,4 @@
-//! HTTP/2 server (RFC 7540) — first-party stdlib support, no
+//! HTTP/2 server (RFC 7540) - first-party stdlib support, no
 //! Tokio runtime.
 //!
 //! The server takes any connected `Read + Write` stream (plain
@@ -17,15 +17,15 @@
 //! - h2 handshake (server side).
 //! - SETTINGS / PING / WINDOW_UPDATE frames (handled inside the
 //!   `h2` crate).
-//! - Multiplexed concurrent streams — one goroutine per stream.
+//! - Multiplexed concurrent streams - one goroutine per stream.
 //! - Flow-control respected (the `h2` crate's `SendStream` /
 //!   `RecvStream` mediate it).
 //! - Graceful GOAWAY: `Server::shutdown(deadline)` triggers a
 //!   `goaway` frame and waits for in-flight streams to drain.
 //! - h2c (cleartext) and ALPN-selected h2-over-TLS both supported.
-//! - Bounded-body handlers via `Handler` — handler returns a
+//! - Bounded-body handlers via `Handler` - handler returns a
 //!   complete `Response`, body sent as one `DATA` frame.
-//! - Streaming handlers via `StreamingHandler` — handler is
+//! - Streaming handlers via `StreamingHandler` - handler is
 //!   passed a `ResponseWriter` and can emit `DATA` frames
 //!   incrementally. Suitable for server-sent events, long-poll
 //!   loops, or chunked uploads where the response body size is
@@ -61,8 +61,8 @@ use crate::http::{Headers, Method, Request, Response, StatusCode};
 /// `Request`, return a complete `Response`. The full body is
 /// buffered in `Response::body` before being sent in a single
 /// `DATA` frame (plus the implicit `END_STREAM`). For streaming
-/// bodies — chunked emission of arbitrary size, server-sent
-/// events, server-push half of a long-poll loop — see
+/// bodies - chunked emission of arbitrary size, server-sent
+/// events, server-push half of a long-poll loop - see
 /// [`StreamingHandler`].
 pub trait Handler: Send + Sync + 'static {
     /// Serve one HTTP/2 request.
@@ -182,7 +182,7 @@ impl ResponseWriter {
 
     /// Sends the terminating `END_STREAM` frame. If the head has
     /// not yet been flushed (no `write_chunk` calls), this flushes
-    /// the head with `END_STREAM` set on the HEADERS frame — i.e.
+    /// the head with `END_STREAM` set on the HEADERS frame - i.e.
     /// an empty body. Idempotent.
     pub fn finish(mut self) -> Result<(), Error> {
         self.terminate()
@@ -236,7 +236,7 @@ impl ResponseWriter {
     /// response head).
     ///
     /// `uri` is the absolute or scheme-relative URI of the pushed
-    /// resource — for HTTP/2 this becomes the synthetic request's
+    /// resource - for HTTP/2 this becomes the synthetic request's
     /// `:path` pseudo-header. The supplied `headers` are added as
     /// request-side headers on the pushed stream.
     ///
@@ -354,7 +354,7 @@ pub type Trailers = Headers;
 
 /// Server-push prioritization knobs. The exact fields mirror the
 /// HTTP/2 priority frame semantics from RFC 7540 §5.3 (deprecated
-/// but still honoured by most clients) — h2's internal
+/// but still honoured by most clients) - h2's internal
 /// prioritization layer does not currently surface dependency
 /// trees, but the struct shape is preserved so future versions
 /// can wire them through.
@@ -659,7 +659,7 @@ impl ServerHandle {
 
 /// Drives an HTTP/2 server connection on the calling goroutine.
 ///
-/// `io` is the AsyncRead+AsyncWrite source — typically an
+/// `io` is the AsyncRead+AsyncWrite source - typically an
 /// [`crate::async_tcp::AsyncTcpStream`] (for h2c) or a rustls
 /// TLS-wrapped stream (for h2-over-TLS). The handler is called
 /// once per inbound stream.
@@ -1187,7 +1187,7 @@ mod tests {
 
     #[test]
     fn bind_and_run_h2c_binds_then_drops() {
-        // Bind on port 0 and immediately drop — we just want
+        // Bind on port 0 and immediately drop - we just want
         // to verify the TCP listener creates and the entry
         // point doesn't panic before accept.
         let listener = StdListener::bind("127.0.0.1:0").unwrap();
@@ -1255,7 +1255,7 @@ mod tests {
     fn headers_to_header_map_skips_invalid_names() {
         let mut h = Headers::new();
         h.insert("x-good", "ok");
-        // Insert a name with a space — not a valid HTTP token.
+        // Insert a name with a space - not a valid HTTP token.
         // `Headers::insert` lowercases but doesn't reject; the
         // h2-bridge converter should drop it.
         h.insert("bad name", "v");

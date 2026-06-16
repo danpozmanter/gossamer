@@ -3,7 +3,7 @@ source: crates/gossamer-diagnostics/tests/snapshots.rs
 expression: rendered
 ---
 --- plain ---
-error[GL0040]: Integer literals of five or more digits are easier to scan with — here
+error[GL0040]: Integer literals of five or more digits are easier to scan with - here
 --- framed ---
 error[GL0040]: Integer literals of five or more digits are easier to scan with
   --> snap.gos:2:5

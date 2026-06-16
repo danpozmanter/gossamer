@@ -21,7 +21,7 @@ use std::os::raw::c_char;
 use super::*;
 
 // ---------------------------------------------------------------
-// uuid — v4 (random) and v7 (timestamp-ordered) UUID generation,
+// uuid - v4 (random) and v7 (timestamp-ordered) UUID generation,
 // parsing, and normalization. Logic lives in the runtime crate
 // (compiled tier links against `libgossamer_runtime.a` directly);
 // `gossamer-std::uuid` is a thin facade that re-exports these
@@ -92,7 +92,7 @@ pub unsafe extern "C" fn gos_rt_uuid_simple(s: *const c_char) -> *mut c_char {
 }
 
 // ======================================================================
-// std::iter combinators — AOT runtime helpers.
+// std::iter combinators - AOT runtime helpers.
 //
 // The interp wires these as native fns in stdlib_builtins.rs; this block
 // is the cranelift + LLVM counterpart. SPEC §10.4: data-last argument
@@ -335,7 +335,7 @@ pub unsafe extern "C" fn gos_rt_iter_chain_i64(a: *const GosVec, b: *const GosVe
     })
 }
 
-/// `iter::dedup(xs)` — drop consecutive duplicate elements.
+/// `iter::dedup(xs)` - drop consecutive duplicate elements.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_iter_dedup_i64(v: *const GosVec) -> *mut GosVec {
     ffi_entry!(std::ptr::null_mut(), {
@@ -356,7 +356,7 @@ pub unsafe extern "C" fn gos_rt_iter_dedup_i64(v: *const GosVec) -> *mut GosVec 
     })
 }
 
-/// `iter::flatten(xss)` — concatenate a `Vec<Vec<i64>>` into one
+/// `iter::flatten(xss)` - concatenate a `Vec<Vec<i64>>` into one
 /// `Vec<i64>`. Each outer element is an 8-byte `*mut GosVec`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_iter_flatten_i64(v: *const GosVec) -> *mut GosVec {
@@ -381,7 +381,7 @@ pub unsafe extern "C" fn gos_rt_iter_flatten_i64(v: *const GosVec) -> *mut GosVe
     })
 }
 
-/// `iter::enumerate(xs)` — `Vec<(i64, i64)>` of `(index, value)`.
+/// `iter::enumerate(xs)` - `Vec<(i64, i64)>` of `(index, value)`.
 /// Each element is a 16-byte 2-slot tuple read by the multislot
 /// for-loop path (`gos_rt_vec_get_ptr` + `gos_load` at 0 / 8).
 #[unsafe(no_mangle)]
@@ -401,7 +401,7 @@ pub unsafe extern "C" fn gos_rt_iter_enumerate_i64(v: *const GosVec) -> *mut Gos
     })
 }
 
-/// `iter::zip(a, b)` — `Vec<(i64, i64)>`, stopping at the shorter
+/// `iter::zip(a, b)` - `Vec<(i64, i64)>`, stopping at the shorter
 /// input. 16-byte 2-slot tuple elements.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_iter_zip_i64(a: *const GosVec, b: *const GosVec) -> *mut GosVec {
@@ -423,7 +423,7 @@ pub unsafe extern "C" fn gos_rt_iter_zip_i64(a: *const GosVec, b: *const GosVec)
     })
 }
 
-/// `iter::pairwise(xs)` — `Vec<(i64, i64)>` of successive
+/// `iter::pairwise(xs)` - `Vec<(i64, i64)>` of successive
 /// overlapping pairs (width-2 windows).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_iter_pairwise_i64(v: *const GosVec) -> *mut GosVec {
@@ -443,7 +443,7 @@ pub unsafe extern "C" fn gos_rt_iter_pairwise_i64(v: *const GosVec) -> *mut GosV
     })
 }
 
-/// `iter::windowed(n, xs)` — `Vec<Vec<i64>>` of every contiguous
+/// `iter::windowed(n, xs)` - `Vec<Vec<i64>>` of every contiguous
 /// width-`n` window. Empty when `n <= 0` or `xs` is shorter than
 /// `n`. Outer is a VEC-typed vec of inner `*mut GosVec` pointers
 /// (recursively freed).
@@ -473,7 +473,7 @@ pub unsafe extern "C" fn gos_rt_iter_windowed_i64(n: i64, v: *const GosVec) -> *
     })
 }
 
-/// `iter::chunk_by_size(n, xs)` — `Vec<Vec<i64>>` of consecutive
+/// `iter::chunk_by_size(n, xs)` - `Vec<Vec<i64>>` of consecutive
 /// width-`n` chunks; the final chunk may be short. Empty when
 /// `n <= 0`.
 #[unsafe(no_mangle)]
@@ -507,7 +507,7 @@ pub unsafe extern "C" fn gos_rt_iter_chunk_by_size_i64(n: i64, v: *const GosVec)
 // `(env, args...) -> ret` signature determined by the combinator's
 // callback contract.
 
-/// `iter::for_each(f, xs)` — call `f(x)` once per element.
+/// `iter::for_each(f, xs)` - call `f(x)` once per element.
 /// Closure body sig: `(env: *const u8, x: i64) -> i64` (return value
 /// ignored; using i64 keeps the callback ABI uniform with sort_by).
 #[unsafe(no_mangle)]
@@ -710,7 +710,7 @@ pub unsafe extern "C" fn gos_rt_iter_all_i64(env: *const u8, v: *const GosVec) -
 /// match flag through `gos_rt_iter_find_i64_flag`; this entry returns
 /// the value. Two-stage so the same dispatch table can name both.
 ///
-/// In MIR we expose this as `iter::find` producing `Option<i64>` —
+/// In MIR we expose this as `iter::find` producing `Option<i64>` -
 /// the lowering builds a `gos_rt_option_new(disc, payload)` from the
 /// `(flag, value)` pair so source-level pattern-matching keeps working.
 #[unsafe(no_mangle)]
@@ -736,7 +736,7 @@ pub unsafe extern "C" fn gos_rt_iter_find_i64(env: *const u8, v: *const GosVec) 
     })
 }
 
-/// Companion to `gos_rt_iter_find_i64` — returns 1 if some element
+/// Companion to `gos_rt_iter_find_i64` - returns 1 if some element
 /// matched, 0 otherwise. Together they let the lowering synthesize an
 /// `Option<i64>` without packing values into wider returns.
 #[unsafe(no_mangle)]
@@ -763,12 +763,12 @@ pub unsafe extern "C" fn gos_rt_iter_find_i64_flag(env: *const u8, v: *const Gos
 }
 
 // ======================================================================
-// std::option — non-closure accessors. The closure-taking option::map /
+// std::option - non-closure accessors. The closure-taking option::map /
 // and_then / filter / default_with / or_else / iter helpers stay in the
 // interp VM only for the moment; they need per-shape thunks across all
 // inner types, which is the open piece of the Phase 1b follow-up.
 
-/// `option::is_some(opt)` — opt is the `*mut GosResult`-shaped enum
+/// `option::is_some(opt)` - opt is the `*mut GosResult`-shaped enum
 /// handle produced by the `Option<T>` constructor lowering (disc 0 =
 /// Some, 1 = None per `lower_result_ctor`).
 #[unsafe(no_mangle)]
@@ -843,7 +843,7 @@ pub unsafe extern "C" fn gos_rt_result_map_i64(env: *const u8, res: i128) -> i12
         let disc = super::vec::gos_rt_result_disc(res);
         let payload = super::vec::gos_rt_result_payload(res);
         if disc != 0 {
-            // Err — pass through.
+            // Err - pass through.
             return gos_rt_result_new(disc, payload);
         }
         type CallFn = unsafe extern "C" fn(env: *const u8, x: i64) -> i64;

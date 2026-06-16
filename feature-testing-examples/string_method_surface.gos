@@ -3,8 +3,8 @@
 // dispatch identically. Each method also exists as a `strings::*` free
 // function; the method form is the canonical, pipeable spelling.
 //
-// Also covers `Vec<String>.join(sep)` — the method form of
-// `strings::join(parts, sep)` — and receiver-typed dispatch so
+// Also covers `Vec<String>.join(sep)` - the method form of
+// `strings::join(parts, sep)` - and receiver-typed dispatch so
 // `s.to_title()` resolves to the string title-caser, not `unicode::to_title`.
 
 use std::iter
@@ -39,7 +39,7 @@ fn main() {
     println!("{}", match s.strip_prefix("Hello ") { Some(r) => r, None => "?" })
     println!("{}", match s.strip_suffix(" Foo") { Some(r) => r, None => "?" })
 
-    // Vec<String>.join — method form of strings::join
+    // Vec<String>.join - method form of strings::join
     let parts: Vec<String> = ["a", "b", "c"]
     println!("{}", parts.join("-"))
     let upper: Vec<String> = "one two three"

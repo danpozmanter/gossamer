@@ -1,4 +1,4 @@
-//! `gos check [PATH]` — parse + resolve + typecheck + exhaustiveness.
+//! `gos check [PATH]` - parse + resolve + typecheck + exhaustiveness.
 //!
 //! Walks `<project-root>/src` when invoked with no path; honours a
 //! single file or a directory when supplied. Renders every stage's

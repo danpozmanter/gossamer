@@ -1,7 +1,7 @@
 //! Keeps the resolver's checked-in stdlib export table in sync with
 //! the runtime builtin registry. If the stdlib surface changes, this
 //! fails with the diff so the table in
-//! `gossamer-resolve/src/stdlib_exports.rs` is regenerated — without
+//! `gossamer-resolve/src/stdlib_exports.rs` is regenerated - without
 //! it, a newly-added `module::fn` would be wrongly rejected by
 //! `gos check` / the LSP as an unknown member.
 
@@ -36,7 +36,7 @@ fn resolver_stdlib_table_matches_runtime() {
 
 /// Intentional deprecated re-exports the team keeps callable even
 /// though their canonical spelling lives under a different module in
-/// the manifest. This is a closed list, not a dumping ground — every
+/// the manifest. This is a closed list, not a dumping ground - every
 /// entry must be a deliberate alias, not an unmanifested member.
 const ALLOWED_UNMANIFESTED: &[&str] = &[
     // Each entry's canonical spelling is the manifest member; these
@@ -61,7 +61,7 @@ const ALLOWED_UNMANIFESTED: &[&str] = &[
 /// Every registered `module::fn` must name a member the canonical
 /// manifest advertises. Without this guard, a runtime builtin can
 /// register an unmanifested alias that passes `gos check` and runs on
-/// the VM, yet has no manifest entry — the structural hole that let a
+/// the VM, yet has no manifest entry - the structural hole that let a
 /// drift of VM-only aliases accumulate. `module::Type::method` forms
 /// (the segment before the member is uppercase) are type-associated
 /// methods, not free functions, and are not manifest members.

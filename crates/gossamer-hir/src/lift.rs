@@ -29,7 +29,7 @@ use crate::tree::{
 /// outer bindings are left untouched.
 ///
 /// `tcx` is consulted to mint pointer-shaped types for the env
-/// parameter of capturing closures — without an i64-shaped Ty,
+/// parameter of capturing closures - without an i64-shaped Ty,
 /// the lifted body's first parameter would inherit the closure's
 /// return type and the codegen would treat env as a sub-byte
 /// register.
@@ -61,7 +61,7 @@ pub fn lift_closures(mut program: HirProgram, tcx: &mut gossamer_types::TyCtxt) 
             // Impl methods and trait default methods are still nested
             // here at lift time (they are flattened into top-level `Fn`
             // items only during MIR lowering), so descend into them too
-            // — otherwise a closure inside `impl Handler { fn serve }`
+            // - otherwise a closure inside `impl Handler { fn serve }`
             // never lifts and the compiled tier lowers it to a null env.
             HirItemKind::Impl(imp) => {
                 for method in &mut imp.methods {
@@ -91,7 +91,7 @@ pub fn lift_closures(mut program: HirProgram, tcx: &mut gossamer_types::TyCtxt) 
     for item in &mut lifter.lifted {
         if let HirItemKind::Fn(decl) = &mut item.kind {
             // Collect param names whose body uses TupleIndex / Field
-            // projections on them — those params are aggregates
+            // projections on them - those params are aggregates
             // (tuples / structs) passed by pointer, NOT i64 values.
             // Pinning them to i64 makes the lowered closure compute
             // field offsets off a junk integer; the param needs to
@@ -149,7 +149,7 @@ pub fn lift_closures(mut program: HirProgram, tcx: &mut gossamer_types::TyCtxt) 
 /// appears as the receiver of a `TupleIndex`, `Field`, or `Index`
 /// expression. The lift-pass's i64-default pinning skips these so
 /// closure params that hold aggregates (tuples / structs / arrays)
-/// stay pointer-shaped — the runtime sort / iter comparators hand
+/// stay pointer-shaped - the runtime sort / iter comparators hand
 /// the body raw element pointers and the projections walk off them.
 /// True when `go <inner>` is the MIR builder's direct named-function
 /// spawn fast path (`gos_rt_go_spawn_call_N`): a call whose callee is
@@ -195,7 +195,7 @@ fn collect_aggregate_in_expr(expr: &HirExpr, out: &mut std::collections::HashSet
             collect_aggregate_in_expr(index, out);
         }
         HirExprKind::MethodCall { receiver, args, .. } => {
-            // `param.clone()` / `param.len()` etc. — the receiver
+            // `param.clone()` / `param.len()` etc. - the receiver
             // is used as an aggregate handle whose methods walk
             // off a pointer, same as a field projection.
             note_path_receiver(receiver, out);
@@ -251,7 +251,7 @@ struct Lifter {
     next_id: u32,
     lifted: Vec<HirItem>,
     ids: HirIdGenerator,
-    /// Ty handle for an i64 — used as the env parameter type
+    /// Ty handle for an i64 - used as the env parameter type
     /// of capturing closures so the lifted body sees env as a
     /// pointer-sized register, not a byte / sub-word.
     env_ty: gossamer_types::Ty,
@@ -305,7 +305,7 @@ impl Lifter {
         match &mut expr.kind {
             HirExprKind::Call { callee, args } => {
                 // A path used as the direct callee stays a direct
-                // call — only value-position references eta-expand,
+                // call - only value-position references eta-expand,
                 // so skip the callee when it is a bare path (its
                 // visit was a no-op before eta-expansion existed).
                 if !matches!(callee.kind, HirExprKind::Path { .. }) {
@@ -459,9 +459,9 @@ impl Lifter {
     /// `go f(args)` where `f` is a resolved named function with at
     /// most six arguments is the MIR builder's direct fast path
     /// (`gos_rt_go_spawn_call_N`); it is left as a call and only its
-    /// arguments are walked for nested closures. Every other shape — a
+    /// arguments are walked for nested closures. Every other shape - a
     /// stdlib free call (`go http::get(url)`), a method call, a call
-    /// with more than six arguments, a block — cannot ride that fast
+    /// with more than six arguments, a block - cannot ride that fast
     /// path, so it is wrapped in a zero-argument closure that the
     /// closure-lift below turns into a real top-level body. The MIR
     /// builder spawns that closure fire-and-forget, so the wrapped
@@ -605,7 +605,7 @@ impl Lifter {
         // fn's MIR signature matches the actual return shape.
         // Without this, the MIR builder defaults the return type
         // to `unit` and downstream callers (Fn(...) dispatch sites)
-        // mismatch on the calling convention — bool / f64 closures
+        // mismatch on the calling convention - bool / f64 closures
         // segfault on return because the dispatcher reads the
         // wrong register width.
         let ret = ret.or(Some(body.ty));
@@ -640,7 +640,7 @@ impl Lifter {
         // in the body. Without this, every capture's let pattern
         // gets `body.ty` (the closure's return type), which is
         // catastrophic when the captures' types differ from the
-        // return type — e.g. `let scale = 3; let bias = 0.5; |x|
+        // return type - e.g. `let scale = 3; let bias = 0.5; |x|
         // x * scale + bias` puts an i64 capture's bytes into an
         // f64-typed slot and the codegen reads the integer's bit
         // pattern as a subnormal float ≈ 0.
@@ -829,22 +829,22 @@ fn is_closed<S: std::hash::BuildHasher + Clone>(
     match &expr.kind {
         HirExprKind::Path { segments, def } => {
             // Fully-qualified paths and resolved DefIds point to top-
-            // level items — treat those as "closed" (not captures).
+            // level items - treat those as "closed" (not captures).
             if def.is_some() || segments.len() > 1 {
                 return true;
             }
             if let Some(first) = segments.first() {
                 // Synthetic builtin names (mirror of `walk_free`'s
-                // exclusion set) — must never be treated as free
+                // exclusion set) - must never be treated as free
                 // captures, so the closure stays liftable. Without
-                // this match the closure body `Pair { ... }` —
+                // this match the closure body `Pair { ... }` -
                 // which the HIR lowerer rewrites into
-                // `__struct(...)` — appears unbound and the
+                // `__struct(...)` - appears unbound and the
                 // closure neither lifts as closed nor lifts as
                 // capturing, leaving the original `Closure` HIR
                 // node for MIR to mishandle.
                 // Lifted closure bodies (`__closure_N`) and synthetic
-                // builtins are global items — never free variables.
+                // builtins are global items - never free variables.
                 if matches!(
                     first.name.as_str(),
                     "__concat"
@@ -949,7 +949,7 @@ fn is_closed<S: std::hash::BuildHasher + Clone>(
 /// Walks `expr` looking for the first `Path { name }` reference and
 /// returns its recorded type. Used by `lift_capturing` to thread the
 /// capture's actual type through the lifted function's wrapper let
-/// binding — without this, every capture's let gets the closure
+/// binding - without this, every capture's let gets the closure
 /// body's return type, mis-typing captures whose declared type
 /// differs from the body's tail expression.
 fn capture_ty_in_expr(expr: &HirExpr, name: &str) -> Option<gossamer_types::Ty> {

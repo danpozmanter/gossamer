@@ -1,4 +1,4 @@
-// Closure as goroutine body — exercises spawning an inline
+// Closure as goroutine body - exercises spawning an inline
 // closure (with captures) as a goroutine in all three tiers.
 
 use std::sync::channel

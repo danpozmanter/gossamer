@@ -1,5 +1,5 @@
 /*
- * Bubble sort — sort a `[i64]` ascending.
+ * Bubble sort - sort a `[i64]` ascending.
  *
  * The sorting helper owns a local `mut` copy and returns the
  * sorted vector; the caller binds the result with a plain

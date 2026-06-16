@@ -2,7 +2,7 @@
 
 A goroutine-powered, fast-compiling systems language with
 Rust-flavoured syntax and a Go-shaped runtime. Memory is automatic
-and deterministic — reference counting plus `arena { }` regions, no
+and deterministic - reference counting plus `arena { }` regions, no
 tracing collector and no GC pauses.
 
 - Source on GitHub: [danpozmanter/gossamer](https://github.com/danpozmanter/gossamer)
@@ -55,20 +55,20 @@ collector.
 
 ## Where to go next
 
-- [Install](install.md) — build from source today, prebuilt
+- [Install](install.md) - build from source today, prebuilt
   binaries coming with the 1.0.0 release.
-- [Running](running.md) — `gos` cheat-sheet.
-- [Syntax](syntax.md) — grammar tour with worked examples.
-- [Memory model](memory.md) — how values, references, and
+- [Running](running.md) - `gos` cheat-sheet.
+- [Syntax](syntax.md) - grammar tour with worked examples.
+- [Memory model](memory.md) - how values, references, and
   automatic memory management fit together.
-- [Writing libraries](libraries.md) — `project.toml`, module
+- [Writing libraries](libraries.md) - `project.toml`, module
   layout, publishing.
-- [Standard library](stdlib.md) — module index.
-- [Prelude](prelude.md) — everything available without imports.
-- [Toolchain](toolchain.md) — every subcommand.
+- [Standard library](stdlib.md) - module index.
+- [Prelude](prelude.md) - everything available without imports.
+- [Toolchain](toolchain.md) - every subcommand.
 
 Coming from another language? Start with the migration guide for
 [Rust](migration/rust.md), [Go](migration/go.md),
 [Python](migration/python.md), [Kotlin](migration/kotlin.md), or
-[F#](migration/fsharp.md) — each maps what you already know onto
+[F#](migration/fsharp.md) - each maps what you already know onto
 Gossamer.

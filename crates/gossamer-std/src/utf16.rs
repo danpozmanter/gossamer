@@ -1,8 +1,8 @@
-//! Runtime support for `std::utf16` — UTF-16 encoding and surrogate pair helpers.
+//! Runtime support for `std::utf16` - UTF-16 encoding and surrogate pair helpers.
 //!
 //! UTF-16 encodes Unicode scalar values in 16-bit code units. Scalars in the
 //! Basic Multilingual Plane (U+0000..U+D7FF, U+E000..U+FFFF) map to one code
-//! unit; supplementary scalars (U+10000..U+10FFFF) map to a high–low surrogate
+//! unit; supplementary scalars (U+10000..U+10FFFF) map to a high-low surrogate
 //! pair.
 
 #![forbid(unsafe_code)]

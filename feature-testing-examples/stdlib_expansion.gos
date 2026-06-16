@@ -1,4 +1,4 @@
-// 0.7.0 Quality-of-Life surface — exercises every helper that
+// 0.7.0 Quality-of-Life surface - exercises every helper that
 // 0.7.0 added across all three tiers (VM, cranelift, LLVM).
 //
 // Pair this with `tier_parity` so a regression in any one tier

@@ -11,7 +11,7 @@
 // `Response::stream` proxy passthrough (gap 6, client + server).
 //
 // Self-terminating: the client runs in main and exits explicitly.
-// Binds fixed loopback ports 23908/23909 — serialized under
+// Binds fixed loopback ports 23908/23909 - serialized under
 // SERVER_PORT_LOCK by `http_roundtrip_parity_across_tiers` in
 // crates/gossamer-cli/tests/tier_parity.rs.
 

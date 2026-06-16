@@ -18,7 +18,7 @@
 use std::sync::atomic::{AtomicI64, Ordering};
 
 // ---------------------------------------------------------------
-// Channel runtime — bounded MPMC via parking_lot Mutex<VecDeque>
+// Channel runtime - bounded MPMC via parking_lot Mutex<VecDeque>
 // ---------------------------------------------------------------
 
 use std::collections::VecDeque;
@@ -273,8 +273,8 @@ static CTX_IS_CANCELLED_HOOK: std::sync::atomic::AtomicPtr<()> =
 
 /// Installs the cross-crate context hooks. Idempotent; calling
 /// twice with the same fn pointers is a no-op. Calling with a
-/// different fn pointer (an actual rebind) is undefined behaviour
-/// — the caller (gossamer-std) installs exactly once at first
+/// different fn pointer (an actual rebind) is undefined behaviour -
+/// the caller (gossamer-std) installs exactly once at first
 /// use of a context-aware runtime entry.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_install_ctx_hooks(
@@ -493,7 +493,7 @@ pub(crate) fn chan_close_idempotent(chan: &GosChan) -> bool {
 /// `close of closed channel`, matching Go. The panic is
 /// goroutine-scoped (via `gos_rt_panic`): it unwinds to the
 /// coroutine boundary inside a spawned goroutine (isolating only
-/// that goroutine) and exits 101 on the main goroutine — it never
+/// that goroutine) and exits 101 on the main goroutine - it never
 /// aborts the whole process. Callers may ignore the return value.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_chan_close(c: *mut GosChan) -> i32 {
@@ -538,7 +538,7 @@ pub unsafe extern "C" fn gos_rt_chan_drop(c: *mut GosChan) {
         // because callers may also drop a `Box<GosChan>` directly in
         // tests without going through this entry point.
         unsafe {
-            // Idempotent close for reclamation — must not panic if the
+            // Idempotent close for reclamation - must not panic if the
             // user already closed this channel explicitly (the
             // user-facing `gos_rt_chan_close` panics on double-close).
             chan_close_idempotent(&*c);

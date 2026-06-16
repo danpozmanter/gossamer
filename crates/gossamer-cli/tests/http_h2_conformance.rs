@@ -8,25 +8,25 @@
 //!
 //! RFC 7540 / RFC 9113 sections covered (approximate mapping):
 //!
-//! - §3.5 HTTP/2 Connection Preface — `preface_handshake_completes`
-//! - §6.5 SETTINGS — `settings_exchange_completes`,
+//! - §3.5 HTTP/2 Connection Preface - `preface_handshake_completes`
+//! - §6.5 SETTINGS - `settings_exchange_completes`,
 //!   `settings_advertise_max_concurrent_streams`,
 //!   `settings_advertise_initial_window_size`
-//! - §6.7 PING — `ping_round_trips`
-//! - §6.9 `WINDOW_UPDATE` / Flow Control — `window_update_releases_capacity`
-//! - §8.1 HTTP Request/Response Exchange —
+//! - §6.7 PING - `ping_round_trips`
+//! - §6.9 `WINDOW_UPDATE` / Flow Control - `window_update_releases_capacity`
+//! - §8.1 HTTP Request/Response Exchange -
 //!   `headers_end_stream_get_returns_200`,
 //!   `data_end_stream_post_echoes_body`
-//! - §8.1.2.6 Malformed Pseudo-Headers — `malformed_pseudo_header_rejected`
-//! - §8.2 Server Push — `push_promise_delivered_to_client`
-//! - §8.1.2.1 Pseudo-Header Fields — `request_carries_required_pseudo_headers`
-//! - §5.4 GOAWAY — `goaway_on_graceful_shutdown`
-//! - §5.4 Stream Cancellation (`RST_STREAM`) — `rst_stream_mid_stream_aborts`
-//! - §6.5.2 `SETTINGS_MAX_HEADER_LIST_SIZE` — `oversized_headers_rejected`
-//! - HTTP/2 Trailers (RFC 9113 §8.1) — `trailers_round_trip`,
+//! - §8.1.2.6 Malformed Pseudo-Headers - `malformed_pseudo_header_rejected`
+//! - §8.2 Server Push - `push_promise_delivered_to_client`
+//! - §8.1.2.1 Pseudo-Header Fields - `request_carries_required_pseudo_headers`
+//! - §5.4 GOAWAY - `goaway_on_graceful_shutdown`
+//! - §5.4 Stream Cancellation (`RST_STREAM`) - `rst_stream_mid_stream_aborts`
+//! - §6.5.2 `SETTINGS_MAX_HEADER_LIST_SIZE` - `oversized_headers_rejected`
+//! - HTTP/2 Trailers (RFC 9113 §8.1) - `trailers_round_trip`,
 //!   `request_trailers_observable`
-//! - Concurrent stream multiplexing — `multiple_concurrent_streams_complete`
-//! - Server-side stream count — `in_flight_counter_drops_after_drain`
+//! - Concurrent stream multiplexing - `multiple_concurrent_streams_complete`
+//! - Server-side stream count - `in_flight_counter_drops_after_drain`
 
 #![allow(missing_docs, clippy::missing_panics_doc, clippy::missing_errors_doc)]
 
@@ -44,7 +44,7 @@ const CLIENT_TIMEOUT_MS: u64 = 5_000;
 
 /// Returns the next available free loopback port. Binds momentarily
 /// to claim it, then drops the listener so the server-under-test
-/// can re-bind. There is a small TOCTOU window — acceptable for
+/// can re-bind. There is a small TOCTOU window - acceptable for
 /// in-process tests; the alternative (passing the live listener
 /// to the server entry point) requires an API the h2c shim does
 /// not currently expose.
@@ -57,7 +57,7 @@ fn pick_port() -> u16 {
 
 /// Spawns a bounded-handler h2c server on `addr` in a dedicated
 /// thread. Returns a join handle that callers can use to confirm
-/// the server didn't crash (best-effort — h2c serves forever).
+/// the server didn't crash (best-effort - h2c serves forever).
 fn spawn_bounded_server<H>(addr: String, handler: H, config: h2srv::Config)
 where
     H: h2srv::Handler + Clone,
@@ -398,7 +398,7 @@ fn goaway_on_graceful_shutdown() {
         match tokio::time::timeout(Duration::from_millis(500), drive).await {
             Ok(Ok(ok)) => ok,
             Ok(Err(_)) => false,
-            // Timing out is acceptable here — the contract is that
+            // Timing out is acceptable here - the contract is that
             // the server doesn't crash on a peer-side GOAWAY. The
             // h2 crate's Connection future has a tail that ticks
             // before resolving; we don't require it to resolve.
@@ -438,7 +438,7 @@ fn rst_stream_mid_stream_aborts() {
         send.send_data(Bytes::new(), true).expect("end stream");
         send.send_reset(h2::Reason::CANCEL);
         // The response future may resolve with an error after
-        // the reset — either outcome is fine; we just want the
+        // the reset - either outcome is fine; we just want the
         // server not to crash.
         let _ = resp_fut.await;
         drop(send_req);
@@ -465,7 +465,7 @@ fn malformed_pseudo_header_rejected() {
         // `:path`. The h2 client may either reject the request
         // build outright, return an error from `send_request`, or
         // forward the frame and have the server reset the stream
-        // — every outcome is acceptable as long as the server
+        // - every outcome is acceptable as long as the server
         // doesn't crash.
         let build_result = HttpRequest::builder()
             .method(HttpMethod::GET)
@@ -516,8 +516,8 @@ fn oversized_headers_rejected() {
         // 1024 in its SETTINGS; the h2 client honours it and
         // rejects the send. We accept either outcome (rejection
         // before the wire, or a stream RST after).
-        // Client-side rejection — the desired behaviour when
-        // SETTINGS_MAX_HEADER_LIST_SIZE is honoured — is the
+        // Client-side rejection - the desired behaviour when
+        // SETTINGS_MAX_HEADER_LIST_SIZE is honoured - is the
         // alternative happy path; the `if let` ignores it.
         if let Ok((resp_fut, _send)) = send_req.send_request(req, true) {
             let _ = resp_fut.await; // may error
@@ -556,7 +556,7 @@ fn push_promise_delivered_to_client() {
             .expect("build");
         let (mut resp_fut, _send) = send_req.send_request(req, true).expect("send");
         // Pushed streams are surfaced via `ResponseFuture::push_promises()`
-        // — must be called BEFORE awaiting the response future.
+        // - must be called BEFORE awaiting the response future.
         let mut pushes = resp_fut.push_promises();
         let resp = resp_fut.await.expect("resp");
         let (parts, mut body) = resp.into_parts();
@@ -815,7 +815,7 @@ fn request_trailer_observer(req: Request) -> Response {
 }
 
 fn slow_streaming_handler(_req: Request, mut w: h2srv::ResponseWriter) -> Result<(), h2srv::Error> {
-    // Send the head, then wait a beat before sending body — so
+    // Send the head, then wait a beat before sending body - so
     // the client has time to RST_STREAM mid-flight.
     w.set_status(200);
     w.write_chunk(b"first")?;
@@ -839,7 +839,7 @@ fn trailers_streaming_handler(
 }
 
 fn push_streaming_handler(_req: Request, mut w: h2srv::ResponseWriter) -> Result<(), h2srv::Error> {
-    // Push BEFORE the first write_chunk on the parent — h2
+    // Push BEFORE the first write_chunk on the parent - h2
     // requires PUSH_PROMISE to precede the parent's HEADERS
     // response frame. The uri must be absolute (h2's
     // push_request rejects scheme-relative).

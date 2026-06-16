@@ -1,4 +1,4 @@
-//! `gos init` and `gos new` — project scaffolding plus the inline
+//! `gos init` and `gos new` - project scaffolding plus the inline
 //! source / manifest / README templates each `--template` choice
 //! emits.
 
@@ -7,7 +7,7 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result, anyhow};
 
-/// `gos init ID` — drops a `project.toml` (and a starter
+/// `gos init ID` - drops a `project.toml` (and a starter
 /// `src/main.gos` when neither it nor `src/lib.gos` exists) into
 /// the current directory.
 pub(crate) fn init(id: &str) -> Result<()> {
@@ -41,7 +41,7 @@ pub(crate) fn init(id: &str) -> Result<()> {
     Ok(())
 }
 
-/// `gos new ID --path P --template T` — scaffolds a fresh project
+/// `gos new ID --path P --template T` - scaffolds a fresh project
 /// directory according to the chosen template (`bin`, `lib`,
 /// `service`, or `workspace`).
 pub(crate) fn new(id: &str, path: Option<PathBuf>, template: &str) -> Result<()> {
@@ -99,7 +99,7 @@ pub(crate) fn new(id: &str, path: Option<PathBuf>, template: &str) -> Result<()>
         }
         other => {
             return Err(anyhow!(
-                "unknown template `{other}` — expected bin, lib, service, workspace, or binding"
+                "unknown template `{other}` - expected bin, lib, service, workspace, or binding"
             ));
         }
     }
@@ -115,7 +115,7 @@ pub(crate) fn new(id: &str, path: Option<PathBuf>, template: &str) -> Result<()>
 /// Returns the seed `src/lib.gos` for `--template lib`.
 fn lib_template_source(project: &gossamer_pkg::ProjectId) -> String {
     format!(
-        "//! {project} — library crate.\n\
+        "//! {project} - library crate.\n\
          //!\n\
          //! Replace this scaffolding with the real API before\n\
          //! publishing.\n\
@@ -130,7 +130,7 @@ fn lib_template_source(project: &gossamer_pkg::ProjectId) -> String {
 /// Returns the seed `src/main.gos` for `--template service`.
 fn service_template_source(project: &gossamer_pkg::ProjectId) -> String {
     format!(
-        "//! {project} — HTTP service entry point.\n\
+        "//! {project} - HTTP service entry point.\n\
          //!\n\
          //! Listens on 0.0.0.0:8080 and answers `/health` with a 200.\n\
          //! Replace the match arms with your real routes before shipping.\n\
@@ -217,7 +217,7 @@ fn binding_template_cargo_toml(crate_name: &str) -> String {
 fn binding_template_lib_rs(crate_name: &str) -> String {
     let mod_name = crate_name.replace('-', "_");
     format!(
-        "//! `{crate_name}` — Rust bindings exposed to Gossamer.\n\
+        "//! `{crate_name}` - Rust bindings exposed to Gossamer.\n\
          //!\n\
          //! Drop fn definitions inside the `#[gos_module]` block.\n\
          //! `///` doc-comments above each fn flow through to\n\

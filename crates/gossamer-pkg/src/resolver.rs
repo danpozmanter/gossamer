@@ -8,7 +8,7 @@
 //! tarball) pins pass through unchanged; two inline pins for the
 //! same id that disagree raise [`ResolveError::ConflictingPins`].
 //!
-//! The resolver is transitive — after picking a concrete version for
+//! The resolver is transitive - after picking a concrete version for
 //! a direct dep, the dep's own `project.toml` (read out of the
 //! cached source tree) is parsed and its dependencies are pushed
 //! onto the work queue. A visited set keyed on `(id, source-pin)`
@@ -35,7 +35,7 @@ pub struct CatalogueEntry {
     pub version: Version,
     /// Whether this version is yanked.
     pub yanked: bool,
-    /// Optional download URL — required for tarball fetches.
+    /// Optional download URL - required for tarball fetches.
     pub download_url: Option<String>,
     /// SHA-256 of the on-the-wire tarball, if known.
     pub tarball_sha256: Option<String>,
@@ -706,7 +706,7 @@ fn load_manifest_from_source(src: &CachedSource) -> Result<Option<Manifest>, Res
     Ok(Some(manifest))
 }
 
-/// Convenience adaptor — wraps a closure as a [`TransitiveLoader`].
+/// Convenience adaptor - wraps a closure as a [`TransitiveLoader`].
 pub struct FnLoader<F>(pub F);
 
 impl<F> TransitiveLoader for FnLoader<F>
@@ -718,7 +718,7 @@ where
     }
 }
 
-/// Empty loader — every dep reports "no manifest". Useful for tests
+/// Empty loader - every dep reports "no manifest". Useful for tests
 /// and for the direct-deps-only fast path.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct NoopLoader;

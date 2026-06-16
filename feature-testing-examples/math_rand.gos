@@ -1,4 +1,4 @@
-// std::math::rand — deterministic SplitMix64 RNG.
+// std::math::rand - deterministic SplitMix64 RNG.
 //
 // Covers: Rng::new(seed), next_u64, next_u32, range_u64, next_f64.
 // A fixed seed makes the sequence reproducible, so stdout is

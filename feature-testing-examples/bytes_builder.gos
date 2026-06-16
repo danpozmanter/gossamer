@@ -1,4 +1,4 @@
-// std::bytes — Builder (string assembly) + Buffer (byte accumulation)
+// std::bytes - Builder (string assembly) + Buffer (byte accumulation)
 // + the stateless index_of / split / replace helpers. Exercises the
 // handle types across every tier; output is deterministic, so the
 // tier-parity harness asserts the strings are bit-identical on VM,

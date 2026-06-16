@@ -1834,46 +1834,46 @@ version. This page is auto-generated from the catalogue in
 </tbody>
 </table>
 <h2 id="gp0001"><code>GP0001</code> <a id="gp0001"></a><a class="headerlink" href="#gp0001" title="Permanent link">&para;</a></h2>
-<p><strong>Parser</strong> — unexpected token</p>
+<p><strong>Parser</strong> - unexpected token</p>
 <p>The parser saw a token where it expected a different one. Check for missing punctuation, an unmatched delimiter, or an out-of-place keyword.</p>
 <h2 id="gp0002"><code>GP0002</code> <a id="gp0002"></a><a class="headerlink" href="#gp0002" title="Permanent link">&para;</a></h2>
-<p><strong>Parser</strong> — unexpected end of input</p>
-<p>The parser reached end-of-file in the middle of a construct. Finish the expression, statement, or item — or remove it.</p>
+<p><strong>Parser</strong> - unexpected end of input</p>
+<p>The parser reached end-of-file in the middle of a construct. Finish the expression, statement, or item - or remove it.</p>
 <h2 id="gp0003"><code>GP0003</code> <a id="gp0003"></a><a class="headerlink" href="#gp0003" title="Permanent link">&para;</a></h2>
-<p><strong>Parser</strong> — unterminated delimiter</p>
+<p><strong>Parser</strong> - unterminated delimiter</p>
 <p>A balanced construct (block, tuple, array, string literal) was left unterminated. Add the matching closing delimiter.</p>
 <h2 id="gp0004"><code>GP0004</code> <a id="gp0004"></a><a class="headerlink" href="#gp0004" title="Permanent link">&para;</a></h2>
-<p><strong>Parser</strong> — chained comparison without parentheses</p>
+<p><strong>Parser</strong> - chained comparison without parentheses</p>
 <p>Comparison operators like <code>==</code> / <code>!=</code> / <code>&lt;</code> are not associative. Parenthesise the operands: <code>(a == b) &amp;&amp; (b == c)</code>.</p>
 <h2 id="gr0001"><code>GR0001</code> <a id="gr0001"></a><a class="headerlink" href="#gr0001" title="Permanent link">&para;</a></h2>
-<p><strong>Resolve</strong> — unresolved name</p>
+<p><strong>Resolve</strong> - unresolved name</p>
 <p>A name used in source could not be resolved to a declaration. Check the spelling, whether a <code>use</code> brings the name into scope, and whether the item is visible at this location.</p>
 <h2 id="gr0002"><code>GR0002</code> <a id="gr0002"></a><a class="headerlink" href="#gr0002" title="Permanent link">&para;</a></h2>
-<p><strong>Resolve</strong> — wrong namespace</p>
+<p><strong>Resolve</strong> - wrong namespace</p>
 <p>A name was resolved to the wrong namespace (value vs. type). Check the declaration and the spelling.</p>
 <h2 id="gr0003"><code>GR0003</code> <a id="gr0003"></a><a class="headerlink" href="#gr0003" title="Permanent link">&para;</a></h2>
-<p><strong>Resolve</strong> — duplicate item</p>
+<p><strong>Resolve</strong> - duplicate item</p>
 <p>Two items in the same module share a name. Rename one of them or move it into a distinct <code>mod</code>.</p>
 <h2 id="gr0004"><code>GR0004</code> <a id="gr0004"></a><a class="headerlink" href="#gr0004" title="Permanent link">&para;</a></h2>
-<p><strong>Resolve</strong> — duplicate import</p>
+<p><strong>Resolve</strong> - duplicate import</p>
 <p>The same path was imported twice in the same <code>use</code> list. Drop the duplicate.</p>
 <h2 id="gt0001"><code>GT0001</code> <a id="gt0001"></a><a class="headerlink" href="#gt0001" title="Permanent link">&para;</a></h2>
-<p><strong>Types</strong> — type mismatch</p>
+<p><strong>Types</strong> - type mismatch</p>
 <p>The type checker could not reconcile two types it expected to match. The primary label shows the location of the mismatch; the <code>note:</code> line names the conflicting types.</p>
 <h2 id="gt0002"><code>GT0002</code> <a id="gt0002"></a><a class="headerlink" href="#gt0002" title="Permanent link">&para;</a></h2>
-<p><strong>Types</strong> — unresolved method</p>
+<p><strong>Types</strong> - unresolved method</p>
 <p>The type checker could not find a method with the supplied name on the receiver type. Check for a typo, a missing <code>use</code>, or a trait impl that lives in an unreachable module.</p>
 <h2 id="gt0003"><code>GT0003</code> <a id="gt0003"></a><a class="headerlink" href="#gt0003" title="Permanent link">&para;</a></h2>
-<p><strong>Types</strong> — unresolved operator</p>
+<p><strong>Types</strong> - unresolved operator</p>
 <p>The operator is not defined for the operand types. Check the operand types and use the correct operator.</p>
 <h2 id="gt0004"><code>GT0004</code> <a id="gt0004"></a><a class="headerlink" href="#gt0004" title="Permanent link">&para;</a></h2>
-<p><strong>Match exhaustiveness</strong> — non-exhaustive match</p>
+<p><strong>Match exhaustiveness</strong> - non-exhaustive match</p>
 <p>A <code>match</code> expression does not cover every possible value. Add an arm for the pattern(s) listed under <code>help:</code>.</p>
 <h2 id="gt0005"><code>GT0005</code> <a id="gt0005"></a><a class="headerlink" href="#gt0005" title="Permanent link">&para;</a></h2>
-<p><strong>Types</strong> — non-primitive cast</p>
+<p><strong>Types</strong> - non-primitive cast</p>
 <p>The <code>as</code> cast is restricted to a whitelist: numeric ↔ numeric, <code>bool</code>/<code>char</code> → integer, <code>u8</code> → <code>char</code>, and same-type no-ops. Struct / enum / String sources are rejected. Use a conversion method when you need serialisation; <code>as</code> does not run code.</p>
 <h2 id="gk0001"><code>GK0001</code> <a id="gk0001"></a><a class="headerlink" href="#gk0001" title="Permanent link">&para;</a></h2>
-<p><strong>Package manager</strong> — manifest parse error</p>
+<p><strong>Package manager</strong> - manifest parse error</p>
 <p>The package manifest (<code>gos.toml</code>) could not be parsed. Check the TOML syntax and required fields.</p>
 
 

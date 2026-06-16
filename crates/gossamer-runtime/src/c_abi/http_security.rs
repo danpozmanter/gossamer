@@ -5,7 +5,7 @@
 //! compiled (Cranelift / LLVM) tier resolves the same calls natively
 //! instead of failing to link.
 //!
-//! Only the request/response-free core is wired here — the parts that
+//! Only the request/response-free core is wired here - the parts that
 //! are pure functions of their string / byte arguments:
 //!
 //! - `cookie::parse_cookie_header(header) -> [(String, String)]` and
@@ -113,7 +113,7 @@ fn b64url_decode(input: &str) -> Option<Vec<u8>> {
     Some(out)
 }
 
-// -- HMAC-SHA256 (RFC 2104) — mirrors crypto::hmac::sha256_mac ------------
+// -- HMAC-SHA256 (RFC 2104) - mirrors crypto::hmac::sha256_mac ------------
 
 fn hmac_sha256(key: &[u8], message: &[u8]) -> [u8; 32] {
     const BLOCK: usize = 64;
@@ -238,7 +238,7 @@ fn sanitize_cookie_name(name: &str) -> String {
         .collect()
 }
 
-/// `cookie::parse_cookie_header(header) -> [(String, String)]` — splits
+/// `cookie::parse_cookie_header(header) -> [(String, String)]` - splits
 /// a `Cookie:` request header into ordered `(name, value)` pairs.
 /// Lenient: malformed pairs are skipped. Mirrors
 /// `gossamer_std::http_cookie::parse_cookie_header`.
@@ -274,13 +274,13 @@ pub unsafe extern "C" fn gos_rt_http_cookie_parse_header(header: *const c_char) 
                 gos_rt_vec_push(v, std::ptr::addr_of!(entry).cast::<u8>());
             }
         }
-        // Tagged after the pushes — the vec owns the fresh strings.
+        // Tagged after the pushes - the vec owns the fresh strings.
         vec_set_slot_children(v, &COOKIE_PAIR_SLOT_CHILDREN);
         v
     })
 }
 
-/// `cookie::serialize(name, value) -> String` — renders a bare
+/// `cookie::serialize(name, value) -> String` - renders a bare
 /// `name=value` `Set-Cookie` value with RFC 6265 sanitisation (no
 /// attributes). Mirrors `Cookie::new(name, value).to_header_value()`.
 #[unsafe(no_mangle)]
@@ -309,7 +309,7 @@ fn split_token(token: &str) -> Option<(&str, &str)> {
     Some((a, b))
 }
 
-/// `csrf::issue_token(key) -> Result<String, errors::Error>` — a fresh
+/// `csrf::issue_token(key) -> Result<String, errors::Error>` - a fresh
 /// signed double-submit token `base64url(nonce).base64url(hmac(key, nonce))`.
 /// Mirrors `gossamer_std::http_csrf::issue_token`.
 #[unsafe(no_mangle)]
@@ -366,7 +366,7 @@ pub unsafe extern "C" fn gos_rt_http_csrf_verify_token(
 
 // -- session (SignedCookieStore, SignedOnly mode) ------------------------
 
-/// `session::sign(payload, key) -> String` — frames a JSON payload as a
+/// `session::sign(payload, key) -> String` - frames a JSON payload as a
 /// signed cookie value `base64url(payload).base64url(hmac(key,
 /// base64url(payload)))`. Mirrors `SignedCookieStore::encode` for
 /// `SerializationMode::SignedOnly`. The signature covers the
@@ -386,7 +386,7 @@ pub unsafe extern "C" fn gos_rt_http_session_sign(
     })
 }
 
-/// `session::verify(cookie, key) -> Result<String, errors::Error>` —
+/// `session::verify(cookie, key) -> Result<String, errors::Error>` -
 /// validates the HMAC and returns the decoded JSON payload text.
 /// Mirrors `SignedCookieStore::decode` for `SignedOnly`.
 #[unsafe(no_mangle)]

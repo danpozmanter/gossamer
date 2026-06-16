@@ -130,7 +130,7 @@ intentional for truthiness coercion, use an explicit cast.
 ## `self_assignment`
 
 Assigning a variable to itself does nothing. The statement is
-usually the residue of a refactor — remove it.
+usually the residue of a refactor - remove it.
 
 ## `todo_macro`
 
@@ -139,7 +139,7 @@ expressions. Implement the branch before merging.
 
 ## `bool_literal_in_condition`
 
-`if true { ... }` / `while false { ... }` — the branch is
+`if true { ... }` / `while false { ... }` - the branch is
 decided at compile time. Drop the control-flow construct.
 
 ## `let_and_return`
@@ -163,7 +163,7 @@ keep the body once.
 
 ## `needless_else_after_return`
 
-`if cond { return X } else { Y }` — the `else` is unreachable
+`if cond { return X } else { Y }` - the `else` is unreachable
 fall-through. Un-nest the `else` body.
 
 ## `self_compare`
@@ -183,7 +183,7 @@ Drop the `let`.
 
 ## `float_eq_zero`
 
-Equality against a float literal is almost never what you want —
+Equality against a float literal is almost never what you want -
 floating-point arithmetic rarely produces the exact bit pattern.
 Compare `(x - y).abs() < eps` with an explicit tolerance.
 
@@ -199,7 +199,7 @@ Rewrite as `if b { ... } else { ... }`.
 
 ## `needless_parens`
 
-`(x)` without a trailing comma is a needless pair of parens —
+`(x)` without a trailing comma is a needless pair of parens -
 `x` reads the same. `(x,)` is a one-tuple and means something
 different.
 
@@ -255,7 +255,7 @@ swap is needed.
 
 ## `consecutive_assignment`
 
-Two back-to-back assignments to the same place — the earlier
+Two back-to-back assignments to the same place - the earlier
 value is dead before it's read. Drop the first or consolidate
 the logic into one statement.
 
@@ -288,12 +288,12 @@ explicit `-> ()` is noise.
 
 `let _: () = expr` annotates the binding with the unit type. If
 `expr` was going to return `()` anyway, the annotation is noise.
-If it wasn't, the annotation forces a coercion — use a plain
+If it wasn't, the annotation forces a coercion - use a plain
 statement instead.
 
 ## `useless_default_only_match`
 
-`match x { _ => expr }` always runs `expr` — the `match` adds
+`match x { _ => expr }` always runs `expr` - the `match` adds
 nothing. Drop the `match` (and add `let _ = x` if evaluating
 the scrutinee has side effects).
 

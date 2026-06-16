@@ -89,7 +89,7 @@ impl<'a> Lowerer<'a> {
                 self.lower_call_intrinsic(name, args, dest_local)
             }
             Rvalue::Ref { place, .. } => {
-                // `&place` — we return the address of the
+                // `&place` - we return the address of the
                 // projection walk (or the bare stack slot when
                 // there's no projection). In Gossamer's
                 // runtime shape references are just raw
@@ -224,7 +224,7 @@ impl<'a> Lowerer<'a> {
     /// conversion calls the lowerer wants inline (no separate
     /// Call terminator). The MVP covers the single-argument
     /// f64 functions the nbody-shape programs call through
-    /// `std::math::sqrt` etc. — each maps to an LLVM intrinsic
+    /// `std::math::sqrt` etc. - each maps to an LLVM intrinsic
     /// (`llvm.sqrt.f64`, `llvm.sin.f64`, …) which `llc -O3`
     /// lowers to the matching SSE/AVX instruction.
     /// Generic `gos_rt_*` runtime-call intrinsic in `Rvalue`
@@ -254,7 +254,7 @@ impl<'a> Lowerer<'a> {
             })
             .unwrap_or_default();
         // `gos_rt_chan_send` / `gos_rt_chan_try_send` expect their
-        // second argument to be `*const u8` — a pointer to a
+        // second argument to be `*const u8` - a pointer to a
         // memory slot holding the value bytes (the runtime
         // memcpys `chan.elem_bytes` from there). A naive
         // `inttoptr i64 N to ptr` produces a wild pointer that
@@ -265,12 +265,12 @@ impl<'a> Lowerer<'a> {
         // `gos_rt_result_new(disc, payload)` stores `payload` as an
         // i64. For aggregate payloads (struct literals, tuples,
         // arrays built on this function's stack), the operand's
-        // value in the flat-slot ABI is its stack alloca address —
+        // value in the flat-slot ABI is its stack alloca address -
         // which becomes dangling the moment the caller's frame
         // pops. Heap-copy the aggregate before passing so the
         // pointer outlives the function return.
         let result_new_heap_copy = matches!(name, "gos_rt_result_new");
-        // HashMap insert with struct value — same rationale as
+        // HashMap insert with struct value - same rationale as
         // `gos_rt_result_new`: the value lives on the inserting
         // frame's stack and goes dangling once that frame returns.
         let map_insert_heap_copy = matches!(
@@ -333,7 +333,7 @@ impl<'a> Lowerer<'a> {
             if let Some(want_ty) = registry_param_llvm.get(i) {
                 // Win64: a 2-word `i128` (by-value Result/Option) crosses
                 // the `extern "C"` boundary by pointer, not in a register
-                // pair — that is how rustc lowers an `i128` parameter on
+                // pair - that is how rustc lowers an `i128` parameter on
                 // `x86_64-pc-windows`. Spill the value into a 16-byte-aligned
                 // slot and pass its address, matching the runtime's ABI. On
                 // SysV (Linux/macOS) `i128` is register-passed identically by
@@ -368,7 +368,7 @@ impl<'a> Lowerer<'a> {
         // Build a `declare` stub matching the call's actual
         // shape so the module header carries a single coherent
         // declaration. The runtime fn's signature is whatever
-        // we just emitted at the call site — record it here.
+        // we just emitted at the call site - record it here.
         // Prefer the registry signature when available so two
         // different call sites for the same symbol always agree.
         let mut decl_args = String::new();
@@ -429,7 +429,7 @@ impl<'a> Lowerer<'a> {
         };
         // Always declare using call-site types so the declaration matches
         // the call instruction LLVM sees. Registry types (via declare_rt)
-        // may differ — e.g. gos_rt_result_payload is I64 in the registry
+        // may differ - e.g. gos_rt_result_payload is I64 in the registry
         // but called as ptr in compiled MIR because the payload is a heap
         // pointer reinterpreted as i64 in the C ABI. On x86-64 both share
         // the rax register so the call is correct; the declaration must

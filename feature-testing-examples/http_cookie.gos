@@ -1,4 +1,4 @@
-// Cross-tier parity for std::http::cookie — RFC 6265 cookie header
+// Cross-tier parity for std::http::cookie - RFC 6265 cookie header
 // parsing and bare name=value serialization. These were previously
 // interp-tier only (rich Rust impl, no compiled-tier shim). Each call
 // now routes through a gos_rt_http_cookie_* shim so the output matches

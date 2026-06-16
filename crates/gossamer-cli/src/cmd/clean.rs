@@ -1,4 +1,4 @@
-//! `gos clean [--vendor] [--dry-run]` — drop build artifacts and caches:
+//! `gos clean [--vendor] [--dry-run]` - drop build artifacts and caches:
 //! the project `target/` directory, the per-project `.gos-cache`
 //! incremental IR-object cache, the frontend cache, and optionally the
 //! vendor tree.
@@ -50,7 +50,7 @@ pub(crate) fn run(vendor: bool, dry_run: bool) -> Result<()> {
 
 /// Removes `dir` (recursively) if present, accumulating the byte/entry
 /// tally. A `dry_run` only reports. Absent targets print a note and are
-/// skipped — `gos clean` is idempotent.
+/// skipped - `gos clean` is idempotent.
 fn remove_dir(
     dir: &Path,
     label: &str,
@@ -75,7 +75,7 @@ fn remove_dir(
 }
 
 /// Sums every regular file's byte length under `root`. Broken
-/// symlinks and per-entry I/O errors are treated as 0 bytes — the
+/// symlinks and per-entry I/O errors are treated as 0 bytes - the
 /// tally is advisory, never required for correctness.
 fn dir_size(root: &std::path::Path) -> u64 {
     let mut total: u64 = 0;

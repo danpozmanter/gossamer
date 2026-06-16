@@ -56,7 +56,7 @@ fn f64_round_trip_for_finite_values() {
         // Use bit-pattern equality where possible; some
         // representations may round-trip with negligible drift
         // (within 1 ulp). We treat exact equality as the bar
-        // here — anything else flags a real precision loss.
+        // here - anything else flags a real precision loss.
         assert_eq!(
             back.to_bits(),
             n.to_bits(),

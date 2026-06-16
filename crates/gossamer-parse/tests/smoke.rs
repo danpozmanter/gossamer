@@ -166,7 +166,7 @@ fn nested_generics_closing_shift_right_parses() {
 }
 
 /// Regression: the match-scrutinee / loop-condition struct-literal
-/// restriction must be suspended inside delimited sub-expressions —
+/// restriction must be suspended inside delimited sub-expressions -
 /// call arguments, parentheses, index brackets, array literals, and
 /// blocks. `match http::serve("addr", App { }) { .. }` used to fail
 /// with "unexpected `{`, expected `)` to close argument list".

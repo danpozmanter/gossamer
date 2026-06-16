@@ -8,7 +8,7 @@
     clippy::unnecessary_wraps,
     clippy::module_name_repetitions
 )]
-//! Bytecode-VM `http::middleware::bearer_ok` — the interp mirror of
+//! Bytecode-VM `http::middleware::bearer_ok` - the interp mirror of
 //! `gos_rt_http_bearer_ok`. A `native` builtin, because it invokes the
 //! caller's Gossamer `verify` closure through the interpreter
 //! dispatcher (a plain `BuiltinFnPub` cannot call a closure). Same

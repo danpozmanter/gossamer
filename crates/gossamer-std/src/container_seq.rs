@@ -1,5 +1,5 @@
 // `std::container::queue` / `std::container::stack` /
-// `std::container::deque` — FIFO / LIFO / double-ended queue over
+// `std::container::deque` - FIFO / LIFO / double-ended queue over
 // `Vec<i64>`. All operations use the re-bind shape:
 //
 //   let q = queue::push(q, 1)

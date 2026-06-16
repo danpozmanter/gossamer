@@ -1579,41 +1579,41 @@ threads naturally:</p>
 </code></pre></div>
 <h2 id="running-today">Running today<a class="headerlink" href="#running-today" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong><code>hello_world.gos</code></strong> — one-liner that prints via <code>fmt::println</code>.
+<li><strong><code>hello_world.gos</code></strong> - one-liner that prints via <code>fmt::println</code>.
   Runs under <code>gos run</code>.</li>
-<li><strong><code>function_piping.gos</code></strong> — tour of the <code>|&gt;</code> forward-pipe
+<li><strong><code>function_piping.gos</code></strong> - tour of the <code>|&gt;</code> forward-pipe
   operator plus the <code>std::iter</code> / <code>std::option</code> combinator
   surface (<code>filter</code>, <code>sum_by</code>, <code>find</code>, <code>option::default</code>, …).
   Runs under <code>gos run</code>, <code>gos build</code> (cranelift), and
   <code>gos build --release</code> (LLVM); the tier_parity test confirms
   identical output across all three.</li>
-<li><strong><code>generic_struct.gos</code></strong> — three generic struct shapes: <code>Pair&lt;A, B&gt;</code>
+<li><strong><code>generic_struct.gos</code></strong> - three generic struct shapes: <code>Pair&lt;A, B&gt;</code>
   (two independent parameters), <code>SameType&lt;T&gt;</code> (one parameter shared by
   both fields, enabling field arithmetic), and <code>Triple&lt;A, B, C&gt;</code> (three
   parameters). Each construction site is a separate monomorphisation;
   parameters are inferred from the field values at the call site.
   Runs under <code>gos run</code> and <code>gos build</code>.</li>
-<li><strong><code>go_spawn.gos</code></strong> — goroutine fan-out with no channels.
+<li><strong><code>go_spawn.gos</code></strong> - goroutine fan-out with no channels.
   Every construct lowers through native codegen, so <code>gos build</code>
   produces a working binary.</li>
-<li><strong><code>concurrency.gos</code></strong> — goroutines plus a <code>(Sender, Receiver)</code>
+<li><strong><code>concurrency.gos</code></strong> - goroutines plus a <code>(Sender, Receiver)</code>
   channel, producer / consumer shape. Runs under <code>gos run</code>
   (tree-walker and VM); native codegen for channel operations
   is still pending.</li>
-<li><strong><code>line_count.gos</code></strong> — walks a directory via <code>os::read_dir</code>,
+<li><strong><code>line_count.gos</code></strong> - walks a directory via <code>os::read_dir</code>,
   counts plain-text lines per file, fans out through a channel.
   Uses goroutines and <code>select</code>.</li>
-<li><strong><code>web_server.gos</code></strong> — HTTP/1.1 echo server mirroring FastAPI's
+<li><strong><code>web_server.gos</code></strong> - HTTP/1.1 echo server mirroring FastAPI's
   <code>/echo</code> handler. Accepts any method, returns method / path /
   query / body as JSON. Runs under <code>gos run</code>; <code>curl
   http://localhost:8080/echo?name=jane</code> exercises it.</li>
 </ul>
 <h2 id="parse-only-today-run-once-the-stdlib-wiring-lands">Parse-only today (run once the stdlib wiring lands)<a class="headerlink" href="#parse-only-today-run-once-the-stdlib-wiring-lands" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong><code>kv_cache.gos</code></strong> — in-memory TTL cache with a background
+<li><strong><code>kv_cache.gos</code></strong> - in-memory TTL cache with a background
   expiry sweeper. Exercises goroutines, <code>Mutex&lt;T&gt;</code>, channels,
   graceful shutdown via <code>std::context</code>.</li>
-<li><strong><code>json_pipeline.gos</code></strong> — streaming JSONL transformer. Reads
+<li><strong><code>json_pipeline.gos</code></strong> - streaming JSONL transformer. Reads
   line-delimited JSON from stdin, applies a transform, writes
   JSONL to stdout. Exercises <code>std::io</code>, <code>std::encoding::json</code>,
   <code>std::errors::wrap</code>.</li>
@@ -1622,7 +1622,7 @@ threads naturally:</p>
 <p><code>examples/selfhost/</code> holds parse-only ports of Gossamer's own
 lexer and parser, as described in
 <a href="../design/selfhosting/"><code>docs/selfhosting.md</code></a>. These are a
-feasibility study — they will <em>build</em> once the stdlib covers
+feasibility study - they will <em>build</em> once the stdlib covers
 growable collections, hashmaps, and generics through codegen.</p>
 <h2 id="try-it">Try it<a class="headerlink" href="#try-it" title="Permanent link">&para;</a></h2>
 <div class="language-sh highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>gos<span class="w"> </span>run<span class="w"> </span>examples/hello_world.gos

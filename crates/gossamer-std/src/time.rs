@@ -150,9 +150,9 @@ pub fn sleep(duration: Duration) {
 /// Cancellation-aware variant of [`sleep`].
 ///
 /// Behaves identically to `sleep(duration)` when `ctx` is not
-/// cancelled. If `ctx` is cancelled while the goroutine is parked
-/// — either via `Cancel::cancel_with` or via a `with_deadline`
-/// elapsing — the sleep returns early. The return value is
+/// cancelled. If `ctx` is cancelled while the goroutine is parked -
+/// either via `Cancel::cancel_with` or via a `with_deadline`
+/// elapsing - the sleep returns early. The return value is
 /// `Ok(())` for a natural completion and `Err(context error)`
 /// for a cancellation-driven wake-up.
 ///
@@ -211,7 +211,7 @@ pub enum FormatError {
 }
 
 /// Renders a wall-clock instant in RFC 1123 (HTTP date) form
-/// (`Sun, 06 Nov 1994 08:49:37 GMT`). Always GMT — this is the
+/// (`Sun, 06 Nov 1994 08:49:37 GMT`). Always GMT - this is the
 /// canonical encoding for HTTP `Date`, `Last-Modified`, and
 /// `If-Modified-Since` headers.
 pub fn format_rfc1123_gmt(when: SystemTime) -> Result<String, FormatError> {
@@ -271,7 +271,7 @@ pub fn format_rfc3339(when: SystemTime) -> Result<String, FormatError> {
 /// Parses an RFC 3339 timestamp. Accepts `T` or space as the
 /// date/time separator; accepts `Z`, `+HH:MM`, `-HH:MM`, or no
 /// suffix (assumes UTC). Sub-second fractions are accepted but
-/// silently dropped — full precision waits on a real time type.
+/// silently dropped - full precision waits on a real time type.
 pub fn parse_rfc3339(s: &str) -> Result<SystemTime, FormatError> {
     let bytes = s.as_bytes();
     let bad = || FormatError::BadInput(s.to_string());
@@ -556,7 +556,7 @@ fn days_to_civil(days: i64) -> CivilDate {
 /// `stop` flag flips. The callback runs on the ticker's own
 /// thread; long-running callbacks block subsequent ticks.
 ///
-/// Returned [`Ticker`] handle is `Drop`-safe — dropping it
+/// Returned [`Ticker`] handle is `Drop`-safe - dropping it
 /// signals stop and joins the worker thread.
 pub struct Ticker {
     stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
@@ -592,7 +592,7 @@ impl Ticker {
     }
 
     /// Stops the ticker and waits for the worker thread to
-    /// finish. Idempotent — subsequent calls are no-ops.
+    /// finish. Idempotent - subsequent calls are no-ops.
     pub fn stop(&mut self) {
         self.stop.store(true, std::sync::atomic::Ordering::Release);
         if let Some(h) = self.handle.take() {
@@ -660,7 +660,7 @@ impl TimerHandle {
 
 impl Drop for TimerHandle {
     fn drop(&mut self) {
-        // Don't auto-cancel on drop — callers that fire-and-
+        // Don't auto-cancel on drop - callers that fire-and-
         // forget the handle expect the timer to still fire.
         // We just detach the worker thread.
         if let Some(h) = self.handle.take() {
@@ -683,7 +683,7 @@ pub mod tz {
     use super::{FormatError, SystemTime};
 
     /// Reference to an IANA timezone (e.g. `"America/Los_Angeles"`).
-    /// Cheap to clone — wraps the `chrono_tz::Tz` enum by value.
+    /// Cheap to clone - wraps the `chrono_tz::Tz` enum by value.
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub struct Location {
         tz: Tz,
@@ -846,7 +846,7 @@ pub mod tz {
     /// The reference time is:
     ///   Mon Jan  2 15:04:05 MST 2006
     /// We translate the well-known tokens and pass everything else
-    /// through verbatim. Not exhaustive — covers RFC3339 / common log
+    /// through verbatim. Not exhaustive - covers RFC3339 / common log
     /// shapes.
     fn go_layout_to_chrono(layout: &str) -> String {
         let mut out = String::with_capacity(layout.len() + 8);
@@ -1110,7 +1110,7 @@ mod tests {
         // Long delay so the cancel deterministically beats the deadline
         // regardless of scheduler jitter. `cancel()` joins the timer
         // thread, so once it returns the thread has exited and `fired`
-        // holds its final value — no post-cancel sleep race.
+        // holds its final value - no post-cancel sleep race.
         let fired = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let fired_for_cb = std::sync::Arc::clone(&fired);
         let mut handle = after_func(Duration::from_secs(3600), move || {

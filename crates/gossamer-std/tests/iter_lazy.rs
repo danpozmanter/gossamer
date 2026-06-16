@@ -1,7 +1,7 @@
 //! Regression coverage for the `std::iter` extensions:
 //! - eager `sum` / `product` / `min` / `max` / `step_by` /
 //!   `once` / `empty` / `collect` helpers.
-//! - `Lazy` adapter — chains `map`/`filter`/`take`/`skip`/`step_by`
+//! - `Lazy` adapter - chains `map`/`filter`/`take`/`skip`/`step_by`
 //!   without materialising intermediate `Vec`s.
 
 use std::collections::HashSet;
@@ -29,7 +29,7 @@ fn min_max_over_empty_and_nonempty() {
 fn step_by_returns_every_nth_element() {
     let xs = vec![1i64, 2, 3, 4, 5, 6, 7];
     assert_eq!(iter::step_by(2, &xs), vec![1, 3, 5, 7]);
-    // Zero step is normalised to 1 — every element returned.
+    // Zero step is normalised to 1 - every element returned.
     assert_eq!(iter::step_by(0, &xs).len(), xs.len());
 }
 

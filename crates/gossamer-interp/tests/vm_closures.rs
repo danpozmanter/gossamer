@@ -58,7 +58,7 @@ fn main() {
 #[test]
 fn scalar_capture_is_a_snapshot() {
     // Mutating the original local after the closure is built does not
-    // change the captured value — the upvalue was snapshotted by value.
+    // change the captured value - the upvalue was snapshotted by value.
     let src = r#"
 fn call(f: Fn() -> i64) -> i64 { f() }
 fn main() {

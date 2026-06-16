@@ -3,7 +3,7 @@ source: crates/gossamer-diagnostics/tests/snapshots.rs
 expression: rendered
 ---
 --- plain ---
-error[GL0020]: `Foo { x: x }` is the same as the shorthand `Foo { x }`. — here
+error[GL0020]: `Foo { x: x }` is the same as the shorthand `Foo { x }`. - here
 --- framed ---
 error[GL0020]: `Foo { x: x }` is the same as the shorthand `Foo { x }`.
   --> snap.gos:2:5

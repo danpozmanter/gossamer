@@ -52,7 +52,7 @@ fn write_manifest_with_echo(dir: &Path, fixture: &Path) -> Manifest {
     // (it strips the outer `"` and keeps inner content verbatim),
     // but Cargo's strict TOML parser later rejects unescaped `\`,
     // so we render the same path style the production code does
-    // — see `BindingRunner::cargo_dep_line` / `toml_path_kv`.
+    // - see `BindingRunner::cargo_dep_line` / `toml_path_kv`.
     let body = format!(
         "{HEADER}\n[rust-bindings]\necho-binding = {{ path = \"{}\" }}\n",
         fixture.display().to_string().replace('\\', "/")

@@ -19,7 +19,7 @@ use gossamer_resolve::{
 /// Outcome of [`dispatch_runner_if_needed`].
 #[derive(Debug)]
 pub enum DispatchOutcome {
-    /// Runner not needed — fall through to the in-process CLI.
+    /// Runner not needed - fall through to the in-process CLI.
     InProcess,
     /// Runner was dispatched; this never returns on success
     /// because the runner replaces the current process. Returned
@@ -68,9 +68,9 @@ fn first_subcommand(args: &[OsString]) -> Option<String> {
 /// this function is a no-op.
 ///
 /// Returns:
-/// - `DispatchOutcome::InProcess` — caller should continue with
+/// - `DispatchOutcome::InProcess` - caller should continue with
 ///   the in-process CLI.
-/// - `DispatchOutcome::Failed(err)` — runner build / spawn
+/// - `DispatchOutcome::Failed(err)` - runner build / spawn
 ///   failed. Caller should print the error and exit non-zero.
 ///
 /// Successful dispatch never returns: [`BindingRunner::exec`]
@@ -210,7 +210,7 @@ pub fn locate_gossamer_root() -> Option<PathBuf> {
 /// - the table is already non-empty.
 ///
 /// Returns the number of external modules now visible to the
-/// resolver (zero is fine — caller treats it as "no bindings").
+/// resolver (zero is fine - caller treats it as "no bindings").
 pub fn ensure_external_signatures() -> Result<usize, BindingRunnerError> {
     if std::env::var_os("GOSSAMER_IN_RUNNER").is_some() {
         return Ok(all_external_modules().len());

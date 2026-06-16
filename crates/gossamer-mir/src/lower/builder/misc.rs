@@ -70,7 +70,7 @@ impl<'a> Builder<'a> {
         // Otherwise: a path / general expression whose value is a
         // String is also iterable byte-by-byte under the same
         // contract, since `as_bytes` is a runtime no-op (the
-        // receiver IS the bytes — see the dispatch entry
+        // receiver IS the bytes - see the dispatch entry
         // `"as_bytes" => Some("")` in this file).
         let cur_ty = self
             .receiver_local_from_path(cur)
@@ -310,7 +310,7 @@ impl<'a> Builder<'a> {
         self.set_current(body_block);
         self.push_scope();
 
-        // Bind idx_pat to a copy of the counter — the binding is a
+        // Bind idx_pat to a copy of the counter - the binding is a
         // separate slot so the body can shadow / reassign without
         // perturbing the loop counter.
         if let HirPatKind::Binding { name, mutable } = &idx_pat.kind {
@@ -465,12 +465,12 @@ impl<'a> Builder<'a> {
 
         self.set_current(body_block);
         self.push_scope();
-        // The element slot address — needed only by the tuple-destructure body
+        // The element slot address - needed only by the tuple-destructure body
         // below, which reads each field via `gos_load(slot, i*8)`. Set on the
         // `gos_rt_vec_get_ptr` path; `None` for the by-value `i128` path.
         let mut tuple_slot_ptr: Option<Local> = None;
         // A by-value `Result`/`Option` element is a 16-byte `i128` read
-        // directly into the loop var — not via `gos_rt_vec_get_ptr` (which
+        // directly into the loop var - not via `gos_rt_vec_get_ptr` (which
         // would bind the slot address and let `match` decode garbage) nor the
         // 8-byte `gos_load` (which drops the payload).
         let elem_local = if matches!(
@@ -847,7 +847,7 @@ impl<'a> Builder<'a> {
         // `loop_pat.ty` is unresolved (a leaked `Var(...)`). Without
         // this, `render_ty(Var) = "ptr"` and the codegen emits
         // `load ptr` against an i64 array element + `store i64 <ptr>`
-        // — a type mismatch that makes opt complain and silently
+        // - a type mismatch that makes opt complain and silently
         // misroutes through the Cranelift fallback path.
         let mut elem_ty = loop_pat.ty;
         let needs_pin = matches!(self.tcx.kind_of(elem_ty), TyKind::Var(_) | TyKind::Error);
@@ -888,7 +888,7 @@ impl<'a> Builder<'a> {
             HirPatKind::Tuple(sub_pats) => {
                 // Bind each tuple sub-pattern to its own local that
                 // reads `array[counter].i`. Avoids materialising the
-                // whole tuple into a scalar local — `cl_type_of` of a
+                // whole tuple into a scalar local - `cl_type_of` of a
                 // tuple is `ptr_ty`, so the existing single-binding
                 // path would only copy the first 8-byte slot.
                 let elem_kinds: Vec<Ty> = match self.tcx.kind_of(elem_ty) {

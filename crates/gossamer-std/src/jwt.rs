@@ -7,20 +7,20 @@
 //! is audited and constant-time; the vulnerable `rsa 0.9.x` crate
 //! (RUSTSEC-2023-0071) is intentionally not linked. ES384 / ES512
 //! are absent pending p384 / p521 dependencies. Sign for RS* is
-//! not exposed — OIDC and friends are verify-only on this side.
+//! not exposed - OIDC and friends are verify-only on this side.
 //!
 //! Security invariants enforced on every verify call:
 //!
 //! * `alg: "none"` is rejected unconditionally and never emitted.
 //! * The token's `alg` header must equal the caller's expected
-//!   algorithm — there is no negotiation.
+//!   algorithm - there is no negotiation.
 //! * HMAC verifiers reject asymmetric `alg` values (`RS*` / `ES*`
 //!   / `Ed*`) and asymmetric verifiers reject HMAC `alg` values,
 //!   so an attacker cannot trick `verify_hs` into treating an
 //!   RSA public key as a shared secret.
 //! * Header `typ` must be `"JWT"` or absent; anything else is
 //!   rejected.
-//! * Header `crit` (RFC 7515 §4.1.11) is always rejected — we
+//! * Header `crit` (RFC 7515 §4.1.11) is always rejected - we
 //!   don't process critical extensions.
 //! * HMAC signature comparison runs through
 //!   [`crate::crypto::subtle::constant_time_eq`].
@@ -95,7 +95,7 @@ impl Alg {
     }
 }
 
-/// JOSE header — only the fields we care about. Unknown header
+/// JOSE header - only the fields we care about. Unknown header
 /// parameters are tolerated for forward compatibility, with the
 /// sole exception of `crit`, which is fatal per RFC 7515.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -105,7 +105,7 @@ pub struct Header {
     /// Token type. Conventionally `"JWT"`; only `"JWT"` (or absent
     /// on the wire) is accepted on verify.
     pub typ: String,
-    /// Optional key identifier (`kid`) — opaque to JWS itself; an
+    /// Optional key identifier (`kid`) - opaque to JWS itself; an
     /// application may use it to select a verification key.
     pub kid: Option<String>,
 }
@@ -136,7 +136,7 @@ impl Header {
 
         if obj.contains_key("crit") {
             return Err(Error::new(
-                "jwt: header carries crit; refusing (RFC 7515 §4.1.11 — unknown critical extensions)",
+                "jwt: header carries crit; refusing (RFC 7515 §4.1.11 - unknown critical extensions)",
             ));
         }
 
@@ -171,19 +171,19 @@ impl Header {
 /// surfaced directly; everything else goes into `custom`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Claims {
-    /// `iss` — token issuer.
+    /// `iss` - token issuer.
     pub iss: Option<String>,
-    /// `sub` — token subject.
+    /// `sub` - token subject.
     pub sub: Option<String>,
-    /// `aud` — token audience (one or many).
+    /// `aud` - token audience (one or many).
     pub aud: Option<Vec<String>>,
-    /// `exp` — expiration time, seconds since the Unix epoch.
+    /// `exp` - expiration time, seconds since the Unix epoch.
     pub exp: Option<i64>,
-    /// `nbf` — not-before time, seconds since the Unix epoch.
+    /// `nbf` - not-before time, seconds since the Unix epoch.
     pub nbf: Option<i64>,
-    /// `iat` — issue time, seconds since the Unix epoch.
+    /// `iat` - issue time, seconds since the Unix epoch.
     pub iat: Option<i64>,
-    /// `jti` — opaque, application-chosen token identifier.
+    /// `jti` - opaque, application-chosen token identifier.
     pub jti: Option<String>,
     /// Application-defined extra claims. Round-tripped verbatim.
     pub custom: serde_json::Map<String, serde_json::Value>,
@@ -276,7 +276,7 @@ impl Claims {
 
     /// Adds or replaces a single custom claim. Reserved-name
     /// keys (`iss`/`sub`/`aud`/`exp`/`nbf`/`iat`/`jti`) are
-    /// silently ignored — use the typed setters instead.
+    /// silently ignored - use the typed setters instead.
     #[must_use]
     pub fn custom(mut self, key: impl Into<String>, value: impl Into<serde_json::Value>) -> Self {
         let key = key.into();
@@ -505,7 +505,7 @@ pub fn verify_hs(
     }
     if header.alg != expected_alg {
         return Err(Error::new(format!(
-            "jwt: alg mismatch — token says {} but verifier expected {}",
+            "jwt: alg mismatch - token says {} but verifier expected {}",
             header.alg.as_str(),
             expected_alg.as_str()
         )));
@@ -557,7 +557,7 @@ pub fn verify_es256(
     }
     if header.alg != Alg::Es256 {
         return Err(Error::new(format!(
-            "jwt: alg mismatch — token says {} but verifier expected ES256",
+            "jwt: alg mismatch - token says {} but verifier expected ES256",
             header.alg.as_str()
         )));
     }
@@ -591,7 +591,7 @@ pub fn sign_eddsa(claims: &Claims, signing_key_pem: &str) -> Result<String, Erro
     let signing_input = build_signing_input(&header, claims)?;
     let signing = SigningKey::from_pkcs8_pem(signing_key_pem)
         .map_err(|e| Error::new(format!("jwt: EdDSA secret pem: {e}")))?;
-    // Ed25519 signatures are natively 64 raw bytes — no DER detour.
+    // Ed25519 signatures are natively 64 raw bytes - no DER detour.
     let sig = signing.sign(signing_input.as_bytes());
     Ok(format!(
         "{signing_input}.{}",
@@ -617,7 +617,7 @@ pub fn verify_eddsa(
     }
     if header.alg != Alg::EdDsa {
         return Err(Error::new(format!(
-            "jwt: alg mismatch — token says {} but verifier expected EdDSA",
+            "jwt: alg mismatch - token says {} but verifier expected EdDSA",
             header.alg.as_str()
         )));
     }
@@ -650,7 +650,7 @@ pub fn verify_eddsa(
 /// `RSA PUBLIC KEY` for raw PKCS#1).
 ///
 /// `expected_alg` must be one of `Alg::Rs256` / `Alg::Rs384` /
-/// `Alg::Rs512` — anything else is a hard error so callers can't
+/// `Alg::Rs512` - anything else is a hard error so callers can't
 /// route a non-RSA token through this entry. Verification runs
 /// through `ring`'s constant-time RSA implementation; the
 /// vulnerable `rsa 0.9.x` crate is not linked.
@@ -676,7 +676,7 @@ pub fn verify_rs(
     }
     if header.alg != expected_alg {
         return Err(Error::new(format!(
-            "jwt: alg mismatch — token says {} but verifier expected {}",
+            "jwt: alg mismatch - token says {} but verifier expected {}",
             header.alg.as_str(),
             expected_alg.as_str()
         )));
@@ -734,7 +734,7 @@ pub fn verify_rs512(
 /// Parses an RSA public key from PEM. Accepts both SPKI
 /// (`BEGIN PUBLIC KEY`, the JOSE / OIDC convention) and bare
 /// PKCS#1 (`BEGIN RSA PUBLIC KEY`). Returns `(modulus_be, exponent_be)`
-/// with leading zero bytes stripped — the shape ring expects.
+/// with leading zero bytes stripped - the shape ring expects.
 fn parse_rsa_public_key_pem(pem: &str) -> Result<(Vec<u8>, Vec<u8>), Error> {
     use std::io::Cursor;
     use x509_parser::pem::Pem;
@@ -780,7 +780,7 @@ fn parse_rsa_public_key_pem(pem: &str) -> Result<(Vec<u8>, Vec<u8>), Error> {
     Ok((strip_leading_zeros(&n_bytes), strip_leading_zeros(&e_bytes)))
 }
 
-/// Strips leading 0x00 bytes from a big-endian integer encoding —
+/// Strips leading 0x00 bytes from a big-endian integer encoding -
 /// ASN.1 INTEGER prepends a zero byte to keep the high bit clear,
 /// but ring wants the unpadded magnitude.
 fn strip_leading_zeros(bytes: &[u8]) -> Vec<u8> {
@@ -901,7 +901,7 @@ fn build_signing_input(header: &Header, claims: &Claims) -> Result<String, Error
 /// every structural decode but no signature verification and no
 /// claim validation.
 fn split_and_decode(token: &str) -> Result<(Header, Claims, String, Vec<u8>), Error> {
-    // Reject tokens with stray dots before doing any allocation —
+    // Reject tokens with stray dots before doing any allocation -
     // a JWS compact token is exactly three segments.
     let parts: Vec<&str> = token.split('.').collect();
     if parts.len() != 3 {
@@ -932,7 +932,7 @@ fn validate_claims(claims: &Claims, opts: &VerifyOpts) -> Result<(), Error> {
 
     if opts.validate_exp {
         if let Some(exp) = claims.exp {
-            // exp is the absolute deadline — token is valid while
+            // exp is the absolute deadline - token is valid while
             // now <= exp + leeway. Use saturating math to avoid
             // wrap on pathological leeway values.
             if now > exp.saturating_add(leeway) {
@@ -1116,7 +1116,7 @@ fn b64url_decode(input: &str) -> Result<Vec<u8>, Error> {
             out.push(((acc >> bits) & 0xff) as u8);
         }
     }
-    // Remaining bits must be zero — otherwise this is malformed.
+    // Remaining bits must be zero - otherwise this is malformed.
     if bits > 0 && (acc & ((1u32 << bits) - 1)) != 0 {
         return Err(Error::new("jwt: base64url: non-zero padding bits"));
     }
@@ -1277,7 +1277,7 @@ mod tests {
 
     #[test]
     fn hs256_matches_rfc7515_a1_vector() {
-        // RFC 7515 Appendix A.1 — known HS256 test vector.
+        // RFC 7515 Appendix A.1 - known HS256 test vector.
         // Header: {"typ":"JWT","alg":"HS256"}
         // Payload: {"iss":"joe","exp":1300819380,"http://example.com/is_root":true}
         // Key: the 64-byte octet string from Appendix A.1.
@@ -1332,7 +1332,7 @@ mod tests {
 
     #[test]
     fn alg_none_rejected_on_verify() {
-        // Construct a token with alg "none" by hand — no signature
+        // Construct a token with alg "none" by hand - no signature
         // segment computed, but the third segment is present and
         // empty so the token has the expected three-segment shape.
         let header = serde_json::json!({"alg":"none","typ":"JWT"});
@@ -1623,7 +1623,7 @@ c8sXVMOsEK3V1GrcN6CNDucJtVeSEfkcY+QFEBvyNTEnv6TxOnBq2VtJeQb5HQNE\n\
 
     /// Mints an RS{256,384,512} token by signing `claims` with the
     /// fixture private key through ring. Used only inside the test
-    /// module — `verify_rs` is the surface this whole file exposes.
+    /// module - `verify_rs` is the surface this whole file exposes.
     fn mint_rs_token(alg: Alg, claims: &Claims) -> String {
         let padding: &'static dyn ring::signature::RsaEncoding = match alg {
             Alg::Rs256 => &ring::signature::RSA_PKCS1_SHA256,
@@ -1660,7 +1660,7 @@ c8sXVMOsEK3V1GrcN6CNDucJtVeSEfkcY+QFEBvyNTEnv6TxOnBq2VtJeQb5HQNE\n\
         let token = mint_rs_token(Alg::Rs256, &Claims::new().subject("alice"));
         // Flip a byte well inside the signature segment so the
         // base64url length and final-quartet padding bits stay
-        // valid — we want a cryptographic-mismatch reject, not a
+        // valid - we want a cryptographic-mismatch reject, not a
         // structural one.
         let last_dot = token.rfind('.').expect("token has 2 dots");
         let mut bytes = token.into_bytes();

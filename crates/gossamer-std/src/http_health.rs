@@ -1,4 +1,4 @@
-//! Runtime support for `std::http::health` — operational health,
+//! Runtime support for `std::http::health` - operational health,
 //! readiness, and liveness endpoints.
 //!
 //! A `Health` builder collects named `Probe`s; each probe runs a
@@ -8,13 +8,13 @@
 //!
 //! Conventional split:
 //!
-//! - `/liveness` — process up and not deadlocked. Returns 200 with
+//! - `/liveness` - process up and not deadlocked. Returns 200 with
 //!   an empty body unless the process is wedged. Kubernetes uses
 //!   this to decide when to restart.
-//! - `/readiness` — process able to serve traffic. Returns 200 when
+//! - `/readiness` - process able to serve traffic. Returns 200 when
 //!   all downstream probes pass; 503 otherwise. Kubernetes uses
 //!   this to gate inclusion in the load balancer.
-//! - `/health` — combined view; typically mirrors readiness for
+//! - `/health` - combined view; typically mirrors readiness for
 //!   convenience.
 //!
 //! Probes that take more than ~1 s should run on a background
@@ -77,7 +77,7 @@ impl Health {
 
     /// Registers a probe with an explicit deadline. Probes that
     /// take longer than `timeout` are reported as failed with a
-    /// timeout message — useful for downstream calls.
+    /// timeout message - useful for downstream calls.
     pub fn probe_with_timeout(
         &self,
         name: impl Into<String>,
@@ -202,7 +202,7 @@ fn run_with_timeout(probe: &dyn Probe, timeout: Duration) -> Result<(), String> 
     // The probe runs synchronously; timeout is an upper bound on
     // wall-clock spent inside it. We measure after the call so that
     // a slow probe still completes (and we can report it). The
-    // timeout is advisory — for hard cancellation, the probe must
+    // timeout is advisory - for hard cancellation, the probe must
     // honour its own deadline.
     let start = std::time::Instant::now();
     let result = probe.check();

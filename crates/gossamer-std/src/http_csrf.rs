@@ -13,7 +13,7 @@
 //! list and (2) the header/form token byte-equals the cookie token
 //! and the HMAC verifies under the server key. A cross-origin
 //! attacker cannot read the victim's cookie, so cannot reproduce
-//! the header — even though their forged request still ships the
+//! the header - even though their forged request still ships the
 //! cookie automatically.
 
 #![forbid(unsafe_code)]
@@ -33,7 +33,7 @@ use crate::http_cookie::{Cookie, SameSite, parse_cookie_header};
 /// Route-marker enum a handler attaches to declare its auth model.
 ///
 /// CSRF middleware reads this to decide whether to enforce a token
-/// check — bearer-only routes are exempt because the attacker would
+/// check - bearer-only routes are exempt because the attacker would
 /// need to steal the bearer token outright, which the browser does
 /// not auto-attach the way it does cookies.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -169,7 +169,7 @@ pub fn verify_token(
     let (header_nonce_b64, _) = split_token(token_from_header_or_form)?;
 
     // The nonce portion of cookie vs supplied must match exactly.
-    // Constant-time on the base64 form is fine — the byte length is
+    // Constant-time on the base64 form is fine - the byte length is
     // identical for any valid 32-byte nonce.
     if !constant_time_eq(cookie_nonce_b64.as_bytes(), header_nonce_b64.as_bytes()) {
         return Err(Error::new("csrf: token mismatch"));
@@ -218,7 +218,7 @@ pub fn extract_token(request: &Request, config: &Config) -> Option<String> {
 /// `config.trusted_origins`.
 ///
 /// When the trusted list is empty the check falls back to "same
-/// `Host`" — i.e. the request's `Origin` scheme+host must equal its
+/// `Host`" - i.e. the request's `Origin` scheme+host must equal its
 /// own `Host` header. Missing both `Origin` and `Referer` is treated
 /// conservatively: rejected for unsafe methods, allowed for safe
 /// ones. Same-`Host` fallback exists because a fresh deployment with
@@ -308,7 +308,7 @@ pub fn check(request: &Request, route_auth: RouteAuth, config: &Config) -> Resul
 /// The cookie is intentionally **not** `HttpOnly` because the SPA
 /// needs to read it from JS to echo into the `X-CSRF-Token` header.
 /// This is the defining tradeoff of the double-submit pattern:
-/// the cookie's value is not itself a secret — it is the round-trip
+/// the cookie's value is not itself a secret - it is the round-trip
 /// equality of cookie and header (under the server's HMAC) that
 /// proves the request came from a page that ran on the same origin.
 pub fn attach_cookie(response: &mut Response, token: &str, config: &Config) {
@@ -706,7 +706,7 @@ mod tests {
 
     #[test]
     fn check_post_none_auth_with_cookie_still_enforced() {
-        // RouteAuth::None still enforces when an unsafe method arrives —
+        // RouteAuth::None still enforces when an unsafe method arrives -
         // the spec is "exempt for safe, enforced for unsafe with cookies".
         let cfg = Config::new(key()).trust_origin("https://app.example.com");
         let token = issue_token(&cfg.key).expect("issue");

@@ -20,7 +20,7 @@ pub(crate) const PRELUDE_SENTINEL: NodeId = NodeId::DUMMY;
 
 /// True for bindings inserted by [`ScopeStack::with_prelude`].
 /// Those are the only entries `insert_type` / `insert_value`
-/// silently overwrite — a non-prelude collision stays an error.
+/// silently overwrite - a non-prelude collision stays an error.
 fn is_prelude_binding(b: &Binding) -> bool {
     matches!(
         b.resolution,
@@ -74,8 +74,8 @@ pub(crate) struct Scope {
 
 impl Scope {
     /// Returns `false` when the slot is already occupied by a
-    /// non-prelude binding (a real duplicate). Prelude bindings —
-    /// inserted by `with_prelude` with `PRELUDE_SENTINEL` — get
+    /// non-prelude binding (a real duplicate). Prelude bindings -
+    /// inserted by `with_prelude` with `PRELUDE_SENTINEL` - get
     /// silently overwritten so user definitions can shadow them
     /// (e.g. `fn clamp(...)` overriding the new prelude `clamp`).
     pub(crate) fn insert_type(&mut self, name: impl Into<Symbol>, binding: Binding) -> bool {
@@ -237,7 +237,7 @@ const PRELUDE_VALUES: &[&str] = &[
     // returns a handle whose `.join()` blocks for the outcome. Bare
     // prelude name so a user `fn spawn` overrides it.
     "spawn",
-    // `channel()` — typed goroutine channel constructor. Prelude so the
+    // `channel()` - typed goroutine channel constructor. Prelude so the
     // injected `time::after` / `time::tick` timer wrappers can build a
     // channel without the user importing `std::sync::channel`.
     "channel",

@@ -2,13 +2,13 @@
 //!
 //! Three pieces of state turn a position into a semantic answer:
 //!
-//! * `LocateResult` — the smallest path / pattern / ident the cursor sits in,
+//! * `LocateResult` - the smallest path / pattern / ident the cursor sits in,
 //!   produced by walking the AST once per request.
-//! * [`DefinitionIndex`] — `DefId → (Ident, Span, DefKind)` plus a `NodeId →
+//! * [`DefinitionIndex`] - `DefId → (Ident, Span, DefKind)` plus a `NodeId →
 //!   (Ident, Span)` map for every `let`-bound, `for`-bound, fn-parameter, and
 //!   pattern-bound local. Built once per analysis run and reused across
 //!   hover / definition / references.
-//! * [`PathOccurrence`] — every path expression and type path resolved by
+//! * [`PathOccurrence`] - every path expression and type path resolved by
 //!   the resolver, recorded with its head segment span. Lets references /
 //!   rename find every use of a definition without re-walking the tree.
 
@@ -63,7 +63,7 @@ pub(crate) enum Locate {
         name: String,
     },
     /// Cursor is on a struct-pattern field name. Method-call receivers and
-    /// regular field accesses fall under this too — the field span anchors
+    /// regular field accesses fall under this too - the field span anchors
     /// hover and rename.
     Field {
         /// Receiver `NodeId` (Expr or Pattern) the field belongs to.
@@ -100,7 +100,7 @@ impl Walker {
         }
         if let Some(current) = &self.best {
             let current_span = locate_span(current);
-            // Prefer the tighter (smaller) span — leaf wins over its ancestor.
+            // Prefer the tighter (smaller) span - leaf wins over its ancestor.
             if span_width(span) < span_width(current_span) {
                 self.best = Some(candidate);
             }
@@ -273,7 +273,7 @@ impl Walker {
 
     #[allow(
         clippy::too_many_lines,
-        reason = "flat-shape dispatch / lowering — splitting hides the per-arm intent"
+        reason = "flat-shape dispatch / lowering - splitting hides the per-arm intent"
     )]
     fn visit_expr(&mut self, expr: &Expr) {
         match &expr.kind {
@@ -556,7 +556,7 @@ fn contains(span: Span, offset: u32) -> bool {
     span.start <= offset && offset <= span.end
 }
 
-/// Best-effort span for `name` inside `fallback` — the parser does not
+/// Best-effort span for `name` inside `fallback` - the parser does not
 /// stash spans on `Ident`, but the head identifier of a path always sits
 /// at the path's `start`. Accurate for top-level paths; for sub-segments
 /// we fall back to the whole-expression span.
@@ -602,7 +602,7 @@ pub(crate) struct DefinitionInfo {
     /// -> bool`). Empty for kinds that don't have a useful single-line
     /// rendering (e.g. modules).
     pub signature: String,
-    /// Doc comment — the leading `///` block right above the declaration,
+    /// Doc comment - the leading `///` block right above the declaration,
     /// joined into a single string (one `\n` per line, no leading slashes).
     pub docs: String,
 }
@@ -680,7 +680,7 @@ impl DefinitionIndex {
 
     #[allow(
         clippy::too_many_lines,
-        reason = "flat-shape dispatch / lowering — splitting hides the per-arm intent"
+        reason = "flat-shape dispatch / lowering - splitting hides the per-arm intent"
     )]
     fn visit_item(&mut self, item: &Item, source: &str, resolutions: &Resolutions) {
         let docs = doc_block_above(source, item.span.start);
@@ -877,7 +877,7 @@ impl DefinitionIndex {
 
     #[allow(
         clippy::too_many_lines,
-        reason = "flat-shape dispatch / lowering — splitting hides the per-arm intent"
+        reason = "flat-shape dispatch / lowering - splitting hides the per-arm intent"
     )]
     fn collect_expr_locals(&mut self, expr: &Expr) {
         match &expr.kind {

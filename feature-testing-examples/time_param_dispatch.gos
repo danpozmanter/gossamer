@@ -3,7 +3,7 @@
 // annotation, not via inference. The annotation must resolve to the
 // transparent newtype kind so `d.as_millis()` / `t.elapsed_ms()`
 // dispatch on the receiver's static type and reach the same runtime
-// helper the qualified free call uses — on every tier. The inference
+// helper the qualified free call uses - on every tier. The inference
 // form (`let d = time::Duration::from_millis(..)`) already locks this;
 // this fixture covers the annotation form, which previously fell to
 // name-global dispatch and failed to lower on the compiled tiers.

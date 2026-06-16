@@ -1,4 +1,4 @@
-//! Cranelift intrinsic lowering — String / Vec primitive helpers
+//! Cranelift intrinsic lowering - String / Vec primitive helpers
 //! (length, slice, byte access, concat, etc). Fourth and final
 //! partition in the dispatch chain. Holds
 //! `lower_intrinsic_call_string`.
@@ -80,7 +80,7 @@
 //! the process exit code, so the object file links through a
 //! standard `cc` invocation.
 //! Aggregates (tuples/arrays/structs), strings, closures, and
-//! anything that needs a GC heap are not yet lowered — those
+//! anything that needs a GC heap are not yet lowered - those
 //! constructs fall back to [`crate::emit::emit_module`] for
 //! inspection.
 
@@ -375,7 +375,7 @@ pub(super) fn lower_intrinsic_call_string(
             );
             Ok(true)
         }
-        // ---- Heap [u8] primitive (`U8Vec`) — 1 byte per element ----
+        // ---- Heap [u8] primitive (`U8Vec`) - 1 byte per element ----
         "U8Vec::new" | "heap_u8::new" | "gos_rt_heap_u8_new" => {
             let len = match args.first() {
                 Some(a) => lower_operand(
@@ -537,7 +537,7 @@ pub(super) fn lower_intrinsic_call_string(
             );
             Ok(true)
         }
-        // `buf.to_string(len)` — freezes the first `len` bytes of
+        // `buf.to_string(len)` - freezes the first `len` bytes of
         // a `U8Vec` build buffer into an immutable `String`.
         "gos_rt_heap_u8_to_string" => {
             let v = match args.first() {
@@ -1014,7 +1014,7 @@ pub(super) fn lower_intrinsic_call_string(
             );
             Ok(true)
         }
-        // `Vec<T>::len()` — the runtime exposes `len` as the first
+        // `Vec<T>::len()` - the runtime exposes `len` as the first
         // i64 of the `#[repr(C)] GosVec { len, cap, elem_bytes, ptr }`
         // header (see runtime/src/c_abi.rs:1791). Inline the read as
         // a null check + offset-0 load so the for-loop bound check
@@ -1233,7 +1233,7 @@ pub(super) fn lower_intrinsic_call_string(
         "gos_rt_str_find" | "gos_rt_str_find_opt" => {
             // `find_opt` returns `*mut GosResult` (Option<i64>);
             // the bare `find` returns raw i64. Both share two
-            // `*const c_char` argument shapes — pick the result
+            // `*const c_char` argument shapes - pick the result
             // type by the symbol name.
             let (sym, ret_ty): (&'static str, _) = if name == "gos_rt_str_find_opt" {
                 ("gos_rt_str_find_opt", ptr_ty)
@@ -1329,7 +1329,7 @@ pub(super) fn lower_intrinsic_call_string(
                 &[ptr_ty]
             };
             // `extern_fn` keys on a `&'static str`; leak the
-            // matched name once. Bounded leak — at most two
+            // matched name once. Bounded leak - at most two
             // entries (split + lines) across the program.
             let static_name: &'static str = match name {
                 "gos_rt_str_split" => "gos_rt_str_split",
@@ -1498,7 +1498,7 @@ pub(super) fn lower_intrinsic_call_string(
         // call the runtime's typed push. The runtime reads
         // `vec.elem_bytes` bytes from the pointer we pass, so for
         // multi-slot aggregates (tuples / structs / inline arrays)
-        // we must pass the address of the actual storage —
+        // we must pass the address of the actual storage -
         // spilling the operand's pointer-value into an 8-byte
         // slot leaks only the first word and rereads adjacent
         // stack bytes for the rest. Scalars still go through the
@@ -1523,12 +1523,12 @@ pub(super) fn lower_intrinsic_call_string(
             let agg_slots = elem_arg.and_then(|a| operand_aggregate_slots(body, tcx, a));
             let elem_addr = if let (Some(slots), Some(a)) = (agg_slots, elem_arg) {
                 // Multi-slot aggregate operand. Take the address of
-                // its backing storage and pass it through — the
+                // its backing storage and pass it through - the
                 // runtime memcpys `slots * 8` bytes into the vec.
                 let _ = slots;
                 let Operand::Copy(place) = a else {
                     // operand_aggregate_slots only returns Some for
-                    // Copy(place) — unreachable otherwise.
+                    // Copy(place) - unreachable otherwise.
                     unreachable!("aggregate-slot operand must be Copy(place)")
                 };
                 lower_place_address(module, builder, locals, body, tcx, place, intrinsics)?
@@ -1596,7 +1596,7 @@ pub(super) fn lower_intrinsic_call_string(
             );
             Ok(true)
         }
-        // `arr[lo..hi]` — copies a subrange into a new GosVec.
+        // `arr[lo..hi]` - copies a subrange into a new GosVec.
         "gos_rt_vec_slice" => {
             let f = intrinsics.extern_fn(
                 module,
@@ -1639,7 +1639,7 @@ pub(super) fn lower_intrinsic_call_string(
             );
             Ok(true)
         }
-        // `vec_get_ptr(v, i)` — returns a `*mut u8` pointer to
+        // `vec_get_ptr(v, i)` - returns a `*mut u8` pointer to
         // the i-th element's slot. Used by the for-vec loop
         // lowering to read each element via a follow-up
         // `gos_load(ptr, 0)` so the same code handles scalar
@@ -1681,7 +1681,7 @@ pub(super) fn lower_intrinsic_call_string(
             );
             Ok(true)
         }
-        // `v.pop()` — `gos_rt_vec_pop_opt` returns the popped
+        // `v.pop()` - `gos_rt_vec_pop_opt` returns the popped
         // element as a packed Option and routes through the
         // generic forwarding below (same shape as `v.first()`).
         // Generic forwarding for the new stdlib helpers added in

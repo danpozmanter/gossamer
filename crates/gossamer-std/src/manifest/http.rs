@@ -103,7 +103,7 @@ pub const TLS: StdModule = StdModule {
 
 pub const HTML_TEMPLATE: StdModule = StdModule {
     path: "std::html::template",
-    summary: "Context-aware HTML templates with auto-escape (text/attr/URL/JS). The context classifier is heuristic — sound for typical server-rendered responses but NOT a content-security-policy substitute; sanitize untrusted HTML fragments with a dedicated sanitizer.",
+    summary: "Context-aware HTML templates with auto-escape (text/attr/URL/JS). The context classifier is heuristic - sound for typical server-rendered responses but NOT a content-security-policy substitute; sanitize untrusted HTML fragments with a dedicated sanitizer.",
     items: &[
         StdItem {
             name: "Template",
@@ -187,7 +187,7 @@ pub const HTTP: StdModule = StdModule {
         StdItem {
             name: "serve",
             kind: StdItemKind::Function,
-            doc: "Convenience: bind and serve an HTTP handler. `Result<(), Error>` — a bind failure is an Err value.",
+            doc: "Convenience: bind and serve an HTTP handler. `Result<(), Error>` - a bind failure is an Err value.",
         },
         StdItem {
             name: "Client",
@@ -244,7 +244,7 @@ pub const HTTP: StdModule = StdModule {
             kind: StdItemKind::Function,
             doc: "One-shot OPTIONS: `(url, headers) -> Result<Response, Error>`.",
         },
-        // HTTP/2 surface — folded in per the Go model.
+        // HTTP/2 surface - folded in per the Go model.
         StdItem {
             name: "Http2Handler",
             kind: StdItemKind::Trait,
@@ -298,7 +298,7 @@ pub const HTTP: StdModule = StdModule {
         StdItem {
             name: "Trailers",
             kind: StdItemKind::Type,
-            doc: "HTTP/2 trailing HEADERS (alias for Headers) — used by `ResponseWriter::write_trailers` and `Request::trailers`.",
+            doc: "HTTP/2 trailing HEADERS (alias for Headers) - used by `ResponseWriter::write_trailers` and `Request::trailers`.",
         },
         StdItem {
             name: "PushOptions",
@@ -510,7 +510,7 @@ pub const HTTP_SSE: StdModule = StdModule {
         StdItem {
             name: "Stream",
             kind: StdItemKind::Type,
-            doc: "Active SSE stream — handler writes events through it (Rust-side).",
+            doc: "Active SSE stream - handler writes events through it (Rust-side).",
         },
         StdItem {
             name: "Event",

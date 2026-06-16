@@ -42,9 +42,9 @@ fn callee_is_diagnostic(callee: &HirExpr) -> bool {
 /// admits only side-effect-transparent, control-flow-free shapes:
 /// literals, name reads, arithmetic, casts, indexing, field / tuple
 /// access, and nested calls (which may themselves inline). Everything
-/// else — control flow (`if` / `match` / loops / `return` / `break` /
+/// else - control flow (`if` / `match` / loops / `return` / `break` /
 /// `continue`), closures, `go` / `select`, assignment, and method calls
-/// — rejects the function, keeping the MVP correctness-first.
+/// - rejects the function, keeping the MVP correctness-first.
 fn tail_inline_cost(expr: &HirExpr) -> Option<usize> {
     use HirExprKind as K;
     let children = match &expr.kind {
@@ -111,8 +111,8 @@ impl<'tcx> FnBuilder<'tcx> {
     /// Inlines a call to a detected [`InlinableFn`] by re-compiling the
     /// callee's tail expression directly into the caller, with the
     /// callee's parameters bound to the already-compiled argument
-    /// registers. Returns `Some(tail_reg)` — preserving the tail's
-    /// `RegKind` so a numeric result stays unboxed — or `None` when the
+    /// registers. Returns `Some(tail_reg)` - preserving the tail's
+    /// `RegKind` so a numeric result stays unboxed - or `None` when the
     /// call is not inlinable (unknown callee, arity mismatch, recursion,
     /// or budget exhausted), in which case the caller emits a real
     /// `Op::Call`.
@@ -144,7 +144,7 @@ impl<'tcx> FnBuilder<'tcx> {
         }
         // Copy the `'tcx` map reference out of `self` first so the looked
         // up `&InlinableFn` is independent of the `&mut self` borrows
-        // below — no clone of the callee's HIR is needed.
+        // below - no clone of the callee's HIR is needed.
         let fns: &'tcx InlinableFns = self.inline_fns;
         let Some(info) = fns.get(seg.name.as_str()) else {
             return Ok(None);
@@ -164,7 +164,7 @@ impl<'tcx> FnBuilder<'tcx> {
             return Ok(None);
         }
         // Evaluate every argument once, left-to-right, in the caller's
-        // current scope — matching call-by-value evaluation order.
+        // current scope - matching call-by-value evaluation order.
         let mut arg_regs: Vec<TypedReg> = Vec::with_capacity(args.len());
         for arg in args {
             arg_regs.push(self.compile_expr_ex(arg)?);

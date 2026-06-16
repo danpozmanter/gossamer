@@ -1,5 +1,5 @@
 // A hot scalar-signature caller that, before inlining, called a small
-// helper returning a String (an excluded aggregate-signature body) —
+// helper returning a String (an excluded aggregate-signature body) -
 // which poisoned the caller's JIT eligibility. Post-inline the helper
 // is dissolved and `hot_sum` is a self-contained promotable body.
 fn label_len(i: i64) -> i64 {

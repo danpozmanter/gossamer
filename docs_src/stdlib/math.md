@@ -48,7 +48,7 @@ Mathematical constants and f64 functions (Go's math package shape).
 | `nan` | fn | Returns the IEEE 754 NaN value. |
 | `inf` | fn | Returns ±infinity based on sign. |
 | `copysign` | fn | Magnitude of x with sign of y. |
-| `dim` | fn | max(x-y, 0) — Go's math.Dim. |
+| `dim` | fn | max(x-y, 0) - Go's math.Dim. |
 | `sinh` | fn | Hyperbolic sine. |
 | `cosh` | fn | Hyperbolic cosine. |
 | `tanh` | fn | Hyperbolic tangent. |

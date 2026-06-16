@@ -116,7 +116,7 @@ impl<'a> Lowerer<'a> {
             }
             // A struct/tuple field whose own value is a single-slot
             // aggregate (e.g. a nested `struct Inner { tag: i64 }`) must be
-            // copied by value into the parent's slot — `lower_operand` of an
+            // copied by value into the parent's slot - `lower_operand` of an
             // aggregate place yields its *address*, so the scalar-store branch
             // would embed a pointer and the parent would read it back inline as
             // garbage. Route 1-slot aggregate copies through the memcpy branch.
@@ -135,7 +135,7 @@ impl<'a> Lowerer<'a> {
             } else {
                 // Nested aggregate. The operand may be either a
                 // bare-local copy (`Operand::Copy(p)` with empty
-                // projection — the original supported shape) or
+                // projection - the original supported shape) or
                 // a projected place (`base.inner`, `tuple.0`,
                 // etc.). For both, the source is an in-memory
                 // place whose address we compute through
@@ -182,7 +182,7 @@ impl<'a> Lowerer<'a> {
         Ok(())
     }
 
-    /// `[value; count]` — fills `count` slots with the same
+    /// `[value; count]` - fills `count` slots with the same
     /// scalar `value`. Small counts are unrolled (`llc -O3`
     /// later SLP-vectorises); larger counts drop into a
     /// tight loop to keep module text small.

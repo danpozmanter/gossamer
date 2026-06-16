@@ -366,7 +366,7 @@ fn missing_variants(all: &[String], patterns: &[&Pat]) -> Vec<String> {
 /// Returns a missing payload witness for `variant_name` when its
 /// matched arms don't cover every shape its payload can take.
 /// Currently handles single-field bool payloads
-/// (`enum E { V(bool) }` — missing `V(true)` if only `V(false)`
+/// (`enum E { V(bool) }` - missing `V(true)` if only `V(false)`
 /// was matched).
 fn missing_payload_witness(variant_name: &str, patterns: &[&Pat]) -> Option<String> {
     let mut bool_field_seen_true = false;
@@ -388,7 +388,7 @@ fn missing_payload_witness(variant_name: &str, patterns: &[&Pat]) -> Option<Stri
                     Pat::Wild => {
                         // Wildcard payload covers both. Only treat
                         // as bool-domain if we've also seen a real
-                        // bool field elsewhere — otherwise a
+                        // bool field elsewhere - otherwise a
                         // wildcard payload is a wildcard over an
                         // unknown type.
                         bool_field_seen_wild = true;
@@ -721,7 +721,7 @@ mod m13_tests {
         let later = Pat::Tuple(vec![Pat::Bool(true), Pat::Bool(true)]);
         assert!(
             !subsumes(&earlier, &later),
-            "(true, false) must NOT subsume (true, true) — they're disjoint"
+            "(true, false) must NOT subsume (true, true) - they're disjoint"
         );
     }
 

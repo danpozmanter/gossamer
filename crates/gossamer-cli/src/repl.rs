@@ -19,7 +19,7 @@ pub(crate) fn cmd_repl() -> Result<()> {
     use crate::repl_helper::GosReplHelper;
 
     println!(
-        "gos repl — type an expression or declaration\n\
+        "gos repl - type an expression or declaration\n\
          up/down cycles history · Enter continues until braces close · Ctrl-D or %quit exits"
     );
 
@@ -45,7 +45,7 @@ pub(crate) fn cmd_repl() -> Result<()> {
     if tty {
         crate::style::force_enable();
     }
-    // Greeting on a TTY only — keeps non-interactive consumers
+    // Greeting on a TTY only - keeps non-interactive consumers
     // (`echo expr | gos`) clean.
     if tty {
         println!(
@@ -203,8 +203,8 @@ pub(crate) fn cmd_repl() -> Result<()> {
 }
 
 /// Validates that the accumulated declarations parse, resolve, and
-/// compile onto the VM. The built `Vm` is discarded — the REPL keeps
-/// declarations as source strings and full-recompiles each input — so
+/// compile onto the VM. The built `Vm` is discarded - the REPL keeps
+/// declarations as source strings and full-recompiles each input - so
 /// this is purely a probe: `Ok(())` means the declaration set is
 /// loadable, `Err` rolls back the just-added declaration.
 fn rebuild_session(declarations: &[String]) -> std::result::Result<(), String> {

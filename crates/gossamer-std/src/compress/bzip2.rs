@@ -1,4 +1,4 @@
-// Runtime support for `std::compress::bzip2` — bzip2 compress/decompress.
+// Runtime support for `std::compress::bzip2` - bzip2 compress/decompress.
 
 #![forbid(unsafe_code)]
 
@@ -7,7 +7,7 @@ use bzip2::read::{BzDecoder, BzEncoder};
 
 use crate::io::IoError;
 
-/// Compresses `data` with bzip2 at the given level (0–9; 0 = fastest, 9 = best).
+/// Compresses `data` with bzip2 at the given level (0-9; 0 = fastest, 9 = best).
 pub fn compress(data: &[u8], level: u32) -> Result<Vec<u8>, IoError> {
     use std::io::Read as _;
     let level = Compression::new(level.clamp(0, 9));

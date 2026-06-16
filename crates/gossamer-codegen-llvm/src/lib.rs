@@ -4,7 +4,7 @@
 //! default for `gos build`. This crate mirrors its
 //! `compile_to_object` signature but emits LLVM IR text and
 //! shells out to `llc -O3` for aggressive optimisation
-//! (auto-vectorisation, loop unrolling, instcombine, SLP) —
+//! (auto-vectorisation, loop unrolling, instcombine, SLP) -
 //! the scalar-only scenarios where Cranelift leaves perf on
 //! the table.
 //!
@@ -12,7 +12,7 @@
 //! shell out to it so this crate stays FFI-free: no
 //! `inkwell`/`llvm-sys` dependency, no unsafe Rust, no
 //! build-time LLVM header requirements. The runtime `.a`
-//! staticlib is unchanged — the linker stage (`cc`) wires
+//! staticlib is unchanged - the linker stage (`cc`) wires
 //! the LLVM-produced object against it the same way as
 //! Cranelift's.
 //!

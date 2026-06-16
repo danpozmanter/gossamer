@@ -13,7 +13,7 @@ use std::os::raw::c_char;
 use super::*;
 
 // ---------------------------------------------------------------
-// sync::Map — concurrent String -> String map
+// sync::Map - concurrent String -> String map
 // ---------------------------------------------------------------
 //
 // Wraps `parking_lot::RwLock<HashMap<String, String>>`. Reads

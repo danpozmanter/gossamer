@@ -15,7 +15,7 @@ use std::os::raw::c_char;
 use super::*;
 
 // ---------------------------------------------------------------
-// encoding::yaml — YAML 1.2 parsing + emission via `serde_yaml`.
+// encoding::yaml - YAML 1.2 parsing + emission via `serde_yaml`.
 // Returns `Result<String, errors::Error>` for fallible operations.
 // Mirrors the toml_enc.rs surface so the auto-derive synthesizer
 // can reuse the same JSON-as-lingua-franca shape.
@@ -98,7 +98,7 @@ fn json_to_serde_yaml(v: &serde_json::Value) -> serde_yaml::Value {
 /// `encoding::yaml::parse(text) -> Result<json::Value, Error>`.
 /// YAML is parsed and re-projected onto the JSON value tree so the
 /// dynamic document path reuses the fully-supported `json::Value`
-/// runtime type (`json::get` / `as_str` / …) on every tier — the VM's
+/// runtime type (`json::get` / `as_str` / …) on every tier - the VM's
 /// `yaml::parse` routes through the same yaml->json projection. Err
 /// payload is a c-string, matching `gos_rt_json_parse`.
 #[unsafe(no_mangle)]

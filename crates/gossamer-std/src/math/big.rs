@@ -1,4 +1,4 @@
-// Runtime support for `std::math::big` — arbitrary-precision integers.
+// Runtime support for `std::math::big` - arbitrary-precision integers.
 //
 // Wraps `num-bigint::BigInt` for signed big integers and
 // `num-bigint::BigUint` for unsigned, exposing the operations that

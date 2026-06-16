@@ -26,7 +26,7 @@ use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering, fence};
 // Every RC-managed heap object is laid out as `[ RcHeader | payload ]`.
 // The pointer the compiled program holds points at the *payload*; the
 // header sits `RC_HEADER_SIZE` bytes before it. There is no global
-// allocation registry — lifetime is owned entirely by the strong
+// allocation registry - lifetime is owned entirely by the strong
 // refcount in each object's header. This replaces the raw-pointer
 // tracing GC, which could not discover live roots precisely under
 // optimized LLVM.
@@ -57,8 +57,8 @@ pub struct RcHeader {
     /// Weak reference count (saturating). The allocation outlives `strong ==
     /// 0` whenever this is non-zero, so a `Weak` can probe liveness without
     /// reading freed memory. `u8`: an object observed by 255 simultaneous
-    /// weak handles saturates and its allocation is never reclaimed — a
-    /// leak, never a corruption — which frees the byte the enum
+    /// weak handles saturates and its allocation is never reclaimed - a
+    /// leak, never a corruption - which frees the byte the enum
     /// discriminant now occupies.
     pub weak: u8,
     /// Enum discriminant. Lives in the header (codegen reads/writes the
@@ -70,7 +70,7 @@ pub struct RcHeader {
     pub disc: u8,
     /// Interned id of the child-layout descriptor blob (see
     /// `meta_intern` / `meta_of`); 0 for leaf objects with no
-    /// RC-pointer children. The allocation size is not recorded at all —
+    /// RC-pointer children. The allocation size is not recorded at all -
     /// blocks are freed with `mi_free`, which needs only the base
     /// pointer.
     pub meta_id: u16,
@@ -98,12 +98,12 @@ const _: () = assert!(RC_HEADER_SIZE == 8, "RcHeader must remain 8 bytes");
 // Cranelift, unlike a nested pointer-laden descriptor). The header's
 // `meta` points at word 0.
 //
-//   [0] kind            — RC_KIND_*
+//   [0] kind            - RC_KIND_*
 //   [1] variant_count V
 //   then V variant records, each variable-length:
-//       disc            — discriminant value this record describes
-//       child_count C   — number of RC-pointer child words
-//       off_0 .. off_C  — payload WORD indices (byte offset / 8) holding
+//       disc            - discriminant value this record describes
+//       child_count C   - number of RC-pointer child words
+//       off_0 .. off_C  - payload WORD indices (byte offset / 8) holding
 //                         RC-managed child pointers to release
 //
 // For an enum, `release_children` reads the live discriminant from
@@ -171,7 +171,7 @@ fn rc_live_dec() {
 // Reference counting cannot reclaim cycles (`A -> B -> A` never reaches
 // count 0). A synchronous Bacon-Rajan trial-deletion collector reclaims
 // cyclic RC garbage by tracing the object graph from a buffer of
-// *candidate roots* — objects whose strong count was decremented to a
+// *candidate roots* - objects whose strong count was decremented to a
 // non-zero value (the only objects that can start a cycle). It needs no
 // stack scanning and no compiler root map, so it is sound under `-O3` by
 // construction (it never inspects a register or spill slot), and it stays
@@ -195,7 +195,7 @@ const STRONG_COUNT_MASK: u32 = 0x07FF_FFFF;
 /// Its strong count is then mutated with **atomic** retain/release so
 /// concurrent workers can't tear the count (lost decrement → UAF /
 /// double-free). Shared objects are excluded from the per-thread cycle
-/// collector — their cycles leak, exactly like Rust's `Arc` (break with
+/// collector - their cycles leak, exactly like Rust's `Arc` (break with
 /// weak refs). Set transitively over the reachable RC subgraph at the
 /// escape point by [`gos_rt_rc_mark_shared`], before the value is
 /// published, and never cleared. Because shared objects skip the
@@ -222,7 +222,7 @@ const COLOR_MASK: u32 = 0b11 << COLOR_SHIFT;
 /// reclamation cost on short-lived allocation churn.
 const REGION_BIT: u32 = 1 << 30;
 
-// Only the test asserts read this now — the hot retain/release paths
+// Only the test asserts read this now - the hot retain/release paths
 // check `REGION_BIT` inline off their single atomic `strong` load
 // (`inc_strong` / `dec_strong`) to avoid a second read.
 #[cfg(test)]
@@ -250,7 +250,7 @@ unsafe fn strong_count(h: *const RcHeader) -> u32 {
 unsafe fn set_strong_count(h: *mut RcHeader, count: u32) {
     let cur = unsafe { (*h).strong };
     // Immortal pin (unit-variant singletons): the count is never
-    // mutated — not by retain/release, not by the cycle collector's
+    // mutated - not by retain/release, not by the cycle collector's
     // trial deletion, not by the release walk's child decrements.
     if cur & STRONG_COUNT_MASK == STRONG_IMMORTAL {
         return;
@@ -271,7 +271,7 @@ unsafe fn set_strong_count(h: *mut RcHeader, count: u32) {
 // non-atomic accessors only ever see thread-local objects (shared ones
 // are excluded from the cycle collector, the only other writer).
 
-/// Relaxed atomic load of `strong` — safe to call on shared objects.
+/// Relaxed atomic load of `strong` - safe to call on shared objects.
 #[inline]
 unsafe fn load_strong(h: *const RcHeader) -> u32 {
     let a = unsafe { AtomicU32::from_ptr(std::ptr::addr_of!((*h).strong).cast_mut()) };
@@ -312,7 +312,7 @@ struct DecOutcome {
     next: u32,
     /// The object had escaped to another goroutine.
     shared: bool,
-    /// Region / immortal object — no accounting happened, never reclaim.
+    /// Region / immortal object - no accounting happened, never reclaim.
     skip: bool,
 }
 
@@ -417,7 +417,7 @@ unsafe fn set_buffered(h: *mut RcHeader, on: bool) {
     }
 }
 
-/// Whether `payload`'s *live* shape holds at least one RC-pointer child —
+/// Whether `payload`'s *live* shape holds at least one RC-pointer child -
 /// the precondition for being a cycle member. An object with no current
 /// children (a leaf, an empty-variant enum, a struct of scalars) can never
 /// start a cycle, so it is never buffered as a candidate and frees
@@ -460,7 +460,7 @@ unsafe fn possible_root(payload: *mut u8) {
     }
     let h = unsafe { header_ptr(payload) };
     // Objects that have escaped to another goroutine are excluded from
-    // the per-thread cycle collector — touching their flag bits here is a
+    // the per-thread cycle collector - touching their flag bits here is a
     // non-atomic write that would race a concurrent worker's atomic
     // retain/release. Their cycles leak (like `Arc`); break with weak refs.
     if unsafe { is_shared(h) } {
@@ -494,7 +494,7 @@ unsafe fn possible_root(payload: *mut u8) {
 // every node through libc `malloc`/`free` is the dominant cost on
 // allocation-heavy workloads; Rust's reference implementations of the
 // same programs use a bump arena. This caches freed blocks per size class
-// and hands them straight back on the next allocation of that class — a
+// and hands them straight back on the next allocation of that class - a
 // pop/push instead of a malloc/free round-trip.
 //
 // Blocks are recycled by *byte size* (rounded to `CLASS_STEP`), never by
@@ -517,7 +517,7 @@ unsafe fn possible_root(payload: *mut u8) {
 /// `mi_zalloc` directly instead of going through the Rust global-allocator
 /// facade: the facade routes every allocation through
 /// `mi_zalloc_aligned(size, align)`, and mimalloc v3's aligned entry pads
-/// the request by 8-16 bytes — a 48-byte RC node then occupies a 64-byte
+/// the request by 8-16 bytes - a 48-byte RC node then occupies a 64-byte
 /// block, a flat ~25% RAM tax on every RC object. Plain `mi_zalloc`
 /// returns exactly the requested bin and guarantees 16-byte alignment,
 /// which covers `RC_ALIGN`. Under ThreadSanitizer the global allocator is
@@ -591,8 +591,8 @@ fn tsan_sizes() -> &'static parking_lot::Mutex<std::collections::HashMap<usize, 
 // Meta interning: blob pointer <-> u16 id.
 // ---------------------------------------------------------------
 //
-// Metas are per-TYPE module constants — a program has a handful of
-// distinct ones — so the header stores a 16-bit id instead of the
+// Metas are per-TYPE module constants - a program has a handful of
+// distinct ones - so the header stores a 16-bit id instead of the
 // 8-byte pointer. Reads (`meta_of`, on every release walk) are a single
 // relaxed load from an append-only table; writes intern through a map
 // with a per-thread single-entry memo, which hits ~always because
@@ -629,8 +629,8 @@ fn meta_intern(meta: *const i64) -> u16 {
         let next = META_NEXT.fetch_add(1, Ordering::Relaxed);
         if next >= META_TABLE_CAP {
             // Table exhausted (65535 distinct metas): treat the object as
-            // a leaf. Its children are never released — a leak, never a
-            // corruption — and no realistic program has this many ADTs.
+            // a leaf. Its children are never released - a leak, never a
+            // corruption - and no realistic program has this many ADTs.
             return 0;
         }
         let id = next as u16;
@@ -662,7 +662,7 @@ unsafe fn header_ptr(payload: *mut u8) -> *mut RcHeader {
 // A region is a bump allocator on a stack of large slabs. While a region
 // is active, `gos_rt_rc_alloc` allocates from it and tags the object with
 // `REGION_BIT`; retain/release on such objects are no-ops, and the whole
-// region is freed in O(slabs) at `gos_rt_arena_pop` — never a per-node
+// region is freed in O(slabs) at `gos_rt_arena_pop` - never a per-node
 // teardown walk. The compiler guarantees no region object outlives the
 // pop (region-block results are RC-free and region values cannot be
 // assigned to outer bindings), so the bulk free is sound.
@@ -679,10 +679,10 @@ const REGION_SLAB_BYTES: usize = 1 << 20;
 // accounting entries cannot read a header bit to decide "no-op".
 // Instead every region slab is carved out of a single reserved
 // virtual range, and `in_region(ptr)` is a subtract + compare against
-// a cached global — no memory access into the object. If the reserve
+// a cached global - no memory access into the object. If the reserve
 // fails (exotic environment), regions disable themselves
 // (`gos_rt_arena_push` no-ops) and everything stays reference
-// counted with headers — slower, never unsound.
+// counted with headers - slower, never unsound.
 
 /// Virtual reservation size. Address space only; pages are committed
 /// slab-by-slab as regions actually allocate.
@@ -716,7 +716,7 @@ pub(crate) fn in_region_arena(ptr: *const u8) -> bool {
 /// bare range test would classify every pointer below `REGION_ARENA_BYTES`
 /// (64 GiB) as in-region. That holds for the low heap addresses Windows
 /// hands out, which silently turned `gos_rt_rc_retain`/`release` into
-/// no-ops there — a use-after-free, since structural frees still ran.
+/// no-ops there - a use-after-free, since structural frees still ran.
 #[inline]
 fn addr_in_region_arena(addr: usize, base: usize) -> bool {
     if base == 0 || base == usize::MAX {
@@ -833,11 +833,11 @@ fn arena_decommit(p: *mut u8, len: usize) {
 }
 
 /// Carve (or re-commit) a slab of `slab_size` bytes from the arena.
-/// Null when the arena is unavailable or exhausted — callers fall back
+/// Null when the arena is unavailable or exhausted - callers fall back
 /// to headered global allocation (sound, just unoptimised).
 /// Host page size, queried once. Slab offsets inside the reserved
 /// arena must be page-multiples or `mprotect` / `VirtualAlloc`
-/// rejects the commit — and the size is NOT universally 4 KiB
+/// rejects the commit - and the size is NOT universally 4 KiB
 /// (macOS arm64 and some aarch64 Linux kernels use 16 KiB or 64 KiB
 /// pages).
 fn os_page_size() -> usize {
@@ -959,7 +959,7 @@ thread_local! {
 
 /// Acquire a slab of `slab_size` bytes. Standard-size slabs come from the
 /// recycling pool when available (no `mmap`); oversized ones are always
-/// freshly allocated. Bytes are NOT zeroed — `region_alloc_inner` zeroes
+/// freshly allocated. Bytes are NOT zeroed - `region_alloc_inner` zeroes
 /// each handed-out allocation, so a recycled slab needs no bulk clear.
 fn acquire_slab(slab_size: usize) -> *mut u8 {
     if slab_size == REGION_SLAB_BYTES {
@@ -989,20 +989,20 @@ pub fn region_is_active() -> bool {
 
 /// Public: bump `n` zeroed, `RC_ALIGN`-aligned bytes from the active region,
 /// or null if no region is active. The bytes are freed wholesale at
-/// `arena_pop` — callers must NOT individually free them.
+/// `arena_pop` - callers must NOT individually free them.
 #[must_use]
 pub fn region_alloc_bytes(n: usize) -> *mut u8 {
     if n == 0 || !region_active() {
         return std::ptr::null_mut();
     }
     // Raw bytes (Vec/String backing) are not RC_LIVE-counted, so don't bump
-    // the region's RC-object tally — doing so underflows RC_LIVE at pop.
+    // the region's RC-object tally - doing so underflows RC_LIVE at pop.
     region_alloc_inner(n, false)
 }
 
 /// Bump `total` zeroed, `RC_ALIGN`-aligned bytes from the innermost active
 /// region. `count_obj` increments the region's RC-object tally (used to
-/// reconcile `RC_LIVE` at pop) — true for RC payloads, false for raw
+/// reconcile `RC_LIVE` at pop) - true for RC payloads, false for raw
 /// Vec/String backing bytes (which are not `RC_LIVE`-counted). Returns null
 /// only on allocation failure. Caller guarantees a region is active.
 fn region_alloc_inner(total: usize, count_obj: bool) -> *mut u8 {
@@ -1018,7 +1018,7 @@ fn region_alloc_inner_unzeroed(total: usize, count_obj: bool) -> *mut u8 {
 
 fn region_alloc_inner_impl(total: usize, count_obj: bool, zero: bool) -> *mut u8 {
     let need = (total + RC_ALIGN - 1) & !(RC_ALIGN - 1);
-    // Hot path: bump within the innermost region's current slab — no RefCell,
+    // Hot path: bump within the innermost region's current slab - no RefCell,
     // no Vec walk, just a compare and an add on a thread-local cache.
     let ptr = BUMP.with(|b| {
         let st = b.get();
@@ -1043,7 +1043,7 @@ fn region_alloc_inner_impl(total: usize, count_obj: bool, zero: bool) -> *mut u8
         ptr
     };
     // Zero the handed-out bytes: slabs may be recycled or freshly (un-zeroed)
-    // allocated, and codegen relies on every allocation starting zeroed —
+    // allocated, and codegen relies on every allocation starting zeroed -
     // except for callers that provably overwrite every byte.
     if zero {
         unsafe { std::ptr::write_bytes(ptr, 0, need) };
@@ -1114,7 +1114,7 @@ pub extern "C" fn gos_rt_arena_push() {
 }
 
 /// Close the innermost region: free/recycle every slab in O(slabs). No
-/// per-object teardown walk runs — the escape analysis guarantees nothing in
+/// per-object teardown walk runs - the escape analysis guarantees nothing in
 /// the region is referenced after pop.
 #[unsafe(no_mangle)]
 pub extern "C" fn gos_rt_arena_pop() {
@@ -1159,15 +1159,15 @@ pub extern "C" fn gos_rt_arena_pop() {
 // The RC primitives are deliberately NOT wrapped in `ffi_entry!`
 // (catch_unwind): they are called once per allocation / copy / drop and
 // the per-call unwind-guard setup dominates their cost. They are also
-// panic-free across the FFI boundary — pointer arithmetic and atomics
+// panic-free across the FFI boundary - pointer arithmetic and atomics
 // never unwind, and the only allocator failure paths (`alloc_zeroed`
 // returning null, `Vec` growth) `abort` rather than unwind. Keeping them
 // bare is what makes RC-managed code fast.
 /// Allocate a TAGGED-repr enum node (discriminant in pointer bits, no
 /// header byte consulted at match time). Inside an active region the
-/// node is completely HEADERLESS — `size` payload bytes, bump-allocated,
+/// node is completely HEADERLESS - `size` payload bytes, bump-allocated,
 /// bulk-freed at pop, identified by the arena range check (never by a
-/// header) — a two-pointer tree node costs exactly 16 bytes. Outside a
+/// header) - a two-pointer tree node costs exactly 16 bytes. Outside a
 /// region this is a normal reference-counted allocation (the header
 /// carries counts; the disc bits still live in the pointer).
 #[unsafe(no_mangle)]
@@ -1207,7 +1207,7 @@ pub unsafe extern "C" fn gos_rt_rc_alloc(size: u64, meta: *const i64) -> *mut u8
     // field nor class rounding is needed.
     let total = (size as usize).saturating_add(RC_HEADER_SIZE);
     // Inside a `region { … }` the object is bump-allocated and freed
-    // wholesale at pop — tag it so retain/release stay no-ops and the
+    // wholesale at pop - tag it so retain/release stay no-ops and the
     // teardown walk never touches it.
     let in_region = region_active();
     let base = if in_region {
@@ -1232,7 +1232,7 @@ pub unsafe extern "C" fn gos_rt_rc_alloc(size: u64, meta: *const i64) -> *mut u8
 /// Shared, pinned singleton for a payload-less enum variant with discriminant
 /// `tag`. Unit variants carry no fields and are only read (the match reads the
 /// tag at offset 0), so every `Tree::Leaf`-style construction shares one heap
-/// node instead of allocating per use — a large RAM win for recursive enums
+/// node instead of allocating per use - a large RAM win for recursive enums
 /// (full binary trees are ~half leaves). The node is allocated GLOBALLY (never
 /// in an arena region, which would free it wholesale at pop and leave the
 /// cached pointer dangling), and its base reference pins it for the process
@@ -1298,7 +1298,7 @@ pub extern "C" fn gos_rt_enum_unit(tag: i64) -> *mut u8 {
             fresh
         }
         Err(winner) => {
-            // Lost the race — drop the redundant node, share the winner's.
+            // Lost the race - drop the redundant node, share the winner's.
             unsafe { gos_rt_rc_release(fresh) };
             unsafe { gos_rt_rc_retain(winner) };
             winner
@@ -1438,8 +1438,8 @@ pub unsafe extern "C" fn gos_rt_rc_weak_upgrade(payload: *mut u8) -> *mut u8 {
 /// count: the `Some` payload is an interior borrow valid for the
 /// duration of the caller's match arm (whose own live strong reference
 /// keeps the object alive). Bumping the count here would keep dead-once
-/// objects alive across later `upgrade()` calls — silently turning a
-/// `None` into a `Some` — so the borrow model is the sound one for the
+/// objects alive across later `upgrade()` calls - silently turning a
+/// `None` into a `Some` - so the borrow model is the sound one for the
 /// synchronous match/if-let idiom. Null-safe (returns `None`).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_rc_weak_upgrade_opt(payload: *mut u8) -> i128 {
@@ -1483,7 +1483,7 @@ unsafe fn rc_release_impl(root: *mut u8) {
         return;
     }
     let h = unsafe { header_ptr(root) };
-    // Region objects are freed wholesale at region pop — never individually.
+    // Region objects are freed wholesale at region pop - never individually.
     // Skipping the decrement-and-walk here is exactly what eliminates the
     // per-node teardown cost for `region { … }` allocations.
     // `dec_strong` reads `strong` atomically and dispatches: region /
@@ -1497,7 +1497,7 @@ unsafe fn rc_release_impl(root: *mut u8) {
     if d.next != 0 {
         // Survived the decrement. Thread-local objects become cycle
         // candidates; shared objects are excluded from the per-thread
-        // collector (their cycles leak, like `Arc` — break with weak refs).
+        // collector (their cycles leak, like `Arc` - break with weak refs).
         if !d.shared {
             unsafe { possible_root(root) };
         }
@@ -1505,14 +1505,14 @@ unsafe fn rc_release_impl(root: *mut u8) {
     }
     // Last reference. For a shared object an Acquire fence pairs with the
     // other workers' Release decrements so this thread sees all their
-    // writes before tearing it down (now exclusively owned — count 0).
+    // writes before tearing it down (now exclusively owned - count 0).
     if d.shared {
         fence(Ordering::Acquire);
     }
     unsafe { set_color(h, COLOR_BLACK) };
     let meta = unsafe { meta_of(h) };
     // Leaf fast path: a childless object (no RC-pointer children, the
-    // overwhelming common case — every enum payload-free variant, every
+    // overwhelming common case - every enum payload-free variant, every
     // leaf node) is reclaimed directly. This avoids touching the worklist
     // at all, so the dominant release shape never allocates or recurses.
     if meta.is_null() {
@@ -1520,7 +1520,7 @@ unsafe fn rc_release_impl(root: *mut u8) {
         return;
     }
     // Internal node: walk children iteratively (bounds stack depth on deep
-    // structures). Reuse a thread-local worklist buffer — allocating a
+    // structures). Reuse a thread-local worklist buffer - allocating a
     // fresh `Vec` per release call was a malloc/free on every node teardown
     // (millions, for tree workloads), dwarfing the actual reclamation.
     RELEASE_WORKLIST.with(|cell| {
@@ -1593,11 +1593,11 @@ thread_local! {
 /// Call `f` for each non-null RC-pointer child of `payload`, per its
 /// type-meta blob. Walks the flat `[i64]` blob documented above. The single
 /// edge-traversal primitive shared by the RC release walk, the cycle
-/// collector's trial-deletion, and the GC mark — one edge map, three
+/// collector's trial-deletion, and the GC mark - one edge map, three
 /// consumers.
 unsafe fn visit_rc_children(payload: *mut u8, mut f: impl FnMut(*mut u8)) {
     // Type metas list every heap child a node owns, and an enum or
-    // struct can own a *String* child — whose allocation carries the
+    // struct can own a *String* child - whose allocation carries the
     // string tag header, not an `RcHeader`. Feeding one to the count /
     // color machinery reads garbage, so the RC-graph walk yields only
     // RC-headered children; the release path reclaims string children
@@ -1670,7 +1670,7 @@ unsafe fn free_block(payload: *mut u8) {
     }
     let base = h as *mut u8;
     rc_live_dec();
-    // Straight back to mimalloc — see `gos_rt_rc_alloc` for why a custom
+    // Straight back to mimalloc - see `gos_rt_rc_alloc` for why a custom
     // slab/pool is not used (measured net-neutral), and
     // `rc_block_alloc_zeroed` for why the call is direct.
     unsafe { rc_block_free(base) };
@@ -1691,7 +1691,7 @@ unsafe fn free_block(payload: *mut u8) {
 // word can also hold pointers this system did NOT allocate (a map-get
 // result, an interior borrow, the Cranelift tier's construction-allocated
 // aggregates). Every guarded retain/release first checks membership and
-// leaves foreign pointers untouched — an unknown pointer can be leaked,
+// leaves foreign pointers untouched - an unknown pointer can be leaked,
 // never corrupted. Entries are removed exactly at `free_block`, so a
 // reused address can never inherit stale membership.
 static COPY_BLOBS: std::sync::LazyLock<parking_lot::Mutex<std::collections::HashSet<usize>>> =
@@ -1712,7 +1712,7 @@ fn copy_blob_remove(p: *mut u8) {
 /// Walk the `(disc_word, payload_word)` pairs of an `RC_KIND_STRUCT_GUARDED`
 /// meta over the aggregate slots at `base`, calling `f` for each child that
 /// is live (negative disc word, or the disc word reads 0), non-null, and a
-/// registered copy-blob. `base` may be a heap payload or a stack slot — the
+/// registered copy-blob. `base` may be a heap payload or a stack slot - the
 /// walk only reads the flat words the meta names.
 unsafe fn visit_guarded_children(base: *mut u8, meta: *const i64, mut f: impl FnMut(*mut u8)) {
     let entry_count = unsafe { *meta.add(1) };
@@ -1835,7 +1835,7 @@ pub unsafe extern "C" fn gos_rt_option_slot_release(slot: *const i64) {
         unsafe { gos_rt_rc_release(payload) };
         // Null the payload word so a second release of the same slot
         // (consumption-site release + the unconditional return-sweep)
-        // is a no-op instead of a double-free — the same null-out
+        // is a no-op instead of a double-free - the same null-out
         // discipline the local-release pass uses. The address may be
         // reused and re-registered in the provenance set, so "the set
         // no longer contains it" is not a safe second-release guard.
@@ -1891,8 +1891,8 @@ unsafe fn mark_gray(root: *mut u8) {
 }
 
 /// Scan: any gray node still holding an external reference (count > 0) is
-/// live — restore its subgraph to black. Gray nodes that reached count 0
-/// are cyclic garbage — paint them white and recurse.
+/// live - restore its subgraph to black. Gray nodes that reached count 0
+/// are cyclic garbage - paint them white and recurse.
 unsafe fn scan(root: *mut u8) {
     let mut stack = vec![root];
     while let Some(s) = stack.pop() {
@@ -1932,7 +1932,7 @@ unsafe fn scan_black(root: *mut u8) {
 }
 
 /// CollectWhite: free the confirmed garbage cycle. White nodes are gathered
-/// (repainting black to dedupe), then their allocations reclaimed — unless a
+/// (repainting black to dedupe), then their allocations reclaimed - unless a
 /// weak reference still pins one, in which case the payload is already dead
 /// and the block lingers for the last weak release.
 unsafe fn collect_white(root: *mut u8) {
@@ -1989,7 +1989,7 @@ unsafe fn collect_cycles() {
             // A candidate whose count later fell to 0 *and* is black is
             // acyclic garbage whose children were already released; reclaim
             // it. A gray candidate is mid-trace (reachable from another
-            // purple root) and must be left to scan/collect — never freed
+            // purple root) and must be left to scan/collect - never freed
             // here, or a live cycle member would be dropped.
             if unsafe { color_of(h) } == COLOR_BLACK && unsafe { strong_count(h) } == 0 {
                 dead.push(s);
@@ -2031,7 +2031,7 @@ mod tests {
     #[cfg_attr(miri, ignore)] // arena uses mmap with non-RW protections; Miri can't model it
     fn region_arena_rejects_every_pointer_when_no_arena_reserved() {
         // Regression: with the uninitialised base (0) the range test must
-        // report NO pointer as region memory — even ones below the 64 GiB
+        // report NO pointer as region memory - even ones below the 64 GiB
         // reserve size. The old bare `wrapping_sub` classified every low
         // heap pointer as in-region, which neutralised RC retain/release on
         // platforms whose allocator hands out low addresses (Windows),
@@ -2182,7 +2182,7 @@ mod tests {
             let a = gos_rt_rc_alloc(16, meta.as_ptr());
             // `a` uniquely owns `b` (the reference was moved in, not aliased):
             // dropping `a` frees both straight at count 0, so neither ever
-            // survives a decrement and nothing is buffered — the collector
+            // survives a decrement and nothing is buffered - the collector
             // stays a no-op on the unique-ownership (benchmark) shape.
             move_child(a, b);
             gos_rt_rc_release(a);
@@ -2239,7 +2239,7 @@ mod tests {
             move_child(parent, child);
             // "Consume" the parent (count would hit zero for a heap object,
             // triggering a teardown walk). For a region object this is a
-            // no-op — the child is NOT freed here.
+            // no-op - the child is NOT freed here.
             gos_rt_rc_release(parent);
             assert_eq!(rc_live_count(), base + 2, "region release must not free");
             let buffered = ROOTS.with(|r| r.borrow().len());
@@ -2260,7 +2260,7 @@ mod tests {
         let base = rc_live_count();
         unsafe {
             gos_rt_arena_push();
-            // Larger than the default slab — must still allocate, on its own slab.
+            // Larger than the default slab - must still allocate, on its own slab.
             let big = gos_rt_rc_alloc((REGION_SLAB_BYTES as u64) * 2, std::ptr::null());
             assert!(!big.is_null());
             assert!(is_region(header_ptr(big)));

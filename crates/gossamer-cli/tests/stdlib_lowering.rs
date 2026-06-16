@@ -4,7 +4,7 @@
 //! *calls* one stdlib free function, builds it through the LLVM tier
 //! (`gos build`), runs the binary, and asserts exit 0 plus expected
 //! stdout. A function that the MIR builder fails to lower surfaces as
-//! `opt: use of undefined value '@module::fn'` — the build fails and
+//! `opt: use of undefined value '@module::fn'` - the build fails and
 //! the test goes red.
 //!
 //! This file is the acceptance gate for "every stdlib function is

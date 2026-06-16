@@ -7,7 +7,7 @@
 //! it into the program. The public surface is the generic call form
 //! `to_json::<T>(value)` / `from_json::<T>(text)`, which
 //! `rewrite_serde_generic_calls` rewrites into those names. There are
-//! no `Type::to_json` methods — one spelling only.
+//! no `Type::to_json` methods - one spelling only.
 //!
 //! Because the synthesized functions are ordinary Gossamer code, they
 //! compile through every tier (VM + Cranelift + LLVM) automatically.
@@ -27,7 +27,7 @@ use gossamer_lex::{FileId, SourceMap, Span};
 use crate::ParseDiagnostic;
 
 /// Classification of a struct field for the synthesizer. Anything
-/// outside this set causes the struct to be skipped — we don't want
+/// outside this set causes the struct to be skipped - we don't want
 /// to emit code that won't compile.
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum FieldKind {
@@ -115,7 +115,7 @@ impl FieldKind {
 
     /// Gossamer source fragment that renders a single value bound to
     /// `expr` to JSON-syntax text. Returns an expression of type
-    /// `String` — or, for nested structs, a `?`-propagating call.
+    /// `String` - or, for nested structs, a `?`-propagating call.
     fn render_to_json(&self, expr: &str) -> String {
         match self {
             Self::I64 | Self::Int(_) | Self::F64 | Self::Bool => {
@@ -397,7 +397,7 @@ pub fn synthesize_derive_impls(parsed: &SourceFile) -> String {
 }
 
 /// The match pattern and the value-reconstruction for one enum variant,
-/// binding each payload field to `{prefix}{i}` — e.g. for `V(a, b)` with prefix
+/// binding each payload field to `{prefix}{i}` - e.g. for `V(a, b)` with prefix
 /// `__s`: `("E::V(__s0, __s1)", "E::V(__s0, __s1)", ["__s0", "__s1"])`.
 fn variant_shape(enum_name: &str, v: &EnumVariant, prefix: &str) -> (String, String, Vec<String>) {
     let vn = &v.name.name;
@@ -445,7 +445,7 @@ fn emit_enum_derive_impl(out: &mut String, decl: &EnumDecl, derives: &[String]) 
     // Struct-payload variants (`Rect { w, h }`) are `Value::Struct` on the VM
     // walker, keyed by the bare variant name, so `==` / `{:?}` can't dispatch
     // to `Enum::eq` / `Enum::fmt` there. Derive only enums whose variants are
-    // all tuple (`Circle(f64)`) or unit (`Point`) — those work on every tier.
+    // all tuple (`Circle(f64)`) or unit (`Point`) - those work on every tier.
     if decl
         .variants
         .iter()
@@ -1485,7 +1485,7 @@ fn __gos_http_session_cookie_value(store: &__gos_http_session_Store, data: &Stri
 // load / save are free functions, not methods: a `&self` method that
 // returns the 2-word `Result` while also taking an opaque-handle arg
 // (`http::Request`) miscompiles the call on the LLVM tier, whereas the
-// free-function form is sound — and `session::load(store, req)` /
+// free-function form is sound - and `session::load(store, req)` /
 // `session::save(store, resp, data)` is also the data-first spelling.
 fn __gos_http_session_save(store: &__gos_http_session_Store, resp: http::Response, data: &String) -> http::Response {
     let sc = __gos_http_session_cookie_value(store, data)
@@ -1862,7 +1862,7 @@ pub fn rewrite_stdlib_struct_surface(sf: &mut SourceFile) {
             return;
         }
         // `sql::Error` is the standard error type at the language
-        // level — redirect to `errors::Error`.
+        // level - redirect to `errors::Error`.
         if path.segments[n - 2].name.name.as_str() == "sql"
             && path.segments[n - 1].name.name.as_str() == "Error"
         {
@@ -1918,8 +1918,8 @@ pub fn rewrite_stdlib_struct_surface(sf: &mut SourceFile) {
     Rewriter.visit_source_file(sf);
 }
 
-/// Rewrites the generic serde call surface — `to_json::<T>(v)`,
-/// `from_json::<T>(s)`, and the toml/yaml variants — into calls to the
+/// Rewrites the generic serde call surface - `to_json::<T>(v)`,
+/// `from_json::<T>(s)`, and the toml/yaml variants - into calls to the
 /// per-type free functions synthesized by [`synthesize_serde_impls`]
 /// (`__gos_serde_<op>_<T>`). This is the single public spelling; there
 /// are no `Type::to_json` methods.
@@ -1989,7 +1989,7 @@ pub fn rewrite_serde_generic_calls(sf: &mut SourceFile) {
 
 /// Adds `use std::json` and `use std::errors` to the parsed source
 /// if it has synthesized impl blocks that depend on them. Idempotent
-/// — checks for existing imports before inserting.
+/// - checks for existing imports before inserting.
 pub fn inject_synthetic_uses(sf: &mut SourceFile, file: FileId) {
     // `arena { ... }` desugars to `runtime::arena_push/pop` calls; make
     // the module available without requiring an explicit import.

@@ -1,4 +1,4 @@
-// std::validate — handle dispatch across function boundaries.
+// std::validate - handle dispatch across function boundaries.
 //
 // Locks method dispatch on `validate::Errors` / `validate::FieldError`
 // values that flow OUT of a function (return) and IN to a function

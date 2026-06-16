@@ -1,4 +1,4 @@
-//! `gos lsp` — runs the language server over stdio. Blocks until
+//! `gos lsp` - runs the language server over stdio. Blocks until
 //! the client sends `exit` (after `shutdown`) or closes stdin.
 
 use anyhow::{Result, anyhow};

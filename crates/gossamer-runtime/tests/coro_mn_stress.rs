@@ -2,7 +2,7 @@
 //!
 //! Spawns thousands of goroutines that each park on a netpoller
 //! timer, then unblocks them all. The test fails if the scheduler
-//! cannot drain them on a small worker pool — which it could not
+//! cannot drain them on a small worker pool - which it could not
 //! when goroutines were OS-thread-bound (the previous design).
 
 use std::sync::Arc;

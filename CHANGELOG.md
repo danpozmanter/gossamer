@@ -1,15 +1,15 @@
 # Changelog
 
-## 0.14.0 — Tree-walker removed (VM-only execution), standard-library ergonomics, stability, performance, parity, _.method pipe placeholder, deep technical debt
+## 0.14.0 - Tree-walker removed (VM-only execution), standard-library ergonomics, stability, performance, parity, _.method pipe placeholder, deep technical debt
 
-- **The tree-walking interpreter is gone — the register-based bytecode VM lowers every construct natively.** `gos run` / `gos test` / `gos bench` and the REPL previously fell back to a bundled tree-walker (via `Op::EvalDeferred`) for closures, `select`, `defer`, non-call `go { block }`, or-patterns that bind a variable, custom (`impl Iterator`) for-loops, and a handful of other shapes — and `gos test` / `gos bench` / the REPL ran *entirely* on the walker. The VM now compiles all of these to native bytecode: closures lower to `Op::MakeClosure` with upvalue capture (snapshot scalars, `Arc`-shared aggregates), `select` to a native channel poll/park (`Op::Select`), `defer` to LIFO emission at every exit edge (fall-through / `return` / `break` / `continue` / the `?` path), or-patterns to shared binding registers, `go { block }` to a spawned closure, and struct/enum `==` and nested `a.b.c = x` assignment to direct opcodes. En route, two pre-existing VM correctness gaps were fixed across all tiers: `&mut self` struct-method mutation now persists (`c.bump()` was silently lost on `gos run`), and `static mut` storage is now shared and observable (writes were silently dropped on *every* tier, masked by tier-parity agreeing on the wrong answer). `Op::EvalDeferred`, `compile_deferred`, and the ~2,900-line walker (`interp.rs` + `env.rs`) are deleted; the bytecode VM is the single `gos run` / `gos test` / `gos bench` / REPL engine, its output pinned by the VM-vs-LLVM-AOT differential and the tier-parity suite. `gos test` additionally gains statement-level coverage instrumentation and a call-chain traceback on a failed test.
-- **Format-spec mini-language.** `{}` placeholders now accept the Rust-style spec grammar: width and alignment (`{:>8}` / `{:<8}` / `{:^8}` / `{:8}`), fill characters (`{:*>8}`), zero-padding (`{:08}`), radix (`{:x}` / `{:X}` / `{:b}` / `{:o}`), and precision combined with width (`{:>8.2}`) — for positional and named (`{n:03}`) arguments. Each spec expands at parse time to a composition of `__concat` / `__fmt_radix` / `__fmt_prec` / `__fmt_pad`, so it runs bit-identically on the VM, Cranelift, and LLVM. Previously only `{}`, `{ident}`, `{:?}`, and `{:.N}` were recognized; richer specs fell through as literal text.
-- **HashSet algebra.** `union`, `intersection`, `difference`, `symmetric_difference` (returning a fresh set) and the `is_subset` / `is_superset` / `is_disjoint` predicates, wired across every tier. A `HashSet<T>` (and `BTreeMap<K, V>`) annotation now resolves to a named type, so method dispatch works when a set flows across a function boundary — previously a returned/parameter set lost its construction tag and `s.contains(...)` emitted an undefined symbol on the compiled tiers.
+- **The tree-walking interpreter is gone - the register-based bytecode VM lowers every construct natively.** `gos run` / `gos test` / `gos bench` and the REPL previously fell back to a bundled tree-walker (via `Op::EvalDeferred`) for closures, `select`, `defer`, non-call `go { block }`, or-patterns that bind a variable, custom (`impl Iterator`) for-loops, and a handful of other shapes - and `gos test` / `gos bench` / the REPL ran *entirely* on the walker. The VM now compiles all of these to native bytecode: closures lower to `Op::MakeClosure` with upvalue capture (snapshot scalars, `Arc`-shared aggregates), `select` to a native channel poll/park (`Op::Select`), `defer` to LIFO emission at every exit edge (fall-through / `return` / `break` / `continue` / the `?` path), or-patterns to shared binding registers, `go { block }` to a spawned closure, and struct/enum `==` and nested `a.b.c = x` assignment to direct opcodes. En route, two pre-existing VM correctness gaps were fixed across all tiers: `&mut self` struct-method mutation now persists (`c.bump()` was silently lost on `gos run`), and `static mut` storage is now shared and observable (writes were silently dropped on *every* tier, masked by tier-parity agreeing on the wrong answer). `Op::EvalDeferred`, `compile_deferred`, and the ~2,900-line walker (`interp.rs` + `env.rs`) are deleted; the bytecode VM is the single `gos run` / `gos test` / `gos bench` / REPL engine, its output pinned by the VM-vs-LLVM-AOT differential and the tier-parity suite. `gos test` additionally gains statement-level coverage instrumentation and a call-chain traceback on a failed test.
+- **Format-spec mini-language.** `{}` placeholders now accept the Rust-style spec grammar: width and alignment (`{:>8}` / `{:<8}` / `{:^8}` / `{:8}`), fill characters (`{:*>8}`), zero-padding (`{:08}`), radix (`{:x}` / `{:X}` / `{:b}` / `{:o}`), and precision combined with width (`{:>8.2}`) - for positional and named (`{n:03}`) arguments. Each spec expands at parse time to a composition of `__concat` / `__fmt_radix` / `__fmt_prec` / `__fmt_pad`, so it runs bit-identically on the VM, Cranelift, and LLVM. Previously only `{}`, `{ident}`, `{:?}`, and `{:.N}` were recognized; richer specs fell through as literal text.
+- **HashSet algebra.** `union`, `intersection`, `difference`, `symmetric_difference` (returning a fresh set) and the `is_subset` / `is_superset` / `is_disjoint` predicates, wired across every tier. A `HashSet<T>` (and `BTreeMap<K, V>`) annotation now resolves to a named type, so method dispatch works when a set flows across a function boundary - previously a returned/parameter set lost its construction tag and `s.contains(...)` emitted an undefined symbol on the compiled tiers.
 - **`strconv` radix + quoting.** `parse_i64_radix(s, base)` / `format_i64_radix(n, base)` for bases 2..=36, and `quote(s)` / `unquote(s)` for round-tripping double-quoted strings with escapes.
 - **Channel-returning timer.** `time::after(d)` returns a `Receiver` that yields once after `d`, firing on a goroutine that then completes, so it composes with `select` and `while let` for timeout patterns. `channel()` is now a prelude name (like `spawn`).
-- **String surface naming — one spelling per operation.** `index_any` / `last_index_any` renamed to `find_any` / `rfind_any` (symmetric with `find` / `rfind`); `lstrip_chars` / `rstrip_chars` renamed to `trim_start_matches` / `trim_end_matches` (the Rust `trim_*_matches` family). The duplicate spellings `to_lowercase` / `to_uppercase` (use `to_lower` / `to_upper`), `strip_chars` (use `trim_matches`), `fields` (use `split_whitespace`), and `zfill` (use `pad_left` / `{:0N}`) were removed. A method that does not exist is now a hard error on every tier — the tree-walking interpreter previously returned the receiver unchanged for an unknown method instead of erroring like the bytecode VM and compiled tiers.
+- **String surface naming - one spelling per operation.** `index_any` / `last_index_any` renamed to `find_any` / `rfind_any` (symmetric with `find` / `rfind`); `lstrip_chars` / `rstrip_chars` renamed to `trim_start_matches` / `trim_end_matches` (the Rust `trim_*_matches` family). The duplicate spellings `to_lowercase` / `to_uppercase` (use `to_lower` / `to_upper`), `strip_chars` (use `trim_matches`), `fields` (use `split_whitespace`), and `zfill` (use `pad_left` / `{:0N}`) were removed. A method that does not exist is now a hard error on every tier - the tree-walking interpreter previously returned the receiver unchanged for an unknown method instead of erroring like the bytecode VM and compiled tiers.
 - **Vec methods on array literals.** A `[T; N]` array-literal receiver is coerced to a heap `GosVec` before `contains` / `index_of` / `count_of` / `first` / `last` / `reversed` / `join`, fixing a native-tier segfault where the flat stack buffer was read through a `GosVec` header.
-- **`_.method` pipe placeholder.** `x |> _.trim`, `x |> _.replace(a, b)`, `x |> _.0`, `x |> _[i]`, and `x |> _` thread the piped value in as the receiver — `_` reads as "the value flowing through here". A bare `_.ident` with no parens is a nullary method call (`s |> _.trim` is `s.trim()`); tuple/index forms stay field/index access. A pure parse-time desugar, so it runs bit-identically on the bytecode VM, Cranelift, and LLVM; the existing `x |> recv.m(a)` → `recv.m(a, x)` and closure-step forms are unchanged.
+- **`_.method` pipe placeholder.** `x |> _.trim`, `x |> _.replace(a, b)`, `x |> _.0`, `x |> _[i]`, and `x |> _` thread the piped value in as the receiver - `_` reads as "the value flowing through here". A bare `_.ident` with no parens is a nullary method call (`s |> _.trim` is `s.trim()`); tuple/index forms stay field/index access. A pure parse-time desugar, so it runs bit-identically on the bytecode VM, Cranelift, and LLVM; the existing `x |> recv.m(a)` → `recv.m(a, x)` and closure-step forms are unchanged.
 - **The canonical String method surface dispatches on every tier.** `split_whitespace`, `splitn`, `to_title`, `trim_matches`, `replacen`, `pad_left`, `pad_right`, `contains_any`, `contains_rune`, `equal_fold`, `index_any`, `index_rune`, `last_index_any`, `strip_prefix`, and `strip_suffix` previously worked only as `strings::*` free functions and emitted an undefined `@method` symbol when called as `s.method(...)` on the compiled tiers. The method form now lowers to the same `gos_rt_str_*` shim the free function uses, with the destination pinned to the correct return type (`String` / `Vec<String>` / `bool` / `Option<i64>` / `Option<String>`).
 - **`Vec<String>.join(sep)` is the method form of `strings::join`.** Wired across the VM and the compiled tiers for `Vec` / `&[String]` receivers.
 - **Receiver-typed method dispatch on the VM.** A method whose bare name collides with another module's free function now resolves by receiver type: `s.to_title()` reaches the string title-caser instead of `unicode::to_title` (which titlecases a single char), and `parts.join(sep)` reaches `strings::join` instead of `path::join`. String methods register under a `String::` key and `Vec`-receiver dispatch under a `Vec::` key, ahead of the bare-name fallback.
@@ -17,21 +17,21 @@
 
 ### Stability, performance, and parity hardening
 
-- **Integer divide / modulo by zero is a clean panic on every tier.** The compiled tiers lowered `/` and `%` to a raw `sdiv`/`srem`, so a zero divisor trapped with `SIGFPE` (exit 136) — or, for a constant zero the folder declined to fold, produced a silently-undefined value. MIR now emits the (previously dead) `Assert{DivideByZero}` terminator before integer division, so `gos build` raises the same `error[GX0005]: panic: divide by zero` the VM does. The VM's divide-by-zero, formerly a recoverable `GX0004`, is now also a panic, so all three tiers match (code, message, and exit 101). Constant non-`0`/`-1` divisors fold the guard away, preserving the `x / 1 → x` strength reduction.
-- **`i64::MIN / -1` (and `% -1`) wraps to `MIN` / `0` on every tier** instead of trapping (`SIGFPE` on x86) on the compiled tiers — matching the VM's `wrapping_div`. The guard is branchless-foldable for constant divisors.
+- **Integer divide / modulo by zero is a clean panic on every tier.** The compiled tiers lowered `/` and `%` to a raw `sdiv`/`srem`, so a zero divisor trapped with `SIGFPE` (exit 136) - or, for a constant zero the folder declined to fold, produced a silently-undefined value. MIR now emits the (previously dead) `Assert{DivideByZero}` terminator before integer division, so `gos build` raises the same `error[GX0005]: panic: divide by zero` the VM does. The VM's divide-by-zero, formerly a recoverable `GX0004`, is now also a panic, so all three tiers match (code, message, and exit 101). Constant non-`0`/`-1` divisors fold the guard away, preserving the `x / 1 → x` strength reduction.
+- **`i64::MIN / -1` (and `% -1`) wraps to `MIN` / `0` on every tier** instead of trapping (`SIGFPE` on x86) on the compiled tiers - matching the VM's `wrapping_div`. The guard is branchless-foldable for constant divisors.
 - **`I64Vec` / `U8Vec` out-of-range `get_at` / `set_at` no longer corrupt the heap on LLVM.** The inline fast path skipped the bounds check the runtime shim and Cranelift both have, so an out-of-range index read or wrote arbitrary heap memory. It now null- and bounds-checks like the bare-`Vec` inlines (out-of-range get → 0, set → no-op).
-- **`String.substring(a, b)` dispatches to the clamping byte-slice builtin on every tier.** The compiled tier had a runtime shim but no method-lowering entry, so `s.substring(0, 5)` either failed to lower or returned the pointer as garbage; the VM had no registration at all. Now wired end-to-end (clamping, infallible — the counterpart to the `Result`-returning `slice`).
-- **Closing an already-closed channel panics with `close of closed channel`, matching Go.** A double-close is a goroutine-scoped panic — fatal on the main goroutine, isolated to the offending goroutine otherwise — on the VM and the compiled runtime alike, rather than aborting the whole process (which defeated goroutine-panic isolation) or silently ignoring the second close. The channel's drop/reclamation path stays idempotent, so a channel closed once and then reclaimed at end of scope does not panic.
-- **Deep recursion in goroutine / closure / method bodies raises a clean `GX0008` stack-overflow instead of crashing.** Walker-evaluated recursion (spawned-goroutine bodies, closures, `impl` methods) ran unguarded on the native stack and overflowed it — fatal on the 1 MiB goroutine stack. A byte-budget stack guard (armed at each goroutine's and the main thread's shallowest frame, re-armed across goroutine migration) trips before the guard page and surfaces a normal stack-overflow error. VM-tier goroutine OS threads are now sized to the goroutine stack contract.
-- **Interpreter dispatch speed.** The hottest `gos run` ops (`FieldGet`, method calls, free calls) re-hashed the receiver's already-interned type name through a second thread-local pool on every execution to compute their inline-cache token; they now use the globally-interned `&'static str` pointer directly. Cached free-builtin calls no longer allocate (and free) an `Arc<BuiltinInner>` per call — the fn pointer is invoked directly and the pooled argument buffer is returned to the pool.
-- **Bytecode-VM numeric loop dispatch.** Reading or writing a float field of a fixed-size struct array through an integer loop index (`bodies[i].vx`) now sources the index straight from the integer register file via dedicated `FlatGetF64I` / `FlatSetF64I` ops, dropping the per-access box of the index into a value register that every flat field access previously emitted. Separately, a bare assignment statement no longer materializes the unused `()` value it evaluates to (a `LoadConst(Unit)` per statement) — the store is compiled directly when its result is discarded, while assignment-as-expression positions still produce the unit. Both cut the instruction count of tight numeric and mutation-heavy loops on `gos run`.
-- **In-place string accumulation for `acc += format!(...)`.** The accumulation now appends each interpolated piece directly onto the accumulator — one copy into the growing buffer — instead of assembling the fragment in a scratch buffer, allocating a result string, and copying that into the accumulator (three copies of every character). Integer and float interpolations format their digits straight into the destination via new in-place `gos_rt_str_append_*` shims, with no throwaway string per value. A compiled-tier lowering; the produced text is bit-identical to the buffered concat path.
-- **Goroutine-shared reference counts are atomic on the compiled tiers (atomic-on-escape).** A heap-RC object (recursive enum / boxed payload) shared between goroutines — captured by a `spawn` closure, passed to `go f(...)`, or sent on a channel — was retained/released with non-atomic counts under the multi-threaded scheduler, so two workers releasing it concurrently could tear the count into a use-after-free or a leak. Objects now switch to atomic reference counting when they escape to another goroutine (a `SHARED_BIT` set transitively at the escape point) and are excluded from the per-thread cycle collector (their cycles leak like Rust's `Arc` — break with weak refs). Thread-local objects keep the cheap non-atomic path, so single-goroutine RC performance is unchanged.
-- **A `Vec` of by-value aggregates owns its elements' RC children on the compiled tiers.** A `Vec<T>` whose element `T` is a struct/tuple carrying an unconditional RC field — a heap user enum, `String`, or nested vec (e.g. `Vec<Projection>` where `Projection { expr: Expr, alias: String }`) — was shallow-freed while the source temporary's fields were released at scope end, so a vec built in one function and returned (it outlives the temp) left dangling pointers, and walking it after the return was a use-after-free (it corrupted the `atlas_db` SQL benchmark's query planner). The vec is now tagged `AGGR_OWNED` with a slot-children layout (`gos_rt_vec_set_slot_children`): push retains each element's RC children and free deep-frees them, so a pushed element dropped at its source scope — or carried out inside the returned vec — is reclaimed exactly once. A `for x in &v` loop variable bound to a borrowed element is no longer treated as an owning aggregate, so it no longer double-releases the element's fields.
+- **`String.substring(a, b)` dispatches to the clamping byte-slice builtin on every tier.** The compiled tier had a runtime shim but no method-lowering entry, so `s.substring(0, 5)` either failed to lower or returned the pointer as garbage; the VM had no registration at all. Now wired end-to-end (clamping, infallible - the counterpart to the `Result`-returning `slice`).
+- **Closing an already-closed channel panics with `close of closed channel`, matching Go.** A double-close is a goroutine-scoped panic - fatal on the main goroutine, isolated to the offending goroutine otherwise - on the VM and the compiled runtime alike, rather than aborting the whole process (which defeated goroutine-panic isolation) or silently ignoring the second close. The channel's drop/reclamation path stays idempotent, so a channel closed once and then reclaimed at end of scope does not panic.
+- **Deep recursion in goroutine / closure / method bodies raises a clean `GX0008` stack-overflow instead of crashing.** Walker-evaluated recursion (spawned-goroutine bodies, closures, `impl` methods) ran unguarded on the native stack and overflowed it - fatal on the 1 MiB goroutine stack. A byte-budget stack guard (armed at each goroutine's and the main thread's shallowest frame, re-armed across goroutine migration) trips before the guard page and surfaces a normal stack-overflow error. VM-tier goroutine OS threads are now sized to the goroutine stack contract.
+- **Interpreter dispatch speed.** The hottest `gos run` ops (`FieldGet`, method calls, free calls) re-hashed the receiver's already-interned type name through a second thread-local pool on every execution to compute their inline-cache token; they now use the globally-interned `&'static str` pointer directly. Cached free-builtin calls no longer allocate (and free) an `Arc<BuiltinInner>` per call - the fn pointer is invoked directly and the pooled argument buffer is returned to the pool.
+- **Bytecode-VM numeric loop dispatch.** Reading or writing a float field of a fixed-size struct array through an integer loop index (`bodies[i].vx`) now sources the index straight from the integer register file via dedicated `FlatGetF64I` / `FlatSetF64I` ops, dropping the per-access box of the index into a value register that every flat field access previously emitted. Separately, a bare assignment statement no longer materializes the unused `()` value it evaluates to (a `LoadConst(Unit)` per statement) - the store is compiled directly when its result is discarded, while assignment-as-expression positions still produce the unit. Both cut the instruction count of tight numeric and mutation-heavy loops on `gos run`.
+- **In-place string accumulation for `acc += format!(...)`.** The accumulation now appends each interpolated piece directly onto the accumulator - one copy into the growing buffer - instead of assembling the fragment in a scratch buffer, allocating a result string, and copying that into the accumulator (three copies of every character). Integer and float interpolations format their digits straight into the destination via new in-place `gos_rt_str_append_*` shims, with no throwaway string per value. A compiled-tier lowering; the produced text is bit-identical to the buffered concat path.
+- **Goroutine-shared reference counts are atomic on the compiled tiers (atomic-on-escape).** A heap-RC object (recursive enum / boxed payload) shared between goroutines - captured by a `spawn` closure, passed to `go f(...)`, or sent on a channel - was retained/released with non-atomic counts under the multi-threaded scheduler, so two workers releasing it concurrently could tear the count into a use-after-free or a leak. Objects now switch to atomic reference counting when they escape to another goroutine (a `SHARED_BIT` set transitively at the escape point) and are excluded from the per-thread cycle collector (their cycles leak like Rust's `Arc` - break with weak refs). Thread-local objects keep the cheap non-atomic path, so single-goroutine RC performance is unchanged.
+- **A `Vec` of by-value aggregates owns its elements' RC children on the compiled tiers.** A `Vec<T>` whose element `T` is a struct/tuple carrying an unconditional RC field - a heap user enum, `String`, or nested vec (e.g. `Vec<Projection>` where `Projection { expr: Expr, alias: String }`) - was shallow-freed while the source temporary's fields were released at scope end, so a vec built in one function and returned (it outlives the temp) left dangling pointers, and walking it after the return was a use-after-free (it corrupted the `atlas_db` SQL benchmark's query planner). The vec is now tagged `AGGR_OWNED` with a slot-children layout (`gos_rt_vec_set_slot_children`): push retains each element's RC children and free deep-frees them, so a pushed element dropped at its source scope - or carried out inside the returned vec - is reclaimed exactly once. A `for x in &v` loop variable bound to a borrowed element is no longer treated as an owning aggregate, so it no longer double-releases the element's fields.
 - **The loop-carried-release hoist no longer frees a value still live on a sibling branch.** The hoist relocated a string's release to its last mention along a single back-edge path, but a `for` loop with one branch reading the value and another pushing it (a group-by accumulation: `for k in &keys { if k == key … }` then `keys.push(key)`) left the value live past that mention; nulling it there collapsed every later group key to empty on the compiled tiers. The hoist now runs a forward-liveness check from the insertion point and skips the relocation when the value is read before being rewritten on any path.
 - **`assert(cond[, msg])` and `assert_eq(a, b[, msg])` are implemented on every tier.** Both were reserved prelude names with no implementation, so a call raised `error[GX0002]: name 'assert' is not bound` even though the skill card and test examples use them. They now panic on a false condition (the supplied message verbatim, else "assertion failed") via a `builtin_assert` in the interpreter and a conditional-`panic` MIR lowering for the compiled tiers; a passing `assert` is counted in the test tally.
 - **`gos test` links sibling modules into the test compilation.** A `#[test]` calling a sibling module (`super::helper::triple` where `src/helper.gos` is declared `mod helper;`) failed with `GX0002` because the per-file test build read the entry source without the sibling auto-bundle that `gos run` / `gos build` apply. Tests now bundle siblings the same way; test-name collection stays unbundled so a sibling's own tests are not double-counted.
-- **`*p = v` through a `&mut <scalar>` parameter writes back on the interpreter.** Assigning through a scalar `&mut i64` / `&mut f64` / `&mut bool` reference raised `error[GX0007]: assignment to non-local place` on the VM (the compiled tiers, passing by pointer, wrote back correctly). The write-back cell protocol — previously `&mut Vec` / `&mut [T]` only — now covers scalar primitives and a dereferenced lvalue, so a deref-assign reaches the caller bit-identically with the compiled tiers.
+- **`*p = v` through a `&mut <scalar>` parameter writes back on the interpreter.** Assigning through a scalar `&mut i64` / `&mut f64` / `&mut bool` reference raised `error[GX0007]: assignment to non-local place` on the VM (the compiled tiers, passing by pointer, wrote back correctly). The write-back cell protocol - previously `&mut Vec` / `&mut [T]` only - now covers scalar primitives and a dereferenced lvalue, so a deref-assign reaches the caller bit-identically with the compiled tiers.
 - **Deterministic, cross-tier HashMap / HashSet iteration order.** `m.keys()`, `m.values()`, `for (k, v) in m.iter()`, and `set.to_vec()` now traverse in key-sorted order on every tier instead of unspecified hash-bucket order that differed across tiers (and, for `HashSet`, run-to-run). `keys()` / `values()` / `iter()` agree on ordering so positional pairing is stable.
 - **`as usize` / `as u64` cast results work as comparison and arithmetic operands on the interpreter.** `(x as usize) < (y as usize)` type-errored on the VM (a `Uint` reaching the typed-i64 register path); the unbox now accepts `Uint` (every ≤64-bit integer shares i64 arithmetic), matching the compiled tiers.
 - **The runtime symbol registry is sorted.** Out-of-order additions (`set_*` algebra, `fmt_pad`, `strconv` radix/quote, `str_append_*`) broke the alphabetical-order invariant the binary-search lookup relies on; the registry is re-sorted.
@@ -45,40 +45,40 @@
 - **`std::compress::zstd` works on every tier.** `encode` / `encode_level(1..=22)` / `decode` were manifest-advertised but unbound; they now have interp builtins and `gos_rt_compress_zstd_*` runtime shims, mirroring the gzip/flate/zlib wiring (a `String` argument is byte-coerced before the shim, like the other encoders).
 - **`crypto::password` (Argon2id) works on every tier.** `hash` / `verify` / `needs_rehash` were manifest-advertised but unbound; now wired with `gos_rt_crypto_password_*` shims using the same Argon2id defaults as `kdf::argon2id` (Argon2id, V0x13, default params), so a PHC hash minted on one tier verifies on another. `hash` returns `Result<String, Error>`, `verify` returns `Result<bool, Error>`.
 
-### Stdlib breadth — modules wired across all three tiers
+### Stdlib breadth - modules wired across all three tiers
 
 Many modules and methods had an interpreter implementation but no compiled-tier shim (BUILD-FAIL under `gos build`) or were manifest-advertised but unbound everywhere (`GX0002`). The following now run bit-identically on the bytecode VM, Cranelift JIT, and LLVM AOT, each with a tier-parity fixture:
 
 - **Crypto breadth.** `crypto::insecure::md5_hex`/`sha1_hex`, `crypto::kdf::pbkdf2_sha256`/`argon2id_hash`/`argon2id_verify`/`scrypt_interactive`, `crypto::aead::aes_256_gcm_seal`/`open` + `chacha20_poly1305_seal`/`open`, `crypto::ed25519::keypair`/`sign`/`verify`, and `crypto::ecdsa::keypair_pem`/`sign_pem`/`verify_pem` now have compiled shims reimplementing the same crates the interpreter uses (the runtime cannot depend on `gossamer-std`).
 - **`std::jwt`.** Sign/verify for HS256/384/512, ES256, and EdDSA, via a JSON-string claims API (`sign_hs`/`verify_hs` take/return the claims as a JSON object string), avoiding a `Claims` struct crossing the C-ABI.
 - **`std::compress::bzip2`** (`compress`/`decompress`).
-- **`encoding::xml`** (`parse`/`encode` over an opaque node handle) and **`encoding::yaml::parse`** (compiled phantom — now projects YAML→JSON like the VM).
+- **`encoding::xml`** (`parse`/`encode` over an opaque node handle) and **`encoding::yaml::parse`** (compiled phantom - now projects YAML→JSON like the VM).
 - **Phantom stateful-handle modules.** `std::math::rand` (`Rng` SplitMix64), `std::bytes` (`Builder`/`Buffer`), `std::validate` (`FieldError`/`Errors`), `sync::RwLock`, `std::context`, `std::metrics` (`Counter`/`Gauge`/`Histogram`/`Registry`), and `std::trace` (`Tracer`/`Span`/`EndedSpan`) are wired via the opaque-handle pattern; closure-taking methods (`RwLock::with_read`/`with_write`, `Once::call`) cross the FFI via the env-thunk convention.
-- **Networking — TCP / UDP / `net::ip`.** `TcpListener::bind`/`accept`/`local_addr`/`close`, `TcpStream::connect`/`read`/`read_to_string`/`write`/`close`, `UdpSocket::bind`/`send_to`/`recv_from`/`local_addr`/`close`, and `net::ip::parse`/`is_valid`/`is_v4`/`is_v6`/`is_loopback`/`octets` now compile (`std::net`, cross-platform). A captured `TcpStream` handle from `accept()`'s tuple dispatches its methods on the compiled tier.
+- **Networking - TCP / UDP / `net::ip`.** `TcpListener::bind`/`accept`/`local_addr`/`close`, `TcpStream::connect`/`read`/`read_to_string`/`write`/`close`, `UdpSocket::bind`/`send_to`/`recv_from`/`local_addr`/`close`, and `net::ip::parse`/`is_valid`/`is_v4`/`is_v6`/`is_loopback`/`octets` now compile (`std::net`, cross-platform). A captured `TcpStream` handle from `accept()`'s tuple dispatches its methods on the compiled tier.
 - **`iter` combinators.** `enumerate`/`zip`/`flatten`/`dedup`/`unzip`/`windowed`/`pairwise`/`chunk_by_size` now lower on the compiled tiers (i64-element), and `iter::reversed(xs)[i]` / `for x in iter::reversed(xs)` no longer segfault (the vec-returning intrinsics pin a heap `Vec<elem>` dest, and the for-loop element type is propagated from an inline iterable expression).
 - **`sync` extras.** `sync::Once::call` (runs its closure exactly once, the VM builtin now actually invokes the closure), `sync::Barrier::new`/`wait`, and the qualified free-call atomic forms (`sync::AtomicI64::fetch_add(a, n)` etc.).
 - **Misc compiled-tier gaps.** `thread::num_cpus`, `encoding::json::valid`, `bufio::read_lines`, `math::min`/`max`/`clamp` in the `math::`-qualified spelling, the `math::PI`/`E`/… constants in arithmetic and print context, `BTreeMap::keys()`, and `strings::pad_left`/`pad_right` (the pad glyph is a String char with a default space).
-- **Fundamental String building.** `String::new()` / `String::with_capacity`, `s.push(char)`, `s.push_str(str)`, and `s.chars()` (`for ch in s.chars()`) are implemented across all tiers — they were documented but unwired, and `s.push` previously clobbered its receiver via the mutating-method writeback.
+- **Fundamental String building.** `String::new()` / `String::with_capacity`, `s.push(char)`, `s.push_str(str)`, and `s.chars()` (`for ch in s.chars()`) are implemented across all tiers - they were documented but unwired, and `s.push` previously clobbered its receiver via the mutating-method writeback.
 - **`http::Request` request-scoped values + typed/raw path params + `middleware::bearer_ok`.** `r.set_value(k, v)` / `r.value(k)` carry per-request data (a Go `context.WithValue` analog), and `middleware::bearer_ok(r, verify)` runs a Gossamer verify closure across the FFI to gate a route.
 - **`http::session` / `csrf` / `cookie` core**, **`http::static_files::FileServer` on the interpreter**, and **`http::websocket::accept`** (the RFC 6455 server handshake) now have compiled-tier coverage and fixtures.
-- **`html::escape` is CSP-grade.** It now escapes the OWASP "HTML element content" defensive set — the five metacharacters (`& < > " '`) plus `/` (`&#x2F;`, the closing-tag / unquoted-attribute edge cases) and backtick (`&#x60;`, IE's attribute delimiter) — so a single `html::escape(value)` is safe in HTML text *and* quoted/unquoted attribute values without the caller knowing the sink. Both tiers escape identically and `html::unescape` round-trips the new hex references. (Context-aware escaping for URL/JS/CSS sinks remains the `html::template` engine's job — a single escaper cannot be context-aware.)
-- **`http::Client` cookie jar + proxy (Go's `net/http/cookiejar` / `Transport.Proxy`).** `Client::builder().cookie_jar(true)` builds a client that holds a persistent engine — one `ureq::Agent` on the boxed client (compiled tiers) / an id-keyed `gossamer_std::http::Client` registry (interpreter) — so a `Set-Cookie` stored on one request is re-sent on the next request made with the same client. `cookie_jar(false)` (the default) runs each request on a fresh engine, so nothing carries over. `.proxy(url)` routes every request through an HTTP/SOCKS proxy. Both builder methods chain across every tier; the verb-chain (`client.get(url)....send()`) and `client.request` paths all run on the client's engine. Fixture `feature-testing-examples/http_client_cookie_jar.gos` proves the jar round-trips bit-identically on the VM, Cranelift, and LLVM.
+- **`html::escape` is CSP-grade.** It now escapes the OWASP "HTML element content" defensive set - the five metacharacters (`& < > " '`) plus `/` (`&#x2F;`, the closing-tag / unquoted-attribute edge cases) and backtick (`&#x60;`, IE's attribute delimiter) - so a single `html::escape(value)` is safe in HTML text *and* quoted/unquoted attribute values without the caller knowing the sink. Both tiers escape identically and `html::unescape` round-trips the new hex references. (Context-aware escaping for URL/JS/CSS sinks remains the `html::template` engine's job - a single escaper cannot be context-aware.)
+- **`http::Client` cookie jar + proxy (Go's `net/http/cookiejar` / `Transport.Proxy`).** `Client::builder().cookie_jar(true)` builds a client that holds a persistent engine - one `ureq::Agent` on the boxed client (compiled tiers) / an id-keyed `gossamer_std::http::Client` registry (interpreter) - so a `Set-Cookie` stored on one request is re-sent on the next request made with the same client. `cookie_jar(false)` (the default) runs each request on a fresh engine, so nothing carries over. `.proxy(url)` routes every request through an HTTP/SOCKS proxy. Both builder methods chain across every tier; the verb-chain (`client.get(url)....send()`) and `client.request` paths all run on the client's engine. Fixture `feature-testing-examples/http_client_cookie_jar.gos` proves the jar round-trips bit-identically on the VM, Cranelift, and LLVM.
 
-### Correctness — compiled-tier silent-divergence and codegen fixes
+### Correctness - compiled-tier silent-divergence and codegen fixes
 
-- **`value_to_bytes` accepts a byte-array literal.** The interpreter's crypto helpers read `[u8]` arguments via `value_to_bytes`, which only handled the boxed `Array` shape and returned empty for the packed `IntArray` a `[112, 97, …]` literal lowers to — so VM crypto (`pbkdf2`/`argon2id`/`aead`) silently hashed *nothing*. The `IntArray` arm fixes the whole family.
+- **`value_to_bytes` accepts a byte-array literal.** The interpreter's crypto helpers read `[u8]` arguments via `value_to_bytes`, which only handled the boxed `Array` shape and returned empty for the packed `IntArray` a `[112, 97, …]` literal lowers to - so VM crypto (`pbkdf2`/`argon2id`/`aead`) silently hashed *nothing*. The `IntArray` arm fixes the whole family.
 - **`.len()` on a runtime-helper String temporary.** `crypto::sha256::hex(x).len()` (and the other hex/`unicode::nfc` temporaries) read a `GosVec` header out of a c-string pointer on the compiled tier because the inline-receiver dispatch keyed on the unresolved HIR type; it now re-keys off the resolved (`String`) type and routes to `gos_rt_str_len`.
 - **`iter::min`/`max` carry a real `Option<i64>`.** The shims returned a bare `i64` while the static type was `Option<i64>`, so `iter::min(xs) |> option::default(0)` read garbage through the Option ABI; the shims now return the boxed Option.
 - **`HashMap<String, Vec<i64>>` get/or_insert.** A String-keyed, aggregate-valued map stored via the i64-keyed path and could never be read back, and `or_insert` build-failed; dispatch now routes by key kind, with RC blob retain/release parity, and an `or_insert` of a fresh aggregate no longer double-frees at teardown.
 - **`fs::metadata(p)` returns a struct.** Field access (`m.size`, `m.is_file`) segfaulted on the compiled tier (the shim returned only the size as `Result<i64>`); it now uses the injected-source-struct pattern (a `__gos_fs_Metadata` wrapper over a 6-tuple leaf), matching the VM's `fs::Metadata`.
-- **`flag::Set::parse([literal])`** no longer segfaults — the `[String]` array literal is coerced to a heap `GosVec` before the shim (the same whitelist `http::Client::request` uses).
+- **`flag::Set::parse([literal])`** no longer segfaults - the `[String]` array literal is coerced to a heap `GosVec` before the shim (the same whitelist `http::Client::request` uses).
 - **Closures inside `impl`/`trait` method bodies work on the compiled tiers.** The closure-lifting pass never descended into `impl`/`trait` method bodies, so a closure inside a handler's `serve` method lowered to a null environment; the lifter now walks those bodies.
 - **`slog::info`/`warn`/`error`/`debug` emit structured JSON on every tier.** The compiled shims printed `INFO: msg` plain text and dropped fields; they now emit the same `{"level":…,"msg":…}` line the interpreter does.
 - **More cross-goroutine sync registries made global.** `BARRIER_REGISTRY` and `ATOMIC_U64_REGISTRY` were still `thread_local!` (so they silently lost updates across goroutine worker threads); both are now process-global like the rest.
 
-### Systemic — stdlib tests now compile-and-run
+### Systemic - stdlib tests now compile-and-run
 
-- **`assert_vm_output` retired.** The `stdlib_new_modules` probe helper ran `gos run` only — the reason VM-only drift went uncaught across the standard library. It now also `gos build`s each probe, runs the native binary, and asserts the compiled stdout matches the VM bit-for-bit (an explicit `assert_vm_only(reason)` exists for documented exceptions). Folding the ~52 probes into the cross-tier gate surfaced and fixed several more compiled-tier gaps at once.
+- **`assert_vm_output` retired.** The `stdlib_new_modules` probe helper ran `gos run` only - the reason VM-only drift went uncaught across the standard library. It now also `gos build`s each probe, runs the native binary, and asserts the compiled stdout matches the VM bit-for-bit (an explicit `assert_vm_only(reason)` exists for documented exceptions). Folding the ~52 probes into the cross-tier gate surfaced and fixed several more compiled-tier gaps at once.
 - **`static_files` conditional GET** parses the RFC 1123 / RFC 850 / asctime date formats browsers actually send for `If-Modified-Since` (was RFC 3339 only), returning 304 correctly.
 - **Canonical web example.** `examples/web_auth_api.gos` shows a router with path params, a `middleware::bearer_ok` auth gate, and `session::sign`/`verify`, running identically on every tier.
 - **CI parity battery split into groups.** The single "every example" parity walks (`*_matches_vm_on_every_example`, the strict-lowering check) are now `cranelift_parity_group_N` / `llvm_parity_group_N` / `llvm_strict_lower_group_N` (round-robin across `PARITY_GROUPS`), so a failing example fails a small, fast group test that still names the example, instead of one giant suite.
@@ -87,53 +87,53 @@ Many modules and methods had an interpreter implementation but no compiled-tier 
 ### Weekly Miri + fuzz CI
 
 - **Miri runs the `gossamer-runtime` crate clean.** The `mimalloc` global allocator and the RC pool's direct `mi_*` calls fall back to the system allocator under Miri (as they already do under ThreadSanitizer), so Miri models every allocation instead of aborting on the first foreign call. The strict-provenance defects it then surfaced are fixed at the root: the closure-env and flat-slot ABIs recover a pointer's exposed provenance (`with_exposed_provenance`) rather than `transmute`-ing an integer, and the `Vec` element buffer is word-aligned (its `i64` / pointer slots were being read through a 1-aligned `Vec<u8>`). Socket round-trip tests are skipped under Miri (no sockets there), and the million-node release stress shrinks under Miri while the native run is unchanged.
-- **The weekly fuzz job survives the full hour.** The process-global symbol interner is now resettable (`reset_interner`) and the fuzz harnesses clear it per input, so a long run no longer accumulates every identifier ever interned — the same unbounded growth the long-lived LSP shared. The fuzz binary falls back to the system allocator (a `--cfg fuzzing` gate) so ASan / LeakSanitizer instrument the heap, and the weekly targets run in libFuzzer fork mode (`-fork=1`) so a child that trips the RSS cap is recorded and replaced instead of killing the parent.
+- **The weekly fuzz job survives the full hour.** The process-global symbol interner is now resettable (`reset_interner`) and the fuzz harnesses clear it per input, so a long run no longer accumulates every identifier ever interned - the same unbounded growth the long-lived LSP shared. The fuzz binary falls back to the system allocator (a `--cfg fuzzing` gate) so ASan / LeakSanitizer instrument the heap, and the weekly targets run in libFuzzer fork mode (`-fork=1`) so a child that trips the RSS cap is recorded and replaced instead of killing the parent.
 - **Bytecode-VM user-function inliner.** `gos run` re-compiles a small non-recursive single-expression helper directly at its call sites instead of emitting a per-call frame, keeping the result in its native (`i64` / `f64` / value) register bank. A function that calls `panic` / `assert` stays a real frame so panic and failed-test tracebacks are unchanged, and `gos test` disables inlining to preserve the full call chain. Spectral-norm runs ~4.8× faster interpreted; `GOSSAMER_INLINE=0` turns it off for differential checks.
 - **Tuple-extracted RC values are released, and destructuring loops auto-region.** A value bound out of a tuple (`let (tree, _) = build()`) is now retained at the extract and released with its owner, and a loop body that only produces and consumes fresh per-iteration values is bump-allocated and freed wholesale. The ast-rewrite cross-round leak is gone (≈487 MB → ≈49 MB at depth 20) with no speed cost.
-- **`&mut String` write-back works on every tier.** `*s = v` (release-old) and `*s += v` (self-consuming append) through a `&mut String` parameter now persist — the VM via its cell protocol, the compiled tiers via a by-slot-address `Rvalue::Ref` plus a post-call reload — enabling the idiomatic `serialize_into(&mut buf)` accumulator that the JSON benchmark now uses.
+- **`&mut String` write-back works on every tier.** `*s = v` (release-old) and `*s += v` (self-consuming append) through a `&mut String` parameter now persist - the VM via its cell protocol, the compiled tiers via a by-slot-address `Rvalue::Ref` plus a post-call reload - enabling the idiomatic `serialize_into(&mut buf)` accumulator that the JSON benchmark now uses.
 - **Counted-loop `[i64]` reads skip the bounds check on the LLVM tier.** `for x in vec` over a primitive-element vector lowers to a branch-free unchecked element read, since the induction index is provably within `[0, len)`.
 - **Cleanup.** Removed the dead heap-`GosResult` exit-code fallback (Result/Option are by-value `i128`), fixed broken rustdoc intra-doc links so `cargo doc -D rustdoc::broken_intra_doc_links` passes, and the `crypto::hmac::sha256_mac` lowering test now passes byte slices (`.as_bytes()`) like the other byte-input crypto helpers instead of a `String` (which the compiled shim read as a byte vector).
 
-## 0.13.0 — Bidirectional typechecking, identity-operand folding; std::database::sql end-to-end; rust-bindings native builds, deep fixes, tier parity and correctness.
+## 0.13.0 - Bidirectional typechecking, identity-operand folding; std::database::sql end-to-end; rust-bindings native builds, deep fixes, tier parity and correctness.
 
-- **The typechecker is formally bidirectional.** Expected types flow *down* into expressions as they are checked (an `Expectation` threaded through the checker, rustc-style) instead of being retro-patched onto literal nodes after unification. Every site that knows its expected type propagates it: annotated `let` / `const` / `static` initializers, function and closure return positions (block tails, `return`, branches, match arms), call and method arguments, variant-constructor payloads, struct-literal fields, and `&`-borrows. Literal containers adopt the expected shape on first pass — fixed `[T; N]` versus heap `Vec<T>` is a layout decision unification cannot rewrite later — and element mismatches now surface at the element's own span.
-- **Assignment values are checked against the place's type.** `v = [2, 3]` into a `Vec<i64>` slot previously recorded the literal as a fixed `[i64; 2]` — a layout desync from the Vec-typed slot on the compiled tiers. The place type now flows into the value as its expectation.
+- **The typechecker is formally bidirectional.** Expected types flow *down* into expressions as they are checked (an `Expectation` threaded through the checker, rustc-style) instead of being retro-patched onto literal nodes after unification. Every site that knows its expected type propagates it: annotated `let` / `const` / `static` initializers, function and closure return positions (block tails, `return`, branches, match arms), call and method arguments, variant-constructor payloads, struct-literal fields, and `&`-borrows. Literal containers adopt the expected shape on first pass - fixed `[T; N]` versus heap `Vec<T>` is a layout decision unification cannot rewrite later - and element mismatches now surface at the element's own span.
+- **Assignment values are checked against the place's type.** `v = [2, 3]` into a `Vec<i64>` slot previously recorded the literal as a fixed `[i64; 2]` - a layout desync from the Vec-typed slot on the compiled tiers. The place type now flows into the value as its expectation.
 - **`Some` / `Ok` / `Err` payload literals adopt the expected payload shape.** `let x: Option<Vec<i64>> = Some([1, 2])` previously recorded the payload as a fixed `[i64; 2]` inside a `Vec`-typed slot; the constructor now threads the expected `Option` / `Result` payload type into its argument.
-- **Identity-operand constant folding in MIR.** A `BinaryOp` with one constant identity or absorbing operand folds away: `x + 0`, `x - 0`, `x * 1`, `x / 1`, `x | 0`, `x ^ 0`, `x << 0`, `x >> 0` fold to `x`; `x * 0`, `x & 0`, `x % 1` fold to `0`; `b & true`, `b | false`, `b ^ false` fold to `b`; `b & false` / `b | true` fold to the constant. Integer and bool only — float identities are unsound under IEEE-754, and a non-constant divisor keeps its runtime division (`0 / x` still faults when `x == 0`). Pays off where LLVM `-O3` never runs: the bytecode VM and unoptimised `gos build` binaries.
+- **Identity-operand constant folding in MIR.** A `BinaryOp` with one constant identity or absorbing operand folds away: `x + 0`, `x - 0`, `x * 1`, `x / 1`, `x | 0`, `x ^ 0`, `x << 0`, `x >> 0` fold to `x`; `x * 0`, `x & 0`, `x % 1` fold to `0`; `b & true`, `b | false`, `b ^ false` fold to `b`; `b & false` / `b | true` fold to the constant. Integer and bool only - float identities are unsound under IEEE-754, and a non-constant divisor keeps its runtime division (`0 / x` still faults when `x == 0`). Pays off where LLVM `-O3` never runs: the bytecode VM and unoptimised `gos build` binaries.
 
-`std::database::sql` is now callable from Gossamer source on every tier. The 0.9.0 release shipped the driver registry, the Rust trait surface, and 33 `gos_rt_sql_*` shims — but no front half: `sql::open(...)` failed under `gos run` (no interpreter binding) and `gos build` emitted undefined `@sql::open` symbols. The full CRUD path (parameterized execute/query, row iteration, typed getters, transactions, savepoints, isolation levels) now produces bit-identical output under `gos run`, `gos build`, and `gos build --release` against a live PostgreSQL via the external pgooseql driver.
+`std::database::sql` is now callable from Gossamer source on every tier. The 0.9.0 release shipped the driver registry, the Rust trait surface, and 33 `gos_rt_sql_*` shims - but no front half: `sql::open(...)` failed under `gos run` (no interpreter binding) and `gos build` emitted undefined `@sql::open` symbols. The full CRUD path (parameterized execute/query, row iteration, typed getters, transactions, savepoints, isolation levels) now produces bit-identical output under `gos run`, `gos build`, and `gos build --release` against a live PostgreSQL via the external pgooseql driver.
 
 - **Injected real-struct wrappers for `database::sql`** (the pem/x509/tar/zip precedent): `gossamer-parse` injects Gossamer source defining `Conn` / `Rows` / `Row` / `Tx` as one-field handle structs, the `Value` / `IsolationLevel` enums, and `sql::open` / `sql::drivers` wrappers whose bodies call scalar-shaped `__gos_sql_*_raw` leaf intrinsics. Methods on the injected structs are ordinary impl methods, so every tier executes the same code; the dead `stdlib_sql.rs` MIR dispatch tables (never wired into method lowering) are deleted. `sql::Value::Int(1)` / `sql::IsolationLevel::Serializable` variant paths and the `sql::Error` → `errors::Error` type alias rewrite at parse time.
-- **One semantics for all tiers**: the interpreter's `__gos_sql_*_raw` builtins and the C-ABI shims marshal to the same safe core functions in `c_abi/sql.rs` — one handle registry, identical sentinel conventions. New shims: parameter binding (`gos_rt_sql_params_new` / `_push_{null,bool,int,float,text,blob}`, `gos_rt_sql_conn_{execute,query}_params`), `gos_rt_sql_conn_close`, `gos_rt_sql_row_kind` (typed-getter mismatch checks), `gos_rt_sql_row_get_bool_i64` / `_get_blob_vec`, and `gos_rt_sql_last_error` — every failure path now records a message (previously `Err(_) => -1` discarded it).
+- **One semantics for all tiers**: the interpreter's `__gos_sql_*_raw` builtins and the C-ABI shims marshal to the same safe core functions in `c_abi/sql.rs` - one handle registry, identical sentinel conventions. New shims: parameter binding (`gos_rt_sql_params_new` / `_push_{null,bool,int,float,text,blob}`, `gos_rt_sql_conn_{execute,query}_params`), `gos_rt_sql_conn_close`, `gos_rt_sql_row_kind` (typed-getter mismatch checks), `gos_rt_sql_row_get_bool_i64` / `_get_blob_vec`, and `gos_rt_sql_last_error` - every failure path now records a message (previously `Err(_) => -1` discarded it).
 - **The SQL driver registry is shared across linked runtime copies.** A `gos build` binary with `[rust-bindings]` links two gossamer-runtime copies (`--allow-multiple-definition`); the registry static was duplicated per copy, so a driver registered by the binding was invisible to `gos_rt_sql_open`. The storage now lives behind one unmangled symbol (`GOS_RT_SQL_DRIVER_REGISTRY`) the linker deduplicates.
 - **`gos build` works for `[rust-bindings]` programs.** Calls to external binding fns emitted no LLVM `declare`, so every `[rust-bindings]` program failed at the `opt` stage with `use of undefined value '@gos_binding_…'`. The emitter now synthesizes the declaration from the call-site types (which the MIR binding lowering derives from the binding's signature metadata).
 - **`gos build --release` works for `[rust-bindings]` programs.** The static-musl release link consumed a glibc-built bindings staticlib (undefined `__res_init` / `open64` / `gnu_get_libc_version`); the bindings staticlib is now built with `--target x86_64-unknown-linux-musl` when the main link is static-musl, with the cargo target folded into the archive path and freshness stamp.
-- **Array/tuple literal arguments re-type against method and variant-constructor parameters.** The 0.10.0 re-typing covered free-fn calls only: `c.execute(&[V::I(1)])` (method) and `Value::Blob([1, 2, 3])` (variant ctor) kept the fixed `[T; N]` layout while the callee read a heap GosVec — a native-tier segfault. Method signatures are recorded by name + arity (conflicting registrations are poisoned, never coerced); `&`-borrowed literals re-type through the reference; explicit `return [..]` re-types against the declared return like the block-tail path already did.
+- **Array/tuple literal arguments re-type against method and variant-constructor parameters.** The 0.10.0 re-typing covered free-fn calls only: `c.execute(&[V::I(1)])` (method) and `Value::Blob([1, 2, 3])` (variant ctor) kept the fixed `[T; N]` layout while the callee read a heap GosVec - a native-tier segfault. Method signatures are recorded by name + arity (conflicting registrations are poisoned, never coerced); `&`-borrowed literals re-type through the reference; explicit `return [..]` re-types against the declared return like the block-tail path already did.
 - **Nested by-value enums (`Result<Option<T>, E>`) round-trip on the compiled tiers.** `Ok(Some(2))` truncated the inner 2-word Option to its discriminant word (`while let Some(v) = f()?` yielded zeros for scalars and segfaulted for struct payloads). Construction now heap-copies a 2-word by-value enum payload (`maybe_heap_copy_value_enum`); the new `gos_rt_result_payload_i128` extractor dereferences it back by value; `None` in return position pins its destination to the i128 representation (`lower_result_no_payload` mirrored `lower_result_ctor`).
-- **`.len()` on a fixed `[T; N]` array is a compile-time constant.** It previously routed to `gos_rt_len`, which read a GosVec header out of the inline stack aggregate — `[1, 2, 3].len()` returned 1 natively (3 on the VM).
+- **`.len()` on a fixed `[T; N]` array is a compile-time constant.** It previously routed to `gos_rt_len`, which read a GosVec header out of the inline stack aggregate - `[1, 2, 3].len()` returned 1 natively (3 on the VM).
 - **Fixture**: `feature-testing-examples/sql_driverless.gos` exercises the registry, the unknown-driver error path through `?`, and `Value` / `IsolationLevel` construction + matching without a database, registered for tier parity.
 - **Struct-receiver `.close()` no longer hijacked by the channel helper.** The bare-name method table routed every `.close()` to `gos_rt_chan_close` regardless of receiver; `rows.close()` on the compiled tiers closed a bogus channel handle (and could deadlock at startup in larger binaries). The arm now carries the same receiver gate as `insert` / `get`: a struct whose impl defines `close` dispatches to it, everything else keeps the channel lowering.
-- **SQL cursors no longer leak handles.** `Rows` follows cursor semantics: advancing frees the previous `Row` handle (typed getters on a stale row report "row is no longer valid"), a fully drained iteration reclaims everything, and the new idempotent `rows.close()` (wired VM / Cranelift / LLVM) handles early exits — `defer rows.close()` is the idiom, matching Go. `conn.close()` sweeps any cursors still open on the connection, so an abandoned iteration is bounded by connection lifetime. Previously every fetched row leaked its registry entry until process exit.
-- **`Conn::query_each(sql, params, f)`** runs `f` once per row with the cursor opened, drained, and closed inside the call — implemented in the injected Gossamer wrapper (defer + let-else drain), so all tiers share one body. Stub-driver unit tests pin the lifecycle invariants; `sql_driverless.gos` exercises `close` idempotency and the `query_each` error path across tiers.
+- **SQL cursors no longer leak handles.** `Rows` follows cursor semantics: advancing frees the previous `Row` handle (typed getters on a stale row report "row is no longer valid"), a fully drained iteration reclaims everything, and the new idempotent `rows.close()` (wired VM / Cranelift / LLVM) handles early exits - `defer rows.close()` is the idiom, matching Go. `conn.close()` sweeps any cursors still open on the connection, so an abandoned iteration is bounded by connection lifetime. Previously every fetched row leaked its registry entry until process exit.
+- **`Conn::query_each(sql, params, f)`** runs `f` once per row with the cursor opened, drained, and closed inside the call - implemented in the injected Gossamer wrapper (defer + let-else drain), so all tiers share one body. Stub-driver unit tests pin the lifecycle invariants; `sql_driverless.gos` exercises `close` idempotency and the `query_each` error path across tiers.
 - **`result::default` / `option::default` work on the compiled tiers.** `result::default` had no MIR lowering at all (`gos build` failed at `opt` with `use of undefined value '@result::default'`), and both combinators erased heap / float payload types to raw i64 (a String came back as its pointer digits, an f64 fallback as 0). New `gos_rt_result_default` / `gos_rt_result_default_f64` / `gos_rt_option_default_f64` shims; the destination type is recovered from the scrutinee's `substs[0]` when the call expression's type is still an inference variable. Fixtures `result_default.gos` / `option_default.gos` registered for tier parity.
-- **Binding `Result` / `Option` returns are real values on the compiled tiers.** A `[rust-bindings]` fn returning `Result<String, String>` handed the native program a raw binding-ABI `GosVariant` pointer — `match` read garbage payloads and printed pointer digits (the VM was fine). The MIR binding lowering now routes such returns through the new `gos_rt_binding_variant_to_result` shim, which repacks the variant as the runtime's i128 result and re-allocates string payloads as header'd runtime strings, typed as the genuine `Result` / `Option` Adt.
+- **Binding `Result` / `Option` returns are real values on the compiled tiers.** A `[rust-bindings]` fn returning `Result<String, String>` handed the native program a raw binding-ABI `GosVariant` pointer - `match` read garbage payloads and printed pointer digits (the VM was fine). The MIR binding lowering now routes such returns through the new `gos_rt_binding_variant_to_result` shim, which repacks the variant as the runtime's i128 result and re-allocates string payloads as header'd runtime strings, typed as the genuine `Result` / `Option` Adt.
 - **Bare `gos run` / `gos build` work in any project with an entry source.** Entry resolution from a project root now tries `src/main.gos`, `main.gos`, the manifest-id-named source (`src/<id-tail>.gos`, `<id-tail>.gos`), then a sole `.gos` candidate under `src/` or the root (scratch `_*.gos` and `*_test.gos` excluded). Several nameless candidates produce an error that lists them; previously anything but `main.gos` failed with "pass a path explicitly".
-- **Imported binding fns dispatch to the module the program imported.** Eight tuigoose modules each expose `with_block`; the bare-leaf dispatch tables (interp and MIR) disambiguate by arity only, so `use tuigoose::paragraph::with_block` + a bare call could silently route to whichever same-arity candidate the linker registered first — link-order-dependent wrong behavior. HIR lowering now expands a single-segment imported name to its full qualified path when it targets a registered `[rust-bindings]` item (std / user imports untouched), so both tiers dispatch through the qualified entry.
-- **New example: `examples/projects/clipboard_rust`** — wraps the published `arboard` crate behind a two-fn `[rust-bindings]` crate (`clipboard::get_text` / `set_text`), prints the previous clipboard text and replaces it with the CLI args. The Linux holder-process dance (X11 selections die with their owner) is handled inside the binding with a claim-acknowledged handshake, so back-to-back invocations are deterministic. When the native path is unreachable (Wayland-only, Termux, headless) the binding falls back to wl-copy / wl-paste, xclip, xsel, then termux-clipboard-get/set; only when none exist does it fail, with a message asking for a clipboard utility to be installed.
+- **Imported binding fns dispatch to the module the program imported.** Eight tuigoose modules each expose `with_block`; the bare-leaf dispatch tables (interp and MIR) disambiguate by arity only, so `use tuigoose::paragraph::with_block` + a bare call could silently route to whichever same-arity candidate the linker registered first - link-order-dependent wrong behavior. HIR lowering now expands a single-segment imported name to its full qualified path when it targets a registered `[rust-bindings]` item (std / user imports untouched), so both tiers dispatch through the qualified entry.
+- **New example: `examples/projects/clipboard_rust`** - wraps the published `arboard` crate behind a two-fn `[rust-bindings]` crate (`clipboard::get_text` / `set_text`), prints the previous clipboard text and replaces it with the CLI args. The Linux holder-process dance (X11 selections die with their owner) is handled inside the binding with a claim-acknowledged handshake, so back-to-back invocations are deterministic. When the native path is unreachable (Wayland-only, Termux, headless) the binding falls back to wl-copy / wl-paste, xclip, xsel, then termux-clipboard-get/set; only when none exist does it fail, with a message asking for a clipboard utility to be installed.
 - **The retired tracing GC is deleted end-to-end.** The `gossamer-gc` crate, the runtime's handle heap (write barriers, safepoints, shadow stacks, concurrent mark), the MIR `insert_gc_barriers` pass and `GcWriteBarrier` statement, and every dead registry / symbol-table / JIT-dispatch entry are gone. Memory management is what actually ships: reference counting + the drop pass + arenas. SPEC §7.2 and the runtime design doc now describe that model; the live aggregate-malloc shims (`gos_rt_gc_alloc` / `gos_rt_aggr_*`) and no-op ABI-compat entries are unchanged.
-- **`std::runtime::mem_stats` removed** — declared in the manifest but implemented on no tier, and its backing stats read the always-empty tracing heap.
+- **`std::runtime::mem_stats` removed** - declared in the manifest but implemented on no tier, and its backing stats read the always-empty tracing heap.
 - **`regex::compile` returns a real `Result` on the compiled tiers.** An invalid pattern previously came back as `Ok` with a null handle under `gos build` (the VM correctly returned `Err`); the new `gos_rt_regex_compile_result` shim carries the same diagnostic string as the VM, so all tiers report identical errors.
 - **`fs::walk_dir` is tier-uniform.** The VM materialised flat path strings while the compiled tiers produced `DirInfo` aggregates; the VM now yields the same `DirInfo` shape as `fs::list_dir`. An unreadable directory (including a missing root) is an `Err` on every tier (the compiled walk silently returned `Ok([])`), and the Err payload is typed as `errors::Error` so `println!("{e}")` renders the message instead of a raw pointer.
-- **Block comments no longer nest**, matching SPEC §Comments — the first `*/` closes the comment, so `/* see target/* */` no longer swallows the rest of the file. Tokenization errors (unterminated comment / string, bad escape, …) surface as parse diagnostics (`GP0018`); previously they were dropped with the lexer and a file with an unterminated `/*` parsed as empty-but-valid.
-- **`[rust-bindings]` functions can be passed as values.** A value-position reference (`run(config, set_text)`) eta-expands during closure lifting into the equivalent closed closure, so it flows through the standard binding-call lowering — argument and return conversions included — on every tier; previously the compiled tiers emitted a reference to an undefined symbol and died inside `opt`. A binding `FnRef` that somehow survives to the LLVM tier now fails strict lowering with an actionable message instead of an `opt` crash.
+- **Block comments no longer nest**, matching SPEC §Comments - the first `*/` closes the comment, so `/* see target/* */` no longer swallows the rest of the file. Tokenization errors (unterminated comment / string, bad escape, …) surface as parse diagnostics (`GP0018`); previously they were dropped with the lexer and a file with an unterminated `/*` parsed as empty-but-valid.
+- **`[rust-bindings]` functions can be passed as values.** A value-position reference (`run(config, set_text)`) eta-expands during closure lifting into the equivalent closed closure, so it flows through the standard binding-call lowering - argument and return conversions included - on every tier; previously the compiled tiers emitted a reference to an undefined symbol and died inside `opt`. A binding `FnRef` that somehow survives to the LLVM tier now fails strict lowering with an actionable message instead of an `opt` crash.
 - **Explicit `return` values unify against the declared return type.** `return s` with `s: String` in a `-> i64` fn now reports `GT0001` like the equivalent block tail; the return expectation previously shaped literal containers only, so non-literal returns slipped the checker.
 - **Lint fixes**: `unused_mut_variable` counts mutating method calls (`xs.push(v)`, `flags.parse(args)`) and `&mut` borrows as mutations; every lint now descends into inline `mod` bodies (`mod tests` was invisible, and `use` imports referenced only there false-positived as unused); `redundant_closure` only suggests passing the function directly when the callee is a locally defined function (imported and qualified-path callees have call-site-only lowerings, so the closure is load-bearing).
-- **`gos bench` drops `allocs/op`** — the counter behind it was the removed tracing heap's, so the column always printed a fabricated 0; output is `ns/op` only.
+- **`gos bench` drops `allocs/op`** - the counter behind it was the removed tracing heap's, so the column always printed a fabricated 0; output is `ns/op` only.
 - **The i64 integer model is now uniform across tiers.** The compiled tiers (Cranelift and LLVM) previously routed division, remainder, comparison, and `>>` on unsigned-declared types through unsigned machine ops and printed `u64`/`usize` unsigned, so `(0u8 - 1) / 2`, `0u64 - 1 > 0`, and `z >> 1` diverged from the VM; LLVM also emitted unmasked shifts (`1 << 70` was poison under `-O3`). All ≤64-bit ints now run signed-i64 semantics with `& 63` shift masking on every tier, `u64 as f64` converts signed, and the unsigned printer fires only for explicit `as u64` / `as usize` cast results (matching the VM's `Value::Uint` display provenance). SPEC §3.1 now documents the model.
-- **Packed byte-vec helpers honor the element stride.** `first` / `last` / `index_of` / `count_of` / `contains` / `Vec::remove` and indexed get/set on an `elem_bytes=1` vec (e.g. `os::read_file` bytes) read 8 bytes per element on the compiled tiers — out-of-bounds reads and garbage values; `reversed()` also lost the byte element type. All of them now load/store at the header's stride, and `reversed()` preserves the receiver's element type.
+- **Packed byte-vec helpers honor the element stride.** `first` / `last` / `index_of` / `count_of` / `contains` / `Vec::remove` and indexed get/set on an `elem_bytes=1` vec (e.g. `os::read_file` bytes) read 8 bytes per element on the compiled tiers - out-of-bounds reads and garbage values; `reversed()` also lost the byte element type. All of them now load/store at the header's stride, and `reversed()` preserves the receiver's element type.
 - **`xs.pop()` returns a real `Option<T>` on every tier.** The VM evaluated `xs.pop()` to the shortened array itself (so `if let Some(v) = xs.pop()` never matched), and the compiled tiers returned a bare flag with the length untouched. Pop now shortens the receiver and yields `Some(last)` / `None` everywhere (new `gos_rt_vec_pop_opt` shim, stride-aware).
 
-### `std::database::sql` — full surface from Gossamer on every tier
+### `std::database::sql` - full surface from Gossamer on every tier
 
 The remaining Rust-façade-only pieces now work from Gossamer source, verified bit-identically under `gos run`, `gos build`, and `gos build --release` against live PostgreSQL via the external pgooseql driver (TLS, streaming rows, COPY, LISTEN/NOTIFY, rich type decoding on the driver side).
 
@@ -142,26 +142,26 @@ The remaining Rust-façade-only pieces now work from Gossamer source, verified b
 - **Parameterized transactions**: `tx.execute_params(sql, &[Value…])` and `tx.query(sql, &[Value…])` (cursors register under the transaction's connection).
 - **COPY**: `conn.copy_in(sql, data: &[u8]) -> i64` and `conn.copy_out(sql) -> [u8]` (two-step run/take shims so the wrapper branches on a scalar status before materializing bytes).
 - **LISTEN/NOTIFY**: `conn.listen/unlisten(channel)` and `conn.poll_notification(timeout_ms) -> Option<Notification>` over a per-connection last-notification slot read by scalar getter shims.
-- **Connection pool relocated to `gossamer-runtime::sql_pool`** (operating on `Box<dyn ConnectionImpl>`; the std façade keeps its `Conn` wrapper + statement-cache LRU as an adapter) and exposed to Gossamer: `Pool::open(driver, url, max)` / `Pool::open_with(…)`, `pool.acquire() -> Conn` (named `acquire`, not `get` — the VM's bare-name `get` router hijacks `get` on struct receivers), `live` / `idle` / `close_idle`; closing a pooled checkout returns it to the pool through the ordinary `conn.close()` shim. Evictions and `close_idle` drop driver connections outside the pool lock.
-- **Migrations relocated to `gossamer-runtime::sql_migrate`** (std façade delegates) and exposed as `sql::migrate::up(&mut conn, dir) -> i64`. The `schema_migrations` bookkeeping column is now `BIGINT` — PostgreSQL's `INTEGER` is 32-bit and epoch milliseconds overflowed it (SQLite reads both as i64).
-- **`Select` builder in pure injected Gossamer** — fluent `sql::Select::new(t).columns(&[…]).where_eq(col, v).order_by(col, asc).limit(n).offset(n)` rendering `$N` placeholders via `render()` + `params()`; methods return a fresh builder (functional style — correct under both copy and share field semantics).
-- **Method-call typing fixes surfaced by the above** (general, not SQL-specific): array/tuple-literal arguments re-type against method and variant-constructor parameters with multi-candidate disambiguation (same name + arity coerce only when exactly one candidate is container-shaped); non-generic impl methods record their declared return type keyed by `(self type, name, arity)` so chained results (`sel.params()`) reach codegen typed; the LLVM call emitter passes one-slot enum arguments by slot address when inference left the call-site local untyped (the callee memcpys from the address — passing the loaded tagged-pointer value made it dereference tag bits).
-- **RC accounting no longer depends on item order** (soundness, compiled tiers). `register_rc_managed_ty` only fired at enum-constructor lowering sites, so any body lowered *before* an enum's first constructor treated that enum's locals as non-RC and skipped every retain/release — a by-value enum argument stored into a container inside such a body (the SELECT builder's `where_eq` pushing a `Value`) was freed by the caller's ctor-temp release while the container still referenced it. Symptom: intermittent (allocator-reuse-dependent) garbage discriminants / segfaults in `gos build [--release]` binaries, ~50% crash rate on the pgooseql full example. Payload-bearing enum defs are now registered eagerly during typechecking (`register_rc_managed_enum_def`, def-based so every instantiation of a generic enum is covered); all-unit enums stay excluded (they lower as bare `i64` discriminants). Regression-gated by `feature-testing-examples/enum_param_rc_repro.gos` in tier parity.
+- **Connection pool relocated to `gossamer-runtime::sql_pool`** (operating on `Box<dyn ConnectionImpl>`; the std façade keeps its `Conn` wrapper + statement-cache LRU as an adapter) and exposed to Gossamer: `Pool::open(driver, url, max)` / `Pool::open_with(…)`, `pool.acquire() -> Conn` (named `acquire`, not `get` - the VM's bare-name `get` router hijacks `get` on struct receivers), `live` / `idle` / `close_idle`; closing a pooled checkout returns it to the pool through the ordinary `conn.close()` shim. Evictions and `close_idle` drop driver connections outside the pool lock.
+- **Migrations relocated to `gossamer-runtime::sql_migrate`** (std façade delegates) and exposed as `sql::migrate::up(&mut conn, dir) -> i64`. The `schema_migrations` bookkeeping column is now `BIGINT` - PostgreSQL's `INTEGER` is 32-bit and epoch milliseconds overflowed it (SQLite reads both as i64).
+- **`Select` builder in pure injected Gossamer** - fluent `sql::Select::new(t).columns(&[…]).where_eq(col, v).order_by(col, asc).limit(n).offset(n)` rendering `$N` placeholders via `render()` + `params()`; methods return a fresh builder (functional style - correct under both copy and share field semantics).
+- **Method-call typing fixes surfaced by the above** (general, not SQL-specific): array/tuple-literal arguments re-type against method and variant-constructor parameters with multi-candidate disambiguation (same name + arity coerce only when exactly one candidate is container-shaped); non-generic impl methods record their declared return type keyed by `(self type, name, arity)` so chained results (`sel.params()`) reach codegen typed; the LLVM call emitter passes one-slot enum arguments by slot address when inference left the call-site local untyped (the callee memcpys from the address - passing the loaded tagged-pointer value made it dereference tag bits).
+- **RC accounting no longer depends on item order** (soundness, compiled tiers). `register_rc_managed_ty` only fired at enum-constructor lowering sites, so any body lowered *before* an enum's first constructor treated that enum's locals as non-RC and skipped every retain/release - a by-value enum argument stored into a container inside such a body (the SELECT builder's `where_eq` pushing a `Value`) was freed by the caller's ctor-temp release while the container still referenced it. Symptom: intermittent (allocator-reuse-dependent) garbage discriminants / segfaults in `gos build [--release]` binaries, ~50% crash rate on the pgooseql full example. Payload-bearing enum defs are now registered eagerly during typechecking (`register_rc_managed_enum_def`, def-based so every instantiation of a generic enum is covered); all-unit enums stay excluded (they lower as bare `i64` discriminants). Regression-gated by `feature-testing-examples/enum_param_rc_repro.gos` in tier parity.
 - **23 new `gos_rt_sql_*` shims** with ABI-registry entries, JIT symbol-table entries, interpreter builtins over the same safe core, and MIR dispatch arms; driverless tier-parity fixture extended to the Select builder and pool error paths.
 
-### `std::http` — proxy-grade client and server on every tier
+### `std::http` - proxy-grade client and server on every tier
 
 The HTTP stack was the largest remaining VM-only / tier-divergent surface; it is now bit-identical under `gos run`, `gos build`, and `gos build --release`, pinned by new live-loopback fixtures in tier parity (`http_redirect_policy`, `http_response_headers`, `http_request_headers`, `http_raw_bytes`, `http_next_chunk`, `http_proxy_stream`, `http_bare_handler`, `http_serve_err_binding`, `http_surface`, `http_roundtrip`).
 
-- **`http::request` / `http::request_bytes` are native on the compiled tiers** (previously VM-only), and every client verb now routes through one ureq engine on all tiers — the hand-rolled native GET paths are deleted — so transport-error strings are identical between `gos run` and `gos build`.
+- **`http::request` / `http::request_bytes` are native on the compiled tiers** (previously VM-only), and every client verb now routes through one ureq engine on all tiers - the hand-rolled native GET paths are deleted - so transport-error strings are identical between `gos run` and `gos build`.
 - **Client `Response` carries a real `headers` field**: `[(String, String)]` with lowercase names, wire order, duplicates preserved. The `content_type` / `location` accessors are fixed on the compiled tiers (they read heap garbage before).
-- **Configured clients: `http::Client::builder().max_redirects(n).timeout_ms(ms).build()`** plus `client.request` / `client.request_bytes`. `max_redirects(0)` hands back the raw 3xx with its `Location` header intact — the proxy-correct mode.
+- **Configured clients: `http::Client::builder().max_redirects(n).timeout_ms(ms).build()`** plus `client.request` / `client.request_bytes`. `max_redirects(0)` hands back the raw 3xx with its `Location` header intact - the proxy-correct mode.
 - **The legacy builder chain (`.get(url)` / `.post(url)` / `.header(k, v)` / `.body(s)` / `.send()`) is tier-unified**: `send()` returns `Result` everywhere, `.header` / `.body` are honored on the VM (they were silently dropped), and `put` / `options` / `delete` / `head` have native shims (previously VM-only).
-- **Server `Request.raw_body`** exposes the inbound body as bytes (`[u8]`). Inbound headers are populated and `r.headers` works natively as a real `Vec<(String, String)>` — previously empty on the VM path and a segfault on the compiled tiers (no native lowering existed for the field projection). `request.path` strips the query string natively (`r.query` keeps it).
-- **Handler-set response headers reach the wire**, and `with_header(k, v)` chains with replace-then-push semantics (a repeated case-insensitive name keeps the last value). Content-type precedence is explicit header > constructor field > `text/plain` default on every tier — the compiled `Response::text()` emitted `application/json` before. A struct-literal `http::Response` lowers natively, and handlers declaring a bare `http::Response` return (no `Result`) are wrapped natively via a synthesized `__ok_wrap` thunk — the native server previously misread the Response pointer as a Result discriminant and answered 500.
-- **Streamed server responses**: `Response::stream(status, content_type, upstream)` writes status + headers + `Transfer-Encoding: chunked` and drains the upstream `ResponseStream` to the client in 8 KiB frames with no full-body buffering — the proxy-passthrough shape. On the client, `ResponseStream::next_chunk(max) -> Option<[u8]>` reads raw byte frames (packed `elem_bytes=1` vec), complementing the line-oriented `next_line()`.
+- **Server `Request.raw_body`** exposes the inbound body as bytes (`[u8]`). Inbound headers are populated and `r.headers` works natively as a real `Vec<(String, String)>` - previously empty on the VM path and a segfault on the compiled tiers (no native lowering existed for the field projection). `request.path` strips the query string natively (`r.query` keeps it).
+- **Handler-set response headers reach the wire**, and `with_header(k, v)` chains with replace-then-push semantics (a repeated case-insensitive name keeps the last value). Content-type precedence is explicit header > constructor field > `text/plain` default on every tier - the compiled `Response::text()` emitted `application/json` before. A struct-literal `http::Response` lowers natively, and handlers declaring a bare `http::Response` return (no `Result`) are wrapped natively via a synthesized `__ok_wrap` thunk - the native server previously misread the Response pointer as a Result discriminant and answered 500.
+- **Streamed server responses**: `Response::stream(status, content_type, upstream)` writes status + headers + `Transfer-Encoding: chunked` and drains the upstream `ResponseStream` to the client in 8 KiB frames with no full-body buffering - the proxy-passthrough shape. On the client, `ResponseStream::next_chunk(max) -> Option<[u8]>` reads raw byte frames (packed `elem_bytes=1` vec), complementing the line-oriented `next_line()`.
 - **Compiled h1 server hardening parity**: the native server now reads request bodies via `Content-Length` (it never read POST bodies before), decodes inbound chunked transfer encoding + trailers, enforces the 1 MiB default body cap on every tier (the native cap was a divergent 64 MiB), answers 413 to a hostile `Content-Length`, keeps NUL bytes in byte bodies intact, and emits lowercase wire header names matching the VM.
-- **`http::serve` returns `Result<(), Error>` on every tier** — a bind failure is the caller's `Err` value. Previously the interpreter panicked and a native binary aborted; matching on the serve result also broke LLVM lowering ("sext void to i64") when the call lowered to a unit destination.
+- **`http::serve` returns `Result<(), Error>` on every tier** - a bind failure is the caller's `Err` value. Previously the interpreter panicked and a native binary aborted; matching on the serve result also broke LLVM lowering ("sext void to i64") when the call lowered to a unit destination.
 - **Error rendering parity**: `println!("{e}")` on a wrapped error renders the colon-joined cause chain (`outer: mid: root`) on every tier; the `errors::join` separator is unified to `"; "`; a let-bound `errors::new` value printed as pointer digits natively before.
 
 ### Tier-parity correctness sweep
@@ -170,14 +170,14 @@ The HTTP stack was the largest remaining VM-only / tier-divergent surface; it is
 - **`regex::compile(..)` results keep their pattern identity through `unwrap`.** The Result-shaped `gos_rt_regex_compile_result` rewire missed the runtime-kind rows, so `pat.replace_all(..)` on the compiled tiers lowered to an undefined bare symbol (and `pat.replace(..)` silently misrouted to the string helper). The kind map covers the new symbol and the payload-extracting result helpers (`unwrap`, `unwrap_or`) propagate the receiver's kind.
 - **Closure parameters are typed from std combinator signatures.** An unannotated `|e| …` passed to `result::map_err`, `option::map`, and the rest of the tabled `result::` / `option::` / `iter::` surface pins to the payload type; the compiled tiers previously defaulted untyped closure params to `i64` and printed `String` / `Error` payloads as raw pointers. A closure passed to a combinator with no signature row is rejected uniformly (`GT0013`) instead of miscompiling. Fixtures: `combinator_sweep.gos`, `closure_payload_typing.gos`.
 - **Std free functions work as first-class values on the compiled tiers** (`r.map_err(errors::new)`): a table maps each supported path to a word-shaped `gos_rt_*` symbol the existing eta-expansion machinery points its thunk at; untabled names are rejected uniformly (`GT0015`) with a wrap-in-a-closure suggestion. 30+ `result::` / `option::` / `iter::` combinators gained native dispatch in the same sweep (previously VM-only).
-- **`&mut Vec<T>` / `&mut [T]` parameters write through on the VM** via writeback cells — element writes, growth via `push` (realloc visible to the caller), `swap`, nested-call forwarding, early-return paths, struct-field places, and closures taking the `&mut` param all mutate the caller's storage. Mutations through such params were silently lost before. Fixture: `mut_ref_params.gos`.
-- **The full `as` cast whitelist runs on every tier**: `bool` / `char` sources, `f32`, float → int truncation toward zero with saturation at i64 width and NaN → 0 (no narrow mask: `300.7 as u8 == 300`), integer narrow-width masking (`300 as u8 == 44`), and unsigned display provenance — the VM previously no-op'd several whitelisted shapes. `i128` / `u128` are rejected uniformly (`GT0014`): no tier has a 128-bit runtime representation, so the binding previously truncated silently.
+- **`&mut Vec<T>` / `&mut [T]` parameters write through on the VM** via writeback cells - element writes, growth via `push` (realloc visible to the caller), `swap`, nested-call forwarding, early-return paths, struct-field places, and closures taking the `&mut` param all mutate the caller's storage. Mutations through such params were silently lost before. Fixture: `mut_ref_params.gos`.
+- **The full `as` cast whitelist runs on every tier**: `bool` / `char` sources, `f32`, float → int truncation toward zero with saturation at i64 width and NaN → 0 (no narrow mask: `300.7 as u8 == 300`), integer narrow-width masking (`300 as u8 == 44`), and unsigned display provenance - the VM previously no-op'd several whitelisted shapes. `i128` / `u128` are rejected uniformly (`GT0014`): no tier has a 128-bit runtime representation, so the binding previously truncated silently.
 - **GosVec slot-children deep-free.** Breaking early out of a loop over regex capture / response-header / csv / json materializer results leaked the elements' c-string children (the guarded-meta walk stopped at the slot); the release walk now frees slot children at every depth, and a companion double-free in the drop pass is fixed. Fixture: `early_break_materializers.gos`.
-- **`gos fmt` is faithful.** The AST pretty-printer — which destroyed sources (comments and macro bodies dropped) — is replaced by a token-stream formatter: comments, macro calls, and authored line structure are preserved verbatim while spacing and indentation normalise; output is idempotent; and a no-destruction self-check re-lexes the result and refuses to write anything whose non-whitespace token stream differs from the input's.
+- **`gos fmt` is faithful.** The AST pretty-printer - which destroyed sources (comments and macro bodies dropped) - is replaced by a token-stream formatter: comments, macro calls, and authored line structure are preserved verbatim while spacing and indentation normalise; output is idempotent; and a no-destruction self-check re-lexes the result and refuses to write anything whose non-whitespace token stream differs from the input's.
 - **Parser / driver fixes**: struct literals parse in delimited scrutinee positions; `GL0010` no longer false-positives on an else-less `if let`; a bare manifest id in source is a hard error and calling through an unbound binding name raises `GX0002` (both silently produced Unit before); the binding ABI's GosVec readers honor packed element strides; the runner template pins its `time` dependency (the cookie × time `E0119` build break); `super::` paths resolve inside `#[cfg(test)]` modules; `fs` error text matches across tiers (fixture `fs_error_text.gos`).
 - **Win64 i128/aggregate ABI follows the target triple.** The LLVM backend gated its Win64 fat-aggregate (`<16 x i8>`) marshalling on the host `cfg!(windows)` rather than the resolved target triple, so cross-building to a Windows target from a non-Windows host emitted SysV ABI against a Win64 runtime; it now keys off `host_triple()`, matching the llc target and datalayout.
 - **`println!` flushes on every newline.** `gos_rt_println` now unconditionally flushes stdout after the newline (matching Rust's `LineWriter` contract), so native-program `println!` output appears immediately without a manual `io::stdout().flush()`. `print!` (no newline) keeps its unbuffered-until-newline behavior, as in Rust.
-- **SKILL.md trimmed** from ~50k to ~34k chars — stdlib surface compressed and style rules de-duplicated against the idioms section, with every syntax rule and API entry preserved.
+- **SKILL.md trimmed** from ~50k to ~34k chars - stdlib surface compressed and style rules de-duplicated against the idioms section, with every syntax rule and API entry preserved.
 
 ### Security
 
@@ -189,56 +189,56 @@ The HTTP stack was the largest remaining VM-only / tier-divergent surface; it is
 - **`json::encode` escapes `<`, `>`, `&`, U+2028, and U+2029** so a JSON string is safe to embed in an HTML `<script>` block; the escapes round-trip and are byte-identical across tiers.
 - **HTML auto-escape template hardened**: a `javascript:` / `data:` URL-attribute scheme is neutralized and unquoted-attribute values escape their terminators, closing two XSS vectors.
 
-## 0.12.0 — Arenas, compact enums, panic ergonomics, predictable memory, deep optimizations.
+## 0.12.0 - Arenas, compact enums, panic ergonomics, predictable memory, deep optimizations.
 
 - **`arena { }` blocks (inspired by Zig).** Everything allocated in the block is bump-allocated and freed wholesale on every exit path (desugars to a block-scoped `defer`). Arenas nest, slabs recycle, and retain/release are no-ops for arena values via a range check against one reserved virtual range. Statement-position only; contract documented in the memory-model chapter. binary-trees with arenas: 0.36 s / 18 MB.
-- **Compact heap enums.** The discriminant left the payload: enums with more than 4 variants keep it in a spare header byte; enums with at most 4 carry it in pointer tag bits, so match dispatch reads no memory. The RC header also shrank 16 to 8 bytes (size field deleted — `mi_free` needs only the pointer; meta pointer interned to a 16-bit id). Net: a two-pointer tree node went 48 to 24 bytes (16 inside an arena). Enums are capped at 256 variants (`GT0012`).
-- **Loop-carried values release at last use in the iteration.** The old value of a reassigned local was released at the reassignment — after the next structure was already built, doubling transient peaks. A hoisting pass releases at the last mention instead (original site stays as a null-safe backstop). With everything above, binary-trees peak RSS: 165 MB in 0.11.0 to 33 MB — below the Rust and Go ports; ast-rewrite 0.59 s / 163 MB to 0.16 s / 49 MB.
+- **Compact heap enums.** The discriminant left the payload: enums with more than 4 variants keep it in a spare header byte; enums with at most 4 carry it in pointer tag bits, so match dispatch reads no memory. The RC header also shrank 16 to 8 bytes (size field deleted - `mi_free` needs only the pointer; meta pointer interned to a 16-bit id). Net: a two-pointer tree node went 48 to 24 bytes (16 inside an arena). Enums are capped at 256 variants (`GT0012`).
+- **Loop-carried values release at last use in the iteration.** The old value of a reassigned local was released at the reassignment - after the next structure was already built, doubling transient peaks. A hoisting pass releases at the last mention instead (original site stays as a null-safe backstop). With everything above, binary-trees peak RSS: 165 MB in 0.11.0 to 33 MB - below the Rust and Go ports; ast-rewrite 0.59 s / 163 MB to 0.16 s / 49 MB.
 - **Owned heap values release at last use, not function return** (liveness pass with null-out + return backstop; `Weak`-creating functions keep return placement).
 - **Escaped struct values reclaim deterministically (the `cycles` leak),** via reference-counted copy blobs with guarded child metas, provenance-set gated so foreign pointers can be leaked but never corrupted. Uniform holder accounting covers overwrite-of-`Some`, `Err`-side payloads, and field aliases.
 - **Container-stored aggregates reclaim.** Vec elements with guarded children retain on push/clone/slice and release on free; map blob values release on insert-overwrite/remove/free and the `_opt` getters hand out owned shares (previously they stole the map's).
-- **Unit-variant singletons are process-immortal** — fixes the pin being stripped by `let x = Enum::Unit` bindings and a count overflow on arena workloads; also removes two header writes per leaf. Tuple-variant payload detection now comes from the declaration, so matching a unit-variant binding no longer dereferences a bare tag.
-- **Strings owned by enum payloads free correctly** — the release walk no longer feeds tag-headered string children into the refcount machinery (was a crash or a leak).
+- **Unit-variant singletons are process-immortal** - fixes the pin being stripped by `let x = Enum::Unit` bindings and a count overflow on arena workloads; also removes two header writes per leaf. Tuple-variant payload detection now comes from the declaration, so matching a unit-variant binding no longer dereferences a bare tag.
+- **Strings owned by enum payloads free correctly** - the release walk no longer feeds tag-headered string children into the refcount machinery (was a crash or a leak).
 - **Panic ergonomics.** An unobserved `go` panic prints one clean `error[GX0005]` line plus user frames (raw Rust panic line and trampoline frames gone). `runtime::set_panic_hook(f: fn(String))` replaces the default report on every tier. Main-goroutine panics exit 101 (Rust parity, pinned by test) instead of dumping core, and a CI guard rejects `panic = "abort"` in any profile (unwinding is load-bearing for isolation).
 - **Process exit no longer boots the scheduler** (~150 ms saved on `Result`-returning `main`); exit waits on the idle condvar, bounded at 5 s.
-- **Hot-loop Vec codegen (LLVM):** inline `len`, constant-8 stride scaling, no-grow `push` fast path — 25-40% off pointer-chasing loops.
+- **Hot-loop Vec codegen (LLVM):** inline `len`, constant-8 stride scaling, no-grow `push` fast path - 25-40% off pointer-chasing loops.
 - **THP RSS inflation fixed:** `allow_thp = 0` set from `.init_array` before the first arena maps.
 - **`i128` gets a truthful 8-byte ABI alignment** in emitted modules (16-byte assumption produced faulting vector copies at odd struct offsets).
 - **`Vec<bool>` element-stride corruption fixed** (uniform 8-byte slots).
-- **RC blocks allocate via `mi_zalloc` directly** — the aligned-entry facade padded every block (~25% RAM tax); and RC metas now emit on the streaming single-unit LLVM path (was an undefined-symbol build error).
-- **The bytecode VM JIT-compiles enum-heavy functions.** Heap-enum parameters and returns cross the JIT boundary as native tagged pointers (`Value::NativeEnum` owns the reference; shapes built from the HIR drive VM-side match/field access on handles), so hot recursive-enum code runs at compiled-tier speed under `gos run`: binary-trees 44 s to 1.2 s (Go's compiled binary runs 1.1 s), gc-trees to 0.6 s. Mixed-phase calls stay sound — a boxed value falls back to bytecode. Bodies with struct locals or inline-Option i128 locals are declined (bytecode), and one uncompilable body no longer disables the whole JIT module.
+- **RC blocks allocate via `mi_zalloc` directly** - the aligned-entry facade padded every block (~25% RAM tax); and RC metas now emit on the streaming single-unit LLVM path (was an undefined-symbol build error).
+- **The bytecode VM JIT-compiles enum-heavy functions.** Heap-enum parameters and returns cross the JIT boundary as native tagged pointers (`Value::NativeEnum` owns the reference; shapes built from the HIR drive VM-side match/field access on handles), so hot recursive-enum code runs at compiled-tier speed under `gos run`: binary-trees 44 s to 1.2 s (Go's compiled binary runs 1.1 s), gc-trees to 0.6 s. Mixed-phase calls stay sound - a boxed value falls back to bytecode. Bodies with struct locals or inline-Option i128 locals are declined (bytecode), and one uncompilable body no longer disables the whole JIT module.
 - **VM shape tests compare interned pointers.** `VariantIs`/`StructIs` operands moved to an interned-name table; one pointer compare replaces string equality per match arm (13% off enum-heavy VM workloads).
 - **VM enum/struct values fused to one allocation + buffer.** `VariantInner`/`StructInner` carry fields inline instead of behind a second `Arc` (VM RSS on tree workloads −19%).
 - **`use std::...` paths are validated: a module path that does not exist is an error (`GR0005`).** Imports bind by tail name, so alias spellings (`std::json` for `std::encoding::json`) and outright typos (`std::nonsense`) were silently accepted and only failed at member lookup, or never. Resolution now checks the path against the canonical module table (drift-tested against the std manifest); item imports through a valid parent module (`use std::sync::channel`) are unaffected. The autoderive injection also switched to the canonical `std::encoding::json`.
 - **The LSP runs the autoderive step.** Editor diagnostics previously reported every synthesized name (`from_json::<T>` and friends) as unresolved because the LSP parsed raw source while the driver augments it first; the LSP now mirrors the driver pipeline, filters diagnostics pointing into the synthesized tail, and no longer emits duplicate-import noise for the injected `use` lines.
 - **`std::option` and `std::result` registered as manifest modules** (they were resolvable but missing from the canonical module table, so `use std::option` wrongly failed the new path validation); examples migrated off the removed `std::exec` / `std::url` alias spellings to `std::os::exec` / `std::net::url`.
-- **String concatenation accepts a borrowed right-hand side with a literal left-hand side.** `"hello, " + &name` — the documented spelling — failed to unify (`String != &T`); the checker now peels the reference. The previous `"x".to_string() + &y` form only typechecked by accident through an unresolved inference variable.
+- **String concatenation accepts a borrowed right-hand side with a literal left-hand side.** `"hello, " + &name` - the documented spelling - failed to unify (`String != &T`); the checker now peels the reference. The previous `"x".to_string() + &y` form only typechecked by accident through an unresolved inference variable.
 - **The tree-walker matches JIT-produced native enum values** (they previously fell through every match arm to unit).
 - **Examples and fixtures brought up to current idiom**: compound assignment, no `.to_string()` on literals, no `as usize` on indices, direct `for x in xs` iteration, bare integer literals.
-- **Arena slab offsets round to the host page size.** The reserve-range allocator rounded oversized slabs to 4 KiB, so on 16 KiB-page systems (macOS arm64) a following slab started page-misaligned, `mprotect` rejected the commit, and the allocation returned null — a crash the macOS ASan job caught. The page size is queried once (`sysconf` / `GetSystemInfo`).
-- **Parsed JSON documents are reclaimed.** `json::parse` / `json::get` handles were leaked boxes (the note said "the GC reclaims them" — the tracing GC is gone), so every parse in a loop leaked the whole document tree. A drop-pass rule frees provably single-owner `json::Value` locals (handle moves through `?` included) via the new `gos_rt_json_free`; aliased or escaping handles keep the old behaviour. `from_json::<T>` loops: 173 MB at 200k iterations to flat.
-- **`result_new` destinations with copy-blob payloads are option holders even when the typer left the temp unresolved** — the payload blob no longer leaves a helper one count high, pinned in the collector buffer.
-- **By-value `Result<Struct, E>` payloads no longer double-free or dangle.** Three coordinated root fixes: `result_payload` extractions are borrows (the per-field release walk no longer fires for locals that never retained); option-slot releases are not early-relocated for Results whose payload is extracted (the borrow's lifetime is invisible to the liveness pass — Results never extracted-from keep early placement); and `option_slot_release` nulls the payload word so a second slot release is structurally a no-op.
-- **Opaque runtime handles excluded from per-field stack accounting.** `http::Response` (and the other sentinel stdlib structs) lower as one-slot handles, but the field walk used their declared field lists — releasing words past the alloca and corrupting the stack. Any `http::get(..)?` in a `Result`-returning helper crashed.
+- **Arena slab offsets round to the host page size.** The reserve-range allocator rounded oversized slabs to 4 KiB, so on 16 KiB-page systems (macOS arm64) a following slab started page-misaligned, `mprotect` rejected the commit, and the allocation returned null - a crash the macOS ASan job caught. The page size is queried once (`sysconf` / `GetSystemInfo`).
+- **Parsed JSON documents are reclaimed.** `json::parse` / `json::get` handles were leaked boxes (the note said "the GC reclaims them" - the tracing GC is gone), so every parse in a loop leaked the whole document tree. A drop-pass rule frees provably single-owner `json::Value` locals (handle moves through `?` included) via the new `gos_rt_json_free`; aliased or escaping handles keep the old behaviour. `from_json::<T>` loops: 173 MB at 200k iterations to flat.
+- **`result_new` destinations with copy-blob payloads are option holders even when the typer left the temp unresolved** - the payload blob no longer leaves a helper one count high, pinned in the collector buffer.
+- **By-value `Result<Struct, E>` payloads no longer double-free or dangle.** Three coordinated root fixes: `result_payload` extractions are borrows (the per-field release walk no longer fires for locals that never retained); option-slot releases are not early-relocated for Results whose payload is extracted (the borrow's lifetime is invisible to the liveness pass - Results never extracted-from keep early placement); and `option_slot_release` nulls the payload word so a second slot release is structurally a no-op.
+- **Opaque runtime handles excluded from per-field stack accounting.** `http::Response` (and the other sentinel stdlib structs) lower as one-slot handles, but the field walk used their declared field lists - releasing words past the alloca and corrupting the stack. Any `http::get(..)?` in a `Result`-returning helper crashed.
 - **Qualified serde spelling restored:** `json::from_json::<T>` (and yaml/toml forms) parse to the synthesized serializers again.
-- **Frontend cache keyed by compiler build** — stale ASTs were served across rebuilds with an unchanged version string; the key now folds in a per-build stamp that tracks every frontend crate.
+- **Frontend cache keyed by compiler build** - stale ASTs were served across rebuilds with an unchanged version string; the key now folds in a per-build stamp that tracks every frontend crate.
 
-## 0.11.0 — Process isolation, cross platform parity, block scoped defer and derive.
+## 0.11.0 - Process isolation, cross platform parity, block scoped defer and derive.
 
-A panic in a spawned goroutine now terminates only that goroutine: the process keeps running and exits cleanly, on every tier (bytecode VM, Cranelift JIT, LLVM AOT). A panic on the main goroutine stays fatal, as in Rust — isolation is goroutine-scoped, not panic-swallowing.
+A panic in a spawned goroutine now terminates only that goroutine: the process keeps running and exits cleanly, on every tier (bytecode VM, Cranelift JIT, LLVM AOT). A panic on the main goroutine stays fatal, as in Rust - isolation is goroutine-scoped, not panic-swallowing.
 
 - **Goroutine fault isolation, verified across tiers.** The compiled tier's `gos_rt_panic` contains a panic raised inside a goroutine (the M:N scheduler keeps running other goroutines) and the interpreter catches the runtime error in the goroutine thread. `crates/gossamer-cli/tests/process_isolation.rs` builds and runs both a panic-in-goroutine and a panic-in-main program on `gos run` and `gos build`, asserting the process survives the former (and that the goroutine genuinely panicked) and dies on the latter.
-- **Buffered stdout is flushed before a fatal panic.** A main-goroutine panic aborts the process; `gos_rt_panic` now flushes the runtime's line-buffered stdout first — as `gos_rt_exit` already does — so output printed before the panic is no longer swallowed by `abort()`.
+- **Buffered stdout is flushed before a fatal panic.** A main-goroutine panic aborts the process; `gos_rt_panic` now flushes the runtime's line-buffered stdout first - as `gos_rt_exit` already does - so output printed before the panic is no longer swallowed by `abort()`.
 
 ### Language features
 
-- **`spawn(f)` join handles.** `spawn(f)` runs `f` on a goroutine and returns a `JoinHandle<T>`; `handle.join()` blocks for the outcome as `Result<T, String>` — `Ok(value)` on normal return, or `Err(message)` if the goroutine panicked. Works on every tier (the runtime delivers the panic message to the handle as the stack unwinds, then isolates the goroutine like `go`). Closures may capture their environment. Fixture: `feature-testing-examples/spawn_join.gos`.
+- **`spawn(f)` join handles.** `spawn(f)` runs `f` on a goroutine and returns a `JoinHandle<T>`; `handle.join()` blocks for the outcome as `Result<T, String>` - `Ok(value)` on normal return, or `Err(message)` if the goroutine panicked. Works on every tier (the runtime delivers the panic message to the handle as the stack unwinds, then isolates the goroutine like `go`). Closures may capture their environment. Fixture: `feature-testing-examples/spawn_join.gos`.
 - **Real `select { }` on the compiled tiers.** Cranelift and LLVM previously lowered `select` to an "arm 0 always fires" stub; they now poll arms in source order and park the goroutine until one is ready (or a `default` arm fires) via a new `gos_rt_select_*` runtime, matching the VM walker bit-for-bit. Send arms (`tx.send(v) => …`) now parse. Fixture: `feature-testing-examples/select_multiplex.gos`.
-- **Block-scoped `defer` (Swift/Zig style).** The reserved-but-no-op `defer` now runs its expression when control leaves the enclosing `{ }` block — fall-through, `return`, `break`, or `continue` — in LIFO order, on every tier. A `defer` in a loop body runs each iteration. Example: `examples/defer_cleanup.gos`.
+- **Block-scoped `defer` (Swift/Zig style).** The reserved-but-no-op `defer` now runs its expression when control leaves the enclosing `{ }` block - fall-through, `return`, `break`, or `continue` - in LIFO order, on every tier. A `defer` in a loop body runs each iteration. Example: `examples/defer_cleanup.gos`.
 - **`let PAT = expr else { … }`.** Refutable-let-or-diverge, desugared to a `match` so it runs on every tier. Fixture: `feature-testing-examples/let_else_binding.gos`.
-- **`#[derive(Clone, PartialEq, Eq, Default, Debug)]` for structs and enums.** Synthesizes the matching methods as real Gossamer source (the same parse-time path that derives JSON/TOML/YAML), so `==` / `!=` (field-wise), `.clone()`, `Type::default()`, and `{:?}` / `{}` (rendering `Name { field: value }`) work identically on the VM walker, Cranelift, and LLVM. Struct fields may be primitives, `String`, `[T]`, **nested structs**, and the struct may be **generic** (`struct Wrap<T>`). Enums derive too when their variants are all **tuple** (`Circle(f64)`) or **unit** (`Point`) — `Debug` renders `Circle(5.0)` and `Default` picks the `#[default]` variant. Example: `examples/derive.gos`; fixture: `feature-testing-examples/derive_traits.gos`. (Struct-payload enum variants are not yet derivable.)
-- **Structs and tuples as `HashMap` / `HashSet` keys.** Keys are now compared and hashed by *value* on every tier: two equal-valued keys at distinct allocations share a slot, a re-insert overwrites, and a distinct key is a distinct slot. Works for flat structs (`struct Point { x, y }`), `String`-field structs, nested structs, and tuples. The compiled tiers hash the key's content via a per-slot layout descriptor (dereferencing `String` fields); the VM keys aggregates structurally — previously it collapsed every aggregate key into a single slot (`len()` of a struct-keyed map was always 1). `#[derive(Hash)]` is accepted on a key type. Fixture: `feature-testing-examples/struct_map_keys.gos`.
-- **Collection literals coerce to `Vec<T>` / `[T]`.** `[a, b]` and `[v; N]` build a growable Vec/slice wherever the expected type calls for one — a `let` annotation, a `-> Vec<T>` return, a Vec-typed field, and a Vec/slice argument — on every tier, not only for integer-element literals as before. An `if` / `match` whose branches are literals of differing length joins to `Vec<T>` for every element type. Example: `examples/vec_literals.gos`; fixture: `feature-testing-examples/vec_literal_coercion.gos`.
+- **`#[derive(Clone, PartialEq, Eq, Default, Debug)]` for structs and enums.** Synthesizes the matching methods as real Gossamer source (the same parse-time path that derives JSON/TOML/YAML), so `==` / `!=` (field-wise), `.clone()`, `Type::default()`, and `{:?}` / `{}` (rendering `Name { field: value }`) work identically on the VM walker, Cranelift, and LLVM. Struct fields may be primitives, `String`, `[T]`, **nested structs**, and the struct may be **generic** (`struct Wrap<T>`). Enums derive too when their variants are all **tuple** (`Circle(f64)`) or **unit** (`Point`) - `Debug` renders `Circle(5.0)` and `Default` picks the `#[default]` variant. Example: `examples/derive.gos`; fixture: `feature-testing-examples/derive_traits.gos`. (Struct-payload enum variants are not yet derivable.)
+- **Structs and tuples as `HashMap` / `HashSet` keys.** Keys are now compared and hashed by *value* on every tier: two equal-valued keys at distinct allocations share a slot, a re-insert overwrites, and a distinct key is a distinct slot. Works for flat structs (`struct Point { x, y }`), `String`-field structs, nested structs, and tuples. The compiled tiers hash the key's content via a per-slot layout descriptor (dereferencing `String` fields); the VM keys aggregates structurally - previously it collapsed every aggregate key into a single slot (`len()` of a struct-keyed map was always 1). `#[derive(Hash)]` is accepted on a key type. Fixture: `feature-testing-examples/struct_map_keys.gos`.
+- **Collection literals coerce to `Vec<T>` / `[T]`.** `[a, b]` and `[v; N]` build a growable Vec/slice wherever the expected type calls for one - a `let` annotation, a `-> Vec<T>` return, a Vec-typed field, and a Vec/slice argument - on every tier, not only for integer-element literals as before. An `if` / `match` whose branches are literals of differing length joins to `Vec<T>` for every element type. Example: `examples/vec_literals.gos`; fixture: `feature-testing-examples/vec_literal_coercion.gos`.
 - **Nested generic types parse.** `Vec<Vec<T>>`, `HashMap<String, Vec<i64>>`, and deeper now close on the maximal-munch `>>` token, which the type / generic-parameter / turbofish parsers split into the per-level `>` (previously a hard parse error).
 
 ### Compiled-tier correctness fixes
@@ -254,7 +254,7 @@ A panic in a spawned goroutine now terminates only that goroutine: the process k
 
 - **Windows: user functions returning `Result`/`Option`/inline-enum no longer miscompile.** The Win64 `<16 x i8>` fat-return ABI was applied to user-function calls, not just runtime shims; it is now gated to the ABI registry, with both LLVM call emitters routed through one `needs_win64_fat_ret` decision.
 - **`gos build` works from a released install.** Every release artifact (tarball, zip, deb, rpm, Inno Setup, Docker) now ships `libgossamer_runtime.a` / `gossamer_runtime.lib`; the installer places it where `gos build` resolves it, and the cross-compiled Linux-aarch64 / macOS-x86_64 jobs build the runtime for their target.
-- **mimalloc is the process allocator** on every platform and binary (toolchain and compiled programs), replacing the platform default — notably musl `malloc` on the static-musl release path. Its page-purge delay is set to zero so freed memory returns to the OS promptly: a phase-structured program (build a large map, drop it, build the next) keeps a flat footprint instead of holding every phase's pages until exit (peak RSS roughly halved on such workloads), at unchanged throughput.
+- **mimalloc is the process allocator** on every platform and binary (toolchain and compiled programs), replacing the platform default - notably musl `malloc` on the static-musl release path. Its page-purge delay is set to zero so freed memory returns to the OS promptly: a phase-structured program (build a large map, drop it, build the next) keeps a flat footprint instead of holding every phase's pages until exit (peak RSS roughly halved on such workloads), at unchanged throughput.
 - **Owner-only-DACL modules build on Windows.** The credential and multipart-upload files carry a `#[cfg(windows)]` Win32 ACL block; their module lint moved from `#![forbid(unsafe_code)]` to `#![deny(...)]` so that one audited block compiles under a local `#[allow]` (`forbid` cannot be locally overridden).
 - **Windows credential and multipart-upload files get an owner-only DACL**, the analogue of the POSIX `0o600` they already set; the write fails closed rather than leaving a world-readable file.
 - **`pid_alive` is accurate on macOS and Windows** (`kill(pid, 0)` / `OpenProcess` + `GetExitCodeProcess`), so a stale build lock from a crashed `gos` is reclaimed instead of waiting out the deadline.
@@ -266,32 +266,32 @@ A panic in a spawned goroutine now terminates only that goroutine: the process k
 - **Cross-platform perf gate.** A new `perf-native` matrix job times a `gos build --release` native binary on Linux, macOS, and Windows, so an allocator/codegen regression is visible off Linux.
 - **AddressSanitizer now runs on macOS** as well as Linux, giving the RC use-after-free / double-free suite portable coverage (glibc `MALLOC_CHECK_` was Linux-only).
 
-## 0.10.0 — LLVM AOT tier completeness and soundness in the GC + fixes
+## 0.10.0 - LLVM AOT tier completeness and soundness in the GC + fixes
 
-Audit-driven sweep that closes 43 wiring gaps where features worked in the VM and Cranelift JIT but diverged under `gos build --release`. A new gauge — `crates/gossamer-cli/tests/llvm_aot_coverage.rs` — builds a binary per feature, runs it, and asserts stdout, so regressions surface as red bars instead of silent miscompiles.
+Audit-driven sweep that closes 43 wiring gaps where features worked in the VM and Cranelift JIT but diverged under `gos build --release`. A new gauge - `crates/gossamer-cli/tests/llvm_aot_coverage.rs` - builds a binary per feature, runs it, and asserts stdout, so regressions surface as red bars instead of silent miscompiles.
 
 ### Cross-platform native-build fixes
 
-- **macOS native binaries no longer crash on string literals.** Header-carrying string constants (`<{ i32 len, i8 0xA8, [N x i8] }>` with a `base+5` body alias) were emitted `unnamed_addr`, so the Mach-O backend filed the 4/8/16-byte ones into the mergeable `__literal{4,8,16}` pools. ld64 coalesces and reorders literals there and ignores the interior `.alt_entry` body symbol, so the alias resolved into the wrong literal and the runtime read a corrupt length/tag header — SIGSEGV/SIGBUS on essentially every program with a short format fragment. The backing constant is now a plain `constant` (address-significant → `__const`, stable interior symbols on every target). Guarded by a unit test that rejects `unnamed_addr` on header string constants.
+- **macOS native binaries no longer crash on string literals.** Header-carrying string constants (`<{ i32 len, i8 0xA8, [N x i8] }>` with a `base+5` body alias) were emitted `unnamed_addr`, so the Mach-O backend filed the 4/8/16-byte ones into the mergeable `__literal{4,8,16}` pools. ld64 coalesces and reorders literals there and ignores the interior `.alt_entry` body symbol, so the alias resolved into the wrong literal and the runtime read a corrupt length/tag header - SIGSEGV/SIGBUS on essentially every program with a short format fragment. The backing constant is now a plain `constant` (address-significant → `__const`, stable interior symbols on every target). Guarded by a unit test that rejects `unnamed_addr` on header string constants.
 - **Windows-GNU native linking.** `gos build` drives mingw's `cc` directly, so unlike a rustc-driven link it must name the libraries the runtime needs that mingw's default specs don't auto-link. `-ldl` (which mingw has no library for) is now gated to Linux only, and the Win32 import libs `ws2_32` / `bcrypt` / `advapi32` / `userenv` / `ntdll` are added on Windows. The same fix is applied to the Cranelift crate's `native.rs` link check.
-- **Windows native binaries no longer corrupt `Result` / `Option` / `Vec` across the runtime boundary.** The compiled tier carries every 2-word aggregate as a scalar `i128` (`AbiType::I128`), but a by-value `i128` has no shared `extern "C"` ABI on Win64: `llc` passes it in a GP register pair and returns it there, while rustc — which compiles the runtime — passes an `i128` argument *by pointer* and returns it in a `<16 x i8>` vector register. Every `gos build` binary therefore read a corrupt discriminant/payload on Windows (wrong output, or a SIGSEGV from a payload pointer read out of the low word); SysV happens to agree, so Linux/macOS were unaffected. The LLVM tier now emits the rustc-matching shape on Windows — an `i128` argument is spilled to a 16-byte-aligned slot and passed as `ptr`, an `i128` return is called as `<16 x i8>` and `bitcast` back — at every runtime-call emission site (the two central emitters plus the inline `gos_rt_vec_push_i128` fast path that pushes a `Result`/`Option` into a `Vec`), routed through one `fat_i128_call_arg` helper so a future site cannot silently diverge, with `RuntimeEntry::llvm_declare` rendering the matching declaration. No runtime, registry, or non-Windows codegen changes; verified by comparing `llc -mtriple=x86_64-pc-windows-gnu` output against rustc's ABI, and guarded by `gossamer-abi`'s `win64_marshals_fat_i128_across_the_ffi_boundary` test. This is the complete surface: a 2-word aggregate only crosses the runtime `extern "C"` boundary as a machine value in the LLVM AOT tier (now fixed). The bytecode interpreter calls the runtime as in-process Rust with no FFI boundary, and the Cranelift JIT does not compile `i128`-shaped bodies at all (no `JitKind::I128`; Cranelift panics on an `i128` argument/return without `enable_llvm_abi_extensions`), so such bodies fall back to the interpreter — correct on every platform. `gos run` of a fat program (`result::default_with`, `hex::decode`) produces correct output on Win64 through that path, JIT forced on or off.
-- **Runtime staticlib is published atomically.** `gossamer-cli`'s build script copies the ~300 MB `libgossamer_runtime.a` into `target/<profile>/` for non-cargo linkers (`gos build`, the Cranelift `native.rs` link tests). The copy was a plain `fs::copy`, which truncates the destination and streams the bytes; because the script re-runs whenever a `GOS_*` env var changes (the diagnose CI step sets several), a parallel test reading the archive mid-write hit `ld: failed to set dynamic section sizes: file truncated`. The publish now copies to a per-pid temp file and `rename`s it into place, so a reader always sees a complete archive. (Surfaced because the `native.rs` link helper no longer silently skips link failures — see below.)
+- **Windows native binaries no longer corrupt `Result` / `Option` / `Vec` across the runtime boundary.** The compiled tier carries every 2-word aggregate as a scalar `i128` (`AbiType::I128`), but a by-value `i128` has no shared `extern "C"` ABI on Win64: `llc` passes it in a GP register pair and returns it there, while rustc - which compiles the runtime - passes an `i128` argument *by pointer* and returns it in a `<16 x i8>` vector register. Every `gos build` binary therefore read a corrupt discriminant/payload on Windows (wrong output, or a SIGSEGV from a payload pointer read out of the low word); SysV happens to agree, so Linux/macOS were unaffected. The LLVM tier now emits the rustc-matching shape on Windows - an `i128` argument is spilled to a 16-byte-aligned slot and passed as `ptr`, an `i128` return is called as `<16 x i8>` and `bitcast` back - at every runtime-call emission site (the two central emitters plus the inline `gos_rt_vec_push_i128` fast path that pushes a `Result`/`Option` into a `Vec`), routed through one `fat_i128_call_arg` helper so a future site cannot silently diverge, with `RuntimeEntry::llvm_declare` rendering the matching declaration. No runtime, registry, or non-Windows codegen changes; verified by comparing `llc -mtriple=x86_64-pc-windows-gnu` output against rustc's ABI, and guarded by `gossamer-abi`'s `win64_marshals_fat_i128_across_the_ffi_boundary` test. This is the complete surface: a 2-word aggregate only crosses the runtime `extern "C"` boundary as a machine value in the LLVM AOT tier (now fixed). The bytecode interpreter calls the runtime as in-process Rust with no FFI boundary, and the Cranelift JIT does not compile `i128`-shaped bodies at all (no `JitKind::I128`; Cranelift panics on an `i128` argument/return without `enable_llvm_abi_extensions`), so such bodies fall back to the interpreter - correct on every platform. `gos run` of a fat program (`result::default_with`, `hex::decode`) produces correct output on Win64 through that path, JIT forced on or off.
+- **Runtime staticlib is published atomically.** `gossamer-cli`'s build script copies the ~300 MB `libgossamer_runtime.a` into `target/<profile>/` for non-cargo linkers (`gos build`, the Cranelift `native.rs` link tests). The copy was a plain `fs::copy`, which truncates the destination and streams the bytes; because the script re-runs whenever a `GOS_*` env var changes (the diagnose CI step sets several), a parallel test reading the archive mid-write hit `ld: failed to set dynamic section sizes: file truncated`. The publish now copies to a per-pid temp file and `rename`s it into place, so a reader always sees a complete archive. (Surfaced because the `native.rs` link helper no longer silently skips link failures - see below.)
 - **Native-build test diagnostics.** Link errors on a supported platform now fail loudly with the full `cc` stderr instead of silently skipping (a silent skip hid the `-ldl` break); `GOS_LINK_VERBOSE` echoes the resolved linker line + libraries; `GOS_KEEP_BUILD_ARTIFACTS` / failing three-tier harnesses preserve sources, objects and binaries for CI artifact upload; and exit codes are rendered as their cause (`killed by signal 11 (SIGSEGV)`, `exit code 0xC0000005 (STATUS_ACCESS_VIOLATION)`) rather than an opaque number.
 
 ### Compiled-tier reference counting replaces the tracing GC
 
-The compiled tiers (Cranelift JIT, LLVM AOT) now manage recursive heap-enum lifetime with intrusive reference counting — matching the interpreter's `Arc`-payload semantics — instead of the raw-pointer tracing collector, which was unsound under `opt -O3` (live roots are not precisely discoverable) and leaked or crashed on tree-shaped heaps. Soundness is verified across aliasing, struct-embedding, return-of-argument, container, and payload-variant cases under glibc's `MALLOC_CHECK_=3`.
+The compiled tiers (Cranelift JIT, LLVM AOT) now manage recursive heap-enum lifetime with intrusive reference counting - matching the interpreter's `Arc`-payload semantics - instead of the raw-pointer tracing collector, which was unsound under `opt -O3` (live roots are not precisely discoverable) and leaked or crashed on tree-shaped heaps. Soundness is verified across aliasing, struct-embedding, return-of-argument, container, and payload-variant cases under glibc's `MALLOC_CHECK_=3`.
 
 - **Intrusive RC runtime** (`gos_rt_rc_alloc` / `_retain` / `_release`, `c_abi/rc.rs`): every heap object carries a strong count plus a flat `[i64]` child-layout descriptor; release is iterative so deep structures cannot overflow the runtime stack. User enum constructors allocate through it, and a per-variant descriptor is emitted once as a module constant in both backends.
 - **Balanced retain/release insertion** (`gossamer-mir`): retain on every aliasing copy / field store / aggregate / container insert, release every owned local at scope exit, with move elision so the construct-and-return pattern costs zero refcount traffic. Interior borrows (match bindings, accessor results) are never released.
 - **Per-call tracing-GC instrumentation removed.** The shadow-stack save/push/restore and safepoint hooks previously emitted on every function call are gone (the collector they fed is superseded by RC). Hot leaf-math loops return to native parity after a large release-mode regression, and recursive-enum allocation workloads run several times faster.
-- **Two latent optimizer miscompiles fixed** (`gossamer-mir::opt`): `const_value_of` and `copy_propagate` both treated a local's first constant assignment as its value, ignoring a later reassignment — a use after the reassignment could fold a live heap pointer to null.
-- **Incremental object cache now keyed by compiler fingerprint.** The per-body LLVM object cache hashed only the MIR, target, and opt profile — so a rebuilt compiler that emits different IR for identical MIR (e.g. after the tracing-GC removal) silently reused stale objects, surfacing as link failures against removed runtime symbols or as "fixed-but-still-slow" binaries. The key now mixes the package version and the compiler executable's size + mtime.
+- **Two latent optimizer miscompiles fixed** (`gossamer-mir::opt`): `const_value_of` and `copy_propagate` both treated a local's first constant assignment as its value, ignoring a later reassignment - a use after the reassignment could fold a live heap pointer to null.
+- **Incremental object cache now keyed by compiler fingerprint.** The per-body LLVM object cache hashed only the MIR, target, and opt profile - so a rebuilt compiler that emits different IR for identical MIR (e.g. after the tracing-GC removal) silently reused stale objects, surfacing as link failures against removed runtime symbols or as "fixed-but-still-slow" binaries. The key now mixes the package version and the compiler executable's size + mtime.
 - **Dead tracing-GC machinery removed.** The raw-pointer collector, shadow-stack roots, safepoint/write-barrier shims, allocation registry, and per-call instrumentation are deleted from the runtime, ABI registry, and codegen; the aggregate allocators (`gos_rt_aggr_alloc`/`_free`) and the deterministic drop pass remain. `std::runtime::gc_collect()` is retained as a no-op (RC reclaims automatically). A `--release` performance canary (`tests/perf_canary.rs`) guards against per-call-overhead regressions in the hot scalar path.
 
 ### RC for container / Result-nested enums
 
-Four drop-pass / RC bugs that corrupted or miscompiled recursive enums carrying `Vec`, tuple, and `Result` payloads — the shape of a JSON-value tree — are fixed. Covered by `crates/gossamer-cli/tests/rc_nested_containers.rs`.
+Four drop-pass / RC bugs that corrupted or miscompiled recursive enums carrying `Vec`, tuple, and `Result` payloads - the shape of a JSON-value tree - are fixed. Covered by `crates/gossamer-cli/tests/rc_nested_containers.rs`.
 
 - **Loop element borrows are no longer released.** A `for x in xs` element loaded through a terminator-position `gos_load` (block boundary, not the `CallIntrinsic` form) was treated as owned and released each iteration, freeing the container's elements. `gos_load` / `gos_store` in terminator position are now recognised as borrows.
 - **A `Vec` stored into a returned enum survives.** The drop pass freed a `Vec` local at return even after it was stored into a returned `J::Arr(v)`; the escape analysis now follows `gos_store(obj, off, val)` into an escaping object.
@@ -299,11 +299,11 @@ Four drop-pass / RC bugs that corrupted or miscompiled recursive enums carrying 
 
 ### By-value `Result` / `Option` and inline enum payloads
 
-`Result<T, E>` and `Option<T>` are now a 2-word by-value `i128` (`[disc, payload]`) rather than a heap-boxed `*mut GosResult`. The box was allocated on every `Ok` / `Err` / `Some` / `None` and never reclaimed — an unbounded leak on every `?`. `ast` / `json` / `gc` workloads are unaffected and output is bit-identical across all tiers.
+`Result<T, E>` and `Option<T>` are now a 2-word by-value `i128` (`[disc, payload]`) rather than a heap-boxed `*mut GosResult`. The box was allocated on every `Ok` / `Err` / `Some` / `None` and never reclaimed - an unbounded leak on every `?`. `ast` / `json` / `gc` workloads are unaffected and output is bit-identical across all tiers.
 
 - **2-word representation** (`AbiType::I128`; `render_ty` and the Cranelift layout map the sentinel ADTs to `i128`; `pack_result` / `gos_rt_result_disc` / `gos_rt_result_payload` in `c_abi/vec.rs`): discriminant in the low word, payload (a scalar inline, or a pointer to a larger value) in the high word. The `?` desugar, `match`, field access, and the `result::*` / `option::*` combinators read and build it directly; `is_rc_managed` reports these as values, never RC pointers.
 - **16-byte `Vec` / array elements.** A by-value `Result` / `Option` element occupies two slots: `slot_count` / `type_slot_bytes` / `aggr_size_bytes` report two slots for the sentinels, with `gos_rt_vec_push_i128` / `gos_rt_vec_get_i128` and matching push / index / for-loop element reads. `regex::captures` / `captures_all` (returning `Vec<Vec<Option<String>>>`) round-trip bit-identically across the VM, Cranelift, and LLVM tiers.
-- **Inline enum payloads.** A user enum whose every variant has at most one field that fits in a single 8-byte slot (scalar / `String` / `Vec` / map / handle — the shape of a JSON-value enum) uses the same 2-word by-value representation: construction packs the discriminant and field with no heap node, `match` reads the discriminant from the low word, and the single field is the high word. Multi-field variants (e.g. a tree node) keep the heap-node representation.
+- **Inline enum payloads.** A user enum whose every variant has at most one field that fits in a single 8-byte slot (scalar / `String` / `Vec` / map / handle - the shape of a JSON-value enum) uses the same 2-word by-value representation: construction packs the discriminant and field with no heap node, `match` reads the discriminant from the low word, and the single field is the high word. Multi-field variants (e.g. a tree node) keep the heap-node representation.
 - **Payload-less variant singleton.** A no-field variant (`Tree::Leaf`, `JsonVal::Null`, …) returns one process-pinned, globally-allocated per-discriminant node instead of allocating a fresh node per construction (the node is shared and never mutated).
 
 ### `for x in vec` single-slot element read
@@ -312,7 +312,7 @@ A `for`-loop over a `Vec` of single-slot, non-float elements (i64 / bool / `Stri
 
 ### HTTP server: per-request memory leak fixed
 
-The compiled HTTP server leaked every request's `Ok(Response)` result box. Per-request reclamation had relied on a per-worker arena reset (`gos_rt_gc_reset`) that became a no-op when the bump arena was retired, and on the tracing GC that the reference-counting migration removed — so `gos_rt_result_new`'s `Box::into_raw` was never freed. Under load the server grew unboundedly; `drop_handler_result` now frees the result box after the response is written. 
+The compiled HTTP server leaked every request's `Ok(Response)` result box. Per-request reclamation had relied on a per-worker arena reset (`gos_rt_gc_reset`) that became a no-op when the bump arena was retired, and on the tracing GC that the reference-counting migration removed - so `gos_rt_result_new`'s `Box::into_raw` was never freed. Under load the server grew unboundedly; `drop_handler_result` now frees the result box after the response is written. 
 
 ### Lenient out-of-bounds indexing parity (VM matches compiled)
 
@@ -327,20 +327,20 @@ Every `gos_rt_*` LLVM declaration now carries `nounwind` (correct: an `extern "C
 Three coordinated fixes cut compiled-tier RAM on heap-heavy workloads. A named local bound to a recursive heap value and rebuilt each loop iteration was leaking every iteration's value until the function returned; a pathological loop that should hold ~11 MB held 863 MB. Covered by a new named-binding-loop RSS regression test (the prior test only exercised the temporary shape, which already released).
 
 - **Release before reassignment, not only at return.** Owned reference-counted locals are now released before *any* reassignment (including the loop back-edge), not just before a fresh allocation. A `let t = build(d)` rebuilt each iteration frees the previous tree instead of accumulating all of them. The entry zero-init keeps the first release null-safe.
-- **16-byte object header.** `RcHeader` shrank from 24 to 16 bytes (`strong` and `size` are now `u32` — 4 billion live refs / 4 GiB objects are unreachable ceilings), so a `Node(i64, Box, Box)` is 40 bytes instead of 48.
+- **16-byte object header.** `RcHeader` shrank from 24 to 16 bytes (`strong` and `size` are now `u32` - 4 billion live refs / 4 GiB objects are unreachable ceilings), so a `Node(i64, Box, Box)` is 40 bytes instead of 48.
 - **Byte-budgeted recycling pool.** The thread-local free-list is now capped by a 4 MiB-per-class byte budget instead of a flat 65k-block count, so a large size class can no longer pin tens of MiB of cached blocks.
 
 ### Container element ownership + per-iteration `Vec` reclaim
 
 A string or nested container stored in a `Vec` no longer leaks, and a `Vec` rebuilt each loop iteration is reclaimed instead of accumulating.
 
-- **No per-push element clone.** `gos_rt_vec_push` copied each STRING element into a vec-owned buffer (a value-semantics relic), while the drop pass separately retained the caller's original — so that original leaked once per push. Elements are now held by reference: the compile-time RC (retain at insert, `elem_kind` deep-free at container drop) owns each exactly once, the same model as struct fields. `string_in_vec` / `nested_vec_string` drop from O(n) live strings to O(1).
+- **No per-push element clone.** `gos_rt_vec_push` copied each STRING element into a vec-owned buffer (a value-semantics relic), while the drop pass separately retained the caller's original - so that original leaked once per push. Elements are now held by reference: the compile-time RC (retain at insert, `elem_kind` deep-free at container drop) owns each exactly once, the same model as struct fields. `string_in_vec` / `nested_vec_string` drop from O(n) live strings to O(1).
 - **Loop-local `Vec` freed per iteration.** A `Vec` constructed in a loop body was freed only at function return, leaking every prior iteration's container and its elements. The drop pass now frees the previous value before each constructor reassignment (null-safe via an entry zero-init) and at each return, conservatively skipping any container that escapes into another container or the return value. A deterministic per-family allocation ledger (`c_abi/ledger.rs`, `GOS_LEAK_LEDGER`, unix) backs the leak-shape gate.
 - **`HashMap` insert releases its inbound strings.** `gos_rt_map_insert_str_*` / `_i64_str` copy the key/value bytes into the map's own storage, so the consuming-call contract leaves the caller's `format!(...)` key/value as a leaked temporary. The runtime now releases each inbound gos-string after copying (rc-aware + tag-checked, so a moved temp is freed, a shared string is only decremented, and a literal is skipped).
 - **Fresh string producers are owned.** `str_repeat` / `slice` / `substring` / `trim*` / `replace*` / `pad_*` / `to_upper`/`to_lower`/`to_title` return a freshly allocated owned `String`, so a standalone transient (`let big = strings::repeat(…); use(&big)`) is released at scope instead of leaking. A returned producer result is exempted (it flows to the caller). The substring-retention leak benchmark goes from ~290 MB to flat ~0.6 MB. Deliberately excludes `concat` (in-place-aliasing in `s += …`) and `Result`/`Option` payload extraction.
 
-- **Loop-local `HashMap` / `HashSet` reclaimed.** `let m = HashMap::new()` lowered to `tmp = map_new(); m = Copy(tmp)`; the copy pinned the constructor result as aliased, so the reuse pass never reclaimed a loop-local map. Container constructors (and `Some` / `Ok` / `Err`) now write the binding directly — no copy, no alias — so a loop-local map / set is freed per iteration like a `Vec`. A map passed to a user function stays safe via the existing escape disqualification.
-- **By-value enum payload extraction is a move.** A `String` moved out of a consumed `Result` / `Option` (`let s = f()?`, `r.unwrap()`, `match o { Some(s) => … }`) transfers the enum's single owning reference to the binding instead of retaining a second, so the binding releases it exactly once. When the extracted value is instead stored into an aggregate — the synthesized `from_json` parses a field `String` and places it in the result struct through copy temporaries — the retain is load-bearing and kept, detected by propagating "stored into an aggregate" transitively backward through copy edges. An aliased enum (`let o2 = o; match o2; match o`) is conservatively not owned (leak-not-double-free), and autoderive `from_json` / `to_json` round-trips clean under `MALLOC_CHECK_=3`.
+- **Loop-local `HashMap` / `HashSet` reclaimed.** `let m = HashMap::new()` lowered to `tmp = map_new(); m = Copy(tmp)`; the copy pinned the constructor result as aliased, so the reuse pass never reclaimed a loop-local map. Container constructors (and `Some` / `Ok` / `Err`) now write the binding directly - no copy, no alias - so a loop-local map / set is freed per iteration like a `Vec`. A map passed to a user function stays safe via the existing escape disqualification.
+- **By-value enum payload extraction is a move.** A `String` moved out of a consumed `Result` / `Option` (`let s = f()?`, `r.unwrap()`, `match o { Some(s) => … }`) transfers the enum's single owning reference to the binding instead of retaining a second, so the binding releases it exactly once. When the extracted value is instead stored into an aggregate - the synthesized `from_json` parses a field `String` and places it in the result struct through copy temporaries - the retain is load-bearing and kept, detected by propagating "stored into an aggregate" transitively backward through copy edges. An aliased enum (`let o2 = o; match o2; match o`) is conservatively not owned (leak-not-double-free), and autoderive `from_json` / `to_json` round-trips clean under `MALLOC_CHECK_=3`.
 - **`?` / match payload typing.** The extracted payload type is recovered from the scrutinee enum's substitution (the declared variant field type is the generic default, often `i64`), and concrete types are propagated forward through `Copy` chains, so a `?` extraction copied into an otherwise-`Var` binding is recognised as RC-managed and released.
 - **Leak ledger no longer counts region-managed strings.** A string allocated inside an arena region is reclaimed wholesale at `region_pop` (and skipped by `gos_rt_str_free`), so an unmatched `str_inc` made the `GOS_LEAK_LEDGER` gauge report a false positive on region-heavy loops; region strings are no longer counted in the per-string gauge (the memory is bounded by the region).
 
@@ -349,12 +349,12 @@ A string or nested container stored in a `Vec` no longer leaks, and a `Vec` rebu
 - A loop body is wrapped in an arena region (`region_push` / `region_pop`) only when it actually allocates a heap value. A purely-scalar inner loop (a counter scan, byte stores) previously paid two region calls every iteration for nothing; eligibility now also requires a heap-allocating call or constructor in the body. Allocating loops stay regioned and bounded.
 - A tuple field read out of a fixed array (`table[j].1`) lowers to a single combined index+field projection instead of materialising the whole tuple to extract one field, and `buf.set_byte(i, x)` lowers to an inlined branchless bounds-guarded store in the LLVM tier instead of a per-byte runtime call.
 
-### Length-carrying strings — O(1) `len`/`slice`
+### Length-carrying strings - O(1) `len`/`slice`
 
 Compiled-tier strings now store their byte length in the allocation header, so length and slicing are O(1) instead of `strlen`-per-call. A recursive-descent parser that slices a large input at growing offsets was O(n^2); **json-serde drops from 167s to 0.54s at N=50000** (now linear, output bit-identical to the Rust reference).
 
 - Heap strings (`format!`, `slice`, file reads, every `alloc_cstring` caller) use the length-carrying builder layout, so `gos_rt_str_len` reads the stored length at `ptr[-5]`; foreign pointers fall back to `strlen`.
-- `gos_rt_str_slice` bounds-checks against the O(1) length and copies the range directly — the safe out-of-bounds `Err` contract is preserved (no UB fast path).
+- `gos_rt_str_slice` bounds-checks against the O(1) length and copies the range directly - the safe out-of-bounds `Err` contract is preserved (no UB fast path).
 - LLVM string literals emit a length-carrying header (`<{ i32 len, i8 tag, bytes }>`) with a global alias at the body, so literal references are unchanged while their length is O(1) too.
 - C interop is unchanged: the body pointer still points at NUL-terminated bytes (the length header sits before it).
 
@@ -363,7 +363,7 @@ Compiled-tier strings now store their byte length in the allocation header, so l
 `gos clean` now also removes the project `target/` directory and the
 per-project `.gos-cache` incremental IR-object cache (previously it dropped
 only the frontend cache). `--dry-run` reports without deleting; `--vendor`
-additionally drops `vendor/`. Idempotent — absent targets are noted and
+additionally drops `vendor/`. Idempotent - absent targets are noted and
 skipped.
 
 ### Recycling RC allocator (thread-local slab)
@@ -380,65 +380,65 @@ Three coordinated typechecker fixes ground inference results that previously lea
 
 - **Unsuffixed float literals default to `f64`.** `InferCtxt` gained a `float_literal` var flavour (mirroring the integer-constrained flavour) plus `default_unresolved_float_vars`. A bare `3.0` fed into a generic position (`Triple { third: 3.0 }`) previously left its inference var unbound; the field then printed the value's IEEE-754 bit pattern through `gos_rt_concat_i64` (`4613937818241073152` instead of `3`). Float literals now take their use-site width when constrained and fall back to `f64` otherwise.
 - **`deep_resolve` recurses into `Adt` substs.** The end-of-typecheck zonk only grounded `FnPtr` / `FnTrait` sigs, so a `Triple<?, ?, ?>` whose vars unified to `<i64, String, f64>` stayed recorded with unresolved substs. It now resolves each `Adt` type argument, so a generic struct's field access substitutes the concrete type.
-- **`impl` method `self` binds to the concrete `Self` type.** The receiver was bound to a fresh inference var, so `self.field` reads left the field type unresolved — a `for x in self.items` over a `[String]` field bound `x` at the i64 default (the auto-derived `to_json` serialised a `[String]` field as integer pointers: `["2100555", …]`). `self` now binds to the impl's `Self` (wrapped in `&` / `&mut` for `&self` / `&mut self` receivers).
+- **`impl` method `self` binds to the concrete `Self` type.** The receiver was bound to a fresh inference var, so `self.field` reads left the field type unresolved - a `for x in self.items` over a `[String]` field bound `x` at the i64 default (the auto-derived `to_json` serialised a `[String]` field as integer pointers: `["2100555", …]`). `self` now binds to the impl's `Self` (wrapped in `&` / `&mut` for `&self` / `&mut self` receivers).
 
 ### Native bytecode-VM `match` compilation
 
 The bytecode VM (`gos run`) now lowers `match` expressions to a native test-and-branch chain instead of routing every arm evaluation through the bundled tree-walker via `Op::EvalDeferred`. Across the example suite the walker-fallback count drops sharply (`shapes.gos` 20 → 0, `temperature.gos` 18 → 0, `json_structs.gos` 24 → 4).
 
-- **Three new opcodes** — `VariantIs` (enum/tuple-struct name + arity test), `VariantField` (positional payload extract), and `StructIs` (struct-name test) — back the pattern tests; literals compare via `Eq`, ranges via `Ge`/`Le`/`Lt`, tuple/struct fields project via the existing `TupleIndex` / `FieldGet` ops.
+- **Three new opcodes** - `VariantIs` (enum/tuple-struct name + arity test), `VariantField` (positional payload extract), and `StructIs` (struct-name test) - back the pattern tests; literals compare via `Eq`, ranges via `Ge`/`Le`/`Lt`, tuple/struct fields project via the existing `TupleIndex` / `FieldGet` ops.
 - **`compile_match` + `emit_pattern_test`** lower every native-expressible pattern shape: wildcard, binding, literal, range, enum variant (with nested payload patterns), tuple (including a `..` rest), struct (with field-shorthand binding), `&`-ref, `@`-binding, and or-patterns of non-binding alternatives. Guards compile inline after the pattern test.
-- **Fallback preserved** — an or-pattern that introduces bindings still routes the whole `match` through the walker, so semantics stay correct while the common 95% runs natively. (Closures, `go`, and `select` remain walker-evaluated; the walker is not yet deleted.)
-- **`get()` bare-name router** — exercising `match` scrutinees natively exposed a latent dispatch collision: `install_module("json", …)` registered `("get", builtin_json_get)` after the HashMap getter, so a natively-evaluated `m.get(&k)` returned `None` and `match m.get(&k) { Some(v) => … }` always took the `None` arm. A receiver-dispatching `builtin_get_router` (mirroring the `keys`/`values` routers) sends `Map`/`IntMap` receivers to the map getter and struct/json receivers to the json getter.
-- **Compiled-tier tuple-match binding** — `match` on a tuple whose element types inference left loose (`let pair = (10, "hi")`) bound each element through a pointer-shaped local, so the `println!` arg dispatcher routed the `i64` element through `gos_rt_concat_str` and strlen'd the integer → segfault. The MIR tuple-pattern lowering now recovers each element type from the sub-pattern when the tuple's recorded type is unresolved.
+- **Fallback preserved** - an or-pattern that introduces bindings still routes the whole `match` through the walker, so semantics stay correct while the common 95% runs natively. (Closures, `go`, and `select` remain walker-evaluated; the walker is not yet deleted.)
+- **`get()` bare-name router** - exercising `match` scrutinees natively exposed a latent dispatch collision: `install_module("json", …)` registered `("get", builtin_json_get)` after the HashMap getter, so a natively-evaluated `m.get(&k)` returned `None` and `match m.get(&k) { Some(v) => … }` always took the `None` arm. A receiver-dispatching `builtin_get_router` (mirroring the `keys`/`values` routers) sends `Map`/`IntMap` receivers to the map getter and struct/json receivers to the json getter.
+- **Compiled-tier tuple-match binding** - `match` on a tuple whose element types inference left loose (`let pair = (10, "hi")`) bound each element through a pointer-shaped local, so the `println!` arg dispatcher routed the `i64` element through `gos_rt_concat_str` and strlen'd the integer → segfault. The MIR tuple-pattern lowering now recovers each element type from the sub-pattern when the tuple's recorded type is unresolved.
 
 ### Free-fn dispatch wired through MIR
 
-- `strconv::parse_i64` / `parse_f64` / `parse_bool` / `parse_u64` / `atoi` / `format_i64` / `format_f64` / `format_bool` / `itoa` — new `gos_rt_strconv_*` shims (`c_abi/strconv.rs`) with Result-shaped payloads where the VM returns Result.
+- `strconv::parse_i64` / `parse_f64` / `parse_bool` / `parse_u64` / `atoi` / `format_i64` / `format_f64` / `format_bool` / `itoa` - new `gos_rt_strconv_*` shims (`c_abi/strconv.rs`) with Result-shaped payloads where the VM returns Result.
 - `strings::trim` / `trim_start` / `trim_end` / `split` / `to_upper` / `to_lower` / `contains` / `replace` / `starts_with` / `ends_with` / `lines` / `find` / `repeat`.
 - `math::tan` / `asin` / `acos` / `atan` / `atan2` / `sinh` / `cosh` / `tanh` / `log2` / `log10` / `cbrt` / `round` / `exp2` / `fmod` / `hypot` / `copysign` / `dim`.
-- `path::parent` / `stem` / `file_name` — new Option-returning shims.
+- `path::parent` / `stem` / `file_name` - new Option-returning shims.
 - `env::set_var`, `env::program_name` (registry entry was missing), `crypto::rand::bytes` (new `getrandom`-backed shim), `fs::metadata`, `time::Duration::as_millis` / `from_micros` / `as_secs` / `as_micros`, `sync::AtomicBool::new` / `sync::AtomicU64::new` (alias to AtomicI64).
-- `encoding::xml::escape`, `encoding::base32::encode` / `encode_string` / `decode_string`, `encoding::base64::encode` / `decode`, `encoding::hex::encode` / `decode`, `html::escape` / `unescape`, `compress::flate::compress` / `decompress`, `compress::zlib::compress` / `decompress`, `crypto::hmac::sha256_mac`, `result::default_with` — previously emitted an undefined `@module::fn` reference at the `opt` stage of `gos build`. New `gos_rt_*` shims (`c_abi/encoding.rs`, plus flate/zlib in `c_abi/gzip.rs`, hmac in `c_abi/crypto.rs`), MIR dispatch arms, and ABI-registry entries lower them across the compiled tiers. A `Vec<u8>` is stored i64-per-element (each byte zero-extended to an 8-byte slot), and the byte readers/builders in the new shims respect that. Acceptance gate: `crates/gossamer-cli/tests/stdlib_lowering.rs` builds + runs a probe per function.
+- `encoding::xml::escape`, `encoding::base32::encode` / `encode_string` / `decode_string`, `encoding::base64::encode` / `decode`, `encoding::hex::encode` / `decode`, `html::escape` / `unescape`, `compress::flate::compress` / `decompress`, `compress::zlib::compress` / `decompress`, `crypto::hmac::sha256_mac`, `result::default_with` - previously emitted an undefined `@module::fn` reference at the `opt` stage of `gos build`. New `gos_rt_*` shims (`c_abi/encoding.rs`, plus flate/zlib in `c_abi/gzip.rs`, hmac in `c_abi/crypto.rs`), MIR dispatch arms, and ABI-registry entries lower them across the compiled tiers. A `Vec<u8>` is stored i64-per-element (each byte zero-extended to an 8-byte slot), and the byte readers/builders in the new shims respect that. Acceptance gate: `crates/gossamer-cli/tests/stdlib_lowering.rs` builds + runs a probe per function.
 
 ### More VM-only stdlib surface wired through MIR
 
 A reverse audit (interp-registered builtins with no compiled-tier lowering) found a large further set of `module::fn` calls that ran under `gos run` but emitted an undefined `@module::fn` symbol at the `opt` stage of `gos build`. The `dispatch_parity` test only checks the runtime→codegen direction, so this whole class was ungated. Each function below now has a `gos_rt_*` shim, an ABI-registry entry, and a MIR dispatch arm, and is exercised by a `feature-testing-examples/` fixture that asserts bit-identical stdout across VM / Cranelift / LLVM.
 
-- **`strings`** — `splitn`, `split_whitespace`, `fields`, `replacen`, `to_title`, `trim_matches`, `pad_left`, `pad_right`, `contains_rune`, `contains_any`, `equal_fold`, `index_rune`, `index_any`, `last_index_any`, `strip_prefix`, `strip_suffix`.
-- **`path`** — `clean`, `normalize`, `is_absolute`, `has_prefix`, `extension` (aliases the existing `ext` Option shim).
-- **`time`** — `sleep`, `now`, `unix_ms`, `now_nanos`, `monotonic_ms`, `monotonic_nanos`, `since_ms` (monotonic shims already existed; these route the language-level calls plus new epoch-nanos / since shims).
-- **`hash`** — `crc32::{checksum, checksum_string, update}`, `adler32::{checksum, checksum_string, update}`, `fnv::{hash32, hash64, hash_string}` (new `c_abi/hash.rs`).
-- **`math::bits`** — scalar primitives `count_ones`, `count_zeros`, `leading_zeros`, `trailing_zeros`, `reverse_bits`, `reverse_bytes`, `len`, `rotate_left`, `rotate_right`.
-- **`os` / `fs`** — `copy` (Result<i64>), `canonicalize` (Result<String>).
-- **`crypto::subtle::constant_time_eq`** — length-aware constant-time byte compare.
-- **`encoding::ascii85`** — `encode`, `decode`.
-- **`encoding::utf16`** — `is_surrogate`, `rune_len`, `decode_surrogate_pair` (Option<char>), `encode_string` ([u16]), `decode_to_string`. The interp registration was also fixed to bind the canonical `encoding::utf16::*` path (it previously only bound the bare `utf16::*` form, so `use std::encoding; encoding::utf16::…` failed in the VM too).
-- **`encoding::binary`** — `put_u16/u32/u64_be/le` ([u8]), `get_u16/u32/u64_be/le` (Result<i64>), `uvarint` / `varint` (Result<(i64, i64)>).
-- **`encoding::csv`** — `parse_line` ([String]), `read` (Result<[[String]]>), `write` (String). Exercises the nested `Vec<Vec<String>>` representation across the by-value-aggregate ABI.
-- **`bufio`** — `read_to_string` (Result<String>), `read_lines_of` (Result<[String]>), `split_whitespace`.
-- **`net`** — `resolve` / `lookup` (Result<[String]>).
+- **`strings`** - `splitn`, `split_whitespace`, `fields`, `replacen`, `to_title`, `trim_matches`, `pad_left`, `pad_right`, `contains_rune`, `contains_any`, `equal_fold`, `index_rune`, `index_any`, `last_index_any`, `strip_prefix`, `strip_suffix`.
+- **`path`** - `clean`, `normalize`, `is_absolute`, `has_prefix`, `extension` (aliases the existing `ext` Option shim).
+- **`time`** - `sleep`, `now`, `unix_ms`, `now_nanos`, `monotonic_ms`, `monotonic_nanos`, `since_ms` (monotonic shims already existed; these route the language-level calls plus new epoch-nanos / since shims).
+- **`hash`** - `crc32::{checksum, checksum_string, update}`, `adler32::{checksum, checksum_string, update}`, `fnv::{hash32, hash64, hash_string}` (new `c_abi/hash.rs`).
+- **`math::bits`** - scalar primitives `count_ones`, `count_zeros`, `leading_zeros`, `trailing_zeros`, `reverse_bits`, `reverse_bytes`, `len`, `rotate_left`, `rotate_right`.
+- **`os` / `fs`** - `copy` (Result<i64>), `canonicalize` (Result<String>).
+- **`crypto::subtle::constant_time_eq`** - length-aware constant-time byte compare.
+- **`encoding::ascii85`** - `encode`, `decode`.
+- **`encoding::utf16`** - `is_surrogate`, `rune_len`, `decode_surrogate_pair` (Option<char>), `encode_string` ([u16]), `decode_to_string`. The interp registration was also fixed to bind the canonical `encoding::utf16::*` path (it previously only bound the bare `utf16::*` form, so `use std::encoding; encoding::utf16::…` failed in the VM too).
+- **`encoding::binary`** - `put_u16/u32/u64_be/le` ([u8]), `get_u16/u32/u64_be/le` (Result<i64>), `uvarint` / `varint` (Result<(i64, i64)>).
+- **`encoding::csv`** - `parse_line` ([String]), `read` (Result<[[String]]>), `write` (String). Exercises the nested `Vec<Vec<String>>` representation across the by-value-aggregate ABI.
+- **`bufio`** - `read_to_string` (Result<String>), `read_lines_of` (Result<[String]>), `split_whitespace`.
+- **`net`** - `resolve` / `lookup` (Result<[String]>).
 
-The carrying `math::bits::{add, sub, mul, div}` and the `utf8::{decode_rune, decode_rune_in_string, decode_last_rune, decode_last_rune_in_string}` family return by-value tuples (`(i64, i64)` / `(char, i64)`); `utf8::append_rune` returns `[u8]`. These exercise the compiled-tier by-value-aggregate ABI — a runtime helper returns a GC-allocated multi-slot heap buffer that the caller memcpys into its destination, the same shape user-defined tuple/struct returns already use across both backends.
+The carrying `math::bits::{add, sub, mul, div}` and the `utf8::{decode_rune, decode_rune_in_string, decode_last_rune, decode_last_rune_in_string}` family return by-value tuples (`(i64, i64)` / `(char, i64)`); `utf8::append_rune` returns `[u8]`. These exercise the compiled-tier by-value-aggregate ABI - a runtime helper returns a GC-allocated multi-slot heap buffer that the caller memcpys into its destination, the same shape user-defined tuple/struct returns already use across both backends.
 
 ### Struct-returning stdlib functions via injected real-struct wrappers
 
 The last VM-only class was stdlib functions that build or return a *named struct* (`pem::Block`, `x509::CertInfo`, `tar::TarEntry`, `zip::ZipEntry`). Rather than a fragile sentinel-DefId opaque handle (which disagrees with the multi-slot inline layout the compiled tier gives real structs), each is wired through the serde-autoderive precedent: `gossamer-parse` injects real Gossamer `struct` + wrapper-fn source, and a `VisitorMut` rewrites the public call/type sites (`pem::decode`, `x509::CertInfo`, …) to the mangled wrappers. Each wrapper calls a leaf intrinsic that returns the proven tuple / `[u8]` ABI shapes; the wrapper folds the tuple into the real struct, which then constructs, indexes, and field-accesses identically on every tier.
 
-- **`encoding::pem`** — `decode` / `decode_all` / `encode` over a real `Block { block_type, bytes }`. Leaf intrinsics `gos_rt_pem_decode_raw` (`Result<(String, [u8])>`), `gos_rt_pem_decode_all_raw` (`Result<[(String, [u8])]>`), `gos_rt_pem_encode_raw`.
-- **`crypto::x509::parse_pem`** — `Result<CertInfo, Error>` over a real 7-field struct, via a single `gos_rt_x509_parse_pem_raw` leaf returning a 7-slot `(subject, issuer, serial, not_before_unix, not_after_unix, san_dns, sha256)` tuple. The runtime shim reuses `x509-parser` + `sha2` so the compiled tier matches the VM byte-for-byte.
-- **`archive::tar` / `archive::zip`** — `read` returns `[TarEntry]` / `[ZipEntry]` (each `{ name, data, is_dir }`) via a `[(String, [u8], bool)]` tuple-vec leaf; `write([(String, [u8])])` returns `Result<[u8]>` directly (no struct). Runtime shims use the `tar` / `zip` crates.
+- **`encoding::pem`** - `decode` / `decode_all` / `encode` over a real `Block { block_type, bytes }`. Leaf intrinsics `gos_rt_pem_decode_raw` (`Result<(String, [u8])>`), `gos_rt_pem_decode_all_raw` (`Result<[(String, [u8])]>`), `gos_rt_pem_encode_raw`.
+- **`crypto::x509::parse_pem`** - `Result<CertInfo, Error>` over a real 7-field struct, via a single `gos_rt_x509_parse_pem_raw` leaf returning a 7-slot `(subject, issuer, serial, not_before_unix, not_after_unix, san_dns, sha256)` tuple. The runtime shim reuses `x509-parser` + `sha2` so the compiled tier matches the VM byte-for-byte.
+- **`archive::tar` / `archive::zip`** - `read` returns `[TarEntry]` / `[ZipEntry]` (each `{ name, data, is_dir }`) via a `[(String, [u8], bool)]` tuple-vec leaf; `write([(String, [u8])])` returns `Result<[u8]>` directly (no struct). Runtime shims use the `tar` / `zip` crates.
 
 Three general codegen fixes fell out of this work and benefit all user structs, not just the stdlib wrappers:
 
-- **`[u8]` / `[T]` field method dispatch** — a struct extracted from a `Result` (`match Ok(q) => q.bytes.len()`) lost contact with its field types, so `.len()` on a `[u8]` field dispatched to `strlen` and read the i64-per-element Vec as a C string (returning 1, or crashing on a misaligned pointer). The method-call lowering now recovers the field's declared type from the parent struct's `Adt` def — ground truth — instead of the wrongly-resolved HIR type.
-- **Array-literal struct fields coerce to heap Vec** — `Q { bytes: [1, 2, 3] }` where `bytes: [u8]` stored the 3-slot inline array straight into the 1-slot Vec field, overflowing the aggregate. The struct-literal lowering coerces an array-literal value to a `GosVec` when the field is declared `[T]` / slice.
+- **`[u8]` / `[T]` field method dispatch** - a struct extracted from a `Result` (`match Ok(q) => q.bytes.len()`) lost contact with its field types, so `.len()` on a `[u8]` field dispatched to `strlen` and read the i64-per-element Vec as a C string (returning 1, or crashing on a misaligned pointer). The method-call lowering now recovers the field's declared type from the parent struct's `Adt` def - ground truth - instead of the wrongly-resolved HIR type.
+- **Array-literal struct fields coerce to heap Vec** - `Q { bytes: [1, 2, 3] }` where `bytes: [u8]` stored the 3-slot inline array straight into the 1-slot Vec field, overflowing the aggregate. The struct-literal lowering coerces an array-literal value to a `GosVec` when the field is declared `[T]` / slice.
 - **Field-access type recovery** prefers the struct's declared field type whenever the receiver is an `Adt` with known fields, not only when the HIR type is an unresolved `Var`.
-- **Array/tuple-literal arguments re-type to the parameter.** A literal argument is re-recorded against the callee parameter type, so a nested `[1, 2, 3]` byte array inside a `(String, [u8])` tuple inside a `[(String, [u8])]` parameter (the `archive::tar`/`zip` `write` shape) is typed as a heap Vec at every level rather than a fixed `[i64; N]` — the compiled tier then lays out the same heap structure the runtime shim reads. A per-body pre-scan extends this through a `let` binding (`let files = […]; tar::write(files)`): the binding whose value flows into such a call is re-typed up front, the backward inference the single-pass checker can't otherwise reach.
+- **Array/tuple-literal arguments re-type to the parameter.** A literal argument is re-recorded against the callee parameter type, so a nested `[1, 2, 3]` byte array inside a `(String, [u8])` tuple inside a `[(String, [u8])]` parameter (the `archive::tar`/`zip` `write` shape) is typed as a heap Vec at every level rather than a fixed `[i64; N]` - the compiled tier then lays out the same heap structure the runtime shim reads. A per-body pre-scan extends this through a `let` binding (`let files = […]; tar::write(files)`): the binding whose value flows into such a call is re-typed up front, the backward inference the single-pass checker can't otherwise reach.
 
 ### Method dispatch fallthroughs
 
-- `HashMap::contains` aliases `contains_key`; `BTreeMap::get` / `contains` / `contains_key` — three new btmap shims.
+- `HashMap::contains` aliases `contains_key`; `BTreeMap::get` / `contains` / `contains_key` - three new btmap shims.
 
 ### Result<f64> bit-pattern preservation
 
@@ -450,285 +450,285 @@ Three general codegen fixes fell out of this work and benefit all user structs, 
 
 ### Silent miscompiles closed
 
-- `let mut xs = [1, 2, 3]; xs.push(4)` — MIR's let-lowering promotes `mut` array-literal bindings to `Vec<T>` so `.push` / `.sort` / `.iter` don't write through a stack `[i64; N]` interpreted as a `GosVec` header.
+- `let mut xs = [1, 2, 3]; xs.push(4)` - MIR's let-lowering promotes `mut` array-literal bindings to `Vec<T>` so `.push` / `.sort` / `.iter` don't write through a stack `[i64; N]` interpreted as a `GosVec` header.
 - `gos_rt_set_args` captures `argv[0]` whenever `argc >= 1` (was gated behind `argc > 1`), so `env::program_name()` returns the binary path even when run with no user args.
 - `gos_rt_crypto_rand_bytes` writes the requested length into the `GosVec` header after filling the buffer.
 - `regex::captures_all` / `captures` build canonical `Option<String>` capture groups. The runtime pushed a bare c-string pointer (or 0) per group, but each group's source type is `Option<String>`; when the element typed as a concrete `Option<String>` (e.g. through a function whose declared return is `[[Option<String>]]`), the compiled-tier `match group { Some(k) => …, None => … }` read the tagged-union discriminant (`gos_rt_result_disc`) off the pointer and saw a c-string's first bytes as garbage, so the match fell through and produced no output. The runtime now pushes `gos_rt_result_new(disc, payload)` Options and the MIR pins the result element to `Option<String>` (`captures_all` → `Vec<Vec<Option<String>>>`, `captures` → `Option<Vec<Option<String>>>`, and the `for row in captures_all(…)` element to `Vec<Option<String>>`).
 
 ### Coverage gauge
 
-- `tests/llvm_aot_coverage.rs` — 43 round-tripped tests, 0 ignored. Each test pins a behaviour the audit found broken; the suite is the regression gate for future LLVM-tier work.
+- `tests/llvm_aot_coverage.rs` - 43 round-tripped tests, 0 ignored. Each test pins a behaviour the audit found broken; the suite is the regression gate for future LLVM-tier work.
 
 ### `&mut T` deref-assign and `&mut self` field mutation
 
 Three coordinated fixes close a class of LLVM AOT segfaults / silent miscompiles where `&mut scalar` was passed as an i64-as-ptr and `*s = expr` was silently dropped.
 
-- **`*place = expr` (deref-assign) routes through a Place with `Projection::Deref`** — `gossamer_mir::lower::builder::expr::lower_place_expr` gained a `HirUnaryOp::Deref` arm that appends a `Projection::Deref` step. Previously the match defaulted to `None`, so `lower_assign` silently returned without emitting any store, and the program silently dropped the entire assignment.
-- **LLVM `lower_place_address` skips its prefix auto-deref when the first projection is itself `Deref`** — the auto-deref exists for the common shape `let r: &T = &x; r.field` (loads the local's pointer slot once before walking field offsets). When `*r = expr` arrives with `Place { local: r, projection: [Deref] }`, both the auto-deref and the explicit `Deref` would fire — the second load reads garbage at the pointee's first 8 bytes. The new `skip_auto_deref` check on `place.projection.first()` keeps single-level pointer semantics correct for both shapes.
-- **`&mut`-on-place-of-scalar emits `Rvalue::Ref`** — `lower_unary` previously returned `Some(inner)` for every `RefShared` / `RefMut`. For aggregates (Vec/String/struct/opaque-handle Adts whose locals already hold a pointer) that's correct. For `&mut` on a scalar place (`&mut state`, `&mut p.field`, `&mut arr[i]` where the element is `i64`/`f64`/`bool`/`char`), the caller used to hand the callee the **value as a pointer**, segfaulting on the first deref. The lowerer now narrows to the `&mut` + scalar + genuine-place shape and emits `Rvalue::Ref { mutable: true, place }` so backends compute a real slot address. Shared `&` on scalars and `&` on literals keep their historical value-passthrough so existing dispatch (e.g. `map.get(&k)` → `gos_rt_map_get_i64(m, k_value)`) continues to work.
-- **Cranelift `Rvalue::Ref` for bare scalar locals materialises a stack slot** — when the address is asked for a local that lives in an SSA `Variable` (the common cranelift shape for `i64`/`f64`/`bool`/`char`), the handler now allocates an 8-byte stack slot, stores the current value, and returns `stack_addr`. The LLVM tier didn't need this because alloca-backed locals always have an address; cranelift required the explicit promotion for the `&mut state` path to produce a real pointer.
-- **Net effect** — `fn lcg(s: &mut i64) { *s = *s * K + C }` now runs correctly under both `gos build` and `gos build --release` instead of segfaulting; `impl P { fn advance(&mut self) { self.pos += 1 } }` writes back through the pointer. The bytecode-VM / walker tier still has the long-standing `&mut self` writeback gap on field mutation.
+- **`*place = expr` (deref-assign) routes through a Place with `Projection::Deref`** - `gossamer_mir::lower::builder::expr::lower_place_expr` gained a `HirUnaryOp::Deref` arm that appends a `Projection::Deref` step. Previously the match defaulted to `None`, so `lower_assign` silently returned without emitting any store, and the program silently dropped the entire assignment.
+- **LLVM `lower_place_address` skips its prefix auto-deref when the first projection is itself `Deref`** - the auto-deref exists for the common shape `let r: &T = &x; r.field` (loads the local's pointer slot once before walking field offsets). When `*r = expr` arrives with `Place { local: r, projection: [Deref] }`, both the auto-deref and the explicit `Deref` would fire - the second load reads garbage at the pointee's first 8 bytes. The new `skip_auto_deref` check on `place.projection.first()` keeps single-level pointer semantics correct for both shapes.
+- **`&mut`-on-place-of-scalar emits `Rvalue::Ref`** - `lower_unary` previously returned `Some(inner)` for every `RefShared` / `RefMut`. For aggregates (Vec/String/struct/opaque-handle Adts whose locals already hold a pointer) that's correct. For `&mut` on a scalar place (`&mut state`, `&mut p.field`, `&mut arr[i]` where the element is `i64`/`f64`/`bool`/`char`), the caller used to hand the callee the **value as a pointer**, segfaulting on the first deref. The lowerer now narrows to the `&mut` + scalar + genuine-place shape and emits `Rvalue::Ref { mutable: true, place }` so backends compute a real slot address. Shared `&` on scalars and `&` on literals keep their historical value-passthrough so existing dispatch (e.g. `map.get(&k)` → `gos_rt_map_get_i64(m, k_value)`) continues to work.
+- **Cranelift `Rvalue::Ref` for bare scalar locals materialises a stack slot** - when the address is asked for a local that lives in an SSA `Variable` (the common cranelift shape for `i64`/`f64`/`bool`/`char`), the handler now allocates an 8-byte stack slot, stores the current value, and returns `stack_addr`. The LLVM tier didn't need this because alloca-backed locals always have an address; cranelift required the explicit promotion for the `&mut state` path to produce a real pointer.
+- **Net effect** - `fn lcg(s: &mut i64) { *s = *s * K + C }` now runs correctly under both `gos build` and `gos build --release` instead of segfaulting; `impl P { fn advance(&mut self) { self.pos += 1 } }` writes back through the pointer. The bytecode-VM / walker tier still has the long-standing `&mut self` writeback gap on field mutation.
 
 ### Multi-dim fixed-array indexing
 
-- **`lower_place_address` advances `current_ty` after every `Index` step** — when projecting `arr[i][j]` over `[[T; A]; B]`, the LLVM lowerer previously left `current_ty` pinned at the outer array type and reset `stride_slots` to 1 after the first index. The second index then used the outer array's bounds (panic with `len is 2 but index is 2` after a clean exit from a `while s < 2` loop), and the stride was wrong for the element width — corrupting the data. The Index arm now matches the Field arm and walks into the element type, recomputing `stride_slots = elem_slots(elem_ty)`. The chess-engine `make_zobrist`-style writes over `[[[i64; 64]; 6]; 2]` round-trip cleanly across all tiers.
+- **`lower_place_address` advances `current_ty` after every `Index` step** - when projecting `arr[i][j]` over `[[T; A]; B]`, the LLVM lowerer previously left `current_ty` pinned at the outer array type and reset `stride_slots` to 1 after the first index. The second index then used the outer array's bounds (panic with `len is 2 but index is 2` after a clean exit from a `while s < 2` loop), and the stride was wrong for the element width - corrupting the data. The Index arm now matches the Field arm and walks into the element type, recomputing `stride_slots = elem_slots(elem_ty)`. The chess-engine `make_zobrist`-style writes over `[[[i64; 64]; 6]; 2]` round-trip cleanly across all tiers.
 
 ### `env::args()` empty-iteration safety
 
-- **`gos_rt_set_args` materialises an empty `GosVec` when `argc <= 1`** — previously the no-user-arg branch stored a null pointer into `ARGS_VEC`, and any iteration over `env::args()` (`for a in args { ... }`) dereferenced the null header and segfaulted. The header is now a zero-length stack-stable `GosVec` with `ptr = null`, `len = 0`, `cap = 0`, so the iterator's `header.ptr + 0 * elem_bytes` walk is a clean zero-trip.
+- **`gos_rt_set_args` materialises an empty `GosVec` when `argc <= 1`** - previously the no-user-arg branch stored a null pointer into `ARGS_VEC`, and any iteration over `env::args()` (`for a in args { ... }`) dereferenced the null header and segfaulted. The header is now a zero-length stack-stable `GosVec` with `ptr = null`, `len = 0`, `cap = 0`, so the iterator's `header.ptr + 0 * elem_bytes` walk is a clean zero-trip.
 
 ### `xs.pop()` on typed-storage arrays
 
-- **`builtin_pop` handles `Value::IntArray` and `Value::FloatVec`** — the receiver dispatch previously only covered `Value::Array`. A `let mut xs: [i64] = [..]` lands as `Value::IntArray`, fell into the `_ => empty_array` fallback, and the writeback then moved the empty result into `xs` — clobbering the entire vector. Both typed-storage variants now shrink by one element instead of being zeroed out.
+- **`builtin_pop` handles `Value::IntArray` and `Value::FloatVec`** - the receiver dispatch previously only covered `Value::Array`. A `let mut xs: [i64] = [..]` lands as `Value::IntArray`, fell into the `_ => empty_array` fallback, and the writeback then moved the empty result into `xs` - clobbering the entire vector. Both typed-storage variants now shrink by one element instead of being zeroed out.
 
-### Interpreter RAM — shared prelude, interned identifiers, end-of-load compaction
+### Interpreter RAM - shared prelude, interned identifiers, end-of-load compaction
 
-- **Process-shared prelude `Arc<FxHashMap<&'static str, Global>>`** — `builtins::prelude_globals()` builds the ~330-entry built-in dispatch table once via `OnceLock`; every `Vm::new` and `Vm::with_globals` `Arc::clones` it. New `Vm::lookup_global` / `lookup_global_ref` two-tier helpers consult the per-Vm overlay first, then the shared prelude on miss. Goroutine-heavy programs no longer pay per-Vm prelude duplication. Every `Op::Call` / `Op::MethodCall` / `Op::LoadGlobal` / `Op::SpawnMethod` dispatch site now routes through `lookup_global*`.
-- **`Vm.globals` keyed by `&'static str`** — `Arc<HashMap<String, Global>>` → `Arc<FxHashMap<&'static str, Global>>`. Dynamic qualified keys (`format!("{prefix}::{name}")`) intern through `value::intern_type_name`. Eliminates ~330 per-Vm `String` heap allocations and the `to_string()` calls that fed them.
-- **`FnChunk::name: &'static str`** — interned at chunk construction (in `compile_fn`). `FnBuilder::name` follows. Recursive programs no longer allocate one `String` per call-stack frame.
-- **`Vm.call_stack: RefCell<Vec<&'static str>>`** — interned chunk-name push instead of `String::clone` per `apply` entry. `call_stack_snapshot` still returns `Vec<String>` for API stability.
-- **Interner pools migrated to `FxHashSet<&'static str>`** — the process-global `value::intern_type_name` and the per-thread `vm::intern_type_name` / `vm::intern_qualified` swapped from `Vec<(String, &'static str)>` linear scan to a hash-set of leaked `&'static str`. Lookups stay O(1) past the small-program range; hits no longer allocate a probe `String`.
-- **`FnBuilder::finish()` folds in `compact()`** — every chunk-construction path now `shrink_to_fit`s its Vec storage automatically; new code that produces a chunk through `finish` cannot accidentally skip the compaction.
-- **`Vm::load` ends with `globals.shrink_to_fit()`** — releases hashbrown's growth-by-doubling slack on the overlay once every item is registered.
-- **`release_jit_prelude` extended** — drops `mir_bodies` + `tcx_snapshot` and now also `shrink_to_fit`s `chunk_state_arena` + `chunk_state_map` so the post-`call` Vm's RSS reflects steady state while goroutines drain.
+- **Process-shared prelude `Arc<FxHashMap<&'static str, Global>>`** - `builtins::prelude_globals()` builds the ~330-entry built-in dispatch table once via `OnceLock`; every `Vm::new` and `Vm::with_globals` `Arc::clones` it. New `Vm::lookup_global` / `lookup_global_ref` two-tier helpers consult the per-Vm overlay first, then the shared prelude on miss. Goroutine-heavy programs no longer pay per-Vm prelude duplication. Every `Op::Call` / `Op::MethodCall` / `Op::LoadGlobal` / `Op::SpawnMethod` dispatch site now routes through `lookup_global*`.
+- **`Vm.globals` keyed by `&'static str`** - `Arc<HashMap<String, Global>>` → `Arc<FxHashMap<&'static str, Global>>`. Dynamic qualified keys (`format!("{prefix}::{name}")`) intern through `value::intern_type_name`. Eliminates ~330 per-Vm `String` heap allocations and the `to_string()` calls that fed them.
+- **`FnChunk::name: &'static str`** - interned at chunk construction (in `compile_fn`). `FnBuilder::name` follows. Recursive programs no longer allocate one `String` per call-stack frame.
+- **`Vm.call_stack: RefCell<Vec<&'static str>>`** - interned chunk-name push instead of `String::clone` per `apply` entry. `call_stack_snapshot` still returns `Vec<String>` for API stability.
+- **Interner pools migrated to `FxHashSet<&'static str>`** - the process-global `value::intern_type_name` and the per-thread `vm::intern_type_name` / `vm::intern_qualified` swapped from `Vec<(String, &'static str)>` linear scan to a hash-set of leaked `&'static str`. Lookups stay O(1) past the small-program range; hits no longer allocate a probe `String`.
+- **`FnBuilder::finish()` folds in `compact()`** - every chunk-construction path now `shrink_to_fit`s its Vec storage automatically; new code that produces a chunk through `finish` cannot accidentally skip the compaction.
+- **`Vm::load` ends with `globals.shrink_to_fit()`** - releases hashbrown's growth-by-doubling slack on the overlay once every item is registered.
+- **`release_jit_prelude` extended** - drops `mir_bodies` + `tcx_snapshot` and now also `shrink_to_fit`s `chunk_state_arena` + `chunk_state_map` so the post-`call` Vm's RSS reflects steady state while goroutines drain.
 
 ### Short-circuit `&&` / `||` in the compiled tier
 
-- **`lower_binary` branches on the LHS for logical AND/OR** — the MIR lowerer previously called `lower_expr` on both sides up front. Any guarded RHS (`while j > 0 && arr[j - 1] < x`) evaluated the bounds-violating index unconditionally and panicked with `index is -1` once the LHS guard kicked in. The lowering now emits a small branch lattice: LHS → switch → (short-circuit constant) or (eval RHS) → merge. VM tier was already correct via the walker's expression evaluator; this brings the compiled tier in line.
+- **`lower_binary` branches on the LHS for logical AND/OR** - the MIR lowerer previously called `lower_expr` on both sides up front. Any guarded RHS (`while j > 0 && arr[j - 1] < x`) evaluated the bounds-violating index unconditionally and panicked with `index is -1` once the LHS guard kicked in. The lowering now emits a small branch lattice: LHS → switch → (short-circuit constant) or (eval RHS) → merge. VM tier was already correct via the walker's expression evaluator; this brings the compiled tier in line.
 
 ### `HashMap` bare-name dispatch router
 
-- **`builtin_keys_router` / `builtin_values_router`** — `install_module("json", …)`'s unconditional bare-name push registered `("keys", builtin_json_keys)` AFTER the HashMap surface's `("keys", builtin_map_keys)`. The later json push silently overrode the bare-name registry, so every `m.keys()` on a HashMap dispatched to the JSON helper which returns `None` for non-Struct receivers — surfacing as `ks.len() == 0` even with multiple inserts. A small router dispatches on the Value variant so both surfaces work without depending on registration order.
+- **`builtin_keys_router` / `builtin_values_router`** - `install_module("json", …)`'s unconditional bare-name push registered `("keys", builtin_json_keys)` AFTER the HashMap surface's `("keys", builtin_map_keys)`. The later json push silently overrode the bare-name registry, so every `m.keys()` on a HashMap dispatched to the JSON helper which returns `None` for non-Struct receivers - surfacing as `ks.len() == 0` even with multiple inserts. A small router dispatches on the Value variant so both surfaces work without depending on registration order.
 
 ### Array literal → `Vec` / `Slice` return coercion
 
-- **`Return` lowering coerces `Array<T; N>` to `Vec<T>` when the declared return is `Vec(elem)` / `Slice(elem)`** — `fn f() -> [String] { return ["a", "b"] }` previously lowered the literal as a flat stack-aggregate that the caller dereferenced as a `*mut GosVec` (len read as garbage bits, all subsequent reads silently empty). The Return path now routes the value through `coerce_array_to_vec` (which calls `gos_rt_vec_from_arr`) when the shapes match.
+- **`Return` lowering coerces `Array<T; N>` to `Vec<T>` when the declared return is `Vec(elem)` / `Slice(elem)`** - `fn f() -> [String] { return ["a", "b"] }` previously lowered the literal as a flat stack-aggregate that the caller dereferenced as a `*mut GosVec` (len read as garbage bits, all subsequent reads silently empty). The Return path now routes the value through `coerce_array_to_vec` (which calls `gos_rt_vec_from_arr`) when the shapes match.
 
 ### `HashMap.iter()` direct-binding guard
 
-- **MIR's method-call dispatch rejects `.iter()` on a `HashMap` receiver outside the for-loop shape** — `for (k, v) in m.iter()` is still handled by `try_lower_for_hashmap_iter` (a real entries walk on every tier). The direct-binding form `let xs = m.iter()` previously dispatched the `*mut GosMap` receiver through `gos_rt_arr_iter`, which reads the map handle's first 8 bytes as a `GosVec` length header and walks garbage — silent miscompile / segfault. The dispatch now `return None`s for HashMap receivers so the compiler emits a clear error pointing users at `m.keys()` / `m.values()` / the for-loop form instead of producing a broken binary.
+- **MIR's method-call dispatch rejects `.iter()` on a `HashMap` receiver outside the for-loop shape** - `for (k, v) in m.iter()` is still handled by `try_lower_for_hashmap_iter` (a real entries walk on every tier). The direct-binding form `let xs = m.iter()` previously dispatched the `*mut GosMap` receiver through `gos_rt_arr_iter`, which reads the map handle's first 8 bytes as a `GosVec` length header and walks garbage - silent miscompile / segfault. The dispatch now `return None`s for HashMap receivers so the compiler emits a clear error pointing users at `m.keys()` / `m.values()` / the for-loop form instead of producing a broken binary.
 
 ### `Vec<Struct>` place-indexing + fixed-array promotion
 
 Two coordinated fixes close a class of multi-slot-element corruption under `gos build --release`.
 
-- **`bodies[i].field` over a `Vec<Struct>` routes through `gos_rt_vec_get_ptr`** — the place-expression Index arm previously appended a flat `Projection::Index`, which the LLVM lowerer strode off the `*mut GosVec` *header* rather than the data buffer. Element 0 happened to alias the header's first field, so reads/writes past index 0 hit garbage (the chess / nbody struct-array corruption). The Index arm now detects a Vec / Slice base with multi-slot elements (consulting the base local's MIR-resolved type so promoted bindings are seen), materialises the element address via `gos_rt_vec_get_ptr`, and binds it to a `&elem`-typed local; the appended `Field` projection auto-derefs that pointer so both reads and writes land inside the Vec's storage.
-- **`let mut [T; N]` promotion to `Vec` is gated on actual growth** — a `mut` array-literal binding was unconditionally rewritten to a heap `Vec`, even for an explicitly-sized `[Body; 5]` that is only indexed, field-mutated, or passed to a `[T; N]`-typed parameter. The promotion desynchronised the element stride at call boundaries (`energy(&bodies)` declared `&[Body; 5]` strode the GosVec header as inline data → NaN). The MIR builder now pre-scans the function body for growth / reshape receivers (`push`, `pop`, `insert`, `remove`, `extend`, `truncate`, `clear`, `retain`, `append`, `resize`, `drain`, `split_off`, `sort`, `sort_by`) and promotes a `let mut [literal]` only when its binding is grown somewhere; otherwise it keeps the inline fixed-array layout that matches every use site. `let mut xs = [3, 1, 2]; xs.push(4); xs.sort()` still promotes; `let mut bodies: [Body; 5]` passed to a `[Body; 5]` parameter no longer does.
+- **`bodies[i].field` over a `Vec<Struct>` routes through `gos_rt_vec_get_ptr`** - the place-expression Index arm previously appended a flat `Projection::Index`, which the LLVM lowerer strode off the `*mut GosVec` *header* rather than the data buffer. Element 0 happened to alias the header's first field, so reads/writes past index 0 hit garbage (the chess / nbody struct-array corruption). The Index arm now detects a Vec / Slice base with multi-slot elements (consulting the base local's MIR-resolved type so promoted bindings are seen), materialises the element address via `gos_rt_vec_get_ptr`, and binds it to a `&elem`-typed local; the appended `Field` projection auto-derefs that pointer so both reads and writes land inside the Vec's storage.
+- **`let mut [T; N]` promotion to `Vec` is gated on actual growth** - a `mut` array-literal binding was unconditionally rewritten to a heap `Vec`, even for an explicitly-sized `[Body; 5]` that is only indexed, field-mutated, or passed to a `[T; N]`-typed parameter. The promotion desynchronised the element stride at call boundaries (`energy(&bodies)` declared `&[Body; 5]` strode the GosVec header as inline data → NaN). The MIR builder now pre-scans the function body for growth / reshape receivers (`push`, `pop`, `insert`, `remove`, `extend`, `truncate`, `clear`, `retain`, `append`, `resize`, `drain`, `split_off`, `sort`, `sort_by`) and promotes a `let mut [literal]` only when its binding is grown somewhere; otherwise it keeps the inline fixed-array layout that matches every use site. `let mut xs = [3, 1, 2]; xs.push(4); xs.sort()` still promotes; `let mut bodies: [Body; 5]` passed to a `[Body; 5]` parameter no longer does.
 
 ### `sort_by` comparator over aggregate elements
 
-- **The closure-lift pass no longer pins aggregate-typed comparator params to i64** — `xs.sort_by(|a, b| a.1 < b.1)` on a `Vec<(String, i64)>` produced a no-op / wrong order. Inference left the closure params `a` / `b` as `Var` (the expected `FnTrait((T, T) -> i64)` signature wasn't propagated into the closure body), and `lift_closures` blanket-pinned every unresolved closure param to i64. The lifted comparator then computed `a.1`'s field offset off a junk integer rather than the element pointer the runtime sort (`gos_rt_vec_sort_by_aggr`) passes it. The lift pass now walks each closure body first and skips the i64 pin for any param used through a `TupleIndex` / `Field` projection or as a method-call receiver — those params hold aggregates passed by pointer. Scalar comparator params (`|n| n * 2`) keep the i64 pin they need. Works without the previously-required explicit `|a: (String, i64), b: (String, i64)|` annotation.
+- **The closure-lift pass no longer pins aggregate-typed comparator params to i64** - `xs.sort_by(|a, b| a.1 < b.1)` on a `Vec<(String, i64)>` produced a no-op / wrong order. Inference left the closure params `a` / `b` as `Var` (the expected `FnTrait((T, T) -> i64)` signature wasn't propagated into the closure body), and `lift_closures` blanket-pinned every unresolved closure param to i64. The lifted comparator then computed `a.1`'s field offset off a junk integer rather than the element pointer the runtime sort (`gos_rt_vec_sort_by_aggr`) passes it. The lift pass now walks each closure body first and skips the i64 pin for any param used through a `TupleIndex` / `Field` projection or as a method-call receiver - those params hold aggregates passed by pointer. Scalar comparator params (`|n| n * 2`) keep the i64 pin they need. Works without the previously-required explicit `|a: (String, i64), b: (String, i64)|` annotation.
 
 ### `for e in &Vec<Enum>` slot-pointer dereference
 
-- **`lower_for_vec` checks slot width before treating the element as inline** — the for-loop helper previously flagged any `TyKind::Adt` element as "inline aggregate" and bound the loop variable to the slot's address. For multi-slot user structs (`Projection { a: i64, b: i64 }` = 16 bytes inline) that's the right move; field projections walk off the slot address. For single-slot Adts — enums, sentinel-handle structs whose 8-byte slot *holds* a heap pointer — the loop body needs the pointer value, one `gos_load` away. The previous binding handed each iteration the slot address; `match e { … }` then read the first 8 bytes of the heap allocation as the pattern scrutinee, every variant arm failed to match, and `for e in &Vec<Expr>` silently produced no output. The check is now `slot_bytes > 8` rather than just "is Adt"; single-slot Adts route through the scalar `gos_load(ptr, 0)` path.
+- **`lower_for_vec` checks slot width before treating the element as inline** - the for-loop helper previously flagged any `TyKind::Adt` element as "inline aggregate" and bound the loop variable to the slot's address. For multi-slot user structs (`Projection { a: i64, b: i64 }` = 16 bytes inline) that's the right move; field projections walk off the slot address. For single-slot Adts - enums, sentinel-handle structs whose 8-byte slot *holds* a heap pointer - the loop body needs the pointer value, one `gos_load` away. The previous binding handed each iteration the slot address; `match e { … }` then read the first 8 bytes of the heap allocation as the pattern scrutinee, every variant arm failed to match, and `for e in &Vec<Expr>` silently produced no output. The check is now `slot_bytes > 8` rather than just "is Adt"; single-slot Adts route through the scalar `gos_load(ptr, 0)` path.
 
 ### `Vec<UserStruct>` inline element width
 
-- **`type_slot_bytes` for user `Adt` sums registered field widths** — every user struct collapsed to 8 bytes regardless of field count, so `gos_rt_vec_new(elem_bytes)` for a `Vec<Projection>` whose `Projection { a: i64, b: i64 }` is two slots reserved 8-byte slots, and each push truncated to the first field. `for p in &xs { p.b }` then read garbage at the wrong offset (and any `String` field's `len()` segfaulted on the stray pointer). `type_slot_bytes` now consults `tcx.struct_field_tys(def)` and returns the slot-sum × 8 for user structs, leaving sentinel stdlib structs (DirInfo, Output, ResponseStream, Response — `u32::MAX - 5 ..= u32::MAX`) at the pointer-sized 8 bytes their runtime helpers require.
+- **`type_slot_bytes` for user `Adt` sums registered field widths** - every user struct collapsed to 8 bytes regardless of field count, so `gos_rt_vec_new(elem_bytes)` for a `Vec<Projection>` whose `Projection { a: i64, b: i64 }` is two slots reserved 8-byte slots, and each push truncated to the first field. `for p in &xs { p.b }` then read garbage at the wrong offset (and any `String` field's `len()` segfaulted on the stray pointer). `type_slot_bytes` now consults `tcx.struct_field_tys(def)` and returns the slot-sum × 8 for user structs, leaving sentinel stdlib structs (DirInfo, Output, ResponseStream, Response - `u32::MAX - 5 ..= u32::MAX`) at the pointer-sized 8 bytes their runtime helpers require.
 
 ### Typed-storage fast paths tolerate generic-Array receivers
 
-- **`Op::IntArrayGetI64` / `Op::FloatVecGetF64` fall back to `Value::Array`** — the compiler's `flat_int_locals` / `flat_float_locals` tracking can outlive the receiver's concrete `Value::IntArray` / `Value::FloatVec` payload when the call-args path doesn't typed-promote across a function boundary. The runtime fast paths now accept the generic `Value::Array(Vec<Value::Int>)` / `Vec<Value::Float>` shape (one discriminant match per index) instead of aborting with `receiver lost flat invariant`. Hot-path performance is unchanged on the typed path; the fallback rescues calls that previously panicked.
+- **`Op::IntArrayGetI64` / `Op::FloatVecGetF64` fall back to `Value::Array`** - the compiler's `flat_int_locals` / `flat_float_locals` tracking can outlive the receiver's concrete `Value::IntArray` / `Value::FloatVec` payload when the call-args path doesn't typed-promote across a function boundary. The runtime fast paths now accept the generic `Value::Array(Vec<Value::Int>)` / `Vec<Value::Float>` shape (one discriminant match per index) instead of aborting with `receiver lost flat invariant`. Hot-path performance is unchanged on the typed path; the fallback rescues calls that previously panicked.
 
 ### Regression coverage
 
 `tests/bug_regressions.rs` gains tests pinning the above behaviours through both VM and LLVM AOT tiers:
 
-- `deref_assign_through_mut_i64_runs_under_llvm` — LCG `*s = *s * K + C` runs correctly instead of segfaulting.
-- `mut_self_field_compound_assign_writes_back` — `self.n += 1` writes back through the pointer.
-- `multi_dim_fixed_array_index_walks_inner_strides` — `arr[i][j][k]` over `[[[T; A]; B]; C]` lands on the correct element.
-- `env_args_empty_iter_does_not_segfault` — `for a in env::args() { … }` is a clean no-trip when no user args supplied.
-- `vec_pop_on_typed_storage_shrinks_by_one` — `[i64]` / `[f64]` slices shrink by exactly one after `xs.pop()`.
-- `hashmap_keys_router_does_not_get_shadowed_by_json` — `m.keys()` returns all keys regardless of registration order with module-prefixed bare-name pushes.
-- `return_array_literal_coerces_to_slice` — array-literal return to a `Vec`/`Slice`-typed function produces a real GosVec.
-- `typed_int_array_get_falls_back_to_generic_array` — `arr[i]` inside `fn slide(arr: [i64; N])` works for repeated calls inside a loop.
-- `logical_and_or_short_circuit_in_compiled_tier` — `&&` / `||` short-circuit RHS evaluation under `gos build --release`.
-- `sort_by_on_tuple_vec_orders_by_comparator` — `xs.sort_by(|a, b| …)` on a `Vec<(String, i64)>` orders by the comparator without explicit closure-param type annotations.
-- `vec_of_struct_index_field_reads_and_writes_through_data_buffer` — `bs[i].x` read and `bs[i].x = v` write on a `Vec<Struct>` land in the Vec's storage.
-- `mut_fixed_struct_array_not_promoted_keeps_layout_across_calls` — `let mut bodies: [Body; N]` passed to a `&[Body; N]` parameter keeps its inline layout.
-- `mut_scalar_array_with_push_still_promotes_to_vec` — a `mut` array literal that calls `push` / `sort` still promotes to a heap Vec.
-- `vec_of_enum_for_loop_dereferences_slot_pointer` — `for e in &Vec<Enum>` reads the heap pointer out of the slot before passing the element to the body.
-- `vec_of_multi_slot_struct_round_trips_all_fields` — `Vec<Projection>` where `Projection` has multiple scalar fields preserves every field across `push` / `for` iteration.
+- `deref_assign_through_mut_i64_runs_under_llvm` - LCG `*s = *s * K + C` runs correctly instead of segfaulting.
+- `mut_self_field_compound_assign_writes_back` - `self.n += 1` writes back through the pointer.
+- `multi_dim_fixed_array_index_walks_inner_strides` - `arr[i][j][k]` over `[[[T; A]; B]; C]` lands on the correct element.
+- `env_args_empty_iter_does_not_segfault` - `for a in env::args() { … }` is a clean no-trip when no user args supplied.
+- `vec_pop_on_typed_storage_shrinks_by_one` - `[i64]` / `[f64]` slices shrink by exactly one after `xs.pop()`.
+- `hashmap_keys_router_does_not_get_shadowed_by_json` - `m.keys()` returns all keys regardless of registration order with module-prefixed bare-name pushes.
+- `return_array_literal_coerces_to_slice` - array-literal return to a `Vec`/`Slice`-typed function produces a real GosVec.
+- `typed_int_array_get_falls_back_to_generic_array` - `arr[i]` inside `fn slide(arr: [i64; N])` works for repeated calls inside a loop.
+- `logical_and_or_short_circuit_in_compiled_tier` - `&&` / `||` short-circuit RHS evaluation under `gos build --release`.
+- `sort_by_on_tuple_vec_orders_by_comparator` - `xs.sort_by(|a, b| …)` on a `Vec<(String, i64)>` orders by the comparator without explicit closure-param type annotations.
+- `vec_of_struct_index_field_reads_and_writes_through_data_buffer` - `bs[i].x` read and `bs[i].x = v` write on a `Vec<Struct>` land in the Vec's storage.
+- `mut_fixed_struct_array_not_promoted_keeps_layout_across_calls` - `let mut bodies: [Body; N]` passed to a `&[Body; N]` parameter keeps its inline layout.
+- `mut_scalar_array_with_push_still_promotes_to_vec` - a `mut` array literal that calls `push` / `sort` still promotes to a heap Vec.
+- `vec_of_enum_for_loop_dereferences_slot_pointer` - `for e in &Vec<Enum>` reads the heap pointer out of the slot before passing the element to the body.
+- `vec_of_multi_slot_struct_round_trips_all_fields` - `Vec<Projection>` where `Projection` has multiple scalar fields preserves every field across `push` / `for` iteration.
 
-## 0.9.0 — Production hardening, tooling, observability, and SQL pluggability
+## 0.9.0 - Production hardening, tooling, observability, and SQL pluggability
 
 ### Language
 
-- **`?` on `Option<T>` and `Result<T, E>`** — `try_propagation_kind` selects the propagation shape; `ast_is_option_shaped` is the AST-level fallback when typechecker hasn't pinned the return type. Error paths auto-route through `gos_rt_error_from` so `let x: A = fallible_b()?` works when `A: From<B>`.
-- **User `impl Iterator for T` end-to-end** across all three tiers — HIR `lower_for` splits into `lower_for_user_iter` (Adt receivers; threads through a `__for_iter` let-binding and a `.next() -> Option<T>` call) and `lower_for_inline` (range / array / Vec fast paths). MIR for-loop fast-path bails to the generic shape for Adt receivers. Interp's `invoke_method` + `apply_closure_capture_self` write a mutated `&mut self` back to the receiver place; `&self` / `&mut self` are typed `Ref<SelfType>` in HIR.
-- **`UnknownTraitBound` (GT0011)** — `register_fn_sig` validates declared trait names against `known_builtin_trait` (the eight built-in kinds) + the user's `declared_trait_names`. Typo'd bounds (`Itarator` for `Iterator`) now surface as a type error with a span.
+- **`?` on `Option<T>` and `Result<T, E>`** - `try_propagation_kind` selects the propagation shape; `ast_is_option_shaped` is the AST-level fallback when typechecker hasn't pinned the return type. Error paths auto-route through `gos_rt_error_from` so `let x: A = fallible_b()?` works when `A: From<B>`.
+- **User `impl Iterator for T` end-to-end** across all three tiers - HIR `lower_for` splits into `lower_for_user_iter` (Adt receivers; threads through a `__for_iter` let-binding and a `.next() -> Option<T>` call) and `lower_for_inline` (range / array / Vec fast paths). MIR for-loop fast-path bails to the generic shape for Adt receivers. Interp's `invoke_method` + `apply_closure_capture_self` write a mutated `&mut self` back to the receiver place; `&self` / `&mut self` are typed `Ref<SelfType>` in HIR.
+- **`UnknownTraitBound` (GT0011)** - `register_fn_sig` validates declared trait names against `known_builtin_trait` (the eight built-in kinds) + the user's `declared_trait_names`. Typo'd bounds (`Itarator` for `Iterator`) now surface as a type error with a span.
 
 ### Tooling
 
-- **`gos bench [PATH] [--parallel N]`** — discovers every `#[bench]`-annotated function under `PATH` (defaults to `src/`) and reports `ns/op` plus `allocs/op` per benchmark. Per-bench iteration counts auto-tune to a 50ms calibration window (capped at 2^20); allocation deltas read from `gossamer_runtime::gc::stats().bytes_allocated`. `std::testing::Bencher` ships as the future-facing argument type; zero-arg `#[bench]` fns keep working.
+- **`gos bench [PATH] [--parallel N]`** - discovers every `#[bench]`-annotated function under `PATH` (defaults to `src/`) and reports `ns/op` plus `allocs/op` per benchmark. Per-bench iteration counts auto-tune to a 50ms calibration window (capped at 2^20); allocation deltas read from `gossamer_runtime::gc::stats().bytes_allocated`. `std::testing::Bencher` ships as the future-facing argument type; zero-arg `#[bench]` fns keep working.
 - check.sh extended to mirror more of the CI workflow with Github Actions.
 
-### Runtime — production safety
+### Runtime - production safety
 
-- **Stack-overflow guard** — `stack_guard::install_stack_guard()` runs at scheduler start and per worker. Unix installs `sigaltstack(2)` + `SA_ONSTACK` SIGSEGV handler with async-signal-safe diagnostics; Windows uses `SetThreadStackGuarantee` + `SetUnhandledExceptionFilter`. Faults outside the guard window restore `SIG_DFL` and re-raise.
-- **`safe_daemon::daemonize`** — Unix `fork` + `setsid` + second-`fork` detach so `gossamer-std` (`#![forbid(unsafe_code)]`) can run a daemon without losing that guarantee. `Unsupported` on non-Unix.
-- **OOM no longer crosses the FFI boundary** — `gos_rt_gc_alloc` + `gos_rt_aggr_alloc_leak` `alloc_zeroed`-null paths `eprintln!` + `std::process::abort()` instead of `std::alloc::handle_alloc_error` (which panics; panic-across-FFI into compiled Gossamer is UB).
-- **FFI transmute audit** — `c_abi/mime.rs::mime_str` no longer launders the borrow into `&'static str` via `mem::transmute`; returns an owned `String`.
-- **`WorkerHandleGuard`** — RAII over `WorkerSlot::thread_handle`. On panic-unwind, swap-to-0 and call `preempt::release_thread_handle`. Closes a long-running Windows-service handle leak.
-- **Typed function-pointer registry** — `c_abi::fn_registry` with `FnKind` enum (I64ArgsToI64, EnvI64ArgsToI64, HttpHandlerBare/Env, SortCmp/SortCmpAggr, UnaryI64ToI64, BinaryI64ToI64, PredI64, JitEntry, GoSpawnEntry, CtxCancelI64, Generic). `verify` runs at every `gos_rt_fn_tramp_N` / `gos_rt_go_spawn_call_N` site; registered-with-different-kind aborts. `parking_lot::RwLock<HashMap>` keeps the read path uncontended.
-- **`GosMutex` owner tracking** — `owner: AtomicI64`; cross-goroutine unlock aborts with a diagnostic rather than corrupting lock state.
-- **`parking_lot::Mutex` everywhere** — every internal `std::sync::Mutex` migrated. No poisoning, smaller footprint, faster uncontended path. `.lock().unwrap_or_else(PoisonError::into_inner)` collapses to `.lock()`.
-- **`tests/audit_unsafe.rs`** — CI gate asserts every `unsafe { ... }` block in `gossamer-runtime/src/` (excluding the FFI surface in `c_abi/` + `ffi.rs`) carries a `// SAFETY:` comment within 8 lines above. Backfills `http2_server.rs` + `stack_guard.rs`.
-- **`gossamer-runtime::replay`** — deterministic record + replay modes via `GOS_TRACE` / `GOS_REPLAY`. Length-prefixed binary records cover channel send/recv, goroutine spawn/yield, RNG seed draws.
+- **Stack-overflow guard** - `stack_guard::install_stack_guard()` runs at scheduler start and per worker. Unix installs `sigaltstack(2)` + `SA_ONSTACK` SIGSEGV handler with async-signal-safe diagnostics; Windows uses `SetThreadStackGuarantee` + `SetUnhandledExceptionFilter`. Faults outside the guard window restore `SIG_DFL` and re-raise.
+- **`safe_daemon::daemonize`** - Unix `fork` + `setsid` + second-`fork` detach so `gossamer-std` (`#![forbid(unsafe_code)]`) can run a daemon without losing that guarantee. `Unsupported` on non-Unix.
+- **OOM no longer crosses the FFI boundary** - `gos_rt_gc_alloc` + `gos_rt_aggr_alloc_leak` `alloc_zeroed`-null paths `eprintln!` + `std::process::abort()` instead of `std::alloc::handle_alloc_error` (which panics; panic-across-FFI into compiled Gossamer is UB).
+- **FFI transmute audit** - `c_abi/mime.rs::mime_str` no longer launders the borrow into `&'static str` via `mem::transmute`; returns an owned `String`.
+- **`WorkerHandleGuard`** - RAII over `WorkerSlot::thread_handle`. On panic-unwind, swap-to-0 and call `preempt::release_thread_handle`. Closes a long-running Windows-service handle leak.
+- **Typed function-pointer registry** - `c_abi::fn_registry` with `FnKind` enum (I64ArgsToI64, EnvI64ArgsToI64, HttpHandlerBare/Env, SortCmp/SortCmpAggr, UnaryI64ToI64, BinaryI64ToI64, PredI64, JitEntry, GoSpawnEntry, CtxCancelI64, Generic). `verify` runs at every `gos_rt_fn_tramp_N` / `gos_rt_go_spawn_call_N` site; registered-with-different-kind aborts. `parking_lot::RwLock<HashMap>` keeps the read path uncontended.
+- **`GosMutex` owner tracking** - `owner: AtomicI64`; cross-goroutine unlock aborts with a diagnostic rather than corrupting lock state.
+- **`parking_lot::Mutex` everywhere** - every internal `std::sync::Mutex` migrated. No poisoning, smaller footprint, faster uncontended path. `.lock().unwrap_or_else(PoisonError::into_inner)` collapses to `.lock()`.
+- **`tests/audit_unsafe.rs`** - CI gate asserts every `unsafe { ... }` block in `gossamer-runtime/src/` (excluding the FFI surface in `c_abi/` + `ffi.rs`) carries a `// SAFETY:` comment within 8 lines above. Backfills `http2_server.rs` + `stack_guard.rs`.
+- **`gossamer-runtime::replay`** - deterministic record + replay modes via `GOS_TRACE` / `GOS_REPLAY`. Length-prefixed binary records cover channel send/recv, goroutine spawn/yield, RNG seed draws.
 
-### Runtime — performance
+### Runtime - performance
 
-- **`gos_rt_str_concat`** — single-allocation path via `alloc_cstring_from_slices` (was three allocations per concat). `try_extend_last_cstring` removed.
-- **`ChannelInner.closed`: `AtomicBool`** (was `Cell<bool>`) — `close()` uses `compare_exchange` so concurrent close-and-recv races converge deterministically.
-- **Scheduler yield-rate tracking** — per-worker `last_yield_micros: AtomicU64` + `process_start()` / `now_micros_since_start()` helpers. `should_yield()` uses `Acquire` ordering.
-- **Interp allocator-pressure shaves** — `apply_closure_capture_self` borrows the self-param name as `&str` from the closure (was a per-call `String::clone`); `builtin_map_inc_at` builds the map key via `SmolStr::from_str(&str)` directly (was `to_string()` then wrap). Every user `impl Iterator` `.next(&mut self)` benefits.
+- **`gos_rt_str_concat`** - single-allocation path via `alloc_cstring_from_slices` (was three allocations per concat). `try_extend_last_cstring` removed.
+- **`ChannelInner.closed`: `AtomicBool`** (was `Cell<bool>`) - `close()` uses `compare_exchange` so concurrent close-and-recv races converge deterministically.
+- **Scheduler yield-rate tracking** - per-worker `last_yield_micros: AtomicU64` + `process_start()` / `now_micros_since_start()` helpers. `should_yield()` uses `Acquire` ordering.
+- **Interp allocator-pressure shaves** - `apply_closure_capture_self` borrows the self-param name as `&str` from the closure (was a per-call `String::clone`); `builtin_map_inc_at` builds the map key via `SmolStr::from_str(&str)` directly (was `to_string()` then wrap). Every user `impl Iterator` `.next(&mut self)` benefits.
 
 ### Garbage collector
 
-- **Overflow safety** — `Heap`'s two `u32::try_from` sites `eprintln!` + `abort` instead of `.expect()`. Weak-ref `generation` widened to `u64` with `checked_add`; closes the 2^32-churn use-after-free.
-- **Pause-time histogram** — `GcStats::pause_histogram` (6-bucket: `<100us` / `<1ms` / `<10ms` / `<100ms` / `<1s` / `>=1s`) updated per `collect()` cycle.
-- **Precise pointer-mask tracing** — `gos_rt_gc_alloc_traced(size, mask_ptr, mask_len)` registers an aggregate with an explicit `u32` pointer-offset mask. The marker walks only the recorded offsets; `null` mask opts into the conservative word-scan. Closes the false-retention hazard from `i64` payload words colliding with live addresses.
-- **`gos_rt_gc_collect` thread-local `CollectBuffers`** — the snapshot `HashMap`, marked `HashSet`, and worklist `Vec` live in a `thread_local!` cell and are `.clear()`'d (capacity preserved) between cycles. Removes the per-cycle alloc/free churn on HashMap-heavy workloads.
-- **`gos_rt_fs_list_dir` / `gos_rt_fs_walk_dir`** — per-entry blobs now allocate through `gos_rt_gc_alloc` so the collector can reclaim them. The prior path leaked one 56-byte payload per directory entry.
+- **Overflow safety** - `Heap`'s two `u32::try_from` sites `eprintln!` + `abort` instead of `.expect()`. Weak-ref `generation` widened to `u64` with `checked_add`; closes the 2^32-churn use-after-free.
+- **Pause-time histogram** - `GcStats::pause_histogram` (6-bucket: `<100us` / `<1ms` / `<10ms` / `<100ms` / `<1s` / `>=1s`) updated per `collect()` cycle.
+- **Precise pointer-mask tracing** - `gos_rt_gc_alloc_traced(size, mask_ptr, mask_len)` registers an aggregate with an explicit `u32` pointer-offset mask. The marker walks only the recorded offsets; `null` mask opts into the conservative word-scan. Closes the false-retention hazard from `i64` payload words colliding with live addresses.
+- **`gos_rt_gc_collect` thread-local `CollectBuffers`** - the snapshot `HashMap`, marked `HashSet`, and worklist `Vec` live in a `thread_local!` cell and are `.clear()`'d (capacity preserved) between cycles. Removes the per-cycle alloc/free churn on HashMap-heavy workloads.
+- **`gos_rt_fs_list_dir` / `gos_rt_fs_walk_dir`** - per-entry blobs now allocate through `gos_rt_gc_alloc` so the collector can reclaim them. The prior path leaked one 56-byte payload per directory entry.
 
-### Codegen — LLVM
+### Codegen - LLVM
 
-- **`render_ir_to_string(bodies, tcx, allow_fallback)`** — runs the standard LLVM pipeline and returns `.ll` IR as `String`. Used by snapshot / smoke tests in downstream crates.
-- **`gos build --release` strict-lowering on by default** — `set_strict_lowering(true)`; any MIR shape the LLVM backend can't lower is a hard build failure. `--allow-llvm-fallback` is the explicit opt-out.
+- **`render_ir_to_string(bodies, tcx, allow_fallback)`** - runs the standard LLVM pipeline and returns `.ll` IR as `String`. Used by snapshot / smoke tests in downstream crates.
+- **`gos build --release` strict-lowering on by default** - `set_strict_lowering(true)`; any MIR shape the LLVM backend can't lower is a hard build failure. `--allow-llvm-fallback` is the explicit opt-out.
 - **`pipeline_tmp_dir`** suffixes the per-process directory with a per-call atomic counter so parallel `render_ir_to_string` / `compile_to_object` calls don't trample each other's `unit.ll` / `unit.o`.
-- **`crates/gossamer-codegen-llvm/tests/lower_shapes.rs`** — 14 deterministic tests hand-roll a `Body` per MIR shape (constants + binop variants for add/sub/mul/div/rem/and/or/xor/shl/shr) and assert substring properties on the rendered IR.
+- **`crates/gossamer-codegen-llvm/tests/lower_shapes.rs`** - 14 deterministic tests hand-roll a `Body` per MIR shape (constants + binop variants for add/sub/mul/div/rem/and/or/xor/shl/shr) and assert substring properties on the rendered IR.
 
-### Codegen — Cranelift
+### Codegen - Cranelift
 
-- **Closure-callback JIT dispatch entries** — `gos_rt_arr_sort_by_i64`, `gos_rt_vec_sort_by_i64`, `gos_rt_vec_sort_i64`, `gos_rt_{arr,vec}_sort_by_aggr`, `gos_rt_callback_invoke`, `gos_rt_iter_map_i64` now in the JIT symbol table. User bodies calling these no longer skip JIT compilation.
-- **`intrinsic_g{0,1,2,3}.rs` → `intrinsic_{io_math,collections,handles,string}.rs`** — names describe contents rather than alphabet position; module-level docs added.
+- **Closure-callback JIT dispatch entries** - `gos_rt_arr_sort_by_i64`, `gos_rt_vec_sort_by_i64`, `gos_rt_vec_sort_i64`, `gos_rt_{arr,vec}_sort_by_aggr`, `gos_rt_callback_invoke`, `gos_rt_iter_map_i64` now in the JIT symbol table. User bodies calling these no longer skip JIT compilation.
+- **`intrinsic_g{0,1,2,3}.rs` → `intrinsic_{io_math,collections,handles,string}.rs`** - names describe contents rather than alphabet position; module-level docs added.
 
 ### Diagnostics + LSP + Parse + CLI
 
-- **Centralised error-code registry** — `gossamer-diagnostics::REGISTRY` is the single source of truth for every `GL`/`GP`/`GR`/`GT`/`GM`/`GX` code; `gos explain CODE` reads from it. `tests/registry.rs` enforces alphabetical order + non-empty text; `tests/snapshots.rs` renders every code (plain + framed) via `insta`.
-- **LSP — 67 new integration tests** across `completion`, `hover`, `diagnostics`, `document_symbol`, `code_actions`, `format`, `semantic_tokens`, `inlay_hints`. `ServerHandle` (test-only) gains 13 request methods + four `params`-building helpers.
-- **`crates/gossamer-parse/tests/proptest_round_trip.rs`** — five proptest properties exercise int literals, binary ops, `let` bindings, function definitions, and nested blocks. Capped at `cases: 64` / `max_shrink_time: 2s` for CI determinism.
-- **`crates/gossamer-cli/tests/repl.rs`** — seven scripted-stdin tests for the `gos repl` binary covering the happy path and error reporting.
-- **`examples/projects/rust_binding_add/`** — minimal Rust-bindings project demonstrating `gos add --rust-binding`.
+- **Centralised error-code registry** - `gossamer-diagnostics::REGISTRY` is the single source of truth for every `GL`/`GP`/`GR`/`GT`/`GM`/`GX` code; `gos explain CODE` reads from it. `tests/registry.rs` enforces alphabetical order + non-empty text; `tests/snapshots.rs` renders every code (plain + framed) via `insta`.
+- **LSP - 67 new integration tests** across `completion`, `hover`, `diagnostics`, `document_symbol`, `code_actions`, `format`, `semantic_tokens`, `inlay_hints`. `ServerHandle` (test-only) gains 13 request methods + four `params`-building helpers.
+- **`crates/gossamer-parse/tests/proptest_round_trip.rs`** - five proptest properties exercise int literals, binary ops, `let` bindings, function definitions, and nested blocks. Capped at `cases: 64` / `max_shrink_time: 2s` for CI determinism.
+- **`crates/gossamer-cli/tests/repl.rs`** - seven scripted-stdin tests for the `gos repl` binary covering the happy path and error reporting.
+- **`examples/projects/rust_binding_add/`** - minimal Rust-bindings project demonstrating `gos add --rust-binding`.
 
-### Stdlib — `std::database::sql`
+### Stdlib - `std::database::sql`
 
-- **`pool` submodule** — bounded-semaphore connection pool with idle-timeout recycling and a per-checkout retry budget.
-- **`migrate` submodule** — forward-only schema migrations from a `<version>_<slug>.sql` directory; each migration runs in its own transaction; concurrent runners coordinate via an advisory lock on `schema_migrations`.
-- **`query::Select` builder** — fluent SELECT renderer emitting `(sql, params)` with `Value`-bound parameters and Postgres-style `$N` placeholders (SQLite also accepts).
-- **Trait surface extensions** — `Error::driver(...)` + `Error::PoolExhausted`, `IsolationLevel` enum (`Default` / `Read{Uncommitted,Committed}` / `RepeatableRead` / `Serializable`). `Conn::begin_with(iso)` / `ping()` / `execute_many(sql, rows)` ship as default impls on the facade for incremental driver adoption.
-- **Native lowering** — `gossamer-runtime::sql` (trait surface relocated from `gossamer-std`) + `c_abi::sql` (33 `gos_rt_sql_*` shims over five handle registries: Conn / Stmt / Rows / Row / Tx / Value). Cranelift JIT + LLVM AOT dispatch through `Both`-tier ABI registry entries. `Conn::interrupt()` / `execute_ctx(ctx, ...)` / `query_ctx(ctx, ...)` check `ctx.is_cancelled()` on either side of the call.
-- **SQLite driver removed** — `rusqlite` dependency dropped, `database/sql/sqlite.rs` deleted. The facade stays; third-party drivers register through `gossamer-runtime::sql::Driver`.
+- **`pool` submodule** - bounded-semaphore connection pool with idle-timeout recycling and a per-checkout retry budget.
+- **`migrate` submodule** - forward-only schema migrations from a `<version>_<slug>.sql` directory; each migration runs in its own transaction; concurrent runners coordinate via an advisory lock on `schema_migrations`.
+- **`query::Select` builder** - fluent SELECT renderer emitting `(sql, params)` with `Value`-bound parameters and Postgres-style `$N` placeholders (SQLite also accepts).
+- **Trait surface extensions** - `Error::driver(...)` + `Error::PoolExhausted`, `IsolationLevel` enum (`Default` / `Read{Uncommitted,Committed}` / `RepeatableRead` / `Serializable`). `Conn::begin_with(iso)` / `ping()` / `execute_many(sql, rows)` ship as default impls on the facade for incremental driver adoption.
+- **Native lowering** - `gossamer-runtime::sql` (trait surface relocated from `gossamer-std`) + `c_abi::sql` (33 `gos_rt_sql_*` shims over five handle registries: Conn / Stmt / Rows / Row / Tx / Value). Cranelift JIT + LLVM AOT dispatch through `Both`-tier ABI registry entries. `Conn::interrupt()` / `execute_ctx(ctx, ...)` / `query_ctx(ctx, ...)` check `ctx.is_cancelled()` on either side of the call.
+- **SQLite driver removed** - `rusqlite` dependency dropped, `database/sql/sqlite.rs` deleted. The facade stays; third-party drivers register through `gossamer-runtime::sql::Driver`.
 
-### Stdlib — web + networking
+### Stdlib - web + networking
 
-- **`std::http_h3`** — first-party HTTP/3 server + client (RFC 9114) wrapping `quinn` (QUIC) + `h3`. Each `serve` / `Client` instance owns a private current-thread tokio runtime; callers see only synchronous entry points mirroring `std::http_h2` and `std::http`.
-- **`std::http_native_client` TLS** — `NativeClient` wraps the TCP stream in `rustls::StreamOwned<ClientConnection, _>` for `https://`; per-request setup amortises through `Arc<rustls::ClientConfig>`.
-- **`http_state::attach_to_router`** — `Router` gains an optional `AppState` field + `set_state` / `state` accessors; `State::<T>::from_router(&router)` is the typed extractor handlers use.
+- **`std::http_h3`** - first-party HTTP/3 server + client (RFC 9114) wrapping `quinn` (QUIC) + `h3`. Each `serve` / `Client` instance owns a private current-thread tokio runtime; callers see only synchronous entry points mirroring `std::http_h2` and `std::http`.
+- **`std::http_native_client` TLS** - `NativeClient` wraps the TCP stream in `rustls::StreamOwned<ClientConnection, _>` for `https://`; per-request setup amortises through `Arc<rustls::ClientConfig>`.
+- **`http_state::attach_to_router`** - `Router` gains an optional `AppState` field + `set_state` / `state` accessors; `State::<T>::from_router(&router)` is the typed extractor handlers use.
 
-### Stdlib — observability + compression
+### Stdlib - observability + compression
 
-- **`std::metrics`** — Prometheus-compatible `Counter`, `Gauge`, `Histogram` + a `Registry` holding them in registration order; outputs the text-exposition format.
-- **`std::trace`** — W3C trace-context distributed tracing (`TraceId`, `SpanId`, `SpanContext`, `Span`, `Tracer`). OTLP JSON exporter pushes ended spans to a sidecar collector — no `opentelemetry-otlp` dependency.
-- **`std::compress::zstd`** — Zstandard encoder/decoder wrapping vendored libzstd. Same byte-in/byte-out shape as `gzip` / `flate` / `zlib`; level 1–22, default 3.
+- **`std::metrics`** - Prometheus-compatible `Counter`, `Gauge`, `Histogram` + a `Registry` holding them in registration order; outputs the text-exposition format.
+- **`std::trace`** - W3C trace-context distributed tracing (`TraceId`, `SpanId`, `SpanContext`, `Span`, `Tracer`). OTLP JSON exporter pushes ended spans to a sidecar collector - no `opentelemetry-otlp` dependency.
+- **`std::compress::zstd`** - Zstandard encoder/decoder wrapping vendored libzstd. Same byte-in/byte-out shape as `gzip` / `flate` / `zlib`; level 1-22, default 3.
 
-### Stdlib — fs
+### Stdlib - fs
 
-- **Watch / mmap / locks / atomic writes** — `fs::watch::Watcher` (`notify`), `mmap_read` / `mmap_write` (`memmap2`), `lock_exclusive` / `lock_shared` (`fs2`), `write_atomic` (temp-file + rename). `hard_link`, `set_permissions_mode`, `chown` close the niche-fs gap.
-- **`fs::TempDir`** — RAII temp directory; `new()` / `with_prefix(prefix)` under `env::temp_dir()`; `path()` / `into_path()` / `Drop`-cleanup.
-- **`fs::temp_file(prefix)`** — `(File, PathBuf)` for a uniquely-named writable scratch file.
+- **Watch / mmap / locks / atomic writes** - `fs::watch::Watcher` (`notify`), `mmap_read` / `mmap_write` (`memmap2`), `lock_exclusive` / `lock_shared` (`fs2`), `write_atomic` (temp-file + rename). `hard_link`, `set_permissions_mode`, `chown` close the niche-fs gap.
+- **`fs::TempDir`** - RAII temp directory; `new()` / `with_prefix(prefix)` under `env::temp_dir()`; `path()` / `into_path()` / `Drop`-cleanup.
+- **`fs::temp_file(prefix)`** - `(File, PathBuf)` for a uniquely-named writable scratch file.
 
-### Stdlib — crypto + jwt
+### Stdlib - crypto + jwt
 
-- **Hex digest C-ABI shims** — `gos_rt_sha256_hex` / `gos_rt_sha512_hex` / `gos_rt_blake3_hex` / `gos_rt_hmac_sha256_hex` under `c_abi::crypto`, alphabetically registered in `gossamer-abi::registry`. Tier-parity bit-identical via `feature-testing-examples/crypto_sha_hex.gos`.
-- **`std::jwt` RS256 / RS384 / RS512 verify** — RSA PKCS#1 v1.5 via `ring`'s audited constant-time RSA. The vulnerable `rsa` crate (RUSTSEC-2023-0071) stays out of the tree.
+- **Hex digest C-ABI shims** - `gos_rt_sha256_hex` / `gos_rt_sha512_hex` / `gos_rt_blake3_hex` / `gos_rt_hmac_sha256_hex` under `c_abi::crypto`, alphabetically registered in `gossamer-abi::registry`. Tier-parity bit-identical via `feature-testing-examples/crypto_sha_hex.gos`.
+- **`std::jwt` RS256 / RS384 / RS512 verify** - RSA PKCS#1 v1.5 via `ring`'s audited constant-time RSA. The vulnerable `rsa` crate (RUSTSEC-2023-0071) stays out of the tree.
 
-### Stdlib — unicode + iter + regex
+### Stdlib - unicode + iter + regex
 
-- **Grapheme cluster iteration** — `std::unicode::graphemes(s)` / `grapheme_count(s)` walk UAX #29 extended grapheme clusters via `unicode-segmentation`. `👨‍👩‍👧` counts as one.
-- **`std::iter::Lazy<I>`** — lazy adapter over any Rust `Iterator` with `map` / `filter` / `take` / `skip` / `step_by` adapters and `sum` / `min` / `max` / `count` / `first` / `fold` / `any` / `all` / `to_vec` / `product` terminals. Allocation-free until the terminal materialises.
-- **Free iter combinators** — `iter::sum`, `iter::product`, `iter::min`, `iter::max`, `iter::step_by`, `iter::once`, `iter::empty`, `iter::collect` join the existing family.
-- **Regex named groups** — `regex::capture_names(pat)`, `regex::captures_named(pat, hay)`, `regex::captures_named_all(pat, hay)`. `(?P<year>\d{4})` lookups return `HashMap<String, String>` directly.
+- **Grapheme cluster iteration** - `std::unicode::graphemes(s)` / `grapheme_count(s)` walk UAX #29 extended grapheme clusters via `unicode-segmentation`. `👨‍👩‍👧` counts as one.
+- **`std::iter::Lazy<I>`** - lazy adapter over any Rust `Iterator` with `map` / `filter` / `take` / `skip` / `step_by` adapters and `sum` / `min` / `max` / `count` / `first` / `fold` / `any` / `all` / `to_vec` / `product` terminals. Allocation-free until the terminal materialises.
+- **Free iter combinators** - `iter::sum`, `iter::product`, `iter::min`, `iter::max`, `iter::step_by`, `iter::once`, `iter::empty`, `iter::collect` join the existing family.
+- **Regex named groups** - `regex::capture_names(pat)`, `regex::captures_named(pat, hay)`, `regex::captures_named_all(pat, hay)`. `(?P<year>\d{4})` lookups return `HashMap<String, String>` directly.
 
 ### CI
 
-- **`cargo doc --workspace`** under `RUSTDOCFLAGS=-D rustdoc::broken_intra_doc_links` + `cargo test --doc --workspace --release` — doc-test drift fails CI.
-- **Cross-target check matrix** — `aarch64-unknown-linux-gnu`, `riscv64gc-unknown-linux-gnu`, `wasm32-unknown-unknown`, `wasm32-wasip1` each `cargo check` the platform-agnostic crates (runtime, abi, binding{,-macros}, pkg, gc, sched).
+- **`cargo doc --workspace`** under `RUSTDOCFLAGS=-D rustdoc::broken_intra_doc_links` + `cargo test --doc --workspace --release` - doc-test drift fails CI.
+- **Cross-target check matrix** - `aarch64-unknown-linux-gnu`, `riscv64gc-unknown-linux-gnu`, `wasm32-unknown-unknown`, `wasm32-wasip1` each `cargo check` the platform-agnostic crates (runtime, abi, binding{,-macros}, pkg, gc, sched).
 
 ### Test fixtures
 
-- **`feature-testing-examples/iterator_trait_user_impl.gos`** — user `impl Iterator for Counter` driving `for x in c`; tier-parity bit-identical.
-- **`feature-testing-examples/try_option_propagation.gos`** + **`try_err_conversion.gos`** — `?` on `Option` and `?` with `From`-conversion in the error path.
-- **`feature-testing-examples/crypto_sha_hex.gos`** — every hex-digest shim exercised end-to-end.
-- **`crates/gossamer-runtime/tests/gc_collect_concurrent.rs`** — concurrent-allocator non-starvation, precise pointer-mask registration, fs blob GC reclaimability.
-- **`crates/gossamer-std/tests/{iter_lazy,python_ergonomics}.rs`** — `iter::Lazy` chain round-trips; regex named groups + `TempDir` cleanup + `temp_file` uniqueness.
-- **`crates/gossamer-hir/tests/lower.rs`** — trait-bound validation, Option-shape `?` propagation.
+- **`feature-testing-examples/iterator_trait_user_impl.gos`** - user `impl Iterator for Counter` driving `for x in c`; tier-parity bit-identical.
+- **`feature-testing-examples/try_option_propagation.gos`** + **`try_err_conversion.gos`** - `?` on `Option` and `?` with `From`-conversion in the error path.
+- **`feature-testing-examples/crypto_sha_hex.gos`** - every hex-digest shim exercised end-to-end.
+- **`crates/gossamer-runtime/tests/gc_collect_concurrent.rs`** - concurrent-allocator non-starvation, precise pointer-mask registration, fs blob GC reclaimability.
+- **`crates/gossamer-std/tests/{iter_lazy,python_ergonomics}.rs`** - `iter::Lazy` chain round-trips; regex named groups + `TempDir` cleanup + `temp_file` uniqueness.
+- **`crates/gossamer-hir/tests/lower.rs`** - trait-bound validation, Option-shape `?` propagation.
 
-## 0.8.0 — Unicode, web stack, publish flow, LSP, fixes, and Rust-binding ergonomics
+## 0.8.0 - Unicode, web stack, publish flow, LSP, fixes, and Rust-binding ergonomics
 
 ### Language
 
-- Identifiers follow UAX #31 `XID_Start` / `XID_Continue` (same surface as Rust 2024) — `let café = 1`, `let π = 3.14`, `let 名前 = "x"` all parse.
+- Identifiers follow UAX #31 `XID_Start` / `XID_Continue` (same surface as Rust 2024) - `let café = 1`, `let π = 3.14`, `let 名前 = "x"` all parse.
 - New `docs_src/language/` reference site (33 pages: `if_let`, `while_let`, `pipe`, patterns, traits, …) generated from the manifest registry.
 
-### Stdlib — std::unicode
+### Stdlib - std::unicode
 
 The hand-rolled ASCII / BMP-range stubs are gone; every predicate answers against the Unicode 16 tables via `unicode-properties`, `unicode-normalization`, and `unicode-segmentation`.
 
-- General-category predicates now correct for non-ASCII: `is_digit('٧')` (Arabic-Indic), `is_punct('—')` (em dash), `is_symbol('¥')`, `is_mark('\u{0301}')`, `is_number('Ⅴ')`, `is_title('ǅ')`.
+- General-category predicates now correct for non-ASCII: `is_digit('٧')` (Arabic-Indic), `is_punct('-')` (em dash), `is_symbol('¥')`, `is_mark('\u{0301}')`, `is_number('Ⅴ')`, `is_title('ǅ')`.
 - Added `is_assigned(r) -> bool` and `combining_class(r) -> i64`.
 - Added whole-string casing helpers: `to_upper_str(s)` (ß → SS), `to_lower_str(s)` (Σ → σ), `fold_case(s)`.
 - Added normalization: `nfc(s)`, `nfd(s)`, `nfkc(s)`, `nfkd(s)`, plus `is_nfc` / `is_nfd` / `is_nfkc` / `is_nfkd`.
 - Added segmentation (UAX #29): `graphemes(s) -> Vec<String>`, `grapheme_count(s) -> i64`, `words(s)`, `word_bounds(s)`, `word_count(s)`, `sentences(s)`, `sentence_count(s)`. Family ZWJ sequences count as one grapheme; `cafe\u{0301}` is four.
 
-### Stdlib — std::utf8
+### Stdlib - std::utf8
 
 - `full_rune_in_string(s) -> bool` exposed alongside the existing byte-slice `full_rune`.
 
-### Stdlib — HTTP server stack
+### Stdlib - HTTP server stack
 
-- `std::http::cookie` — RFC 6265 `Cookie` / `CookieBuilder`, `SameSite` enum, `parse_cookie_header`, `parse_set_cookie`.
-- `std::http::csrf` — double-submit cookie + Origin/Referer check: `issue_token`, `verify_token`, `extract_token`, `origin_allowed`, `check`, `attach_cookie`, `RouteAuth`.
-- `std::http::form` — `application/x-www-form-urlencoded` parser and builder.
-- `std::http::multipart` — streaming RFC 7578 parser: `parse_boundary`, `parse_bytes`, `parse<R: Read>`, with `Part` / `PartData` / `Form` types.
-- `std::http::query` — typed `Query` wrapper over URL query strings.
-- `std::http::session` — signed-cookie session store: `SessionConfig`, `Session`, `SessionStore` trait, `SignedCookieStore`, `with_session`.
-- `std::http::state` — `AppState` typemap + `State<T>(Arc<T>)` DI container for handlers.
-- `std::http::health` — `Probe` trait + `Health` aggregator with `always_ok` / `always_fail` / `tcp_probe` helpers.
+- `std::http::cookie` - RFC 6265 `Cookie` / `CookieBuilder`, `SameSite` enum, `parse_cookie_header`, `parse_set_cookie`.
+- `std::http::csrf` - double-submit cookie + Origin/Referer check: `issue_token`, `verify_token`, `extract_token`, `origin_allowed`, `check`, `attach_cookie`, `RouteAuth`.
+- `std::http::form` - `application/x-www-form-urlencoded` parser and builder.
+- `std::http::multipart` - streaming RFC 7578 parser: `parse_boundary`, `parse_bytes`, `parse<R: Read>`, with `Part` / `PartData` / `Form` types.
+- `std::http::query` - typed `Query` wrapper over URL query strings.
+- `std::http::session` - signed-cookie session store: `SessionConfig`, `Session`, `SessionStore` trait, `SignedCookieStore`, `with_session`.
+- `std::http::state` - `AppState` typemap + `State<T>(Arc<T>)` DI container for handlers.
+- `std::http::health` - `Probe` trait + `Health` aggregator with `always_ok` / `always_fail` / `tcp_probe` helpers.
 
-### Stdlib — HTTP middleware
+### Stdlib - HTTP middleware
 
-`std::http::middleware` gained `body_limit`, `timeout`, `hsts`, `security_headers`, `cache_control`, `etag`, `bearer_auth`, `rate_limit`, `compress_gzip`, and a `safe_defaults` bundle — alongside the existing `logger`, `recoverer`, `request_id`, `cors`, and `basic_auth`.
+`std::http::middleware` gained `body_limit`, `timeout`, `hsts`, `security_headers`, `cache_control`, `etag`, `bearer_auth`, `rate_limit`, `compress_gzip`, and a `safe_defaults` bundle - alongside the existing `logger`, `recoverer`, `request_id`, `cors`, and `basic_auth`.
 
-### Stdlib — HTTP/2
+### Stdlib - HTTP/2
 
 - Server push: `PushOptions`, `PushStream`, `ResponseWriter::push_promise`.
 - Trailers: `ResponseWriter::write_trailers`, `Request::trailers`, `Trailers` alias.
 
-### Stdlib — std::process / std::exec
+### Stdlib - std::process / std::exec
 
 - `Pipeline` for stdout→stdin chaining: `pipeline_run`.
 - `Signal` enum + `spawn`, `kill`, `signal(pid, sig)`, `kill_group(pgid, sig)`, `wait_timeout(child, ms)`.
 
-### Stdlib — new modules
+### Stdlib - new modules
 
-- `std::jwt` — RFC 7519 sign + verify for HS256/384/512, ES256, and EdDSA; `Alg`, `Header`, `Claims`, `VerifyOpts`.
-- `std::lifecycle` — graceful-shutdown hooks, signal handling, sd_notify.
-- `std::validate` — `Validate` trait plus `FieldError` / `Errors` for form/field validation.
-- `std::crypto::password` — Argon2id facade: `hash`, `verify`, `needs_rehash` (PHC strings).
+- `std::jwt` - RFC 7519 sign + verify for HS256/384/512, ES256, and EdDSA; `Alg`, `Header`, `Claims`, `VerifyOpts`.
+- `std::lifecycle` - graceful-shutdown hooks, signal handling, sd_notify.
+- `std::validate` - `Validate` trait plus `FieldError` / `Errors` for form/field validation.
+- `std::crypto::password` - Argon2id facade: `hash`, `verify`, `needs_rehash` (PHC strings).
 
 ### Package manager
 
-- `gos publish` / `yank` / `login` / `logout` / `owner` — full registry workflow.
+- `gos publish` / `yank` / `login` / `logout` / `owner` - full registry workflow.
 - Credential store (`~/.config/gossamer/credentials.toml`): `CredentialStore`, `Credential`, `load_default`, `get`, `insert`, `remove`.
 - Ed25519 publish keys: `load_publish_key`, `sign_bytes`, `verify_bytes`.
 - `pack_crate`, `upload_with`, `yank_with`, `owner_op_with` round out the publish pipeline.
 - Transitive resolution: `CatalogueEntry`, `resolve_transitive`, `CacheBackedLoader`, `FnLoader`, `NoopLoader`.
 - Disk-backed source cache under `default_cache_root()` (digest-keyed).
 - Tarball + Git + registry sources with sha256 verification; `tarball_sha256` recorded in `LockedEntry`.
-- `[rust-bindings.<name>] src = "bindings/x.rs"` — single-file binding; `gos` auto-scaffolds a wrapper crate under `.gos-bindings/__srcwrap-<name>/` with an optional `deps = "..."` Cargo-deps fragment.
-- `[rust-bindings.<name>] prebuilt = "lib/x.a", abi = "1.0"` — pre-built static archive for hermetic / no-cargo-at-build-time deployments.
+- `[rust-bindings.<name>] src = "bindings/x.rs"` - single-file binding; `gos` auto-scaffolds a wrapper crate under `.gos-bindings/__srcwrap-<name>/` with an optional `deps = "..."` Cargo-deps fragment.
+- `[rust-bindings.<name>] prebuilt = "lib/x.a", abi = "1.0"` - pre-built static archive for hermetic / no-cargo-at-build-time deployments.
 
 ### LSP
 
@@ -751,7 +751,7 @@ The hand-rolled ASCII / BMP-range stubs are gone; every predicate answers agains
 ### CLI
 
 - `gos test --coverage <path>` writes lcov reports; `--parallel N` / `--serial`, `--format junit`, `--tier-parity --report=status`.
-- `gos feature-status` — list and check the feature-status registry: `--status shipped|experimental|planned|removed`, `--format table|json|markdown`, `--check` drift gate.
+- `gos feature-status` - list and check the feature-status registry: `--status shipped|experimental|planned|removed`, `--format table|json|markdown`, `--check` drift gate.
 - New `std::manifest::feature_status` registry covers stdlib modules and `lang::*` entries; rendered docs gain a `Status:` marker per page.
 - `gos new --template binding NAME` scaffolds a ready-to-edit binding crate.
 - `gos bindgen INPUT --output DIR --module PATH` walks a Rust source file's `pub fn` surface, classifies each by ABI vocabulary support, and emits a ready-to-edit binding crate; unsupported items are flagged with their blocking type.
@@ -767,14 +767,14 @@ The hand-rolled ASCII / BMP-range stubs are gone; every predicate answers agains
 
 ### Compiled tier
 
-- Every new `std::unicode`, `std::utf8`, `std::exec`, and slice helper has a typed entry in the ABI registry and a dispatch arm in MIR `stdlib_free.rs` / `method_call_dispatch.rs`. Bit-identical output across VM, Cranelift, and LLVM tiers — verified by `feature-testing-examples/unicode_full.gos`, `slice_methods.gos`, `exec_pipeline.gos`, `exec_signal_group.gos`, `exec_wait_timeout.gos`, `http2_push.gos`, and `http2_trailers.gos` under `tier_parity`.
-- Cranelift soft-zero fallback for unknown call names removed — unresolved calls are now a hard error (the `GOSSAMER_STRICT_LOWER` env var is retired).
+- Every new `std::unicode`, `std::utf8`, `std::exec`, and slice helper has a typed entry in the ABI registry and a dispatch arm in MIR `stdlib_free.rs` / `method_call_dispatch.rs`. Bit-identical output across VM, Cranelift, and LLVM tiers - verified by `feature-testing-examples/unicode_full.gos`, `slice_methods.gos`, `exec_pipeline.gos`, `exec_signal_group.gos`, `exec_wait_timeout.gos`, `http2_push.gos`, and `http2_trailers.gos` under `tier_parity`.
+- Cranelift soft-zero fallback for unknown call names removed - unresolved calls are now a hard error (the `GOSSAMER_STRICT_LOWER` env var is retired).
 
 ### Fixes
 
 - LLVM tier silent miscompile when `if let Some(p) = m.get(&k); p.field` was used for `HashMap<_, Struct>`: the dispatcher pinned the call's return type to bare `i64`, so the match arm couldn't recover `&V` from `Option<V>` and field projection fell through to `ptr`. New `gos_rt_map_get_i64_opt` / `gos_rt_map_get_str_opt` return `Option<V>` as a `*mut GosResult`, with `pinned_ret` synthesised from the receiver's HashMap value Ty. Side effect: `m.get(missing)` for `HashMap<_, i64>` now correctly returns `None` (previously the no-Adt happy-path encoded missing keys as `Some(0)`).
-- LLVM tier stack-pointer bug on `HashMap.insert` with struct values: the inserted value was the stack address of the literal alloca, so subsequent reads in any other frame saw stale data. `maybe_heap_copy_aggregate` heap-copies the struct via `gos_rt_aggr_alloc` before passing to `gos_rt_map_insert_i64_i64` and `_str_i64`. The wrapper is marked `#[inline(never)]` plus a `#[used]` static anchor (`GOS_RT_AGGR_ALLOC_KEEP`) so neither the rustc inliner nor the linker's dead-strip collapses it back into `gos_rt_gc_alloc` — that collapse silently elides the heap copy and reintroduces the stack-pointer regression. Cross-tier parity verified by `feature-testing-examples/hashmap_get_some_field.gos` and the aether_ecs build benchmark, which now matches the interp tier bit-for-bit (`pos_x_sum=9990959.95`).
-- LLVM tier GC blindness through `HashMap` values: `GosMap` allocations live outside the GC registry (`Box::into_raw` in `gos_rt_map_new`), and the conservative payload scan can't walk the Rust-side bucket allocator, so heap-allocated struct values stored as i64 entries were unreachable from the tracing collector and reclaimed mid-program. `gos_map_register` / `gos_map_deregister` track every live `GosMap` in a dedicated registry; `gos_rt_gc_collect` now adds a second mark drain that walks every registered map's storage and emits each value as a candidate pointer for the registry-presence check. The conservative trace tolerates raw i64 values in primitive maps (`HashMap<_, i64>`) — they don't match registered allocations so they don't over-mark.
+- LLVM tier stack-pointer bug on `HashMap.insert` with struct values: the inserted value was the stack address of the literal alloca, so subsequent reads in any other frame saw stale data. `maybe_heap_copy_aggregate` heap-copies the struct via `gos_rt_aggr_alloc` before passing to `gos_rt_map_insert_i64_i64` and `_str_i64`. The wrapper is marked `#[inline(never)]` plus a `#[used]` static anchor (`GOS_RT_AGGR_ALLOC_KEEP`) so neither the rustc inliner nor the linker's dead-strip collapses it back into `gos_rt_gc_alloc` - that collapse silently elides the heap copy and reintroduces the stack-pointer regression. Cross-tier parity verified by `feature-testing-examples/hashmap_get_some_field.gos` and the aether_ecs build benchmark, which now matches the interp tier bit-for-bit (`pos_x_sum=9990959.95`).
+- LLVM tier GC blindness through `HashMap` values: `GosMap` allocations live outside the GC registry (`Box::into_raw` in `gos_rt_map_new`), and the conservative payload scan can't walk the Rust-side bucket allocator, so heap-allocated struct values stored as i64 entries were unreachable from the tracing collector and reclaimed mid-program. `gos_map_register` / `gos_map_deregister` track every live `GosMap` in a dedicated registry; `gos_rt_gc_collect` now adds a second mark drain that walks every registered map's storage and emits each value as a candidate pointer for the registry-presence check. The conservative trace tolerates raw i64 values in primitive maps (`HashMap<_, i64>`) - they don't match registered allocations so they don't over-mark.
 
 ### Tooling
 
@@ -786,16 +786,16 @@ The hand-rolled ASCII / BMP-range stubs are gone; every predicate answers agains
 ### Cross-platform
 
 - `std::signal` on Windows now bridges `SetConsoleCtrlHandler`: Ctrl+C → SIGINT, Ctrl+Break → SIGQUIT (+ goroutine-stack dump via `sigquit::render_to`), close / logoff / shutdown → SIGTERM. Previously `signal::on(SIGINT).wait()` deadlocked because nothing flipped the notifier flag.
-- `std::lifecycle` Windows arm consumes those notifiers — `Lifecycle::install_default()` now runs registered shutdown hooks on Ctrl+C / supervisor close, mirroring the unix dispatcher's double-signal force-exit semantics.
+- `std::lifecycle` Windows arm consumes those notifiers - `Lifecycle::install_default()` now runs registered shutdown hooks on Ctrl+C / supervisor close, mirroring the unix dispatcher's double-signal force-exit semantics.
 - `find_clang_rt_profile` searches macOS Homebrew (`/opt/homebrew/opt/llvm@*`, `/usr/local/opt/llvm@*`, `darwin/libclang_rt.profile_osx.a`) and Windows MSYS2 (`C:\msys64\mingw64\lib\clang\*\lib\windows\clang_rt.profile-*.lib`) layouts; honours `$GOS_LLVM_PROFILE_RT` for explicit overrides and walks the `$GOS_LLVM_OPT` parent tree.
 - `std::net::UnixListener` / `UnixStream` gain `#[cfg(not(unix))]` stub arms so `use std::net::UnixListener` resolves on Windows; every method returns `Err("AF_UNIX sockets are not supported on this platform")` until the real Win10+ AF_UNIX surface lands.
-- `gossamer-std`'s `unicode-properties` / `unicode-normalization` / `unicode-segmentation` deps moved out of `[target.'cfg(unix)'.dependencies]` — they were used unconditionally by `std::unicode` and would have failed to resolve on a Windows build.
+- `gossamer-std`'s `unicode-properties` / `unicode-normalization` / `unicode-segmentation` deps moved out of `[target.'cfg(unix)'.dependencies]` - they were used unconditionally by `std::unicode` and would have failed to resolve on a Windows build.
 
-## 0.7.0 — Stdlib, stability, refactoring, and build optimizations
+## 0.7.0 - Stdlib, stability, refactoring, and build optimizations
 
 ### Build
 
-- Debug builds use a minimal opt pass set (`mem2reg`, `instcombine`, `simplifycfg`) instead of `-O1`; cuts `gos build` wall-clock time by 100–200 ms on typical programs.
+- Debug builds use a minimal opt pass set (`mem2reg`, `instcombine`, `simplifycfg`) instead of `-O1`; cuts `gos build` wall-clock time by 100-200 ms on typical programs.
 - Release builds parallelize per-body `opt`+`llc` across up to 8 threads; wall-clock time falls roughly `(N-1)/N` on N-body programs.
 - Incremental object cache under `~/.cache/gossamer/ir-cache` (or `GOS_BUILD_CACHE`); repeat builds reuse unchanged bodies. Disable with `GOS_NO_CACHE=1`.
 
@@ -803,61 +803,61 @@ The hand-rolled ASCII / BMP-range stubs are gone; every predicate answers agains
 
 - `gos_rt_panic_oob`, `gos_rt_panic`, and `gos_rt_process_abort` declared `noreturn cold nounwind` in emitted LLVM IR; restores inner-loop vectorization that the 0.6.0 bounds-check pass had blocked.
 
-### Stdlib — new modules
+### Stdlib - new modules
 
-- `std::encoding::yaml::to_json` / `from_json` — YAML ↔ JSON text converters, mirroring `toml::to_json` / `from_json`.
-- `std::sync::Map` — concurrent string-keyed string-value map: `new`, `set`, `get`, `delete`, `len`, `contains`, `keys`.
+- `std::encoding::yaml::to_json` / `from_json` - YAML ↔ JSON text converters, mirroring `toml::to_json` / `from_json`.
+- `std::sync::Map` - concurrent string-keyed string-value map: `new`, `set`, `get`, `delete`, `len`, `contains`, `keys`.
 
-### Stdlib — string
+### Stdlib - string
 
 All methods also available as `std::strings` free functions.
 
 - `s.split_once(sep)` / `s.rsplit_once(sep)` → `Option<(String, String)>`
-- `s.count(needle) -> i64` — non-overlapping occurrence count
+- `s.count(needle) -> i64` - non-overlapping occurrence count
 - `s.strip_chars(cutset)` / `s.lstrip_chars(cutset)` / `s.rstrip_chars(cutset)`
 - `s.zfill(width)` and `s.center(width, pad_char)`
-- `s.slice(start, end) -> Result<String, errors::Error>` — non-panicking byte-range slice
+- `s.slice(start, end) -> Result<String, errors::Error>` - non-panicking byte-range slice
 
-### Stdlib — Vec / `[T]`
+### Stdlib - Vec / `[T]`
 
 - `xs.contains(&v) -> bool`, `xs.index_of(&v) -> Option<i64>`, `xs.count_of(&v) -> i64`
 - `xs.first() -> Option<T>` and `xs.last() -> Option<T>`
-- `xs.reversed() -> Vec<T>` — non-mutating counterpart to the in-place `xs.reverse()`
+- `xs.reversed() -> Vec<T>` - non-mutating counterpart to the in-place `xs.reverse()`
 - `xs.slice(start, end) -> Result<Vec<T>, errors::Error>`
-- `Vec::insert(xs, i, v) -> Result<Vec<T>, errors::Error>` and `Vec::remove(xs, i) -> Result<T, errors::Error>` — safe qualified forms; the legacy method-call shape keeps its existing behaviour
+- `Vec::insert(xs, i, v) -> Result<Vec<T>, errors::Error>` and `Vec::remove(xs, i) -> Result<T, errors::Error>` - safe qualified forms; the legacy method-call shape keeps its existing behaviour
 
-### Stdlib — HashMap
+### Stdlib - HashMap
 
 - `m.keys() -> Vec<K>` and `m.values() -> Vec<V>`
-- `HashMap::pop(m, k) -> Option<V>` — removes and returns the previous value
+- `HashMap::pop(m, k) -> Option<V>` - removes and returns the previous value
 
-### Stdlib — scalar prelude
+### Stdlib - scalar prelude
 
-- `min(a, b)`, `max(a, b)`, `clamp(x, lo, hi)` — bare prelude functions for scalar pairs
+- `min(a, b)`, `max(a, b)`, `clamp(x, lo, hi)` - bare prelude functions for scalar pairs
 
-### Stdlib — auto-derive
+### Stdlib - auto-derive
 
 - Narrow integer fields (`i8`, `i16`, `i32`, `u8`, `u16`, `u32`, `f32`) now supported in `from_json` / `to_json` auto-derive; previously the entire struct was silently skipped.
 - `from_yaml` / `to_yaml` auto-derived on every eligible struct alongside the existing JSON and TOML pairs.
 
-### Stdlib — misc
+### Stdlib - misc
 
 - `flag::Cell<T>` auto-derefs at comparisons, function arguments, and typed register unboxes; `*flags.field` still works explicitly.
-- `errors::newf(fmt, args…)` — format-shaped error constructor; rewritten at parse time to `errors::new(format!(fmt, args…))`.
-- `http::Response.raw_bytes` — body as `Vec<u8>` for binary responses; compiled tier now matches the VM tier.
-- `os::write_file(path, &Vec<u8>)` — binary-safe write preserving embedded NULs.
-- `os::read_file(path) -> Result<Vec<u8>, errors::Error>` — raw bytes counterpart to `read_file_to_string`.
+- `errors::newf(fmt, args…)` - format-shaped error constructor; rewritten at parse time to `errors::new(format!(fmt, args…))`.
+- `http::Response.raw_bytes` - body as `Vec<u8>` for binary responses; compiled tier now matches the VM tier.
+- `os::write_file(path, &Vec<u8>)` - binary-safe write preserving embedded NULs.
+- `os::read_file(path) -> Result<Vec<u8>, errors::Error>` - raw bytes counterpart to `read_file_to_string`.
 
 ### Fixes
 
 - LLVM `slot_count` for `http::Response` corrected to `None`; the previous inline-alloca layout truncated the heap pointer, causing segfaults in LLVM AOT builds when accessing `.body`.
 - Resolver allows user-defined items to shadow prelude entries without collision.
 
-## 0.6.0 — Stability hardening
+## 0.6.0 - Stability hardening
 
 ### Safety
 
-- `catch_unwind` at every `gos_rt_*` and JIT-call boundary — runtime
+- `catch_unwind` at every `gos_rt_*` and JIT-call boundary - runtime
   panics no longer cross `extern "C"` as UB.
 - Recoverable language panics (e.g. chan double-close) return a typed
   error instead of `process::abort`.
@@ -1022,7 +1022,7 @@ The compiled tier now has an active tracing collector.
   images' user-default rustup profile is `complete`, so the
   rustup-shim invoked by cargo decides the project needs rust-src
   and races the parent + every nested `build.rs` cargo invocation
-  to download it — one of them dies with `could not rename
+  to download it - one of them dies with `could not rename
   'downloaded' .partial` (Linux) or `detected conflict:
   rust-src Cargo.lock` (macOS / Windows, where the runner image
   has a partial rust-src dir from a previous stable build). The
@@ -1035,9 +1035,9 @@ The compiled tier now has an active tracing collector.
   `${{ matrix.target }}` placeholder. A schedule-only file is
   cleaner.
 - `check.sh` fuzz loop covers all 10 targets (added `resolve`,
-  `hir_lower`, `vm_run` — they were missing, which is how the
+  `hir_lower`, `vm_run` - they were missing, which is how the
   CI build broke without local notice).
-- CI runners standardised on `*-latest` (`macos-13` pin retired —
+- CI runners standardised on `*-latest` (`macos-13` pin retired -
   retired runners stalled jobs in the queue).
 - Adopted `clippy::duration_suboptimal_units` (new in 1.95);
   `Duration::from_secs(60)` rewritten to `from_mins(1)` across the
@@ -1054,7 +1054,7 @@ The compiled tier now has an active tracing collector.
   every invocation. The codegen now elides the prologue safepoint
   + shadow-stack save/restore when the body cannot allocate (new
   `gossamer_mir::body_might_allocate` helper) and drops the
-  loop-back-edge safepoint outright — allocation routines update
+  loop-back-edge safepoint outright - allocation routines update
   the byte-pressure counter and the next allocating function's
   prologue safepoint runs the collect when the threshold trips,
   which is sufficient for any body that grows the heap. Measured
@@ -1067,8 +1067,8 @@ The compiled tier now has an active tracing collector.
   the pool, the queue filled, `try_send` started silently
   dropping sockets (RST'd by the OS), and the bench saw
   connection errors. The dedicated-thread shape (capped by
-  `HTTP_ACTIVE_CONNS` / `GOSSAMER_HTTP_MAX_CONN` — default
-  4096 — so a runaway client cannot bomb the thread / fd
+  `HTTP_ACTIVE_CONNS` / `GOSSAMER_HTTP_MAX_CONN` - default
+  4096 - so a runaway client cannot bomb the thread / fd
   budget; past the cap responds 503 cleanly) is back.
 - **Fuzz targets `hir_lower` + `vm_run` were broken on `cargo
   +nightly fuzz build`.** `grammar::render_source` was
@@ -1099,13 +1099,13 @@ The compiled tier now has an active tracing collector.
   `json::render` on a user-defined struct previously fell through to the
   raw `gos_rt_json_render` path in compiled (Cranelift/LLVM) code,
   where the runtime misinterpreted the struct pointer as a `GosJson`
-  Arc — crashing on the first field access.
+  Arc - crashing on the first field access.
 
 - **Compiled-mode segfault when `json::render` appears in one branch of
   an if-else.** `lower_json_render_adt` allocates a `pairs_vec` (via
   `Vec::new`) only inside the JSON arm. `insert_drops_at_returns`
   scanned all blocks globally and emitted `gos_rt_vec_free(pairs_vec)`
-  at every `Return` — including the other arm where `pairs_vec` was
+  at every `Return` - including the other arm where `pairs_vec` was
   never initialised, producing `gos_rt_vec_free(0x21)` → segfault in
   `__GI___libc_free`.
 
@@ -1134,9 +1134,9 @@ The compiled tier now has an active tracing collector.
 ### VM / runtime
 
 - **Call depth limit with clean diagnostic (GX0008).** Unbounded recursion
-  now produces `error[GX0008]: stack overflow — call depth exceeded 40 frames`
+  now produces `error[GX0008]: stack overflow - call depth exceeded 40 frames`
   with a call-stack trace instead of a Rust stack overflow / SIGSEGV. The
-  limit is calibrated for debug builds; `gos build` is not affected — native
+  limit is calibrated for debug builds; `gos build` is not affected - native
   code uses the OS call stack. `gos explain GX0008` registered.
 
 ### Correctness
@@ -1165,7 +1165,7 @@ The compiled tier now has an active tracing collector.
   `Error` expression variant. Malformed sub-expressions can now be represented
   in the AST instead of being silently dropped, enabling error-recovery paths
   that suppress cascading diagnostics.
-- **Native codegen — zero LLVM fallbacks on `tier_parity`.** Aggregate
+- **Native codegen - zero LLVM fallbacks on `tier_parity`.** Aggregate
   Display formatting (Vec / Array / `JsonValue` / `DynError`) lowers inline
   via `gos_rt_*_format_*` helpers; struct-update aggregate-store path
   handles 1-slot fields; `Ok(struct)` heap-copies the aggregate so the
@@ -1247,15 +1247,15 @@ The compiled tier now has an active tracing collector.
 The standard library's process-level surface was restructured for
 intuitiveness. Filesystem ops moved out of `os`, environment +
 argv split into `env`, child processes into `process`. HTTP/2 was
-dissolved into `std::http` exactly as Go does in `net/http` — no
+dissolved into `std::http` exactly as Go does in `net/http` - no
 separate `std::http2` namespace.
 
 **New modules:**
 
-- **`std::env`** — `args`, `program_name`, `var`, `set_var`,
+- **`std::env`** - `args`, `program_name`, `var`, `set_var`,
   `unset_var`, `current_dir`, `set_current_dir`, `home_dir`,
   `temp_dir`. Mirrors Rust's `std::env`.
-- **`std::process`** — `Command`, `Output`, `Stdio`, `ExitStatus`,
+- **`std::process`** - `Command`, `Output`, `Stdio`, `ExitStatus`,
   `Child`, `run`, `spawn`, `kill`, `exit`, `id`, `abort`. Mirrors
   Rust's `std::process`.
 
@@ -1292,7 +1292,7 @@ gone. Renamed entry points live under `std::http`:
 **`std::os` shrunk to OS identity.** New: `os::family()`
 (`"unix"`/`"windows"`), `os::arch()` (CPU triple component). The
 old filesystem/env/process functions stay callable for one minor
-release as deprecated re-exports — every entry in the `os::`
+release as deprecated re-exports - every entry in the `os::`
 manifest now says "Deprecated: use ...".
 
 **New documented modules:** `std::log` (Go-style flat log shape)
@@ -1301,10 +1301,10 @@ were absent from the manifest; both now documented.
 
 **Naming aliases (no behavior change):**
 
-- `strings::to_lower` / `to_upper` — short alias for
+- `strings::to_lower` / `to_upper` - short alias for
   `to_lowercase` / `to_uppercase`, matching SKILL.md and Go.
 - `strconv::parse_int` / `atoi` / `parse_float` / `format_int` /
-  `itoa` / `format_float` — Go-style aliases for the existing
+  `itoa` / `format_float` - Go-style aliases for the existing
   `parse_i64` / `parse_f64` / `format_i64` / `format_f64`.
 
 **Manifest dedup:** the split `ENCODING_BINARY` /
@@ -1312,7 +1312,7 @@ were absent from the manifest; both now documented.
 `std::encoding::binary` block.
 
 **Dropped bare-module aliases:** `gzip::*` was a back-compat alias
-for `compress::gzip::*` — removed; the canonical path was already
+for `compress::gzip::*` - removed; the canonical path was already
 the dispatch shape every example used. Bare `exec::*` retained
 for back-compat alongside the new `process::*`.
 
@@ -1334,24 +1334,24 @@ future drops require a deliberate floor adjustment.
 Four new shapes in the Rust-binding system; every 0.3 binding crate
 recompiles unchanged.
 
-- **`Type::Bytes`** — first-class byte payload, distinct from
+- **`Type::Bytes`** - first-class byte payload, distinct from
   `Vec<i64>` at the source level. Rust shape is the new
   `gossamer_binding::Bytes` newtype (transparent `Vec<u8>`).
   Compiled tier uses a `GosBytes { len, cap, ptr }` C-ABI struct;
   interp tier stores as `Value::IntArray`.
-- **`Type::Map<K, V>`** — keyed collection backed by `HashMap<K, V>`.
+- **`Type::Map<K, V>`** - keyed collection backed by `HashMap<K, V>`.
   Compiled tier uses `GosMap { keys, values }` parallel-vec headers.
   Concrete impls for `HashMap<String, String>`,
   `HashMap<String, i64>`, `HashMap<i64, i64>`.
-- **`Type::Variant<arms...>`** — tagged-union return backed by the
+- **`Type::Variant<arms...>`** - tagged-union return backed by the
   new `gossamer_binding::DynValue` enum (Nil, Bool, Int, Float,
   Char, String, Bytes, List, Map, Tagged). Compiled tier uses
   `GosDynVariant { name, payload_len, payload }` with arena-
   allocated arm names.
-- **`Type::Callback(args, ret)`** — Gossamer-side callable that
+- **`Type::Callback(args, ret)`** - Gossamer-side callable that
   bindings may invoke during their call. `BindingCallback` for
   interp (wraps a `Value`), `NativeCallback` for compiled (wraps a
-  `u64` handle). Lifetime is strictly call-scoped — retaining past
+  `u64` handle). Lifetime is strictly call-scoped - retaining past
   the binding return is undefined behaviour.
 
 `gossamer_resolve::BindingType`, `gossamer_driver::DumpedType`,
@@ -1395,7 +1395,7 @@ the new shapes. Architecture spec at
   (`src/main.gos` / `src/lib.gos`) still works when neither is
   present.
 
-### HTTP — wire correctness
+### HTTP - wire correctness
 
 - **`Client::builder().tls(...)` and `.cookies(...)` now work.**
   Previous behaviour silently dropped both. `ClientConfig` retains
@@ -1429,7 +1429,7 @@ the new shapes. Architecture spec at
   share a single generic `parse_request_head_generic` +
   `finish_request` implementation.
 
-### HTTP — timeouts and graceful shutdown
+### HTTP - timeouts and graceful shutdown
 
 - **Timeout taxonomy.** `Config` gains `read_header_timeout`
   (10 s default, slowloris guard), `read_body_timeout` (30 s),
@@ -1439,7 +1439,7 @@ the new shapes. Architecture spec at
   the parser and body reader; per-syscall timeouts via
   `set_read_timeout` / `set_write_timeout` switching across the
   idle → header → body → write phases.
-- **`Server::shutdown(&Config, Option<Duration>) -> bool`** —
+- **`Server::shutdown(&Config, Option<Duration>) -> bool`** -
   flips the shutdown flag, blocks until `Config.in_flight` drains
   to zero or the deadline elapses. Returns `true` on clean drain,
   `false` on timeout. Worker loop polls the flag between
@@ -1448,35 +1448,35 @@ the new shapes. Architecture spec at
   cancel handle when `Config.shutdown` trips, so long-running
   handlers observe `request.context().is_cancelled() == true`.
 
-### HTTP — router, middleware, static files, proxy
+### HTTP - router, middleware, static files, proxy
 
-- **`http_router`** — Go 1.22-class `ServeMux` with `{name}`
+- **`http_router`** - Go 1.22-class `ServeMux` with `{name}`
   captures, `{rest...}` trailing captures, `*` wildcard, method
   gating (`get` / `post` / `put` / `delete` / `patch` / `head` /
   `options`). Precedence: method-specific beats method-agnostic;
   more-specific pattern wins; insertion-order breaks ties. Default
   404 / 405 responses with overridable hooks.
-- **`http_middleware`** — Logger, Recoverer
+- **`http_middleware`** - Logger, Recoverer
   (`std::panic::catch_unwind`), RequestId (`X-Request-Id` stamping
   with carry-through), CORS (preflight + per-response headers),
   BasicAuth (RFC 7617), Compress (gzip body framing gated on
   `Accept-Encoding`, with min-bytes threshold).
-- **`http_static_files`** — `FileServer` with configurable `etag`,
+- **`http_static_files`** - `FileServer` with configurable `etag`,
   `last_modified`, `range_support`, `max_file_bytes`. Path-
   traversal guard (`fs::canonicalize` + prefix check). 200 / 206
   / 304 / 404 / 416 response shaping. ETag from `mtime + size`,
   RFC 1123 GMT `Last-Modified`. MIME table covers 25 common
   extensions. `index.html` auto-served on directory hits.
-- **`http_proxy`** (behind `http-client` feature) — `ReverseProxy`
+- **`http_proxy`** (behind `http-client` feature) - `ReverseProxy`
   with caller-supplied `director`, `modify_response`,
   `error_handler`. `ReverseProxy::single_host` forwards path +
   query verbatim. Hop-by-hop header stripping per RFC 7230 §6.1.
   Auto-appends `X-Forwarded-For`, `X-Forwarded-Host`,
   `X-Forwarded-Proto`.
 
-### HTTP — WebSocket and SSE
+### HTTP - WebSocket and SSE
 
-- **`http_websocket`** — RFC 6455 from scratch. `accept` performs
+- **`http_websocket`** - RFC 6455 from scratch. `accept` performs
   the handshake (validates Upgrade / Connection /
   Sec-WebSocket-Version=13 / Sec-WebSocket-Key, computes
   Sec-WebSocket-Accept via inline SHA-1 + base64). `WebSocket`
@@ -1487,7 +1487,7 @@ the new shapes. Architecture spec at
   client-mode masks outbound frames. Length encoding handles
   7-bit, 16-bit, and 64-bit forms. Inline SHA-1 + base64
   implementations (no extra deps).
-- **`http_sse`** — Server-Sent Events (`text/event-stream`)
+- **`http_sse`** - Server-Sent Events (`text/event-stream`)
   encoder: `SseStream::send` (event name / id / data lines),
   `send_retry`, `send_comment` (heartbeat). `event_stream_headers()`
   + `response_skeleton()` helpers.
@@ -1495,7 +1495,7 @@ the new shapes. Architecture spec at
 ### HTTP/2 server
 
 - **`std::http::serve_h2c`** in both `gos run` and `gos build`.
-  (Renamed from `std::http2::bind_and_run_h2c` during 0.4.0 dev —
+  (Renamed from `std::http2::bind_and_run_h2c` during 0.4.0 dev -
   HTTP/2 is now folded into `std::http` per the Go model; see
   "Stdlib reorganization" above.) The `h2` crate runs on
   Gossamer's own goroutine scheduler via `runtime_future::drive`
@@ -1521,12 +1521,12 @@ the new shapes. Architecture spec at
   user-agent / timeout / max-body-bytes config. HTTPS not yet
   supported; TLS stays on the existing ureq path.
 
-### HTTP module bridges — interp + compiled parity
+### HTTP module bridges - interp + compiled parity
 
 Eight stdlib HTTP modules now callable from Gossamer source in
 both tiers, byte-identical across `gos run` and `gos build`.
 
-- **router / FileServer / NativeClient / Proxy** — stateful,
+- **router / FileServer / NativeClient / Proxy** - stateful,
   method-chain dispatch. `Router::new()`, `r.get(path, Handler {})`,
   `r.serve(req)` and the rest of the verb chain work end-to-end.
   22 new `gos_rt_*` runtime symbols. MIR auto-synthesises
@@ -1535,13 +1535,13 @@ both tiers, byte-identical across `gos run` and `gos build`.
   fn-pointer ABI as `gos_rt_http_serve`. `gos_fn_addr` now
   resolves to `intrinsics.externs` for runtime symbols.
 - **chunked / sse / middleware / websocket-accept-key /
-  static_files-mime** — stateless free-fn shapes.
+  static_files-mime** - stateless free-fn shapes.
   `chunked::encode` / `decode`, `sse::encode_event` / `comment` /
   `retry`, `middleware::new_request_id` / `accepts_gzip`,
   `websocket::accept_key`, `static_files::mime_for_path`. Self-
   contained SHA-1 + base64 in the runtime for the WS accept-key
   derivation.
-- **MIR runtime-kind tag from rendered type** — `lower_fn`'s
+- **MIR runtime-kind tag from rendered type** - `lower_fn`'s
   parameter binding now reads the rendered type of the param (in
   addition to the binding name), so `r: http::Request` resolves
   the same as `request: http::Request`. Fixes garbage reads on
@@ -1558,17 +1558,17 @@ both tiers, byte-identical across `gos run` and `gos build`.
 
 ### Networking
 
-- **`net::TcpStream::set_keepalive(Option<Duration>)`** — socket2-
+- **`net::TcpStream::set_keepalive(Option<Duration>)`** - socket2-
   backed `SO_KEEPALIVE` toggle.
 - **`net::TcpStream::connect_happy_eyeballs(addrs, stagger,
-  timeout)`** — Go 1.21-style v6/v4-interleaved race with per-
+  timeout)`** - Go 1.21-style v6/v4-interleaved race with per-
   candidate staggered start.
-- **`net::UnixListener` / `net::UnixStream`** (Unix-only) — bind /
+- **`net::UnixListener` / `net::UnixStream`** (Unix-only) - bind /
   accept / connect / read / write / shutdown.
-- **`net::IpNet`** — RFC 4632 prefix parsing for IPv4 and IPv6,
+- **`net::IpNet`** - RFC 4632 prefix parsing for IPv4 and IPv6,
   `contains(&Ip)` predicate, `prefix_len()`, `render()`. Cross-
   family addresses are rejected.
-- **`net::url`** — `path_escape` / `path_unescape`,
+- **`net::url`** - `path_escape` / `path_unescape`,
   `UserInfo { username, password: Option<String> }` (parse +
   render with percent-encoding), `Values` (Go's `url.Values`:
   `add` / `set` / `get` / `get_all` / `delete` / `encode` /
@@ -1577,37 +1577,37 @@ both tiers, byte-identical across `gos run` and `gos build`.
 
 ### Stdlib
 
-- **`std::io`** — `copy`, `copy_n`, `read_all`, `LimitReader`,
+- **`std::io`** - `copy`, `copy_n`, `read_all`, `LimitReader`,
   `TeeReader`, `MultiReader`, `pipe` (paired `PipeReader` +
   `PipeWriter` with cross-thread blocking semantics).
-- **`std::log`** (new) — Go-style flat logger: `println`,
+- **`std::log`** (new) - Go-style flat logger: `println`,
   `printf`, `fatal`, `panic_msg`; `set_output`, `set_prefix`,
   `set_flags`; flag constants `L_DATE`, `L_TIME`, `L_MICROSECONDS`,
   `L_JSON`, etc. Global process-wide sink protected by
   `parking_lot::Mutex`.
-- **`std::time`** — `Ticker` (recurring callback every interval;
+- **`std::time`** - `Ticker` (recurring callback every interval;
   `stop()` / Drop-safe), `after_func` (one-shot timer returning a
   cancellable `TimerHandle`), `SystemTime::from_std` / `as_std` /
   `unix_seconds`.
-- **`std::sync`** — `SyncMap<K, V>` (read-heavy `RwLock`-backed
+- **`std::sync`** - `SyncMap<K, V>` (read-heavy `RwLock`-backed
   concurrent map: `store` / `load` / `load_or_store` / `delete` /
   `contains` / `range`), `Pool<T>` (factory-backed freelist),
   `Cond` (`parking_lot::Condvar` wrapper for `signal` /
   `broadcast` / `wait`).
-- **`std::path`** — Go `path/filepath` parity: `glob(pattern)`
+- **`std::path`** - Go `path/filepath` parity: `glob(pattern)`
   (literal, `*`, `?`, `[class]`, `**` recursive), `matches(pattern,
   name)` segment matcher (no `/` crossing), `walk(root, visit)`
   with `SKIP_DIR` / `SKIP_ALL` sentinels, `eval_symlinks(path)`.
-- **`std::crypto::cipher`** — `aes_ctr_xor` (in-place encrypt/
+- **`std::crypto::cipher`** - `aes_ctr_xor` (in-place encrypt/
   decrypt for 128/192/256-bit keys), `aes_cbc_encrypt` +
   `aes_cbc_decrypt` with PKCS#7 padding. Bad key sizes and bad
   IVs return typed errors.
-- **`std::runtime`** — `caller(skip)` returns
+- **`std::runtime`** - `caller(skip)` returns
   `Option<StackFrame>`, `stack()` returns `Vec<StackFrame>` (both
   backed by the `backtrace` crate). `set_finalizer(arc, fn)`
   returns a `Finalizer<T>` guard with `cancel()` and Arc-aware
-  drop semantics — fires only when the last clone goes away.
-- **`std::text::template`** — `FuncMap` registry with default
+  drop semantics - fires only when the last clone goes away.
+- **`std::text::template`** - `FuncMap` registry with default
   helpers (`upper`, `lower`, `trim`, `len`, `default`,
   `html_escape`); pipelines (`{{ .x | upper | trim }}`);
   `Template::render_with_funcs(data, funcs)` and free
@@ -1616,7 +1616,7 @@ both tiers, byte-identical across `gos run` and `gos build`.
 
 ### Stdlib feature gates removed
 
-`gossamer-std` no longer ships behind feature flags — every
+`gossamer-std` no longer ships behind feature flags - every
 module (regex, tls, crypto, compress, archive, http2, templates,
 sql, ureq, …) is unconditionally compiled. The `[features]`
 table is gone; consumers depend on the crate plain. 58
@@ -1624,7 +1624,7 @@ table is gone; consumers depend on the crate plain. 58
 
 ### Tooling
 
-- **`gos doc --emit-stdlib DIR`** — walks `manifest::ALL_MODULES`
+- **`gos doc --emit-stdlib DIR`** - walks `manifest::ALL_MODULES`
   and emits one Markdown page per module under `DIR` plus an
   `index.md` landing page. `--check` mode compares disk against
   generated output and fails the build on drift. Wired into
@@ -1698,7 +1698,7 @@ table is gone; consumers depend on the crate plain. 58
 
 - **JIT peak RSS reduced for programs with large array initialisers.**
   - `Rvalue::Repeat` in the Cranelift backend now skips all stores for
-    zero-constant fills (`[0.0; N]`, `[false; N]`, `[(); N]`) — `calloc`
+    zero-constant fills (`[0.0; N]`, `[false; N]`, `[(); N]`) - `calloc`
     already zeroes memory, so the stores were redundant. Non-zero fills
     larger than 16 elements emit a counted loop (O(1) IR) instead of N
     unrolled `store` instructions (O(N) IR), matching the LLVM backend.
@@ -1792,7 +1792,7 @@ table is gone; consumers depend on the crate plain. 58
 
 - **Directory sizes report 0 in native tiers on Windows.**
   `gos_rt_fs_list_dir` and `gos_rt_fs_walk_dir` used `DirEntry::metadata()`
-  which reads from `WIN32_FIND_DATA` — a cached struct that stores
+  which reads from `WIN32_FIND_DATA` - a cached struct that stores
   `nFileSize = 0` for directories. The interpreter uses
   `std::fs::metadata(path)`, which opens a file handle and calls
   `GetFileInformationByHandle`, returning the real NTFS directory-index
@@ -1813,7 +1813,7 @@ table is gone; consumers depend on the crate plain. 58
 - **`exec::kill` interpreter implementation no longer uses unsafe on Windows.**
   `gossamer-interp` has `#![forbid(unsafe_code)]`, so the Win32 FFI approach
   from 0.1.6 was rejected at compile time. Replaced with `taskkill /F /PID
-  <pid>` via `std::process::Command` — the same safe shell-out pattern used
+  <pid>` via `std::process::Command` - the same safe shell-out pattern used
   for `/bin/kill` on Unix. The compiled-tier runtime (`c_abi.rs`) keeps the
   direct `OpenProcess`/`TerminateProcess` approach, which is correct there
   since `gossamer-runtime` permits unsafe.
@@ -1876,7 +1876,7 @@ table is gone; consumers depend on the crate plain. 58
 
 - **`os_env_compiled` test helpers no longer trigger dead-code warnings on Windows.**
   `os_set_env_round_trips_through_os_env_in_all_tiers` had an unnecessary
-  `#[cfg(unix)]` guard — the test body is pure env-var I/O and runs on all
+  `#[cfg(unix)]` guard - the test body is pure env-var I/O and runs on all
   platforms. Windows variant of the child-propagation test added using
   `cmd /c set`.
 
@@ -1909,7 +1909,7 @@ table is gone; consumers depend on the crate plain. 58
   future helpers.
 - **`Option<T>` discriminator regression in compiled tiers fixed.**
   `match json::get(...)` returning `Some(v)` matched neither
-  `Some` nor `None` arms — both fell through silently. Root cause:
+  `Some` nor `None` arms - both fell through silently. Root cause:
   the runtime helpers `gos_rt_json_get`, `gos_rt_json_keys`,
   `gos_rt_json_as_array` returned bare `*mut GosJson`/`*mut GosVec`
   pointers, but user-level `json::get` is typed as `Option<&Value>`
@@ -1926,7 +1926,7 @@ table is gone; consumers depend on the crate plain. 58
   `json_get_returns_option_with_correct_discriminator`,
   `malformed_json_returns_none_not_segfault`,
   `json_as_array_iter_native` all pass now.
-- **Cranelift native codegen — nested struct field offsets.**
+- **Cranelift native codegen - nested struct field offsets.**
   `o.inner.x` segfaulted: field projections used flat `idx*8`
   offsets that ignored embedded struct widths. Rewrote
   `lower_place_address` / `resolve_place_cl_type` /
@@ -1941,7 +1941,7 @@ table is gone; consumers depend on the crate plain. 58
   aggregates passed by value aliased the caller's storage
   (`shift(p)` mutated `original`). Added defensive copy via
   new `operand_aggregate_slots` / `clone_aggregate_value`
-  helpers — fresh storage + per-slot memcpy at every
+  helpers - fresh storage + per-slot memcpy at every
   by-value pass.
 - **MIR `lower_place_expr` resolved nested fields against
   the wrong struct.** `o.inner.x = 100` looked up `x` on the
@@ -1972,7 +1972,7 @@ table is gone; consumers depend on the crate plain. 58
 - **User-defined `pub fn substring(s, ...)` recursed via
   method dispatch.** `s.substring(a, b)` is now resolved
   to the runtime `String::substring` helper before falling
-  through to user dispatch — restores `String::method` to
+  through to user dispatch - restores `String::method` to
   the qualified-method dispatch keys.
 - **Stray `feature-testing-examples/project.toml` was
   forcing all 52 examples into every build.** The CLI's
@@ -2034,7 +2034,7 @@ table is gone; consumers depend on the crate plain. 58
   formatter (`gos_rt_i64_to_str` / `gos_rt_f64_to_str` /
   identity for strings) when the typechecker leaves the chain's
   HIR type as a `Var(_)`. Previously the identity-copy fallback
-  fed an i64 to `gos_rt_str_concat` as a c_char* — segfault.
+  fed an i64 to `gos_rt_str_concat` as a c_char* - segfault.
 - Better error messages.
 - Actual Error types.
 
@@ -2146,7 +2146,7 @@ table is gone; consumers depend on the crate plain. 58
 - `flag::define(name, [flag::int(...), flag::string(...),
   flag::bool(...)])` (declarative one-shot constructor) now lowers
   to the imperative `flag::Set` builder chain at MIR time.
-  Previously interp-only — compiled mode silently returned a
+  Previously interp-only - compiled mode silently returned a
   null-shaped struct so `*flags.<long>` always yielded the
   primitive zero.
 - `os::env`, `os::cwd` wired in both tiers. Compiled mode was
@@ -2162,7 +2162,7 @@ table is gone; consumers depend on the crate plain. 58
   `examples/*.gos` under both tiers and asserts byte-identical
   stdout/stderr/exit code. Two examples (`go_spawn.gos`,
   `list_dir.gos`) are listed in `KNOWN_DIVERGENT_EXAMPLES` with
-  explicit root-cause comments — go_spawn requires a
+  explicit root-cause comments - go_spawn requires a
   deterministic scheduler shared between tiers, list_dir
   requires registering `fs::DirInfo` as a stdlib struct in
   `gossamer-types::TyCtxt::register_struct_fields` at
@@ -2184,7 +2184,7 @@ table is gone; consumers depend on the crate plain. 58
 - `flag::define(name, [flag::int(...), flag::string(...),
   flag::bool(...)])` (declarative one-shot constructor) now lowers
   to the imperative `flag::Set` builder chain at MIR time.
-  Previously interp-only — compiled mode silently returned a
+  Previously interp-only - compiled mode silently returned a
   null-shaped struct so `*flags.<long>` always yielded the
   primitive zero.
 - `os::env`, `os::cwd` wired in both tiers. Compiled mode was
@@ -2224,7 +2224,7 @@ table is gone; consumers depend on the crate plain. 58
   formatter (`gos_rt_i64_to_str` / `gos_rt_f64_to_str` /
   identity for strings) when the typechecker leaves the chain's
   HIR type as a `Var(_)`. Previously the identity-copy fallback
-  fed an i64 to `gos_rt_str_concat` as a c_char* — segfault.
+  fed an i64 to `gos_rt_str_concat` as a c_char* - segfault.
 - Better error messages.
 - Actual Error types.
 
@@ -2235,7 +2235,7 @@ table is gone; consumers depend on the crate plain. 58
   `examples/*.gos` under both tiers and asserts byte-identical
   stdout/stderr/exit code. Two examples (`go_spawn.gos`,
   `list_dir.gos`) are listed in `KNOWN_DIVERGENT_EXAMPLES` with
-  explicit root-cause comments — go_spawn requires a
+  explicit root-cause comments - go_spawn requires a
   deterministic scheduler shared between tiers, list_dir
   requires registering `fs::DirInfo` as a stdlib struct in
   `gossamer-types::TyCtxt::register_struct_fields` at

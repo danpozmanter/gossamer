@@ -13,7 +13,7 @@ enum Tree {
 
 struct Holder { t: Tree, tag: i64 }
 
-// Returns its by-value argument — an unretained alias unless the
+// Returns its by-value argument - an unretained alias unless the
 // return-copy retains it.
 fn identity(t: Tree) -> Tree { t }
 

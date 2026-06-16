@@ -33,7 +33,7 @@ struct Triple<A, B, C> {
 }
 
 fn main() {
-    // Pair: same struct, three concrete type combinations — each
+    // Pair: same struct, three concrete type combinations - each
     // instantiation is independent and the typechecker infers the
     // parameters from the field values.
     let int_pair = Pair { fst: 10, snd: 32 }

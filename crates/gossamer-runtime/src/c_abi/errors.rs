@@ -21,7 +21,7 @@ use std::os::raw::c_char;
 use super::*;
 
 // ---------------------------------------------------------------
-// errors module — Gossamer's `Result<T, errors::Error>` plumbing.
+// errors module - Gossamer's `Result<T, errors::Error>` plumbing.
 // `Error` is an opaque heap struct: a leaked message string plus
 // an optional cause pointer. The compiled tier represents an
 // `errors::Error` value as `*mut GosError`; `Option<&Error>`
@@ -115,7 +115,7 @@ pub unsafe extern "C" fn gos_rt_error_message(err: *const GosError) -> *mut c_ch
 
 /// Display (`{}`) rendering of an `errors::Error`: the Go-style
 /// colon-joined cause chain (`"outer: mid: root"`). `.message()`
-/// stays top-level-only via [`gos_rt_error_message`] — this entry
+/// stays top-level-only via [`gos_rt_error_message`] - this entry
 /// is for the format-macro lowering of `{}` on an error value.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_error_display(err: *const GosError) -> *mut c_char {

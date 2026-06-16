@@ -6,11 +6,11 @@
 //!
 //! Closure ABI (shared with the `gos_rt_iter_*_i64` family in
 //! `uuid.rs`): `env` is a heap blob whose first word is the callable
-//! address — the lifted closure body for capturing closures, or a
+//! address - the lifted closure body for capturing closures, or a
 //! per-shape thunk (`__fn_thunk_*`) for fn items and non-capturing
 //! closures. Callbacks are invoked as `f(env, args…)`.
 //!
-//! Result / Option ABI: packed `i128` — low word discriminant
+//! Result / Option ABI: packed `i128` - low word discriminant
 //! (0 = Ok/Some, 1 = Err/None), high word payload (see `pack_result`).
 
 use super::{
@@ -108,7 +108,7 @@ fn vec_from(xs: &[i64]) -> *mut GosVec {
 // ----------------------------------------------------------------------
 // result
 
-/// `result::and_then(f, res)` — `f(ok_payload) -> Result` when Ok,
+/// `result::and_then(f, res)` - `f(ok_payload) -> Result` when Ok,
 /// Err passthrough. Callback returns a packed i128 Result.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_result_and_then(res: i128, env: *const u8) -> i128 {
@@ -125,7 +125,7 @@ pub unsafe extern "C" fn gos_rt_result_and_then(res: i128, env: *const u8) -> i1
     })
 }
 
-/// `result::or_else(f, res)` — `f(err_payload) -> Result` when Err,
+/// `result::or_else(f, res)` - `f(err_payload) -> Result` when Err,
 /// Ok passthrough.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_result_or_else(res: i128, env: *const u8) -> i128 {
@@ -142,7 +142,7 @@ pub unsafe extern "C" fn gos_rt_result_or_else(res: i128, env: *const u8) -> i12
     })
 }
 
-/// `result::ok(res) -> Option<T>` — Ok payload as Some, Err as None.
+/// `result::ok(res) -> Option<T>` - Ok payload as Some, Err as None.
 #[unsafe(no_mangle)]
 pub extern "C" fn gos_rt_result_to_opt_ok(res: i128) -> i128 {
     if gos_rt_result_disc(res) == 0 {
@@ -152,7 +152,7 @@ pub extern "C" fn gos_rt_result_to_opt_ok(res: i128) -> i128 {
     }
 }
 
-/// `result::err(res) -> Option<E>` — Err payload as Some, Ok as None.
+/// `result::err(res) -> Option<E>` - Err payload as Some, Ok as None.
 #[unsafe(no_mangle)]
 pub extern "C" fn gos_rt_result_to_opt_err(res: i128) -> i128 {
     if gos_rt_result_disc(res) != 0 {
@@ -165,7 +165,7 @@ pub extern "C" fn gos_rt_result_to_opt_err(res: i128) -> i128 {
 // ----------------------------------------------------------------------
 // option
 
-/// `option::and_then(f, opt)` — `f(payload) -> Option` when Some,
+/// `option::and_then(f, opt)` - `f(payload) -> Option` when Some,
 /// None passthrough.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_option_and_then(opt: i128, env: *const u8) -> i128 {
@@ -182,7 +182,7 @@ pub unsafe extern "C" fn gos_rt_option_and_then(opt: i128, env: *const u8) -> i1
     })
 }
 
-/// `option::filter(p, opt)` — keeps Some(x) only when `p(x)` holds.
+/// `option::filter(p, opt)` - keeps Some(x) only when `p(x)` holds.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_option_filter(opt: i128, env: *const u8) -> i128 {
     ffi_entry!(NONE, {
@@ -203,7 +203,7 @@ pub unsafe extern "C" fn gos_rt_option_filter(opt: i128, env: *const u8) -> i128
     })
 }
 
-/// `option::or(alt, opt)` — data-last: returns `opt` when Some,
+/// `option::or(alt, opt)` - data-last: returns `opt` when Some,
 /// otherwise `alt`.
 #[unsafe(no_mangle)]
 pub extern "C" fn gos_rt_option_or(alt: i128, opt: i128) -> i128 {
@@ -214,7 +214,7 @@ pub extern "C" fn gos_rt_option_or(alt: i128, opt: i128) -> i128 {
     }
 }
 
-/// `option::or_else(f, opt)` — returns `opt` when Some, otherwise
+/// `option::or_else(f, opt)` - returns `opt` when Some, otherwise
 /// `f() -> Option`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_option_or_else(opt: i128, env: *const u8) -> i128 {
@@ -231,7 +231,7 @@ pub unsafe extern "C" fn gos_rt_option_or_else(opt: i128, env: *const u8) -> i12
     })
 }
 
-/// `option::default_with(f, opt)` — Some payload, or `f()`.
+/// `option::default_with(f, opt)` - Some payload, or `f()`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_option_default_with(opt: i128, env: *const u8) -> i64 {
     ffi_entry!(0, {
@@ -247,7 +247,7 @@ pub unsafe extern "C" fn gos_rt_option_default_with(opt: i128, env: *const u8) -
     })
 }
 
-/// `option::zip(first, second)` — `Some((a, b))` when both are Some.
+/// `option::zip(first, second)` - `Some((a, b))` when both are Some.
 /// Matches the interp's argument order: the data-last pipe passes the
 /// piped option as `second`.
 #[unsafe(no_mangle)]
@@ -264,7 +264,7 @@ pub extern "C" fn gos_rt_option_zip(first: i128, second: i128) -> i128 {
     })
 }
 
-/// `option::flatten(opt)` — `Some(inner)` loads the nested 16-byte
+/// `option::flatten(opt)` - `Some(inner)` loads the nested 16-byte
 /// Option from the payload word; None stays None.
 #[unsafe(no_mangle)]
 pub extern "C" fn gos_rt_option_flatten(opt: i128) -> i128 {
@@ -274,7 +274,7 @@ pub extern "C" fn gos_rt_option_flatten(opt: i128) -> i128 {
     load_enum_at(gos_rt_result_payload(opt))
 }
 
-/// `option::iter(opt) -> [T]` — zero- or one-element Vec.
+/// `option::iter(opt) -> [T]` - zero- or one-element Vec.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_option_iter(opt: i128) -> *mut GosVec {
     ffi_entry!(std::ptr::null_mut(), {
@@ -287,9 +287,9 @@ pub unsafe extern "C" fn gos_rt_option_iter(opt: i128) -> *mut GosVec {
 }
 
 // ----------------------------------------------------------------------
-// iter — closure-taking entries over Vec<i64>-shaped sequences.
+// iter - closure-taking entries over Vec<i64>-shaped sequences.
 
-/// `iter::filter_map(f, xs)` — keeps the Some payloads of `f(x)`.
+/// `iter::filter_map(f, xs)` - keeps the Some payloads of `f(x)`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_iter_filter_map_i64(
     env: *const u8,
@@ -312,7 +312,7 @@ pub unsafe extern "C" fn gos_rt_iter_filter_map_i64(
     })
 }
 
-/// `iter::flat_map(f, xs)` — concatenates the Vec results of `f(x)`.
+/// `iter::flat_map(f, xs)` - concatenates the Vec results of `f(x)`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_iter_flat_map_i64(env: *const u8, v: *const GosVec) -> *mut GosVec {
     ffi_entry!(std::ptr::null_mut(), {
@@ -361,7 +361,7 @@ pub unsafe extern "C" fn gos_rt_iter_flat_map_arr_i64(
     })
 }
 
-/// `iter::reduce(f, xs) -> Option<T>` — left fold seeded by the first
+/// `iter::reduce(f, xs) -> Option<T>` - left fold seeded by the first
 /// element; None on an empty sequence.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_iter_reduce_i64(env: *const u8, v: *const GosVec) -> i128 {
@@ -383,7 +383,7 @@ pub unsafe extern "C" fn gos_rt_iter_reduce_i64(env: *const u8, v: *const GosVec
     })
 }
 
-/// `iter::scan(init, f, xs)` — running fold, one output per element.
+/// `iter::scan(init, f, xs)` - running fold, one output per element.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_iter_scan_i64(
     init: i64,
@@ -406,7 +406,7 @@ pub unsafe extern "C" fn gos_rt_iter_scan_i64(
     })
 }
 
-/// `iter::product_by(f, xs)` — product of `f(x)` over the sequence.
+/// `iter::product_by(f, xs)` - product of `f(x)` over the sequence.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_iter_product_by_i64(env: *const u8, v: *const GosVec) -> i64 {
     ffi_entry!(1, {
@@ -423,7 +423,7 @@ pub unsafe extern "C" fn gos_rt_iter_product_by_i64(env: *const u8, v: *const Go
     })
 }
 
-/// `iter::position(p, xs) -> Option<i64>` — index of the first match.
+/// `iter::position(p, xs) -> Option<i64>` - index of the first match.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_iter_position_i64(env: *const u8, v: *const GosVec) -> i128 {
     ffi_entry!(NONE, {
@@ -441,7 +441,7 @@ pub unsafe extern "C" fn gos_rt_iter_position_i64(env: *const u8, v: *const GosV
     })
 }
 
-/// `iter::find_map(f, xs) -> Option<U>` — first Some payload of `f(x)`.
+/// `iter::find_map(f, xs) -> Option<U>` - first Some payload of `f(x)`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_iter_find_map_i64(env: *const u8, v: *const GosVec) -> i128 {
     ffi_entry!(NONE, {
@@ -460,7 +460,7 @@ pub unsafe extern "C" fn gos_rt_iter_find_map_i64(env: *const u8, v: *const GosV
     })
 }
 
-/// `iter::take_while(p, xs)` — longest matching prefix.
+/// `iter::take_while(p, xs)` - longest matching prefix.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_iter_take_while_i64(
     env: *const u8,
@@ -484,7 +484,7 @@ pub unsafe extern "C" fn gos_rt_iter_take_while_i64(
     })
 }
 
-/// `iter::skip_while(p, xs)` — everything after the matching prefix.
+/// `iter::skip_while(p, xs)` - everything after the matching prefix.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_iter_skip_while_i64(
     env: *const u8,
@@ -509,7 +509,7 @@ pub unsafe extern "C" fn gos_rt_iter_skip_while_i64(
     })
 }
 
-/// `iter::partition(p, xs) -> ([T], [T])` — matching elements first.
+/// `iter::partition(p, xs) -> ([T], [T])` - matching elements first.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_iter_partition_i64(env: *const u8, v: *const GosVec) -> *mut u8 {
     ffi_entry!(std::ptr::null_mut(), {
@@ -531,7 +531,7 @@ pub unsafe extern "C" fn gos_rt_iter_partition_i64(env: *const u8, v: *const Gos
     })
 }
 
-/// `iter::unzip(pairs) -> ([i64], [i64])` — split a `Vec<(i64, i64)>`
+/// `iter::unzip(pairs) -> ([i64], [i64])` - split a `Vec<(i64, i64)>`
 /// into the vec of first components and the vec of seconds. Each
 /// input element is a 16-byte 2-slot tuple; the result is the
 /// by-value `(Vec, Vec)` pair returned as a 16-byte heap blob.
@@ -565,7 +565,7 @@ fn sorted_with(env: *const u8, v: *const GosVec, f: CmpFn) -> Vec<i64> {
     xs
 }
 
-/// `iter::sort_by(cmp, xs)` — fresh sorted Vec (non-mutating).
+/// `iter::sort_by(cmp, xs)` - fresh sorted Vec (non-mutating).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_iter_sorted_by_i64(
     env: *const u8,
@@ -581,7 +581,7 @@ pub unsafe extern "C" fn gos_rt_iter_sorted_by_i64(
     })
 }
 
-/// `iter::sort_by_key(key, xs)` — fresh Vec sorted by `key(x)`.
+/// `iter::sort_by_key(key, xs)` - fresh Vec sorted by `key(x)`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_iter_sorted_by_key_i64(
     env: *const u8,
@@ -603,7 +603,7 @@ pub unsafe extern "C" fn gos_rt_iter_sorted_by_key_i64(
     })
 }
 
-/// `iter::min_by(cmp, xs) -> Option<T>` — first minimal element wins
+/// `iter::min_by(cmp, xs) -> Option<T>` - first minimal element wins
 /// ties (matches the interp's `cmp(x, best) < 0` update rule).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_iter_min_by_i64(env: *const u8, v: *const GosVec) -> i128 {
@@ -627,7 +627,7 @@ pub unsafe extern "C" fn gos_rt_iter_min_by_i64(env: *const u8, v: *const GosVec
     })
 }
 
-/// `iter::max_by(cmp, xs) -> Option<T>` — first maximal element wins
+/// `iter::max_by(cmp, xs) -> Option<T>` - first maximal element wins
 /// ties (`cmp(x, best) > 0` update rule).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_iter_max_by_i64(env: *const u8, v: *const GosVec) -> i128 {
@@ -686,7 +686,7 @@ fn min_max_by_key(env: *const u8, v: *const GosVec, want_max: bool) -> i128 {
     some_of(best)
 }
 
-/// `iter::group_by(key, xs) -> HashMap<K, [T]>` — insertion order of
+/// `iter::group_by(key, xs) -> HashMap<K, [T]>` - insertion order of
 /// groups follows first occurrence of each key.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_iter_group_by_i64(env: *const u8, v: *const GosVec) -> *mut GosMap {
@@ -713,7 +713,7 @@ pub unsafe extern "C" fn gos_rt_iter_group_by_i64(env: *const u8, v: *const GosV
     })
 }
 
-/// `iter::count_by(key, xs) -> HashMap<K, i64>` — occurrence counts.
+/// `iter::count_by(key, xs) -> HashMap<K, i64>` - occurrence counts.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_iter_count_by_i64(env: *const u8, v: *const GosVec) -> *mut GosMap {
     ffi_entry!(std::ptr::null_mut(), {
@@ -743,7 +743,7 @@ pub unsafe extern "C" fn gos_rt_iter_count_by_i64(env: *const u8, v: *const GosV
 mod tests {
     use super::*;
 
-    /// Heap-copies a 16-byte enum value and returns its address —
+    /// Heap-copies a 16-byte enum value and returns its address -
     /// the payload representation of a nested Result/Option.
     fn store_enum(value: i128) -> i64 {
         let p = crate::c_abi::gos_rt_gc_alloc(16);

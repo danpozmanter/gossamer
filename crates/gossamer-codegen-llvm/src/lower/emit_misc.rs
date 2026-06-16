@@ -115,7 +115,7 @@ impl<'a> Lowerer<'a> {
         format!("{prefix}_{n}")
     }
 
-    /// Audit C6 — dynamic array-index bounds check.
+    /// Audit C6 - dynamic array-index bounds check.
     ///
     /// Emits a compare + conditional branch around the
     /// `getelementptr` for `arr[i]`. The compare is unsigned
@@ -128,7 +128,7 @@ impl<'a> Lowerer<'a> {
     /// Only fires when `ty` (after peeling `Ref` wrappers)
     /// resolves to `TyKind::Array { len, .. }`. Vec / Slice
     /// indexing reaches element storage through
-    /// `gos_rt_vec_get_*` intrinsics which check internally —
+    /// `gos_rt_vec_get_*` intrinsics which check internally -
     /// the projection path only needs to cover flat fixed
     /// arrays.
     ///
@@ -359,7 +359,7 @@ impl<'a> Lowerer<'a> {
             .map(|tys| tys.iter().map(|t| Some(*t)).collect())
             .unwrap_or_default();
         // For `gos_rt_*` symbols, the runtime registry gives us
-        // canonical LLVM parameter types — drive the emission off
+        // canonical LLVM parameter types - drive the emission off
         // those rather than the per-call operand types so that a
         // Unit-typed operand still lands as a valid i64 / ptr at
         // the call site (matches the dedup'd canonical declare
@@ -378,7 +378,7 @@ impl<'a> Lowerer<'a> {
             Vec::new()
         };
         // `gos_rt_chan_send` / `gos_rt_chan_try_send` expect their
-        // second argument to be `*const u8` — a pointer to a
+        // second argument to be `*const u8` - a pointer to a
         // memory slot holding the value bytes (the runtime
         // memcpys `chan.elem_bytes` from there). Stack-spill the
         // value and pass the slot address, matching the
@@ -395,7 +395,7 @@ impl<'a> Lowerer<'a> {
         // of scope when the inserting frame returns. Heap-copy so
         // subsequent `m.get(&k)` calls read live memory rather than
         // stale stack slots. Applies to `_i64_i64` (i64-key) and
-        // `_str_i64` (str-key) — the `_*_str` variants already pass
+        // `_str_i64` (str-key) - the `_*_str` variants already pass
         // a c_char ptr to a heap-allocated string, no copy needed.
         let map_insert_heap_copy = matches!(
             symbol,
@@ -494,7 +494,7 @@ impl<'a> Lowerer<'a> {
         let dest_ty = render_ty(self.tcx, dest_ty_mir);
 
         // Every `gos_rt_*` declaration MUST come from the typed
-        // ABI registry — that's the single source of truth for the
+        // ABI registry - that's the single source of truth for the
         // LLVM IR shape. `declare_rt` panics on an unknown symbol,
         // which is the correct behaviour: the prior synthesised
         // path invented a signature from operand types at the call
@@ -520,7 +520,7 @@ impl<'a> Lowerer<'a> {
         // register. Linux SysV LLVM 18 happens to normalise the
         // mismatch through the `declare i64` line and a memory
         // spill/reload pair; Windows mingw-w64-x86_64-llvm 18
-        // does NOT — it honours the call-site type literally, so
+        // does NOT - it honours the call-site type literally, so
         // the caller reads xmm0 while the function wrote rax and
         // the load yields stale FP state instead of the i64 we
         // returned. The visible symptom on Windows was
@@ -537,7 +537,7 @@ impl<'a> Lowerer<'a> {
         let registry_says_void = registry_ret.as_deref() == Some("void");
         if symbol.starts_with("gos_binding_") {
             // External `[rust-bindings]` symbols are defined in the
-            // linked per-project staticlib, not in this module —
+            // linked per-project staticlib, not in this module -
             // synthesize the `declare` from the call-site types (the
             // MIR binding lowering typed the args from the binding's
             // signature metadata, so every call site agrees). Only
@@ -630,7 +630,7 @@ impl<'a> Lowerer<'a> {
                     // A user function returning an inline aggregate heap-copies
                     // it (see the Return lowering) so the pointer outlives the
                     // callee frame. We've now copied its slots into our own
-                    // destination, so that buffer is dead — free it (a shallow
+                    // destination, so that buffer is dead - free it (a shallow
                     // dealloc; any RC field pointers it held now live in the
                     // destination slot). Without this, every struct/tuple/array
                     // returned by value leaks its buffer. Runtime accessors
@@ -648,7 +648,7 @@ impl<'a> Lowerer<'a> {
                     // Handle-Adt with no inline layout (recursive enum,
                     // opaque sentinel struct): the slot holds an 8-byte
                     // heap handle and the runtime returned that handle
-                    // value. Store it directly — memcpy'ing would copy
+                    // value. Store it directly - memcpy'ing would copy
                     // the cell's first word (the discriminant) into the
                     // slot, so the next discriminant / field read would
                     // double-indirect through it and crash. Mirrors the

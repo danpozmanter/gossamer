@@ -1,5 +1,5 @@
 /*
- * Sequence containers — queue (FIFO), stack (LIFO), deque (both-ends).
+ * Sequence containers - queue (FIFO), stack (LIFO), deque (both-ends).
  *
  * Operations re-bind the underlying Vec<i64>. Use reassignment
  * (`q = queue::push(q, v)`) rather than `let q = ...` shadowing

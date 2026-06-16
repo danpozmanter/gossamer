@@ -9,7 +9,7 @@ use gossamer_lex::{FileId, SourceMap};
 
 use crate::{Diagnostic, Label};
 
-/// Style options for [`render`]. Kept small on purpose — callers that
+/// Style options for [`render`]. Kept small on purpose - callers that
 /// want colour should opt in explicitly.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct RenderOptions {
@@ -61,7 +61,7 @@ pub fn render_plain(diag: &Diagnostic) -> String {
     if let Some(primary) = diag.primary_label()
         && let Some(msg) = &primary.message
     {
-        out.push_str(" — ");
+        out.push_str(" - ");
         out.push_str(msg);
     }
     out

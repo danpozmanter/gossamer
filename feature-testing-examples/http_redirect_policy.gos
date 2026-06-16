@@ -3,13 +3,13 @@
 // .build()` plus `client.request` / `client.request_bytes`.
 //
 // Client A (default policy) follows the 302 from /hop and lands on
-// /data with the final body. Client B (`max_redirects(0)` — the
+// /data with the final body. Client B (`max_redirects(0)` - the
 // proxy-correct mode) gets the 302 back raw with its Location
 // header intact. Client C exercises the binary-body
 // `request_bytes` path through the same configured client.
 //
 // Self-terminating: the client runs in main and exits explicitly.
-// Binds a fixed loopback port — serialized under SERVER_PORT_LOCK
+// Binds a fixed loopback port - serialized under SERVER_PORT_LOCK
 // by `http_redirect_policy_parity_across_tiers` in
 // crates/gossamer-cli/tests/tier_parity.rs.
 

@@ -4,7 +4,7 @@
 //! `opt |> option::map(f) |> option::default(0)` threads cleanly.
 //!
 //! The user-facing dispatch in `.gos` programs lives in
-//! `crates/gossamer-interp/src/stdlib_builtins.rs::install_option` —
+//! `crates/gossamer-interp/src/stdlib_builtins.rs::install_option` -
 //! these Rust helpers exist for stdlib code that wants to reach the
 //! same surface.
 

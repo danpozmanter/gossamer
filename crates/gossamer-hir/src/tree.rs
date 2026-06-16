@@ -13,7 +13,7 @@ use gossamer_types::Ty;
 
 use crate::ids::HirId;
 
-/// Whole program — the collection of items lowered from a source file.
+/// Whole program - the collection of items lowered from a source file.
 #[derive(Debug, Clone, Default)]
 pub struct HirProgram {
     /// Items in source order.
@@ -126,11 +126,11 @@ pub struct HirAdt {
 #[derive(Debug, Clone)]
 pub enum HirAdtKind {
     /// `struct` with named, positional, or unit body. The embedded
-    /// list carries the field names in declaration order — empty for
+    /// list carries the field names in declaration order - empty for
     /// a unit struct or tuple struct with positional-only fields.
     Struct(Vec<Ident>),
     /// `enum` with the given variants. Each variant carries its
-    /// name plus an optional ordered field list — `None` for unit
+    /// name plus an optional ordered field list - `None` for unit
     /// (`Line`) and tuple variants (`Circle(f64)`); `Some(names)`
     /// for struct-payload variants (`Rect { w, h }`). The MIR
     /// lowerer reads the field names so `__struct("Rect", ...)`
@@ -260,7 +260,7 @@ pub struct HirExpr {
 /// One arm of a `select { … }` expression after HIR lowering.
 #[derive(Debug, Clone)]
 pub struct HirSelectArm {
-    /// Operation kind — recv on a channel, send on a channel, or the
+    /// Operation kind - recv on a channel, send on a channel, or the
     /// default fallback arm.
     pub op: HirSelectOp,
     /// Body evaluated when this arm is chosen.
@@ -270,7 +270,7 @@ pub struct HirSelectArm {
 /// Operation performed by a `select` arm.
 #[derive(Debug, Clone)]
 pub enum HirSelectOp {
-    /// `pat = chan.recv()` — receive from `channel`, binding the
+    /// `pat = chan.recv()` - receive from `channel`, binding the
     /// received value to `pattern`.
     Recv {
         /// Pattern that receives the value.
@@ -278,7 +278,7 @@ pub enum HirSelectOp {
         /// Channel expression.
         channel: HirExpr,
     },
-    /// `chan.send(value)` — send `value` on `channel`.
+    /// `chan.send(value)` - send `value` on `channel`.
     Send {
         /// Channel expression.
         channel: HirExpr,
@@ -625,7 +625,7 @@ pub enum HirPatKind {
         /// `true` for `..=` (inclusive of `hi`); `false` for `..`.
         inclusive: bool,
     },
-    /// `name @ subpattern` — binds the scrutinee to `name` *and*
+    /// `name @ subpattern` - binds the scrutinee to `name` *and*
     /// requires the scrutinee to match `sub`. Pattern compilers
     /// that ignore the `sub` filter (or the binding) drop one
     /// half of the semantics; the lowering must recurse into

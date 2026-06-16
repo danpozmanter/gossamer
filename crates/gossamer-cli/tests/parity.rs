@@ -4,7 +4,7 @@
 //! tests against `examples/hello_world.gos`, which keeps the suite
 //! under a couple of seconds. The full `every_example_*` walks
 //! across the whole `examples/` directory live behind the
-//! `exhaustive_tests` feature flag — invoke `exhaustive_test.sh`
+//! `exhaustive_tests` feature flag - invoke `exhaustive_test.sh`
 //! at the workspace root, or `cargo test -p gossamer-cli --test
 //! parity --features exhaustive_tests`, to run them.
 //!
@@ -56,7 +56,7 @@ fn run_interpreter(source: &Path) -> Run {
 }
 
 /// Builds `source` natively and runs the produced artifact. Returns
-/// `None` when the build fails — every legal program is expected to
+/// `None` when the build fails - every legal program is expected to
 /// compile after L4.
 fn run_native(source: &Path) -> Option<Run> {
     let build = Command::new(gos_bin())
@@ -148,7 +148,7 @@ fn minimal_parity_native_matches_interpreter_for_hello_world() {
 /// iteration, arrays, integer arithmetic, control flow, string
 /// formatting). Together with `hello_world` the default
 /// `cargo test` parity gate covers eight examples at a
-/// wall-time cost of around twelve seconds — small enough that
+/// wall-time cost of around twelve seconds - small enough that
 /// a regression in the compiled tier surfaces in CI without
 /// requiring `--features exhaustive_tests`.
 const DEFAULT_PARITY_EXAMPLES: &[&str] = &[
@@ -159,7 +159,7 @@ const DEFAULT_PARITY_EXAMPLES: &[&str] = &[
     "range_sum.gos",
     "prime_check.gos",
     "binary_search.gos",
-    // `control_flow.gos` is intentionally NOT here — it carries a
+    // `control_flow.gos` is intentionally NOT here - it carries a
     // known native-tier divergence on `first square > 100` (loop
     // returns 0 instead of 121). The full exhaustive walk catches
     // it; gating the always-on suite on the divergence would block
@@ -169,7 +169,7 @@ const DEFAULT_PARITY_EXAMPLES: &[&str] = &[
 
 #[test]
 fn default_parity_native_matches_interpreter_on_curated_examples() {
-    // Bumps the default parity matrix beyond `hello_world` — the
+    // Bumps the default parity matrix beyond `hello_world` - the
     // single-program smoke test (above) was missing regressions
     // in lowering paths used by mainstream user code (recursion,
     // arrays, integer arithmetic). 7 + 1 examples keep CI under
@@ -209,7 +209,7 @@ fn every_example_with_committed_expected_matches_interpreter_stdout() {
     // interpreter's stdout must match the committed file
     // byte-for-byte.
     //
-    // Examples without an expected file are exempt — they're
+    // Examples without an expected file are exempt - they're
     // either non-deterministic (timing-driven `go expr`) or
     // depend on external state (network, stdin). Add an
     // `<name>.expected.txt` next to the source to opt the example
@@ -280,7 +280,7 @@ mod full {
     /// shape can't supply. Each is covered by a dedicated
     /// integration test elsewhere.
     const NON_TERMINATING_EXAMPLES: &[&str] = &[
-        "web_server.gos",  // HTTP server runs until shutdown — would hang
+        "web_server.gos",  // HTTP server runs until shutdown - would hang
         "http_client.gos", // expects a live `web_server.gos` on :8080
         "grep.gos",        // requires CLI args (PATTERN [FILE...])
     ];
@@ -290,7 +290,7 @@ mod full {
     /// own doc-comment says "output order is not guaranteed").
     /// We compare the stdout line-set as a multiset instead of
     /// byte-equal so the test still asserts both tiers run the
-    /// same units of work — just not in the same order.
+    /// same units of work - just not in the same order.
     const NON_DETERMINISTIC_STDOUT: &[&str] = &["go_spawn.gos"];
 
     fn gos_examples() -> Vec<PathBuf> {

@@ -1466,7 +1466,7 @@ outermost wrap down to the root cause:</p>
 </code></pre></div>
 <ul>
 <li><code>err.message()</code> returns only the top message (<code>"reading config"</code>),
-  not the chain — pair it with <code>err.cause()</code> to walk levels manually.</li>
+  not the chain - pair it with <code>err.cause()</code> to walk levels manually.</li>
 <li><code>errors::join([a, b]) -&gt; Option&lt;Error&gt;</code> combines several errors into
   one whose message is the individual messages joined with <code>"; "</code>
   (<code>"a; b"</code>); an empty list joins to <code>None</code>.</li>

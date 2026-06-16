@@ -274,7 +274,7 @@ impl<'a> Builder<'a> {
                     }
                 }
                 // Non-fast-path `go`: the front-end wrapped `inner`
-                // into a zero-argument closure — spawn it
+                // into a zero-argument closure - spawn it
                 // fire-and-forget so the wrapped call runs on its own
                 // goroutine, identical to the VM tier.
                 self.lower_go_spawn_closure(inner, go_span)
@@ -283,7 +283,7 @@ impl<'a> Builder<'a> {
                 // Real multiplexing via the runtime select builder. The arms
                 // are registered in source order; `gos_rt_select_wait` polls
                 // them (lowest-index ready arm wins) and parks the goroutine
-                // until one is ready unless a default arm exists — matching the
+                // until one is ready unless a default arm exists - matching the
                 // VM walker's `eval_select`. The recv payload rides the same
                 // 8-byte word contract as `gos_rt_chan_recv_option`.
                 use gossamer_hir::{HirPatKind, HirSelectOp};
@@ -502,7 +502,7 @@ impl<'a> Builder<'a> {
             // The native build pipeline runs `gossamer_hir::lift_closures`
             // upstream, so by the time we lower a Closure here we are
             // either in the VM's pre-JIT pass (which never executes the
-            // resulting MIR — execution stays on the tree-walker) or
+            // resulting MIR - execution stays on the tree-walker) or
             // an unreachable path. Emit a zero-shaped placeholder so
             // pre-pass lowering succeeds without claiming to lower the
             // closure semantically. Same shape for the resolver's
@@ -612,7 +612,7 @@ impl<'a> Builder<'a> {
         // `json::Value::Null` (path expression, no parens) is a unit
         // variant constructor for the stdlib `json::Value` enum.
         // The user-enum path above doesn't catch it because
-        // `json::Value` isn't declared in the program — it lives in
+        // `json::Value` isn't declared in the program - it lives in
         // `gossamer-std`. Without this arm the path falls through to
         // the FnRef fallback below, producing a function-pointer
         // value that downstream code interpreted as a `*mut GosJson`
@@ -654,7 +654,7 @@ impl<'a> Builder<'a> {
         // `gossamer-std`; the interpreter binds them as `Value::Float`
         // globals, but the compiled tiers never see a `const` def for
         // them, so the path would otherwise fall through to the
-        // FnRef/string fallback below — printing the literal "math::PI"
+        // FnRef/string fallback below - printing the literal "math::PI"
         // and feeding a string-tag pointer into arithmetic. Inline the
         // IEEE value so every tier folds them identically.
         if strip_std.len() == 2
@@ -671,8 +671,8 @@ impl<'a> Builder<'a> {
             return Some(local);
         }
         // When the typechecker leaves a path-expr's type as `Var(_)`
-        // — common for paths that resolve to `const` / `static`
-        // items because the const-value pass runs after typeck —
+        // - common for paths that resolve to `const` / `static`
+        // items because the const-value pass runs after typeck -
         // pin the local's MIR type from the folded `ConstValue`'s
         // shape. Without this, the local stays `Var` and downstream
         // dispatch (operand_print_kind, format-helper selection)
@@ -734,7 +734,7 @@ impl<'a> Builder<'a> {
             // the local as a closure env pointer.
             //
             // A tabled std fn used as a value (`errors::new` passed
-            // to `map_err`) is recorded under its runtime symbol —
+            // to `map_err`) is recorded under its runtime symbol -
             // the eta-expansion target the compiled tiers can take
             // the address of. The thunk machinery then forwards to
             // the C-ABI shim exactly like a lifted bare closure.
@@ -762,7 +762,7 @@ impl<'a> Builder<'a> {
             HirUnaryOp::RefShared | HirUnaryOp::RefMut => {
                 // For aggregate-typed operands (Vec, String, HashMap,
                 // struct, …) and opaque-handle Adts (Regex, SqlDb,
-                // Channel — all stored as i64 locals carrying a
+                // Channel - all stored as i64 locals carrying a
                 // ptr-shaped value) the existing `inner` local already
                 // holds the canonical pointer the callee expects, so
                 // `&x` is a no-op.
@@ -770,7 +770,7 @@ impl<'a> Builder<'a> {
                 // For `&mut`-on-named-place-of-scalar (i.e.
                 // `&mut state` where `state: i64`), the callee
                 // genuinely wants a pointer that lets it write back
-                // — without this, deref-assign through the borrowed
+                // - without this, deref-assign through the borrowed
                 // ref lands on the value-as-ptr and segfaults. Emit
                 // `Rvalue::Ref` so the backend pulls a real slot
                 // address.
@@ -782,7 +782,7 @@ impl<'a> Builder<'a> {
                 // the value, not a stable header like `GosVec`), so a
                 // callee's `*s = v` / `*s += v` must land on the
                 // caller's SLOT, not on a passed-by-value copy of the
-                // pointer — hence the by-slot-address `Rvalue::Ref`,
+                // pointer - hence the by-slot-address `Rvalue::Ref`,
                 // exactly as for a scalar. The post-call reload in
                 // `lower_call` pulls the callee's new pointer back into
                 // the caller's local. Shared `&` on a literal or
@@ -870,7 +870,7 @@ impl<'a> Builder<'a> {
                 // Without this load, `for x in v.iter() { *x }`
                 // prints the iterator's slot pointer, not the
                 // element. Apply only to scalar inner types
-                // (i64/f64/bool/char) — aggregate refs are passed
+                // (i64/f64/bool/char) - aggregate refs are passed
                 // by pointer in this codegen and have their own
                 // projection paths.
                 let inner_ty = self.locals[inner.0 as usize].ty;
@@ -911,7 +911,7 @@ impl<'a> Builder<'a> {
             }
         };
         // When the HIR type is unresolved (`Var(_)`) the unary
-        // result inherits the operand's type — `!bool` is `bool`,
+        // result inherits the operand's type - `!bool` is `bool`,
         // `-i64` is `i64`, etc. Without this fallback the
         // destination local is `Var`/ptr-shaped, and downstream
         // print kinds route the i1 result through `print_str`
@@ -1024,7 +1024,7 @@ impl<'a> Builder<'a> {
         }
         let lhs_local = self.lower_expr(lhs)?;
         let rhs_local = self.lower_expr(rhs)?;
-        // 0.7.0 flag::Cell auto-deref at the binary-op boundary —
+        // 0.7.0 flag::Cell auto-deref at the binary-op boundary -
         // `flags.output == "text"` works without `*`. Matches the
         // VM tier's `values_equal` / `compare` auto-unwrap shape.
         let lhs_local = self.auto_deref_cell(lhs_local, span);
@@ -1452,7 +1452,7 @@ impl<'a> Builder<'a> {
         // the new value. The store's own `Copy` retain (in the RC pass) gives
         // the slot its share of the new value. The self-consuming `*s += …`
         // append handled above never reaches here (it returns early), so this
-        // fires only for genuine overwrites — no double release of a value the
+        // fires only for genuine overwrites - no double release of a value the
         // append helper already consumed.
         if self.deref_string_place_local(place).is_some() {
             let unit_ty = self.tcx.unit();
@@ -1641,7 +1641,7 @@ impl<'a> Builder<'a> {
             HirExprKind::Field { receiver, name } => {
                 let mut base = self.lower_place_expr(receiver)?;
                 // Resolve which struct's field ordering to use.
-                // Prefer the receiver's static type — for nested
+                // Prefer the receiver's static type - for nested
                 // projections (`o.inner.x`) the receiver expression
                 // is `o.inner` whose type is `Inner`, while
                 // `local_struct[base.local]` would point at `o`'s
@@ -1666,7 +1666,7 @@ impl<'a> Builder<'a> {
                 // For a Vec / Slice base whose elements are multi-slot
                 // aggregates (`bodies[i].x` over a `Vec<Body>`), a flat
                 // `Projection::Index` would treat the local's value as
-                // an inline element buffer — but the local holds a
+                // an inline element buffer - but the local holds a
                 // `*mut GosVec` *header*, so the index strides off the
                 // header fields instead of the data buffer (every
                 // access past element 0 reads garbage). Route through
@@ -1754,7 +1754,7 @@ impl<'a> Builder<'a> {
                     .push(crate::ir::Projection::Index(index_local));
                 Some(base_place)
             }
-            // `*operand = ...` — deref-assign through a `&mut T` /
+            // `*operand = ...` - deref-assign through a `&mut T` /
             // `*mut T`. The Place is the base local with a `Deref`
             // projection appended; the lowerer's `Place::Deref`
             // arm in cranelift/LLVM stores through the pointer.
@@ -1820,7 +1820,7 @@ impl<'a> Builder<'a> {
     ) -> Option<Local> {
         // Fast path: a tuple index of a PLACE expression (`table[j].1`,
         // `p.pair.0`) reads the field through one combined projection instead
-        // of copying the whole tuple out and then extracting a field — the hot
+        // of copying the whole tuple out and then extracting a field - the hot
         // `table[j].0`/`.1` shape (fasta). Restricted to a concrete field type
         // so the backend picks the right load kind; the unannotated (`Var`)
         // case keeps the materialising slow path, which first pins the
@@ -1915,7 +1915,7 @@ impl<'a> Builder<'a> {
             let hi_local = if let Some(e) = end {
                 self.lower_expr(e)?
             } else {
-                // `arr[lo..]` — substitute `arr.len()` as the
+                // `arr[lo..]` - substitute `arr.len()` as the
                 // upper bound by calling `gos_rt_len` on the
                 // base. Works for both arrays and Vecs since
                 // `gos_rt_len` reads the leading length word.
@@ -1970,7 +1970,7 @@ impl<'a> Builder<'a> {
         // Walk through references so `&String` indexing behaves
         // the same as indexing a bare `String`. Prefer the MIR
         // local's pinned type over the HIR type when the base is
-        // a simple Path — the type checker may have left the HIR
+        // a simple Path - the type checker may have left the HIR
         // type as an unresolved inference variable for receivers
         // produced by runtime helpers (e.g. `read_to_string`),
         // and the indexing path needs the concrete `String` to
@@ -1986,7 +1986,7 @@ impl<'a> Builder<'a> {
         if base_is_string {
             let base_local = self.lower_expr(base)?;
             let index_local = self.lower_expr(index)?;
-            // `gos_rt_str_byte_at` returns a zero-extended byte —
+            // `gos_rt_str_byte_at` returns a zero-extended byte -
             // pin the MIR destination to `i64` so downstream
             // print/format dispatch routes to the integer helper
             // instead of mis-treating the byte as a string ptr.
@@ -2014,7 +2014,7 @@ impl<'a> Builder<'a> {
         // `*mut GosVec` header, not a flat element buffer) route
         // index reads through `gos_rt_vec_get_i64`. A naked
         // `Projection::Index` would treat the local's first 8
-        // bytes as element 0 — which is the GosVec `len` field,
+        // bytes as element 0 - which is the GosVec `len` field,
         // not the data buffer.
         let actual_base_kind = self
             .tcx
@@ -2037,7 +2037,7 @@ impl<'a> Builder<'a> {
             // `Vec<Option<T>>` / `Vec<Result<T, _>>` store each
             // element as the wrapped tagged-union handle (a
             // `*mut [disc, payload]` cell), exactly like any other
-            // enum — `xs.push(None)` and `xs.push(Some(v))` must be
+            // enum - `xs.push(None)` and `xs.push(Some(v))` must be
             // distinguishable at read time. Read the element back as
             // the wrapper so `match v[i] { Some(k) => …, None => … }`
             // sees the real discriminant; the `Some(k)` arm still
@@ -2050,7 +2050,7 @@ impl<'a> Builder<'a> {
             let dest_ty = match elem_kind_now {
                 TyKind::String | TyKind::Bool | TyKind::Char | TyKind::Float(_) => elem_unwrapped,
                 TyKind::Int(_) => elem_unwrapped,
-                // Aggregate elements (struct, tuple, fixed array) —
+                // Aggregate elements (struct, tuple, fixed array) -
                 // keep the pinned element type so subsequent
                 // `Field(idx)` / `Index(k)` projections find the
                 // right slot layout. A `Vec<[i64; 2]>` element is a
@@ -2063,7 +2063,7 @@ impl<'a> Builder<'a> {
                 // through the json runtime helpers. Without this
                 // pin, the dest fell through to the i64 default
                 // and `tcs[k].clone()` (askq) lost the json tag
-                // — every nested field probe missed.
+                // - every nested field probe missed.
                 TyKind::JsonValue => elem_unwrapped,
                 // `Vec<Vec<T>>` indexing: preserve the inner Vec type
                 // so that subsequent indexing on the result routes
@@ -2079,7 +2079,7 @@ impl<'a> Builder<'a> {
                 },
             };
             // Multi-slot element types (tuples, named structs with
-            // multiple fields) need `gos_rt_vec_get_ptr` — the
+            // multiple fields) need `gos_rt_vec_get_ptr` - the
             // single-slot `gos_rt_vec_get_i64` only reads the first
             // 8 bytes of the slot, so a `(String, String)` element
             // would hand back just the first String and the

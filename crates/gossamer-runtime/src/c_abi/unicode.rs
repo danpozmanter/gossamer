@@ -15,7 +15,7 @@
 #![allow(unused_unsafe)]
 #![allow(clippy::wildcard_imports)]
 
-//! C-ABI surface for `std::unicode` — general-category predicates,
+//! C-ABI surface for `std::unicode` - general-category predicates,
 //! casing helpers, normalization forms, and grapheme / word /
 //! sentence segmentation. Compiled-tier programs call these through
 //! the MIR `stdlib_free` dispatcher.
@@ -276,7 +276,7 @@ pub unsafe extern "C" fn gos_rt_unicode_simple_fold(c: u32) -> u32 {
 }
 
 // ---------------------------------------------------------------
-// Casing (whole string — handles full mappings like ß -> SS)
+// Casing (whole string - handles full mappings like ß -> SS)
 // ---------------------------------------------------------------
 
 #[unsafe(no_mangle)]

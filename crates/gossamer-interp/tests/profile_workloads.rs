@@ -33,7 +33,7 @@ fn compile(src: &str) -> (gossamer_hir::HirProgram, TyCtxt) {
 
 fn run(label: &str, src: &str) -> String {
     gossamer_interp::profile::reset();
-    // Profiler audits the bytecode VM — disable JIT so hot
+    // Profiler audits the bytecode VM - disable JIT so hot
     // functions stay in the dispatch loop rather than
     // tier-up to native after the hot counter trips.
     gossamer_interp::set_jit_disabled();
@@ -198,7 +198,7 @@ fn profile_all() {
         combined.push_str(&report);
     }
 
-    // Try writing to ~/dev/contexts/lang/. Best-effort — don't
+    // Try writing to ~/dev/contexts/lang/. Best-effort - don't
     // fail the test if the parent dir isn't writable.
     if let Some(home) = std::env::var_os("HOME") {
         let mut path = std::path::PathBuf::from(home);

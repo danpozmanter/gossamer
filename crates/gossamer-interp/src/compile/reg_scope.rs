@@ -54,7 +54,7 @@ impl<'tcx> FnBuilder<'tcx> {
 
     /// Compiles a defer frame's expressions for their side effects in
     /// LIFO (reverse-registration) order. Emitted at every edge that
-    /// leaves the frame's block — normal fall-through, `return`,
+    /// leaves the frame's block - normal fall-through, `return`,
     /// `break`, `continue`. Each expression's result register is
     /// discarded: a `defer` body yields no value and never redirects
     /// control flow out of the deferred expression.
@@ -66,7 +66,7 @@ impl<'tcx> FnBuilder<'tcx> {
     }
 
     /// Emits every defer frame at stack index `>= from_depth`, innermost
-    /// block first, without removing them — each owning `compile_block`
+    /// block first, without removing them - each owning `compile_block`
     /// pops its own frame as control unwinds. `return` passes `0` (all
     /// frames); `break` / `continue` pass the target loop's `defer_depth`
     /// (only the frames nested inside the loop body). Mirrors

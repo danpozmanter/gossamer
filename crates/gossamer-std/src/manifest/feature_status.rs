@@ -1,4 +1,4 @@
-//! Lifecycle status registry — declares whether each documented
+//! Lifecycle status registry - declares whether each documented
 //! stdlib module and language feature is `Shipped`, `Experimental`,
 //! `Planned`, or `Removed`.
 //!
@@ -60,7 +60,7 @@ impl Status {
     }
 }
 
-/// One entry in the lifecycle registry — qualified path, status,
+/// One entry in the lifecycle registry - qualified path, status,
 /// brief description.
 #[derive(Debug, Clone, Copy)]
 pub struct FeatureStatus {
@@ -150,7 +150,7 @@ pub const FEATURE_STATUS: &[FeatureStatus] = &[
         "lang::mut_ref_params",
         "`&mut Vec<T>` / `&mut [T]` parameters write through to the caller's storage on every tier.",
     ),
-    // Identifier rules — Unicode XID_Start / XID_Continue (UAX #31).
+    // Identifier rules - Unicode XID_Start / XID_Continue (UAX #31).
     lang(
         "lang::unicode_identifiers",
         "Identifiers follow UAX #31 (matches Rust 2024).",
@@ -159,17 +159,17 @@ pub const FEATURE_STATUS: &[FeatureStatus] = &[
     FeatureStatus {
         path: "lang::move_keyword",
         status: Status::Planned,
-        doc: "`move` closure capture keyword — parses, lowers to the same Fn shape as a non-move closure (GC handles ownership).",
+        doc: "`move` closure capture keyword - parses, lowers to the same Fn shape as a non-move closure (GC handles ownership).",
     },
     FeatureStatus {
         path: "lang::async_await",
         status: Status::Planned,
-        doc: "`async fn` / `.await` — goroutines + channels cover the same shape today.",
+        doc: "`async fn` / `.await` - goroutines + channels cover the same shape today.",
     },
     FeatureStatus {
         path: "lang::lifetimes",
         status: Status::Planned,
-        doc: "Explicit lifetime annotations — not needed under the current GC model; tracked in case a borrow-checker mode lands.",
+        doc: "Explicit lifetime annotations - not needed under the current GC model; tracked in case a borrow-checker mode lands.",
     },
     // -----------------------------------------------------------------
     // Stdlib status overrides. Only modules whose status departs from
@@ -179,7 +179,7 @@ pub const FEATURE_STATUS: &[FeatureStatus] = &[
     FeatureStatus {
         path: "std::tls",
         status: Status::Experimental,
-        doc: "TLS surface (rustls-backed) — handshake works; mTLS auth + custom verifiers still maturing.",
+        doc: "TLS surface (rustls-backed) - handshake works; mTLS auth + custom verifiers still maturing.",
     },
     FeatureStatus {
         path: "std::database::sql",
@@ -189,12 +189,12 @@ pub const FEATURE_STATUS: &[FeatureStatus] = &[
     FeatureStatus {
         path: "std::html::template",
         status: Status::Experimental,
-        doc: "Context-aware HTML template engine — auto-escape works (text/attr/URL/JS), pipeline operator set still expanding. Heuristic classifier, NOT a content-security-policy substitute; the `html::escape` primitive (wired on every tier) is the supported cross-tier escape.",
+        doc: "Context-aware HTML template engine - auto-escape works (text/attr/URL/JS), pipeline operator set still expanding. Heuristic classifier, NOT a content-security-policy substitute; the `html::escape` primitive (wired on every tier) is the supported cross-tier escape.",
     },
     FeatureStatus {
         path: "std::text::template",
         status: Status::Experimental,
-        doc: "Plain-text template engine — feature parity with html::template tracked together.",
+        doc: "Plain-text template engine - feature parity with html::template tracked together.",
     },
     // -----------------------------------------------------------------
     // Sub-module stdlib feature entries. Not manifest modules (the

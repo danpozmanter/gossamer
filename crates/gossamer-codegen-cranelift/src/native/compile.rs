@@ -75,7 +75,7 @@
 //! the process exit code, so the object file links through a
 //! standard `cc` invocation.
 //! Aggregates (tuples/arrays/structs), strings, closures, and
-//! anything that needs a GC heap are not yet lowered — those
+//! anything that needs a GC heap are not yet lowered - those
 //! constructs fall back to [`crate::emit::emit_module`] for
 //! inspection.
 
@@ -186,7 +186,7 @@ pub(crate) fn build_native_isa(
     // `movq sym@GOTPCREL(%rip)` (a load *through* a GOT slot) for
     // every symbol address, but the object backend rewrites the
     // resulting `GotRelative` to a plain `Relative` reloc pointing
-    // straight at the symbol — so the load reads the symbol's first
+    // straight at the symbol - so the load reads the symbol's first
     // bytes as if they were its address, corrupting every string and
     // data reference. Mach-O and ELF resolve the GOT load correctly
     // (ELF via GOTPCRELX relaxation), so PIC stays on there; on COFF
@@ -490,7 +490,7 @@ pub(crate) fn lower_program_full(
             }
         } else {
             // Body is referenced (call-site, address-of) but
-            // its body lives in a sibling object — declare as
+            // its body lives in a sibling object - declare as
             // Import so the linker resolves the symbol.
             Linkage::Import
         };

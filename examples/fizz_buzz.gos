@@ -1,12 +1,12 @@
 /*
- * FizzBuzz — the classic interview warm-up.
+ * FizzBuzz - the classic interview warm-up.
  *
  * Multiples of 3 print "Fizz", multiples of 5 print "Buzz",
  * multiples of both print "FizzBuzz". Everything else prints
  * the number.
  *
  * Each iteration's result is computed by a `match` expression
- * — no mutable accumulator at the call site.
+ * - no mutable accumulator at the call site.
  */
 
 fn label(n: i64) -> String {

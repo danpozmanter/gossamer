@@ -5,7 +5,7 @@
 //! every test feeds the lowerer a hand-rolled MIR body and
 //! inspects the resulting object bytes (or a trace from running
 //! the compiled program). A more granular "IR text snapshot"
-//! flavour requires the lowerer to expose `render_module` —
+//! flavour requires the lowerer to expose `render_module` -
 //! tracked under the §3.3 LLVM-tests-directory item; this file
 //! is the seed crate so that follow-up has a place to land.
 //!
@@ -95,7 +95,7 @@ fn llvm_lowers_constant_return_to_object_bytes() {
         Ok(o) => o,
         Err(e) => {
             // The smoke test treats a missing LLVM toolchain as a
-            // skip rather than a hard fail — `BuildError::Tool`
+            // skip rather than a hard fail - `BuildError::Tool`
             // surfaces both "binary not found" and "binary failed".
             // Anything else is real and should fail.
             let msg = e.to_string();

@@ -22,7 +22,7 @@ use std::http
 use std::process
 use std::time
 
-// Selected-header lookup through a borrowed header list — the same
+// Selected-header lookup through a borrowed header list - the same
 // shape http_request_headers.gos uses, which lowers identically on
 // every tier (r.headers is a Vec<(String, String)>).
 fn header_of(headers: &[(String, String)], want: String) -> String {

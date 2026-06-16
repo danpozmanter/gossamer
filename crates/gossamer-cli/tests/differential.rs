@@ -26,7 +26,7 @@ fn gos_bin() -> PathBuf {
     PathBuf::from(env::var("CARGO_BIN_EXE_gos").expect("CARGO_BIN_EXE_gos"))
 }
 
-/// Linear-congruential PRNG. Deterministic, single-state — keeps
+/// Linear-congruential PRNG. Deterministic, single-state - keeps
 /// the grammar walk reproducible from the seed alone.
 struct Lcg(u64);
 impl Lcg {

@@ -7,11 +7,11 @@ targets = [
 
 [advisories]
 version = 2
-# Unmaintained-but-no-vulnerability advisories — pinned with the
+# Unmaintained-but-no-vulnerability advisories - pinned with the
 # rationale here so a future bump can revisit. Active CVEs are NOT
 # allowed here; they fail CI by design.
 ignore = [
-    # RUSTSEC-2025-0141 — bincode 1.x: development ceased, no CVE.
+    # RUSTSEC-2025-0141 - bincode 1.x: development ceased, no CVE.
     # Pulled in transitively via `cranelift-codegen`; we do not own
     # the upgrade path. Drop when cranelift moves to bincode 2.x.
     "RUSTSEC-2025-0141",
@@ -67,7 +67,7 @@ skip = [
     # version (via tokio + quinn). Drop the pin when notify
     # consolidates on mio 1.
     { name = "mio", version = "0.8.11" },
-    # `socket2 0.5` vs `0.6` — quinn 0.11 pulls 0.5, h2 / rustls pull
+    # `socket2 0.5` vs `0.6` - quinn 0.11 pulls 0.5, h2 / rustls pull
     # 0.6. Drop the pin when quinn upgrades.
     { name = "socket2", version = "0.5.10" },
     # `thiserror 1.x` arrives via h2 / quinn 0.11; `2.x` is the

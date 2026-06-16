@@ -1,4 +1,4 @@
-//! Phase 0 ergonomic regression — the `name: <ident>` form,
+//! Phase 0 ergonomic regression - the `name: <ident>` form,
 //! doc-comment capture, and the `FORCE_LINK_FNS` distributed-slice
 //! mechanism. Verifies the legacy `register_module!` form keeps
 //! working alongside.
@@ -61,7 +61,7 @@ fn doc_comments_flow_through_to_itemfn() {
 fn force_link_fns_distributed_slice_is_populated() {
     // The Phase-0 ergonomic form publishes a `FORCE_LINK_FNS`
     // entry; calling `run_all_force_links` walks every registered
-    // module's force_link() — must not panic.
+    // module's force_link() - must not panic.
     let n_before = gossamer_binding::FORCE_LINK_FNS.len();
     gossamer_binding::run_all_force_links();
     let n_after = gossamer_binding::FORCE_LINK_FNS.len();

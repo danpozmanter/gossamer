@@ -2013,7 +2013,7 @@ image. The compiled musl binary needs nothing else. Sample
 <a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a><span class="k">EXPOSE</span><span class="w"> </span><span class="s">8080</span>
 <a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a><span class="k">ENTRYPOINT</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;/server&quot;</span><span class="p">]</span>
 </code></pre></div>
-<p>Image sizes settle around 10–15 MiB for a typical HTTP service.</p>
+<p>Image sizes settle around 10-15 MiB for a typical HTTP service.</p>
 <h2 id="process-supervision-systemd">Process supervision: systemd<a class="headerlink" href="#process-supervision-systemd" title="Permanent link">&para;</a></h2>
 <p>Drop a unit file at <code>/etc/systemd/system/myservice.service</code>:</p>
 <div class="language-ini highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="k">[Unit]</span>
@@ -2111,7 +2111,7 @@ that spawn thousands of goroutines, drop the stack with
 </code></pre></div>
 <p>Or in systemd: <code>LimitSTACK=1048576</code>.</p>
 <p>As of 0.1.0 the M:N scheduler is live, so goroutines no
-longer correspond 1:1 to OS threads — the <code>ulimit</code> is only
+longer correspond 1:1 to OS threads - the <code>ulimit</code> is only
 relevant if you spawn unbounded <em>threads</em> directly. Idle
 goroutines are parked on the netpoller and consume
 constant memory.</p>
@@ -2121,7 +2121,7 @@ each value the moment its last reference dies, an on-demand cycle
 collector (<code>runtime::collect_cycles()</code>) handles reference cycles, and
 <code>arena { }</code> regions free short-lived graphs wholesale. There is no
 tracing collector, so there are no mark/sweep pauses and no GC tuning
-knobs to set — RAM tracks the live working set and stays predictable.</p>
+knobs to set - RAM tracks the live working set and stays predictable.</p>
 <p>The allocator returns freed pages to the OS promptly, so resident
 memory follows the working set down as well as up. For container
 limits, size to the service's peak working set plus headroom for
@@ -2204,7 +2204,7 @@ through <code>.github/workflows/release.yml</code> are cosign-signed
 and ship alongside a CycloneDX SBOM.</p>
 <h2 id="cross-references">Cross-references<a class="headerlink" href="#cross-references" title="Permanent link">&para;</a></h2>
 <ul>
-<li><a href="../stdlib/"><code>stdlib.md</code></a> — <code>slog</code>, <code>http</code>, <code>os</code>.</li>
+<li><a href="../stdlib/"><code>stdlib.md</code></a> - <code>slog</code>, <code>http</code>, <code>os</code>.</li>
 </ul>
 
 

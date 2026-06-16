@@ -18,7 +18,7 @@
 use super::*;
 
 // ---------------------------------------------------------------
-// container::heap — min-heap operations over `Vec<i64>` (in-place
+// container::heap - min-heap operations over `Vec<i64>` (in-place
 // sift up/down). Pair with `Vec::len` to detect empty before
 // peek/pop; the sentinel return (0) on empty is documented but the
 // caller is expected to check length.

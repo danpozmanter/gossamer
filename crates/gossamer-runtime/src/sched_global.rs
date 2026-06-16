@@ -3,7 +3,7 @@
 //!
 //! Every compiled Gossamer binary links `gossamer-runtime` as a
 //! `staticlib`, so the singleton ships with the program automatically
-//! — no extra registration step is required from user code.
+//! - no extra registration step is required from user code.
 //!
 //! Boot ordering:
 //!
@@ -20,7 +20,7 @@
 //!
 //! Goroutines are stackful coroutines. When user code blocks on a
 //! channel, mutex, sleep, or socket, [`park`] suspends the
-//! coroutine — the worker thread immediately picks up the next
+//! coroutine - the worker thread immediately picks up the next
 //! runnable goroutine instead of being held hostage by the OS-level
 //! block. The wakeup source (poller, channel queue, mutex release)
 //! calls [`MultiScheduler::unpark`] when ready.
@@ -120,8 +120,8 @@ fn ensure_poller_thread(g: &'static Globals) {
 /// any registration arriving while the netpoller is mid-syscall
 /// waits at most `POLL_TICK_MS` ms before the mutex unlocks.
 /// The mio waker (fired by [`with_poller`]) is the first line
-/// of defence — most cycles end instantly when a registration
-/// fires it — but the ceiling keeps idle CPU bounded if the
+/// of defence - most cycles end instantly when a registration
+/// fires it - but the ceiling keeps idle CPU bounded if the
 /// waker mechanism is ever broken or bypassed.
 const POLL_TICK_MS: u64 = 1;
 
@@ -148,7 +148,7 @@ fn poller_loop() {
 /// being interrupted mid-syscall by `std::process::exit`. Idempotent.
 pub fn request_shutdown() {
     // The observable flag is a bare process global: setting it must
-    // not depend on (or boot) the runtime — `gos_rt_exit` runs on the
+    // not depend on (or boot) the runtime - `gos_rt_exit` runs on the
     // exit path of every program and booting a worker pool there just
     // to flag it down cost ~150 ms per short-lived process.
     SHUTDOWN_REQUESTED.store(true, Ordering::Release);
@@ -168,7 +168,7 @@ static SHUTDOWN_REQUESTED: std::sync::atomic::AtomicBool =
 
 /// Blocks until every goroutine spawned via `go` has finished, bounded
 /// at five seconds so a permanently blocked goroutine cannot wedge
-/// process exit. No-op — and crucially, does not boot the runtime —
+/// process exit. No-op - and crucially, does not boot the runtime -
 /// when nothing ever started the scheduler: a program with no
 /// concurrency has nothing to drain, and booting a worker pool on the
 /// exit path just to observe it idle cost ~150 ms per process.
@@ -193,7 +193,7 @@ pub fn is_shutdown_requested() -> bool {
 /// up-to-date registrations and timer entries. Called by paths
 /// that just inserted into the poller (registration, timer add)
 /// to avoid waiting up to one poll cycle for the change to take
-/// effect. Cheap and idempotent — safe to call from any thread.
+/// effect. Cheap and idempotent - safe to call from any thread.
 pub fn wake_poller() {
     let _ = globals().poller_interrupt.wake();
 }
@@ -203,7 +203,7 @@ fn deliver_event(ev: Readiness) {
     if let Some(w) = waker {
         w();
     } else {
-        // No waker registered — likely an unparked-then-resubscribed
+        // No waker registered - likely an unparked-then-resubscribed
         // race. Falling back to a direct unpark gives the goroutine
         // a chance to re-arm itself.
         globals().scheduler.unpark(ev.gid);
@@ -327,7 +327,7 @@ pub struct Parker {
 /// returning and the worker loop moving this task into the parked
 /// map, the scheduler's `unpark(gid)` can't find the gid in
 /// `parked` yet. The scheduler handles this with a side
-/// `pre_unpark` set — the worker checks it just after parking
+/// `pre_unpark` set - the worker checks it just after parking
 /// and immediately re-ejects the task if its gid is in `pre_unpark`.
 ///
 /// # Panics
@@ -410,7 +410,7 @@ pub fn sleep_until(deadline: Instant) {
         return;
     }
     if !gossamer_coro::in_goroutine() {
-        // No goroutine to park — fall back to OS-thread sleep.
+        // No goroutine to park - fall back to OS-thread sleep.
         std::thread::sleep(deadline - now);
         return;
     }
@@ -424,7 +424,7 @@ pub fn sleep_until(deadline: Instant) {
         );
         with_poller(|p| p.add_timer(deadline, gid));
     });
-    // Cleanup on resume — the waker entry was consumed by
+    // Cleanup on resume - the waker entry was consumed by
     // `deliver_event`, but if the wait timed out before delivery
     // (poll loop's 50 ms tick), the waker may still be registered.
     if let Some(gid) = current_gid() {
@@ -460,7 +460,7 @@ pub fn spawn(task: Box<dyn FnOnce() + Send + 'static>) -> Gid {
 /// [`crate::sched::Task`] trait. Each `step()` call resumes the
 /// coroutine; if the coroutine completes, returns [`Step::Done`].
 /// If the coroutine called [`gossamer_coro::suspend`], returns
-/// [`Step::Yield`] — the worker loop further consults
+/// [`Step::Yield`] - the worker loop further consults
 /// [`take_pending_park`] to decide whether to re-enqueue the task
 /// or move it to the parked map.
 struct GoroutineTask {

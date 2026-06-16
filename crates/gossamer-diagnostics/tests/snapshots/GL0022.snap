@@ -3,7 +3,7 @@ source: crates/gossamer-diagnostics/tests/snapshots.rs
 expression: rendered
 ---
 --- plain ---
-error[GL0022]: Comparing a value to itself is always `true` (for `==`, `<=`, — here
+error[GL0022]: Comparing a value to itself is always `true` (for `==`, `<=`, - here
 --- framed ---
 error[GL0022]: Comparing a value to itself is always `true` (for `==`, `<=`,
   --> snap.gos:2:5

@@ -94,7 +94,7 @@ impl<'tcx> FnBuilder<'tcx> {
             mut_ref_params: self.mut_ref_params,
         };
         // Release growth-by-doubling slack on every Vec field
-        // unconditionally — any code path that produces a chunk
+        // unconditionally - any code path that produces a chunk
         // via `finish` benefits, with no risk of a future caller
         // forgetting an explicit compact() call.
         chunk.compact();

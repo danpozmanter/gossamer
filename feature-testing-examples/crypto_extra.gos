@@ -13,7 +13,7 @@ use std::crypto
 use std::encoding
 
 fn main() {
-    // Legacy digests — string input, lowercase-hex output.
+    // Legacy digests - string input, lowercase-hex output.
     println!("md5(abc) = {}", crypto::insecure::md5_hex("abc"))
     println!("sha1(abc) = {}", crypto::insecure::sha1_hex("abc"))
 

@@ -58,7 +58,7 @@ pub fn typecheck_source_file(
 /// blowing the C stack inside [`TypeChecker::check_expr`].
 const RECURSION_LIMIT: u32 = 256;
 
-/// Expected type pushed down into an expression while it is checked —
+/// Expected type pushed down into an expression while it is checked -
 /// the "checking mode" of bidirectional typechecking. The expectation
 /// decides structural questions unification cannot settle after the
 /// fact (an array literal lowering as a fixed `[T; N]` versus a heap
@@ -75,7 +75,7 @@ enum Expectation {
     HasType(Ty),
     /// Shape-only hint: literal containers adopt a matching expected
     /// shape but nothing is unified. Used where the expectation source
-    /// is unreliable — name-global method signatures and variant
+    /// is unreliable - name-global method signatures and variant
     /// constructors whose declared payload may belong to another type.
     Coerce(Ty),
 }
@@ -118,7 +118,7 @@ struct TypeChecker<'a> {
     /// so a method's `self` receiver binds to the concrete type
     /// instead of a free inference var. Without this, `self.field`
     /// reads inside a method leave the field type unresolved and a
-    /// `for x in self.items` loop binds `x` at the i64 default —
+    /// `for x in self.items` loop binds `x` at the i64 default -
     /// printing a `[String]` field's element pointers as integers.
     current_self_ty: Option<Ty>,
     /// Running depth of recursive entries into expression / block /
@@ -153,7 +153,7 @@ struct TypeChecker<'a> {
     /// Declared return types of non-generic `impl` methods, keyed by
     /// `(self type name, method name, arity)`. When a method-call
     /// receiver resolves to that Adt, the call types as the declared
-    /// return instead of a fresh inference var — without this,
+    /// return instead of a fresh inference var - without this,
     /// `sel.params()` reaches MIR untyped and the compiled tier
     /// guesses the element layout.
     method_ret_types: HashMap<(String, String, usize), Ty>,
@@ -193,14 +193,14 @@ struct TypeChecker<'a> {
     /// Trait names declared in this source file. Populated upfront
     /// by `collect_signatures` from every `ItemKind::Trait`. Used
     /// by `register_fn_sig` to validate that each `<T: Bound>`
-    /// names a trait that actually exists — typos surface as a
+    /// names a trait that actually exists - typos surface as a
     /// `GT0011 unknown-trait-bound` diagnostic at declaration time
     /// instead of as a runtime "no method" error later.
     declared_trait_names: std::collections::HashSet<String>,
     /// Local `let`-binding pattern nodes whose value flows into a
     /// stdlib `archive::{tar,zip}::write` call. A pre-scan of each
     /// function body fills this so the binding's literal initializer
-    /// is re-typed to the `[(String, [u8])]` parameter — backward
+    /// is re-typed to the `[(String, [u8])]` parameter - backward
     /// inference the single-pass checker can't otherwise reach, which
     /// the compiled tier needs so the nested byte arrays become heap
     /// Vecs instead of fixed inline arrays.
@@ -431,7 +431,7 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
-    /// Resolves a type deeply — after shallow-resolving top-level `Var`
+    /// Resolves a type deeply - after shallow-resolving top-level `Var`
     /// nodes, recurses into `FnPtr` / `FnTrait` sigs so that compound
     /// types like `FnPtr(FnSig { output: Var(1) })` are fully grounded
     /// when the inference var was unified with a concrete type.
@@ -468,7 +468,7 @@ impl<'a> TypeChecker<'a> {
             // `Triple<i64, String, f64>`. Without this, a generic
             // struct's field access (`r.third`) reads the field's
             // `Param(n)` against unresolved-`Var` substs and the field
-            // local defaults to i64/ptr — printing an `f64`'s bit
+            // local defaults to i64/ptr - printing an `f64`'s bit
             // pattern or strlen'ing a non-pointer.
             TyKind::Adt { def, substs } => {
                 let new_args: Vec<crate::GenericArg> = substs
@@ -662,7 +662,7 @@ impl<'a> TypeChecker<'a> {
     }
 
     /// Walks `items` recursively into inline modules and records
-    /// every `ItemKind::Trait` name. Idempotent — re-calling
+    /// every `ItemKind::Trait` name. Idempotent - re-calling
     /// adds to the existing set.
     fn collect_trait_names(&mut self, items: &[Item]) {
         for item in items {
@@ -689,7 +689,7 @@ impl<'a> TypeChecker<'a> {
     }
 
     /// Registers an enum's `DefId -> name` so `render_ty` / `adt_dispatch_name`
-    /// recover "Shape" instead of the "adt#N" placeholder — needed for `==` /
+    /// recover "Shape" instead of the "adt#N" placeholder - needed for `==` /
     /// `{:?}` dispatch on enum values whose type resolves to the Adt.
     fn register_enum(&mut self, item_id: NodeId, decl: &gossamer_ast::EnumDecl, span: Span) {
         if let Some(def) = self.resolutions.definition_of(item_id) {
@@ -770,10 +770,10 @@ impl<'a> TypeChecker<'a> {
     /// Resolves field access to a type, distinguishing failure
     /// modes worth surfacing to the user:
     ///
-    /// - `Err(UnknownField { opaque: true })` — the receiver is an
+    /// - `Err(UnknownField { opaque: true })` - the receiver is an
     ///   `Adt` whose field map isn't registered (typical of opaque
     ///   stdlib types like `json::Value`).
-    /// - `Err(UnknownField { opaque: false })` — the receiver is a
+    /// - `Err(UnknownField { opaque: false })` - the receiver is a
     ///   known struct but the field name doesn't match any of its
     ///   fields.
     ///
@@ -1050,7 +1050,7 @@ impl<'a> TypeChecker<'a> {
             let prev_ret = self.current_fn_ret.replace(ret);
             // The declared return type flows into the body as its
             // expectation, so a literal in return position (block
-            // tail / branch / arm) adopts the declared shape —
+            // tail / branch / arm) adopts the declared shape -
             // `fn f() -> Vec<T> { [..] }` yields a growable Vec,
             // not `[T; N]`.
             let body_ty = self.check_expr_expecting(body, Expectation::HasType(ret));
@@ -1126,7 +1126,7 @@ impl<'a> TypeChecker<'a> {
     }
 
     /// Resolves the expectation to the structural type it imposes,
-    /// peeling one `Ref` — a `&[T]` parameter shapes a bare `[..]`
+    /// peeling one `Ref` - a `&[T]` parameter shapes a bare `[..]`
     /// literal exactly like `[T]` (the borrow is transparent at the
     /// layout level).
     fn expectation_target(&mut self, expected: Expectation) -> Option<Ty> {
@@ -1141,7 +1141,7 @@ impl<'a> TypeChecker<'a> {
 
     #[allow(
         clippy::too_many_lines,
-        reason = "expression dispatch — arms map 1:1 to ExprKind variants; splitting hides the dispatch table"
+        reason = "expression dispatch - arms map 1:1 to ExprKind variants; splitting hides the dispatch table"
     )]
     fn check_expr_kind(&mut self, expr: &Expr, expected: Expectation) -> Ty {
         match &expr.kind {
@@ -1237,7 +1237,7 @@ impl<'a> TypeChecker<'a> {
             ExprKind::Return(value) | ExprKind::Break { value, .. } => {
                 if let Some(value) = value {
                     // `return [..]` carries the declared return shape
-                    // the same way the block-tail path does — without
+                    // the same way the block-tail path does - without
                     // this an explicit `return []` in a `-> [T]` fn
                     // stays a fixed `[T; 0]` and the caller reads a
                     // stack address where a Vec header was expected.
@@ -1288,7 +1288,7 @@ impl<'a> TypeChecker<'a> {
                 // slots. We allocate one fresh inference variable
                 // per generic parameter and substitute those into
                 // each field type before unifying with the
-                // literal's value type — that lets the inferencer
+                // literal's value type - that lets the inferencer
                 // pin `A` and `B` from the field values.
                 let head_node = expr.id;
                 let (struct_ty, substs_table) = if let Some(res) = self.resolutions.get(head_node) {
@@ -1314,7 +1314,7 @@ impl<'a> TypeChecker<'a> {
                 } else {
                     (self.fresh(), Vec::new())
                 };
-                // `http::Response { … }` — no resolver entry (stdlib
+                // `http::Response { … }` - no resolver entry (stdlib
                 // opaque type). Pin the literal to the sentinel
                 // Response Adt and check the known field shapes so a
                 // wrong-typed field reports a clean type mismatch
@@ -1435,8 +1435,8 @@ impl<'a> TypeChecker<'a> {
     /// order) from the callee's known signature, a variant
     /// constructor's declared payload types (`Value::Blob([1, 2, 3])`
     /// shapes its payload as a heap `[u8]`, not a fixed `[i64; 3]`),
-    /// the stdlib archive-write parameter, or — for the bare `Some` /
-    /// `Ok` / `Err` constructors — the call's own expected type.
+    /// the stdlib archive-write parameter, or - for the bare `Some` /
+    /// `Ok` / `Err` constructors - the call's own expected type.
     fn call_arg_expectations(
         &mut self,
         callee: &Expr,
@@ -1648,7 +1648,7 @@ impl<'a> TypeChecker<'a> {
                 return ty;
             }
             // Built-in intrinsics emitted by the parser's macro
-            // expansion (`format!` only — `println!` / `print!` /
+            // expansion (`format!` only - `println!` / `print!` /
             // `eprintln!` / `eprint!` etc. expand to a call to the
             // outer name with the format-built string as the single
             // argument, and pinning `println` to Unit broke
@@ -1669,7 +1669,7 @@ impl<'a> TypeChecker<'a> {
     /// Concrete return type of a stdlib `json` / `errors` / `fs` / `os`
     /// free call whose signature lives outside user source. Returning a
     /// real type (rather than a fresh inference var) lets the checker
-    /// catch mismatches — e.g. matching `fs::file_size(p)`'s bare `i64`
+    /// catch mismatches - e.g. matching `fs::file_size(p)`'s bare `i64`
     /// against a `Result` pattern. The json accessors return `Option<T>`
     /// at runtime (the interp emits `Some`/`None`), so they are typed as
     /// such; `json::get(v, k).unwrap()` and the autoderive `Some`/`None`
@@ -1768,7 +1768,7 @@ impl<'a> TypeChecker<'a> {
     /// variant constructors. The resolver doesn't hand `Some` / `Ok` /
     /// `Err` / `None` a `DefId`, so the call expression typechecks as
     /// a fresh `Var` and the binding `let first = Some(10)` collapses
-    /// to `Int(I64)` — losing the Adt wrapper. Match dispatch later
+    /// to `Int(I64)` - losing the Adt wrapper. Match dispatch later
     /// treats the 8-byte `*mut GosResult` pointer as a raw i64 and
     /// reads garbage from the slot. Recognise the four standard
     /// variants here and synthesise the right Adt: `Some(t)` →
@@ -1815,7 +1815,7 @@ impl<'a> TypeChecker<'a> {
     }
 
     /// Re-records literal nodes to a type discovered by *joining*
-    /// sibling branches — `if c { [1, 2] } else { [3] }` joins to
+    /// sibling branches - `if c { [1, 2] } else { [3] }` joins to
     /// `Vec<i64>` only after both arms are checked, so the arm
     /// literals (and the wrapper nodes codegen sizes result slots
     /// from) are re-shaped afterwards. This is the synthesis-side
@@ -1829,7 +1829,7 @@ impl<'a> TypeChecker<'a> {
         };
         match &expr.kind {
             // `&[..]` / `&mut [..]`: the borrow is transparent at the
-            // layout level — re-type the borrowed literal itself
+            // layout level - re-type the borrowed literal itself
             // (expected already had its `Ref` stripped above).
             ExprKind::Unary {
                 op: UnaryOp::RefShared | UnaryOp::RefMut,
@@ -1863,7 +1863,7 @@ impl<'a> TypeChecker<'a> {
             // a literal in a block tail / branch / arm is re-recorded too:
             // `fn f() -> Vec<T> { [..] }`,
             // `let v: Vec<T> = if c { [..] } else { [..] }`. The wrapping
-            // node is re-recorded as well — codegen sizes the block/if/
+            // node is re-recorded as well - codegen sizes the block/if/
             // match result slot from its node type, so leaving it `[T; N]`
             // while the branches build a heap Vec would desync the slot.
             ExprKind::Block(block) | ExprKind::Unsafe(block) => {
@@ -1926,10 +1926,10 @@ impl<'a> TypeChecker<'a> {
         for (i, arg) in args.iter().enumerate() {
             // Shape literal arguments by the method's declared
             // parameter so `c.execute(&[V::I(1)])` builds a heap Vec,
-            // matching the free-fn call path. Coerce only — no
+            // matching the free-fn call path. Coerce only - no
             // unification: dispatch is name-global, so the coercion
             // target must be unambiguous across every same-named
-            // method (non-container candidates are irrelevant — a
+            // method (non-container candidates are irrelevant - a
             // container literal cannot be meant for them).
             let exp = match self.unique_container_expectation(&candidates, i) {
                 Some(want) => Expectation::Coerce(want),
@@ -2237,7 +2237,7 @@ impl<'a> TypeChecker<'a> {
                     // The Ok payload and the handler's return mix at
                     // runtime (`Ok(v)` yields `v`, `Err(e)` yields
                     // `f(e)`), and the dominant shape is a discarded
-                    // call with a unit handler — pin only the param
+                    // call with a unit handler - pin only the param
                     // and leave the result free.
                     "default_with" => {
                         let _ = self.callable_output(lead_tys[0], &[err], span);
@@ -2554,7 +2554,7 @@ impl<'a> TypeChecker<'a> {
                 // back values rather than references). Without
                 // either pinning, downstream `println!("{}", *x)`
                 // dispatches via `TyKind::Var → StrPtr` and tries
-                // to dereference the value as a pointer — segv.
+                // to dereference the value as a pointer - segv.
                 let resolved = self.infer.resolve(self.tcx, operand_ty);
                 match self.tcx.kind(resolved) {
                     Some(TyKind::Ref { inner, .. }) => *inner,
@@ -2722,7 +2722,7 @@ impl<'a> TypeChecker<'a> {
     /// Validates an `as` cast against the whitelist of permitted
     /// conversions: numeric ↔ numeric, `bool`/`char` → integer,
     /// `u8` → `char`, and same-type no-ops. Matches Rust's RFC 401.
-    /// Fails soft when either side is still an inference variable —
+    /// Fails soft when either side is still an inference variable -
     /// the unification pass will resolve it, and a later run can
     /// recheck; inventing an error on a not-yet-known type would
     /// cascade into noise.
@@ -2779,7 +2779,7 @@ impl<'a> TypeChecker<'a> {
     }
 
     /// Joins two branch result types (if/else, match arms). Two array
-    /// literals of differing length — or an array and a Vec/slice — join
+    /// literals of differing length - or an array and a Vec/slice - join
     /// to a growable `Vec<T>`, the only type that holds both, so
     /// `if c { ["a", "b"] } else { ["c"] }` is a `Vec<String>` rather than
     /// a length mismatch. Equal-length arrays and every other type unify
@@ -2942,7 +2942,7 @@ impl<'a> TypeChecker<'a> {
         // integer type. When the iterator is itself a method call
         // (`xs.iter()`, `xs.into_iter()`) whose return type is an
         // unresolved inference variable, fall back to looking at
-        // the method's receiver — `.iter()` and friends always
+        // the method's receiver - `.iter()` and friends always
         // produce the receiver's element type, regardless of which
         // wrapper they technically return.
         let derived = {
@@ -3085,8 +3085,8 @@ impl<'a> TypeChecker<'a> {
     fn check_array(&mut self, arr: &ArrayExpr, expected: Expectation) -> Ty {
         // An expected growable `[T]` / `Vec<T>` (possibly behind one
         // `&`) shapes the literal: it adopts the expected container
-        // type directly — fixed `[T; N]` versus heap Vec is a layout
-        // decision unification cannot rewrite later — and its
+        // type directly - fixed `[T; N]` versus heap Vec is a layout
+        // decision unification cannot rewrite later - and its
         // elements are checked against `T` at the same strength.
         let growable: Option<(Ty, Ty)> = match self.expectation_target(expected) {
             Some(target) => match self.tcx.kind(target) {
@@ -3112,8 +3112,8 @@ impl<'a> TypeChecker<'a> {
                     self.fresh()
                 };
                 // Join element types rather than a plain unify so a nested
-                // literal whose inner arrays differ in length —
-                // `[["a", "b"], ["c"]]` — settles on `Vec<String>` instead
+                // literal whose inner arrays differ in length -
+                // `[["a", "b"], ["c"]]` - settles on `Vec<String>` instead
                 // of failing `[String; 2]` vs `[String; 1]`.
                 for elem in elems.iter().skip(1) {
                     let ty = self.check_expr(elem);
@@ -3307,13 +3307,13 @@ impl<'a> TypeChecker<'a> {
                 return self.tcx.float_ty(*float_ty);
             }
         }
-        // Unsuffixed integer literal — Go-style untyped constant.
+        // Unsuffixed integer literal - Go-style untyped constant.
         // The fresh var is integer-constrained so it can only
         // unify with concrete integer types; if no use-site
         // constraints arise it defaults to `i64` at the end of
         // typechecking. Validate magnitude against the widest
         // integer bucket the language exposes (`u128`/`i128`),
-        // not against `i64` alone — `let x: u64 = u64::MAX` is
+        // not against `i64` alone - `let x: u64 = u64::MAX` is
         // a legitimate program; the use-site unification will
         // either succeed (assign to u64) or fail with a normal
         // type-mismatch diagnostic. Only literals whose
@@ -3560,7 +3560,7 @@ impl<'a> TypeChecker<'a> {
                 return self.tcx.intern(TyKind::Adt { def, substs });
             }
             // `Box<T>` / `Arc<T>` / `Rc<T>` are transparent in a fully
-            // GC'd language — every value is heap-shared already, so
+            // GC'd language - every value is heap-shared already, so
             // these wrappers carry no runtime distinction. Keep the
             // surface accepting the spelling (Rust users expect to be
             // able to write `Box<List>` for a recursive enum payload)
@@ -3573,7 +3573,7 @@ impl<'a> TypeChecker<'a> {
                 }
                 return self.fresh();
             }
-            // `Weak<T>` — a non-owning reference into an RC allocation.
+            // `Weak<T>` - a non-owning reference into an RC allocation.
             // Unlike `Box`/`Arc`/`Rc` it is NOT transparent: it carries
             // its own sentinel ADT so the drop pass releases it via the
             // weak helpers and `upgrade()` can produce an `Option<T>`.
@@ -3592,7 +3592,7 @@ impl<'a> TypeChecker<'a> {
         // with no resolver `DefId`. An explicit annotation (`d:
         // time::Duration`) must resolve to the dedicated `TyKind` so the
         // method form (`d.as_millis()`) dispatches on the receiver's
-        // static type the same way the inference form does — otherwise
+        // static type the same way the inference form does - otherwise
         // it falls to name-global dispatch and fails to lower on the
         // compiled tiers. Match the full module path (not a bare tail)
         // so a user type or `flag::Cell::Duration` named `Duration` is
@@ -3622,13 +3622,13 @@ impl<'a> TypeChecker<'a> {
             "Output" => Some(3),
             "ResponseStream" => Some(4),
             "Response" => Some(5),
-            // `context::Context` — an opaque i64 handle with no
+            // `context::Context` - an opaque i64 handle with no
             // dedicated `TyKind`. Resolving the annotation to a named
             // sentinel Adt (rather than a fresh inference var) lets
             // method dispatch recover the receiver kind from its *type*
             // when a context flows in as a parameter (the canonical
             // request-propagation shape) and the construction tag is
-            // gone — the `is_cancelled` / `cancel` / `done` / `done_chan`
+            // gone - the `is_cancelled` / `cancel` / `done` / `done_chan`
             // calls then route to the `gos_rt_ctx_*` shims. Offset 11:
             // 9 and 10 are taken by `validate::Errors` / `FieldError`.
             "Context" => Some(11),
@@ -3649,7 +3649,7 @@ impl<'a> TypeChecker<'a> {
         // a named sentinel Adt (instead of a fresh inference var) lets
         // method dispatch recover the handle kind from its *type* when an
         // `Errors` / `FieldError` flows across a function boundary and the
-        // construction-site tag is gone — the same recovery `HashSet`
+        // construction-site tag is gone - the same recovery `HashSet`
         // and `BTreeMap` rely on.
         let validate_handle: Option<(u32, &str)> = match tail {
             "Errors" => Some((9, "Errors")),
@@ -3732,7 +3732,7 @@ impl<'a> TypeChecker<'a> {
     /// The built-in `Result` / `Option` constructor named by an
     /// unqualified pattern path (`Ok` / `Err` / `Some` / `None`), or
     /// `None` for a qualified path or any other name. Qualified
-    /// variants (`MyEnum::Ok`) keep their user typing — only the bare
+    /// variants (`MyEnum::Ok`) keep their user typing - only the bare
     /// spelling is the reserved built-in.
     fn bare_result_option_ctor(path: &gossamer_ast::Path) -> Option<&'static str> {
         if path.segments.len() != 1 {
@@ -4276,7 +4276,7 @@ fn cast_allowed(from: &TyKind, to: &TyKind) -> bool {
 /// built-in (used for the `<T: Bound>` validation in
 /// `register_fn_sig`). The list mirrors stdlib traits that
 /// have no source-level declaration in the current file but
-/// are part of the surface — keeps a `fn f<T: Iterator>(...)`
+/// are part of the surface - keeps a `fn f<T: Iterator>(...)`
 /// declaration in a file that itself does not declare
 /// `trait Iterator` from raising a false unknown-trait
 /// diagnostic.

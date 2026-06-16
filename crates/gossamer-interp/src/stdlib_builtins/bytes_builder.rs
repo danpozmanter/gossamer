@@ -5,7 +5,7 @@
     clippy::unnecessary_wraps,
     clippy::type_complexity
 )]
-//! `std::bytes` builtins for the bytecode VM — the `Builder` (string
+//! `std::bytes` builtins for the bytecode VM - the `Builder` (string
 //! assembly) and `Buffer` (byte accumulation) handle types plus the
 //! stateless `index_of` / `split` / `replace` helpers.
 //!
@@ -228,7 +228,7 @@ pub(crate) fn builtin_buffer_push(args: &[Value]) -> RuntimeResult<Value> {
         }
     });
     // `push` is in the VM's mutating-method writeback list, so return the
-    // receiver handle (not Unit) to keep the writeback-move idempotent —
+    // receiver handle (not Unit) to keep the writeback-move idempotent -
     // returning Unit would clobber the handle local. Mirrors `HashSet`.
     Ok(args.first().cloned().unwrap_or(Value::Unit))
 }

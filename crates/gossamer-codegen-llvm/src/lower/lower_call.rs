@@ -267,7 +267,7 @@ impl<'a> Lowerer<'a> {
                 // Resolve through the per-module `DefId.local` →
                 // name map populated by the emitter. Unknown
                 // `def.local` means the referenced function isn't
-                // in this MIR module — typically a stdlib helper
+                // in this MIR module - typically a stdlib helper
                 // the frontend was expected to monomorphise but
                 // didn't. 0.8.0: this is a hard error (no
                 // Cranelift fallback) so the missing
@@ -278,9 +278,9 @@ impl<'a> Lowerer<'a> {
             Operand::Copy(place) => {
                 // `Copy(local)` callee: indirect call through a
                 // function pointer. Two shapes:
-                //   1. `FnDef`/`FnPtr` typed local — the value
+                //   1. `FnDef`/`FnPtr` typed local - the value
                 //      *is* the callable address.
-                //   2. Closure env pointer — first heap word is
+                //   2. Closure env pointer - first heap word is
                 //      the function pointer; env doubles as the
                 //      implicit first argument.
                 // Mirror Cranelift's `call_indirect` handling.
@@ -302,7 +302,7 @@ impl<'a> Lowerer<'a> {
             return Err(BuildError::Unsupported(Box::leak(
                 format!(
                     "indirect / closure call not lowered: callee shape {kind_label} \
-                    has no resolvable name in fn_name_by_def — frontend monomorphisation \
+                    has no resolvable name in fn_name_by_def - frontend monomorphisation \
                     bug or missing stdlib registration"
                 )
                 .into_boxed_str(),
@@ -319,7 +319,7 @@ impl<'a> Lowerer<'a> {
             self.lower_concat_call(args, destination, target)?;
             return Ok(());
         }
-        // `__fmt_prec(value, prec)` — emitted by macro expansion for
+        // `__fmt_prec(value, prec)` - emitted by macro expansion for
         // `{:.N}` specs. Routes through `gos_rt_f64_prec_to_str` so
         // the result is a heap String that the surrounding `__concat`
         // pipeline consumes like any other string operand.
@@ -331,7 +331,7 @@ impl<'a> Lowerer<'a> {
         // the runtime's `gos_rt_print_str` for each arg, plus a
         // trailing `gos_rt_println()` for the `*ln` variants.
         // This mirrors what the Cranelift backend does in
-        // `lower_intrinsic_call` — the runtime's println is
+        // `lower_intrinsic_call` - the runtime's println is
         // arity-0, so an inline `gos_rt_print_str(arg)` then
         // `gos_rt_println()` reproduces the user-level
         // `println(s)` semantics.
@@ -350,7 +350,7 @@ impl<'a> Lowerer<'a> {
             // message via `gos_rt_str_concat` over the
             // per-arg `to_str` helpers, then calls
             // `gos_rt_panic` (noreturn). Empty arg list panics
-            // with an empty message — `gos_rt_panic` then
+            // with an empty message - `gos_rt_panic` then
             // emits its default "panic" string.
             declare_rt(&mut self.runtime_refs, "gos_rt_panic");
             let msg = self.emit_args_to_concat_string(args, " ")?;
@@ -423,7 +423,7 @@ impl<'a> Lowerer<'a> {
         // `.len()` on a Vec/Slice that routed through the generic
         // `gos_rt_len` dispatcher: same null-guarded header load, but
         // only when the static element type pins the receiver as a
-        // real word-stride GosVec — never `Vec<String>`, whose
+        // real word-stride GosVec - never `Vec<String>`, whose
         // `env::args()` sentinel pointer keeps its length in
         // `ARGS_LEN` rather than at `*p`.
         if name == "gos_rt_len" && args.len() == 1 && self.vec_operand_has_word_elem(&args[0]) {
@@ -492,7 +492,7 @@ impl<'a> Lowerer<'a> {
             self.lower_raw_intrinsic(&name, args, destination, target)?;
             return Ok(());
         }
-        // `v.push(x)` on a Vec — the runtime helper takes
+        // `v.push(x)` on a Vec - the runtime helper takes
         // `(*mut GosVec, *const u8)` and `memcpy`s the value
         // through the second pointer. The MIR routes every
         // element type to the same generic `gos_rt_vec_push`
@@ -510,7 +510,7 @@ impl<'a> Lowerer<'a> {
         // out-of-range → 0 / no-op / null, matching the runtime). Removes a
         // per-element FFI call from hot index loops (BFS, scans) and lets
         // LLVM hoist the loop-invariant len/ptr loads.
-        // Only inline when the element is a primitive int/bool — exactly the
+        // Only inline when the element is a primitive int/bool - exactly the
         // hot index-loop case (queue/visited/scans). A heap-pointer Adt
         // element (e.g. `Vec<DirInfo>`, where `&entries[i]` has
         // reference-through-handle semantics the generic call-result path
@@ -538,7 +538,7 @@ impl<'a> Lowerer<'a> {
             self.lower_vec_set_i64_inline(args, destination, target)?;
             return Ok(());
         }
-        // NOTE: gos_rt_vec_get_ptr is intentionally NOT inlined — its result
+        // NOTE: gos_rt_vec_get_ptr is intentionally NOT inlined - its result
         // handling is dest-type-dependent (a multi-slot aggregate dest
         // memcpys from the returned address rather than storing it), which
         // the generic call-result path handles correctly.
@@ -556,7 +556,7 @@ impl<'a> Lowerer<'a> {
             self.emit_variant_stub(&name, args, destination, target)?;
             return Ok(());
         }
-        // `channel()` / `sync::channel()` — the std prelude shape
+        // `channel()` / `sync::channel()` - the std prelude shape
         // for unbuffered channels. MIR emits a 0-arg `Call("channel",
         // dest=tuple_local)`; we lower to `gos_rt_chan_new(8, 0)` and
         // mirror the cranelift backend's "write chan_ptr to both
@@ -617,7 +617,7 @@ impl<'a> Lowerer<'a> {
             emit_terminator_branch(&mut self.out, target);
             return Ok(());
         }
-        // `Vec::new(elem_bytes)` — the runtime helper signature is
+        // `Vec::new(elem_bytes)` - the runtime helper signature is
         // `gos_rt_vec_new(elem_bytes: u32)`. MIR passes the element
         // width as `i64`, so we truncate to `i32` before the call.
         if matches!(name.as_str(), "Vec::new" | "gos_rt_vec_new") {
@@ -737,7 +737,7 @@ impl<'a> Lowerer<'a> {
     /// passed as the `ptr` argument of `gos_load`/`gos_store`.
     /// Differs from the generic `lower_operand` because
     /// aggregate-typed locals (Adt / Tuple / Array) are stored
-    /// as a heap pointer in their slot — `lower_place_read`
+    /// as a heap pointer in their slot - `lower_place_read`
     /// returns the slot's *address* for those, but the raw
     /// heap intrinsics need the *contents* (the heap pointer
     /// the slot stores). Without this distinction the
@@ -817,7 +817,7 @@ impl<'a> Lowerer<'a> {
                 // Case 2b: the callee declares a one-slot aggregate
                 // param (a tagged-pointer / bare-discriminant enum),
                 // but this call site's arg local is a one-word scalar
-                // — either inference left it untyped (method-call arg
+                // - either inference left it untyped (method-call arg
                 // temporaries) or a unit-only enum lowered its value
                 // to a bare `i64` discriminant. The callee memcpys 8
                 // bytes from the arg address, so pass the slot address;
@@ -837,7 +837,7 @@ impl<'a> Lowerer<'a> {
 
     /// Reads the value being stored by a raw heap intrinsic
     /// (`gos_store`'s third arg). Aggregate-typed locals hold
-    /// the heap pointer in their slot — when one flows in as
+    /// the heap pointer in their slot - when one flows in as
     /// the value, return the *contents* (load ptr from slot)
     /// instead of the slot address. Returns `(value, llvm_ty)`.
     pub(crate) fn lower_raw_value_arg(
@@ -1072,7 +1072,7 @@ impl<'a> Lowerer<'a> {
                 writeln!(self.out, "  store {dest_ty} {coerced}, ptr {slot}").unwrap();
             }
             "gos_store" => {
-                // gos_store(ptr, offset, value) — writes 8 bytes.
+                // gos_store(ptr, offset, value) - writes 8 bytes.
                 if args.len() < 3 {
                     return Err(BuildError::Unsupported("gos_store arity"));
                 }
@@ -1098,7 +1098,7 @@ impl<'a> Lowerer<'a> {
                 // slot must keep its IEEE-754 bit pattern intact
                 // (so the matching `gos_load` can read it back
                 // via `bitcast i64 to double`). `coerce_llvm_value`
-                // uses `fptosi` for value-semantic conversions —
+                // uses `fptosi` for value-semantic conversions -
                 // wrong here: `fptosi(0.5)` is `0`, losing the
                 // capture. Emit `bitcast` explicitly for the
                 // float-to-i64 store path.
@@ -1212,7 +1212,7 @@ impl<'a> Lowerer<'a> {
                 // because the cranelift companion (or another LLVM
                 // body) provides the definition. When `fname` is a
                 // runtime symbol (`gos_rt_*`), ensure the matching
-                // `declare` lands in the module — otherwise opt
+                // `declare` lands in the module - otherwise opt
                 // rejects `bitcast ptr @gos_rt_<name>` with "use of
                 // undefined value".
                 if fname.starts_with("gos_rt_") && gossamer_abi::lookup(fname).is_some() {
@@ -1253,7 +1253,7 @@ impl<'a> Lowerer<'a> {
     }
 }
 
-/// True for LLVM integer/bool scalar types — the safe element kinds for the
+/// True for LLVM integer/bool scalar types - the safe element kinds for the
 /// inline Vec get/set fast path (the loaded i64 maps cleanly to these).
 fn is_primitive_int_llvm(ty: &str) -> bool {
     matches!(ty, "i64" | "i32" | "i16" | "i8" | "i1")

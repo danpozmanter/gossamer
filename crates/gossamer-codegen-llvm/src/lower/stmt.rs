@@ -82,7 +82,7 @@ impl<'a> Lowerer<'a> {
         writeln!(self.out, "bb{}:", block.id.as_u32()).unwrap();
         // No loop-back-edge safepoint. A runtime call on every
         // iteration is opaque to `opt -O3` and blocks vectorisation
-        // of tight numeric loops — the difference between sub-1-second
+        // of tight numeric loops - the difference between sub-1-second
         // and 50-second runs on spectral-norm and n-body. Allocation-
         // driven safepoint dispatch (`gos_rt_aggr_alloc` updates the
         // byte-pressure counter; the next function-prologue safepoint
@@ -207,7 +207,7 @@ impl<'a> Lowerer<'a> {
             // Guarded copy-blob walks from the aggregate drop pass:
             // arg0 is passed by SLOT ADDRESS (the walk reads the
             // aggregate's flat words in place) and arg1 names the
-            // module-global meta blob — the generic runtime-call path
+            // module-global meta blob - the generic runtime-call path
             // would lower both wrongly (value load; string constant).
             if let Rvalue::CallIntrinsic { name, args } = rvalue
                 && matches!(
@@ -241,7 +241,7 @@ impl<'a> Lowerer<'a> {
             return Ok(());
         }
         // Aggregate constructions (`Aggregate`, `Repeat`) are
-        // routed straight at the destination slot — they
+        // routed straight at the destination slot - they
         // populate the stack aggregate in-place rather than
         // producing a scalar value to store.
         match rvalue {
@@ -281,7 +281,7 @@ impl<'a> Lowerer<'a> {
         // Whole-aggregate copy: when the destination is an
         // aggregate local and the rvalue is a plain `Use(Copy)`
         // of another aggregate value (a bare local OR a
-        // projected aggregate field — `let p = pts[i]`), memcpy
+        // projected aggregate field - `let p = pts[i]`), memcpy
         // the flat storage rather than trying to load/store it
         // as a single scalar.
         if place.projection.is_empty() && is_aggregate(self.tcx, dest_ty_mir) {
@@ -387,7 +387,7 @@ impl<'a> Lowerer<'a> {
         match term {
             Terminator::Return => {
                 // Emit cleanup calls for owning heap-typed locals before
-                // the actual `ret`. Mirrors the Cranelift Return path —
+                // the actual `ret`. Mirrors the Cranelift Return path -
                 // see `gossamer_mir::plan_cleanup` for the analysis.
                 let cleanup =
                     gossamer_mir::plan_cleanup_with_summary(self.body, &self.capture_summary);
@@ -428,7 +428,7 @@ impl<'a> Lowerer<'a> {
                         // inline-aggregate path above would gc_alloc a
                         // copy of the slot and return a pointer *to* the
                         // handle (double indirection), so the caller
-                        // decoded a wild discriminant — e.g. an enum
+                        // decoded a wild discriminant - e.g. an enum
                         // produced by `fn f() -> E` then pushed into a
                         // Vec read back as garbage.
                         let tmp = self.fresh();

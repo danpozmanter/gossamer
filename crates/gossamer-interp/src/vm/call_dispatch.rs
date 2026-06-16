@@ -38,7 +38,7 @@ impl Vm {
 
     /// Deliver a panic message to the registered hook, if any. The
     /// stored hook may be a function value or (bytecode tier) the bare
-    /// function NAME — resolve through globals in that case. Returns
+    /// function NAME - resolve through globals in that case. Returns
     /// false when no hook is set or the call failed (caller prints the
     /// default report).
     pub fn invoke_panic_hook(&self, msg: &str) -> bool {
@@ -83,7 +83,7 @@ impl Vm {
                     self.call_stack.borrow_mut().push(chunk.name);
                 }
                 let state = self.chunk_state_for(&chunk);
-                // Tier D2 — decrement the per-`Vm` hot counter and
+                // Tier D2 - decrement the per-`Vm` hot counter and
                 // trigger a deferred JIT compile when the budget is
                 // spent. The counter is per-thread (in `ChunkState`),
                 // so each goroutine independently warms up.
@@ -91,7 +91,7 @@ impl Vm {
                 // JIT compiler skips it); its hot counter is irrelevant.
                 // We rely purely on per-function counters so short-lived
                 // scripts that never call any function 16+ times skip the
-                // Cranelift compile pass entirely — a ~3 MB RSS saving for
+                // Cranelift compile pass entirely - a ~3 MB RSS saving for
                 // programs that don't benefit from JIT.
                 if chunk.name != "main" {
                     let hot = state.hot_counter.get();
@@ -103,7 +103,7 @@ impl Vm {
                         }
                     }
                 }
-                // Tier D1 — if the deferred compile produced a
+                // Tier D1 - if the deferred compile produced a
                 // native entry for this chunk, route through the
                 // trampoline first. The override map is shared
                 // across goroutines via `Arc<RwLock<JitState>>`, so
@@ -119,7 +119,7 @@ impl Vm {
                     None
                 } else {
                     // Resolve once per ChunkState, then read a plain
-                    // field — no lock, no string hash. Sound because
+                    // field - no lock, no string hash. Sound because
                     // JIT install is one-shot and the map only shrinks.
                     let mut slot = state.jit_resolve.borrow_mut();
                     if matches!(&*slot, crate::vm::JitResolve::Unresolved) {
@@ -175,7 +175,7 @@ impl Vm {
                 result
             }
             Global::Value(value) => match value {
-                // Builtins / natives take aggregates by value —
+                // Builtins / natives take aggregates by value -
                 // unwrap any `&mut` write-back cell so they see the
                 // plain aggregate (the unchanged value flows back to
                 // the caller through the cell afterwards).
@@ -197,7 +197,7 @@ impl Vm {
                     "global is not callable at this call site".to_string(),
                 )),
             },
-            // A `static mut` holding a callable value — load the current
+            // A `static mut` holding a callable value - load the current
             // value and dispatch it as a plain value.
             Global::MutStatic(cell) => {
                 let value = cell.lock().clone();
@@ -210,7 +210,7 @@ impl Vm {
     /// running it against the worker thread's reused `Vm`. The pool
     /// keeps `num_cpus()` worker threads, each owning a thread-local
     /// `Vm` lazily built on first task and reused across every
-    /// goroutine that lands on it — chunk caches stay warm, the frame
+    /// goroutine that lands on it - chunk caches stay warm, the frame
     /// pool stays populated, and there is no per-spawn `HashMap::clone`
     /// of globals. After `task` returns, the worker `Vm` is trimmed
     /// back toward steady state so bursty workloads do not leave every
@@ -272,7 +272,7 @@ impl Vm {
     /// Spawns `callee(args)` through the bytecode VM and returns a
     /// one-shot channel handle that `.join()` blocks on for the
     /// outcome. Backs `spawn(f)`: the outcome rides the channel as the
-    /// final `Result<T, String>` variant — `Ok(value)`, or
+    /// final `Result<T, String>` variant - `Ok(value)`, or
     /// `Err(message)` carrying the bare panic text, matching the
     /// compiled tier's `gos_rt_join`.
     pub(crate) fn spawn_join_native(

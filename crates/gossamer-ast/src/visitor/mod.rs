@@ -91,7 +91,7 @@ pub trait Visitor {
     }
 }
 
-/// Mutable AST visitor — identical surface to [`Visitor`] with `&mut` nodes.
+/// Mutable AST visitor - identical surface to [`Visitor`] with `&mut` nodes.
 pub trait VisitorMut {
     /// Visits a source file.
     fn visit_source_file(&mut self, source_file: &mut SourceFile) {

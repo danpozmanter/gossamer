@@ -9,7 +9,7 @@
 //!
 //! The escape mode is inferred from where the substitution lands in
 //! the source text: text body, attribute body, URL attribute, or JS
-//! body. The classifier is heuristic — sufficient for typical web-form
+//! body. The classifier is heuristic - sufficient for typical web-form
 //! responses but not a substitute for a content-security policy.
 
 #![forbid(unsafe_code)]
@@ -52,7 +52,7 @@ pub fn parse(source: &str) -> Result<Template, Error> {
 /// Renders `source` against a JSON-encoded data context, escaping
 /// every dynamic substitution by context. The JSON document is
 /// projected onto the template [`Value`] tree so the call marshals
-/// across every tier with two plain string arguments — the shape the
+/// across every tier with two plain string arguments - the shape the
 /// Gossamer `html::template::render(source, data)` surface lowers to.
 ///
 /// The context classifier is heuristic (text / attribute / URL / JS):
@@ -210,7 +210,7 @@ fn escape_html_text(s: &str) -> String {
 
 /// Escapes a value substituted into an unquoted attribute (`<a
 /// href=VALUE>`). Beyond the HTML specials, the bytes that *terminate*
-/// an unquoted value — whitespace, `` ` ``, `=` — are numeric-escaped
+/// an unquoted value - whitespace, `` ` ``, `=` - are numeric-escaped
 /// so the value cannot end early and inject a new attribute (e.g.
 /// `onmouseover=...`).
 fn escape_attr_unquoted(s: &str) -> String {
@@ -239,7 +239,7 @@ fn escape_attr_unquoted(s: &str) -> String {
 const SAFE_URL_SCHEMES: [&str; 5] = ["http", "https", "mailto", "tel", "ftp"];
 
 /// Extracts the URL scheme (the run before the first `:`) when the
-/// value actually has one — i.e. the `:` precedes any `/`, `?`, or `#`
+/// value actually has one - i.e. the `:` precedes any `/`, `?`, or `#`
 /// and the scheme is a valid `ALPHA *( ALPHA / DIGIT / "+" / "-" /
 /// "." )`. Returns `None` for relative URLs and fragments.
 fn url_scheme(s: &str) -> Option<&str> {
@@ -260,7 +260,7 @@ fn url_scheme(s: &str) -> Option<&str> {
 
 /// True when `s` carries a scheme outside [`SAFE_URL_SCHEMES`]. Tabs and
 /// newlines are stripped and leading controls/spaces skipped first,
-/// because browsers do the same before parsing the scheme — otherwise
+/// because browsers do the same before parsing the scheme - otherwise
 /// `java\tscript:` would slip through.
 fn has_unsafe_scheme(s: &str) -> bool {
     let normalized: String = s
@@ -571,7 +571,7 @@ mod tests {
         let data = map(&[("x", Value::String("y onmouseover=alert(1)".into()))]);
         let out = render("<a href={{ .x }}>x</a>", &data).unwrap();
         // href is a URL attribute, so the space is percent-encoded and
-        // the payload stays inside the single href value — no raw space
+        // the payload stays inside the single href value - no raw space
         // means no new attribute.
         assert!(!out.contains(" onmouseover"), "raw space breaks out: {out}");
         assert!(out.contains("y%20onmouseover"), "got {out}");
@@ -609,7 +609,7 @@ mod tests {
         // verbatim; copying it byte-by-byte as `char` corrupted any
         // multi-byte sequence.
         let data = map(&[("n", Value::String("x".into()))]);
-        let out = render("café — 日本語 🦀 {{ .n }}", &data).unwrap();
-        assert_eq!(out, "café — 日本語 🦀 x");
+        let out = render("café - 日本語 🦀 {{ .n }}", &data).unwrap();
+        assert_eq!(out, "café - 日本語 🦀 x");
     }
 }

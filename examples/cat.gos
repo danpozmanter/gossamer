@@ -1,5 +1,5 @@
 /*
- * cat — concatenate files to stdout.
+ * cat - concatenate files to stdout.
  *
  * Demonstrates grouped `use`, `Result` + `|>` pipeline style,
  * `result::map` for the ok-path, `result::default_with` to

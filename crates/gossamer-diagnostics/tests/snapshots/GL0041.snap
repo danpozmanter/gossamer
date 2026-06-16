@@ -3,7 +3,7 @@ source: crates/gossamer-diagnostics/tests/snapshots.rs
 expression: rendered
 ---
 --- plain ---
-error[GL0041]: `|x| f(x)` is a closure that just forwards to `f`. Pass `f` — here
+error[GL0041]: `|x| f(x)` is a closure that just forwards to `f`. Pass `f` - here
 --- framed ---
 error[GL0041]: `|x| f(x)` is a closure that just forwards to `f`. Pass `f`
   --> snap.gos:2:5

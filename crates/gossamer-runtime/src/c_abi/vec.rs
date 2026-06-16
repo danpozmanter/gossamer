@@ -21,7 +21,7 @@
 use super::*;
 
 // ---------------------------------------------------------------
-// Vec runtime — a `{ elem_bytes, len, cap, ptr }` struct
+// Vec runtime - a `{ elem_bytes, len, cap, ptr }` struct
 // ---------------------------------------------------------------
 
 /// Element kind tag carried in the `GosVec` header so
@@ -33,7 +33,7 @@ use super::*;
 /// Encoding is deliberately small (one byte) so the field fits in
 /// the existing 4-byte padding between `elem_bytes` (u32) and
 /// `ptr` (8-byte aligned pointer). Adding it does not change the
-/// struct size, the offset of `ptr`, or the offset of `len` — all
+/// struct size, the offset of `ptr`, or the offset of `len` - all
 /// of which the codegen reads at fixed offsets.
 pub mod vec_elem_kind {
     /// Element payload is a primitive value owning no other heap
@@ -65,11 +65,11 @@ pub mod vec_elem_kind {
     /// each live child even when the vec was never iterated (the
     /// early-`break` path), and `gos_rt_vec_push` retains the copied
     /// slot's children. Set via [`super::vec::vec_set_slot_children`] by
-    /// runtime materializer shims — never by codegen.
+    /// runtime materializer shims - never by codegen.
     pub const AGGR_OWNED: u8 = 6;
     /// Slot-child kind (NOT a vec-level `elem_kind`): the slot word holds
-    /// a reference-counted heap node — a user enum or struct pointer
-    /// (possibly tag-bit-encoded) — retained via `gos_rt_rc_retain` and
+    /// a reference-counted heap node - a user enum or struct pointer
+    /// (possibly tag-bit-encoded) - retained via `gos_rt_rc_retain` and
     /// released via `gos_rt_rc_release`, both of which mask the low tag
     /// bits and walk the node's own child meta. Used inside `AGGR_OWNED`
     /// slot-children layouts for an aggregate element's enum/struct
@@ -121,7 +121,7 @@ unsafe fn alloc_vec_header(mut v: GosVec) -> *mut GosVec {
 
 /// Per-vec guarded element meta, keyed by the stable `GosVec` header
 /// pointer. Only vecs tagged `vec_elem_kind::AGGR_GUARDED` have entries,
-/// so ordinary vecs never consult the table — the tag byte (already in
+/// so ordinary vecs never consult the table - the tag byte (already in
 /// the header) gates every lookup. Entries are removed when the vec is
 /// reclaimed, so a reused header address cannot inherit a stale meta.
 static VEC_ELEM_METAS: std::sync::LazyLock<
@@ -149,8 +149,8 @@ pub struct VecSlotChild {
     pub disc_word: usize,
     /// Word index of the child pointer within the slot.
     pub word: usize,
-    /// Child kind — [`vec_elem_kind::STRING`] or [`vec_elem_kind::VEC`]
-    /// — selecting the free / retain routine.
+    /// Child kind - [`vec_elem_kind::STRING`] or [`vec_elem_kind::VEC`]
+    /// - selecting the free / retain routine.
     pub kind: u8,
 }
 
@@ -694,7 +694,7 @@ pub unsafe extern "C" fn gos_rt_vec_len(v: *const GosVec) -> i64 {
 /// Typed-i64 wrapper around [`gos_rt_vec_push`]. Spills the value
 /// to a stack slot and forwards its address so the byte-erased
 /// push helper can `memcpy` it into the vec's storage. Used by the
-/// dynamic-count `[value; n]` lowering — passing an i64 directly
+/// dynamic-count `[value; n]` lowering - passing an i64 directly
 /// to the byte-erased helper would otherwise need a per-call-site
 /// stack slot in cranelift.
 #[unsafe(no_mangle)]
@@ -747,11 +747,11 @@ pub unsafe extern "C" fn gos_rt_vec_push(v: *mut GosVec, elem: *const u8) {
             let new_bytes = (new_cap as usize) * (vec.elem_bytes as usize);
             if vec_is_region(vec) {
                 // Region-allocated: grow into a fresh region buffer (zeroed)
-                // and abandon the old one in the region — it is reclaimed
+                // and abandon the old one in the region - it is reclaimed
                 // wholesale at `arena_pop`, never individually freed.
                 let region_buf = crate::c_abi::rc::region_alloc_bytes(new_bytes);
                 if region_buf.is_null() {
-                    // No active region (grown after its pop — unusual): fall
+                    // No active region (grown after its pop - unusual): fall
                     // back to a global buffer; the region flag stays set so
                     // free still skips it (small bounded leak in this edge).
                     let new_buf = alloc_vec_buffer(new_bytes);
@@ -772,7 +772,7 @@ pub unsafe extern "C" fn gos_rt_vec_push(v: *mut GosVec, elem: *const u8) {
                     vec.cap = new_cap;
                 }
             } else {
-                // Zero-initialised — see `gos_rt_vec_with_capacity`.
+                // Zero-initialised - see `gos_rt_vec_with_capacity`.
                 let new_buf = alloc_vec_buffer(new_bytes);
                 if !vec.ptr.is_null() && old_bytes > 0 {
                     unsafe {
@@ -791,7 +791,7 @@ pub unsafe extern "C" fn gos_rt_vec_push(v: *mut GosVec, elem: *const u8) {
         // REFERENCE: the drop pass retains the inbound value at the push site
         // (so the container holds a reference-counted element) and
         // `gos_rt_vec_free` releases each one through its `elem_kind` deep-free.
-        // Storing the pointer directly — no per-push clone — lets the
+        // Storing the pointer directly - no per-push clone - lets the
         // compile-time RC own the element exactly once. The previous clone left
         // the caller's original retained-but-never-released (a per-push leak,
         // since the container held the copy, not the original). `gos_rt_str_free`
@@ -822,7 +822,7 @@ pub unsafe extern "C" fn gos_rt_vec_push(v: *mut GosVec, elem: *const u8) {
 // Tagged-union encoding for `Result<T, E>` and `Option<T>`: a 2-word
 // BY-VALUE `i128` with the discriminant in the low 64 bits and the
 // payload in the high 64 bits. Convention: `disc == 0` = Ok / Some,
-// `disc == 1` = Err / None — the distinguishing bit pattern dispatch
+// `disc == 1` = Err / None - the distinguishing bit pattern dispatch
 // reads. Construction is a register pack with zero allocation; the
 // payload flows as a normal value (a scalar, or a pointer to a
 // heap-copied aggregate) managed by RC like any other binding.
@@ -849,7 +849,7 @@ pub extern "C" fn gos_rt_result_new(disc: i64, payload: i64) -> i128 {
     pack_result(disc, payload)
 }
 
-/// `gos_rt_result_new` variant for f64 payloads — stores the value's
+/// `gos_rt_result_new` variant for f64 payloads - stores the value's
 /// `to_bits()` so the symmetric `gos_rt_result_payload_f64` reads back the
 /// original f64.
 #[unsafe(no_mangle)]
@@ -1008,7 +1008,7 @@ pub extern "C" fn gos_rt_result_is_err(r: i128) -> i64 {
 /// Maps a `gos_main` return value to a process exit code. A
 /// `Result`-returning `main` yields its discriminant (`0` = `Ok`,
 /// `1` = `Err`) in the low word; a unit or integer `main` yields its
-/// value directly — both are the exit code. Also blocks until every
+/// value directly - both are the exit code. Also blocks until every
 /// outstanding goroutine has settled so their stdout reaches the user
 /// before the process exits.
 #[unsafe(no_mangle)]

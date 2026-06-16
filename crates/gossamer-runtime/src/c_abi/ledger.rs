@@ -1,5 +1,5 @@
 //! Allocation ledger: per-family live-object counters, printed at process exit
-//! when `GOS_LEAK_LEDGER` is set. Deterministic leak detection — a family whose
+//! when `GOS_LEAK_LEDGER` is set. Deterministic leak detection - a family whose
 //! live count grows with the workload size N (instead of staying O(1)) is
 //! leaking. Used to lock leak targets and prove fixes (see
 //! `~/dev/contexts/gos/leaks.md`).
@@ -35,8 +35,8 @@ extern "C" fn report() {
 // additionally skipped under Miri, which cannot execute `atexit` (and runs
 // with `-Zmiri-ignore-leaks`, so the report is moot there anyway). On other
 // targets the counters still tally but the report is read via a debugger /
-// explicit query rather than printed at exit. This keeps the Windows build —
-// where `libc` is not a dependency — and the Miri job compiling and running.
+// explicit query rather than printed at exit. This keeps the Windows build -
+// where `libc` is not a dependency - and the Miri job compiling and running.
 #[inline]
 fn arm() {
     #[cfg(all(unix, not(miri)))]

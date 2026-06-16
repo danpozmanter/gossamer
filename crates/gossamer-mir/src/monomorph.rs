@@ -4,7 +4,7 @@
 //! upstream already stamps each MIR local with its concrete [`Ty`]
 //! (no `TyKind::Param` escapes the type table's post-solve
 //! projection), so a specialised copy is structurally identical to
-//! its generic source under the flat-i64-per-slot layout — but the
+//! its generic source under the flat-i64-per-slot layout - but the
 //! copy is registered under a stable mangled name so each call site
 //! can dispatch to its own specialisation.
 //!
@@ -32,7 +32,7 @@ const MAX_MONOMORPHISE_ITERATIONS: u32 = 32;
 /// previous implementation walked the original bodies once and
 /// emitted copies after; specialisations that themselves called
 /// other generics never had their inner calls specialised. We
-/// loop until a pass produces no new copies — `fn map<T,U>(f:
+/// loop until a pass produces no new copies - `fn map<T,U>(f:
 /// fn(T)->U, xs)` calling `fn each<T>(f, xs)` now produces both
 /// `map_i64_str` and `each_i64`. Cap at
 /// `MAX_MONOMORPHISE_ITERATIONS` as a runaway guard.
@@ -78,14 +78,14 @@ pub fn monomorphise(bodies: &mut Vec<Body>, tcx: &mut TyCtxt) {
             }
         }
         if specialised.is_empty() {
-            // No new copies — fixed point reached.
+            // No new copies - fixed point reached.
             break;
         }
         bodies.extend(specialised);
         assert!(
             iteration + 1 != MAX_MONOMORPHISE_ITERATIONS,
             "monomorphise: did not reach a fixed point in {MAX_MONOMORPHISE_ITERATIONS} iterations \
-            — either there's a runaway generic that depends on its own specialisation, \
+            - either there's a runaway generic that depends on its own specialisation, \
             or the cap needs to be raised after auditing the offending bodies"
         );
     }
@@ -210,17 +210,17 @@ pub fn check_generic_layouts(bodies: &[Body], tcx: &TyCtxt) -> Vec<String> {
 ///
 /// - Scalars: `bool`, `char`, integer / float, `()`, `!`.
 /// - `String`, `Vec<T>`, `HashMap<K, V>`, `HashSet<T>`,
-///   `BTreeMap<K, V>` — by-pointer in the flat ABI.
-/// - Tuples and named ADTs (struct/enum) — by-pointer.
+///   `BTreeMap<K, V>` - by-pointer in the flat ABI.
+/// - Tuples and named ADTs (struct/enum) - by-pointer.
 /// - Function references and channel handles (`Sender<T>` /
-///   `Receiver<T>`) — already round-trip through `i64` in the
+///   `Receiver<T>`) - already round-trip through `i64` in the
 ///   compiled tier.
 /// - Refs (`&T`).
 ///
 /// Still rejected:
-/// - `TyKind::Closure` — needs explicit env pointer wiring at
+/// - `TyKind::Closure` - needs explicit env pointer wiring at
 ///   the call site that monomorphisation doesn't yet rewrite.
-/// - `TyKind::Alias` (unresolved type alias) — should never
+/// - `TyKind::Alias` (unresolved type alias) - should never
 ///   reach codegen, but flagged here defensively.
 fn fits_flat_i64_abi(tcx: &TyCtxt, ty: Ty) -> bool {
     match tcx.kind_of(ty) {
@@ -249,7 +249,7 @@ fn fits_flat_i64_abi(tcx: &TyCtxt, ty: Ty) -> bool {
 }
 
 /// Best-effort one-line spelling of a `Ty` for the diagnostic.
-/// Intentionally terse — full type printing lives in
+/// Intentionally terse - full type printing lives in
 /// `gossamer-types::printer`; we don't want to drag the printer
 /// crate's full dependency surface into the MIR diagnostic path.
 fn render_ty_for_diagnostic(tcx: &TyCtxt, ty: Ty) -> String {
@@ -311,7 +311,7 @@ mod tests {
     #[test]
     fn monomorphise_is_idempotent_on_a_concrete_body() {
         // Smoke test: running the pass twice over the same body must
-        // produce identical structural output — the pass is
+        // produce identical structural output - the pass is
         // deliberately a fixpoint.
         let mut tcx = TyCtxt::new();
         let unit = tcx.unit();

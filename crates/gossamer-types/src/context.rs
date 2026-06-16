@@ -39,12 +39,12 @@ pub struct TyCtxt {
     /// enum. Populated by MIR lowering from the enum index; consulted by
     /// the drop pass to recognise locals holding RC pointers that need a
     /// `gos_rt_rc_release` at end of life. Membership must stay
-    /// conservative — see `rc_enum_tys` in the MIR enum index.
+    /// conservative - see `rc_enum_tys` in the MIR enum index.
     rc_managed_tys: std::collections::HashSet<Ty>,
     /// `DefId.local`s of payload-bearing user enums, registered
     /// eagerly by the typechecker's enum collection. Heap-enum
     /// values of these defs are reference counted regardless of
-    /// which interned `Adt` handle a body uses — the per-handle
+    /// which interned `Adt` handle a body uses - the per-handle
     /// `rc_managed_tys` registration only happens at constructor
     /// lowering, which made RC accounting depend on item order (a
     /// body lowered before the enum's first constructor skipped
@@ -359,14 +359,14 @@ impl TyCtxt {
     /// Registers a payload-bearing user enum (by `DefId.local`) as
     /// reference counted. Called eagerly during typechecking so RC
     /// accounting never depends on which body lowers first.
-    /// All-unit enums must NOT be registered — they lower as bare
+    /// All-unit enums must NOT be registered - they lower as bare
     /// `i64` discriminants and releasing one would treat the
     /// integer as a pointer.
     pub fn register_rc_managed_enum_def(&mut self, def_local: u32) {
         self.rc_managed_enum_defs.insert(def_local);
     }
 
-    /// Registers a user enum (by `DefId.local`) as inline-able — its values
+    /// Registers a user enum (by `DefId.local`) as inline-able - its values
     /// are the 2-word by-value `i128` representation.
     pub fn register_inline_enum_def(&mut self, def_local: u32) {
         self.inline_enum_defs.insert(def_local);
@@ -397,7 +397,7 @@ impl TyCtxt {
         ) {
             return false;
         }
-        // Opaque runtime-handle / heap-blob stdlib structs — `fs::DirInfo`
+        // Opaque runtime-handle / heap-blob stdlib structs - `fs::DirInfo`
         // (`u32::MAX - 2`), `process::Output` (`- 3`), `http::ResponseStream`
         // (`- 4`), and `http::Response` (`- 5`). Each is a plain `Box`
         // handle with no RC header, so `gos_rt_rc_release` on the whole
@@ -436,9 +436,9 @@ impl TyCtxt {
         }
         // `Weak<T>` (sentinel def `u32::MAX - 6`) is a weak-counted
         // pointer into an RC allocation, regardless of its payload
-        // substitution. It must be processed by the drop pass — which
+        // substitution. It must be processed by the drop pass - which
         // branches on `is_weak_ty` to emit the weak retain/release
-        // helpers instead of the strong ones — so report it here even
+        // helpers instead of the strong ones - so report it here even
         // though no per-instantiation registration exists.
         self.is_weak_ty(ty)
     }

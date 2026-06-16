@@ -2,7 +2,7 @@
 //! release pass. A recursive enum value aliased to multiple bindings
 //! (`let b = a; let c = a`) must not be released more than once. An
 //! earlier ownership-move heuristic propagated ownership to every copy
-//! target, triple-freeing the shared node — `glibc` aborted with
+//! target, triple-freeing the shared node - `glibc` aborted with
 //! "unaligned fastbin chunk detected" once enough allocations exercised
 //! the corrupted free list. We re-run the program under
 //! `MALLOC_CHECK_=3` (glibc's strict allocator consistency mode) so any
@@ -85,7 +85,7 @@ fn main() {
         .join(format!("alias{}", std::env::consts::EXE_SUFFIX));
     assert!(bin.exists(), "missing {}", bin.display());
 
-    // Run several times — heap corruption from a double free is
+    // Run several times - heap corruption from a double free is
     // nondeterministic and may only abort on some runs.
     for run in 0..5 {
         let out = Command::new(&bin)
@@ -94,7 +94,7 @@ fn main() {
             .expect("spawn alias binary");
         assert!(
             out.status.success(),
-            "run {run}: binary aborted (likely double free) — status {:?}, stderr={}",
+            "run {run}: binary aborted (likely double free) - status {:?}, stderr={}",
             out.status,
             String::from_utf8_lossy(&out.stderr)
         );

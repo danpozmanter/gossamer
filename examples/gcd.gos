@@ -1,5 +1,5 @@
 /*
- * Greatest common divisor — Euclidean algorithm.
+ * Greatest common divisor - Euclidean algorithm.
  *
  * `gcd_recursive` is the canonical functional definition;
  * `gcd_iterative` keeps the same shape with a tiny rolling

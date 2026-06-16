@@ -1,4 +1,4 @@
-//! `gos lint` — clippy-style lints over the Gossamer AST.
+//! `gos lint` - clippy-style lints over the Gossamer AST.
 //! Each lint is a pure function `(&SourceFile) -> Vec<(Span, title,
 //! help)>`. The runner filters by per-lint level and renders the
 //! findings through `gossamer-diagnostics`.
@@ -66,7 +66,7 @@ pub struct Registry {
 }
 
 impl Registry {
-    /// Empty registry — every lookup returns [`Level::Allow`].
+    /// Empty registry - every lookup returns [`Level::Allow`].
     #[must_use]
     pub fn new() -> Self {
         Self {
@@ -108,7 +108,7 @@ impl Default for Registry {
     }
 }
 
-/// Every registered lint identifier. Originally "day one" — kept
+/// Every registered lint identifier. Originally "day one" - kept
 /// under that name so downstream attribute parsing and the
 /// explain-subcommand lookup tables do not churn as lints are
 /// added.

@@ -21,17 +21,17 @@
     clippy::decimal_bitwise_operands
 )]
 
-//! WebSocket (RFC 6455) — first-party stdlib support.
+//! WebSocket (RFC 6455) - first-party stdlib support.
 //!
 //! Per the user requirement, websockets are part of the
 //! standard library, not feature-gated, not an external crate.
 //!
 //! Two surfaces:
 //!
-//! - `accept` — server-side handshake from an HTTP request.
+//! - `accept` - server-side handshake from an HTTP request.
 //!   Returns a `WebSocket` wrapping the upgraded TCP/TLS
 //!   connection.
-//! - `WebSocket` — full-duplex frame interface:
+//! - `WebSocket` - full-duplex frame interface:
 //!   `send_text` / `send_binary` / `send_ping` / `send_pong` /
 //!   `send_close` / `receive` (returns the next `Message`).
 //!
@@ -106,7 +106,7 @@ pub enum Error {
     Closed,
 }
 
-/// Result of [`accept`] — the upgrade response that the caller
+/// Result of [`accept`] - the upgrade response that the caller
 /// MUST write to the wire before constructing a [`WebSocket`].
 #[derive(Debug)]
 pub struct Upgrade {
@@ -179,7 +179,7 @@ pub fn compute_accept(client_key: &str) -> String {
 }
 
 /// SHA-1 implementation (RFC 3174). Used solely for the
-/// WebSocket handshake — not exposed publicly to discourage
+/// WebSocket handshake - not exposed publicly to discourage
 /// use elsewhere. SHA-1 is broken for collision-resistance but
 /// the WebSocket spec mandates it for handshake compatibility.
 fn sha1(input: &[u8]) -> [u8; 20] {

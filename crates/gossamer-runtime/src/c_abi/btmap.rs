@@ -21,7 +21,7 @@ use std::os::raw::c_char;
 use super::*;
 
 // ---------------------------------------------------------------
-// BTreeMap — sorted-key map with String keys + i64 values.
+// BTreeMap - sorted-key map with String keys + i64 values.
 // Mirrors the `gos_rt_map_*` shape but iterates in key order.
 // ---------------------------------------------------------------
 
@@ -108,7 +108,7 @@ pub unsafe extern "C" fn gos_rt_btmap_len(m: *const GosBtMap) -> i64 {
 
 /// Returns a fresh `*mut GosVec` of the BTreeMap's keys (in sort
 /// order, since BTreeMap iterates ordered). Used by the
-/// `for (k, v) in m.iter()` lowering — the codegen iterates the
+/// `for (k, v) in m.iter()` lowering - the codegen iterates the
 /// keys vec by index and re-fetches the value via
 /// `gos_rt_btmap_get_or` so each binding gets a real value, not
 /// the ranked Vec header garbage the previous (missing) iter
@@ -427,7 +427,7 @@ pub unsafe extern "C" fn gos_rt_arr_format_string(
 /// MIR-side dispatch routes `os::set_env(...)` here so the
 /// compiled tier matches the VM's behaviour. Without this binding
 /// `os::set_env` lowered to a generic call against a non-existent
-/// symbol — the compiled tier silently no-op'd, and downstream
+/// symbol - the compiled tier silently no-op'd, and downstream
 /// `os::env(name)` returned the old value.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_os_set_env(name: *const c_char, value: *const c_char) -> i128 {
@@ -448,7 +448,7 @@ pub unsafe extern "C" fn gos_rt_os_set_env(name: *const c_char, value: *const c_
     })
 }
 
-/// `os::unset_env(name)` — companion to `gos_rt_os_set_env`.
+/// `os::unset_env(name)` - companion to `gos_rt_os_set_env`.
 /// Returns unit; failures (e.g. name with `=`) are silently
 /// dropped to match the VM's lenient behaviour.
 #[unsafe(no_mangle)]

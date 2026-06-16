@@ -74,7 +74,7 @@ pub(crate) fn returns_borrowed_pointer(name: &str) -> bool {
             // Container element accessors return an interior borrow into the
             // container's own storage, not an owned value. The container
             // still owns each element and deep-frees it on drop, so releasing
-            // the borrow here double-frees — `x[0]` on a `Vec<Vec<T>>` (the
+            // the borrow here double-frees - `x[0]` on a `Vec<Vec<T>>` (the
             // inner Vec) or a `Vec<String>` (the element string) frees memory
             // the outer container reclaims again at scope end.
             | "gos_rt_vec_get_i64"
@@ -116,7 +116,7 @@ pub(crate) fn aggr_size_bytes(tcx: &gossamer_types::TyCtxt, ty: Ty) -> i64 {
         }
         TyKind::Adt { def, .. } => {
             // `Result<T,E>` / `Option<T>` are the 2-word by-value `i128`
-            // (16-byte) representation — two slots as an aggregate element.
+            // (16-byte) representation - two slots as an aggregate element.
             if def.local == u32::MAX || def.local == u32::MAX - 1 {
                 16
             } else if let Some(field_tys) = tcx.struct_field_tys(*def) {
@@ -292,8 +292,8 @@ pub(crate) fn lower_binop(op: HirBinaryOp) -> BinOp {
         // Logical `&&` / `||` lower to bitwise on the i1/i8
         // bool representation. The truth tables match: for
         // operands `a, b ∈ {0, 1}`, `a & b == a && b` and
-        // `a | b == a || b`. (Short-circuit evaluation — not
-        // calling the rhs when the lhs settles the result —
+        // `a | b == a || b`. (Short-circuit evaluation - not
+        // calling the rhs when the lhs settles the result -
         // is a separate concern handled at HIR-to-MIR control
         // flow if/when we expose `&&`/`||` over expressions
         // with side effects.)

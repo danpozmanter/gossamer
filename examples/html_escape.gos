@@ -13,7 +13,7 @@ use std::html
 use std::encoding
 
 fn main() {
-    // HTML escaping — critical for preventing XSS in template output.
+    // HTML escaping - critical for preventing XSS in template output.
     let raw = "<script>alert('XSS & injection')</script>"
     let safe = html::escape(raw)
     println!("raw:     {}", raw)

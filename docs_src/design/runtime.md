@@ -1,6 +1,6 @@
 # Runtime internals
 
-This page is a map — not a specification — of what happens between
+This page is a map - not a specification - of what happens between
 `gos run` and `main` returning. Each section links to the crate that
 owns the stage so a new contributor can find the real source.
 
@@ -53,8 +53,8 @@ The register-based bytecode VM in `gossamer-interp` is the sole
    `time::sleep`, `json::parse`, …) and variant constructors for
    every user enum.
 4. Executes the compiled bytecode in a register machine, keeping
-   locals in per-frame register files. Every construct — closures,
-   `select`, `defer`, or-patterns, goroutines, custom iterators — is
+   locals in per-frame register files. Every construct - closures,
+   `select`, `defer`, or-patterns, goroutines, custom iterators - is
    lowered to native bytecode; nothing is interpreted from HIR.
 
 Struct values are `Rc<Vec<(Ident, Value)>>`. Field assignment runs
@@ -63,7 +63,7 @@ bindings never observe each other's mutations.
 
 ## Memory management
 
-Compiled programs manage memory deterministically — there is no
+Compiled programs manage memory deterministically - there is no
 tracing collector and no pause:
 
 - **Reference counting** (`gossamer-runtime::c_abi::rc`). Recursive
@@ -73,7 +73,7 @@ tracing collector and no pause:
   value's reference-counted children iteratively and frees the
   payload. Weak references follow the Swift-ARC model.
 - **Cycle collection.** `runtime::collect_cycles()` runs an
-  on-demand Bacon–Rajan trial-deletion pass over suspected cycle
+  on-demand Bacon-Rajan trial-deletion pass over suspected cycle
   roots, on every tier.
 - **Aggregate reclamation.** Structs / tuples / arrays are
   heap-allocated via `gos_rt_aggr_alloc` (plain zeroed malloc) and
@@ -129,7 +129,7 @@ the task into `MultiScheduler::parked` keyed by gid. The wakeup
 source (poller readiness, channel send, mutex unlock, blocking-pool
 worker, ...) calls `MultiScheduler::unpark(gid)` which pushes the
 task back onto the injector. Any free worker picks it up and
-resumes the coroutine — possibly on a different OS thread than the
+resumes the coroutine - possibly on a different OS thread than the
 one it suspended on.
 
 A blocked goroutine costs ~16 KiB of mmap'd stack, not an OS
@@ -162,15 +162,15 @@ for it via `register_waker(gid, closure)`. Default closure: just
 - park on the netpoller for accept readiness,
 - spawn each accepted connection as a goroutine via
   `sched_global::spawn`,
-- read / write under the netpoller — `WouldBlock` parks the
+- read / write under the netpoller - `WouldBlock` parks the
   goroutine; the worker thread immediately picks up another
   connection.
 
 Graceful shutdown is driven by:
 
-- `GOSSAMER_HTTP_MAX_REQUESTS=N` — env var, stop after N requests.
-- `gossamer_interp::set_http_max_requests(N)` — safe-Rust test hook.
-- `config.shutdown: Arc<AtomicBool>` — for in-process callers.
+- `GOSSAMER_HTTP_MAX_REQUESTS=N` - env var, stop after N requests.
+- `gossamer_interp::set_http_max_requests(N)` - safe-Rust test hook.
+- `config.shutdown: Arc<AtomicBool>` - for in-process callers.
 
 ## Panic recovery
 
@@ -178,7 +178,7 @@ Graceful shutdown is driven by:
 the evaluator. The native HTTP server catches that per-request,
 logs it, and returns a 500. A panic inside a goroutine body
 unwinds the coroutine's stack and propagates to the worker M's
-resume site — the worker exits with the panic, but other
+resume site - the worker exits with the panic, but other
 goroutines on other workers continue running. A program-wide
 panic handler can be installed via `panic::set_hook` from user
 code.

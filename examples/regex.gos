@@ -1,5 +1,5 @@
 /*
- * `std::regex` — compiled regular expressions.
+ * `std::regex` - compiled regular expressions.
  *
  * Wraps the Rust `regex` crate. Pattern syntax is the same subset
  * (PCRE-like; no backreferences or look-around). The public API is

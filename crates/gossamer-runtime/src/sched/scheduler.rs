@@ -150,7 +150,7 @@ impl Scheduler {
     }
 
     /// Returns the number of goroutines still in the active state.
-    /// O(1) — maintained incrementally by `spawn` / `finish`.
+    /// O(1) - maintained incrementally by `spawn` / `finish`.
     #[must_use]
     pub fn active_count(&self) -> usize {
         self.active

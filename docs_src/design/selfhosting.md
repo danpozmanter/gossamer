@@ -10,8 +10,8 @@ self-hosted front-end.
 
 Companion ports under `examples/selfhost/`:
 
-- `lexer.gos` — minimal tokeniser over a subset of Gossamer source.
-- `parser.gos` — minimal recursive-descent parser over a synthetic
+- `lexer.gos` - minimal tokeniser over a subset of Gossamer source.
+- `parser.gos` - minimal recursive-descent parser over a synthetic
   token stream.
 
 Both files parse cleanly through `gos parse`, which is asserted by
@@ -19,15 +19,15 @@ Both files parse cleanly through `gos parse`, which is asserted by
 
 ## What works today
 
-- **Enums with data**, pattern-matched exhaustively — viable for
+- **Enums with data**, pattern-matched exhaustively - viable for
   `TokenKind`, `Expr`, `Stmt`, `Ty`.
-- **Structs with named fields**, `&` and `&mut` references — viable
+- **Structs with named fields**, `&` and `&mut` references - viable
   for `Lexer`, `Parser`, `TyCtxt`-shaped contexts.
-- **`for`, `while`, `loop`, `match`, `if`/`else`** — enough control
+- **`for`, `while`, `loop`, `match`, `if`/`else`** - enough control
   flow for a recursive-descent parser.
 - **Function calls, method calls, tuples, slices, mutable locals**.
 - **`println` / `print` / `eprintln` / `format`** builtins.
-- **Package manager** (Phase 27–28): project layout, lockfile,
+- **Package manager** (Phase 27-28): project layout, lockfile,
   fetcher, vendor directory. Ready to host a `gossamer-selfhost`
   crate once the front-end ports land.
 - **Build graph** (Phase 29): incremental, parallel, content-

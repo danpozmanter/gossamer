@@ -7,7 +7,7 @@
 //! `Local` index past the end of the locals table, a block whose
 //! `id` field disagrees with its position in `body.blocks`. The
 //! copy-prop aggregate-aliasing miscompile that shipped in 0.4
-//! is exactly this class — `verify_body` would have caught it at
+//! is exactly this class - `verify_body` would have caught it at
 //! the point the rewrite happened, not at codegen time when the
 //! produced object segfaulted under user code.
 //!
@@ -489,7 +489,7 @@ pub fn verify_body_typed(body: &Body, tcx: &TyCtxt) -> Result<(), Vec<VerifyErro
     }
 }
 
-/// Whole-program verifier — runs [`verify_body_typed`] on each body
+/// Whole-program verifier - runs [`verify_body_typed`] on each body
 /// and adds cross-body checks (currently: call arity vs the callee's
 /// declared `arity`).
 ///
@@ -695,7 +695,7 @@ fn operand_leaf_ty(body: &Body, n_locals: usize, operand: &Operand) -> Option<go
 /// Walks `place.projection` and returns the leaf type, or `None`
 /// when a step's type cannot be recovered (Index without an element
 /// hint, deref of a non-Ref, etc.). The cheap-checks contract means
-/// missing leaves are tolerated — only fully-resolved leaves are
+/// missing leaves are tolerated - only fully-resolved leaves are
 /// scrutinised by the typed verifier.
 fn place_leaf_ty(
     body: &Body,
@@ -734,7 +734,7 @@ fn place_leaf_ty(
     Some(ty)
 }
 
-/// `true` if a runtime value of `ty` is an owning heap reference —
+/// `true` if a runtime value of `ty` is an owning heap reference -
 /// the only shapes a `Terminator::Drop` may legally target.
 fn ty_is_pointer(tcx: &TyCtxt, ty: Ty) -> bool {
     match tcx.kind_of(ty) {

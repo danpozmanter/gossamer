@@ -1,5 +1,5 @@
 //! `gos test [PATH] [--run RX] [--parallel N] [--format junit]
-//! [--junit-out FILE] [--race] [--coverage FILE]` — discovers and
+//! [--junit-out FILE] [--race] [--coverage FILE]` - discovers and
 //! runs every `#[test]`-annotated function under `PATH`, plus every
 //! fenced doc-test it can extract from `///` comments.
 
@@ -296,7 +296,7 @@ pub(crate) fn run_with_opts(opts: TestOpts) -> Result<()> {
     }
     if !load_errors.is_empty() {
         // A file the user pointed at refused to parse / resolve /
-        // typecheck. Bubble up so the harness exits non-zero —
+        // typecheck. Bubble up so the harness exits non-zero -
         // running tests against statically-broken source is worse
         // than reporting nothing.
         let summary = if load_errors.len() == 1 {
@@ -424,6 +424,22 @@ fn run_tests_filtered(
     style: &TestStyle,
     quiet: bool,
 ) -> Vec<TestRecord> {
+    // Execute on a thread with a large native stack so a deeply
+    // recursive `#[test]` does not overflow the host's default
+    // main-thread stack (see `cmd::with_vm_stack`). Covers both the
+    // serial and the parallel-worker call sites.
+    let file = file.to_path_buf();
+    let names = names.to_vec();
+    let style = style.clone();
+    crate::cmd::with_vm_stack(move || run_tests_filtered_inner(&file, &names, &style, quiet))
+}
+
+fn run_tests_filtered_inner(
+    file: &Path,
+    names: &[String],
+    style: &TestStyle,
+    quiet: bool,
+) -> Vec<TestRecord> {
     // Bundle sibling `*.gos` modules into the compilation, exactly as
     // `gos run` / `gos build` do, so a `#[test]` can reach a sibling
     // module (`super::helper::triple` where `src/helper.gos` is declared
@@ -478,7 +494,7 @@ fn run_tests_filtered(
                 }
                 reason.push_str(&format!("{} assertion(s) failed", tally.failures));
                 if let Some(first) = tally.first_failure.as_ref() {
-                    reason.push_str(" — ");
+                    reason.push_str(" - ");
                     reason.push_str(first);
                 }
             }
@@ -513,7 +529,7 @@ fn run_tests_filtered(
                     style.dim(&elapsed_str),
                     style.red(&failure_message.clone().unwrap_or_default())
                 );
-                // The call-chain traceback is additional context — the
+                // The call-chain traceback is additional context - the
                 // failure message above stays byte-identical to before.
                 if !call_trace.is_empty() {
                     println!("{}", style.dim(&call_trace));
@@ -712,7 +728,7 @@ fn extract_doc_tests(source: &str, display: &str) -> Vec<DocTest> {
     out
 }
 
-/// Cross-tier walk surface — runs every example through the VM and
+/// Cross-tier walk surface - runs every example through the VM and
 /// the LLVM-compiled binary, capturing per-tier outcomes and
 /// (optionally) writing the JSON sidecar that
 /// `gos feature-status` reads.
@@ -798,7 +814,7 @@ mod tier_parity {
             Ok(())
         } else {
             Err(anyhow!(
-                "{} tier-parity failure(s) — see sidecar for details",
+                "{} tier-parity failure(s) - see sidecar for details",
                 failed.len(),
             ))
         }

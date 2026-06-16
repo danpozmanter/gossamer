@@ -70,7 +70,7 @@ jobs:
       # ASan catches the heap-corruption / use-after-free / double-free class
       # the RC migration can regress. Running it on macOS as well as Linux
       # closes the gap where `MALLOC_CHECK_` (glibc-only) gave that coverage on
-      # Linux alone — ASan is the portable, stronger equivalent. LeakSanitizer
+      # Linux alone - ASan is the portable, stronger equivalent. LeakSanitizer
       # is Linux-only, so `detect_leaks` is left at its platform default. We
       # skip the LLVM-build crates (they shell out to opt/llc, noise unrelated
       # to the unsafe surface we're hardening).

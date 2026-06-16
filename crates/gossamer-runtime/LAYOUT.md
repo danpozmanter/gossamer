@@ -24,28 +24,28 @@ program holds addresses the *payload*; the header sits
 |--------|------|-----------|--------------------------------------------------------------------------------------------------|
 | 0      | 4    | `strong`  | Strong reference count in the low 27 bits (`STRONG_COUNT_MASK`); the high bits hold the shared / region / buffered / cycle-color flags. Starts at 1. |
 | 4      | 1    | `weak`    | Weak reference count (saturating); the allocation outlives `strong == 0` while this is non-zero. |
-| 5      | 1    | `disc`    | Enum discriminant — codegen reads/writes the byte at `payload - 3`; 0 (and unread) for non-enum objects. |
+| 5      | 1    | `disc`    | Enum discriminant - codegen reads/writes the byte at `payload - 3`; 0 (and unread) for non-enum objects. |
 | 6      | 2    | `meta_id` | Interned id of the child-layout descriptor blob; 0 for leaf objects with no RC-pointer children. |
 
 Total: **8 bytes**, 8-byte-aligned (`RC_ALIGN`). There is no mark byte
 and no tracing collector. An object is freed when its strong count
-reaches zero — its RC-pointer children are released first — and
+reaches zero - its RC-pointer children are released first - and
 reference cycles are reclaimed on demand by the cycle collector
 ("Cycle-collector roots" below). The interpreter tier does not use this
 header; it mirrors the same semantics with Rust `Arc`-shared values.
 
 ## Child-layout meta blob
 
-`meta_id` interns a pointer to a per-type *child-layout blob* — the
+`meta_id` interns a pointer to a per-type *child-layout blob* - the
 descriptor the release path uses to find the RC-managed pointers inside
 a payload. Codegen emits one flat `[i64]` blob per RC-managed ADT as a
 single module constant; `meta_intern` / `meta_of` map between the blob
 pointer and the 16-bit id stored in the header. The blob is
 self-describing:
 
-- `[0]` — kind tag (`RC_KIND_ENUM`, `RC_KIND_STRUCT`, … re-exported
+- `[0]` - kind tag (`RC_KIND_ENUM`, `RC_KIND_STRUCT`, … re-exported
   from `gossamer-abi`).
-- `[1]` — variant count `V`.
+- `[1]` - variant count `V`.
 - then `V` variant records, each `disc, child_count C, off_0 … off_C`,
   where each `off_i` is a payload word index (byte offset / 8) holding
   an RC-managed child pointer.
@@ -53,7 +53,7 @@ self-describing:
 On release, `release_children` reads the live discriminant, finds the
 matching record, and releases each child pointer. Leaf objects (no
 RC-pointer children) carry `meta_id == 0` and free immediately at strong
-count zero. No per-type `scan_fn` is walked by a collector — release is
+count zero. No per-type `scan_fn` is walked by a collector - release is
 driven entirely by this blob.
 
 ## Primitive values
@@ -197,8 +197,8 @@ and no compiler root map: its candidate roots are exactly the objects
 whose strong count was decremented to a *non-zero* value
 (`possible_root`), recorded in a thread-local buffer (`ROOTS`) and
 deduplicated by the header's buffered bit. When the buffer crosses
-`DEFAULT_COLLECT_THRESHOLD` (10 000) — or when user code calls
-`runtime::collect_cycles()` (`gos_rt_collect_cycles`) — the collector
+`DEFAULT_COLLECT_THRESHOLD` (10 000) - or when user code calls
+`runtime::collect_cycles()` (`gos_rt_collect_cycles`) - the collector
 traces only the subgraph reachable from those candidates and frees any
 confirmed garbage cycle. Objects shared across goroutines and
 arena-region objects are excluded.

@@ -5,7 +5,7 @@
 //! blocking pool routes the work to a dedicated OS thread so the
 //! calling goroutine yields cleanly. On platforms without one
 //! (or before the scheduler hook is wired in this build), the
-//! function runs inline — observable behaviour is identical, the
+//! function runs inline - observable behaviour is identical, the
 //! only difference is whether the scheduler can keep other
 //! goroutines making progress.
 
@@ -15,7 +15,7 @@
 ///
 /// The fallback (inline) behaviour is sound: every binding fn body
 /// was originally written assuming sync execution, so running it on
-/// the calling thread cannot break correctness — it only forgoes
+/// the calling thread cannot break correctness - it only forgoes
 /// the scheduler-yielding benefit. Wiring through to a real pool is
 /// a runtime concern tracked in `~/dev/contexts/lang/ffi.md` and
 /// `~/dev/contexts/gos/ecosystem.md` (SQLite, tonic, sync HTTP).

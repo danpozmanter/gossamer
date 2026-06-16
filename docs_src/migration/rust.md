@@ -1,6 +1,6 @@
 # Migrating from Rust to Gossamer
 
-Gossamer looks a lot like Rust — the lexical grammar, keyword list,
+Gossamer looks a lot like Rust - the lexical grammar, keyword list,
 and item shape are deliberate references. The differences compress
 into a handful of rules.
 
@@ -11,7 +11,7 @@ into a handful of rules.
 | Manual lifetimes (`'a`, `'static`) on references. | No explicit lifetimes. The runtime owns every heap aggregate (reference-counted); `&T` is a plain shared reference whose validity the runtime guarantees, not a tracked borrow. |
 | Ownership-by-move, `Copy` marker trait. | No move semantics. Non-trivial values are heap-allocated, reference-counted, and shared by reference; primitives are copied the same as Rust. |
 | Procedural and declarative macros. | **No user macros at all.** Six fixed `format!` / `println!`-family macros expand at parse time. |
-| `async fn`, `Future`, `await`. | `go expr` spawns a goroutine. No futures, no awaits — blocking IO is fine. |
+| `async fn`, `Future`, `await`. | `go expr` spawns a goroutine. No futures, no awaits - blocking IO is fine. |
 | Multiple separate compilation units, workspace member graph. | Same workspace idea (`gos new --template workspace`). Individual crates are called *packages* and resolve through `project.toml`. |
 | `unsafe` blocks. | **Forbidden at the language level.** No `unsafe` keyword in Gossamer source. `std` is safe-Rust too. |
 | `panic!` unwinds by default. | `panic` aborts the current goroutine; handlers observe a 500 but the process keeps running. |
@@ -58,7 +58,7 @@ Gossamer:
 struct Server { handler: fn(http::Request) -> http::Response }
 ```
 
-(Trait objects stay available but rarely needed — concrete closure
+(Trait objects stay available but rarely needed - concrete closure
 types are preferred and the runtime keeps their captures alive.)
 
 ## Collection combinators (one obvious way)
@@ -85,7 +85,7 @@ carry `.map` / `.filter` / `.fold` methods in Gossamer. The
 free-function form in `std::iter` is the one obvious way to chain
 transformations, and the `|>` operator (SPEC §4.6) threads each
 value through with the data-last convention. Mutating helpers like
-`xs.push`, `xs.sort`, `m.inc`, `m.or_insert` stay as methods —
+`xs.push`, `xs.sort`, `m.inc`, `m.or_insert` stay as methods -
 they operate by side-effect on the receiver and don't compose
 through `|>`.
 
@@ -124,6 +124,6 @@ and exit in `process::*`.
 | `std::time::Duration::from_millis` | `time::Duration::from_millis` |
 | `std::thread::spawn` | `go expr` (goroutine) or `thread::spawn` (OS thread) |
 
-HTTP/2 is integrated into `std::http` directly (Go-style) —
+HTTP/2 is integrated into `std::http` directly (Go-style) -
 `http::serve_h2c` for cleartext h2c, automatic ALPN negotiation
 when serving over TLS. There is no separate `std::http2`.

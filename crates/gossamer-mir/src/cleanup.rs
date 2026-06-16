@@ -2,7 +2,7 @@
 //!
 //! Identifies locals that own the result of a runtime heap-allocator
 //! call and computes a per-local drop position so the codegen can
-//! release the allocation as soon as the value is no longer live —
+//! release the allocation as soon as the value is no longer live -
 //! not at the function's `Return`. Without per-block drops, every
 //! owning binding stays alive until process exit, peak RSS carries
 //! the union of all live + dead allocations, and `main()`-shaped
@@ -25,7 +25,7 @@
 //!
 //! When neither rule fires (mixed-liveness predecessors, irreducible
 //! CFGs), the local falls back to the legacy `at-Return` placement
-//! — still better than leaking, just not as tight.
+//! - still better than leaking, just not as tight.
 
 #![forbid(unsafe_code)]
 
@@ -182,7 +182,7 @@ pub fn plan_with_summary(body: &Body, summary: &CaptureSummary) -> CleanupPlan {
         return CleanupPlan::default();
     }
 
-    // Drop any candidate whose local escapes — return values, call
+    // Drop any candidate whose local escapes - return values, call
     // arguments, and aggregates are off-limits because the freed
     // memory may still be reachable by the caller.
     let escape = analyse_escape_with_summary(body, summary);
@@ -263,13 +263,13 @@ fn compute_drop_sites(body: &Body, local: Local, predecessors: &[Vec<BlockId>]) 
     // assignment. Both locals alias the same heap memory; freeing
     // one invalidates the other. The cleanup pass therefore tracks
     // every Copy-alias of the original allocator destination and
-    // computes liveness on the union — a "use" of any chain member
+    // computes liveness on the union - a "use" of any chain member
     // counts as a use of the underlying allocation.
     let chain = compute_alias_chain(body, local);
     // Split stmt-uses from terminator-uses so we know whether the
     // terminator reads the local. Drops emitted at "block exit"
     // (just before the terminator) are unsafe when the terminator
-    // itself reads the value — those cases must drop on the
+    // itself reads the value - those cases must drop on the
     // successor's entry instead.
     let mut stmt_uses = vec![false; n];
     let mut term_uses = vec![false; n];
@@ -339,7 +339,7 @@ fn compute_drop_sites(body: &Body, local: Local, predecessors: &[Vec<BlockId>]) 
         //   * terminator reads the local (e.g. Call args) on the
         //     way to S, and S itself does not read it;
         //   * loop exit, where the loop header's terminator does
-        //     not read the local but the back-edge target does —
+        //     not read the local but the back-edge target does -
         //     dropping at the loop-exit's entry catches the
         //     fall-through transition.
         if stmt_uses[i] || term_uses[i] || live_in[i] {

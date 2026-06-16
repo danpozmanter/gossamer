@@ -1,9 +1,9 @@
-//! Runtime support for `std::lifecycle` — graceful shutdown
+//! Runtime support for `std::lifecycle` - graceful shutdown
 //! hooks, signal handling, and systemd `sd_notify` integration.
 //!
 //! `Lifecycle::on_shutdown(closure)` registers a cleanup hook that
 //! fires when the process receives `SIGTERM`, `SIGINT`, or
-//! `SIGHUP`. Hooks run in LIFO order — the last-registered hook
+//! `SIGHUP`. Hooks run in LIFO order - the last-registered hook
 //! runs first, mirroring `defer` semantics. A second signal within
 //! 5 seconds escalates to immediate process exit.
 //!
@@ -37,7 +37,7 @@ struct State {
 
 /// Process-lifecycle handle.
 ///
-/// Clones share the same hook registry — the value is reference-
+/// Clones share the same hook registry - the value is reference-
 /// counted internally. Holding one across goroutines is safe.
 #[derive(Clone)]
 pub struct Lifecycle {
@@ -87,7 +87,7 @@ impl Lifecycle {
         F: FnOnce() + Send + 'static,
     {
         if self.inner.shutting_down.load(Ordering::Acquire) {
-            // Already shutting down — run inline so the caller
+            // Already shutting down - run inline so the caller
             // does not silently leak resources.
             hook();
             return;
@@ -250,7 +250,7 @@ impl Lifecycle {
             let mut guard = self.inner.hooks.lock().expect("lifecycle hooks lock");
             std::mem::take(&mut *guard)
         };
-        // LIFO order — last registered runs first (defer semantics).
+        // LIFO order - last registered runs first (defer semantics).
         let total = hooks.len();
         for (idx, hook) in hooks.into_iter().rev().enumerate() {
             if started.elapsed() > self.inner.grace {

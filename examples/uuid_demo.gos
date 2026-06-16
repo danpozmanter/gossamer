@@ -3,7 +3,7 @@
  *
  * Two flavours: v4 (random) and v7 (timestamp-ordered). Use v4 when
  * you only need uniqueness; use v7 when you also want insertion-order
- * locality (great for database primary keys — the leading bits encode
+ * locality (great for database primary keys - the leading bits encode
  * milliseconds since the unix epoch, so newer rows cluster together).
  *
  * Strings come back in the canonical hyphenated form. Use

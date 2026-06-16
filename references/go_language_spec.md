@@ -496,7 +496,7 @@ TypeList = Type { "," Type } .
 TypeLit  = ArrayType | StructType | PointerType | FunctionType | InterfaceType |
            SliceType | MapType | ChannelType .
 
-The language predeclares certain type names. Others are introduced with type declarations or type parameter lists. Composite types—array, struct, pointer, function, interface, slice, map, and channel types—may be constructed using type literals.
+The language predeclares certain type names. Others are introduced with type declarations or type parameter lists. Composite types-array, struct, pointer, function, interface, slice, map, and channel types-may be constructed using type literals.
 
 Predeclared types, defined types, and type parameters are called named types. An alias denotes a named type if the type given in the alias declaration is a named type.
 Boolean types¶
@@ -3708,7 +3708,7 @@ m := make(map[string]int, 100)  // map with initial space for approximately 100 
 Calling make with a map type and size hint n will create a map with initial space to hold n map elements. The precise behavior is implementation-dependent.
 Min and max¶
 
-The built-in functions min and max compute the smallest—or largest, respectively—value of a fixed number of arguments of ordered types. There must be at least one argument [Go 1.21].
+The built-in functions min and max compute the smallest-or largest, respectively-value of a fixed number of arguments of ordered types. There must be at least one argument [Go 1.21].
 
 The same type rules as for operators apply: for ordered arguments x and y, min(x, y) is valid if x + y is valid, and the type of min(x, y) is the type of x + y (and similarly for max). If all arguments are constant, the result is constant.
 
@@ -3976,7 +3976,7 @@ The packages of a complete program are initialized stepwise, one package at a ti
 
 Given the list of all packages, sorted by import path, in each step the first uninitialized package in the list for which all imported packages (if any) are already initialized is initialized. This step is repeated until all packages are initialized.
 
-Package initialization—variable initialization and the invocation of init functions—happens in a single goroutine, sequentially, one package at a time. An init function may launch other goroutines, which can run concurrently with the initialization code. However, initialization always sequences the init functions: it will not invoke the next one until the previous one has returned.
+Package initialization-variable initialization and the invocation of init functions-happens in a single goroutine, sequentially, one package at a time. An init function may launch other goroutines, which can run concurrently with the initialization code. However, initialization always sequences the init functions: it will not invoke the next one until the previous one has returned.
 Program execution¶
 
 A complete program is created by linking a single, unimported package called the main package with all the packages it imports, transitively. The main package must have package name main and declare a function main that takes no arguments and returns no value.

@@ -1,4 +1,4 @@
-// Struct update syntax (`..base`) — exercises functional record
+// Struct update syntax (`..base`) - exercises functional record
 // update so all three tiers see the same values.
 
 struct Config {

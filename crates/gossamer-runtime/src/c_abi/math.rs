@@ -154,20 +154,20 @@ pub unsafe extern "C" fn gos_rt_math_trunc(x: f64) -> f64 {
     ffi_entry!(f64::NAN, { x.trunc() })
 }
 
-/// `math::abs_i64(x)` — magnitude of `x`, saturating at `i64::MAX`
+/// `math::abs_i64(x)` - magnitude of `x`, saturating at `i64::MAX`
 /// for `i64::MIN` (mirrors `gossamer_std::math::abs_i64`).
 #[unsafe(no_mangle)]
 pub extern "C" fn gos_rt_math_abs_i64(x: i64) -> i64 {
     x.saturating_abs()
 }
 
-/// `math::is_nan(x)` — 1 when `x` is NaN, else 0.
+/// `math::is_nan(x)` - 1 when `x` is NaN, else 0.
 #[unsafe(no_mangle)]
 pub extern "C" fn gos_rt_math_is_nan(x: f64) -> i32 {
     i32::from(x.is_nan())
 }
 
-/// `math::is_inf(x, sign)` — `sign > 0` checks +∞, `sign < 0` checks
+/// `math::is_inf(x, sign)` - `sign > 0` checks +∞, `sign < 0` checks
 /// −∞, `sign == 0` checks either. Mirrors `gossamer_std::math::is_inf`.
 #[unsafe(no_mangle)]
 pub extern "C" fn gos_rt_math_is_inf(x: f64, sign: i64) -> i32 {
@@ -179,13 +179,13 @@ pub extern "C" fn gos_rt_math_is_inf(x: f64, sign: i64) -> i32 {
     i32::from(hit)
 }
 
-/// `math::nan()` — the IEEE 754 not-a-number value.
+/// `math::nan()` - the IEEE 754 not-a-number value.
 #[unsafe(no_mangle)]
 pub extern "C" fn gos_rt_math_nan() -> f64 {
     f64::NAN
 }
 
-/// `math::inf(sign)` — positive infinity when `sign >= 0`, else
+/// `math::inf(sign)` - positive infinity when `sign >= 0`, else
 /// negative infinity (mirrors `gossamer_std::math::inf`).
 #[unsafe(no_mangle)]
 pub extern "C" fn gos_rt_math_inf(sign: i64) -> f64 {
@@ -207,7 +207,7 @@ pub unsafe extern "C" fn gos_rt_time_now_ms() -> i64 {
 }
 
 // ---------------------------------------------------------------
-// math::bits::* — scalar bit primitives over u64 (values cross the
+// math::bits::* - scalar bit primitives over u64 (values cross the
 // C-ABI as i64 bit patterns). Mirrors `gossamer_std::math::bits`.
 // ---------------------------------------------------------------
 

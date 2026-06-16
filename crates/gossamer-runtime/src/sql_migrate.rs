@@ -191,7 +191,7 @@ fn split_statements(sql: &str) -> Vec<String> {
                 out.push(std::mem::take(&mut buf));
             }
             '-' if !in_single && chars.peek() == Some(&'-') => {
-                // SQL line comment — skip to end of line.
+                // SQL line comment - skip to end of line.
                 chars.next();
                 for inner in chars.by_ref() {
                     if inner == '\n' {

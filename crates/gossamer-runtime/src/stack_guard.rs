@@ -2,7 +2,7 @@
 //!
 //! Recursive Gossamer code can blow the OS stack. Without a guard
 //! the kernel delivers SIGSEGV on the bottom guard page and the
-//! process dies silently — there is no chance to print a useful
+//! process dies silently - there is no chance to print a useful
 //! diagnostic because the signal handler itself would run on the
 //! already-exhausted stack and trigger a second fault.
 //!
@@ -72,7 +72,7 @@ mod unix {
     use super::{ALT_STACK_BYTES, STACK_GUARD_PROXIMITY};
 
     // Per-thread alternate-signal stack. Kept thread-local so the
-    // kernel always has a valid `ss_sp` for the calling thread —
+    // kernel always has a valid `ss_sp` for the calling thread -
     // `sigaltstack` is a per-thread setting, not process-wide.
     thread_local! {
         static ALT_STACK: Cell<*mut u8> = const { Cell::new(std::ptr::null_mut()) };
@@ -90,7 +90,7 @@ mod unix {
     pub(super) fn install() {
         // AddressSanitizer installs its own SIGSEGV handler + alt
         // signal stack to diagnose stack overflow itself. Installing
-        // ours on top conflicts with ASan's runtime — when the test
+        // ours on top conflicts with ASan's runtime - when the test
         // thread exits, ASan reads the current alt-stack state via
         // `sigaltstack(NULL, &old)` and tries to `munmap` whatever
         // it sees. Our heap-allocated `Box<[u8]>` alt stack isn't
@@ -98,7 +98,7 @@ mod unix {
         // "Failed to munmap" CHECK in libasan. Detect ASan via its
         // standard option-variable contract (any ASan-instrumented
         // program reads `ASAN_OPTIONS` at startup; CI sets it
-        // explicitly) and skip — ASan's diagnostics are strictly
+        // explicitly) and skip - ASan's diagnostics are strictly
         // better than ours for this case.
         if std::env::var_os("ASAN_OPTIONS").is_some() {
             return;
@@ -117,7 +117,7 @@ mod unix {
     fn install_alt_stack() {
         // SAFETY: `Box::into_raw` returns a valid heap allocation
         // of `ALT_STACK_BYTES`. The pointer is parked thread-local
-        // and never freed — the thread either exits (kernel reaps
+        // and never freed - the thread either exits (kernel reaps
         // the alt stack first via SS_DISABLE on thread exit) or
         // lives until process abort.
         let buf: Box<[u8]> = vec![0_u8; ALT_STACK_BYTES].into_boxed_slice();
@@ -213,7 +213,7 @@ mod unix {
     fn discover_stack_bounds() -> (usize, usize) {
         // Other Unix (FreeBSD, illumos, etc.): no portable bounds
         // discovery. The handler still installs but every fault is
-        // forwarded unmodified — equivalent to the pre-guard
+        // forwarded unmodified - equivalent to the pre-guard
         // behaviour but with the alt stack in place so the kernel
         // doesn't double-fault.
         (0, 0)
@@ -262,7 +262,7 @@ mod unix {
 
     fn report_overflow_and_abort(addr: usize) -> ! {
         // Compose the message on a stack scratch buffer. We can't
-        // use `format!` or `eprintln!` — both allocate / take
+        // use `format!` or `eprintln!` - both allocate / take
         // locks. `itoa::Buffer` writes into a stack-resident
         // array.
         let prefix = b"gossamer: stack overflow at 0x";
@@ -369,13 +369,13 @@ mod unix {
         fn proximity_check_inside_stack_is_not_overflow() {
             STACK_LO.with(|c| c.set(0x1_0000_0000));
             STACK_HI.with(|c| c.set(0x1_0010_0000));
-            // Address inside the live stack — not an overflow.
+            // Address inside the live stack - not an overflow.
             assert!(!is_stack_overflow(0x1_0005_0000));
-            // Address just below the bottom — the overflow case.
+            // Address just below the bottom - the overflow case.
             assert!(is_stack_overflow(0x0_FFFF_F000));
-            // Address far below the bottom — propagate.
+            // Address far below the bottom - propagate.
             assert!(!is_stack_overflow(0x0_0000_1000));
-            // Address above the top — propagate.
+            // Address above the top - propagate.
             assert!(!is_stack_overflow(0x1_0020_0000));
             STACK_LO.with(|c| c.set(0));
             STACK_HI.with(|c| c.set(0));
@@ -386,8 +386,8 @@ mod unix {
         fn install_is_idempotent() {
             // Under AddressSanitizer `install` is a no-op (see the
             // doc on `install` for why our sigaltstack would
-            // collide with libasan's). Idempotency still holds —
-            // two no-ops are equivalent to one — but the
+            // collide with libasan's). Idempotency still holds -
+            // two no-ops are equivalent to one - but the
             // `INSTALLED` assertion below would spuriously fail, so
             // skip the body when ASan owns the signal stack.
             if std::env::var_os("ASAN_OPTIONS").is_some() {

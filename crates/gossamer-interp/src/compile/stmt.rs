@@ -84,7 +84,7 @@ impl<'tcx> FnBuilder<'tcx> {
                         self.record_flag_init(init, typed.reg);
                         self.bind_local(&name.name, typed);
                     } else {
-                        // Declared-only — default to Value; an
+                        // Declared-only - default to Value; an
                         // assignment before read will overwrite.
                         let reg = self.alloc_reg();
                         self.bind_local(
@@ -96,7 +96,7 @@ impl<'tcx> FnBuilder<'tcx> {
                         );
                     }
                 } else if let Some(init) = init {
-                    // Destructuring — compile init to a Value reg,
+                    // Destructuring - compile init to a Value reg,
                     // then bind sub-patterns via TupleIndex. Only
                     // tuple/wildcard/binding shapes are handled
                     // here; complex patterns error out instead of
@@ -274,7 +274,7 @@ impl<'tcx> FnBuilder<'tcx> {
                 }
             }
         }
-        // `local[idx].field = value` — fused in-place write.
+        // `local[idx].field = value` - fused in-place write.
         // The `IndexedFieldSet` op mutates the array and the
         // body's field vec via `Arc::make_mut`, which is O(1)
         // here because `target` is the sole holder of the
@@ -379,7 +379,7 @@ impl<'tcx> FnBuilder<'tcx> {
         // register move; a `static mut`-rooted place (`COUNTER = …`,
         // `STATIC.field = …`) bottoms out in an `Op::StoreStatic` against
         // the shared `Global::MutStatic` cell. Those are the only
-        // assignable place roots — a `const` or immutable `static` is
+        // assignable place roots - a `const` or immutable `static` is
         // rejected by the typechecker before it reaches here.
         if self.place_root_is_local(place) || self.place_root_is_mut_static(place) {
             let value_reg = self.compile_expr(value)?;
@@ -390,7 +390,7 @@ impl<'tcx> FnBuilder<'tcx> {
         ))
     }
 
-    /// `true` when the lvalue `place` is rooted at a bound local — a
+    /// `true` when the lvalue `place` is rooted at a bound local - a
     /// chain of field / index / deref projections bottoming out at a
     /// local binding. A static-rooted place returns `false`.
     fn place_root_is_local(&self, place: &HirExpr) -> bool {
@@ -408,7 +408,7 @@ impl<'tcx> FnBuilder<'tcx> {
         }
     }
 
-    /// `true` when the lvalue `place` is rooted at a `static mut` — the
+    /// `true` when the lvalue `place` is rooted at a `static mut` - the
     /// static side of [`Self::place_root_is_local`]. A field / index /
     /// deref chain bottoming out at a known mutable static matches.
     fn place_root_is_mut_static(&self, place: &HirExpr) -> bool {

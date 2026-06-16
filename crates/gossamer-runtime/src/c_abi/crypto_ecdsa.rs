@@ -6,18 +6,18 @@
 //!
 //! The construction is copied verbatim from
 //! `gossamer-std/src/crypto.rs::ecdsa` (the runtime cannot depend on
-//! `gossamer-std` — that would cycle, since `gossamer-std` already
-//! depends on `gossamer-runtime` — so the leaf logic is reimplemented
+//! `gossamer-std` - that would cycle, since `gossamer-std` already
+//! depends on `gossamer-runtime` - so the leaf logic is reimplemented
 //! over the same `p256` crate, producing byte-identical results):
-//! - `keypair_pem()` returns `Result<(String, String), errors::Error>`
-//!   — `(secret_pkcs8_pem, public_spki_pem)` with LF line endings.
+//! - `keypair_pem()` returns `Result<(String, String), errors::Error>` -
+//!   `(secret_pkcs8_pem, public_spki_pem)` with LF line endings.
 //!   The Ok payload is a 16-byte heap pair `(secret_ptr, public_ptr)`
 //!   of `*mut c_char`, matching the bytecode VM's
 //!   `Value::Tuple([secret, public])`.
 //! - `sign_pem(secret_pem, message)` returns
-//!   `Result<Vec<u8>, errors::Error>` — the DER-encoded signature.
+//!   `Result<Vec<u8>, errors::Error>` - the DER-encoded signature.
 //! - `verify_pem(public_pem, message, signature)` returns
-//!   `Result<(), errors::Error>` — `Ok(())` packed as disc 0,
+//!   `Result<(), errors::Error>` - `Ok(())` packed as disc 0,
 //!   payload 0 (mirrors the VM's `ok_variant(Value::Unit)`).
 
 #![allow(clippy::missing_safety_doc)]
@@ -34,7 +34,7 @@ use super::encoding::{bytes_to_gosvec, gosvec_u8};
 use super::vec::{GosVec, gos_rt_result_new};
 
 /// OS-CSPRNG adapter for `p256::ecdsa::SigningKey::random`. Mirrors
-/// `gossamer_std::crypto::rand::OsRng` — backed by `getrandom`. On the
+/// `gossamer_std::crypto::rand::OsRng` - backed by `getrandom`. On the
 /// (essentially never) failure of the OS RNG, `fill_bytes` zero-fills;
 /// the entry point probes the RNG up front and refuses on failure, so
 /// a zero-filled scalar is never reached in practice.
@@ -105,7 +105,7 @@ fn alloc_pair(a: i64, b: i64) -> *mut u8 {
 }
 
 /// `crypto::ecdsa::keypair_pem()
-/// -> Result<(String, String), errors::Error>` — fresh P-256 keypair
+/// -> Result<(String, String), errors::Error>` - fresh P-256 keypair
 /// `(secret_pkcs8_pem, public_spki_pem)`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_crypto_ecdsa_keypair_pem() -> i128 {
@@ -135,7 +135,7 @@ pub unsafe extern "C" fn gos_rt_crypto_ecdsa_keypair_pem() -> i128 {
 }
 
 /// `crypto::ecdsa::sign_pem(secret_pem, message)
-/// -> Result<Vec<u8>, errors::Error>` — DER-encoded signature.
+/// -> Result<Vec<u8>, errors::Error>` - DER-encoded signature.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_crypto_ecdsa_sign_pem(
     secret_pem: *const c_char,
@@ -157,7 +157,7 @@ pub unsafe extern "C" fn gos_rt_crypto_ecdsa_sign_pem(
 }
 
 /// `crypto::ecdsa::verify_pem(public_pem, message, signature)
-/// -> Result<(), errors::Error>` — `Ok(())` on a valid DER signature.
+/// -> Result<(), errors::Error>` - `Ok(())` on a valid DER signature.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_crypto_ecdsa_verify_pem(
     public_pem: *const c_char,

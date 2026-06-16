@@ -6,7 +6,7 @@
 // result::default_with over String payloads, the
 // `map_err(errors::new)` eta shape (std fn as a value), a live
 // `http::request(...).map_err(|e| format!(...))` against a refused
-// loopback port (23907 — reserved, never bound), and a GT-clean
+// loopback port (23907 - reserved, never bound), and a GT-clean
 // is_ok / is_err bool print.
 
 use std::{errors, http, iter, option, result, strings}

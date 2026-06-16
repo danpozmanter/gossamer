@@ -15,7 +15,7 @@ pub fn id() -> u32 {
 }
 
 /// Exits the current process with the given status code. Drops no
-/// destructors — use it only for terminal error paths.
+/// destructors - use it only for terminal error paths.
 pub fn exit(code: i32) -> ! {
     std::process::exit(code)
 }

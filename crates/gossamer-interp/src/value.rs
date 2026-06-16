@@ -1,6 +1,6 @@
 //! Runtime value representation for the tree-walking interpreter.
 //! Every shared aggregate is backed by [`Arc`] rather than
-//! [`std::rc::Rc`] so a [`Value`] can cross thread boundaries — a
+//! [`std::rc::Rc`] so a [`Value`] can cross thread boundaries - a
 //! prerequisite for real goroutine parallelism per
 //! the risks backlog.
 //! Phase P1 introduces `to_raw` / `from_raw` so that the interpreter
@@ -40,7 +40,7 @@ use gossamer_runtime::{
 /// 8-byte payload + 8-byte discriminant/padding). Pre-B1, the
 /// `FloatArray` / `Variant` / `Struct` / `Builtin` / `Native`
 /// variants inlined a `String` (24 bytes) plus an `Arc`, pushing
-/// `size_of::<Value>` to 48 bytes — every register-file slot
+/// `size_of::<Value>` to 48 bytes - every register-file slot
 /// paid the worst-case width even when holding `Int(i64)`. We
 /// pull each heavy variant behind an `Arc<Inner>` so the enum
 /// payload is one ptr; cloning a `Value` is now a refcount
@@ -106,7 +106,7 @@ pub enum Value {
     /// frequency tables ride this variant, dropping per-iteration
     /// hash + compare cost dramatically.
     IntMap(Arc<parking_lot::Mutex<rustc_hash::FxHashMap<i64, i64>>>),
-    /// Unsigned 64-bit integer — same bit pattern as `Int(n as i64)`
+    /// Unsigned 64-bit integer - same bit pattern as `Int(n as i64)`
     /// but formats as an unsigned decimal value. Used exclusively for
     /// `x as u64` casts to preserve unsigned display semantics.
     Uint(u64),
@@ -119,7 +119,7 @@ pub enum Value {
     /// argument. The caller wraps the aggregate at the call site,
     /// the callee unwraps it at frame entry and stores the final
     /// parameter value back on return, and the caller then reads it
-    /// out — write-through `&mut` parameter semantics on top of the
+    /// out - write-through `&mut` parameter semantics on top of the
     /// VM's clone-on-write value model. Never escapes the call
     /// protocol: no user-visible op ever observes a `MutCell`.
     MutCell(Arc<parking_lot::Mutex<Value>>),
@@ -131,7 +131,7 @@ pub enum Value {
 /// `std::sync::Weak` to the corresponding heap variant's `Arc`, so
 /// upgrading reconstructs the original `Value` shape when the referent
 /// is still alive. A downgrade of a non-heap (Copy) value records
-/// [`WeakValue::Dead`] — there is no allocation to observe, so it never
+/// [`WeakValue::Dead`] - there is no allocation to observe, so it never
 /// upgrades.
 #[derive(Debug, Clone)]
 pub enum WeakValue {
@@ -178,7 +178,7 @@ impl WeakValue {
 /// gives it a `(tag, content)` total order so any value the user
 /// can hash (int / bool / char / string) sorts deterministically.
 /// Aggregate values (arrays, structs, closures) collapse to a
-/// single bucket — they're rejected at insert time, not here.
+/// single bucket - they're rejected at insert time, not here.
 ///
 /// String keys are stored as [`SmolStr`] (8 B inline for ≤ 7-byte
 /// keys, otherwise an `Arc<str>` behind a tag bit) instead of an
@@ -197,9 +197,9 @@ pub enum MapKey {
     Int(i64),
     /// `char` key.
     Char(char),
-    /// String key (stored inline when ≤ 7 bytes — see [`SmolStr`]).
+    /// String key (stored inline when ≤ 7 bytes - see [`SmolStr`]).
     Str(SmolStr),
-    /// Aggregate key — struct / tuple / enum variant — hashed by *value*:
+    /// Aggregate key - struct / tuple / enum variant - hashed by *value*:
     /// the type/variant name plus each field's `MapKey`, recursively. Two
     /// equal-valued aggregates at distinct allocations produce equal keys, so
     /// `HashMap<Point, _>` keys by content the way the compiled tier does.
@@ -215,7 +215,7 @@ impl MapKey {
             Value::Bool(b) => Self::Bool(*b),
             Value::Int(n) => Self::Int(*n),
             Value::Char(c) => Self::Char(*c),
-            // Key floats by their bit pattern — matches the compiled tier,
+            // Key floats by their bit pattern - matches the compiled tier,
             // which hashes the raw 8 bytes.
             Value::Float(f) => Self::Int(f.to_bits() as i64),
             Value::String(s) => Self::Str(s.clone()),
@@ -278,7 +278,7 @@ pub struct VariantInner {
     /// Variant name (interned, see `intern_type_name`).
     pub name: &'static str,
     /// Positional fields, stored inline: a variant value is ONE heap
-    /// allocation plus its field buffer (was three — outer Arc, inner
+    /// allocation plus its field buffer (was three - outer Arc, inner
     /// `Arc<Vec>`, buffer). Sharing still goes through the outer Arc.
     pub fields: Vec<Value>,
 }
@@ -329,7 +329,7 @@ pub struct NativeInner {
 /// allocates a `String` on the heap *and* an `Arc` header (~32
 /// bytes total). Variant names like `"Ok"` / `"Err"` / `"Some"`
 /// / `"None"`, single-char field names, and most stack tags fit
-/// in 7 bytes — so a steady-state hot loop now does zero heap
+/// in 7 bytes - so a steady-state hot loop now does zero heap
 /// allocation for those values.
 ///
 /// **Safety.** All pointer arithmetic is contained in this type.
@@ -358,7 +358,7 @@ impl SmolStr {
     /// up to 7 bytes are stored inline; longer strings allocate
     /// a fresh `Arc<String>`.
     ///
-    /// Intentionally not the [`std::str::FromStr`] trait method —
+    /// Intentionally not the [`std::str::FromStr`] trait method -
     /// `FromStr` returns `Result` to model fallible parsing and
     /// this conversion is infallible. Implementing the trait
     /// would force callers to `.unwrap()` an `Ok`-only path.
@@ -387,7 +387,7 @@ impl SmolStr {
         }
     }
 
-    /// Constructs from an existing `Arc<String>` — used by hot
+    /// Constructs from an existing `Arc<String>` - used by hot
     /// paths that have already paid the allocation. Always
     /// stores as heap (no inline-promotion to keep the
     /// constructor branch-free).
@@ -598,7 +598,7 @@ unsafe impl Sync for SmolStr {}
 /// Returns a `&'static str` identity for `name`, allocating once
 /// per distinct byte sequence. Used by [`Value::variant`],
 /// [`Value::struct_`], and [`Value::float_array`] to deduplicate
-/// type names across all values that share them — programs
+/// type names across all values that share them - programs
 /// typically have a fixed, small set of named types.
 ///
 /// The leak is bounded by that set, not by call count.
@@ -707,7 +707,7 @@ impl Value {
 /// `go expr` ships.
 ///
 /// A Condvar lets receivers (and `select`) park instead of polling
-/// when the channel is empty — a `send` notifies all waiters so they
+/// when the channel is empty - a `send` notifies all waiters so they
 /// can re-check.
 #[derive(Clone)]
 pub struct Channel {
@@ -721,7 +721,7 @@ struct ChannelInner {
     /// buffer with `closed = true` return `None` instead of parking
     /// forever. Stored as an `AtomicBool` so peers (e.g. select's
     /// readiness probe) can observe the closed state without
-    /// acquiring `buf` — no hand-rolled `unsafe impl Sync` needed
+    /// acquiring `buf` - no hand-rolled `unsafe impl Sync` needed
     /// and no race possible on the read.
     closed: std::sync::atomic::AtomicBool,
 }
@@ -753,7 +753,7 @@ impl Channel {
     /// Marks the channel as closed and wakes every parked receiver
     /// so they observe the closed state and exit their wait. Returns
     /// `true` when this call performed the close and `false` when the
-    /// channel was already closed — the caller turns the latter into
+    /// channel was already closed - the caller turns the latter into
     /// a `close of closed channel` panic, matching Go. That panic is
     /// goroutine-scoped, so it ends only the offending goroutine
     /// (fatal on `main`) and never aborts the whole process.
@@ -783,7 +783,7 @@ impl Channel {
     }
 
     /// Non-blocking receive. Returns `None` when the channel is
-    /// empty (regardless of close state — callers that need
+    /// empty (regardless of close state - callers that need
     /// drain-aware semantics should use [`Channel::recv`]).
     #[must_use]
     pub fn try_recv(&self) -> Option<Value> {
@@ -887,7 +887,7 @@ impl Value {
     /// Rehydrates a [`Value::FloatArray`] into the boxed
     /// [`Value::Array`] of [`Value::Struct`] representation.
     /// Used at every code path where a flat aggregate meets
-    /// code that expects the generic shape — ABI crossings,
+    /// code that expects the generic shape - ABI crossings,
     /// `EvalDeferred`, `Display`, etc.
     ///
     /// # Panics
@@ -976,7 +976,7 @@ impl Value {
             }
             Self::FloatArray(_) => {
                 // Rehydrate into a `Value::Array<Value::Struct>`
-                // before handing across the ABI boundary — the raw
+                // before handing across the ABI boundary - the raw
                 // representation has no slot for flat f64 aggregates.
                 let arr = self.float_array_to_value_array();
                 let Value::Array(a) = arr else { unreachable!() };
@@ -1029,7 +1029,7 @@ impl Value {
             | Self::Native(_)
             | Self::Weak(_)
             | Self::Void => {
-                // Unencodable in the raw layout — return a sentinel
+                // Unencodable in the raw layout - return a sentinel
                 // that `from_raw` maps back to `Void`.
                 from_singleton(SINGLETON_UNIT)
             }
@@ -1086,7 +1086,7 @@ impl fmt::Display for Value {
         // byte-identical text. the parity plan.
         match self {
             Self::NativeEnum(o) => fmt::Display::fmt(&native_enum_to_variant(o), out),
-            // Cells render as their inner value — they are a call-
+            // Cells render as their inner value - they are a call-
             // protocol artifact, never a user-visible shape.
             Self::MutCell(c) => {
                 let inner = c.lock().clone();
@@ -1291,7 +1291,7 @@ pub type RuntimeResult<T> = Result<T, RuntimeError>;
 
 /// Top-level interpreter errors. Each variant carries a stable
 /// diagnostic code (`GX0001` …) that both the interpreter and the
-/// native backend use when reporting the same failure — the
+/// native backend use when reporting the same failure - the
 /// "unified error code catalogue" half of
 /// the parity plan.
 #[derive(Debug, Clone, thiserror::Error)]
@@ -1323,7 +1323,7 @@ pub enum RuntimeError {
     #[error("error[GX0007]: interpreter does not yet support {0}")]
     Unsupported(&'static str),
     /// Goroutine call depth exceeded the VM limit.
-    #[error("error[GX0008]: stack overflow — call depth exceeded {0} frames")]
+    #[error("error[GX0008]: stack overflow - call depth exceeded {0} frames")]
     StackOverflow(usize),
 }
 
@@ -1420,7 +1420,7 @@ fn take_heap(handle: u32) -> Option<RegistryEntry> {
 
 /// Returns `(slots, occupied)` where `slots` is the size of the
 /// registry's slot vector and `occupied` is the count of currently
-/// non-empty slots. Test-only — exposed so the value-roundtrip suite
+/// non-empty slots. Test-only - exposed so the value-roundtrip suite
 /// can assert that the registry stays bounded under repeated
 /// `to_raw`/`from_raw` cycles.
 #[doc(hidden)]
@@ -1445,7 +1445,7 @@ mod size_assertions {
         //
         // The natural fit on 64-bit is 16 bytes (8 disc + 8
         // payload). A future D9 NaN-box pass can collapse this
-        // further to 8 by encoding the tag inside the payload —
+        // further to 8 by encoding the tag inside the payload -
         // see `gossamer_runtime::GossamerValue` for the layout
         // the LLVM lowerer already speaks. Until then this
         // assertion is the regression guard.
@@ -1543,7 +1543,7 @@ static NATIVE_SHAPES: std::sync::LazyLock<parking_lot::RwLock<Vec<&'static Nativ
 ///
 /// The reserve (reading the base index) and the inserts happen under a
 /// single write lock, so concurrent program loads can never interleave
-/// a reserve with another load's register — the indices a shape is
+/// a reserve with another load's register - the indices a shape is
 /// built against are guaranteed to be the indices it lands at.
 ///
 /// `build` is handed the base index the block will occupy and must
@@ -1638,7 +1638,7 @@ pub fn native_enum_field(owner: &NativeEnumOwner, idx: usize) -> Value {
 }
 
 /// Deep-converts a native enum value into the boxed
-/// [`Value::Variant`] representation — the safety valve for paths
+/// [`Value::Variant`] representation - the safety valve for paths
 /// that need structural `Value`s (FFI bridging, fallback equality).
 #[must_use]
 pub fn native_enum_to_variant(owner: &NativeEnumOwner) -> Value {

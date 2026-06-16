@@ -9,7 +9,7 @@
 //!
 //! Every entry maps a source path to a `gos_rt_*` shim whose C ABI is
 //! word-shaped (pointer/i64 arguments, word or packed-i128 return), so
-//! the per-shape callable thunks can forward to it directly — the
+//! the per-shape callable thunks can forward to it directly - the
 //! eta-expansion is the existing env-blob + `__fn_thunk_*` machinery,
 //! pointed at the runtime symbol instead of a nonexistent
 //! `module::name` function.
@@ -115,7 +115,7 @@ pub const STD_FN_VALUES: &[StdFnValue] = &[
 
 /// Std modules whose free functions the VM exposes as builtin values.
 /// An unresolved lowercase path under one of these heads, used in a
-/// value position, is a std-fn-as-value — supported when tabled,
+/// value position, is a std-fn-as-value - supported when tabled,
 /// GT0015 otherwise.
 const STD_VALUE_MODULES: &[&str] = &[
     "errors", "strings", "strconv", "math", "path", "utf8", "unicode", "sort", "fs", "os", "time",

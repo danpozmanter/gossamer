@@ -143,7 +143,7 @@ impl LinkerOptions {
         })
     }
 
-    /// Returns a copy with DCE and compact mangling both enabled —
+    /// Returns a copy with DCE and compact mangling both enabled -
     /// the recommended shape for release builds.
     #[must_use]
     pub fn release(mut self) -> Self {
@@ -219,7 +219,7 @@ fn short_hash(text: &str) -> String {
 
 /// Set of `(unit, fn)` pairs reachable from `entry`. A pass runs a
 /// simple textual search over each function's emitted body for
-/// references to other functions — fine for the text-stub codegen,
+/// references to other functions - fine for the text-stub codegen,
 /// accurate enough to identify the transitive closure.
 fn reachable_symbols(units: &[TranslationUnit], entry: &str) -> BTreeMap<String, Vec<String>> {
     let mut function_by_name: BTreeMap<String, (String, &FunctionText)> = BTreeMap::new();

@@ -17,8 +17,8 @@ use gossamer_pkg::{
 };
 
 /// Builds a single-entry USTAR tarball in memory so tests do not
-/// need `tar(1)` on the host. Keeps the helper here — not in
-/// `gossamer-pkg` — because it's purely test-support code.
+/// need `tar(1)` on the host. Keeps the helper here - not in
+/// `gossamer-pkg` - because it's purely test-support code.
 fn build_tar(name: &str, body: &[u8]) -> Vec<u8> {
     let mut header = [0u8; 512];
     for (i, b) in name.as_bytes().iter().take(100).enumerate() {

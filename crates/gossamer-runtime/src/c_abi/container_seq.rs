@@ -18,7 +18,7 @@
 use super::*;
 
 // ---------------------------------------------------------------
-// container::queue / stack / deque — sequence container ops over
+// container::queue / stack / deque - sequence container ops over
 // `Vec<i64>`. All operations return the same heap pointer for the
 // `let q = queue::push(q, v)` re-bind idiom.
 // ---------------------------------------------------------------
@@ -26,7 +26,7 @@ use super::*;
 /// Append `value` to a clone of the input `Vec<i64>`. Returns a
 /// fresh Vec so the caller's old binding can be dropped cleanly
 /// (MIR's let-shadowing pattern is sensitive to same-pointer
-/// returns — see `containers_seq_demo.gos` for the canonical
+/// returns - see `containers_seq_demo.gos` for the canonical
 /// re-bind shape).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_vec_push_back_i64(v: *mut GosVec, value: i64) -> *mut GosVec {

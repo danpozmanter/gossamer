@@ -1,4 +1,4 @@
-//! Stream B.3 — acceptance harness that asserts each fixture under
+//! Stream B.3 - acceptance harness that asserts each fixture under
 //! `tests/fixtures/` emits its declared `// ERROR: G???` code.
 //! Every fixture carries a `// ERROR: <CODE>` comment on the first
 //! line. The harness runs parse + resolve + type-check on the

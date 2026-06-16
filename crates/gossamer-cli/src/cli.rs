@@ -60,7 +60,7 @@ enum Command {
     /// The execution path is the register-based bytecode VM, which
     /// lowers every language construct to native bytecode. The
     /// historical `--tree-walker` / `--vm` flags were retired in
-    /// 0.5.0 — there is one `gos run` engine and it is not a
+    /// 0.5.0 - there is one `gos run` engine and it is not a
     /// user-selectable tier.
     ///
     /// With no path: defaults to `<project-root>/src/main.gos`
@@ -71,7 +71,7 @@ enum Command {
         file: Option<PathBuf>,
         /// Disable the cranelift JIT (deferred whole-program
         /// compile triggered by per-chunk hot-counter tier-up).
-        /// The JIT is on by default — pass `--no-jit` to fall back
+        /// The JIT is on by default - pass `--no-jit` to fall back
         /// to pure bytecode dispatch. Equivalent to setting
         /// `GOS_JIT=0` in the environment.
         #[arg(long)]
@@ -388,7 +388,7 @@ enum Command {
         /// Optional: defaults to the project's `src/` directory.
         path: Option<PathBuf>,
         /// Number of files to bench in parallel. Defaults to 1 so
-        /// per-bench timings stay reproducible — two CPU-bound
+        /// per-bench timings stay reproducible - two CPU-bound
         /// benches sharing a core perturb each other's measurements.
         #[arg(long)]
         parallel: Option<usize>,
@@ -489,7 +489,7 @@ enum Command {
         /// Output format. Defaults to a pipe-separated table.
         #[arg(long, default_value = "table")]
         format: String,
-        /// CI gate mode — exit non-zero with a punch list when any
+        /// CI gate mode - exit non-zero with a punch list when any
         /// `Shipped` item lacks a doc page or a passing tier-parity test.
         #[arg(long)]
         check: bool,
@@ -524,11 +524,11 @@ pub(crate) fn run() -> ExitCode {
 }
 
 /// Routes the parsed [`Command`] to the matching `cmd::*` module.
-/// Kept as a flat match so each new subcommand is one line — the
+/// Kept as a flat match so each new subcommand is one line - the
 /// place to look when a flag stops landing where you expect.
 #[allow(
     clippy::too_many_lines,
-    reason = "intentional flat dispatch — one arm per subcommand keeps grep-ability"
+    reason = "intentional flat dispatch - one arm per subcommand keeps grep-ability"
 )]
 fn dispatch(command: Option<Command>) -> anyhow::Result<()> {
     match command {

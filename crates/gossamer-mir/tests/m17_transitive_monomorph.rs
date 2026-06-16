@@ -1,6 +1,6 @@
 //! Audit M17 (0.6.0): fixed-point monomorphisation. A generic
 //! body that calls another generic must produce specialised
-//! copies for both — the pre-0.6 one-shot pass missed the inner
+//! copies for both - the pre-0.6 one-shot pass missed the inner
 //! call.
 //!
 //! This is a smoke test against the public `monomorphise` entry

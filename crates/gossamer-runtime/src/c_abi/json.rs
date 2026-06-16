@@ -21,7 +21,7 @@ use std::os::raw::c_char;
 use super::*;
 
 // ---------------------------------------------------------------
-// JSON runtime — wraps `serde_json::Value` behind a heap pointer
+// JSON runtime - wraps `serde_json::Value` behind a heap pointer
 // so user code can do `json::parse(s)`, `value.field`, and
 // `value.as_i64()` from compiled Gossamer. The MIR lowerer
 // rewrites field access on a `json::Value` receiver into a
@@ -33,7 +33,7 @@ use super::*;
 /// `*mut GosJson` pointers through normal i64 slots; the runtime
 /// owns every node exclusively (each helper that "returns" a value
 /// boxes a fresh node). Lifetime tied to the next
-/// `gos_rt_gc_reset` only for the cstring helpers — JSON nodes are
+/// `gos_rt_gc_reset` only for the cstring helpers - JSON nodes are
 /// Heap-allocated JSON node. The compiled tier shuttles raw
 /// `*mut GosJson` pointers through normal i64 slots; each handle
 /// carries a shared `Arc<serde_json::Value>` keeping the parsed
@@ -105,7 +105,7 @@ unsafe fn json_borrow<'a>(p: *const GosJson) -> Option<&'a serde_json::Value> {
     }
     // Arc<serde_json::Value> pointers are always >> 1 on any real allocator.
     // If the first word is 0 or 1 we received a *mut GosResult (disc + payload)
-    // instead of a *const GosJson — unwrap the Option layer transparently.
+    // instead of a *const GosJson - unwrap the Option layer transparently.
     let first_word = unsafe { *(p as *const u64) };
     if first_word <= 1 {
         if first_word == 0 {
@@ -127,7 +127,7 @@ unsafe fn json_borrow<'a>(p: *const GosJson) -> Option<&'a serde_json::Value> {
     // tree's root) or by `Self::child` (points at a sub-Value of
     // `self.tree`'s subtree). Either way the pointee lives as
     // long as `tree` does, which is at least until this `&GosJson`
-    // dies — i.e. at least until this function returns.
+    // dies - i.e. at least until this function returns.
     Some(unsafe { &*json.view.as_const_ptr() })
 }
 
@@ -154,7 +154,7 @@ unsafe fn json_handle<'a>(p: *const GosJson) -> Option<&'a GosJson> {
 }
 
 /// `json::parse(text) -> Result<json::Value, String>` runtime
-/// `json::valid(text) -> bool` — true when `text` parses as
+/// `json::valid(text) -> bool` - true when `text` parses as
 /// well-formed JSON. Mirrors the interp `json::valid` builtin.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_json_valid(text: *const c_char) -> i8 {
@@ -209,8 +209,8 @@ pub unsafe extern "C" fn gos_rt_json_free(j: *mut GosJson) {
 }
 
 /// Escapes `<`, `>`, `&`, U+2028, and U+2029 in serialized JSON as
-/// `\uXXXX`. These bytes never appear in JSON structural syntax — only
-/// inside string values — so a whole-document replace is safe. Mirrors
+/// `\uXXXX`. These bytes never appear in JSON structural syntax - only
+/// inside string values - so a whole-document replace is safe. Mirrors
 /// the interpreter's `gossamer_std::json` encoder, keeping `json::encode`
 /// byte-identical across tiers and safe to embed inside an HTML
 /// `<script>` block.
@@ -393,7 +393,7 @@ pub unsafe extern "C" fn gos_rt_json_as_str(j: *const GosJson) -> *mut c_char {
     })
 }
 
-/// `value.as_i64() -> Option<i64>` — strict: `Some` only for a JSON
+/// `value.as_i64() -> Option<i64>` - strict: `Some` only for a JSON
 /// integer (or integer-valued number), `None` otherwise. This is the
 /// shape the auto-derived `from_json` relies on (`match json::as_i64(x)
 /// { Some(v) => v, None => Err }`); a coercing i64 return made every
@@ -420,7 +420,7 @@ pub unsafe extern "C" fn gos_rt_json_as_i64_opt(j: *const GosJson) -> i128 {
     })
 }
 
-/// `value.as_f64() -> Option<f64>` — `Some` for any JSON number,
+/// `value.as_f64() -> Option<f64>` - `Some` for any JSON number,
 /// `None` otherwise.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_json_as_f64_opt(j: *const GosJson) -> i128 {
@@ -434,7 +434,7 @@ pub unsafe extern "C" fn gos_rt_json_as_f64_opt(j: *const GosJson) -> i128 {
     })
 }
 
-/// `value.as_str() -> Option<String>` — `Some` only for a JSON
+/// `value.as_str() -> Option<String>` - `Some` only for a JSON
 /// string, `None` otherwise.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_json_as_str_opt(j: *const GosJson) -> i128 {
@@ -462,7 +462,7 @@ pub unsafe extern "C" fn gos_rt_json_as_bool(j: *const GosJson) -> i32 {
     })
 }
 
-/// `json::as_bool(value) -> Option<bool>` — `Some(b)` only when the
+/// `json::as_bool(value) -> Option<bool>` - `Some(b)` only when the
 /// value is a JSON boolean, else `None`. Result-shaped (disc 0 =
 /// Some, disc 1 = None) to match the bytecode VM's `Option<bool>`.
 #[unsafe(no_mangle)]
@@ -476,7 +476,7 @@ pub unsafe extern "C" fn gos_rt_json_as_bool_opt(j: *const GosJson) -> i128 {
 }
 
 /// Identity helper for `json::as_array` / similar type
-/// assertions — the runtime doesn't keep separate array vs
+/// assertions - the runtime doesn't keep separate array vs
 /// object handles, so the as_* coercions just thread the
 /// receiver through unchanged. Lets MIR lowering route these
 /// names without special-casing them at the call site.
@@ -516,7 +516,7 @@ pub unsafe extern "C" fn gos_rt_json_get_opt(j: *const GosJson, key: *const c_ch
 
 /// `json::keys(value) -> Option<[String]>`. Returns `Some(vec)`
 /// for objects (keys in declaration order), `None` for any other
-/// shape — pinned by `malformed_json_returns_none_not_segfault`.
+/// shape - pinned by `malformed_json_returns_none_not_segfault`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_json_keys_opt(j: *const GosJson) -> i128 {
     ffi_entry!(0i128, {
@@ -563,7 +563,7 @@ pub unsafe extern "C" fn gos_rt_json_as_array_opt(j: *const GosJson) -> i128 {
                 let vec_ptr = unsafe { gos_rt_vec_new(8) };
                 for item in items {
                     // Each element shares the parent's `Arc<Value>`
-                    // tree — no deep clone, no per-element leak of a
+                    // tree - no deep clone, no per-element leak of a
                     // freshly-boxed Value.
                     let elem = parent.child(item) as i64;
                     unsafe {
@@ -696,7 +696,7 @@ pub unsafe extern "C" fn gos_rt_json_array_from_scalar_vec(
     })
 }
 
-/// `json::Value::object(n, pairs_ptr)` — fan-out constructor
+/// `json::Value::object(n, pairs_ptr)` - fan-out constructor
 /// that takes the pair count and a flat `[k0, v0, k1, v1, …]`
 /// arena buffer. Lets the MIR lowerer materialise an array
 /// literal of `(String, json::Value)` pairs into a 16-B-strided
@@ -756,7 +756,7 @@ pub unsafe extern "C" fn gos_rt_json_value_object(vec: *const GosVec) -> *mut Go
                 matches!(elem_bytes, 8 | 16 | 24) && raw_len <= 16 * 1024 * 1024;
             if header_looks_valid && !header.ptr.is_null() && raw_len > 0 {
                 // Tuples in the compiled tier currently get pushed as
-                // flat 8-byte slots — `[("k", v), ("k2", v2)]` lands
+                // flat 8-byte slots - `[("k", v), ("k2", v2)]` lands
                 // as `len = 4` of i64 slots, not `len = 2` of 16-byte
                 // pairs. Detect this by `elem_bytes`: if it's 8, treat
                 // `len` as half the tuple count and stride 8; if it's
@@ -848,7 +848,7 @@ mod tests {
         assert_eq!(vec.elem_kind, crate::c_abi::vec::vec_elem_kind::STRING);
         // Probe-share key 0, free the vec WITHOUT iterating (the
         // early-break consumer shape): deep-free must release exactly
-        // the vec's share — rc 2 -> 1, not 2 (leak), not 0 (double free).
+        // the vec's share - rc 2 -> 1, not 2 (leak), not 0 (double free).
         let k0 = unsafe {
             std::ptr::with_exposed_provenance_mut::<c_char>(
                 (vec.ptr.as_ptr() as *const usize).read_unaligned(),

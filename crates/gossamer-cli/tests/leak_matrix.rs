@@ -5,7 +5,7 @@
 //! If the per-iteration heap is reclaimed at scope end, peak RSS stays bounded
 //! regardless of the iteration count; if it leaks, RSS grows with N and blows
 //! past the cap. The control shape (`enum_tree`) is RC-managed today and MUST
-//! stay bounded — it proves the harness and the existing RC both work. The
+//! stay bounded - it proves the harness and the existing RC both work. The
 //! other shapes are flipped into `MUST_BE_BOUNDED` as each phase fixes them.
 //!
 //! Run just this gate: `cargo test -p gossamer-cli --test leak_matrix -- --nocapture`

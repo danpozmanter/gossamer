@@ -98,7 +98,7 @@ install_unix() {
 
     if [ "$SYSTEM" -eq 0 ] && [[ ":${PATH}:" != *":$bin_dir:"* ]]; then
         echo
-        echo "Note: $bin_dir is not in PATH — add it to your shell profile:"
+        echo "Note: $bin_dir is not in PATH - add it to your shell profile:"
         case "${SHELL##*/}" in
             zsh)  echo "    echo 'export PATH=\"$bin_dir:\$PATH\"' >> ~/.zshrc" ;;
             fish) echo "    fish_add_path $bin_dir" ;;
@@ -132,7 +132,7 @@ install_windows() {
     lib_dir="$prefix/lib"
 
     mkdir -p "$bin_dir" "$lib_dir" \
-        || die "could not create $prefix — re-run from an admin shell for --system"
+        || die "could not create $prefix - re-run from an admin shell for --system"
     cp "$exe" "$bin_dir/gos.exe"
     cp "$lib" "$lib_dir/gossamer_runtime.lib"
 

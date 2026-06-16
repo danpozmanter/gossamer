@@ -1,14 +1,14 @@
-//! Runtime support for `std::unicode` — Unicode general-category
+//! Runtime support for `std::unicode` - Unicode general-category
 //! predicates, casing operations, normalization forms, and
 //! grapheme / word / sentence segmentation.
 //!
 //! Properties come from the Unicode 16 tables shipped by the
 //! `unicode-properties`, `unicode-normalization`, and
 //! `unicode-segmentation` crates. The earlier hand-rolled ASCII /
-//! BMP-range stubs are gone — every predicate now answers against
+//! BMP-range stubs are gone - every predicate now answers against
 //! the real general-category data so user code that asks
-//! `is_digit('٧')` (Arabic-Indic seven, U+0667) or
-//! `is_punct('—')` (em dash, U+2014) gets the right answer.
+//! `is_digit('٧')` (Arabic-Indic seven, U+0667), or whether an
+//! em dash (U+2014) is punctuation, gets the right answer.
 
 #![forbid(unsafe_code)]
 
@@ -22,13 +22,13 @@ use unicode_segmentation::UnicodeSegmentation;
 // ---------------------------------------------------------------------------
 
 /// Returns `true` if `r` is in Unicode general-category group L (any
-/// letter — Lu, Ll, Lt, Lm, Lo).
+/// letter - Lu, Ll, Lt, Lm, Lo).
 #[must_use]
 pub fn is_letter(r: char) -> bool {
     matches!(r.general_category_group(), GeneralCategoryGroup::Letter)
 }
 
-/// Returns `true` if `r` is in category Nd (decimal digit) — covers
+/// Returns `true` if `r` is in category Nd (decimal digit) - covers
 /// ASCII `0`..`9`, Arabic-Indic `٠`..`٩`, Devanagari `०`..`९`, etc.
 #[must_use]
 pub fn is_digit(r: char) -> bool {
@@ -36,13 +36,13 @@ pub fn is_digit(r: char) -> bool {
 }
 
 /// Returns `true` if `r` is in general-category group N (any numeric
-/// character — Nd decimal, Nl letter-number, No other-number).
+/// character - Nd decimal, Nl letter-number, No other-number).
 #[must_use]
 pub fn is_number(r: char) -> bool {
     matches!(r.general_category_group(), GeneralCategoryGroup::Number)
 }
 
-/// Returns `true` if `r` is Unicode whitespace — group Z (separator)
+/// Returns `true` if `r` is Unicode whitespace - group Z (separator)
 /// plus the ASCII whitespace control characters HT / LF / VT / FF / CR
 /// and NEL (U+0085). Matches Go's `unicode.IsSpace`.
 #[must_use]
@@ -72,7 +72,7 @@ pub fn is_title(r: char) -> bool {
     matches!(r.general_category(), GeneralCategory::TitlecaseLetter)
 }
 
-/// Returns `true` if `r` is in general-category group P — any
+/// Returns `true` if `r` is in general-category group P - any
 /// punctuation (Pc, Pd, Ps, Pe, Pi, Pf, Po).
 #[must_use]
 pub fn is_punct(r: char) -> bool {
@@ -82,21 +82,21 @@ pub fn is_punct(r: char) -> bool {
     )
 }
 
-/// Returns `true` if `r` is in general-category group S — any
+/// Returns `true` if `r` is in general-category group S - any
 /// symbol (Sm math, Sc currency, Sk modifier, So other).
 #[must_use]
 pub fn is_symbol(r: char) -> bool {
     matches!(r.general_category_group(), GeneralCategoryGroup::Symbol)
 }
 
-/// Returns `true` if `r` is in general-category group M — any
+/// Returns `true` if `r` is in general-category group M - any
 /// combining mark (Mn nonspacing, Mc spacing-combining, Me enclosing).
 #[must_use]
 pub fn is_mark(r: char) -> bool {
     matches!(r.general_category_group(), GeneralCategoryGroup::Mark)
 }
 
-/// Returns `true` if `r` is a printable Unicode character — not a
+/// Returns `true` if `r` is a printable Unicode character - not a
 /// control, format char, surrogate, private-use, or unassigned
 /// code point. Matches Go's `unicode.IsPrint` semantics: the
 /// general-category group `Other` (Cc/Cf/Cs/Co/Cn) is excluded.
@@ -105,7 +105,7 @@ pub fn is_print(r: char) -> bool {
     !matches!(r.general_category_group(), GeneralCategoryGroup::Other)
 }
 
-/// Returns `true` if `r` is a graphic character — printable and not
+/// Returns `true` if `r` is a graphic character - printable and not
 /// a whitespace separator.
 #[must_use]
 pub fn is_graphic(r: char) -> bool {
@@ -124,7 +124,7 @@ pub fn is_assigned(r: char) -> bool {
     !matches!(r.general_category(), GeneralCategory::Unassigned)
 }
 
-/// Returns the canonical combining class for `r` (0–254). Used by
+/// Returns the canonical combining class for `r` (0-254). Used by
 /// callers that implement custom normalization passes.
 #[must_use]
 pub fn combining_class(r: char) -> i64 {
@@ -193,7 +193,7 @@ pub fn to_upper_str(s: &str) -> String {
     s.chars().flat_map(char::to_uppercase).collect()
 }
 
-/// Returns the Unicode simple-case-folded form of `s` — the
+/// Returns the Unicode simple-case-folded form of `s` - the
 /// canonical comparison form for case-insensitive equality. Built
 /// by composing the simple lower mapping rune-by-rune.
 #[must_use]
@@ -271,7 +271,7 @@ pub fn is_nfkd(s: &str) -> bool {
 
 /// Returns the extended grapheme clusters in `s` (UAX #29) as a
 /// vector of owned strings. A grapheme is the user-perceived
-/// "character" — `👨‍👩‍👧` is one grapheme, even though it spans
+/// "character" - `👨‍👩‍👧` is one grapheme, even though it spans
 /// several Unicode scalars.
 #[must_use]
 pub fn graphemes(s: &str) -> Vec<String> {
@@ -295,7 +295,7 @@ pub fn grapheme_indices(s: &str) -> Vec<(i64, String)> {
         .collect()
 }
 
-/// Returns the Unicode word boundaries (UAX #29) in `s` — including
+/// Returns the Unicode word boundaries (UAX #29) in `s` - including
 /// whitespace-only and punctuation-only spans, mirroring
 /// `unicode-segmentation`'s `split_word_bounds`.
 #[must_use]

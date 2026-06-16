@@ -1,5 +1,5 @@
 // spawn(f) runs f on a goroutine and hands back a join handle;
-// handle.join() blocks for the outcome as Result<T, String> — Ok with
+// handle.join() blocks for the outcome as Result<T, String> - Ok with
 // the returned value, or Err with the panic message if the goroutine
 // panicked. Exercises the spawn/join surface byte-identically across
 // the bytecode VM, the Cranelift JIT, and the LLVM AOT backend.

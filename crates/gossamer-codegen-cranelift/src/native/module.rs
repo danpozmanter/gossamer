@@ -75,7 +75,7 @@
 //! the process exit code, so the object file links through a
 //! standard `cc` invocation.
 //! Aggregates (tuples/arrays/structs), strings, closures, and
-//! anything that needs a GC heap are not yet lowered — those
+//! anything that needs a GC heap are not yet lowered - those
 //! constructs fall back to [`crate::emit::emit_module`] for
 //! inspection.
 
@@ -163,7 +163,7 @@ impl Module for OfflineModule {
         _linkage: Linkage,
         _sig: &Signature,
     ) -> cranelift_module::ModuleResult<FuncId> {
-        unreachable!("OfflineModule: declare_function called in parallel phase — pre-declare first")
+        unreachable!("OfflineModule: declare_function called in parallel phase - pre-declare first")
     }
     fn declare_anonymous_function(
         &mut self,
@@ -179,7 +179,7 @@ impl Module for OfflineModule {
         _tls: bool,
     ) -> cranelift_module::ModuleResult<DataId> {
         unreachable!(
-            "OfflineModule: declare_data called in parallel phase — pre-intern strings first"
+            "OfflineModule: declare_data called in parallel phase - pre-intern strings first"
         )
     }
     fn declare_anonymous_data(

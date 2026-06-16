@@ -16,11 +16,11 @@
 //! upstream and pipes the response back. Mirrors Go's
 //! `httputil.ReverseProxy` shape:
 //!
-//! - **Director** — caller-supplied function to rewrite the
+//! - **Director** - caller-supplied function to rewrite the
 //!   forwarded request (target URL, headers).
-//! - **ModifyResponse** — caller-supplied function to mutate
+//! - **ModifyResponse** - caller-supplied function to mutate
 //!   the upstream response before it's sent to the client.
-//! - **ErrorHandler** — caller-supplied function invoked when
+//! - **ErrorHandler** - caller-supplied function invoked when
 //!   the upstream fails; defaults to `502 Bad Gateway`.
 //! - **Hop-by-hop header stripping** per RFC 7230 §6.1.
 //! - **`X-Forwarded-For`** / **`X-Forwarded-Proto`** /
@@ -49,7 +49,7 @@ pub struct ReverseProxy {
     pub error_handler: Option<Box<dyn Fn(&Request, &ClientError) -> Response + Send + Sync>>,
 }
 
-/// Output of the director — the upstream call's parts.
+/// Output of the director - the upstream call's parts.
 #[derive(Debug, Clone)]
 pub struct ForwardedRequest {
     /// Full upstream URL (scheme + host + path + query).
@@ -242,7 +242,7 @@ mod tests {
         (listener, addr)
     }
 
-    /// Returns an ephemeral port that was bound, then released —
+    /// Returns an ephemeral port that was bound, then released -
     /// useful for negative tests that need a port nothing is
     /// listening on. The brief gap between drop and reuse is OK
     /// since the caller's intent is "no listener here".

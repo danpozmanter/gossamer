@@ -24,7 +24,7 @@ pub type GlobalIdx = u16;
 pub type InstrIdx = u32;
 
 /// Bytecode instructions. The VM dispatch loop is a `match` over this
-/// enum — fast enough for the compiled-tier parity bar
+/// enum - fast enough for the compiled-tier parity bar
 /// and trivially safe. Every variant's payload is `Copy`, so the
 /// dispatch loop can pull instructions without cloning. The
 /// explicit `u16` discriminant keeps the per-op memory footprint
@@ -61,28 +61,28 @@ pub enum Op {
         rhs: Reg,
         cache_idx: u16,
     },
-    /// `dst = lhs - rhs` on boxed `Value`. Adaptive — see [`Op::AddInt`].
+    /// `dst = lhs - rhs` on boxed `Value`. Adaptive - see [`Op::AddInt`].
     SubInt {
         dst: Reg,
         lhs: Reg,
         rhs: Reg,
         cache_idx: u16,
     },
-    /// `dst = lhs * rhs` on boxed `Value`. Adaptive — see [`Op::AddInt`].
+    /// `dst = lhs * rhs` on boxed `Value`. Adaptive - see [`Op::AddInt`].
     MulInt {
         dst: Reg,
         lhs: Reg,
         rhs: Reg,
         cache_idx: u16,
     },
-    /// `dst = lhs / rhs` on boxed `Value`. Adaptive — see [`Op::AddInt`].
+    /// `dst = lhs / rhs` on boxed `Value`. Adaptive - see [`Op::AddInt`].
     DivInt {
         dst: Reg,
         lhs: Reg,
         rhs: Reg,
         cache_idx: u16,
     },
-    /// `dst = lhs % rhs` on boxed `Value`. Adaptive — see [`Op::AddInt`].
+    /// `dst = lhs % rhs` on boxed `Value`. Adaptive - see [`Op::AddInt`].
     RemInt {
         dst: Reg,
         lhs: Reg,
@@ -140,7 +140,7 @@ pub enum Op {
     Return { value: Reg },
     /// `ret ()`.
     ReturnUnit,
-    /// `dst = closure value` — builds a [`crate::value::Closure`]
+    /// `dst = closure value` - builds a [`crate::value::Closure`]
     /// from the proto at `FnChunk::closure_protos[proto]`. The
     /// handler snapshots each register named in the proto's
     /// `capture_regs` into the closure's upvalue list, then forms a
@@ -179,7 +179,7 @@ pub enum Op {
         /// Index into the global `gossamer_runtime::coverage` table.
         slot: u32,
     },
-    /// `dst = receiver.method_name(args…)` — native method
+    /// `dst = receiver.method_name(args…)` - native method
     /// dispatch. `name_idx` is a `ConstIdx` into the chunk's
     /// globals table (keyed by the bare method name). The VM
     /// puts the receiver value at `args` and the remaining args
@@ -190,7 +190,7 @@ pub enum Op {
         dst: Reg,
         /// Register holding the receiver value.
         receiver: Reg,
-        /// Index into `FnChunk::globals` — holds the bare
+        /// Index into `FnChunk::globals` - holds the bare
         /// method name.
         name_idx: GlobalIdx,
         /// First user-arg register. Receiver is stored at
@@ -206,7 +206,7 @@ pub enum Op {
         /// calls from the same site.
         cache_idx: u16,
     },
-    /// Specialised `<stream>.write_byte(<byte>)` — fused
+    /// Specialised `<stream>.write_byte(<byte>)` - fused
     /// super-instruction emitted whenever the compiler sees a
     /// method call whose name is `write_byte` and whose argc is 1.
     /// fasta's hot loop is dominated by per-character calls
@@ -215,7 +215,7 @@ pub enum Op {
     /// the receiver clone + per-call buf-init + indirect dispatch.
     /// The handler verifies the receiver is a `Value::Struct`
     /// named `"Stream"` at runtime and falls back to a regular
-    /// `MethodCall`-shaped lookup if not — so emitting this op
+    /// `MethodCall`-shaped lookup if not - so emitting this op
     /// for any user-defined `write_byte` is still correct, just
     /// not as fast.
     StreamWriteByte {
@@ -230,7 +230,7 @@ pub enum Op {
         /// `[0, 255]` in the steady state).
         byte_reg: Reg,
     },
-    /// Specialised `<u8vec>.set_byte(<idx>, <byte>)` — the
+    /// Specialised `<u8vec>.set_byte(<idx>, <byte>)` - the
     /// `U8Vec` counterpart to [`Op::StreamWriteByte`]. The runtime
     /// inlines the handle lookup and `AtomicU8::store`, skipping
     /// the `Op::MethodCall` IC + builtin `&[Value]` round-trip
@@ -251,7 +251,7 @@ pub enum Op {
     },
     /// Specialised `<u8vec>.get_byte(<idx>)` returning into a
     /// typed `i64` register. Mirror of [`Op::U8VecSetByte`] for
-    /// reads — the typed destination lets a downstream `Op::AddI64`
+    /// reads - the typed destination lets a downstream `Op::AddI64`
     /// chain off the result without a `Value::Int` round-trip.
     U8VecGetByte {
         /// Destination `i64` register.
@@ -261,7 +261,7 @@ pub enum Op {
         /// Register holding the byte index (`Value::Int`).
         idx_reg: Reg,
     },
-    /// Specialised `m.insert(k, m.get_or(k, 0) + by)` — fused
+    /// Specialised `m.insert(k, m.get_or(k, 0) + by)` - fused
     /// counter-increment super-instruction. Collapses the two
     /// `MethodCall`s, two IC probes, two arg-vec materialisations,
     /// and (crucially) the two `parking_lot::Mutex` acquisitions
@@ -278,14 +278,14 @@ pub enum Op {
         /// Register holding the increment (`Value::Int`).
         by_reg: Reg,
     },
-    /// Specialised `m.inc_at(seq, start, len, by)` — zero-copy
+    /// Specialised `m.inc_at(seq, start, len, by)` - zero-copy
     /// slice-hash counter that hashes `seq[start..start+len]`
     /// directly, matching `*m.entry(&seq[i..i+k]).or_insert(0)
     /// += by`. Skips the generic builtin-call overhead by
     /// inlining the slice-hash + entry increment under one Mutex
     /// acquisition. Result register holds the post-increment
     /// value as a `Value::Int`. Carried via `WideOp::MapIncAt` in
-    /// the chunk's `wide_ops` side-table — see `Op::Wide`.
+    /// the chunk's `wide_ops` side-table - see `Op::Wide`.
     Wide {
         /// Index into `FnChunk::wide_ops`.
         idx: u16,
@@ -318,7 +318,7 @@ pub enum Op {
     /// registers starting at `first`. The generic array-literal
     /// (`[a, b, c]`) counterpart of `BuildTuple` for element types
     /// the typed-storage builders (`BuildIntArray` / `BuildFloatVec`)
-    /// don't specialise — strings, structs, bools, nested arrays.
+    /// don't specialise - strings, structs, bools, nested arrays.
     BuildArray {
         /// Destination value register.
         dst: Reg,
@@ -369,7 +369,7 @@ pub enum Op {
         /// Source `f64` register.
         src_f: Reg,
     },
-    /// Narrowing integer cast — truncates an i64 register to a
+    /// Narrowing integer cast - truncates an i64 register to a
     /// target width (in bits) and sign- or zero-extends back to i64.
     /// Implements Rust-style wrapping `as` semantics for `i64 as i32`,
     /// `i64 as u8`, etc.
@@ -399,7 +399,7 @@ pub enum Op {
     },
     /// Typed write of an `i64` register into a `Value::IntArray`
     /// at `index_i`. Mirrors [`Op::FloatVecSetF64`] for integer
-    /// arrays — fannkuch's `perm[j] = perm1[j]` and similar
+    /// arrays - fannkuch's `perm[j] = perm1[j]` and similar
     /// in-place updates avoid the box/unbox round-trip the
     /// generic `Op::IndexSet` imposes.
     IntArraySetI64 {
@@ -531,7 +531,7 @@ pub enum Op {
         /// `i64` register holding the key.
         key_i: Reg,
     },
-    /// `go callee(args[0..argc])` — spawns a goroutine that runs
+    /// `go callee(args[0..argc])` - spawns a goroutine that runs
     /// `callee` with the supplied args entirely through the bytecode
     /// VM. Requires `FnChunk` to be `Send + Sync` (call/arith caches
     /// live in per-`Vm` `ChunkState` rather than on the chunk).
@@ -546,7 +546,7 @@ pub enum Op {
         /// Number of arguments to pass.
         argc: u16,
     },
-    /// `go receiver.method_name(args[0..argc])` — spawns a
+    /// `go receiver.method_name(args[0..argc])` - spawns a
     /// goroutine running the method whose name lives in the
     /// chunk's globals at `name_idx`. Mirrors `Op::MethodCall`'s
     /// resolution chain (`qualified_key` then bare name) so a
@@ -556,14 +556,14 @@ pub enum Op {
     SpawnMethod {
         /// Register holding the receiver value.
         receiver: Reg,
-        /// Index into `FnChunk::globals` — holds the bare method name.
+        /// Index into `FnChunk::globals` - holds the bare method name.
         name_idx: GlobalIdx,
         /// First register of the argument span.
         args: Reg,
         /// Number of user-supplied arguments (receiver excluded).
         argc: u16,
     },
-    /// `dst = base[index]` — native indexed read over arrays,
+    /// `dst = base[index]` - native indexed read over arrays,
     /// strings, tuples, vecs, and structs (tuple-struct
     /// projection).
     IndexGet {
@@ -574,7 +574,7 @@ pub enum Op {
         /// Register holding the index value.
         index: Reg,
     },
-    /// `base[index] = value` — native indexed write.
+    /// `base[index] = value` - native indexed write.
     IndexSet {
         /// Register holding the base.
         base: Reg,
@@ -583,7 +583,7 @@ pub enum Op {
         /// Register holding the value to store.
         value: Reg,
     },
-    /// `dst = receiver.field_name` — native struct-field read.
+    /// `dst = receiver.field_name` - native struct-field read.
     /// `name_idx` is a const-pool index holding a
     /// `Value::String` with the field name.
     FieldGet {
@@ -600,7 +600,7 @@ pub enum Op {
         /// changed), refill the slot. PEP 659-style.
         cache_idx: u16,
     },
-    /// `receiver.field_name = value` — native struct-field
+    /// `receiver.field_name = value` - native struct-field
     /// write. Mutates the fields vector in place (`Arc::make_mut`
     /// semantics).
     FieldSet {
@@ -611,7 +611,7 @@ pub enum Op {
         /// Register holding the value to store.
         value: Reg,
     },
-    /// `dst = receiver.N` — native tuple / positional-field
+    /// `dst = receiver.N` - native tuple / positional-field
     /// read.
     TupleIndex {
         /// Destination register.
@@ -621,7 +621,7 @@ pub enum Op {
         /// Zero-based index.
         index: u32,
     },
-    /// `dst = tuple[len - offset_from_end - 1]` — tail-anchored
+    /// `dst = tuple[len - offset_from_end - 1]` - tail-anchored
     /// element access for rest patterns like `(first, .., last)`.
     TupleTailIndex {
         /// Destination register.
@@ -631,7 +631,7 @@ pub enum Op {
         /// How many positions from the end (0 = last element).
         offset_from_end: u32,
     },
-    /// `base[index].field_name = value` — fused in-place
+    /// `base[index].field_name = value` - fused in-place
     /// write. Avoids the `IndexGet` / `FieldSet` / `IndexSet`
     /// round-trip (and its O(n) Vec clones) that dominates
     /// hot loops iterating over arrays of structs
@@ -655,7 +655,7 @@ pub enum Op {
     // Operands named `*_f` live in the frame's float register
     // file (`Vec<f64>`); operands named `*_v` live in the
     // regular `Value` register file. All other Reg slots in
-    // these ops refer to the indicated file — the compiler
+    // these ops refer to the indicated file - the compiler
     // keeps them straight.
     /// `floats[dst_f] = f64_consts[idx]`. Uses a dedicated
     /// f64 constant pool so the `Op` enum stays small (the
@@ -684,14 +684,14 @@ pub enum Op {
     EqF64 { dst_v: Reg, lhs_f: Reg, rhs_f: Reg },
     /// `registers[dst_v] = Bool(floats[lhs_f] != floats[rhs_f])`.
     NeF64 { dst_v: Reg, lhs_f: Reg, rhs_f: Reg },
-    /// `floats[dst_f] = src_v.as_float()` — unbox an f64 out
+    /// `floats[dst_f] = src_v.as_float()` - unbox an f64 out
     /// of a `Value::Float` for use with the typed ops.
     UnboxF64 { dst_f: Reg, src_v: Reg },
-    /// `registers[dst_v] = Value::Float(floats[src_f])` —
+    /// `registers[dst_v] = Value::Float(floats[src_f])` -
     /// re-box an f64 register for ABI-crossing use (calls,
     /// field stores, returns).
     BoxF64 { dst_v: Reg, src_f: Reg },
-    /// `floats[dst_f] = sqrt(floats[src_f])` — inlined
+    /// `floats[dst_f] = sqrt(floats[src_f])` - inlined
     /// `math::sqrt` intrinsic.
     SqrtF64 { dst_f: Reg, src_f: Reg },
     /// `floats[dst_f] = sin(floats[src_f])`.
@@ -766,13 +766,13 @@ pub enum Op {
     /// Wrapping `ints[dst_i] = ints[lhs_i] << (ints[rhs_i] & 63)`.
     ShlI64 { dst_i: Reg, lhs_i: Reg, rhs_i: Reg },
     /// Arithmetic `ints[dst_i] = ints[lhs_i] >> (ints[rhs_i] & 63)`
-    /// (matches Rust's `i64 >> i64` semantics — sign-preserving).
+    /// (matches Rust's `i64 >> i64` semantics - sign-preserving).
     ShrI64 { dst_i: Reg, lhs_i: Reg, rhs_i: Reg },
     /// `ints[dst_i] = src_v.as_int()`.
     UnboxI64 { dst_i: Reg, src_v: Reg },
     /// `registers[dst_v] = Value::Int(ints[src_i])`.
     BoxI64 { dst_v: Reg, src_i: Reg },
-    /// `floats[dst_f] = floats[src_f]` — float-file copy,
+    /// `floats[dst_f] = floats[src_f]` - float-file copy,
     /// used for `x = y` when both are in the float file.
     MoveF64 { dst_f: Reg, src_f: Reg },
     /// `ints[dst_i] = ints[src_i]`.
@@ -798,7 +798,7 @@ pub enum Op {
         /// Const-pool index of the field-name string.
         name_idx: ConstIdx,
     },
-    /// `dst = base[index].field_name` — fused indexed field
+    /// `dst = base[index].field_name` - fused indexed field
     /// read. Avoids cloning the inner struct `Arc` that a
     /// separate `IndexGet` + `FieldGet` would produce; reads
     /// the field directly from the array slot by reference.
@@ -812,7 +812,7 @@ pub enum Op {
         /// Const-pool index of the field-name string.
         name_idx: ConstIdx,
     },
-    /// `floats[dst_f] = base[index].field_name` — fused
+    /// `floats[dst_f] = base[index].field_name` - fused
     /// typed indexed field read. Same `Arc`-clone savings as
     /// `IndexedFieldGet` plus the `Value::Float` unbox into
     /// the float register file happens in one step. This is
@@ -827,7 +827,7 @@ pub enum Op {
         /// Const-pool index of the field-name string.
         name_idx: ConstIdx,
     },
-    /// `base[index].field_name = floats[value_f]` — fused
+    /// `base[index].field_name = floats[value_f]` - fused
     /// typed indexed field write. Counterpart to
     /// `IndexedFieldGetF64`.
     IndexedFieldSetF64 {
@@ -874,7 +874,7 @@ pub enum Op {
     /// Fused compare-and-branch ops. Halve the dispatch
     /// overhead on the common `while i < n { ... }` shape by
     /// combining the compare with the conditional jump into a
-    /// single opcode — saves ~one match + one register write
+    /// single opcode - saves ~one match + one register write
     /// per loop iteration.
     ///
     /// Branch to `target` when `ints[lhs_i] < ints[rhs_i]`.
@@ -973,7 +973,7 @@ pub enum Op {
     /// Like `FlatGetF64` but the element index is read straight
     /// from the int register file, skipping the per-access
     /// `BoxI64` a `Value`-register index would need. Emitted when
-    /// the index expression compiles to an `i64` register — the
+    /// the index expression compiles to an `i64` register - the
     /// common loop-counter case (`bodies[a].x`).
     FlatGetF64I {
         /// Destination float register.
@@ -1004,7 +1004,7 @@ pub enum Op {
     // BuildFloatArray (assembles `Value::FloatArray` from a
     // contiguous block of float registers for `[S; N]` literals
     // where `S` has all-f64 fields) lives in the `wide_ops`
-    // side-table — see `Op::Wide` and `WideOp::BuildFloatArray`.
+    // side-table - see `Op::Wide` and `WideOp::BuildFloatArray`.
     /// `registers[dst_v] = Value::Uint(ints[src_i] as u64)`.
     /// Produces an unsigned 64-bit display value for `x as u64` / `x as usize`.
     I64ToUint {
@@ -1014,7 +1014,7 @@ pub enum Op {
         src_i: Reg,
     },
     /// `registers[dst] = cast_scalar(registers[src], target)`.
-    /// Whitelisted scalar cast over Value registers — the combos the
+    /// Whitelisted scalar cast over Value registers - the combos the
     /// typed-register cast ops don't reach (f32 / bool / char sources,
     /// `char` and `f32` targets). Keeps every GT0005-whitelisted cast
     /// native.
@@ -1026,7 +1026,7 @@ pub enum Op {
         /// Resolved cast destination shape.
         target: crate::cast::CastTarget,
     },
-    /// `registers[dst] = MutCell(registers[src])` — wraps a
+    /// `registers[dst] = MutCell(registers[src])` - wraps a
     /// `&mut Vec<T>` / `&mut [T]` call argument in a shared
     /// write-back cell. The callee unwraps it at frame entry and
     /// publishes the final parameter value back on return, giving
@@ -1038,7 +1038,7 @@ pub enum Op {
         /// Register holding the aggregate to share.
         src: Reg,
     },
-    /// `registers[dst] = cell.inner` — reads a write-back cell's
+    /// `registers[dst] = cell.inner` - reads a write-back cell's
     /// final value into the argument's home register after the
     /// call returns.
     CellTake {
@@ -1138,8 +1138,8 @@ pub(crate) struct CacheSlot {
     /// opcode storing the resolved `__call__` directly.
     pub builtin_fn: Option<BuiltinFnPtr>,
     /// General path: when the resolved target is a Gossamer
-    /// function (`Global::Fn(Arc<FnChunk>)`) — i.e. user code
-    /// or stdlib body, not a builtin — its chunk is cached
+    /// function (`Global::Fn(Arc<FnChunk>)`) - i.e. user code
+    /// or stdlib body, not a builtin - its chunk is cached
     /// here. `None` covers both the empty-slot state and any
     /// resolved-but-uncached shape (closures / native / value).
     pub fn_chunk: Option<std::sync::Arc<FnChunk>>,
@@ -1150,7 +1150,7 @@ pub(crate) struct CacheSlot {
 /// so the in-line `Op` enum can stay narrow on the hot path.
 #[derive(Debug, Clone)]
 pub enum WideOp {
-    /// `m.inc_at(seq, start, len, by)` — see the original
+    /// `m.inc_at(seq, start, len, by)` - see the original
     /// `Op::MapIncAt` doc; moved to the side table because the
     /// 6-register payload bloated every `Op` slot.
     MapIncAt {
@@ -1209,11 +1209,11 @@ pub struct ClosureProto {
 /// [`SelectArmMeta`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SelectArmKind {
-    /// `pat = chan.recv()` — receive, binding the value before the body.
+    /// `pat = chan.recv()` - receive, binding the value before the body.
     Recv,
-    /// `chan.send(value)` — send on the channel, then run the body.
+    /// `chan.send(value)` - send on the channel, then run the body.
     Send,
-    /// `default` — chosen when no other arm is ready.
+    /// `default` - chosen when no other arm is ready.
     Default,
 }
 
@@ -1238,7 +1238,7 @@ pub struct SelectArmMeta {
     pub body_block: InstrIdx,
 }
 
-/// Compiled function — the unit of bytecode the VM can call.
+/// Compiled function - the unit of bytecode the VM can call.
 #[derive(Debug, Default)]
 pub struct FnChunk {
     /// Source-level name (useful in diagnostics). Interned into the
@@ -1249,9 +1249,9 @@ pub struct FnChunk {
     pub arity: u16,
     /// Total Value register file size reserved per call.
     pub register_count: u16,
-    /// Unboxed `f64` register file size — Phase 1.
+    /// Unboxed `f64` register file size - Phase 1.
     pub float_count: u16,
-    /// Unboxed `i64` register file size — Phase 1.
+    /// Unboxed `i64` register file size - Phase 1.
     pub int_count: u16,
     /// Linear instruction stream.
     pub instrs: Vec<Op>,
@@ -1279,7 +1279,7 @@ pub struct FnChunk {
     pub shape_names: Vec<&'static str>,
     /// Number of inline-cache slots this chunk needs (`Op::Call`
     /// / `Op::MethodCall` sites). The actual `Vec<CacheSlot>` lives
-    /// per-`Vm` inside `crate::vm::ChunkState`, not on the chunk —
+    /// per-`Vm` inside `crate::vm::ChunkState`, not on the chunk -
     /// goroutines spawned from a parent VM each get their own
     /// `ChunkState` so cache writes don't bounce cache lines across
     /// CPUs. `FnChunk` stays purely-immutable and `Sync`.
@@ -1310,7 +1310,7 @@ pub struct FnChunk {
 }
 
 /// One adaptive-arith inline-cache slot. Tier C2 of the interp
-/// wow plan — held inside [`crate::vm::ChunkState`].
+/// wow plan - held inside [`crate::vm::ChunkState`].
 #[derive(Debug, Default)]
 pub(crate) struct ArithCacheSlot {
     /// Observed operand shape, encoded as one of the `ARITH_*`
@@ -1344,7 +1344,7 @@ pub(crate) const ARITH_UNKNOWN: u8 = 0;
 pub(crate) const ARITH_INT_INT: u8 = 1;
 /// Slot specialised on `(Value::Float, Value::Float)`.
 pub(crate) const ARITH_FLOAT_FLOAT: u8 = 2;
-/// Slot specialised on `(Value::String, Value::String)` — only
+/// Slot specialised on `(Value::String, Value::String)` - only
 /// reached for `Op::AddInt` (string concatenation). The other
 /// arith ops never set this shape; their observers degrade to
 /// polymorphic when they see strings.

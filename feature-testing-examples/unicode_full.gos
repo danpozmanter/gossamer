@@ -1,4 +1,4 @@
-// Full Unicode surface — exercises every helper added in the
+// Full Unicode surface - exercises every helper added in the
 // std::unicode + std::utf8 rewrite across all three tiers
 // (VM, cranelift, LLVM). Pair this with `tier_parity` so a
 // regression in any one tier (MIR dispatch missing, runtime

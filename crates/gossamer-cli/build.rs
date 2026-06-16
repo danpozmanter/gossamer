@@ -61,7 +61,7 @@ const KNOWN_UNUSED_RUNTIME_SYMBOLS: &[&str] = &[
     "gos_rt_chan_recv_ctx_option",
     "gos_rt_install_ctx_hooks",
     // Branch-coverage hooks. Codegen for `gos test --coverage` is
-    // staged but not yet emitting bump/record calls — the runtime
+    // staged but not yet emitting bump/record calls - the runtime
     // surface ships ahead so the harness can install the global
     // table at startup. Wired through codegen in a follow-up patch.
     "gos_rt_cov_bump",
@@ -105,7 +105,7 @@ fn main() {
     }
 
     // Honour CARGO_TARGET_DIR if set, otherwise default to
-    // <workspace>/target — the same logic cargo uses internally.
+    // <workspace>/target - the same logic cargo uses internally.
     let target_dir = env::var_os("CARGO_TARGET_DIR")
         .map_or_else(|| workspace_root.join("target"), PathBuf::from);
 
@@ -136,7 +136,7 @@ fn main() {
     // Linux + release: also build the runtime against musl when the
     // rustup target is installed. The `gos build --release` link
     // path consumes this archive to produce a fully static binary.
-    // Skip silently when the target isn't available — we still ship
+    // Skip silently when the target isn't available - we still ship
     // the dynamic path as a fallback.
     if cfg!(target_os = "linux") && profile == "release" {
         let musl_triple = "x86_64-unknown-linux-musl";
@@ -152,7 +152,7 @@ fn main() {
 }
 
 /// Returns true when the rustup `<triple>` target's std library is
-/// installed locally — checked by probing for the rustlib dir, not
+/// installed locally - checked by probing for the rustlib dir, not
 /// by shelling out to `rustup`.
 fn rustup_target_installed(triple: &str) -> bool {
     let Ok(out) = Command::new(env::var("RUSTC").unwrap_or_else(|_| "rustc".to_string()))
@@ -224,7 +224,7 @@ fn build_runtime_into(
     // Function-level sections so the user-binary linker's
     // `--gc-sections` (static-musl path) can prune unused
     // `gos_rt_*` helpers. Without these the runtime archive is a
-    // single big `.text` blob — pulling any symbol pulls every
+    // single big `.text` blob - pulling any symbol pulls every
     // symbol. Promoting each Rust function/static to its own ELF
     // section lets gc-sections drop the unreferenced ones at user-
     // binary link time. Only matters in release; debug builds skip
@@ -272,7 +272,7 @@ fn build_runtime_into(
     // unique temp path in the same directory, then rename into place.
     // A plain `fs::copy` truncates the destination and streams the bytes,
     // so anything that reads `libgossamer_runtime.a` while this build
-    // script re-runs (it re-runs whenever a `GOS_*` env var changes — the
+    // script re-runs (it re-runs whenever a `GOS_*` env var changes - the
     // diagnose CI step sets several) sees a partially written file and the
     // linker fails with "file truncated". `rename` is atomic on the same
     // filesystem, so a reader always sees either the old or the new
@@ -441,8 +441,8 @@ fn extract_runtime_definitions(src: &str) -> BTreeSet<String> {
 }
 
 /// Returns every `gos_rt_*` identifier mentioned anywhere in `src`.
-/// We accept any occurrence — string literal in a match arm, LLVM
-/// IR `declare`, JIT mapping, or even a comment — because the
+/// We accept any occurrence - string literal in a match arm, LLVM
+/// IR `declare`, JIT mapping, or even a comment - because the
 /// parity check is an "is this symbol live somewhere" probe, not a
 /// per-codegen wiring audit. The unique false-negative this allows
 /// (a stale comment "documenting" a symbol that has no real call
@@ -454,7 +454,7 @@ fn extract_referenced_symbols(src: &str) -> BTreeSet<String> {
     let mut i = 0;
     while i + needle.len() <= bytes.len() {
         if &bytes[i..i + needle.len()] == needle {
-            // Reject if preceded by an identifier char — we only
+            // Reject if preceded by an identifier char - we only
             // want symbol-name occurrences, not "_gos_rt_…" or
             // mid-identifier substring matches.
             let prev_is_ident = i > 0 && is_ident_byte(bytes[i - 1]);

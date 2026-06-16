@@ -1,4 +1,4 @@
-//! Expression parsing — Pratt-style precedence climbing driven by
+//! Expression parsing - Pratt-style precedence climbing driven by
 //! SPEC §4.7 plus hand-written prefix and postfix handlers.
 
 #![forbid(unsafe_code)]
@@ -231,7 +231,7 @@ impl Parser<'_> {
 
     fn validate_pipe_rhs(&mut self, lhs: Expr, mut rhs: Expr) -> Expr {
         // `_`-headed RHS threads the piped value in as the receiver, so the
-        // resolver only ever sees an ordinary method/field/index expression —
+        // resolver only ever sees an ordinary method/field/index expression -
         // no `_` placeholder escapes into later passes.
         //   x |> _.trim          => x.trim()      (bare ident => nullary method)
         //   x |> _.replace(a, b) => x.replace(a, b)
@@ -357,8 +357,8 @@ impl Parser<'_> {
                 // A `(` on the next source line never attaches to the
                 // previous expression. Without this break, a function
                 // body like `for {...}\n(a, 7.0)` parses as one
-                // expression — calling the for-loop's `()` result with
-                // `(a, 7.0)` as args — instead of two statements.
+                // expression - calling the for-loop's `()` result with
+                // `(a, 7.0)` as args - instead of two statements.
                 // Mirrors the same statement-boundary rule already
                 // applied to `&` / `*` / `-` in `parse_expr_with_prec`.
                 if self.newline_before_peek() {
@@ -503,7 +503,7 @@ impl Parser<'_> {
         // of `errors::new`. Rewrite at parse time to
         // `errors::new(format!(fmt, args…))` so the same parse-time
         // template expansion that powers `format!` produces a single
-        // `__concat`-based String — keeps all three tiers identical
+        // `__concat`-based String - keeps all three tiers identical
         // (the VM gets the same lowered call shape compiled-mode
         // sees, no separate variadic runtime helper required).
         if is_errors_newf_path(&callee) {
@@ -1213,7 +1213,7 @@ impl Parser<'_> {
     /// Gossamer exposes a deliberately narrow macro surface: only
     /// `format!` / `println!` / `print!` / `eprintln!` / `eprint!` /
     /// `panic!`. Each is **expanded at parse time** to a plain call
-    /// on the matching variadic builtin — there is no runtime macro
+    /// on the matching variadic builtin - there is no runtime macro
     /// engine, no custom macros, no procedural macros. The
     /// expansion shape is a single `Call` whose args are the
     /// alternating literal / interpolated segments, so the whole
@@ -1251,12 +1251,12 @@ impl Parser<'_> {
             return self.expand_format_macro(&macro_name, args);
         }
 
-        // `vec![...]` / `vec![v; n]` — desugar straight to the
+        // `vec![...]` / `vec![v; n]` - desugar straight to the
         // matching array-literal HIR shape so the existing
         // `Op::BuildIntArray` / `Op::BuildFloatVec` fast paths fire.
         // Without this the macro lowered to `HirExprKind::Placeholder`
         // and the runtime returned a `<stub>` struct instead of a
-        // typed vec — silently wrong.
+        // typed vec - silently wrong.
         if macro_name == "vec" && delim == MacroDelim::Bracket {
             self.expect_punct(Punct::LBracket, "to open `vec!` invocation");
             return self.parse_array_expr();
@@ -1265,7 +1265,7 @@ impl Parser<'_> {
         self.record(
             ParseError::Unexpected {
                 expected: format!(
-                    "`{macro_name}(...)` — Gossamer has no user-defined macros, drop the `!`"
+                    "`{macro_name}(...)` - Gossamer has no user-defined macros, drop the `!`"
                 ),
                 found: "!".to_string(),
             },
@@ -1300,7 +1300,7 @@ impl Parser<'_> {
     /// builtin. For `format!` the concat *is* the result; for
     /// `println!` / `print!` / `eprintln!` / `eprint!` / `panic!`
     /// the concat is passed as the single argument to the outer
-    /// function — so the whole format builds in one allocation
+    /// function - so the whole format builds in one allocation
     /// inside `__concat` rather than chained `+` calls.
     ///
     /// If the first argument is not a string literal, falls back to
@@ -1634,7 +1634,7 @@ fn extract_raw_string_body(source: &str, hashes: u8) -> String {
     // offset inside a multi-byte codepoint when the lexer
     // synthesised the token's span to end of input. Walk the end
     // back to the closest char boundary so the slice is well-typed
-    // — Rust's panic on bad boundaries would otherwise tear the
+    // - Rust's panic on bad boundaries would otherwise tear the
     // parser down on adversarial input.
     let mut end = source.len() - suffix_len;
     while end > prefix_len && !source.is_char_boundary(end) {
@@ -1748,7 +1748,7 @@ enum Align {
 }
 
 /// A parsed format spec covering width / alignment / fill / zero-pad /
-/// precision / radix — the subset of Rust's `{:spec}` grammar Gossamer
+/// precision / radix - the subset of Rust's `{:spec}` grammar Gossamer
 /// expands by composing `__concat`, `strconv::format_i64_radix`, and the
 /// `strings` padding helpers (all already wired on every tier).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1759,7 +1759,7 @@ struct FormatSpec {
     precision: Option<usize>,
     /// Integer radix (`x`/`X` => 16, `b` => 2, `o` => 8); `None` is decimal.
     radix: Option<u32>,
-    /// `{:X}` — uppercase the radix digits.
+    /// `{:X}` - uppercase the radix digits.
     upper: bool,
 }
 
@@ -1767,20 +1767,20 @@ struct FormatSpec {
 enum FormatSegment {
     /// Plain text written into the output verbatim.
     Literal(String),
-    /// `{ident}` — expands to a path expression that resolves
+    /// `{ident}` - expands to a path expression that resolves
     /// `ident` from the enclosing scope.
     Named(String),
-    /// `{}` — consumed in order from the macro's trailing args.
+    /// `{}` - consumed in order from the macro's trailing args.
     Positional,
-    /// `{:.N}` — consumed in order, formatted with N fractional
+    /// `{:.N}` - consumed in order, formatted with N fractional
     /// digits (replaces the hand-rolled `fmt9` helper used by
     /// the benchmark ports).
     PositionalPrec(usize),
-    /// `{ident:.N}` — same as `Positional` but with precision.
+    /// `{ident:.N}` - same as `Positional` but with precision.
     NamedPrec(String, usize),
-    /// `{:spec}` — a positional argument with a width/align/fill/radix spec.
+    /// `{:spec}` - a positional argument with a width/align/fill/radix spec.
     PositionalSpec(FormatSpec),
-    /// `{ident:spec}` — same as `PositionalSpec` but a named binding.
+    /// `{ident:spec}` - same as `PositionalSpec` but a named binding.
     NamedSpec(String, FormatSpec),
 }
 
@@ -1841,7 +1841,7 @@ fn parse_format_template(template: &str) -> Vec<FormatSegment> {
                 } else if let Some(seg) = parse_precision_spec(inner) {
                     segments.push(seg);
                 } else if inner == ":?" {
-                    // `{:?}` — Debug spec. Display already produces a
+                    // `{:?}` - Debug spec. Display already produces a
                     // bracketed array / tuple / struct rendering, so
                     // alias to a positional argument rather than
                     // emitting the literal text the spec used to fall
@@ -1871,7 +1871,7 @@ fn parse_format_template(template: &str) -> Vec<FormatSegment> {
                 // `literal.push(bytes[i] as char)` cast a single
                 // byte to char (giving U+0080..U+00FF) and re-
                 // encoded it as 2-byte UTF-8, which double-encoded
-                // every multi-byte char (e.g. an em-dash `—` came
+                // every multi-byte char (e.g. an em-dash `-` came
                 // out as `â\x80\x94` after the runtime treated
                 // each character as Latin-1 again).
                 let len = utf8_char_len(byte);
@@ -1928,7 +1928,7 @@ fn strip_send_call(expr: Expr) -> Option<(Expr, Expr)> {
 }
 
 /// Parses `:.N` or `name:.N` precision specs out of a `{...}` body.
-/// Returns `None` for anything that doesn't match — the caller falls
+/// Returns `None` for anything that doesn't match - the caller falls
 /// back to emitting the brace block as a literal so unknown specs
 /// don't break compilation.
 fn parse_precision_spec(inner: &str) -> Option<FormatSegment> {

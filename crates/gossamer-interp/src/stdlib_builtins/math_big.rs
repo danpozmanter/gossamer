@@ -370,6 +370,6 @@ pub(crate) fn builtin_big_factorial(args: &[Value]) -> RuntimeResult<Value> {
 // Free-function-style entry points for the stateless / single-call
 // modules. Stateful types that need cross-call state (Router,
 // FileServer, WebSocket, Proxy, NativeClient) use a thread-local
-// registry keyed by an i64 handle — same shape the existing atomic
+// registry keyed by an i64 handle - same shape the existing atomic
 // / mutex / scanner bridges use, so the dispatch path is uniform.
 // ---------------------------------------------------------------------------

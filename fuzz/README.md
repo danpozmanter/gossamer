@@ -5,16 +5,16 @@ toolchain exposes plus differential execution between tiers:
 
 | Target | What it fuzzes | Seed inputs |
 |--------|----------------|-------------|
-| `lex` | `gossamer_lex::tokenize` — source-level tokenisation. | 10 |
-| `parse` | `gossamer_parse::parse_source_file` — full front end. | 9 |
-| `manifest` | `gossamer_pkg::Manifest::parse` — `project.toml`. | 5 |
+| `lex` | `gossamer_lex::tokenize` - source-level tokenisation. | 10 |
+| `parse` | `gossamer_parse::parse_source_file` - full front end. | 9 |
+| `manifest` | `gossamer_pkg::Manifest::parse` - `project.toml`. | 5 |
 | `http_request` | `gossamer_std::http::parse_{request,status}_line`. | 7 |
 | `typecheck` | full front-end through `resolve_source_file` + `typecheck_source_file`. | 0 (libFuzzer-grown) |
 | `mir_lower` | front-end + HIR + `lower_program` + `optimise`; asserts `verify_body` post-pass. | 0 (libFuzzer-grown) |
 | `vm_compile` | front-end + HIR + bytecode `Vm::load` (no execution). | 0 (libFuzzer-grown) |
 | `resolve` | resolver-only driver; takes `Arbitrary`-grown AST and forces it through `resolve_source_file` without a parse-clean prefix. | 0 |
-| `hir_lower` | HIR lowering — drives `gossamer_hir::lower_program` on grammar-generated input bypassing typecheck rejection. | 0 |
-| `vm_run` | bytecode VM **execution** — `Vm::run` on grammar-generated programs; surfaces `get_unchecked` UB the validator misses. | 0 |
+| `hir_lower` | HIR lowering - drives `gossamer_hir::lower_program` on grammar-generated input bypassing typecheck rejection. | 0 |
+| `vm_run` | bytecode VM **execution** - `Vm::run` on grammar-generated programs; surfaces `get_unchecked` UB the validator misses. | 0 |
 | `differential` | grammar-generated programs through VM, Cranelift JIT and LLVM AOT; byte-compares stdout, panics on divergence. | 0 |
 
 ## Running locally
@@ -35,7 +35,7 @@ does not require the cargo-fuzz tooling to be installed.
 
 ## Corpus growth policy
 
-The committed corpus is the *seed* corpus — hand-crafted edge
+The committed corpus is the *seed* corpus - hand-crafted edge
 cases and known-buggy inputs. The plan is:
 
 1. **Seed expansion (this directory).** Hand-curated inputs that
@@ -46,7 +46,7 @@ cases and known-buggy inputs. The plan is:
    run <target> -- -max_total_time=3600`, libFuzzer accumulates
    millions of synthetic inputs in
    `fuzz/corpus/<target>/<libfuzzer-generated>`. Do NOT commit
-   those — the engine recreates them within minutes.
+   those - the engine recreates them within minutes.
 3. **Crash regression (committed).** A reduced crashing input
    from libFuzzer goes into the seed corpus with a name that
    describes the failure mode (e.g.

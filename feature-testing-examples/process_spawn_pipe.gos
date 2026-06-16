@@ -1,6 +1,6 @@
 // Process Spawn and Output Capture
 // Use exec::run to spawn subprocesses, capture stdout/stderr,
-// and check exit codes — the one-shot subprocess pattern.
+// and check exit codes - the one-shot subprocess pattern.
 
 use std::os::exec
 
@@ -19,7 +19,7 @@ fn run_and_check_code(prog: String, args: [String]) -> i64 {
 }
 
 fn main() {
-    // echo — simple stdout capture
+    // echo - simple stdout capture
     match exec::run("echo", ["hello from subprocess"]) {
         Ok(out) => {
             println!("stdout: '{}'", out.stdout.trim())

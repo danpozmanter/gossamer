@@ -228,7 +228,7 @@ fn main() {
 #[test]
 fn nested_if_else_chain_with_tail_less_terminal_block() {
     // Chained if/else if/else where the final else is tail-less
-    // — exercises the same `lower_block` fix transitively.
+    // - exercises the same `lower_block` fix transitively.
     let src = r#"
 fn returns_int() -> i64 { 7 }
 

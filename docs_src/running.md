@@ -13,8 +13,8 @@ Once `gos` is on your `PATH`, every subcommand takes either a
 | `gos run src/main.gos` | Tree-walk interpreter |
 | `gos run --vm src/main.gos` | Register-based bytecode VM |
 | `gos check src/main.gos` | Type-check + exhaustiveness |
-| `gos build src/main.gos` | Native build — links user code against the `gossamer-runtime` staticlib and lets `cc` produce an ELF/Mach-O/PE. Every legal program compiles; a codegen bail is a compiler bug. |
-| `gos build --target aarch64-apple-darwin src/main.gos` | Cross-compile. Reserved for a future milestone — currently rejected because the native path only targets the host ISA. |
+| `gos build src/main.gos` | Native build - links user code against the `gossamer-runtime` staticlib and lets `cc` produce an ELF/Mach-O/PE. Every legal program compiles; a codegen bail is a compiler bug. |
+| `gos build --target aarch64-apple-darwin src/main.gos` | Cross-compile. Reserved for a future milestone - currently rejected because the native path only targets the host ISA. |
 | `gos fmt src/main.gos` | Rewrite canonically; `--check` refuses to edit |
 | `gos doc src/main.gos` | List items + docstrings |
 | `gos test src/main.gos` | Discover and run `#[test]` functions |
@@ -32,12 +32,12 @@ Once `gos` is on your `PATH`, every subcommand takes either a
 
 ## Environment variables
 
-- `GOSSAMER_HTTP_MAX_REQUESTS=N` — ask the HTTP server to exit
+- `GOSSAMER_HTTP_MAX_REQUESTS=N` - ask the HTTP server to exit
   after `N` requests. Used by CI tests; leave unset for normal
   operation. A visible warning prints when the env var is
   honoured.
-- `NO_COLOR` / `CLICOLOR_FORCE` — standard colour toggles.
-- `EDITOR` — used by the REPL's `%edit` meta-command (Stream K
+- `NO_COLOR` / `CLICOLOR_FORCE` - standard colour toggles.
+- `EDITOR` - used by the REPL's `%edit` meta-command (Stream K
   follow-up).
 
 ## Exit codes

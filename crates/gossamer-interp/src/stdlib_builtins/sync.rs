@@ -449,7 +449,7 @@ pub(crate) fn builtin_once_new(_args: &[Value]) -> RuntimeResult<Value> {
     ))
 }
 
-/// `Once::call(o, f)` — run `f` exactly once across all callers of the
+/// `Once::call(o, f)` - run `f` exactly once across all callers of the
 /// handle. Native so the closure can be invoked through the interpreter
 /// dispatcher; returns `true` on the call that executed the body, mirror
 /// of the compiled `gos_rt_once_call`.

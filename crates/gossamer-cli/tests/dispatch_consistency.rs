@@ -3,7 +3,7 @@
 //! the runtime source. Two real regressions in the past month
 //! (`cranelift_dispatch_table.md` 2026-04-28 and
 //! `spectral_norm_regression_fix.md` 2026-04-30) traced back to
-//! a typo'd or stale name in a dispatch table — the resulting
+//! a typo'd or stale name in a dispatch table - the resulting
 //! call silently zeroed out (Cranelift) or routed through the
 //! per-fn fallback (LLVM).
 //!
@@ -138,7 +138,7 @@ fn extract_runtime_exports() -> Vec<String> {
                 continue;
             }
             // Match export-generating macro invocations of the form
-            // `some_macro!(gos_rt_name, ...)` — the runtime defines
+            // `some_macro!(gos_rt_name, ...)` - the runtime defines
             // families of fixed-width `extern "C"` shims (e.g.
             // `put_fixed!`, `get_fixed!`) whose first argument is the
             // exported symbol name. The text scan above can't see the
@@ -297,7 +297,7 @@ fn parse_param_counts(source: &str) -> std::collections::HashMap<String, usize> 
             }
         }
         let params_text = &rest[params_start..params_end];
-        // Filter out `self` and `&self` — not real extern params.
+        // Filter out `self` and `&self` - not real extern params.
         let params_text = params_text
             .replace("&mut self,", "")
             .replace("&self,", "")
@@ -331,7 +331,7 @@ fn registry_param_counts_match_runtime_exports() {
     }
     assert!(
         all_counts.len() > 50,
-        "param-count parser found only {} functions — likely broken",
+        "param-count parser found only {} functions - likely broken",
         all_counts.len()
     );
 

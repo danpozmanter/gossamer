@@ -87,10 +87,10 @@ pub(crate) fn collect_const_values(
 /// `Bool` / `Char`). `consts` is the full fold map (from
 /// [`collect_const_values`]) so an initializer that references another
 /// const resolves. A mutable static with a non-scalar or non-foldable
-/// initializer is intentionally omitted — it keeps the inline-the-
+/// initializer is intentionally omitted - it keeps the inline-the-
 /// initial-value fallback through the const map. Known limitation:
 /// aggregate `static mut` (Vec / struct / String) therefore has no
-/// shared mutable storage — writes are not observable. `static mut`
+/// shared mutable storage - writes are not observable. `static mut`
 /// is supported for scalar types; guard a shared aggregate behind a
 /// `sync::Mutex` instead.
 pub(crate) fn collect_mut_static_defs(
@@ -275,7 +275,7 @@ pub(crate) fn collect_fn_ret_names(program: &HirProgram) -> HashMap<String, Ty> 
     out
 }
 
-/// True when `ty` is the bare `http::Response` shape — not wrapped in
+/// True when `ty` is the bare `http::Response` shape - not wrapped in
 /// `Result` / `Option`.
 pub(crate) fn is_bare_response_ty(tcx: &TyCtxt, ty: Ty) -> bool {
     use gossamer_types::TyKind;
@@ -284,7 +284,7 @@ pub(crate) fn is_bare_response_ty(tcx: &TyCtxt, ty: Ty) -> bool {
         TyKind::Adt { def, .. } if def.local == u32::MAX || def.local == u32::MAX - 1 => false,
         // The checker pins `http::Response` annotations to the
         // sentinel Response Adt (`u32::MAX - 5`), which renders as a
-        // bare `adt#…` placeholder — match the def id directly.
+        // bare `adt#…` placeholder - match the def id directly.
         TyKind::Adt { def, .. } if def.local == u32::MAX - 5 => true,
         // Fallback for paths the checker kept in printable form
         // (e.g. the JsonValue stdlib default). Mirrors the rendered
@@ -385,7 +385,7 @@ fn handler_ok_wrap_body(
 /// shape (`fn(Request)` free fn or `fn(&self, Request)` serve method).
 /// Limitation: only named `fn` items are scanned, so a closure
 /// registered as a handler with a bare-`Response` body is NOT
-/// wrapped — closure handlers must return `Result<Response, Error>`
+/// wrapped - closure handlers must return `Result<Response, Error>`
 /// themselves until closure declarations flow through this pass.
 fn maybe_push_handler_ok_wrap(
     decl: &HirFn,
@@ -465,7 +465,7 @@ pub(crate) fn stdlib_struct_shapes() -> &'static [(&'static str, &'static [&'sta
             "DirEntry",
             &["path", "name", "is_dir", "is_file", "is_symlink"],
         ),
-        // `fs::list_dir` returns these — same field order as the
+        // `fs::list_dir` returns these - same field order as the
         // interp builtin's `Value::struct_("DirInfo", ...)` and
         // the runtime's `gos_rt_fs_list_dir` blob layout.
         (
@@ -498,11 +498,11 @@ pub(crate) fn stdlib_struct_shapes() -> &'static [(&'static str, &'static [&'sta
         ("StatusCode", &["code"]),
         ("FetchOptions", &["offline"]),
         ("IoError", &["kind", "message", "context"]),
-        // `http::stream` returns these — same field order as the
+        // `http::stream` returns these - same field order as the
         // interp's `builtin_http_stream` and the runtime's
         // `gos_rt_http_stream` blob layout.
         ("ResponseStream", &["__handle", "status", "content_type"]),
-        // `http::get` / `http::post` return shape — fields are
+        // `http::get` / `http::post` return shape - fields are
         // accessed via per-name `gos_rt_http_response_*` helpers,
         // not flat-blob indexing, so adding `raw_bytes` here is
         // purely for source-level field-name lookup.
@@ -543,7 +543,7 @@ pub(crate) fn collect_enum_variants(program: &HirProgram) -> EnumIndex {
                     if let Some(tys) = &v.struct_field_tys {
                         // Both named and tuple payloads carry their field
                         // types here, so the declaration alone decides the
-                        // payload question — the body scan below only
+                        // payload question - the body scan below only
                         // supplements constructors of enums declared in
                         // other modules.
                         if !tys.is_empty() {
@@ -1043,7 +1043,7 @@ pub(crate) fn lower_fn(
             // Tag well-known stdlib types via the runtime-kind
             // map so method dispatch on parameters picks the
             // right helper. Maps by struct name; any user struct
-            // sharing one of these names overrides this — out
+            // sharing one of these names overrides this - out
             // of scope for now.
             let runtime_kind: Option<&'static str> = match struct_name.as_str() {
                 "Error" => Some("errors::Error"),

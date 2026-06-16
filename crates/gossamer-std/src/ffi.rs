@@ -1,7 +1,7 @@
 //! Foreign-function interface, exposed at `std::ffi`.
 //!
 //! Safe-Rust wrapper around [`gossamer_runtime::ffi`] (where the
-//! `unsafe` lives — `gossamer-std` keeps `#![forbid(unsafe_code)]`).
+//! `unsafe` lives - `gossamer-std` keeps `#![forbid(unsafe_code)]`).
 //! Mirrors the design at `~/dev/contexts/lang/ffi_design.md`:
 //!
 //! - [`Library::open`] dynamically loads a shared object.
@@ -52,7 +52,7 @@ impl Error {
     }
 }
 
-/// Dynamically loaded shared library. Cheap to clone — clones share
+/// Dynamically loaded shared library. Cheap to clone - clones share
 /// the underlying handle.
 #[derive(Debug, Clone)]
 pub struct Library {

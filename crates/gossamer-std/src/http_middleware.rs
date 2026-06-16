@@ -30,12 +30,12 @@
 //!
 //! The shipped middlewares:
 //!
-//! - `logger` — request/response logging.
-//! - `recoverer` — catches handler panics, returns 500.
-//! - `request_id` — stamps every response with `X-Request-Id`.
-//! - `cors` — CORS preflight + per-response headers.
-//! - `basic_auth` — HTTP Basic auth gate.
-//! - `compress_gzip` — gzips response bodies when the client
+//! - `logger` - request/response logging.
+//! - `recoverer` - catches handler panics, returns 500.
+//! - `request_id` - stamps every response with `X-Request-Id`.
+//! - `cors` - CORS preflight + per-response headers.
+//! - `basic_auth` - HTTP Basic auth gate.
+//! - `compress_gzip` - gzips response bodies when the client
 //!   advertises `Accept-Encoding: gzip`.
 
 use std::sync::Arc;
@@ -121,7 +121,7 @@ pub fn logger<H: Handler + 'static>(inner: H) -> impl Handler {
 /// Wraps `inner` with panic recovery. If the inner handler
 /// panics, a `500 Internal Server Error` response is returned and
 /// the panic message is logged to stderr. The panic is suppressed
-/// — the server continues serving other requests.
+/// - the server continues serving other requests.
 pub fn recoverer<H: Handler + std::panic::RefUnwindSafe + 'static>(inner: H) -> impl Handler {
     let inner = Arc::new(inner);
     move |req: &Request, params: &Params| -> Response {
@@ -466,7 +466,7 @@ pub struct HstsConfig {
     pub max_age_secs: u64,
     /// `includeSubDomains` directive.
     pub include_subdomains: bool,
-    /// `preload` directive — only set if the domain is enrolled
+    /// `preload` directive - only set if the domain is enrolled
     /// in the HSTS preload list.
     pub preload: bool,
 }
@@ -489,7 +489,7 @@ impl HstsConfig {
         Self::default()
     }
 
-    /// Strictest practical config — set after the domain has run
+    /// Strictest practical config - set after the domain has run
     /// HSTS-only for a quarter and is preload-eligible.
     #[must_use]
     pub fn strict() -> Self {
@@ -572,7 +572,7 @@ impl SecurityHeaders {
         }
     }
 
-    /// Headers off — explicit opt-out for cases where the user
+    /// Headers off - explicit opt-out for cases where the user
     /// configures them upstream (e.g. behind a reverse proxy).
     #[must_use]
     pub fn off() -> Self {
@@ -589,7 +589,7 @@ impl SecurityHeaders {
 }
 
 /// Injects [`SecurityHeaders`] into every response (only when the
-/// header is not already set — the handler can override).
+/// header is not already set - the handler can override).
 pub fn security_headers<H: Handler + 'static>(config: SecurityHeaders, inner: H) -> impl Handler {
     let inner = Arc::new(inner);
     move |req: &Request, params: &Params| -> Response {
@@ -662,7 +662,7 @@ pub struct CacheControl {
 }
 
 impl CacheControl {
-    /// `no-store, no-cache, must-revalidate` — appropriate for
+    /// `no-store, no-cache, must-revalidate` - appropriate for
     /// any response carrying personal or session-tied data.
     #[must_use]
     pub fn no_store() -> Self {
@@ -674,7 +674,7 @@ impl CacheControl {
         }
     }
 
-    /// `public, max-age=N, immutable` — for fingerprinted assets
+    /// `public, max-age=N, immutable` - for fingerprinted assets
     /// like `app-3f9c2a.css`.
     #[must_use]
     pub fn immutable_for(secs: u64) -> Self {
@@ -788,7 +788,7 @@ const fn nibble(n: u8) -> char {
 /// `Ok(())` to admit the request or `Err(reason)` to reject with
 /// 401.
 ///
-/// `verify` should run in constant time relative to the token —
+/// `verify` should run in constant time relative to the token -
 /// any HMAC / JWT verifier built on `crate::crypto::subtle` is
 /// safe; raw string equality is not.
 pub fn bearer_auth<H, V>(realm: impl Into<String>, verify: V, inner: H) -> impl Handler
@@ -949,7 +949,7 @@ fn too_many_requests() -> Response {
 /// `request_id -> logger -> recoverer -> security_headers -> body_limit -> timeout`
 ///
 /// CSRF, CORS, session, and rate-limit are intentionally NOT
-/// included — they require app-specific configuration. Wire them
+/// included - they require app-specific configuration. Wire them
 /// explicitly above the safe-defaults chain.
 pub fn safe_defaults<H: Handler + std::panic::RefUnwindSafe + 'static>(inner: H) -> impl Handler {
     let chain = body_limit(1024 * 1024, inner);

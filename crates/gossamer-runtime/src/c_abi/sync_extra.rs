@@ -18,7 +18,7 @@
 use parking_lot::{Condvar, Mutex, Once};
 
 // ---------------------------------------------------------------
-// sync::Barrier — fixed-participant rendezvous
+// sync::Barrier - fixed-participant rendezvous
 // ---------------------------------------------------------------
 //
 // Mirrors `gossamer_std::sync::Barrier` (the VM/interp backing
@@ -26,7 +26,7 @@ use parking_lot::{Condvar, Mutex, Once};
 // generation-counted so a barrier reused across rounds wakes only
 // the waiters of the current generation. Every participant calls
 // `wait()`; the first `n - 1` block on the condvar, the `n`th
-// flips the generation and notifies all. No spinning, no sleeps —
+// flips the generation and notifies all. No spinning, no sleeps -
 // identical observable semantics to the interpreter so tier-parity
 // output matches.
 //
@@ -89,7 +89,7 @@ pub unsafe extern "C" fn gos_rt_barrier_wait(b: *mut GosBarrier) {
 }
 
 // ---------------------------------------------------------------
-// sync::Once — run-exactly-once guard with a closure callback
+// sync::Once - run-exactly-once guard with a closure callback
 // ---------------------------------------------------------------
 //
 // Wraps `parking_lot::Once`. `call(env)` runs the supplied closure

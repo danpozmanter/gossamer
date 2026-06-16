@@ -7,9 +7,9 @@ use crate::ty::Ty;
 /// One argument in a [`Substs`] list.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum GenericArg {
-    /// A type argument — the `T` in `Vec<T>`.
+    /// A type argument - the `T` in `Vec<T>`.
     Type(Ty),
-    /// A const argument — the `N` in `Array<T, N>`. Stored as a
+    /// A const argument - the `N` in `Array<T, N>`. Stored as a
     /// pre-evaluated i128 so that trait solving can treat equal values
     /// as equal without re-evaluating expressions.
     Const(i128),
@@ -25,7 +25,7 @@ pub struct Substs {
 }
 
 impl Substs {
-    /// The empty substitution — no generic arguments applied.
+    /// The empty substitution - no generic arguments applied.
     #[must_use]
     pub const fn new() -> Self {
         Self { args: Vec::new() }

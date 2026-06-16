@@ -99,7 +99,7 @@ impl<'a> Lowerer<'a> {
             (UnOp::Not, _) => {
                 // `Not` is bitwise on integers, logical on bool.
                 // Both map to `xor` with an all-ones mask for the
-                // operand's width — `-1` covers both `i1` and
+                // operand's width - `-1` covers both `i1` and
                 // wider integer types. The destination's MIR type
                 // may be `Var`/`ptr` (typechecker left it
                 // unresolved); use the operand's actual LLVM type
@@ -127,7 +127,7 @@ impl<'a> Lowerer<'a> {
         rhs: &Operand,
         dest_local: Local,
     ) -> Result<String, BuildError> {
-        // String comparisons must use `gos_rt_str_compare` — pointer
+        // String comparisons must use `gos_rt_str_compare` - pointer
         // equality on C strings is address comparison, not content.
         let operand_ty_raw = self.operand_ty(lhs);
         let is_str_cmp = matches!(
@@ -175,7 +175,7 @@ impl<'a> Lowerer<'a> {
         let mut rhs_v = self.lower_operand(rhs)?;
         // Comparisons return `i1`; everything else returns the
         // operands' shared type. Pick the operand type off
-        // either side — both are the same kind by MIR
+        // either side - both are the same kind by MIR
         // invariant.
         let operand_ty = self.operand_ty(lhs);
         let mut kind = numeric_kind(self.tcx, operand_ty);
@@ -425,7 +425,7 @@ impl<'a> Lowerer<'a> {
             writeln!(self.out, "  {widened} = zext i1 {tmp} to {dest_llvm}").unwrap();
             return Ok(widened);
         }
-        // Arithmetic — result type matches `operand_llvm`.
+        // Arithmetic - result type matches `operand_llvm`.
         if operand_llvm == "i64" && dest_llvm == "i1" {
             let narrowed = self.fresh();
             writeln!(self.out, "  {narrowed} = icmp ne i64 {tmp}, 0").unwrap();
@@ -462,7 +462,7 @@ impl<'a> Lowerer<'a> {
                 (NumericKind::Float(FloatTy::F64), "double".to_string())
             }
             // Bool / char consts classify directly for the same
-            // reason as Int / Float above — `true as i64` in a body
+            // reason as Int / Float above - `true as i64` in a body
             // with no bool local must not misclassify.
             Operand::Const(ConstValue::Bool(_)) => (NumericKind::Other, "i1".to_string()),
             Operand::Const(ConstValue::Char(_)) => (NumericKind::Other, "i32".to_string()),
@@ -522,7 +522,7 @@ impl<'a> Lowerer<'a> {
         // the 64-bit runtime value; a narrow declared target then
         // masks like any int → int cast. `u8 as char` masks to the
         // declared u8 width before narrowing into the char's i32
-        // code-point slot — matching the VM's `cast_scalar`.
+        // code-point slot - matching the VM's `cast_scalar`.
         if let (NumericKind::Other, NumericKind::Int(b)) = (src_kind, dst_kind)
             && (src_llvm == "i1" || src_llvm == "i32")
         {

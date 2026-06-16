@@ -4,7 +4,7 @@
 // `Request::trailers`, `ResponseWriter::write_trailers`) is
 // exercised end-to-end by the in-process h2 client suite in
 // `crates/gossamer-cli/tests/http_h2_conformance.rs`. This .gos
-// file is the per-tier parity sentinel — every emitter must
+// file is the per-tier parity sentinel - every emitter must
 // produce the same stdout for the parity walk to pass.
 //
 // The values printed mirror the well-known h2 default

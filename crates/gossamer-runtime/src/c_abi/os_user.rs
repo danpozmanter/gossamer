@@ -22,7 +22,7 @@ use std::os::raw::c_char;
 use super::*;
 
 // ---------------------------------------------------------------
-// os::user — POSIX user / group lookup. Unix uses `nix`; on
+// os::user - POSIX user / group lookup. Unix uses `nix`; on
 // Windows everything falls back to USERNAME / USERPROFILE env vars.
 // ---------------------------------------------------------------
 

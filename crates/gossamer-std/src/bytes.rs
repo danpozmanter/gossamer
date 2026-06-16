@@ -1,4 +1,4 @@
-//! Runtime support for `std::bytes` — ergonomic byte-slice + buffer
+//! Runtime support for `std::bytes` - ergonomic byte-slice + buffer
 //! helpers used by protocol and parser code.
 
 #![forbid(unsafe_code)]

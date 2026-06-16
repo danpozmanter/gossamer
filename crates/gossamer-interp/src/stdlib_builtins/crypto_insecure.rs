@@ -174,4 +174,4 @@ pub(crate) fn builtin_bzip2_decompress(args: &[Value]) -> RuntimeResult<Value> {
 }
 
 // ----------------------------------------------------------------------
-// math::big — arbitrary-precision integers (string representation in VM)
+// math::big - arbitrary-precision integers (string representation in VM)

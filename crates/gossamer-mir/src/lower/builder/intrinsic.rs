@@ -72,7 +72,7 @@ impl<'a> Builder<'a> {
         // sort through the by-value i64 helpers; multi-slot
         // aggregates (Tuple / Adt) sort through the byte-stride
         // helpers that hand the comparator pointers to each
-        // element. Arrays-of-T as elements aren't sortable —
+        // element. Arrays-of-T as elements aren't sortable -
         // their content fan-out makes the comparator ABI
         // ambiguous; bail out.
         let elem_is_scalar = matches!(
@@ -1354,7 +1354,7 @@ impl<'a> Builder<'a> {
                 ))
             }
             ("sync::Once::call" | "Once::call", 2) => {
-                // `Once::call(o, || ...)` — handle first, nullary closure
+                // `Once::call(o, || ...)` - handle first, nullary closure
                 // second. The closure crosses the C-ABI through the same
                 // env-thunk convention as `option::default_with`; the run
                 // body's value is ignored (the i64 result is the ran flag).
@@ -1371,7 +1371,7 @@ impl<'a> Builder<'a> {
                 ))
             }
             ("middleware::bearer_ok" | "http::middleware::bearer_ok", 2) => {
-                // `bearer_ok(req, verify)` — request first, a
+                // `bearer_ok(req, verify)` - request first, a
                 // String-taking verify closure second. Mirrors the
                 // VM-native `native_bearer_ok`; the closure runs on the
                 // extracted Bearer token and its bool result is returned
@@ -1391,7 +1391,7 @@ impl<'a> Builder<'a> {
                 ))
             }
             ("sync::RwLock::with_read" | "RwLock::with_read", 2) => {
-                // `RwLock::with_read(lock, |v| ...)` — handle first, an
+                // `RwLock::with_read(lock, |v| ...)` - handle first, an
                 // i64-taking closure second. Mirrors the VM-native
                 // `native_rwlock_with_read`; the callback runs under a
                 // read lock and its result is returned unchanged.
@@ -1408,7 +1408,7 @@ impl<'a> Builder<'a> {
                 ))
             }
             ("sync::RwLock::with_write" | "RwLock::with_write", 2) => {
-                // `RwLock::with_write(lock, |v| ...)` — the callback runs
+                // `RwLock::with_write(lock, |v| ...)` - the callback runs
                 // under a write lock and its result becomes the new
                 // guarded value, which is also returned.
                 let handle = self.lower_expr(&args[0])?;
@@ -2202,7 +2202,7 @@ impl<'a> Builder<'a> {
 
         let recv_local = self.lower_expr(receiver)?;
 
-        // keys = m.keys() — a fresh real Vec<K> snapshot.
+        // keys = m.keys() - a fresh real Vec<K> snapshot.
         let keys_vec_ty = self.tcx.intern(TyKind::Vec(key_ty));
         let keys_vec = self.fresh(keys_vec_ty);
         let after_keys = self.new_block(span);

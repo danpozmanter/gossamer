@@ -10,7 +10,7 @@ repo="$(cd "$here/../.." && pwd)"
 gos="${GOS:-$repo/target/release/gos}"
 
 if [ ! -x "$gos" ]; then
-    echo "error: gos binary not found at $gos — set GOS or build first" >&2
+    echo "error: gos binary not found at $gos - set GOS or build first" >&2
     exit 2
 fi
 
@@ -21,7 +21,7 @@ trap 'rm -f "$tmp"' EXIT
 for p in p*.gos; do
     stem="${p%.gos}"
     rm -f "$stem"
-    # Post-L4 every probe either builds native or fails outright —
+    # Post-L4 every probe either builds native or fails outright -
     # no launcher fallback.
     stderr="$($gos build "$p" 2>&1 1>/dev/null || true)"
     if [ -x "$stem" ]; then
@@ -36,6 +36,6 @@ done
 if diff -u results.txt "$tmp" >&2; then
     echo "probe matrix unchanged"
 else
-    echo "probe matrix drift — update results.txt if intentional" >&2
+    echo "probe matrix drift - update results.txt if intentional" >&2
     exit 1
 fi

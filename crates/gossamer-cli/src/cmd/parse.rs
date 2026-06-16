@@ -1,4 +1,4 @@
-//! `gos parse FILE` — pretty-prints the AST for the supplied source.
+//! `gos parse FILE` - pretty-prints the AST for the supplied source.
 
 use std::path::PathBuf;
 

@@ -18,8 +18,8 @@
 use super::*;
 
 // ---------------------------------------------------------------
-// container::ordered_set — sorted Vec<i64> with dedup on insert.
-// container::ordered_map — flat Vec<i64> of [k0, v0, k1, v1, ...]
+// container::ordered_set - sorted Vec<i64> with dedup on insert.
+// container::ordered_map - flat Vec<i64> of [k0, v0, k1, v1, ...]
 // pairs sorted by k; insert replaces an existing key, get does
 // binary search.
 // ---------------------------------------------------------------
@@ -96,7 +96,7 @@ pub unsafe extern "C" fn gos_rt_oset_contains_i64(v: *const GosVec, value: i64) 
     unsafe { gos_rt_ovec_contains_i64(v, value) }
 }
 
-/// `om_insert(m, k, v)` — set `m[k] = v`, keeping the flat
+/// `om_insert(m, k, v)` - set `m[k] = v`, keeping the flat
 /// `[k0,v0,k1,v1,...]` buffer sorted by key.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_omap_insert_i64(
@@ -217,7 +217,7 @@ pub unsafe extern "C" fn gos_rt_omap_len(v: *const GosVec) -> i64 {
 }
 
 // ---------------------------------------------------------------
-// container::ordered_vec / ordered_list — sorted-on-insert Vec<i64>.
+// container::ordered_vec / ordered_list - sorted-on-insert Vec<i64>.
 // Insert places `value` in the unique sorted position via binary
 // search. Returns fresh Vecs for the re-bind drop semantics.
 // ---------------------------------------------------------------

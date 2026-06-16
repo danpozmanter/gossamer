@@ -1,4 +1,4 @@
-// Mutable static — read+write across function boundaries.
+// Mutable static - read+write across function boundaries.
 // Verifies that `static mut` storage is shared and observable
 // from both the writer and reader, in all tiers.
 

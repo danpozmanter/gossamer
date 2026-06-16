@@ -80,7 +80,7 @@ fn fill_after_fault_clears_resumes_real_csprng() {
 #[test]
 fn two_consecutive_fills_differ() {
     // The recoverable surface produces fresh entropy on every call
-    // — assert by drawing two samples and comparing.
+    // - assert by drawing two samples and comparing.
     let _guard = fault_lock().lock().unwrap();
     rand::test_support::set_fault_for_tests(false);
     let a = rand::bytes(32).expect("first sample");
@@ -100,7 +100,7 @@ fn no_workspace_code_silently_swallows_getrandom_errors() {
     walk_rs(&workspace_root, &mut |path, body| {
         // Skip generated/target/test paths. Match by path *component*
         // rather than by substring so the filter is separator-agnostic
-        // (Windows uses `\`, Unix uses `/` — a `contains("/tests/")`
+        // (Windows uses `\`, Unix uses `/` - a `contains("/tests/")`
         // check silently lets every test file through on Windows and
         // the audit then flags its own pattern documentation).
         let skip_component = |name: &str| {

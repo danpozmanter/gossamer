@@ -69,7 +69,7 @@ impl<'a> Builder<'a> {
             // unit value. Without this the caller (e.g. `lower_if`'s
             // else arm) sees `None` and skips the join `Goto`,
             // leaving the post-statement block with the default
-            // `Unreachable` terminator — `let _ = fn_call()` as
+            // `Unreachable` terminator - `let _ = fn_call()` as
             // the last statement of an else block crashed
             // compiled binaries with `ud2`.
             None => {
@@ -95,7 +95,7 @@ impl<'a> Builder<'a> {
     /// If `value` is the freshly-produced result of a recognised constructor
     /// (a container `Call` like `HashMap::new`, or a `gos_rt_result_new`
     /// `CallIntrinsic` for `Some`/`Ok`/`Err`), rewrite that constructor to
-    /// write `binding` directly and return true — the caller then skips the
+    /// write `binding` directly and return true - the caller then skips the
     /// redundant `binding = Copy(value)`. This keeps the constructor result
     /// un-aliased so the drop pass treats the binding as the single owner: a
     /// loop-local map is reclaimed like a directly-bound `Vec`, and a by-value
@@ -124,7 +124,7 @@ impl<'a> Builder<'a> {
             }
         }
         // `Some(..)` / `Ok(..)` / `Err(..)` lower to a `gos_rt_result_new`
-        // `CallIntrinsic` assignment — the last statement of the current block
+        // `CallIntrinsic` assignment - the last statement of the current block
         // (the binding copy has not been emitted yet).
         let cur_idx = cur.0 as usize;
         if cur_idx < self.blocks.len()
@@ -159,7 +159,7 @@ impl<'a> Builder<'a> {
                     use gossamer_types::TyKind;
                     let binding_wants_vec =
                         matches!(self.tcx.kind_of(*ty), TyKind::Vec(_) | TyKind::Slice(_),);
-                    // `let mut xs = [literal]` — the user wrote `mut`,
+                    // `let mut xs = [literal]` - the user wrote `mut`,
                     // so they want a growable Vec, not a fixed-size
                     // array. Without this promotion `xs.push(...)`
                     // calls `gos_rt_vec_push(stack_array_ptr, ...)`
@@ -171,7 +171,7 @@ impl<'a> Builder<'a> {
                     // function. An explicitly-sized `let mut bodies:
                     // [Body; 5]` that is only indexed, field-mutated,
                     // or passed to a `[T; N]`-typed parameter must
-                    // keep its inline fixed-array layout — promoting
+                    // keep its inline fixed-array layout - promoting
                     // it to `Vec<Body>` desynchronises the element
                     // stride at call boundaries (`energy(&bodies)`
                     // expecting `&[Body; 5]`) and corrupts reads.
@@ -202,7 +202,7 @@ impl<'a> Builder<'a> {
                                 // comes from the first element; for an empty
                                 // literal (`let mut xs = []`) there is no
                                 // element, so fall back to the binding's
-                                // resolved `Array`/`Vec`/`Slice` element —
+                                // resolved `Array`/`Vec`/`Slice` element -
                                 // defaulting to i64 would size the vec's
                                 // elements at 8 bytes and corrupt the heap on
                                 // `xs.push(t)` of a wider element (e.g. a
@@ -258,7 +258,7 @@ impl<'a> Builder<'a> {
                         // / String annotation. `let low: i64 =
                         // root.latency.low_ms` becomes
                         // `gos_rt_json_as_i64(root.get("latency").get("low_ms"))`
-                        // — keeps the user's natural notation while
+                        // - keeps the user's natural notation while
                         // funnelling the dynamic-shape tax through
                         // the runtime helpers.
                         let value_ty = self.locals[value.0 as usize].ty;
@@ -300,7 +300,7 @@ impl<'a> Builder<'a> {
                         // When the HIR-recorded type is an
                         // unresolved inference variable, pin the
                         // binding's MIR type to whatever the lowered
-                        // initialiser settled on — keeps downstream
+                        // initialiser settled on - keeps downstream
                         // passes (string-concat, codegen cl-type
                         // inference) grounded on concrete kinds.
                         let init_ty = self.locals[value.0 as usize].ty;
@@ -338,7 +338,7 @@ impl<'a> Builder<'a> {
                             // collapsed to a primitive. The cell
                             // value is pointer-shaped at runtime, so
                             // the binding's MIR type must be widened
-                            // to i64 — keeping it as bool/i8 makes
+                            // to i64 - keeping it as bool/i8 makes
                             // cranelift store the byte-truncated
                             // pointer value, and later loads return
                             // garbage. This is the cli_args / flag
@@ -425,7 +425,7 @@ impl<'a> Builder<'a> {
                         // not, and the copy pins the constructor result as
                         // aliased so the drop pass cannot reclaim a loop-local
                         // one. Rewrite the constructor call to write the binding
-                        // directly and drop the redundant copy — `value` is the
+                        // directly and drop the redundant copy - `value` is the
                         // freshly-lowered init, used only by this copy, so this
                         // is sound and leaves the result un-aliased.
                         if !self.try_rebind_ctor_call(value, local) {
@@ -461,7 +461,7 @@ impl<'a> Builder<'a> {
                 }
             }
             HirStmtKind::Go(expr) => {
-                // `go f(args);` — spawn `f` on a fresh OS
+                // `go f(args);` - spawn `f` on a fresh OS
                 // thread via the runtime's
                 // `gos_rt_go_spawn_call_N(fn_addr, args…)`
                 // helper. Mirrors the expression-position

@@ -3,7 +3,7 @@
 // return, a Vec-typed struct field, and a Vec/slice parameter. The `[v; N]`
 // repeat form coerces too. An `if` / `match` whose branches are array literals
 // of differing length joins to `Vec<T>` (the only type that holds both),
-// consistently for every element type — not just untyped integer literals.
+// consistently for every element type - not just untyped integer literals.
 // Nested `Vec<Vec<T>>` literals build and index correctly, and indexing a
 // nested container returns an interior borrow that the container still owns
 // (no double free at scope end).

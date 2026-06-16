@@ -2,7 +2,7 @@
 // deserialized inside a helper, extracted with `?`, rewrapped into the
 // outgoing Ok, consumed by match in the caller, passed by value, and
 // field-read after the source Result died. The payload blob and its
-// string children must survive exactly as long as their holders — a
+// string children must survive exactly as long as their holders - a
 // premature slot release (or a stack-aggregate field walk over an
 // opaque one-slot handle) crashes a tier and breaks parity.
 

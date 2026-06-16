@@ -20,7 +20,7 @@ use std::sync::atomic::Ordering;
 use super::*;
 
 // ---------------------------------------------------------------
-// Array/Vec/Generic len — first i64 of the passed buffer is len
+// Array/Vec/Generic len - first i64 of the passed buffer is len
 // ---------------------------------------------------------------
 
 /// Reads the leading i64 of a len-prefixed pointer.

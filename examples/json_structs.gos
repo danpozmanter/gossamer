@@ -1,5 +1,5 @@
 /*
- * JSON serialize and deserialize with structs — one line per direction.
+ * JSON serialize and deserialize with structs - one line per direction.
  *
  * Every named struct in the program auto-derives a pair of generic
  * serializer functions, called with a turbofish type argument:

@@ -18,7 +18,7 @@ fn arena_cap_prevents_runaway_doubling() {
     }
     // We can't peek at the arena vec from outside, so instead
     // we verify a 64 MiB allocation succeeds without OOMing
-    // the test process — pre-fix the doubling would have asked
+    // the test process - pre-fix the doubling would have asked
     // for 4+8+16+32+64+128 = 252 MiB capacity for the same
     // sequence, ahead of even fitting the new request.
     let big = gos_rt_gc_alloc((20 * MIB) as u64);

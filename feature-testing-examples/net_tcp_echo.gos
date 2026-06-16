@@ -6,14 +6,14 @@
 //
 // Binds 127.0.0.1:0 (OS-assigned ephemeral port, read back via
 // local_addr), so there is no fixed-port contention with the parallel
-// SPECS walk — this runs as a plain stdout-parity fixture.
+// SPECS walk - this runs as a plain stdout-parity fixture.
 //
 // Bytes (not a String) are written on both sides so the single
 // `gos_rt_tcp_stream_write([u8])` ABI applies uniformly. A 4-byte
 // payload over loopback, write_all-flushed before the peer reads, is
-// delivered in one read() on every platform — the echo is exact. The
+// delivered in one read() on every platform - the echo is exact. The
 // result is a numeric status code (not a String) so the cross-goroutine
-// channel carries an i64 — its element type is identical on every tier.
+// channel carries an i64 - its element type is identical on every tier.
 
 use std::net
 use std::sync::channel

@@ -1,4 +1,4 @@
-// `std::net::netip` — typed IP address operations.
+// `std::net::netip` - typed IP address operations.
 //
 // Backed by Rust's `std::net::IpAddr`. Returns "" / -1 sentinels on
 // parse failure to keep the runtime ABI simple (the value lives

@@ -5,10 +5,10 @@
 //! and emits a `Reloc::X86GOTPCRel4`. The object backend's COFF writer
 //! rewrites `GotRelative` to a plain `Relative` reloc pointing at the
 //! symbol itself, so the `movq` loads the symbol's first 8 bytes as if
-//! they were its address — corrupting every string/data reference.
+//! they were its address - corrupting every string/data reference.
 //!
 //! `build_native_isa` therefore disables PIC on Windows. With PIC off
-//! and a colocated (near) symbol, cranelift emits `leaq sym(%rip)` — a
+//! and a colocated (near) symbol, cranelift emits `leaq sym(%rip)` - a
 //! direct relative reference that COFF/PE resolve correctly. The reloc
 //! *type* is `IMAGE_REL_AMD64_REL32` either way, so the distinguishing
 //! signal is the instruction opcode at the relocation site: `lea`
@@ -133,7 +133,7 @@ fn coff_symbol_reference_uses_lea_without_pic() {
 #[test]
 fn coff_symbol_reference_uses_got_load_with_pic() {
     // Documents the broken shape PIC produces on COFF: a `movq`
-    // (0x8b) GOT load whose reloc COFF rewrites to a direct REL32 —
+    // (0x8b) GOT load whose reloc COFF rewrites to a direct REL32 -
     // loading the string's bytes as if they were its address.
     assert_eq!(
         symbol_ref_opcode(true),

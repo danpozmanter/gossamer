@@ -159,7 +159,7 @@ pub unsafe extern "C" fn gos_rt_str_free(s: *mut c_char) {
         // us a cstring that did NOT come from `alloc_cstring` (foreign
         // allocation, libc-owned argv string, or a static literal).
         // Reclaiming such a pointer with `Box::from_raw` corrupts the
-        // global allocator's free list — leak instead.
+        // global allocator's free list - leak instead.
         let tag_ptr = unsafe { s.cast::<u8>().sub(1) };
         let tag = unsafe { *tag_ptr };
         if tag == STR_REGION_TAG {
@@ -191,11 +191,11 @@ pub unsafe extern "C" fn gos_rt_str_free(s: *mut c_char) {
             drop(unsafe { Box::from_raw(slice) });
             crate::c_abi::ledger::str_dec();
         } else if tag == STR_STATIC_TAG {
-            // Static rodata literal — never freed.
+            // Static rodata literal - never freed.
         } else {
             eprintln!(
                 "gos_rt_str_free: allocator tag mismatch (got 0x{tag:02x}, \
-             expected 0x{STR_ALLOC_TAG:02x}) — refusing to free"
+             expected 0x{STR_ALLOC_TAG:02x}) - refusing to free"
             );
         }
     });
@@ -203,7 +203,7 @@ pub unsafe extern "C" fn gos_rt_str_free(s: *mut c_char) {
 
 /// True when `s` is a Gossamer-allocated string (tag byte at offset -1 in
 /// `0xA8..=0xAB`). An RC object's byte at -1 is its (canonical) `meta` high
-/// byte = `0x00`, so the ranges never collide — the RC retain/release dispatch
+/// byte = `0x00`, so the ranges never collide - the RC retain/release dispatch
 /// uses this to route strings to the string allocator.
 #[inline]
 pub unsafe fn is_gos_string(s: *const c_char) -> bool {
@@ -250,7 +250,7 @@ pub fn alloc_cstring_from_slices(parts: &[&[u8]]) -> *mut c_char {
     // Use the length-carrying builder layout (cap = content length) so the
     // result has its byte length stored at `ptr[-5]` for O(1)
     // `gos_rt_str_len` / `gos_rt_str_slice`. A later in-place `+=` finds no
-    // spare capacity and reallocates with doubling — correctness and the
+    // spare capacity and reallocates with doubling - correctness and the
     // amortised growth analysis are unchanged. `gos_rt_str_free` and the
     // concat fast path already handle `STR_BUILDER_TAG`.
     let total: usize = parts.iter().map(|p| p.len()).sum();
@@ -281,7 +281,7 @@ pub unsafe extern "C" fn gos_rt_len_is_zero(p: *const i64) -> bool {
 }
 
 /// Clones a `*mut GosVec` element-by-element. Used by
-/// `xs.to_vec()` so the result is independent of the source —
+/// `xs.to_vec()` so the result is independent of the source -
 /// without this, the previous identity lowering aliased the
 /// source buffer and mutations like `out.swap(i, j)` clobbered
 /// the caller's input.
@@ -354,7 +354,7 @@ pub unsafe extern "C" fn gos_rt_vec_clone(src: *const GosVec) -> *mut GosVec {
 /// Materialises `s.as_bytes()` as a real `GosVec<u8>` so callees
 /// receiving `&[u8]` can call `.len()` / `.iter()` / index it
 /// the same way they would any other slice. The previous
-/// identity lowering returned the raw c-string ptr — `.len()`
+/// identity lowering returned the raw c-string ptr - `.len()`
 /// on it read the first 8 content bytes as a Vec length prefix,
 /// and `.iter()` walked off into garbage. Backing buffer +
 /// header are arena-allocated; the next `gos_rt_gc_reset`
@@ -369,11 +369,11 @@ pub unsafe extern "C" fn gos_rt_str_as_bytes(s: *const c_char) -> *mut GosVec {
         };
         // The returned Vec is consumed by `bytes[i]` indexing in
         // user code, which the codegen lowers via the Vec/Slice
-        // dispatch (`gos_rt_vec_get_i64`) — every slot is i64-shaped.
+        // dispatch (`gos_rt_vec_get_i64`) - every slot is i64-shaped.
         // Materialise each byte as a zero-extended i64 so the load
         // returns the byte's value rather than 8 packed buffer
         // bytes. Use `gos_rt_vec_with_capacity` so the resulting
-        // header is `Box::from_raw`-compatible — the auto-emitted
+        // header is `Box::from_raw`-compatible - the auto-emitted
         // `gos_rt_vec_free` at scope-end relies on that
         // provenance.
         let v = unsafe { gos_rt_vec_with_capacity(8, len as i64) };
@@ -395,7 +395,7 @@ pub unsafe extern "C" fn gos_rt_str_as_bytes(s: *const c_char) -> *mut GosVec {
     })
 }
 
-/// `s.chars()` — materialises the string's Unicode scalar values as a
+/// `s.chars()` - materialises the string's Unicode scalar values as a
 /// fresh `*mut GosVec` of i64 codepoints (one 8-byte slot per char), so
 /// `for ch in s.chars()` reads each scalar via `gos_rt_vec_get_i64` and
 /// binds a `char`. Mirrors the interp builtin so `gos run` and
@@ -436,7 +436,7 @@ pub unsafe extern "C" fn gos_rt_str_byte_at(s: *const c_char, i: i64) -> i64 {
         // Strings are null-terminated and treated as immutable
         // bytes. The previous implementation called
         // `CStr::from_ptr(s).to_bytes()` which walks the string with
-        // `strlen` on every access — fasta-style hot loops doing
+        // `strlen` on every access - fasta-style hot loops doing
         // `s[idx % len]` paid O(strlen) per byte. The user's loop is
         // expected to keep `idx` in range (e.g. `% alu_len` against
         // a precomputed `alu_len = alu.len()`); reading past the
@@ -447,11 +447,11 @@ pub unsafe extern "C" fn gos_rt_str_byte_at(s: *const c_char, i: i64) -> i64 {
     })
 }
 
-/// `os::read_dir(path) -> Result<Vec<String>, errors::Error>` —
+/// `os::read_dir(path) -> Result<Vec<String>, errors::Error>` -
 /// returns the entry names under `path` as a `*mut GosVec` of
 /// `*const c_char`. Gossamer programs treat the call as
 /// fallible, but the MIR pin keeps it as a plain `Vec<String>`
-/// today (matching the interp's shape) — error cases land as an
+/// today (matching the interp's shape) - error cases land as an
 /// empty vec rather than a Result-shaped Adt.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_os_read_dir(path: *const c_char) -> *mut GosVec {
@@ -486,11 +486,11 @@ pub unsafe extern "C" fn gos_rt_os_read_dir(path: *const c_char) -> *mut GosVec 
     })
 }
 
-/// `s.substring(start, end)` — byte-range slice. Clamps `start`
+/// `s.substring(start, end)` - byte-range slice. Clamps `start`
 /// and `end` into `[0, len(s)]` and returns the indicated byte
 /// substring as a fresh `*mut c_char`. Mirrors the interp
 /// builtin so user code that calls `s.substring(a, b)` runs the
-/// same way under `gos run` and `gos build` — without this
+/// same way under `gos run` and `gos build` - without this
 /// helper the compiled tier saw `s.substring(...)` as an
 /// undispatched method, fell through to a free-fn lookup, and
 /// resolved to a user-defined `pub fn substring` (askq's
@@ -577,7 +577,7 @@ pub unsafe extern "C" fn gos_rt_str_concat_drop_a(
         let b_bytes: &[u8] = unsafe { CStr::from_ptr(b).to_bytes() };
         let len_b = b_bytes.len();
 
-        // Fast path: a is a growable string (heap or region) — try in-place
+        // Fast path: a is a growable string (heap or region) - try in-place
         // append. Region builders share the layout; their backing bytes are
         // writable until pop, and the realloc branch routes a fresh buffer
         // through the region too (and `gos_rt_str_free(a)` no-ops on it).
@@ -619,7 +619,7 @@ pub unsafe extern "C" fn gos_rt_str_concat_drop_a(
             }
         }
 
-        // a is null, a literal, or a fixed heap string — allocate fresh growable.
+        // a is null, a literal, or a fixed heap string - allocate fresh growable.
         let a_bytes: &[u8] = if a_empty {
             &[]
         } else {
@@ -640,7 +640,7 @@ pub unsafe extern "C" fn gos_rt_str_concat_drop_a(
 
 /// Appends the decimal form of `n` straight onto growable string `acc`
 /// and returns the (possibly reallocated) accumulator. The digits format
-/// into a stack buffer, so the value reaches `acc` in a single copy — the
+/// into a stack buffer, so the value reaches `acc` in a single copy - the
 /// fused form of `acc += format!("{}", n)` that skips the concat buffer and
 /// the throwaway result string.
 #[unsafe(no_mangle)]
@@ -688,7 +688,7 @@ pub unsafe extern "C" fn gos_rt_str_trim(s: *const c_char) -> *mut c_char {
     })
 }
 
-/// `s.trim_start() / strings::trim_start(s)` — strips leading
+/// `s.trim_start() / strings::trim_start(s)` - strips leading
 /// Unicode whitespace, mirroring Rust's `str::trim_start`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_str_trim_start(s: *const c_char) -> *mut c_char {
@@ -703,7 +703,7 @@ pub unsafe extern "C" fn gos_rt_str_trim_start(s: *const c_char) -> *mut c_char 
     })
 }
 
-/// `s.trim_end() / strings::trim_end(s)` — strips trailing
+/// `s.trim_end() / strings::trim_end(s)` - strips trailing
 /// Unicode whitespace, mirroring Rust's `str::trim_end`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_str_trim_end(s: *const c_char) -> *mut c_char {
@@ -817,7 +817,7 @@ pub unsafe extern "C" fn gos_rt_str_find(s: *const c_char, needle: *const c_char
 /// `s.find(needle) -> Option<i64>` packed as a `*mut GosResult`
 /// (`disc 0 = Some(idx)`, `disc 1 = None`). Wraps the raw i64
 /// `gos_rt_str_find` return so cranelift's match-on-Option
-/// lowering reads the right discriminant — the bare i64 form
+/// lowering reads the right discriminant - the bare i64 form
 /// produces a Value the SwitchInt path always treats as Some
 /// because -1 doesn't correspond to either Some-disc (0) or
 /// None-disc (1).
@@ -1014,7 +1014,7 @@ pub unsafe extern "C" fn gos_rt_str_count(s: *const c_char, needle: *const c_cha
     })
 }
 
-/// `s.strip_chars(cutset)` — trims any char in `cutset` from both
+/// `s.strip_chars(cutset)` - trims any char in `cutset` from both
 /// ends. Empty cutset is a no-op.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_str_strip_chars(
@@ -1088,7 +1088,7 @@ pub unsafe extern "C" fn gos_rt_str_rstrip_chars(
     })
 }
 
-/// `s.zfill(width)` — pad with `'0'` on the left until at least
+/// `s.zfill(width)` - pad with `'0'` on the left until at least
 /// `width` characters wide.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_str_zfill(s: *const c_char, width: i64) -> *mut c_char {
@@ -1115,7 +1115,7 @@ pub unsafe extern "C" fn gos_rt_str_zfill(s: *const c_char, width: i64) -> *mut 
     })
 }
 
-/// `s.center(width, pad_char)` — symmetric pad to `width`. Pads
+/// `s.center(width, pad_char)` - symmetric pad to `width`. Pads
 /// with `' '` if `pad_char` is 0 (caller defaulted).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_str_center(
@@ -1293,7 +1293,7 @@ pub unsafe extern "C" fn gos_rt_str_lines(s: *const c_char) -> *mut GosVec {
             unsafe { CStr::from_ptr(s).to_str().unwrap_or("") }
         };
         let parts: Vec<*mut c_char> = s.lines().map(|l| alloc_cstring(l.as_bytes())).collect();
-        // STRING-typed — same ownership contract as `gos_rt_str_split`.
+        // STRING-typed - same ownership contract as `gos_rt_str_split`.
         let vec = unsafe {
             crate::c_abi::vec::gos_rt_vec_with_capacity_typed(
                 8,
@@ -1399,7 +1399,7 @@ pub unsafe extern "C" fn gos_rt_result_map_err(result: i128, closure: *const u8)
 /// `result.map(closure)` for **capturing** closures whose lifted
 /// function follows the env-first ABI `extern "C" fn(env, payload)
 /// -> i64`. Non-capturing closures must dispatch through
-/// [`gos_rt_result_map_bare`] instead — they have no env slot, so
+/// [`gos_rt_result_map_bare`] instead - they have no env slot, so
 /// passing one would shadow the payload arg and the closure would
 /// transform the env pointer instead of the payload (the askq
 /// round-2 corruption pre-fix).
@@ -1419,7 +1419,7 @@ pub unsafe extern "C" fn gos_rt_result_map(result: i128, closure: *const u8) -> 
     })
 }
 
-/// `result::default_with(closure, result)` — returns the `Ok` value
+/// `result::default_with(closure, result)` - returns the `Ok` value
 /// unchanged, or calls `closure` on the `Err` payload and returns its
 /// result. The returned `i64` is the unwrapped `T` (a scalar value or
 /// a pointer, depending on `T`). Mirrors `gos_rt_result_map`'s closure
@@ -1442,7 +1442,7 @@ pub unsafe extern "C" fn gos_rt_result_default_with(result: i128, closure: *cons
     })
 }
 
-/// `result::default(fallback, result)` — returns the `Ok` payload,
+/// `result::default(fallback, result)` - returns the `Ok` payload,
 /// or `fallback` when the Result is `Err`. The returned `i64` is the
 /// unwrapped `T` (a scalar value or a pointer, depending on `T`).
 #[unsafe(no_mangle)]
@@ -1472,7 +1472,7 @@ pub extern "C" fn gos_rt_result_default_f64(fallback: f64, result: i128) -> f64 
 
 /// `result.map(closure)` for **non-capturing** closures whose
 /// lifted function follows the bare ABI `extern "C" fn(payload) ->
-/// i64` (no env slot — this is what `gossamer-hir::lift_closed`
+/// i64` (no env slot - this is what `gossamer-hir::lift_closed`
 /// produces). The MIR call-site dispatch picks this entry point
 /// when the closure arg has a recorded `local_fn_name` (i.e. is
 /// a direct path to a lifted function rather than a heap-allocated
@@ -1535,14 +1535,14 @@ pub unsafe extern "C" fn gos_rt_flag_cell_load_bool(cell: *const bool) -> i64 {
     })
 }
 
-/// `time::Duration::from_secs(n)` lowering — returns `n * 1000` as
+/// `time::Duration::from_secs(n)` lowering - returns `n * 1000` as
 /// the i64-millisecond Duration the compiled tier carries.
 #[unsafe(no_mangle)]
 pub extern "C" fn gos_rt_duration_from_secs(secs: i64) -> i64 {
     ffi_entry!(-1, { secs.saturating_mul(1_000) })
 }
 
-// `flag::parse([decls])` declarative parser — takes an array of
+// `flag::parse([decls])` declarative parser - takes an array of
 // `FlagDecl`-shaped blobs and returns a `FlagMap` handle.
 // Layout per blob: `[name_cs, short_char, kind_tag, int_val,
 // str_cs]` (5 * 8 = 40 bytes). `kind_tag` is 0=Int, 1=Str, 2=Bool.
@@ -1744,7 +1744,7 @@ pub unsafe extern "C" fn gos_rt_flag_map_get(map: *const GosFlagMap, key: *const
             return unsafe { gos_rt_result_new(0, payload) };
         }
         // Suppress unused-field warning on positional (kept for
-        // future surface — `flag::parse(...)?.positional`).
+        // future surface - `flag::parse(...)?.positional`).
         let _ = &m.positional;
         unsafe { gos_rt_result_new(1, 0) }
     })
@@ -1872,7 +1872,7 @@ pub unsafe extern "C" fn gos_rt_time_parse_rfc3339(s: *const c_char) -> i128 {
     })
 }
 
-/// `time::Duration::from_millis(n)` lowering — Duration is already
+/// `time::Duration::from_millis(n)` lowering - Duration is already
 /// stored as i64 ms in the compiled tier, so this is the identity.
 #[unsafe(no_mangle)]
 pub extern "C" fn gos_rt_duration_from_millis(ms: i64) -> i64 {
@@ -1952,7 +1952,7 @@ pub unsafe extern "C" fn gos_rt_f64_to_str(x: f64) -> *mut c_char {
     })
 }
 
-/// Stringifies an `f64` with `prec` fractional digits — the runtime
+/// Stringifies an `f64` with `prec` fractional digits - the runtime
 /// side of `format!("{:.N}", x)`. Routes through the Rust standard
 /// library's float formatter so rounding matches the interpreter's
 /// `{:.N}` Display output bit-for-bit. Negative `prec` is clamped to
@@ -2074,7 +2074,7 @@ pub unsafe extern "C" fn gos_rt_str_replacen(
     })
 }
 
-/// `strings::to_title(s) -> String` — capitalises the first
+/// `strings::to_title(s) -> String` - capitalises the first
 /// character of each whitespace-separated word.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_str_to_title(s: *const c_char) -> *mut c_char {
@@ -2180,7 +2180,7 @@ pub unsafe extern "C" fn gos_rt_str_pad_right(
     })
 }
 
-/// `__fmt_pad(s, width, fill, align)` — pads the already-rendered string `s`
+/// `__fmt_pad(s, width, fill, align)` - pads the already-rendered string `s`
 /// to `width` characters with the `fill` codepoint. `align`: 0 = right
 /// (pad on the left), 1 = left (pad on the right), 2 = center. Backs the
 /// `{:>N}` / `{:<N}` / `{:^N}` / `{:0N}` format specs.
@@ -2244,7 +2244,7 @@ pub unsafe extern "C" fn gos_rt_str_contains_any(s: *const c_char, chars: *const
     })
 }
 
-/// `strings::equal_fold(a, b) -> bool` — case-insensitive compare.
+/// `strings::equal_fold(a, b) -> bool` - case-insensitive compare.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_str_equal_fold(a: *const c_char, b: *const c_char) -> i32 {
     ffi_entry!(-1, {

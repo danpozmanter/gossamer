@@ -1,4 +1,4 @@
-# Gossamer — Project Style Guide
+# Gossamer - Project Style Guide
 
 This file is the authoritative style guide for the Gossamer compiler and
 runtime. It overrides any conflicting guidance.
@@ -68,7 +68,7 @@ For Rust code in this repo:
 - Use `//!` at the top of every `lib.rs` / `mod.rs` with a one- or
   two-sentence description of the module's responsibility.
 - Docstrings describe intent, invariants, preconditions, and return
-  value — not the mechanical body.
+  value - not the mechanical body.
 - No multi-paragraph docstrings unless documenting a public API that a
   consumer genuinely needs the detail for.
 
@@ -86,7 +86,7 @@ No inline comments. No `//` comments inside Rust function bodies and no
 trailing end-of-line comments.
 
 If a line needs commentary, either:
-1. The code is not clear enough — rename, extract, or restructure until
+1. The code is not clear enough - rename, extract, or restructure until
    it is, or
 2. The invariant belongs in the function's docstring.
 
@@ -100,9 +100,9 @@ code.
 ## Naming
 
 Follow Rust convention without exception:
-- `snake_case` — functions, methods, locals, modules, fields.
-- `UpperCamelCase` — types, traits, enums, enum variants.
-- `SCREAMING_SNAKE_CASE` — consts and statics.
+- `snake_case` - functions, methods, locals, modules, fields.
+- `UpperCamelCase` - types, traits, enums, enum variants.
+- `SCREAMING_SNAKE_CASE` - consts and statics.
 - Acronyms treated as words: `Utf8`, `HttpClient`, `JsonValue`.
 
 Names are expressive. Prefer a slightly longer, unambiguous name over a
@@ -135,7 +135,7 @@ short, cryptic one.
   genuinely required.
 - `Arc<parking_lot::Mutex<T>>` only at thread boundaries. Within a
   single thread, plain ownership or `Rc<RefCell<T>>`.
-- `parking_lot::Mutex` instead of `std::sync::Mutex` — no poisoning,
+- `parking_lot::Mutex` instead of `std::sync::Mutex` - no poisoning,
   better performance.
 - Derive `Debug`, `Clone`, `PartialEq`, `Eq`, `Hash` when they are
   meaningful and cheap. Derive `Default` for types with a sensible
@@ -194,5 +194,5 @@ Where performance pressure would historically justify `unsafe`:
 
 ## No Emojis
 
-No emojis anywhere — source code, comments, doc comments, commit
+No emojis anywhere - source code, comments, doc comments, commit
 messages, CHANGELOG, error messages, PR descriptions, nothing.

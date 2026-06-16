@@ -3,7 +3,7 @@ source: crates/gossamer-diagnostics/tests/snapshots.rs
 expression: rendered
 ---
 --- plain ---
-error[GT0002]: The type checker could not find a method with the supplied — here
+error[GT0002]: The type checker could not find a method with the supplied - here
 --- framed ---
 error[GT0002]: The type checker could not find a method with the supplied
   --> snap.gos:2:5

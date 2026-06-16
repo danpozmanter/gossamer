@@ -21,7 +21,7 @@ use std::os::raw::c_char;
 use super::*;
 
 // ---------------------------------------------------------------
-// fs / path helpers — read_to_string, write, create_dir_all,
+// fs / path helpers - read_to_string, write, create_dir_all,
 // path::join. Mirror Rust std::fs minus the typed Error.
 // Filesystem syscalls are synchronous in every host kernel; the
 // goroutine running these calls parks the OS worker for the
@@ -97,7 +97,7 @@ fn classify_io_error(err: &std::io::Error, context: &str) -> String {
     }
 }
 
-/// `os::write_file(path, contents) -> Result<(), IoError>` — Result
+/// `os::write_file(path, contents) -> Result<(), IoError>` - Result
 /// shape. Used when the call site chains `.map_err(...)` (askq's
 /// `save_history`); the bool-returning `gos_rt_fs_write` would
 /// trip cranelift's verifier when `.map_err` then tried to feed
@@ -127,7 +127,7 @@ pub unsafe extern "C" fn gos_rt_os_write_file_result(
     })
 }
 
-/// `os::write_file(path, bytes: &[u8]) -> Result<(), IoError>` — `Vec<u8>`
+/// `os::write_file(path, bytes: &[u8]) -> Result<(), IoError>` - `Vec<u8>`
 /// payload variant. The MIR dispatcher picks this helper over the
 /// c-string-shaped one when the contents argument types as `Vec<u8>`
 /// or `&[u8]`, so binary writes (e.g. saving a downloaded image)
@@ -179,7 +179,7 @@ pub unsafe extern "C" fn gos_rt_os_write_file_bytes_result(
     })
 }
 
-/// `os::read_file(path) -> Result<Vec<u8>, IoError>` — bytes-shaped
+/// `os::read_file(path) -> Result<Vec<u8>, IoError>` - bytes-shaped
 /// read counterpart to `gos_rt_fs_read_to_string`. The Ok payload
 /// is a `*mut GosVec` with elem_bytes=1 holding the raw file
 /// content (preserves embedded NULs / non-UTF-8 bytes). Callers
@@ -223,7 +223,7 @@ pub unsafe extern "C" fn gos_rt_fs_read_bytes_result(path: *const c_char) -> i12
     })
 }
 
-/// `os::mkdir_all(path) -> Result<(), IoError>` — Result shape, for
+/// `os::mkdir_all(path) -> Result<(), IoError>` - Result shape, for
 /// `.map_err(...)` chains.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_os_mkdir_all_result(path: *const c_char) -> i128 {
@@ -246,7 +246,7 @@ pub unsafe extern "C" fn gos_rt_os_mkdir_all_result(path: *const c_char) -> i128
     })
 }
 
-/// `fs::remove_all(path) -> Result<(), IoError>` — removes a directory tree or file.
+/// `fs::remove_all(path) -> Result<(), IoError>` - removes a directory tree or file.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_os_remove_dir_all_result(path: *const c_char) -> i128 {
     ffi_entry!(0i128, {
@@ -268,7 +268,7 @@ pub unsafe extern "C" fn gos_rt_os_remove_dir_all_result(path: *const c_char) ->
     })
 }
 
-/// `os::remove_file(path) -> Result<(), IoError>` — Result shape.
+/// `os::remove_file(path) -> Result<(), IoError>` - Result shape.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_os_remove_file_result(path: *const c_char) -> i128 {
     ffi_entry!(0i128, {
@@ -334,13 +334,13 @@ pub unsafe extern "C" fn gos_rt_env_set_current_dir(path: *const c_char) -> i128
     })
 }
 
-/// `os::arch() -> String` — target CPU architecture (e.g. `"x86_64"`).
+/// `os::arch() -> String` - target CPU architecture (e.g. `"x86_64"`).
 #[unsafe(no_mangle)]
 pub extern "C" fn gos_rt_os_arch() -> *const c_char {
     alloc_cstring(std::env::consts::ARCH.as_bytes()).cast_const()
 }
 
-/// `os::family() -> String` — target OS family (e.g. `"unix"`).
+/// `os::family() -> String` - target OS family (e.g. `"unix"`).
 #[unsafe(no_mangle)]
 pub extern "C" fn gos_rt_os_family() -> *const c_char {
     alloc_cstring(std::env::consts::FAMILY.as_bytes()).cast_const()
@@ -364,7 +364,7 @@ pub unsafe extern "C" fn gos_rt_path_join(a: *const c_char, b: *const c_char) ->
     })
 }
 
-/// `path::base(p) -> String` — final path component (filename),
+/// `path::base(p) -> String` - final path component (filename),
 /// matching `gossamer_std::path::base`. Inlined here so the runtime
 /// crate stays free of a dep on `gossamer-std`.
 #[unsafe(no_mangle)]
@@ -383,7 +383,7 @@ pub unsafe extern "C" fn gos_rt_path_base(p: *const c_char) -> *mut c_char {
     })
 }
 
-/// `path::dir(p) -> String` — parent directory; returns `"."`
+/// `path::dir(p) -> String` - parent directory; returns `"."`
 /// when no separator is present.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_path_dir(p: *const c_char) -> *mut c_char {
@@ -402,7 +402,7 @@ pub unsafe extern "C" fn gos_rt_path_dir(p: *const c_char) -> *mut c_char {
     })
 }
 
-/// `path::ext(p) -> Option<String>` — extension with the leading
+/// `path::ext(p) -> Option<String>` - extension with the leading
 /// dot wrapped in `Some`, or `None` if absent / the dot is at the
 /// very start of the file name. Mirrors the interp / stdlib
 /// `path::ext` Option-returning shape.
@@ -431,7 +431,7 @@ pub unsafe extern "C" fn gos_rt_path_ext(p: *const c_char) -> i128 {
     })
 }
 
-/// `path::parent(p) -> Option<String>` — drops the trailing
+/// `path::parent(p) -> Option<String>` - drops the trailing
 /// component. Returns None when `p` has no parent (root or
 /// single-component path).
 #[unsafe(no_mangle)]
@@ -457,7 +457,7 @@ pub unsafe extern "C" fn gos_rt_path_parent(p: *const c_char) -> i128 {
     })
 }
 
-/// `path::stem(p) -> Option<String>` — basename minus the
+/// `path::stem(p) -> Option<String>` - basename minus the
 /// extension. Returns None when the basename is empty.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_path_stem(p: *const c_char) -> i128 {
@@ -483,7 +483,7 @@ pub unsafe extern "C" fn gos_rt_path_stem(p: *const c_char) -> i128 {
     })
 }
 
-/// `path::file_name(p) -> Option<String>` — last component.
+/// `path::file_name(p) -> Option<String>` - last component.
 /// Returns None for empty paths or trailing-slash directories.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_path_file_name(p: *const c_char) -> i128 {
@@ -534,7 +534,7 @@ pub unsafe extern "C" fn gos_rt_path_is_absolute(p: *const c_char) -> i32 {
     })
 }
 
-/// `path::has_prefix(p, prefix) -> bool` — path-aware prefix test.
+/// `path::has_prefix(p, prefix) -> bool` - path-aware prefix test.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_path_has_prefix(p: *const c_char, prefix: *const c_char) -> i32 {
     ffi_entry!(-1, {
@@ -563,7 +563,7 @@ pub unsafe extern "C" fn gos_rt_path_has_prefix(p: *const c_char, prefix: *const
 }
 
 /// `os::copy(src, dst) / fs::copy(src, dst) -> Result<i64, Error>`
-/// — copies the file contents and returns the byte count.
+/// - copies the file contents and returns the byte count.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_fs_copy(src: *const c_char, dst: *const c_char) -> i128 {
     ffi_entry!(0i128, {
@@ -674,7 +674,7 @@ pub unsafe extern "C" fn gos_rt_bufio_read_lines_of(path: *const c_char) -> i128
 }
 
 /// `net::resolve(host) / net::lookup(host) -> Result<[String], Error>`
-/// — resolves a host (optionally `host:port`) to IP address strings.
+/// - resolves a host (optionally `host:port`) to IP address strings.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_net_resolve(host: *const c_char) -> i128 {
     ffi_entry!(0i128, {

@@ -3,7 +3,7 @@ source: crates/gossamer-diagnostics/tests/snapshots.rs
 expression: rendered
 ---
 --- plain ---
-error[GP0003]: A balanced construct (block, tuple, array, string literal) was — here
+error[GP0003]: A balanced construct (block, tuple, array, string literal) was - here
 --- framed ---
 error[GP0003]: A balanced construct (block, tuple, array, string literal) was
   --> snap.gos:2:5

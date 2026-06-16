@@ -8,14 +8,14 @@
     clippy::unnecessary_wraps,
     clippy::needless_pass_by_value
 )]
-//! `std::sync::RwLock` builtins for the bytecode VM — a reader-writer
+//! `std::sync::RwLock` builtins for the bytecode VM - a reader-writer
 //! lock guarding a single `i64`. The handle is a struct carrying an
 //! `id`; the real `parking_lot::RwLock` lives in a process-global
 //! registry keyed by `id` (mirrors `sync::Map` / `sync::Once`), so a
 //! handle minted on one goroutine worker thread resolves on another.
 //!
 //! `with_read` / `with_write` are `native` builtins so the closure can
-//! be invoked through the interpreter dispatcher — a plain
+//! be invoked through the interpreter dispatcher - a plain
 //! `BuiltinFnPub` cannot call the callback. They are registered as
 //! free data-last calls (`sync::RwLock::with_read(lock, f)`), the same
 //! shape as `sync::Once::call`, and are the bit-identical VM mirror of

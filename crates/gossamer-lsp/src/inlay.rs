@@ -1,14 +1,14 @@
 //! Inlay-hint collection.
 //!
 //! Walks every fn body in the open document and emits one hint per
-//! binding whose type the user did **not** spell out — `let` bindings
+//! binding whose type the user did **not** spell out - `let` bindings
 //! and closure params without an explicit `: T` annotation. Each hint
 //! anchors at the end of the binding pattern's span so the editor
 //! renders ` : <type>` ghost text right after the name.
 //!
 //! Resolved types come from [`gossamer_types::TypeTable`] keyed by
 //! the pattern's `NodeId`. Unresolved inference variables (rendered
-//! as `?N`) and the unit type are filtered out — they add noise
+//! as `?N`) and the unit type are filtered out - they add noise
 //! without telling the user anything actionable.
 //!
 //! The client sends `textDocument/inlayHint` with a range; we honour
@@ -28,7 +28,7 @@ use crate::session::DocumentAnalysis;
 pub(crate) struct InlayHint {
     /// 0-based line of the anchor position (LSP coordinates).
     pub line: u32,
-    /// 0-based UTF-16 character (we approximate as bytes — see
+    /// 0-based UTF-16 character (we approximate as bytes - see
     /// `position_to_offset` for the existing convention).
     pub character: u32,
     /// Text shown to the user, including the leading `:` separator.
@@ -101,11 +101,11 @@ impl Walker<'_> {
         }
     }
 
-    // One arm per ExprKind variant — splitting it would split the
+    // One arm per ExprKind variant - splitting it would split the
     // single match in half without making any branch shorter.
     #[allow(
         clippy::too_many_lines,
-        reason = "flat-shape dispatch / lowering — splitting hides the per-arm intent"
+        reason = "flat-shape dispatch / lowering - splitting hides the per-arm intent"
     )]
     fn walk_expr(&mut self, expr: &Expr) {
         match &expr.kind {

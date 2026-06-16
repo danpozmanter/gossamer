@@ -1,4 +1,4 @@
-//! Runtime support for `std::sort` — stable / unstable sorting and
+//! Runtime support for `std::sort` - stable / unstable sorting and
 //! binary search.
 
 #![forbid(unsafe_code)]

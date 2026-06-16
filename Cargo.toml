@@ -48,7 +48,7 @@ authors = ["Gossamer contributors"]
 # the smallest possible scope without each crate having to
 # re-list every workspace lint in a manual override (Cargo's
 # `[lints]` table is replace-only). Crates with zero unsafe
-# need no override — they just don't write `#[allow]` and
+# need no override - they just don't write `#[allow]` and
 # `deny` rejects unannotated unsafe everywhere else.
 unsafe_code = "deny"
 missing_docs = "warn"
@@ -73,7 +73,7 @@ missing_panics_doc = "allow"
 #     fire constantly in the lexer / parser / codegen where the
 #     surrounding logic already bounds the cast.
 #   - float_cmp fires on tests that compare constants for exact
-#     equality — legitimate for deterministic helpers like SplitMix64.
+#     equality - legitimate for deterministic helpers like SplitMix64.
 match_same_arms = "allow"
 needless_pass_by_value = "allow"
 unused_self = "allow"

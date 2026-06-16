@@ -33,7 +33,7 @@ const MAX_ACTIVE_READS: usize = 4;
 #[derive(Debug, Clone)]
 struct Access {
     gid: u32,
-    /// Frozen vector clock at the time of the access — keyed by
+    /// Frozen vector clock at the time of the access - keyed by
     /// goroutine id, value = the local logical step counter.
     clock: Vec<u64>,
 }
@@ -307,7 +307,7 @@ mod tests {
         enable();
         let _ = drain_races();
         // Goroutine 103 writes, hands off via record_sync to 104
-        // which also writes — 103's write happens-before 104's.
+        // which also writes - 103's write happens-before 104's.
         record_access(103, 0xBEEF, true);
         record_sync(103, 104);
         record_access(104, 0xBEEF, true);
@@ -323,7 +323,7 @@ mod tests {
         let _g = TEST_GUARD.lock();
         enable();
         let _ = drain_races();
-        // Writer syncs to reader via record_sync — no race.
+        // Writer syncs to reader via record_sync - no race.
         record_access(120, 0xCCCC, true);
         record_sync(120, 121);
         record_access(121, 0xCCCC, false);

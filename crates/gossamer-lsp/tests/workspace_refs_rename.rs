@@ -80,7 +80,7 @@ fn refs_find_across_two_files() {
         "file:///main.gos",
         "use util::shared\nfn main() { shared() }\n",
     );
-    // Cursor on the declaration in util.gos — the `s` of `shared`
+    // Cursor on the declaration in util.gos - the `s` of `shared`
     // sits at byte 7 (after `pub fn `).
     let params = position_params("file:///util.gos", 0, 8);
     let response = server.references(&params);
@@ -172,7 +172,7 @@ fn field_rename_scoped_to_owning_struct() {
                   fn use_point(p: Point) -> i64 { p.bar }\n\
                   fn use_color(c: Color) -> i64 { c.bar }\n";
     server.update("file:///s.gos", source);
-    // Cursor on `p.bar` access — line 2 col 34 inside `p.bar`.
+    // Cursor on `p.bar` access - line 2 col 34 inside `p.bar`.
     let params = rename_params("file:///s.gos", 2, 34, "bar2");
     let response = server.rename(&params);
     // The response must rewrite at least one site in the file.
@@ -181,7 +181,7 @@ fn field_rename_scoped_to_owning_struct() {
         // When the type resolver doesn't pin the receiver, the
         // server falls back to the file-local semantic-only
         // surface. The rename is then either empty or covers only
-        // the cursor position itself — both are acceptable as long
+        // the cursor position itself - both are acceptable as long
         // as it does NOT touch the Color.bar field.
         return;
     }
@@ -225,7 +225,7 @@ fn method_rename_scoped_to_impl_type() {
                   fn use_a(a: A) -> i64 { a.run() }\n\
                   fn use_b(b: B) -> i64 { b.run() }\n";
     server.update("file:///m.gos", source);
-    // The rename target is `A::run` — cursor on the method
+    // The rename target is `A::run` - cursor on the method
     // declaration line 2. Whether or not the receiver resolves at
     // every call site, the rename should never produce edits
     // touching the B impl's `run` declaration line 3.
@@ -297,14 +297,14 @@ fn text_fallback_only_in_strings() {
     // string and once as a free word inside a comment.
     let source = "fn main() {\n    let s = \"target\"\n    // target comment\n}\n";
     server.update("file:///t.gos", source);
-    // Cursor inside the string literal — column 16 of line 1.
+    // Cursor inside the string literal - column 16 of line 1.
     let params_in_string = position_params("file:///t.gos", 1, 16);
     let response_in_string = server.references(&params_in_string);
     let in_string_refs = match &response_in_string {
         Value::Array(items) => items.len(),
         _ => 0,
     };
-    // Cursor on the bare comment word — column 8 of line 2.
+    // Cursor on the bare comment word - column 8 of line 2.
     let params_in_comment = position_params("file:///t.gos", 2, 8);
     let response_in_comment = server.references(&params_in_comment);
     let in_comment_refs = match &response_in_comment {
@@ -313,7 +313,7 @@ fn text_fallback_only_in_strings() {
     };
     // The string-literal cursor is allowed to fall through to
     // the text-fallback (>= 0 results acceptable). The comment
-    // cursor must yield zero results — comments aren't string
+    // cursor must yield zero results - comments aren't string
     // literals or fenced doctests.
     assert_eq!(
         in_comment_refs, 0,
@@ -340,7 +340,7 @@ fn index_updates_on_did_change() {
     // The old key must no longer surface any cross-file edit.
     let stale_params = rename_params("file:///main.gos", 1, 13, "x");
     let stale_resp = server.rename(&stale_params);
-    // Should yield either null or only main-local edits — never
+    // Should yield either null or only main-local edits - never
     // attempts to write to lib.gos under the stale name.
     if let Value::Object(fields) = &stale_resp {
         if let Some(Value::Object(changes)) = fields.get("changes") {
@@ -348,7 +348,7 @@ fn index_updates_on_did_change() {
             // `old_fn` reference in main.gos should no longer pull
             // lib.gos into the edit set (no cross-file resolution
             // because the symbol is gone).
-            // Note: we accept either behaviour here — the key
+            // Note: we accept either behaviour here - the key
             // assertion is that the workspace index update did
             // not panic and the stale entry was purged.
             let _ = changes;

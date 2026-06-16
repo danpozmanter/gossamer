@@ -1,4 +1,4 @@
-//! Runtime support for `std::fs` — filesystem walking + mutation
+//! Runtime support for `std::fs` - filesystem walking + mutation
 //! helpers on top of `std::fs`.
 
 use std::fs::{self as stdfs, File, Metadata};
@@ -177,7 +177,7 @@ pub fn canonicalize(path: impl AsRef<Path>) -> io::Result<String> {
 }
 
 /// Creates a single directory at `path`. Fails if a parent is
-/// missing — use [`create_dir_all`] for the recursive form.
+/// missing - use [`create_dir_all`] for the recursive form.
 pub fn create_dir(path: impl AsRef<Path>) -> io::Result<()> {
     stdfs::create_dir(path)
 }
@@ -268,7 +268,7 @@ pub fn chown(_path: impl AsRef<Path>, _uid: i64, _gid: i64) -> io::Result<()> {
 /// Writes `bytes` to `path` atomically: the bytes are first written
 /// to a sibling temp file, fsync'd, then renamed into place. On a
 /// crash mid-write the caller observes either the previous file
-/// contents or the new ones — never a partial file.
+/// contents or the new ones - never a partial file.
 pub fn write_atomic(path: impl AsRef<Path>, bytes: &[u8]) -> io::Result<()> {
     let path = path.as_ref();
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
@@ -450,7 +450,7 @@ pub fn mmap_read(path: &str) -> io::Result<Mmap> {
 }
 
 /// Acquires an exclusive (writer) advisory lock on `file`. Blocks
-/// until any conflicting lock is released. Locks are advisory —
+/// until any conflicting lock is released. Locks are advisory -
 /// only cooperating processes that also call the lock helpers
 /// see them.
 pub fn lock_exclusive(file: &File) -> io::Result<()> {
@@ -483,7 +483,7 @@ pub fn try_lock_shared(file: &File) -> io::Result<()> {
 /// POSIX `flock` returns `EAGAIN`/`EWOULDBLOCK` (Rust maps both
 /// to `ErrorKind::WouldBlock`). Windows `LockFileEx` with
 /// `LOCKFILE_FAIL_IMMEDIATELY` returns `ERROR_LOCK_VIOLATION` (33),
-/// which Rust's `decode_error_kind` table does not list — it
+/// which Rust's `decode_error_kind` table does not list - it
 /// surfaces as the private `ErrorKind::Uncategorized`, breaking
 /// callers that match on `WouldBlock`. Re-stamp the kind here so
 /// the contract is the same shape everywhere.
@@ -496,14 +496,14 @@ fn normalize_try_lock_err(e: io::Error) -> io::Error {
 }
 
 /// Releases any advisory lock previously taken on `file`. Idempotent
-/// — releasing an already-unlocked handle is not an error on POSIX.
+/// - releasing an already-unlocked handle is not an error on POSIX.
 pub fn unlock(file: &File) -> io::Result<()> {
     fs2::FileExt::unlock(file)
 }
 
 /// RAII wrapper around a freshly-created temporary directory. The
 /// directory and every entry inside it are removed when the handle
-/// drops — even if the holder panicked. Mirrors Python's
+/// drops - even if the holder panicked. Mirrors Python's
 /// `tempfile.TemporaryDirectory`.
 #[derive(Debug)]
 pub struct TempDir {
@@ -563,7 +563,7 @@ impl Drop for TempDir {
 
 /// Creates a freshly-named temporary file under the system temp
 /// root and returns `(File, PathBuf)`. The caller is responsible
-/// for removing the file when finished — pair with [`TempDir`] for
+/// for removing the file when finished - pair with [`TempDir`] for
 /// automatic cleanup. Mirrors Python's `tempfile.mkstemp` (sans
 /// the file-descriptor return).
 pub fn temp_file(prefix: &str) -> io::Result<(File, PathBuf)> {

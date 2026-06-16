@@ -200,7 +200,7 @@ fn load_from_disk(root: &Path, digest: &str) -> Option<CachedSource> {
     let actual = compute_digest(&files);
     if actual != digest {
         eprintln!(
-            "cache: warning: integrity check failed for {digest}; recomputed {actual} — ignoring on-disk copy"
+            "cache: warning: integrity check failed for {digest}; recomputed {actual} - ignoring on-disk copy"
         );
         return None;
     }
@@ -248,7 +248,7 @@ pub enum CacheError {
         /// Filesystem path that failed.
         path: String,
     },
-    /// Digest mismatch — the cached payload differs from the recorded
+    /// Digest mismatch - the cached payload differs from the recorded
     /// `sha256` in the manifest/lockfile.
     #[error("digest mismatch for {id}: expected {expected}, found {found}")]
     DigestMismatch {
@@ -280,7 +280,7 @@ pub enum CacheError {
     #[error("{0}: publisher signature does not verify")]
     SignatureInvalid(String),
     /// The registry advertised a publisher key that differs from the
-    /// one pinned in the lockfile — a key rotation or substitution.
+    /// one pinned in the lockfile - a key rotation or substitution.
     #[error("{id}: publisher key changed (pinned {pinned}, registry offered {offered})")]
     KeyMismatch {
         /// Project id.

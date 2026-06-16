@@ -55,7 +55,7 @@ static PROGRAM_NAME_PTR: AtomicUsize = AtomicUsize::new(0);
 pub unsafe extern "C" fn gos_rt_set_args(argc: c_int, argv: *const *const c_char) {
     ffi_entry!((), {
         // Capture argv[0] as the program name whenever argv has any
-        // entries — previously this only happened when argc > 1, so
+        // entries - previously this only happened when argc > 1, so
         // a binary run with no user args had `env::program_name()`
         // return null and stringify to an empty string.
         if argc >= 1 && !argv.is_null() {
@@ -90,7 +90,7 @@ pub unsafe extern "C" fn gos_rt_set_args(argc: c_int, argv: *const *const c_char
             //
             // `cap = 0` marks the data buffer as borrowed (libc owns
             // `argv`), so `gos_rt_vec_free` skips its dealloc arm
-            // when GC sweep walks across this header — `len` alone is
+            // when GC sweep walks across this header - `len` alone is
             // enough for `args.len()` (read at offset 0) and indexing
             // (which only touches `ptr` and `elem_bytes`).
             let vec = Box::into_raw(Box::new(GosVec {
@@ -123,7 +123,7 @@ pub unsafe extern "C" fn gos_rt_set_args(argc: c_int, argv: *const *const c_char
         // Initialise the Rust runtime's per-process state. The
         // Cranelift-emitted `main` shim is a plain
         // `extern "C" fn main(int, **char) -> int`, so libc's
-        // `__libc_start_main` calls it directly — bypassing the
+        // `__libc_start_main` calls it directly - bypassing the
         // `std::rt::lang_start` wrapper that rustc generates around
         // a Rust `fn main()`. Without that wrapper several pieces of
         // standard-library state are left in their lazy-init defaults:
@@ -153,8 +153,8 @@ pub unsafe extern "C" fn gos_rt_set_args(argc: c_int, argv: *const *const c_char
 
 /// Returns freed pages to the OS promptly by setting mimalloc's purge
 /// delay to zero. mimalloc's default (1000 ms in v3) defers the
-/// `madvise` purge to batch it; on a phase-structured program — build a
-/// large map, drop it, build the next — every dropped phase's pages stay
+/// `madvise` purge to batch it; on a phase-structured program - build a
+/// large map, drop it, build the next - every dropped phase's pages stay
 /// resident until process exit, so peak RSS becomes the SUM of all
 /// phases instead of the largest live set (measured: k-nucleotide
 /// `--release` 52.6 MB -> 28.8 MB, wall-clock unchanged). Delegates to
@@ -168,9 +168,9 @@ fn configure_allocator() {
 // and therefore before the process's first heap allocation. The
 // `allow_thp` option only takes effect if set before mimalloc maps its
 // first arena (the `MADV_HUGEPAGE` advice is applied at arena mmap
-// time), and that arena is created by the very first allocation —
+// time), and that arena is created by the very first allocation -
 // argv capture above in compiled programs, Rust's pre-main runtime in
-// the `gos` binary — which precedes every `runtime_init` call site.
+// the `gos` binary - which precedes every `runtime_init` call site.
 // THP is Linux-only, so the constructor is too; other platforms keep
 // the `runtime_init`/CLI-main call, where only the purge delay
 // matters and late application is harmless. Lives in this module
@@ -235,7 +235,7 @@ fn runtime_init() {
 /// header's `ptr` is `argv + 1` and `len`/`cap` are `argc - 1`,
 /// so `args.len()` dispatches through `gos_rt_arr_len` (reading
 /// `len` at offset 0) and `args[i]` reads the i-th `*const c_char`
-/// through the GosVec `ptr` field — same shape as any other
+/// through the GosVec `ptr` field - same shape as any other
 /// `Vec<String>`. `gos_rt_arr_len`'s legacy `argv + 1` sentinel
 /// short-circuit is retained for callers that still hold the raw
 /// pointer.
@@ -472,7 +472,7 @@ pub unsafe extern "C" fn gos_rt_fs_walk_dir(path: *const c_char) -> i128 {
                     .and_then(|d| i64::try_from(d.as_millis()).ok())
                     .unwrap_or(0);
                 // 7 fields * 8 bytes = 56 bytes. Route through the
-                // tracing collector — symmetric with list_dir.
+                // tracing collector - symmetric with list_dir.
                 let blob = super::gc::gos_rt_gc_alloc(56) as *mut i64;
                 if blob.is_null() {
                     continue;
@@ -568,7 +568,7 @@ pub unsafe extern "C" fn gos_rt_os_file_size(path: *const c_char) -> i64 {
 /// (`is_file`, `is_dir`, `modified_unix_ms`, …) are exposed
 /// through the existing `gos_rt_os_*` predicates on the same
 /// path. This compiled-tier surface is a strict subset of the
-/// VM's `fs::Metadata { … }` aggregate — the dominant call shape
+/// VM's `fs::Metadata { … }` aggregate - the dominant call shape
 /// (`if let Ok(_) = fs::metadata(p) { … }` to test stat-ability)
 /// works end-to-end; the field-rich form will land alongside the
 /// shared aggregate-binding pass that http::Request / sql::Row
@@ -662,7 +662,7 @@ pub unsafe extern "C" fn gos_rt_fs_metadata_raw(path: *const c_char) -> i128 {
 /// generic free-call dispatch that emits a call to a non-existent
 /// symbol; cranelift / LLVM then either drop the call entirely or
 /// stash a garbage pointer in the destination, and the caller
-/// dereferences it as a Result aggregate — the visible symptom is
+/// dereferences it as a Result aggregate - the visible symptom is
 /// either a plain segfault or `memory allocation of <huge> bytes
 /// failed` when the runtime treats the random pointer as a
 /// length-prefixed buffer.

@@ -3,7 +3,7 @@ source: crates/gossamer-diagnostics/tests/snapshots.rs
 expression: rendered
 ---
 --- plain ---
-error[GL0019]: Both branches of the `if` are identical. Drop the branch and — here
+error[GL0019]: Both branches of the `if` are identical. Drop the branch and - here
 --- framed ---
 error[GL0019]: Both branches of the `if` are identical. Drop the branch and
   --> snap.gos:2:5

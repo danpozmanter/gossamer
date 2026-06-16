@@ -20,11 +20,11 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use thiserror::Error;
 
-/// Default cap on parser nesting depth — guards the recursive descent
+/// Default cap on parser nesting depth - guards the recursive descent
 /// against stack exhaustion from adversarial input.
 pub const DEFAULT_MAX_DEPTH: usize = 128;
 
-/// Default cap on document byte length — guards against memory
+/// Default cap on document byte length - guards against memory
 /// exhaustion from oversized payloads. 16 MiB.
 pub const DEFAULT_MAX_SIZE: usize = 16 * 1024 * 1024;
 
@@ -250,7 +250,7 @@ pub fn to_string(value: &Value) -> String {
     encode(value)
 }
 
-/// Placeholder derive adapters — until the compiler's derive machinery
+/// Placeholder derive adapters - until the compiler's derive machinery
 /// can target these traits directly, callers hand-implement them by
 /// constructing [`Value`]s manually.
 pub mod serde_surface {
@@ -500,7 +500,7 @@ impl<W: std::io::Write> Encoder<W> {
     }
 }
 
-/// Field-tag descriptor. The compiler's derive machinery (deferred —
+/// Field-tag descriptor. The compiler's derive machinery (deferred -
 /// see [`serde_surface`]) walks a struct's tags to know how to map
 /// JSON keys onto Rust fields.
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -2,7 +2,7 @@
 
 Status: shipped
 
-Legacy / broken hashes (MD5, SHA-1). Compat only — never use for new code.
+Legacy / broken hashes (MD5, SHA-1). Compat only - never use for new code.
 
 ## Public items
 

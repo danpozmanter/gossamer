@@ -15,7 +15,7 @@
 // Output is fully deterministic on every tier: the barrier turns
 // goroutine scheduling into a fixed two-phase rendezvous, so `main`
 // always reads each round's published counter, and `Once` fires its
-// body exactly once. No sleeps — `WaitGroup` makes completion
+// body exactly once. No sleeps - `WaitGroup` makes completion
 // deterministic.
 
 use std::sync

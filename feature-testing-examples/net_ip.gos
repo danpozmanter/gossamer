@@ -1,4 +1,4 @@
-// Cross-tier fixture for `std::net::ip` — the stateless IP
+// Cross-tier fixture for `std::net::ip` - the stateless IP
 // classification surface (string in, bool/Result out), backed by
 // Rust's std::net::IpAddr on every tier. Deterministic: pure
 // computation, no sockets, prints a single line.

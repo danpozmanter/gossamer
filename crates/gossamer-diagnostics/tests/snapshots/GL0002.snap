@@ -3,7 +3,7 @@ source: crates/gossamer-diagnostics/tests/snapshots.rs
 expression: rendered
 ---
 --- plain ---
-error[GL0002]: A `use` declaration whose imported name is never referenced. — here
+error[GL0002]: A `use` declaration whose imported name is never referenced. - here
 --- framed ---
 error[GL0002]: A `use` declaration whose imported name is never referenced.
   --> snap.gos:2:5

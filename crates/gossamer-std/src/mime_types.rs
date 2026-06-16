@@ -1,4 +1,4 @@
-// `std::mime` — RFC 2045 media type parsing + extension lookup.
+// `std::mime` - RFC 2045 media type parsing + extension lookup.
 //
 // Surface (simple scalar-only API for cross-tier wiring):
 //   - `parse(s)` -> "type/subtype" if valid, else ""
@@ -147,7 +147,7 @@ mod tests {
     #[test]
     fn extension_by_type_roundtrip() {
         // Not all media types round-trip cleanly (e.g. several
-        // extensions map to text/plain) — just verify a stable
+        // extensions map to text/plain) - just verify a stable
         // entry is returned.
         let e = extension_by_type("image/png");
         assert!(!e.is_empty());

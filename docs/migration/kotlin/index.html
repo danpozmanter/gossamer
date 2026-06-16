@@ -1943,7 +1943,7 @@ last, piped with <code>|&gt;</code>). Mutating helpers (<code>push</code>, <code
 <h2 id="coroutines-goroutines">Coroutines → goroutines<a class="headerlink" href="#coroutines-goroutines" title="Permanent link">&para;</a></h2>
 <p>Kotlin coroutines are cooperative and tied to a <code>CoroutineScope</code>.
 Gossamer goroutines are stackful and scheduled by an M:N
-work-stealing runtime — blocking IO doesn't block the OS thread.</p>
+work-stealing runtime - blocking IO doesn't block the OS thread.</p>
 <p>Kotlin:</p>
 <div class="language-kotlin highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="kd">fun</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">runBlocking</span><span class="w"> </span><span class="p">{</span>
 <a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a><span class="w">    </span><span class="kd">val</span><span class="w"> </span><span class="nv">result</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">async</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">fetchData</span><span class="p">(</span><span class="n">url</span><span class="p">)</span><span class="w"> </span><span class="p">}</span>
@@ -2177,10 +2177,10 @@ function. Combine errors with <code>errors::wrap</code>:</p>
 </table>
 <h2 id="cross-references">Cross-references<a class="headerlink" href="#cross-references" title="Permanent link">&para;</a></h2>
 <ul>
-<li><a href="../../syntax/"><code>../syntax.md</code></a> — full language tour.</li>
-<li><a href="../../stdlib_coverage/"><code>../stdlib_coverage.md</code></a> — every
+<li><a href="../../syntax/"><code>../syntax.md</code></a> - full language tour.</li>
+<li><a href="../../stdlib_coverage/"><code>../stdlib_coverage.md</code></a> - every
   stdlib module, support state.</li>
-<li><a href="../../codegen_abi/"><code>../codegen_abi.md</code></a> — generic
+<li><a href="../../codegen_abi/"><code>../codegen_abi.md</code></a> - generic
   instantiation constraints in v1.</li>
 </ul>
 

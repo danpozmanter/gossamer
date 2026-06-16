@@ -11,7 +11,7 @@ description = "Runtime support library linked into every Gossamer program."
 [lib]
 crate-type = ["staticlib", "rlib"]
 
-# The runtime crate is unsafe by design — its C-ABI surface
+# The runtime crate is unsafe by design - its C-ABI surface
 # (`#[no_mangle] extern "C"` functions accepting raw pointers)
 # is unsafe at every entry. Override the workspace `deny` to
 # `allow` rather than annotate every fn individually.
@@ -45,7 +45,7 @@ itoa = "1"
 mimalloc = "0.1"
 # Direct handle on the same native lib `mimalloc` links, with the
 # `extended` bindings so the runtime can set `mi_option_purge_delay`
-# (return freed pages to the OS promptly — see `configure_allocator`).
+# (return freed pages to the OS promptly - see `configure_allocator`).
 libmimalloc-sys = { version = "0.1", features = ["extended"] }
 num-bigint = "0.4"
 num-integer = "0.1"
@@ -53,8 +53,8 @@ num-traits = "0.2"
 parking_lot = { workspace = true }
 # Real machine-stack unwinding for compiled-tier panic / SIGQUIT
 # backtraces. `std::backtrace` reports "unsupported" on the
-# static-musl release target, so the standalone crate — which builds
-# its unwinder into the binary against the linked `libunwind.a` — is
+# static-musl release target, so the standalone crate - which builds
+# its unwinder into the binary against the linked `libunwind.a` - is
 # the only mechanism that works on the default release link path.
 backtrace = "0.3"
 thiserror = { workspace = true }
@@ -91,7 +91,7 @@ ureq = { version = "3", features = ["cookies"] }
 # HTTP/2 server compiled into libgossamer_runtime.a so
 # `http2::bind_and_run_h2c` works under `gos build`. Tokio is
 # pulled in for its `io-util` trait surface only (AsyncRead /
-# AsyncWrite) — no runtime, no reactor; the goroutine scheduler
+# AsyncWrite) - no runtime, no reactor; the goroutine scheduler
 # drives futures via [`crate::http2_server::drive`].
 h2 = "0.4"
 http = "1"
@@ -124,7 +124,7 @@ mime_guess = "2"
 # CSV codec (`std::encoding::csv` compiled-tier helpers).
 csv = "1"
 
-# YAML codec — already used by gossamer-std; needed in runtime for
+# YAML codec - already used by gossamer-std; needed in runtime for
 # auto-derive helpers.
 serde_yaml = "0.9"
 serde = { workspace = true }

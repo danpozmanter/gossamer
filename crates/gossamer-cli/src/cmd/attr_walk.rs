@@ -1,7 +1,7 @@
 //! Item-attribute walkers shared by `gos test` and `gos bench`.
 
 /// Returns `true` when `item` carries an outer attribute whose final
-/// path segment is `name` — used to detect `#[test]` / `#[bench]`.
+/// path segment is `name` - used to detect `#[test]` / `#[bench]`.
 pub(crate) fn item_has_attr(item: &gossamer_ast::Item, name: &str) -> bool {
     item.attrs.outer.iter().any(|a| {
         a.path

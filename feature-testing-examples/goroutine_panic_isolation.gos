@@ -1,6 +1,6 @@
 // Goroutine Result Aggregation
 // Each goroutine computes an independent result and sends it
-// back via a channel — demonstrating the pattern where goroutine
+// back via a channel - demonstrating the pattern where goroutine
 // failures (Result::Err) do not crash the coordinator.
 
 use std::sync::channel

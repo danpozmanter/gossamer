@@ -19,7 +19,7 @@ fn main() {
     go worker(5, tx, 50)
 
     // Give the scheduler a beat. Multiple senders share the
-    // channel so drain via `try_recv` rather than `recv` —
+    // channel so drain via `try_recv` rather than `recv` -
     // close+drain requires a single owner of the close step.
     time::sleep(50)
 

@@ -1,4 +1,4 @@
-//! `gos` — command-line entry point for the Gossamer toolchain.
+//! `gos` - command-line entry point for the Gossamer toolchain.
 //!
 //! The actual subcommand surface lives in [`gossamer_cli::cli`]
 //! (clap derive + dispatch table). This shim performs one

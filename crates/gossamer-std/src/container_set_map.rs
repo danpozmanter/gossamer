@@ -1,5 +1,5 @@
-// `std::container::ordered_set` — sorted Vec<i64> with dedup on
-// insert. `std::container::ordered_map` — flat [k, v, k, v, ...]
+// `std::container::ordered_set` - sorted Vec<i64> with dedup on
+// insert. `std::container::ordered_map` - flat [k, v, k, v, ...]
 // pair Vec sorted by key. Both use the rebind shape.
 
 #![forbid(unsafe_code)]

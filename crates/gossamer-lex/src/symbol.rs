@@ -3,7 +3,7 @@
 //! Hot data structures across resolve / typeck / LSP key on
 //! identifier names. Storing each occurrence as `String` (24 B
 //! header + heap copy of the bytes) duplicates the same name
-//! across scope frames, type tables, and per-document indexes —
+//! across scope frames, type tables, and per-document indexes -
 //! ~5× duplication on a non-trivial project per the RAM analysis.
 //!
 //! The interner deduplicates: each distinct string maps to one
@@ -11,7 +11,7 @@
 //! Comparison is integer equality, hashing is fast, and the
 //! resolved `&'static str` is recovered without further locking.
 //!
-//! Storage strategy — Bytes are appended to a leak-on-purpose
+//! Storage strategy - Bytes are appended to a leak-on-purpose
 //! arena (`Vec<Box<str>>`) so the slices the interner hands out
 //! live for the process. The arena sits behind a `RwLock`; the
 //! `lookup` map (string → symbol) sits inside the same lock. The
@@ -114,7 +114,7 @@ impl From<&String> for Symbol {
 ///
 /// The interner hands out `&'static str` slices into a leak-on-purpose
 /// arena, so without this its footprint grows for the life of the
-/// process — unbounded in a host that compiles many independent
+/// process - unbounded in a host that compiles many independent
 /// programs in one process (the fuzz harnesses). Such a host calls
 /// this at each program boundary to bound the growth.
 ///

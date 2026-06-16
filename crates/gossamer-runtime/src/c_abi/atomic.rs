@@ -143,7 +143,7 @@ pub unsafe extern "C" fn gos_rt_atomic_i64_store_release(a: *mut GosAtomicI64, v
     });
 }
 
-/// Relaxed load — no synchronisation, only atomicity. Useful for
+/// Relaxed load - no synchronisation, only atomicity. Useful for
 /// progress counters, generation tokens, and other observable-
 /// from-anywhere values where ordering is enforced separately.
 #[unsafe(no_mangle)]
@@ -233,7 +233,7 @@ pub unsafe extern "C" fn gos_rt_atomic_i64_cas_acq_rel(
     })
 }
 
-/// Atomic exchange — returns the previous value.
+/// Atomic exchange - returns the previous value.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_atomic_i64_swap(a: *mut GosAtomicI64, val: i64) -> i64 {
     ffi_entry!(-1, {

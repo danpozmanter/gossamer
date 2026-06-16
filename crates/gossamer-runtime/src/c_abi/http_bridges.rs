@@ -22,7 +22,7 @@ use super::*;
 
 // ---------------------------------------------------------------
 // ---------------------------------------------------------------
-// 0.4.0 HTTP-module bridges — compiled tier stateful + free-fn
+// 0.4.0 HTTP-module bridges - compiled tier stateful + free-fn
 // entry points. Matches the interp surface in
 // `gossamer_interp::stdlib_builtins::install_http_*`.
 // ---------------------------------------------------------------
@@ -52,8 +52,8 @@ struct GosRoute {
 
 enum RouteSegment {
     Literal(String),
-    Capture(String),    // `{name}` — captures one path segment
-    CaptureAll(String), // `{name...}` — captures the rest
+    Capture(String),    // `{name}` - captures one path segment
+    CaptureAll(String), // `{name...}` - captures the rest
 }
 
 fn parse_route_pattern(pattern: &str) -> Vec<RouteSegment> {
@@ -155,7 +155,7 @@ pub unsafe extern "C" fn gos_rt_router_add(
     });
 }
 
-/// `router::add(router, method, pattern)` — registers a handler-less
+/// `router::add(router, method, pattern)` - registers a handler-less
 /// route used purely for `router::lookup` pattern matching (the index
 /// of the registered route is what `lookup` returns). `method` empty
 /// matches any verb.
@@ -196,7 +196,7 @@ pub unsafe extern "C" fn gos_rt_router_add_pattern(
     });
 }
 
-/// `router::lookup(router, method, path) -> Option<i64>` — the index of
+/// `router::lookup(router, method, path) -> Option<i64>` - the index of
 /// the first route whose method (empty = any) and pattern match, packed
 /// as the 2-word Option (disc=0 Some, disc=1 None). Mirrors the interp
 /// `router::lookup` matching exactly.
@@ -376,7 +376,7 @@ pub unsafe extern "C" fn gos_rt_router_options(
 }
 
 /// Bare-fn variants: register a top-level Gossamer `fn(http::Request)
-/// -> Result<http::Response, http::Error>` directly as a handler — no
+/// -> Result<http::Response, http::Error>` directly as a handler - no
 /// env, no struct wrapper. Dispatch invokes the function with the
 /// request as its single argument.
 #[unsafe(no_mangle)]
@@ -551,13 +551,13 @@ pub const BYTERANGES_BOUNDARY: &str = "gossamer_byteranges_boundary";
 
 /// Outcome of evaluating a `Range:` header against a file length.
 pub enum RangeOutcome {
-    /// No (parseable) Range header — serve the whole file (200).
+    /// No (parseable) Range header - serve the whole file (200).
     Whole,
-    /// One satisfiable range — 206 + Content-Range.
+    /// One satisfiable range - 206 + Content-Range.
     Single { start: u64, end: u64 },
-    /// Several satisfiable ranges — 206 multipart/byteranges.
+    /// Several satisfiable ranges - 206 multipart/byteranges.
     Multi(Vec<(u64, u64)>),
-    /// A Range header naming no satisfiable range — 416.
+    /// A Range header naming no satisfiable range - 416.
     Unsatisfiable,
 }
 
@@ -804,7 +804,7 @@ pub unsafe extern "C" fn gos_rt_file_server_serve(
     })
 }
 
-/// `static_files::serve_file(path) -> Result<Response, errors::Error>` —
+/// `static_files::serve_file(path) -> Result<Response, errors::Error>` -
 /// one-shot read of a single file into a 200 Response (content-type from
 /// the extension), or `Err` when the file cannot be read. Distinct from
 /// `FileServer` (no prefix-strip / Range handling); mirrors the interp
@@ -939,7 +939,7 @@ pub unsafe extern "C" fn gos_rt_proxy_forward(
 // existing gossamer-std `WebSocket` Rust impl; compiled-mode users
 // drive it via `accept_key` + manual frame layout for now. The
 // accept-key thunk is already declared above (gos_rt_ws_accept_key).
-// gos_rt_ws_frame_text — encodes one text frame for outbound use.
+// gos_rt_ws_frame_text - encodes one text frame for outbound use.
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_ws_frame_text(payload: *const c_char) -> *mut c_char {
@@ -974,7 +974,7 @@ impl GosHttpRequest {
     }
 }
 
-/// chunked::encode — wrap one buffer in HTTP/1.1 chunked
+/// chunked::encode - wrap one buffer in HTTP/1.1 chunked
 /// transfer-encoding with a single data chunk + terminator.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_chunked_encode(data: *const c_char) -> *mut c_char {
@@ -992,7 +992,7 @@ pub unsafe extern "C" fn gos_rt_chunked_encode(data: *const c_char) -> *mut c_ch
     })
 }
 
-/// chunked::decode — concat the data chunks from a complete
+/// chunked::decode - concat the data chunks from a complete
 /// chunked body (trailers discarded).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_chunked_decode(data: *const c_char) -> *mut c_char {
@@ -1041,7 +1041,7 @@ pub unsafe extern "C" fn gos_rt_chunked_decode(data: *const c_char) -> *mut c_ch
     })
 }
 
-/// sse::encode_event(name, data, id) — render one
+/// sse::encode_event(name, data, id) - render one
 /// `event:`/`data:` block.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_sse_encode_event(
@@ -1086,7 +1086,7 @@ pub unsafe extern "C" fn gos_rt_sse_encode_event(
     })
 }
 
-/// sse::encode_comment — render a `:`-prefixed keepalive line.
+/// sse::encode_comment - render a `:`-prefixed keepalive line.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_sse_encode_comment(text: *const c_char) -> *mut c_char {
     ffi_entry!(std::ptr::null_mut(), {
@@ -1099,7 +1099,7 @@ pub unsafe extern "C" fn gos_rt_sse_encode_comment(text: *const c_char) -> *mut 
     })
 }
 
-/// sse::encode_retry — render a `retry:` directive.
+/// sse::encode_retry - render a `retry:` directive.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_sse_encode_retry(ms: i64) -> *mut c_char {
     ffi_entry!(std::ptr::null_mut(), {
@@ -1107,7 +1107,7 @@ pub unsafe extern "C" fn gos_rt_sse_encode_retry(ms: i64) -> *mut c_char {
     })
 }
 
-/// middleware::new_request_id — process-monotonic id with nanos
+/// middleware::new_request_id - process-monotonic id with nanos
 /// prefix.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_mw_new_request_id() -> *mut c_char {
@@ -1122,7 +1122,7 @@ pub unsafe extern "C" fn gos_rt_mw_new_request_id() -> *mut c_char {
     })
 }
 
-/// middleware::accepts_gzip — comma-split the header, look for a
+/// middleware::accepts_gzip - comma-split the header, look for a
 /// gzip token.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_mw_accepts_gzip(header: *const c_char) -> i32 {
@@ -1138,7 +1138,7 @@ pub unsafe extern "C" fn gos_rt_mw_accepts_gzip(header: *const c_char) -> i32 {
     })
 }
 
-/// websocket::accept_key — RFC 6455 Sec-WebSocket-Accept
+/// websocket::accept_key - RFC 6455 Sec-WebSocket-Accept
 /// derivation: base64(sha1(client_key + GUID)).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_ws_accept_key(client_key: *const c_char) -> *mut c_char {
@@ -1157,7 +1157,7 @@ pub unsafe extern "C" fn gos_rt_ws_accept_key(client_key: *const c_char) -> *mut
     })
 }
 
-/// static_files::mime_for_path — extension-driven MIME lookup.
+/// static_files::mime_for_path - extension-driven MIME lookup.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_static_mime_for_path(path: *const c_char) -> *mut c_char {
     ffi_entry!(std::ptr::null_mut(), {
@@ -1191,7 +1191,7 @@ pub unsafe extern "C" fn gos_rt_static_mime_for_path(path: *const c_char) -> *mu
 }
 
 // Minimal sha1 + base64 used by gos_rt_ws_accept_key. Inlined
-// here to avoid pulling in another dep — the runtime crate
+// here to avoid pulling in another dep - the runtime crate
 // stays self-contained for these tiny one-shots.
 fn sha1_oneshot(input: &[u8]) -> [u8; 20] {
     // FIPS 180-4 SHA-1.

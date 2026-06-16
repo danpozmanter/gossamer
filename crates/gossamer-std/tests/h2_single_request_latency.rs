@@ -1,4 +1,4 @@
-//! Direct latency probe — boots an h2c server in a goroutine,
+//! Direct latency probe - boots an h2c server in a goroutine,
 //! issues a single curl request, asserts the round-trip is below
 //! a sane bound. Gated on `GOS_H2_BENCH=1`.
 
@@ -72,7 +72,7 @@ fn single_h2c_request_completes_quickly() {
     eprintln!("avg over {iters} reqs (fresh-connection): {avg:?}");
 
     // Multiplexed: 10 GETs on ONE connection. This is the case
-    // h2 is designed to win — no fresh handshake per request.
+    // h2 is designed to win - no fresh handshake per request.
     let t = Instant::now();
     let mut args: Vec<String> = vec![
         "--http2-prior-knowledge".into(),
@@ -93,14 +93,14 @@ fn single_h2c_request_completes_quickly() {
         out.status.success()
     );
 
-    // Fresh-connection bound — curl overhead dominates, but
+    // Fresh-connection bound - curl overhead dominates, but
     // anything well above 50ms means the kernel-to-goroutine
     // wakeup path is taking too long.
     assert!(
         avg < Duration::from_millis(50),
         "h2c fresh-connection latency too high: {avg:?}"
     );
-    // Multiplexed bound — this is where h2 wins. Should be sub-
+    // Multiplexed bound - this is where h2 wins. Should be sub-
     // 10ms per request when the connection is reused.
     assert!(
         multiplexed / 10 < Duration::from_millis(10),

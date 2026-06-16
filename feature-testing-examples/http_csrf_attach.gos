@@ -6,7 +6,7 @@
 // it in the cookie + header, and `check` gates the unsafe POST.
 //
 // `issue_token` draws a random nonce, so the token string is not
-// deterministic — the fixture asserts the round-trip OUTCOMES (the
+// deterministic - the fixture asserts the round-trip OUTCOMES (the
 // attach cookie name prefix, the extract match, the check verdicts),
 // which are bit-identical across the bytecode VM, Cranelift, and LLVM.
 

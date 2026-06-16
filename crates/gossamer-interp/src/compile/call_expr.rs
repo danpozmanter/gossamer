@@ -28,7 +28,7 @@ impl<'tcx> FnBuilder<'tcx> {
         // pick between: one registered under the tail name
         // (`text`) and one under the fully-qualified path
         // (`http::Response::text`). Emit a LoadGlobal keyed on the
-        // full join — the global table has entries for both, and
+        // full join - the global table has entries for both, and
         // the qualified key is unambiguous.
         let name = if segments.len() > 1 {
             // Strip `super::` / `crate::` / `self::` so a path written

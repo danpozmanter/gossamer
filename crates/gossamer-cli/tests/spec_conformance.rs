@@ -8,20 +8,20 @@
 //! enforced as rejection).
 //!
 //! Banners covered:
-//!   §3.1   integer overflow — `status: not-in-0.5.0` for debug panic,
+//!   §3.1   integer overflow - `status: not-in-0.5.0` for debug panic,
 //!          `status: not-in-0.5.0` for `i128`/`u128` on the compiled
 //!          tier.
-//!   §3.10  generics — `status: scaffolded` for non-scalar generic
+//!   §3.10  generics - `status: scaffolded` for non-scalar generic
 //!          arguments.
-//!   §7.2   GC concurrent path — `status: scaffolded` (default
+//!   §7.2   GC concurrent path - `status: scaffolded` (default
 //!          collector is STW).
-//!   §7.4   atomics / race detector — `status: scaffolded`.
-//!   §7.5   borrow check — `status: not-in-0.5.0`.
-//!   §8.6   `unsafe` powers — `status: implemented` (no `extern "C"`).
-//!   §11.1  targets — `status: partial` (post-0.5.0 targets refused).
-//!   §11.2  linking — `status: not-in-0.5.0` for musl-static default.
-//!   §12    FFI — `status: rust-bindings-only` (GP0016 fires).
-//!   §14    macros — `status: partial` (six-macro subset accepted).
+//!   §7.4   atomics / race detector - `status: scaffolded`.
+//!   §7.5   borrow check - `status: not-in-0.5.0`.
+//!   §8.6   `unsafe` powers - `status: implemented` (no `extern "C"`).
+//!   §11.1  targets - `status: partial` (post-0.5.0 targets refused).
+//!   §11.2  linking - `status: not-in-0.5.0` for musl-static default.
+//!   §12    FFI - `status: rust-bindings-only` (GP0016 fires).
+//!   §14    macros - `status: partial` (six-macro subset accepted).
 
 #![allow(missing_docs)]
 
@@ -183,7 +183,7 @@ fn spec_8_6_extern_inside_unsafe_block_is_still_rejected() {
     // specific GP0016. The `unsafe`-wrapped form fires whichever
     // diagnostic the parser surfaces first (today: GP0001 from the
     // `unsafe`-fn parser, after which GP0016 is reached if recovery
-    // continues). The invariant we pin is "rejected" — the specific
+    // continues). The invariant we pin is "rejected" - the specific
     // diagnostic chain is part of the diagnostic-quality follow-up.
     let bare = r#"
 extern "C" {
@@ -261,7 +261,7 @@ fn spec_14_unimplemented_macro_rejected() {
 fn spec_3_1_overflow_does_not_panic() {
     // The 0.5.0 banner says debug-mode overflow panic is
     // `not-in-0.5.0`; release wrap is the contract. The invariant
-    // we pin here is "no panic" — the program completes. We use
+    // we pin here is "no panic" - the program completes. We use
     // i64::MAX so the host-Rust arithmetic (which `gos run` uses
     // under the bytecode VM) actually wraps rather than silently
     // widening to a wider integer.

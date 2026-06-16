@@ -7,7 +7,7 @@
 //! interesting parser / typechecker / lowerer paths. We still
 //! accept arbitrary bytes (libFuzzer's mutator is byte-level),
 //! but the bytes are interpreted as a tape of choices for a
-//! finite grammar walk — so a single bit-flip biases toward
+//! finite grammar walk - so a single bit-flip biases toward
 //! "produce a different operator" instead of "produce invalid
 //! UTF-8."
 
@@ -18,7 +18,7 @@ use arbitrary::{Arbitrary, Unstructured};
 pub const MAX_SOURCE_BYTES: usize = 4096;
 
 /// Renders an `Arbitrary` choice tape into a Gossamer source
-/// fragment. Always emits a syntactically-plausible body — even
+/// fragment. Always emits a syntactically-plausible body - even
 /// degenerate tapes produce valid AST shapes.
 ///
 /// `pub` (not `pub(crate)`) because the fuzz target bins are
@@ -132,7 +132,7 @@ impl Stmt {
 impl ShortStr {
     fn render(&self) -> String {
         // Render an ASCII-only short string; avoid escape edge
-        // cases — the parse fuzz target's seed corpus covers those.
+        // cases - the parse fuzz target's seed corpus covers those.
         (0..(self.0 % 8))
             .map(|i| char::from(b'a' + (i % 26)))
             .collect()

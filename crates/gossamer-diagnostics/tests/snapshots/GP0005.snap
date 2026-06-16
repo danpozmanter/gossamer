@@ -3,7 +3,7 @@ source: crates/gossamer-diagnostics/tests/snapshots.rs
 expression: rendered
 ---
 --- plain ---
-error[GP0005]: Range operators (`..`, `..=`) are not associative. — here
+error[GP0005]: Range operators (`..`, `..=`) are not associative. - here
 --- framed ---
 error[GP0005]: Range operators (`..`, `..=`) are not associative.
   --> snap.gos:2:5

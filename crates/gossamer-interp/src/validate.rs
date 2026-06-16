@@ -9,7 +9,7 @@
 //! malformed bytecode surfaces as a clear `RuntimeError` instead of a
 //! segfault.
 //!
-//! Release builds skip validation entirely — the goal is to catch
+//! Release builds skip validation entirely - the goal is to catch
 //! compiler regressions during development; production execution
 //! still trusts the unverified invariant for speed.
 
@@ -160,7 +160,7 @@ impl std::error::Error for ValidationError {}
 #[allow(
     clippy::too_many_lines,
     clippy::similar_names,
-    reason = "one giant match over every Op variant — splitting would harm readability of the validator's per-op invariants"
+    reason = "one giant match over every Op variant - splitting would harm readability of the validator's per-op invariants"
 )]
 pub(crate) fn validate_chunk(chunk: &FnChunk) -> Result<(), ValidationError> {
     let instr_count = chunk.instrs.len();
@@ -300,7 +300,7 @@ pub(crate) fn validate_chunk(chunk: &FnChunk) -> Result<(), ValidationError> {
                 check_v(op_idx, src)?;
             }
 
-            // Adaptive arith — boxed value lhs/rhs/dst.
+            // Adaptive arith - boxed value lhs/rhs/dst.
             Op::AddInt { dst, lhs, rhs, .. }
             | Op::SubInt { dst, lhs, rhs, .. }
             | Op::MulInt { dst, lhs, rhs, .. }
@@ -1047,7 +1047,7 @@ pub(crate) fn validate_chunk(chunk: &FnChunk) -> Result<(), ValidationError> {
     Ok(())
 }
 
-/// Helper for [`validate_chunk`] — descends into the wide-op side
+/// Helper for [`validate_chunk`] - descends into the wide-op side
 /// table since `Op::Wide` only carries the side-table index.
 fn validate_wide_op(
     op_idx: usize,

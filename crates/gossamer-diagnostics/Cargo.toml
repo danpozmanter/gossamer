@@ -6,7 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
-description = "Structured diagnostics for the Gossamer compiler — codes, labels, notes, suggestions, rendering."
+description = "Structured diagnostics for the Gossamer compiler - codes, labels, notes, suggestions, rendering."
 
 [lints]
 workspace = true

@@ -72,7 +72,7 @@ pub enum ItemKind {
     Static(StaticDecl),
     /// `mod name { items }` or `mod name;`.
     Mod(ModDecl),
-    /// A free-standing attribute item `#![attr]` — uncommon outside
+    /// A free-standing attribute item `#![attr]` - uncommon outside
     /// crate-level headers but included for completeness.
     AttrItem(Attribute),
 }
@@ -430,7 +430,7 @@ pub struct StaticDecl {
     pub value: Expr,
 }
 
-/// `mod` item declaration — inline or external.
+/// `mod` item declaration - inline or external.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ModDecl {
     /// Module name.

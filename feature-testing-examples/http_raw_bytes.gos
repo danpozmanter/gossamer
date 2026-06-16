@@ -11,7 +11,7 @@
 // Body "Aÿ™z" = 41 C3 BF E2 84 A2 7A (7 bytes).
 //
 // Self-terminating: the client runs in main and exits explicitly.
-// Binds a fixed loopback port — serialized under SERVER_PORT_LOCK
+// Binds a fixed loopback port - serialized under SERVER_PORT_LOCK
 // by `http_raw_bytes_parity_across_tiers` in
 // crates/gossamer-cli/tests/tier_parity.rs.
 

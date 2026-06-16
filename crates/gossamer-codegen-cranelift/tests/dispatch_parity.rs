@@ -6,8 +6,8 @@
 //! returning `iconst i64 0` from a missing helper (the soft-fallback
 //! at `native.rs`'s end). That is exactly the failure mode that
 //! produced four months of "works in interp / fails in --release"
-//! bugs. The test is intentionally crude — a string scan over both
-//! files — so it catches new regressions even when the dispatch
+//! bugs. The test is intentionally crude - a string scan over both
+//! files - so it catches new regressions even when the dispatch
 //! pattern grows.
 //!
 //! Helpers handled by prefix-dispatch (e.g. `gos_rt_fn_tramp_*`)
@@ -50,10 +50,10 @@ const RUST_ONLY: &[&str] = &[
     "gos_rt_string_view",         // helper used inside other helpers
     "gos_rt_vec_sanity_check",    // debug-only assertion helper
     "gos_rt_static_set_str_rust", // safe Rust API mirror
-    // GC internals — called from vec_free and other runtime helpers,
+    // GC internals - called from vec_free and other runtime helpers,
     // never emitted from MIR.
     "gos_rt_gc_deregister",
-    // FFI / Rust-binding helpers — declared in c_abi.rs for external
+    // FFI / Rust-binding helpers - declared in c_abi.rs for external
     // callers (Rust bindings, runtime tests) but never lowered from
     // MIR. AOT codegen does not need to dispatch them.
     "gos_rt_arena_restore",
@@ -126,7 +126,7 @@ const RUST_ONLY: &[&str] = &[
     "gos_rt_gc_alloc_count",
     "gos_rt_gc_collect",
     // test/diagnostic hook. Not emitted from
-    // MIR — called only by tests asserting clean goroutine
+    // MIR - called only by tests asserting clean goroutine
     // shutdown.
     "gos_rt_goroutine_panicked",
 ];

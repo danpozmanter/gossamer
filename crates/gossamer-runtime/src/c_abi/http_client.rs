@@ -22,7 +22,7 @@ use std::sync::atomic::{AtomicI64, Ordering};
 use super::*;
 
 // ---------------------------------------------------------------
-// HTTP client shims for the compiled tiers — ureq-backed (TLS via
+// HTTP client shims for the compiled tiers - ureq-backed (TLS via
 // rustls, cookies, redirects), mirroring the interp's
 // `gossamer_std::http::Client` defaults so tier output matches.
 // ---------------------------------------------------------------
@@ -37,7 +37,7 @@ pub struct ClientConfig {
     /// When `true`, requests on this client reuse one persistent
     /// `ureq::Agent` so `Set-Cookie` survives across requests (the
     /// agent's jar is shared across its clones). When `false`, each
-    /// request gets a fresh agent — no cookie carryover.
+    /// request gets a fresh agent - no cookie carryover.
     pub cookie_jar: bool,
     /// Proxy URL (`http://host:port`, `socks5://...`) every request is
     /// routed through, or `None` for a direct connection.
@@ -99,8 +99,8 @@ pub struct GosHttpRequest {
     pub headers: Vec<(String, String)>,
     pub body: Vec<u8>,
     /// Offset of the body region within `body`. The h1 server path
-    /// (`parse_request_into`) stores the full raw request — header
-    /// section + body — in `body` so headers can be scanned lazily,
+    /// (`parse_request_into`) stores the full raw request - header
+    /// section + body - in `body` so headers can be scanned lazily,
     /// and points this at the first body byte. Every other
     /// constructor stores the body alone and leaves this 0.
     pub body_offset: usize,
@@ -163,7 +163,7 @@ pub struct GosHttpResponse {
     /// payload (image downloads, gzipped content, etc.) via
     /// `resp.raw_bytes` without going through the UTF-8-lossy
     /// `body` field. `None` when the response came from a legacy
-    /// constructor that didn't populate this — accessors should
+    /// constructor that didn't populate this - accessors should
     /// then fall back to the `body` c-string bytes.
     pub body_bytes: Option<Vec<u8>>,
     /// Content type recorded by the constructor; used by the server
@@ -182,7 +182,7 @@ pub unsafe extern "C" fn gos_rt_http_client_new() -> *mut GosHttpClient {
     })
 }
 
-/// `http::Client::builder() -> ClientBuilder` — starts a client
+/// `http::Client::builder() -> ClientBuilder` - starts a client
 /// configuration chain with `Client::new()`'s defaults.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_http_client_builder_new() -> *mut GosClientBuilder {
@@ -193,7 +193,7 @@ pub unsafe extern "C" fn gos_rt_http_client_builder_new() -> *mut GosClientBuild
     })
 }
 
-/// `ClientBuilder::max_redirects(n) -> ClientBuilder` — mutates in
+/// `ClientBuilder::max_redirects(n) -> ClientBuilder` - mutates in
 /// place and returns the same pointer (chainable). Negatives clamp
 /// to 0 (never follow).
 #[unsafe(no_mangle)]
@@ -209,7 +209,7 @@ pub unsafe extern "C" fn gos_rt_http_client_builder_max_redirects(
     })
 }
 
-/// `ClientBuilder::timeout_ms(t) -> ClientBuilder` — mutates in
+/// `ClientBuilder::timeout_ms(t) -> ClientBuilder` - mutates in
 /// place and returns the same pointer (chainable). Non-positive
 /// values fall back to the 30 s default.
 #[unsafe(no_mangle)]
@@ -225,7 +225,7 @@ pub unsafe extern "C" fn gos_rt_http_client_builder_timeout_ms(
     })
 }
 
-/// `ClientBuilder::cookie_jar(enabled) -> ClientBuilder` — toggles the
+/// `ClientBuilder::cookie_jar(enabled) -> ClientBuilder` - toggles the
 /// persistent cookie jar (chainable). When enabled, requests on the
 /// built client reuse one agent so `Set-Cookie` survives across
 /// requests; when disabled, every request gets a fresh agent.
@@ -242,7 +242,7 @@ pub unsafe extern "C" fn gos_rt_http_client_builder_cookie_jar(
     })
 }
 
-/// `ClientBuilder::proxy(url) -> ClientBuilder` — routes every request
+/// `ClientBuilder::proxy(url) -> ClientBuilder` - routes every request
 /// through `url` (chainable). An empty string clears the proxy.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_http_client_builder_proxy(
@@ -263,7 +263,7 @@ pub unsafe extern "C" fn gos_rt_http_client_builder_proxy(
     })
 }
 
-/// `ClientBuilder::build() -> Client` — consumes the builder Box
+/// `ClientBuilder::build() -> Client` - consumes the builder Box
 /// (exactly once; the builder pointer is dead after this call) and
 /// produces a configured client carrying a persistent ureq agent.
 /// Like the legacy `gos_rt_http_client_new` allocation, the client
@@ -528,8 +528,8 @@ pub unsafe extern "C" fn gos_rt_http_request_body_str(req: *const GosHttpRequest
 }
 
 /// Raw request body bytes (binary-safe counterpart of `body`).
-/// Resolves the body region through `request_body_slice` — the
-/// same split `gos_rt_http_request_body_str` uses — so the h1
+/// Resolves the body region through `request_body_slice` - the
+/// same split `gos_rt_http_request_body_str` uses - so the h1
 /// lazy-buffer and h2/builder direct-body shapes both work. The
 /// returned vec is the canonical i64-slot-per-byte `Vec<u8>` shape
 /// (`bytes_to_gosvec`): compiled-tier for-loops and `bytes[i]`
@@ -592,7 +592,7 @@ unsafe fn path_param_lookup(req: *const GosHttpRequest, name: *const c_char) -> 
         .map(|(_, v)| v.clone())
 }
 
-/// `Request.path_value(name) -> String` — the router-captured path
+/// `Request.path_value(name) -> String` - the router-captured path
 /// parameter for `name`, or `""` when the request didn't match a
 /// pattern carrying that capture. Mirrors Go's `http.Request.PathValue`.
 /// Populated by `gos_rt_router_serve`; empty for a plain
@@ -610,7 +610,7 @@ pub unsafe extern "C" fn gos_rt_http_request_path_value(
     })
 }
 
-/// `Request.path_int(name) -> Option<i64>` — the captured path
+/// `Request.path_int(name) -> Option<i64>` - the captured path
 /// parameter parsed as a base-10 integer (the typed extractor for
 /// `/users/{id}` where `id` is numeric). `None` when the capture is
 /// absent or not an integer.
@@ -627,7 +627,7 @@ pub unsafe extern "C" fn gos_rt_http_request_path_int(
     })
 }
 
-/// `Request.path_float(name) -> Option<f64>` — the captured path
+/// `Request.path_float(name) -> Option<f64>` - the captured path
 /// parameter parsed as an `f64`. `None` when absent or unparseable.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_http_request_path_float(
@@ -677,7 +677,7 @@ pub unsafe extern "C" fn gos_rt_http_response_text_new(
         // the TLS-owned `headers: Vec<(String, String)>` had its drop
         // path running concurrently with whatever code happened to be
         // using the response pointer. Switching to Box::into_raw +
-        // Box::from_raw makes ownership explicit — `drop_handler_result`
+        // Box::from_raw makes ownership explicit - `drop_handler_result`
         // is the unique reclaim site.
         Box::into_raw(Box::new(GosHttpResponse {
             status,
@@ -709,7 +709,7 @@ pub unsafe extern "C" fn gos_rt_http_response_json_new(
     })
 }
 
-/// `Response::stream(status, content_type, rs) -> Response` — wraps a
+/// `Response::stream(status, content_type, rs) -> Response` - wraps a
 /// live `ResponseStream` so the server drains it to the client as
 /// chunked frames (proxy passthrough). `rs` points at the 3-slot blob
 /// `[handle, status, content_type]` from `gos_rt_http_stream`.
@@ -771,7 +771,7 @@ pub unsafe extern "C" fn gos_rt_http_response_body(resp: *const GosHttpResponse)
 /// `json_new`), falls back to the c-string bytes.
 ///
 /// Representation contract: the returned vec is PACKED with
-/// `elem_bytes = 1` — one byte per element, not the canonical
+/// `elem_bytes = 1` - one byte per element, not the canonical
 /// i64-per-element model `bytes_to_gosvec` produces. Every
 /// consumer must honor the stride: the codegen inline get/set
 /// fast paths and the `gos_rt_vec_*` element helpers (first /
@@ -799,7 +799,7 @@ pub unsafe extern "C" fn gos_rt_http_response_raw_bytes(
         // them directly into the backing buffer. The previous
         // per-byte `gos_rt_vec_push` path went through the slow
         // growth loop and triggered the JIT-cached helper's
-        // single-shot-byte memcpy — which on some lowering paths
+        // single-shot-byte memcpy - which on some lowering paths
         // received `&b as *const u8` from a transient stack frame
         // that was clobbered between iterations, producing a
         // truncated 2-byte vec. Bulk memcpy is also simpler.
@@ -894,7 +894,7 @@ fn header_pairs_to_gosvec(pairs: &[(String, String)]) -> *mut crate::c_abi::vec:
             crate::c_abi::vec::gos_rt_vec_push(v, std::ptr::addr_of!(entry).cast::<u8>());
         }
     }
-    // Tagged after the pushes — the vec owns the fresh strings.
+    // Tagged after the pushes - the vec owns the fresh strings.
     crate::c_abi::vec::vec_set_slot_children(v, &HEADER_SLOT_CHILDREN);
     v
 }
@@ -964,7 +964,7 @@ pub unsafe extern "C" fn gos_rt_http_response_set_header(
 /// Replace-then-push (same semantics as
 /// [`gos_rt_http_response_set_header`]): a prior header with the
 /// same case-insensitive name is removed, then the new pair is
-/// appended. Returns `resp` itself — no new allocation — so chains
+/// appended. Returns `resp` itself - no new allocation - so chains
 /// keep mutating the single boxed response the constructor minted.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_http_response_with_header(
@@ -1062,7 +1062,7 @@ pub unsafe extern "C" fn gos_rt_http_response_get_header(
 }
 
 // ---------------------------------------------------------------
-// http::stream — POST/GET that returns a line-by-line body reader
+// http::stream - POST/GET that returns a line-by-line body reader
 // keyed by an integer handle. Mirrors the interp's
 // `builtin_http_stream` shape: the call returns a
 // `Result<ResponseStream, errors::Error>` whose Ok payload is a
@@ -1114,7 +1114,7 @@ static PENDING_SERVE: parking_lot::Mutex<
 
 /// Moves `handle` from the client registry into the pending-serve
 /// registry. After this, `next_line` / `next_chunk` on the same
-/// `ResponseStream` return `None` — the stream now belongs to the
+/// `ResponseStream` return `None` - the stream now belongs to the
 /// response. No-op when the handle was already consumed. Mirrors the
 /// interp tier's `stream_consume_for_response` exactly.
 pub(crate) fn stream_consume_for_response(handle: i64) {
@@ -1130,7 +1130,7 @@ pub(crate) fn stream_consume_for_response(handle: i64) {
     }
 }
 
-/// Takes the pending stream for `handle` — one-shot, so serving the
+/// Takes the pending stream for `handle` - one-shot, so serving the
 /// same streamed response twice drains an empty body the second time.
 pub(crate) fn stream_take_for_serve(
     handle: i64,
@@ -1143,7 +1143,7 @@ pub(crate) fn stream_take_for_serve(
 /// content_type]`. Field order matches `stdlib_struct_shapes`.
 /// Box-allocated so the pointer outlives any LLVM
 /// `arena_save`/`arena_restore` window the caller's compiled code
-/// emits — see fix_architecture_ownership.md Stage 4.
+/// emits - see fix_architecture_ownership.md Stage 4.
 fn alloc_response_stream_blob(handle: i64, status: i64, content_type: &str) -> *mut i64 {
     let ct_cs = alloc_cstring(content_type.as_bytes()) as i64;
     Box::into_raw(Box::new([handle, status, ct_cs])).cast::<i64>()
@@ -1214,7 +1214,7 @@ fn validate_http_method(method: &str) -> Option<String> {
 
 /// Builds a fresh ureq engine from a client config. Settings mirror
 /// `gossamer_std::http::Client::new()` defaults (global timeout, 10
-/// redirects, `gossamer/{version}` UA, non-2xx are Ok responses —
+/// redirects, `gossamer/{version}` UA, non-2xx are Ok responses -
 /// matching the interp tier's `http_status_as_error(false)`), plus the
 /// configured proxy. Cookie persistence comes from REUSING an agent:
 /// the jar is shared across an agent's clones, so a `cookie_jar`
@@ -1223,7 +1223,7 @@ fn validate_http_method(method: &str) -> Option<String> {
 fn build_agent(config: &ClientConfig) -> ureq::Agent {
     // Redirect semantics (ureq 3, will_error left at its default):
     // `max_redirects(0)` never follows and returns 3xx raw; exceeding
-    // a non-zero budget is a "too many redirects" transport error —
+    // a non-zero budget is a "too many redirects" transport error -
     // matching `gossamer_std::http::ClientBuilder`.
     let mut cfg = ureq::config::Config::builder()
         .http_status_as_error(false)
@@ -1294,7 +1294,7 @@ fn http_response_with_agent(
     for (name, value) in resp.headers() {
         // Lifted header names are lowercase on every tier: the interp
         // client lifts from the lowercase-keyed `Headers` map, and the
-        // `http` crate already normalizes — the explicit lowercase
+        // `http` crate already normalizes - the explicit lowercase
         // keeps the invariant local rather than inherited.
         hdrs.push((
             name.as_str().to_ascii_lowercase(),
@@ -1644,7 +1644,7 @@ pub unsafe extern "C" fn gos_rt_http_delete(
     })
 }
 
-/// `native_client::get(url) -> Result<Response, errors::Error>` —
+/// `native_client::get(url) -> Result<Response, errors::Error>` -
 /// one-shot GET with no extra headers (the bare `NativeClient` helper).
 #[unsafe(no_mangle)]
 pub extern "C" fn gos_rt_nc_get(url: *const c_char) -> i128 {
@@ -1653,7 +1653,7 @@ pub extern "C" fn gos_rt_nc_get(url: *const c_char) -> i128 {
     })
 }
 
-/// `native_client::delete(url) -> Result<Response, errors::Error>` —
+/// `native_client::delete(url) -> Result<Response, errors::Error>` -
 /// one-shot DELETE with no body and no extra headers.
 #[unsafe(no_mangle)]
 pub extern "C" fn gos_rt_nc_delete(url: *const c_char) -> i128 {
@@ -1829,7 +1829,7 @@ pub unsafe extern "C" fn gos_rt_http_stream(
         };
         let header_pairs = decode_header_tuple_vec(headers);
 
-        // Build an agent with no read timeout — SSE / chunked
+        // Build an agent with no read timeout - SSE / chunked
         // chat-completion bodies can have multi-second gaps between
         // tokens (askq's reasoning phase) and the default 30s read
         // timeout would tear the connection mid-stream.
@@ -1934,7 +1934,7 @@ pub unsafe extern "C" fn gos_rt_http_stream_next_line(rs: *const i64) -> i128 {
 /// from the registry and returns None.
 ///
 /// Representation contract: the Some payload is a PACKED
-/// `elem_bytes = 1` `GosVec` — one byte per element, matching
+/// `elem_bytes = 1` `GosVec` - one byte per element, matching
 /// `gos_rt_http_response_raw_bytes`; every consumer op (indexing,
 /// for-loop, len, hex::encode, …) is stride-aware. `max_bytes` is
 /// clamped to 1..=1 MiB, mirroring the interp tier's
@@ -2397,7 +2397,7 @@ mod tests {
             "streamed body has no c-string"
         );
         // Construction consumed the client registry entry: the
-        // ResponseStream's own readers now yield None — identical to
+        // ResponseStream's own readers now yield None - identical to
         // the interp tier's consume semantics.
         assert_eq!(
             next_chunk_bytes(blob, 64),

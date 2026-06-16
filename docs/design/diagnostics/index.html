@@ -1654,13 +1654,13 @@
 
 
 
-<h1 id="gossamer-diagnostics-style-guide">Gossamer diagnostics — style guide<a class="headerlink" href="#gossamer-diagnostics-style-guide" title="Permanent link">&para;</a></h1>
+<h1 id="gossamer-diagnostics-style-guide">Gossamer diagnostics - style guide<a class="headerlink" href="#gossamer-diagnostics-style-guide" title="Permanent link">&para;</a></h1>
 <p>Every diagnostic the compiler emits goes through
 <code>gossamer-diagnostics</code>. A diagnostic has exactly four things the user
 sees:</p>
 <ol>
-<li>A <strong>severity</strong> — <code>error</code>, <code>warning</code>, <code>note</code>, or <code>help</code>.</li>
-<li>A <strong>code</strong> — a stable four-character prefix plus a four-digit
+<li>A <strong>severity</strong> - <code>error</code>, <code>warning</code>, <code>note</code>, or <code>help</code>.</li>
+<li>A <strong>code</strong> - a stable four-character prefix plus a four-digit
    number (<code>GP0001</code>, <code>GR0003</code>, <code>GT0004</code>, …).</li>
 <li>A one-line <strong>title</strong> that fits in ~72 columns.</li>
 <li>A list of <strong>labels</strong>, <strong>notes</strong>, <strong>helps</strong>, and optional
@@ -1700,15 +1700,15 @@ the stable <code>render_plain</code> form or against the code.</p>
 <p>Allocate from the phase-scoped namespace. New codes go in the next
 unused slot for that phase.</p>
 <ul>
-<li><code>GP</code> — parser and lexer.</li>
-<li><code>GR</code> — name resolution.</li>
-<li><code>GT</code> — type checker.</li>
-<li><code>GM</code> — match exhaustiveness.</li>
-<li><code>GL</code> — lints.</li>
-<li><code>GK</code> — package manager.</li>
+<li><code>GP</code> - parser and lexer.</li>
+<li><code>GR</code> - name resolution.</li>
+<li><code>GT</code> - type checker.</li>
+<li><code>GM</code> - match exhaustiveness.</li>
+<li><code>GL</code> - lints.</li>
+<li><code>GK</code> - package manager.</li>
 </ul>
 <p>Once published, <strong>never reuse</strong> a code. If a diagnostic is removed,
-its code is retired — <code>gos explain &lt;CODE&gt;</code> will say "retired in
+its code is retired - <code>gos explain &lt;CODE&gt;</code> will say "retired in
 version X, see <CODE>".</p>
 <h2 id="titles">Titles<a class="headerlink" href="#titles" title="Permanent link">&para;</a></h2>
 <ul>
@@ -1717,9 +1717,9 @@ version X, see <CODE>".</p>
 <li>Lowercase (the severity in front capitalises for you).</li>
 <li>Under 72 characters. If you cannot say it in 72, split into a
   title + note.</li>
-<li>Do not mention the error code in the title — the renderer prints
+<li>Do not mention the error code in the title - the renderer prints
   both.</li>
-<li>Do not mention the file name — the renderer prints the location.</li>
+<li>Do not mention the file name - the renderer prints the location.</li>
 </ul>
 <h2 id="labels">Labels<a class="headerlink" href="#labels" title="Permanent link">&para;</a></h2>
 <p>Every error has one <strong>primary label</strong> pointing at the smallest span
@@ -1751,7 +1751,7 @@ editors consume them.</p>
   silently during <code>gos check</code>.</li>
 <li>Suggestion messages start with a verb: <code>"rename to</code>new_name<code>"</code>,
   <code>"remove this clone"</code>, <code>"wrap in</code>Some(...)<code>"</code>.</li>
-<li>The replacement string replaces exactly <code>Location.span</code> — no more,
+<li>The replacement string replaces exactly <code>Location.span</code> - no more,
   no less. If more context is needed, widen the location.</li>
 </ul>
 <h2 id="did-you-mean">Did-you-mean<a class="headerlink" href="#did-you-mean" title="Permanent link">&para;</a></h2>
@@ -1764,7 +1764,7 @@ shared helper.</p>
 <li>No stack traces. The compiler is not a runtime.</li>
 <li>No "internal error" shown to the user without an issue-report
   link. Prefer an <code>assert</code> over a vague panic.</li>
-<li>No diagnostic without a location — even "could not open file"
+<li>No diagnostic without a location - even "could not open file"
   should carry a synthetic zero-length span at offset 0.</li>
 <li>No chained <code>.context(...)</code> via <code>anyhow</code> at the user-facing layer.
   <code>anyhow</code> is for internal wiring; user-facing errors go through

@@ -39,7 +39,7 @@ pub enum Value {
     Blob(Vec<u8>),
 }
 
-/// Coarse category of a [`Value`] — useful when a driver returns a
+/// Coarse category of a [`Value`] - useful when a driver returns a
 /// dynamically-typed column and the caller wants the kind without
 /// matching the full enum.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -179,7 +179,7 @@ fn unsupported(op: &str) -> Error {
     Error::driver("sql", format!("{op} is not supported by this driver"))
 }
 
-/// Driver trait — concrete drivers implement [`open`] and return a
+/// Driver trait - concrete drivers implement [`open`] and return a
 /// [`Box<dyn ConnectionImpl>`] backed by their own state.
 pub trait Driver: Send + Sync {
     /// Driver name (for [`open`]).
@@ -322,7 +322,7 @@ fn valid_savepoint_name(name: &str) -> Result<&str, Error> {
     }
 }
 
-/// Rows trait — iterate result sets.
+/// Rows trait - iterate result sets.
 pub trait RowsImpl: Send {
     /// Pulls the next row, or `None` on end-of-set.
     fn next_row(&mut self) -> Result<Option<Vec<Value>>, Error>;
@@ -341,7 +341,7 @@ fn registry() -> &'static Mutex<Vec<Arc<dyn Driver>>> {
 }
 
 /// Registers a driver so [`open`] can find it. Idempotent on driver
-/// name — re-registering replaces the previous handle.
+/// name - re-registering replaces the previous handle.
 pub fn register(driver: Arc<dyn Driver>) {
     let mut reg = registry().lock();
     let name = driver.name().to_string();

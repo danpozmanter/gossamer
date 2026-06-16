@@ -2,18 +2,18 @@
 //!
 //! Three attribute macros plus one derive:
 //!
-//! - `#[gos_module("name")]` — alternative to `register_module!`
+//! - `#[gos_module("name")]` - alternative to `register_module!`
 //!   that takes the module path as a string literal argument and
 //!   captures every `pub fn` inside the annotated `mod { ... }`
 //!   as a binding item. Doc-comments flow through.
-//! - `#[gos_opaque]` on an `impl Type { ... }` block — turns every
+//! - `#[gos_opaque]` on an `impl Type { ... }` block - turns every
 //!   `pub fn` (including `&self` / `&mut self` methods) into a
 //!   binding item named `Type::method`, backed by a per-type
 //!   `gossamer_binding::Registry<T>` keyed by `i64` handle.
-//! - `#[gos_blocking]` on a binding fn — wraps the body in a
+//! - `#[gos_blocking]` on a binding fn - wraps the body in a
 //!   blocking-pool dispatch so a long sync call doesn't stall the
 //!   scheduler.
-//! - `#[derive(GosStruct)]` on a Rust struct — emits
+//! - `#[derive(GosStruct)]` on a Rust struct - emits
 //!   `FromGos`/`ToGos`/`BindingAbi` so the struct passes through
 //!   binding signatures as a `Type::Opaque(name)` struct value.
 //!
@@ -30,7 +30,7 @@ use syn::{
     Attribute, Expr, FnArg, ImplItem, ItemImpl, ItemMod, LitStr, Pat, Type, parse_macro_input,
 };
 
-/// `#[gos_module("name")]` — register the items inside an
+/// `#[gos_module("name")]` - register the items inside an
 /// annotated `mod { ... }` as Gossamer-callable binding items
 /// under the given path.
 ///
@@ -55,7 +55,7 @@ fn expand_gos_module(path_lit: &LitStr, module: &ItemMod) -> TokenStream2 {
     // `register_module!` emits its items inside a synthetic
     // `mod <prefix> { use super::*; ... }`. To let user `use`
     // imports (and other non-`pub fn` items) be visible to those
-    // bodies, we re-emit every non-fn item at the parent scope —
+    // bodies, we re-emit every non-fn item at the parent scope -
     // `super::*` then pulls them into the synthetic mod.
     let mut fn_emits: Vec<TokenStream2> = Vec::new();
     let mut item_at_parent: Vec<TokenStream2> = Vec::new();
@@ -76,7 +76,7 @@ fn expand_gos_module(path_lit: &LitStr, module: &ItemMod) -> TokenStream2 {
                 // Drop `use` items: they're scope-relative to the
                 // user's `mod` and won't resolve once we lift the
                 // bodies out. Authors should keep imports outside
-                // the `#[gos_module]` block — `register_module!`
+                // the `#[gos_module]` block - `register_module!`
                 // emits a `use super::*;` automatically so anything
                 // visible at the macro invocation site is reachable
                 // inside the binding bodies.
@@ -105,7 +105,7 @@ fn expand_gos_module(path_lit: &LitStr, module: &ItemMod) -> TokenStream2 {
     }
 }
 
-/// `#[gos_blocking]` on a free fn — wraps the body in
+/// `#[gos_blocking]` on a free fn - wraps the body in
 /// `gossamer_binding::blocking_pool::run_blocking(|| body)` so
 /// the call doesn't stall the M:N scheduler. The wrapper is a
 /// best-effort fall-through: the runtime helper is a no-op stub
@@ -127,7 +127,7 @@ pub fn gos_blocking(_args: TokenStream, input: TokenStream) -> TokenStream {
     .into()
 }
 
-/// `#[gos_opaque]` on an `impl Type { ... }` — every `pub fn`
+/// `#[gos_opaque]` on an `impl Type { ... }` - every `pub fn`
 /// inside becomes a binding item named `Type::method`, with the
 /// receiver translated into an `i64` handle threading through a
 /// per-type `Registry<Mutex<Type>>`.
@@ -180,7 +180,7 @@ fn expand_gos_opaque(block: &ItemImpl) -> TokenStream2 {
 
             match receiver_kind {
                 ReceiverKind::None => {
-                    // Associated fn — if return type is `Self`,
+                    // Associated fn - if return type is `Self`,
                     // wrap into a fresh registry handle. Otherwise
                     // pass through.
                     let is_self_returning = returns_self(output);
@@ -323,7 +323,7 @@ fn type_to_ident(ty: &Type) -> syn::Ident {
     format_ident!("Opaque")
 }
 
-/// `#[derive(GosStruct)]` — emits `FromGos` / `ToGos` /
+/// `#[derive(GosStruct)]` - emits `FromGos` / `ToGos` /
 /// `BindingAbi` impls that round-trip a Rust struct through
 /// `Value::Struct` (interp tier) and an opaque-handle wire shape
 /// (compiled tier).
@@ -411,7 +411,7 @@ pub fn derive_gos_struct(input: TokenStream) -> TokenStream {
         // struct is encoded as `DynValue::Tagged { name, payload:
         // [<field_value>...] }` so every field's wire shape is
         // already handled by the variant payload tag system. This
-        // is a defensive default — for hot paths, declare a
+        // is a defensive default - for hot paths, declare a
         // hand-tuned `BindingAbi` impl with a dedicated wire shape.
         #[allow(unsafe_code, reason = "compiled-tier C-ABI bridge")]
         impl ::gossamer_binding::native::BindingAbi for #name {

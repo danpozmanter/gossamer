@@ -7,7 +7,7 @@ fn maybe(n: i64) -> Option<i64> {
     if n > 0 { Some(n) } else { None }
 }
 
-// Direct `?` on Option — pre-fix this fell through to the
+// Direct `?` on Option - pre-fix this fell through to the
 // `Err(__try_err)` arm and produced nonsense.
 fn double_maybe(n: i64) -> Option<i64> {
     let v = maybe(n)?

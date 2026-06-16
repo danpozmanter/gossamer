@@ -1642,13 +1642,13 @@ runs them through the tree-walker.</p>
 </code></pre></div>
 <p>Gossamer uses one comment form: <code>//</code> for line comments and
 <code>/* ... */</code> for block comments. There is no separate <code>///</code> /
-<code>//!</code> doc-comment syntax — a run of <code>//</code> lines directly above
+<code>//!</code> doc-comment syntax - a run of <code>//</code> lines directly above
 an item (no blank line between) is its documentation, and a
 run at the top of a file is the module's. <code>gos doc
 src/lib.gos</code> prints every item plus that summary block. HTML
 output lands with Stream H polish.</p>
 <h2 id="publishing">Publishing<a class="headerlink" href="#publishing" title="Permanent link">&para;</a></h2>
-<p><em>(planned)</em> — <code>gos publish</code> pushes to the default registry once
+<p><em>(planned)</em> - <code>gos publish</code> pushes to the default registry once
 the backend lands. Until then, path-based + git-based
 dependencies in <code>project.toml</code> work end-to-end.</p>
 

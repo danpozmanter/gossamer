@@ -1,17 +1,17 @@
 /*
  * HTTP/2 cleartext (h2c) server using std::http.
  *
- * Following the Go model, HTTP/2 lives inside std::http directly —
+ * Following the Go model, HTTP/2 lives inside std::http directly -
  * `http::serve_h2c` is the h2c (cleartext) entry point;
  * `http::serve_tls` auto-negotiates HTTP/2 over TLS via ALPN.
  *
  * Each accepted connection runs the h2 handshake under the
  * goroutine scheduler and spawns one child goroutine per inbound
- * stream — see crates/gossamer-std/HTTP_H2_ARCH.md for the
+ * stream - see crates/gossamer-std/HTTP_H2_ARCH.md for the
  * runtime/future-driver story.
  *
  * Handlers return `Result<Response, Error>` just like the h1
- * `http::serve` shape — the runtime reads `Ok(response)` as a
+ * `http::serve` shape - the runtime reads `Ok(response)` as a
  * success response and `Err(_)` as a 500.
  *
  * Run:

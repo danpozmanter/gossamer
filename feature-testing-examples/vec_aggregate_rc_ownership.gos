@@ -6,7 +6,7 @@
 //     those children: push retains, free deep-frees. Before the fix the
 //     vec was shallow-freed and the source temp's fields were released
 //     at scope end, so a vec built in one function and RETURNED (it
-//     outlives the temp) left dangling enum pointers — a use-after-free
+//     outlives the temp) left dangling enum pointers - a use-after-free
 //     when the caller walked them.
 //
 //  2. The loop-carried-release hoist nulled a string that was still

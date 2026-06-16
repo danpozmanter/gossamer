@@ -28,7 +28,7 @@ pub enum ParseError {
         construct: String,
     },
     /// A construct required to be terminated was not.
-    #[error("unterminated {construct} — expected `{delimiter}`")]
+    #[error("unterminated {construct} - expected `{delimiter}`")]
     Unterminated {
         /// Name of the construct (e.g. `block`, `tuple`).
         construct: String,
@@ -36,13 +36,13 @@ pub enum ParseError {
         delimiter: String,
     },
     /// A comparison operator was chained without parentheses, e.g. `a == b == c`.
-    #[error("comparison operator `{op}` is non-associative — parenthesise the operands")]
+    #[error("comparison operator `{op}` is non-associative - parenthesise the operands")]
     NonAssociativeCompare {
         /// Operator spelling.
         op: String,
     },
     /// A range operator was chained without parentheses, e.g. `1..2..3`.
-    #[error("range operator `{op}` is non-associative — parenthesise the operands")]
+    #[error("range operator `{op}` is non-associative - parenthesise the operands")]
     NonAssociativeRange {
         /// Operator spelling.
         op: String,
@@ -82,7 +82,7 @@ pub enum ParseError {
     ///
     /// The `extern` keyword is reserved; FFI is expressed through
     /// `[rust-bindings]` in `project.toml` plus the `gossamer-binding` crate.
-    #[error("extern blocks are not supported — use `[rust-bindings]` in `project.toml`")]
+    #[error("extern blocks are not supported - use `[rust-bindings]` in `project.toml`")]
     ExternReserved,
     /// An expression, type, or pattern nested past the parser's hard
     /// recursion limit. Emitted to keep adversarial inputs from
@@ -158,7 +158,7 @@ impl ParseDiagnostic {
                 delimiter,
             } => (
                 "GP0003",
-                format!("unterminated {construct} — expected `{delimiter}`"),
+                format!("unterminated {construct} - expected `{delimiter}`"),
                 Some(format!("add `{delimiter}` to close the {construct}")),
             ),
             ParseError::NonAssociativeCompare { op } => (

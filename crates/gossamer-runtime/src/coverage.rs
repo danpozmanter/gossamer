@@ -5,7 +5,7 @@
 //! bump the counter at every basic-block entry; the test runner
 //! snapshots the table at exit and renders an lcov report.
 //!
-//! The table is lazily populated — registering an `(file, line)`
+//! The table is lazily populated - registering an `(file, line)`
 //! that hasn't been seen yet appends a slot. Reads from the table
 //! are O(1) via an indirection through a `(file, line) -> idx`
 //! map. The hot path (bump) is a single `fetch_add`.
@@ -33,7 +33,7 @@ pub struct Counter {
     /// Optional branch index (`0` = no branch / sequential
     /// statement, `1..N` = arm of a `match` / branch of an `if`).
     pub branch: u32,
-    /// Hit counter — bumped on every BB entry.
+    /// Hit counter - bumped on every BB entry.
     pub hits: AtomicU64,
 }
 
@@ -66,7 +66,7 @@ pub fn enabled() -> bool {
 }
 
 /// Registers a counter slot for `(file, line, branch)` and
-/// returns its index. Idempotent — repeated calls with the same
+/// returns its index. Idempotent - repeated calls with the same
 /// triple return the same index.
 #[must_use]
 pub fn register(file: &str, line: u32, branch: u32) -> usize {

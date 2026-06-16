@@ -1,7 +1,7 @@
 /*
  * Command-line argument parsing.
  *
- * Uses `std::flag` — Gossamer's batteries-included flag parser
+ * Uses `std::flag` - Gossamer's batteries-included flag parser
  * with GNU-style long + short options, typed values, and an
  * auto-generated `--help`.
  *

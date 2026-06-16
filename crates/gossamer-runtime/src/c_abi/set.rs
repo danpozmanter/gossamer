@@ -19,7 +19,7 @@ use std::ffi::CStr;
 use std::os::raw::c_char;
 
 // ---------------------------------------------------------------
-// Sets — `HashSet<String>` (the most common shape) backed by
+// Sets - `HashSet<String>` (the most common shape) backed by
 // `std::collections::HashSet<String>`. Stored on the heap; the
 // pointer is the value seen by user code. Element type is
 // erased at the FFI: only String keys are wired today, matching

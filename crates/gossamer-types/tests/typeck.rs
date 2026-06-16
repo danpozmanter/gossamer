@@ -358,7 +358,7 @@ fn nested_vec_literal_with_differing_inner_lengths_checks() {
 #[test]
 fn assignment_value_array_literal_adopts_vec_shape() {
     // `v = [2, 3]` where `v: Vec<i64>` must record the literal as a
-    // heap Vec — a fixed `[i64; 2]` record desyncs the value layout
+    // heap Vec - a fixed `[i64; 2]` record desyncs the value layout
     // from the Vec-typed slot on the compiled tiers.
     let checked = run("fn main() { let mut v: Vec<i64> = [1]\n v = [2, 3] }\n");
     assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
@@ -557,7 +557,7 @@ fn piped_result_default_with_closure_param_pins_to_err_type() {
 fn unknown_std_combinator_with_closure_errors_loudly() {
     // `iter::mystery` has no checker signature row. A closure passed
     // there is uninferrable, which the compiled tiers would render as
-    // a pointer-formatting bug — the checker must reject loudly.
+    // a pointer-formatting bug - the checker must reject loudly.
     // (The resolver flags the unknown name separately; this test
     // bypasses the resolve assertion on purpose.)
     let source = "use std::iter\n\
@@ -647,7 +647,7 @@ fn bool_and_char_casts_pass_the_whitelist() {
 }
 
 // ---------------------------------------------------------------
-// Task 22 — std fns as first-class values (GT0015 + tabled set).
+// Task 22 - std fns as first-class values (GT0015 + tabled set).
 // ---------------------------------------------------------------
 
 fn diagnostics_for(source: &str) -> Vec<gossamer_types::TypeDiagnostic> {

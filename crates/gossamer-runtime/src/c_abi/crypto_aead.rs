@@ -12,13 +12,13 @@
 //!   (`key`, `nonce`, `data`, `aad`) and return
 //!   `Result<Vec<u8>, errors::Error>` packed as the runtime's `i128`.
 //! - `ed25519::keypair()` returns
-//!   `Result<(Vec<u8>, Vec<u8>), errors::Error>` — the Ok payload is a
+//!   `Result<(Vec<u8>, Vec<u8>), errors::Error>` - the Ok payload is a
 //!   16-byte heap pair `(secret_ptr, public_ptr)` of `*mut GosVec`,
 //!   matching the bytecode VM's `Value::Tuple([secret, public])`.
 //! - `ed25519::sign(secret, msg)` returns
 //!   `Result<Vec<u8>, errors::Error>` (64-byte signature).
 //! - `ed25519::verify(public, msg, sig)` returns
-//!   `Result<(), errors::Error>` — `Ok(())` packed as disc `0`,
+//!   `Result<(), errors::Error>` - `Ok(())` packed as disc `0`,
 //!   payload `0` (mirrors the VM's `ok_variant(Value::Unit)`).
 //!
 //! AEAD construction (`Aes256Gcm` / `ChaCha20Poly1305` via the
@@ -70,7 +70,7 @@ fn alloc_pair(a: i64, b: i64) -> *mut u8 {
 }
 
 /// `crypto::aead::aes_256_gcm_seal(key, nonce, plaintext, aad)
-/// -> Result<[u8], errors::Error>` — AES-256-GCM seal (ciphertext
+/// -> Result<[u8], errors::Error>` - AES-256-GCM seal (ciphertext
 /// followed by the 16-byte auth tag).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_crypto_aes256gcm_seal(
@@ -110,7 +110,7 @@ pub unsafe extern "C" fn gos_rt_crypto_aes256gcm_seal(
 }
 
 /// `crypto::aead::aes_256_gcm_open(key, nonce, ciphertext, aad)
-/// -> Result<[u8], errors::Error>` — AES-256-GCM open (decrypt +
+/// -> Result<[u8], errors::Error>` - AES-256-GCM open (decrypt +
 /// verify). `Err` on auth-tag mismatch (e.g. wrong key).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_crypto_aes256gcm_open(
@@ -150,7 +150,7 @@ pub unsafe extern "C" fn gos_rt_crypto_aes256gcm_open(
 }
 
 /// `crypto::aead::chacha20_poly1305_seal(key, nonce, plaintext, aad)
-/// -> Result<[u8], errors::Error>` — ChaCha20-Poly1305 seal.
+/// -> Result<[u8], errors::Error>` - ChaCha20-Poly1305 seal.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_crypto_chacha20poly1305_seal(
     key: *const GosVec,
@@ -191,7 +191,7 @@ pub unsafe extern "C" fn gos_rt_crypto_chacha20poly1305_seal(
 }
 
 /// `crypto::aead::chacha20_poly1305_open(key, nonce, ciphertext, aad)
-/// -> Result<[u8], errors::Error>` — ChaCha20-Poly1305 open.
+/// -> Result<[u8], errors::Error>` - ChaCha20-Poly1305 open.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_crypto_chacha20poly1305_open(
     key: *const GosVec,
@@ -232,7 +232,7 @@ pub unsafe extern "C" fn gos_rt_crypto_chacha20poly1305_open(
 }
 
 /// `crypto::ed25519::keypair() -> Result<([u8], [u8]), errors::Error>`
-/// — fresh Ed25519 keypair `(secret, public)` from the OS CSPRNG.
+/// - fresh Ed25519 keypair `(secret, public)` from the OS CSPRNG.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_crypto_ed25519_keypair() -> i128 {
     ffi_entry!(0i128, {
@@ -250,7 +250,7 @@ pub unsafe extern "C" fn gos_rt_crypto_ed25519_keypair() -> i128 {
 }
 
 /// `crypto::ed25519::sign(secret, message)
-/// -> Result<[u8], errors::Error>` — 64-byte detached signature.
+/// -> Result<[u8], errors::Error>` - 64-byte detached signature.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_crypto_ed25519_sign(
     secret: *const GosVec,
@@ -271,7 +271,7 @@ pub unsafe extern "C" fn gos_rt_crypto_ed25519_sign(
 }
 
 /// `crypto::ed25519::verify(public, message, signature)
-/// -> Result<(), errors::Error>` — `Ok(())` on a valid signature,
+/// -> Result<(), errors::Error>` - `Ok(())` on a valid signature,
 /// `Err` otherwise. Matches the VM's `ok_variant(Value::Unit)`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_crypto_ed25519_verify(

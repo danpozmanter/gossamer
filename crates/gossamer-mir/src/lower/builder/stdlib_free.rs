@@ -285,10 +285,10 @@ impl<'a> Builder<'a> {
             &names[..]
         };
         let joined = strip_std.join("::");
-        // 0.7.0 — bare prelude names (`min`, `max`, `clamp`) shadow
+        // 0.7.0 - bare prelude names (`min`, `max`, `clamp`) shadow
         // a runtime helper only when the user hasn't defined their
         // own fn with that name. A non-None `def` here means the
-        // resolver bound this path to a user fn — defer to the
+        // resolver bound this path to a user fn - defer to the
         // generic user-fn dispatch below.
         if callee_def.is_some()
             && segments.len() == 1
@@ -373,9 +373,9 @@ impl<'a> Builder<'a> {
                 ("gos_rt_regex_compile_result", ty)
             }
             "regex::is_match" => ("gos_rt_regex_is_match", self.tcx.bool_ty()),
-            // Returns Option<(start, end, text)> — disc=0 Some, disc=1 None.
+            // Returns Option<(start, end, text)> - disc=0 Some, disc=1 None.
             "regex::find" => ("gos_rt_regex_find_opt", self.option_tuple3_i64_i64_str_ty()),
-            // Returns Option<Vec<String>> — disc=0 Some(caps), disc=1 None.
+            // Returns Option<Vec<String>> - disc=0 Some(caps), disc=1 None.
             "regex::captures" => ("gos_rt_regex_captures", self.option_vec_option_string_ty()),
             "regex::find_all" => {
                 let s = self.tcx.string_ty();
@@ -383,7 +383,7 @@ impl<'a> Builder<'a> {
                 ("gos_rt_regex_find_all", v)
             }
             "regex::captures_all" => {
-                // Returns `Vec<Vec<Option<String>>>` — outer per-match,
+                // Returns `Vec<Vec<Option<String>>>` - outer per-match,
                 // inner per-group. Each group is a canonical
                 // `Option<String>` tagged union (`gos_rt_result_new`):
                 // Some(matched text) or None for an absent optional
@@ -408,12 +408,12 @@ impl<'a> Builder<'a> {
             // stdlib. Compiled mode never wired a binding for the
             // os-prefixed name, so the call previously fell through
             // to a generic dispatch that returned an empty string.
-            // Mirror `fs::read_to_string`'s shape — the runtime
+            // Mirror `fs::read_to_string`'s shape - the runtime
             // helper hands back a `*mut c_char`, the MIR type is
             // `String`, and downstream `.map_err(...)?` paths do
             // the result-wrap themselves.
             "os::read_file_to_string" => ("gos_rt_fs_read_to_string", self.tcx.string_ty()),
-            // `os::read_file(path) -> Result<Vec<u8>, errors::Error>` —
+            // `os::read_file(path) -> Result<Vec<u8>, errors::Error>` -
             // returns the raw bytes so binary files (images,
             // archives, …) round-trip through Gossamer without the
             // UTF-8-lossy collapse `read_file_to_string` would apply.
@@ -443,7 +443,7 @@ impl<'a> Builder<'a> {
             }
             "fs::write" | "os::write_file" => {
                 // Pick the bytes-shaped variant when the contents
-                // argument is a Vec<u8> / &[u8] — the c-string-shaped
+                // argument is a Vec<u8> / &[u8] - the c-string-shaped
                 // helper would truncate at the first NUL and corrupt
                 // binary payloads (image writes, gzip bodies, etc.).
                 // The typechecker often leaves `&local_vec`-shaped
@@ -504,7 +504,7 @@ impl<'a> Builder<'a> {
             "path::is_absolute" => ("gos_rt_path_is_absolute", self.tcx.bool_ty()),
             "path::has_prefix" => ("gos_rt_path_has_prefix", self.tcx.bool_ty()),
             "path::extension" => ("gos_rt_path_ext", self.option_string_adt_ty()),
-            // 0.10.0 — os/fs copy + canonicalize, crypto::subtle.
+            // 0.10.0 - os/fs copy + canonicalize, crypto::subtle.
             "os::copy" | "fs::copy" => ("gos_rt_fs_copy", self.result_i64_error_adt_ty()),
             "os::canonicalize" | "fs::canonicalize" => {
                 ("gos_rt_fs_canonicalize", self.result_string_error_adt_ty())
@@ -527,7 +527,7 @@ impl<'a> Builder<'a> {
                     self.tcx.intern(gossamer_types::TyKind::Vec(s)),
                 )
             }
-            // io::Copy(dst, src) / io::ReadAll(reader) — Go-shaped
+            // io::Copy(dst, src) / io::ReadAll(reader) - Go-shaped
             // stream helpers over the fd-tagged `*GosStream` handles.
             "io::Copy" => (
                 "gos_rt_io_copy",
@@ -537,7 +537,7 @@ impl<'a> Builder<'a> {
             "net::resolve" | "net::lookup" => {
                 ("gos_rt_net_resolve", self.result_vec_string_error_ty())
             }
-            // 0.10.0 — hash::* checksums previously VM-only.
+            // 0.10.0 - hash::* checksums previously VM-only.
             "hash::crc32::checksum" => (
                 "gos_rt_hash_crc32_checksum",
                 self.tcx.int_ty(gossamer_types::IntTy::I64),
@@ -574,7 +574,7 @@ impl<'a> Builder<'a> {
                 "gos_rt_hash_fnv_string",
                 self.tcx.int_ty(gossamer_types::IntTy::I64),
             ),
-            // 0.10.0 — math::bits::* scalar primitives previously
+            // 0.10.0 - math::bits::* scalar primitives previously
             // VM-only. The carrying add/sub/mul/div (tuple returns)
             // stay on the VM until aggregate-return ABI lands.
             "math::bits::count_ones" => (
@@ -613,7 +613,7 @@ impl<'a> Builder<'a> {
                 "gos_rt_bits_rotate_right",
                 self.tcx.int_ty(gossamer_types::IntTy::I64),
             ),
-            // 0.10.0 — carrying primitives return (i64, i64) via the
+            // 0.10.0 - carrying primitives return (i64, i64) via the
             // by-value-aggregate ABI (heap pointer + caller memcpy).
             "math::bits::add" | "math::bits::sub" | "math::bits::div" => {
                 let i = self.tcx.int_ty(gossamer_types::IntTy::I64);
@@ -630,7 +630,7 @@ impl<'a> Builder<'a> {
                 let tup = self.tcx.intern(gossamer_types::TyKind::Tuple(vec![i, i]));
                 ("gos_rt_bits_mul", tup)
             }
-            // utf8::decode_rune family — (char, i64) by-value tuple.
+            // utf8::decode_rune family - (char, i64) by-value tuple.
             "utf8::decode_rune"
             | "utf8::decode_rune_in_string"
             | "utf8::decode_last_rune"
@@ -680,7 +680,7 @@ impl<'a> Builder<'a> {
             "encoding::utf16::decode_to_string" | "utf16::decode_to_string" => {
                 ("gos_rt_utf16_decode_to_string", self.tcx.string_ty())
             }
-            // 0.7.0 stdlib wiring — string-surface free fns that
+            // 0.7.0 stdlib wiring - string-surface free fns that
             // the VM already exposes but that lacked a compiled-tier
             // runtime entry point. Each maps a fully-qualified
             // module path to the matching `gos_rt_*` helper.
@@ -704,7 +704,7 @@ impl<'a> Builder<'a> {
                 "gos_rt_str_count",
                 self.tcx.int_ty(gossamer_types::IntTy::I64),
             ),
-            // 0.10.0 — string-surface free fns. Each routes to the
+            // 0.10.0 - string-surface free fns. Each routes to the
             // matching `gos_rt_str_*` runtime helper (same shim that
             // already backs the method-call form). Without these,
             // MIR emits `@strings::trim` etc. as a literal symbol and
@@ -738,7 +738,7 @@ impl<'a> Builder<'a> {
                 });
                 ("gos_rt_str_find_opt", opt_ty)
             }
-            // 0.10.0 — strconv free fns. parse_* return
+            // 0.10.0 - strconv free fns. parse_* return
             // Result<T, errors::Error> packed as a *mut GosResult;
             // format_* / itoa return String.
             "strconv::parse_i64" | "strconv::parse_int" => {
@@ -778,7 +778,7 @@ impl<'a> Builder<'a> {
             "strings::trim_end_matches" => ("gos_rt_str_rstrip_chars", self.tcx.string_ty()),
             "strings::center" => ("gos_rt_str_center", self.tcx.string_ty()),
             "strings::slice" => ("gos_rt_str_slice", self.result_string_error_adt_ty()),
-            // 0.10.0 — remaining strings::* free fns previously
+            // 0.10.0 - remaining strings::* free fns previously
             // VM-only. Each routes to the matching gos_rt_str_*
             // runtime helper backed by gossamer_std::strings.
             "strings::splitn" => {
@@ -864,7 +864,7 @@ impl<'a> Builder<'a> {
             "encoding::base32::encode" | "base32::encode" => {
                 ("gos_rt_encoding_base32_encode", self.tcx.string_ty())
             }
-            // encoding::binary — put_* return [u8]; get_* return
+            // encoding::binary - put_* return [u8]; get_* return
             // Result<i64>; uvarint/varint return Result<(i64,i64)>.
             "encoding::binary::put_u16_be"
             | "encoding::binary::put_u16_le"
@@ -1148,7 +1148,7 @@ impl<'a> Builder<'a> {
                 self.tcx.int_ty(gossamer_types::IntTy::I64),
             ),
             // tar/zip write take `[(String,[u8])]` tuples and return
-            // Result<[u8]> — no struct, so they lower directly.
+            // Result<[u8]> - no struct, so they lower directly.
             "archive::tar::write" | "tar::write" => {
                 ("gos_rt_tar_write", self.result_vec_u8_error_ty())
             }
@@ -1214,13 +1214,13 @@ impl<'a> Builder<'a> {
             "path::base" => ("gos_rt_path_base", self.tcx.string_ty()),
             "path::dir" => ("gos_rt_path_dir", self.tcx.string_ty()),
             "path::ext" => ("gos_rt_path_ext", self.option_string_adt_ty()),
-            // 0.10.0 — path Option-returning free fns. Each wraps
+            // 0.10.0 - path Option-returning free fns. Each wraps
             // the matching `gos_rt_path_*_opt` helper which packs a
             // `*mut GosResult` (disc=0 Some(String), disc=1 None).
             "path::parent" => ("gos_rt_path_parent", self.option_string_adt_ty()),
             "path::stem" => ("gos_rt_path_stem", self.option_string_adt_ty()),
             "path::file_name" => ("gos_rt_path_file_name", self.option_string_adt_ty()),
-            // 0.10.0 — math extended trig / log / round entries.
+            // 0.10.0 - math extended trig / log / round entries.
             "math::tan" => (
                 "gos_rt_math_tan",
                 self.tcx.float_ty(gossamer_types::FloatTy::F64),
@@ -1331,7 +1331,7 @@ impl<'a> Builder<'a> {
                 "gos_rt_max_i64",
                 self.tcx.int_ty(gossamer_types::IntTy::I64),
             ),
-            // 0.10.0 — arbitrary-precision big integers. Every value
+            // 0.10.0 - arbitrary-precision big integers. Every value
             // is carried as a decimal `String` (matching the interp),
             // so all the arithmetic entries take/return `String`.
             "math::big::factorial" => ("gos_rt_math_big_factorial", self.tcx.string_ty()),
@@ -1377,7 +1377,7 @@ impl<'a> Builder<'a> {
                 "gos_rt_math_big_uint_bit_len",
                 self.tcx.int_ty(gossamer_types::IntTy::I64),
             ),
-            // 0.10.0 — env aliases (the os:: spelling is already wired
+            // 0.10.0 - env aliases (the os:: spelling is already wired
             // above; the env:: spelling matches `use std::env`).
             "env::set_var" => {
                 let unit_ty = self.tcx.unit();
@@ -1400,7 +1400,7 @@ impl<'a> Builder<'a> {
                 });
                 ("gos_rt_env_set_current_dir", result_ty)
             }
-            // `os::arch()` / `os::family()` — target introspection.
+            // `os::arch()` / `os::family()` - target introspection.
             "os::arch" => ("gos_rt_os_arch", self.tcx.string_ty()),
             "os::family" => ("gos_rt_os_family", self.tcx.string_ty()),
             // `os::rename(from, to)` / `fs::rename(from, to)` -> Result<(), Error>.
@@ -1414,9 +1414,9 @@ impl<'a> Builder<'a> {
                 });
                 ("gos_rt_fs_rename", result_ty)
             }
-            // `thread::yield_now()` — goroutine-aware yield (Gosched).
+            // `thread::yield_now()` - goroutine-aware yield (Gosched).
             "thread::yield_now" => ("gos_rt_go_yield", self.tcx.unit()),
-            // 0.10.0 — crypto::rand::bytes(n) -> Vec<u8>.
+            // 0.10.0 - crypto::rand::bytes(n) -> Vec<u8>.
             "crypto::rand::bytes" => {
                 let u8_ty = self.tcx.int_ty(gossamer_types::IntTy::U8);
                 let v = self.tcx.intern(gossamer_types::TyKind::Vec(u8_ty));
@@ -1504,7 +1504,7 @@ impl<'a> Builder<'a> {
                 "gos_rt_thread_num_cpus",
                 self.tcx.int_ty(gossamer_types::IntTy::I64),
             ),
-            // 0.10.0 — time::Duration helpers. Duration is represented
+            // 0.10.0 - time::Duration helpers. Duration is represented
             // as i64 nanoseconds end-to-end through the compiled tier.
             "time::Duration::from_secs" => (
                 "gos_rt_duration_from_secs",
@@ -1588,7 +1588,7 @@ impl<'a> Builder<'a> {
             "yaml::from_json" => ("gos_rt_yaml_from_json", self.result_string_error_adt_ty()),
             "yaml::is_valid" => ("gos_rt_yaml_is_valid", self.tcx.bool_ty()),
             // ---------------------------------------------------------------
-            // std::unicode — general-category predicates, casing,
+            // std::unicode - general-category predicates, casing,
             // normalization, segmentation. Char args lower as u32,
             // string args as `*const c_char`, bool results as i64
             // (auto-truncated to i1 by the LLVM lowerer). Vec<String>
@@ -1660,7 +1660,7 @@ impl<'a> Builder<'a> {
                 self.tcx.int_ty(gossamer_types::IntTy::I64),
             ),
             // ---------------------------------------------------------------
-            // std::utf8 — high-value helpers. The decode_rune family
+            // std::utf8 - high-value helpers. The decode_rune family
             // returns `(char, usize)` tuples and stays interp-only
             // until the Adt-by-value ABI lands.
             "utf8::rune_count_in_string" => (
@@ -1966,7 +1966,7 @@ impl<'a> Builder<'a> {
                 });
                 ("gos_rt_time_parse_rfc3339", result_ty)
             }
-            // 0.10.0 — time::* free fns previously VM-only. The
+            // 0.10.0 - time::* free fns previously VM-only. The
             // monotonic/now shims already existed in the runtime;
             // these arms route the language-level calls to them.
             "time::sleep" | "thread::sleep_ms" => ("gos_rt_sleep_ms", self.tcx.unit()),
@@ -2248,7 +2248,7 @@ impl<'a> Builder<'a> {
             }
             "os::unset_env" | "unset_env" => ("gos_rt_os_unset_env", self.tcx.unit()),
             // `exec::spawn(prog, args) -> Result<i64, errors::Error>`.
-            // Non-blocking process launch — returns the child PID
+            // Non-blocking process launch - returns the child PID
             // so callers (daemon launchers, long-running tools)
             // don't block the calling goroutine. Pin the Ok
             // payload to `i64` and the Err to `errors::Error` so
@@ -2264,7 +2264,7 @@ impl<'a> Builder<'a> {
                 });
                 ("gos_rt_exec_spawn", result_ty)
             }
-            // `exec::kill(pid) -> bool` — best-effort SIGTERM.
+            // `exec::kill(pid) -> bool` - best-effort SIGTERM.
             "exec::kill" | "os::exec::kill" | "process::kill" => {
                 ("gos_rt_exec_kill", self.tcx.bool_ty())
             }
@@ -2272,7 +2272,7 @@ impl<'a> Builder<'a> {
             "exec::signal" | "os::exec::signal" | "process::signal" => {
                 ("gos_rt_exec_signal", self.tcx.bool_ty())
             }
-            // `exec::kill_group(pid) -> bool` — kills the entire
+            // `exec::kill_group(pid) -> bool` - kills the entire
             // process group on Unix; best-effort on Windows.
             "exec::kill_group" | "os::exec::kill_group" | "process::kill_group" => {
                 ("gos_rt_exec_kill_group", self.tcx.bool_ty())
@@ -2302,12 +2302,12 @@ impl<'a> Builder<'a> {
                 });
                 ("gos_rt_exec_pipeline_run", result_ty)
             }
-            // `signal::on(sig_raw) -> i64` — registers a notifier.
+            // `signal::on(sig_raw) -> i64` - registers a notifier.
             "signal::on" | "os::signal::on" => (
                 "gos_rt_signal_on",
                 self.tcx.int_ty(gossamer_types::IntTy::I64),
             ),
-            // `Notifier::wait(handle)` — blocks until signal fires.
+            // `Notifier::wait(handle)` - blocks until signal fires.
             "signal_wait" | "Notifier::wait" | "signal::wait" | "os::signal::wait" => {
                 ("gos_rt_signal_wait", self.tcx.unit())
             }
@@ -2343,7 +2343,7 @@ impl<'a> Builder<'a> {
                 "gos_rt_http_response_json_new",
                 self.tcx.int_ty(gossamer_types::IntTy::I64),
             ),
-            // `Response::stream(status, content_type, rs)` — the rs
+            // `Response::stream(status, content_type, rs)` - the rs
             // argument is the 3-slot ResponseStream blob pointer
             // (same ptr shape `next_line` receives as receiver).
             "http::Response::stream" | "Response::stream" => (
@@ -2360,7 +2360,7 @@ impl<'a> Builder<'a> {
             }
             // 0.4.0 HTTP-module bridges (compiled tier free-fn surface).
             // Stateful types (router::new, etc.) are interp-only and not
-            // listed here — calling them in compiled mode emits an
+            // listed here - calling them in compiled mode emits an
             // "unsupported call" diagnostic via the generic fallback.
             "http::chunked::encode" | "chunked::encode" => {
                 ("gos_rt_chunked_encode", self.tcx.string_ty())
@@ -2473,7 +2473,7 @@ impl<'a> Builder<'a> {
             "testing::check" => ("gos_rt_testing_check", self.tcx.bool_ty()),
             "testing::check_eq" => ("gos_rt_testing_check_eq_i64", self.tcx.bool_ty()),
             "testing::check_ok" => {
-                // Pass-through identity in compiled mode — assumes
+                // Pass-through identity in compiled mode - assumes
                 // happy path.
                 ("", self.tcx.int_ty(gossamer_types::IntTy::I64))
             }
@@ -2491,7 +2491,7 @@ impl<'a> Builder<'a> {
                 "gos_rt_btmap_new",
                 self.tcx.int_ty(gossamer_types::IntTy::I64),
             ),
-            // 0.7.0 — `HashMap::pop(m, k) -> Option<V>` free-fn shape.
+            // 0.7.0 - `HashMap::pop(m, k) -> Option<V>` free-fn shape.
             // Dispatches by the first arg's HashMap key type to the
             // string-keyed or i64-keyed runtime variant. The Option
             // payload is the previous value (i64 directly for
@@ -2512,8 +2512,8 @@ impl<'a> Builder<'a> {
                 });
                 (sym, opt_ty)
             }
-            // 0.7.0 — `Vec::insert(xs, i, v)` / `Vec::remove(xs, i)` /
-            // `Vec::slice(xs, a, b)` — free-fn forms of the same
+            // 0.7.0 - `Vec::insert(xs, i, v)` / `Vec::remove(xs, i)` /
+            // `Vec::slice(xs, a, b)` - free-fn forms of the same
             // Result-returning safe Vec helpers exposed as methods.
             "Vec::insert" if args.len() == 3 => {
                 let i = self.tcx.int_ty(gossamer_types::IntTy::I64);
@@ -2550,7 +2550,7 @@ impl<'a> Builder<'a> {
             "String::slice" if args.len() == 3 => {
                 ("gos_rt_str_slice", self.result_string_error_adt_ty())
             }
-            // 0.7.0 scalar cmp prelude — `min(a, b)` / `max(a, b)`
+            // 0.7.0 scalar cmp prelude - `min(a, b)` / `max(a, b)`
             // / `clamp(x, lo, hi)`. Two-arg shape dispatches by
             // first-arg HIR type to the i64 or f64 variant; the
             // Vec-shaped `min(xs)` / `max(xs)` fallback hits the
@@ -2613,7 +2613,7 @@ impl<'a> Builder<'a> {
         }
         // The byte-vector `encode` shims take a `*mut GosVec` of bytes,
         // but Gossamer's API (mirroring the interp's `bytes_from_value`)
-        // also accepts a `String` — `base64::encode("text")`. A String
+        // also accepts a `String` - `base64::encode("text")`. A String
         // is a c-string pointer, not a GosVec, so it must be converted
         // to a byte Vec via `gos_rt_str_as_bytes` before the call;
         // passing it raw makes the shim read the c-string bytes as a
@@ -2622,7 +2622,7 @@ impl<'a> Builder<'a> {
         // `salt`, `message`, `plaintext`, `aad`) are ergonomically
         // passed as `String` literals. Every byte parameter is a
         // `*const GosVec`, so a String arg (a c-string pointer) must
-        // be converted to a byte Vec — the VM's `bytes_from_value`
+        // be converted to a byte Vec - the VM's `bytes_from_value`
         // accepts the String directly; the compiled tier matches via
         // `gos_rt_str_as_bytes`. The genuinely-byte args (keys,
         // nonces, signatures) are `Vec<u8>` typed and pass through

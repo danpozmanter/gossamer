@@ -1,7 +1,7 @@
 //! High-level IR for the Gossamer compiler.
 //! The HIR is a desugared, explicit version of the parsed and type-
-//! checked AST. Control-flow sugar — `for` loops, the `?` operator,
-//! and the forward-pipe `|>` — is lowered into primitive forms so that
+//! checked AST. Control-flow sugar - `for` loops, the `?` operator,
+//! and the forward-pipe `|>` - is lowered into primitive forms so that
 //! later passes (bytecode, MIR) see one spelling per concept.
 //! Each HIR node carries a stable [`HirId`] and a [`gossamer_types::Ty`]
 //! annotation. Types come from the [`gossamer_types::TypeTable`];

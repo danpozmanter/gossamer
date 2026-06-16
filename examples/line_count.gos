@@ -1,5 +1,5 @@
 /*
- * line_count — counts newlines in a sample string.
+ * line_count - counts newlines in a sample string.
  *
  * A minimal, self-contained, terminating example used by the CI
  * smoke suite. The richer version in earlier drafts walked the

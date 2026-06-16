@@ -82,7 +82,7 @@ impl FileServer {
     pub fn serve_path(&self, rel_path: &str, request: &Request) -> Response {
         // Path-traversal guard: canonicalize the requested path and
         // verify it is still under the canonical root. Canonicalize
-        // must succeed — a path that does not resolve cannot be served
+        // must succeed - a path that does not resolve cannot be served
         // anyway, and falling back to the raw `candidate` would leave
         // `..` segments that the component-wise `starts_with` accepts.
         // Canonicalizing both sides also normalises platform prefixes

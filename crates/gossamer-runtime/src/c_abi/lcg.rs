@@ -86,7 +86,7 @@ fn mul_mod(a: i64, b: i64, m: i64) -> i64 {
 // in the cranelift codegen then invokes that trampoline as
 // `f(env, args…)`; the trampoline reads the real fn from `env+8`
 // and forwards the args, dropping the env. Capturing closures
-// don't need this — their env already carries the lifted body's
+// don't need this - their env already carries the lifted body's
 // (env, args) signature at offset 0.
 //
 // Arities 0..=8 cover every higher-order shape the stdlib uses

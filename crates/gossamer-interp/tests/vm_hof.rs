@@ -7,7 +7,7 @@
 //! and invoke the user callables passed to them through it. With
 //! Phase 2's `impl NativeDispatch for Vm` (via the `VmDispatch`
 //! adapter), those callbacks run on the VM rather than the bundled
-//! tree-walker — so a correct result here proves the callback path
+//! tree-walker - so a correct result here proves the callback path
 //! reaches user code through the VM's own call machinery.
 
 use std::cell::RefCell;
@@ -49,7 +49,7 @@ fn run_main(source: &str) -> String {
 #[test]
 fn for_each_runs_closure_once_per_element() {
     // `iter::for_each` invokes the closure for every element through
-    // `NativeDispatch::call_value` — each side-effecting print proves
+    // `NativeDispatch::call_value` - each side-effecting print proves
     // the callback fired on the VM.
     let src = r#"
 use std::iter

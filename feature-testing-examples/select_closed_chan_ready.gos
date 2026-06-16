@@ -3,8 +3,8 @@
 // A `select` recv arm is READY when its channel is closed, yielding the
 // element-type zero value (Go's `v, ok := <-ch` for a closed channel).
 // An open-but-empty channel's recv arm stays not-ready, so the default
-// arm fires. Every selection point here is decided synchronously — no
-// goroutines, no sleeps — so stdout is bit-identical across the bytecode
+// arm fires. Every selection point here is decided synchronously - no
+// goroutines, no sleeps - so stdout is bit-identical across the bytecode
 // VM (`gos run` / `gos test`), the Cranelift JIT, and the LLVM AOT tier
 // (`gos build`).
 

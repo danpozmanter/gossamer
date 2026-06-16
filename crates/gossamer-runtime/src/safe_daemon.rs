@@ -5,17 +5,17 @@
 //!
 //! ## Soundness contract
 //!
-//! `fork` after threads have started is fundamentally unsafe — only
+//! `fork` after threads have started is fundamentally unsafe - only
 //! async-signal-safe operations may run in the child until the next
 //! `exec*`. `daemonize` must therefore be invoked **before any
 //! goroutine or thread spawn**. The wrapper does the minimum needed
 //! to detach from the controlling terminal:
 //!
-//! 1. `fork` — parent exits, child continues.
-//! 2. `setsid` — child becomes session + process-group leader.
-//! 3. Second `fork` — grandchild can never re-acquire a controlling
+//! 1. `fork` - parent exits, child continues.
+//! 2. `setsid` - child becomes session + process-group leader.
+//! 3. Second `fork` - grandchild can never re-acquire a controlling
 //!    terminal even if it later opens one.
-//! 4. `chdir("/")` — release the inherited working directory so the
+//! 4. `chdir("/")` - release the inherited working directory so the
 //!    daemon does not pin a mount point.
 //! 5. Redirect stdin / stdout / stderr to `/dev/null` so the
 //!    detached child does not inherit terminal file descriptors.

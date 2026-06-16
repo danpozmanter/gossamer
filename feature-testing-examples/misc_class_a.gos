@@ -11,12 +11,12 @@ use std::strings
 use std::thread
 
 fn main() {
-    // thread::num_cpus — the count is host-dependent, so assert the
+    // thread::num_cpus - the count is host-dependent, so assert the
     // invariant rather than the raw value to stay tier-stable.
     let cpus = thread::num_cpus()
     println!("cpus_ok={}", cpus >= 1)
 
-    // strings::pad_* — 2-arg form defaults to a space; 3-arg form
+    // strings::pad_* - 2-arg form defaults to a space; 3-arg form
     // honours a String pad glyph; the char-literal pad keeps working.
     println!("[{}]", strings::pad_left("hi", 5))
     println!("[{}]", strings::pad_right("hi", 5))

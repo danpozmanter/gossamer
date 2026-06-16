@@ -3,7 +3,7 @@ source: crates/gossamer-diagnostics/tests/snapshots.rs
 expression: rendered
 ---
 --- plain ---
-error[GT0009]: An integer literal overflows the value range of its declared — here
+error[GT0009]: An integer literal overflows the value range of its declared - here
 --- framed ---
 error[GT0009]: An integer literal overflows the value range of its declared
   --> snap.gos:2:5

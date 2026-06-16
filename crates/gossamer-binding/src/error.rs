@@ -1,10 +1,10 @@
-//! `GosError` — boundary error type for bindings.
+//! `GosError` - boundary error type for bindings.
 //!
 //! Bindings return `Result<T, GosError>` and propagate Rust-side
 //! errors with `?`. `GosError` carries a message plus an optional
 //! cause chain; on the Gossamer side it lowers to the same
 //! `errors::Error` shape native `errors::new(msg)` /
-//! `errors::wrap(cause, msg)` produces — pattern-matchable on arm
+//! `errors::wrap(cause, msg)` produces - pattern-matchable on arm
 //! name, walkable via `errors::chain(err)`.
 //!
 //! # Build-side examples
@@ -56,7 +56,7 @@ use crate::types::Type;
 ///
 /// Owns a heap-allocated message and an optional cause chain.
 /// Cheap to clone, `Send + Sync`, `'static`. Constructed via
-/// `GosError::new(msg)` or — usually — via `?` on any `E:
+/// `GosError::new(msg)` or - usually - via `?` on any `E:
 /// Into<GosError>`.
 #[derive(Debug, Clone)]
 pub struct GosError {
@@ -127,7 +127,7 @@ impl fmt::Display for GosError {
 impl StdError for GosError {
     fn source(&self) -> Option<&(dyn StdError + 'static)> {
         // Don't expose the `cause` chain through `std::error`'s
-        // source walk — the chain is binding-side metadata and the
+        // source walk - the chain is binding-side metadata and the
         // Display impl already renders it. Returning `None` keeps
         // downstream `anyhow`-style chains uncluttered.
         None
@@ -239,7 +239,7 @@ impl SigType for GosError {
 // shape as `String`. The rendered message string is the visible
 // payload; the cause chain is folded into it by `render()`. This
 // keeps the wire shape compatible with any caller that already
-// pattern-matches on `Result<T, String>` — `Result<T, GosError>`
+// pattern-matches on `Result<T, String>` - `Result<T, GosError>`
 // is wire-equivalent.
 
 #[allow(unsafe_code, reason = "compiled-tier C-ABI bridge")]

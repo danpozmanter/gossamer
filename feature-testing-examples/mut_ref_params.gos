@@ -1,5 +1,5 @@
 // Cross-tier write-through matrix for `&mut Vec<T>` / `&mut [T]`
-// parameters — the compiled tiers must mutate the caller's storage
+// parameters - the compiled tiers must mutate the caller's storage
 // through the reference, not a copy: direct element write, nested
 // call forwarding, early-return paths, growth via push (realloc
 // must be visible to the caller), slice swap, a struct-field place

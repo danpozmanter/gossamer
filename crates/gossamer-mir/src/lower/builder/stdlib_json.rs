@@ -203,7 +203,7 @@ impl<'a> Builder<'a> {
                 self.set_current(next);
                 return Some(dest);
             }
-            // Zero-arg `json::Value::object()` — route to the _n variant
+            // Zero-arg `json::Value::object()` - route to the _n variant
             // with n=0 so the compiled tier always passes explicit args.
             // The generic path below would emit a call with no arguments,
             // leaving the GosVec register uninitialized; on Windows the
@@ -303,7 +303,7 @@ impl<'a> Builder<'a> {
             "parse" | "decode" => ("gos_rt_json_parse", self.result_json_value_error_adt_ty()),
             "render" | "encode" => ("gos_rt_json_render", self.tcx.string_ty()),
             "valid" => ("gos_rt_json_valid", self.tcx.bool_ty()),
-            // `json::set(obj, key, value) → json::Value` — append or
+            // `json::set(obj, key, value) → json::Value` - append or
             // replace a named field on an object-shaped Value.
             "set" => ("gos_rt_json_set", self.tcx.json_value_ty()),
             // User-level `json::get` returns `Option<json::Value>`.
@@ -369,7 +369,7 @@ impl<'a> Builder<'a> {
 
         let struct_local = self.lower_expr(&args[0])?;
 
-        // Allocate the KV pairs vec (8-byte element slots — cstr/GosJson ptrs).
+        // Allocate the KV pairs vec (8-byte element slots - cstr/GosJson ptrs).
         let pairs_vec = self.fresh(vec_of_i64_ty);
         let elem_size = self.fresh(i64_ty);
         self.emit_assign(
@@ -467,7 +467,7 @@ impl<'a> Builder<'a> {
         });
         self.set_current(next);
 
-        // Free the pairs vec immediately after use — it was only borrowed by
+        // Free the pairs vec immediately after use - it was only borrowed by
         // gos_rt_json_value_object, so we own it and must release it here.
         // Doing this inline (rather than relying on insert_drops_at_returns)
         // keeps the free inside the JSON arm only: the drop-at-return pass

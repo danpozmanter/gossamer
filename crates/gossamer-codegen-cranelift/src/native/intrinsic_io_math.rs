@@ -1,4 +1,4 @@
-//! Cranelift intrinsic lowering — IO / math / time / OS family.
+//! Cranelift intrinsic lowering - IO / math / time / OS family.
 //!
 //! Holds `lower_intrinsic_call_io_math`, the first partition in
 //! the cranelift dispatch chain. Covers `gos_rt_print_*`,
@@ -87,7 +87,7 @@
 //! the process exit code, so the object file links through a
 //! standard `cc` invocation.
 //! Aggregates (tuples/arrays/structs), strings, closures, and
-//! anything that needs a GC heap are not yet lowered — those
+//! anything that needs a GC heap are not yet lowered - those
 //! constructs fall back to [`crate::emit::emit_module`] for
 //! inspection.
 
@@ -374,7 +374,7 @@ pub(super) fn lower_intrinsic_call_io_math(
             );
             Ok(true)
         }
-        // `__fmt_prec(value, prec)` — emitted by macro expansion for
+        // `__fmt_prec(value, prec)` - emitted by macro expansion for
         // `{:.N}` specs. Routes through `gos_rt_f64_prec_to_str` so
         // the result is a String the surrounding `__concat` consumes.
         "__fmt_prec" => {
@@ -421,7 +421,7 @@ pub(super) fn lower_intrinsic_call_io_math(
             );
             Ok(true)
         }
-        // `io::stdout()` / `io::stderr()` / `io::stdin()` —
+        // `io::stdout()` / `io::stderr()` / `io::stdin()` -
         // return an opaque pointer to a static `GosStream`.
         // Method dispatch on the returned value routes to the
         // `gos_rt_stream_*` helpers below.
@@ -495,7 +495,7 @@ pub(super) fn lower_intrinsic_call_io_math(
             Ok(true)
         }
         "gos_rt_stream_write_byte_array" => {
-            // Bulk byte write — `out.write_byte_array(arr, len)`.
+            // Bulk byte write - `out.write_byte_array(arr, len)`.
             // `arr` is a `[i64; N]` whose flat-slot layout
             // means each byte sits in the low 8 bits of an
             // `i64`; the runtime walks it once and packs into
@@ -668,8 +668,8 @@ pub(super) fn lower_intrinsic_call_io_math(
             // The whole sequence runs under the process-global
             // stdout lock so concurrent goroutines on other OS
             // threads can't interleave bytes mid-line. The lock
-            // is reentrant — each per-arg helper takes it again
-            // — so this outer acquire merely extends the held
+            // is reentrant - each per-arg helper takes it again
+            // - so this outer acquire merely extends the held
             // duration to cover the entire multi-call sequence.
             let acquire_fn = intrinsics.extern_fn_by_name(module, "gos_rt_stdout_acquire")?;
             let release_fn = intrinsics.extern_fn_by_name(module, "gos_rt_stdout_release")?;
@@ -744,7 +744,7 @@ pub(super) fn lower_intrinsic_call_io_math(
             let func_id = if let Some(id) = intrinsics.functions.get(name).copied() {
                 id
             } else if let Some(id) = intrinsics.externs.get(name.as_str()).copied() {
-                // Runtime extern symbol — `gos_rt_router_serve` and
+                // Runtime extern symbol - `gos_rt_router_serve` and
                 // the other stateful-type serve dispatchers are
                 // declared via `extern_fn_by_name` at codegen init
                 // (loop over `gossamer_abi::REGISTRY`) and live in
@@ -834,7 +834,7 @@ pub(super) fn lower_intrinsic_call_io_math(
             // bodies that fall back when the LLVM lowerer rejects a
             // construct. Such a body heap-allocates its aggregates at
             // construction instead of copying them into provenance-set
-            // blobs, so these walks would only ever no-op — escaped
+            // blobs, so these walks would only ever no-op - escaped
             // aggregates inside a fallback body degrade to a bounded
             // leak (never a corruption: every release is set-gated).
             Ok(true)
@@ -891,7 +891,7 @@ pub(super) fn lower_intrinsic_call_io_math(
             Ok(true)
         }
         "gos_enum_load" => {
-            // Load i64 at ((ptr & !7) + off) — enum payload read; mask is
+            // Load i64 at ((ptr & !7) + off) - enum payload read; mask is
             // a no-op for header-repr (aligned) pointers.
             let p = match args.first() {
                 Some(arg) => {
@@ -941,7 +941,7 @@ pub(super) fn lower_intrinsic_call_io_math(
             Ok(true)
         }
         "gos_enum_tag" => {
-            // ptr | (disc << 1) — tagged-repr enum constructor finish.
+            // ptr | (disc << 1) - tagged-repr enum constructor finish.
             let p = match args.first() {
                 Some(arg) => {
                     lower_operand(module, builder, locals, body, tcx, arg, None, intrinsics)?
@@ -991,7 +991,7 @@ pub(super) fn lower_intrinsic_call_io_math(
             Ok(true)
         }
         "gos_enum_untag" => {
-            // ptr & !7 — payload base of a tagged enum pointer.
+            // ptr & !7 - payload base of a tagged enum pointer.
             let p = match args.first() {
                 Some(arg) => {
                     lower_operand(module, builder, locals, body, tcx, arg, None, intrinsics)?
@@ -1168,7 +1168,7 @@ pub(super) fn lower_intrinsic_call_io_math(
             let offset_raw = lower_operand(
                 module, builder, locals, body, tcx, &args[1], None, intrinsics,
             )?;
-            // See `gos_store` above — coerce both operands to i64
+            // See `gos_store` above - coerce both operands to i64
             // so the env-param's narrower inferred cl-type can't
             // mismatch the offset constant.
             let ptr_val = coerce_arg_to(builder, ptr_raw, types::I64).unwrap_or(ptr_raw);
@@ -1197,7 +1197,7 @@ pub(super) fn lower_intrinsic_call_io_math(
         "panic" => {
             // Route through `gos_rt_panic(msg)` after building a
             // single concatenated message from all arguments
-            // (mirrors `render_args` in the interpreter — pieces
+            // (mirrors `render_args` in the interpreter - pieces
             // joined by a single space). Multi-arg
             // `panic("code=", 42)` previously dropped every arg
             // after the first.
@@ -1405,7 +1405,7 @@ pub(super) fn lower_intrinsic_call_io_math(
             );
             Ok(true)
         }
-        // `std::time::now()` — opaque monotonic clock value. Cast
+        // `std::time::now()` - opaque monotonic clock value. Cast
         // a `libc::clock_gettime` result into an i64 ns-since-
         // epoch. For now, return 0 so programs that print the
         // current instant compile; the interpreter path already
@@ -1438,7 +1438,7 @@ pub(super) fn lower_intrinsic_call_io_math(
             );
             Ok(true)
         }
-        // `std::math::*` — all (f64) -> f64 except where noted.
+        // `std::math::*` - all (f64) -> f64 except where noted.
         "math::sqrt" | "math::sin" | "math::cos" | "math::ln" | "math::log" | "math::exp"
         | "math::abs" | "math::floor" | "math::ceil" => {
             let rt_name = match name {

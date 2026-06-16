@@ -12,12 +12,12 @@
 //!     coordinated fixes for aggregate parameter ABI, return ABI,
 //!     and dest-ty pinning.
 //!   - `result_unwrap_or_dispatch` (2026-04-30): LLVM treated a
-//!     `Result` aggregate as a flat slot — fasta looped forever.
+//!     `Result` aggregate as a flat slot - fasta looped forever.
 //!
 //! Every case below is a regression test for one of those classes.
 //! Each program runs in all three tiers (VM, Cranelift debug, LLVM
 //! release) and the captured stdout must match. Output is byte-equal
-//! across tiers — anything else trips the gate.
+//! across tiers - anything else trips the gate.
 
 #![allow(missing_docs)]
 
@@ -304,7 +304,7 @@ fn main() {
 
 #[test]
 fn option_struct_round_trip_through_callee() {
-    // `Option<Struct>` round-trip — the Option discriminant
+    // `Option<Struct>` round-trip - the Option discriminant
     // travels with an aggregate payload. Past regressions
     // (`compiler_bugs_round1`, `result_unwrap_or_dispatch`)
     // proved the aggregate Option/Result class is a hot spot.

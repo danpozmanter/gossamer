@@ -8,7 +8,7 @@
 //! than the highest recorded in `schema_migrations`. Each migration
 //! runs inside its own transaction so a failure leaves the schema
 //! at the previous version. Concurrent runners are protected by an
-//! advisory lock on `schema_migrations` — the first runner wins; the
+//! advisory lock on `schema_migrations` - the first runner wins; the
 //! others wait via the connection's busy-timeout.
 //!
 //! Usage:

@@ -54,13 +54,13 @@ use super::*;
 /// interpreter tier's `Arc` clone/drop semantics. This is the sound RC
 /// model: the strong count always equals the number of live references,
 /// so aliasing (`let b = a; let c = a`), returning a borrowed argument,
-/// storing into a struct, etc. are all handled by the counts — there is
+/// storing into a struct, etc. are all handled by the counts - there is
 /// no fragile move/escape/ownership inference to get wrong.
 ///
-/// Acquisitions (`+1`, emit a retain at the site) — any operation that
+/// Acquisitions (`+1`, emit a retain at the site) - any operation that
 /// creates a new reference to an RC value:
 /// - `to = Copy(from)` (binding/assignment, including into the return
-///   slot — that mints the caller's reference),
+///   slot - that mints the caller's reference),
 /// - `gos_store(obj, off, val)` (the heap object gains a child reference;
 ///   freed transitively when the object's refcount hits zero),
 /// - an aggregate operand / `Repeat` element (the struct/tuple/array
@@ -72,7 +72,7 @@ use super::*;
 /// Such locals are zeroed at entry so each release is null-safe on any
 /// path. Parameters are borrowed (the caller owns and releases them) and
 /// the return slot is transferred to the caller, so neither is released
-/// here — and because every new reference retains, this is balanced with
+/// here - and because every new reference retains, this is balanced with
 /// no callee-signature analysis.
 /// One field-level retain/release in the by-value-aggregate teardown:
 /// `(is_retain, aggregate_local, field_index, is_weak)`.
@@ -83,13 +83,13 @@ type FieldGap = (bool, Local, u32, bool);
 /// `A`'s type. A fixpoint, so chains (`A -> B -> C`) settle fully. Run before
 /// the RC passes so a `?` / `unwrap` extraction (typed from the scrutinee's
 /// substs) copied into an otherwise-`Var` binding is recognised as RC-managed
-/// and released — without it the extracted `String` leaks.
+/// and released - without it the extracted `String` leaks.
 pub(crate) fn propagate_copy_types(body: &mut Body, tcx: &gossamer_types::TyCtxt) {
     use gossamer_types::TyKind;
     let n = body.locals.len();
     let unresolved = |ty| matches!(tcx.kind_of(ty), TyKind::Var(_) | TyKind::Error);
     // Type of `base.Field(idx)`, seeing through one `&`. Used to flow a
-    // resolved aggregate's field type onto an otherwise-`Var` destination —
+    // resolved aggregate's field type onto an otherwise-`Var` destination -
     // e.g. `inner = Copy(a.Field(0))` once `a` is known to be a struct.
     let field_ty = |base_ty: gossamer_types::Ty, idx: u32| -> Option<gossamer_types::Ty> {
         let mut t = base_ty;
@@ -206,7 +206,7 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
             // Result/Option: `http::Response` (u32::MAX - 5) lowers as
             // an OPAQUE one-slot runtime handle and the heap-blob
             // sentinels (DirInfo/Output/ResponseStream) as one-slot
-            // pointers — per-field stack accounting over their
+            // pointers - per-field stack accounting over their
             // DECLARED field lists reads and releases past the 1-slot
             // alloca, clobbering adjacent stack memory.
             TyKind::Adt { def, .. } if def.local < u32::MAX - 16 && !tcx.is_inline_enum_ty(ty) => {
@@ -222,24 +222,24 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
         }
     };
     // (No early-out on `is_rc` locals alone: a function may only copy a
-    // borrowed RC *parameter* into its return slot — e.g. `fn id(t: Tree)
-    // -> Tree { t }` — which still needs a return-copy retain. The
+    // borrowed RC *parameter* into its return slot - e.g. `fn id(t: Tree)
+    // -> Tree { t }` - which still needs a return-copy retain. The
     // empty-work check after collecting retain/release sites handles the
     // genuine no-op case.)
 
     // Retain sites within statement sequences: `(block, stmt_idx,
-    // local, count)` — insert `count` retains of `local` just after the
+    // local, count)` - insert `count` retains of `local` just after the
     // statement. Collected first, applied after the release edits so
     // statement indices stay valid.
     // Self-accumulation copy-backs from the in-place string builder:
     // `tmp = gos_rt_str_concat_drop_a(s, frag)` (a block's Call terminator)
-    // whose result is copied straight back — `s = Copy(tmp)` as the first
+    // whose result is copied straight back - `s = Copy(tmp)` as the first
     // statement of the successor block. `concat_drop_a` consumes `s`'s old
     // buffer (appends in place, or reallocates and frees it) and returns the
     // new one, so this copy-back is a move that *replaces* `s`: it must NOT
     // retain `tmp` (that would drive the reused buffer's count above 1 and
-    // force every append onto the copy-on-write path — O(n^2)) and must NOT
-    // release the old `s` (already owned/freed by the call — double-free).
+    // force every append onto the copy-on-write path - O(n^2)) and must NOT
+    // release the old `s` (already owned/freed by the call - double-free).
     // The `(succ_block, 0)` of each such copy-back is recorded here.
     let mut copyback_sites: std::collections::HashSet<(usize, usize)> =
         std::collections::HashSet::new();
@@ -257,7 +257,7 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
             && destination.projection.is_empty()
             && let Some(Operand::Copy(arg0)) = args.first()
         {
-            // The self-consuming append accumulator is `arg0` — a bare local
+            // The self-consuming append accumulator is `arg0` - a bare local
             // (`acc`) or a `&mut String` deref place (`*s`). The copy-back
             // stores `tmp` straight back into that same place; recognising it
             // (by matching both the local AND the projection) keeps the
@@ -282,7 +282,7 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
     // `&mut String` ref produced for the call): a copy-back, not a fresh
     // reassignment. The callee already released the value `L` previously held
     // (its `*R = …` displaced it through the slot), so the release-before-
-    // reassignment that would otherwise fire for `L` must be suppressed — else
+    // reassignment that would otherwise fire for `L` must be suppressed - else
     // it double-frees. The reload itself takes no retain (its source is a
     // borrowed deref), so adding it here only cancels the spurious release.
     for (bi, block) in body.blocks.iter().enumerate() {
@@ -315,7 +315,7 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
     // vec's element, not the transferred single reference a consumed
     // `Result` hands to `?` / `unwrap()`. A `String` payload extracted
     // from one of these must RETAIN (the binding takes its own share;
-    // the vec's `elem_kind` deep-free keeps the vec's), never move —
+    // the vec's `elem_kind` deep-free keeps the vec's), never move -
     // moving released the vec's only share and the deep-free at
     // `gos_rt_vec_free` then double-freed it.
     let mut borrowed_enum_src = vec![false; n_locals];
@@ -381,12 +381,12 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
     // Word-slot element loads out of a vec the CONTAINER still owns: the
     // `gos_rt_vec_get_i64` destination of a for-loop / index read. When the
     // loop lowering's element-type pin did not reach (`for s in
-    // strings::split(...)` — a free-call iter expression), the destination
+    // strings::split(...)` - a free-call iter expression), the destination
     // local is typed i64 and `rc_operand` cannot see the String underneath,
     // so the copy into a String-typed binding neither mints a share nor
     // schedules a release. The binding's release (or the caller's, when the
     // value is returned) then collides with the vec's `elem_kind` deep-free
-    // — a double free. The retain/owned arms below mint a share for any
+    // - a double free. The retain/owned arms below mint a share for any
     // String-typed binding copied from one of these destinations, mirroring
     // the `borrowed_enum_src` extraction contract.
     let mut borrowed_word_elem_src = vec![false; n_locals];
@@ -416,7 +416,7 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
     // Locals holding a `String` payload freshly extracted from a consumed
     // by-value `Result`/`Option` (`f()?`, `r.unwrap()`). The extraction yields
     // the single owning reference the enum held, so copying it into the binding
-    // (`let s = f()?`) must MOVE rather than retain — a retain there leaves the
+    // (`let s = f()?`) must MOVE rather than retain - a retain there leaves the
     // extracted reference dangling once the binding is released (a leak).
     // Restricted to `String` payloads: an aggregate (`Adt`) payload carries
     // nested-RC fields whose release is balanced by the copy retain, so moving
@@ -424,7 +424,7 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
     let mut extraction_results = vec![false; n_locals];
     // Locals whose every whole-local assignment is a CONSTANT (the
     // tagged-null unit-variant representation, null-outs): such values
-    // are immortal-by-construction — retaining/releasing them is a
+    // are immortal-by-construction - retaining/releasing them is a
     // guaranteed runtime no-op, so skip emitting the calls at all.
     let mut saw_const_assign = vec![false; n_locals];
     let mut saw_other_assign = vec![false; n_locals];
@@ -437,7 +437,7 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
                 // Only INTEGER constants qualify: the tagged-null
                 // unit-variant representation and null-outs. A string
                 // literal is a real heap-shaped value whose holders
-                // retain it — eliding those desynchronizes the
+                // retain it - eliding those desynchronizes the
                 // accounting.
                 if matches!(rvalue, Rvalue::Use(Operand::Const(ConstValue::Int(_)))) {
                     saw_const_assign[place.local.0 as usize] = true;
@@ -454,7 +454,7 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
         }
     }
     // Parameters and the return slot receive their values from the
-    // caller — never const-only, regardless of body-local assignments.
+    // caller - never const-only, regardless of body-local assignments.
     let const_init_only: Vec<bool> = (0..n_locals)
         .map(|i| i > body.arity as usize && saw_const_assign[i] && !saw_other_assign[i])
         .collect();
@@ -468,7 +468,7 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
     let mut stored_into_aggregate = vec![false; n_locals];
     {
         use gossamer_types::TyKind;
-        // A `String` payload (or one left unresolved as `Var` — the nested
+        // A `String` payload (or one left unresolved as `Var` - the nested
         // `?` in a function whose own return type doesn't pin the Ok type, so
         // inference never settles the extraction local). Aggregate (`Adt`)
         // payloads are excluded; even if one slips through as `Var`, the
@@ -495,7 +495,7 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
                 };
                 match rvalue {
                     Rvalue::CallIntrinsic { name, args } => {
-                        // Borrowed-slot extractions are NOT moves — see
+                        // Borrowed-slot extractions are NOT moves - see
                         // `borrowed_enum_src`.
                         if *name == "gos_rt_result_payload"
                             && place.projection.is_empty()
@@ -590,7 +590,7 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
                     // moved into a binding that is NOT itself stored into an
                     // aggregate. A stored binding keeps the retain (the store
                     // consumes one reference, the binding release drops the
-                    // other) — see `stored_into_aggregate`.
+                    // other) - see `stored_into_aggregate`.
                     let skip_extraction_move = rc_operand(op).is_some_and(|l| {
                         extraction_results[l.0 as usize]
                             && !(place.projection.is_empty()
@@ -604,7 +604,7 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
                     }
                     // A String-typed binding copied from an untyped borrowed
                     // word-slot element (see `borrowed_word_elem_src`): mint
-                    // the binding's share here — the vec's deep-free keeps
+                    // the binding's share here - the vec's deep-free keeps
                     // the container's. `rc_operand` is None for these (the
                     // source local is typed i64), so this never doubles the
                     // retain above.
@@ -620,7 +620,7 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
                         retain_sites.push((block_idx, stmt_idx, p.local, 1));
                     }
                 }
-                // Storing an RC child into a heap object — the object
+                // Storing an RC child into a heap object - the object
                 // gains a reference (released via its type-meta on free).
                 Rvalue::CallIntrinsic { name, args } if *name == "gos_store" => {
                     if let Some(l) = args.get(2).and_then(&rc_operand) {
@@ -629,7 +629,7 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
                 }
                 // `dest = gos_enum_tag(src, disc)` is an IDENTITY alias of
                 // the same allocation (the tag bits live in the pointer):
-                // ownership-wise it is `dest = Copy(src)` — retain the
+                // ownership-wise it is `dest = Copy(src)` - retain the
                 // source (move elision transfers instead when this is its
                 // only read).
                 Rvalue::CallIntrinsic { name, args } if *name == "gos_enum_tag" => {
@@ -642,14 +642,14 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
                 // return or is unwrapped by `?`), so the payload is
                 // acquired here. Without this, `Ok(J::Obj(ps))` released the
                 // enum payload while the returned Result still pointed at
-                // it — a use-after-free that dropped a node from every
+                // it - a use-after-free that dropped a node from every
                 // `self.parse()?`-built tree.
                 Rvalue::CallIntrinsic { name, args } if *name == "gos_rt_result_new" => {
                     if let Some(l) = args.get(1).and_then(&rc_operand) {
                         retain_sites.push((block_idx, stmt_idx, l, 1));
                     }
                 }
-                // Aggregate fields / repeated elements — the
+                // Aggregate fields / repeated elements - the
                 // struct/tuple/array gains a reference per slot.
                 Rvalue::Aggregate { operands, .. } => {
                     for op in operands {
@@ -671,7 +671,7 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
             && is_consuming_call(name)
         {
             // arg0 is the container/channel/closure RECEIVER (borrowed, mutated
-            // in place) — only the value argument(s) (arg1..) are consumed and
+            // in place) - only the value argument(s) (arg1..) are consumed and
             // gain a stored reference. Retaining the receiver too (now that it
             // is RC-managed) would over-retain it and leak it.
             for arg in args.iter().skip(1) {
@@ -690,7 +690,7 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
     // - `to = Copy(from)` of an RC value (retained above).
     // Values *loaded* from a structure (`gos_load`, match-arm bindings,
     // field/index reads) or returned by a runtime accessor are interior
-    // borrows — the containing object still owns them, so releasing them
+    // borrows - the containing object still owns them, so releasing them
     // here would double-free. They are excluded.
     // Locals that are the source of a bare `x = Copy(y)` statement: the copy
     // *target* becomes the owner. Used below to decide whether a by-value enum
@@ -700,7 +700,7 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
     // Locals that are the destination of a bare `L = Copy(..)`. With
     // `copy_sourced` this flags an enum value that is aliased (copied to/from
     // another binding); its by-value payload pointer is then shared, so no
-    // extraction may own/release it — matching both aliases would otherwise
+    // extraction may own/release it - matching both aliases would otherwise
     // double-free the one payload.
     let mut copy_target = vec![false; n_locals];
     for block in &body.blocks {
@@ -724,7 +724,7 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
     // release (the `owned` `gos_rt_result_payload` arm below) needs its
     // own share: retain at the extraction site so the binding's release
     // and the container's element deep-free are both balanced. The
-    // gating mirrors that `owned` arm exactly — retain iff a release
+    // gating mirrors that `owned` arm exactly - retain iff a release
     // will be scheduled.
     for (block_idx, block) in body.blocks.iter().enumerate() {
         for (stmt_idx, stmt) in block.stmts.iter().enumerate() {
@@ -780,7 +780,7 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
                     // frame owns it and must release it; the enum value itself
                     // frees nothing. When the extraction is copied into a
                     // binding (`let x = to_json()?`), that binding owns it (the
-                    // `Use(Copy)` arm below) — so this arm excludes
+                    // `Use(Copy)` arm below) - so this arm excludes
                     // `copy_sourced` to avoid double-freeing the autoderive path.
                     // A `String` payload moved out of a consumed by-value
                     // `Result`/`Option`/inline enum (`match o { Some(s) => … }`)
@@ -788,7 +788,7 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
                     // frame owns it and must release it; the enum value itself
                     // frees nothing. When the extraction is copied into a
                     // binding (`let x = to_json()?`), that binding owns it (the
-                    // `Use(Copy)` arm below) — so this arm excludes
+                    // `Use(Copy)` arm below) - so this arm excludes
                     // `copy_sourced` to avoid double-freeing the autoderive path.
                     Rvalue::CallIntrinsic { name, args }
                         if *name == "gos_rt_result_payload"
@@ -881,7 +881,7 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
             // `gos_store` may hand back an interior borrow it still owns,
             // so do not treat that as owned. `gos_load` appears in
             // terminator position (not just as a `CallIntrinsic`
-            // statement) when it sits at a block boundary — e.g. the
+            // statement) when it sits at a block boundary - e.g. the
             // element load of a `for x in xs` loop body. Releasing such a
             // borrow frees a value the container still owns (double-free /
             // use-after-free on the next iteration).
@@ -900,7 +900,7 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
                 _ => true,
             };
             // Region-owned call results (e.g. a tree built inside a region
-            // block) are freed at pop — never release them here.
+            // block) are freed at pop - never release them here.
             if owns_return && i < n_locals && !body.locals[i].region {
                 owned[i] = true;
             }
@@ -1017,7 +1017,7 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
     // owned here and not moved out. Each surviving new reference was
     // retained above, so releasing every owner keeps the count balanced.
     // A local whose value flows into the return slot must NOT be released here
-    // — the caller receives and owns it (else an owned producer result that is
+    // - the caller receives and owns it (else an owned producer result that is
     // returned would be freed at scope AND by the caller). Backward closure
     // from `Local::RETURN` over bare `Copy` and aggregate-operand edges.
     let mut flows_to_return = vec![false; n_locals];
@@ -1110,7 +1110,7 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
     }
     // Field-extract `X = Copy(Y.field)` of an RC field: X holds a fresh
     // reference to the field value, so retain it. Added after move-elision
-    // filtering so it always fires — Y still owns its own copy of the field
+    // filtering so it always fires - Y still owns its own copy of the field
     // and releases it when Y dies.
     for (block_idx, block) in body.blocks.iter().enumerate() {
         for (stmt_idx, stmt) in block.stmts.iter().enumerate() {
@@ -1133,7 +1133,7 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
     // Aggregate locals that are BORROWS of a container element: the
     // `for p in &v` loop variable, whose value is `Copy`-ed from a
     // `gos_rt_vec_get_ptr` interior pointer the vec still owns. Such a
-    // local must NOT release the element's RC fields — the container (or
+    // local must NOT release the element's RC fields - the container (or
     // the by-value aggregate that was pushed into it) owns them, so a
     // per-field release here double-frees with the owner's release. The
     // get_ptr result type is a raw element pointer, so the copy-on-load
@@ -1156,7 +1156,7 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
             }
         }
         // A whole-local assignment that is neither a bare `Copy` nor the
-        // get_ptr terminator gives the local an owned value — disqualify.
+        // get_ptr terminator gives the local an owned value - disqualify.
         // Collect the copy sources so the fixpoint can require every one
         // to itself be a borrow.
         let mut disqualified = vec![false; n_locals];
@@ -1243,7 +1243,7 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
         .collect();
 
     // Parallel to `gaps`, but each entry is (is_retain, local, field_index,
-    // is_weak) — a retain/release of one RC field of a by-value aggregate.
+    // is_weak) - a retain/release of one RC field of a by-value aggregate.
     let mut field_gaps: Vec<Vec<Vec<FieldGap>>> = body
         .blocks
         .iter()
@@ -1252,7 +1252,7 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
 
     for bi in 0..n_blocks {
         let len = body.blocks[bi].stmts.len();
-        // Release before each stmt-position reassignment of an owner — for
+        // Release before each stmt-position reassignment of an owner - for
         // ANY rvalue, not just `gos_rc_alloc`. A named binding rebound in a
         // loop (`let t = build(d)`, where the build result is `Copy`-ed into
         // `t`) must release the previous iteration's value before it is
@@ -1269,7 +1269,7 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
                 gaps[bi][si].push((false, place.local));
             }
         }
-        // Release before a Call-terminator reassignment of an owner — unless
+        // Release before a Call-terminator reassignment of an owner - unless
         // the call *consumes* the old value of that same local. The in-place
         // string builder `s = gos_rt_str_concat_drop_a(s, frag)` reads `s`,
         // appends in place (or reallocates and frees the old buffer), and
@@ -1337,9 +1337,9 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
                 // Struct copy `dest = Copy(src)` where `src` is an aggregate:
                 // `dest` shares each RC field pointer, so retain them after the
                 // copy. Keyed on the SOURCE being an aggregate (not on `dest`
-                // being a managed local) so a copy into the return slot — which
+                // being a managed local) so a copy into the return slot - which
                 // transfers the value to the caller while the source local is
-                // released at this return — keeps the fields alive.
+                // released at this return - keeps the fields alive.
                 if let Rvalue::Use(Operand::Copy(src)) = rvalue
                     && src.projection.is_empty()
                     && (src.local.0 as usize) < body.locals.len()
@@ -1363,7 +1363,7 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
             }
         }
         // A call that reassigns an owned aggregate local (`h = make()`) must
-        // release the previous value's RC fields first — the statement-position
+        // release the previous value's RC fields first - the statement-position
         // release above only sees `Assign`, not a call-terminator destination.
         if let Terminator::Call { destination, .. } = &block.terminator
             && destination.projection.is_empty()
@@ -1687,7 +1687,7 @@ pub(crate) fn insert_aggr_copy_drops(body: &mut Body, tcx: &gossamer_types::TyCt
     // destination's type unresolved (`Ok(S { .. })` through a `Var`
     // temp): without the classification, the temp's sweep release is
     // never emitted and the payload blob leaves the function one count
-    // high — pinned in the collector buffer, one leak per call.
+    // high - pinned in the collector buffer, one leak per call.
     let mut mint_holders = vec![false; n_locals];
     for block in &body.blocks {
         for stmt in &block.stmts {
@@ -1984,7 +1984,7 @@ const SLOT_KIND_RC_NODE: i64 = 7;
 /// own. `gate` is `-1` for an unconditional pointer field, or the
 /// discriminant value gating an `Option`/`Result` payload word. Sets
 /// `has_direct` when an unconditional (non-`Option`/`Result`) RC field is
-/// present — the signal that the element needs the `AGGR_OWNED` path
+/// present - the signal that the element needs the `AGGR_OWNED` path
 /// rather than the copy-blob-only `AGGR_GUARDED` path. Recurses through
 /// nested inline struct / tuple fields at absolute word offsets.
 fn collect_slot_rc_children(
@@ -2118,8 +2118,8 @@ fn ensure_slot_children_meta(
 /// Type-driven on the construction destination, so it covers literals,
 /// `Vec::new`, `with_capacity`, and array->Vec coercions uniformly.
 ///
-/// Elements that carry an unconditional (non-`Option`/`Result`) RC field
-/// — a `String`, nested vec, or user enum/struct heap pointer — instead
+/// Elements that carry an unconditional (non-`Option`/`Result`) RC field -
+/// a `String`, nested vec, or user enum/struct heap pointer - instead
 /// take the `AGGR_OWNED` path (`gos_rt_vec_set_slot_children`): the vec
 /// owns those children, retaining them on push and deep-freeing them on
 /// free, so a by-value element pushed in and then dropped at its source
@@ -2197,7 +2197,7 @@ pub(crate) fn insert_vec_elem_metas(body: &mut Body, tcx: &mut gossamer_types::T
         }
     }
 
-    // Guarded copy-blob meta of a vec element — but only when the element
+    // Guarded copy-blob meta of a vec element - but only when the element
     // did NOT take the owned path (the owned layout already covers every
     // RC child, including `Option`/`Result` payloads).
     let elem_meta_of = |l: Local| -> Option<String> {
@@ -2358,8 +2358,8 @@ pub(crate) fn insert_vec_elem_metas(body: &mut Body, tcx: &mut gossamer_types::T
 /// `insert_aggr_copy_drops`). For each candidate it finds the blocks
 /// from whose exit no further *real* mention of the local is reachable
 /// (accounting intrinsics and constant stores don't count), inserts the
-/// matching release right after the last mention — or at the head of
-/// each successor when the last mention is the terminator — and nulls
+/// matching release right after the last mention - or at the head of
+/// each successor when the last mention is the terminator - and nulls
 /// the local out. The return-block releases stay in place as a null-safe
 /// backstop, so a path this analysis misses leaks nothing and a path it
 /// covers cannot double-release.
@@ -2373,7 +2373,7 @@ type PendingRelease = (usize, Local, &'static str, Option<String>);
 
 pub(crate) fn insert_early_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) {
     // Locals whose by-value Result/Option payload is extracted with
-    // `gos_rt_result_payload` anywhere in the body — their slot
+    // `gos_rt_result_payload` anywhere in the body - their slot
     // releases must stay at the return sweep (see the candidate match
     // below).
     let extracted_from: std::collections::HashSet<u32> = body
@@ -2407,7 +2407,7 @@ pub(crate) fn insert_early_releases(body: &mut Body, tcx: &gossamer_types::TyCtx
     // hands a fresh share to a holder that was just initialised from
     // this local), so retains MUST count as mentions: inserting the
     // early release+null between a store and its follow-up retain made
-    // the retain see null — the new holder never got its share and the
+    // the retain see null - the new holder never got its share and the
     // node freed while still referenced.
     let accounting = |name: &str| -> bool {
         matches!(
@@ -2451,7 +2451,7 @@ pub(crate) fn insert_early_releases(body: &mut Body, tcx: &gossamer_types::TyCtx
                 // the body: the extraction BORROWS the payload blob's
                 // children (shared field pointers, no retains), and
                 // that borrow's lifetime is invisible to the mention
-                // analysis — the relocated release (typically right at
+                // analysis - the relocated release (typically right at
                 // the extraction) frees the blob under the borrower.
                 // Results that are never extracted-from keep early
                 // placement (Option-chain workloads rely on it to keep
@@ -2574,7 +2574,7 @@ pub(crate) fn insert_early_releases(body: &mut Body, tcx: &gossamer_types::TyCtx
                         let _ = args;
                     }
                     Rvalue::Use(Operand::Const(_)) => {
-                        // Constant (re)initialisation — the zero-init
+                        // Constant (re)initialisation - the zero-init
                         // pattern; not a use of the heap value.
                     }
                     Rvalue::Ref { place: rp, .. } => {
@@ -2604,7 +2604,7 @@ pub(crate) fn insert_early_releases(body: &mut Body, tcx: &gossamer_types::TyCtx
                     Rvalue::Aggregate { operands, .. } => {
                         // An aggregate literal (fixed array, tuple) copies
                         // heap POINTERS out of its operands without
-                        // retaining them — the aggregate borrows the
+                        // retaining them - the aggregate borrows the
                         // operand locals' shares. Releasing an operand at
                         // its last textual mention would free a node the
                         // aggregate still references, so pin operands to
@@ -2844,7 +2844,7 @@ pub(crate) fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyC
     // inside `gos_rt_aggr_free` makes this a no-op on the first
     // assignment (the local holds 0/null pre-init) and reclaims
     // the previous allocation on every subsequent assignment
-    // — closing the loop-body aggregate-leak case.
+    // - closing the loop-body aggregate-leak case.
     let mut drop_before_sites: Vec<(usize, usize, Local, i64)> = Vec::new();
 
     let ctor_to_free = |name: &str| -> Option<&'static str> {
@@ -2858,7 +2858,7 @@ pub(crate) fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyC
             | "gos_rt_set_difference"
             | "gos_rt_set_symmetric_difference" => Some("gos_rt_set_free"),
             "gos_rt_btmap_new" => Some("gos_rt_btmap_free"),
-            // Iterator over a Vec — the destination local is typed as
+            // Iterator over a Vec - the destination local is typed as
             // the source Vec so the `.next()` dispatch can recover the
             // element type. Without this entry the type-based
             // `inferred_free` path would schedule `gos_rt_vec_free` on
@@ -2913,7 +2913,7 @@ pub(crate) fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyC
                 // `Rvalue::Repeat` are NOT tracked here. The LLVM
                 // backend (used by `gos build`) lowers aggregates
                 // to stack slots that die with the function frame
-                // — no leak. The Cranelift backend (used by the
+                // - no leak. The Cranelift backend (used by the
                 // in-process JIT for `gos run`) routes them through
                 // `gos_rt_aggr_alloc`, which lives in the
                 // process-wide registry; long-running JIT bodies
@@ -2921,7 +2921,7 @@ pub(crate) fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyC
                 // reclaim. Emitting `gos_rt_aggr_free` here would
                 // double-free the stack slot under LLVM, which is
                 // the default backend.
-                // Re-assignment of an owning local — disqualify.
+                // Re-assignment of an owning local - disqualify.
                 if owner_ctor[idx].is_some() && !matches!(rvalue, Rvalue::CallIntrinsic { .. }) {
                     owner_ctor[idx] = None;
                 }
@@ -2941,7 +2941,7 @@ pub(crate) fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyC
                 continue;
             }
             // Any local of a heap-container type that's the
-            // destination of a Call also owns the result — the
+            // destination of a Call also owns the result - the
             // callee returned a freshly-allocated container that
             // this frame must drop unless it's then moved into
             // the return slot. Match by static type, since the
@@ -2949,7 +2949,7 @@ pub(crate) fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyC
             // doesn't telegraph ownership.
             //
             // A handful of runtime callees return *borrowed*
-            // pointers — `gos_rt_os_args` hands back the global
+            // pointers - `gos_rt_os_args` hands back the global
             // `ARGS_VEC` sentinel that lives for the whole
             // process; passing it to `gos_rt_vec_free` aborts in
             // `__libc_free` on the next-pointer probe. Skip the
@@ -2999,7 +2999,7 @@ pub(crate) fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyC
             );
             // note: Call destinations of aggregate
             // type are not tracked here. See the matching comment in
-            // the stmt-loop above — LLVM uses stack slots, Cranelift
+            // the stmt-loop above - LLVM uses stack slots, Cranelift
             // JIT uses tracked heap allocs reclaimable via
             // `gos_rt_gc_reset` at safepoints.
             let _ = dest_is_aggregate;
@@ -3038,13 +3038,13 @@ pub(crate) fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyC
                     // An aggregate moves each `Copy` operand into
                     // the constructed value's storage. If the
                     // aggregate later flows to RETURN, every
-                    // moved-in source local must skip its drop —
+                    // moved-in source local must skip its drop -
                     // its allocation is now owned by the caller via
                     // the returned aggregate. Without this edge,
                     // a `let v = Vec::new(); push(v, ...); Foo {
                     // ids: v }` body emits a `gos_rt_vec_free(v)`
                     // before Return, freeing storage that the
-                    // returned struct's `ids` field still aliases —
+                    // returned struct's `ids` field still aliases -
                     // the caller's `f.ids.len()` then reads garbage.
                     Rvalue::Aggregate { operands, .. } => {
                         for op in operands {
@@ -3081,7 +3081,7 @@ pub(crate) fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyC
     // Calls whose destination flows into `Local::RETURN` move every
     // pointer-shaped Copy argument into the return value too. Tuple
     // construction in particular lowers as a synthesised
-    // `__tuple(...)` Call — the Vec/aggregate operands are moved
+    // `__tuple(...)` Call - the Vec/aggregate operands are moved
     // into the constructed value, so they must skip their drop.
     // Iterate to a fixed point because a moved-in Call destination
     // can propagate the same closure backwards through more Copy
@@ -3093,8 +3093,8 @@ pub(crate) fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyC
         // arg list when its destination already flows there.
         // Used for both Terminator::Call and Rvalue::CallIntrinsic
         // (the result-ctor / aggregate-helper paths route through
-        // the Rvalue form), so the same chain — Vec → struct
-        // operand → gos_rt_result_new → Local::RETURN — is walked
+        // the Rvalue form), so the same chain - Vec → struct
+        // operand → gos_rt_result_new → Local::RETURN - is walked
         // back to the Vec and skips its drop.
         let propagate_call_args = |args: &[Operand], moved: &mut Vec<bool>, changed: &mut bool| {
             for arg in args {
@@ -3144,7 +3144,7 @@ pub(crate) fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyC
                     // `J::Arr(v)` stored as `gos_store(arr, 8, v)` then
                     // `return arr`), `val` escapes with it. Freeing `val`
                     // here would dangle the returned object's child
-                    // pointer — exactly the `Vec`-in-enum crash.
+                    // pointer - exactly the `Vec`-in-enum crash.
                     if *name == "gos_store"
                         && let Some(Operand::Copy(obj_p)) = args.first()
                         && obj_p.projection.is_empty()
@@ -3175,11 +3175,11 @@ pub(crate) fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyC
             // `gos_rt_vec_push(container, elem)`: the element's heap
             // ownership moves into the container, which deep-frees its
             // elements on drop or carries them to the caller when
-            // returned — either way an independent drop here would
+            // returned - either way an independent drop here would
             // double-free / dangle. Mark unconditionally. Done inside the
             // fixpoint (not a separate pass) so a pushed enum's own
-            // escaped children — `inner` in `outer.push(J::Arr(inner))`,
-            // reached via the `gos_store` rule above — propagate through
+            // escaped children - `inner` in `outer.push(J::Arr(inner))`,
+            // reached via the `gos_store` rule above - propagate through
             // arbitrarily deep nesting.
             if let Terminator::Call { callee, args, .. } = &block.terminator
                 && let Operand::Const(ConstValue::Str(name)) = callee
@@ -3245,7 +3245,7 @@ pub(crate) fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyC
     // (zero-init + drop-before-overwrite + at-return, all null-safe) so a
     // container rebuilt each loop iteration frees every prior allocation
     // instead of leaking all but the last. Aliased locals (the source of a
-    // bare `Copy`) are left to the conservative return-only path — freeing one
+    // bare `Copy`) are left to the conservative return-only path - freeing one
     // before its reassignment could dangle the alias. Locals captured by a
     // call were already disqualified from `owner_ctor` in pass 1.
     // Conservative aliasing: a local that is the source of a bare `Copy`, or a
@@ -3299,7 +3299,7 @@ pub(crate) fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyC
     }
 
     // Per-target must-init dataflow. For each drop target `L`,
-    // compute `init_at_return[L][R]` — `true` when every path from
+    // compute `init_at_return[L][R]` - `true` when every path from
     // entry to Return block `R` passes through at least one
     // definition of `L`. A definition is a Call terminator whose
     // destination is `L` or a stmt-position assignment to `L`.
@@ -3315,7 +3315,7 @@ pub(crate) fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyC
     // joins (the "must-init" lattice). Drops are emitted only at
     // Return blocks where the target is must-init at the point of
     // return; cases where the proof is undecidable (irreducible
-    // CFG, complex loops) conservatively skip the drop — a leak
+    // CFG, complex loops) conservatively skip the drop - a leak
     // is preferable to a free of uninit memory.
     let init_at_return = compute_init_at_returns(body, &drop_targets);
 
@@ -3337,7 +3337,7 @@ pub(crate) fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyC
                 mutable: false,
                 region: false,
             });
-            // Emit the free as a CallIntrinsic stmt — the cranelift
+            // Emit the free as a CallIntrinsic stmt - the cranelift
             // lowerer's statement path handles it without any block
             // rewiring. `gos_rt_aggr_free` needs a second `size`
             // arg the codegen derives from the local's type; all
@@ -3369,7 +3369,7 @@ pub(crate) fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyC
 
     // drop-before-overwrite for aggregate
     // reassignments. Skip sites where the local is not provably
-    // initialised on every path leading to this statement —
+    // initialised on every path leading to this statement -
     // freeing an uninitialised aggregate local reads garbage from
     // the Cranelift Variable slot and aborts in `__libc_free`.
     //
@@ -3482,7 +3482,7 @@ pub(crate) fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyC
         }
         let free_of: std::collections::BTreeMap<u32, &'static str> =
             reuse.iter().map(|(l, f)| (l.0, *f)).collect();
-        // (block_idx, free_name, local) — each appended to the block's stmts,
+        // (block_idx, free_name, local) - each appended to the block's stmts,
         // i.e. just before its terminator.
         let mut sites: Vec<(usize, &'static str, Local)> = Vec::new();
         for (block_idx, block) in body.blocks.iter().enumerate() {
@@ -3540,7 +3540,7 @@ pub(crate) fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyC
 /// allocations for an accumulation loop over n elements.
 ///
 /// `gos_rt_str_concat_drop_a(out, frag)` reads both args, allocates the result,
-/// then frees `out` — safe because the free happens after the read. It no-ops
+/// then frees `out` - safe because the free happens after the read. It no-ops
 /// silently on null and rodata/literal `out` values.
 pub(crate) fn rewrite_str_concat_consuming(body: &mut Body) {
     let n_blocks = body.blocks.len();
@@ -3582,7 +3582,7 @@ pub(crate) fn rewrite_str_concat_consuming(body: &mut Body) {
             continue;
         }
         // Otherwise: check that the successor block's FIRST statement copies
-        // `tmp` back into `src` — the copy-back pattern.
+        // `tmp` back into `src` - the copy-back pattern.
         let Some(succ_id) = target else { continue };
         let succ_idx = succ_id.0 as usize;
         if succ_idx >= n_blocks {
@@ -3710,8 +3710,8 @@ pub(crate) fn compute_init_at_returns(
 
     let target_locals: Vec<u32> = targets.iter().map(|(l, _)| l.0).collect();
 
-    // init_in[B][t] — must-init at entry of B.
-    // init_out[B][t] — must-init after all of B's stmts (used at
+    // init_in[B][t] - must-init at entry of B.
+    // init_out[B][t] - must-init after all of B's stmts (used at
     // the Return point for Return-terminated blocks).
     let mut init_in = vec![vec![false; n_targets]; n_blocks];
     let mut init_out = vec![vec![false; n_targets]; n_blocks];
@@ -3762,7 +3762,7 @@ pub(crate) fn compute_init_at_returns(
                 // Transfer: pick up stmt defs that fire before any
                 // terminator-position read. The Return point reads
                 // *after* stmts but the terminator itself is the
-                // return — so `init_out` for a Return block sees
+                // return - so `init_out` for a Return block sees
                 // stmt defs from this block.
                 let new_out = new_in || stmt_defs[i][t];
                 if new_in != init_in[i][t] || new_out != init_out[i][t] {
@@ -3778,7 +3778,7 @@ pub(crate) fn compute_init_at_returns(
     // *point of return*. Return blocks read `init_out[B]` (defs in
     // this block's stmts count); non-Return blocks see the value
     // they would have at the terminator boundary, which callers
-    // ignore — the drop pass only consults Return blocks.
+    // ignore - the drop pass only consults Return blocks.
     for i in 0..n_blocks {
         out[i].clone_from(&init_out[i]);
     }
@@ -3810,13 +3810,13 @@ pub(crate) fn block_successors(t: &Terminator) -> Vec<BlockId> {
 /// ```
 ///
 /// the reassignment sits AFTER the next value has been built, so the
-/// old and new structures coexist — for binary-trees-style workloads
+/// old and new structures coexist - for binary-trees-style workloads
 /// that doubles transient RSS. This pass walks back from each
 /// `release(x); x = Copy(tmp)` pair through the unique-predecessor
 /// chain to x's last mention, and inserts `release(x); x = null`
 /// right after it. The original release stays as a null-safe
 /// backstop (releasing null is a no-op), so a missed hoist can only
-/// keep the old timing — never double-free.
+/// keep the old timing - never double-free.
 pub(crate) fn hoist_loop_carried_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) {
     let n_locals = body.locals.len();
     let n_blocks = body.blocks.len();
@@ -4005,7 +4005,7 @@ pub(crate) fn hoist_loop_carried_releases(body: &mut Body, tcx: &gossamer_types:
                     break;
                 }
                 // At a join (e.g. a loop head: entry edge + back edge),
-                // follow the back edge — the highest-numbered
+                // follow the back edge - the highest-numbered
                 // predecessor, i.e. the loop body's bottom. This is
                 // sound because the original release stays in place as
                 // a null-safe backstop: paths that bypass the hoisted
@@ -4027,7 +4027,7 @@ pub(crate) fn hoist_loop_carried_releases(body: &mut Body, tcx: &gossamer_types:
                 if term_mentions(pterm, x) {
                     // Terminator-position mention (e.g. a call arg):
                     // inserting after a terminator means a successor
-                    // head, and `cur`'s head IS that point — but only
+                    // head, and `cur`'s head IS that point - but only
                     // when the mention is the unique pred's terminator
                     // and x is not its destination. Insert at the head
                     // of `cur`.
@@ -4042,14 +4042,14 @@ pub(crate) fn hoist_loop_carried_releases(body: &mut Body, tcx: &gossamer_types:
             };
             // Hoisting to the immediate predecessor position of the
             // original release is a no-op; skip. (`usize::MAX` is the
-            // head-of-block sentinel for terminator mentions — always
+            // head-of-block sentinel for terminator mentions - always
             // a real hoist, and `+ 1` on it would overflow.)
             if mb == bi && ms != usize::MAX && ms + 1 >= si {
                 continue;
             }
             // Forward-liveness guard. The hoisted release NULLS `x`, so it
             // is only sound when `x` is dead from the insertion point until
-            // its next write on EVERY path — not just the single back-edge
+            // its next write on EVERY path - not just the single back-edge
             // path the walk above verified. With a branch inside the loop
             // body (e.g. a group-match `for` loop that reads the key in one
             // arm and pushes it in another), `x` is read again past the
@@ -4163,7 +4163,7 @@ pub(crate) fn hoist_loop_carried_releases(body: &mut Body, tcx: &gossamer_types:
 /// (which borrow). Qualifying locals get `gos_rt_json_free` before
 /// each re-initialising call and at every return. Aliased, stored,
 /// returned, or user-call-passed handles keep today's (leaking)
-/// behaviour — a leak is recoverable, a dangling handle is not.
+/// behaviour - a leak is recoverable, a dangling handle is not.
 pub(crate) fn insert_json_frees(body: &mut Body, tcx: &gossamer_types::TyCtxt) {
     use gossamer_types::TyKind;
     let n_locals = body.locals.len();
@@ -4182,7 +4182,7 @@ pub(crate) fn insert_json_frees(body: &mut Body, tcx: &gossamer_types::TyCtxt) {
     let is_json_rt = |name: &str| name.starts_with("gos_rt_json_");
     // Whole-local handle moves (`v = Copy(tmp)` with both sides
     // JSON-typed): ownership transfers when the move is the source's
-    // ONLY value read and its only such move — the destination owns
+    // ONLY value read and its only such move - the destination owns
     // the handle, the source is never freed. Pre-scan to identify
     // them so the escape check below can treat the move as allowed.
     let jv: Vec<bool> = (0..n_locals)

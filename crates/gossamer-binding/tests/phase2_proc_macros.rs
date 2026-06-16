@@ -6,7 +6,7 @@
 //! The derive emits `FromGos`/`ToGos`/`SigType` impls that
 //! round-trip a Rust struct through `Value::Struct`. The
 //! attribute proc-macros are exercised indirectly through their
-//! generated `register_module!` calls — verifying the resulting
+//! generated `register_module!` calls - verifying the resulting
 //! module-table entries exist with the expected items.
 
 use gossamer_binding::{FromGos, GosError, GosStruct, ToGos, gos_blocking, gos_module};

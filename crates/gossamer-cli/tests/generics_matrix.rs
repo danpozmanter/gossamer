@@ -7,7 +7,7 @@
 //! 2026-04-28 `compiled_impl_method_dispatch.md` memo described
 //! a HashMap-mangling collision that surfaced exactly when the
 //! same generic-shaped routine was instantiated twice with
-//! different concrete types in one program — the class this
+//! different concrete types in one program - the class this
 //! file gates.
 //!
 //! Each test runs a single `.gos` source through all three
@@ -252,7 +252,7 @@ fn hashmap_and_vec_of_same_value_type_dont_collide() {
     // `HashMap<String, i64>` and `Vec<i64>` (i.e. `[i64]`)
     // both carry an `i64` payload through the runtime. A
     // collision in the value-type mangling shows up as one
-    // collection's getter dispatching the other's storage —
+    // collection's getter dispatching the other's storage -
     // a real bug class for the runtime accessor table.
     let src = r#"
 use std::collections::HashMap
@@ -323,7 +323,7 @@ fn apply(f: Fn(i64) -> i64, x: i64) -> i64 {
 fn main() {
     // HOF + closure that internally constructs an aggregate.
     // The closure builds a `Pair` as a local, sums its fields,
-    // and returns the i64 — exercising aggregate construction
+    // and returns the i64 - exercising aggregate construction
     // inside a closure body without crossing the indirect-call
     // ABI with an aggregate-by-value parameter or return.
     let pair_sum = |seed: i64| {

@@ -3,7 +3,7 @@ source: crates/gossamer-diagnostics/tests/snapshots.rs
 expression: rendered
 ---
 --- plain ---
-error[GP0017]: An expression nested past the parser's hard recursion limit. — here
+error[GP0017]: An expression nested past the parser's hard recursion limit. - here
 --- framed ---
 error[GP0017]: An expression nested past the parser's hard recursion limit.
   --> snap.gos:2:5

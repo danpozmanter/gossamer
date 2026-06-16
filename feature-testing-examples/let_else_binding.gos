@@ -1,4 +1,4 @@
-// `let PAT = expr else { diverge }` — the refutable-let-or-bail form. The
+// `let PAT = expr else { diverge }` - the refutable-let-or-bail form. The
 // pattern's bindings escape into the enclosing scope; the else block must
 // diverge (return / break / continue / panic). Desugars to a `match`, so it
 // runs identically on the VM, Cranelift, and LLVM tiers.

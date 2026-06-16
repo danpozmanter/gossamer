@@ -22,7 +22,7 @@ env:
   #
   # Setting RUSTUP_TOOLCHAIN makes the proxy always dispatch directly
   # to the named toolchain AND suppresses reading rust-toolchain.toml
-  # — eliminating the consistency check, the re-sync, the rust-src
+  # - eliminating the consistency check, the re-sync, the rust-src
   # download, and the race. Documented behavior:
   # https://rust-lang.github.io/rustup/overrides.html
   RUSTUP_TOOLCHAIN: 1.95.0
@@ -71,7 +71,7 @@ jobs:
       # discovered); macOS and Windows runners need explicit
       # discovery + env-var pointers. Both steps run BEFORE
       # `dtolnay/rust-toolchain@1.95.0` so its `$GITHUB_PATH`
-      # push of `~/.cargo/bin` is the last entry on PATH —
+      # push of `~/.cargo/bin` is the last entry on PATH -
       # without that ordering, a brew-managed `cargo` shim
       # (left by a stale `rustup-init` install on the macOS
       # runner image) gets resolved ahead of the rust toolchain
@@ -97,7 +97,7 @@ jobs:
           $ErrorActionPreference = 'Stop'
           # The upstream LLVM Windows installer (wrapped by the
           # chocolatey `llvm` package) ships a slim distribution:
-          # clang / clang-cl / clang-tidy / lld / llvm-ar — but
+          # clang / clang-cl / clang-tidy / lld / llvm-ar - but
           # NOT `opt.exe` or `llc.exe`, the two binaries our
           # codegen pipeline drives. Pull the full toolchain from
           # MSYS2's `mingw-w64-x86_64-llvm` package, which is
@@ -185,7 +185,7 @@ jobs:
           which rustup || true
           rustup_bin="$HOME/.cargo/bin/rustup"
           if [ ! -x "$rustup_bin" ]; then
-            echo "::error::$rustup_bin missing — rust-toolchain action did not install rustup at the expected path"
+            echo "::error::$rustup_bin missing - rust-toolchain action did not install rustup at the expected path"
             ls -la "$HOME/.cargo/bin/" || true
             exit 1
           fi
@@ -198,12 +198,12 @@ jobs:
       # staticlib is emitted into `target/<profile>/` for both
       # debug and release; no explicit pre-build step needed.
       # Native build/run crates (`gos build` + `gos run`) run FIRST, serially,
-      # with live output and full diagnostics — ALWAYS, not only on failure.
+      # with live output and full diagnostics - ALWAYS, not only on failure.
       # These crates fork llc/linkers and execute freshly-built native
       # binaries, so a miscompile manifests as a test process killed by a
       # signal (SIGSEGV/SIGBUS on Unix; an access violation that drops the
       # whole runner on Windows). A parallel, captured run reports only
-      # "N targets failed" — the process dies before libtest names the test —
+      # "N targets failed" - the process dies before libtest names the test -
       # and the previous design parked the live re-run behind `if: failure()`,
       # which never executes when the crash takes the runner down with it.
       # `--test-threads=1 --nocapture` makes the culprit test the last
@@ -245,7 +245,7 @@ jobs:
           # process dying by a signal (SIGSEGV/SIGBUS on Unix; a Windows access
           # violation that can drop the whole runner). A single combined
           # `cargo test` runs the binaries concurrently, so their output
-          # interleaves and a crash reports only "N targets failed" — the
+          # interleaves and a crash reports only "N targets failed" - the
           # culprit is lost. One invocation per binary keeps every failure
           # attributed to a named target, and the per-binary log survives in the
           # uploaded artifacts even if the crash takes the runner down. Slower
@@ -273,12 +273,12 @@ jobs:
       # area groups so a failure on one platform lands in its own labelled,
       # collapsible log section instead of being buried in one giant block
       # after any platform-specific error. Each group is `if: !cancelled()`
-      # so a failure in an earlier group does not skip the later groups —
+      # so a failure in an earlier group does not skip the later groups -
       # every area still reports for the platform, and the job goes red if
       # any group fails. The native crates ran in the step above; the
       # final group is `--workspace --exclude` of everything already run,
       # so a newly added crate is always covered somewhere.
-      - name: Test — frontend (lex/parse/resolve/hir/types)
+      - name: Test - frontend (lex/parse/resolve/hir/types)
         if: ${{ !cancelled() }}
         shell: bash
         env:
@@ -289,7 +289,7 @@ jobs:
             -p gossamer-resolve -p gossamer-hir -p gossamer-types \
             -p gossamer-diagnostics \
             -- --nocapture
-      - name: Test — IR & codegen (mir/llvm/abi/binding)
+      - name: Test - IR & codegen (mir/llvm/abi/binding)
         if: ${{ !cancelled() }}
         shell: bash
         env:
@@ -299,7 +299,7 @@ jobs:
             -p gossamer-mir -p gossamer-codegen-llvm -p gossamer-abi \
             -p gossamer-binding -p gossamer-binding-macros \
             -- --nocapture
-      - name: Test — runtime & interpreter (runtime/interp/sched/coro)
+      - name: Test - runtime & interpreter (runtime/interp/sched/coro)
         if: ${{ !cancelled() }}
         shell: bash
         env:
@@ -309,7 +309,7 @@ jobs:
             -p gossamer-runtime -p gossamer-interp -p gossamer-sched \
             -p gossamer-coro \
             -- --nocapture
-      - name: Test — stdlib & tooling (rest of workspace)
+      - name: Test - stdlib & tooling (rest of workspace)
         if: ${{ !cancelled() }}
         shell: bash
         env:
@@ -410,7 +410,7 @@ jobs:
       # The contract this job enforces is per-target. The full Linux
       # cross targets (aarch64-gnu, riscv64-gnu) check the runtime
       # surface end-to-end. The wasm32 targets check only the truly
-      # platform-agnostic crates — rustls / corosensei / mio aren't
+      # platform-agnostic crates - rustls / corosensei / mio aren't
       # wasm-portable, so runtime / sched / binding / pkg can't be
       # asked to compile there.
       - name: cargo check (target-appropriate crate set)

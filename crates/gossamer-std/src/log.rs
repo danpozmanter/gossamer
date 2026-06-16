@@ -160,7 +160,7 @@ fn format_stamp(flags: u32) -> String {
     // civil is `Day, DD Mon YYYY HH:MM:SS GMT`.
     // For Go-compat, the standard format is YYYY/MM/DD HH:MM:SS.
     // We pull year/month/day out of the RFC1123 string we just
-    // produced — bounded, simple.
+    // produced - bounded, simple.
     let parts: Vec<&str> = civil.split(' ').collect();
     if parts.len() != 6 {
         return String::new();

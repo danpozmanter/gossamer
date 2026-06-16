@@ -67,7 +67,7 @@ impl<'a> Builder<'a> {
     ) -> Option<Local> {
         use gossamer_types::TyKind;
         // Re-derive locals the original lower_method_call computed
-        // earlier in its body — this helper was extracted from the
+        // earlier in its body - this helper was extracted from the
         // tail of that function and the captured-state plumbing is
         // simpler when the helper re-derives from what it already
         // has (receiver / receiver_local).
@@ -76,7 +76,7 @@ impl<'a> Builder<'a> {
             .map_or(receiver.ty, |local| self.locals[local.0 as usize].ty);
         let lowered_recv_ty = self.locals[receiver_local.0 as usize].ty;
         if sym.is_empty() {
-            // Identity method — just copy the receiver to the
+            // Identity method - just copy the receiver to the
             // destination. Lets `"lit".to_string()` lower
             // without involving the runtime.
             //
@@ -84,7 +84,7 @@ impl<'a> Builder<'a> {
             // own type rather than the method-call expression's
             // (often still unresolved) inference variable, so
             // downstream passes see a concrete `String` /
-            // `Vec<T>` / etc. — crucial for the binary-op
+            // `Vec<T>` / etc. - crucial for the binary-op
             // lowering in `lower_binary` to route `s + t`
             // through `gos_rt_str_concat`.
             //
@@ -93,14 +93,14 @@ impl<'a> Builder<'a> {
             // `Option<T>` and the unwrapped value is the
             // first generic argument. Dig into the receiver's
             // generic substitution so the destination is the
-            // inner `T` instead of the wrapper Adt — keeps
+            // inner `T` instead of the wrapper Adt - keeps
             // `println!("{v}")` of the unwrapped value on the
             // right scalar dispatch.
             // For Option/Result `unwrap`, default the inner to
             // i64 when neither the receiver type nor the call
             // expression's type knows the wrapped element. The
             // common case where neither has a concrete type is
-            // `m.get(k).unwrap()` for `HashMap<_, i64>` — the
+            // `m.get(k).unwrap()` for `HashMap<_, i64>` - the
             // type checker leaves both call expressions as
             // unresolved and the MIR has to assume something.
             let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
@@ -108,7 +108,7 @@ impl<'a> Builder<'a> {
             // when the receiver is a `Result<T, E>` / `Option<T>`
             // wrapper, then the LOWERED receiver's own MIR type
             // if it's already concrete (the pinned-`Call` path
-            // may have flattened the wrapper away — `let s =
+            // may have flattened the wrapper away - `let s =
             // fs::read_to_string(...).unwrap()` hits exactly
             // this shape now that `gos_rt_fs_read_to_string`
             // pins to `String`), and only as a last resort i64.
@@ -143,7 +143,7 @@ impl<'a> Builder<'a> {
                 // `json::as_str(v)` returned `Option<&str>`
                 // but the runtime hands back a raw c-string
                 // ptr typed `String`), the inner type IS the
-                // lowered receiver — there is no Option to
+                // lowered receiver - there is no Option to
                 // peel. Without this short-circuit the
                 // first_generic_of(receiver_ty) call below
                 // pulled the typechecker-side `&str` out of
@@ -171,7 +171,7 @@ impl<'a> Builder<'a> {
             // Same shape for `.map` / `.map_err` on a scalar:
             // when the inverse fix-up forced runtime_symbol
             // to identity for these names, the destination
-            // should also be the lowered scalar type — not
+            // should also be the lowered scalar type - not
             // the typechecker's Option<T> wrapper.
             let map_inner = matches!(method.name.as_str(), "map" | "map_err")
                 .then(|| {
@@ -188,7 +188,7 @@ impl<'a> Builder<'a> {
                 .then(|| self.second_generic_of(receiver_ty).unwrap_or(i64_ty));
             // For Option/Result identity unwraps, prefer the
             // generic argument over the call expression's HIR
-            // type — the latter is `Adt { Result, .. }` /
+            // type - the latter is `Adt { Result, .. }` /
             // `Adt { Option, .. }` if the type checker assumed
             // Wrapped semantics, but the compiled tier always
             // returns the inner value directly.
@@ -326,8 +326,8 @@ impl<'a> Builder<'a> {
                 self.tcx.intern(gossamer_types::TyKind::Vec(s))
             }
             "gos_rt_str_chars" => {
-                // Return shape is `Vec<char>` — one i64 codepoint per
-                // slot — so `for ch in s.chars()` reads each via
+                // Return shape is `Vec<char>` - one i64 codepoint per
+                // slot - so `for ch in s.chars()` reads each via
                 // `gos_rt_vec_get_i64` and binds a `char`.
                 let ch = self.tcx.intern(gossamer_types::TyKind::Char);
                 self.tcx.intern(gossamer_types::TyKind::Vec(ch))
@@ -340,7 +340,7 @@ impl<'a> Builder<'a> {
             }
             "gos_rt_str_strip_prefix" | "gos_rt_str_strip_suffix" => self.option_string_adt_ty(),
             "gos_rt_str_as_bytes" => {
-                // Return shape is `Vec<i64>` — the runtime
+                // Return shape is `Vec<i64>` - the runtime
                 // helper materialises one i64 slot per byte
                 // (zero-extended) so downstream `bytes[i]`
                 // indexing dispatches through the Slice/Vec
@@ -390,7 +390,7 @@ impl<'a> Builder<'a> {
             | "gos_rt_parse_i64" => self.tcx.int_ty(gossamer_types::IntTy::I64),
             // `m.get_or(k, default)` returns the stored value word.
             // For Vec-valued maps (`iter::group_by` results) that word
-            // is a vec pointer — pin the dest to the value type so
+            // is a vec pointer - pin the dest to the value type so
             // for-loops and indexing dispatch through the vec helpers
             // instead of treating it as a scalar.
             "gos_rt_map_get_or_i64"
@@ -588,7 +588,7 @@ impl<'a> Builder<'a> {
                     substs,
                 })
             }
-            // `reversed()` copies the receiver — preserve its
+            // `reversed()` copies the receiver - preserve its
             // element type so byte-packed (`Vec<u8>`) receivers
             // keep their stride-1 indexing downstream.
             "gos_rt_vec_reversed"
@@ -609,7 +609,7 @@ impl<'a> Builder<'a> {
                 }
                 // A `[T; N]` array receiver is coerced to a `GosVec` before the
                 // call, so the reversed copy is a heap `Vec<T>`, not a flat
-                // `[T; N]` — indexing the result as an inline array would read
+                // `[T; N]` - indexing the result as an inline array would read
                 // the GosVec header. `Vec` / `Slice` keep their own type.
                 match self.tcx.kind_of(flat).clone() {
                     TyKind::Array { elem, .. } => {
@@ -667,7 +667,7 @@ impl<'a> Builder<'a> {
                 if matches!(self.tcx.kind_of(t), TyKind::Adt { .. }) {
                     t
                 } else {
-                    // Receiver type lost — fall back to the lowered
+                    // Receiver type lost - fall back to the lowered
                     // local's MIR type so we still pin a Result/Adt
                     // when the typechecker handed us a Var. Without
                     // this the call's destination defaults to Var
@@ -683,7 +683,7 @@ impl<'a> Builder<'a> {
                     }
                 }
             }
-            // `result.ok_or(new_err)` — the returned Result's
+            // `result.ok_or(new_err)` - the returned Result's
             // first generic is the original Ok-payload type,
             // the second generic is the type of `new_err` (the
             // replacement). Build a fresh Result Adt from
@@ -759,7 +759,7 @@ impl<'a> Builder<'a> {
             // per-iteration drop treat it as a byte vec.
             "gos_rt_http_stream_next_chunk" => self.option_vec_u8_ty(),
             // `Request::send() -> Result<Response, errors::Error>`
-            // — same packed-i128 Result shape and sentinel Ok
+            // - same packed-i128 Result shape and sentinel Ok
             // payload as the `http::get` free call.
             "gos_rt_http_request_send" => self.result_response_error_adt_ty(),
             // Pin the iterator to the receiver's vec type so

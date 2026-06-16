@@ -21,20 +21,20 @@
 #    stdout. Any non-zero exit, missing marker, or runner-build
 #    failure is a hard fail.
 #
-# Designed to run from `exhaustive_test.sh` (it's slow — the
+# Designed to run from `exhaustive_test.sh` (it's slow - the
 # first run does a cargo build of the runner) but it can also be
 # invoked directly. Idempotent: a second run reuses the cached
 # runner workspace.
 #
 # Environment overrides:
-#   GOSSAMER_ROOT    — path to the gossamer source tree
+#   GOSSAMER_ROOT    - path to the gossamer source tree
 #                      (defaults to the script's parent).
-#   TUIGOOSE_ROOT    — path to the tuigoose source tree
+#   TUIGOOSE_ROOT    - path to the tuigoose source tree
 #                      (defaults to ${GOSSAMER_ROOT}/../tuigoose).
-#   GOSSAMER_CACHE   — runner-build cache root (defaults to a
+#   GOSSAMER_CACHE   - runner-build cache root (defaults to a
 #                      tempdir; the cargo target dir then lives
 #                      under <cache>/runners/<fp>/target/).
-#   KEEP_TEMP        — set to 1 to leave the synthesised project
+#   KEEP_TEMP        - set to 1 to leave the synthesised project
 #                      around after the test.
 
 set -euo pipefail

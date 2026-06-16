@@ -1545,7 +1545,7 @@
 
 
 <h1 id="migrating-from-rust-to-gossamer">Migrating from Rust to Gossamer<a class="headerlink" href="#migrating-from-rust-to-gossamer" title="Permanent link">&para;</a></h1>
-<p>Gossamer looks a lot like Rust — the lexical grammar, keyword list,
+<p>Gossamer looks a lot like Rust - the lexical grammar, keyword list,
 and item shape are deliberate references. The differences compress
 into a handful of rules.</p>
 <h2 id="differences-that-matter">Differences that matter<a class="headerlink" href="#differences-that-matter" title="Permanent link">&para;</a></h2>
@@ -1571,7 +1571,7 @@ into a handful of rules.</p>
 </tr>
 <tr>
 <td><code>async fn</code>, <code>Future</code>, <code>await</code>.</td>
-<td><code>go expr</code> spawns a goroutine. No futures, no awaits — blocking IO is fine.</td>
+<td><code>go expr</code> spawns a goroutine. No futures, no awaits - blocking IO is fine.</td>
 </tr>
 <tr>
 <td>Multiple separate compilation units, workspace member graph.</td>
@@ -1619,7 +1619,7 @@ into a handful of rules.</p>
 <p>Gossamer:</p>
 <div class="language-gos highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="k">struct</span> <span class="nc">Server</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">handler</span>: <span class="nc">fn</span><span class="p">(</span><span class="n">http</span>::<span class="n">Request</span><span class="p">)</span><span class="w"> </span>-&gt; <span class="nc">http</span>::<span class="n">Response</span><span class="w"> </span><span class="p">}</span>
 </code></pre></div>
-<p>(Trait objects stay available but rarely needed — concrete closure
+<p>(Trait objects stay available but rarely needed - concrete closure
 types are preferred and the runtime keeps their captures alive.)</p>
 <h2 id="collection-combinators-one-obvious-way">Collection combinators (one obvious way)<a class="headerlink" href="#collection-combinators-one-obvious-way" title="Permanent link">&para;</a></h2>
 <p>Rust:</p>
@@ -1638,7 +1638,7 @@ carry <code>.map</code> / <code>.filter</code> / <code>.fold</code> methods in G
 free-function form in <code>std::iter</code> is the one obvious way to chain
 transformations, and the <code>|&gt;</code> operator (SPEC §4.6) threads each
 value through with the data-last convention. Mutating helpers like
-<code>xs.push</code>, <code>xs.sort</code>, <code>m.inc</code>, <code>m.or_insert</code> stay as methods —
+<code>xs.push</code>, <code>xs.sort</code>, <code>m.inc</code>, <code>m.or_insert</code> stay as methods -
 they operate by side-effect on the receiver and don't compose
 through <code>|&gt;</code>.</p>
 <p>The same pattern applies to <code>Option&lt;T&gt;</code> / <code>Result&lt;T, E&gt;</code> chaining:
@@ -1731,7 +1731,7 @@ and exit in <code>process::*</code>.</p>
 </tr>
 </tbody>
 </table>
-<p>HTTP/2 is integrated into <code>std::http</code> directly (Go-style) —
+<p>HTTP/2 is integrated into <code>std::http</code> directly (Go-style) -
 <code>http::serve_h2c</code> for cleartext h2c, automatic ALPN negotiation
 when serving over TLS. There is no separate <code>std::http2</code>.</p>
 

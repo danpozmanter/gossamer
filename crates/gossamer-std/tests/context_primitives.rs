@@ -65,7 +65,7 @@ fn read_ctx_returns_cancelled_when_context_fires_with_no_data_available() {
     use std::net::TcpListener;
 
     // Set up a listener so the client has something to connect to,
-    // but the server never writes — `read_ctx` will block.
+    // but the server never writes - `read_ctx` will block.
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
     let addr = listener.local_addr().expect("local_addr");
     let _server_thread = std::thread::spawn(move || {

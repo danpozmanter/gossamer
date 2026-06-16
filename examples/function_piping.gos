@@ -11,7 +11,7 @@
  * parentheses.
  *
  * Combinator surfaces in `std::iter` / `std::option` / `std::result`
- * (SPEC §10.4–§10.4b) keep transformation pipelines at the
+ * (SPEC §10.4-§10.4b) keep transformation pipelines at the
  * expression level instead of dropping to procedural `for` loops.
  * Argument order across the surface is data-last, so every helper
  * threads through `|>` without an explicit placeholder.
@@ -41,7 +41,7 @@ fn main() {
     let same = clamp(0, 100, add(10, double(3)))
     println!("nested: {same}")
 
-    // `_.method` pipes the value through its own methods — `_` is the
+    // `_.method` pipes the value through its own methods - `_` is the
     // receiver of the step, so `_.trim` is `x.trim()`.
     let shout = "  hello  " |> _.trim |> _.to_upper
     println!("shout: {shout}")
@@ -53,7 +53,7 @@ fn main() {
         |> iter::count
     println!("words: {words}")
 
-    // Sum of squares of evens in 1..=10 — one expression, no `let mut`.
+    // Sum of squares of evens in 1..=10 - one expression, no `let mut`.
     let total = iter::range_inclusive(1, 10)
         |> iter::filter(|n: i64| n % 2 == 0)
         |> iter::sum_by(|n: i64| n * n)
@@ -66,7 +66,7 @@ fn main() {
         |> option::default(-1)
     println!("first > 10 (or -1): {first_big}")
 
-    // Filter twice — `iter::count` reports each subset's size.
+    // Filter twice - `iter::count` reports each subset's size.
     let evens = xs |> iter::filter(|n: i64| n % 2 == 0)
     let odds = xs |> iter::filter(|n: i64| n % 2 != 0)
     println!("evens: {}, odds: {}", evens |> iter::count, odds |> iter::count)

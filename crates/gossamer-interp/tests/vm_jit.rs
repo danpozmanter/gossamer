@@ -95,7 +95,7 @@ fn jit_fib_recursion_returns_correctly() {
 
 #[test]
 fn jit_falls_back_when_signature_unsupported() {
-    // String concat returns String — not in the JIT's supported
+    // String concat returns String - not in the JIT's supported
     // primitive set. The VM should still produce the right answer
     // via the bytecode fallback.
     let _g = GosJitGuard::new();

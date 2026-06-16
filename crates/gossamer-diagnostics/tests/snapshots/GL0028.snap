@@ -3,9 +3,9 @@ source: crates/gossamer-diagnostics/tests/snapshots.rs
 expression: rendered
 ---
 --- plain ---
-error[GL0028]: `(x)` without a trailing comma is a needless pair of parens — — here
+error[GL0028]: `(x)` without a trailing comma is a needless pair of parens - - here
 --- framed ---
-error[GL0028]: `(x)` without a trailing comma is a needless pair of parens —
+error[GL0028]: `(x)` without a trailing comma is a needless pair of parens -
   --> snap.gos:2:5
      2 |     let x = 1
        |     ^^^^^

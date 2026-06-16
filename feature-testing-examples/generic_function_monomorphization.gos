@@ -52,7 +52,7 @@ fn main() {
     let product = reduce_i64(nums, 1, |acc, x| acc * x)
     println!("product = {}", product)
 
-    // Float domain — same algorithm, different type
+    // Float domain - same algorithm, different type
     let fs: [f64] = [1.0, 2.0, 3.0, 4.0]
     let halved = map_f64(fs, |x| x * 0.5)
     println!("halved[0] = {}", halved[0])

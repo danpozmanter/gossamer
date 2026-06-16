@@ -1,7 +1,7 @@
-//! Runtime support for `std::math::rand` — deterministic pseudo-
+//! Runtime support for `std::math::rand` - deterministic pseudo-
 //! random numbers suitable for simulation, testing, and
 //! non-security work.
-//! Uses `SplitMix64` for scalar generation — tiny, passable
+//! Uses `SplitMix64` for scalar generation - tiny, passable
 //! statistical quality, and trivially seedable.
 
 #![forbid(unsafe_code)]
@@ -14,7 +14,7 @@ pub struct Rng {
 }
 
 impl Rng {
-    /// Builds an RNG from `seed`. A `seed` of 0 is permitted — the
+    /// Builds an RNG from `seed`. A `seed` of 0 is permitted - the
     /// first [`Self::next_u64`] still returns a non-zero value.
     #[must_use]
     pub const fn new(seed: u64) -> Self {

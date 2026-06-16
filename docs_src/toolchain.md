@@ -1,7 +1,7 @@
 # Toolchain reference
 
 Every subcommand of `gos`. Auto-generated output coming with
-Stream H polish — for now this page is hand-written and may lag
+Stream H polish - for now this page is hand-written and may lag
 the implementation by a rev.
 
 ## Front-end
@@ -9,7 +9,7 @@ the implementation by a rev.
 | Command | Purpose |
 |---------|---------|
 | `gos parse FILE` | Print the AST. |
-| `gos check [--timings] FILE` | Parse + resolve + typecheck + exhaustiveness. With `--timings`, prints per-stage wall-clock times. Parse output is cached by source hash — re-invocations on an unchanged file reuse the parsed AST. Set `GOSSAMER_CACHE_TRACE=1` to log cache hits. |
+| `gos check [--timings] FILE` | Parse + resolve + typecheck + exhaustiveness. With `--timings`, prints per-stage wall-clock times. Parse output is cached by source hash - re-invocations on an unchanged file reuse the parsed AST. Set `GOSSAMER_CACHE_TRACE=1` to log cache hits. |
 | `gos run FILE` | Execute via the register-based bytecode VM (with in-process Cranelift JIT). |
 | `gos build [--target TRIPLE] FILE` | Produce a native binary (ELF/Mach-O/PE) by lowering through MIR + Cranelift and linking the user's `.o` against `libgossamer_runtime.a`. Every legal program compiles; a build error means a compiler bug. |
 
@@ -55,7 +55,7 @@ the implementation by a rev.
 
 ## REPL
 
-`gos` with no arguments — or `gos repl` — drops into an
+`gos` with no arguments - or `gos repl` - drops into an
 interactive session. The first-slice supports:
 
 - Numbered `In [N]:` / `Out[N]:` prompts, coloured green / red
@@ -82,25 +82,25 @@ completion, persistent history file, `%time` / `%timeit` /
 `gos lsp` is intended for editors, not humans. Shipped
 capabilities:
 
-- `textDocument/publishDiagnostics` on `didOpen` / `didChange` —
+- `textDocument/publishDiagnostics` on `didOpen` / `didChange` -
   every open document runs through parse + resolve + typecheck and
   diagnostics are published inline.
-- `textDocument/hover` — renders a small markdown card with the
+- `textDocument/hover` - renders a small markdown card with the
   identifier under the cursor and its interned type when the
   type checker can resolve it.
-- `textDocument/definition` — jumps to the declaring item for
+- `textDocument/definition` - jumps to the declaring item for
   identifiers that resolve to a top-level `fn` / `struct` / `enum`
   / `trait` / `type` / `const` / `static` / `mod`.
-- `textDocument/completion` — completion provider for top-level
+- `textDocument/completion` - completion provider for top-level
   items and keywords in scope.
-- `textDocument/references` — every whole-word occurrence of the
+- `textDocument/references` - every whole-word occurrence of the
   symbol under the cursor, in the same document. Matched
   syntactically; shadowed locals are reported alongside the real
   references until the semantic use-to-def map lands.
-- `textDocument/prepareRename` + `textDocument/rename` — returns
+- `textDocument/prepareRename` + `textDocument/rename` - returns
   a `WorkspaceEdit` that renames every occurrence of the symbol
   in the file. Rejects non-identifier `newName` inputs.
-- `textDocument/inlayHint` — emits a `: <type>` ghost-text hint
+- `textDocument/inlayHint` - emits a `: <type>` ghost-text hint
   after every `let` binding and closure parameter whose type the
   user did not spell out. Same shape rust-analyzer uses for Rust.
 
@@ -112,7 +112,7 @@ Editors should launch `gos lsp` over stdio and speak LSP 3.16 with
 Plug-ins that wire `gos lsp` into common editors live in a separate
 repo:
 [`danpozmanter/gossamer-editor-support`](https://github.com/danpozmanter/gossamer-editor-support)
-— ships VSCode, Vim, Neovim, Helix, Emacs, Sublime, Zed clients
+- ships VSCode, Vim, Neovim, Helix, Emacs, Sublime, Zed clients
 plus a tree-sitter grammar.
 
 ## Smoke-test

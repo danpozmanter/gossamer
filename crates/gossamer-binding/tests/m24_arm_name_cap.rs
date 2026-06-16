@@ -1,6 +1,6 @@
 //! Audit M24 (0.6.0): `intern_arm_name` pool cap.
 //!
-//! The pool used to grow unbounded — a binding that returned
+//! The pool used to grow unbounded - a binding that returned
 //! `DynValue::Tagged { name: format!("Item-{n}"), .. }` over many
 //! calls would leak one `Box::leak` per unique name. The 0.6.0
 //! fix caps at 1024 entries; past that, the function returns a
@@ -25,7 +25,7 @@ fn dynamic_variant_names_intern_without_panic() {
             payload: Vec::new(),
         };
         let lowered: Value = value.to_gos();
-        // The lowering must succeed — neither the cap check
+        // The lowering must succeed - neither the cap check
         // nor the legacy unbounded path should panic.
         let _ = lowered;
     }

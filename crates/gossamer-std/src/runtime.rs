@@ -1,4 +1,4 @@
-//! Runtime support for `std::runtime` — goroutine / scheduler
+//! Runtime support for `std::runtime` - goroutine / scheduler
 //! introspection and tuning knobs, analogous to Go's `runtime`
 //! package: CPU count, a `GOMAXPROCS`-equivalent setter, and
 //! goroutine / call-stack diagnostics.
@@ -134,7 +134,7 @@ fn collect_frames() -> Vec<StackFrame> {
 /// Registers a finalizer for an `Arc`-managed value. Invokes
 /// `finalize` when the last clone of `value` is dropped.
 ///
-/// Internally just wraps the value in a guard type — the
+/// Internally just wraps the value in a guard type - the
 /// finalizer fires on `Drop`. Mirrors Go's
 /// `runtime.SetFinalizer` shape with the lifetime constraint
 /// that `value` must outlive every call to the closure.

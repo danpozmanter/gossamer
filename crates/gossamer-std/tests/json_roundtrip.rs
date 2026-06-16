@@ -4,7 +4,7 @@
 //! `encode` work in isolation. This file pins the round-trip
 //! semantics: a value parsed from one JSON string, re-encoded,
 //! and parsed again must match the original. The regression
-//! class is encoder/decoder asymmetry — a fix to one without
+//! class is encoder/decoder asymmetry - a fix to one without
 //! the other corrupts every nested value.
 
 #![allow(missing_docs)]

@@ -2,20 +2,20 @@
 //!
 //! Three profile shapes are exposed:
 //!
-//! - **CPU profile** — signal-driven sampler in
+//! - **CPU profile** - signal-driven sampler in
 //!   [`gossamer_runtime::preempt`] records the program counter at
 //!   ~100 Hz; [`cpu_profile`] drains the samples into a profile
 //!   blob.
-//! - **Heap profile** — allocation events produce a sample per N
+//! - **Heap profile** - allocation events produce a sample per N
 //!   bytes (Go's default is 512 KiB); [`heap_profile`] reads the
 //!   accumulated counters.
-//! - **Goroutine profile** — snapshot of every live goroutine via
+//! - **Goroutine profile** - snapshot of every live goroutine via
 //!   [`gossamer_runtime::sigquit::snapshot`]; [`goroutine_profile`]
 //!   formats it.
 //!
 //! All three return bytes that `go tool pprof -text` (or
 //! `-web`) reads. The wire format is the simple "legacy text"
-//! profile shape — every line is a sample of the form:
+//! profile shape - every line is a sample of the form:
 //!
 //! ```text
 //! samples=N self=K
@@ -48,7 +48,7 @@ pub struct Frame {
 /// One sample in a profile.
 #[derive(Debug, Clone, Default)]
 pub struct Sample {
-    /// Sample weight — number of inclusive units (CPU time slices,
+    /// Sample weight - number of inclusive units (CPU time slices,
     /// allocated bytes, alive goroutines).
     pub weight: u64,
     /// Innermost frame first.
@@ -178,7 +178,7 @@ pub fn mutex_profile() -> Vec<u8> {
 }
 
 /// Returns a block profile (goroutines blocked on channel ops,
-/// I/O, etc.). Empty until per-park-reason counters land — Phase 2.
+/// I/O, etc.). Empty until per-park-reason counters land - Phase 2.
 #[must_use]
 pub fn block_profile() -> Vec<u8> {
     ProfileBuffer::default().render().into_bytes()

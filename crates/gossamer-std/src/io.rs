@@ -210,7 +210,7 @@ impl<'a, R: Reader + ?Sized> Reader for LimitReader<'a, R> {
     }
 }
 
-/// Reader that pipes its input through a tee — every byte read
+/// Reader that pipes its input through a tee - every byte read
 /// is also written to `tee`.
 pub struct TeeReader<'a, R: Reader + ?Sized, W: Writer + ?Sized> {
     inner: &'a mut R,
@@ -261,7 +261,7 @@ impl<'a> Reader for MultiReader<'a> {
     }
 }
 
-/// In-memory pipe — a paired reader / writer where bytes written
+/// In-memory pipe - a paired reader / writer where bytes written
 /// to the writer become available on the reader. Buffered;
 /// readers see whatever the writer has flushed so far.
 ///

@@ -1,7 +1,7 @@
 //! Performance canary for the compiled (`gos build --release`) tier.
 //!
-//! A tight scalar floating-point loop — the shape of spectral-norm's
-//! `eval_A` matrix kernel — built at `-O3` and timed. The point is NOT
+//! A tight scalar floating-point loop - the shape of spectral-norm's
+//! `eval_A` matrix kernel - built at `-O3` and timed. The point is NOT
 //! to benchmark precisely (CI machines vary) but to catch catastrophic
 //! per-call / per-iteration overhead regressions: when the compiled
 //! tier emitted a `gos_rt_*` shadow-stack / safepoint call in every
@@ -101,7 +101,7 @@ fn main() {
     let cap = std::time::Duration::from_secs(3);
     assert!(
         elapsed < cap,
-        "release scalar kernel took {elapsed:?} (cap {cap:?}) — likely a per-call \
+        "release scalar kernel took {elapsed:?} (cap {cap:?}) - likely a per-call \
          instrumentation regression (shadow-stack / safepoint emitted in the hot \
          leaf, blocking inlining/vectorisation)"
     );

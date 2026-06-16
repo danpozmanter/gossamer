@@ -1,4 +1,4 @@
-// Runtime support for `std::hash::fnv` — Fowler-Noll-Vo non-cryptographic hashes.
+// Runtime support for `std::hash::fnv` - Fowler-Noll-Vo non-cryptographic hashes.
 //
 // Implements FNV-1 and FNV-1a for 32-bit and 64-bit outputs. FNV-1a is generally
 // preferred: it mixes better on short inputs. Neither variant is cryptographically

@@ -16,7 +16,7 @@ pub struct Error {
     inner: Arc<dyn ErrorObj>,
 }
 
-/// Implementation detail of [`Error`] — erased payload + optional
+/// Implementation detail of [`Error`] - erased payload + optional
 /// cause chain.
 trait ErrorObj: Send + Sync + 'static {
     fn message(&self) -> &str;
@@ -134,7 +134,7 @@ impl<'a> Iterator for Chain<'a> {
     }
 }
 
-/// `errors::join(iter)` — collects every error in `iter` into one
+/// `errors::join(iter)` - collects every error in `iter` into one
 /// semicolon-separated error. Go's `errors.Join` equivalent. The
 /// "; " separator matches the interp builtin and the compiled
 /// tiers' `gos_rt_errors_join*` shims so joined messages render

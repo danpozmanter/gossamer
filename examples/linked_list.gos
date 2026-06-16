@@ -1,10 +1,10 @@
 /*
- * Singly-linked list — the textbook recursive enum.
+ * Singly-linked list - the textbook recursive enum.
  *
  * `enum List { Cons(i64, Box<List>), Nil }` is the natural shape;
  * `Box<T>` is transparent in a fully GC'd language, so the type
  * accepts the Rust spelling (and `enum List { Cons(i64, List), Nil }`
- * works just as well — every variant payload is heap-shared).
+ * works just as well - every variant payload is heap-shared).
  * Construct with `cons` / `Nil`, walk with `match`.
  */
 

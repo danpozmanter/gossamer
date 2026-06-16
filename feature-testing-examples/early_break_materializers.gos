@@ -4,7 +4,7 @@
 // Option<String>), strings::split, and HashMap keys() snapshots.
 // On the compiled tiers these vecs now carry the AGGR_OWNED /
 // STRING element kinds so `gos_rt_vec_free` deep-frees the slots a
-// loop never reached — this fixture locks that the new free path
+// loop never reached - this fixture locks that the new free path
 // neither crashes nor double-frees while output stays identical on
 // every tier.
 

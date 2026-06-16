@@ -86,7 +86,7 @@ impl<'a> Lowerer<'a> {
             return None;
         }
         // Walk every projection except the last, resolving
-        // the type after each step — the final one must be
+        // the type after each step - the final one must be
         // `Index` on a `String`.
         let (prefix, last) = place.projection.split_at(place.projection.len() - 1);
         let Projection::Index(idx_local) = &last[0] else {
@@ -164,7 +164,7 @@ impl<'a> Lowerer<'a> {
 
     /// Resolves the leaf type of a projection chain: the type
     /// the final `load`/`store` should use. Walks the MIR
-    /// projections the same way the runtime does — an `Index`
+    /// projections the same way the runtime does - an `Index`
     /// on an array yields the element type, a `Field` on a
     /// struct yields the field's type, etc. Auto-peels `&T` /
     /// `&mut T` reference layers at each step so the same
@@ -209,7 +209,7 @@ impl<'a> Lowerer<'a> {
     /// aggregates (Array / Tuple / Adt declared inline) hold
     /// their data in-place. Anything classified as opaque
     /// `ptr` by the type renderer that *isn't* a stack
-    /// aggregate is treated as a pointer-bearing slot — this
+    /// aggregate is treated as a pointer-bearing slot - this
     /// catches inference variables that left the typeck pipeline
     /// unresolved (a runtime call like `os::args()` whose return
     /// type is materialised at MIR time but never gets a concrete
@@ -252,8 +252,8 @@ impl<'a> Lowerer<'a> {
     }
 
     /// When `arg` is a `Copy` of a stack-aggregate local whose
-    /// slot contents will outlive the current frame as data —
-    /// but whose stack address won't — emit a heap copy and
+    /// slot contents will outlive the current frame as data -
+    /// but whose stack address won't - emit a heap copy and
     /// return the heap pointer (as i64). Returns `None` for
     /// non-aggregate operands; callers fall through to the
     /// normal arg-coercion path.
@@ -304,7 +304,7 @@ impl<'a> Lowerer<'a> {
     /// Same shape as [`Self::maybe_heap_copy_aggregate`] but routes the
     /// heap allocation through `gos_rt_aggr_alloc_leak` instead of
     /// the GC-tracked `gos_rt_aggr_alloc`. Used when the surviving
-    /// handle escapes the GC's reachability graph — HashMap inserts
+    /// handle escapes the GC's reachability graph - HashMap inserts
     /// store the pointer as a bare i64 in MapStorage, which the
     /// tracing collector cannot walk through, so the GC-tracked
     /// allocation would be reclaimed mid-program. The leak variant
@@ -329,7 +329,7 @@ impl<'a> Lowerer<'a> {
         };
         // Bare local: the alloca is the slot address. Projected place
         // (an option field being overwritten in place): resolve the
-        // field address — the walk reads/writes the slot words there.
+        // field address - the walk reads/writes the slot words there.
         // `map_set_blob_values` takes the map POINTER VALUE.
         if name == "gos_rt_map_set_blob_values" {
             if !p.projection.is_empty() {
@@ -432,7 +432,7 @@ impl<'a> Lowerer<'a> {
             return None;
         }
         // Sentinel Adts (Result/Option, u32::MAX / u32::MAX-1)
-        // are themselves heap-allocated pointers — the slot
+        // are themselves heap-allocated pointers - the slot
         // holds the pointer directly. No copy needed.
         if let Some(TyKind::Adt { def, .. }) = self.tcx.kind(local_ty)
             && (def.local == u32::MAX || def.local == u32::MAX - 1)
@@ -506,7 +506,7 @@ impl<'a> Lowerer<'a> {
                     Some(TyKind::String | TyKind::Ref { .. }) => ConcatKind::StrPtr,
                     Some(TyKind::Int(int_ty)) => {
                         // Every ≤64-bit int lives as a signed i64 at
-                        // runtime and prints signed — the VM renders
+                        // runtime and prints signed - the VM renders
                         // `0u64 - 1` as `-1`. The one exception the
                         // VM makes is display provenance: a value
                         // produced by an explicit `as u64`/`as usize`
@@ -748,7 +748,7 @@ impl<'a> Lowerer<'a> {
                 "inttoptr"
             }
             ("ptr", "double") => {
-                // Through i64 — LLVM has no direct ptr→double.
+                // Through i64 - LLVM has no direct ptr→double.
                 let mid = self.fresh();
                 writeln!(self.out, "  {mid} = ptrtoint ptr {value} to i64").unwrap();
                 writeln!(self.out, "  {tmp} = bitcast i64 {mid} to double").unwrap();
@@ -772,7 +772,7 @@ impl<'a> Lowerer<'a> {
                 }
             }
             // Integer ↔ floating-point conversions use `sitofp`
-            // / `fptosi` (signed) — `bitcast` reinterprets bits
+            // / `fptosi` (signed) - `bitcast` reinterprets bits
             // and produces a denormal float for small integers,
             // which is both wrong semantically and rejected by
             // `opt`'s verifier when the integer literal is too
@@ -953,7 +953,7 @@ impl<'a> Lowerer<'a> {
 // for `gos_rt_*` symbols, whose return type comes from the ABI registry. A bare
 // `i128` returned by a user function is a gossamer->gossamer call (the callee is
 // `define i128`/`ret i128` in the same module) and must stay a GP-register-pair
-// `i128` on both sides — applying the vector ABI to it asymmetrically miscompiles
+// `i128` on both sides - applying the vector ABI to it asymmetrically miscompiles
 // every `Result`/`Option`/inline-enum a user function returns on Windows. Both
 // call emitters (`emit_named_call`, `lower_runtime_call_intrinsic`) MUST gate on
 // the registry return type via this one decision so they cannot drift apart.

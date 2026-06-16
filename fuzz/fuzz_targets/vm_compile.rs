@@ -48,8 +48,10 @@ fuzz_target!(|data: &[u8]| {
     }
     let hir = lower_source_file(&sf, &resolutions, &table, &mut tcx);
     let mut vm = Vm::new();
-    // `Vm::load` is the bytecode compile boundary. We swallow
-    // the `RuntimeResult` — a clean error is fine; a panic is
-    // the regression libFuzzer is hunting for.
-    let _ = vm.load(&hir, tcx);
+    // `Vm::load` is the bytecode compile boundary. `enable_inlining`
+    // is on so the user-function inliner - part of the `gos run` /
+    // `gos build` compile path - is included in the fuzzed surface.
+    // We swallow the `RuntimeResult` - a clean error is fine; a panic
+    // is the regression libFuzzer is hunting for.
+    let _ = vm.load(&hir, tcx, true);
 });

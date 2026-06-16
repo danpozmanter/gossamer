@@ -9,7 +9,7 @@
 //!
 //! Soundness is the entire game: regioning a loop whose allocations DO
 //! escape is a use-after-free. Every check here is a conservative
-//! over-approximation — when in doubt, the loop is NOT regioned.
+//! over-approximation - when in doubt, the loop is NOT regioned.
 
 use std::collections::{HashMap, HashSet};
 
@@ -40,7 +40,7 @@ const MUTATOR_METHODS: &[&str] = &[
     "drain",
 ];
 
-/// True for types whose values carry no heap ownership — copying or
+/// True for types whose values carry no heap ownership - copying or
 /// dropping them frees nothing, so they can flow out of a region freely.
 pub(crate) fn is_copy_ty(tcx: &TyCtxt, ty: Ty) -> bool {
     matches!(
@@ -423,14 +423,14 @@ impl<'a> LoopEligibility<'a> {
     /// Checks a call argument: it must be Copy, or created inside the body
     /// (an in-body let or a fresh call result), never an outer non-Copy.
     /// References are peeled first so `&mut seed` is judged by the referent
-    /// (`seed: i64`, Copy — safe), not the reference type.
+    /// (`seed: i64`, Copy - safe), not the reference type.
     fn check_arg(&mut self, arg: &HirExpr) {
         let inner = peel_refs(arg);
         if is_copy_ty(self.tcx, inner.ty) {
             return;
         }
         match &inner.kind {
-            // Fresh value produced in the body — dies with the region.
+            // Fresh value produced in the body - dies with the region.
             HirExprKind::Call { .. }
             | HirExprKind::Literal(_)
             | HirExprKind::Tuple(_)
@@ -445,7 +445,7 @@ impl<'a> LoopEligibility<'a> {
                 }
             }
             _ => {
-                // Field/index/etc of something — conservatively reject if
+                // Field/index/etc of something - conservatively reject if
                 // it is non-Copy and not obviously in-body.
                 if !place_root_name(inner).is_some_and(|r| self.in_body.contains(r)) {
                     self.ok = false;
@@ -485,7 +485,7 @@ impl<'a> LoopEligibility<'a> {
                             self.ok = false;
                         }
                     }
-                    // Unresolved / non-path callee — cannot vet it.
+                    // Unresolved / non-path callee - cannot vet it.
                     _ => self.ok = false,
                 }
                 for a in args {

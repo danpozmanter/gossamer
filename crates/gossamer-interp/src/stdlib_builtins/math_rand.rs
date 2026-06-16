@@ -8,7 +8,7 @@
     clippy::unnecessary_wraps,
     clippy::needless_pass_by_value
 )]
-//! `std::math::rand` builtins for the bytecode VM — the deterministic
+//! `std::math::rand` builtins for the bytecode VM - the deterministic
 //! SplitMix64 `Rng`. The handle is a struct `{ __rng: id }`; the real
 //! `Rng` state lives in a process-global registry keyed by `id`, so
 //! `&mut self` methods mutate through the registry instead of relying

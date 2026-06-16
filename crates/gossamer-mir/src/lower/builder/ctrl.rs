@@ -153,8 +153,8 @@ impl<'a> Builder<'a> {
         // Per-arm captured payload binding: (binding name, mutable
         // flag, variant constructor name). The variant name lets
         // the arm-body fixup routine re-pin the scrutinee local's
-        // type to the right `substs` slot — `substs[0]` for
-        // `Ok`/`Some`, `substs[1]` for `Err` — so subsequent reads
+        // type to the right `substs` slot - `substs[0]` for
+        // `Ok`/`Some`, `substs[1]` for `Err` - so subsequent reads
         // of the bound name see the payload type, not the wrapper.
         let mut arm_bindings: Vec<Option<(Ident, bool, Option<String>)>> =
             Vec::with_capacity(arms.len());
@@ -215,7 +215,7 @@ impl<'a> Builder<'a> {
                     // are flat single-slot values today), so
                     // bind the inner name to the scrutinee local
                     // when entering the arm. Captures only the
-                    // first single-Binding inner field — wider
+                    // first single-Binding inner field - wider
                     // patterns continue through the placeholder.
                     if let Some(first) = fields.first() {
                         if let HirPatKind::Binding {
@@ -433,7 +433,7 @@ impl<'a> Builder<'a> {
                 self.terminate(Terminator::Goto { target: join });
             } else if self.current.is_some() {
                 // Arm body ended normally (no value to bind, but
-                // control still falls through — typical of a loop
+                // control still falls through - typical of a loop
                 // tail). Connect to join so the codegen doesn't
                 // leave a dangling block.
                 self.terminate(Terminator::Goto { target: join });
@@ -587,7 +587,7 @@ impl<'a> Builder<'a> {
                 self.lower_pattern_predicate(scrutinee, inner, span)
             }
             HirPatKind::Rest => {
-                // Rest pattern in a non-tuple context — match
+                // Rest pattern in a non-tuple context - match
                 // anything; binds nothing.
                 let l = self.fresh(bool_ty);
                 self.emit_assign(
@@ -750,7 +750,7 @@ impl<'a> Builder<'a> {
             }
             HirPatKind::Struct { name, fields, .. } => {
                 // Struct pattern matching a value of a known
-                // struct type — OR a struct-payload enum variant
+                // struct type - OR a struct-payload enum variant
                 // (`Shape::Rect { w, h }` lowers as
                 // `HirPatKind::Struct { name: "Rect", ... }`).
                 // For an enum-variant struct, the predicate
@@ -769,7 +769,7 @@ impl<'a> Builder<'a> {
                     .lookup(std::slice::from_ref(name))
                     .map(|(_, i)| i);
                 // Whether ANY sibling variant of this enum carries
-                // a payload — controls whether the runtime layout
+                // a payload - controls whether the runtime layout
                 // is `[disc, p0, ...]` (heap aggregate) or just an
                 // i64 disc value.
                 let any_variant_has_payload =
@@ -785,7 +785,7 @@ impl<'a> Builder<'a> {
                 // for a free struct, every value of the scrutinee
                 // type matches. For payload-bearing enums the
                 // scrutinee is a *ptr* to `[disc, p0, p1, ...]`,
-                // so we must load disc from offset 0 first —
+                // so we must load disc from offset 0 first -
                 // comparing the bare scrutinee (a heap address) to
                 // a small variant index always returns false and
                 // the arm body never runs (the cli_args /
@@ -959,7 +959,7 @@ impl<'a> Builder<'a> {
                 //   2. **`Option<T>` / `Result<T, E>` stdlib
                 //      variants**: the scrutinee carries the
                 //      wrapped value directly (happy-path
-                //      encoding — `unwrap` is identity). The
+                //      encoding - `unwrap` is identity). The
                 //      compiled tier can't actually distinguish
                 //      `Ok(_)` from `Err(_)` at runtime, so the
                 //      `Ok` / `Some` arm becomes the unconditional
@@ -974,7 +974,7 @@ impl<'a> Builder<'a> {
                 // injected `enum { BearerOnly, CookieSession, None }`).
                 // When the scrutinee is genuinely a `Result` / `Option`,
                 // dispatch on its real discriminant below rather than the
-                // colliding user-enum variant index — otherwise the arm
+                // colliding user-enum variant index - otherwise the arm
                 // compares the whole i128 value to that index and never
                 // matches, falling through to a stale local.
                 let scrut_ty = self.locals[scrutinee.0 as usize].ty;
@@ -1352,12 +1352,12 @@ impl<'a> Builder<'a> {
                             // Without this `let row[i] : i64;
                             // match row[i] { Some(k: String) ... }`
                             // would print `k` through the integer
-                            // formatter — the regex captures_all
+                            // formatter - the regex captures_all
                             // case where strings rendered as raw
                             // pointer ints. The original guard
                             // also kept tagged structs
                             // (`http::Response`/json::Value) safe
-                            // by refusing to overwrite — preserve
+                            // by refusing to overwrite - preserve
                             // that by only repinning when the
                             // payload is a *non-Int* concrete
                             // type (String / Bool / Char / Float)
@@ -1431,7 +1431,7 @@ impl<'a> Builder<'a> {
                                 self.local_elem_struct.entry(payload_local).or_insert(elem);
                             }
                         } else if let HirPatKind::Tuple(sub_pats) = &first.kind {
-                            // `Some((a, b))` — unpack the tuple payload
+                            // `Some((a, b))` - unpack the tuple payload
                             // into individual field bindings.
                             self.bind_tuple_pattern(payload_local, sub_pats, span);
                         }
@@ -1508,7 +1508,7 @@ impl<'a> Builder<'a> {
             HirPatKind::At { name, sub, .. } => {
                 // `x @ subpat`: bind `x` to the scrutinee, then run
                 // the subpattern's filter. Without recursing into
-                // `sub` the constraint is dropped — every input
+                // `sub` the constraint is dropped - every input
                 // matches the arm and the user's intent (e.g.
                 // `x @ 1..=3`) is silently widened to `x => …`.
                 self.bind_local(&name.name, scrutinee);
@@ -1765,7 +1765,7 @@ impl<'a> Builder<'a> {
         // The local-type recovery probes below key off a bare
         // `Path` iter expression. A `for c in &xs` loop lowers the
         // iterand as `Unary { RefShared, Path("xs") }`, so peel a
-        // leading `&` / `&mut` wrapper first — otherwise the probe
+        // leading `&` / `&mut` wrapper first - otherwise the probe
         // misses the binding, the element type defaults to i64, and a
         // `[String]` iterates as raw heap pointers (atlas_db's schema
         // corruption: `orders.<ptr>` instead of `orders.id`).
@@ -1792,7 +1792,7 @@ impl<'a> Builder<'a> {
                 _ => break,
             }
         }
-        // Same probe through the local table — the HIR type for a
+        // Same probe through the local table - the HIR type for a
         // `Path("c")` iter expression often arrives as `Var(_)`
         // even though the local was pinned to the struct on its
         // `let` statement; the local's MIR-side type is the
@@ -1839,7 +1839,7 @@ impl<'a> Builder<'a> {
             }
         }
         // `for entry in v.iter()` / `for entry in v` where v is a
-        // `json::Value` array — synthesise the loop with
+        // `json::Value` array - synthesise the loop with
         // `gos_rt_json_len` + `gos_rt_json_at`.
         let iter_target = match &for_loop.iter_expr.kind {
             HirExprKind::MethodCall { receiver, name, .. } if name.name == "iter" => {
@@ -1860,7 +1860,7 @@ impl<'a> Builder<'a> {
             return self.lower_for_json(for_loop.iter_expr, for_loop.loop_pat, for_loop.body, span);
         }
         // `for byte in s.as_bytes()` / `for byte in s.as_bytes().iter()`
-        // — `s` is a String. The Vec fallback below would call
+        // - `s` is a String. The Vec fallback below would call
         // `gos_rt_vec_len`/`gos_rt_vec_get_ptr` on a `*const c_char`
         // and segfault on the read of the (non-existent) Vec
         // header. Detect the shape and emit a strlen-bound counter
@@ -1909,7 +1909,7 @@ impl<'a> Builder<'a> {
                 //   3. give up (the for-loop fallback re-emits
                 //      the original `loop {}` shape).
                 let mut cur = for_loop.iter_expr.ty;
-                // Also peel `.iter()` method calls — `for x in v.iter()`
+                // Also peel `.iter()` method calls - `for x in v.iter()`
                 // and `for x in &v` both end up wanting Vec iteration.
                 let iter_recv = match &for_loop.iter_expr.kind {
                     HirExprKind::MethodCall { receiver, name, .. } if name.name == "iter" => {
@@ -1992,7 +1992,7 @@ impl<'a> Builder<'a> {
                 }
                 // If the iter expression is a Path bound to a
                 // local, prefer the local's MIR-pinned type to
-                // the HIR expression type — the typechecker
+                // the HIR expression type - the typechecker
                 // often leaves stdlib-call results as Var, but
                 // the MIR side may have pinned them to a
                 // concrete `Vec<T>` via a runtime-helper return
@@ -2079,7 +2079,7 @@ impl<'a> Builder<'a> {
                             // i64, String)>` per the public API.
                             // The runtime stores 24-byte tuples, so
                             // pin the element type to a 3-tuple here
-                            // — without this the loop body treats
+                            // - without this the loop body treats
                             // each element as a single i64/String,
                             // crashing on `hit.2` past the end of
                             // a wrongly-strided buffer.
@@ -2157,7 +2157,7 @@ impl<'a> Builder<'a> {
                     // `gos_rt_http_request_headers` (a Vec of 16-byte
                     // `(String, String)` tuple slots), but the HIR type
                     // of the projection is often an unresolved Var, so
-                    // pin the element type here — without this the loop
+                    // pin the element type here - without this the loop
                     // falls back to the single-slot i64 shape and the
                     // tuple destructure has no slot address to read.
                     if let HirExprKind::Field { receiver, name } = &for_loop.iter_expr.kind {
@@ -2215,7 +2215,7 @@ impl<'a> Builder<'a> {
                 }
                 // Default fallback: treat as a runtime Vec.
                 // Element type defaults to i64, which is the
-                // pointer width — every slot in a GosVec is
+                // pointer width - every slot in a GosVec is
                 // 8 bytes regardless of element shape, so
                 // method calls on the binding still dispatch.
                 let elem_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);

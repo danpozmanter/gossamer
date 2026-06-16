@@ -12,7 +12,7 @@
     clippy::must_use_candidate,
     clippy::single_call_fn
 )]
-//! Interp-tier `http::static_files::FileServer` — the stateful
+//! Interp-tier `http::static_files::FileServer` - the stateful
 //! file-serving handler. `FileServer::new(root, prefix)` builds a
 //! handle; dispatched through `http::serve`, each request runs
 //! `FileServer::serve(req)` which strips the prefix, rejects path
@@ -43,7 +43,7 @@ pub(crate) fn install_http_static_server(globals: &mut Vec<(&'static str, Value)
     }
 }
 
-/// `FileServer::new(root, prefix)` — store the document root and the
+/// `FileServer::new(root, prefix)` - store the document root and the
 /// URL prefix to strip. An absent prefix arg defaults to "".
 pub(crate) fn builtin_file_server_new(args: &[Value]) -> RuntimeResult<Value> {
     let root = arg_str(args.first());
@@ -143,7 +143,7 @@ fn forbidden_response() -> Value {
     Value::struct_("Response", fields)
 }
 
-/// `FileServer::serve(server, request)` — invoked by `http::serve`'s
+/// `FileServer::serve(server, request)` - invoked by `http::serve`'s
 /// dispatch loop when the handler is a `FileServer`. The dispatch
 /// argument is unused (no callback into user code).
 pub(crate) fn native_file_server_serve(

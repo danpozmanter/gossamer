@@ -281,7 +281,7 @@ mod tests {
         assert!(equal_fold("GoSSAMER", "gossamer"));
         assert!(equal_fold("", ""));
         // Different lengths must not compare equal even when one is a
-        // prefix of the other — the old `zip().all()` truncated and
+        // prefix of the other - the old `zip().all()` truncated and
         // wrongly returned true here.
         assert!(!equal_fold("hello", "hell"));
         assert!(!equal_fold("hell", "hello"));

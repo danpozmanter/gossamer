@@ -1,9 +1,9 @@
 /*
- * Factorial — recursive vs. iterative.
+ * Factorial - recursive vs. iterative.
  *
  * Both implementations are pure: each call returns a fresh
  * value, the caller binds the result with a plain `let`.
- * `i64` overflows past 20! — pick `i128` if you need more.
+ * `i64` overflows past 20! - pick `i128` if you need more.
  */
 
 use std::iter

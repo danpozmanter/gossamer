@@ -91,7 +91,7 @@ impl Resolver {
     /// a path that names no module (an alias spelling, a typo) is an
     /// error here instead of a late member-lookup failure. A path
     /// whose parent is a valid module is accepted without checking
-    /// the tail — item imports (`use std::sync::channel`) name items
+    /// the tail - item imports (`use std::sync::channel`) name items
     /// the resolver's table does not enumerate.
     fn reject_non_canonical_std_path(&mut self, use_decl: &UseDecl) {
         let gossamer_ast::UseTarget::Module(p) = &use_decl.target else {
@@ -335,7 +335,7 @@ impl Resolver {
         }
         // Also register `mod1::mod2::name` so cross-module callers
         // resolve directly to this def. Failure to insert here is a
-        // benign duplicate — another sibling module declared the
+        // benign duplicate - another sibling module declared the
         // same fully-qualified path.
         let qualified = format!("{}::{}", module_path.join("::"), name.name);
         let module = self.scopes.module_mut();
@@ -812,7 +812,7 @@ impl Resolver {
         // it via [`Self::register_item_with_module`]. The single
         // segment lookup is the fallback for plain paths and for
         // multi-segment paths whose head is something other than an
-        // inline module (`fmt::println`, `http::Response::text` —
+        // inline module (`fmt::println`, `http::Response::text` -
         // these stay opaque-by-head, matching the historical
         // tree-walker behaviour).
         if effective.len() > 1 {
@@ -825,7 +825,7 @@ impl Resolver {
                 return;
             }
             // Root-cause stdlib-member validation. The resolver is
-            // opaque-by-head for stdlib paths — it has no per-module
+            // opaque-by-head for stdlib paths - it has no per-module
             // export model, so `module::nonexistent` slipped through
             // `check` and only failed at runtime (GX0002). The
             // generated table in `stdlib_exports` lists every
@@ -855,7 +855,7 @@ impl Resolver {
         let head_name = head.name.name.clone();
         let lookup_name = effective.first().copied().unwrap_or(head_name.as_str());
         // For multi-segment paths (`a::b::c`), the head can only be a
-        // module / type / trait — never a local value binding. A
+        // module / type / trait - never a local value binding. A
         // local variable that happens to share a module's name (a
         // common shadow, e.g. `let mut provider = "";` plus
         // `mod provider`) must not capture `provider::xxx` paths.

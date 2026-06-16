@@ -30,7 +30,7 @@ pub(crate) const ENTRIES: &[(&str, Entry)] = &[
 ];
 
 // ------------------------------------------------------------------
-// regex builtins — opaque handle backed by REGEX_REGISTRY.
+// regex builtins - opaque handle backed by REGEX_REGISTRY.
 
 thread_local! {
     static NEXT_REGEX_ID: RefCell<u64> = const { RefCell::new(1) };

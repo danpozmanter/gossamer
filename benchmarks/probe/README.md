@@ -2,7 +2,7 @@
 
 One-construct `.gos` programs that exercise individual codegen
 features. `check.sh` runs `gos build` on each, classifies the
-result (`native` / `failed`), and diffs against `results.txt` —
+result (`native` / `failed`), and diffs against `results.txt` -
 so the committed baseline doubles as a regression guard while the
 Cranelift backend grows.
 

@@ -1,4 +1,4 @@
-# Prelude — available without imports
+# Prelude - available without imports
 
 Every Gossamer program starts with these names in scope. No `use`
 needed.
@@ -25,16 +25,16 @@ println!("{} + {} = {}", 1, 2, 1 + 2)
 
 ## Assertions
 
-- `assert(cond)` — panics when `cond` is false.
-- `assert_eq(a, b)` — panics when `a != b`, printing both values.
-- `todo()` — panics with a "not yet implemented" marker.
+- `assert(cond)` - panics when `cond` is false.
+- `assert_eq(a, b)` - panics when `a != b`, printing both values.
+- `todo()` - panics with a "not yet implemented" marker.
 
 ## Scalars
 
-- `min(a, b)` / `max(a, b)` — work on any pair of comparable
+- `min(a, b)` / `max(a, b)` - work on any pair of comparable
   scalars. The one-argument collection forms `min(xs)` / `max(xs)`
   return `Option<T>`.
-- `clamp(x, lo, hi)` — `x` limited to `[lo, hi]`.
+- `clamp(x, lo, hi)` - `x` limited to `[lo, hi]`.
 
 ```gossamer
 let speed = clamp(input, 0, 120)
@@ -43,9 +43,9 @@ let better = max(score_a, score_b)
 
 ## Concurrency
 
-- `go expr` — statement keyword: run `expr` on a goroutine,
+- `go expr` - statement keyword: run `expr` on a goroutine,
   fire-and-forget.
-- `spawn(f)` — run `f` on a goroutine and get a `JoinHandle<T>`;
+- `spawn(f)` - run `f` on a goroutine and get a `JoinHandle<T>`;
   `handle.join()` blocks for `Result<T, String>` (`Err` carries the
   panic message if the goroutine panicked).
 
@@ -64,7 +64,7 @@ without an import when they appear in signatures.
 ## Serialization (synthesized per struct)
 
 Every user `struct` automatically gets free functions callable with
-a turbofish — no import, no derive attribute:
+a turbofish - no import, no derive attribute:
 
 | Function | Returns |
 |----------|---------|
@@ -93,7 +93,7 @@ Always-in-scope type names:
   `usize`, `f32`, `f64`, `String`, `str`.
 - Wrappers: `Option<T>` (`Some` / `None`), `Result<T, E>`
   (`Ok` / `Err`), `Box<T>`, `Rc<T>`, `Arc<T>` (all three are
-  transparent in a managed runtime — spelling compatibility with
+  transparent in a managed runtime - spelling compatibility with
   Rust), `Weak<T>`.
 - Collections: `Vec<T>`, `HashMap<K, V>`, `HashSet<T>`,
   `BTreeMap<K, V>`, `BTreeSet<T>`, `VecDeque<T>`, `Range`.
@@ -104,11 +104,11 @@ Always-in-scope type names:
 
 Not functions, but also available everywhere:
 
-- `defer expr` — run `expr` on every exit path of the enclosing
+- `defer expr` - run `expr` on every exit path of the enclosing
   block.
-- `arena { … }` — bump-allocate everything created inside; free it
+- `arena { … }` - bump-allocate everything created inside; free it
   wholesale at the block's exit ([memory model](memory.md)).
-- `select { … }` — multiplex channel operations.
+- `select { … }` - multiplex channel operations.
 
-A user definition with the same name shadows any prelude entry —
+A user definition with the same name shadows any prelude entry -
 prelude bindings never collide with your code.

@@ -2,8 +2,8 @@
 
 Archive readers and writers. Two formats ship in 0.4.0:
 
-- [`std::archive::zip`](#stdarchivezip) — RFC 1952 zip.
-- [`std::archive::tar`](#stdarchivetar) — Unix tar (USTAR /
+- [`std::archive::zip`](#stdarchivezip) - RFC 1952 zip.
+- [`std::archive::tar`](#stdarchivetar) - Unix tar (USTAR /
   PAX-aware decode).
 
 ## `std::archive::zip`
@@ -28,7 +28,7 @@ Archive readers and writers. Two formats ship in 0.4.0:
 | `Reader` | type | Iterating tar reader over any `Read` source. |
 | `Reader::open` | fn | Open a file by path. |
 | `Reader::entries` | fn | Yields one `Entry` per archive member. |
-| `Entry` | type | One tar entry — has `path`, `kind`, `size`, `mode`, and a `read` method to extract the body. |
+| `Entry` | type | One tar entry - has `path`, `kind`, `size`, `mode`, and a `read` method to extract the body. |
 | `Writer` | type | Streaming tar writer. |
 | `Writer::create` | fn | Create a new archive. |
 | `Writer::add_file_from_path` | fn | Add a file from disk by path. |

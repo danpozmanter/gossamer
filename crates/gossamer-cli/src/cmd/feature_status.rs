@@ -1,4 +1,4 @@
-//! `gos feature-status` — prints every language / stdlib feature
+//! `gos feature-status` - prints every language / stdlib feature
 //! with its lifecycle stage (shipped, experimental, planned, removed)
 //! plus optional per-tier test status read from a JSON sidecar.
 //!
@@ -26,12 +26,12 @@ use gossamer_std::manifest::{FeatureStatus, Status, feature_status};
 /// Output format selector matching the CLI flag.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum OutputFormat {
-    /// ASCII pipe-separated table — default for human reading.
+    /// ASCII pipe-separated table - default for human reading.
     #[default]
     Table,
     /// One JSON object per feature, easy to pipe into `jq`.
     Json,
-    /// Markdown table — drop into docs pages or PR descriptions.
+    /// Markdown table - drop into docs pages or PR descriptions.
     Markdown,
 }
 
@@ -102,7 +102,7 @@ impl TierStatus {
 pub struct FeatureStatusOpts {
     /// Output format selector.
     pub format: OutputFormat,
-    /// CI gate mode — non-zero exit on policy violation.
+    /// CI gate mode - non-zero exit on policy violation.
     pub check: bool,
     /// Optional glob narrowing the displayed entries (`std::http::*`).
     pub filter: Option<String>,
@@ -209,7 +209,7 @@ pub fn render_sidecar(records: &[(String, TierStatus)]) -> String {
     out
 }
 
-/// Default sidecar path — `target/debug/.feature-status.json` from
+/// Default sidecar path - `target/debug/.feature-status.json` from
 /// the workspace root, falling back to the current directory when
 /// `CARGO_MANIFEST_DIR` isn't set.
 fn default_sidecar_path() -> PathBuf {
@@ -220,7 +220,7 @@ fn default_sidecar_path() -> PathBuf {
     base.join("debug").join(".feature-status.json")
 }
 
-/// Default docs root — `docs_src/` next to the workspace root,
+/// Default docs root - `docs_src/` next to the workspace root,
 /// falling back to a `docs_src` directory beside the cwd.
 fn default_docs_root() -> PathBuf {
     workspace_root_or_cwd().map_or_else(|| PathBuf::from("docs_src"), |r| r.join("docs_src"))

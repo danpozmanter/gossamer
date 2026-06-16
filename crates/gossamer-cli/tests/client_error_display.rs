@@ -6,7 +6,7 @@
 //! `gossamer-runtime/src/c_abi/http_client.rs` (`format!("http:
 //! transport: {e}")` / `"http: io: {e}"`). The two halves are not
 //! linked by a shared constant, so this test pins the std side's
-//! rendered shape — the runtime side is locked by
+//! rendered shape - the runtime side is locked by
 //! `http_request_send_transport_failure_packs_interp_shaped_err`
 //! in the runtime crate, which asserts the identical
 //! `"http: transport:"` prefix off a live refused connection.

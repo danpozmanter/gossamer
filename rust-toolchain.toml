@@ -1,5 +1,5 @@
 [toolchain]
-# Conscious lock — bump deliberately, not via `stable` drift.
+# Conscious lock - bump deliberately, not via `stable` drift.
 #
 # This file is the source of truth for *local* development:
 # `cargo` (via the rustup proxy in ~/.cargo/bin) reads it on
@@ -9,8 +9,8 @@
 #
 # In CI we deliberately *bypass* this file. Every workflow sets
 # `RUSTUP_TOOLCHAIN: 1.95.0` (or `nightly`) at the workflow env
-# level, which makes the rustup proxy a pure pass-through —
-# suppressing the override-file read — and side-steps a known
+# level, which makes the rustup proxy a pure pass-through -
+# suppressing the override-file read - and side-steps a known
 # rustup race documented at
 # https://github.com/rust-lang/rustup/issues/988 :
 # rustup proxies are not concurrent-safe, and the
@@ -24,7 +24,7 @@
 #
 # Bypassing the file in CI is safe because every workflow that
 # needs `rustfmt` or `clippy` passes them through
-# `dtolnay/rust-toolchain`'s `components:` input — that install
+# `dtolnay/rust-toolchain`'s `components:` input - that install
 # is serial, runs once, and is unaffected by `RUSTUP_TOOLCHAIN`.
 # Workflows that don't need those components just don't install
 # them.

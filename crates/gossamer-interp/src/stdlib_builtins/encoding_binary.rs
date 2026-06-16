@@ -137,7 +137,7 @@ pub(crate) fn install_encoding_binary(globals: &mut Vec<(&'static str, Value)>) 
         globals.push((*name, crate::builtins::builtin_pub(name, *f)));
     }
 
-    // Suppress unused warning — the module `bin` is only used for its
+    // Suppress unused warning - the module `bin` is only used for its
     // associated functions, which we call through the function pointers below.
     let _ = bin::get_u8;
 }

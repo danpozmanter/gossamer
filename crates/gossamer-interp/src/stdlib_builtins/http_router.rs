@@ -200,7 +200,7 @@ thread_local! {
         RefCell::new(StdHashMap::new());
 }
 
-/// `Router::serve(router, request)` — invoked by `http::serve`'s
+/// `Router::serve(router, request)` - invoked by `http::serve`'s
 /// dispatch loop when the handler is a Router. Walks the route
 /// table, finds the first match for the request's (method, path),
 /// and invokes the stored handler via `NativeDispatch::call_fn`
@@ -330,7 +330,7 @@ fn path_param_str(args: &[Value]) -> Option<String> {
     None
 }
 
-/// `Request::path_value(req, name) -> String` — the router-captured
+/// `Request::path_value(req, name) -> String` - the router-captured
 /// path parameter, or `""` when absent. Matches the compiled
 /// `gos_rt_http_request_path_value` shim.
 pub(crate) fn builtin_request_path_value(args: &[Value]) -> RuntimeResult<Value> {
@@ -339,7 +339,7 @@ pub(crate) fn builtin_request_path_value(args: &[Value]) -> RuntimeResult<Value>
     )))
 }
 
-/// `Request::path_int(req, name) -> Option<i64>` — typed extractor for
+/// `Request::path_int(req, name) -> Option<i64>` - typed extractor for
 /// a numeric path segment. `None` when absent or not an integer.
 pub(crate) fn builtin_request_path_int(args: &[Value]) -> RuntimeResult<Value> {
     match path_param_str(args).and_then(|s| s.trim().parse::<i64>().ok()) {
@@ -348,7 +348,7 @@ pub(crate) fn builtin_request_path_int(args: &[Value]) -> RuntimeResult<Value> {
     }
 }
 
-/// `Request::path_float(req, name) -> Option<f64>` — typed extractor.
+/// `Request::path_float(req, name) -> Option<f64>` - typed extractor.
 /// `None` when absent or unparseable.
 pub(crate) fn builtin_request_path_float(args: &[Value]) -> RuntimeResult<Value> {
     match path_param_str(args).and_then(|s| s.trim().parse::<f64>().ok()) {

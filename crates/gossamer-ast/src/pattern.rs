@@ -39,7 +39,7 @@ impl PartialEq for Pattern {
 pub enum PatternKind {
     /// Wildcard `_`.
     Wildcard,
-    /// Literal pattern — integer, string, char, byte, or bool literal.
+    /// Literal pattern - integer, string, char, byte, or bool literal.
     Literal(Literal),
     /// Binding pattern `mut? name @ sub?`.
     Ident {
@@ -92,7 +92,7 @@ pub enum PatternKind {
         inner: Box<Pattern>,
     },
     /// Synthetic error placeholder emitted by the parser during pattern
-    /// recovery. Downstream passes treat this as opaque — it does not
+    /// recovery. Downstream passes treat this as opaque - it does not
     /// fold into exhaustiveness as a catch-all and the typechecker
     /// assigns `TyKind::Error` to it.
     Error,

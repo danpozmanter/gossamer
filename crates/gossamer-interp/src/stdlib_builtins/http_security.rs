@@ -125,7 +125,7 @@ pub(crate) fn builtin_session_verify(args: &[Value]) -> RuntimeResult<Value> {
     }
 }
 
-// -- base64url (RFC 4648 §5, no padding) — matches the runtime shim ------
+// -- base64url (RFC 4648 §5, no padding) - matches the runtime shim ------
 
 const B64URL_ALPHA: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 

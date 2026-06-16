@@ -2,7 +2,7 @@
 # Walks each example project, runs `gos run` against it, and
 # (optionally) `gos build` if BUILD=1 in the environment. The
 # default is run-only because the compiled-mode codegen for
-# binding calls is incremental — `gos run` covers the full
+# binding calls is incremental - `gos run` covers the full
 # binding pipeline today.
 set -euo pipefail
 

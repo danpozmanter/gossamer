@@ -1,7 +1,7 @@
 //! Parity check across the 0.4.0 HTTP-module bridges. Runs the
 //! same `.gos` source in `gos run` (interp) and `gos build` →
 //! native, asserts byte-identical stdout. Covers the surfaces
-//! that exist in BOTH tiers — stateful types (`Router`,
+//! that exist in BOTH tiers - stateful types (`Router`,
 //! `FileServer` method chains, `Proxy`, full `NativeClient`,
 //! WebSocket framing) are interp-only and tracked in #54.
 

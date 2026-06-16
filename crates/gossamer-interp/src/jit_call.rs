@@ -13,7 +13,7 @@
 //! Every transmute below relies on the following invariants:
 //! - `jit.ptr` was produced by `JITModule::get_finalized_function`
 //!   for a body whose Cranelift signature exactly matches the
-//!   chosen `extern "C" fn` shape — that match is guaranteed by
+//!   chosen `extern "C" fn` shape - that match is guaranteed by
 //!   `JitArtifact::compile_to_jit`'s own type classification, which
 //!   only registers a [`JitFn`] when `JitKind` for every slot lines
 //!   up with the MIR-derived cranelift type.
@@ -138,7 +138,7 @@ macro_rules! ty_for {
 /// Generates a `call_<arity><shape>` function for one (arity, shape)
 /// combination. Distinct binding names per slot (`a0`, `a1`, …) are
 /// required so each `let` introduces a fresh local instead of
-/// shadowing the previous one — `call_through!` then sees every
+/// shadowing the previous one - `call_through!` then sees every
 /// argument in scope simultaneously when it expands the
 /// `extern "C"` call.
 macro_rules! gen_call {
@@ -1551,7 +1551,7 @@ static JIT_DISABLED: AtomicBool = AtomicBool::new(false);
 /// CLI hook used by `gos run --no-jit` to suppress every JIT
 /// compile attempt regardless of `GOS_JIT`. Pair with
 /// [`force_jit_enable`] to scope the disable to a defined region in
-/// long-lived processes (REPL, test runners, etc.) — see the
+/// long-lived processes (REPL, test runners, etc.) - see the
 /// `set_stdout_writer` companion in `builtins.rs` for the canonical
 /// scoped-disable shape.
 pub fn force_jit_disabled() {
@@ -1563,7 +1563,7 @@ pub fn force_jit_disabled() {
 /// previously lost the JIT permanently once any caller flipped the
 /// flag; this companion lets them restore it.
 ///
-/// `gos run --no-jit` does not call this — the flag stays set for the
+/// `gos run --no-jit` does not call this - the flag stays set for the
 /// process lifetime in CLI mode. Test code that installs a custom
 /// stdout writer should bracket the override with
 /// `force_jit_disabled` / `force_jit_enable` if it wants to recover

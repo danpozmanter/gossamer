@@ -5,10 +5,10 @@
 
 [advisories]
 ignore = [
-    # bincode 1.x — development ceased; no CVE. Pulled in transitively
+    # bincode 1.x - development ceased; no CVE. Pulled in transitively
     # via cranelift-codegen; drop when cranelift moves to bincode 2.x.
     "RUSTSEC-2025-0141",
-    # rustls-pemfile 2.x — archived; functionality folded into
+    # rustls-pemfile 2.x - archived; functionality folded into
     # rustls-pki-types. Drop when our transitive consumers migrate.
     "RUSTSEC-2025-0134",
     # rsa 0.9.x Marvin Attack timing side channel during PKCS#1 v1.5

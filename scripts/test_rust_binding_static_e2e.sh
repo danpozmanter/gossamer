@@ -64,13 +64,13 @@ build_and_run() {
 }
 
 build_and_run \
-    "example 01 (echo-binding) — gos build" \
+    "example 01 (echo-binding) - gos build" \
     "${GOSSAMER_ROOT}/example-external-libraries/01-gossamer-aware" \
     src/main.gos \
     "HELLO, GOSSAMER" "sum: 15" "count: 3"
 
 build_and_run \
-    "example 02 (unic-segment wrapper) — gos build" \
+    "example 02 (unic-segment wrapper) - gos build" \
     "${GOSSAMER_ROOT}/example-external-libraries/02-plain-rust-wrapped" \
     src/main.gos \
     "count: 10" "grapheme: n" "grapheme: ï"

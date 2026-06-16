@@ -39,7 +39,7 @@ fn run_repl(input: &str) -> ReplOutput {
         let stdin = child.stdin.as_mut().expect("stdin handle");
         stdin.write_all(input.as_bytes()).expect("write stdin");
     }
-    // Drop stdin by taking it out — closes the pipe so the REPL sees EOF.
+    // Drop stdin by taking it out - closes the pipe so the REPL sees EOF.
     drop(child.stdin.take());
 
     // Bounded wait so a hung REPL fails fast rather than blocking CI.

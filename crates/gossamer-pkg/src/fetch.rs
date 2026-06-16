@@ -2,11 +2,11 @@
 //!
 //! Materialises every source kind declared in the manifest:
 //!
-//! - `Path` — read the local filesystem.
-//! - `Tarball` — HTTP(S) GET, sha256-verify, USTAR-unpack.
-//! - `Git` — shell out to `git clone --bare` into the cache, then
+//! - `Path` - read the local filesystem.
+//! - `Tarball` - HTTP(S) GET, sha256-verify, USTAR-unpack.
+//! - `Git` - shell out to `git clone --bare` into the cache, then
 //!   `git archive` the requested ref into the source tree.
-//! - `Registry` — look the version up in the [`VersionCatalogue`]
+//! - `Registry` - look the version up in the [`VersionCatalogue`]
 //!   for a `(download_url, tarball_sha256)` pair, fetch that
 //!   tarball, sha256-verify, USTAR-unpack.
 //!
@@ -200,8 +200,8 @@ impl Fetcher {
         })
     }
 
-    /// Downloads `url`, verifies its sha256, and — when `signature` is
-    /// supplied (registry sources) — authenticates the publisher
+    /// Downloads `url`, verifies its sha256, and - when `signature` is
+    /// supplied (registry sources) - authenticates the publisher
     /// signature over the raw bytes before unpacking. Both checks run
     /// before [`tar::unpack`], so a tampered or unsigned payload never
     /// reaches the filesystem.

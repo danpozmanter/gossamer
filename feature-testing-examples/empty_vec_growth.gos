@@ -2,7 +2,7 @@
 // loop must be promoted to a heap Vec sized by the binding's resolved
 // element type. Before the growth-detection fix, the `while`-loop body's
 // `push` was not detected, so the binding stayed an inline fixed array and
-// `push` reinterpreted it as a GosVec header — corrupting the heap on
+// `push` reinterpreted it as a GosVec header - corrupting the heap on
 // churn. This fixture builds and drops many such vecs and reads them back,
 // and must stay bit-identical across the VM, Cranelift, and LLVM tiers.
 

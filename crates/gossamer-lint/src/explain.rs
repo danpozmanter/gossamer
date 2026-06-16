@@ -62,7 +62,7 @@ pub fn lint_explanation(id: &str) -> Option<&'static str> {
         }
         "self_assignment" => {
             "Assigning a variable to itself does nothing. The statement is\n\
-            usually the residue of a refactor — remove it."
+            usually the residue of a refactor - remove it."
         }
         "unused_mut_variable" => {
             "A binding marked `mut` that is never reassigned. Drop the `mut`\n\
@@ -73,7 +73,7 @@ pub fn lint_explanation(id: &str) -> Option<&'static str> {
             expressions. Implement the branch before merging."
         }
         "bool_literal_in_condition" => {
-            "`if true { ... }` / `while false { ... }` — the branch is\n\
+            "`if true { ... }` / `while false { ... }` - the branch is\n\
             decided at compile time. Drop the control-flow construct."
         }
         "let_and_return" => {
@@ -90,7 +90,7 @@ pub fn lint_explanation(id: &str) -> Option<&'static str> {
         }
         "redundant_field_init" => "`Foo { x: x }` is the same as the shorthand `Foo { x }`.",
         "needless_else_after_return" => {
-            "`if cond { return X } else { Y }` — the `else` is unreachable\n\
+            "`if cond { return X } else { Y }` - the `else` is unreachable\n\
             fall-through. Un-nest the `else` body."
         }
         "self_compare" => {
@@ -106,7 +106,7 @@ pub fn lint_explanation(id: &str) -> Option<&'static str> {
             Drop the `let`."
         }
         "float_eq_zero" => {
-            "Equality against a float literal is almost never what you want —\n\
+            "Equality against a float literal is almost never what you want -\n\
             floating-point arithmetic rarely produces the exact bit pattern.\n\
             Compare `(x - y).abs() < eps` with an explicit tolerance."
         }
@@ -119,7 +119,7 @@ pub fn lint_explanation(id: &str) -> Option<&'static str> {
             Rewrite as `if b { ... } else { ... }`."
         }
         "needless_parens" => {
-            "`(x)` without a trailing comma is a needless pair of parens —\n\
+            "`(x)` without a trailing comma is a needless pair of parens -\n\
             `x` reads the same. `(x,)` is a one-tuple and means something\n\
             different."
         }
@@ -160,7 +160,7 @@ pub fn lint_explanation(id: &str) -> Option<&'static str> {
             swap is needed."
         }
         "consecutive_assignment" => {
-            "Two back-to-back assignments to the same place — the earlier\n\
+            "Two back-to-back assignments to the same place - the earlier\n\
             value is dead before it's read. Drop the first or consolidate\n\
             the logic into one statement."
         }
@@ -187,11 +187,11 @@ pub fn lint_explanation(id: &str) -> Option<&'static str> {
         "let_with_unit_type" => {
             "`let _: () = expr` annotates the binding with the unit type. If\n\
             `expr` was going to return `()` anyway, the annotation is noise.\n\
-            If it wasn't, the annotation forces a coercion — use a plain\n\
+            If it wasn't, the annotation forces a coercion - use a plain\n\
             statement instead."
         }
         "useless_default_only_match" => {
-            "`match x { _ => expr }` always runs `expr` — the `match` adds\n\
+            "`match x { _ => expr }` always runs `expr` - the `match` adds\n\
             nothing. Drop the `match` (and add `let _ = x` if evaluating\n\
             the scrutinee has side effects)."
         }

@@ -15,7 +15,7 @@
 //! - The map itself lives behind `Arc<RwLock<...>>`. Cloning `AppState`
 //!   is O(1) and every clone observes the same set of values.
 //! - All operations take a read or write lock, perform the lookup, and
-//!   release the guard before returning — the lock is never held across a
+//!   release the guard before returning - the lock is never held across a
 //!   call into user code.
 //!
 //! # Thread safety
@@ -34,7 +34,7 @@ use parking_lot::RwLock;
 
 /// Type-erased application-state container.
 ///
-/// Stores at most one value per Rust type. Cloning is O(1) — the underlying
+/// Stores at most one value per Rust type. Cloning is O(1) - the underlying
 /// map is shared via `Arc<RwLock<...>>`, so all clones observe the same set
 /// of values. Entries must be `Send + Sync + 'static` so they can cross
 /// goroutine boundaries.
@@ -125,7 +125,7 @@ impl AppState {
 /// Wires `state` into `router`'s middleware chain so every handler
 /// registered against the router sees the same shared [`AppState`].
 ///
-/// Handlers retrieve typed values through `State::from_request` —
+/// Handlers retrieve typed values through `State::from_request` -
 /// the request object carries the `AppState` reference under a
 /// stable extension slot.
 ///

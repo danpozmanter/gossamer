@@ -74,7 +74,7 @@ enum Mode {
 static MODE: OnceLock<Mode> = OnceLock::new();
 
 /// Initialises record / replay according to `GOS_TRACE` / `GOS_REPLAY`
-/// environment variables. Idempotent — subsequent calls are no-ops.
+/// environment variables. Idempotent - subsequent calls are no-ops.
 /// Returns `true` if record or replay was armed.
 pub fn init_from_env() -> bool {
     let _ = MODE.get_or_init(|| {

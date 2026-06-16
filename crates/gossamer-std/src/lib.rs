@@ -82,18 +82,18 @@ pub mod http_sse;
 pub mod http_state;
 /// HTTP static file server (ETag, Last-Modified, Range, MIME sniff).
 pub mod http_static_files;
-/// WebSocket (RFC 6455) — first-party stdlib support.
+/// WebSocket (RFC 6455) - first-party stdlib support.
 pub mod http_websocket;
 pub mod io;
 pub mod iter;
-/// JWT (JSON Web Tokens, RFC 7519) — HS256/384/512, ES256, EdDSA.
+/// JWT (JSON Web Tokens, RFC 7519) - HS256/384/512, ES256, EdDSA.
 pub mod jwt;
 /// Process lifecycle: graceful-shutdown hooks, signal handling, sd_notify.
 pub mod lifecycle;
 /// Go-style `log` package: flat `Println` / `Printf` / `Fatal`.
 pub mod log;
 /// Goroutine-driven future polling (no tokio runtime). Always
-/// compiled — drives HTTP/2 + future async stacks.
+/// compiled - drives HTTP/2 + future async stacks.
 pub mod runtime_future;
 
 /// Chaining combinators for `Option<T>`. F#-style free functions

@@ -3,7 +3,7 @@ source: crates/gossamer-diagnostics/tests/snapshots.rs
 expression: rendered
 ---
 --- plain ---
-error[GL0013]: `!!x` collapses to `x` when `x: bool`. If the double negation is — here
+error[GL0013]: `!!x` collapses to `x` when `x: bool`. If the double negation is - here
 --- framed ---
 error[GL0013]: `!!x` collapses to `x` when `x: bool`. If the double negation is
   --> snap.gos:2:5

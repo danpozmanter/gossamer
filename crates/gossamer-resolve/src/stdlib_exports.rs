@@ -1,11 +1,11 @@
 //! Stdlib export table for `module::member` value-path validation.
 //!
-//! GENERATED — do not edit by hand. The source of truth is the
+//! GENERATED - do not edit by hand. The source of truth is the
 //! runtime builtin registry (`gossamer_interp::registered_names()`):
 //! every qualified name the runtime binds with a lowercase module
 //! head appears here. The resolver rejects a two-segment
 //! `module::member` value path whose head is a known stdlib module
-//! but whose full name is absent from this table — catching
+//! but whose full name is absent from this table - catching
 //! `json::from_json`-style typos at `gos check` / LSP time instead of
 //! only at runtime (GX0002).
 //!
@@ -89,7 +89,7 @@ pub const STDLIB_MODULES: &[&str] = &[
 /// Every qualified `module::...` path the runtime registers with a
 /// lowercase head. Sorted for binary search.
 /// Canonical stdlib module paths (without the `std::` prefix), one
-/// path per module — the alias spellings (`std::json` for
+/// path per module - the alias spellings (`std::json` for
 /// `std::encoding::json`, …) are not in this table and fail `use`
 /// resolution with GR0005. Sorted for binary search. Kept in sync
 /// with `gossamer_std::manifest::ALL_MODULES` by the

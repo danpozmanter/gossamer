@@ -21,8 +21,8 @@ fn main() {
 
 ## Why
 
-For object graphs that die together — a parse tree, a request's
-working set, a per-iteration data structure — individual reference
+For object graphs that die together - a parse tree, a request's
+working set, a per-iteration data structure - individual reference
 counting does work the program does not need. Inside an arena:
 
 - **allocation is a pointer bump** (compare + add);

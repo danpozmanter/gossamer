@@ -46,7 +46,7 @@ pub enum TypeKind {
     Path(TypePath),
     /// A tuple type `(T1, T2, ...)` with two or more elements.
     Tuple(Vec<Type>),
-    /// Fixed-length array type `[T; N]` — `len` is the length expression.
+    /// Fixed-length array type `[T; N]` - `len` is the length expression.
     Array {
         /// Element type of the array.
         elem: Box<Type>,

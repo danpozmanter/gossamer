@@ -5,7 +5,7 @@
 //! async crates like `h2` can consume it. **No tokio runtime is
 //! involved.** When the kernel buffer is empty / full, the
 //! bridge registers the IO source with the goroutine's gid and
-//! parks the goroutine — exactly the same path used by
+//! parks the goroutine - exactly the same path used by
 //! synchronous TcpStream::read/write. The Waker passed in via
 //! the `Context` is woken via the netpoller's
 //! `register_waker(gid, ...)` mechanism.
@@ -31,7 +31,7 @@ use crate::sched_global;
 /// `AsyncRead + AsyncWrite` wrapper over a non-blocking
 /// [`TcpStream`].
 ///
-/// Construction is intentionally trivial — the inner stream is
+/// Construction is intentionally trivial - the inner stream is
 /// already non-blocking with an attached mio handle. The bridge
 /// holds the stream + a slot for the current outstanding waker
 /// so a re-poll of the same operation does not race against the
@@ -57,7 +57,7 @@ impl AsyncTcpStream {
         }
     }
 
-    /// Borrows the inner stream — useful for setting timeouts
+    /// Borrows the inner stream - useful for setting timeouts
     /// or keep-alive after wrap.
     pub fn get_mut(&mut self) -> &mut TcpStream {
         &mut self.inner

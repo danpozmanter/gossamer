@@ -23,7 +23,7 @@ fn formatting_on_clean_doc_returns_empty_or_idempotent() {
     if let Value::Array(items) = &response {
         if !items.is_empty() {
             // If any edit comes back, the new text should still be
-            // valid Gossamer (it always is — the pretty-printer just
+            // valid Gossamer (it always is - the pretty-printer just
             // ran). Acceptable.
             assert!(
                 first_edit_new_text(&response).is_some(),
@@ -48,7 +48,7 @@ fn formatting_on_broken_source_returns_empty() {
 
 #[test]
 fn formatting_full_document_replace() {
-    // Deliberately ugly source — extra blank lines + indentation
+    // Deliberately ugly source - extra blank lines + indentation
     // wobble. The pretty-printer should canonicalize it.
     let uri = "file:///ugly.gos";
     let server = server_with(

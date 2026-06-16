@@ -65,7 +65,7 @@ fn code_action_for_typo_suggests_correction() {
     let params = code_action_params(uri, range.clone(), vec![diag.clone()]);
     let response = server.code_actions(&params);
     // The codeAction response may be empty if the resolver did not
-    // attach a Suggestion for this exact shape. Acceptable — we just
+    // attach a Suggestion for this exact shape. Acceptable - we just
     // assert the shape is well-formed.
     assert!(
         matches!(response, Value::Array(_)),

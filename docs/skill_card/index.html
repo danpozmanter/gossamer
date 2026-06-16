@@ -1354,7 +1354,7 @@
   <a href="#immutability-default-concrete-examples" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Immutability default — concrete examples
+        Immutability default - concrete examples
       
     </span>
   </a>
@@ -1365,7 +1365,7 @@
   <a href="#if-let-while-let-when-to-reach-for-them" class="md-nav__link">
     <span class="md-ellipsis">
       
-        if let / while let — when to reach for them
+        if let / while let - when to reach for them
       
     </span>
   </a>
@@ -1524,7 +1524,7 @@
   <a href="#14-worked-example-http-server-with-method-path-routing" class="md-nav__link">
     <span class="md-ellipsis">
       
-        14. Worked example — HTTP server with method + path routing
+        14. Worked example - HTTP server with method + path routing
       
     </span>
   </a>
@@ -1707,7 +1707,7 @@
   <a href="#immutability-default-concrete-examples" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Immutability default — concrete examples
+        Immutability default - concrete examples
       
     </span>
   </a>
@@ -1718,7 +1718,7 @@
   <a href="#if-let-while-let-when-to-reach-for-them" class="md-nav__link">
     <span class="md-ellipsis">
       
-        if let / while let — when to reach for them
+        if let / while let - when to reach for them
       
     </span>
   </a>
@@ -1877,7 +1877,7 @@
   <a href="#14-worked-example-http-server-with-method-path-routing" class="md-nav__link">
     <span class="md-ellipsis">
       
-        14. Worked example — HTTP server with method + path routing
+        14. Worked example - HTTP server with method + path routing
       
     </span>
   </a>
@@ -1964,7 +1964,7 @@
 
 <!-- This page is the canonical SKILL.md, transcluded verbatim so the
      docs and the AI skill card never drift. Edit /SKILL.md, not this file. -->
-<h1 id="gossamer-skill-card">Gossamer — Skill Card<a class="headerlink" href="#gossamer-skill-card" title="Permanent link">&para;</a></h1>
+<h1 id="gossamer-skill-card">Gossamer - Skill Card<a class="headerlink" href="#gossamer-skill-card" title="Permanent link">&para;</a></h1>
 <p>Drop this file into a model's context to teach it how to write
 idiomatic Gossamer. Self-contained. Covers: what Gossamer is,
 surface syntax, forward-pipe style, the <code>gos</code> toolchain, error
@@ -1974,14 +1974,14 @@ context assumed.</p>
 <h2 id="1-what-gossamer-is">1. What Gossamer is<a class="headerlink" href="#1-what-gossamer-is" title="Permanent link">&para;</a></h2>
 <p>A goroutine-powered, fast-compiling systems language with
 automatic memory management (deterministic reference counting
-plus <code>arena { }</code> regions — no borrow checker, no lifetimes, no
+plus <code>arena { }</code> regions - no borrow checker, no lifetimes, no
 tracing-GC pauses). Syntax is Rust-flavoured. Runtime is
 Go-shaped: goroutines, channels. Source files end in <code>.gos</code>. The
 toolchain binary is <code>gos</code>. Every project ships a <code>project.toml</code>
 manifest.</p>
 <p>Status: pre-1.0.0 (currently 0.14.0). The surface is stable to
 write against, and features ship across all three tiers (bytecode
-VM, in-process JIT, LLVM AOT) — see "current gaps" at the bottom.</p>
+VM, in-process JIT, LLVM AOT) - see "current gaps" at the bottom.</p>
 <h2 id="2-idioms-at-a-glance">2. Idioms at a glance<a class="headerlink" href="#2-idioms-at-a-glance" title="Permanent link">&para;</a></h2>
 <p>Write <strong>clear, low-complexity, concise code.</strong> Names earn their
 length; helpers earn their existence. If a line reads cleanly the
@@ -1998,21 +1998,21 @@ first time through, leave it alone.</p>
   rx.recv()</code> is the canonical channel drain.</li>
 <li><strong>Tuple destructuring at every binding site.</strong> <code>let (a, b) =
   pair</code>, <code>for (k, v) in m.iter()</code>, <code>let (tx, rx) = channel()</code>.</li>
-<li><strong><code>for x in xs</code> over collections — no <code>.iter()</code>, no <code>*x</code>.</strong> The
+<li><strong><code>for x in xs</code> over collections - no <code>.iter()</code>, no <code>*x</code>.</strong> The
   binding is the value for <code>Copy</code> types, a borrow otherwise.</li>
-<li><strong>Bare integer indices — no <code>as usize</code>.</strong> <code>arr[i]</code> works for
+<li><strong>Bare integer indices - no <code>as usize</code>.</strong> <code>arr[i]</code> works for
   <code>i: i64</code>. An index outside <code>[0, len)</code> yields the element type's
-  zero value rather than panicking (identical on every tier) — so
+  zero value rather than panicking (identical on every tier) - so
   guard with <code>len()</code> when absence must differ from zero.</li>
 <li><strong><code>arr.swap(i, j)</code></strong> over the manual three-line temp dance.</li>
 <li><strong><code>m.inc(k)</code> / <code>m.inc(k, by)</code></strong> for counters; <code>m.or_insert(k,
   default)</code> for get-or-fill.</li>
 <li><strong>Recursive enums work directly.</strong> <code>enum List { Cons(i64,
-  Box&lt;List&gt;), Nil }</code>. <code>Box</code> / <code>Arc</code> / <code>Rc</code> are transparent — every
+  Box&lt;List&gt;), Nil }</code>. <code>Box</code> / <code>Arc</code> / <code>Rc</code> are transparent - every
   variant payload is heap-shared; the bare <code>Cons(i64, List)</code> form
   works too.</li>
 <li><strong><code>#[derive(Clone, PartialEq, Eq, Default, Debug, Hash)]</code></strong> on
-  structs and enums — synthesized as real source, so <code>==</code>,
+  structs and enums - synthesized as real source, so <code>==</code>,
   <code>.clone()</code>, <code>Type::default()</code>, <code>{:?}</code> work on every tier. Enums
   derive when variants are all tuple/unit; <code>#[default]</code> picks the
   <code>Default</code> variant. Don't hand-roll field-wise eq/clone.</li>
@@ -2034,9 +2034,9 @@ first time through, leave it alone.</p>
 <li><strong><code>arena { ... }</code> for object graphs that die together.</strong>
   Everything allocated inside is bump-allocated and freed wholesale
   at every exit path. Contract: nothing allocated inside may be
-  referenced after the block — compute scalar/string summaries
+  referenced after the block - compute scalar/string summaries
   inside, keep survivors outside. Statement position only; nests.</li>
-<li><strong>Bare numeric literals — always.</strong> <code>0</code>, <code>200</code>, <code>1.5</code>, not
+<li><strong>Bare numeric literals - always.</strong> <code>0</code>, <code>200</code>, <code>1.5</code>, not
   <code>0i64</code> / <code>1.5f64</code>. Inference picks the type from binding, call
   site, or return type. Suffix only when a literal stands alone
   with no contextual hint. Same for indices: <code>arr[0]</code>.</li>
@@ -2044,10 +2044,10 @@ first time through, leave it alone.</p>
   <code>"foo".to_string()</code>. <code>&amp;"foo"</code> borrows where <code>&amp;String</code> / <code>&amp;str</code>
   is expected.</li>
 <li><strong>Macros only for formatted output.</strong> <code>println!</code>, <code>format!</code>,
-  <code>print!</code>, <code>eprintln!</code>, <code>eprint!</code>, <code>panic!</code> — no others exist.</li>
+  <code>print!</code>, <code>eprintln!</code>, <code>eprint!</code>, <code>panic!</code> - no others exist.</li>
 </ul>
-<h3 id="immutability-default-concrete-examples">Immutability default — concrete examples<a class="headerlink" href="#immutability-default-concrete-examples" title="Permanent link">&para;</a></h3>
-<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="c1">// `if` / `match` are expressions — bind their result.</span>
+<h3 id="immutability-default-concrete-examples">Immutability default - concrete examples<a class="headerlink" href="#immutability-default-concrete-examples" title="Permanent link">&para;</a></h3>
+<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="c1">// `if` / `match` are expressions - bind their result.</span>
 <a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="kd">let</span><span class="w"> </span><span class="n">label</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">if</span><span class="w"> </span><span class="n">n</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="mi">0</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="s">&quot;negative&quot;</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="s">&quot;non-negative&quot;</span><span class="w"> </span><span class="p">}</span>
 <a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="kd">let</span><span class="w"> </span><span class="n">label</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">match</span><span class="w"> </span><span class="n">shape</span><span class="w"> </span><span class="p">{</span>
 <a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">    </span><span class="n">Shape</span>::<span class="n">Circle</span><span class="p">(</span><span class="n">_</span><span class="p">)</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="s">&quot;round&quot;</span><span class="p">,</span>
@@ -2066,7 +2066,7 @@ first time through, leave it alone.</p>
 <p>A <code>let mut</code> lives near a single update site (a loop, a builder, an
 in-place sort) inside a small function that returns the new state.
 If a binding is written from many places, break the function up.</p>
-<h3 id="if-let-while-let-when-to-reach-for-them"><code>if let</code> / <code>while let</code> — when to reach for them<a class="headerlink" href="#if-let-while-let-when-to-reach-for-them" title="Permanent link">&para;</a></h3>
+<h3 id="if-let-while-let-when-to-reach-for-them"><code>if let</code> / <code>while let</code> - when to reach for them<a class="headerlink" href="#if-let-while-let-when-to-reach-for-them" title="Permanent link">&para;</a></h3>
 <div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="k">if</span><span class="w"> </span><span class="kd">let</span><span class="w"> </span><span class="nb">Some</span><span class="p">(</span><span class="n">score</span><span class="p">)</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">scores</span><span class="p">.</span><span class="n">get</span><span class="p">(</span><span class="o">&amp;</span><span class="n">name</span><span class="p">)</span><span class="w"> </span><span class="p">{</span><span class="w">     </span><span class="c1">// collapses a 4-line match</span>
 <a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">    </span><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;{name}: {score}&quot;</span><span class="p">)</span>
 <a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="p">}</span>
@@ -2084,11 +2084,11 @@ variant.</p>
 <p>Prefer <code>|&gt;</code> whenever a value flows through two or more transforms.</p>
 <ul>
 <li><code>x |&gt; f</code> desugars to <code>f(x)</code>.</li>
-<li><code>x |&gt; f(a, b)</code> desugars to <code>f(a, b, x)</code> — piped value lands in the
+<li><code>x |&gt; f(a, b)</code> desugars to <code>f(a, b, x)</code> - piped value lands in the
   <strong>last positional slot</strong>.</li>
-<li><code>x |&gt; recv.m(a)</code> becomes <code>recv.m(a, x)</code> — pipe into an <em>external</em>
+<li><code>x |&gt; recv.m(a)</code> becomes <code>recv.m(a, x)</code> - pipe into an <em>external</em>
   receiver's last argument.</li>
-<li><code>x |&gt; _.m(a)</code> becomes <code>x.m(a)</code> — the <strong><code>_</code> placeholder</strong> makes the
+<li><code>x |&gt; _.m(a)</code> becomes <code>x.m(a)</code> - the <strong><code>_</code> placeholder</strong> makes the
   piped value the <em>receiver</em>. <code>_</code> reads as "the value flowing through
   here". Bare <code>x |&gt; _.trim</code> (no parens) is the nullary method call
   <code>x.trim()</code>; <code>x |&gt; _.0</code> / <code>x |&gt; _[i]</code> index the value; <code>x |&gt; _</code> is the
@@ -2143,7 +2143,7 @@ variant.</p>
 <h2 id="5-grammar-essentials">5. Grammar essentials<a class="headerlink" href="#5-grammar-essentials" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>Comments</strong>: <code>//</code> line and <code>/* ... */</code> block are the only forms
-  — block comments do <strong>not</strong> nest; there is no <code>///</code> / <code>//!</code>. A run
+  - block comments do <strong>not</strong> nest; there is no <code>///</code> / <code>//!</code>. A run
   of <code>//</code> lines immediately above an item (no blank line) is its
   documentation; <code>gos doc</code> renders these and <code>gos test</code> runs fenced
   code inside them.</li>
@@ -2151,7 +2151,7 @@ variant.</p>
   followed by a leading <code>&amp;</code>, <code>*</code>, or <code>-</code> starts a new statement, so
   for multi-line continuation put the operator at the end of the
   previous line (<code>let x = a -\n  b</code>) or parenthesize.</li>
-<li><strong>Imports.</strong> <code>use std::iter</code>; group with braces — <code>use std::{iter,
+<li><strong>Imports.</strong> <code>use std::iter</code>; group with braces - <code>use std::{iter,
   os, strings}</code>. No trailing <code>;</code>. Alias with <code>use
   std::collections::{HashMap as Map}</code>. Paths validate against the
   canonical std manifest (<code>GR0005</code>): always spell the full path
@@ -2160,18 +2160,18 @@ variant.</p>
   all yield values.</li>
 <li><strong>Bindings.</strong> <code>let name = expr</code>, <code>let mut name = expr</code>, <code>let
   Point { x, y } = p</code>, <code>let (a, b) = pair</code>.</li>
-<li><strong>References.</strong> <code>&amp;x</code> read-shared, <code>&amp;mut x</code> exclusive write —
+<li><strong>References.</strong> <code>&amp;x</code> read-shared, <code>&amp;mut x</code> exclusive write -
   aliasing intent only; the runtime owns memory. <strong>No lifetimes, no
   borrow checker.</strong></li>
 <li><strong>Types.</strong> <code>bool</code>, <code>char</code>, <code>i8..i64</code>, <code>u8..u64</code>, <code>isize</code>,
   <code>usize</code>, <code>f32</code>, <code>f64</code>, <code>String</code>, <code>[T]</code>, <code>(A, B)</code>, <code>Option&lt;T&gt;</code>,
   <code>Result&lt;T, E&gt;</code>, <code>&amp;T</code>, <code>&amp;mut T</code>, user types. <code>i128</code> / <code>u128</code> are
-  rejected (<code>GT0014</code>) — no tier has a 128-bit representation. Nested
+  rejected (<code>GT0014</code>) - no tier has a 128-bit representation. Nested
   generics parse (<code>Vec&lt;Vec&lt;T&gt;&gt;</code>, <code>HashMap&lt;String, Vec&lt;i64&gt;&gt;</code>).</li>
-<li><strong><code>defer expr</code></strong> — runs on block exit by any path, LIFO, every tier.</li>
+<li><strong><code>defer expr</code></strong> - runs on block exit by any path, LIFO, every tier.</li>
 <li><strong>Integer literals</strong> are bare; inference picks the type, default
   <code>i64</code>. Suffix only with no contextual hint.</li>
-<li><strong>Casts.</strong> <code>x as i32</code> — whitelist-checked (numeric ↔ numeric,
+<li><strong>Casts.</strong> <code>x as i32</code> - whitelist-checked (numeric ↔ numeric,
   <code>bool</code>/<code>char</code> → int, <code>u8</code> → <code>char</code>, same-type no-op). Int → narrow
   int masks at width (<code>300 as u8 == 44</code>); float → int truncates
   toward zero, saturates at i64 width, no narrow mask (<code>300.7 as u8
@@ -2182,9 +2182,9 @@ variant.</p>
   <code>a | b</code>, <code>@</code>-bindings <code>x @ 1..=3</code>, rest <code>..</code>. Guards: <code>Some(n) if
   n &gt; 0 =&gt; …</code>. Used in <code>let</code>, <code>for</code>, params, <code>match</code>, <code>if let</code>,
   <code>while let</code>.</li>
-<li><strong><code>if let</code> / <code>while let</code></strong> desugar to <code>match</code> — shorter reading,
+<li><strong><code>if let</code> / <code>while let</code></strong> desugar to <code>match</code> - shorter reading,
   no new behavior.</li>
-<li><strong><code>let PAT = expr else { … }</code></strong> — the else block must diverge
+<li><strong><code>let PAT = expr else { … }</code></strong> - the else block must diverge
   (<code>return</code> / <code>break</code> / <code>continue</code> / <code>panic!</code>).</li>
 </ul>
 <h2 id="6-formatted-output-the-only-macros">6. Formatted output (the only macros)<a class="headerlink" href="#6-formatted-output-the-only-macros" title="Permanent link">&para;</a></h2>
@@ -2202,7 +2202,7 @@ parse error.</p>
 <tr>
 <td><code>format!("…", a, b)</code></td>
 <td><code>String</code></td>
-<td>—</td>
+<td>-</td>
 </tr>
 <tr>
 <td><code>println!("…", a, b)</code></td>
@@ -2238,7 +2238,7 @@ bindings in scope:</p>
 <a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;value: {} / {}&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">answer</span><span class="p">,</span><span class="w"> </span><span class="n">total</span><span class="p">)</span>
 <a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="kd">let</span><span class="w"> </span><span class="n">greeting</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">&quot;hello, &quot;</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="o">&amp;</span><span class="n">name</span><span class="w">      </span><span class="c1">// `+` concatenates, no separator</span>
 </code></pre></div>
-<p>Format specs follow Rust's <code>{:spec}</code> grammar — width and alignment
+<p>Format specs follow Rust's <code>{:spec}</code> grammar - width and alignment
 (<code>{:&gt;8}</code> / <code>{:&lt;8}</code> / <code>{:^8}</code> / <code>{:8}</code>), fill chars (<code>{:*&gt;8}</code>),
 zero-pad (<code>{:08}</code>), radix (<code>{:x}</code> / <code>{:X}</code> / <code>{:b}</code> / <code>{:o}</code>), and
 precision (<code>{:.2}</code>, <code>{:&gt;8.2}</code>), for positional and named (<code>{n:03}</code>)
@@ -2260,20 +2260,20 @@ arguments:</p>
 <a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a><span class="p">}</span>
 </code></pre></div>
 <ul>
-<li><code>errors::new(msg)</code> — free-standing error.</li>
-<li><code>errors::newf(fmt, args…)</code> — format-shaped constructor, e.g.
+<li><code>errors::new(msg)</code> - free-standing error.</li>
+<li><code>errors::newf(fmt, args…)</code> - format-shaped constructor, e.g.
   <code>errors::newf("status {}", code)</code>.</li>
-<li><code>errors::wrap(cause, msg)</code> — add a higher-level message.</li>
-<li><code>errors::is(err, needle)</code> / <code>errors::chain(err)</code> — walk/iterate
+<li><code>errors::wrap(cause, msg)</code> - add a higher-level message.</li>
+<li><code>errors::is(err, needle)</code> / <code>errors::chain(err)</code> - walk/iterate
   the cause chain.</li>
-<li><code>errors::join([err, err])</code> — combine several.</li>
+<li><code>errors::join([err, err])</code> - combine several.</li>
 </ul>
 <p>Rendering a wrapped error with <code>{}</code> prints the colon-joined chain
 (<code>outer: mid: root</code>); a joined error joins parts with <code>"; "</code>.
 <code>.message()</code> is the top message only.</p>
 <p><code>?</code> also propagates <code>Option&lt;T&gt;</code> inside an <code>Option</code>-returning
 function, and Result <code>?</code> auto-converts the error through <code>From</code>.</p>
-<p>Idiomatic shape — fallible work returns <code>Result</code>, piped through
+<p>Idiomatic shape - fallible work returns <code>Result</code>, piped through
 <code>result::map</code> for the ok-path and <code>result::default_with</code> to handle
 the error in-line:</p>
 <div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="k">use</span><span class="w"> </span><span class="n">std</span>::<span class="p">{</span><span class="n">env</span><span class="p">,</span><span class="w"> </span><span class="n">errors</span><span class="p">,</span><span class="w"> </span><span class="n">fs</span><span class="p">,</span><span class="w"> </span><span class="n">iter</span><span class="p">,</span><span class="w"> </span><span class="n">result</span><span class="p">}</span>
@@ -2291,17 +2291,17 @@ the error in-line:</p>
 Data-last argument order threads both through <code>|&gt;</code>. <code>?</code> also works
 inside macro arguments (<code>print!("{}", expr?)</code>).</p>
 <p>Panics are goroutine-scoped: a panic in a spawned goroutine ends
-only that goroutine — the scheduler keeps running — while a panic on
+only that goroutine - the scheduler keeps running - while a panic on
 the main goroutine is fatal, as in Rust. Reserve for invariant
 violations. Integer divide / modulo by zero panics (<code>GX0005</code>) on
 every tier; <code>i64::MIN / -1</code> wraps to <code>i64::MIN</code>. Deep recursion in a
 goroutine, closure, or method body raises a clean stack-overflow
-(<code>GX0008</code>) rather than crashing — for genuinely deep recursion use
+(<code>GX0008</code>) rather than crashing - for genuinely deep recursion use
 <code>gos build</code>, where native code lets the OS grow the stack.</p>
 <h2 id="8-concurrency">8. Concurrency<a class="headerlink" href="#8-concurrency" title="Permanent link">&para;</a></h2>
 <p><code>go expr</code> is fire-and-forget. When you need the result, <code>spawn(f)</code>
 runs <code>f</code> on a goroutine and returns a <code>JoinHandle&lt;T&gt;</code>;
-<code>handle.join()</code> blocks for <code>Result&lt;T, String&gt;</code> — <code>Ok(value)</code> or
+<code>handle.join()</code> blocks for <code>Result&lt;T, String&gt;</code> - <code>Ok(value)</code> or
 <code>Err(message)</code> on panic. Closures capture their environment.</p>
 <div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="kd">let</span><span class="w"> </span><span class="n">h</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">spawn</span><span class="p">(</span><span class="o">||</span><span class="w"> </span><span class="n">compute</span><span class="p">())</span>
 <a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="k">match</span><span class="w"> </span><span class="n">h</span><span class="p">.</span><span class="n">join</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
@@ -2311,7 +2311,7 @@ runs <code>f</code> on a goroutine and returns a <code>JoinHandle&lt;T&gt;</code
 </code></pre></div>
 <p>Typed channels via <code>std::sync::channel()</code>. <code>recv()</code> blocks until a
 value arrives or every sender is gone; <code>close()</code> ends the stream, so
-<code>while let Some(v) = rx.recv()</code> is the canonical drain — no sleeps,
+<code>while let Some(v) = rx.recv()</code> is the canonical drain - no sleeps,
 identical under <code>gos run</code> and <code>gos build</code>:</p>
 <div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="k">use</span><span class="w"> </span><span class="n">std</span>::<span class="n">sync</span>::<span class="n">channel</span>
 <a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>
@@ -2343,9 +2343,9 @@ producer when the stream ends.</p>
 <p>Lambdas: <code>|param: T| body</code>. Captures work as expected
 (runtime-managed, no <code>move</code>). Two callable types:</p>
 <ul>
-<li><code>fn(args) -&gt; ret</code> — raw code pointer; accepts only non-capturing
+<li><code>fn(args) -&gt; ret</code> - raw code pointer; accepts only non-capturing
   items.</li>
-<li><code>Fn(args) -&gt; ret</code> — callable trait; accepts bare items and
+<li><code>Fn(args) -&gt; ret</code> - callable trait; accepts bare items and
   capturing closures (fat pointer; implicit conversion at the call
   site).</li>
 </ul>
@@ -2356,10 +2356,10 @@ producer when the stream ends.</p>
 <a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a><span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="n">scaled</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="o">|</span><span class="n">y</span>: <span class="kt">i64</span><span class="o">|</span><span class="w"> </span><span class="n">scale</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">y</span><span class="w">     </span><span class="c1">// captures `scale`</span>
 <a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a><span class="w">    </span><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;{}&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">apply</span><span class="p">(</span><span class="n">scaled</span><span class="p">,</span><span class="w"> </span><span class="mi">5</span><span class="p">))</span><span class="w">    </span><span class="c1">// 50</span>
 <a id="__codelineno-12-7" name="__codelineno-12-7" href="#__codelineno-12-7"></a><span class="w">    </span><span class="k">fn</span> <span class="nf">add_one</span><span class="p">(</span><span class="n">y</span>: <span class="kt">i64</span><span class="p">)</span><span class="w"> </span>-&gt; <span class="kt">i64</span> <span class="p">{</span><span class="w"> </span><span class="n">y</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mi">1</span><span class="w"> </span><span class="p">}</span>
-<a id="__codelineno-12-8" name="__codelineno-12-8" href="#__codelineno-12-8"></a><span class="w">    </span><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;{}&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">apply</span><span class="p">(</span><span class="n">add_one</span><span class="p">,</span><span class="w"> </span><span class="mi">41</span><span class="p">))</span><span class="w">  </span><span class="c1">// 42 — bare fn coerces</span>
+<a id="__codelineno-12-8" name="__codelineno-12-8" href="#__codelineno-12-8"></a><span class="w">    </span><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;{}&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">apply</span><span class="p">(</span><span class="n">add_one</span><span class="p">,</span><span class="w"> </span><span class="mi">41</span><span class="p">))</span><span class="w">  </span><span class="c1">// 42 - bare fn coerces</span>
 <a id="__codelineno-12-9" name="__codelineno-12-9" href="#__codelineno-12-9"></a><span class="p">}</span>
 </code></pre></div>
-<p>Single trait variant — no <code>FnMut</code> / <code>FnOnce</code> distinction (they parse
+<p>Single trait variant - no <code>FnMut</code> / <code>FnOnce</code> distinction (they parse
 but lower to the same <code>Fn(_)</code> shape).</p>
 <h2 id="8b-iterators">8b. Iterators<a class="headerlink" href="#8b-iterators" title="Permanent link">&para;</a></h2>
 <p>Any type with <code>fn next(&amp;mut self) -&gt; Option&lt;T&gt;</code> is iterable; <code>for x
@@ -2380,21 +2380,21 @@ __iter).next() { Some(x) =&gt; body, None =&gt; break } } }</code>.</p>
 <p><code>std::iter</code> also exposes a lazy <code>Lazy</code> adapter over any Rust
 <code>Iterator</code>: <code>map</code> / <code>filter</code> / <code>take</code> / <code>skip</code> / <code>step_by</code> adapters,
 <code>to_vec</code> / <code>sum</code> / <code>min</code> / <code>max</code> / <code>count</code> / <code>any</code> / <code>all</code>
-terminals — allocation-free until the terminal.</p>
+terminals - allocation-free until the terminal.</p>
 <h2 id="9-data-structures">9. Data structures<a class="headerlink" href="#9-data-structures" title="Permanent link">&para;</a></h2>
 <ul>
-<li><code>[T]</code> — growable array. <code>[1, 2, 3]</code>; <code>for x in xs</code>; mutate with
+<li><code>[T]</code> - growable array. <code>[1, 2, 3]</code>; <code>for x in xs</code>; mutate with
   <code>push</code>, <code>pop</code>, <code>swap(i, j)</code>, <code>sort()</code>, <code>sort_by(|a, b| …)</code>.</li>
-<li><code>[T; N]</code> — fixed-size. <code>[v; N]</code> (repeat) or <code>[a, b, c]</code>.
+<li><code>[T; N]</code> - fixed-size. <code>[v; N]</code> (repeat) or <code>[a, b, c]</code>.
   Stack-allocatable; pick when the size is a compile-time constant.</li>
-<li><code>(A, B, …)</code> — tuple. <code>.0</code>, <code>.1</code>, … or destructure inline.</li>
-<li><code>struct Foo { x, y }</code> / <code>struct Pair(A, B)</code> — runtime-managed
+<li><code>(A, B, …)</code> - tuple. <code>.0</code>, <code>.1</code>, … or destructure inline.</li>
+<li><code>struct Foo { x, y }</code> / <code>struct Pair(A, B)</code> - runtime-managed
   value types.</li>
-<li><code>enum E { A, B(Payload) }</code> — sum types, matched exhaustively.
+<li><code>enum E { A, B(Payload) }</code> - sum types, matched exhaustively.
   Recursive payloads work directly; <code>Box</code>/<code>Arc</code>/<code>Rc</code> transparent.</li>
-<li><code>Option&lt;T&gt;</code> — <code>Some</code> / <code>None</code>, read with <code>if let</code>. <code>Result&lt;T, E&gt;</code>
-  — <code>Ok</code> / <code>Err</code>, propagate with <code>?</code>.</li>
-<li><code>std::collections::{Vec, HashMap, HashSet, BTreeMap}</code> — the richer
+<li><code>Option&lt;T&gt;</code> - <code>Some</code> / <code>None</code>, read with <code>if let</code>. <code>Result&lt;T, E&gt;</code>
+  - <code>Ok</code> / <code>Err</code>, propagate with <code>?</code>.</li>
+<li><code>std::collections::{Vec, HashMap, HashSet, BTreeMap}</code> - the richer
   containers. <code>HashMap</code>: <code>m.inc(k)</code> / <code>m.inc(k, by)</code>, <code>m.or_insert(k,
   default)</code>, <code>m.iter()</code> (yields <code>[(K, V)]</code>), <code>keys()</code> / <code>values()</code>,
   <code>HashMap::pop(m, k) -&gt; Option&lt;V&gt;</code>. Structs and tuples work as
@@ -2518,33 +2518,33 @@ and run by <code>gos test</code>. Mark non-runnable fences <code>```text</code>.
 <p>Tight index of the common surface. Many modules are large; trust
 repo examples and write a small test when unsure.</p>
 <ul>
-<li><code>std::fmt</code> — <code>Display</code>, <code>Debug</code>.</li>
-<li><code>std::io</code> — <code>Read</code>, <code>Write</code>, buffered wrappers, <code>stdin</code> / <code>stdout</code>.</li>
-<li><code>std::env</code> — <code>args</code>, <code>program_name</code>, <code>var</code>, <code>set_var</code>,
+<li><code>std::fmt</code> - <code>Display</code>, <code>Debug</code>.</li>
+<li><code>std::io</code> - <code>Read</code>, <code>Write</code>, buffered wrappers, <code>stdin</code> / <code>stdout</code>.</li>
+<li><code>std::env</code> - <code>args</code>, <code>program_name</code>, <code>var</code>, <code>set_var</code>,
   <code>unset_var</code>, <code>current_dir</code>, <code>set_current_dir</code>, <code>home_dir</code>,
   <code>temp_dir</code>.</li>
-<li><code>std::process</code> — <code>Command</code>, <code>Output</code>, <code>Stdio</code>, <code>Child</code>,
+<li><code>std::process</code> - <code>Command</code>, <code>Output</code>, <code>Stdio</code>, <code>Child</code>,
   <code>ExitStatus</code>, <code>run</code>, <code>spawn</code>, <code>kill</code>, <code>exit</code>, <code>id</code>, <code>abort</code>,
   <code>Pipeline</code> (<code>pipeline_run</code>), <code>Signal</code>, <code>signal</code>, <code>kill_group</code>,
   <code>wait_timeout</code> (POSIX-only).</li>
-<li><code>std::fs</code> — <code>read</code>, <code>read_to_string</code>, <code>write</code>, <code>read_dir</code>,
+<li><code>std::fs</code> - <code>read</code>, <code>read_to_string</code>, <code>write</code>, <code>read_dir</code>,
   <code>walk_dir</code>, <code>create_dir(_all)</code>, <code>remove_file/dir(_all)</code>,
   <code>remove_all</code>, <code>copy</code>, <code>rename</code>, <code>exists</code>, <code>is_file/dir/symlink</code>,
   <code>file_size</code>, <code>metadata</code>, <code>canonicalize</code>, <code>glob</code>, <code>eval_symlinks</code>,
   <code>mmap_read/write</code>, <code>lock_exclusive/shared</code>, <code>write_atomic</code>,
   <code>hard_link</code>, <code>set_permissions_mode</code>, <code>chown</code>, <code>TempDir</code>,
   <code>temp_file(prefix)</code>, <code>fs::watch::Watcher</code>.</li>
-<li><code>std::path</code> — pure manipulation (no I/O): <code>join</code>, <code>split</code>, <code>base</code>,
+<li><code>std::path</code> - pure manipulation (no I/O): <code>join</code>, <code>split</code>, <code>base</code>,
   <code>dir</code>, <code>ext</code>, <code>clean</code>, <code>is_absolute</code>, <code>has_prefix</code>, <code>matches</code>,
   <code>parent</code>, <code>file_name</code>, <code>stem</code>, <code>normalize</code>. <code>path::native</code> for
   Windows-style paths.</li>
-<li><code>std::os</code> — <code>family()</code>, <code>arch()</code>; <code>write_file(path, &amp;Vec&lt;u8&gt;)</code>
+<li><code>std::os</code> - <code>family()</code>, <code>arch()</code>; <code>write_file(path, &amp;Vec&lt;u8&gt;)</code>
   (binary-safe) and <code>read_file(path) -&gt; Result&lt;Vec&lt;u8&gt;, _&gt;</code> /
   <code>read_file_to_string</code>.</li>
-<li><code>std::strings</code> — <code>split</code>, <code>splitn</code>, <code>split_whitespace</code>, <code>trim(_start/_end)</code>,
+<li><code>std::strings</code> - <code>split</code>, <code>splitn</code>, <code>split_whitespace</code>, <code>trim(_start/_end)</code>,
   char-set trims <code>trim_matches(set)</code> (both ends) / <code>trim_start_matches(set)</code> /
   <code>trim_end_matches(set)</code> (there is <strong>no</strong> <code>strip_chars</code>/<code>lstrip_chars</code>/
-  <code>rstrip_chars</code> — those raise <code>GX0002</code>), <code>contains</code>, <code>find</code>, <code>rfind</code>,
+  <code>rstrip_chars</code> - those raise <code>GX0002</code>), <code>contains</code>, <code>find</code>, <code>rfind</code>,
   <code>replace</code>, <code>replacen</code>,
   <code>to_lower/upper</code>, <code>to_title</code>, <code>starts_with</code>, <code>ends_with</code>, <code>repeat</code>,
   <code>lines</code>, <code>join</code>, <code>strip_prefix/suffix</code>, <code>pad_left/right</code>. Also as
@@ -2556,14 +2556,14 @@ repo examples and write a small test when unsure.</p>
   over the <code>to_lowercase</code> alias. Join with <code>strings::join(&amp;parts, sep)</code>,
   not the <code>parts.join(sep)</code> method (the latter mis-dispatches and drops
   the elements).</li>
-<li><code>std::strconv</code> — <code>parse_int/i64/u64/float/f64/bool</code>,
+<li><code>std::strconv</code> - <code>parse_int/i64/u64/float/f64/bool</code>,
   <code>format_int/i64/float/f64</code>, <code>itoa</code>, <code>atoi</code>, <code>parse_i64_radix(s, base)</code>
   / <code>format_i64_radix(n, base)</code> (bases 2..=36), <code>quote</code>/<code>unquote</code>.</li>
-<li><code>std::utf8</code> — <code>count_runes</code>, <code>rune_count(_in_string)</code>, <code>rune_len</code>,
+<li><code>std::utf8</code> - <code>count_runes</code>, <code>rune_count(_in_string)</code>, <code>rune_len</code>,
   <code>is_valid</code>, <code>valid_rune/string</code>, <code>full_rune(_in_string)</code>,
   <code>rune_start</code>, <code>decode_rune/last_rune/first</code> (+ <code>_in_string</code>),
   <code>encode_rune</code>, <code>append_rune</code>.</li>
-<li><code>std::unicode</code> — full Unicode 16: general-category predicates
+<li><code>std::unicode</code> - full Unicode 16: general-category predicates
   (<code>is_letter/digit/number/space/upper/lower/title/punct/symbol/mark/print/graphic/control/assigned</code>,
   <code>combining_class</code>); casing (<code>to_upper/lower/title</code>, <code>simple_fold</code>,
   <code>to_upper_str/lower_str</code>, <code>fold_case</code>); normalization
@@ -2571,17 +2571,17 @@ repo examples and write a small test when unsure.</p>
   (<code>graphemes</code>, <code>grapheme_count</code>, <code>words</code>, <code>word_bounds/count</code>,
   <code>sentences</code>, <code>sentence_count</code>). Identifiers follow UAX #31, so
   <code>let café = 1</code>, <code>let π = 3.14</code> parse.</li>
-<li><code>std::collections</code> — <code>Vec</code>, <code>HashMap</code>, <code>HashSet</code> (real set:
+<li><code>std::collections</code> - <code>Vec</code>, <code>HashMap</code>, <code>HashSet</code> (real set:
   <code>insert</code>, <code>remove</code>, <code>contains</code>, <code>len</code>, <code>is_empty</code>, <code>clear</code>,
   <code>to_vec</code>, <code>iter</code>; algebra: <code>union</code>, <code>intersection</code>, <code>difference</code>,
   <code>symmetric_difference</code>, <code>is_subset</code>, <code>is_superset</code>, <code>is_disjoint</code>),
   <code>BTreeMap</code>. (Vec/HashMap method extras under §9.)</li>
-<li><code>std::net</code> — <code>TcpListener::{bind, accept, local_addr, close}</code>,
+<li><code>std::net</code> - <code>TcpListener::{bind, accept, local_addr, close}</code>,
   <code>TcpStream::{connect, read, read_to_string, write, close}</code>,
   <code>UdpSocket::{bind, send_to, recv_from, local_addr, close}</code>,
-  <code>resolve</code> / <code>lookup</code> (DNS). <code>std::net::url</code> — parse + render +
+  <code>resolve</code> / <code>lookup</code> (DNS). <code>std::net::url</code> - parse + render +
   escape.</li>
-<li><code>std::http</code> — <code>Method</code>, <code>StatusCode</code>, <code>Headers</code>, <code>Request</code>,
+<li><code>std::http</code> - <code>Method</code>, <code>StatusCode</code>, <code>Headers</code>, <code>Request</code>,
   <code>Response</code>, <code>Handler</code>, <code>serve</code> (returns <code>Result&lt;(), Error&gt;</code>; a
   bind failure is the caller's <code>Err</code>). One client engine on every
   tier. Client surface: <code>Client { get, post, put, options, delete,
@@ -2614,12 +2614,12 @@ repo examples and write a small test when unsure.</p>
   <code>security_headers</code>, <code>cache_control</code>, <code>etag</code>, <code>bearer_auth</code>,
   <code>rate_limit</code>, <code>compress_gzip</code>, <code>safe_defaults</code>, <code>logger</code>,
   <code>recoverer</code>, <code>request_id</code>, <code>cors</code>, <code>basic_auth</code>); HTTP/2 push +
-  trailers. <code>std::http_h3</code> — HTTP/3 server + client (RFC 9114).</li>
+  trailers. <code>std::http_h3</code> - HTTP/3 server + client (RFC 9114).</li>
 <li><code>std::encoding::{json, base64, hex, binary}</code>. Every user struct
   gets generic serializer free functions called with a turbofish:
   <code>from_json::&lt;Type&gt;(text) -&gt; Result&lt;Type, _&gt;</code> and
   <code>to_json::&lt;Type&gt;(value) -&gt; Result&lt;String, _&gt;</code> (the single
-  spelling — no <code>Type::from_json</code> methods). The decoder validates
+  spelling - no <code>Type::from_json</code> methods). The decoder validates
   each field against its declared type with path-qualified errors;
   nested structs, <code>[T]</code>/<code>Vec&lt;T&gt;</code>/<code>[T; N]</code>/tuples/<code>Option&lt;T&gt;</code>/
   <code>HashMap&lt;String, V&gt;</code> walk recursively; a <code>json::Value</code> field
@@ -2627,11 +2627,11 @@ repo examples and write a small test when unsure.</p>
   canonical. Dynamic <code>json::parse</code> / <code>decode</code> / <code>render</code> +
   <code>json::as_i64/f64/str -&gt; Option&lt;T&gt;</code> stay available for
   unknown-shape documents. Narrow int fields round-trip via <code>as</code>.</li>
-<li><code>std::encoding::yaml</code> — YAML 1.2 parse/encode + <code>yaml::to_json</code> /
+<li><code>std::encoding::yaml</code> - YAML 1.2 parse/encode + <code>yaml::to_json</code> /
   <code>from_json</code> text converters; auto-derived <code>from_yaml::&lt;T&gt;</code> /
   <code>to_yaml::&lt;T&gt;</code> on every struct compose these with the JSON pair.
   Also <code>encoding::toml</code> (<code>toml::to_json</code> / <code>from_json</code>).</li>
-<li><code>std::database::sql</code> — driver-pluggable SQL modelled on Go's
+<li><code>std::database::sql</code> - driver-pluggable SQL modelled on Go's
   <code>database/sql</code> (no driver in the box; a Rust crate implements the
   <code>Driver</code> trait via <code>[rust-bindings]</code>). <code>open(driver, url) -&gt;
   Result&lt;Conn, _&gt;</code>; <code>Conn</code>: <code>execute(sql, &amp;[Value])</code>, <code>query</code>,
@@ -2649,43 +2649,43 @@ repo examples and write a small test when unsure.</p>
   <code>&lt;version&gt;_&lt;slug&gt;.sql</code>); <code>Select</code> fluent builder (<code>new(t).columns(&amp;[..])
   .where_eq(col, v).order_by(col, asc).limit(n)</code> → <code>render()</code> /
   <code>params()</code>).</li>
-<li><code>std::sync</code> — <code>Mutex</code>, <code>RwLock</code>, atomics, <code>channel</code>, <code>Once</code>,
+<li><code>std::sync</code> - <code>Mutex</code>, <code>RwLock</code>, atomics, <code>channel</code>, <code>Once</code>,
   <code>WaitGroup</code> (<code>new</code>/<code>add</code>/<code>done</code>/<code>wait</code>), <code>Map</code> (concurrent
   string→string: <code>set</code>/<code>get</code>/<code>delete</code>/<code>len</code>/<code>contains</code>/<code>keys</code>). For
   non-string payloads wrap a <code>HashMap</code> in <code>Mutex</code>.</li>
-<li><code>std::time</code> — <code>Instant::{now, elapsed_ms}</code>, <code>Duration::{from_millis/secs/micros,
+<li><code>std::time</code> - <code>Instant::{now, elapsed_ms}</code>, <code>Duration::{from_millis/secs/micros,
   as_millis/secs/micros}</code>, <code>sleep</code>, <code>now</code>, <code>now_nanos</code>,
   <code>monotonic_ms/nanos</code>, <code>since_ms</code>, <code>format_rfc3339</code>, <code>parse_rfc3339</code>.
-  Channel timer: <code>after(d) -&gt; Receiver</code> (one-shot) — drain with
+  Channel timer: <code>after(d) -&gt; Receiver</code> (one-shot) - drain with
   <code>while let</code> or use as a <code>select</code> timeout arm.</li>
-<li><code>std::context</code> — cancellation, deadlines, <code>Context::background()</code>.</li>
-<li><code>std::bytes</code> / <code>std::bufio</code> — binary buffers and buffered IO.</li>
-<li><code>std::flag</code> — CLI flag parser; <code>flag::Cell&lt;T&gt;</code> auto-derefs at
+<li><code>std::context</code> - cancellation, deadlines, <code>Context::background()</code>.</li>
+<li><code>std::bytes</code> / <code>std::bufio</code> - binary buffers and buffered IO.</li>
+<li><code>std::flag</code> - CLI flag parser; <code>flag::Cell&lt;T&gt;</code> auto-derefs at
   every value-context (comparisons, call args, <code>if</code>), explicit
   <code>*cell</code> still works.</li>
-<li><strong>Scalar <code>min</code> / <code>max</code> / <code>clamp</code></strong> — bare prelude functions, no
+<li><strong>Scalar <code>min</code> / <code>max</code> / <code>clamp</code></strong> - bare prelude functions, no
   import. <code>min(3, 7) == 3</code>, <code>clamp(15, 0, 10) == 10</code>. Vec-shaped
   <code>min(xs)</code> / <code>max(xs)</code> return <code>Option&lt;T&gt;</code>.</li>
 <li><code>std::sort</code>, <code>std::math::rand</code> (deterministic RNG).</li>
-<li><code>std::crypto::{rand, sha256, hmac, subtle}</code> — narrow, audited;
-  <code>crypto::password</code> — Argon2id (<code>hash</code>, <code>verify</code>, <code>needs_rehash</code>,
+<li><code>std::crypto::{rand, sha256, hmac, subtle}</code> - narrow, audited;
+  <code>crypto::password</code> - Argon2id (<code>hash</code>, <code>verify</code>, <code>needs_rehash</code>,
   PHC strings).</li>
-<li><code>std::jwt</code> — RFC 7519 sign/verify HS256/384/512, ES256, EdDSA,
+<li><code>std::jwt</code> - RFC 7519 sign/verify HS256/384/512, ES256, EdDSA,
   RS256/384/512 (verify): <code>sign_hs</code>/<code>verify_hs</code>,
   <code>sign_es256</code>/<code>verify_es256</code>, <code>sign_eddsa</code>/<code>verify_eddsa</code>.</li>
-<li><code>std::metrics</code> — Prometheus <code>Counter</code>/<code>Gauge</code>/<code>Histogram</code> +
-  <code>Registry</code>. <code>std::trace</code> — W3C trace-context + OTLP JSON exporter.</li>
-<li><code>std::compress::{gzip, flate, zlib, zstd}</code> — byte-in/byte-out
-  (zstd 1–22, default 3).</li>
-<li><code>std::lifecycle</code> — graceful shutdown, signals, sd_notify.
-  <code>std::validate</code> — <code>Validate</code> trait + <code>FieldError</code> / <code>Errors</code>.
-  <code>std::slog</code> — structured logging.</li>
-<li><code>std::runtime</code> — <code>collect_cycles()</code>, <code>arena_push/pop</code> (prefer the
+<li><code>std::metrics</code> - Prometheus <code>Counter</code>/<code>Gauge</code>/<code>Histogram</code> +
+  <code>Registry</code>. <code>std::trace</code> - W3C trace-context + OTLP JSON exporter.</li>
+<li><code>std::compress::{gzip, flate, zlib, zstd}</code> - byte-in/byte-out
+  (zstd 1-22, default 3).</li>
+<li><code>std::lifecycle</code> - graceful shutdown, signals, sd_notify.
+  <code>std::validate</code> - <code>Validate</code> trait + <code>FieldError</code> / <code>Errors</code>.
+  <code>std::slog</code> - structured logging.</li>
+<li><code>std::runtime</code> - <code>collect_cycles()</code>, <code>arena_push/pop</code> (prefer the
   <code>arena {}</code> block), <code>set_panic_hook(f: fn(String))</code>. Main-goroutine
   panic exits 101; an unobserved <code>go</code> panic prints one <code>error[GX0005]</code>
   line and ends only that goroutine.</li>
-<li><code>std::testing</code> — <code>check</code>, <code>check_eq</code>, <code>Runner</code>, <code>check_ok</code>.</li>
-<li><code>std::regex</code> — wraps the Rust <code>regex</code> crate; named groups via
+<li><code>std::testing</code> - <code>check</code>, <code>check_eq</code>, <code>Runner</code>, <code>check_ok</code>.</li>
+<li><code>std::regex</code> - wraps the Rust <code>regex</code> crate; named groups via
   <code>capture_names(pat)</code>, <code>captures_named(pat, hay)</code> /
   <code>captures_named_all</code> → <code>HashMap&lt;String, String&gt;</code>.</li>
 </ul>
@@ -2707,10 +2707,10 @@ repo examples and write a small test when unsure.</p>
 <a id="__codelineno-16-7" name="__codelineno-16-7" href="#__codelineno-16-7"></a><span class="k">[dependencies]</span>
 <a id="__codelineno-16-8" name="__codelineno-16-8" href="#__codelineno-16-8"></a><span class="s2">&quot;example.org/lib&quot;</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;1.2.3&quot;</span>
 </code></pre></div>
-<h2 id="14-worked-example-http-server-with-method-path-routing">14. Worked example — HTTP server with method + path routing<a class="headerlink" href="#14-worked-example-http-server-with-method-path-routing" title="Permanent link">&para;</a></h2>
+<h2 id="14-worked-example-http-server-with-method-path-routing">14. Worked example - HTTP server with method + path routing<a class="headerlink" href="#14-worked-example-http-server-with-method-path-routing" title="Permanent link">&para;</a></h2>
 <p>Route per (method, path); keep each handler a one-job free
 function. Lift dispatch into one <code>App::serve</code> that matches and
-forwards — never inline the response shape in the dispatcher. Full
+forwards - never inline the response shape in the dispatcher. Full
 pattern in <code>examples/web_server.gos</code>.</p>
 <div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a><span class="k">use</span><span class="w"> </span><span class="n">std</span>::<span class="n">http</span>
 <a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a>
@@ -2766,11 +2766,11 @@ pattern in <code>examples/web_server.gos</code>.</p>
   receivers dispatch by type (a <code>String::</code> / <code>HashMap::</code> / <code>Vec::</code>
   key resolved ahead of the bare name), so <code>s.to_title()</code> reaches the
   string op, not <code>unicode::to_title</code>. (Exception: <code>parts.join(sep)</code> on
-  a <code>[String]</code> mis-dispatches and returns just the separator — use
+  a <code>[String]</code> mis-dispatches and returns just the separator - use
   <code>strings::join(&amp;parts, sep)</code>.) Remaining trap: once any struct carries
   <code>#[derive(Clone)]</code>, calling <code>.clone()</code> on a <em><code>String</code></em> receiver can
   dispatch to the struct's derived clone under <code>gos run</code> (a <code>GX0001</code>
-  runtime error); compiled tiers resolve it. Strings are values — bind
+  runtime error); compiled tiers resolve it. Strings are values - bind
   or borrow instead of cloning, and don't shadow built-in method names.</li>
 <li><code>#[derive(...)]</code> does not yet cover enums with struct-payload
   variants (<code>Rect { w, h }</code>); tuple and unit variants derive fine.</li>
@@ -2782,13 +2782,13 @@ pattern in <code>examples/web_server.gos</code>.</p>
 <p>The surface runs bit-identically across the bytecode VM (<code>gos run</code> /
 <code>gos test</code>), the Cranelift JIT, and the LLVM AOT tier (<code>gos build</code>).
 When you hit something that behaves differently across tiers it is a
-bug — reduce it and check against <code>gos test</code> (interpreter) <strong>and</strong>
+bug - reduce it and check against <code>gos test</code> (interpreter) <strong>and</strong>
 <code>gos build</code> (LLVM). One source-level rule remains:</p>
 <ul>
 <li><strong>Per-file test modules must have unique names.</strong> Multiple
   <code>#[cfg(test)] mod tests</code> across bundled sibling files collide on
   <code>gos build</code>/<code>gos run</code> with <code>GR0003: name 'tests' defined multiple
-  times</code> — name them <code>mod foo_tests</code>, <code>mod bar_tests</code>, etc.</li>
+  times</code> - name them <code>mod foo_tests</code>, <code>mod bar_tests</code>, etc.</li>
 </ul>
 <h2 id="16-style-checklist">16. Style checklist<a class="headerlink" href="#16-style-checklist" title="Permanent link">&para;</a></h2>
 <p>(The idioms in §2 are the rules; this is the quick scan.)</p>
@@ -2807,7 +2807,7 @@ bug — reduce it and check against <code>gos test</code> (interpreter) <strong>
   The combinators (<code>map</code>, <code>filter</code>, <code>filter_map</code>, <code>fold</code>, <code>reduce</code>,
   <code>find</code>, <code>group_by</code>, <code>partition</code>, …) are free functions in
   <code>std::iter</code>, data-last. Collections carry no <code>.map</code>/<code>.filter</code>/
-  <code>.fold</code> — only mutating methods (<code>push</code>, <code>sort</code>, <code>inc</code>,
+  <code>.fold</code> - only mutating methods (<code>push</code>, <code>sort</code>, <code>inc</code>,
   <code>or_insert</code>).</li>
 <li><code>option::*</code> / <code>result::*</code> for in-pipeline chaining; <code>?</code> for
   short-circuit propagation.</li>
@@ -2821,7 +2821,7 @@ bug — reduce it and check against <code>gos test</code> (interpreter) <strong>
 <ul>
 <li>Language spec: <code>SPEC.md</code>. Style guide: <code>GUIDELINES.md</code>.</li>
 <li>Rendered docs: <code>docs_src/</code> → <code>site/</code>.</li>
-<li>Examples: <code>examples/</code> — start with <code>hello_world.gos</code>,
+<li>Examples: <code>examples/</code> - start with <code>hello_world.gos</code>,
   <code>function_piping.gos</code>, <code>go_spawn.gos</code>, <code>concurrency.gos</code>.</li>
 </ul>
 <h2 id="18-when-in-doubt">18. When in doubt<a class="headerlink" href="#18-when-in-doubt" title="Permanent link">&para;</a></h2>

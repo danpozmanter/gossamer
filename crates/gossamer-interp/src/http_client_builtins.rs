@@ -1,19 +1,19 @@
 //! VM hooks for `std::http::Client`.
 //!
-//! Every client entry point — the method-style surface
+//! Every client entry point - the method-style surface
 //! (`Client::get` / `post` / `put` / `options` / `delete` / `head`
 //! plus `Request::send`) and the free functions (`http::get`,
 //! `http::post`, `http::put`, `http::options`, `http::delete`,
 //! `http::head`, `http::request`, `http::request_bytes`,
-//! `http::stream`) — wraps `gossamer_std::http::Client`:
+//! `http::stream`) - wraps `gossamer_std::http::Client`:
 //! ureq-backed, HTTPS via rustls (Mozilla roots), 10 redirects,
-//! cookies, gzip decode, connection pool — all on the shared
+//! cookies, gzip decode, connection pool - all on the shared
 //! blocking I/O pool so per-goroutine workers stay free.
 //!
 //! `http::Client::builder().max_redirects(n).timeout_ms(t).build()`
 //! produces a policy-carrying client whose `request` /
 //! `request_bytes` honor the configuration: `max_redirects(0)`
-//! never follows (3xx returned raw — the proxy-correct mode),
+//! never follows (3xx returned raw - the proxy-correct mode),
 //! exceeding a non-zero budget is a "too many redirects" transport
 //! error.
 //!
@@ -168,7 +168,7 @@ fn clamp_timeout_ms(t: i64) -> i64 {
     if t <= 0 { DEFAULT_TIMEOUT_MS } else { t }
 }
 
-/// `http::Client::builder() -> ClientBuilder` — starts a client
+/// `http::Client::builder() -> ClientBuilder` - starts a client
 /// configuration chain with `Client::new()`'s defaults (10
 /// redirects, 30 s timeout).
 pub(crate) fn builtin_http_client_builder(_args: &[Value]) -> RuntimeResult<Value> {
@@ -178,7 +178,7 @@ pub(crate) fn builtin_http_client_builder(_args: &[Value]) -> RuntimeResult<Valu
     ))
 }
 
-/// `ClientBuilder::max_redirects(n) -> ClientBuilder` — rebuilt
+/// `ClientBuilder::max_redirects(n) -> ClientBuilder` - rebuilt
 /// immutably, like `Request::header`. `0` disables
 /// redirect-following entirely (3xx responses are returned raw).
 pub(crate) fn builtin_http_client_builder_max_redirects(args: &[Value]) -> RuntimeResult<Value> {
@@ -194,7 +194,7 @@ pub(crate) fn builtin_http_client_builder_max_redirects(args: &[Value]) -> Runti
     ))
 }
 
-/// `ClientBuilder::timeout_ms(t) -> ClientBuilder` — rebuilt
+/// `ClientBuilder::timeout_ms(t) -> ClientBuilder` - rebuilt
 /// immutably; non-positive values fall back to the 30 s default.
 pub(crate) fn builtin_http_client_builder_timeout_ms(args: &[Value]) -> RuntimeResult<Value> {
     let inner = expect_builder(args, "ClientBuilder::timeout_ms")?;
@@ -209,7 +209,7 @@ pub(crate) fn builtin_http_client_builder_timeout_ms(args: &[Value]) -> RuntimeR
     ))
 }
 
-/// `ClientBuilder::cookie_jar(enabled) -> ClientBuilder` — rebuilt
+/// `ClientBuilder::cookie_jar(enabled) -> ClientBuilder` - rebuilt
 /// immutably. When enabled, the built client reuses one persistent
 /// engine so `Set-Cookie` survives across requests; when disabled,
 /// each request runs on a fresh engine (no cookie carryover).
@@ -223,7 +223,7 @@ pub(crate) fn builtin_http_client_builder_cookie_jar(args: &[Value]) -> RuntimeR
     ))
 }
 
-/// `ClientBuilder::proxy(url) -> ClientBuilder` — rebuilt immutably;
+/// `ClientBuilder::proxy(url) -> ClientBuilder` - rebuilt immutably;
 /// routes every request through `url`. An empty string clears it.
 pub(crate) fn builtin_http_client_builder_proxy(args: &[Value]) -> RuntimeResult<Value> {
     let inner = expect_builder(args, "ClientBuilder::proxy")?;
@@ -235,7 +235,7 @@ pub(crate) fn builtin_http_client_builder_proxy(args: &[Value]) -> RuntimeResult
     ))
 }
 
-/// `ClientBuilder::build() -> Client` — carries the configured
+/// `ClientBuilder::build() -> Client` - carries the configured
 /// policy on the Client struct. When the cookie jar is enabled, a
 /// persistent engine is built once and registered; the Client struct
 /// carries its id in `__client` so the jar survives across requests.
@@ -344,7 +344,7 @@ fn expect_request<'a>(
     }
 }
 
-/// `Request::header(name, value) -> Request` — returns a new Request
+/// `Request::header(name, value) -> Request` - returns a new Request
 /// with the pair appended to its `headers` array-of-tuples field.
 pub(crate) fn builtin_http_request_header(args: &[Value]) -> RuntimeResult<Value> {
     let inner = expect_request(args, "Request::header")?;
@@ -368,7 +368,7 @@ pub(crate) fn builtin_http_request_header(args: &[Value]) -> RuntimeResult<Value
     Ok(Value::struct_("Request", fields))
 }
 
-/// `Request::body(text) -> Request` — returns a new Request whose
+/// `Request::body(text) -> Request` - returns a new Request whose
 /// `body` field holds the given string.
 pub(crate) fn builtin_http_request_body(args: &[Value]) -> RuntimeResult<Value> {
     let inner = expect_request(args, "Request::body")?;
@@ -499,7 +499,7 @@ static PENDING_SERVE: parking_lot::Mutex<Vec<(i64, Arc<parking_lot::Mutex<Stream
 
 /// Moves `handle` from the client registry into the pending-serve
 /// registry. After this, `next_line` / `next_chunk` on the same
-/// `ResponseStream` yield `None` — the stream now belongs to the
+/// `ResponseStream` yield `None` - the stream now belongs to the
 /// response. No-op when the handle was already consumed.
 pub(crate) fn stream_consume_for_response(handle: i64) {
     if handle < 0 {
@@ -514,7 +514,7 @@ pub(crate) fn stream_consume_for_response(handle: i64) {
     }
 }
 
-/// Takes the pending stream for `handle` — one-shot, so serving the
+/// Takes the pending stream for `handle` - one-shot, so serving the
 /// same streamed response twice drains an empty body the second time.
 pub(crate) fn stream_take_for_serve(
     handle: i64,
@@ -586,7 +586,7 @@ fn lift_response(resp: gossamer_std::http::Response) -> Value {
             Value::String(SmolStr::from(location)),
         ),
     ];
-    // The wire sequence (order + duplicates — `set-cookie` repeats)
+    // The wire sequence (order + duplicates - `set-cookie` repeats)
     // is what the compiled tiers lift, so prefer it; the sorted
     // dedup `Headers` view is the fallback for responses built
     // without a transport (e.g. tests constructing `Response`).
@@ -670,8 +670,8 @@ pub(crate) fn builtin_http_request_bytes(args: &[Value]) -> RuntimeResult<Value>
         )));
     };
     let url = args.get(1).and_then(as_str).unwrap_or("");
-    // A byte body can arrive as `Value::Array` of Ints, or — when
-    // the VM specialises int vectors — as `Value::IntArray`. Both
+    // A byte body can arrive as `Value::Array` of Ints, or - when
+    // the VM specialises int vectors - as `Value::IntArray`. Both
     // must decode or the VM tier silently
     // uploads an empty body.
     let body: Vec<u8> = match args.get(2) {
@@ -869,7 +869,7 @@ pub(crate) fn builtin_response_stream_next_chunk(args: &[Value]) -> RuntimeResul
 
 // ------------------------------------------------------------------
 // Method-style API: Client::post / put / options / delete / head /
-// request — matching the existing `Client::get` call shape. The
+// request - matching the existing `Client::get` call shape. The
 // builder produces a `Request { method, url }` struct; calling
 // `.send()` on it dispatches through `gossamer_std::http::Client`.
 
@@ -923,8 +923,8 @@ pub(crate) fn builtin_http_client_head(args: &[Value]) -> RuntimeResult<Value> {
     Ok(pending_request_for("HEAD", url, client_id_of(args.first())))
 }
 
-/// `Client::request(method, url, body, headers) -> Result<Response, String>`
-/// — same semantics and error strings as the free `http::request`,
+/// `Client::request(method, url, body, headers) -> Result<Response, String>` -
+/// same semantics and error strings as the free `http::request`,
 /// except the receiver's configured redirect/timeout policy is
 /// honored. `max_redirects(0)` returns 3xx responses raw; exceeding
 /// a non-zero budget is a transport error ("too many redirects").
@@ -955,7 +955,7 @@ pub(crate) fn builtin_http_client_request(args: &[Value]) -> RuntimeResult<Value
 }
 
 /// `Client::request_bytes(method, url, body: [u8], headers) ->
-/// Result<Response, String>` — binary-body sibling of
+/// Result<Response, String>` - binary-body sibling of
 /// `Client::request`, honoring the configured policy.
 pub(crate) fn builtin_http_client_request_bytes(args: &[Value]) -> RuntimeResult<Value> {
     let method_str = args.get(1).and_then(as_str).unwrap_or("");
@@ -1277,7 +1277,7 @@ mod tests {
     /// ureq hop counting (empirically pinned): `max_redirects(1)` on
     /// a 2-hop chain follows the first redirect, then hits the second
     /// 3xx with the budget exhausted and fails the request with a
-    /// "too many redirects" transport error — it does NOT return the
+    /// "too many redirects" transport error - it does NOT return the
     /// intermediate 3xx. Only `max_redirects(0)` returns 3xx raw.
     #[test]
     fn client_request_max_redirects_one_on_two_hop_chain_is_too_many_redirects() {
@@ -1453,7 +1453,7 @@ mod tests {
     #[test]
     fn lift_response_prefers_raw_pairs_keeping_duplicate_set_cookie_order() {
         // The `Headers` map collapses repeated names, but the wire
-        // sequence keeps both `set-cookie` pairs — and the compiled
+        // sequence keeps both `set-cookie` pairs - and the compiled
         // tiers lift the wire sequence, so the interp must too.
         let mut headers = gossamer_std::http::Headers::new();
         headers.insert("set-cookie", "b=2");

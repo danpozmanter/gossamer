@@ -21,7 +21,7 @@ use std::os::raw::c_char;
 use super::*;
 
 // ---------------------------------------------------------------
-// HashMap runtime — typed-storage variants over rustc-hash's
+// HashMap runtime - typed-storage variants over rustc-hash's
 // FxHashMap. Auto-promotes Empty → I64I64 / StrI64 / StrStr /
 // Bytes on first typed call. The i64-keyed/i64-valued shape
 // (counter / scoreboard hot paths) avoids per-op `Vec<u8>`
@@ -53,7 +53,7 @@ enum MapStorage {
     Empty,
     I64I64(FxHashMap<i64, i64>),
     /// String-keyed maps store keys as `Box<[u8]>` (16 B header)
-    /// rather than `Vec<u8>` (24 B header) — for the k-mer-counter
+    /// rather than `Vec<u8>` (24 B header) - for the k-mer-counter
     /// hot shape (HashMap<String, i64> with millions of short
     /// keys), the saved 8 B per entry compounds visibly: ~8 MB
     /// off a 1 M-entry table. Same applies to `StrStr` keys and
@@ -64,7 +64,7 @@ enum MapStorage {
     Bytes(FxHashMap<Box<[u8]>, Box<[u8]>>),
     /// Struct / aggregate keys: the key is the flat content bytes of the
     /// aggregate (so two distinct allocations of an equal value hash and
-    /// compare equal, matching the VM), the value is an 8-byte word — an
+    /// compare equal, matching the VM), the value is an 8-byte word - an
     /// `i64`, or a heap pointer for `String` / struct values.
     SkeyVal(FxHashMap<Box<[u8]>, i64>),
 }
@@ -83,7 +83,7 @@ pub unsafe extern "C" fn gos_rt_map_new(_key_bytes: u32, _val_bytes: u32) -> *mu
 
 /// Pre-sized constructor: avoids the doubling chain (~22 reallocs
 /// for ~5M inserts) when the caller has an upper bound. Picks the
-/// initial typed shape from the byte sizes — both 8 → I64I64,
+/// initial typed shape from the byte sizes - both 8 → I64I64,
 /// otherwise the byte-erased generic shape that promotes lazily.
 /// Pre-sizing avoids the doubling chain on counter-style hot
 /// loops where the caller knows the total entry count.
@@ -581,7 +581,7 @@ pub unsafe extern "C" fn gos_rt_map_insert_str_i64(m: *mut GosMap, key: *const c
             unsafe { release_blob_value(old) };
         }
         // Consuming insert copied the key bytes; release the moved-in gos-string
-        // (rc-aware + tag-checked — safe for temps, shared, and literals).
+        // (rc-aware + tag-checked - safe for temps, shared, and literals).
         unsafe { gos_rt_str_free(key.cast_mut()) };
     });
 }
@@ -668,7 +668,7 @@ pub unsafe extern "C" fn gos_rt_map_insert_str_str(
         drop(storage);
         // The map copied the key/val bytes into its own storage, so it does not
         // retain the inbound gos-strings. `map_insert` is a consuming call (the
-        // drop pass moves its arguments in), so release the originals here —
+        // drop pass moves its arguments in), so release the originals here -
         // `gos_rt_str_free` is rc-aware and tag-checked: a moved temp is freed,
         // a still-shared string only has its count decremented, and a `.rodata`
         // literal / region string is skipped. Without this the inbound
@@ -740,7 +740,7 @@ pub unsafe extern "C" fn gos_rt_map_remove_str(m: *mut GosMap, key: *const c_cha
     })
 }
 
-/// `m.inc_at(seq, start, len, by)` for `HashMap<String, i64>` —
+/// `m.inc_at(seq, start, len, by)` for `HashMap<String, i64>` -
 /// the zero-allocation analogue of
 /// `m.insert(k, m.get_or(k, 0) + by)` where `k = seq[start..start+len]`.
 ///
@@ -776,7 +776,7 @@ pub unsafe extern "C" fn gos_rt_map_inc_at_str_i64(
         let MapStorage::StrI64(inner) = &mut *storage else {
             return 0;
         };
-        // Lookup is by `&[u8]` — `Vec<u8>: Borrow<[u8]>` lets the
+        // Lookup is by `&[u8]` - `Vec<u8>: Borrow<[u8]>` lets the
         // hashbrown table hash the slice without first allocating an
         // owned key. Only the first occurrence of each unique k-mer
         // pays the `to_vec()` cost.
@@ -790,7 +790,7 @@ pub unsafe extern "C" fn gos_rt_map_inc_at_str_i64(
     })
 }
 
-/// `m.inc(key, by)` for `HashMap<String, i64>` — adds `by`
+/// `m.inc(key, by)` for `HashMap<String, i64>` - adds `by`
 /// (default 1 in user code) to the value at `key`, inserting
 /// the entry if absent. Halves the lock + hash work compared to
 /// `m.insert(k, m.get_or(k, 0) + by)` and avoids the
@@ -824,7 +824,7 @@ pub unsafe extern "C" fn gos_rt_map_inc_str_i64(
     })
 }
 
-/// `m.or_insert(key, default)` — inserts `default` for `key` only when
+/// `m.or_insert(key, default)` - inserts `default` for `key` only when
 /// the key is absent; returns the current (possibly just-inserted) value.
 /// `HashMap<String, i64>` variant.
 #[unsafe(no_mangle)]
@@ -872,7 +872,7 @@ pub unsafe extern "C" fn gos_rt_map_or_insert_str_i64(
     })
 }
 
-/// `m.or_insert(key, default)` — `HashMap<i64, i64>` variant.
+/// `m.or_insert(key, default)` - `HashMap<i64, i64>` variant.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_map_or_insert_i64_i64(
     m: *mut GosMap,
@@ -900,7 +900,7 @@ pub unsafe extern "C" fn gos_rt_map_or_insert_i64_i64(
     })
 }
 
-/// `m.insert(k: i64, v: String)` — `HashMap<i64, String>` insert.
+/// `m.insert(k: i64, v: String)` - `HashMap<i64, String>` insert.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_map_insert_i64_str(m: *mut GosMap, key: i64, val: *const c_char) {
     ffi_entry!((), {
@@ -925,7 +925,7 @@ pub unsafe extern "C" fn gos_rt_map_insert_i64_str(m: *mut GosMap, key: i64, val
     });
 }
 
-/// `m.get(k: i64) -> String` — returns an empty string when absent.
+/// `m.get(k: i64) -> String` - returns an empty string when absent.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_map_get_i64_str(m: *const GosMap, key: i64) -> *mut c_char {
     ffi_entry!(std::ptr::null_mut(), {
@@ -964,7 +964,7 @@ pub unsafe extern "C" fn gos_rt_map_clear(m: *mut GosMap) {
 /// return slot. Idempotent on null.
 ///
 /// SAFETY: only call this on a pointer returned by one of the
-/// runtime's `gos_rt_map_new*` constructors — the runtime's
+/// runtime's `gos_rt_map_new*` constructors - the runtime's
 /// [`GosMap`] layout includes a `parking_lot::Mutex<...>` and
 /// dropping a binding-side `BindingGosMap` (two parallel `GosVec`
 /// pointers) here would `Box::from_raw` the wrong shape and run
@@ -1072,8 +1072,8 @@ pub unsafe extern "C" fn gos_rt_binding_map_free(m: *mut u8) {
 
 /// Drops a `Vec` allocated by [`gos_rt_vec_new`] /
 /// [`gos_rt_vec_with_capacity`] / [`gos_rt_vec_new_typed`]. Frees
-/// the `GosVec` header, the backing element buffer, and — when
-/// `elem_kind != PRIMITIVE` — every pointer-bearing element
+/// the `GosVec` header, the backing element buffer, and - when
+/// `elem_kind != PRIMITIVE` - every pointer-bearing element
 /// payload (cstring, nested Vec, Map, Error). Idempotent on null.
 ///
 /// The default `elem_kind = PRIMITIVE` path matches pre-0.6
@@ -1086,7 +1086,7 @@ pub unsafe extern "C" fn gos_rt_vec_free(v: *mut GosVec) {
             return;
         }
         // Region-allocated vecs (header + buffer in arena slabs) are freed
-        // wholesale at `arena_pop` — never individually. Touching them here
+        // wholesale at `arena_pop` - never individually. Touching them here
         // via `Box::from_raw` / `Vec::from_raw_parts` would corrupt the
         // global allocator (the memory isn't its).
         if crate::c_abi::vec::vec_is_region(unsafe { &*v }) {
@@ -1104,7 +1104,7 @@ pub unsafe extern "C" fn gos_rt_vec_free(v: *mut GosVec) {
         if !boxed.ptr.is_null() && boxed.cap > 0 {
             // Deep-free pointer-bearing element payloads BEFORE
             // reclaiming the backing buffer. Each branch walks the
-            // first `len` slots — slots between `len` and `cap` were
+            // first `len` slots - slots between `len` and `cap` were
             // never written and contain the zero-init produced by
             // `vec![0u8; bytes]` at construction time.
             // Guarded aggregate elements: release each element's
@@ -1200,7 +1200,7 @@ pub unsafe extern "C" fn gos_rt_btmap_free(m: *mut GosBtMap) {
 /// Snapshots the i64 keys of an i64-keyed `HashMap` into a fresh
 /// `GosVec<i64>` for the for-loop lowerer to drive with the
 /// regular `gos_rt_vec_*` helpers. Iteration order matches the
-/// underlying `FxHashMap`'s order — undefined-but-stable per
+/// underlying `FxHashMap`'s order - undefined-but-stable per
 /// process. Returns an empty vec for any other storage shape.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_map_keys_i64(m: *const GosMap) -> *mut GosVec {
@@ -1310,7 +1310,7 @@ pub unsafe extern "C" fn gos_rt_map_keys_str(m: *const GosMap) -> *mut GosVec {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_map_values_str(m: *const GosMap) -> *mut GosVec {
     ffi_entry!(std::ptr::null_mut(), {
-        // STRING-typed — same ownership contract as `gos_rt_map_keys_str`.
+        // STRING-typed - same ownership contract as `gos_rt_map_keys_str`.
         let out = unsafe { crate::c_abi::vec::gos_rt_vec_new_typed(8, vec_elem_kind::STRING) };
         if m.is_null() {
             return out;

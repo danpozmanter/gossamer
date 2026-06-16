@@ -2,7 +2,7 @@
 // Gossamer does not expose a user-level `signal::on` API.
 // This example demonstrates the idiomatic shutdown pattern:
 // a dedicated coordinator goroutine drives a cancellation channel
-// that all workers observe — equivalent to what a SIGTERM handler
+// that all workers observe - equivalent to what a SIGTERM handler
 // would trigger in a production program.
 
 use std::sync::channel

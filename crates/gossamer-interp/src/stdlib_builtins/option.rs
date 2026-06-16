@@ -266,6 +266,6 @@ pub(crate) fn native_option_iter(
 }
 
 // ----------------------------------------------------------------------
-// result — F#-style chaining surface for `Result<T, E>` (SPEC §10.4b).
+// result - F#-style chaining surface for `Result<T, E>` (SPEC §10.4b).
 // Data-last. The `?` operator stays the right tool for short-circuit
 // propagation; these are for in-pipeline transformation.

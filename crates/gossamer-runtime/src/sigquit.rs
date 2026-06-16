@@ -3,7 +3,7 @@
 //! Pressing Ctrl-\ on a Gossamer process (or sending it SIGQUIT)
 //! prints a Go-format dump of every live goroutine's stack to
 //! stderr, then exits non-zero. This is the single most useful
-//! production-incident diagnostic — without it, a hung service
+//! production-incident diagnostic - without it, a hung service
 //! is opaque.
 //!
 //! The handler runs on a dedicated relay thread (signal-hook's
@@ -127,7 +127,7 @@ thread_local! {
     /// the frames migrate with the goroutine across worker threads.
     /// The previous design pushed every frame into a process-global
     /// `Mutex<BTreeMap>`, serialising every function call in the
-    /// program through one lock — this removes that lock from the
+    /// program through one lock - this removes that lock from the
     /// per-call path entirely.
     static LOCAL_FRAMES: std::cell::RefCell<Vec<Frame>> =
         const { std::cell::RefCell::new(Vec::new()) };
@@ -135,14 +135,14 @@ thread_local! {
 
 /// Binds goroutine `gid` to the current OS thread. The scheduler
 /// calls this at step entry (resume) and with `u32::MAX` at step
-/// exit (park). `u32::MAX` is the sentinel "no goroutine — main
+/// exit (park). `u32::MAX` is the sentinel "no goroutine - main
 /// thread".
 ///
 /// This is the migration boundary for the lock-free shadow stack:
 /// the outgoing goroutine's frames are checked back into the registry
 /// (so a SIGQUIT dump can render a parked goroutine), and the
 /// incoming goroutine's saved frames are checked out to this thread's
-/// `LOCAL_FRAMES`. The registry lock is taken at most twice here —
+/// `LOCAL_FRAMES`. The registry lock is taken at most twice here -
 /// per step, never per call.
 pub fn set_active_gid(gid: u32) {
     let old = ACTIVE_GID.with(std::cell::Cell::get);
@@ -186,7 +186,7 @@ pub fn active_gid() -> Option<u32> {
 /// Pushes a new frame onto the active goroutine's call stack.
 /// Called by the interpreter on every call. Lock-free: it touches
 /// only this thread's `LOCAL_FRAMES`. The compiled tier emits no
-/// such call — it recovers traces by unwinding the real machine
+/// such call - it recovers traces by unwinding the real machine
 /// stack ([`render_native_panic_trace`]).
 pub fn stack_push(function: impl Into<String>, file: impl Into<String>, line: u32) {
     let frame = Frame {
@@ -235,7 +235,7 @@ pub fn set_active_line(line: u32) {
     });
 }
 
-/// Updates the latest source position of a goroutine — called by
+/// Updates the latest source position of a goroutine - called by
 /// the codegen safepoint poll when DWARF info is available, or by
 /// the interpreter on every step boundary. Also updates the
 /// topmost call-stack frame's line so panic dumps show the line
@@ -305,12 +305,12 @@ pub fn render_to(out: &mut impl Write) -> std::io::Result<usize> {
             // function from the cheap spawn/park registry. Deep frames
             // for an off-CPU goroutine would require unwinding its
             // suspended coroutine stack from the signal-relay thread,
-            // which is not attempted here — capturing the relay
+            // which is not attempted here - capturing the relay
             // thread's own stack (the previous behaviour) attributed
             // the wrong frames to every goroutine.
         } else {
             // Render the full Gossamer call stack, innermost last
-            // (matches Rust / Go convention — most recent call on
+            // (matches Rust / Go convention - most recent call on
             // top, deepest call at the bottom near the panic).
             for frame in info.frames.iter().rev() {
                 let func_line = format!("  {}()\n", frame.function);
@@ -424,14 +424,14 @@ pub fn render_native_panic_trace() -> String {
 /// Installs the SIGQUIT handler. Idempotent.
 ///
 /// SIGQUIT delivery itself is owned by `gossamer_std::signal`'s
-/// single blocking dispatcher thread — when it sees SIGQUIT, it
+/// single blocking dispatcher thread - when it sees SIGQUIT, it
 /// calls [`render_to`] directly. This entry point stays as a
 /// no-op to preserve the `install_handler()` call sites that the
 /// scheduler boot path uses.
 #[cfg(unix)]
 pub fn install_handler() {}
 
-/// No-op on Windows — the `SetConsoleCtrlHandler` dispatcher in
+/// No-op on Windows - the `SetConsoleCtrlHandler` dispatcher in
 /// `gossamer_std::signal` already calls [`render_to`] directly on
 /// `CTRL_BREAK_EVENT`. Other non-unix targets have no equivalent.
 #[cfg(not(unix))]

@@ -5,7 +5,7 @@
 //! expression on a Path) and typeck leaves the chained
 //! expression types as inference variables, the MIR `len`
 //! dispatch used to fall through to the generic `gos_rt_len`
-//! arm — which interprets the runtime value as a Vec/Slice/Array
+//! arm - which interprets the runtime value as a Vec/Slice/Array
 //! header. For a `String` element, that yields garbage from a
 //! C-string pointer reinterpreted as a length-prefixed buffer.
 //!

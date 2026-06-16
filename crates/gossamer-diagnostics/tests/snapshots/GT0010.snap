@@ -3,7 +3,7 @@ source: crates/gossamer-diagnostics/tests/snapshots.rs
 expression: rendered
 ---
 --- plain ---
-error[GT0010]: A string escape that the parser accepted but cannot be validly — here
+error[GT0010]: A string escape that the parser accepted but cannot be validly - here
 --- framed ---
 error[GT0010]: A string escape that the parser accepted but cannot be validly
   --> snap.gos:2:5

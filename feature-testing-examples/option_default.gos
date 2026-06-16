@@ -1,5 +1,5 @@
 // option::default across payload shapes: the Some payload passes
-// through, the fallback replaces a None — for i64, f64, and String
+// through, the fallback replaces a None - for i64, f64, and String
 // payloads, both direct-call and |>-piped spellings.
 
 use std::option

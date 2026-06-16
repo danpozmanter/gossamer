@@ -7,7 +7,7 @@
 //! registry through the same constructor shims, serves it on an
 //! ephemeral loopback port from a background thread, and asserts a
 //! real `GET /metrics` returns the Prometheus exposition while every
-//! other path returns `404 not found` — the behaviour parity source
+//! other path returns `404 not found` - the behaviour parity source
 //! is `gossamer_std::metrics::serve_metrics`.
 
 #![allow(missing_docs)]

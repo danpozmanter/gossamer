@@ -13,7 +13,7 @@
 //! `gos run` and `gos build` produce identical checksums. The
 //! runtime crate cannot depend on `gossamer-std` (that crate
 //! depends on the runtime), so the algorithms are reimplemented
-//! inline — they are tiny and table-free except for CRC-32.
+//! inline - they are tiny and table-free except for CRC-32.
 
 use std::os::raw::c_char;
 

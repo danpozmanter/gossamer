@@ -67,7 +67,7 @@ pub const ABI_VERSION: (u8, u8) = (1, 0);
 /// than a silent memory corruption.
 ///
 /// `unsafe_code` is permitted on this single static because the
-/// `no_mangle` export is the entire mechanism — without it, the
+/// `no_mangle` export is the entire mechanism - without it, the
 /// runtime has nothing to dlsym for at link time.
 #[allow(unsafe_code, reason = "no_mangle is the load-time ABI-version anchor")]
 #[unsafe(no_mangle)]
@@ -77,7 +77,7 @@ pub static __gos_binding_abi_version: [u8; 2] = [ABI_VERSION.0, ABI_VERSION.1];
 /// Renders the C-ABI export symbol for a binding item.
 ///
 /// Mirrors what the `register_module!` macro emits via the
-/// `symbol_prefix:` parameter — `path::to::module` segments get
+/// `symbol_prefix:` parameter - `path::to::module` segments get
 /// joined with `__`, and the item is appended after a final
 /// `__`. Both the codegen and the macro use this scheme so the
 /// codegen-emitted call resolves to the macro-emitted thunk at
@@ -131,7 +131,7 @@ pub use gossamer_codegen_cranelift::{NATIVE_SYMBOLS, NativeSymbolEntry};
 ///
 /// The `register_module!` macro publishes one entry per call;
 /// [`run_all_force_links`] walks the slice and invokes each. This
-/// replaces the per-crate `__bindings_force_link()` shim — the
+/// replaces the per-crate `__bindings_force_link()` shim - the
 /// runner template just calls `run_all_force_links()` once and
 /// every linked binding's `linkme` registry entries become
 /// reachable. Binding crates with multiple modules contribute one
@@ -178,7 +178,7 @@ pub fn item(qualified: &str) -> Option<(&'static Module, &'static ItemFn)> {
 /// Compiled-mode counterpart to [`install_all`].
 ///
 /// Compiled binaries call binding items directly through the C-ABI
-/// thunks emitted by `register_module!` — they don't go through
+/// thunks emitted by `register_module!` - they don't go through
 /// the interpreter's external-natives table or the resolver. This
 /// function exists so the compiled-mode entry point has a single,
 /// stable symbol to call. It's deliberately a no-op aside from
@@ -226,10 +226,10 @@ pub fn install_all() -> usize {
     }
     for (leaf, group) in &leaf_groups {
         if group.len() == 1 {
-            // Unambiguous leaf — install the direct thunk.
+            // Unambiguous leaf - install the direct thunk.
             gossamer_interp::register_external_native(leaf, group[0].call);
         } else {
-            // Ambiguous leaf — install an arity-aware dispatcher
+            // Ambiguous leaf - install an arity-aware dispatcher
             // that picks a candidate matching the call's argc.
             // Falls back to the first candidate when no arity
             // matches, so the binding's own arity check produces
@@ -276,7 +276,7 @@ fn populate_resolve_table() {
 /// The dispatch table at the bottom of this file is a fixed-size
 /// array of distinct `extern fn` pointers (each is a separate
 /// monomorphic instantiation of `ambig_call::<N>`), so growing
-/// the pool at runtime would require regenerating the table —
+/// the pool at runtime would require regenerating the table -
 /// which is a build-time concern, not a runtime one. 0.6.0
 /// bumped the cap from 64 to 256 (and improved the
 /// exhaustion diagnostic) so practical binding-crate sizes never
@@ -318,7 +318,7 @@ fn assign_ambig_dispatcher(group: AmbigGroup) -> gossamer_interp::value::NativeC
                  More than {AMBIG_POOL_SIZE} distinct ambiguous leaf names are registered \
                  across the linked binding crates. Raise `AMBIG_POOL_SIZE` in \
                  `gossamer-binding/src/lib.rs` and regenerate `AMBIG_DISPATCH_TABLE` \
-                 — the table must remain a fixed-size const array so each entry is \
+                 - the table must remain a fixed-size const array so each entry is \
                  a distinct `extern fn` pointer."
             )
         })

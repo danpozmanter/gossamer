@@ -1,4 +1,4 @@
-//! Stream E.6 — intraprocedural escape analysis.
+//! Stream E.6 - intraprocedural escape analysis.
 //! A local "escapes" the current function when any of the following
 //! is true:
 //! - It is assigned into `Local::RETURN` (flows out to the caller).
@@ -17,8 +17,8 @@
 //! into `buf.set_byte(...)` / `buf.to_string(...)` would otherwise
 //! be marked as escaping (because the helper takes the pointer as a
 //! `Copy` arg) and never get freed. Listing the helpers that only
-//! read/write the pointee — never stash the pointer in a global,
-//! return it back, or hand it to a user-controllable callback — lets
+//! read/write the pointee - never stash the pointer in a global,
+//! return it back, or hand it to a user-controllable callback - lets
 //! the cleanup pass see the local as non-escaping and emit the
 //! matching `_free` call at the body's `Return`.
 
@@ -49,7 +49,7 @@ use crate::ir::{Body, Local, Operand, Rvalue, StatementKind, Terminator};
 // (b) any pointer it returns is freshly allocated, not aliased
 // from an argument. Helpers that return a borrow of an argument
 // (e.g. `map_keys` returning slices into the map's internal Box
-// storage) MUST NOT appear here — the caller would otherwise
+// storage) MUST NOT appear here - the caller would otherwise
 // free the source while the borrowed pointer is still live.
 const NON_CAPTURING_RUNTIME_CALLEES: &[&str] = &[
     "gos_rt_heap_i64_get",
@@ -85,7 +85,7 @@ fn is_non_capturing_runtime_callee(name: &str) -> bool {
     NON_CAPTURING_RUNTIME_CALLEES.binary_search(&name).is_ok()
 }
 
-/// Result of [`analyse`] — the set of locals that escape this body.
+/// Result of [`analyse`] - the set of locals that escape this body.
 ///
 /// Callers typically ask the inverse question via
 /// [`EscapeSet::is_non_escaping`].
@@ -126,7 +126,7 @@ impl EscapeSet {
 }
 
 /// Inter-procedural per-fn argument capture summary. Maps the
-/// callee's `DefId.local` to a bool vector — `captures[i] = true`
+/// callee's `DefId.local` to a bool vector - `captures[i] = true`
 /// means parameter `i` (1-indexed; the entry corresponds to MIR
 /// `Local(i+1)`) of the callee escapes its body. Callers can
 /// safely skip the escape mark on non-capturing arguments.
@@ -138,7 +138,7 @@ pub struct CaptureSummary {
 impl CaptureSummary {
     /// Returns the captures vector for the callee identified by
     /// `def_local`. `None` when the callee has no recorded summary
-    /// — callers must conservatively assume "captures all".
+    /// - callers must conservatively assume "captures all".
     #[must_use]
     pub fn captures(&self, def_local: u32) -> Option<&[bool]> {
         self.captures.get(&def_local).map(Vec::as_slice)
@@ -175,7 +175,7 @@ pub fn build_capture_summary(bodies: &[Body]) -> CaptureSummary {
             let mut captures = Vec::with_capacity(arity);
             for i in 0..arity {
                 // Param i in source order corresponds to MIR
-                // `Local(i + 1)` — `Local(0)` is the return slot.
+                // `Local(i + 1)` - `Local(0)` is the return slot.
                 let pl = Local((i + 1) as u32);
                 captures.push(escape.escapes(pl));
             }

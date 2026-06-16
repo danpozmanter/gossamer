@@ -1,4 +1,4 @@
-//! Runtime support for `std::bufio` — buffered readers, writers, and
+//! Runtime support for `std::bufio` - buffered readers, writers, and
 //! a line / token scanner sitting above `io::Read` / `io::Write`.
 
 #![forbid(unsafe_code)]
@@ -173,7 +173,7 @@ pub fn split_lines(data: &[u8], at_eof: bool) -> Option<(usize, Vec<u8>)> {
     None
 }
 
-/// Whitespace-splitter suitable for `set_split` — emits tokens
+/// Whitespace-splitter suitable for `set_split` - emits tokens
 /// separated by any run of ASCII whitespace.
 #[must_use]
 pub fn split_words(data: &[u8], at_eof: bool) -> Option<(usize, Vec<u8>)> {

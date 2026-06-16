@@ -1,4 +1,4 @@
-// YAML auto-derive parity — every user struct that the synthesizer
+// YAML auto-derive parity - every user struct that the synthesizer
 // can classify gets `from_yaml::<T>` / `to_yaml::<T>` functions
 // alongside the JSON pair, plus `from_toml::<T>` / `to_toml::<T>`.
 // They piggy-back on `to_json` / `from_json` so the validation logic

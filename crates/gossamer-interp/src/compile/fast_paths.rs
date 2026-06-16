@@ -70,10 +70,10 @@ impl<'tcx> FnBuilder<'tcx> {
     /// [`Self::compile_non_call_go`].
     pub(crate) fn try_compile_go_native(&mut self, expr: &HirExpr) -> RuntimeResult<bool> {
         // The HIR shapes we native-lower are:
-        //   `go callable(args)`     — a `Call`, dispatched via
+        //   `go callable(args)`     - a `Call`, dispatched via
         //                              `Op::Spawn` against the
         //                              resolved callee `Value`.
-        //   `go obj.method(args)`   — a `MethodCall`, dispatched via
+        //   `go obj.method(args)`   - a `MethodCall`, dispatched via
         //                              `Op::SpawnMethod` which
         //                              resolves the method by name
         //                              the same way the synchronous
@@ -131,8 +131,8 @@ impl<'tcx> FnBuilder<'tcx> {
         // Compile each arg first so any intermediate register
         // allocations land above the not-yet-reserved span. Then
         // reserve a fresh contiguous block and move the results
-        // into it. Reserving up front and *then* compiling — the
-        // shape this method used to have — is fine for trivial
+        // into it. Reserving up front and *then* compiling - the
+        // shape this method used to have - is fine for trivial
         // args (paths, literals) but slips on any arg that itself
         // emits a fused fast-path opcode that pre-bumps `next_reg`
         // for its own scratch use; that scratch can land inside
@@ -164,8 +164,8 @@ impl<'tcx> FnBuilder<'tcx> {
         Ok(true)
     }
 
-    /// Lowers a non-call `go <expr>` — `go { block }`, `go` over a bare
-    /// expression, or `go` in expression position — by lifting the
+    /// Lowers a non-call `go <expr>` - `go { block }`, `go` over a bare
+    /// expression, or `go` in expression position - by lifting the
     /// spawned expression into a zero-argument closure (reusing the
     /// native closure path) and spawning that closure on the goroutine
     /// pool. The closure captures the expression's free variables by
@@ -386,7 +386,7 @@ impl<'tcx> FnBuilder<'tcx> {
                     kind: RegKind::F64,
                 })
             }
-            // (handled by the caller via `try_compile_fma` —
+            // (handled by the caller via `try_compile_fma` -
             // this arm is the non-fused fallback)
             HirBinaryOp::Mul => {
                 let dst = self.alloc_float();
@@ -729,7 +729,7 @@ impl<'tcx> FnBuilder<'tcx> {
         // registered (e.g. for programs whose resolver didn't
         // populate `struct_field_tys`) we still try the fast
         // path as long as every element in the literal is
-        // clearly the same struct — the `__struct` parse below
+        // clearly the same struct - the `__struct` parse below
         // sees the actual field values, so a later type mismatch
         // would just fall back at runtime.
         if let Some(tys) = self.tcx.struct_field_tys(def) {
@@ -961,7 +961,7 @@ impl<'tcx> FnBuilder<'tcx> {
     }
 
     /// Repeat-form mirror of [`Self::try_build_int_array`] for
-    /// `[value; count]` `[i64]` literals — used by integer scratch
+    /// `[value; count]` `[i64]` literals - used by integer scratch
     /// buffers initialised at function entry.
     pub(crate) fn try_build_int_array_repeat(
         &mut self,
@@ -1230,7 +1230,7 @@ impl<'tcx> FnBuilder<'tcx> {
     /// `while` loops so the compare operands are evaluated
     /// once up front rather than per iteration. Returns
     /// `(lhs_reg, rhs_reg, op, kind)` when the condition
-    /// has a hoistable shape — specifically
+    /// has a hoistable shape - specifically
     /// `Path(local) <op> Literal` or `Literal <op> Path(local)`
     /// over typed numeric kinds.
     pub(crate) fn try_hoist_condition_literals(
@@ -1256,9 +1256,9 @@ impl<'tcx> FnBuilder<'tcx> {
         // `Value::Int` local into a typed int reg once,
         // and subsequent writes back through the `Value`
         // reg wouldn't update it. Safe cases:
-        //   * typed literals — always produce a typed reg
+        //   * typed literals - always produce a typed reg
         //   * locals whose stored `TypedReg` already matches
-        //     the operand kind — reads update through the
+        //     the operand kind - reads update through the
         //     same typed reg the compare uses.
         if !self.is_hoistable_operand(lhs, lk) {
             return Ok(None);
@@ -1280,8 +1280,8 @@ impl<'tcx> FnBuilder<'tcx> {
     /// pre-computed before a loop body without going stale.
     /// Typed literals qualify (their reg is write-once), as do
     /// locals already bound in the matching typed register
-    /// file. Anything else — most importantly a local bound as
-    /// `Value` that would need an `Unbox*` snapshot — is
+    /// file. Anything else - most importantly a local bound as
+    /// `Value` that would need an `Unbox*` snapshot - is
     /// rejected so the fused branch re-emits it each iteration.
     pub(crate) fn is_hoistable_operand(&self, expr: &HirExpr, kind: RegKind) -> bool {
         match &expr.kind {
@@ -1369,7 +1369,7 @@ impl<'tcx> FnBuilder<'tcx> {
         if lk != rk || lk == RegKind::Value {
             return Ok(None);
         }
-        // Check supported op kinds BEFORE compiling operands —
+        // Check supported op kinds BEFORE compiling operands -
         // otherwise we'd emit dead operand-evaluation ops when
         // the comparison falls back to the generic path.
         if !matches!(
@@ -1454,7 +1454,7 @@ impl<'tcx> FnBuilder<'tcx> {
     /// HIR lowers a `for` into the generic `loop { match iter.next() { Some(p)
     /// => body, None => break } }` shape so every iterable goes through
     /// the same machinery. For an integer range that path costs an
-    /// `Option` allocation + a match dispatch *per iteration* — on
+    /// `Option` allocation + a match dispatch *per iteration* - on
     /// nbody's nested `for a in 0..4 { for b in (a+1)..5 { ... } }` the
     /// overhead dominated everything inside.
     ///
@@ -1476,7 +1476,7 @@ impl<'tcx> FnBuilder<'tcx> {
     /// Falls through to the generic match-loop on:
     ///   - non-i64 range bounds (the typed file is i64-only; f64-step
     ///     ranges would need a separate fast path nobody currently writes)
-    ///   - non-`Range` iterators with non-trivial state — those still
+    ///   - non-`Range` iterators with non-trivial state - those still
     ///     go through `next()`.
     pub(crate) fn try_compile_for_loop_range(
         &mut self,
@@ -1519,7 +1519,7 @@ impl<'tcx> FnBuilder<'tcx> {
         // A range's bounds are integers by typecheck. Accept a bound
         // whose static kind is `i64` (the common case, driven by a typed
         // counter) or `Value` (an unresolved-typed bound such as
-        // `0..xs.len()` where `len()`'s result stayed an inference var) —
+        // `0..xs.len()` where `len()`'s result stayed an inference var) -
         // `as_i64` unboxes the runtime `Value::Int`. Only a statically
         // float bound is rejected (no valid for-range produces one), so
         // it falls through to the general inline-iterable materialiser
@@ -1691,7 +1691,7 @@ impl<'tcx> FnBuilder<'tcx> {
         // The plain shape is the `for x in xs` desugar, where the
         // receiver of `.next()` is the collection itself (no `.iter()`).
         // It is accepted only when the receiver's type is an
-        // array / vec / slice the index-walk below can drive — a user
+        // array / vec / slice the index-walk below can drive - a user
         // `impl Iterator` (Adt receiver) falls through to `None` so the
         // stateful `.next()` desugar keeps its own handling.
         let (vec_expr, is_enumerate) = match &next_recv.kind {
@@ -1726,9 +1726,9 @@ impl<'tcx> FnBuilder<'tcx> {
             // for-range path declined. Each evaluates to an indexable
             // `Value::Array` at runtime, so it materialises once and
             // drives by index. The stateful custom-iterator desugar is
-            // excluded — its `.next()` receiver is a `&mut __for_iter`
+            // excluded - its `.next()` receiver is a `&mut __for_iter`
             // borrow, driven by the generic loop emitter's `&mut self`
-            // write-back instead — so it falls through to `compile_loop`.
+            // write-back instead - so it falls through to `compile_loop`.
             _ if !matches!(
                 &next_recv.kind,
                 HirExprKind::Unary {
@@ -1810,7 +1810,7 @@ impl<'tcx> FnBuilder<'tcx> {
         // Pick the expression to materialise and drive by `len()` +
         // `IndexGet`. When the inner receiver is itself an indexable
         // collection (`xs.iter()`, a plain `xs`, or a pattern-bound
-        // collection local), index it directly — no intermediate
+        // collection local), index it directly - no intermediate
         // `.iter()` allocation. An `xs.iter().enumerate()` chain needs
         // `xs` itself indexable; a non-collection enumerate base isn't
         // driven here. Otherwise materialise the iterator expression once
@@ -1875,7 +1875,7 @@ impl<'tcx> FnBuilder<'tcx> {
                 },
             );
         }
-        // Index binding (enumerate only) — alias the counter i64 reg.
+        // Index binding (enumerate only) - alias the counter i64 reg.
         if let Some(name) = &idx_binding {
             self.bind_local(
                 name,

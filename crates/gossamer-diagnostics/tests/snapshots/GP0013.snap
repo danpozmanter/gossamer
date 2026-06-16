@@ -3,7 +3,7 @@ source: crates/gossamer-diagnostics/tests/snapshots.rs
 expression: rendered
 ---
 --- plain ---
-error[GP0013]: An attribute is malformed. Accepted forms are `#[attr]`, — here
+error[GP0013]: An attribute is malformed. Accepted forms are `#[attr]`, - here
 --- framed ---
 error[GP0013]: An attribute is malformed. Accepted forms are `#[attr]`,
   --> snap.gos:2:5

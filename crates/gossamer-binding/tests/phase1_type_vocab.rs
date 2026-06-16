@@ -33,7 +33,7 @@ register_module!(
         if ok { Ok(()) } else { Err("nope".to_string()) }
     }
 
-    /// String/i64 tuple — common "name, count" return.
+    /// String/i64 tuple - common "name, count" return.
     fn pair() -> (String, i64) {
         ("kingdom".to_string(), 42)
     }

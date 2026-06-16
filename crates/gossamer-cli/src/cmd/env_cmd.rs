@@ -1,4 +1,4 @@
-//! `gos env` — prints the toolchain environment in `key  value`
+//! `gos env` - prints the toolchain environment in `key  value`
 //! format (matches `go env`'s shape). Surfaces every datapoint a
 //! user typically needs when diagnosing an install / build issue.
 

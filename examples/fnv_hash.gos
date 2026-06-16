@@ -1,5 +1,5 @@
 /*
- * FNV-1a hashing — a fast, non-cryptographic hash function.
+ * FNV-1a hashing - a fast, non-cryptographic hash function.
  *
  * Demonstrates byte-level hashing with bitwise operators. The
  * hashing function is pure: each call returns the digest of
@@ -17,7 +17,7 @@ fn fnv1a(bytes: &[u8]) -> i64 {
     let mut h: i64 = FNV_OFFSET
     for byte in bytes {
         h ^= byte as i64
-        // Multiply mod 2^64 — wrapping is the spec; we let Gossamer's
+        // Multiply mod 2^64 - wrapping is the spec; we let Gossamer's
         // i64 arithmetic wrap and take the low bits.
         h *= FNV_PRIME
     }

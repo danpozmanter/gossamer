@@ -3,7 +3,7 @@ source: crates/gossamer-diagnostics/tests/snapshots.rs
 expression: rendered
 ---
 --- plain ---
-error[GL0024]: `let x = ()` binds the unit value, which is almost never useful. — here
+error[GL0024]: `let x = ()` binds the unit value, which is almost never useful. - here
 --- framed ---
 error[GL0024]: `let x = ()` binds the unit value, which is almost never useful.
   --> snap.gos:2:5

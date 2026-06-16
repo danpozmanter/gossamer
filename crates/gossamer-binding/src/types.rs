@@ -3,7 +3,7 @@
 //! Bindings advertise their function signatures with these types;
 //! the type checker uses them to validate call sites in `.gos`
 //! source. The vocabulary is intentionally narrower than
-//! Gossamer's full type system — no generics, no traits — so the
+//! Gossamer's full type system - no generics, no traits - so the
 //! mapping is a flat function on each variant.
 //!
 //! # ABI version 0.4
@@ -12,16 +12,16 @@
 //! (Postgres typed columns, Redis RESP returns, OpenTelemetry
 //! attribute maps, HTTP/gRPC streaming callbacks):
 //!
-//! - [`Type::Bytes`]      — first-class `[u8]` payload. Distinct
+//! - [`Type::Bytes`]      - first-class `[u8]` payload. Distinct
 //!   from `Vec<i64>` at the source level. Zero-copy on the
 //!   compiled tier via [`crate::native::GosBytes`].
-//! - [`Type::Variant`]    — tagged-union return shape with named
+//! - [`Type::Variant`]    - tagged-union return shape with named
 //!   arms. Rust authors hand back / receive
 //!   [`crate::conv::DynValue`].
-//! - [`Type::Map`]        — key/value collection. Maps to
+//! - [`Type::Map`]        - key/value collection. Maps to
 //!   `HashMap<K, V>` on the Rust side.
-//! - [`Type::Callback`]   — a Gossamer-side fn handle the binding
-//!   can re-invoke. Lifetime is call-scoped — the binding must
+//! - [`Type::Callback`]   - a Gossamer-side fn handle the binding
+//!   can re-invoke. Lifetime is call-scoped - the binding must
 //!   not retain the [`crate::conv::BindingCallback`] past the
 //!   binding fn's return.
 
@@ -40,7 +40,7 @@ pub enum Type {
     Char,
     /// `String`.
     String,
-    /// `Bytes` — opaque byte buffer with zero-copy
+    /// `Bytes` - opaque byte buffer with zero-copy
     /// compiled-tier ABI. Source spelling is `Bytes`; Rust shape
     /// is `Vec<u8>`.
     Bytes,
@@ -52,7 +52,7 @@ pub enum Type {
     Option(&'static Type),
     /// `Result<T, E>`.
     Result(&'static Type, &'static Type),
-    /// `Map<K, V>` — keyed collection. Source spelling is
+    /// `Map<K, V>` - keyed collection. Source spelling is
     /// `Map<K, V>`; Rust shape is `HashMap<K, V>`.
     Map(&'static Type, &'static Type),
     /// Tagged-union return shape. Each arm has a name plus a
@@ -66,7 +66,7 @@ pub enum Type {
     Callback(&'static [Type], &'static Type),
     /// User-defined opaque struct or enum, identified by name.
     Opaque(&'static str),
-    /// `Any` — the type checker accepts anything for this slot
+    /// `Any` - the type checker accepts anything for this slot
     /// (useful for variadics and pre-typed-system bindings).
     Any,
 }

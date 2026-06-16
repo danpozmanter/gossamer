@@ -19,12 +19,12 @@ fn mat_a(i: i64, j: i64) -> f64 {
 // One-argument helper.
 fn square(x: i64) -> i64 { x * x }
 
-// Calls another inlinable helper in its own tail — exercises transitive
+// Calls another inlinable helper in its own tail - exercises transitive
 // inlining (the inner `square` calls inline inside the inlined `quad`).
 fn quad(x: i64) -> i64 { square(x) + square(x) }
 
 fn main() {
-    // Hot nested loop summing the two-argument kernel — the dominant
+    // Hot nested loop summing the two-argument kernel - the dominant
     // inlining win, called n*n times.
     let n = 80
     let mut sum = 0.0

@@ -61,7 +61,7 @@ impl Validator for GosReplHelper {
     }
 }
 
-/// Returns `Some(_)` when `input` is syntactically incomplete — an
+/// Returns `Some(_)` when `input` is syntactically incomplete - an
 /// unclosed brace/paren/bracket, or a trailing unterminated block
 /// comment. In that case the REPL keeps reading subsequent lines as
 /// a continuation of the same expression.

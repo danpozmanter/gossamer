@@ -52,7 +52,7 @@ pub fn lower_source_file(
 /// HIR (and thus the interpreter + test runner) the same way they
 /// would if declared at the top level. `module_path` tracks the
 /// enclosing inline-module names so each lowered item carries the
-/// path it was declared under — loaders use it to register both the
+/// path it was declared under - loaders use it to register both the
 /// bare name and the `mod1::mod2::item` qualified key.
 fn lower_items(
     lowerer: &mut Lowerer<'_>,
@@ -143,7 +143,7 @@ struct Lowerer<'a> {
     /// detect a mismatch between the inner expression's `Err` type
     /// and the enclosing function's `Err` type, and emit an
     /// automatic conversion (`errors::new(__try_err)` etc.) so
-    /// `?` propagation works across different error types — the
+    /// `?` propagation works across different error types - the
     /// SPEC §4.5 `E: Into<E2>` semantic.
     current_fn_ret_ty: Option<gossamer_types::Ty>,
     /// Per-`use`-declaration map of bound name → full target path,
@@ -227,7 +227,7 @@ impl Lowerer<'_> {
                     // For `&self` / `&mut self`, type `self` as a
                     // Ref so the codegen lowers field access
                     // (`self.x`) and field assignment (`self.x =
-                    // y`) through the pointer — matching how
+                    // y`) through the pointer - matching how
                     // free-function `&mut Type` parameters already
                     // work. Owned `self` keeps the value type.
                     let ty = match kind {
@@ -641,7 +641,7 @@ impl Lowerer<'_> {
         let iter_ty = iter_expr.ty;
         // For unknown / Adt iter types the canonical desugar
         // needs to bind the iter to a fresh slot and call
-        // `.next()` on `&mut` of that slot — that's the
+        // `.next()` on `&mut` of that slot - that's the
         // mechanism user `impl Iterator for T` relies on for
         // its state to persist across iterations. For built-in
         // iter shapes (ranges, arrays, vecs), the MIR fast paths
@@ -657,7 +657,7 @@ impl Lowerer<'_> {
     /// Desugars `for x in iter` to the canonical `loop { match
     /// (&mut __for_iter).next() { Some(x) => body, None => break } }`.
     /// Used when the iter expression is a user struct / unknown
-    /// type — those need state persistence across `next()` calls.
+    /// type - those need state persistence across `next()` calls.
     fn lower_for_user_iter(
         &mut self,
         pattern: &AstPat,
@@ -724,7 +724,7 @@ impl Lowerer<'_> {
         HirExprKind::Block(outer_block)
     }
 
-    /// Inline shape — `loop { match <iter>.next() { ... } }`. The
+    /// Inline shape - `loop { match <iter>.next() { ... } }`. The
     /// MIR / interp for-loop fast-paths inspect `<iter>` directly,
     /// so for built-in iterables (ranges, slices, vecs) we keep
     /// the receiver expression in place rather than introducing a
@@ -911,8 +911,8 @@ impl Lowerer<'_> {
 
     /// Heuristic fallback for `?` operator's `__try_value` type
     /// when the inner expression's HIR type is unresolved. Walks
-    /// chained method calls — `fs::read_to_string(...)
-    /// .map_err(...)` is a common shape — and returns `String`
+    /// chained method calls - `fs::read_to_string(...)
+    /// .map_err(...)` is a common shape - and returns `String`
     /// for stdlib helpers whose runtime return is a c-string. The
     /// MIR-side `pinned_ret` table is the authoritative source of
     /// truth; this list mirrors its String entries so the HIR layer
@@ -1009,7 +1009,7 @@ impl Lowerer<'_> {
         };
         // Build the early-return body. For Option this is `return
         // None`; for Result it's `return Err(__try_err)` (preserving
-        // the existing semantics — From-based error conversion would
+        // the existing semantics - From-based error conversion would
         // require typeck context not available in HIR lowering).
         let (err_pat, err_body) = match kind {
             TryKind::Option => {
@@ -1040,7 +1040,7 @@ impl Lowerer<'_> {
                 (none_pat, body)
             }
             TryKind::Result => {
-                // The actual error type `E` of the inner `Result<T,E>` — may
+                // The actual error type `E` of the inner `Result<T,E>` - may
                 // be `String`, a user type, or `errors::Error`. Typing the
                 // bound error as the concrete `E` (not always `errors::Error`)
                 // is what lets a `String`-typed error survive `?` propagation
@@ -1157,7 +1157,7 @@ impl Lowerer<'_> {
             }
         }
         // Syntactic fallback for the case where the typechecker
-        // hasn't resolved the inner expression yet — recognise
+        // hasn't resolved the inner expression yet - recognise
         // common Option-returning HashMap/Vec lookup shapes so
         // `m.get(&k)?` works even when the inferred type is `Var`.
         if Self::ast_is_option_shaped(inner) {
@@ -1168,7 +1168,7 @@ impl Lowerer<'_> {
     }
 
     /// Returns true when `inner` looks like an `Option`-returning
-    /// stdlib call by name. Conservative — only the dispatch-table
+    /// stdlib call by name. Conservative - only the dispatch-table
     /// entries whose runtime return is documented `Option<T>`.
     fn ast_is_option_shaped(inner: &AstExpr) -> bool {
         match &inner.kind {
@@ -1195,7 +1195,7 @@ impl Lowerer<'_> {
     }
 
     /// Returns the payload type for the unwrapped-success branch of
-    /// `?`. Works for both `Result<T, E>` and `Option<T>` — both
+    /// `?`. Works for both `Result<T, E>` and `Option<T>` - both
     /// carry `T` as their first generic argument.
     fn try_payload_ty(&self, ty: gossamer_types::Ty) -> Option<gossamer_types::Ty> {
         self.try_ok_payload_ty(ty)
@@ -1250,7 +1250,7 @@ impl Lowerer<'_> {
         if inner_err == outer_err {
             return err_value;
         }
-        // Mismatched err types — emit `errors::Error::from(__try_err)`.
+        // Mismatched err types - emit `errors::Error::from(__try_err)`.
         // The std `errors::Error::from` is registered as the canonical
         // String / errors::Error / anyhow-style adapter; programs that
         // declare custom err types can extend it.
@@ -1395,7 +1395,7 @@ impl Lowerer<'_> {
         // dispatch tables disambiguate by arity only, so an imported
         // name must carry its module to dispatch to the item the
         // program actually imported. std / user imports are
-        // untouched — the gate is a registered external item.
+        // untouched - the gate is a registered external item.
         if segments.len() == 1
             && let Some(Resolution::Import { use_id }) = self.resolutions.get(node)
             && let Some(entries) = self.import_targets.get(&use_id)
@@ -1475,7 +1475,7 @@ impl Lowerer<'_> {
                 };
                 let init = init.as_ref().map(|expr| self.lower_expr(expr));
                 // Prefer the user-written annotation over the
-                // initialiser's inferred type — the annotation is
+                // initialiser's inferred type - the annotation is
                 // already what the typechecker unified the init
                 // expression against, and a concrete `Result<T, E>`
                 // / `Option<T>` annotation is much more useful to

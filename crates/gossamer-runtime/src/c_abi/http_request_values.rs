@@ -4,7 +4,7 @@
 #![allow(clippy::must_use_candidate)]
 #![allow(clippy::wildcard_imports)]
 
-//! Request-scoped value map shims for the compiled tiers — Go's
+//! Request-scoped value map shims for the compiled tiers - Go's
 //! `context.WithValue` / `ctx.Value(key)` analog on `http::Request`.
 //!
 //! `set_value(req, key, val)` mutates the request's `values` bag in
@@ -26,7 +26,7 @@
 //!
 //! Field dependency: `GosHttpRequest` must carry
 //! `pub values: Vec<(String, String)>` (see the ready-to-apply delta
-//! in the accompanying spec — the field is added to the struct in
+//! in the accompanying spec - the field is added to the struct in
 //! `http_client.rs` and initialised `Vec::new()` at every
 //! constructor, exactly as `params` was).
 
@@ -44,7 +44,7 @@ fn cstr_to_string(p: *const c_char) -> String {
     }
 }
 
-/// `Request.set_value(key, value) -> Request` — attach a
+/// `Request.set_value(key, value) -> Request` - attach a
 /// request-scoped string value, replacing any prior value under the
 /// same key. Mutates in place and returns `req` for chaining (the
 /// `with_header` pattern). A null request passes through unchanged.
@@ -67,7 +67,7 @@ pub unsafe extern "C" fn gos_rt_http_request_set_value(
     })
 }
 
-/// `Request.value(key) -> String` — the request-scoped value attached
+/// `Request.value(key) -> String` - the request-scoped value attached
 /// under `key`, or `""` when none was set. Mirrors Go's
 /// `ctx.Value(key)` read side. Keys match exactly (case-sensitive):
 /// they are user namespace, not HTTP header names.
@@ -104,7 +104,7 @@ fn form_lookup(body: &str, key: &str) -> String {
     String::new()
 }
 
-/// `Request.form_value(key) -> String` — the first form field value
+/// `Request.form_value(key) -> String` - the first form field value
 /// parsed from the request body, or `""` when absent. Convenience over
 /// hand-parsing `r.body` through `http::form`.
 #[unsafe(no_mangle)]
@@ -123,7 +123,7 @@ pub unsafe extern "C" fn gos_rt_http_request_form_value(
     })
 }
 
-/// `Request.basic_auth() -> Option<(String, String)>` — the decoded
+/// `Request.basic_auth() -> Option<(String, String)>` - the decoded
 /// `(user, password)` from an `Authorization: Basic <base64>` header,
 /// or `None` when the header is missing or malformed. Packed as the
 /// 2-word `Option` the compiled tiers read (`disc=0` Some, payload a

@@ -22,7 +22,7 @@ impl Mutability {
 /// Item visibility as parsed from the source (`pub` vs absent).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum Visibility {
-    /// Not annotated — private to the enclosing module.
+    /// Not annotated - private to the enclosing module.
     Inherited,
     /// Annotated with `pub`.
     Public,

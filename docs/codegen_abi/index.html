@@ -1583,7 +1583,7 @@ type parameter <code>T</code> is representable in 64 bits</strong>:</p>
   <code>isize</code>, <code>usize</code>).</li>
 <li><code>f32</code>, <code>f64</code>.</li>
 <li><code>bool</code>, <code>char</code>.</li>
-<li><code>&amp;T</code> and <code>&amp;mut T</code> references — references are pointers, which
+<li><code>&amp;T</code> and <code>&amp;mut T</code> references - references are pointers, which
   are 64 bits on the platforms we ship.</li>
 <li>Heap-managed aggregate <strong>handles</strong>: <code>String</code>, <code>Vec&lt;T&gt;</code>,
   <code>HashMap&lt;K, V&gt;</code>, channel halves, <code>I64Vec</code>, <code>Mutex&lt;T&gt;</code>,
@@ -1618,7 +1618,7 @@ inner-loop ops are typed: an i64 add is a single Cranelift
 instruction, not a polymorphic dispatch.</p>
 <p>A by-value <code>MyStruct</code> argument needs the codegen to know its
 layout (offsets, alignment, padding) at every monomorphic call
-site. We have that information at MIR — but we don't yet
+site. We have that information at MIR - but we don't yet
 <strong>propagate</strong> it into the codegen call ABI. That work is parity
 plan §P4 ("layout-driven specialisation"), tracked separately.</p>
 <h2 id="how-user-code-lives-within-the-constraint">How user code lives within the constraint<a class="headerlink" href="#how-user-code-lives-within-the-constraint" title="Permanent link">&para;</a></h2>
@@ -1626,7 +1626,7 @@ plan §P4 ("layout-driven specialisation"), tracked separately.</p>
 because:</p>
 <ul>
 <li><code>Vec&lt;T&gt;</code>, <code>HashMap&lt;K, V&gt;</code>, channels are runtime-provided and
-  are <em>not</em> monomorphised by the user — they are a single
+  are <em>not</em> monomorphised by the user - they are a single
   generic implementation in the runtime that takes a <code>T</code> slot.
   The runtime handles arbitrarily-sized elements internally
   by allocating each <code>T</code> on the managed heap and the slot it stores
@@ -1653,16 +1653,16 @@ v1 workaround is "store <code>&amp;T</code>, let the runtime own the body."</p>
 <li>Propagate layout (size, align, field offsets) for each <code>T</code>
    from MIR through to Cranelift / LLVM.</li>
 <li>Switch the codegen call ABI to "by-value where the layout
-   fits in registers; by-reference where it doesn't" — matching
+   fits in registers; by-reference where it doesn't" - matching
    what <code>rustc</code> does.</li>
 <li>Drop the <code>GT0042</code> diagnostic; turn the constraint off.</li>
 </ol>
 <p>Until then, the diagnostic is the safety net that prevents
-"compiles, segfaults at runtime" — a class of bug Gossamer is
+"compiles, segfaults at runtime" - a class of bug Gossamer is
 deliberately willing to accept compile-time pain to avoid.</p>
 <h2 id="see-also">See also<a class="headerlink" href="#see-also" title="Permanent link">&para;</a></h2>
 <ul>
-<li><code>gos explain GT0042</code> — full long-form diagnostic text.</li>
+<li><code>gos explain GT0042</code> - full long-form diagnostic text.</li>
 <li>Internal notes: <code>parity.md</code> §P4 and
   <code>compiler_tier_plan.md</code>.</li>
 </ul>

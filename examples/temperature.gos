@@ -1,5 +1,5 @@
 /*
- * Temperature conversions — small structs + impl methods.
+ * Temperature conversions - small structs + impl methods.
  *
  * Each conversion is a pure method: it returns a new typed
  * value, the caller binds the result. The `Celsius` /

@@ -17,7 +17,7 @@
 //! structures (`SourceFile`, `Resolutions`, `TypeTable`,
 //! `HirProgram`) so a hit can deserialize instead of re-running
 //! the pipeline. That work is scoped as the second half of this
-//! feature and is deliberately out of this first slice — see
+//! feature and is deliberately out of this first slice - see
 //! `docs/incremental.md` for the staged rollout.
 
 #![forbid(unsafe_code)]
@@ -85,7 +85,7 @@ pub fn cache_dir() -> PathBuf {
 
 /// Writes a zero-byte marker indicating the key was compiled
 /// successfully. Creates the cache directory on demand. Silently
-/// swallows I/O errors — the cache is advisory, never required.
+/// swallows I/O errors - the cache is advisory, never required.
 pub fn mark_success(key: &FrontendCacheKey) {
     mark_success_in(&cache_dir(), key);
 }
@@ -113,7 +113,7 @@ pub fn observe_hit_in(root: &Path, key: &FrontendCacheKey) -> bool {
 }
 
 /// Serializes `value` as a bincode blob keyed by `key`. Errors
-/// silently — cache writes are advisory.
+/// silently - cache writes are advisory.
 pub fn store_blob<T: serde::Serialize>(key: &FrontendCacheKey, value: &T) {
     store_blob_in(&cache_dir(), key, value);
 }

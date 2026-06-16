@@ -16,7 +16,7 @@
 //! channel sized at `4 * pool_size`. If the queue saturates,
 //! `run` blocks on `submit` instead of growing an unbounded backlog
 //! that would silently turn into RAM. This puts a hard cap on the
-//! amount of in-flight blocking work — runaway producers see
+//! amount of in-flight blocking work - runaway producers see
 //! backpressure.
 
 #![forbid(unsafe_code)]
@@ -57,7 +57,7 @@ fn pool() -> &'static Pool {
 fn worker_loop(rx: Receiver<Job>) {
     while let Ok(job) = rx.recv() {
         // Run the job; panics inside the job propagate inside this
-        // worker thread but do not poison the pool — we simply
+        // worker thread but do not poison the pool - we simply
         // recover and accept the next job.
         let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(job));
     }
@@ -126,7 +126,7 @@ pub fn run<R: Send + 'static>(f: impl FnOnce() -> R + Send + 'static) -> R {
 ///
 /// The job still runs to completion on a worker thread (the host
 /// kernel offers no way to interrupt an in-flight blocking syscall),
-/// but the *waiter* — the goroutine that submitted the job — returns
+/// but the *waiter* - the goroutine that submitted the job - returns
 /// early when `ctx` cancels. The job's result is dropped once it
 /// arrives. Use this when you want to abandon a slow filesystem /
 /// network call from the goroutine's point of view even though the

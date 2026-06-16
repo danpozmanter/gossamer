@@ -308,7 +308,7 @@ pub const MATH: StdModule = StdModule {
         StdItem {
             name: "dim",
             kind: StdItemKind::Function,
-            doc: "max(x-y, 0) — Go's math.Dim.",
+            doc: "max(x-y, 0) - Go's math.Dim.",
         },
         StdItem {
             name: "sinh",
@@ -678,7 +678,7 @@ pub const ITER: StdModule = StdModule {
 };
 
 // ---------------------------------------------------------------------------
-// 0.4.0 surface — HTTP/2, websocket, sse, router, middleware, static files,
+// 0.4.0 surface - HTTP/2, websocket, sse, router, middleware, static files,
 // proxy, native client, chunked transfer, archives, extended compress,
 // XML / base32 / ascii85, FNV, big-int, insecure / cipher crypto.
 // ---------------------------------------------------------------------------
@@ -855,7 +855,7 @@ pub const MATH_BIG: StdModule = StdModule {
     ],
 };
 
-/// `std::option` — data-last combinators that thread through `|>`.
+/// `std::option` - data-last combinators that thread through `|>`.
 pub const OPTION: StdModule = StdModule {
     path: "std::option",
     summary: "Data-last Option combinators for pipeline chaining: map, filter, default, and_then, etc.",
@@ -923,7 +923,7 @@ pub const OPTION: StdModule = StdModule {
     ],
 };
 
-/// `std::result` — data-last combinators that thread through `|>`.
+/// `std::result` - data-last combinators that thread through `|>`.
 pub const RESULT: StdModule = StdModule {
     path: "std::result",
     summary: "Data-last Result combinators for pipeline chaining: map, map_err, default_with, etc.",

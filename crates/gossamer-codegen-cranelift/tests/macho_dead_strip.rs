@@ -12,7 +12,7 @@
 //! which are referenced directly and merged by the linker.
 //!
 //! `cranelift-module` exposes `DataDescription::set_used`, which the
-//! object backend lowers to `N_NO_DEAD_STRIP` on Mach-O — the
+//! object backend lowers to `N_NO_DEAD_STRIP` on Mach-O - the
 //! canonical "do not dead-strip this symbol" marker. The codegen now
 //! sets it on every interned literal and RC-meta blob. This test
 //! emits a Mach-O object on any host and asserts the retain flag is

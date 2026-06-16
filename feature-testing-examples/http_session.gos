@@ -1,4 +1,4 @@
-// Cross-tier parity for std::http::session — the SignedCookieStore
+// Cross-tier parity for std::http::session - the SignedCookieStore
 // SignedOnly wire format. sign frames a JSON payload as
 // base64url(payload).base64url(hmac(key, base64url(payload))); the
 // signature is computed over the base64url payload string, exactly as

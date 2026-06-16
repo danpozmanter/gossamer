@@ -4,7 +4,7 @@
  * Demonstrates SHA-256, SHA-512, and BLAKE3 digests and HMAC-SHA-256
  * message authentication. All functions are one-shot: pass bytes, get
  * a hex string back. Use these for checksums, fingerprints, and
- * message integrity — not for password storage (use crypto::kdf for
+ * message integrity - not for password storage (use crypto::kdf for
  * that).
  */
 

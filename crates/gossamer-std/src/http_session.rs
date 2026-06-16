@@ -4,10 +4,10 @@
 //! shipped by default. Sessions serialize as JSON, are framed as a
 //! single cookie, and travel one of two wire shapes:
 //!
-//! - `SerializationMode::SignedOnly` — JSON payload + HMAC-SHA256
+//! - `SerializationMode::SignedOnly` - JSON payload + HMAC-SHA256
 //!   tag. The payload is visible to the client; the tag prevents
 //!   tampering.
-//! - `SerializationMode::Encrypted` — AES-256-GCM ciphertext with
+//! - `SerializationMode::Encrypted` - AES-256-GCM ciphertext with
 //!   integrated auth tag. The payload is opaque to the client and
 //!   tampering is rejected by the AEAD open.
 //!
@@ -17,8 +17,8 @@
 //! cookie, the next `SessionStore::save` re-signs with the
 //! active key, so rotation is transparent to callers.
 //!
-//! Invalid cookies — bad format, bad signature, bad ciphertext,
-//! bad JSON — degrade to an **empty session** rather than a
+//! Invalid cookies - bad format, bad signature, bad ciphertext,
+//! bad JSON - degrade to an **empty session** rather than a
 //! visible error, so a tampered or stale cookie cannot lock a
 //! user out of the application. Operators that need stricter
 //! handling layer their own verification on top.
@@ -49,7 +49,7 @@ const DEFAULT_MAX_AGE_SECS: i64 = 86_400 * 7;
 /// the constructor flags them as a configuration smell.
 const MIN_HMAC_KEY_LEN: usize = 32;
 
-/// AES-256-GCM key length in bytes — only key length the underlying
+/// AES-256-GCM key length in bytes - only key length the underlying
 /// AEAD primitive accepts in this build.
 const AES_GCM_KEY_LEN: usize = 32;
 
@@ -87,9 +87,9 @@ pub struct SessionConfig {
     pub max_age_secs: i64,
     /// `SameSite` attribute. Default [`SameSite::Lax`].
     pub same_site: SameSite,
-    /// `Secure` flag. Default `true` — production HTTPS only.
+    /// `Secure` flag. Default `true` - production HTTPS only.
     pub secure: bool,
-    /// `HttpOnly` flag. Default `true` — block JS access.
+    /// `HttpOnly` flag. Default `true` - block JS access.
     pub http_only: bool,
     /// `Path` attribute. Default `"/"`.
     pub path: String,
@@ -120,7 +120,7 @@ impl SessionConfig {
 
     /// Builds an encrypted-cookie session config with the given key.
     ///
-    /// The key must be exactly 32 bytes — AES-256-GCM is the only
+    /// The key must be exactly 32 bytes - AES-256-GCM is the only
     /// AEAD primitive wired through this build. Shorter / longer
     /// keys are rejected when the store is constructed, not here.
     #[must_use]
@@ -310,7 +310,7 @@ pub struct SignedCookieStore {
 }
 
 impl SignedCookieStore {
-    /// Builds a store from the given configuration. Panics-free —
+    /// Builds a store from the given configuration. Panics-free -
     /// configuration errors (no keys, wrong key length for the
     /// chosen mode) surface here so handler code can rely on the
     /// store always succeeding on `load` / `save`.
@@ -487,7 +487,7 @@ impl SessionStore for SignedCookieStore {
             self.build_deletion_cookie()
         } else {
             // Encoding a Map<String, Value> cannot fail in practice
-            // — serde_json only errors on non-string map keys or
+            // - serde_json only errors on non-string map keys or
             // non-finite floats inserted through raw Value. Degrade
             // silently rather than panic out of a handler.
             let Ok(payload) = serde_json::to_vec(&serde_json::Value::Object(session.data.clone()))
@@ -741,7 +741,7 @@ mod tests {
         let set_cookie = extract_set_cookie(&resp).unwrap();
         let value = cookie_value_for(&store.config.cookie_name, &set_cookie).unwrap();
         let (payload, sig) = value.split_once('.').unwrap();
-        // Flip a bit in the last sig character — pick a different
+        // Flip a bit in the last sig character - pick a different
         // letter from the URL-safe alphabet.
         let mut tampered_sig: String = sig.to_string();
         let last = tampered_sig.pop().unwrap();
@@ -882,7 +882,7 @@ mod tests {
         .unwrap();
 
         // Build a request header with several cookies of different
-        // names — only the one matching the configured name should
+        // names - only the one matching the configured name should
         // be consulted.
         let cookie_header = format!(
             "other=xyz; {}={}; another=hello",

@@ -73,7 +73,7 @@ fn comments(source: &str) -> Vec<String> {
 }
 
 /// (a) Every corpus file formats successfully and the output's
-/// non-whitespace token stream — comments included — is identical to
+/// non-whitespace token stream - comments included - is identical to
 /// the input's.
 #[test]
 fn corpus_token_equivalence_after_fmt() {

@@ -1951,7 +1951,7 @@ share these methods:</p>
 </tr>
 </tbody>
 </table>
-<p><code>I64Vec::new(len)</code> — heap-allocated atomic-i64 buffer for
+<p><code>I64Vec::new(len)</code> - heap-allocated atomic-i64 buffer for
 goroutine fan-out:</p>
 <table>
 <thead>
@@ -1998,7 +1998,7 @@ calls) are listed in <a href="../stdlib_coverage/"><code>stdlib_coverage.md</cod
 <li>Add the runtime helper in <code>crates/gossamer-runtime/src/c_abi.rs</code>
    as a <code>#[unsafe(no_mangle)] pub unsafe extern "C" fn</code> (Rust-side
    declaration; this is internal runtime ABI, not the Gossamer
-   source-level FFI surface — see SPEC.md §12 for the latter).</li>
+   source-level FFI surface - see SPEC.md §12 for the latter).</li>
 <li>Add the dispatch arm in
    <code>crates/gossamer-mir/src/lower.rs::lower_method_call</code>.</li>
 <li>Add the LLVM declaration in
@@ -2017,10 +2017,10 @@ dispatch table, (b) the LLVM declarations, (c) the interpreter
 builtins, is a bug.</p>
 <h2 id="cross-references">Cross-references<a class="headerlink" href="#cross-references" title="Permanent link">&para;</a></h2>
 <ul>
-<li><a href="../stdlib/"><code>stdlib.md</code></a> — module index.</li>
-<li><a href="../stdlib_coverage/"><code>stdlib_coverage.md</code></a> — auto-generated
+<li><a href="../stdlib/"><code>stdlib.md</code></a> - module index.</li>
+<li><a href="../stdlib_coverage/"><code>stdlib_coverage.md</code></a> - auto-generated
   coverage matrix.</li>
-<li><a href="../codegen_abi/"><code>codegen_abi.md</code></a> — generic call ABI.</li>
+<li><a href="../codegen_abi/"><code>codegen_abi.md</code></a> - generic call ABI.</li>
 </ul>
 
 

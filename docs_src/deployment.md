@@ -88,7 +88,7 @@ EXPOSE 8080
 ENTRYPOINT ["/server"]
 ```
 
-Image sizes settle around 10–15 MiB for a typical HTTP service.
+Image sizes settle around 10-15 MiB for a typical HTTP service.
 
 ## Process supervision: systemd
 
@@ -214,7 +214,7 @@ ulimit -s 1024  # 1 MiB stacks
 Or in systemd: `LimitSTACK=1048576`.
 
 As of 0.1.0 the M:N scheduler is live, so goroutines no
-longer correspond 1:1 to OS threads — the `ulimit` is only
+longer correspond 1:1 to OS threads - the `ulimit` is only
 relevant if you spawn unbounded *threads* directly. Idle
 goroutines are parked on the netpoller and consume
 constant memory.
@@ -226,7 +226,7 @@ each value the moment its last reference dies, an on-demand cycle
 collector (`runtime::collect_cycles()`) handles reference cycles, and
 `arena { }` regions free short-lived graphs wholesale. There is no
 tracing collector, so there are no mark/sweep pauses and no GC tuning
-knobs to set — RAM tracks the live working set and stays predictable.
+knobs to set - RAM tracks the live working set and stays predictable.
 
 The allocator returns freed pages to the OS promptly, so resident
 memory follows the working set down as well as up. For container
@@ -341,4 +341,4 @@ and ship alongside a CycloneDX SBOM.
 
 ## Cross-references
 
-- [`stdlib.md`](stdlib.md) — `slog`, `http`, `os`.
+- [`stdlib.md`](stdlib.md) - `slog`, `http`, `os`.

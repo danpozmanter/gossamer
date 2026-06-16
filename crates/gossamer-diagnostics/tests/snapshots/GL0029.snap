@@ -3,7 +3,7 @@ source: crates/gossamer-diagnostics/tests/snapshots.rs
 expression: rendered
 ---
 --- plain ---
-error[GL0029]: `!(a == b)` is just `a != b`. Prefer the direct operator. — here
+error[GL0029]: `!(a == b)` is just `a != b`. Prefer the direct operator. - here
 --- framed ---
 error[GL0029]: `!(a == b)` is just `a != b`. Prefer the direct operator.
   --> snap.gos:2:5

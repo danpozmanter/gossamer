@@ -20,7 +20,7 @@ pub unsafe extern "C" fn gos_rt_strconv_parse_i64(s: *const c_char) -> i128 {
     unsafe { gos_rt_parse_i64_result(s) }
 }
 
-/// `strconv::atoi(s) -> Result<i64, errors::Error>` — alias for
+/// `strconv::atoi(s) -> Result<i64, errors::Error>` - alias for
 /// `parse_i64`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_strconv_atoi(s: *const c_char) -> i128 {
@@ -85,25 +85,25 @@ pub unsafe extern "C" fn gos_rt_strconv_parse_bool(s: *const c_char) -> i128 {
     })
 }
 
-/// `strconv::format_i64(n) -> String` — alias for `i64_to_str`.
+/// `strconv::format_i64(n) -> String` - alias for `i64_to_str`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_strconv_format_i64(n: i64) -> *mut c_char {
     unsafe { gos_rt_i64_to_str(n) }
 }
 
-/// `strconv::itoa(n) -> String` — alias for `format_i64`.
+/// `strconv::itoa(n) -> String` - alias for `format_i64`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_strconv_itoa(n: i64) -> *mut c_char {
     unsafe { gos_rt_i64_to_str(n) }
 }
 
-/// `strconv::format_f64(x) -> String` — alias for `f64_to_str`.
+/// `strconv::format_f64(x) -> String` - alias for `f64_to_str`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_strconv_format_f64(x: f64) -> *mut c_char {
     unsafe { gos_rt_f64_to_str(x) }
 }
 
-/// `strconv::format_bool(b) -> String` — alias for `bool_to_str`.
+/// `strconv::format_bool(b) -> String` - alias for `bool_to_str`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_strconv_format_bool(b: i32) -> *mut c_char {
     unsafe { gos_rt_bool_to_str(b) }
@@ -168,7 +168,7 @@ pub unsafe extern "C" fn gos_rt_strconv_format_i64_radix(n: i64, base: i64) -> *
     })
 }
 
-/// `strconv::quote(s) -> String` — double-quotes `s`, escaping `"`, `\`, and
+/// `strconv::quote(s) -> String` - double-quotes `s`, escaping `"`, `\`, and
 /// control characters so [`gos_rt_strconv_unquote`] reverses it exactly.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_strconv_quote(s: *const c_char) -> *mut c_char {
@@ -196,7 +196,7 @@ pub unsafe extern "C" fn gos_rt_strconv_quote(s: *const c_char) -> *mut c_char {
     })
 }
 
-/// `strconv::unquote(s) -> Result<String, errors::Error>` — reverses
+/// `strconv::unquote(s) -> Result<String, errors::Error>` - reverses
 /// [`gos_rt_strconv_quote`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_strconv_unquote(s: *const c_char) -> i128 {

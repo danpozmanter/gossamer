@@ -1,16 +1,16 @@
 //! Workspace automation entry point.
 //! Invoked via `cargo xtask <command>`. Current subcommands:
-//! - `docs-stdlib` — regenerate `docs_src/stdlib.md` from the
+//! - `docs-stdlib` - regenerate `docs_src/stdlib.md` from the
 //!   `gossamer_std` manifest so the rendered reference page tracks
 //!   the single source of truth.
-//! - `docs-lints` — regenerate `docs_src/toolchain/lints.md` from the
+//! - `docs-lints` - regenerate `docs_src/toolchain/lints.md` from the
 //!   `gossamer-lint` crate's `DAY_ONE_LINTS` + `lint_explanation`.
-//! - `docs-diagnostics` — regenerate `docs_src/toolchain/diagnostics.md`
+//! - `docs-diagnostics` - regenerate `docs_src/toolchain/diagnostics.md`
 //!   from the curated catalogue in this file.
-//! - `stdlib-coverage` — regenerate `docs_src/stdlib_coverage.md`
+//! - `stdlib-coverage` - regenerate `docs_src/stdlib_coverage.md`
 //!   from the per-module support state recorded in
 //!   [`STDLIB_SUPPORT`].
-//! - `docs-all` — run every generator above in one invocation.
+//! - `docs-all` - run every generator above in one invocation.
 
 #![forbid(unsafe_code)]
 
@@ -135,8 +135,8 @@ fn report_lint_budget() -> Result<()> {
 }
 
 /// Walks every `*.rs` file under `dir` and counts attribute `#[allow(`
-/// occurrences (item- and crate-level). Approximates the real total —
-/// macros may expand into more — but is the right surface to track at
+/// occurrences (item- and crate-level). Approximates the real total -
+/// macros may expand into more - but is the right surface to track at
 /// the source level.
 fn count_allows_in(dir: &Path) -> Result<usize> {
     let mut total = 0usize;
@@ -402,9 +402,9 @@ fn render_stdlib_page(modules: &[StdModule]) -> String {
     writeln!(out).unwrap();
     writeln!(
         out,
-        "Names available without any import — the print macros, \
+        "Names available without any import - the print macros, \
          `min`/`max`/`clamp`, `spawn`, assertions, and the synthesized \
-         `from_json::<T>` family — are listed on the \
+         `from_json::<T>` family - are listed on the \
          [Prelude page](prelude.md)."
     )
     .unwrap();
@@ -433,7 +433,7 @@ fn render_stdlib_page(modules: &[StdModule]) -> String {
     out
 }
 
-/// Emits one module's detail block — heading, summary, item table.
+/// Emits one module's detail block - heading, summary, item table.
 fn write_module_section(out: &mut String, module: &StdModule) {
     writeln!(out, "## `{}`", module.path).unwrap();
     writeln!(out).unwrap();
@@ -486,7 +486,7 @@ fn kind_label(kind: StdItemKind) -> &'static str {
 }
 
 /// Sort weight so item tables list types first, then traits, then
-/// functions, then macros, then constants — matches the progression
+/// functions, then macros, then constants - matches the progression
 /// a reader scanning for "what's here" expects.
 fn kind_rank(kind: StdItemKind) -> u8 {
     match kind {
@@ -590,7 +590,7 @@ const DIAGNOSTIC_CATALOGUE: &[(&str, &str, &str, &str)] = &[
         "GP0002",
         "Parser",
         "unexpected end of input",
-        "The parser reached end-of-file in the middle of a construct. Finish the expression, statement, or item — or remove it.",
+        "The parser reached end-of-file in the middle of a construct. Finish the expression, statement, or item - or remove it.",
     ),
     (
         "GP0003",
@@ -767,7 +767,7 @@ fn render_diagnostics_page(entries: &[(&str, &str, &str, &str)]) -> String {
         let anchor = code.to_ascii_lowercase();
         writeln!(out, "## `{code}` <a id=\"{anchor}\"></a>").unwrap();
         writeln!(out).unwrap();
-        writeln!(out, "**{phase}** — {title}").unwrap();
+        writeln!(out, "**{phase}** - {title}").unwrap();
         writeln!(out).unwrap();
         writeln!(out, "{explanation}").unwrap();
         writeln!(out).unwrap();
@@ -1126,9 +1126,9 @@ fn render_stdlib_coverage_page(items: &[StdlibSupport]) -> String {
     writeln!(
         out,
         "Columns:\n\n\
-         - **Interp** — `gos run` (bytecode VM + tree-walker fallback).\n\
-         - **Compiled** — `gos build` (Cranelift) and `gos build --release` (LLVM).\n\
-         - **Tests** — at least one integration test exercising the item.\n\n\
+         - **Interp** - `gos run` (bytecode VM + tree-walker fallback).\n\
+         - **Compiled** - `gos build` (Cranelift) and `gos build --release` (LLVM).\n\
+         - **Tests** - at least one integration test exercising the item.\n\n\
          Glyphs: ✓ supported · ◑ partial · ✗ missing.\n"
     )
     .unwrap();
@@ -1175,8 +1175,8 @@ fn render_stdlib_coverage_page(items: &[StdlibSupport]) -> String {
     writeln!(out).unwrap();
     writeln!(
         out,
-        "- [`stdlib.md`](stdlib.md) — module index with summaries.\n\
-         - [`method_support.md`](method_support.md) — per-method\n\
+        "- [`stdlib.md`](stdlib.md) - module index with summaries.\n\
+         - [`method_support.md`](method_support.md) - per-method\n\
            reference for shipped types."
     )
     .unwrap();

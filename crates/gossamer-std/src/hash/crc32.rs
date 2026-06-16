@@ -1,4 +1,4 @@
-// Runtime support for `std::hash::crc32` — CRC-32 checksums.
+// Runtime support for `std::hash::crc32` - CRC-32 checksums.
 //
 // Implements the IEEE 802.3 (Ethernet) polynomial, which is what Go's
 // hash/crc32 calls IEEE and uses for gzip/zlib checksums.

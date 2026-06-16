@@ -89,7 +89,7 @@ fn main() {
         }
         assert!(
             bad.is_empty(),
-            "found {} torn line(s) (release={release}) — first 5: {:?}",
+            "found {} torn line(s) (release={release}) - first 5: {:?}",
             bad.len(),
             &bad.iter().take(5).collect::<Vec<_>>()
         );

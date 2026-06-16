@@ -2,7 +2,7 @@
 // round-trip BOTH the discriminant and the payload word on every
 // compiled tier. The reference is transparent: it carries the i128
 // value, so matching through it dispatches on the real discriminant
-// and reads the real payload — never the truncated low word.
+// and reads the real payload - never the truncated low word.
 
 struct Holder { o: Option<i64>, label: Option<String> }
 

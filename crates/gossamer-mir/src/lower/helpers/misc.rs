@@ -66,7 +66,7 @@ pub(crate) fn shape_char(tcx: &gossamer_types::TyCtxt, ty: gossamer_types::Ty) -
         },
         TyKind::Unit | TyKind::Never => 'u',
         // Result/Option ride the 2-word packed i128 representation,
-        // so a callable returning one needs an i128-ret thunk — an
+        // so a callable returning one needs an i128-ret thunk - an
         // i64-ret thunk would truncate the payload word.
         TyKind::Adt { def, .. } if def.local == u32::MAX || def.local == u32::MAX - 1 => 'r',
         // Pointer-shaped on 64-bit; refs / strings / aggregates

@@ -2,7 +2,7 @@ use std::strconv
 
 struct Node { val: i64, next: Option<Box<Node>> }
 
-// Case 1: None payload — release walk must skip cleanly.
+// Case 1: None payload - release walk must skip cleanly.
 fn case_none() -> i64 {
     let mut total = 0
     let mut i = 0
@@ -14,7 +14,7 @@ fn case_none() -> i64 {
     total
 }
 
-// Case 2: one struct copied into two locals — both walks release;
+// Case 2: one struct copied into two locals - both walks release;
 // counts must balance with the copy retain (no double-free).
 fn case_two_slots() -> i64 {
     let mut total = 0
@@ -29,7 +29,7 @@ fn case_two_slots() -> i64 {
     total
 }
 
-// Case 3: borrow into the chain — reads must not consume ownership.
+// Case 3: borrow into the chain - reads must not consume ownership.
 fn case_borrow() -> i64 {
     let mut total = 0
     let mut i = 0

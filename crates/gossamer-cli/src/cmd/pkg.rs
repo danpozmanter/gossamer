@@ -130,7 +130,7 @@ fn build_cache() -> gossamer_pkg::Cache {
     }
 }
 
-/// `gos add SPEC [--manifest PATH]` — declares a registry
+/// `gos add SPEC [--manifest PATH]` - declares a registry
 /// dependency. `SPEC` is `<id>` or `<id>@<version>`.
 pub(crate) fn add(spec: &str, manifest: Option<PathBuf>) -> Result<()> {
     let path = manifest.unwrap_or_else(|| PathBuf::from("project.toml"));
@@ -153,13 +153,13 @@ pub(crate) fn add(spec: &str, manifest: Option<PathBuf>) -> Result<()> {
     Ok(())
 }
 
-/// `gos add --rust-binding SPEC` — declares an entry in
+/// `gos add --rust-binding SPEC` - declares an entry in
 /// `[rust-bindings]`. Three spec shapes are supported:
 ///
-/// - `<crate>` — crates.io with version `0.0.1` placeholder
+/// - `<crate>` - crates.io with version `0.0.1` placeholder
 ///   (user is expected to update it).
-/// - `<crate>@<version>` — crates.io with explicit version.
-/// - `path:<dir>` — local Cargo crate at `<dir>` (interpreted
+/// - `<crate>@<version>` - crates.io with explicit version.
+/// - `path:<dir>` - local Cargo crate at `<dir>` (interpreted
 ///   relative to the manifest).
 ///
 /// For crates that don't already depend on `gossamer-binding`,
@@ -331,7 +331,7 @@ fn scaffold_wrapper_if_needed(
     Ok(Some(wrapper_dir))
 }
 
-/// `gos remove ID [--manifest PATH]` — drops the matching
+/// `gos remove ID [--manifest PATH]` - drops the matching
 /// dependency entry; errors when nothing matched.
 pub(crate) fn remove(id_text: &str, manifest: Option<PathBuf>) -> Result<()> {
     let path = manifest.unwrap_or_else(|| PathBuf::from("project.toml"));
@@ -348,7 +348,7 @@ pub(crate) fn remove(id_text: &str, manifest: Option<PathBuf>) -> Result<()> {
     Ok(())
 }
 
-/// `gos tidy [--manifest PATH]` — re-renders the manifest so
+/// `gos tidy [--manifest PATH]` - re-renders the manifest so
 /// whitespace + entry ordering match the canonical layout.
 pub(crate) fn tidy(manifest: Option<PathBuf>) -> Result<()> {
     let path = manifest.unwrap_or_else(|| PathBuf::from("project.toml"));
@@ -359,7 +359,7 @@ pub(crate) fn tidy(manifest: Option<PathBuf>) -> Result<()> {
     Ok(())
 }
 
-/// `gos fetch [--manifest PATH] [--offline] [--update]` —
+/// `gos fetch [--manifest PATH] [--offline] [--update]` -
 /// populates the download cache for every transitive dependency and
 /// writes / refreshes `project.lock`. The `--update` flag instructs
 /// the resolver to re-walk the registry index even when a lockfile
@@ -406,7 +406,7 @@ pub(crate) fn fetch(manifest: Option<PathBuf>, offline: bool, update: bool) -> R
     Ok(())
 }
 
-/// `gos vendor [--manifest PATH] [--out DIR]` — materialises every
+/// `gos vendor [--manifest PATH] [--out DIR]` - materialises every
 /// transitive dependency into `<out>/` for an offline / reproducible
 /// build.
 pub(crate) fn vendor(manifest: Option<PathBuf>, out: Option<PathBuf>) -> Result<()> {
@@ -445,7 +445,7 @@ pub(crate) fn vendor(manifest: Option<PathBuf>, out: Option<PathBuf>) -> Result<
     Ok(())
 }
 
-/// `gos publish [--registry URL] [--dry-run]` — pack the current
+/// `gos publish [--registry URL] [--dry-run]` - pack the current
 /// project deterministically, sha256 it, optionally sign with
 /// ed25519, and POST to `<registry>/v1/upload/<id>/<ver>`.
 pub(crate) fn publish(
@@ -506,7 +506,7 @@ pub(crate) fn publish(
     Ok(())
 }
 
-/// `gos yank <id>@<ver> [--reason MSG]` — flag a previously published
+/// `gos yank <id>@<ver> [--reason MSG]` - flag a previously published
 /// version as yanked. New installs refuse to use it unless
 /// `--allow-yanked` is set.
 pub(crate) fn yank(spec: &str, reason: Option<String>) -> Result<()> {
@@ -537,7 +537,7 @@ pub(crate) fn yank(spec: &str, reason: Option<String>) -> Result<()> {
     Ok(())
 }
 
-/// `gos login --registry URL` — prompt for a bearer token (or read
+/// `gos login --registry URL` - prompt for a bearer token (or read
 /// from `$GOS_TOKEN`) and write it to the credential store.
 pub(crate) fn login(registry: String) -> Result<()> {
     let token = if let Ok(token) = std::env::var("GOS_TOKEN") {
@@ -557,7 +557,7 @@ pub(crate) fn login(registry: String) -> Result<()> {
     Ok(())
 }
 
-/// `gos logout --registry URL` — drop the saved token.
+/// `gos logout --registry URL` - drop the saved token.
 pub(crate) fn logout(registry: String) -> Result<()> {
     let path = gossamer_pkg::CredentialStore::default_path()
         .map_err(|e| anyhow!("locating credentials: {e}"))?;
@@ -575,7 +575,7 @@ pub(crate) fn logout(registry: String) -> Result<()> {
     Ok(())
 }
 
-/// `gos owner [add|remove|list] <id> [<user>]` — manage registry ACLs.
+/// `gos owner [add|remove|list] <id> [<user>]` - manage registry ACLs.
 pub(crate) fn owner(op: &str, id_text: &str, user: Option<String>) -> Result<()> {
     let id = gossamer_pkg::ProjectId::parse(id_text)
         .with_context(|| format!("invalid id `{id_text}`"))?;

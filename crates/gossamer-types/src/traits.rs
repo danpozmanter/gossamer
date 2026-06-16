@@ -8,7 +8,7 @@ use gossamer_resolve::DefId;
 use crate::subst::Substs;
 use crate::ty::Ty;
 
-/// A concrete trait reference — the [`DefId`] of a trait together with
+/// A concrete trait reference - the [`DefId`] of a trait together with
 /// the substitutions that instantiate its generics.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct TraitRef {
@@ -32,14 +32,14 @@ impl TraitRef {
 /// clause.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Predicate {
-    /// `T: Trait<Args>` — the type must implement the trait.
+    /// `T: Trait<Args>` - the type must implement the trait.
     Trait {
         /// The bounded self type.
         self_ty: Ty,
         /// Trait reference imposed on `self_ty`.
         trait_ref: TraitRef,
     },
-    /// `Alias<Args> = Target` — equality between a projected type and
+    /// `Alias<Args> = Target` - equality between a projected type and
     /// a concrete type.
     Projection {
         /// The trait reference whose projection is being constrained.

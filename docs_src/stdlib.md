@@ -9,7 +9,7 @@ overwritten on the next regeneration.
 
 The manifest itself lives at [`crates/gossamer-std/src/manifest.rs`](https://github.com/gossamer-lang/gossamer/blob/main/crates/gossamer-std/src/manifest.rs).
 
-Names available without any import — the print macros, `min`/`max`/`clamp`, `spawn`, assertions, and the synthesized `from_json::<T>` family — are listed on the [Prelude page](prelude.md).
+Names available without any import - the print macros, `min`/`max`/`clamp`, `spawn`, assertions, and the synthesized `from_json::<T>` family - are listed on the [Prelude page](prelude.md).
 
 ## Modules
 
@@ -39,7 +39,7 @@ Names available without any import — the print macros, `min`/`max`/`clamp`, `s
 | [`std::crypto::ecdsa`](#stdcryptoecdsa) | 3 | ECDSA over the NIST P-256 curve. |
 | [`std::crypto::ed25519`](#stdcryptoed25519) | 3 | Ed25519 digital signatures. |
 | [`std::crypto::hmac`](#stdcryptohmac) | 1 | HMAC-SHA-256 keyed MACs. |
-| [`std::crypto::insecure`](#stdcryptoinsecure) | 2 | Legacy / broken hashes (MD5, SHA-1). Compat only — never use for new code. |
+| [`std::crypto::insecure`](#stdcryptoinsecure) | 2 | Legacy / broken hashes (MD5, SHA-1). Compat only - never use for new code. |
 | [`std::crypto::kdf`](#stdcryptokdf) | 4 | Password-based key-derivation functions. |
 | [`std::crypto::password`](#stdcryptopassword) | 5 | Argon2id password hashing facade: PHC-string hash / verify / re-hash policy. |
 | [`std::crypto::rand`](#stdcryptorand) | 2 | Secure random bytes from the host CSPRNG. |
@@ -321,7 +321,7 @@ Request-scoped cancellation, deadlines, and timeouts.
 | Item | Kind | Doc |
 |------|------|-----|
 | `Context` | type | Cancellation-aware context handle. |
-| `background` | fn | Root context — never cancelled. |
+| `background` | fn | Root context - never cancelled. |
 | `with_cancel` | fn | Child context plus explicit cancel handle. |
 | `with_deadline` | fn | Child context that cancels at the supplied instant. |
 | `with_timeout` | fn | Child context that cancels after the supplied duration. |
@@ -385,7 +385,7 @@ HMAC-SHA-256 keyed MACs.
 
 ## `std::crypto::insecure`
 
-Legacy / broken hashes (MD5, SHA-1). Compat only — never use for new code.
+Legacy / broken hashes (MD5, SHA-1). Compat only - never use for new code.
 
 | Item | Kind | Doc |
 |------|------|-----|
@@ -478,7 +478,7 @@ Driver-pluggable SQL database access. No driver ships in the box; bring your own
 | `Stmt` | type | Prepared statement. |
 | `Tx` | type | Active transaction. `commit`, `rollback`, `savepoint`, `release_savepoint`, `rollback_to_savepoint`, `execute`. |
 | `Value` | type | Bound or fetched value. Null / Bool / Int / Float / Text / Blob. |
-| `Driver` | trait | Database driver — opens connections. Implementations call `register` at startup. |
+| `Driver` | trait | Database driver - opens connections. Implementations call `register` at startup. |
 | `drivers` | fn | Lists every currently-registered driver name. |
 | `migrate` | fn | Forward-only schema migrations from a directory of `<version>_<slug>.sql` files. `migrate::up(&mut conn, dir)` applies pending migrations, each in its own transaction; `migrate::discover`, `migrate::applied`, `migrate::plan`, `migrate::init` round out the surface. |
 | `open` | fn | Opens a database connection by driver name + URL. |
@@ -733,7 +733,7 @@ HTTP/1.1 and HTTP/2 client and server. HTTP/2 negotiates via ALPN over TLS autom
 | `Server` | type | HTTP server bound to a TCP listener. |
 | `StatusCode` | type | HTTP status code. |
 | `StreamingResponseWriter` | type | Streaming HTTP/2 response writer; set_status / header / write_chunk / finish. |
-| `Trailers` | type | HTTP/2 trailing HEADERS (alias for Headers) — used by `ResponseWriter::write_trailers` and `Request::trailers`. |
+| `Trailers` | type | HTTP/2 trailing HEADERS (alias for Headers) - used by `ResponseWriter::write_trailers` and `Request::trailers`. |
 | `Http2Handler` | trait | Bounded-body HTTP/2 handler: serve(Request) -> Response. |
 | `Http2StreamingHandler` | trait | Chunked-body HTTP/2 handler: serve(Request, StreamingResponseWriter) -> Result. |
 | `serve` | fn | Convenience: bind and serve an HTTP handler. |
@@ -897,7 +897,7 @@ Server-Sent Events (text/event-stream) emitter with heartbeat ticks and retry hi
 | Item | Kind | Doc |
 |------|------|-----|
 | `Event` | type | One SSE event (id, event, data, retry). |
-| `Stream` | type | Active SSE stream — handler writes events through it (Rust-side). |
+| `Stream` | type | Active SSE stream - handler writes events through it (Rust-side). |
 | `encode_comment` | fn | Render a `:`-prefixed keepalive line. Available in interp + compiled. |
 | `encode_event` | fn | Render one event block as a string: `(event, data, id) -> String`. Available in interp + compiled. |
 | `encode_retry` | fn | Render a `retry:` reconnect-hint directive in milliseconds. Available in interp + compiled. |
@@ -1041,7 +1041,7 @@ Mathematical constants and f64 functions (Go's math package shape).
 | `ceil` | fn | Smallest integer ≥ x. |
 | `copysign` | fn | Magnitude of x with sign of y. |
 | `cos` | fn | Cosine (radians). |
-| `dim` | fn | max(x-y, 0) — Go's math.Dim. |
+| `dim` | fn | max(x-y, 0) - Go's math.Dim. |
 | `exp` | fn | e^x. |
 | `exp2` | fn | 2^x. |
 | `floor` | fn | Largest integer ≤ x. |

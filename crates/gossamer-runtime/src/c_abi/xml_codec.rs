@@ -9,7 +9,7 @@
 //! references. `gossamer-runtime` cannot depend on `gossamer-std`
 //! (that would be a dependency cycle), so the parse/encode logic is
 //! reimplemented here against the same `quick-xml 0.37` the VM tier
-//! uses — the bytes mirror `gossamer_std::encoding::xml` exactly, so
+//! uses - the bytes mirror `gossamer_std::encoding::xml` exactly, so
 //! a parse->encode round-trip is bit-identical across tiers.
 //!
 //! The parsed tree is handed to user code as an opaque `*mut GosXml`
@@ -17,7 +17,7 @@
 //! shape `gos_rt_json_*` uses for `serde_json::Value`). `parse`
 //! returns `Result<i64-handle, errors::Error>`; `encode` consumes the
 //! handle and returns the serialised `String`. Between the two the
-//! handle is opaque — user code does not navigate it (field access on
+//! handle is opaque - user code does not navigate it (field access on
 //! an xml node is not part of this surface), matching the VM tier
 //! where the node round-trips straight back into `encode`.
 
@@ -56,8 +56,8 @@ enum Node {
 /// shuttles the raw `*mut GosXml` through an i64 slot. Reclamation
 /// would require a dedicated `TyKind::XmlNode` so the MIR drop pass
 /// can key on it (the json model); the parse result is currently a
-/// plain `i64`, indistinguishable from any other integer, so — like
-/// the raw-i64 SQL handles — the tree is intentionally leaked rather
+/// plain `i64`, indistinguishable from any other integer, so - like
+/// the raw-i64 SQL handles - the tree is intentionally leaked rather
 /// than risk freeing a non-handle i64. See the module docs.
 pub struct GosXml {
     node: Node,

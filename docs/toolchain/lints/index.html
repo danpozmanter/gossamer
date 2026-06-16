@@ -2845,12 +2845,12 @@ redundant. Drop the call.</p>
 intentional for truthiness coercion, use an explicit cast.</p>
 <h2 id="self_assignment"><code>self_assignment</code><a class="headerlink" href="#self_assignment" title="Permanent link">&para;</a></h2>
 <p>Assigning a variable to itself does nothing. The statement is
-usually the residue of a refactor — remove it.</p>
+usually the residue of a refactor - remove it.</p>
 <h2 id="todo_macro"><code>todo_macro</code><a class="headerlink" href="#todo_macro" title="Permanent link">&para;</a></h2>
 <p><code>todo!()</code> and <code>unimplemented!()</code> are placeholders, not shippable
 expressions. Implement the branch before merging.</p>
 <h2 id="bool_literal_in_condition"><code>bool_literal_in_condition</code><a class="headerlink" href="#bool_literal_in_condition" title="Permanent link">&para;</a></h2>
-<p><code>if true { ... }</code> / <code>while false { ... }</code> — the branch is
+<p><code>if true { ... }</code> / <code>while false { ... }</code> - the branch is
 decided at compile time. Drop the control-flow construct.</p>
 <h2 id="let_and_return"><code>let_and_return</code><a class="headerlink" href="#let_and_return" title="Permanent link">&para;</a></h2>
 <p><code>let x = expr; x</code> at the tail of a block is just <code>expr</code>. Drop
@@ -2864,7 +2864,7 @@ keep the body once.</p>
 <h2 id="redundant_field_init"><code>redundant_field_init</code><a class="headerlink" href="#redundant_field_init" title="Permanent link">&para;</a></h2>
 <p><code>Foo { x: x }</code> is the same as the shorthand <code>Foo { x }</code>.</p>
 <h2 id="needless_else_after_return"><code>needless_else_after_return</code><a class="headerlink" href="#needless_else_after_return" title="Permanent link">&para;</a></h2>
-<p><code>if cond { return X } else { Y }</code> — the <code>else</code> is unreachable
+<p><code>if cond { return X } else { Y }</code> - the <code>else</code> is unreachable
 fall-through. Un-nest the <code>else</code> body.</p>
 <h2 id="self_compare"><code>self_compare</code><a class="headerlink" href="#self_compare" title="Permanent link">&para;</a></h2>
 <p>Comparing a value to itself is always <code>true</code> (for <code>==</code>, <code>&lt;=</code>,
@@ -2876,7 +2876,7 @@ adds nothing but noise.</p>
 <p><code>let x = ()</code> binds the unit value, which is almost never useful.
 Drop the <code>let</code>.</p>
 <h2 id="float_eq_zero"><code>float_eq_zero</code><a class="headerlink" href="#float_eq_zero" title="Permanent link">&para;</a></h2>
-<p>Equality against a float literal is almost never what you want —
+<p>Equality against a float literal is almost never what you want -
 floating-point arithmetic rarely produces the exact bit pattern.
 Compare <code>(x - y).abs() &lt; eps</code> with an explicit tolerance.</p>
 <h2 id="empty_else"><code>empty_else</code><a class="headerlink" href="#empty_else" title="Permanent link">&para;</a></h2>
@@ -2886,7 +2886,7 @@ stand alone.</p>
 <p><code>match b { true =&gt; ... false =&gt; ... }</code> is an <code>if</code> in disguise.
 Rewrite as <code>if b { ... } else { ... }</code>.</p>
 <h2 id="needless_parens"><code>needless_parens</code><a class="headerlink" href="#needless_parens" title="Permanent link">&para;</a></h2>
-<p><code>(x)</code> without a trailing comma is a needless pair of parens —
+<p><code>(x)</code> without a trailing comma is a needless pair of parens -
 <code>x</code> reads the same. <code>(x,)</code> is a one-tuple and means something
 different.</p>
 <h2 id="manual_not_equal"><code>manual_not_equal</code><a class="headerlink" href="#manual_not_equal" title="Permanent link">&para;</a></h2>
@@ -2920,7 +2920,7 @@ two bindings via a temporary. Prefer a destructuring assignment
 once the language supports it, or at minimum document why the
 swap is needed.</p>
 <h2 id="consecutive_assignment"><code>consecutive_assignment</code><a class="headerlink" href="#consecutive_assignment" title="Permanent link">&para;</a></h2>
-<p>Two back-to-back assignments to the same place — the earlier
+<p>Two back-to-back assignments to the same place - the earlier
 value is dead before it's read. Drop the first or consolidate
 the logic into one statement.</p>
 <h2 id="large_unreadable_literal"><code>large_unreadable_literal</code><a class="headerlink" href="#large_unreadable_literal" title="Permanent link">&para;</a></h2>
@@ -2941,10 +2941,10 @@ explicit <code>-&gt; ()</code> is noise.</p>
 <h2 id="let_with_unit_type"><code>let_with_unit_type</code><a class="headerlink" href="#let_with_unit_type" title="Permanent link">&para;</a></h2>
 <p><code>let _: () = expr</code> annotates the binding with the unit type. If
 <code>expr</code> was going to return <code>()</code> anyway, the annotation is noise.
-If it wasn't, the annotation forces a coercion — use a plain
+If it wasn't, the annotation forces a coercion - use a plain
 statement instead.</p>
 <h2 id="useless_default_only_match"><code>useless_default_only_match</code><a class="headerlink" href="#useless_default_only_match" title="Permanent link">&para;</a></h2>
-<p><code>match x { _ =&gt; expr }</code> always runs <code>expr</code> — the <code>match</code> adds
+<p><code>match x { _ =&gt; expr }</code> always runs <code>expr</code> - the <code>match</code> adds
 nothing. Drop the <code>match</code> (and add <code>let _ = x</code> if evaluating
 the scrutinee has side effects).</p>
 <h2 id="unnecessary_parens_in_condition"><code>unnecessary_parens_in_condition</code><a class="headerlink" href="#unnecessary_parens_in_condition" title="Permanent link">&para;</a></h2>

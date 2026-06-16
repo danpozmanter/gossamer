@@ -1,4 +1,4 @@
-// Runtime support for `std::compress::zstd` — Zstandard encoding/decoding.
+// Runtime support for `std::compress::zstd` - Zstandard encoding/decoding.
 //
 // Wraps the `zstd` crate (libzstd C library, vendored) in the Gossamer
 // error shape. The user surface mirrors the sibling gzip / flate / zlib

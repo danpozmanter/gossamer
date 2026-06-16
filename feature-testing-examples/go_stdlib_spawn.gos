@@ -2,7 +2,7 @@
 // goroutine on every tier (bytecode VM, Cranelift JIT, LLVM AOT),
 // never run inline. The compiled tiers previously lowered a stdlib
 // free call under `go` (e.g. `go time::sleep(ms)`, `go http::get(url)`)
-// to a synchronous inline call, while the VM spawned it — a parity
+// to a synchronous inline call, while the VM spawned it - a parity
 // bug.
 //
 // The async proof is a two-party barrier rendezvous, deterministic and
@@ -10,8 +10,8 @@
 // is the other. Running asynchronously, the spawned party parks on the
 // barrier while main reaches its own `Barrier::wait`; both release and
 // the program prints two lines. If the spawned call ran synchronously
-// instead, main would block on the barrier as the only party — the
-// second party (main itself) could never arrive — and the program
+// instead, main would block on the barrier as the only party - the
+// second party (main itself) could never arrive - and the program
 // would print nothing and deadlock. So the two-line output is only
 // reachable when the spawned stdlib free call is asynchronous.
 

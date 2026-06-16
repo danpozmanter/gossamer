@@ -48,7 +48,7 @@ jobs:
         working-directory: fuzz
         # `-fork=1` runs each batch of inputs in a child process so a
         # child that trips `-rss_limit_mb` / `-malloc_limit_mb` is
-        # recorded as a crash artefact and replaced with a fresh child —
+        # recorded as a crash artefact and replaced with a fresh child -
         # the parent survives the full hour instead of dying on one OOM.
         # An hour-long run accumulates allocator fragmentation that no
         # single input leaks (verified clean under LeakSanitizer); fork
@@ -72,7 +72,7 @@ jobs:
   # Audit M6: weekly corpus minimization. cargo fuzz cmin shrinks
   # the libFuzzer-grown corpus by removing inputs whose coverage
   # subsumes others'. We commit the minimised seed back via a PR
-  # if and only if cmin produced fewer files than we started with —
+  # if and only if cmin produced fewer files than we started with -
   # silence is the no-op outcome.
   fuzz-cmin:
     name: Fuzz cmin (${{ matrix.target }})

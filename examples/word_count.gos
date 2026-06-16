@@ -1,5 +1,5 @@
 /*
- * Word counting — split a sentence on ASCII whitespace and
+ * Word counting - split a sentence on ASCII whitespace and
  * tally tokens.
  *
  * Walks the input by byte index and emits each non-whitespace

@@ -32,7 +32,7 @@ println!("{}", top)
 ```
 
 - `err.message()` returns only the top message (`"reading config"`),
-  not the chain — pair it with `err.cause()` to walk levels manually.
+  not the chain - pair it with `err.cause()` to walk levels manually.
 - `errors::join([a, b]) -> Option<Error>` combines several errors into
   one whose message is the individual messages joined with `"; "`
   (`"a; b"`); an empty list joins to `None`.

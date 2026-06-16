@@ -1,4 +1,4 @@
-//! Runtime support for `std::hash` — non-cryptographic hash functions.
+//! Runtime support for `std::hash` - non-cryptographic hash functions.
 
 #![forbid(unsafe_code)]
 

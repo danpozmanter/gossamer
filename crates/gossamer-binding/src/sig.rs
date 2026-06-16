@@ -101,7 +101,7 @@ impl SigType for crate::conv::DynValue {
 
 #[allow(
     clippy::implicit_hasher,
-    reason = "ABI surface — declared signature is hasher-agnostic."
+    reason = "ABI surface - declared signature is hasher-agnostic."
 )]
 impl<K: SigType, V: SigType> SigType for std::collections::HashMap<K, V> {
     const TYPE: Type = Type::Map(&K::TYPE, &V::TYPE);
@@ -110,7 +110,7 @@ impl<K: SigType, V: SigType> SigType for std::collections::HashMap<K, V> {
 // --- Tuple SigType impls (Phase 1) ------------------------------------
 //
 // Lower N-tuples to `Type::Tuple(&[T1::TYPE, ...])`. Compile-time
-// element-type validation comes for free — each `Ti: SigType` bound
+// element-type validation comes for free - each `Ti: SigType` bound
 // is checked at impl-instantiation. The compiled-tier `BindingAbi`
 // for tuples is hand-listed per shape in `native.rs`.
 

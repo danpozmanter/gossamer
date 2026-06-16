@@ -1,5 +1,5 @@
 /*
- * Polymorphism via traits — three shapes, one shared interface.
+ * Polymorphism via traits - three shapes, one shared interface.
  *
  * Each struct implements the same `Shape` trait, so the same
  * method names dispatch correctly for every concrete type.

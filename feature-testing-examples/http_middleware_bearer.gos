@@ -1,7 +1,7 @@
 // Cross-tier regression for the bearer-auth check middleware
 // (`http::middleware::bearer_ok`). The handler runs the caller's
 // Gossamer `verify` closure on the extracted Authorization bearer
-// token — the closure crosses the C-ABI via the env-thunk convention
+// token - the closure crosses the C-ABI via the env-thunk convention
 // shared with the iter / Once / RwLock combinators. A valid token
 // reaches the handler body (200); an invalid or absent one is rejected
 // (401). The 401-vs-body shaping is plain Gossamer code, so output is

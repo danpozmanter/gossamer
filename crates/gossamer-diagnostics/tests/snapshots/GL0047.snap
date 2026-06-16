@@ -3,7 +3,7 @@ source: crates/gossamer-diagnostics/tests/snapshots.rs
 expression: rendered
 ---
 --- plain ---
-error[GL0047]: `if (cond) { ... }` wraps the condition in a single-tuple — here
+error[GL0047]: `if (cond) { ... }` wraps the condition in a single-tuple - here
 --- framed ---
 error[GL0047]: `if (cond) { ... }` wraps the condition in a single-tuple
   --> snap.gos:2:5

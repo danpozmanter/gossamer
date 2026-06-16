@@ -1,4 +1,4 @@
-//! HTTP/3 server and client (RFC 9114) — first-party stdlib
+//! HTTP/3 server and client (RFC 9114) - first-party stdlib
 //! support, wrapping `quinn` (QUIC) and the `h3` crate (HTTP/3
 //! framing on top of QUIC).
 //!
@@ -12,11 +12,11 @@
 //!
 //! Public surface mirrors `http_h2`:
 //!
-//! - `serve` — bind a UDP socket on the supplied address, run
+//! - `serve` - bind a UDP socket on the supplied address, run
 //!   a quinn endpoint, dispatch every accepted request to the
 //!   handler (the same `crate::http::Handler` trait the rest of
 //!   the HTTP stack speaks).
-//! - `Client` — issue HTTP/3 requests against a remote endpoint.
+//! - `Client` - issue HTTP/3 requests against a remote endpoint.
 //!   Same shape as `crate::http::Client`: `new`, `get`, `post`,
 //!   `put`, `delete`, `head`, `options`, `request`.
 //!
@@ -50,7 +50,7 @@ use crate::http::{Headers, Method, Request, Response, StatusCode};
 
 /// Handler signature for HTTP/3: receive a `Request`, return a
 /// complete `Response`. Mirrors [`crate::http_h2::Handler`] so
-/// the two stacks share a single handler trait shape — a
+/// the two stacks share a single handler trait shape - a
 /// production service can be served over h2 or h3 from the same
 /// handler value.
 pub trait Handler: Send + Sync + 'static {
@@ -96,7 +96,7 @@ impl From<H3Error> for Error {
 }
 
 /// Installs the rustls ring crypto provider exactly once for
-/// this process. Idempotent — both server and client entry
+/// this process. Idempotent - both server and client entry
 /// points call this before touching any rustls configuration.
 fn install_ring_provider() {
     let _ = rustls::crypto::ring::default_provider().install_default();
@@ -109,7 +109,7 @@ fn install_ring_provider() {
 /// Binds a UDP socket on `addr`, runs a QUIC + HTTP/3 endpoint,
 /// and dispatches every accepted request to `handler`. Blocks
 /// the calling thread until the endpoint stops accepting (a
-/// transport-level fatal error tears it down — there is no
+/// transport-level fatal error tears it down - there is no
 /// public shutdown signal yet, matching the h2 surface).
 ///
 /// `cert_path` / `key_path` point to PEM-encoded files. HTTP/3
@@ -354,7 +354,7 @@ impl Client {
 
     /// Constructs a client that accepts any server certificate.
     /// Intended for tests and self-signed development endpoints
-    /// — never use in production.
+    /// - never use in production.
     pub fn insecure() -> Result<Self, Error> {
         Self::build(true)
     }
@@ -417,7 +417,7 @@ impl Client {
         self.do_request(Method::Head, url, None, headers)
     }
 
-    /// Issues an OPTIONS request — typically a preflight or
+    /// Issues an OPTIONS request - typically a preflight or
     /// capability probe with no body.
     pub fn options(&self, url: &str, headers: &[(&str, &str)]) -> Result<Response, Error> {
         self.do_request(Method::Options, url, None, headers)
@@ -539,7 +539,7 @@ fn quic_client_config_from_rustls(
 
 /// Skip-cert-verification verifier for the `Client::insecure`
 /// constructor. Production callers should never reach this path
-/// — it bypasses every TLS authentication check.
+/// - it bypasses every TLS authentication check.
 #[derive(Debug)]
 struct SkipVerify;
 
@@ -740,7 +740,7 @@ mod tests {
     #[test]
     fn h3_client_insecure_builds() {
         let client = Client::insecure().expect("client");
-        // Drop without issuing any request — verifies the runtime
+        // Drop without issuing any request - verifies the runtime
         // + endpoint bind machinery works on this host.
         drop(client);
     }

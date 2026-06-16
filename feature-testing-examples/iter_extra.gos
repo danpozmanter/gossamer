@@ -3,7 +3,7 @@
 // windowed, pairwise, chunk_by_size) plus the reversed-index idiom
 // `iter::reversed(xs)[i]` (the unannotated-result SIGSEGV class).
 //
-// i64-element only — matches the `_i64` shim family. Output is
+// i64-element only - matches the `_i64` shim family. Output is
 // scalar-only (no tuple Debug) so it is bit-identical across the
 // bytecode VM, the Cranelift JIT, and LLVM AOT. Pair with
 // tier_parity so any per-tier regression trips the stdout gate.

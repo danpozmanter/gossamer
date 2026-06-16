@@ -75,7 +75,7 @@ impl Default for ClientConfig {
     }
 }
 
-/// Native h1 client. Cheap to clone — internals are `Arc`.
+/// Native h1 client. Cheap to clone - internals are `Arc`.
 #[derive(Clone)]
 pub struct NativeClient {
     inner: Arc<Inner>,
@@ -351,7 +351,7 @@ impl NativeClient {
 
     fn dial(&self, host: &str, port: u16, want_tls: bool) -> Result<Conn, NativeError> {
         // Try to pull a live conn out of the pool first. Only
-        // reuse if the scheme matches — a plain socket cannot
+        // reuse if the scheme matches - a plain socket cannot
         // service an https request and vice versa.
         {
             let mut g = self.inner.pool.lock();
@@ -594,7 +594,7 @@ fn read_response<R: Read>(
             .map_err(|e| NativeError::Io(format!("read body: {e}")))?;
         payload
     } else {
-        // No length info — read until EOF or limit.
+        // No length info - read until EOF or limit.
         let mut payload = Vec::new();
         let mut tmp = [0u8; 8192];
         loop {
@@ -718,7 +718,7 @@ mod tests {
         // wired correctly, the build would panic at this point.
         let cfg = super::default_tls_config();
         assert!(Arc::strong_count(&cfg) >= 1);
-        // Second call must hit the cache — same Arc identity.
+        // Second call must hit the cache - same Arc identity.
         let cfg2 = super::default_tls_config();
         assert!(Arc::ptr_eq(&cfg, &cfg2));
     }
@@ -869,7 +869,7 @@ mod tests {
                 Err(_) => return,
             };
             let mut tls = StreamOwned::new(conn, sock);
-            // Drain the request head — read until \r\n\r\n.
+            // Drain the request head - read until \r\n\r\n.
             let mut buf = [0u8; 1024];
             let mut total = Vec::new();
             loop {

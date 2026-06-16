@@ -1,4 +1,4 @@
-// `std::encoding::toml` — TOML 1.0 parsing + emission.
+// `std::encoding::toml` - TOML 1.0 parsing + emission.
 //
 // Surface stays simple to keep the cross-tier C-ABI light:
 //   - `to_json(toml_text)`   -> Result<json_text, errors::Error>
@@ -9,12 +9,12 @@
 // For typed deserialization, every user struct gets a
 // `<Type>::from_toml` / `to_toml` derive at `Vm::load` (extends the
 // JSON auto-derive pattern; routes through `to_json` / `from_json`
-// internally — same schema registry).
+// internally - same schema registry).
 
 #![forbid(unsafe_code)]
 
 /// Parses `text` as TOML and returns its JSON-shaped serialization.
-/// JSON is the lingua franca for downstream consumers — chain into
+/// JSON is the lingua franca for downstream consumers - chain into
 /// `json::parse` or use the auto-derived `<Type>::from_toml`.
 pub fn to_json(text: &str) -> Result<String, String> {
     let value: toml::Value = toml::from_str(text).map_err(|e| e.to_string())?;

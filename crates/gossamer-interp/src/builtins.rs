@@ -179,7 +179,7 @@ pub(crate) fn install(globals: &mut Vec<(&'static str, Value)>) {
 /// Returns the process-wide cached builtin table (built once on
 /// first call). Each `Value::Builtin` / `Value::Native` payload is
 /// behind an `Arc`, so cloning the entries is a refcount bump per
-/// builtin — cheap enough that `Vm::new` can iterate the cached slice
+/// builtin - cheap enough that `Vm::new` can iterate the cached slice
 /// when populating its globals map. The single shared cache avoids
 /// rebuilding all ~330 entries per VM construction.
 pub(crate) fn cached() -> &'static [(&'static str, Value)] {
@@ -207,7 +207,7 @@ pub fn registered_names() -> Vec<&'static str> {
 /// [`Vm`](crate::vm::Vm) `Arc::clone`s this map and consults it on
 /// lookup miss against its own per-Vm overlay; no Vm copies the
 /// prelude into its own storage. Late-registered binding natives
-/// stay out of the prelude — they can land after Vm construction
+/// stay out of the prelude - they can land after Vm construction
 /// and ride the per-Vm overlay instead.
 pub(crate) fn prelude_globals()
 -> std::sync::Arc<rustc_hash::FxHashMap<&'static str, crate::vm::Global>> {
@@ -228,7 +228,7 @@ pub(crate) fn prelude_globals()
 fn install_io_builtins(globals: &mut Vec<(&'static str, Value)>) {
     globals.push(("println", builtin("println", builtin_println)));
     globals.push(("print", builtin("print", builtin_print)));
-    // Math library — mirrors the native runtime's
+    // Math library - mirrors the native runtime's
     // `gos_rt_math_*` surface. Registered under both the bare
     // name and the qualified `math::*` key the VM's
     // `compile_path` joins.
@@ -252,7 +252,7 @@ fn install_io_builtins(globals: &mut Vec<(&'static str, Value)>) {
     globals.push(("math::ceil", builtin("math::ceil", builtin_math_ceil)));
     globals.push(("pow", builtin("pow", builtin_math_pow)));
     globals.push(("math::pow", builtin("math::pow", builtin_math_pow)));
-    // Stream constructors — each returns an `io::Stream` value
+    // Stream constructors - each returns an `io::Stream` value
     // the program's subsequent method calls dispatch against.
     globals.push(("io::stdout", builtin("io::stdout", builtin_io_stdout)));
     globals.push(("io::stderr", builtin("io::stderr", builtin_io_stderr)));
@@ -298,7 +298,7 @@ fn install_io_builtins(globals: &mut Vec<(&'static str, Value)>) {
         "Stream::read_to_string",
         builtin("Stream::read_to_string", builtin_stream_read_to_string),
     ));
-    // io::ReadAll(reader) / io::Copy(dst, src) — Go-shaped helpers
+    // io::ReadAll(reader) / io::Copy(dst, src) - Go-shaped helpers
     // for moving bytes around. Drain the source stream to a String,
     // or shovel from src to dst returning the byte count. Both work
     // on the fd-shaped `Stream` value the existing io::stdout / stdin
@@ -321,7 +321,7 @@ fn install_io_builtins(globals: &mut Vec<(&'static str, Value)>) {
 
 #[allow(
     clippy::too_many_lines,
-    reason = "flat registration list — splitting hides the per-arm intent"
+    reason = "flat registration list - splitting hides the per-arm intent"
 )]
 fn install_http_builtins(globals: &mut Vec<(&'static str, Value)>) {
     globals.push(("http::serve", native("http::serve", native_http_serve)));
@@ -346,7 +346,7 @@ fn install_http_builtins(globals: &mut Vec<(&'static str, Value)>) {
     // HTTP/2 folded into std::http per the Go model. Canonical
     // names live under http::*; nothing exposes the old http2::
     // module path any more (the interp dispatch did, briefly,
-    // during 0.4.0 dev — it's gone now).
+    // during 0.4.0 dev - it's gone now).
     globals.push((
         "http::serve_h2c",
         native("http::serve_h2c", native_http2_bind_and_run_h2c),
@@ -601,20 +601,20 @@ fn install_variant_builtins(globals: &mut Vec<(&'static str, Value)>) {
     globals.push(("None", Value::variant("None", Vec::new())));
 }
 
-// Pure registration list — splitting it would just split the
+// Pure registration list - splitting it would just split the
 // install across files without making any function shorter.
 #[allow(
     clippy::too_many_lines,
-    reason = "flat-shape dispatch / lowering — splitting hides the per-arm intent"
+    reason = "flat-shape dispatch / lowering - splitting hides the per-arm intent"
 )]
 fn install_module_builtins(globals: &mut Vec<(&'static str, Value)>) {
     install_module(
         "os",
         &[
-            // os identity (canonical — stays on os::).
+            // os identity (canonical - stays on os::).
             ("family", builtin_os_family),
             ("arch", builtin_os_arch),
-            // Deprecated re-exports — kept callable so existing
+            // Deprecated re-exports - kept callable so existing
             // user code keeps working; see env::*, process::exit,
             // fs::* for the canonical paths.
             ("args", builtin_os_args),
@@ -845,11 +845,11 @@ fn install_module_builtins(globals: &mut Vec<(&'static str, Value)>) {
         "Scanner::text",
         builtin("Scanner::text", builtin_bufio_scanner_text),
     ));
-    // Method-call dispatch for `<stream>.read_line()` — the same
+    // Method-call dispatch for `<stream>.read_line()` - the same
     // builtin handles both `os::stdin().read_line()` and the
     // method-call form. Adds `read_line` to the global table.
     globals.push(("read_line", builtin("read_line", builtin_stdin_read_line)));
-    // HashMap surface — exposed both qualified (`HashMap::*`) and
+    // HashMap surface - exposed both qualified (`HashMap::*`) and
     // bare (`m.get(k)`, `m.insert(k, v)`) so user code can use the
     // method form. Mutating methods (insert/remove/clear) ride the
     // method-dispatch writeback path same as Vec mutators.
@@ -903,7 +903,7 @@ fn install_module_builtins(globals: &mut Vec<(&'static str, Value)>) {
             ("render", builtin_json_render),
             ("encode", builtin_json_render),
             ("decode", builtin_json_decode),
-            // Query surface — operates on the dynamic struct shape
+            // Query surface - operates on the dynamic struct shape
             // produced by `json_value_to_gossamer`, so a JSON object
             // is a struct keyed by field name and a JSON array is a
             // `Value::Array`.
@@ -1208,7 +1208,7 @@ fn register_flag_spec(set_id: u64, spec: &Value) -> Option<(Ident, Value)> {
 /// Batch constructor. Creates the internal `Set`, registers every
 /// spec, parses `os::args()`, and returns a `Flags` struct with one
 /// cell-typed field per spec (named after the spec's long name).
-/// Callers access parsed values via `*flags.<long>` — no mutation
+/// Callers access parsed values via `*flags.<long>` - no mutation
 /// needed at the call site.
 fn builtin_flag_define(args: &[Value]) -> RuntimeResult<Value> {
     let set_name = args.first().and_then(as_str).unwrap_or("").to_string();
@@ -1288,7 +1288,7 @@ fn install_method_helpers(globals: &mut Vec<(&'static str, Value)>) {
     globals.push(("clone", builtin("clone", builtin_clone)));
     // `iter().next()` outside a for-loop. Returns `Some(first)`
     // for non-empty collections, `None` otherwise. The for-loop
-    // fast paths still drive real iteration state — this binding
+    // fast paths still drive real iteration state - this binding
     // only covers the bare-call shape (`let v = it.next()` and
     // `match it.next() { Some(_) => …, None => … }`).
     globals.push(("next", builtin("next", builtin_next)));
@@ -1302,7 +1302,7 @@ fn install_method_helpers(globals: &mut Vec<(&'static str, Value)>) {
     globals.push(("Box::new", builtin("Box::new", builtin_clone)));
     globals.push(("Arc::new", builtin("Arc::new", builtin_clone)));
     globals.push(("Rc::new", builtin("Rc::new", builtin_clone)));
-    // `x.downgrade()` / `w.upgrade()` — weak references. `downgrade`
+    // `x.downgrade()` / `w.upgrade()` - weak references. `downgrade`
     // records a `std::sync::Weak` to the receiver's `Arc` (mirroring the
     // compiled tier's `gos_rt_rc_downgrade`); `upgrade` yields
     // `Some(value)` while a strong reference survives and `None` once the
@@ -1328,7 +1328,7 @@ fn install_method_helpers(globals: &mut Vec<(&'static str, Value)>) {
         builtin("String::byte_at", builtin_str_byte_at),
     ));
     globals.push(("byte_at", builtin("byte_at", builtin_str_byte_at)));
-    // `String::substring(s, a, b) -> String` — clamping, infallible
+    // `String::substring(s, a, b) -> String` - clamping, infallible
     // byte-range substring (out-of-range bounds clamp; inverted bounds
     // yield ""). Mirrors the compiled tier's `gos_rt_str_substring`.
     // Registered qualified + bare so `s.substring(a, b)` dispatches by
@@ -1338,7 +1338,7 @@ fn install_method_helpers(globals: &mut Vec<(&'static str, Value)>) {
         builtin("String::substring", builtin_str_substring),
     ));
     globals.push(("substring", builtin("substring", builtin_str_substring)));
-    // `String::slice(s, a, b) -> Result<String, errors::Error>` —
+    // `String::slice(s, a, b) -> Result<String, errors::Error>` -
     // the non-panicking byte-range slice. Inverted or out-of-range
     // bounds return Err, not a truncated string. Registered under
     // both the qualified and bare names so `String::slice(s, a, b)?`
@@ -1346,7 +1346,7 @@ fn install_method_helpers(globals: &mut Vec<(&'static str, Value)>) {
     globals.push(("String::slice", builtin("String::slice", builtin_str_slice)));
     globals.push(("Vec::slice", builtin("Vec::slice", builtin_vec_slice)));
     globals.push(("slice", builtin("slice", builtin_str_or_vec_slice)));
-    // 0.7.0 Vec read helpers — the compiled tier exposes these as
+    // 0.7.0 Vec read helpers - the compiled tier exposes these as
     // methods on any Vec; keep the interpreter in lockstep.
     globals.push(("first", builtin("first", builtin_first)));
     globals.push(("last", builtin("last", builtin_last)));
@@ -1377,7 +1377,7 @@ fn install_method_helpers(globals: &mut Vec<(&'static str, Value)>) {
         "collections::HashMap::pop",
         builtin("collections::HashMap::pop", builtin_map_pop),
     ));
-    // `String::to_lower` / `String::to_upper` — short Rust/Go-style
+    // `String::to_lower` / `String::to_upper` - short Rust/Go-style
     // names for the existing to_lowercase / to_uppercase shims.
     // Registered as qualified keys so `s.to_lower()` on a `String`
     // receiver dispatches here rather than to the char-level
@@ -1649,11 +1649,11 @@ fn builtin_str_parse_result(args: &[Value]) -> RuntimeResult<Value> {
     Ok(Value::variant("Err", vec![err]))
 }
 
-// Pure registration list — splitting it would obscure the
+// Pure registration list - splitting it would obscure the
 // concurrency surface area without making any function shorter.
 #[allow(
     clippy::too_many_lines,
-    reason = "flat-shape dispatch / lowering — splitting hides the per-arm intent"
+    reason = "flat-shape dispatch / lowering - splitting hides the per-arm intent"
 )]
 fn install_concurrency_builtins(globals: &mut Vec<(&'static str, Value)>) {
     globals.push(("spawn", native("spawn", native_spawn)));
@@ -1681,7 +1681,7 @@ fn install_concurrency_builtins(globals: &mut Vec<(&'static str, Value)>) {
         "Channel::try_recv",
         builtin("Channel::try_recv", builtin_channel_try_recv),
     ));
-    // MIR-emitted runtime call names — VM intercepts these so the
+    // MIR-emitted runtime call names - VM intercepts these so the
     // interpreter's channel impl is used instead of the native GosChan.
     globals.push((
         "gos_rt_chan_recv_option",
@@ -1691,7 +1691,7 @@ fn install_concurrency_builtins(globals: &mut Vec<(&'static str, Value)>) {
         "gos_rt_chan_try_recv_option",
         builtin("gos_rt_chan_try_recv_option", builtin_channel_try_recv),
     ));
-    // `rx.recv_ctx(&ctx)` — the interp Channel doesn't share
+    // `rx.recv_ctx(&ctx)` - the interp Channel doesn't share
     // storage with `gossamer-std::context::Context` waiters,
     // so the interp implementation degrades to a plain recv
     // (cancel-via-context is observed only when both the
@@ -1753,13 +1753,13 @@ fn install_concurrency_builtins(globals: &mut Vec<(&'static str, Value)>) {
     // `Vec::new()` produces an empty growable array. Without
     // this entry the `Vec::new` path lookup misses, falls back
     // to the bare `new` global, and resolves to whichever
-    // module's `new` was installed last — typically `HashMap`'s,
+    // module's `new` was installed last - typically `HashMap`'s,
     // which means `let mut v: Vec<i64> = Vec::new(); v.push(1)`
     // silently builds an empty `HashMap` and the push is a no-op.
     globals.push(("Vec::new", builtin("Vec::new", builtin_vec_new)));
 
     // U8Vec: 1-byte-per-element heap vec. Same shape as I64Vec
-    // but with byte-aligned storage — fasta-style scratch
+    // but with byte-aligned storage - fasta-style scratch
     // buffers no longer pay the 8x storage tax.
     globals.push(("U8Vec::new", builtin("U8Vec::new", builtin_u8vec_new)));
     globals.push((
@@ -1883,7 +1883,7 @@ fn install_regex_builtins(globals: &mut Vec<(&'static str, Value)>) {
     // a `regex::Pattern::*` shape (used by qualified-method
     // dispatch on `Value::Struct` regex handles). The bare names
     // (`split`, `find`, `replace`, …) collide with the string
-    // method-call dispatch — bare-registering would route a
+    // method-call dispatch - bare-registering would route a
     // `s.split(" ")` call to the regex helper, which would then
     // bail with "expected Pattern handle".
     let qualified_only = [
@@ -2011,7 +2011,7 @@ fn default_stderr(text: &str) {
 ///
 /// Side effect: also disables the JIT process-wide. The runtime's
 /// `gos_rt_print_*` family writes to a separate buffer and flushes
-/// directly to fd 1 — there's no per-call hook for that path, so a
+/// directly to fd 1 - there's no per-call hook for that path, so a
 /// JIT-promoted body's output bypasses the writer the test set up.
 /// Disabling the JIT routes everything through the bytecode VM's
 /// `STDOUT_WRITER`, which the redirect actually catches. Test
@@ -2251,7 +2251,7 @@ fn builtin_stream_write_byte(args: &[Value]) -> RuntimeResult<Value> {
 /// matching the public `set_stdout_writer` contract used by
 /// tests. Pulled out of `builtin_stream_write_byte` so the
 /// `Op::StreamWriteByte` super-instruction can call it without
-/// constructing a `Vec<Value>` first — the dominant per-byte cost
+/// constructing a `Vec<Value>` first - the dominant per-byte cost
 /// in `fasta`'s output loop.
 pub(crate) fn stream_write_one_byte(fd: i64, byte: i64) {
     let bytes = [(byte & 0xff) as u8];
@@ -2316,7 +2316,7 @@ fn builtin_stream_read_to_string(args: &[Value]) -> RuntimeResult<Value> {
     }
 }
 
-/// `io::ReadAll(reader) -> String` — drains the reader until EOF
+/// `io::ReadAll(reader) -> String` - drains the reader until EOF
 /// and returns the accumulated bytes as a String. Mirrors Go's
 /// `io.ReadAll`. Today the only Reader-shaped value the interp
 /// surfaces is the stdin Stream (fd 0); other fds return an empty
@@ -2335,7 +2335,7 @@ fn builtin_io_read_all(args: &[Value]) -> RuntimeResult<Value> {
     }
 }
 
-/// `io::Copy(dst, src) -> i64` — drains `src` byte-by-byte into
+/// `io::Copy(dst, src) -> i64` - drains `src` byte-by-byte into
 /// `dst`, returning the byte count copied. Mirrors Go's `io.Copy`.
 /// Works on the fd-shaped streams returned by `io::stdin` /
 /// `io::stdout` / `io::stderr`: stdin → stdout/stderr is the only
@@ -2386,7 +2386,7 @@ fn builtin_concat(args: &[Value]) -> RuntimeResult<Value> {
     Ok(Value::String(out.into()))
 }
 
-/// `__fmt_prec(value, prec)` — format-string `{:.N}` lowering. Returns
+/// `__fmt_prec(value, prec)` - format-string `{:.N}` lowering. Returns
 /// a `String` containing `value` rendered with `prec` fractional
 /// digits. Mirrors the runtime helper `gos_rt_f64_prec_to_str` so
 /// interp output matches the compiled tiers bit-for-bit.
@@ -2406,7 +2406,7 @@ fn builtin_fmt_prec(args: &[Value]) -> RuntimeResult<Value> {
     Ok(Value::String(format!("{f:.prec$}").into()))
 }
 
-/// `__fmt_radix(value, base)` — renders an integer in `base` (2..=36).
+/// `__fmt_radix(value, base)` - renders an integer in `base` (2..=36).
 fn builtin_fmt_radix(args: &[Value]) -> RuntimeResult<Value> {
     let value = args.first().and_then(value_to_int).unwrap_or(0);
     let base = args.get(1).and_then(value_to_int).unwrap_or(10);
@@ -2435,13 +2435,13 @@ fn builtin_fmt_radix(args: &[Value]) -> RuntimeResult<Value> {
     Ok(Value::String(out.into()))
 }
 
-/// `__fmt_upper(s)` — uppercases the rendered string (for `{:X}`).
+/// `__fmt_upper(s)` - uppercases the rendered string (for `{:X}`).
 fn builtin_fmt_upper(args: &[Value]) -> RuntimeResult<Value> {
     let s = args.first().and_then(as_str).unwrap_or("");
     Ok(Value::String(s.to_uppercase().into()))
 }
 
-/// `__fmt_pad(s, width, fill, align)` — pads a rendered string to `width`.
+/// `__fmt_pad(s, width, fill, align)` - pads a rendered string to `width`.
 /// `align`: 0 = right (pad left), 1 = left (pad right), 2 = center.
 fn builtin_fmt_pad(args: &[Value]) -> RuntimeResult<Value> {
     let text = args.first().and_then(as_str).unwrap_or("");
@@ -2478,7 +2478,7 @@ fn builtin_panic(args: &[Value]) -> RuntimeResult<Value> {
     Err(RuntimeError::Panic(render_args(args)))
 }
 
-/// `assert(cond)` / `assert(cond, msg)` — prelude assertion. Panics on a
+/// `assert(cond)` / `assert(cond, msg)` - prelude assertion. Panics on a
 /// false condition (so a failing test is recorded as a failure); a
 /// passing assertion is counted in the test tally. Mirrored on the
 /// compiled tiers by lowering to a conditional `gos_rt_panic`.
@@ -2498,7 +2498,7 @@ fn builtin_assert(args: &[Value]) -> RuntimeResult<Value> {
     Err(RuntimeError::Panic(detail))
 }
 
-/// `assert_eq(a, b)` / `assert_eq(a, b, msg)` — panics unless `a == b`.
+/// `assert_eq(a, b)` / `assert_eq(a, b, msg)` - panics unless `a == b`.
 fn builtin_assert_eq(args: &[Value]) -> RuntimeResult<Value> {
     let left = args.first().cloned().unwrap_or(Value::Unit);
     let right = args.get(1).cloned().unwrap_or(Value::Unit);
@@ -2518,7 +2518,7 @@ fn builtin_assert_eq(args: &[Value]) -> RuntimeResult<Value> {
 }
 
 fn builtin_http_response_text(args: &[Value]) -> RuntimeResult<Value> {
-    // Method call: response.text() — receiver is a Response struct.
+    // Method call: response.text() - receiver is a Response struct.
     if let Some(Value::Struct(inner)) = args.first() {
         if inner.name == "Response" {
             let body = inner
@@ -2542,7 +2542,7 @@ fn builtin_http_response_json(args: &[Value]) -> RuntimeResult<Value> {
     Ok(response_struct(status, body, "application/json"))
 }
 
-/// `Response::stream(status, content_type, rs) -> Response` — wraps a
+/// `Response::stream(status, content_type, rs) -> Response` - wraps a
 /// live `ResponseStream` so the server drains it to the client as
 /// chunked frames (proxy passthrough). Construction CONSUMES the
 /// stream: the handle is moved out of the client registry, so a later
@@ -2574,7 +2574,7 @@ fn builtin_http_response_stream(args: &[Value]) -> RuntimeResult<Value> {
     Ok(Value::struct_("Response", fields))
 }
 
-/// `resp.with_header(name, value) -> Response` — chainable header
+/// `resp.with_header(name, value) -> Response` - chainable header
 /// attach. Replace-then-push, mirroring the compiled tier's
 /// `gos_rt_http_response_with_header`: any prior header with the
 /// same case-insensitive name is dropped, then the new pair is
@@ -2713,7 +2713,7 @@ fn native_http_serve(dispatch: &mut dyn NativeDispatch, args: &[Value]) -> Runti
         if let Ok(n) = raw.parse::<u64>() {
             config.max_requests = Some(n);
             eprintln!(
-                "http::serve: GOSSAMER_HTTP_MAX_REQUESTS={n} — server will exit after {n} request(s). Unset this env var to run forever."
+                "http::serve: GOSSAMER_HTTP_MAX_REQUESTS={n} - server will exit after {n} request(s). Unset this env var to run forever."
             );
         }
     }
@@ -2764,7 +2764,7 @@ fn native_http_serve(dispatch: &mut dyn NativeDispatch, args: &[Value]) -> Runti
 
     match result {
         Ok(()) => Ok(Value::variant("Ok", vec![Value::Unit])),
-        // `http::serve` is `Result<(), Error>` in Gossamer — a bind
+        // `http::serve` is `Result<(), Error>` in Gossamer - a bind
         // failure is an `Err` value for the caller's match, not a
         // panic (native-tier parity).
         Err(err) => Ok(err_variant(format!("http::serve: {err}"))),
@@ -2936,7 +2936,7 @@ fn request_to_value(request: &http_std::Request) -> Value {
         })
         .collect();
     let body_text = String::from_utf8_lossy(&request.body).into_owned();
-    // Binary-safe sibling of the UTF-8-lossy `body` field — one
+    // Binary-safe sibling of the UTF-8-lossy `body` field - one
     // `Value::Int` per byte, matching the `resp.raw_bytes` and
     // `os::read_file` byte-array shape.
     let raw_body: Vec<Value> = request
@@ -3027,7 +3027,7 @@ fn value_to_response(value: &Value) -> Option<http_std::Response> {
         }
     }
     // A `__stream_handle` field marks a `Response::stream` value:
-    // take the live stream out of the pending registry (one-shot —
+    // take the live stream out of the pending registry (one-shot -
     // a second serve of the same handle drains nothing and answers
     // an empty chunked body, matching the compiled tier).
     let body_stream = stream_handle.map(|h| {
@@ -3046,7 +3046,7 @@ fn value_to_response(value: &Value) -> Option<http_std::Response> {
     };
     // Handler-set headers go in first; `Headers::insert` keys by
     // lowercased name, so a later same-name pair replaces the
-    // earlier one — matching the compiled tier's replace-then-push.
+    // earlier one - matching the compiled tier's replace-then-push.
     let mut has_content_type = false;
     let mut has_content_length = false;
     for (name, value) in &header_pairs {
@@ -3247,7 +3247,7 @@ fn builtin_os_write_file(args: &[Value]) -> RuntimeResult<Value> {
             })
             .collect(),
         // Typed-primitive integer array literals (`[u8] = [..]`,
-        // `[i32] = [..]`) — the VM collapses these to `IntArray`,
+        // `[i32] = [..]`) - the VM collapses these to `IntArray`,
         // not `Array`, so the previous arm silently fell through
         // to the error case and the binary write returned
         // `Err("contents must be string or byte array")`.
@@ -3499,7 +3499,7 @@ fn builtin_runtime_collect_cycles(_args: &[Value]) -> RuntimeResult<Value> {
 /// `runtime::arena_push()` / `runtime::arena_pop()`. Arena regions are a
 /// compiled-tier allocation optimization (bump-allocate, free wholesale).
 /// The interpreter models heap values with `Arc` and reclaims them by
-/// refcount, so a region is a semantic no-op here — the block runs
+/// refcount, so a region is a semantic no-op here - the block runs
 /// identically and produces the same output, preserving tier parity.
 fn builtin_runtime_region_noop(_args: &[Value]) -> RuntimeResult<Value> {
     Ok(Value::Unit)
@@ -3609,11 +3609,11 @@ fn builtin_exec_spawn(args: &[Value]) -> RuntimeResult<Value> {
     }
 }
 
-/// `exec::kill(pid: i64) -> bool` — best-effort SIGTERM. Mirrors
+/// `exec::kill(pid: i64) -> bool` - best-effort SIGTERM. Mirrors
 /// the runtime helper `gos_rt_exec_kill` so the VM and compiled
 /// tiers behave identically for the daemon-launch teardown path.
 /// Shells out to `/bin/kill` instead of pulling in a libc
-/// dep just for `kill(2)` — the dispatch path is rare (only the
+/// dep just for `kill(2)` - the dispatch path is rare (only the
 /// `stop_server` pattern hits it) so an extra fork/exec is fine.
 fn builtin_exec_kill(args: &[Value]) -> RuntimeResult<Value> {
     #[cfg(unix)]
@@ -3811,7 +3811,7 @@ fn raw_to_signal(raw: i64) -> signal_std::Signal {
     }
 }
 
-/// `signal::on(sig_raw) -> i64` — registers a notifier and returns
+/// `signal::on(sig_raw) -> i64` - registers a notifier and returns
 /// an opaque handle for use with `signal_wait` / `signal_try_wait`.
 fn builtin_signal_on(args: &[Value]) -> RuntimeResult<Value> {
     let raw = match args.first() {
@@ -3826,7 +3826,7 @@ fn builtin_signal_on(args: &[Value]) -> RuntimeResult<Value> {
     Ok(Value::Int(handle))
 }
 
-/// `signal_wait(handle)` — blocks until the registered signal fires.
+/// `signal_wait(handle)` - blocks until the registered signal fires.
 fn builtin_signal_wait(args: &[Value]) -> RuntimeResult<Value> {
     let Some(Value::Int(handle)) = args.first() else {
         return Ok(Value::Unit);
@@ -3841,7 +3841,7 @@ fn builtin_signal_wait(args: &[Value]) -> RuntimeResult<Value> {
     Ok(Value::Unit)
 }
 
-/// `signal_try_wait(handle) -> bool` — non-blocking check.
+/// `signal_try_wait(handle) -> bool` - non-blocking check.
 fn builtin_signal_try_wait(args: &[Value]) -> RuntimeResult<Value> {
     let Some(Value::Int(handle)) = args.first() else {
         return Ok(Value::Bool(false));
@@ -3855,7 +3855,7 @@ fn builtin_signal_try_wait(args: &[Value]) -> RuntimeResult<Value> {
     Ok(Value::Bool(notifier.try_wait()))
 }
 
-/// `fs::list_dir(path: String) -> Result<[DirInfo], String>` — direct-children
+/// `fs::list_dir(path: String) -> Result<[DirInfo], String>` - direct-children
 /// listing with metadata. `DirInfo` is a struct carrying the entry's
 /// name, full path, type predicates, byte size (`0` for directories),
 /// and modification time as unix milliseconds. The result is sorted
@@ -3958,7 +3958,7 @@ fn builtin_gzip_decode(args: &[Value]) -> RuntimeResult<Value> {
     }
 }
 
-/// `slog::info(msg: String)` — emits a JSON-line record at INFO
+/// `slog::info(msg: String)` - emits a JSON-line record at INFO
 /// level on stderr. The full structured-fields API stays in
 /// `gossamer-std::slog`; this entry point covers the common
 /// "log this message" call shape from .gos source.
@@ -4027,7 +4027,7 @@ fn json_escape_str(value: &str) -> String {
     out
 }
 
-/// Stdin sentinel — `os::stdin()` returns a struct whose name
+/// Stdin sentinel - `os::stdin()` returns a struct whose name
 /// (`StdinStream`) is the recognition key for `read_line` and
 /// `Scanner::new`. The struct carries no fields; identity is by
 /// type name only.
@@ -4069,7 +4069,7 @@ fn builtin_stdin_read_line(args: &[Value]) -> RuntimeResult<Value> {
     }
 }
 
-/// `bufio::Scanner::new(stream)` — constructs a scanner.
+/// `bufio::Scanner::new(stream)` - constructs a scanner.
 ///
 /// State is kept in a Map (`Arc<Mutex>`) so `scan()`/`text()` can mutate
 /// the cursor without requiring the immutable-struct writeback path.
@@ -4347,7 +4347,7 @@ fn builtin_json_as_bool(args: &[Value]) -> RuntimeResult<Value> {
 
 /// `json::as_array(value)` → `Some([T])` when the receiver is an
 /// array, otherwise `None`. Tests pattern-match the result, so we
-/// always emit an Option variant — `unwrap()` on a non-array now
+/// always emit an Option variant - `unwrap()` on a non-array now
 /// fails loudly instead of returning a misleading empty array.
 fn builtin_json_as_array(args: &[Value]) -> RuntimeResult<Value> {
     if let Some(Value::Array(a)) = args.first() {
@@ -4377,7 +4377,7 @@ pub(crate) struct JsonStructSchema {
 }
 
 /// Expected shape for one JSON-decoded field. Mirrors the subset of
-/// `TyKind` the JSON decoder validates against — primitives, the
+/// `TyKind` the JSON decoder validates against - primitives, the
 /// growable / fixed sequence shapes, tuples, and nested named ADTs
 /// resolved by struct name.
 #[derive(Debug, Clone)]
@@ -4401,9 +4401,9 @@ pub(crate) enum JsonSchemaKind {
     /// `Option<T>`. `null` decodes to `None`; any other JSON value
     /// runs through the inner kind and wraps in `Some`.
     Option(Box<JsonSchemaKind>),
-    /// `HashMap<String, V>` — JSON object with arbitrary string keys.
+    /// `HashMap<String, V>` - JSON object with arbitrary string keys.
     Map(Box<JsonSchemaKind>),
-    /// `json::Value` — accept any well-formed JSON value untouched.
+    /// `json::Value` - accept any well-formed JSON value untouched.
     Json,
     /// Unknown / unsupported leaf. The decoder accepts whatever the
     /// parser produced and does not validate further.
@@ -4439,7 +4439,7 @@ pub(crate) fn set_json_struct_schemas(
     STRUCT_SCHEMAS.with(|cell| *cell.borrow_mut() = schemas);
 }
 
-/// Returns `true` when `type_name` has a registered JSON schema —
+/// Returns `true` when `type_name` has a registered JSON schema -
 /// i.e. it is a user struct in the currently-loaded program. Used
 /// by the interpreter to decide whether to intercept
 /// `<Type>::from_json(text)` / `<Type>::to_json(value)` calls.
@@ -4448,7 +4448,7 @@ pub(crate) fn has_json_schema(type_name: &str) -> bool {
     STRUCT_SCHEMAS.with(|cell| cell.borrow().contains_key(type_name))
 }
 
-/// `<Type>::to_json(value)` — render `value` as a JSON string,
+/// `<Type>::to_json(value)` - render `value` as a JSON string,
 /// returning `Result<String, errors::Error>`. Pairs with
 /// `<Type>::from_json`; the receiver may be either an already-typed
 /// `Value::Struct` or any other shape `json::render` can flatten.
@@ -4457,7 +4457,7 @@ pub(crate) fn json_to_string_for_type(_type_name: &str, value: &Value) -> Value 
     ok_variant(Value::String(SmolStr::from(json_std::encode(&rendered))))
 }
 
-/// `<Type>::from_json(text)` — parse and validate strictly against
+/// `<Type>::from_json(text)` - parse and validate strictly against
 /// the registered schema for `type_name`. Returns the same shape as
 /// `json::decode` (`Result<T, errors::Error>`) so `?` propagates.
 pub(crate) fn json_from_str_for_type(type_name: &str, text: &str) -> Value {
@@ -4746,7 +4746,7 @@ fn builtin_split(args: &[Value]) -> RuntimeResult<Value> {
 }
 
 /// `s.trim()` → `String`. Strips ASCII / Unicode whitespace from
-/// both ends — matches Rust's `str::trim`.
+/// both ends - matches Rust's `str::trim`.
 fn builtin_trim(args: &[Value]) -> RuntimeResult<Value> {
     let Some(Value::String(s)) = args.first() else {
         return Ok(Value::String(SmolStr::from(String::new())));
@@ -4784,14 +4784,14 @@ fn builtin_to_lowercase(args: &[Value]) -> RuntimeResult<Value> {
     Ok(Value::String(SmolStr::from(s.to_lowercase())))
 }
 
-/// `String::new()` / `String::with_capacity(n)` — a fresh empty owned
+/// `String::new()` / `String::with_capacity(n)` - a fresh empty owned
 /// String. The capacity hint is advisory and ignored (gos `String` is
 /// the runtime's immutable byte buffer).
 fn builtin_str_new(_args: &[Value]) -> RuntimeResult<Value> {
     Ok(Value::String(SmolStr::from(String::new())))
 }
 
-/// `s.push(ch)` — append a char, returning the new String. Returning
+/// `s.push(ch)` - append a char, returning the new String. Returning
 /// the new value (not Unit) keeps the VM's mutating-method writeback
 /// idempotent: the writeback move assigns the appended String back into
 /// the receiver binding, so `let mut s = …; s.push('x')` leaves `s` a
@@ -4814,7 +4814,7 @@ fn builtin_str_push(args: &[Value]) -> RuntimeResult<Value> {
     Ok(Value::String(SmolStr::from(out)))
 }
 
-/// `s.push_str(t)` — append a string slice, returning the new String.
+/// `s.push_str(t)` - append a string slice, returning the new String.
 /// See `builtin_str_push` for the writeback contract.
 fn builtin_str_push_str(args: &[Value]) -> RuntimeResult<Value> {
     let base = args.first().and_then(as_str).unwrap_or("");
@@ -4825,7 +4825,7 @@ fn builtin_str_push_str(args: &[Value]) -> RuntimeResult<Value> {
     Ok(Value::String(SmolStr::from(out)))
 }
 
-/// `s.chars()` — the Unicode scalars of `s` as a `Vec<char>`, so
+/// `s.chars()` - the Unicode scalars of `s` as a `Vec<char>`, so
 /// `for ch in s.chars()` binds each `Value::Char` and the elements
 /// work with `out.push(ch)`. Mirrors the compiled `gos_rt_str_chars`.
 fn builtin_str_chars(args: &[Value]) -> RuntimeResult<Value> {
@@ -4836,13 +4836,13 @@ fn builtin_str_chars(args: &[Value]) -> RuntimeResult<Value> {
 
 pub(crate) fn builtin_contains(args: &[Value]) -> RuntimeResult<Value> {
     // String::contains(substr) when both args are strings; otherwise
-    // Vec::contains(&v) — element membership by value equality. The
+    // Vec::contains(&v) - element membership by value equality. The
     // compiled tier exposes both shapes under the same `contains`
     // method, so the interp must too.
     if let Some(Value::String(s)) = args.first() {
         match args.get(1) {
             Some(Value::String(needle)) => return Ok(Value::Bool(s.contains(needle.as_str()))),
-            // `s.contains('e')` — a char needle is the single-codepoint
+            // `s.contains('e')` - a char needle is the single-codepoint
             // substring, matching the compiled tiers' char→String coercion.
             Some(Value::Char(c)) => return Ok(Value::Bool(s.as_str().contains(*c))),
             _ => {}
@@ -4929,7 +4929,7 @@ fn builtin_count_of(args: &[Value]) -> RuntimeResult<Value> {
     Ok(Value::Int(0))
 }
 
-/// `Vec::insert(xs, idx, v) -> Result<[T], errors::Error>` — the
+/// `Vec::insert(xs, idx, v) -> Result<[T], errors::Error>` - the
 /// non-mutating, bounds-checked insert. Mirrors the compiled
 /// `gos_rt_vec_insert_safe` message + policy.
 fn builtin_vec_insert_safe(args: &[Value]) -> RuntimeResult<Value> {
@@ -4947,7 +4947,7 @@ fn builtin_vec_insert_safe(args: &[Value]) -> RuntimeResult<Value> {
     Ok(ok_variant(Value::Array(Arc::new(items))))
 }
 
-/// `Vec::remove(xs, idx) -> Result<T, errors::Error>` — bounds-checked
+/// `Vec::remove(xs, idx) -> Result<T, errors::Error>` - bounds-checked
 /// remove returning the removed element. Mirrors the compiled
 /// `gos_rt_vec_remove_safe`.
 fn builtin_vec_remove_safe(args: &[Value]) -> RuntimeResult<Value> {
@@ -4964,7 +4964,7 @@ fn builtin_vec_remove_safe(args: &[Value]) -> RuntimeResult<Value> {
     Ok(ok_variant(items.remove(idx as usize)))
 }
 
-/// `HashMap::pop(m, k) -> Option<V>` — remove and return the previous
+/// `HashMap::pop(m, k) -> Option<V>` - remove and return the previous
 /// value Python-style.
 fn builtin_map_pop(args: &[Value]) -> RuntimeResult<Value> {
     let Some(key_val) = args.get(1) else {
@@ -5009,7 +5009,7 @@ fn builtin_ends_with(args: &[Value]) -> RuntimeResult<Value> {
     Ok(Value::Bool(s.ends_with(suffix.as_str())))
 }
 
-/// `String::slice(s, a, b) -> Result<String, errors::Error>` — the
+/// `String::slice(s, a, b) -> Result<String, errors::Error>` - the
 /// non-panicking byte-range slice contract: `a > b` or `b > len`
 /// returns Err; valid ranges return the UTF-8-validated substring.
 fn builtin_str_slice(args: &[Value]) -> RuntimeResult<Value> {
@@ -5078,7 +5078,7 @@ fn slice_bounds(args: &[Value], label: &str) -> Result<(usize, usize), Value> {
     Ok((start as usize, end as usize))
 }
 
-/// `Vec::slice(xs, a, b) -> Result<Vec<T>, errors::Error>` —
+/// `Vec::slice(xs, a, b) -> Result<Vec<T>, errors::Error>` -
 /// non-panicking element-range slice; same bounds policy as
 /// [`builtin_str_slice`]. Handles each flat-storage Vec variant.
 fn builtin_vec_slice(args: &[Value]) -> RuntimeResult<Value> {
@@ -5143,7 +5143,7 @@ fn builtin_str_substring(args: &[Value]) -> RuntimeResult<Value> {
     Ok(Value::String(SmolStr::from(out)))
 }
 
-/// `String::byte_at(s, i) -> i64` — the UTF-8 byte at index `i`, or 0
+/// `String::byte_at(s, i) -> i64` - the UTF-8 byte at index `i`, or 0
 /// when `i` is negative or at/past the end. Mirrors the compiled-tier
 /// `gos_rt_str_byte_at` (which reads the null terminator as 0).
 fn builtin_str_byte_at(args: &[Value]) -> RuntimeResult<Value> {
@@ -5231,7 +5231,7 @@ fn builtin_pop(args: &[Value]) -> RuntimeResult<Value> {
             // here as `Value::IntArray`. Without this arm, the
             // generic-Array branch above missed the type and
             // returned `Value::empty_array()`, which the bytecode
-            // VM's writeback then moved into `xs` — clobbering
+            // VM's writeback then moved into `xs` - clobbering
             // every element instead of shortening by one.
             let mut owned = data.as_ref().clone();
             owned.pop();
@@ -5312,7 +5312,7 @@ fn builtin_map_get_or(args: &[Value]) -> RuntimeResult<Value> {
     }
 }
 
-/// `m.inc(k)` / `m.inc(k, by)` — counter-style increment for an
+/// `m.inc(k)` / `m.inc(k, by)` - counter-style increment for an
 /// integer-valued `HashMap` or `IntMap`. Returns the post-increment
 /// value. Equivalent to `*m.entry(k).or_insert(0) += by` in Rust.
 fn builtin_map_inc(args: &[Value]) -> RuntimeResult<Value> {
@@ -5347,7 +5347,7 @@ fn builtin_map_inc(args: &[Value]) -> RuntimeResult<Value> {
     }
 }
 
-/// `m.or_insert(k, default)` — returns the existing value for `k`,
+/// `m.or_insert(k, default)` - returns the existing value for `k`,
 /// inserting `default` first if missing. The Gossamer-shaped
 /// equivalent of Rust's `entry().or_insert()`.
 fn builtin_map_or_insert(args: &[Value]) -> RuntimeResult<Value> {
@@ -5381,7 +5381,7 @@ fn builtin_map_or_insert(args: &[Value]) -> RuntimeResult<Value> {
     }
 }
 
-/// `m.inc_at(seq, start, len, by)` for `HashMap<String, i64>` —
+/// `m.inc_at(seq, start, len, by)` for `HashMap<String, i64>` -
 /// the zero-allocation analogue of `m[seq[start..start+len]] += by`.
 /// Wired into the VM builtins so `gos run` doesn't degrade
 /// to a per-iteration String build when user code uses this method.
@@ -5401,7 +5401,7 @@ fn builtin_map_inc_at(args: &[Value]) -> RuntimeResult<Value> {
     if len == 0 {
         return Ok(Value::Int(0));
     }
-    // Build the SmolStr directly from the &str slice — skips the
+    // Build the SmolStr directly from the &str slice - skips the
     // intermediate String allocation that the prior shape (`.to_string()`
     // then `SmolStr::from(String)`) paid per k-mer. For k <= 22 the
     // SmolStr is stored inline (no heap alloc), so every k-nucleotide
@@ -5550,7 +5550,7 @@ fn builtin_keys_router(args: &[Value]) -> RuntimeResult<Value> {
 /// `IntMap` receivers route to the map getter (Option-returning);
 /// struct / json receivers keep the json field getter. Prevents the
 /// `install_module("json", …)` bare-name push from shadowing the
-/// `HashMap` getter — the bug that made `match m.get(&k) { Some(v) =>
+/// `HashMap` getter - the bug that made `match m.get(&k) { Some(v) =>
 /// … }` always take the `None` arm under native scrutinee
 /// evaluation.
 fn builtin_get_router(args: &[Value]) -> RuntimeResult<Value> {
@@ -5560,7 +5560,7 @@ fn builtin_get_router(args: &[Value]) -> RuntimeResult<Value> {
     }
 }
 
-/// Companion router for bare `values()` — same shape collision as
+/// Companion router for bare `values()` - same shape collision as
 /// `keys()` above. Without this, future stdlib registrations could
 /// re-introduce the silent override.
 fn builtin_values_router(args: &[Value]) -> RuntimeResult<Value> {
@@ -5595,7 +5595,7 @@ fn builtin_map_values(args: &[Value]) -> RuntimeResult<Value> {
     Ok(Value::Array(Arc::new(out)))
 }
 
-/// `m.iter()` / `m.entries()` — yields a `[(K, V)]` array of tuples
+/// `m.iter()` / `m.entries()` - yields a `[(K, V)]` array of tuples
 /// suitable for direct destructuring in `for (k, v) in m.iter()`.
 /// Snapshots the map under the lock so the caller's iteration is
 /// safe even if other goroutines are mutating concurrently.
@@ -5607,7 +5607,7 @@ fn builtin_map_iter(args: &[Value]) -> RuntimeResult<Value> {
     // Sort by key on every call so `BTreeMap` users get deterministic
     // iteration order. The interp uses `FxHashMap` for both `HashMap`
     // and `BTreeMap` internally, so we can't tell them apart at the
-    // value level — sorting unifies observed order across the two.
+    // value level - sorting unifies observed order across the two.
     match args.first() {
         Some(Value::Map(map)) => {
             let mut entries: Vec<(MapKey, Value)> = map
@@ -5636,7 +5636,7 @@ fn builtin_map_iter(args: &[Value]) -> RuntimeResult<Value> {
     }
 }
 
-/// `m.inc_batch(keys, by)` — typed batch counter increment for
+/// `m.inc_batch(keys, by)` - typed batch counter increment for
 /// `Value::IntMap`. Takes the map's mutex once and applies the
 /// `+= by` to every i64 key in the input vec, amortising the
 /// `parking_lot::Mutex` acquisition that `Op::IntMapInc` would
@@ -5715,7 +5715,7 @@ fn builtin_map_is_empty(args: &[Value]) -> RuntimeResult<Value> {
 }
 
 fn builtin_insert(args: &[Value]) -> RuntimeResult<Value> {
-    // Map dispatch: `m.insert(k, v)` — keyed insert, no index.
+    // Map dispatch: `m.insert(k, v)` - keyed insert, no index.
     if matches!(args.first(), Some(Value::Map(_))) {
         return builtin_map_insert(args);
     }
@@ -5863,14 +5863,14 @@ fn builtin_clone(args: &[Value]) -> RuntimeResult<Value> {
     Ok(args.first().cloned().unwrap_or(Value::Unit))
 }
 
-/// `x.downgrade()` — produce a non-owning [`Value::Weak`] observing the
+/// `x.downgrade()` - produce a non-owning [`Value::Weak`] observing the
 /// receiver's allocation.
 fn builtin_downgrade(args: &[Value]) -> RuntimeResult<Value> {
     let receiver = args.first().cloned().unwrap_or(Value::Unit);
     Ok(Value::Weak(crate::value::WeakValue::downgrade(&receiver)))
 }
 
-/// `w.upgrade()` — `Some(value)` while the referent is alive, else `None`.
+/// `w.upgrade()` - `Some(value)` while the referent is alive, else `None`.
 fn builtin_upgrade(args: &[Value]) -> RuntimeResult<Value> {
     let some = |v: Value| Value::variant("Some", vec![v]);
     let none = Value::variant("None", vec![]);
@@ -5884,7 +5884,7 @@ fn builtin_upgrade(args: &[Value]) -> RuntimeResult<Value> {
     }
 }
 
-/// `it.next()` — returns `Some(first)` for non-empty
+/// `it.next()` - returns `Some(first)` for non-empty
 /// collection-shaped receivers and `None` for empty. The
 /// for-loop fast paths handle real iterator state; this binding
 /// covers user code that calls `.next()` once outside a
@@ -6004,7 +6004,7 @@ fn builtin_json_value_object(args: &[Value]) -> RuntimeResult<Value> {
     ))
 }
 
-/// `json::set(obj, key, value) -> json::Value` — append or
+/// `json::set(obj, key, value) -> json::Value` - append or
 /// replace the named field on a `json::Value::object()`-shaped
 /// receiver and return the updated value. Non-object receivers
 /// fall through unchanged so callers don't have to special-case
@@ -6191,7 +6191,7 @@ fn invoke_callable(
     dispatch.call_value(callable, args)
 }
 
-/// `arr.sort_by(|a, b| ordering)` — drives Rust's `sort_by` with a
+/// `arr.sort_by(|a, b| ordering)` - drives Rust's `sort_by` with a
 /// Gossamer comparator. The comparator returns an i64 (negative
 /// if a < b, zero if equal, positive if a > b), matching Rust's
 /// `Ordering::cmp`. Falls back to identity when the receiver isn't
@@ -6247,7 +6247,7 @@ fn native_spawn(dispatch: &mut dyn NativeDispatch, args: &[Value]) -> RuntimeRes
     dispatch.spawn_join(callable, rest)
 }
 
-/// `handle.join() -> Result<T, String>` — blocks on the one-shot
+/// `handle.join() -> Result<T, String>` - blocks on the one-shot
 /// handle channel for the spawned goroutine's outcome variant.
 fn builtin_channel_join(args: &[Value]) -> RuntimeResult<Value> {
     let Some(Value::Channel(channel)) = args.first() else {
@@ -6511,7 +6511,7 @@ fn builtin_channel_try_recv(args: &[Value]) -> RuntimeResult<Value> {
 /// it can't observe a `gossamer-std::context::Context` cancel
 /// directly. For source-level parity with the compiled tier
 /// (where the cancel does propagate via the runtime hooks), this
-/// builtin degrades to a plain `recv` — the `&ctx` arg is
+/// builtin degrades to a plain `recv` - the `&ctx` arg is
 /// accepted and ignored. Programs that need real cancellation
 /// in interpreted mode should structure around `select { _ =
 /// ctx.done() => …, x = rx.recv() => … }`, which the interp's
@@ -6910,7 +6910,7 @@ fn builtin_i64vec_write_lines_to_stdout(args: &[Value]) -> RuntimeResult<Value> 
 }
 
 // ------------------------------------------------------------------
-// U8Vec — 1-byte-per-element heap vec for fasta scratch buffers.
+// U8Vec - 1-byte-per-element heap vec for fasta scratch buffers.
 //
 // Same handle-table shape as I64Vec; storage uses `AtomicU8` so
 // goroutine workers can write disjoint slices without locks.
@@ -7112,12 +7112,12 @@ fn builtin_u8vec_count_kmers(args: &[Value]) -> RuntimeResult<Value> {
 /// `Op::IntMapInc` chain user code would emit. Pre-allocates
 /// the map with a sane capacity (capped well below the worst-
 /// case buffer length so a k=18 call does not reserve tens of
-/// megabytes of hashbrown slots upfront — hashbrown still grows
+/// megabytes of hashbrown slots upfront - hashbrown still grows
 /// by doubling beyond the cap, but the cap keeps steady-state
 /// RSS predictable for the small-k calls).
 // Soft cap on the pre-allocated map capacity: 64 K slots
 // (~1 MB at 16 B/slot). Hashbrown still grows by doubling
-// beyond this — the cap just keeps steady-state RSS
+// beyond this - the cap just keeps steady-state RSS
 // predictable for the small-k calls without paying
 // catastrophic up-front cost on k=18.
 const KMER_CAP_SOFT: usize = 64 * 1024;
@@ -7190,7 +7190,7 @@ fn builtin_u8vec_byte_len(args: &[Value]) -> RuntimeResult<Value> {
     Ok(Value::Int(vec_arc.len() as i64))
 }
 
-/// `Vec::new()` — empty growable array. Used by `let mut v:
+/// `Vec::new()` - empty growable array. Used by `let mut v:
 /// Vec<T> = Vec::new()` patterns; without this entry the path
 /// lookup falls through to the bare `new` global, which is the
 /// last-installed module's `new` (currently `HashMap::new`).
@@ -7198,7 +7198,7 @@ fn builtin_vec_new(_args: &[Value]) -> RuntimeResult<Value> {
     Ok(Value::empty_array())
 }
 
-/// `buf.to_string(len)` — freezes the first `len` bytes of a
+/// `buf.to_string(len)` - freezes the first `len` bytes of a
 /// `U8Vec` build buffer into an immutable `String`. Mirrors the
 /// canonical immutable-string-language idiom: a mutable buffer
 /// for incremental construction, an explicit one-shot conversion
@@ -7397,7 +7397,7 @@ fn write_stdout_bytes(bytes: &[u8]) {
         write_stdout(text);
         return;
     }
-    // Lossy fallback for sequences that aren't valid UTF-8 — should
+    // Lossy fallback for sequences that aren't valid UTF-8 - should
     // not happen in fasta-shaped programs, but keeps the writer
     // contract honest.
     let lossy = String::from_utf8_lossy(bytes);

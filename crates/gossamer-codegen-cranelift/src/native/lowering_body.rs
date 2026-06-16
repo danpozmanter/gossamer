@@ -75,7 +75,7 @@
 //! the process exit code, so the object file links through a
 //! standard `cc` invocation.
 //! Aggregates (tuples/arrays/structs), strings, closures, and
-//! anything that needs a GC heap are not yet lowered — those
+//! anything that needs a GC heap are not yet lowered - those
 //! constructs fall back to [`crate::emit::emit_module`] for
 //! inspection.
 
@@ -252,7 +252,7 @@ pub(super) fn lower_body(
         // SIGQUIT dumps for the compiled tier come from unwinding
         // the real machine stack on demand. A push/pop pair on
         // every function entry blocks leaf-function inlining and
-        // serialises on a global lock — unacceptable in hot loops.
+        // serialises on a global lock - unacceptable in hot loops.
         entry_block_filled = true;
 
         if !cleanup_plan.is_empty() {
@@ -385,7 +385,7 @@ pub(super) fn infer_body_cl_types(
                                 table.insert(place.local, cl);
                                 changed = true;
                             }
-                            // Only upgrade i64 placeholders — locals
+                            // Only upgrade i64 placeholders - locals
                             // whose MIR type or earlier inference
                             // grounded them to a specific non-i64
                             // cranelift type are trusted.
@@ -467,7 +467,7 @@ pub(super) fn define_var_to_with(
     let value_ty = value_type(value, builder);
     let new_decl_ty = preferred_ty.unwrap_or(value_ty);
     let (var, decl_ty) = if let Some(v) = locals.get(&local).copied() {
-        // Variable was declared earlier — its type is locked
+        // Variable was declared earlier - its type is locked
         // for the rest of the function. Read the type back
         // from the builder rather than trusting the caller's
         // hint; mismatches here are the leading cause of
@@ -511,7 +511,7 @@ pub(super) fn define_var_to_with(
     } else if decl_ty.is_int() && value_ty.is_float() {
         // Float→int through a bitcast at the same width then
         // resize as needed. Used when the MIR has assigned a
-        // float-shaped value to an int-shaped local (rare —
+        // float-shaped value to an int-shaped local (rare -
         // typically a fallback path miscalculated the kind).
         let int_form = if value_ty == types::F64 {
             builder

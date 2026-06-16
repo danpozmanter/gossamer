@@ -1,4 +1,4 @@
-//! `gos explain CODE` — describes a diagnostic (parser / resolver
+//! `gos explain CODE` - describes a diagnostic (parser / resolver
 //! / type / monomorph / runtime) or a lint code.
 //!
 //! Lookup table: built-in `GP/GR/GT/GM/GX####` codes have their
@@ -38,7 +38,7 @@ fn diagnostic_explanation(code: &str) -> Option<&'static str> {
         }
         "GP0002" => {
             "The parser reached end-of-file in the middle of a construct.\n\
-                     Finish the expression, statement, or item — or remove it."
+                     Finish the expression, statement, or item - or remove it."
         }
         "GP0003" => {
             "A balanced construct (block, tuple, array, string literal) was\n\
@@ -54,7 +54,7 @@ fn diagnostic_explanation(code: &str) -> Option<&'static str> {
                      and whether the item is visible at this location."
         }
         "GR0002" => {
-            "A path was found in the wrong namespace — for example a value\n\
+            "A path was found in the wrong namespace - for example a value\n\
                      where a type was expected, or a module where a value was\n\
                      expected. Re-check the import target."
         }
@@ -101,7 +101,7 @@ fn diagnostic_explanation(code: &str) -> Option<&'static str> {
         "GT0006" => {
             "A struct field access (`x.field`) referenced a name that the\n\
                      receiver type does not declare. Check the field name or the\n\
-                     receiver's actual type — generics and inference often resolve\n\
+                     receiver's actual type - generics and inference often resolve\n\
                      this once the surrounding code is more constrained."
         }
         "GT0007" => {
@@ -112,7 +112,7 @@ fn diagnostic_explanation(code: &str) -> Option<&'static str> {
                      - Propagate with `?`: `do_something()?` (requires the\n\
                        enclosing function to return `Result`).\n\
                      - Match explicitly: `match do_something() { Ok(v) => …, Err(e) => … }`.\n\
-                     - Acknowledge and discard: `let _ = do_something()` — this\n\
+                     - Acknowledge and discard: `let _ = do_something()` - this\n\
                        silences GT0007 but leaves the error unhandled; only\n\
                        appropriate when the operation is best-effort.\n\n\
                      SPEC §9 requires every `Result` value to be handled."
@@ -122,7 +122,7 @@ fn diagnostic_explanation(code: &str) -> Option<&'static str> {
                      no signature row for, so the closure's parameter type cannot\n\
                      be inferred. The VM would run it, but the compiled tiers pin\n\
                      untyped closure params to i64 and read String / Error heap\n\
-                     payloads as raw integers — so the program is rejected\n\
+                     payloads as raw integers - so the program is rejected\n\
                      uniformly instead. Annotate the closure parameter with its\n\
                      concrete type (`|x: String| ...`) or bind the payload through\n\
                      a typed `match`."
@@ -147,7 +147,7 @@ fn diagnostic_explanation(code: &str) -> Option<&'static str> {
         }
         "GM0001" => {
             "Generic monomorphization received a type substitution that the\n\
-                     compiler does not yet support — typically a generic parameter\n\
+                     compiler does not yet support - typically a generic parameter\n\
                      instantiated with a non-scalar (Vec, HashMap, struct). Track\n\
                      A's P8 widens this; in the meantime, instantiate the generic\n\
                      with a scalar (i64 / bool / f64) or write a non-generic\n\

@@ -57,12 +57,12 @@ impl fmt::Display for Severity {
 ///
 /// Codes are a four-character prefix plus a four-digit number. The
 /// prefix denotes the phase:
-/// - `GP` — parser / lexer.
-/// - `GR` — name resolution.
-/// - `GT` — type checker.
-/// - `GM` — match exhaustiveness.
-/// - `GL` — lint framework.
-/// - `GK` — package manager.
+/// - `GP` - parser / lexer.
+/// - `GR` - name resolution.
+/// - `GT` - type checker.
+/// - `GM` - match exhaustiveness.
+/// - `GL` - lint framework.
+/// - `GK` - package manager.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Code(pub &'static str);
 

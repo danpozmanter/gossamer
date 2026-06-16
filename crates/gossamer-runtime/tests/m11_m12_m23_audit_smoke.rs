@@ -1,5 +1,5 @@
 //! Audit M11 (netpoller shutdown), M12 (`safe_env` lock),
-//! M23 (reproducible `tmp_dir` hash) — sanity tests confirming
+//! M23 (reproducible `tmp_dir` hash) - sanity tests confirming
 //! the 0.6.0 changes actually behave as documented.
 
 use gossamer_runtime::safe_env;
@@ -17,7 +17,7 @@ fn m11_request_shutdown_is_observable() {
         sched_global::is_shutdown_requested(),
         "request_shutdown must set the flag observable to long-running runtime loops"
     );
-    // The flag is intentionally not reset — the runtime is
+    // The flag is intentionally not reset - the runtime is
     // one-shot. Any test that runs after this in the same
     // process observes the flag. Document that and proceed.
 }
@@ -43,7 +43,7 @@ fn m12_with_env_lock_serialises_read_modify_write() {
         // Inside the locked block, no other Gossamer-side
         // setter can race us; safe to read then write.
         // SAFETY: same single-thread serialisation contract as
-        // safe_env::set_env — the lock is held for the
+        // safe_env::set_env - the lock is held for the
         // duration of the closure.
         unsafe { std::env::set_var("GOSSAMER_M12_RMW", &next) };
         next

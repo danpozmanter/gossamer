@@ -6,7 +6,7 @@ source of friction is **syntax**: Gossamer is Rust-flavoured, so
 `fn` not `func`, `let` not `:=`, `match` not `switch`, and so on.
 
 This page walks the differences in three layers: syntax,
-semantics, and stdlib equivalents. It is not exhaustive — for
+semantics, and stdlib equivalents. It is not exhaustive - for
 the spec, see [`SPEC.md`](https://github.com/danpozmanter/gossamer/blob/main/SPEC.md).
 
 ## TL;DR
@@ -17,12 +17,12 @@ the spec, see [`SPEC.md`](https://github.com/danpozmanter/gossamer/blob/main/SPE
 - **What changes:** syntax (Rust-shaped), error handling
   (`Result<T, E>` + `?`), interfaces become traits (nominal),
   no implicit numeric coercion (`as` is explicit), and memory is
-  reclaimed deterministically — reference counting plus arenas,
+  reclaimed deterministically - reference counting plus arenas,
   not a tracing GC, so no collector pauses.
 - **What's missing today:** gRPC, real package registry,
   first-party SQL drivers. `std::database::sql` is the
   driver-pluggable surface (Conn / Tx / Stmt / Rows / Pool /
-  migrate / Select); every driver — including SQLite — is a
+  migrate / Select); every driver - including SQLite - is a
   third-party Rust binding that registers itself at startup.
   HTTP/1, HTTP/2, HTTP/3, WebSockets, and SSE are all
   first-party (`std::http`, `std::http_h3`, `std::http::websocket`,
@@ -38,10 +38,10 @@ the spec, see [`SPEC.md`](https://github.com/danpozmanter/gossamer/blob/main/SPE
 | `for i := 0; i < n; i++ { … }` | `for i in 0..n { … }` | Range-based for-loops. |
 | `for { … }` | `loop { … }` | Infinite loop. |
 | `for i, v := range xs { … }` | `for (i, v) in xs.iter().enumerate() { … }` | Iterator chain. |
-| `switch x { case 1: … }` | `match x { 1 => …, _ => … }` | Pattern-matching is exhaustive — a missing arm is a compile error. |
+| `switch x { case 1: … }` | `match x { 1 => …, _ => … }` | Pattern-matching is exhaustive - a missing arm is a compile error. |
 | `type Point struct { X, Y int }` | `struct Point { x: i64, y: i64 }` | Lowercase fields by convention; visibility via `pub`. |
 | `func (p Point) Norm() int { … }` | `impl Point { fn norm(&self) -> i64 { … } }` | Methods declared in `impl` block. |
-| `type Reader interface { Read([]byte) int }` | `trait Reader { fn read(&self, buf: &mut [u8]) -> i64 }` | Traits are nominal — `impl Reader for MyType { … }`. |
+| `type Reader interface { Read([]byte) int }` | `trait Reader { fn read(&self, buf: &mut [u8]) -> i64 }` | Traits are nominal - `impl Reader for MyType { … }`. |
 | `var err error; if err != nil { … }` | `match call() { Ok(v) => …, Err(e) => … }` | `?` propagates `Err` automatically. |
 | `defer cleanup()` | `defer cleanup()` | Same syntax, same semantics. |
 | `go work()` | `go work()` | Same. |
@@ -179,7 +179,7 @@ Goroutine and channel syntax is the same. Behavioural notes:
 - The M:N work-stealing scheduler is live; goroutines are parked by the
   netpoller when blocked on I/O.
 - Channels are unbounded by default (like Go's `make(chan T)`
-  without a buffer size — wait, actually Go's *unbuffered*
+  without a buffer size - wait, actually Go's *unbuffered*
   channels block on send until a receiver is ready;
   Gossamer's `channel::<T>()` returns a buffered channel today,
   with `try_send` / `try_recv` for non-blocking ops). Bounded
@@ -216,7 +216,7 @@ let total = xs
     |> iter::sum_by(|n: i64| n * n)
 ```
 
-`std::iter` (SPEC §10.4) ships F#-style chaining combinators —
+`std::iter` (SPEC §10.4) ships F#-style chaining combinators -
 `map`, `filter`, `for_each`, `fold`, `sum_by`, `find`, `any`, `all`,
 `take`, `skip`, `range`/`range_inclusive`, `chain`, `reversed`,
 plus closure-taking siblings. Argument order is data-last so each
@@ -225,7 +225,7 @@ combinator threads naturally through `|>`. Mirror modules for
 cover the absent-or-default and error-mapping cases without a
 `match` block.
 
-The `for` loop stays in the language and stays idiomatic — for
+The `for` loop stays in the language and stays idiomatic - for
 side-effect loops with `break` / `continue`, for state machines
 (running flag, accumulator pair, etc.), and for loops that need
 to early-return. `iter::*` is for the *transformation* cases that
@@ -512,9 +512,9 @@ slog::info("started", "port", 8080)
 
 ## Cross-references
 
-- [`../syntax.md`](../syntax.md) — the language tour.
-- [`../codegen_abi.md`](../codegen_abi.md) — what generics fail.
-- [`../stdlib_coverage.md`](../stdlib_coverage.md) — every
+- [`../syntax.md`](../syntax.md) - the language tour.
+- [`../codegen_abi.md`](../codegen_abi.md) - what generics fail.
+- [`../stdlib_coverage.md`](../stdlib_coverage.md) - every
   stdlib item, support state.
 
 ## Standard library mapping (Go → Gossamer)
@@ -522,7 +522,7 @@ slog::info("started", "port", 8080)
 Most of Go's `net/`, `encoding/`, `compress/`, `archive/`, `crypto/`,
 `hash/`, and `database/` namespace is mirrored 1:1 in Gossamer. Where
 Gossamer diverges, it does so toward Rust's `fs`/`env`/`process`
-split for OS primitives — `os.ReadFile` → `fs::read`, `os.Args` →
+split for OS primitives - `os.ReadFile` → `fs::read`, `os.Args` →
 `env::args`, `os.Exit` → `process::exit`.
 
 | Go | Gossamer |
@@ -546,6 +546,6 @@ split for OS primitives — `os.ReadFile` → `fs::read`, `os.Args` →
 | `time.Sleep` | `time::sleep` |
 | `go fn()` | `go expr` |
 
-HTTP/2 is integrated into `std::http` directly — exactly the
+HTTP/2 is integrated into `std::http` directly - exactly the
 shape of Go's `net/http`. `http::serve_h2c` is the cleartext h2c
 entry point; HTTP/2 over TLS auto-negotiates via ALPN.

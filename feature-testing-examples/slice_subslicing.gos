@@ -1,7 +1,7 @@
 // Slice Subslicing and Window Operations
 // Gossamer's VM does not support the `xs[a..b]` range-index syntax.
-// This example implements the same patterns — subslice, windows,
-// chunking, prefix/suffix trimming — via explicit helper functions
+// This example implements the same patterns - subslice, windows,
+// chunking, prefix/suffix trimming - via explicit helper functions
 // so correctness can be tested without the unsupported syntax.
 
 fn subslice(xs: [i64], start: i64, end: i64) -> [i64] {

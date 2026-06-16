@@ -1553,23 +1553,23 @@ every gap standing between today's surface language and a full
 self-hosted front-end.</p>
 <p>Companion ports under <code>examples/selfhost/</code>:</p>
 <ul>
-<li><code>lexer.gos</code> — minimal tokeniser over a subset of Gossamer source.</li>
-<li><code>parser.gos</code> — minimal recursive-descent parser over a synthetic
+<li><code>lexer.gos</code> - minimal tokeniser over a subset of Gossamer source.</li>
+<li><code>parser.gos</code> - minimal recursive-descent parser over a synthetic
   token stream.</li>
 </ul>
 <p>Both files parse cleanly through <code>gos parse</code>, which is asserted by
 <code>crates/gossamer-cli/tests/cli.rs::selfhost_ports_parse_cleanly</code>.</p>
 <h2 id="what-works-today">What works today<a class="headerlink" href="#what-works-today" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Enums with data</strong>, pattern-matched exhaustively — viable for
+<li><strong>Enums with data</strong>, pattern-matched exhaustively - viable for
   <code>TokenKind</code>, <code>Expr</code>, <code>Stmt</code>, <code>Ty</code>.</li>
-<li><strong>Structs with named fields</strong>, <code>&amp;</code> and <code>&amp;mut</code> references — viable
+<li><strong>Structs with named fields</strong>, <code>&amp;</code> and <code>&amp;mut</code> references - viable
   for <code>Lexer</code>, <code>Parser</code>, <code>TyCtxt</code>-shaped contexts.</li>
-<li><strong><code>for</code>, <code>while</code>, <code>loop</code>, <code>match</code>, <code>if</code>/<code>else</code></strong> — enough control
+<li><strong><code>for</code>, <code>while</code>, <code>loop</code>, <code>match</code>, <code>if</code>/<code>else</code></strong> - enough control
   flow for a recursive-descent parser.</li>
 <li><strong>Function calls, method calls, tuples, slices, mutable locals</strong>.</li>
 <li><strong><code>println</code> / <code>print</code> / <code>eprintln</code> / <code>format</code></strong> builtins.</li>
-<li><strong>Package manager</strong> (Phase 27–28): project layout, lockfile,
+<li><strong>Package manager</strong> (Phase 27-28): project layout, lockfile,
   fetcher, vendor directory. Ready to host a <code>gossamer-selfhost</code>
   crate once the front-end ports land.</li>
 <li><strong>Build graph</strong> (Phase 29): incremental, parallel, content-

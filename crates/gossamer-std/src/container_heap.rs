@@ -1,4 +1,4 @@
-// `std::container::heap` — binary min-heap over `Vec<i64>`.
+// `std::container::heap` - binary min-heap over `Vec<i64>`.
 //
 // The shape avoids in-place mutation through a `&mut` reference
 // (which doesn't propagate cleanly across the VM tier's Arc-backed
@@ -15,7 +15,7 @@
 //   }
 //
 // Compiled tier mutates in place and returns the same heap pointer;
-// VM tier clones via `Arc::make_mut` and returns the new Vec —
+// VM tier clones via `Arc::make_mut` and returns the new Vec -
 // both reach the user as the right Vec<i64> after the re-bind.
 
 #![forbid(unsafe_code)]

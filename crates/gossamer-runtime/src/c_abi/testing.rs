@@ -19,7 +19,7 @@ use std::ffi::CStr;
 use std::os::raw::c_char;
 
 // ---------------------------------------------------------------
-// testing module — minimal `check`, `check_eq`, `check_ok` that
+// testing module - minimal `check`, `check_eq`, `check_ok` that
 // log to stderr. Real test discovery / reporting is done via the
 // interpreter today; these stubs make the example compile.
 // ---------------------------------------------------------------

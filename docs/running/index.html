@@ -1533,11 +1533,11 @@
 </tr>
 <tr>
 <td><code>gos build src/main.gos</code></td>
-<td>Native build — links user code against the <code>gossamer-runtime</code> staticlib and lets <code>cc</code> produce an ELF/Mach-O/PE. Every legal program compiles; a codegen bail is a compiler bug.</td>
+<td>Native build - links user code against the <code>gossamer-runtime</code> staticlib and lets <code>cc</code> produce an ELF/Mach-O/PE. Every legal program compiles; a codegen bail is a compiler bug.</td>
 </tr>
 <tr>
 <td><code>gos build --target aarch64-apple-darwin src/main.gos</code></td>
-<td>Cross-compile. Reserved for a future milestone — currently rejected because the native path only targets the host ISA.</td>
+<td>Cross-compile. Reserved for a future milestone - currently rejected because the native path only targets the host ISA.</td>
 </tr>
 <tr>
 <td><code>gos fmt src/main.gos</code></td>
@@ -1599,12 +1599,12 @@
 </table>
 <h2 id="environment-variables">Environment variables<a class="headerlink" href="#environment-variables" title="Permanent link">&para;</a></h2>
 <ul>
-<li><code>GOSSAMER_HTTP_MAX_REQUESTS=N</code> — ask the HTTP server to exit
+<li><code>GOSSAMER_HTTP_MAX_REQUESTS=N</code> - ask the HTTP server to exit
   after <code>N</code> requests. Used by CI tests; leave unset for normal
   operation. A visible warning prints when the env var is
   honoured.</li>
-<li><code>NO_COLOR</code> / <code>CLICOLOR_FORCE</code> — standard colour toggles.</li>
-<li><code>EDITOR</code> — used by the REPL's <code>%edit</code> meta-command (Stream K
+<li><code>NO_COLOR</code> / <code>CLICOLOR_FORCE</code> - standard colour toggles.</li>
+<li><code>EDITOR</code> - used by the REPL's <code>%edit</code> meta-command (Stream K
   follow-up).</li>
 </ul>
 <h2 id="exit-codes">Exit codes<a class="headerlink" href="#exit-codes" title="Permanent link">&para;</a></h2>

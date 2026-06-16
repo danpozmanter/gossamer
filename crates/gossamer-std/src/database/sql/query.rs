@@ -2,7 +2,7 @@
 //!
 //! The builder accumulates clauses through chained methods and
 //! renders the final `(sql, params)` pair. Param values always
-//! flow through the returned `Vec<Value>` — they never appear
+//! flow through the returned `Vec<Value>` - they never appear
 //! inline in the SQL string, so the builder is safe against SQL
 //! injection on values. Identifiers (table name, column names,
 //! `ORDER BY` column) are emitted verbatim when they are simple
@@ -44,7 +44,7 @@ pub struct Select {
 
 impl Select {
     /// Starts a new `SELECT` against `table`. The table name is
-    /// concatenated verbatim into the rendered SQL — validate it
+    /// concatenated verbatim into the rendered SQL - validate it
     /// before calling.
     #[must_use]
     pub fn new(table: &str) -> Self {
@@ -151,7 +151,7 @@ impl Select {
     }
 }
 
-/// True for a plain SQL identifier — a `[A-Za-z_][A-Za-z0-9_]*` word,
+/// True for a plain SQL identifier - a `[A-Za-z_][A-Za-z0-9_]*` word,
 /// optionally one dotted qualifier (`schema.table` / `table.column`).
 fn is_simple_ident(ident: &str) -> bool {
     let parts: Vec<&str> = ident.split('.').collect();
@@ -169,7 +169,7 @@ fn is_simple_ident(ident: &str) -> bool {
 /// anything else is wrapped in double quotes with embedded quotes
 /// doubled (ANSI / `PostgreSQL` / `SQLite` quoting). A value carrying SQL
 /// syntax thus becomes a single quoted identifier the driver rejects
-/// rather than executable SQL — closing the identifier-injection path
+/// rather than executable SQL - closing the identifier-injection path
 /// for a user-controlled column, table, or `ORDER BY` target.
 fn render_ident(ident: &str) -> String {
     if is_simple_ident(ident) {

@@ -1,10 +1,10 @@
 // Cross-tier coverage for streamed server responses
-// (`Response::stream`) — the proxy-passthrough shape. A proxy
+// (`Response::stream`) - the proxy-passthrough shape. A proxy
 // handler opens an upstream `http::stream` and returns
 // `http::Response::stream(up.status, up.content_type, up)`; the
 // server writes status + headers + `Transfer-Encoding: chunked`
 // and drains the upstream reader to the client in 8 KiB frames
-// with the 0-length terminal frame — no full-body buffering.
+// with the 0-length terminal frame - no full-body buffering.
 //
 // The client GETs through the proxy twice (a fresh upstream
 // stream must be opened per request) and then GETs /consumed,
@@ -14,7 +14,7 @@
 // sees data) while the response still drains the full body.
 //
 // Self-terminating: the client runs in main and exits explicitly.
-// Binds fixed loopback ports — serialized under SERVER_PORT_LOCK
+// Binds fixed loopback ports - serialized under SERVER_PORT_LOCK
 // by `http_proxy_stream_parity_across_tiers` in
 // crates/gossamer-cli/tests/tier_parity.rs.
 

@@ -22,7 +22,7 @@ use std::sync::atomic::Ordering;
 use super::*;
 
 // ---------------------------------------------------------------
-// Signal notifier table — `os::signal::on` / `Notifier::wait`
+// Signal notifier table - `os::signal::on` / `Notifier::wait`
 // ---------------------------------------------------------------
 
 struct SignalNotifier {
@@ -77,7 +77,7 @@ fn install_signal_relay(
 
 // On Windows there is no POSIX signal delivery; the console
 // control handler is the closest equivalent. Ctrl-C raises
-// CTRL_C_EVENT and Ctrl-Break raises CTRL_BREAK_EVENT — both are
+// CTRL_C_EVENT and Ctrl-Break raises CTRL_BREAK_EVENT - both are
 // mapped onto notifiers subscribed to SIGINT (2), SIGTERM (15),
 // or SIGBREAK (21) so graceful-shutdown code is portable. The
 // handler is installed once on the first `signal::on` call.
@@ -123,7 +123,7 @@ unsafe extern "system" fn console_ctrl_handler(ctrl_type: u32) -> i32 {
     i32::from(handled)
 }
 
-/// `signal::on(sig_raw) -> i64` — registers a notifier for the
+/// `signal::on(sig_raw) -> i64` - registers a notifier for the
 /// given raw signal number and returns an opaque handle.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_signal_on(sig_raw: i32) -> i64 {
@@ -151,7 +151,7 @@ pub unsafe extern "C" fn gos_rt_signal_on(sig_raw: i32) -> i64 {
     })
 }
 
-/// `signal::wait(handle)` — blocks until the registered signal fires.
+/// `signal::wait(handle)` - blocks until the registered signal fires.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_signal_wait(handle: i64) {
     ffi_entry!((), {
@@ -172,7 +172,7 @@ pub unsafe extern "C" fn gos_rt_signal_wait(handle: i64) {
     });
 }
 
-/// `signal::try_wait(handle) -> i32` — returns 1 if the signal
+/// `signal::try_wait(handle) -> i32` - returns 1 if the signal
 /// fired since the last check, 0 otherwise. Non-blocking.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_signal_try_wait(handle: i64) -> i32 {
@@ -263,7 +263,7 @@ pub unsafe extern "C" fn gos_rt_vec_sort_i64(v: *mut GosVec) {
 
 /// Sorts a flat `[T; len]` buffer of `elem_bytes`-wide elements in
 /// place using the closure callback at `env`. The closure body sig
-/// is `(env, *const T, *const T) -> i64` — multi-slot aggregates
+/// is `(env, *const T, *const T) -> i64` - multi-slot aggregates
 /// (Tuple / struct) are passed as pointers because the cranelift /
 /// LLVM ABI already routes by-value aggregates that way. Used by
 /// `xs.sort_by(closure)` for fixed-size arrays whose element type
@@ -300,7 +300,7 @@ pub unsafe extern "C" fn gos_rt_arr_sort_by_aggr(
             r.cmp(&0)
         });
         // Permute via a temp buffer rather than in-place cycle
-        // following — simpler, still O(n * stride) bytes and one
+        // following - simpler, still O(n * stride) bytes and one
         // memcpy per element on the way back. Cycle-following would
         // halve peak memory but adds index bookkeeping that doesn't
         // earn its complexity at the sizes the comparator surface
@@ -353,7 +353,7 @@ struct CallbackEntry {
     /// invocation. Typically a pointer to a heap-allocated
     /// closure environment owned by the binding crate.
     ctx: SyncRawPtr<u8>,
-    /// C-ABI entry point — receives `(ctx, args, args_len,
+    /// C-ABI entry point - receives `(ctx, args, args_len,
     /// result_out)` and returns a status code (0 = ok, non-zero
     /// = caller-defined error).
     invoke: extern "C" fn(*const u8, *const u8, u32, *mut u8) -> i32,
@@ -372,7 +372,7 @@ fn callback_table() -> &'static parking_lot::Mutex<std::collections::HashMap<u64
 /// Returns the assigned handle (non-zero on success; 0 reserved
 /// for "no callback"). The caller is responsible for
 /// [`gos_rt_callback_unregister`]ing when the closure's lifetime
-/// ends — `BindingCallback`'s `Drop` impl handles this for
+/// ends - `BindingCallback`'s `Drop` impl handles this for
 /// bindings that use the ABI 0.4 surface.
 #[allow(unsafe_code, reason = "no_mangle FFI entry; raw fn pointer + ctx")]
 #[unsafe(no_mangle)]
@@ -435,7 +435,7 @@ pub unsafe extern "C" fn gos_rt_callback_invoke(
             // slot per the ABI. 16 bytes is the documented minimum.
             unsafe { std::ptr::write_bytes(result_out, 0, 16) };
         }
-        // Clone the entry (ctx + fn ptr — both `Copy`) so we can drop
+        // Clone the entry (ctx + fn ptr - both `Copy`) so we can drop
         // the lock before invocation. Without this drop, a callback
         // that recursively registers another handle would deadlock.
         let entry = {
@@ -500,7 +500,7 @@ pub unsafe extern "C" fn gos_rt_arr_iter_next(iter: *mut GosArrIter) -> i128 {
 }
 
 /// Frees a `GosArrIter` allocated by [`gos_rt_arr_iter`]. Does NOT
-/// free the underlying vec — the vec is owned by the original local.
+/// free the underlying vec - the vec is owned by the original local.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_arr_iter_free(iter: *mut GosArrIter) {
     ffi_entry!((), {
@@ -580,7 +580,7 @@ pub unsafe extern "C" fn gos_rt_vec_get_ptr(v: *const GosVec, idx: i64) -> *mut 
 /// Removes the last element of `v` and writes its bytes to
 /// `out`. Returns 1 on success, 0 if the vec was empty. `out`
 /// must be sized for `v.elem_bytes`.
-/// `vec[lo..hi]` — copies the subrange `[lo, hi)` of `v`'s
+/// `vec[lo..hi]` - copies the subrange `[lo, hi)` of `v`'s
 /// elements into a fresh `GosVec` and returns a pointer to it.
 /// Out-of-range bounds are clamped. Element bytes are copied
 /// directly (the i64-erased ABI matches the rest of the Vec
@@ -642,7 +642,7 @@ pub unsafe extern "C" fn gos_rt_vec_first(v: *const GosVec) -> i128 {
     })
 }
 
-/// `xs.last() -> Option<T>` — sibling of `first`. Out-of-range on
+/// `xs.last() -> Option<T>` - sibling of `first`. Out-of-range on
 /// an empty Vec returns None.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_vec_last(v: *const GosVec) -> i128 {
@@ -659,7 +659,7 @@ pub unsafe extern "C" fn gos_rt_vec_last(v: *const GosVec) -> i128 {
     })
 }
 
-/// `xs.reversed() -> Vec<T>` — fresh Vec with the same elements in
+/// `xs.reversed() -> Vec<T>` - fresh Vec with the same elements in
 /// reverse order. Element bytes are copied through the i64-erased
 /// ABI matching the rest of the Vec surface.
 #[unsafe(no_mangle)]
@@ -862,7 +862,7 @@ pub unsafe extern "C" fn gos_rt_intarr_slice_result(
 
 /// `xs.slice(start, end) -> Result<Vec<f64>, errors::Error>` for
 /// fixed-size f64 array receivers. Same layout contract as
-/// [`gos_rt_intarr_slice_result`] — raw inline buffer plus a
+/// [`gos_rt_intarr_slice_result`] - raw inline buffer plus a
 /// statically-known length spliced by the MIR dispatcher.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_floatarr_slice_result(
@@ -897,7 +897,7 @@ pub unsafe extern "C" fn gos_rt_floatarr_slice_result(
 /// new Vec is returned wrapped in Ok; out-of-range indices return
 /// Err. `value` is the raw 8-byte payload of the element being
 /// inserted (i64 for `Vec<i64>`, `*const c_char` cast to i64 for
-/// `Vec<String>` — matches the rest of the i64-erased Vec ABI).
+/// `Vec<String>` - matches the rest of the i64-erased Vec ABI).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_vec_insert_safe(v: *const GosVec, idx: i64, value: i64) -> i128 {
     ffi_entry!(0i128, {
@@ -935,7 +935,7 @@ pub unsafe extern "C" fn gos_rt_vec_insert_safe(v: *const GosVec, idx: i64, valu
     })
 }
 
-/// `Vec::remove(xs, i) -> Result<T, errors::Error>` — returns the
+/// `Vec::remove(xs, i) -> Result<T, errors::Error>` - returns the
 /// removed element as Ok or Err on out-of-range.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_vec_remove_safe(v: *const GosVec, idx: i64) -> i128 {
@@ -953,7 +953,7 @@ pub unsafe extern "C" fn gos_rt_vec_remove_safe(v: *const GosVec, idx: i64) -> i
     })
 }
 
-/// `xs.pop() -> Option<T>` — removes the last element and returns it
+/// `xs.pop() -> Option<T>` - removes the last element and returns it
 /// packed as the 2-word Option (disc 0 = Some, 1 = None), honoring
 /// the header's `elem_bytes` for the payload read.
 #[unsafe(no_mangle)]

@@ -8,14 +8,14 @@
 //! preserved between resumes so the function can pick up exactly
 //! where it left off.
 //!
-//! The crate is deliberately thin — it does not own scheduling,
+//! The crate is deliberately thin - it does not own scheduling,
 //! parking semantics, or wakeup wiring. Those live in
 //! `gossamer-runtime::sched` / `sched_global`. This crate only
 //! exposes:
 //!
-//! - [`Goroutine`] — owns a `corosensei::Coroutine` plus a stable
+//! - [`Goroutine`] - owns a `corosensei::Coroutine` plus a stable
 //!   pointer to its [`corosensei::Yielder`].
-//! - [`suspend`] — yields the currently running goroutine via a
+//! - [`suspend`] - yields the currently running goroutine via a
 //!   thread-local pointer to its yielder. The scheduler's worker
 //!   loop sets this pointer before each resume.
 //!
@@ -42,7 +42,7 @@ use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicUsize, Ordering};
 
 /// Payload type for Gossamer-originated panics. Raised by the
 /// runtime's `gos_rt_panic` on the goroutine path and recognised by
-/// the process panic hook (which stays silent for it — the Gossamer
+/// the process panic hook (which stays silent for it - the Gossamer
 /// report has already been printed) and by the catch in
 /// [`Goroutine::new`].
 pub struct GosPanic(pub String);
@@ -54,7 +54,7 @@ pub struct GosPanic(pub String);
 static GOROUTINE_PANICKED: AtomicBool = AtomicBool::new(false);
 
 /// Returns `true` if any goroutine has panicked since this
-/// process started. The flag is sticky — once set it stays set,
+/// process started. The flag is sticky - once set it stays set,
 /// so a test that spawns multiple goroutines can check it after
 /// the full batch joins.
 #[must_use]
@@ -72,7 +72,7 @@ use corosensei::{Coroutine, CoroutineResult, Yielder};
 /// 1 MiB is generous compared to Go's 8 KiB starting size, but Go
 /// grows stacks on demand via segmented + relocating allocation;
 /// our stacks are fixed. On 64-bit hosts the cost is virtual address
-/// space (cheap) — `mmap`'s on-demand committing keeps RSS
+/// space (cheap) - `mmap`'s on-demand committing keeps RSS
 /// proportional to *actual* depth used. 10 000 goroutines eat
 /// ~10 GiB of address space and typically tens of MiB of committed
 /// RAM. Compiled-tier code (HTTP handlers, JSON parsing, regex
@@ -82,7 +82,7 @@ use corosensei::{Coroutine, CoroutineResult, Yielder};
 pub const DEFAULT_STACK_BYTES: usize = 1024 * 1024;
 
 /// Minimum allowed stack size in bytes (32 KiB). Overrides smaller
-/// than this are clamped up — anything less risks overflowing into
+/// than this are clamped up - anything less risks overflowing into
 /// the guard page from a single function prologue.
 pub const MIN_STACK_BYTES: usize = 32 * 1024;
 
@@ -112,7 +112,7 @@ pub const STACK_GUARD_MARGIN: usize = 256 * 1024;
 thread_local! {
     /// Stack address captured at a shallow point (goroutine body
     /// entry, or program start for the main thread) as the baseline
-    /// for the byte-budget recursion guard. `0` means unarmed —
+    /// for the byte-budget recursion guard. `0` means unarmed -
     /// callers fall back to a frame count.
     static STACK_ORIGIN: Cell<usize> = const { Cell::new(0) };
     /// Bytes of stack growth allowed past [`STACK_ORIGIN`] before the
@@ -133,7 +133,7 @@ pub fn current_stack_ptr() -> usize {
 /// Arms the byte-budget recursion guard on the current thread:
 /// records the current (shallow) stack pointer as the origin and the
 /// bytes of growth allowed past it before [`stack_guard_tripped`]
-/// fires. Call at a shallow point — goroutine body entry (`budget =
+/// fires. Call at a shallow point - goroutine body entry (`budget =
 /// stack_size() - STACK_GUARD_MARGIN`) or program start.
 pub fn arm_stack_guard(budget: usize) {
     STACK_ORIGIN.with(|o| o.set(current_stack_ptr()));
@@ -159,7 +159,7 @@ pub fn stack_guard_armed() -> bool {
 }
 
 /// Returns `true` when the armed guard's stack has grown past its
-/// budget — the caller must stop recursing and raise a clean
+/// budget - the caller must stop recursing and raise a clean
 /// stack-overflow error rather than let the native stack overflow
 /// (which aborts the whole process, fatal on a 1 MiB goroutine
 /// stack). Always `false` when unarmed.
@@ -213,11 +213,11 @@ impl Goroutine {
             // stable for the lifetime of the coroutine. Two writes
             // happen on first entry:
             //
-            // 1. `yielder_slot` — published so subsequent resumes
+            // 1. `yielder_slot` - published so subsequent resumes
             //    (which the scheduler initiates from a worker M
             //    that may differ from this one) can read the
             //    pointer and re-arm the worker's TLS_YIELDER.
-            // 2. `set_current_yielder` — bootstrap value for *this*
+            // 2. `set_current_yielder` - bootstrap value for *this*
             //    first resume, so `suspend()` can find the yielder
             //    before the worker had a chance to set TLS itself.
             let ptr = std::ptr::from_ref::<Yielder<(), ()>>(yielder)
@@ -250,7 +250,7 @@ impl Goroutine {
                 } else {
                     "(non-string panic payload)".to_string()
                 };
-                eprintln!("gossamer: goroutine panicked — {msg}; isolating, scheduler continues");
+                eprintln!("gossamer: goroutine panicked - {msg}; isolating, scheduler continues");
                 GOROUTINE_PANICKED.store(true, Ordering::Release);
             }
         });
@@ -272,7 +272,7 @@ impl Goroutine {
 
     /// Resumes execution of the goroutine. Returns `true` when the
     /// goroutine has completed (its entry function returned).
-    /// Returns `false` when the goroutine called [`suspend`] —
+    /// Returns `false` when the goroutine called [`suspend`] -
     /// the caller should re-resume later when the wakeup event
     /// fires.
     ///

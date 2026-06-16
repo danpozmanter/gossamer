@@ -1,4 +1,4 @@
-//! `gos doc` — rustdoc-style HTML renderer plus the plain-text
+//! `gos doc` - rustdoc-style HTML renderer plus the plain-text
 //! fallback. Kept in its own module so `main.rs` stays under the
 //! 2000-line hard limit defined in `GUIDELINES.md`.
 
@@ -135,7 +135,7 @@ pub(crate) fn cmd_doc(file: &PathBuf, html_out: Option<&std::path::Path>) -> Res
     Ok(())
 }
 
-/// One item surfaced to `gos doc` — kind tag, display name,
+/// One item surfaced to `gos doc` - kind tag, display name,
 /// signature line, and leading doc-comment text.
 struct DocEntry {
     /// Kind tag: `fn` / `struct` / `enum` / `trait` / `impl` /
@@ -179,7 +179,7 @@ fn collect_doc_entries(sf: &gossamer_ast::SourceFile, source: &str) -> Vec<DocEn
     entries
 }
 
-/// Returns the source text of an item's signature — everything
+/// Returns the source text of an item's signature - everything
 /// from the item's starting offset up to the first `{` or `;` that
 /// terminates the header. Used for HTML rendering so the reader
 /// sees the real declaration, not a reconstruction.
@@ -195,7 +195,7 @@ fn extract_signature(source: &str, span: gossamer_lex::Span) -> String {
 }
 
 /// Walks backwards from `span.start` collecting the consecutive
-/// block of `//` comment lines that precede the item — the
+/// block of `//` comment lines that precede the item - the
 /// rustdoc equivalent of the `///` / `//!` doc attribute. A blank
 /// line or non-comment line terminates the block. Returns the
 /// joined comment body with each line's `// ` prefix stripped.
@@ -216,7 +216,7 @@ fn extract_doc_comment(source: &str, span: gossamer_lex::Span) -> String {
     captured.join("\n")
 }
 
-/// Returns a stable HTML anchor id for `entry` — the shape is
+/// Returns a stable HTML anchor id for `entry` - the shape is
 /// `item-<kind>-<name>` so intra-doc links can target it
 /// deterministically.
 fn doc_anchor(entry: &DocEntry) -> String {
@@ -289,7 +289,7 @@ fn render_doc_html(source_path: &std::path::Path, entries: &[DocEntry]) -> Strin
     let mut out = String::with_capacity(8192 + entries.len() * 256);
     out.push_str("<!doctype html>\n<html lang=\"en\"><head>\n");
     out.push_str("<meta charset=\"utf-8\">\n");
-    out.push_str(&format!("<title>gos doc — {title}</title>\n"));
+    out.push_str(&format!("<title>gos doc - {title}</title>\n"));
     out.push_str("<style>\n");
     out.push_str(DOC_CSS);
     out.push_str("</style>\n</head><body>\n");

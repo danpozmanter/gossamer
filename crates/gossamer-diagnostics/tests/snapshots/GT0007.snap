@@ -3,7 +3,7 @@ source: crates/gossamer-diagnostics/tests/snapshots.rs
 expression: rendered
 ---
 --- plain ---
-error[GT0007]: A `Result<T, E>` expression was used as a statement without its — here
+error[GT0007]: A `Result<T, E>` expression was used as a statement without its - here
 --- framed ---
 error[GT0007]: A `Result<T, E>` expression was used as a statement without its
   --> snap.gos:2:5

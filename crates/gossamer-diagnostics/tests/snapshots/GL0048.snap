@@ -3,7 +3,7 @@ source: crates/gossamer-diagnostics/tests/snapshots.rs
 expression: rendered
 ---
 --- plain ---
-error[GL0048]: `match () { ... }` has exactly one reachable arm. Drop the match — here
+error[GL0048]: `match () { ... }` has exactly one reachable arm. Drop the match - here
 --- framed ---
 error[GL0048]: `match () { ... }` has exactly one reachable arm. Drop the match
   --> snap.gos:2:5

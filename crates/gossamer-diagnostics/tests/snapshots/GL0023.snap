@@ -3,7 +3,7 @@ source: crates/gossamer-diagnostics/tests/snapshots.rs
 expression: rendered
 ---
 --- plain ---
-error[GL0023]: `x + 0`, `x - 0`, `x * 1`, `x / 1` all equal `x`. The operation — here
+error[GL0023]: `x + 0`, `x - 0`, `x * 1`, `x / 1` all equal `x`. The operation - here
 --- framed ---
 error[GL0023]: `x + 0`, `x - 0`, `x * 1`, `x / 1` all equal `x`. The operation
   --> snap.gos:2:5

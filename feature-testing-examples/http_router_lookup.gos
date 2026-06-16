@@ -1,7 +1,7 @@
 // Cross-tier regression for the stateless `http::router` pattern-lookup
 // helpers `router::new` / `router::add` / `router::lookup`. `add`
 // registers a (method, pattern) route; `lookup(method, path)` returns
-// `Option<i64>` — the index of the first route whose method (empty =
+// `Option<i64>` - the index of the first route whose method (empty =
 // any) and RFC-style `{capture}` / `{rest...}` pattern match. The
 // compiled tier wires `gos_rt_router_add_pattern` / `gos_rt_router_lookup`
 // over the same `GosRouter` route table the serving Router uses; the

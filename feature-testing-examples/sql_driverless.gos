@@ -15,7 +15,7 @@ fn show_row(row: sql::Row) {
     println!("row width {}", row.width())
 }
 
-// query_each: cursor opened, drained, and closed inside one call —
+// query_each: cursor opened, drained, and closed inside one call -
 // here the no-driver open fails first, but the whole body (defer,
 // let-else drain loop, Fn-param callback) must lower on every tier.
 fn try_query_each() -> Result<(), sql::Error> {

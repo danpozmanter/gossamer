@@ -2026,7 +2026,7 @@ statement from Go. Most Go idioms map one-to-one. The biggest
 source of friction is <strong>syntax</strong>: Gossamer is Rust-flavoured, so
 <code>fn</code> not <code>func</code>, <code>let</code> not <code>:=</code>, <code>match</code> not <code>switch</code>, and so on.</p>
 <p>This page walks the differences in three layers: syntax,
-semantics, and stdlib equivalents. It is not exhaustive — for
+semantics, and stdlib equivalents. It is not exhaustive - for
 the spec, see <a href="https://github.com/danpozmanter/gossamer/blob/main/SPEC.md"><code>SPEC.md</code></a>.</p>
 <h2 id="tldr">TL;DR<a class="headerlink" href="#tldr" title="Permanent link">&para;</a></h2>
 <ul>
@@ -2036,12 +2036,12 @@ the spec, see <a href="https://github.com/danpozmanter/gossamer/blob/main/SPEC.m
 <li><strong>What changes:</strong> syntax (Rust-shaped), error handling
   (<code>Result&lt;T, E&gt;</code> + <code>?</code>), interfaces become traits (nominal),
   no implicit numeric coercion (<code>as</code> is explicit), and memory is
-  reclaimed deterministically — reference counting plus arenas,
+  reclaimed deterministically - reference counting plus arenas,
   not a tracing GC, so no collector pauses.</li>
 <li><strong>What's missing today:</strong> gRPC, real package registry,
   first-party SQL drivers. <code>std::database::sql</code> is the
   driver-pluggable surface (Conn / Tx / Stmt / Rows / Pool /
-  migrate / Select); every driver — including SQLite — is a
+  migrate / Select); every driver - including SQLite - is a
   third-party Rust binding that registers itself at startup.
   HTTP/1, HTTP/2, HTTP/3, WebSockets, and SSE are all
   first-party (<code>std::http</code>, <code>std::http_h3</code>, <code>std::http::websocket</code>,
@@ -2090,7 +2090,7 @@ the spec, see <a href="https://github.com/danpozmanter/gossamer/blob/main/SPEC.m
 <tr>
 <td><code>switch x { case 1: … }</code></td>
 <td><code>match x { 1 =&gt; …, _ =&gt; … }</code></td>
-<td>Pattern-matching is exhaustive — a missing arm is a compile error.</td>
+<td>Pattern-matching is exhaustive - a missing arm is a compile error.</td>
 </tr>
 <tr>
 <td><code>type Point struct { X, Y int }</code></td>
@@ -2105,7 +2105,7 @@ the spec, see <a href="https://github.com/danpozmanter/gossamer/blob/main/SPEC.m
 <tr>
 <td><code>type Reader interface { Read([]byte) int }</code></td>
 <td><code>trait Reader { fn read(&amp;self, buf: &amp;mut [u8]) -&gt; i64 }</code></td>
-<td>Traits are nominal — <code>impl Reader for MyType { … }</code>.</td>
+<td>Traits are nominal - <code>impl Reader for MyType { … }</code>.</td>
 </tr>
 <tr>
 <td><code>var err error; if err != nil { … }</code></td>
@@ -2236,7 +2236,7 @@ write the conversion table out by hand:</p>
 <li>The M:N work-stealing scheduler is live; goroutines are parked by the
   netpoller when blocked on I/O.</li>
 <li>Channels are unbounded by default (like Go's <code>make(chan T)</code>
-  without a buffer size — wait, actually Go's <em>unbuffered</em>
+  without a buffer size - wait, actually Go's <em>unbuffered</em>
   channels block on send until a receiver is ready;
   Gossamer's <code>channel::&lt;T&gt;()</code> returns a buffered channel today,
   with <code>try_send</code> / <code>try_recv</code> for non-blocking ops). Bounded
@@ -2264,7 +2264,7 @@ write the conversion table out by hand:</p>
 <a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="w">    </span><span class="o">|&gt;</span><span class="w"> </span><span class="n">iter</span>::<span class="n">filter</span><span class="p">(</span><span class="o">|</span><span class="n">n</span>: <span class="kt">i64</span><span class="o">|</span><span class="w"> </span><span class="n">n</span><span class="w"> </span><span class="o">%</span><span class="w"> </span><span class="mi">2</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span>
 <a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a><span class="w">    </span><span class="o">|&gt;</span><span class="w"> </span><span class="n">iter</span>::<span class="n">sum_by</span><span class="p">(</span><span class="o">|</span><span class="n">n</span>: <span class="kt">i64</span><span class="o">|</span><span class="w"> </span><span class="n">n</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">n</span><span class="p">)</span>
 </code></pre></div>
-<p><code>std::iter</code> (SPEC §10.4) ships F#-style chaining combinators —
+<p><code>std::iter</code> (SPEC §10.4) ships F#-style chaining combinators -
 <code>map</code>, <code>filter</code>, <code>for_each</code>, <code>fold</code>, <code>sum_by</code>, <code>find</code>, <code>any</code>, <code>all</code>,
 <code>take</code>, <code>skip</code>, <code>range</code>/<code>range_inclusive</code>, <code>chain</code>, <code>reversed</code>,
 plus closure-taking siblings. Argument order is data-last so each
@@ -2272,7 +2272,7 @@ combinator threads naturally through <code>|&gt;</code>. Mirror modules for
 <code>Option&lt;T&gt;</code> (<code>std::option</code>) and <code>Result&lt;T, E&gt;</code> (<code>std::result</code>)
 cover the absent-or-default and error-mapping cases without a
 <code>match</code> block.</p>
-<p>The <code>for</code> loop stays in the language and stays idiomatic — for
+<p>The <code>for</code> loop stays in the language and stays idiomatic - for
 side-effect loops with <code>break</code> / <code>continue</code>, for state machines
 (running flag, accumulator pair, etc.), and for loops that need
 to early-return. <code>iter::*</code> is for the <em>transformation</em> cases that
@@ -2684,16 +2684,16 @@ authoritative table.</p>
 </code></pre></div>
 <h2 id="cross-references">Cross-references<a class="headerlink" href="#cross-references" title="Permanent link">&para;</a></h2>
 <ul>
-<li><a href="../../syntax/"><code>../syntax.md</code></a> — the language tour.</li>
-<li><a href="../../codegen_abi/"><code>../codegen_abi.md</code></a> — what generics fail.</li>
-<li><a href="../../stdlib_coverage/"><code>../stdlib_coverage.md</code></a> — every
+<li><a href="../../syntax/"><code>../syntax.md</code></a> - the language tour.</li>
+<li><a href="../../codegen_abi/"><code>../codegen_abi.md</code></a> - what generics fail.</li>
+<li><a href="../../stdlib_coverage/"><code>../stdlib_coverage.md</code></a> - every
   stdlib item, support state.</li>
 </ul>
 <h2 id="standard-library-mapping-go-gossamer">Standard library mapping (Go → Gossamer)<a class="headerlink" href="#standard-library-mapping-go-gossamer" title="Permanent link">&para;</a></h2>
 <p>Most of Go's <code>net/</code>, <code>encoding/</code>, <code>compress/</code>, <code>archive/</code>, <code>crypto/</code>,
 <code>hash/</code>, and <code>database/</code> namespace is mirrored 1:1 in Gossamer. Where
 Gossamer diverges, it does so toward Rust's <code>fs</code>/<code>env</code>/<code>process</code>
-split for OS primitives — <code>os.ReadFile</code> → <code>fs::read</code>, <code>os.Args</code> →
+split for OS primitives - <code>os.ReadFile</code> → <code>fs::read</code>, <code>os.Args</code> →
 <code>env::args</code>, <code>os.Exit</code> → <code>process::exit</code>.</p>
 <table>
 <thead>
@@ -2777,7 +2777,7 @@ split for OS primitives — <code>os.ReadFile</code> → <code>fs::read</code>, 
 </tr>
 </tbody>
 </table>
-<p>HTTP/2 is integrated into <code>std::http</code> directly — exactly the
+<p>HTTP/2 is integrated into <code>std::http</code> directly - exactly the
 shape of Go's <code>net/http</code>. <code>http::serve_h2c</code> is the cleartext h2c
 entry point; HTTP/2 over TLS auto-negotiates via ALPN.</p>
 

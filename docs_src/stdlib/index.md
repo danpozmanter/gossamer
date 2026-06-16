@@ -28,7 +28,7 @@ One page per module. Source is `crates/gossamer-std/src/`; this index is regener
 | [`std::crypto::ecdsa`](crypto_ecdsa.md) | ECDSA over the NIST P-256 curve. |
 | [`std::crypto::ed25519`](crypto_ed25519.md) | Ed25519 digital signatures. |
 | [`std::crypto::hmac`](crypto_hmac.md) | HMAC-SHA-256 keyed MACs. |
-| [`std::crypto::insecure`](crypto_insecure.md) | Legacy / broken hashes (MD5, SHA-1). Compat only — never use for new code. |
+| [`std::crypto::insecure`](crypto_insecure.md) | Legacy / broken hashes (MD5, SHA-1). Compat only - never use for new code. |
 | [`std::crypto::kdf`](crypto_kdf.md) | Password-based key-derivation functions. |
 | [`std::crypto::password`](crypto_password.md) | Argon2id password hashing facade: PHC-string hash / verify / re-hash policy. |
 | [`std::crypto::rand`](crypto_rand.md) | Secure random bytes from the host CSPRNG. |
@@ -57,7 +57,7 @@ One page per module. Source is `crates/gossamer-std/src/`; this index is regener
 | [`std::hash::crc32`](hash_crc32.md) | CRC-32 (IEEE) checksums. |
 | [`std::hash::fnv`](hash_fnv.md) | FNV-1a non-cryptographic hash (32-bit, 64-bit). |
 | [`std::html`](html.md) | HTML text escaping and unescaping. |
-| [`std::html::template`](html_template.md) | Context-aware HTML templates with auto-escape (text/attr/URL/JS). The context classifier is heuristic — sound for typical server-rendered responses but NOT a content-security-policy substitute; sanitize untrusted HTML fragments with a dedicated sanitizer. |
+| [`std::html::template`](html_template.md) | Context-aware HTML templates with auto-escape (text/attr/URL/JS). The context classifier is heuristic - sound for typical server-rendered responses but NOT a content-security-policy substitute; sanitize untrusted HTML fragments with a dedicated sanitizer. |
 | [`std::http`](http.md) | HTTP/1.1 and HTTP/2 client and server. HTTP/2 negotiates via ALPN over TLS automatically (Go-style); h2c entry points are explicit. |
 | [`std::http::chunked`](http_chunked.md) | RFC 7230 §4.1 chunked transfer-encoding reader and writer. |
 | [`std::http::cookie`](http_cookie.md) | RFC 6265 cookie parser and Set-Cookie builder. |

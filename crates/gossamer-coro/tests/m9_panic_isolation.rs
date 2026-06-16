@@ -10,12 +10,12 @@ use gossamer_coro::{Goroutine, any_goroutine_panicked};
 #[test]
 fn goroutine_panic_does_not_kill_the_process() {
     // If isolation is broken, this test aborts the whole test
-    // binary — which surfaces as a `cargo test` failure of every
+    // binary - which surfaces as a `cargo test` failure of every
     // test in the same process, not just this one. The fact that
     // we reach the assertion at all is the primary signal.
     let mut g = Goroutine::new(Box::new(|| panic!("intentional test panic")));
     let _done = g.resume();
-    // The resume call returned cleanly — no panic propagated.
+    // The resume call returned cleanly - no panic propagated.
     assert!(
         any_goroutine_panicked(),
         "panicked-flag must be sticky after a panic in a goroutine"

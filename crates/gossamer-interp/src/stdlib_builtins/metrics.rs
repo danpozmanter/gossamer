@@ -9,7 +9,7 @@
     clippy::unnecessary_wraps,
     clippy::needless_pass_by_value
 )]
-//! `std::metrics` builtins for the bytecode VM — Prometheus-compatible
+//! `std::metrics` builtins for the bytecode VM - Prometheus-compatible
 //! Counter / Gauge / Histogram and a rendering Registry. Metric and
 //! registry state live in process-global registries keyed by `id`, so
 //! `&self` mutating methods reach through the registry instead of the
@@ -314,8 +314,8 @@ pub(crate) fn builtin_registry_render(args: &[Value]) -> RuntimeResult<Value> {
     Ok(Value::String(text.into()))
 }
 
-/// `metrics::serve_metrics(addr, registry) -> Result<(), errors::Error>`
-/// — serves the registry on `/metrics` over the std http server. Blocks
+/// `metrics::serve_metrics(addr, registry) -> Result<(), errors::Error>` -
+/// serves the registry on `/metrics` over the std http server. Blocks
 /// the calling goroutine until shutdown; the compiled tier serves over
 /// the runtime's own server via `gos_rt_metrics_serve`.
 pub(crate) fn builtin_serve_metrics(args: &[Value]) -> RuntimeResult<Value> {
