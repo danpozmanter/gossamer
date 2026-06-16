@@ -27,8 +27,12 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: '3.x'
-      - name: Install mkdocs
-        run: pip install mkdocs
+      - name: Install mkdocs + Material theme
+        # mkdocs.yml uses `theme: material`, the pymdownx extensions, and a
+        # Pygments lexer in `mkdocs_hooks.py`. `mkdocs-material` pulls
+        # mkdocs, Pygments, and pymdown-extensions; the latter is named
+        # explicitly so the extensions are guaranteed present.
+        run: pip install mkdocs-material pymdown-extensions
       - name: Assemble landing page at site root
         run: |
           mkdir -p site

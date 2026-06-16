@@ -164,11 +164,14 @@ fn install_native_handlers() {
 #[allow(unsafe_code)]
 fn install_native_handlers() {
     use std::sync::Once;
-    use windows_sys::Win32::Foundation::BOOL;
+
     use windows_sys::Win32::System::Console::{
         CTRL_BREAK_EVENT, CTRL_C_EVENT, CTRL_CLOSE_EVENT, CTRL_LOGOFF_EVENT, CTRL_SHUTDOWN_EVENT,
         SetConsoleCtrlHandler,
     };
+    // `windows-sys` 0.60 moved the primitive `BOOL` alias out of
+    // `Win32::Foundation` into the crate's `core` module.
+    use windows_sys::core::BOOL;
     static ONCE: Once = Once::new();
     if std::env::var("GOSSAMER_SIGNAL_DISABLE_HANDLERS").is_ok() {
         return;
