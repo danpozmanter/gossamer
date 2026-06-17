@@ -10,7 +10,7 @@ tracing collector and no GC pauses.
 - Project style guide: [`GUIDELINES.md`](https://github.com/danpozmanter/gossamer/blob/main/GUIDELINES.md)
 - Security policy: [`SECURITY.md`](https://github.com/danpozmanter/gossamer/blob/main/SECURITY.md)
 
-**Status**: pre-1.0.0 (currently 0.14.0). The surface is stable to
+**Status**: pre-1.0.0 (currently 0.16.0). The surface is stable to
 write against; the public API may still change before 1.0.
 
 ## Hello, Gossamer
@@ -46,6 +46,22 @@ fn main() {
     }
 }
 ```
+
+## A Script, No Boilerplate
+
+No `fn main`, no ceremony - the file's top-level statements *are* the
+program. Reach for forward pipes and the iterator combinators and a
+data-processing script reads top to bottom:
+
+```gossamer
+use std::iter
+
+let nums = [4, 8, 15, 16, 23, 42]
+let evens = nums |> iter::filter(|n| n % 2 == 0) |> iter::sum()
+println!("sum of evens: {}", evens)
+```
+
+See [Top-level statements](language/top_level_statements.md).
 
 ## Why Gossamer
 

@@ -1,0 +1,26 @@
+/*
+ * Functional record update - build a new struct from an existing one,
+ * overriding only the fields that change. The `..base` spread may sit in
+ * any position, explicit fields win over the base, and the base stays
+ * usable afterward (its heap fields are shared and retained, not moved).
+ */
+
+struct Config {
+    host: String,
+    port: i64,
+    verbose: bool,
+}
+
+fn main() {
+    let base = Config { host: format!("localhost"), port: 8080, verbose: false }
+
+    // Override one scalar field; host is copied from base.
+    let prod = Config { ..base, port: 443 }
+
+    // The spread may also come last, and may override a String field.
+    let remote = Config { host: format!("example.com"), ..base }
+
+    println!("base:   {} {} {}", base.host, base.port, base.verbose)
+    println!("prod:   {} {} {}", prod.host, prod.port, prod.verbose)
+    println!("remote: {} {} {}", remote.host, remote.port, remote.verbose)
+}

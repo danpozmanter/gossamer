@@ -137,6 +137,15 @@ pub enum TypeError {
         /// Trait name as written.
         name: String,
     },
+    /// A generic call instantiates a type parameter with a concrete type
+    /// that does not implement a required trait bound.
+    #[error("the trait bound `{ty}: {bound}` is not satisfied")]
+    TraitBoundNotSatisfied {
+        /// Concrete type supplied at the call site.
+        ty: String,
+        /// Trait the parameter is bound by.
+        bound: String,
+    },
     /// An enum declares more variants than the heap representation's
     /// one-byte discriminant can index.
     #[error("enum `{name}` has {count} variants; the maximum is 256")]
@@ -215,6 +224,7 @@ impl TypeError {
             Self::IntLiteralOverflow { .. } => "int-literal-overflow",
             Self::InvalidEscape { .. } => "invalid-escape",
             Self::UnknownTraitBound { .. } => "unknown-trait-bound",
+            Self::TraitBoundNotSatisfied { .. } => "trait-bound-not-satisfied",
             Self::TooManyVariants { .. } => "too-many-variants",
             Self::ClosureParamUninferred { .. } => "closure-param-uninferred",
             Self::Int128Unsupported { .. } => "int128-unsupported",
@@ -243,6 +253,7 @@ impl TypeError {
             Self::Int128Unsupported { .. } => "GT0014",
             Self::StdFnValueUnsupported { .. } => "GT0015",
             Self::JsonNotSerializable { .. } => "GT0016",
+            Self::TraitBoundNotSatisfied { .. } => "GT0017",
         }
     }
 }
@@ -380,6 +391,11 @@ impl TypeDiagnostic {
                     )
                     .with_note("SPEC §9: every `Result` value must be handled");
             }
+            TypeError::TraitBoundNotSatisfied { ty, bound } => {
+                out = out.with_help(format!(
+                    "add `impl {bound} for {ty} {{ ... }}`, or pass a type that already implements `{bound}`"
+                ));
+            }
             TypeError::RecursionLimit { .. } => {
                 out = out
                     .with_help("split the expression into smaller helpers")
@@ -408,18 +424,27 @@ impl TypeDiagnostic {
                 out = std_fn_value_diagnostic(out, path);
             }
             TypeError::JsonNotSerializable { op, ty } => {
-                out = out
-                    .with_note(format!(
-                        "`{ty}` is an enum, which has no JSON representation"
-                    ))
-                    .with_help(format!(
-                        "unwrap the value before encoding - e.g. `let v = …?` then \
-                         `json::{op}(&v)` - or build a `json::Value`"
-                    ));
+                out = json_not_serializable_diagnostic(out, op, ty);
             }
         }
         out
     }
+}
+
+/// Attaches the GT0016 note + help. Split out of `to_diagnostic` to keep
+/// that match within the line-count lint budget.
+fn json_not_serializable_diagnostic(
+    out: gossamer_diagnostics::Diagnostic,
+    op: &str,
+    ty: &str,
+) -> gossamer_diagnostics::Diagnostic {
+    out.with_note(format!(
+        "`{ty}` is an enum, which has no JSON representation"
+    ))
+    .with_help(format!(
+        "unwrap the value before encoding - e.g. `let v = …?` then \
+             `json::{op}(&v)` - or build a `json::Value`"
+    ))
 }
 
 /// Attaches the GT0013 help + note. Split out of `to_diagnostic` to

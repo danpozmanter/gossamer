@@ -162,6 +162,24 @@ impl<'tcx> FnBuilder<'tcx> {
                     self.collect_collection_binding_names(p, ety, out);
                 }
             }
+            HirPatKind::Slice {
+                prefix,
+                rest,
+                suffix,
+            } => {
+                let ety = scrut_ty.and_then(|t| self.array_elem_ty(t));
+                for p in prefix {
+                    self.collect_collection_binding_names(p, ety, out);
+                }
+                if let Some(rest) = rest {
+                    // The `..rest` sub-slice has the same indexable
+                    // collection type as the scrutinee.
+                    self.collect_collection_binding_names(rest, scrut_ty, out);
+                }
+                for p in suffix {
+                    self.collect_collection_binding_names(p, ety, out);
+                }
+            }
             HirPatKind::Ref { inner, .. } => {
                 let inner_ty = scrut_ty.map(|t| self.unwrap_ref(t));
                 self.collect_collection_binding_names(inner, inner_ty, out);

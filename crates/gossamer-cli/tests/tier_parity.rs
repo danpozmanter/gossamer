@@ -225,10 +225,22 @@ const SPECS: &[Spec] = &[
     spec("feature-testing-examples/jit_enum_char_field.gos"),
     spec("feature-testing-examples/jit_inline_vec_ops.gos"),
     spec("feature-testing-examples/jit_mixed_arity6.gos"),
+    spec("feature-testing-examples/jit_aggregate_param.gos"),
     // Bytecode VM user-function inliner - must stay bit-identical to the
     // MIR-tier inlining already present in the compiled tiers.
     spec("feature-testing-examples/inline_scalar_kernel.gos"),
     spec("feature-testing-examples/temporary_wrap.gos"),
+    spec("feature-testing-examples/temporary_method_dispatch.gos"),
+    spec("feature-testing-examples/vecdeque_element_typing.gos"),
+    spec("feature-testing-examples/method_dispatch_collisions.gos"),
+    spec("feature-testing-examples/fmt_struct_enum.gos"),
+    spec("feature-testing-examples/fmt_tuple_map.gos"),
+    spec("feature-testing-examples/string_concat_chain.gos"),
+    spec("feature-testing-examples/record_update.gos"),
+    spec("feature-testing-examples/trait_bounds.gos"),
+    spec("feature-testing-examples/nested_field_access.gos"),
+    spec("feature-testing-examples/rc_elision.gos"),
+    spec("feature-testing-examples/bounds_check_elim.gos"),
     spec("feature-testing-examples/borrowed_option_result.gos"),
     spec("feature-testing-examples/aggregate_binding.gos"),
     spec("feature-testing-examples/fs_metadata.gos"),
@@ -251,6 +263,7 @@ const SPECS: &[Spec] = &[
     spec("feature-testing-examples/byte_vec_i64_model.gos"),
     spec("feature-testing-examples/map_iteration_order.gos"),
     spec("feature-testing-examples/usize_compare.gos"),
+    spec("feature-testing-examples/u64_unsigned.gos"),
     spec("feature-testing-examples/channel_close_drain.gos"),
     spec("feature-testing-examples/channel_timers.gos"),
     Spec {
@@ -649,6 +662,10 @@ const SPECS: &[Spec] = &[
         allow_nonzero: true,
         ..spec("feature-testing-examples/top_level_exit_code.gos")
     },
+    // Front-end features: labelled loops (`break 'l`/`continue 'l`) and
+    // slice / rest patterns (`[a, b]`, `[first, ..rest]`, `[.., last]`).
+    spec("feature-testing-examples/labeled_loops.gos"),
+    spec("feature-testing-examples/slice_patterns.gos"),
 ];
 
 #[derive(Debug)]

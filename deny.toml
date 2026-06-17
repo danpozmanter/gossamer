@@ -52,10 +52,18 @@ skip-tree = [
 ]
 # Transitive duplicates we do not own the upgrade path for.
 skip = [
-    # `hashbrown 0.15.5` reaches the workspace via `cranelift-codegen`;
-    # `hashbrown 0.17.0` arrives transitively via `indexmap 2.14 →
-    # gimli 0.32 → cranelift-codegen`. Both land through cranelift.
-    { name = "hashbrown", version = "0.15.5" },
+    # The `cranelift 0.132` object/jit backend pulls newer `gimli`,
+    # `hashbrown`, `object`, and an older `memmap2` than the rest of the
+    # graph; each duplicate is confined to the cranelift subtree we do not
+    # own the upgrade path for. Skip the version that only cranelift uses.
+    { name = "gimli", version = "0.32.3" },
+    { name = "hashbrown", version = "0.16.1" },
+    { name = "object", version = "0.37.3" },
+    { name = "memmap2", version = "0.2.3" },
+    # `toml 0.9` is mid-migration off `winnow`: it pulls `winnow 0.7`
+    # directly and `winnow 1.0` through `toml_parser`. Drop when toml
+    # finishes the move to winnow 1.0.
+    { name = "winnow", version = "0.7.15" },
     # `cpufeatures 0.2` reaches the workspace via sha2 / aes /
     # chacha20; `0.3` arrives via blake3. Both are RustCrypto deps.
     { name = "cpufeatures", version = "0.2.17" },

@@ -309,11 +309,34 @@ impl<'a> Lowerer<'a> {
             operand_llvm = "i64".to_string();
             kind = NumericKind::Int(gossamer_types::IntTy::I64);
         }
-        // All ≤64-bit integer types are signed-i64 runtime values
-        // (VM reference: `wrapping_div` / `wrapping_shr` / signed
-        // compares on `i64`), so the declared signedness only
-        // selects the instruction for the 128-bit types.
+        // `Div` / `Rem` keep the signed-i64 runtime model for every
+        // ≤64-bit type (the VM uses `wrapping_div` / `wrapping_rem` on
+        // `i64`), so the declared signedness only selects `udiv`/`urem`
+        // for the 128-bit types.
         let op_signed = |i: gossamer_types::IntTy| int_width(i) <= 64 || int_signed(i);
+        // `< <= > >=` and `>>` use unsigned instructions (`icmp u*` /
+        // `lshr`) only for the unsigned families that can exceed
+        // `i64::MAX` - `u64` / `usize` / `u128`; every other ≤64-bit type
+        // (including `u8`/`u16`/`u32`, which mask below 2^63) keeps the
+        // signed `icmp s*` / `ashr`. This matches the VM, which routes
+        // only `u64`/`usize` operands through its unsigned compare/shift
+        // opcodes. A constant operand carries no signedness, so derive it
+        // from the place operand when one side is constant; two constants
+        // default to signed.
+        let cmp_shift_signed = {
+            let pick = |o: &Operand| -> Option<gossamer_types::IntTy> {
+                if let Operand::Copy(_) = o
+                    && let NumericKind::Int(i) = numeric_kind(self.tcx, self.operand_ty(o))
+                {
+                    return Some(i);
+                }
+                None
+            };
+            match pick(lhs).or_else(|| pick(rhs)) {
+                Some(i) => int_signed(i) || int_width(i) < 64,
+                None => true,
+            }
+        };
         // LLVM `shl`/`ashr` produce poison for shift amounts >= the
         // operand width; the VM masks the amount with `& 63`. Mask
         // i64 shift amounts the same way so `1 << 70` is `1 << 6`
@@ -346,8 +369,8 @@ impl<'a> Lowerer<'a> {
             (BinOp::BitOr, _) => format!("or {operand_llvm}"),
             (BinOp::BitXor, _) => format!("xor {operand_llvm}"),
             (BinOp::Shl, _) => format!("shl {operand_llvm}"),
-            (BinOp::Shr, NumericKind::Int(i)) => {
-                if op_signed(i) {
+            (BinOp::Shr, NumericKind::Int(_)) => {
+                if cmp_shift_signed {
                     format!("ashr {operand_llvm}")
                 } else {
                     format!("lshr {operand_llvm}")
@@ -358,8 +381,8 @@ impl<'a> Lowerer<'a> {
             (BinOp::Mul, NumericKind::Float(_)) => format!("fmul {operand_llvm}"),
             (BinOp::Div, NumericKind::Float(_)) => format!("fdiv {operand_llvm}"),
             (BinOp::Rem, NumericKind::Float(_)) => format!("frem {operand_llvm}"),
-            (cmp, NumericKind::Int(i)) if is_cmp(cmp) => {
-                let pred = int_cmp_pred(cmp, op_signed(i));
+            (cmp, NumericKind::Int(_)) if is_cmp(cmp) => {
+                let pred = int_cmp_pred(cmp, cmp_shift_signed);
                 format!("icmp {pred} {operand_llvm}")
             }
             (cmp, NumericKind::Float(_)) if is_cmp(cmp) => {
@@ -664,8 +687,10 @@ impl<'a> Lowerer<'a> {
                 | ConcatKind::ArrBool(_)
                 | ConcatKind::ArrString(_)
                 | ConcatKind::JsonValue
-                | ConcatKind::ErrorMessage) => {
-                    let str_ptr = self.emit_aggregate_format(kind, &value);
+                | ConcatKind::ErrorMessage
+                | ConcatKind::Tuple
+                | ConcatKind::Map) => {
+                    let str_ptr = self.emit_concat_aggregate(arg, kind, &value)?;
                     writeln!(self.out, "  call void @gos_rt_concat_str(ptr {str_ptr})").unwrap();
                 }
                 ConcatKind::Unsupported => unreachable!("checked above"),

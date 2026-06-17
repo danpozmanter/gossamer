@@ -46,6 +46,7 @@ impl<'tcx> FnBuilder<'tcx> {
             next_int_reg: 0,
             scopes: vec![Scope::default()],
             loop_stack: Vec::new(),
+            pending_loop_label: None,
             defer_stack: Vec::new(),
             closure_protos: Vec::new(),
             select_arms: Vec::new(),

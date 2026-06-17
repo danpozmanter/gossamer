@@ -32,8 +32,8 @@ use parking_lot::Mutex;
 
 use gossamer_pkg::{GitRef, Manifest, RustBindingSpec};
 use gossamer_runner_template::{
-    BindingEntry, Profile as TmplProfile, RenderInput, render_cargo_toml, render_main_rs,
-    render_sigs_dump_rs, render_staticlib_cargo_toml, render_staticlib_lib_rs,
+    BindingEntry, GossamerPatchSource, Profile as TmplProfile, RenderInput, render_cargo_toml,
+    render_main_rs, render_sigs_dump_rs, render_staticlib_cargo_toml, render_staticlib_lib_rs,
 };
 use thiserror::Error;
 
@@ -145,6 +145,9 @@ pub struct BindingRunner {
     pub profile: Profile,
     /// Project id for cosmetic comments in the rendered files.
     pub project_id: String,
+    /// `[patch]` sources whose `gossamer-*` crates must be redirected
+    /// to [`Self::gossamer_root`] so the runner links one gossamer-runtime.
+    pub patch_sources: Vec<GossamerPatchSource>,
 }
 
 impl BindingRunner {
@@ -182,6 +185,7 @@ impl BindingRunner {
         let workdir = cache_root.join("runners").join(&fingerprint_hex);
         fs::create_dir_all(&workdir)?;
         let bindings = render_bindings(&manifest.rust_bindings, manifest_dir);
+        let patch_sources = detect_patch_sources(&manifest.rust_bindings, manifest_dir);
         Ok(Some(Self {
             fingerprint,
             fingerprint_hex,
@@ -190,6 +194,7 @@ impl BindingRunner {
             gossamer_root: gossamer_root.to_path_buf(),
             profile,
             project_id: manifest.project.id.as_str().to_string(),
+            patch_sources,
         }))
     }
 
@@ -346,6 +351,7 @@ impl BindingRunner {
             gossamer_root: &self.gossamer_root,
             bindings: leaked_entries(&self.bindings),
             profile,
+            patch_sources: &self.patch_sources,
         }
     }
 
@@ -399,6 +405,9 @@ pub struct StaticBindingsLib {
     pub cargo_target: Option<String>,
     /// Project id for cosmetic comments.
     pub project_id: String,
+    /// `[patch]` sources whose `gossamer-*` crates must be redirected
+    /// to [`Self::gossamer_root`] so the staticlib links one gossamer-runtime.
+    pub patch_sources: Vec<GossamerPatchSource>,
 }
 
 impl StaticBindingsLib {
@@ -434,6 +443,7 @@ impl StaticBindingsLib {
             .join(SUBDIR_STATICLIB);
         fs::create_dir_all(&workdir)?;
         let bindings = render_bindings(&manifest.rust_bindings, manifest_dir);
+        let patch_sources = detect_patch_sources(&manifest.rust_bindings, manifest_dir);
         Ok(Some(Self {
             fingerprint,
             fingerprint_hex,
@@ -443,6 +453,7 @@ impl StaticBindingsLib {
             profile,
             cargo_target: None,
             project_id: manifest.project.id.as_str().to_string(),
+            patch_sources,
         }))
     }
 
@@ -486,6 +497,7 @@ impl StaticBindingsLib {
             gossamer_root: &self.gossamer_root,
             bindings: leaked_entries(&self.bindings),
             profile: self.profile.template_profile(),
+            patch_sources: &self.patch_sources,
         };
         write_if_different(&cargo_toml, &render_staticlib_cargo_toml(&input))?;
         write_if_different(&lib_rs, &render_staticlib_lib_rs(&input))?;
@@ -676,6 +688,127 @@ pub struct DumpedVariantArm {
 /// Parses the sigs-dump JSON.
 pub fn parse_signature_dump(text: &str) -> Result<SignatureDump, BindingRunnerError> {
     serde_json::from_str(text).map_err(|e| BindingRunnerError::BadSignatureJson(e.to_string()))
+}
+
+/// Gossamer crates whose source a binding must share with the
+/// toolchain (gossamer-runtime owns the process `#[global_allocator]`,
+/// so a second copy is a link error).
+const GOSSAMER_CRATES: [&str; 3] = ["gossamer-runtime", "gossamer-std", "gossamer-binding"];
+
+/// Determines the `[patch]` sources needed so every binding's
+/// `gossamer-*` crates resolve to the toolchain checkout rather than a
+/// second copy from crates.io / git.
+///
+/// For path / src bindings the binding crate is on disk, so its
+/// `Cargo.toml` is read and each gossamer dep's source is detected
+/// precisely (crates.io vs a git URL). Crates.io / git bindings aren't
+/// materialised at generation time; per the version contract (bindings
+/// declare a crates.io `gossamer-* = "<req>"` requirement - any req the
+/// toolchain version satisfies, e.g. `=X.Y.Z` or `>=X.Y.Z`) they resolve
+/// gossamer-* from crates.io, so `[patch.crates-io]` is emitted. The
+/// `[patch]` supplies the toolchain checkout, so the requirement need
+/// only be satisfiable by `gos --version`, not exact.
+/// Sources are de-duplicated by their patch-table key.
+fn detect_patch_sources(
+    rust_bindings: &BTreeMap<String, RustBindingSpec>,
+    manifest_dir: &Path,
+) -> Vec<GossamerPatchSource> {
+    let mut sources: Vec<GossamerPatchSource> = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for spec in rust_bindings.values() {
+        for src in gossamer_sources_for_binding(spec, manifest_dir) {
+            if seen.insert(src.table_key()) {
+                sources.push(src);
+            }
+        }
+    }
+    sources
+}
+
+fn gossamer_sources_for_binding(
+    spec: &RustBindingSpec,
+    manifest_dir: &Path,
+) -> Vec<GossamerPatchSource> {
+    match spec {
+        RustBindingSpec::Path { path, .. } => {
+            let abs = if Path::new(path).is_absolute() {
+                PathBuf::from(path)
+            } else {
+                manifest_dir.join(path)
+            };
+            gossamer_sources_from_manifest_path(&abs.join("Cargo.toml"))
+        }
+        RustBindingSpec::Src { deps, .. } => {
+            gossamer_sources_from_manifest_text(&format!("[dependencies]\n{deps}\n"))
+        }
+        // A crates.io binding cannot carry path / git deps (crates.io
+        // forbids them), so it pulls gossamer-* from crates.io. A git
+        // binding most commonly does the same; the version contract
+        // makes crates-io the correct patch source either way.
+        RustBindingSpec::Crates { .. } | RustBindingSpec::Git { .. } => {
+            vec![GossamerPatchSource::CratesIo]
+        }
+        // Prebuilt archives carry no Cargo dep graph - nothing to patch.
+        RustBindingSpec::Prebuilt { .. } => Vec::new(),
+    }
+}
+
+fn gossamer_sources_from_manifest_path(cargo_toml: &Path) -> Vec<GossamerPatchSource> {
+    match fs::read_to_string(cargo_toml) {
+        Ok(text) => gossamer_sources_from_manifest_text(&text),
+        Err(_) => Vec::new(),
+    }
+}
+
+/// Parses a Cargo manifest and returns the distinct non-path sources
+/// its `gossamer-*` dependencies resolve through. Path-sourced
+/// gossamer deps are skipped: cargo already unifies them by canonical
+/// path, and `[patch]` cannot rewrite a path dependency.
+fn gossamer_sources_from_manifest_text(text: &str) -> Vec<GossamerPatchSource> {
+    let Ok(doc) = toml::from_str::<toml::Value>(text) else {
+        return Vec::new();
+    };
+    let mut out: Vec<GossamerPatchSource> = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut scan = |table: Option<&toml::Value>| {
+        let Some(table) = table.and_then(toml::Value::as_table) else {
+            return;
+        };
+        for crate_name in GOSSAMER_CRATES {
+            if let Some(src) = table.get(crate_name).and_then(source_of_dep)
+                && seen.insert(src.table_key())
+            {
+                out.push(src);
+            }
+        }
+    };
+    scan(doc.get("dependencies"));
+    scan(doc.get("build-dependencies"));
+    if let Some(target) = doc.get("target").and_then(toml::Value::as_table) {
+        for cfg in target.values() {
+            scan(cfg.get("dependencies"));
+        }
+    }
+    out
+}
+
+fn source_of_dep(val: &toml::Value) -> Option<GossamerPatchSource> {
+    match val {
+        // `gossamer-runtime = "=0.16.0"` - crates.io.
+        toml::Value::String(_) => Some(GossamerPatchSource::CratesIo),
+        toml::Value::Table(t) => {
+            if let Some(git) = t.get("git").and_then(toml::Value::as_str) {
+                Some(GossamerPatchSource::Git(git.to_string()))
+            } else if t.contains_key("path") {
+                None
+            } else if t.contains_key("version") {
+                Some(GossamerPatchSource::CratesIo)
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
 }
 
 fn render_bindings(
@@ -1212,6 +1345,125 @@ mod tests {
                 .ends_with("echo")
         );
         assert!(runner.workdir.starts_with(&cache));
+    }
+
+    /// Writes a minimal binding crate at `dir/<name>` whose Cargo.toml
+    /// declares the supplied `gossamer-*` dependency lines, returning
+    /// the crate directory.
+    fn write_binding_crate(dir: &Path, name: &str, gossamer_deps: &str) -> PathBuf {
+        let crate_dir = dir.join(name);
+        fs::create_dir_all(crate_dir.join("src")).unwrap();
+        let cargo = format!(
+            "[package]\nname = \"{name}\"\nversion = \"0.0.1\"\nedition = \"2024\"\n\n[dependencies]\n{gossamer_deps}\n"
+        );
+        fs::write(crate_dir.join("Cargo.toml"), cargo).unwrap();
+        fs::write(crate_dir.join("src").join("lib.rs"), "").unwrap();
+        crate_dir
+    }
+
+    fn path_binding_manifest(name: &str) -> Manifest {
+        let body = format!(
+            "[project]\nid = \"example.com/p\"\nversion = \"0.1.0\"\n\n[rust-bindings]\n{name} = {{ path = \"./{name}\" }}\n"
+        );
+        Manifest::parse(&body).unwrap()
+    }
+
+    #[test]
+    fn detect_patch_sources_reads_crates_io_gossamer_dep() {
+        let dir = tempdir();
+        write_binding_crate(&dir, "sqlite", "gossamer-runtime = \"=0.16.0\"");
+        let m = path_binding_manifest("sqlite");
+        let sources = detect_patch_sources(&m.rust_bindings, &dir);
+        assert_eq!(sources, vec![GossamerPatchSource::CratesIo]);
+    }
+
+    #[test]
+    fn detect_patch_sources_reads_git_gossamer_dep() {
+        let dir = tempdir();
+        write_binding_crate(
+            &dir,
+            "sqlite",
+            "gossamer-runtime = { git = \"https://github.com/dpup/gossamer\", tag = \"v0.16.0\" }",
+        );
+        let m = path_binding_manifest("sqlite");
+        let sources = detect_patch_sources(&m.rust_bindings, &dir);
+        assert_eq!(
+            sources,
+            vec![GossamerPatchSource::Git(
+                "https://github.com/dpup/gossamer".to_string()
+            )]
+        );
+    }
+
+    #[test]
+    fn detect_patch_sources_skips_path_gossamer_dep() {
+        let dir = tempdir();
+        write_binding_crate(
+            &dir,
+            "sqlite",
+            "gossamer-runtime = { path = \"../../gossamer/crates/gossamer-runtime\" }",
+        );
+        let m = path_binding_manifest("sqlite");
+        let sources = detect_patch_sources(&m.rust_bindings, &dir);
+        assert!(sources.is_empty(), "path deps need no patch: {sources:?}");
+    }
+
+    #[test]
+    fn detect_patch_sources_defaults_crates_io_for_non_path_binding() {
+        let body = "[project]\nid = \"example.com/p\"\nversion = \"0.1.0\"\n\n[rust-bindings]\nsqlite = { version = \"0.16.0\" }\n";
+        let m = Manifest::parse(body).unwrap();
+        let sources = detect_patch_sources(&m.rust_bindings, &std::env::temp_dir());
+        assert_eq!(sources, vec![GossamerPatchSource::CratesIo]);
+    }
+
+    #[test]
+    fn detect_patch_sources_defaults_crates_io_for_git_binding() {
+        let body = "[project]\nid = \"example.com/p\"\nversion = \"0.1.0\"\n\n[rust-bindings]\nsqlite = { git = \"https://example.com/sqlite-binding\" }\n";
+        let m = Manifest::parse(body).unwrap();
+        let sources = detect_patch_sources(&m.rust_bindings, &std::env::temp_dir());
+        assert_eq!(sources, vec![GossamerPatchSource::CratesIo]);
+    }
+
+    #[test]
+    fn gossamer_dep_with_range_requirement_is_crates_io() {
+        // A binding may use any crates.io version requirement the toolchain
+        // version satisfies - `>=X.Y.Z` is preferred over an exact pin so it
+        // survives `gos` upgrades. It still resolves through `[patch.crates-io]`.
+        let sources = gossamer_sources_from_manifest_text(
+            "[dependencies]\ngossamer-runtime = \">=0.16.0\"\n",
+        );
+        assert_eq!(sources, vec![GossamerPatchSource::CratesIo]);
+        assert_eq!(
+            source_of_dep(&toml::Value::String(">=0.16.0".to_string())),
+            Some(GossamerPatchSource::CratesIo)
+        );
+    }
+
+    #[test]
+    fn runner_manifest_contains_patch_block_for_crates_io_binding() {
+        let cache = tempdir();
+        let manifest_dir = tempdir();
+        write_binding_crate(&manifest_dir, "sqlite", "gossamer-runtime = \"=0.16.0\"");
+        let m = path_binding_manifest("sqlite");
+        let root = tempdir();
+        let runner =
+            BindingRunner::from_manifest_in(&m, &manifest_dir, &root, Profile::Debug, &cache)
+                .unwrap()
+                .expect("runner");
+        let rendered = render_cargo_toml(&runner.render_input(TmplProfile::Debug));
+        assert!(
+            rendered.contains("[patch.crates-io]"),
+            "runner manifest missing patch table:\n{rendered}"
+        );
+        let runtime_line = format!(
+            "gossamer-runtime = {{ path = '{}/crates/gossamer-runtime' }}",
+            root.display()
+        );
+        assert!(
+            rendered.contains(&runtime_line),
+            "runner manifest missing runtime redirect:\n{rendered}"
+        );
+        let _: toml::Value = toml::from_str(&rendered).expect("rendered runner Cargo.toml parses");
     }
 
     #[test]

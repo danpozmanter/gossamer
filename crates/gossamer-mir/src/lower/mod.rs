@@ -227,6 +227,20 @@ pub fn lower_program(program: &HirProgram, tcx: &mut TyCtxt) -> Vec<Body> {
             }
         }
     }
+    // RC retain/release last-use elision (item 3) is implemented and unit
+    // tested but kept OFF the body pipeline: its conservative escape gate
+    // never cancels a pair on the real corpus (no benefit), while the
+    // compiled tiers double-free at teardown when it does fire (a balanced
+    // pair that is load-bearing for a value reached again at scope end). It
+    // re-enables once the gate is driven by the true SHARED_BIT / goroutine
+    // boundary rather than the intraprocedural escape set.
+    if false {
+        let capture_summary = crate::escape::build_capture_summary(&bodies);
+        for body in &mut bodies {
+            let escape = crate::escape::analyse_with_summary(body, &capture_summary);
+            crate::opt::elide_redundant_rc_pairs(body, &escape, tcx);
+        }
+    }
     #[cfg(debug_assertions)]
     crate::verify::debug_verify_program(&bodies, tcx);
     bodies

@@ -1,0 +1,70 @@
+// Methods, for-loops, and match arms that consume a stdlib/method-call
+// temporary directly (not via a `let` binding). The checker leaves these
+// call results as inference vars, so each tier must recover the real
+// element / payload type from the lowered value - otherwise the compiled
+// tiers render a `[String]` element's pointer bits instead of the string.
+
+use std::collections::HashMap
+
+fn main() {
+    let words = ["alpha", "beta", "gamma"]
+
+    // Type-guarded Vec method on a chained temporary.
+    println!("{}", words.reversed().first().unwrap())
+
+    // first / last unwrap on a [String] literal.
+    println!("{}", words.first().unwrap())
+    println!("{}", words.last().unwrap())
+
+    // match / if let directly on the method-call temporary.
+    match words.first() {
+        Some(s) => println!("first={}", s),
+        None => println!("none"),
+    }
+    if let Some(s) = words.last() {
+        println!("last={}", s)
+    }
+
+    // for-loop over String-producing temporaries.
+    for w in "one two three".split_whitespace() {
+        println!("w={}", w)
+    }
+    for part in "a-b-c".splitn(2, "-") {
+        println!("p={}", part)
+    }
+    for w in words.reversed() {
+        println!("r={}", w)
+    }
+    for w in "x y".split(" ").to_vec() {
+        println!("t={}", w)
+    }
+
+    // Numeric element type is preserved (not forced to String).
+    let nums = [10, 20, 30]
+    println!("{}", nums.reversed().first().unwrap())
+    for n in nums.reversed() {
+        println!("n={}", n)
+    }
+
+    // String sort orders by value, not by element pointer address.
+    let mut letters = ["delta", "alpha", "charlie", "bravo"]
+    letters.sort()
+    for w in letters {
+        println!("s={}", w)
+    }
+    let mut ints = [3, 1, 2]
+    ints.sort()
+    println!("{}", ints.first().unwrap())
+
+    // HashMap pop mutates in place and returns Option<V>; the map's
+    // other entries survive.
+    let mut table: HashMap<String, i64> = HashMap::new()
+    table.insert("x", 1)
+    table.insert("y", 2)
+    match table.pop("x") {
+        Some(v) => println!("popped={}", v),
+        None => println!("popped=none"),
+    }
+    println!("len={}", table.len())
+    println!("y={}", table.get("y").unwrap_or(-1))
+}

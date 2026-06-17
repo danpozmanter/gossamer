@@ -242,7 +242,9 @@ impl<'a> Lowerer<'a> {
             | ConcatKind::ArrBool(_)
             | ConcatKind::ArrString(_)
             | ConcatKind::JsonValue
-            | ConcatKind::ErrorMessage) => Ok(self.emit_aggregate_format(kind, &value)),
+            | ConcatKind::ErrorMessage
+            | ConcatKind::Tuple
+            | ConcatKind::Map) => self.emit_concat_aggregate(arg, kind, &value),
             ConcatKind::Unsupported => unreachable!("checked above"),
         }
     }
@@ -547,6 +549,14 @@ impl<'a> Lowerer<'a> {
             && is_primitive_int_llvm(&self.operand_llvm_ty(&args[2]))
         {
             self.lower_vec_set_i64_inline(args, destination, target)?;
+            return Ok(());
+        }
+        // The MIR emits this only from the bounds-check elision of a
+        // counted loop, where the index is proven in `[0, len)` and the
+        // receiver non-null. Inline it without the null / bounds guard so
+        // the inner loop is a straight store.
+        if name == "gos_rt_vec_set_i64_unchecked" && args.len() == 3 {
+            self.lower_vec_set_i64_unchecked_inline(args, destination, target)?;
             return Ok(());
         }
         // NOTE: gos_rt_vec_get_ptr is intentionally NOT inlined - its result

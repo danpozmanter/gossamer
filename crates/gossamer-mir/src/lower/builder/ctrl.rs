@@ -123,6 +123,7 @@ impl<'a> Builder<'a> {
                 || matches!(
                     arm.pattern.kind,
                     HirPatKind::Tuple(_)
+                        | HirPatKind::Slice { .. }
                         | HirPatKind::Or(_)
                         | HirPatKind::Struct { .. }
                         | HirPatKind::Range { .. }
@@ -661,6 +662,11 @@ impl<'a> Builder<'a> {
                 }
                 Some(acc)
             }
+            HirPatKind::Slice {
+                prefix,
+                rest,
+                suffix,
+            } => self.lower_slice_pattern(scrutinee, prefix, rest.as_deref(), suffix, span),
             HirPatKind::Or(branches) => {
                 // Disjunction across branch predicates. Each branch
                 // contributes its own match check; their bool
@@ -1523,6 +1529,218 @@ impl<'a> Builder<'a> {
         }
     }
 
+    /// Desugars a slice pattern `[p.., ..rest, ..q]` matched against a
+    /// `Vec`/`Slice`/`Array` scrutinee into a length guard plus
+    /// per-element binds. Prefix elements read `xs[i]`, suffix elements
+    /// read `xs[len - n_suffix + j]`, and a `..rest` binding captures
+    /// `xs.slice(n_prefix, len - n_suffix)`. The returned local holds
+    /// the conjoined boolean match predicate.
+    fn lower_slice_pattern(
+        &mut self,
+        scrutinee: Local,
+        prefix: &[HirPat],
+        rest: Option<&HirPat>,
+        suffix: &[HirPat],
+        span: Span,
+    ) -> Option<Local> {
+        use gossamer_types::TyKind;
+        let bool_ty = self.tcx.bool_ty();
+        let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+        let elem_ty = {
+            let mut base = self.locals[scrutinee.0 as usize].ty;
+            while let TyKind::Ref { inner, .. } = self.tcx.kind_of(base) {
+                base = *inner;
+            }
+            match self.tcx.kind_of(base) {
+                TyKind::Vec(e) | TyKind::Slice(e) | TyKind::Array { elem: e, .. } => *e,
+                _ => i64_ty,
+            }
+        };
+        // len = gos_rt_vec_len(scrutinee)
+        let len_local = self.fresh(i64_ty);
+        let next = self.new_block(span);
+        self.terminate(Terminator::Call {
+            callee: Operand::Const(ConstValue::Str("gos_rt_vec_len".to_string())),
+            args: vec![Operand::Copy(Place::local(scrutinee))],
+            destination: Place::local(len_local),
+            target: Some(next),
+        });
+        self.set_current(next);
+
+        let n_prefix = prefix.len() as i128;
+        let n_suffix = suffix.len() as i128;
+        // Length predicate: `len >= n_prefix + n_suffix` with a `..`,
+        // `len == n_prefix` for a fixed-length slice.
+        let mut acc = self.fresh(bool_ty);
+        let bound_local = self.fresh(i64_ty);
+        if rest.is_some() {
+            self.emit_assign(
+                Place::local(bound_local),
+                Rvalue::Use(Operand::Const(ConstValue::Int(n_prefix + n_suffix))),
+                span,
+            );
+            self.emit_assign(
+                Place::local(acc),
+                Rvalue::BinaryOp {
+                    op: BinOp::Ge,
+                    lhs: Operand::Copy(Place::local(len_local)),
+                    rhs: Operand::Copy(Place::local(bound_local)),
+                },
+                span,
+            );
+        } else {
+            self.emit_assign(
+                Place::local(bound_local),
+                Rvalue::Use(Operand::Const(ConstValue::Int(n_prefix))),
+                span,
+            );
+            self.emit_assign(
+                Place::local(acc),
+                Rvalue::BinaryOp {
+                    op: BinOp::Eq,
+                    lhs: Operand::Copy(Place::local(len_local)),
+                    rhs: Operand::Copy(Place::local(bound_local)),
+                },
+                span,
+            );
+        }
+        // Prefix elements: `xs[i]`.
+        for (i, sub) in prefix.iter().enumerate() {
+            let idx_local = self.fresh(i64_ty);
+            self.emit_assign(
+                Place::local(idx_local),
+                Rvalue::Use(Operand::Const(ConstValue::Int(i as i128))),
+                span,
+            );
+            let elem_local = self.emit_vec_get(scrutinee, idx_local, elem_ty, span);
+            let sub_pred = self.lower_pattern_predicate(elem_local, sub, span)?;
+            acc = self.and_bool(acc, sub_pred, span);
+        }
+        // Suffix elements: `xs[len - n_suffix + j]`.
+        for (j, sub) in suffix.iter().enumerate() {
+            let offset_local = self.fresh(i64_ty);
+            self.emit_assign(
+                Place::local(offset_local),
+                Rvalue::Use(Operand::Const(ConstValue::Int(j as i128 - n_suffix))),
+                span,
+            );
+            let idx_local = self.fresh(i64_ty);
+            self.emit_assign(
+                Place::local(idx_local),
+                Rvalue::BinaryOp {
+                    op: BinOp::Add,
+                    lhs: Operand::Copy(Place::local(len_local)),
+                    rhs: Operand::Copy(Place::local(offset_local)),
+                },
+                span,
+            );
+            let elem_local = self.emit_vec_get(scrutinee, idx_local, elem_ty, span);
+            let sub_pred = self.lower_pattern_predicate(elem_local, sub, span)?;
+            acc = self.and_bool(acc, sub_pred, span);
+        }
+        // `..rest` binding: `xs.slice(n_prefix, len - n_suffix)`.
+        if let Some(rest) = rest {
+            if let HirPatKind::Binding { name, mutable } = &rest.kind {
+                let lo_local = self.fresh(i64_ty);
+                self.emit_assign(
+                    Place::local(lo_local),
+                    Rvalue::Use(Operand::Const(ConstValue::Int(n_prefix))),
+                    span,
+                );
+                let hi_offset = self.fresh(i64_ty);
+                self.emit_assign(
+                    Place::local(hi_offset),
+                    Rvalue::Use(Operand::Const(ConstValue::Int(-n_suffix))),
+                    span,
+                );
+                let hi_local = self.fresh(i64_ty);
+                self.emit_assign(
+                    Place::local(hi_local),
+                    Rvalue::BinaryOp {
+                        op: BinOp::Add,
+                        lhs: Operand::Copy(Place::local(len_local)),
+                        rhs: Operand::Copy(Place::local(hi_offset)),
+                    },
+                    span,
+                );
+                let rest_ty = match self.tcx.kind_of(rest.ty) {
+                    TyKind::Vec(_) | TyKind::Slice(_) => rest.ty,
+                    _ => self.tcx.intern(TyKind::Vec(elem_ty)),
+                };
+                let rest_local =
+                    self.push_local(rest_ty, Some(Ident::new(name.name.as_str())), *mutable);
+                let after = self.new_block(span);
+                self.terminate(Terminator::Call {
+                    callee: Operand::Const(ConstValue::Str("gos_rt_vec_slice".to_string())),
+                    args: vec![
+                        Operand::Copy(Place::local(scrutinee)),
+                        Operand::Copy(Place::local(lo_local)),
+                        Operand::Copy(Place::local(hi_local)),
+                    ],
+                    destination: Place::local(rest_local),
+                    target: Some(after),
+                });
+                self.set_current(after);
+                self.bind_local(name.name.as_str(), rest_local);
+            }
+        }
+        Some(acc)
+    }
+
+    /// Reads `xs[index]` for a `Vec`/`Slice` scrutinee, choosing the
+    /// runtime accessor that matches the element's slot shape, and
+    /// returns the destination local (pinned to `elem_ty`).
+    fn emit_vec_get(&mut self, base: Local, index: Local, elem_ty: Ty, span: Span) -> Local {
+        use gossamer_types::TyKind;
+        let elem_is_result_option = matches!(
+            self.tcx.kind_of(elem_ty),
+            TyKind::Adt { def, .. } if def.local == u32::MAX || def.local == u32::MAX - 1
+        );
+        let elem_is_multislot = matches!(
+            self.tcx.kind_of(elem_ty),
+            TyKind::Tuple(_) | TyKind::Adt { .. } | TyKind::Array { .. }
+        ) && self.type_slot_bytes(elem_ty) > 8;
+        let helper = if elem_is_result_option {
+            "gos_rt_vec_get_i128"
+        } else if elem_is_multislot {
+            "gos_rt_vec_get_ptr"
+        } else {
+            "gos_rt_vec_get_i64"
+        };
+        let dest = self.fresh(elem_ty);
+        let next = self.new_block(span);
+        self.terminate(Terminator::Call {
+            callee: Operand::Const(ConstValue::Str(helper.to_string())),
+            args: vec![
+                Operand::Copy(Place::local(base)),
+                Operand::Copy(Place::local(index)),
+            ],
+            destination: Place::local(dest),
+            target: Some(next),
+        });
+        self.set_current(next);
+        if let Some(name) = self.struct_name_of(elem_ty) {
+            self.local_struct.insert(dest, name);
+        }
+        dest
+    }
+
+    /// Bitwise-ANDs two boolean predicate locals into a fresh local.
+    fn and_bool(&mut self, lhs: Local, rhs: Local, span: Span) -> Local {
+        let bool_ty = self.tcx.bool_ty();
+        let combined = self.fresh(bool_ty);
+        self.emit_assign(
+            Place::local(combined),
+            Rvalue::BinaryOp {
+                op: BinOp::BitAnd,
+                lhs: Operand::Copy(Place::local(lhs)),
+                rhs: Operand::Copy(Place::local(rhs)),
+            },
+            span,
+        );
+        combined
+    }
+
     pub(crate) fn lower_cast(
         &mut self,
         value: &HirExpr,
@@ -1629,7 +1847,22 @@ impl<'a> Builder<'a> {
         }
     }
 
+    /// Index into `loop_stack` of the loop a `break`/`continue` targets:
+    /// the innermost loop carrying a matching label, or the innermost
+    /// loop of any label when no label is given. `None` when no such
+    /// loop is in scope.
+    pub(crate) fn resolve_loop_target(&self, label: Option<&str>) -> Option<usize> {
+        match label {
+            None => self.loop_stack.len().checked_sub(1),
+            Some(name) => self
+                .loop_stack
+                .iter()
+                .rposition(|ctx| ctx.label.as_deref() == Some(name)),
+        }
+    }
+
     pub(crate) fn lower_while(&mut self, condition: &HirExpr, body: &HirExpr, span: Span) {
+        let label = self.pending_loop_label.take();
         let header = self.new_block(span);
         let body_block = self.new_block(span);
         let exit = self.new_block(span);
@@ -1664,6 +1897,7 @@ impl<'a> Builder<'a> {
             result: None,
             break_used: false,
             defer_depth: self.defer_stack.len(),
+            label,
         });
         let _ = self.lower_expr(body);
         self.loop_stack.pop();
@@ -1730,10 +1964,16 @@ impl<'a> Builder<'a> {
     }
 
     pub(crate) fn lower_loop(&mut self, body: &HirExpr, ty: Ty, span: Span) -> Option<Local> {
+        let label = self.pending_loop_label.take();
         if let Some(for_loop) = detect_for_loop(body) {
+            // Re-arm the pending label so the for-loop fast path's
+            // `LoopContext` (pushed deep inside a `lower_for_*` helper)
+            // inherits it; clear it again if no fast path fires.
+            self.pending_loop_label.clone_from(&label);
             if let Some(result) = self.try_lower_for_loop(&for_loop, span) {
                 return Some(result);
             }
+            self.pending_loop_label = None;
         }
         let header = self.new_block(span);
         let exit = self.new_block(span);
@@ -1750,6 +1990,7 @@ impl<'a> Builder<'a> {
             result: Some(result_local),
             break_used: false,
             defer_depth: self.defer_stack.len(),
+            label,
         });
         let _ = self.lower_expr(body);
         let ctx = self.loop_stack.pop().expect("loop stack underflow");
@@ -1760,6 +2001,38 @@ impl<'a> Builder<'a> {
         } else {
             None
         }
+    }
+
+    /// Best-effort element type for a `for x in <iter>` iterable whose HIR
+    /// type the checker left unresolved (stdlib call results are often a
+    /// `Var`). Walks the common Vec-producing shapes - a concrete
+    /// Vec/Slice/Array type, the String split/lines family, `chars`, and the
+    /// element-preserving `reversed`/`to_vec`/`clone` adapters (recursing into
+    /// their receiver) - so the loop binds the right element type across every
+    /// tier instead of defaulting to i64 and iterating heap pointers.
+    pub(crate) fn for_loop_elem_ty(&mut self, iter: &HirExpr) -> Option<Ty> {
+        use gossamer_types::TyKind;
+        let mut ty = self
+            .receiver_local_from_path(iter)
+            .map_or(iter.ty, |l| self.locals[l.0 as usize].ty);
+        while let TyKind::Ref { inner, .. } = self.tcx.kind_of(ty) {
+            ty = *inner;
+        }
+        match self.tcx.kind_of(ty) {
+            TyKind::Vec(elem) | TyKind::Slice(elem) | TyKind::Array { elem, .. } => {
+                return Some(*elem);
+            }
+            _ => {}
+        }
+        if let HirExprKind::MethodCall { name, receiver, .. } = &iter.kind {
+            return match name.name.as_str() {
+                "split" | "splitn" | "split_whitespace" | "lines" => Some(self.tcx.string_ty()),
+                "chars" => Some(self.tcx.intern(TyKind::Char)),
+                "reversed" | "to_vec" | "clone" => self.for_loop_elem_ty(receiver),
+                _ => None,
+            };
+        }
+        None
     }
 
     pub(crate) fn try_lower_for_loop(
@@ -2038,10 +2311,25 @@ impl<'a> Builder<'a> {
                 }
                 if for_vec_elem.is_none() {
                     if let HirExprKind::MethodCall { name, .. } = &for_loop.iter_expr.kind {
-                        if matches!(name.name.as_str(), "split" | "lines") {
+                        if matches!(
+                            name.name.as_str(),
+                            "split" | "splitn" | "split_whitespace" | "lines"
+                        ) {
                             for_vec_elem = Some(self.tcx.string_ty());
                         } else if name.name.as_str() == "chars" {
                             for_vec_elem = Some(self.tcx.intern(gossamer_types::TyKind::Char));
+                        }
+                    }
+                }
+                // Element-preserving Vec adapters (`xs.reversed()`,
+                // `xs.to_vec()`, `xs.clone()`) consumed directly as the
+                // iterable carry a `Var` HIR type; recover the element type
+                // from the adapter's receiver so the loop binds it correctly.
+                if for_vec_elem.is_none() {
+                    if let HirExprKind::MethodCall { name, receiver, .. } = &for_loop.iter_expr.kind
+                    {
+                        if matches!(name.name.as_str(), "reversed" | "to_vec" | "clone") {
+                            for_vec_elem = self.for_loop_elem_ty(receiver);
                         }
                     }
                 }

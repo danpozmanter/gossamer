@@ -55,6 +55,7 @@ impl<'tcx> FnBuilder<'tcx> {
         // Loop-invariant literal operands get hoisted above
         // `loop_start` so the LoadConst ops don't re-execute
         // per iteration.
+        let label = self.pending_loop_label.take();
         let hoisted = self.try_hoist_condition_literals(condition)?;
         let loop_start = self.cur_idx();
         let exit_patch = if let Some((lhs_reg, rhs_reg, op, kind)) = hoisted {
@@ -75,6 +76,7 @@ impl<'tcx> FnBuilder<'tcx> {
             continue_patches: Vec::new(),
             result_reg: result,
             defer_depth: self.defer_stack.len(),
+            label,
         });
         let _ = self.compile_expr(body)?;
         self.emit(Op::Jump { target: loop_start });
@@ -97,6 +99,7 @@ impl<'tcx> FnBuilder<'tcx> {
     }
 
     pub(crate) fn compile_loop(&mut self, body: &HirExpr) -> RuntimeResult<Reg> {
+        let label = self.pending_loop_label.take();
         let loop_start = self.cur_idx();
         let result = self.alloc_reg();
         self.loop_stack.push(LoopCtx {
@@ -104,6 +107,7 @@ impl<'tcx> FnBuilder<'tcx> {
             continue_patches: Vec::new(),
             result_reg: result,
             defer_depth: self.defer_stack.len(),
+            label,
         });
         let _ = self.compile_expr(body)?;
         self.emit(Op::Jump { target: loop_start });
@@ -135,16 +139,20 @@ impl<'tcx> FnBuilder<'tcx> {
         Ok(reg)
     }
 
-    pub(crate) fn compile_break(&mut self, value: Option<&HirExpr>) -> RuntimeResult<Reg> {
+    pub(crate) fn compile_break(
+        &mut self,
+        value: Option<&HirExpr>,
+        label: Option<&str>,
+    ) -> RuntimeResult<Reg> {
         let reg = match value {
             Some(value) => self.compile_expr(value)?,
             None => self.load_unit(),
         };
+        let idx = self
+            .resolve_loop_target(label)
+            .ok_or(RuntimeError::Unsupported("break outside of loop"))?;
         let (result_reg, defer_depth) = {
-            let ctx = self
-                .loop_stack
-                .last()
-                .ok_or(RuntimeError::Unsupported("break outside of loop"))?;
+            let ctx = &self.loop_stack[idx];
             (ctx.result_reg, ctx.defer_depth)
         };
         self.emit(Op::Move {
@@ -155,11 +163,20 @@ impl<'tcx> FnBuilder<'tcx> {
         // nested blocks), but not the loop's enclosing frames.
         self.emit_defers_above(defer_depth)?;
         let patch = self.emit(Op::Jump { target: 0 });
-        self.loop_stack
-            .last_mut()
-            .expect("loop ctx")
-            .break_patches
-            .push(patch);
+        self.loop_stack[idx].break_patches.push(patch);
         Ok(reg)
+    }
+
+    /// Index into `loop_stack` of the loop a `break`/`continue` targets:
+    /// the innermost loop carrying a matching label, or the innermost
+    /// loop of any label when no label is given.
+    pub(crate) fn resolve_loop_target(&self, label: Option<&str>) -> Option<usize> {
+        match label {
+            None => self.loop_stack.len().checked_sub(1),
+            Some(name) => self
+                .loop_stack
+                .iter()
+                .rposition(|ctx| ctx.label.as_deref() == Some(name)),
+        }
     }
 }

@@ -22,9 +22,9 @@ Names available without any import - the print macros, `min`/`max`/`clamp`, `spa
 | [`std::collections`](#stdcollections) | 6 | Built-in container types. |
 | [`std::collections::deque`](#stdcollectionsdeque) | 7 | Double-ended queue over Vec<i64>. Re-bind shape on every mutator. |
 | [`std::collections::heap`](#stdcollectionsheap) | 4 | Binary min-heap (priority queue) over Vec<i64>. Re-bind shape: `let h = heap::push(h, v)`. |
-| [`std::collections::ordered_map`](#stdcollectionsorderedmap) | 5 | Sorted key/value map (i64 -> i64) backed by a flat pair Vec. Re-bind on every mutator. |
-| [`std::collections::ordered_set`](#stdcollectionsorderedset) | 4 | Sorted set of i64 with binary-search lookups. Re-bind shape on every mutator. |
-| [`std::collections::ordered_vec`](#stdcollectionsorderedvec) | 7 | Sorted-on-insert Vec<i64> with binary-search lookups. |
+| [`std::collections::ordered_map`](#stdcollectionsordered_map) | 5 | Sorted key/value map (i64 -> i64) backed by a flat pair Vec. Re-bind on every mutator. |
+| [`std::collections::ordered_set`](#stdcollectionsordered_set) | 4 | Sorted set of i64 with binary-search lookups. Re-bind shape on every mutator. |
+| [`std::collections::ordered_vec`](#stdcollectionsordered_vec) | 7 | Sorted-on-insert Vec<i64> with binary-search lookups. |
 | [`std::collections::queue`](#stdcollectionsqueue) | 4 | FIFO queue over Vec<i64>. Re-bind shape: `let q = queue::push(q, v)`. |
 | [`std::collections::stack`](#stdcollectionsstack) | 4 | LIFO stack over Vec<i64>. Re-bind shape: `let s = stack::push(s, v)`. |
 | [`std::compress::bzip2`](#stdcompressbzip2) | 2 | bzip2 encoder / decoder (BZh format). |
@@ -74,16 +74,16 @@ Names available without any import - the print macros, `min`/`max`/`clamp`, `spa
 | [`std::http::health`](#stdhttphealth) | 5 | Liveness / readiness probes for HTTP health endpoints. |
 | [`std::http::middleware`](#stdhttpmiddleware) | 11 | Composable middleware: logger, recoverer, request_id, cors, basic_auth, compress_gzip. |
 | [`std::http::multipart`](#stdhttpmultipart) | 7 | RFC 7578 multipart/form-data streaming parser. |
-| [`std::http::native_client`](#stdhttpnativeclient) | 6 | Goroutine-driven HTTP/1.1 client over std::net (no ureq, no blocking pool). |
+| [`std::http::native_client`](#stdhttpnative_client) | 6 | Goroutine-driven HTTP/1.1 client over std::net (no ureq, no blocking pool). |
 | [`std::http::proxy`](#stdhttpproxy) | 3 | Reverse proxy on top of http::Client. Director-style request mutator + hop-by-hop strip + error handler. |
 | [`std::http::query`](#stdhttpquery) | 1 | Typed wrapper over URL query strings. |
 | [`std::http::router`](#stdhttprouter) | 6 | Go 1.22-class ServeMux: method-aware path patterns with parameter captures + prefix routes. |
 | [`std::http::session`](#stdhttpsession) | 6 | Signed-cookie session store with pluggable backend trait. |
 | [`std::http::sse`](#stdhttpsse) | 6 | Server-Sent Events (text/event-stream) emitter with heartbeat ticks and retry hint. |
 | [`std::http::state`](#stdhttpstate) | 2 | Handler-side dependency injection via a typed AppState. |
-| [`std::http::static_files`](#stdhttpstaticfiles) | 3 | Caching static-file handler: ETag, Last-Modified, byte ranges, MIME sniff. |
+| [`std::http::static_files`](#stdhttpstatic_files) | 3 | Caching static-file handler: ETag, Last-Modified, byte ranges, MIME sniff. |
 | [`std::http::websocket`](#stdhttpwebsocket) | 6 | RFC 6455 WebSocket support. Server-side accept + send_text / send_binary / ping / pong / close. |
-| [`std::http_h3`](#stdhttph3) | 4 | First-party HTTP/3 server + client over QUIC (RFC 9114; quinn + h3). Each `serve` and `Client` instance owns a private tokio runtime; callers see only synchronous entry points. |
+| [`std::http_h3`](#stdhttp_h3) | 4 | First-party HTTP/3 server + client over QUIC (RFC 9114; quinn + h3). Each `serve` and `Client` instance owns a private tokio runtime; callers see only synchronous entry points. |
 | [`std::io`](#stdio) | 10 | Stream-oriented I/O abstractions. |
 | [`std::iter`](#stditer) | 16 | Sequence adapters over Vec<T>: map, filter, fold, zip, enumerate, chain, etc. |
 | [`std::jwt`](#stdjwt) | 10 | RFC 7519 sign / verify for HS256 / HS384 / HS512, ES256, and EdDSA tokens. |

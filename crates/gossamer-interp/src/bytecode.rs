@@ -757,6 +757,14 @@ pub enum Op {
     EqI64 { dst_v: Reg, lhs_i: Reg, rhs_i: Reg },
     /// `registers[dst_v] = Bool(ints[lhs_i] != ints[rhs_i])`.
     NeI64 { dst_v: Reg, lhs_i: Reg, rhs_i: Reg },
+    /// Unsigned `registers[dst_v] = Bool((ints[lhs_i] as u64) < (ints[rhs_i] as u64))`.
+    LtU64 { dst_v: Reg, lhs_i: Reg, rhs_i: Reg },
+    /// Unsigned `registers[dst_v] = Bool((ints[lhs_i] as u64) <= (ints[rhs_i] as u64))`.
+    LeU64 { dst_v: Reg, lhs_i: Reg, rhs_i: Reg },
+    /// Unsigned `registers[dst_v] = Bool((ints[lhs_i] as u64) > (ints[rhs_i] as u64))`.
+    GtU64 { dst_v: Reg, lhs_i: Reg, rhs_i: Reg },
+    /// Unsigned `registers[dst_v] = Bool((ints[lhs_i] as u64) >= (ints[rhs_i] as u64))`.
+    GeU64 { dst_v: Reg, lhs_i: Reg, rhs_i: Reg },
     /// Bitwise `ints[dst_i] = ints[lhs_i] & ints[rhs_i]`.
     BitAndI64 { dst_i: Reg, lhs_i: Reg, rhs_i: Reg },
     /// Bitwise `ints[dst_i] = ints[lhs_i] | ints[rhs_i]`.
@@ -768,6 +776,10 @@ pub enum Op {
     /// Arithmetic `ints[dst_i] = ints[lhs_i] >> (ints[rhs_i] & 63)`
     /// (matches Rust's `i64 >> i64` semantics - sign-preserving).
     ShrI64 { dst_i: Reg, lhs_i: Reg, rhs_i: Reg },
+    /// Logical `ints[dst_i] = ((ints[lhs_i] as u64) >> (ints[rhs_i] & 63)) as i64`
+    /// (matches Rust's `u64 >> u64` semantics - zero-filling). Used when
+    /// the shifted operand's declared type is unsigned.
+    ShrU64 { dst_i: Reg, lhs_i: Reg, rhs_i: Reg },
     /// `ints[dst_i] = src_v.as_int()`.
     UnboxI64 { dst_i: Reg, src_v: Reg },
     /// `registers[dst_v] = Value::Int(ints[src_i])`.

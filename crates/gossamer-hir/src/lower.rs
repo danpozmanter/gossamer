@@ -421,6 +421,10 @@ impl Lowerer<'_> {
         }
     }
 
+    #[allow(
+        clippy::too_many_lines,
+        reason = "single dispatch match over every AST expression kind; splitting it would scatter the one-to-one HIR mapping"
+    )]
     fn lower_expr_kind(&mut self, expr: &AstExpr) -> HirExprKind {
         match &expr.kind {
             AstExprKind::Literal(lit) => HirExprKind::Literal(lower_literal(lit)),
@@ -467,21 +471,31 @@ impl Lowerer<'_> {
                 scrutinee: Box::new(self.lower_expr(scrutinee)),
                 arms: arms.iter().map(|arm| self.lower_match_arm(arm)).collect(),
             },
-            AstExprKind::Loop { body, .. } => HirExprKind::Loop {
+            AstExprKind::Loop { body, label } => HirExprKind::Loop {
                 body: Box::new(self.lower_expr(body)),
+                label: label.as_ref().map(|l| l.name.clone()),
             },
             AstExprKind::While {
-                condition, body, ..
+                condition,
+                body,
+                label,
             } => HirExprKind::While {
                 condition: Box::new(self.lower_expr(condition)),
                 body: Box::new(self.lower_expr(body)),
+                label: label.as_ref().map(|l| l.name.clone()),
             },
             AstExprKind::For {
                 pattern,
                 iter,
                 body,
-                ..
-            } => self.lower_for(pattern, iter, body, expr.span),
+                label,
+            } => self.lower_for(
+                pattern,
+                iter,
+                body,
+                label.as_ref().map(|l| l.name.clone()),
+                expr.span,
+            ),
             AstExprKind::Block(block) | AstExprKind::Unsafe(block) => {
                 HirExprKind::Block(self.lower_block(block, expr.span))
             }
@@ -493,10 +507,13 @@ impl Lowerer<'_> {
             AstExprKind::Return(value) => {
                 HirExprKind::Return(value.as_ref().map(|v| Box::new(self.lower_expr(v))))
             }
-            AstExprKind::Break { value, .. } => {
-                HirExprKind::Break(value.as_ref().map(|v| Box::new(self.lower_expr(v))))
-            }
-            AstExprKind::Continue { .. } => HirExprKind::Continue,
+            AstExprKind::Break { value, label } => HirExprKind::Break {
+                value: value.as_ref().map(|v| Box::new(self.lower_expr(v))),
+                label: label.as_ref().map(|l| l.name.clone()),
+            },
+            AstExprKind::Continue { label } => HirExprKind::Continue {
+                label: label.as_ref().map(|l| l.name.clone()),
+            },
             AstExprKind::Tuple(elems) => {
                 HirExprKind::Tuple(elems.iter().map(|e| self.lower_expr(e)).collect())
             }
@@ -635,6 +652,7 @@ impl Lowerer<'_> {
         pattern: &AstPat,
         iter: &AstExpr,
         body: &AstExpr,
+        label: Option<String>,
         span: Span,
     ) -> HirExprKind {
         let iter_expr = self.lower_expr(iter);
@@ -649,9 +667,9 @@ impl Lowerer<'_> {
         // inline shape that those detectors recognise.
         let needs_state_binding = self.iter_needs_state_binding(iter_ty);
         if needs_state_binding {
-            return self.lower_for_user_iter(pattern, iter_expr, body, span);
+            return self.lower_for_user_iter(pattern, iter_expr, body, label, span);
         }
-        self.lower_for_inline(pattern, iter_expr, body, span)
+        self.lower_for_inline(pattern, iter_expr, body, label, span)
     }
 
     /// Desugars `for x in iter` to the canonical `loop { match
@@ -663,6 +681,7 @@ impl Lowerer<'_> {
         pattern: &AstPat,
         iter_expr: HirExpr,
         body: &AstExpr,
+        label: Option<String>,
         span: Span,
     ) -> HirExprKind {
         let iter_ty = iter_expr.ty;
@@ -713,7 +732,7 @@ impl Lowerer<'_> {
                 args: Vec::new(),
             },
         };
-        let loop_expr = self.assemble_for_loop(pattern, next_call, body, span);
+        let loop_expr = self.assemble_for_loop(pattern, next_call, body, label, span);
         let outer_block = HirBlock {
             id: self.fresh(),
             span,
@@ -734,6 +753,7 @@ impl Lowerer<'_> {
         pattern: &AstPat,
         iter_expr: HirExpr,
         body: &AstExpr,
+        label: Option<String>,
         span: Span,
     ) -> HirExprKind {
         let next_call = HirExpr {
@@ -746,7 +766,8 @@ impl Lowerer<'_> {
                 args: Vec::new(),
             },
         };
-        self.assemble_for_loop(pattern, next_call, body, span).kind
+        self.assemble_for_loop(pattern, next_call, body, label, span)
+            .kind
     }
 
     /// Shared builder: wraps a `match scrutinee { Some(pat) =>
@@ -756,6 +777,7 @@ impl Lowerer<'_> {
         pattern: &AstPat,
         next_call: HirExpr,
         body: &AstExpr,
+        label: Option<String>,
         span: Span,
     ) -> HirExpr {
         let loop_pat = self.lower_pat(pattern);
@@ -784,7 +806,10 @@ impl Lowerer<'_> {
             id: self.fresh(),
             span,
             ty: self.tcx.never(),
-            kind: HirExprKind::Break(None),
+            kind: HirExprKind::Break {
+                value: None,
+                label: None,
+            },
         };
         let match_expr = HirExpr {
             id: self.fresh(),
@@ -825,6 +850,7 @@ impl Lowerer<'_> {
             ty: unit_ty,
             kind: HirExprKind::Loop {
                 body: Box::new(body_block),
+                label,
             },
         }
     }
@@ -1604,6 +1630,15 @@ impl Lowerer<'_> {
             AstPatKind::Tuple(parts) => {
                 HirPatKind::Tuple(parts.iter().map(|p| self.lower_pat(p)).collect())
             }
+            AstPatKind::Slice {
+                prefix,
+                rest,
+                suffix,
+            } => HirPatKind::Slice {
+                prefix: prefix.iter().map(|p| self.lower_pat(p)).collect(),
+                rest: rest.as_ref().map(|r| Box::new(self.lower_pat(r))),
+                suffix: suffix.iter().map(|p| self.lower_pat(p)).collect(),
+            },
             AstPatKind::Or(alts) => {
                 HirPatKind::Or(alts.iter().map(|p| self.lower_pat(p)).collect())
             }

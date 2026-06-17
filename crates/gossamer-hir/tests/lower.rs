@@ -192,14 +192,14 @@ fn for_loop_lowers_to_loop_plus_match() {
     let body = main.body.as_ref().unwrap();
     let tail = body.block.tail.as_ref().expect("tail present");
     match &tail.kind {
-        HirExprKind::Loop { body } => match &body.kind {
+        HirExprKind::Loop { body, .. } => match &body.kind {
             HirExprKind::Block(block) => {
                 let inner_tail = block.tail.as_ref().expect("loop tail");
                 match &inner_tail.kind {
                     HirExprKind::Match { arms, .. } => {
                         assert_eq!(arms.len(), 2);
                         match &arms[1].body.kind {
-                            HirExprKind::Break(_) => {}
+                            HirExprKind::Break { .. } => {}
                             other => panic!("None arm should break: {other:?}"),
                         }
                     }

@@ -84,10 +84,18 @@ struct LinkOptions {
 }
 
 impl LinkOptions {
-    /// On Linux release builds, prefer the static-musl link when
-    /// the rustup target is installed and the user did not opt out.
+    /// On Linux release builds, prefer the static-musl link when the
+    /// rustup target is installed and the user did not opt out. The
+    /// `MUSL_RUNTIME_LIB` bake records musl availability at CLI build
+    /// time; [`musl_runtime_available`] re-checks at link time so a
+    /// removed-since-build musl target degrades to the gnu link instead
+    /// of failing.
     fn want_static_musl(self) -> bool {
-        self.release && !self.dynamic && cfg!(target_os = "linux") && MUSL_RUNTIME_LIB.is_some()
+        self.release
+            && !self.dynamic
+            && cfg!(target_os = "linux")
+            && MUSL_RUNTIME_LIB.is_some()
+            && musl_runtime_available()
     }
 
     /// Whether to strip symbols from the linked binary. Enabled
@@ -101,6 +109,41 @@ impl LinkOptions {
 /// the rustup `x86_64-unknown-linux-musl` target wasn't installed
 /// at cli build time. Populated by `gossamer-cli/build.rs`.
 const MUSL_RUNTIME_LIB: Option<&str> = option_env!("GOSSAMER_RUNTIME_LIB_PATH_MUSL");
+
+/// rustup's self-contained musl CRT/libc directory under `sysroot`.
+fn musl_self_contained_dir(sysroot: &Path) -> PathBuf {
+    sysroot
+        .join("lib")
+        .join("rustlib")
+        .join("x86_64-unknown-linux-musl")
+        .join("lib")
+        .join("self-contained")
+}
+
+/// `true` when the rustup `x86_64-unknown-linux-musl` self-contained CRT
+/// directory exists right now. `MUSL_RUNTIME_LIB` is baked at CLI build
+/// time, but the rustup target can be removed afterward; this re-checks
+/// at link time so a stale bake falls back to the gnu link rather than
+/// failing the build. Warns once when it falls back, since the user asked
+/// (via `--release`) for the static-musl link. The result is cached - the
+/// musl state cannot change within a single `gos build`.
+fn musl_runtime_available() -> bool {
+    static AVAILABLE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *AVAILABLE.get_or_init(|| {
+        let present =
+            rustc_sysroot().is_ok_and(|sysroot| musl_self_contained_dir(&sysroot).exists());
+        if !present {
+            eprintln!(
+                "warning: the static-musl release link is unavailable \
+                 (rustup target x86_64-unknown-linux-musl is not installed); \
+                 linking dynamically against the host libc instead. Run \
+                 `rustup target add x86_64-unknown-linux-musl` to restore \
+                 self-contained release binaries."
+            );
+        }
+        present
+    })
+}
 
 /// Resolve where the linked binary should land. `--out-dir` wins
 /// when supplied; otherwise the project-relative `target/` layout
@@ -771,12 +814,7 @@ fn link_posix_static_musl(
     opts: LinkOptions,
 ) -> std::result::Result<(), NativeBuildError> {
     let sysroot = rustc_sysroot()?;
-    let self_contained = sysroot
-        .join("lib")
-        .join("rustlib")
-        .join("x86_64-unknown-linux-musl")
-        .join("lib")
-        .join("self-contained");
+    let self_contained = musl_self_contained_dir(&sysroot);
     if !self_contained.exists() {
         return Err(NativeBuildError::LinkerMissing(format!(
             "musl self-contained dir not found: {}; \

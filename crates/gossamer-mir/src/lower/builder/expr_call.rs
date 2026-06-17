@@ -562,7 +562,20 @@ impl<'a> Builder<'a> {
                             self.tcx.kind_of(expected_inner),
                             TyKind::Vec(_) | TyKind::Slice(_)
                         ) {
-                            self.coerce_array_to_vec(local, elem, len, span)
+                            // A `&[T]` parameter borrows: the caller's array
+                            // outlives the call and reclaims its element
+                            // children at its own drop. Build a non-owning
+                            // view so the coerced slice never deep-frees
+                            // those children. A by-value `Vec<T>` / `[T]`
+                            // parameter takes ownership, so keep the owning
+                            // copy.
+                            let param_is_borrow =
+                                matches!(self.tcx.kind_of(expected), TyKind::Ref { .. });
+                            if param_is_borrow {
+                                self.coerce_borrow_array_to_vec(local, elem, len, span)
+                            } else {
+                                self.coerce_array_to_vec(local, elem, len, span)
+                            }
                         } else {
                             local
                         }

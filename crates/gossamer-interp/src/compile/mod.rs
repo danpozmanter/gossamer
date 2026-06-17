@@ -482,6 +482,12 @@ pub(crate) struct FnBuilder<'tcx> {
     pub(crate) next_int_reg: u16,
     pub(crate) scopes: Vec<Scope>,
     pub(crate) loop_stack: Vec<LoopCtx>,
+    /// The label of the loop currently being compiled, set by the
+    /// `Loop` / `While` compilation site just before it descends into a
+    /// loop emitter. Each emitter takes it at entry and records it on
+    /// the `LoopCtx` it pushes, so labelled `break`/`continue` can
+    /// target the right loop. `None` for an unlabelled loop.
+    pub(crate) pending_loop_label: Option<String>,
     /// Per-block frames of `defer`red expressions, mirroring the MIR
     /// builder's `defer_stack`. `compile_block` pushes a frame on entry
     /// and emits it LIFO on a normal exit; `return` / `break` /
@@ -546,6 +552,10 @@ pub(crate) struct LoopCtx {
     /// runs on every exit edge while the loop's enclosing frames stay
     /// pending. Mirrors `gossamer-mir`'s `LoopCtx::defer_depth`.
     pub(crate) defer_depth: usize,
+    /// Loop label (without the leading apostrophe), or `None` for an
+    /// unlabelled loop. Labelled `break`/`continue` scan the stack from
+    /// the innermost outward for a matching label.
+    pub(crate) label: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -577,7 +587,7 @@ pub(crate) use inline::detect_inlinable_fn;
 fn expr_diverges(expr: &HirExpr) -> bool {
     matches!(
         expr.kind,
-        HirExprKind::Return(_) | HirExprKind::Break(_) | HirExprKind::Continue
+        HirExprKind::Return(_) | HirExprKind::Break { .. } | HirExprKind::Continue { .. }
     )
 }
 
@@ -664,6 +674,15 @@ fn pattern_has_binding(pat: &HirPat) -> bool {
         HirPatKind::Binding { .. } | HirPatKind::At { .. } => true,
         HirPatKind::Tuple(ps) | HirPatKind::Variant { fields: ps, .. } => {
             ps.iter().any(pattern_has_binding)
+        }
+        HirPatKind::Slice {
+            prefix,
+            rest,
+            suffix,
+        } => {
+            prefix.iter().any(pattern_has_binding)
+                || rest.as_deref().is_some_and(pattern_has_binding)
+                || suffix.iter().any(pattern_has_binding)
         }
         HirPatKind::Struct { fields, .. } => fields
             .iter()

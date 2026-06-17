@@ -1822,6 +1822,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_map_contains_key_str as *const u8,
         ),
         (
+            "gos_rt_map_format",
+            crate::c_abi::gos_rt_map_format as *const u8,
+        ),
+        (
             "gos_rt_map_free",
             crate::c_abi::gos_rt_map_free as *const u8,
         ),
@@ -2789,6 +2793,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
         (
             "gos_rt_vec_set_slot_children",
             crate::c_abi::vec::gos_rt_vec_set_slot_children as *const u8,
+        ),
+        (
+            "gos_rt_vec_borrow_arr",
+            crate::c_abi::vec::gos_rt_vec_borrow_arr as *const u8,
         ),
         (
             "gos_rt_map_set_blob_values",
@@ -4141,6 +4149,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_trace_tracer_start_span as *const u8,
         ),
         (
+            "gos_rt_tuple_format",
+            crate::c_abi::gos_rt_tuple_format as *const u8,
+        ),
+        (
             "gos_rt_u64_to_str",
             crate::c_abi::gos_rt_u64_to_str as *const u8,
         ),
@@ -4594,6 +4606,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_vec_set_i64 as *const u8,
         ),
         (
+            "gos_rt_vec_set_i64_unchecked",
+            crate::c_abi::gos_rt_vec_set_i64_unchecked as *const u8,
+        ),
+        (
             "gos_rt_vec_slice",
             crate::c_abi::gos_rt_vec_slice as *const u8,
         ),
@@ -4612,6 +4628,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
         (
             "gos_rt_vec_sort_i64",
             crate::c_abi::gos_rt_vec_sort_i64 as *const u8,
+        ),
+        (
+            "gos_rt_vec_sort_str",
+            crate::c_abi::gos_rt_vec_sort_str as *const u8,
         ),
         (
             "gos_rt_vec_with_capacity",

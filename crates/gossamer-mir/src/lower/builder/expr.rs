@@ -77,11 +77,19 @@ impl<'a> Builder<'a> {
                 expr.ty,
                 expr.span,
             ),
-            HirExprKind::While { condition, body } => {
+            HirExprKind::While {
+                condition,
+                body,
+                label,
+            } => {
+                self.pending_loop_label.clone_from(label);
                 self.lower_while(condition, body, expr.span);
                 Some(self.lower_unit(expr.span))
             }
-            HirExprKind::Loop { body } => self.lower_loop(body, expr.ty, expr.span),
+            HirExprKind::Loop { body, label } => {
+                self.pending_loop_label.clone_from(label);
+                self.lower_loop(body, expr.ty, expr.span)
+            }
             HirExprKind::Block(block) => self.lower_block(block),
             HirExprKind::Return(value) => {
                 if let Some(value) = value {
@@ -140,20 +148,21 @@ impl<'a> Builder<'a> {
                 self.terminate(Terminator::Return);
                 None
             }
-            HirExprKind::Break(payload) => {
-                // Jump to the innermost loop's break target. Outside
-                // a loop the resolver/typechecker is supposed to
-                // reject this; if it slips through, fall back to
-                // `Unreachable` rather than emit a dangling jump.
-                let (break_to, result_local, defer_depth) =
-                    if let Some(ctx) = self.loop_stack.last_mut() {
-                        ctx.break_used = true;
-                        (ctx.break_to, ctx.result, ctx.defer_depth)
-                    } else {
-                        self.terminate(Terminator::Unreachable);
-                        return None;
-                    };
-                if let (Some(value), Some(result)) = (payload, result_local) {
+            HirExprKind::Break { value, label } => {
+                // Jump to the target loop's break block - the labelled
+                // loop when `'l` is given, otherwise the innermost.
+                // Outside a loop (or an unknown label) the resolver is
+                // supposed to reject this; if it slips through, fall
+                // back to `Unreachable` rather than a dangling jump.
+                let Some(idx) = self.resolve_loop_target(label.as_deref()) else {
+                    self.terminate(Terminator::Unreachable);
+                    return None;
+                };
+                self.loop_stack[idx].break_used = true;
+                let break_to = self.loop_stack[idx].break_to;
+                let result_local = self.loop_stack[idx].result;
+                let defer_depth = self.loop_stack[idx].defer_depth;
+                if let (Some(value), Some(result)) = (value, result_local) {
                     if let Some(value_local) = self.lower_expr(value) {
                         self.emit_assign(
                             Place::local(result),
@@ -168,11 +177,13 @@ impl<'a> Builder<'a> {
                 self.terminate(Terminator::Goto { target: break_to });
                 None
             }
-            HirExprKind::Continue => {
-                if let Some(ctx) = self.loop_stack.last().copied() {
-                    self.emit_defers_above(ctx.defer_depth);
+            HirExprKind::Continue { label } => {
+                if let Some(idx) = self.resolve_loop_target(label.as_deref()) {
+                    let continue_to = self.loop_stack[idx].continue_to;
+                    let defer_depth = self.loop_stack[idx].defer_depth;
+                    self.emit_defers_above(defer_depth);
                     self.terminate(Terminator::Goto {
-                        target: ctx.continue_to,
+                        target: continue_to,
                     });
                 } else {
                     self.terminate(Terminator::Unreachable);
@@ -968,6 +979,56 @@ impl<'a> Builder<'a> {
         self.set_current(next);
     }
 
+    /// True when `t` resolves to `String` (peeling references).
+    fn ty_is_string(&self, t: Ty) -> bool {
+        let mut cur = t;
+        loop {
+            match self.tcx.kind_of(cur) {
+                gossamer_types::TyKind::String => return true,
+                gossamer_types::TyKind::Ref { inner, .. } => cur = *inner,
+                _ => return false,
+            }
+        }
+    }
+
+    /// If `lhs + rhs` is a String concatenation, returns the full left-nested
+    /// chain's operands left-to-right; otherwise `None`. Detection uses HIR
+    /// types only so it runs before the operands are lowered.
+    fn str_concat_chain<'h>(
+        &self,
+        lhs: &'h HirExpr,
+        rhs: &'h HirExpr,
+        result_ty: Ty,
+    ) -> Option<Vec<&'h HirExpr>> {
+        if !(self.ty_is_string(result_ty) || self.ty_is_string(lhs.ty) || self.ty_is_string(rhs.ty))
+        {
+            return None;
+        }
+        let mut parts = Vec::new();
+        self.collect_concat_operand(lhs, &mut parts);
+        self.collect_concat_operand(rhs, &mut parts);
+        Some(parts)
+    }
+
+    /// Recursively flattens a String `+` sub-expression into `parts`, or pushes
+    /// `expr` itself when it is not a String `+`.
+    fn collect_concat_operand<'h>(&self, expr: &'h HirExpr, parts: &mut Vec<&'h HirExpr>) {
+        if let HirExprKind::Binary {
+            op: HirBinaryOp::Add,
+            lhs,
+            rhs,
+        } = &expr.kind
+            && (self.ty_is_string(expr.ty)
+                || self.ty_is_string(lhs.ty)
+                || self.ty_is_string(rhs.ty))
+        {
+            self.collect_concat_operand(lhs, parts);
+            self.collect_concat_operand(rhs, parts);
+        } else {
+            parts.push(expr);
+        }
+    }
+
     pub(crate) fn lower_binary(
         &mut self,
         op: HirBinaryOp,
@@ -1024,6 +1085,35 @@ impl<'a> Builder<'a> {
             self.terminate(Terminator::Goto { target: join_block });
             self.set_current(join_block);
             return Some(result);
+        }
+        // Fold a left-nested String `+` chain (`a + b + c + ...`) into one
+        // n-ary `__concat` so the whole chain allocates a single result buffer
+        // instead of one intermediate String per operator. This reuses the
+        // same single-pass join `format!` lowers to, so it stays byte-identical
+        // across every tier. Only a >= 3-operand chain detectable from the HIR
+        // types folds here; a 2-operand `+` or an inference-shaped concat takes
+        // the pairwise path below.
+        if matches!(op, HirBinaryOp::Add)
+            && let Some(parts) = self.str_concat_chain(lhs, rhs, ty)
+            && parts.len() >= 3
+        {
+            let mut arg_operands = Vec::with_capacity(parts.len());
+            for p in parts {
+                let pl = self.lower_expr(p)?;
+                let pl = self.auto_deref_cell(pl, span);
+                arg_operands.push(Operand::Copy(Place::local(pl)));
+            }
+            let str_ty = self.tcx.string_ty();
+            let dest = self.fresh(str_ty);
+            let next = self.new_block(span);
+            self.terminate(Terminator::Call {
+                callee: Operand::Const(ConstValue::Str("__concat".to_string())),
+                args: arg_operands,
+                destination: Place::local(dest),
+                target: Some(next),
+            });
+            self.set_current(next);
+            return Some(dest);
         }
         let lhs_local = self.lower_expr(lhs)?;
         let rhs_local = self.lower_expr(rhs)?;

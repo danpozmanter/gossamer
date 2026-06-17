@@ -9,7 +9,7 @@
 //!   from the curated catalogue in this file.
 //! - `stdlib-coverage` - regenerate `docs_src/stdlib_coverage.md`
 //!   from the per-module support state recorded in
-//!   [`STDLIB_SUPPORT`].
+//!   `STDLIB_SUPPORT`.
 //! - `docs-all` - run every generator above in one invocation.
 
 #![forbid(unsafe_code)]
@@ -776,7 +776,7 @@ fn render_diagnostics_page(entries: &[(&str, &str, &str, &str)]) -> String {
 }
 
 /// Coverage state for a stdlib module across the toolchain's
-/// execution paths. Hand-curated in [`STDLIB_SUPPORT`]; updated
+/// execution paths. Hand-curated in `STDLIB_SUPPORT`; updated
 /// in PRs that wire a previously-missing item.
 #[derive(Clone, Copy)]
 struct StdlibSupport {

@@ -1,0 +1,19 @@
+// Method names shared between String and Vec (and a Vec<String> `join`)
+// dispatch by the receiver's resolved type, not name-globally, so they
+// agree across the VM, Cranelift, and LLVM tiers.
+
+use std::strings
+
+fn main() {
+    let s = "hello world"
+    let v = ["a", "b", "c"]
+    let nums = [3, 1, 2]
+
+    println!("{}", s.len())            // String length: 11
+    println!("{}", v.len())            // Vec length: 3
+    println!("{}", nums.len())         // 3
+    println!("{}", s.contains("wor"))  // String contains: true
+    println!("{}", v.contains(&"b"))   // Vec contains: true
+    println!("{}", v.join(","))        // Vec<String> join -> a,b,c
+    println!("{}", strings::join(&v, "/"))
+}

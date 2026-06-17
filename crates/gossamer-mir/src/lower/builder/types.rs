@@ -89,6 +89,7 @@ impl<'a> Builder<'a> {
             local_define_layout: HashMap::new(),
             param_locals: std::collections::HashSet::new(),
             loop_stack: Vec::new(),
+            pending_loop_label: None,
             payload_defer_block: None,
             grows_bindings: std::collections::HashSet::new(),
             grows_elem_ty: HashMap::new(),
@@ -445,6 +446,21 @@ impl<'a> Builder<'a> {
         }
     }
 
+    /// Element type of a `Vec<T>` / `[T]` / `[T; N]` receiver, peeling any
+    /// leading references. `None` when `ty` is not a sequence.
+    pub(crate) fn seq_elem_of(&self, ty: Ty) -> Option<Ty> {
+        use gossamer_types::TyKind;
+        let mut cur = ty;
+        while let TyKind::Ref { inner, .. } = self.tcx.kind_of(cur) {
+            cur = *inner;
+        }
+        match self.tcx.kind_of(cur) {
+            TyKind::Vec(e) | TyKind::Slice(e) => Some(*e),
+            TyKind::Array { elem, .. } => Some(*elem),
+            _ => None,
+        }
+    }
+
     pub(crate) fn first_generic_of(&self, ty: Ty) -> Option<Ty> {
         use gossamer_types::{GenericArg, TyKind};
         let mut cur = ty;
@@ -755,6 +771,24 @@ impl<'a> Builder<'a> {
             def: gossamer_resolve::DefId::local(u32::MAX),
             substs,
         })
+    }
+
+    /// Element type of a `Vec<T>` / `[T]` receiver (peeling a leading
+    /// `&` borrow), falling back to `i64` when the receiver is not a
+    /// vec/slice. Lets the safe Vec helpers (`slice` / `insert` /
+    /// `remove`) carry the receiver's real element type into their
+    /// `Result` so a `Vec<String>` result indexes as strings rather than
+    /// reading the heap pointer back as an i64.
+    pub(crate) fn vec_receiver_elem_ty(&mut self, recv: Ty) -> Ty {
+        use gossamer_types::TyKind;
+        let mut t = recv;
+        if let TyKind::Ref { inner, .. } = self.tcx.kind_of(t) {
+            t = *inner;
+        }
+        match self.tcx.kind_of(t) {
+            TyKind::Vec(e) | TyKind::Slice(e) => *e,
+            _ => self.tcx.int_ty(gossamer_types::IntTy::I64),
+        }
     }
 
     /// `Result<Vec<json::Value>, errors::Error>` - the shape

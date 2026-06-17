@@ -377,17 +377,21 @@ pub enum HirExprKind {
         /// Arms in source order.
         arms: Vec<HirMatchArm>,
     },
-    /// `loop { body }`.
+    /// `loop { body }`, optionally carrying a loop label `'name`.
     Loop {
         /// Body expression.
         body: Box<HirExpr>,
+        /// Optional loop label (without the leading apostrophe).
+        label: Option<String>,
     },
-    /// `while cond { body }`.
+    /// `while cond { body }`, optionally carrying a loop label `'name`.
     While {
         /// Condition.
         condition: Box<HirExpr>,
         /// Body.
         body: Box<HirExpr>,
+        /// Optional loop label (without the leading apostrophe).
+        label: Option<String>,
     },
     /// Block expression.
     Block(HirBlock),
@@ -423,10 +427,18 @@ pub enum HirExprKind {
     },
     /// `return expr?`.
     Return(Option<Box<HirExpr>>),
-    /// `break [value]`.
-    Break(Option<Box<HirExpr>>),
-    /// `continue`.
-    Continue,
+    /// `break ['label] [value]`.
+    Break {
+        /// Optional value returned from a `loop`.
+        value: Option<Box<HirExpr>>,
+        /// Optional target loop label (without the leading apostrophe).
+        label: Option<String>,
+    },
+    /// `continue ['label]`.
+    Continue {
+        /// Optional target loop label (without the leading apostrophe).
+        label: Option<String>,
+    },
     /// Tuple literal.
     Tuple(Vec<HirExpr>),
     /// Array literal (explicit or repeat form).
@@ -586,6 +598,19 @@ pub enum HirPatKind {
     Literal(HirLiteral),
     /// Tuple pattern.
     Tuple(Vec<HirPat>),
+    /// Slice pattern `[p0, .., pN]`. `prefix` binds the leading
+    /// elements, `suffix` the trailing elements (indexed from the end),
+    /// and `rest` is `Some` when a `..` was written - bound to a
+    /// sub-slice when it is a binding pattern, `None` for a
+    /// fixed-length slice pattern.
+    Slice {
+        /// Element patterns before the `..` rest.
+        prefix: Vec<HirPat>,
+        /// The `..` rest binding, or `None` when no `..` is present.
+        rest: Option<Box<HirPat>>,
+        /// Element patterns after the `..` rest.
+        suffix: Vec<HirPat>,
+    },
     /// Enum variant or tuple-struct pattern.
     Variant {
         /// Variant name (last path segment).

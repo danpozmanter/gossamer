@@ -1,0 +1,73 @@
+// Labelled loops: `break 'l` / `continue 'l` target an outer loop by
+// label. Covers labelled `for`, `while`, and `loop` plus a labelled
+// `break value` from a `loop`. Output must be bit-identical across the
+// bytecode VM, the Cranelift JIT, and the LLVM AOT tiers.
+
+fn first_factor_pair(target: i64, limit: i64) -> (i64, i64) {
+    let mut result = (0, 0)
+    'outer: for i in 1..limit {
+        for j in 1..limit {
+            if i * j == target {
+                result = (i, j)
+                break 'outer
+            }
+        }
+    }
+    result
+}
+
+fn count_skipping(rows: i64, cols: i64) -> i64 {
+    let mut count = 0
+    'rows: for _i in 0..rows {
+        for j in 0..cols {
+            if j == cols - 1 {
+                continue 'rows
+            }
+            count += 1
+        }
+    }
+    count
+}
+
+fn labelled_loop_value() -> i64 {
+    let mut n = 0
+    'lp: loop {
+        n += 1
+        if n > 3 {
+            break 'lp n * 10
+        }
+    }
+}
+
+fn labelled_while_break(stop: i64) -> i64 {
+    let mut w = 0
+    'w: while w < 100 {
+        w += 1
+        if w == stop {
+            break 'w
+        }
+    }
+    w
+}
+
+fn nested_continue_outer() -> i64 {
+    let mut total = 0
+    'a: for i in 0..4 {
+        for j in 0..4 {
+            if i + j == 3 {
+                continue 'a
+            }
+            total += 1
+        }
+    }
+    total
+}
+
+fn main() {
+    let (i, j) = first_factor_pair(12, 8)
+    println!("pair {} {}", i, j)
+    println!("count {}", count_skipping(3, 4))
+    println!("loop_value {}", labelled_loop_value())
+    println!("while_break {}", labelled_while_break(7))
+    println!("continue_outer {}", nested_continue_outer())
+}

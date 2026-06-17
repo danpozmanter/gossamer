@@ -55,6 +55,19 @@ pub enum PatternKind {
     Path(TypePath),
     /// Tuple pattern `(p1, p2, ...)`.
     Tuple(Vec<Pattern>),
+    /// Slice pattern `[p1, p2, ..rest, pN]`. `prefix` holds the
+    /// element patterns before `..`, `suffix` those after, and `rest`
+    /// is `Some` when a `..` was written - bound to a sub-slice when it
+    /// is a binding pattern, or `Wildcard` for a bare `..`. `rest` is
+    /// `None` for a fixed-length slice pattern like `[a, b]`.
+    Slice {
+        /// Element patterns before the `..` rest.
+        prefix: Vec<Pattern>,
+        /// The `..` rest binding, or `None` when no `..` is present.
+        rest: Option<Box<Pattern>>,
+        /// Element patterns after the `..` rest.
+        suffix: Vec<Pattern>,
+    },
     /// Struct pattern `path::Name { f1: p1, f2, .. }`.
     Struct {
         /// Path naming the struct type.

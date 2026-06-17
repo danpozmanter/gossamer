@@ -614,8 +614,10 @@ pub(crate) fn collect_enum_variants(program: &HirProgram) -> EnumIndex {
                     recurse(&a.body, has_payload);
                 }
             }
-            HirExprKind::Loop { body } => recurse(body, has_payload),
-            HirExprKind::While { condition, body } => {
+            HirExprKind::Loop { body, .. } => recurse(body, has_payload),
+            HirExprKind::While {
+                condition, body, ..
+            } => {
                 recurse(condition, has_payload);
                 recurse(body, has_payload);
             }
@@ -660,7 +662,9 @@ pub(crate) fn collect_enum_variants(program: &HirProgram) -> EnumIndex {
                 }
             }
             HirExprKind::Cast { value, .. } => recurse(value, has_payload),
-            HirExprKind::Return(Some(v)) | HirExprKind::Break(Some(v)) => recurse(v, has_payload),
+            HirExprKind::Return(Some(v)) | HirExprKind::Break { value: Some(v), .. } => {
+                recurse(v, has_payload)
+            }
             _ => {}
         }
     }
@@ -940,7 +944,9 @@ fn growth_in_expr(
         }
         HirExprKind::Block(b) => collect_growth_receivers(b, out, elem_out),
         HirExprKind::Loop { body, .. } => growth_in_expr(body, out, elem_out),
-        HirExprKind::While { condition, body } => {
+        HirExprKind::While {
+            condition, body, ..
+        } => {
             growth_in_expr(condition, out, elem_out);
             growth_in_expr(body, out, elem_out);
         }
@@ -1117,6 +1123,7 @@ pub(crate) fn pattern_kind_label(pattern: &HirPat) -> &'static str {
         HirPatKind::Binding { .. } => "binding",
         HirPatKind::Literal(_) => "literal",
         HirPatKind::Tuple(_) => "tuple",
+        HirPatKind::Slice { .. } => "slice",
         HirPatKind::Or(_) => "or-pattern",
         HirPatKind::Range { .. } => "range",
         HirPatKind::Struct { .. } => "struct",

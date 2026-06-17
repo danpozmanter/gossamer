@@ -247,6 +247,21 @@ impl Walker {
                 }
             }
             PatternKind::Ref { inner, .. } => self.visit_pattern(inner),
+            PatternKind::Slice {
+                prefix,
+                rest,
+                suffix,
+            } => {
+                for part in prefix {
+                    self.visit_pattern(part);
+                }
+                if let Some(rest) = rest {
+                    self.visit_pattern(rest);
+                }
+                for part in suffix {
+                    self.visit_pattern(part);
+                }
+            }
             PatternKind::Wildcard
             | PatternKind::Literal(_)
             | PatternKind::Path(_)
@@ -866,6 +881,21 @@ impl DefinitionIndex {
                 }
             }
             PatternKind::Ref { inner, .. } => self.collect_pattern_locals(inner),
+            PatternKind::Slice {
+                prefix,
+                rest,
+                suffix,
+            } => {
+                for part in prefix {
+                    self.collect_pattern_locals(part);
+                }
+                if let Some(rest) = rest {
+                    self.collect_pattern_locals(rest);
+                }
+                for part in suffix {
+                    self.collect_pattern_locals(part);
+                }
+            }
             PatternKind::Wildcard
             | PatternKind::Literal(_)
             | PatternKind::Path(_)

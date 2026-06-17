@@ -191,7 +191,67 @@ pub(super) enum PrintKind {
     JsonValue,
     /// `errors::Error` - calls `gos_rt_error_message` then prints as string.
     ErrorMessage,
+    /// A tuple of scalar elements - rendered via `gos_rt_tuple_format`
+    /// with a per-element tag array computed from the element types.
+    Tuple,
+    /// A scalar-keyed, scalar/string-valued `HashMap` - rendered via
+    /// `gos_rt_map_format`.
+    Map,
     Unsupported(&'static str),
+}
+
+/// Per-element tag for `gos_rt_tuple_format`, or `None` when the
+/// element type can't be rendered straight from a raw 8-byte tuple
+/// slot. Integers are restricted to 64-bit width and floats to `f64`
+/// (a narrower scalar writes fewer than 8 bytes into its slot, so
+/// reading the slot back as an i64 / f64 bit pattern would pick up
+/// adjacent bytes); `bool` (low bit) and `char` (low 32 bits) read
+/// through a mask, so both are safe.
+fn tuple_elem_tag(tcx: &TyCtxt, ty: Ty) -> Option<u8> {
+    let mut ty = ty;
+    while let TyKind::Ref { inner, .. } = tcx.kind_of(ty) {
+        ty = *inner;
+    }
+    match tcx.kind_of(ty) {
+        TyKind::Int(IntTy::I64 | IntTy::U64 | IntTy::Isize | IntTy::Usize) => Some(0),
+        TyKind::Duration | TyKind::Instant => Some(0),
+        TyKind::Float(FloatTy::F64) => Some(2),
+        TyKind::Bool => Some(3),
+        TyKind::Char => Some(4),
+        TyKind::String => Some(5),
+        _ => None,
+    }
+}
+
+/// The per-element tag array for a tuple operand, or `None` when any
+/// element type isn't formattable from a flat slot. Drives both the
+/// `PrintKind::Tuple` gate and the emit-time tag blob.
+pub(super) fn tuple_tags(tcx: &TyCtxt, body: &Body, operand: &Operand) -> Option<Vec<u8>> {
+    let Operand::Copy(place) = operand else {
+        return None;
+    };
+    let mut ty = resolve_place_ty(tcx, body, place);
+    while let TyKind::Ref { inner, .. } = tcx.kind_of(ty) {
+        ty = *inner;
+    }
+    let TyKind::Tuple(elems) = tcx.kind_of(ty) else {
+        return None;
+    };
+    if elems.is_empty() {
+        return None;
+    }
+    elems.iter().map(|e| tuple_elem_tag(tcx, *e)).collect()
+}
+
+/// True when a `HashMap` key/value type is one `gos_rt_map_format`
+/// renders from its live storage: an integer (signed decimal, like
+/// the VM) or a `String` (bare).
+fn map_kv_supported(tcx: &TyCtxt, ty: Ty) -> bool {
+    let mut ty = ty;
+    while let TyKind::Ref { inner, .. } = tcx.kind_of(ty) {
+        ty = *inner;
+    }
+    matches!(tcx.kind_of(ty), TyKind::Int(_) | TyKind::String)
 }
 
 pub(super) fn operand_cl_type(
@@ -276,7 +336,13 @@ pub(super) fn operand_print_kind(body: &Body, tcx: &TyCtxt, operand: &Operand) -
                 // Refuse loudly so the user knows to call
                 // `format!("{x:?}")` or write their own
                 // stringification.
-                TyKind::Tuple(_) => PrintKind::Unsupported("tuple"),
+                TyKind::Tuple(_) => {
+                    if tuple_tags(tcx, body, operand).is_some() {
+                        PrintKind::Tuple
+                    } else {
+                        PrintKind::Unsupported("tuple")
+                    }
+                }
                 // Fixed-size arrays: flat slot storage. The runtime
                 // helpers that print `VecI64` / `VecF64` / etc. read
                 // a `*mut GosVec` header, but a fixed array is just
@@ -321,7 +387,13 @@ pub(super) fn operand_print_kind(body: &Body, tcx: &TyCtxt, operand: &Operand) -
                     },
                     _ => PrintKind::Unsupported("Vec"),
                 },
-                TyKind::HashMap { .. } => PrintKind::Unsupported("HashMap"),
+                TyKind::HashMap { key, value } => {
+                    if map_kv_supported(tcx, *key) && map_kv_supported(tcx, *value) {
+                        PrintKind::Map
+                    } else {
+                        PrintKind::Unsupported("HashMap")
+                    }
+                }
                 TyKind::Sender(_) | TyKind::Receiver(_) | TyKind::JoinHandle(_) => {
                     PrintKind::Unsupported("channel")
                 }

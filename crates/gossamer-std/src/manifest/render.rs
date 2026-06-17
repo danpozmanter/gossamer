@@ -165,12 +165,46 @@ pub fn render_language_markdown(entry: &super::feature_status::FeatureStatus) ->
     out
 }
 
+/// Renders the `docs_src/language/index.md` landing page listing
+/// every documented language feature with its lifecycle status and
+/// one-line summary. Mirrors `render_index_markdown` for the
+/// language surface.
+#[must_use]
+pub fn render_language_index_markdown() -> String {
+    let mut out = String::new();
+    out.push_str("# Gossamer language reference\n\n");
+    out.push_str(
+        "One page per language feature. Source is \
+`crates/gossamer-std/src/manifest/feature_status.rs`; this index \
+is regenerated from `manifest::FEATURE_STATUS` by \
+`gos doc --emit-stdlib`.\n\n",
+    );
+    out.push_str("| Feature | Status | Summary |\n");
+    out.push_str("|---|---|---|\n");
+    for entry in super::feature_status::FEATURE_STATUS {
+        if !entry.path.starts_with("lang::") {
+            continue;
+        }
+        out.push_str(&format!(
+            "| [`{}`]({}.md) | {} | {} |\n",
+            entry.path,
+            language_slug(entry.path),
+            entry.status.tag(),
+            entry.doc.replace('|', "\\|"),
+        ));
+    }
+    out.push('\n');
+    out
+}
+
 /// Returns every `(slug, markdown)` pair for the language-feature
 /// docs site under `docs_src/language/`. Mirrors `render_all_docs`
-/// for the language surface.
+/// for the language surface: the `index` page plus one page per
+/// documented feature.
 #[must_use]
 pub fn render_all_language_docs() -> Vec<(String, String)> {
     let mut out: Vec<(String, String)> = Vec::new();
+    out.push(("index".to_string(), render_language_index_markdown()));
     for entry in super::feature_status::FEATURE_STATUS {
         if !entry.path.starts_with("lang::") {
             continue;

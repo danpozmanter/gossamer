@@ -1,0 +1,81 @@
+// Slice / rest patterns: fixed-length `[a, b]`, empty `[]`, prefix and
+// suffix binds with a `..` rest, and a `..rest` sub-slice capture. The
+// length guard plus per-element binds lower the same way on the
+// bytecode VM, the Cranelift JIT, and the LLVM AOT tiers.
+
+fn classify(xs: Vec<i64>) -> String {
+    match xs {
+        [] => "empty".to_string(),
+        [a] => format!("one({})", a),
+        [a, b] => format!("two({},{})", a, b),
+        [first, .., last] => format!("ends({},{})", first, last),
+    }
+}
+
+fn middle_sum(xs: Vec<i64>) -> i64 {
+    match xs {
+        [_first, ..rest] => {
+            let mut total = 0
+            for x in rest {
+                total += x
+            }
+            total
+        }
+        [] => 0,
+    }
+}
+
+fn starts_with_zero(xs: Vec<i64>) -> bool {
+    match xs {
+        [0, ..] => true,
+        _ => false,
+    }
+}
+
+fn last_or(xs: Vec<i64>, fallback: i64) -> i64 {
+    match xs {
+        [.., last] => last,
+        [] => fallback,
+    }
+}
+
+fn literal_prefix(xs: Vec<i64>) -> String {
+    match xs {
+        [1, second, _third] => format!("one-then-{}", second),
+        _ => "other".to_string(),
+    }
+}
+
+fn build(values: &[i64]) -> Vec<i64> {
+    let mut v: Vec<i64> = Vec::new()
+    for x in values {
+        v.push(x)
+    }
+    v
+}
+
+fn main() {
+    println!("{}", classify(build(&[])))
+    println!("{}", classify(build(&[7])))
+    println!("{}", classify(build(&[3, 4])))
+    println!("{}", classify(build(&[1, 2, 3, 4, 5])))
+
+    println!("middle_sum {}", middle_sum(build(&[10, 1, 2, 3])))
+    println!("middle_sum_empty {}", middle_sum(build(&[])))
+
+    println!("starts_zero {}", starts_with_zero(build(&[0, 9])))
+    println!("starts_zero {}", starts_with_zero(build(&[4, 0])))
+
+    println!("last {}", last_or(build(&[5, 6, 7]), -1))
+    println!("last_empty {}", last_or(build(&[]), -1))
+
+    println!("{}", literal_prefix(build(&[1, 42, 99])))
+    println!("{}", literal_prefix(build(&[2, 42, 99])))
+
+    // Slice pattern in a `let` binding (irrefutable destructure).
+    let pair = build(&[100, 200])
+    match pair {
+        [x, y] => println!("pair {} {}", x, y),
+        _ => println!("nope"),
+    }
+}

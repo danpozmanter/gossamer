@@ -503,6 +503,21 @@ pub fn walk_pattern<V: Visitor + ?Sized>(visitor: &mut V, pattern: &Pattern) {
                 visitor.visit_pattern(item);
             }
         }
+        PatternKind::Slice {
+            prefix,
+            rest,
+            suffix,
+        } => {
+            for item in prefix {
+                visitor.visit_pattern(item);
+            }
+            if let Some(rest) = rest {
+                visitor.visit_pattern(rest);
+            }
+            for item in suffix {
+                visitor.visit_pattern(item);
+            }
+        }
         PatternKind::Struct { path, fields, .. } => {
             visitor.visit_type_path(path);
             for field in fields {

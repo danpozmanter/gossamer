@@ -5,6 +5,19 @@
 // every `&[T]` (`Ref { Slice }`) parameter, so the callee read the inline flat
 // buffer as a GosVec header and returned garbage / segfaulted on the compiled
 // tiers, while the VM read it correctly.
+//
+// A `&[T]` parameter is also a borrow: when the element owns heap children
+// (here `Tag.name: String`), the coerced slice must be a non-owning view, or
+// its drop and the source array's drop both reclaim the same strings - a
+// double free that segfaults the compiled tiers at teardown. The aggregate
+// cases below borrow a named array that is read again after the call, which is
+// exactly the shape that triggered the double free.
+
+struct Tag { name: String, count: i64 }
+
+fn make_tag(prefix: &String, n: i64) -> Tag {
+    Tag { name: format!("{}-{}", prefix, n), count: n }
+}
 
 fn total(xs: &[i64]) -> i64 {
     let mut t = 0
@@ -23,9 +36,26 @@ fn first_gt(xs: &[i64], n: i64) -> i64 {
     -1
 }
 
+fn longest_name(tags: &[Tag]) -> i64 {
+    let mut best = 0
+    for i in 0..tags.len() {
+        let len = tags[i].name.len()
+        if len > best {
+            best = len
+        }
+    }
+    best
+}
+
 fn main() {
     let xs = [10, 20, 7]
     println!("{}", total(&xs))
     println!("{}", total(&[1, 2, 3, 4]))
     println!("{}", first_gt(&xs, 15))
+
+    let tags = [make_tag(&"alpha", 1), make_tag(&"beta", 22), make_tag(&"gamma", 333)]
+    println!("{}", longest_name(&tags))
+    // The named array is read again after the borrow: it must still own its
+    // strings here, so the borrowed slice above did not free them.
+    println!("{}", tags[0].name)
 }

@@ -1,0 +1,19 @@
+// `{}` / `{:?}` on a struct or enum WITHOUT `#[derive(Debug)]` lowers on the
+// compiled tiers (previously a hard `gos build` error) and renders identically
+// to the VM. A structural `fmt` is synthesized for every struct/enum whose
+// fields are renderable, unless the user wrote their own.
+
+struct Point { x: i64, y: i64 }
+struct Named { tag: String, p: Point }
+enum Shape { Circle(f64), Rect { w: i64, h: i64 }, Dot }
+
+fn main() {
+    let p = Point { x: 1, y: 2 }
+    println!("{}", p)
+    println!("{:?}", p)
+    let n = Named { tag: "origin", p: Point { x: 0, y: 0 } }
+    println!("{:?}", n)
+    println!("{:?}", Shape::Circle(2.5))
+    println!("{:?}", Shape::Rect { w: 3, h: 4 })
+    println!("{:?}", Shape::Dot)
+}

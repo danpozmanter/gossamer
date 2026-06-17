@@ -1,0 +1,53 @@
+/*
+ * Generic functions with trait bounds, dispatched statically. One generic
+ * `report` works for every type that implements `Shape`; each call resolves
+ * `name` / `area` to that type's own impl. The bound is enforced at compile
+ * time, and every instantiation is monomorphised to a direct call - the
+ * output is identical on the bytecode VM, the Cranelift JIT, and the LLVM
+ * native build.
+ */
+
+trait Shape {
+    fn name(&self) -> String
+    fn area(&self) -> i64
+}
+
+struct Square {
+    side: i64,
+}
+
+struct Rect {
+    width: i64,
+    height: i64,
+}
+
+impl Shape for Square {
+    fn name(&self) -> String { format!("square") }
+    fn area(&self) -> i64 { self.side * self.side }
+}
+
+impl Shape for Rect {
+    fn name(&self) -> String { format!("rect") }
+    fn area(&self) -> i64 { self.width * self.height }
+}
+
+// Generic over any `Shape`: calls trait methods on the bound parameter.
+fn report<T: Shape>(s: &T) -> String {
+    format!("{}: {}", s.name(), s.area())
+}
+
+// A second generic that returns a value derived from the bound methods.
+fn is_larger_than<T: Shape>(s: &T, threshold: i64) -> bool {
+    s.area() > threshold
+}
+
+fn main() {
+    let sq = Square { side: 4 }
+    let r = Rect { width: 3, height: 5 }
+
+    // The same generic function serves both concrete types.
+    println!("{}", report(&sq))
+    println!("{}", report(&r))
+    println!("{}", is_larger_than(&sq, 10))
+    println!("{}", is_larger_than(&r, 100))
+}

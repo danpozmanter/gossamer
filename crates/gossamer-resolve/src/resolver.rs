@@ -1096,6 +1096,21 @@ impl Resolver {
                     self.bind_pattern(part);
                 }
             }
+            PatternKind::Slice {
+                prefix,
+                rest,
+                suffix,
+            } => {
+                for part in prefix {
+                    self.bind_pattern(part);
+                }
+                if let Some(rest) = rest {
+                    self.bind_pattern(rest);
+                }
+                for part in suffix {
+                    self.bind_pattern(part);
+                }
+            }
             PatternKind::Struct { path, fields, .. } => {
                 self.resolve_pattern_path(path, pattern.id, pattern.span);
                 for field in fields {

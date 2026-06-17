@@ -488,12 +488,32 @@ impl<'tcx> FnBuilder<'tcx> {
         }
     }
 
+    /// True when `ty` (through `&` / `&mut` layers) is `u64` or `usize` -
+    /// the only ≤64-bit integer types whose value can exceed `i64::MAX`,
+    /// so comparison and right-shift must use unsigned semantics. The
+    /// narrower unsigned types (`u8`/`u16`/`u32`) mask to a value below
+    /// `2^63`, where signed and unsigned ops coincide.
+    pub(crate) fn is_unsigned64_ty(&self, ty: Ty) -> bool {
+        matches!(
+            self.tcx.kind(self.unwrap_ref(ty)),
+            Some(TyKind::Int(
+                gossamer_types::IntTy::U64 | gossamer_types::IntTy::Usize
+            ))
+        )
+    }
+
     pub(crate) fn emit_binary_i64(
         &mut self,
         op: HirBinaryOp,
         lhs_i: Reg,
         rhs_i: Reg,
+        lhs_unsigned: bool,
+        rhs_unsigned: bool,
     ) -> RuntimeResult<TypedReg> {
+        // Relational comparisons treat the pair as unsigned when either
+        // operand's declared type is unsigned 64-bit; a right-shift keys
+        // off the shifted (left) operand only.
+        let cmp_unsigned = lhs_unsigned || rhs_unsigned;
         match op {
             HirBinaryOp::Add => {
                 let dst = self.alloc_int();
@@ -557,10 +577,18 @@ impl<'tcx> FnBuilder<'tcx> {
             }
             HirBinaryOp::Lt => {
                 let dst = self.alloc_reg();
-                self.emit(Op::LtI64 {
-                    dst_v: dst,
-                    lhs_i,
-                    rhs_i,
+                self.emit(if cmp_unsigned {
+                    Op::LtU64 {
+                        dst_v: dst,
+                        lhs_i,
+                        rhs_i,
+                    }
+                } else {
+                    Op::LtI64 {
+                        dst_v: dst,
+                        lhs_i,
+                        rhs_i,
+                    }
                 });
                 Ok(TypedReg {
                     reg: dst,
@@ -569,10 +597,18 @@ impl<'tcx> FnBuilder<'tcx> {
             }
             HirBinaryOp::Le => {
                 let dst = self.alloc_reg();
-                self.emit(Op::LeI64 {
-                    dst_v: dst,
-                    lhs_i,
-                    rhs_i,
+                self.emit(if cmp_unsigned {
+                    Op::LeU64 {
+                        dst_v: dst,
+                        lhs_i,
+                        rhs_i,
+                    }
+                } else {
+                    Op::LeI64 {
+                        dst_v: dst,
+                        lhs_i,
+                        rhs_i,
+                    }
                 });
                 Ok(TypedReg {
                     reg: dst,
@@ -581,10 +617,18 @@ impl<'tcx> FnBuilder<'tcx> {
             }
             HirBinaryOp::Gt => {
                 let dst = self.alloc_reg();
-                self.emit(Op::GtI64 {
-                    dst_v: dst,
-                    lhs_i,
-                    rhs_i,
+                self.emit(if cmp_unsigned {
+                    Op::GtU64 {
+                        dst_v: dst,
+                        lhs_i,
+                        rhs_i,
+                    }
+                } else {
+                    Op::GtI64 {
+                        dst_v: dst,
+                        lhs_i,
+                        rhs_i,
+                    }
                 });
                 Ok(TypedReg {
                     reg: dst,
@@ -593,10 +637,18 @@ impl<'tcx> FnBuilder<'tcx> {
             }
             HirBinaryOp::Ge => {
                 let dst = self.alloc_reg();
-                self.emit(Op::GeI64 {
-                    dst_v: dst,
-                    lhs_i,
-                    rhs_i,
+                self.emit(if cmp_unsigned {
+                    Op::GeU64 {
+                        dst_v: dst,
+                        lhs_i,
+                        rhs_i,
+                    }
+                } else {
+                    Op::GeI64 {
+                        dst_v: dst,
+                        lhs_i,
+                        rhs_i,
+                    }
                 });
                 Ok(TypedReg {
                     reg: dst,
@@ -677,10 +729,18 @@ impl<'tcx> FnBuilder<'tcx> {
             }
             HirBinaryOp::Shr => {
                 let dst = self.alloc_int();
-                self.emit(Op::ShrI64 {
-                    dst_i: dst,
-                    lhs_i,
-                    rhs_i,
+                self.emit(if lhs_unsigned {
+                    Op::ShrU64 {
+                        dst_i: dst,
+                        lhs_i,
+                        rhs_i,
+                    }
+                } else {
+                    Op::ShrI64 {
+                        dst_i: dst,
+                        lhs_i,
+                        rhs_i,
+                    }
                 });
                 Ok(TypedReg {
                     reg: dst,
@@ -1253,6 +1313,11 @@ impl<'tcx> FnBuilder<'tcx> {
         if lk != rk || lk == RegKind::Value {
             return Ok(None);
         }
+        // The fused branch ops are signed-only; an unsigned-64 operand
+        // must fall back to the unsigned compare + `BranchIfNot` path.
+        if self.is_unsigned64_ty(lhs.ty) || self.is_unsigned64_ty(rhs.ty) {
+            return Ok(None);
+        }
         // Hoist only when neither operand would require an
         // `Unbox*` at evaluation: that would snapshot a
         // `Value::Int` local into a typed int reg once,
@@ -1369,6 +1434,11 @@ impl<'tcx> FnBuilder<'tcx> {
         let lk = self.expr_kind(lhs);
         let rk = self.expr_kind(rhs);
         if lk != rk || lk == RegKind::Value {
+            return Ok(None);
+        }
+        // The fused branch ops are signed-only; an unsigned-64 operand
+        // must fall back to the unsigned compare + `BranchIfNot` path.
+        if self.is_unsigned64_ty(lhs.ty) || self.is_unsigned64_ty(rhs.ty) {
             return Ok(None);
         }
         // Check supported op kinds BEFORE compiling operands -
@@ -1606,6 +1676,7 @@ impl<'tcx> FnBuilder<'tcx> {
             continue_patches: Vec::new(),
             result_reg: result,
             defer_depth: self.defer_stack.len(),
+            label: self.pending_loop_label.take(),
         });
         let _ = self.compile_expr(&some_arm.body)?;
         // `continue` jumps here: the same fused inc-and-test op
@@ -1918,6 +1989,7 @@ impl<'tcx> FnBuilder<'tcx> {
             continue_patches: Vec::new(),
             result_reg: result,
             defer_depth: self.defer_stack.len(),
+            label: self.pending_loop_label.take(),
         });
         let _ = self.compile_expr(&some_arm.body)?;
         // `continue` jumps here so the counter increment + jump

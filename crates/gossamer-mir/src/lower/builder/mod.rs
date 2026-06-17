@@ -106,6 +106,13 @@ pub(crate) struct Builder<'a> {
     /// `HirExprKind::Break` / `Continue` lookup the back of the
     /// stack to terminate to the right block.
     pub(crate) loop_stack: Vec<LoopContext>,
+    /// The label of the loop currently being lowered, set by the
+    /// `Loop` / `While` lowering site just before it descends into the
+    /// loop builder. Each loop builder takes it at entry (before
+    /// lowering the iterand / body) and records it on the `LoopContext`
+    /// it pushes, so labelled `break`/`continue` can target the right
+    /// loop. `None` for an unlabelled loop.
+    pub(crate) pending_loop_label: Option<String>,
     /// When set, `gos_rt_result_payload` + field/tuple-binding emissions
     /// for a Result/Option match arm are deferred into this block instead
     /// of the pre-branch header. Prevents unconditional null-deref when
@@ -145,11 +152,15 @@ pub(crate) struct Builder<'a> {
 /// A live loop context: where to jump on `break` vs. `continue`,
 /// plus the optional result local that `break <expr>` writes into
 /// before jumping. `None` for loops whose result is unused.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub(crate) struct LoopContext {
     pub(crate) continue_to: BlockId,
     pub(crate) break_to: BlockId,
     pub(crate) result: Option<Local>,
+    /// Loop label (without the leading apostrophe), or `None` for an
+    /// unlabelled loop. Labelled `break`/`continue` scan the stack
+    /// from the innermost outward for a matching label.
+    pub(crate) label: Option<String>,
     /// Set to `true` when a `break` targeting this loop is lowered.
     /// Used so `lower_loop` can return `None` for purely divergent
     /// loops (no `break` at all), preventing a spurious `RETURN`

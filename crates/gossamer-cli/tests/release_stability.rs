@@ -849,13 +849,11 @@ fn main() {
 
 #[test]
 fn release_u64_values_print_like_the_vm() {
-    // Under the i64 runtime model every <=64-bit int is a signed
-    // i64 value, so a `u64` literal at 2^64-1 aliases `-1` and
-    // prints signed - matching the VM. The single exception is
-    // display provenance: a value produced by an explicit
-    // `as u64` / `as usize` cast renders unsigned (the VM's
-    // `Value::Uint`). This test gates both halves of the
-    // contract.
+    // A `u64` / `usize` value renders unsigned by its declared type: a
+    // binding typed `u64` at 2^64-1 prints `18446744073709551615`, the same
+    // as a value produced by an explicit `as u64` cast, on both the VM and
+    // the released binary. (Previously a declared-but-uncast `u64` aliased
+    // the signed-i64 `-1` and the tiers disagreed on the comparison form.)
     assert_release_stdout_eq(
         "u64_max",
         r#"
@@ -866,7 +864,7 @@ fn main() {
     println!("{}", c)
 }
 "#,
-        "-1\n18446744073709551615\n",
+        "18446744073709551615\n18446744073709551615\n",
     );
 }
 

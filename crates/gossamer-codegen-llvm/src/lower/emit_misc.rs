@@ -248,8 +248,10 @@ impl<'a> Lowerer<'a> {
                 | ConcatKind::ArrBool(_)
                 | ConcatKind::ArrString(_)
                 | ConcatKind::JsonValue
-                | ConcatKind::ErrorMessage) => {
-                    let str_ptr = self.emit_aggregate_format(kind, &value);
+                | ConcatKind::ErrorMessage
+                | ConcatKind::Tuple
+                | ConcatKind::Map) => {
+                    let str_ptr = self.emit_concat_aggregate(arg, kind, &value)?;
                     writeln!(self.out, "  call void @gos_rt_print_str(ptr {str_ptr})").unwrap();
                 }
                 ConcatKind::Unsupported => unreachable!("checked above"),

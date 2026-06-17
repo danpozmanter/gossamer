@@ -968,19 +968,34 @@ impl Parser<'_> {
         if !self.at_label_start() {
             return None;
         }
-        self.bump();
-        if let Some(name_span) = self.eat_ident() {
-            return Some(Label::new(self.slice(name_span)));
-        }
-        self.record(ParseError::MalformedLabel, self.peek_span());
-        None
+        let token = self.bump();
+        Some(Label::new(label_name(self.slice(token.span))))
     }
 
     fn at_label_start(&self) -> bool {
-        false
+        matches!(self.peek().kind, TokenKind::Label)
     }
 
     fn parse_labelled_loop(&mut self) -> ExprKind {
+        let token = self.bump();
+        let label = Some(Label::new(label_name(self.slice(token.span))));
+        self.expect_punct(Punct::Colon, "after loop label");
+        if self.at_keyword(Keyword::Loop) {
+            return self.parse_loop_expr(label);
+        }
+        if self.at_keyword(Keyword::While) {
+            return self.parse_while_expr(label);
+        }
+        if self.at_keyword(Keyword::For) {
+            return self.parse_for_expr(label);
+        }
+        self.record(
+            ParseError::Unexpected {
+                expected: "`loop`, `while`, or `for` after label".to_string(),
+                found: self.peek_text(),
+            },
+            self.peek_span(),
+        );
         ExprKind::Error
     }
 
@@ -1179,9 +1194,28 @@ impl Parser<'_> {
         let mut fields = Vec::new();
         let mut base = None;
         while !self.at_punct(Punct::RBrace) && !self.at_eof() {
+            // `..base` functional update may appear anywhere in the field
+            // list (`{ ..base, x: 1 }` or `{ x: 1, ..base }`); explicit
+            // fields override the base's value for the same name. Only one
+            // spread is allowed.
             if self.eat_punct(Punct::DotDot) {
-                base = Some(Box::new(self.parse_expr_no_assign()));
-                break;
+                let spread_span = self.peek_span();
+                let expr = self.parse_expr_no_assign();
+                if base.is_some() {
+                    self.record(
+                        ParseError::Unexpected {
+                            expected: "a single `..base` spread in a struct literal".to_string(),
+                            found: "a second `..` spread".to_string(),
+                        },
+                        spread_span,
+                    );
+                } else {
+                    base = Some(Box::new(expr));
+                }
+                if !self.eat_punct(Punct::Comma) {
+                    break;
+                }
+                continue;
             }
             let name_span = self.peek_span();
             if !matches!(self.peek().kind, TokenKind::Ident) {
@@ -1658,7 +1692,8 @@ pub(crate) fn is_expression_start(parser: &Parser<'_>) -> bool {
         | TokenKind::CharLit
         | TokenKind::ByteLit
         | TokenKind::ByteStringLit
-        | TokenKind::RawByteStringLit { .. } => true,
+        | TokenKind::RawByteStringLit { .. }
+        | TokenKind::Label => true,
         TokenKind::Keyword(keyword) => matches!(
             keyword,
             Keyword::True
@@ -2059,6 +2094,11 @@ fn parse_format_spec(inner: &str) -> Option<FormatSegment> {
     } else {
         None
     }
+}
+
+/// Strips the leading apostrophe from a `'name` label token's source text.
+fn label_name(source: &str) -> &str {
+    source.strip_prefix('\'').unwrap_or(source)
 }
 
 fn is_identifier(text: &str) -> bool {

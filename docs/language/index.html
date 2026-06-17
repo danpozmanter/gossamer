@@ -12,27 +12,31 @@
         <meta name="author" content="Gossamer contributors">
       
       
-        <link rel="canonical" href="https://danpozmanter.github.io/gossamer/docs/stdlib/archive/">
+        <link rel="canonical" href="https://danpozmanter.github.io/gossamer/docs/language/">
       
       
+        <link rel="prev" href="../syntax/">
+      
+      
+        <link rel="next" href="top_level_statements/">
       
       
         
       
       
-      <link rel="icon" href="../../img/GossamerLogo.png">
+      <link rel="icon" href="../img/GossamerLogo.png">
       <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
     
     
       
-        <title>std::archive - Gossamer</title>
+        <title>Gossamer language reference - Gossamer</title>
       
     
     
-      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      <link rel="stylesheet" href="../assets/stylesheets/main.484c7ddc.min.css">
       
         
-        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
       
       
 
@@ -51,9 +55,9 @@
       
     
     
-      <link rel="stylesheet" href="../../stylesheets/extra.css">
+      <link rel="stylesheet" href="../stylesheets/extra.css">
     
-    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
 
@@ -78,7 +82,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#stdarchive" class="md-skip">
+        <a href="#gossamer-language-reference" class="md-skip">
           Skip to content
         </a>
       
@@ -94,9 +98,9 @@
 
 <header class="md-header md-header--shadow" data-md-component="header">
   <nav class="md-header__inner md-grid" aria-label="Header">
-    <a href="../.." title="Gossamer" class="md-header__button md-logo" aria-label="Gossamer" data-md-component="logo">
+    <a href=".." title="Gossamer" class="md-header__button md-logo" aria-label="Gossamer" data-md-component="logo">
       
-  <img src="../../img/GossamerLogo.png" alt="logo">
+  <img src="../img/GossamerLogo.png" alt="logo">
 
     </a>
     <label class="md-header__button md-icon" for="__drawer">
@@ -113,7 +117,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              std::archive
+              Gossamer language reference
             
           </span>
         </div>
@@ -231,9 +235,9 @@
 
 <nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
-    <a href="../.." title="Gossamer" class="md-nav__button md-logo" aria-label="Gossamer" data-md-component="logo">
+    <a href=".." title="Gossamer" class="md-nav__button md-logo" aria-label="Gossamer" data-md-component="logo">
       
-  <img src="../../img/GossamerLogo.png" alt="logo">
+  <img src="../img/GossamerLogo.png" alt="logo">
 
     </a>
     Gossamer
@@ -260,7 +264,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../.." class="md-nav__link">
+      <a href=".." class="md-nav__link">
         
   
   
@@ -287,7 +291,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../install/" class="md-nav__link">
+      <a href="../install/" class="md-nav__link">
         
   
   
@@ -314,7 +318,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../running/" class="md-nav__link">
+      <a href="../running/" class="md-nav__link">
         
   
   
@@ -341,7 +345,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../syntax/" class="md-nav__link">
+      <a href="../syntax/" class="md-nav__link">
         
   
   
@@ -365,31 +369,40 @@
       
   
   
+    
   
   
+  
     
     
       
-        
-      
-    
-    
-    
-      
-        
-        
-      
-    
-    
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
-      
-        
-        
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
         
           
-          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
-            
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" checked>
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="./" class="md-nav__link md-nav__link--active">
+              
   
   
   <span class="md-ellipsis">
@@ -403,10 +416,16 @@
   
   
 
-            <span class="md-nav__icon md-icon"></span>
-          </label>
+            </a>
+            
+              
+              <label class="md-nav__link md-nav__link--active" for="__nav_5" id="__nav_5_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_5">
             <span class="md-nav__icon md-icon"></span>
             
@@ -418,13 +437,15 @@
           <ul class="md-nav__list" data-md-scrollfix>
             
               
+            
+              
                 
   
   
   
   
     <li class="md-nav__item">
-      <a href="../../language/top_level_statements/" class="md-nav__link">
+      <a href="top_level_statements/" class="md-nav__link">
         
   
   
@@ -432,6 +453,34 @@
     
   
     Top-level statements
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="arena/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Arena blocks
   
 
     
@@ -459,7 +508,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../memory/" class="md-nav__link">
+      <a href="../memory/" class="md-nav__link">
         
   
   
@@ -486,7 +535,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../libraries/" class="md-nav__link">
+      <a href="../libraries/" class="md-nav__link">
         
   
   
@@ -516,6 +565,10 @@
     
       
         
+          
+        
+      
+        
       
         
       
@@ -539,8 +592,9 @@
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_8" >
         
           
-          <label class="md-nav__link" for="__nav_8" id="__nav_8_label" tabindex="">
-            
+          <div class="md-nav__link md-nav__container">
+            <a href="../stdlib/" class="md-nav__link ">
+              
   
   
   <span class="md-ellipsis">
@@ -554,8 +608,14 @@
   
   
 
-            <span class="md-nav__icon md-icon"></span>
-          </label>
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_8" id="__nav_8_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
         
         <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_8_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_8">
@@ -569,13 +629,15 @@
           <ul class="md-nav__list" data-md-scrollfix>
             
               
+            
+              
                 
   
   
   
   
     <li class="md-nav__item">
-      <a href="../" class="md-nav__link">
+      <a href="../stdlib/" class="md-nav__link">
         
   
   
@@ -603,7 +665,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../prelude/" class="md-nav__link">
+      <a href="../prelude/" class="md-nav__link">
         
   
   
@@ -631,7 +693,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../method_support/" class="md-nav__link">
+      <a href="../method_support/" class="md-nav__link">
         
   
   
@@ -659,7 +721,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../stdlib_coverage/" class="md-nav__link">
+      <a href="../stdlib_coverage/" class="md-nav__link">
         
   
   
@@ -754,7 +816,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../toolchain/" class="md-nav__link">
+      <a href="../toolchain/" class="md-nav__link">
         
   
   
@@ -782,7 +844,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../toolchain/lints/" class="md-nav__link">
+      <a href="../toolchain/lints/" class="md-nav__link">
         
   
   
@@ -810,7 +872,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../toolchain/diagnostics/" class="md-nav__link">
+      <a href="../toolchain/diagnostics/" class="md-nav__link">
         
   
   
@@ -845,7 +907,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../examples/" class="md-nav__link">
+      <a href="../examples/" class="md-nav__link">
         
   
   
@@ -930,7 +992,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../deployment/" class="md-nav__link">
+      <a href="../deployment/" class="md-nav__link">
         
   
   
@@ -958,7 +1020,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../codegen_abi/" class="md-nav__link">
+      <a href="../codegen_abi/" class="md-nav__link">
         
   
   
@@ -1057,7 +1119,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../migration/rust/" class="md-nav__link">
+      <a href="../migration/rust/" class="md-nav__link">
         
   
   
@@ -1085,7 +1147,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../migration/go/" class="md-nav__link">
+      <a href="../migration/go/" class="md-nav__link">
         
   
   
@@ -1113,7 +1175,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../migration/python/" class="md-nav__link">
+      <a href="../migration/python/" class="md-nav__link">
         
   
   
@@ -1141,7 +1203,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../migration/fsharp/" class="md-nav__link">
+      <a href="../migration/fsharp/" class="md-nav__link">
         
   
   
@@ -1169,7 +1231,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../migration/kotlin/" class="md-nav__link">
+      <a href="../migration/kotlin/" class="md-nav__link">
         
   
   
@@ -1264,7 +1326,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../design/diagnostics/" class="md-nav__link">
+      <a href="../design/diagnostics/" class="md-nav__link">
         
   
   
@@ -1292,7 +1354,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../design/runtime/" class="md-nav__link">
+      <a href="../design/runtime/" class="md-nav__link">
         
   
   
@@ -1320,7 +1382,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../design/selfhosting/" class="md-nav__link">
+      <a href="../design/selfhosting/" class="md-nav__link">
         
   
   
@@ -1355,7 +1417,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../skill_card/" class="md-nav__link">
+      <a href="../skill_card/" class="md-nav__link">
         
   
   
@@ -1382,7 +1444,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../security/" class="md-nav__link">
+      <a href="../security/" class="md-nav__link">
         
   
   
@@ -1409,7 +1471,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/" class="md-nav__link">
+      <a href="../contributing/" class="md-nav__link">
         
   
   
@@ -1449,36 +1511,6 @@
     
   
   
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#stdarchivezip" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        std::archive::zip
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#stdarchivetar" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        std::archive::tar
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
 </nav>
                   </div>
                 </div>
@@ -1494,134 +1526,191 @@
 
 
 
-<h1 id="stdarchive"><code>std::archive</code><a class="headerlink" href="#stdarchive" title="Permanent link">&para;</a></h1>
-<p>Archive readers and writers. Two formats ship in 0.4.0:</p>
-<ul>
-<li><a href="#stdarchivezip"><code>std::archive::zip</code></a> - RFC 1952 zip.</li>
-<li><a href="#stdarchivetar"><code>std::archive::tar</code></a> - Unix tar (USTAR /
-  PAX-aware decode).</li>
-</ul>
-<h2 id="stdarchivezip"><code>std::archive::zip</code><a class="headerlink" href="#stdarchivezip" title="Permanent link">&para;</a></h2>
+<h1 id="gossamer-language-reference">Gossamer language reference<a class="headerlink" href="#gossamer-language-reference" title="Permanent link">&para;</a></h1>
+<p>One page per language feature. Source is <code>crates/gossamer-std/src/manifest/feature_status.rs</code>; this index is regenerated from <code>manifest::FEATURE_STATUS</code> by <code>gos doc --emit-stdlib</code>.</p>
 <table>
 <thead>
 <tr>
-<th>Name</th>
-<th>Kind</th>
-<th>Description</th>
+<th>Feature</th>
+<th>Status</th>
+<th>Summary</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td><code>Reader</code></td>
-<td>type</td>
-<td>Random-access zip reader (in-memory or file-backed).</td>
+<td><a href="let/"><code>lang::let</code></a></td>
+<td>shipped</td>
+<td>Immutable binding.</td>
 </tr>
 <tr>
-<td><code>Reader::open</code></td>
-<td>fn</td>
-<td>Open a file by path.</td>
+<td><a href="let_mut/"><code>lang::let_mut</code></a></td>
+<td>shipped</td>
+<td>Mutable binding.</td>
 </tr>
 <tr>
-<td><code>Reader::open_bytes</code></td>
-<td>fn</td>
-<td>Parse zip bytes.</td>
+<td><a href="if/"><code>lang::if</code></a></td>
+<td>shipped</td>
+<td>Conditional expression.</td>
 </tr>
 <tr>
-<td><code>Reader::names</code></td>
-<td>fn</td>
-<td>Returns the list of entry names.</td>
+<td><a href="match/"><code>lang::match</code></a></td>
+<td>shipped</td>
+<td>Exhaustive pattern match expression.</td>
 </tr>
 <tr>
-<td><code>Reader::read_file</code></td>
-<td>fn</td>
-<td>Reads a single entry by name.</td>
+<td><a href="if_let/"><code>lang::if_let</code></a></td>
+<td>shipped</td>
+<td>Single-variant pattern sugar.</td>
 </tr>
 <tr>
-<td><code>Writer</code></td>
-<td>type</td>
-<td>Streaming zip writer.</td>
+<td><a href="while_let/"><code>lang::while_let</code></a></td>
+<td>shipped</td>
+<td>Loop that drains while a pattern matches.</td>
 </tr>
 <tr>
-<td><code>Writer::create</code></td>
-<td>fn</td>
-<td>Create a new archive at path.</td>
+<td><a href="for/"><code>lang::for</code></a></td>
+<td>shipped</td>
+<td>Iterator-driven loop.</td>
 </tr>
 <tr>
-<td><code>Writer::add_file</code></td>
-<td>fn</td>
-<td>Add a named entry with raw bytes.</td>
+<td><a href="loop/"><code>lang::loop</code></a></td>
+<td>shipped</td>
+<td>Unconditional loop with <code>break value</code>.</td>
 </tr>
 <tr>
-<td><code>Writer::finish</code></td>
-<td>fn</td>
-<td>Finalise the archive (writes central directory).</td>
+<td><a href="break/"><code>lang::break</code></a></td>
+<td>shipped</td>
+<td>Exit the innermost loop, optionally with a value.</td>
 </tr>
 <tr>
-<td><code>Error</code></td>
-<td>enum</td>
-<td><code>Io</code>, <code>Format</code>, <code>NotFound</code>, <code>Unsupported</code>.</td>
-</tr>
-</tbody>
-</table>
-<h2 id="stdarchivetar"><code>std::archive::tar</code><a class="headerlink" href="#stdarchivetar" title="Permanent link">&para;</a></h2>
-<table>
-<thead>
-<tr>
-<th>Name</th>
-<th>Kind</th>
-<th>Description</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>Reader</code></td>
-<td>type</td>
-<td>Iterating tar reader over any <code>Read</code> source.</td>
+<td><a href="continue/"><code>lang::continue</code></a></td>
+<td>shipped</td>
+<td>Skip to the next iteration of the innermost loop.</td>
 </tr>
 <tr>
-<td><code>Reader::open</code></td>
-<td>fn</td>
-<td>Open a file by path.</td>
+<td><a href="return/"><code>lang::return</code></a></td>
+<td>shipped</td>
+<td>Exit the enclosing function with a value.</td>
 </tr>
 <tr>
-<td><code>Reader::entries</code></td>
-<td>fn</td>
-<td>Yields one <code>Entry</code> per archive member.</td>
+<td><a href="question_mark/"><code>lang::question_mark</code></a></td>
+<td>shipped</td>
+<td>Short-circuit Result / Option propagation operator.</td>
 </tr>
 <tr>
-<td><code>Entry</code></td>
-<td>type</td>
-<td>One tar entry - has <code>path</code>, <code>kind</code>, <code>size</code>, <code>mode</code>, and a <code>read</code> method to extract the body.</td>
+<td><a href="pipe/"><code>lang::pipe</code></a></td>
+<td>shipped</td>
+<td>Forward-pipe operator <code>\|&gt;</code>.</td>
 </tr>
 <tr>
-<td><code>Writer</code></td>
-<td>type</td>
-<td>Streaming tar writer.</td>
+<td><a href="closure/"><code>lang::closure</code></a></td>
+<td>shipped</td>
+<td>Lambda expression <code>\|args\| body</code>.</td>
 </tr>
 <tr>
-<td><code>Writer::create</code></td>
-<td>fn</td>
-<td>Create a new archive.</td>
+<td><a href="fn/"><code>lang::fn</code></a></td>
+<td>shipped</td>
+<td>Function declaration.</td>
 </tr>
 <tr>
-<td><code>Writer::add_file_from_path</code></td>
-<td>fn</td>
-<td>Add a file from disk by path.</td>
+<td><a href="struct/"><code>lang::struct</code></a></td>
+<td>shipped</td>
+<td>Product type declaration.</td>
 </tr>
 <tr>
-<td><code>Writer::add_bytes</code></td>
-<td>fn</td>
-<td>Add a named entry from in-memory bytes.</td>
+<td><a href="enum/"><code>lang::enum</code></a></td>
+<td>shipped</td>
+<td>Sum type declaration with payload-carrying variants.</td>
 </tr>
 <tr>
-<td><code>Writer::finish</code></td>
-<td>fn</td>
-<td>Finalise the archive (zero blocks).</td>
+<td><a href="trait/"><code>lang::trait</code></a></td>
+<td>shipped</td>
+<td>Behaviour interface declaration.</td>
 </tr>
 <tr>
-<td><code>Error</code></td>
-<td>enum</td>
-<td><code>Io</code>, <code>Format</code>, <code>Unsupported</code>.</td>
+<td><a href="impl/"><code>lang::impl</code></a></td>
+<td>shipped</td>
+<td>Inherent and trait implementation blocks.</td>
+</tr>
+<tr>
+<td><a href="generics/"><code>lang::generics</code></a></td>
+<td>shipped</td>
+<td>Type parameters on functions / impls / structs.</td>
+</tr>
+<tr>
+<td><a href="go/"><code>lang::go</code></a></td>
+<td>shipped</td>
+<td>Goroutine spawn.</td>
+</tr>
+<tr>
+<td><a href="select/"><code>lang::select</code></a></td>
+<td>shipped</td>
+<td>Channel multiplex select expression.</td>
+</tr>
+<tr>
+<td><a href="channel/"><code>lang::channel</code></a></td>
+<td>shipped</td>
+<td>Typed channel via <code>std::sync::channel</code>.</td>
+</tr>
+<tr>
+<td><a href="spawn/"><code>lang::spawn</code></a></td>
+<td>shipped</td>
+<td>Goroutine join handle: <code>spawn(f)</code> -&gt; <code>JoinHandle&lt;T&gt;</code>, <code>.join()</code> -&gt; <code>Result&lt;T, String&gt;</code>.</td>
+</tr>
+<tr>
+<td><a href="macros/"><code>lang::macros</code></a></td>
+<td>shipped</td>
+<td>Six built-in format macros (print/println/eprint/eprintln/format/panic).</td>
+</tr>
+<tr>
+<td><a href="doctest/"><code>lang::doctest</code></a></td>
+<td>shipped</td>
+<td>Fenced code in <code>//</code> doc comments runs under <code>gos test</code>.</td>
+</tr>
+<tr>
+<td><a href="cfg/"><code>lang::cfg</code></a></td>
+<td>shipped</td>
+<td>Conditional compilation attribute.</td>
+</tr>
+<tr>
+<td><a href="attribute/"><code>lang::attribute</code></a></td>
+<td>shipped</td>
+<td>Built-in attributes (<code>#[cfg]</code>, <code>#[test]</code>, <code>#[bench]</code>, <code>#[derive]</code>).</td>
+</tr>
+<tr>
+<td><a href="const/"><code>lang::const</code></a></td>
+<td>shipped</td>
+<td>Compile-time constant binding.</td>
+</tr>
+<tr>
+<td><a href="static/"><code>lang::static</code></a></td>
+<td>shipped</td>
+<td>Module-level mutable or immutable static slot.</td>
+</tr>
+<tr>
+<td><a href="mut_ref_params/"><code>lang::mut_ref_params</code></a></td>
+<td>shipped</td>
+<td><code>&amp;mut Vec&lt;T&gt;</code> / <code>&amp;mut [T]</code> parameters write through to the caller's storage on every tier.</td>
+</tr>
+<tr>
+<td><a href="unicode_identifiers/"><code>lang::unicode_identifiers</code></a></td>
+<td>shipped</td>
+<td>Identifiers follow UAX #31 (matches Rust 2024).</td>
+</tr>
+<tr>
+<td><a href="move_keyword/"><code>lang::move_keyword</code></a></td>
+<td>planned</td>
+<td><code>move</code> closure capture keyword - parses, lowers to the same Fn shape as a non-move closure (the runtime manages ownership).</td>
+</tr>
+<tr>
+<td><a href="async_await/"><code>lang::async_await</code></a></td>
+<td>planned</td>
+<td><code>async fn</code> / <code>.await</code> - goroutines + channels cover the same shape today.</td>
+</tr>
+<tr>
+<td><a href="lifetimes/"><code>lang::lifetimes</code></a></td>
+<td>planned</td>
+<td>Explicit lifetime annotations - not needed under the current memory model; tracked in case a borrow-checker mode lands.</td>
 </tr>
 </tbody>
 </table>
@@ -1682,10 +1771,10 @@
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.instant", "navigation.tracking", "navigation.top", "navigation.sections", "navigation.indexes", "toc.follow", "search.suggest", "search.highlight", "content.code.copy", "content.code.annotate", "content.tabs.link"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.instant", "navigation.tracking", "navigation.top", "navigation.sections", "navigation.indexes", "toc.follow", "search.suggest", "search.highlight", "content.code.copy", "content.code.annotate", "content.tabs.link"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      <script src="../assets/javascripts/bundle.79ae519e.min.js"></script>
       
     
   </body>

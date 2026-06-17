@@ -336,6 +336,21 @@ fn visit_pattern(pattern: &Pattern, kind: TokenKind, out: &mut Vec<RawToken>) {
             }
         }
         PatternKind::Ref { inner, .. } => visit_pattern(inner, kind, out),
+        PatternKind::Slice {
+            prefix,
+            rest,
+            suffix,
+        } => {
+            for part in prefix {
+                visit_pattern(part, kind, out);
+            }
+            if let Some(rest) = rest {
+                visit_pattern(rest, kind, out);
+            }
+            for part in suffix {
+                visit_pattern(part, kind, out);
+            }
+        }
         PatternKind::Wildcard
         | PatternKind::Literal(_)
         | PatternKind::Path(_)

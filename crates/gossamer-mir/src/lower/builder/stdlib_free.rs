@@ -2545,8 +2545,8 @@ impl<'a> Builder<'a> {
             // `Vec::slice(xs, a, b)` - free-fn forms of the same
             // Result-returning safe Vec helpers exposed as methods.
             "Vec::insert" if args.len() == 3 => {
-                let i = self.tcx.int_ty(gossamer_types::IntTy::I64);
-                let v = self.tcx.intern(gossamer_types::TyKind::Vec(i));
+                let elem = self.vec_receiver_elem_ty(args[0].ty);
+                let v = self.tcx.intern(gossamer_types::TyKind::Vec(elem));
                 let e = self.tcx.dyn_error_ty();
                 let substs = gossamer_types::Substs::from_types([v, e]);
                 let result_ty = self.tcx.intern(gossamer_types::TyKind::Adt {
@@ -2556,9 +2556,9 @@ impl<'a> Builder<'a> {
                 ("gos_rt_vec_insert_safe", result_ty)
             }
             "Vec::remove" if args.len() == 2 => {
-                let i = self.tcx.int_ty(gossamer_types::IntTy::I64);
+                let elem = self.vec_receiver_elem_ty(args[0].ty);
                 let e = self.tcx.dyn_error_ty();
-                let substs = gossamer_types::Substs::from_types([i, e]);
+                let substs = gossamer_types::Substs::from_types([elem, e]);
                 let result_ty = self.tcx.intern(gossamer_types::TyKind::Adt {
                     def: gossamer_resolve::DefId::local(u32::MAX),
                     substs,
@@ -2566,8 +2566,12 @@ impl<'a> Builder<'a> {
                 ("gos_rt_vec_remove_safe", result_ty)
             }
             "Vec::slice" if args.len() == 3 => {
-                let i = self.tcx.int_ty(gossamer_types::IntTy::I64);
-                let v = self.tcx.intern(gossamer_types::TyKind::Vec(i));
+                // The slice preserves the receiver's element type: a
+                // `Vec<String>` slice is `Result<Vec<String>, _>`, so the
+                // unwrapped Vec indexes its elements as strings rather than
+                // reading the raw String pointer back as an i64.
+                let elem = self.vec_receiver_elem_ty(args[0].ty);
+                let v = self.tcx.intern(gossamer_types::TyKind::Vec(elem));
                 let e = self.tcx.dyn_error_ty();
                 let substs = gossamer_types::Substs::from_types([v, e]);
                 let result_ty = self.tcx.intern(gossamer_types::TyKind::Adt {

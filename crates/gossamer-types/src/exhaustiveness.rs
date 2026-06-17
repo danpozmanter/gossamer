@@ -560,6 +560,21 @@ fn lower_pattern(pattern: &Pattern) -> Pat {
             }
         }
         PatternKind::Tuple(parts) => Pat::Tuple(parts.iter().map(lower_pattern).collect()),
+        // A `[..]` / `[..rest]` slice (no fixed elements) matches any
+        // slice, so it acts as a catch-all; any slice carrying fixed
+        // elements imposes a length constraint and is opaque to the
+        // usefulness lattice (it never subsumes another pattern).
+        PatternKind::Slice {
+            prefix,
+            rest,
+            suffix,
+        } => {
+            if rest.is_some() && prefix.is_empty() && suffix.is_empty() {
+                Pat::Wild
+            } else {
+                Pat::Opaque
+            }
+        }
         PatternKind::Or(alts) => Pat::Or(alts.iter().map(lower_pattern).collect()),
         PatternKind::Range { .. } => Pat::Opaque,
         PatternKind::Ref { inner, .. } => lower_pattern(inner),

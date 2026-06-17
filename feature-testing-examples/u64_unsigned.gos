@@ -1,0 +1,25 @@
+// `u64` / `usize` values above 2^63 compare, right-shift, and Display as
+// unsigned by their declared type, so a value whose i64 bit pattern is
+// negative still reads as a large positive decimal. Signed `i64` keeps
+// signed comparison / arithmetic-shift / Display. Output is identical on
+// the bytecode VM (`gos run`) and the LLVM AOT tier (`gos build`).
+fn main() {
+    let big: u64 = 18000000000000000000
+    let small: u64 = 5
+    println!("{}", big)
+    println!("{}", big > small)
+    println!("{}", big < small)
+    println!("{}", small > big)
+    println!("{}", big >> 1)
+
+    let ubig: usize = 18000000000000000000
+    println!("{}", ubig)
+    println!("{}", ubig > 7)
+
+    let neg: i64 = -5
+    let three: i64 = 3
+    println!("{}", neg)
+    println!("{}", neg > three)
+    println!("{}", neg < three)
+    println!("{}", neg >> 1)
+}

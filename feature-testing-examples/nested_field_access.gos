@@ -1,0 +1,31 @@
+// Nested field access where the receiver is itself a projection - a struct
+// reached through a tuple element (`t.0.x`) or another struct (`w.inner.v`).
+// The field type must be taken on the projected receiver, not the root local:
+// reading `t.0.x` as element-0's whole struct type instead of `x`'s `i64`
+// mis-routed the compiled-tier print dispatcher (it called the struct's `fmt`
+// on an `i64`, dereferencing the value as a pointer). Output must match across
+// the VM, Cranelift, and LLVM tiers.
+
+struct P {
+    x: i64,
+    y: i64,
+}
+
+struct Named {
+    p: P,
+    tag: String,
+}
+
+fn main() {
+    // Struct reached through a tuple element.
+    let t = (P { x: 7, y: 9 }, 5)
+    println!("{} {} {}", t.0.x, t.0.y, t.1)
+
+    // Struct field reached through another struct, with a String leaf.
+    let n = Named { p: P { x: 1, y: 2 }, tag: format!("origin") }
+    println!("{} {} {}", n.p.x, n.p.y, n.tag)
+
+    // A tuple holding a struct with a String, read after the tuple is built.
+    let pair = (Named { p: P { x: 3, y: 4 }, tag: format!("here") }, 8)
+    println!("{} {} {}", pair.0.p.x, pair.0.tag, pair.1)
+}

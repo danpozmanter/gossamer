@@ -159,7 +159,7 @@ pub const FEATURE_STATUS: &[FeatureStatus] = &[
     FeatureStatus {
         path: "lang::move_keyword",
         status: Status::Planned,
-        doc: "`move` closure capture keyword - parses, lowers to the same Fn shape as a non-move closure (GC handles ownership).",
+        doc: "`move` closure capture keyword - parses, lowers to the same Fn shape as a non-move closure (the runtime manages ownership).",
     },
     FeatureStatus {
         path: "lang::async_await",
@@ -169,7 +169,7 @@ pub const FEATURE_STATUS: &[FeatureStatus] = &[
     FeatureStatus {
         path: "lang::lifetimes",
         status: Status::Planned,
-        doc: "Explicit lifetime annotations - not needed under the current GC model; tracked in case a borrow-checker mode lands.",
+        doc: "Explicit lifetime annotations - not needed under the current memory model; tracked in case a borrow-checker mode lands.",
     },
     // -----------------------------------------------------------------
     // Stdlib status overrides. Only modules whose status departs from

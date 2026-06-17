@@ -70,6 +70,9 @@ impl Parser<'_> {
         if self.eat_punct(Punct::LParen) {
             return self.parse_tuple_pattern();
         }
+        if self.eat_punct(Punct::LBracket) {
+            return self.parse_slice_pattern();
+        }
         if self.eat_keyword(Keyword::Mut) {
             return self.parse_ident_pattern(Mutability::Mutable);
         }
@@ -120,6 +123,57 @@ impl Parser<'_> {
             return elements.pop().expect("single-element tuple").kind;
         }
         PatternKind::Tuple(elements)
+    }
+
+    /// Parses a slice pattern `[p1, ..rest, pN]`. The leading `[` has
+    /// already been consumed. A single `..` (optionally binding a
+    /// sub-slice, e.g. `..rest`) splits the elements into a prefix and
+    /// suffix; without `..` the pattern matches a fixed length.
+    fn parse_slice_pattern(&mut self) -> PatternKind {
+        let mut prefix = Vec::new();
+        let mut suffix = Vec::new();
+        let mut rest: Option<Box<Pattern>> = None;
+        let mut seen_rest = false;
+        while !self.at_punct(Punct::RBracket) && !self.at_eof() {
+            if self.at_punct(Punct::DotDot) {
+                let rest_span = self.peek_span();
+                self.bump();
+                let binding = if self.at_punct(Punct::Comma) || self.at_punct(Punct::RBracket) {
+                    let id = self.alloc_id();
+                    Box::new(Pattern::new(id, rest_span, PatternKind::Wildcard))
+                } else {
+                    Box::new(self.parse_pattern_no_or())
+                };
+                if seen_rest {
+                    self.record(
+                        ParseError::Unexpected {
+                            expected: "at most one `..` in a slice pattern".to_string(),
+                            found: "a second `..`".to_string(),
+                        },
+                        rest_span,
+                    );
+                } else {
+                    seen_rest = true;
+                    rest = Some(binding);
+                }
+            } else {
+                let pattern = self.parse_pattern();
+                if seen_rest {
+                    suffix.push(pattern);
+                } else {
+                    prefix.push(pattern);
+                }
+            }
+            if !self.eat_punct(Punct::Comma) {
+                break;
+            }
+        }
+        self.expect_punct(Punct::RBracket, "to close slice pattern");
+        PatternKind::Slice {
+            prefix,
+            rest,
+            suffix,
+        }
     }
 
     fn parse_ident_pattern(&mut self, mutability: Mutability) -> PatternKind {

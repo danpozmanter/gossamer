@@ -55,6 +55,15 @@ fn main() {
   parameters). Each construction site is a separate monomorphisation;
   parameters are inferred from the field values at the call site.
   Runs under `gos run` and `gos build`.
+- **`trait_bounds.gos`** - generic functions with trait bounds dispatched
+  statically. One `report<T: Shape>(s: &T)` serves every type that
+  implements `Shape`; the bound is enforced at compile time and each
+  instantiation monomorphises to a direct call. Identical output under
+  `gos run`, the Cranelift JIT, and `gos build`.
+- **`record_update.gos`** - functional record update
+  (`Config { ..base, port: 443 }`): build a new struct from an existing
+  one, overriding only the changed fields, with the base still usable
+  afterward. Runs under `gos run` and `gos build`.
 - **`go_spawn.gos`** - goroutine fan-out with no channels.
   Every construct lowers through native codegen, so `gos build`
   produces a working binary.

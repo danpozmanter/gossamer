@@ -50,6 +50,17 @@ pub enum JitKind {
     /// shape-table index used to re-wrap returned pointers. Integer
     /// register class.
     EnumPtr(u32),
+    /// A `String` crossing the boundary as the runtime's native
+    /// `*mut c_char` cstring pointer (the flat-ABI shape the codegen
+    /// uses). The trampoline builds a fresh owned cstring from the VM
+    /// String for a param, and reads back + frees a returned cstring.
+    /// Integer register class.
+    NativeStr,
+    /// A `Vec<i64>` crossing the boundary as the runtime's native
+    /// `*mut GosVec` pointer (8-byte primitive slots). The trampoline
+    /// builds a fresh owned `GosVec` from the VM vec for a param, and
+    /// reads back + frees a returned `GosVec`. Integer register class.
+    NativeVecI64,
 }
 
 /// Raw handle for a JIT-compiled function: a fn pointer plus the
@@ -167,6 +178,10 @@ fn jit_compile_set<'a>(
     // compile (the trampoline marshals at the boundary).
     let uses_i128_repr = |b: &Body| -> bool {
         b.locals.iter().any(|l| match tcx.kind_of(l.ty) {
+            // `String` and `Vec<_>` locals are marshalled across the JIT
+            // boundary by the native-pointer bridge (see `ty_to_kind`),
+            // so they never force a body onto bytecode.
+            TyKind::String | TyKind::Vec(_) | TyKind::Slice(_) => false,
             // Inline Option/Result sentinels are two-word i128 values.
             // Non-enum Adts (structs) are also declined: the JIT-side
             // struct lowering is unexercised - bodies holding struct
@@ -419,15 +434,22 @@ fn ty_to_kind(tcx: &TyCtxt, ty: Ty, enum_shapes: &HashMap<u32, u32>) -> Option<J
         TyKind::Adt { def, .. } if tcx.is_rc_managed(ty) => enum_shapes
             .get(&def.local)
             .map(|idx| JitKind::EnumPtr(*idx)),
-        // Aggregate types (`String`, `Tuple`, `Adt`, channels …)
-        // intentionally return `None` here. The codegen lowers
-        // them as native struct-pointer ABIs (load/store at
-        // computed offsets), but the trampoline can only marshal
-        // through the runtime's `GossamerValue` u64 handle ABI.
-        // Until the codegen and runtime agree on a uniform
-        // aggregate calling convention, JIT-promoting these
-        // shapes risks segfaults. `JitKind::Value` is reserved
-        // for that future work.
+        // `String` and `Vec<i64>` cross as the runtime's native pointer
+        // (the flat-ABI shape `mir_ty_to_cabi` emits: a single pointer
+        // slot). The trampoline builds a fresh runtime object from the
+        // VM value at the call boundary and reclaims it after the call,
+        // so the body sees the same `*mut c_char` / `*mut GosVec` shape
+        // the AOT tier passes (zero in-body conversion).
+        TyKind::String => Some(JitKind::NativeStr),
+        TyKind::Vec(elem)
+            if matches!(tcx.kind_of(*elem), TyKind::Int(gossamer_types::IntTy::I64)) =>
+        {
+            Some(JitKind::NativeVecI64)
+        }
+        // Remaining aggregates (`Tuple`, struct `Adt`, `Vec` of
+        // non-`i64`, channels …) stay on bytecode: the trampoline has
+        // no marshalling shape for them yet, and JIT-promoting them
+        // risks segfaults at the boundary.
         _ => None,
     }
 }
@@ -787,6 +809,7 @@ fn register_runtime_symbols(builder: &mut JITBuilder) -> std::collections::HashS
         "gos_rt_vec_format_string"   => rt::gos_rt_vec_format_string,
         "gos_rt_vec_format_vec_i64"  => rt::gos_rt_vec_format_vec_i64,
         "gos_rt_vec_format_vec_string" => rt::gos_rt_vec_format_vec_string,
+        "gos_rt_tuple_format"        => rt::gos_rt_tuple_format,
         "gos_rt_concat_init"         => rt::gos_rt_concat_init,
         "gos_rt_concat_str"          => rt::gos_rt_concat_str,
         "gos_rt_concat_i64"          => rt::gos_rt_concat_i64,
@@ -900,6 +923,7 @@ fn register_runtime_symbols(builder: &mut JITBuilder) -> std::collections::HashS
         "gos_rt_arr_sort_by_i64"     => rt::gos_rt_arr_sort_by_i64,
         "gos_rt_vec_sort_by_i64"     => rt::gos_rt_vec_sort_by_i64,
         "gos_rt_vec_sort_i64"        => rt::gos_rt_vec_sort_i64,
+        "gos_rt_vec_sort_str"        => rt::gos_rt_vec_sort_str,
         "gos_rt_arr_sort_by_aggr"    => rt::gos_rt_arr_sort_by_aggr,
         "gos_rt_vec_sort_by_aggr"    => rt::gos_rt_vec_sort_by_aggr,
         "gos_rt_callback_invoke"     => rt::gos_rt_callback_invoke,
@@ -996,6 +1020,7 @@ fn register_runtime_symbols(builder: &mut JITBuilder) -> std::collections::HashS
         "gos_rt_vec_new"             => rt::gos_rt_vec_new,
         "gos_rt_vec_with_capacity"   => rt::gos_rt_vec_with_capacity,
         "gos_rt_vec_from_arr"        => rt::gos_rt_vec_from_arr,
+        "gos_rt_vec_borrow_arr"      => rt::gos_rt_vec_borrow_arr,
         "gos_rt_nested_arr_to_vec"   => rt::gos_rt_nested_arr_to_vec,
         "gos_rt_vec_len"             => rt::gos_rt_vec_len,
         "gos_rt_vec_push"            => rt::gos_rt_vec_push,
@@ -1041,6 +1066,7 @@ fn register_runtime_symbols(builder: &mut JITBuilder) -> std::collections::HashS
         "gos_rt_map_get_or_i64_str"  => rt::gos_rt_map_get_or_i64_str,
         "gos_rt_map_insert_i64_str"  => rt::gos_rt_map_insert_i64_str,
         "gos_rt_map_get_i64_str"     => rt::gos_rt_map_get_i64_str,
+        "gos_rt_map_format"          => rt::gos_rt_map_format,
         "gos_rt_json_parse"          => rt::gos_rt_json_parse,
         "gos_rt_json_render"         => rt::gos_rt_json_render,
         "gos_rt_json_display"        => rt::gos_rt_json_display,

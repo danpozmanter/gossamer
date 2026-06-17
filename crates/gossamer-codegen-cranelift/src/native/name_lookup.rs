@@ -476,7 +476,13 @@ pub(super) fn generic_rt_static_name(name: &str) -> Option<&'static str> {
         // behavior, bit-identical to the VM and the checked path.
         "gos_rt_vec_get_i64_unchecked" => Some("gos_rt_vec_get_i64"),
         "gos_rt_vec_set_i64" => Some("gos_rt_vec_set_i64"),
+        // The JIT is not the perf target: resolve the bounds-free counted-loop
+        // writer to the checked symbol so it keeps the lenient null/OOB no-op
+        // behavior, bit-identical to the VM and the checked path.
+        "gos_rt_vec_set_i64_unchecked" => Some("gos_rt_vec_set_i64"),
         "gos_rt_vec_format_i64" => Some("gos_rt_vec_format_i64"),
+        "gos_rt_tuple_format" => Some("gos_rt_tuple_format"),
+        "gos_rt_map_format" => Some("gos_rt_map_format"),
         "gos_rt_chan_recv_option" => Some("gos_rt_chan_recv_option"),
         "gos_rt_chan_try_recv_option" => Some("gos_rt_chan_try_recv_option"),
         "gos_rt_result_new" => Some("gos_rt_result_new"),
@@ -634,6 +640,7 @@ pub(super) fn generic_rt_static_name(name: &str) -> Option<&'static str> {
         "gos_rt_flag_cell_load_vec" => Some("gos_rt_flag_cell_load_vec"),
         // Plain ascending sort for Vec<i64>.
         "gos_rt_vec_sort_i64" => Some("gos_rt_vec_sort_i64"),
+        "gos_rt_vec_sort_str" => Some("gos_rt_vec_sort_str"),
         // Sort-by callbacks for fixed-array / Vec receivers.
         "gos_rt_arr_sort_by_i64" => Some("gos_rt_arr_sort_by_i64"),
         "gos_rt_vec_sort_by_i64" => Some("gos_rt_vec_sort_by_i64"),

@@ -276,6 +276,54 @@ impl<'a> Builder<'a> {
         dest
     }
 
+    /// Coerces a borrowed array (`&[T; N]` reaching a `&[T]` / `&Vec<T>`
+    /// parameter) into a borrowing GosVec view. Identical buffer to
+    /// `coerce_array_to_vec`, but built via `gos_rt_vec_borrow_arr` so the
+    /// drop pass leaves it non-owning: a borrow must not free the element
+    /// children the source array still owns. Nested-array borrows fall back
+    /// to the owning conversion (exotic; the inner vecs need real headers).
+    pub(crate) fn coerce_borrow_array_to_vec(
+        &mut self,
+        raw: Local,
+        elem_ty: Ty,
+        len: usize,
+        span: Span,
+    ) -> Local {
+        use gossamer_types::TyKind;
+        if matches!(self.tcx.kind_of(elem_ty), TyKind::Array { .. }) {
+            return self.coerce_array_to_vec(raw, elem_ty, len, span);
+        }
+        let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+        let elem_bytes = self.elem_bytes_of(elem_ty);
+        let elem_bytes_local = self.fresh(i64_ty);
+        self.emit_assign(
+            Place::local(elem_bytes_local),
+            Rvalue::Use(Operand::Const(ConstValue::Int(i128::from(elem_bytes)))),
+            span,
+        );
+        let len_local = self.fresh(i64_ty);
+        self.emit_assign(
+            Place::local(len_local),
+            Rvalue::Use(Operand::Const(ConstValue::Int(len as i128))),
+            span,
+        );
+        let vec_ty = self.tcx.intern(TyKind::Vec(elem_ty));
+        let dest = self.fresh(vec_ty);
+        let next = self.new_block(span);
+        self.terminate(Terminator::Call {
+            callee: Operand::Const(ConstValue::Str("gos_rt_vec_borrow_arr".to_string())),
+            args: vec![
+                Operand::Copy(Place::local(elem_bytes_local)),
+                Operand::Copy(Place::local(raw)),
+                Operand::Copy(Place::local(len_local)),
+            ],
+            destination: Place::local(dest),
+            target: Some(next),
+        });
+        self.set_current(next);
+        dest
+    }
+
     pub(crate) fn resolve_external_binding(
         &self,
         names: &[&str],

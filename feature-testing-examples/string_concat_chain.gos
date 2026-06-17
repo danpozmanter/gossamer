@@ -1,0 +1,13 @@
+// A left-nested String `+` chain folds into one n-ary concat (a single result
+// allocation) instead of one intermediate String per `+`, identically across
+// every tier.
+fn main() {
+    let a = "Hello, "
+    let b = "beautiful "
+    let c = "world"
+    let s = a + b + c + "!"
+    println!("{}", s)
+    let name = "Ada"
+    println!("{}", "Dear " + name + ", welcome")
+    println!("{}", "x" + "y")
+}

@@ -806,6 +806,11 @@ pub(crate) fn validate_chunk(chunk: &FnChunk) -> Result<(), ValidationError> {
                 dst_i,
                 lhs_i,
                 rhs_i,
+            }
+            | Op::ShrU64 {
+                dst_i,
+                lhs_i,
+                rhs_i,
             } => {
                 check_i(op_idx, dst_i)?;
                 check_i(op_idx, lhs_i)?;
@@ -841,6 +846,26 @@ pub(crate) fn validate_chunk(chunk: &FnChunk) -> Result<(), ValidationError> {
                 rhs_i,
             }
             | Op::NeI64 {
+                dst_v,
+                lhs_i,
+                rhs_i,
+            }
+            | Op::LtU64 {
+                dst_v,
+                lhs_i,
+                rhs_i,
+            }
+            | Op::LeU64 {
+                dst_v,
+                lhs_i,
+                rhs_i,
+            }
+            | Op::GtU64 {
+                dst_v,
+                lhs_i,
+                rhs_i,
+            }
+            | Op::GeU64 {
                 dst_v,
                 lhs_i,
                 rhs_i,

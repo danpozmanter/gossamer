@@ -297,6 +297,32 @@ impl IntrinsicContext {
         Ok(id)
     }
 
+    /// Defines a read-only data object holding a tuple's per-element
+    /// tag bytes (one byte per element) and returns its `DataId`. The
+    /// `gos_rt_tuple_format` shim reads exactly `n` bytes, so no NUL
+    /// terminator or header is needed.
+    pub(super) fn intern_tuple_tags(
+        &mut self,
+        module: &mut dyn Module,
+        tags: &[u8],
+    ) -> Result<DataId> {
+        let symbol = format!(".Ltags{}", self.next_str_id);
+        self.next_str_id += 1;
+        let id = module
+            .declare_data(&symbol, Linkage::Local, false, false)
+            .map_err(|e| anyhow!("declare {symbol}: {e}"))?;
+        let mut description = DataDescription::new();
+        description.define(tags.to_vec().into_boxed_slice());
+        // Reached only through a section-relative relocation; keep the
+        // atom alive for the Mach-O / ELF dead-strip pass (see
+        // `intern_string`).
+        description.set_used(true);
+        module
+            .define_data(id, &description)
+            .map_err(|e| anyhow!("define {symbol}: {e}"))?;
+        Ok(id)
+    }
+
     /// Declares (if needed) an imported C-ABI function and returns
     /// its `FuncId`.
     pub(super) fn extern_fn(

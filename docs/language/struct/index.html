@@ -371,6 +371,12 @@
     
       
         
+          
+        
+      
+        
+      
+        
       
     
     
@@ -388,8 +394,9 @@
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
         
           
-          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
-            
+          <div class="md-nav__link md-nav__container">
+            <a href="../" class="md-nav__link ">
+              
   
   
   <span class="md-ellipsis">
@@ -403,8 +410,14 @@
   
   
 
-            <span class="md-nav__icon md-icon"></span>
-          </label>
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
         
         <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_5">
@@ -416,6 +429,8 @@
 
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
+            
+              
             
               
                 
@@ -432,6 +447,34 @@
     
   
     Top-level statements
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../arena/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Arena blocks
   
 
     
@@ -516,6 +559,10 @@
     
       
         
+          
+        
+      
+        
       
         
       
@@ -539,8 +586,9 @@
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_8" >
         
           
-          <label class="md-nav__link" for="__nav_8" id="__nav_8_label" tabindex="">
-            
+          <div class="md-nav__link md-nav__container">
+            <a href="../../stdlib/" class="md-nav__link ">
+              
   
   
   <span class="md-ellipsis">
@@ -554,8 +602,14 @@
   
   
 
-            <span class="md-nav__icon md-icon"></span>
-          </label>
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_8" id="__nav_8_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
         
         <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_8_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_8">
@@ -567,6 +621,8 @@
 
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
+            
+              
             
               
                 
@@ -1449,6 +1505,25 @@
     
   
   
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#functional-record-update" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Functional record update
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
 </nav>
                   </div>
                 </div>
@@ -1467,6 +1542,21 @@
 <h1 id="langstruct"><code>lang::struct</code><a class="headerlink" href="#langstruct" title="Permanent link">&para;</a></h1>
 <p>Status: shipped</p>
 <p>Product type declaration.</p>
+<!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
+
+<h2 id="functional-record-update">Functional record update<a class="headerlink" href="#functional-record-update" title="Permanent link">&para;</a></h2>
+<p>A struct literal may spread a base value with <code>..base</code> and override
+individual fields:</p>
+<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kd">let</span><span class="w"> </span><span class="n">p2</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">Point</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="o">..</span><span class="n">p1</span><span class="p">,</span><span class="w"> </span><span class="n">x</span>: <span class="mi">10</span><span class="w"> </span><span class="p">}</span><span class="w">   </span><span class="c1">// x overridden, the rest copied from p1</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="kd">let</span><span class="w"> </span><span class="n">p3</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">Point</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">x</span>: <span class="mi">10</span><span class="p">,</span><span class="w"> </span><span class="o">..</span><span class="n">p1</span><span class="w"> </span><span class="p">}</span><span class="w">   </span><span class="c1">// the spread may appear in any position</span>
+</code></pre></div>
+<ul>
+<li>Explicit fields win over the base for the same name.</li>
+<li>Exactly one <code>..base</code> spread is allowed (a second is a parse error).</li>
+<li>Fields copied from the base share its heap children and are retained,
+  so the base stays usable after the update with no double-free. Output
+  is identical across the VM, Cranelift, and LLVM tiers.</li>
+</ul>
 
 
 

@@ -78,7 +78,7 @@ impl<'src> Lexer<'src> {
             return self.finish_string(start);
         }
         if first == '\'' {
-            return self.finish_char(start);
+            return self.finish_label_or_char(start);
         }
         if first.is_ascii_digit() {
             return lex_number(&mut self.cursor);
@@ -135,6 +135,42 @@ impl<'src> Lexer<'src> {
     fn finish_string(&mut self, start: u32) -> TokenKind {
         let outcome = lex_string(&mut self.cursor, self.file, start);
         self.absorb_quoted(outcome)
+    }
+
+    /// Decides between a loop label (`'name`) and a character literal
+    /// (`'x'`). A `'` followed by an identifier-start character whose
+    /// run of identifier characters does not terminate at a closing
+    /// `'` is a label; everything else is a character literal.
+    fn finish_label_or_char(&mut self, start: u32) -> TokenKind {
+        if self.at_label() {
+            return self.finish_label();
+        }
+        self.finish_char(start)
+    }
+
+    /// Returns `true` when the cursor (sitting on `'`) begins a label.
+    fn at_label(&self) -> bool {
+        if !is_ident_start(self.cursor.peek_nth(1)) {
+            return false;
+        }
+        let mut offset = 2;
+        loop {
+            let character = self.cursor.peek_nth(offset);
+            if is_ident_continue(character) {
+                offset += 1;
+                continue;
+            }
+            // A closing `'` after the identifier run means this was a
+            // (possibly over-long) char literal like `'a'` / `'ab'`.
+            return character != '\'';
+        }
+    }
+
+    /// Lexes a `'name` label, including the leading apostrophe.
+    fn finish_label(&mut self) -> TokenKind {
+        self.cursor.bump();
+        self.cursor.bump_while(is_ident_continue);
+        TokenKind::Label
     }
 
     /// Lexes a `'x'` character literal and forwards any diagnostics.

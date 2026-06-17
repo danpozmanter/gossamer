@@ -9,6 +9,7 @@ use std::collections::HashMap;
 
 use gossamer_types::{TyCtxt, TyKind};
 
+use crate::escape::EscapeSet;
 use crate::ir::{
     BasicBlock, BinOp, BlockId, Body, ConstValue, Local, Operand, Place, Projection, Rvalue,
     Statement, StatementKind, Terminator,
@@ -66,6 +67,8 @@ pub fn optimise(body: &mut Body, tcx: &TyCtxt) {
     dead_block_sweep(body);
     crate::verify::debug_verify_body(body);
     dead_store_elim(body, tcx);
+    crate::verify::debug_verify_body(body);
+    bounds_check_elim(body, tcx);
     crate::verify::debug_verify_body(body);
 }
 
@@ -524,8 +527,20 @@ pub fn inline_general(bodies: &mut [Body]) {
     if !inlining_enabled() {
         return;
     }
+    let def_to_name = def_to_name_map(bodies);
     let mut callees: HashMap<String, GeneralCallee> = HashMap::new();
     for b in bodies.iter() {
+        // A self-recursive callee would re-inline its own body one level per
+        // splice into every caller, bounded only by the growth budget. Refuse
+        // to register it so recursion stays a real call. (Caller
+        // self-recursion is already skipped in `inline_general_into`.)
+        let self_recursive = b.blocks.iter().any(|blk| {
+            matches!(&blk.terminator, Terminator::Call { callee, .. }
+                if callee_body_name(callee, &def_to_name).as_deref() == Some(b.name.as_str()))
+        });
+        if self_recursive {
+            continue;
+        }
         if let Some(gc) = try_build_general(b) {
             callees.insert(b.name.clone(), gc);
         }
@@ -533,7 +548,6 @@ pub fn inline_general(bodies: &mut [Body]) {
     if callees.is_empty() {
         return;
     }
-    let def_to_name = def_to_name_map(bodies);
     for body in bodies.iter_mut() {
         inline_general_into(body, &callees, &def_to_name);
     }
@@ -1483,4 +1497,1154 @@ pub fn const_value_of(body: &Body, local: Local) -> Option<ConstValue> {
         }
     }
     found
+}
+
+// ---------------------------------------------------------------------------
+// RC retain/release last-use elision (item 3).
+// ---------------------------------------------------------------------------
+
+/// The release helper that balances a given retain helper. `None` for any
+/// name that is not a plain strong retain - weak / field / aggregate
+/// retains are never paired here (a wrong pairing would unbalance a
+/// reference count and free reachable memory).
+fn rc_paired_release(retain: &str) -> Option<&'static str> {
+    match retain {
+        "gos_rt_rc_retain" => Some("gos_rt_rc_release"),
+        "gos_rt_vec_retain" => Some("gos_rt_vec_free"),
+        _ => None,
+    }
+}
+
+/// The single bare-local argument of an RC accounting call, or `None`
+/// when the call takes anything other than exactly one projection-free
+/// `Copy(local)` (a field/weak/aggregate op, or a constant).
+fn rc_bare_local_arg(args: &[Operand]) -> Option<Local> {
+    if let [Operand::Copy(p)] = args
+        && p.projection.is_empty()
+    {
+        return Some(p.local);
+    }
+    None
+}
+
+/// `true` when `place` reads or writes through `local` (root or an
+/// `Index` projection local).
+fn place_mentions_local(place: &Place, local: Local) -> bool {
+    place.local == local
+        || place
+            .projection
+            .iter()
+            .any(|p| matches!(p, Projection::Index(l) if *l == local))
+}
+
+fn operand_mentions_local(op: &Operand, local: Local) -> bool {
+    matches!(op, Operand::Copy(p) if place_mentions_local(p, local))
+}
+
+fn rvalue_mentions_local(rv: &Rvalue, local: Local) -> bool {
+    match rv {
+        Rvalue::Use(op)
+        | Rvalue::UnaryOp { operand: op, .. }
+        | Rvalue::Cast { operand: op, .. } => operand_mentions_local(op, local),
+        Rvalue::BinaryOp { lhs, rhs, .. } => {
+            operand_mentions_local(lhs, local) || operand_mentions_local(rhs, local)
+        }
+        Rvalue::Aggregate { operands, .. } => {
+            operands.iter().any(|o| operand_mentions_local(o, local))
+        }
+        Rvalue::Repeat { value, .. } => operand_mentions_local(value, local),
+        Rvalue::Len(p) | Rvalue::Ref { place: p, .. } => place_mentions_local(p, local),
+        Rvalue::CallIntrinsic { args, .. } => args.iter().any(|o| operand_mentions_local(o, local)),
+        Rvalue::StaticLoad(_) => false,
+    }
+}
+
+/// `true` when `stmt` reads or writes `local` in any position.
+fn stmt_mentions_local(stmt: &Statement, local: Local) -> bool {
+    match &stmt.kind {
+        StatementKind::Assign { place, rvalue } => {
+            place_mentions_local(place, local) || rvalue_mentions_local(rvalue, local)
+        }
+        StatementKind::SetDiscriminant { place, .. } => place_mentions_local(place, local),
+        StatementKind::StaticStore { value, .. } => operand_mentions_local(value, local),
+        StatementKind::StorageLive(l) | StatementKind::StorageDead(l) => *l == local,
+        StatementKind::Nop => false,
+    }
+}
+
+/// `true` when `stmt` assigns the bare local `local` (a full
+/// reassignment, not a projected field/element write).
+fn stmt_writes_bare(stmt: &Statement, local: Local) -> bool {
+    matches!(&stmt.kind, StatementKind::Assign { place, .. }
+        if place.projection.is_empty() && place.local == local)
+}
+
+fn term_mentions_local(t: &Terminator, local: Local) -> bool {
+    let m = |op: &Operand| operand_mentions_local(op, local);
+    match t {
+        Terminator::SwitchInt { discriminant, .. } => m(discriminant),
+        Terminator::Call {
+            callee,
+            args,
+            destination,
+            ..
+        } => m(callee) || args.iter().any(m) || place_mentions_local(destination, local),
+        Terminator::Assert { cond, .. } => m(cond),
+        _ => false,
+    }
+}
+
+fn term_writes_bare(t: &Terminator, local: Local) -> bool {
+    matches!(t, Terminator::Call { destination, .. }
+        if destination.projection.is_empty() && destination.local == local)
+}
+
+/// Block successor indices.
+fn successor_indices(t: &Terminator) -> Vec<usize> {
+    match t {
+        Terminator::Goto { target } => vec![target.0 as usize],
+        Terminator::SwitchInt { arms, default, .. } => {
+            let mut v: Vec<usize> = arms.iter().map(|(_, b)| b.0 as usize).collect();
+            v.push(default.0 as usize);
+            v
+        }
+        Terminator::Call { target, .. } => target.iter().map(|t| t.0 as usize).collect(),
+        Terminator::Assert { target, .. } | Terminator::Drop { target, .. } => {
+            vec![target.0 as usize]
+        }
+        Terminator::Return | Terminator::Unreachable | Terminator::Panic { .. } => Vec::new(),
+    }
+}
+
+/// Forward liveness probe: starting just after statement `after_stmt` in
+/// `start_block`, returns `true` when `x` is read on some path before it
+/// is overwritten. A bare reassignment (or a call destination) kills the
+/// path; any other appearance of `x` - including an RC accounting call on
+/// it - counts as a read and makes `x` live. Conservative: any uncertain
+/// reach reports live so the caller keeps the retain/release pair.
+fn local_live_after(
+    body: &Body,
+    succs: &[Vec<usize>],
+    start_block: usize,
+    after_stmt: usize,
+    x: Local,
+) -> bool {
+    let n = body.blocks.len();
+    let mut stack: Vec<(usize, usize)> = vec![(start_block, after_stmt + 1)];
+    let mut visited = vec![false; n];
+    while let Some((b, from)) = stack.pop() {
+        let blk = &body.blocks[b];
+        let mut killed = false;
+        for sj in from..blk.stmts.len() {
+            let st = &blk.stmts[sj];
+            if stmt_writes_bare(st, x) {
+                // `x = f(x)` reads the old value before overwriting.
+                if let StatementKind::Assign { rvalue, .. } = &st.kind
+                    && rvalue_mentions_local(rvalue, x)
+                {
+                    return true;
+                }
+                killed = true;
+                break;
+            }
+            if stmt_mentions_local(st, x) {
+                return true;
+            }
+        }
+        if killed {
+            continue;
+        }
+        let t = &blk.terminator;
+        if term_writes_bare(t, x) {
+            if let Terminator::Call { callee, args, .. } = t
+                && (operand_mentions_local(callee, x)
+                    || args.iter().any(|o| operand_mentions_local(o, x)))
+            {
+                return true;
+            }
+            continue;
+        }
+        if term_mentions_local(t, x) {
+            return true;
+        }
+        for &s in &succs[b] {
+            if !visited[s] {
+                visited[s] = true;
+                stack.push((s, 0));
+            }
+        }
+    }
+    false
+}
+
+/// RC retain/release last-use elision (item 3). Cancels a tightly
+/// bracketed `retain(x)` / `release(x)` pair on a non-escaping,
+/// non-region, RC-managed local `x` whose reference is moved into a
+/// surviving holder.
+///
+/// A pair is cancelled only when, conservatively, all hold:
+/// - the retain is a plain strong retain (`gos_rt_rc_retain` /
+///   `gos_rt_vec_retain`) on a bare local - never a field / weak /
+///   aggregate accounting op;
+/// - `x` is RC-managed, not a `region` local, and `escape` reports it
+///   non-escaping (an escaped object may be shared across goroutines and
+///   carry the `SHARED_BIT` atomic boundary, where the balanced count is
+///   load-bearing);
+/// - the statement directly before the retain reads `x` (the forwarding
+///   use whose new reference the retain accounts for) and does not
+///   reassign it;
+/// - the matching release (the type-paired opposite name) follows in the
+///   same block with no other mention of `x` between the two - a tight
+///   bracket on one object;
+/// - `x` is dead on every path after the release.
+///
+/// Because the holder created by the forwarding use keeps its own
+/// balanced release and `x` is dead, removing both members moves `x`'s
+/// single share into that holder without changing the object's reference
+/// count at any point outside the bracket. Both members are removed or
+/// neither; a missed pair only keeps the original (correct) timing.
+pub(crate) fn elide_redundant_rc_pairs(body: &mut Body, escape: &EscapeSet, tcx: &TyCtxt) {
+    let n_blocks = body.blocks.len();
+    if n_blocks == 0 {
+        return;
+    }
+    let n_locals = body.locals.len();
+    let succs: Vec<Vec<usize>> = body
+        .blocks
+        .iter()
+        .map(|b| successor_indices(&b.terminator))
+        .collect();
+
+    let is_rc_local = |x: Local| -> bool {
+        let i = x.0 as usize;
+        i < n_locals && tcx.is_rc_managed(body.locals[i].ty) && !body.locals[i].region
+    };
+
+    let mut cancels: Vec<(usize, usize, usize)> = Vec::new();
+    for bi in 0..n_blocks {
+        let stmts = &body.blocks[bi].stmts;
+        for ir in 0..stmts.len() {
+            let StatementKind::Assign {
+                rvalue: Rvalue::CallIntrinsic { name, args },
+                ..
+            } = &stmts[ir].kind
+            else {
+                continue;
+            };
+            let Some(rel_name) = rc_paired_release(name) else {
+                continue;
+            };
+            let Some(x) = rc_bare_local_arg(args) else {
+                continue;
+            };
+            if !is_rc_local(x) || !escape.is_non_escaping(x) {
+                continue;
+            }
+            // The forwarding use that the retain accounts for must sit
+            // immediately before it and read (not reassign) `x`.
+            if ir == 0 {
+                continue;
+            }
+            let prev = &stmts[ir - 1];
+            if stmt_writes_bare(prev, x) || !stmt_mentions_local(prev, x) {
+                continue;
+            }
+            // Find the paired release: the first matching release of `x`
+            // in this block, with no other mention of `x` in between.
+            let mut paired: Option<usize> = None;
+            for (j, stmt) in stmts.iter().enumerate().skip(ir + 1) {
+                if let StatementKind::Assign {
+                    rvalue: Rvalue::CallIntrinsic { name: dn, args: da },
+                    ..
+                } = &stmt.kind
+                    && *dn == rel_name
+                    && rc_bare_local_arg(da) == Some(x)
+                {
+                    paired = Some(j);
+                    break;
+                }
+                if stmt_mentions_local(stmt, x) {
+                    break;
+                }
+            }
+            let Some(id) = paired else {
+                continue;
+            };
+            if local_live_after(body, &succs, bi, id, x) {
+                continue;
+            }
+            cancels.push((bi, ir, id));
+        }
+    }
+    for (bi, ir, id) in cancels {
+        body.blocks[bi].stmts[ir].kind = StatementKind::Nop;
+        body.blocks[bi].stmts[id].kind = StatementKind::Nop;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Bounds-check elision (item 5).
+// ---------------------------------------------------------------------------
+
+/// Recognised counted-loop header: a `SwitchInt` on `counter < bound`
+/// whose false arm exits and whose default re-enters the body.
+struct CountedHeader {
+    counter: Local,
+    bound: Local,
+    body_entry: usize,
+    exit: usize,
+}
+
+/// Matches the `for i in 0..bound` header shape produced by the lowerer:
+/// a final `cmp = Lt(Copy(counter), Copy(bound))` statement followed by
+/// `SwitchInt(cmp, arms:[(0, exit)], default: body)`. Inclusive (`Le`)
+/// comparisons and any other arm layout are rejected.
+fn recognise_counted_header(block: &BasicBlock) -> Option<CountedHeader> {
+    let Terminator::SwitchInt {
+        discriminant: Operand::Copy(disc),
+        arms,
+        default,
+    } = &block.terminator
+    else {
+        return None;
+    };
+    if !disc.projection.is_empty() || arms.len() != 1 || arms[0].0 != 0 {
+        return None;
+    }
+    let cmp = disc.local;
+    let exit = arms[0].1.0 as usize;
+    let body_entry = default.0 as usize;
+    if exit == body_entry {
+        return None;
+    }
+    // The discriminant must be defined by the block's last statement as a
+    // strict-less-than over two bare locals.
+    let last = block.stmts.last()?;
+    let StatementKind::Assign {
+        place,
+        rvalue:
+            Rvalue::BinaryOp {
+                op: BinOp::Lt,
+                lhs: Operand::Copy(lhs),
+                rhs: Operand::Copy(rhs),
+            },
+    } = &last.kind
+    else {
+        return None;
+    };
+    if place.local != cmp
+        || !place.projection.is_empty()
+        || !lhs.projection.is_empty()
+        || !rhs.projection.is_empty()
+    {
+        return None;
+    }
+    Some(CountedHeader {
+        counter: lhs.local,
+        bound: rhs.local,
+        body_entry,
+        exit,
+    })
+}
+
+/// Computes the loop body region for a header. Returns the set of body
+/// block indices (excluding the header and the exit) and the single
+/// latch block whose terminator jumps back to the header. Bails (`None`)
+/// on any irregular shape: more than one back edge to the header, or a
+/// region block that escapes to a block other than the header or exit.
+fn counted_loop_region(
+    body: &Body,
+    succs: &[Vec<usize>],
+    header: usize,
+    body_entry: usize,
+    exit: usize,
+) -> Option<(Vec<usize>, usize)> {
+    if body_entry == header || body_entry == exit {
+        return None;
+    }
+    let n = body.blocks.len();
+    let mut in_region = vec![false; n];
+    let mut stack = vec![body_entry];
+    in_region[body_entry] = true;
+    let mut order = Vec::new();
+    while let Some(b) = stack.pop() {
+        order.push(b);
+        for &s in &succs[b] {
+            if s == header || s == exit {
+                continue;
+            }
+            if s >= n {
+                return None;
+            }
+            if !in_region[s] {
+                in_region[s] = true;
+                stack.push(s);
+            }
+        }
+    }
+    // Closed-loop check + locate the single latch (back edge to header).
+    let mut latch: Option<usize> = None;
+    for &b in &order {
+        let mut targets_header = false;
+        for &s in &succs[b] {
+            if s == header {
+                targets_header = true;
+            } else if s == exit {
+                // a `break`-style early exit is fine
+            } else if !in_region.get(s).copied().unwrap_or(false) {
+                // escapes the loop to a third block - not a clean loop.
+                return None;
+            }
+        }
+        if targets_header {
+            if latch.is_some() {
+                return None;
+            }
+            latch = Some(b);
+        }
+    }
+    let latch = latch?;
+    // The latch must jump unconditionally back to the header.
+    if !matches!(&body.blocks[latch].terminator, Terminator::Goto { target } if target.0 as usize == header)
+    {
+        return None;
+    }
+    Some((order, latch))
+}
+
+/// `true` when `local` is assigned (bare) by `stmt` or by a call
+/// destination, inside the given block.
+fn block_writes_local(block: &BasicBlock, local: Local) -> bool {
+    block.stmts.iter().any(|s| stmt_writes_bare(s, local))
+        || term_writes_bare(&block.terminator, local)
+}
+
+/// Verifies the counter is a monotone non-negative induction variable:
+/// its only in-loop write is one `counter = counter + positive_const`
+/// in the latch, and every definition outside the loop traces to a
+/// non-negative value (so the monotone counter stays in `[0, bound)`).
+fn verify_counter(
+    body: &Body,
+    region: &[usize],
+    header: usize,
+    latch: usize,
+    counter: Local,
+) -> bool {
+    let in_loop = |b: usize| b == header || region.contains(&b);
+    let mut latch_increment = false;
+    let mut saw_outside_init = false;
+    for (bi, block) in body.blocks.iter().enumerate() {
+        let inside = in_loop(bi);
+        for stmt in &block.stmts {
+            let StatementKind::Assign { place, rvalue } = &stmt.kind else {
+                continue;
+            };
+            if place.local != counter || !place.projection.is_empty() {
+                continue;
+            }
+            if inside {
+                // The only legal in-loop write is the latch increment.
+                if bi != latch {
+                    return false;
+                }
+                let positive_step = match rvalue {
+                    Rvalue::BinaryOp {
+                        op: BinOp::Add,
+                        lhs: Operand::Copy(p),
+                        rhs: Operand::Const(ConstValue::Int(k)),
+                    }
+                    | Rvalue::BinaryOp {
+                        op: BinOp::Add,
+                        lhs: Operand::Const(ConstValue::Int(k)),
+                        rhs: Operand::Copy(p),
+                    } => p.projection.is_empty() && p.local == counter && *k >= 1,
+                    _ => false,
+                };
+                if !positive_step || latch_increment {
+                    return false;
+                }
+                latch_increment = true;
+            } else {
+                // Pre-loop initialisation must be provably non-negative.
+                if !value_traces_nonneg(body, &in_loop, place.local, &mut Vec::new()) {
+                    return false;
+                }
+                saw_outside_init = true;
+            }
+        }
+        // A call destination writing the counter (in or out of loop) is
+        // not a provable induction variable.
+        if term_writes_bare(&block.terminator, counter) {
+            return false;
+        }
+    }
+    latch_increment && saw_outside_init
+}
+
+/// `true` when every out-of-loop definition of `local` is a provably
+/// non-negative value: a non-negative integer constant, a length-helper
+/// result (always `>= 0`), or a bare copy of another such local. In-loop
+/// definitions are ignored (the caller proves the in-loop write is a
+/// positive increment separately). Bails on cycles, multiple-source
+/// ambiguity, or any non-traceable definition.
+fn value_traces_nonneg(
+    body: &Body,
+    in_loop: &impl Fn(usize) -> bool,
+    local: Local,
+    visited: &mut Vec<Local>,
+) -> bool {
+    if visited.contains(&local) {
+        return false;
+    }
+    visited.push(local);
+    let mut saw_def = false;
+    for (bi, block) in body.blocks.iter().enumerate() {
+        if in_loop(bi) {
+            continue;
+        }
+        for stmt in &block.stmts {
+            let StatementKind::Assign { place, rvalue } = &stmt.kind else {
+                continue;
+            };
+            if place.local != local || !place.projection.is_empty() {
+                continue;
+            }
+            saw_def = true;
+            match rvalue {
+                Rvalue::Use(Operand::Const(ConstValue::Int(n))) if *n >= 0 => {}
+                Rvalue::Use(Operand::Copy(p)) if p.projection.is_empty() => {
+                    if !value_traces_nonneg(body, in_loop, p.local, visited) {
+                        return false;
+                    }
+                }
+                _ => return false,
+            }
+        }
+        if let Terminator::Call {
+            callee: Operand::Const(ConstValue::Str(name)),
+            destination,
+            ..
+        } = &block.terminator
+            && destination.local == local
+            && destination.projection.is_empty()
+        {
+            saw_def = true;
+            if !is_len_helper(name) {
+                return false;
+            }
+        }
+    }
+    saw_def
+}
+
+/// Length-helper runtime names: a call `name(vec)` returns `vec.len()`.
+fn is_len_helper(name: &str) -> bool {
+    matches!(name, "gos_rt_vec_len" | "gos_rt_len")
+}
+
+/// Returns the vec local that `bound` is the length of, following a
+/// chain of bare copies back to a `len(vec)` call. The bound must have a
+/// single definition along the chain and must not be written anywhere in
+/// the loop. Rejects len arithmetic, other vecs (the caller pins the
+/// receiver), and parameters (no in-body definition).
+fn bound_traces_to_len(
+    body: &Body,
+    region: &[usize],
+    header: usize,
+    bound: Local,
+) -> Option<Local> {
+    let in_loop = |b: usize| b == header || region.contains(&b);
+    // The bound must be loop-invariant.
+    for (bi, block) in body.blocks.iter().enumerate() {
+        if in_loop(bi) && block_writes_local(block, bound) {
+            return None;
+        }
+    }
+    let mut current = bound;
+    let mut guard = 0;
+    loop {
+        guard += 1;
+        if guard > 64 {
+            return None;
+        }
+        // Find the unique definition of `current`.
+        let mut def: Option<&Rvalue> = None;
+        let mut call_len_arg: Option<Local> = None;
+        let mut def_count = 0;
+        for block in &body.blocks {
+            for stmt in &block.stmts {
+                if let StatementKind::Assign { place, rvalue } = &stmt.kind
+                    && place.local == current
+                    && place.projection.is_empty()
+                {
+                    def = Some(rvalue);
+                    def_count += 1;
+                }
+            }
+            if let Terminator::Call {
+                callee: Operand::Const(ConstValue::Str(name)),
+                args,
+                destination,
+                ..
+            } = &block.terminator
+                && destination.local == current
+                && destination.projection.is_empty()
+            {
+                def_count += 1;
+                if is_len_helper(name)
+                    && let [Operand::Copy(p)] = args.as_slice()
+                    && p.projection.is_empty()
+                {
+                    call_len_arg = Some(p.local);
+                }
+            }
+        }
+        if def_count != 1 {
+            return None;
+        }
+        if let Some(vec) = call_len_arg {
+            return Some(vec);
+        }
+        match def {
+            Some(Rvalue::Use(Operand::Copy(p))) if p.projection.is_empty() => current = p.local,
+            _ => return None,
+        }
+    }
+}
+
+/// Verifies the indexed vec `xs` is not mutated, reassigned, aliased, or
+/// captured anywhere in the loop. Inside the loop `xs` may appear only as
+/// the receiver (first argument) of an indexed get/set or a length read;
+/// any other appearance (a push/pop, a copy, a borrow, a user call, a
+/// reassignment) is disqualifying.
+fn verify_vec_unmodified(body: &Body, region: &[usize], header: usize, xs: Local) -> bool {
+    let in_loop = |b: usize| b == header || region.contains(&b);
+    for (bi, block) in body.blocks.iter().enumerate() {
+        if !in_loop(bi) {
+            continue;
+        }
+        for stmt in &block.stmts {
+            if stmt_mentions_local(stmt, xs) {
+                return false;
+            }
+        }
+        match &block.terminator {
+            Terminator::Call {
+                callee: Operand::Const(ConstValue::Str(name)),
+                args,
+                destination,
+                ..
+            } if is_receiver_safe_call(name) => {
+                if destination.local == xs && destination.projection.is_empty() {
+                    return false;
+                }
+                // `xs` may appear only as arg0 (the receiver).
+                for (i, a) in args.iter().enumerate() {
+                    if i == 0 {
+                        continue;
+                    }
+                    if operand_mentions_local(a, xs) {
+                        return false;
+                    }
+                }
+            }
+            other => {
+                if term_mentions_local(other, xs) {
+                    return false;
+                }
+            }
+        }
+    }
+    true
+}
+
+/// Runtime calls that read or write `xs` in place without changing its
+/// length or capturing it - the only forms allowed to reference the
+/// indexed vec inside a bounds-elided loop.
+fn is_receiver_safe_call(name: &str) -> bool {
+    matches!(
+        name,
+        "gos_rt_vec_get_i64"
+            | "gos_rt_vec_set_i64"
+            | "gos_rt_vec_get_i64_unchecked"
+            | "gos_rt_vec_set_i64_unchecked"
+            | "gos_rt_vec_len"
+            | "gos_rt_len"
+    )
+}
+
+/// `true` when `op` is exactly `Copy(counter)`, or a bare copy of a
+/// local whose sole definition (in a loop block) is `Copy(counter)`. The
+/// counter is only written at the latch, so any in-body snapshot of it
+/// equals the header-checked value, which lies in `[0, bound)`.
+fn index_is_counter(body: &Body, region: &[usize], counter: Local, op: &Operand) -> bool {
+    let Operand::Copy(p) = op else {
+        return false;
+    };
+    if !p.projection.is_empty() {
+        return false;
+    }
+    if p.local == counter {
+        return true;
+    }
+    // Otherwise: a single in-loop definition `idx = Copy(counter)`.
+    let idx = p.local;
+    let mut def_in_region = false;
+    let mut def_count = 0;
+    for (bi, block) in body.blocks.iter().enumerate() {
+        for stmt in &block.stmts {
+            if stmt_writes_bare(stmt, idx) {
+                def_count += 1;
+                let is_counter_copy = matches!(&stmt.kind,
+                    StatementKind::Assign { rvalue: Rvalue::Use(Operand::Copy(s)), .. }
+                        if s.projection.is_empty() && s.local == counter);
+                if is_counter_copy && region.contains(&bi) {
+                    def_in_region = true;
+                }
+            }
+        }
+        if term_writes_bare(&block.terminator, idx) {
+            def_count += 1;
+        }
+    }
+    def_count == 1 && def_in_region
+}
+
+/// Element kind of `xs` is a single-slot scalar safe for the unchecked
+/// i64-shaped path: integer, bool, or char (mirrors the counted-loop
+/// unchecked reader's restriction; excludes RC-managed and float
+/// elements).
+fn vec_elem_is_unchecked_scalar(body: &Body, tcx: &TyCtxt, xs: Local) -> bool {
+    let mut ty = body.local_ty(xs);
+    if let TyKind::Ref { inner, .. } = tcx.kind_of(ty) {
+        ty = *inner;
+    }
+    let elem = match tcx.kind_of(ty) {
+        TyKind::Vec(e) | TyKind::Slice(e) => *e,
+        _ => return false,
+    };
+    matches!(
+        tcx.kind_of(elem),
+        TyKind::Int(_) | TyKind::Bool | TyKind::Char
+    )
+}
+
+/// Conservative bounds-check elision (item 5). For each recognised
+/// counted loop `for i in 0..xs.len()` whose counter is a monotone
+/// non-negative induction variable, whose bound is exactly `xs.len()`,
+/// and whose `xs` is provably not mutated / aliased / captured in the
+/// loop, rewrites every `gos_rt_vec_get_i64` / `gos_rt_vec_set_i64` whose
+/// receiver is `xs` and whose index is the counter to the `_unchecked`
+/// callee. The index is provably in `[0, len)` and the receiver non-null
+/// (a null vec has length 0, so the body never runs), so the unchecked
+/// store/load is behaviour-identical to the checked one. Bails closed on
+/// anything unprovable; the compiled tiers that do not honour the
+/// unchecked form resolve it back to the checked symbol.
+pub(crate) fn bounds_check_elim(body: &mut Body, tcx: &TyCtxt) {
+    let n_blocks = body.blocks.len();
+    if n_blocks == 0 {
+        return;
+    }
+    let succs: Vec<Vec<usize>> = body
+        .blocks
+        .iter()
+        .map(|b| successor_indices(&b.terminator))
+        .collect();
+
+    // (block_index, new_callee_name) for each rewritable get/set.
+    let mut rewrites: Vec<(usize, &'static str)> = Vec::new();
+    for h in 0..n_blocks {
+        let Some(header) = recognise_counted_header(&body.blocks[h]) else {
+            continue;
+        };
+        let Some((region, latch)) =
+            counted_loop_region(body, &succs, h, header.body_entry, header.exit)
+        else {
+            continue;
+        };
+        if !verify_counter(body, &region, h, latch, header.counter) {
+            continue;
+        }
+        let Some(xs) = bound_traces_to_len(body, &region, h, header.bound) else {
+            continue;
+        };
+        if !verify_vec_unmodified(body, &region, h, xs) {
+            continue;
+        }
+        if !vec_elem_is_unchecked_scalar(body, tcx, xs) {
+            continue;
+        }
+        for &b in &region {
+            let Terminator::Call {
+                callee: Operand::Const(ConstValue::Str(name)),
+                args,
+                ..
+            } = &body.blocks[b].terminator
+            else {
+                continue;
+            };
+            let (unchecked, idx_arg) = match name.as_str() {
+                "gos_rt_vec_get_i64" if args.len() == 2 => {
+                    ("gos_rt_vec_get_i64_unchecked", &args[1])
+                }
+                "gos_rt_vec_set_i64" if args.len() == 3 => {
+                    ("gos_rt_vec_set_i64_unchecked", &args[1])
+                }
+                _ => continue,
+            };
+            if !operand_mentions_local(&args[0], xs)
+                || !matches!(&args[0], Operand::Copy(p) if p.local == xs && p.projection.is_empty())
+            {
+                continue;
+            }
+            if !index_is_counter(body, &region, header.counter, idx_arg) {
+                continue;
+            }
+            rewrites.push((b, unchecked));
+        }
+    }
+    for (b, name) in rewrites {
+        if let Terminator::Call { callee, .. } = &mut body.blocks[b].terminator {
+            *callee = Operand::Const(ConstValue::Str(name.to_string()));
+        }
+    }
+}
+
+#[cfg(test)]
+mod elision_tests {
+    use gossamer_lex::{SourceMap, Span};
+    use gossamer_types::TyCtxt;
+
+    use super::{bounds_check_elim, elide_redundant_rc_pairs};
+    use crate::escape::EscapeSet;
+    use crate::ir::{
+        BasicBlock, BinOp, BlockId, Body, ConstValue, Local, LocalDecl, Operand, Place, Projection,
+        Rvalue, Statement, StatementKind, Terminator,
+    };
+
+    fn span() -> Span {
+        let mut map = SourceMap::new();
+        Span::new(map.add_file("t.gos", ""), 0, 0)
+    }
+
+    fn decl(ty: gossamer_types::Ty) -> LocalDecl {
+        LocalDecl {
+            ty,
+            debug_name: None,
+            mutable: false,
+            region: false,
+        }
+    }
+
+    fn assign(place: Place, rvalue: Rvalue) -> Statement {
+        Statement {
+            kind: StatementKind::Assign { place, rvalue },
+            span: span(),
+        }
+    }
+
+    fn copy(dst: u32, src: u32) -> Statement {
+        assign(
+            Place::local(Local(dst)),
+            Rvalue::Use(Operand::Copy(Place::local(Local(src)))),
+        )
+    }
+
+    fn rc_call(dst: u32, name: &'static str, arg: Place) -> Statement {
+        assign(
+            Place::local(Local(dst)),
+            Rvalue::CallIntrinsic {
+                name,
+                args: vec![Operand::Copy(arg)],
+            },
+        )
+    }
+
+    fn is_nop(s: &Statement) -> bool {
+        matches!(s.kind, StatementKind::Nop)
+    }
+
+    fn intrinsic_name(s: &Statement) -> Option<&str> {
+        match &s.kind {
+            StatementKind::Assign {
+                rvalue: Rvalue::CallIntrinsic { name, .. },
+                ..
+            } => Some(name),
+            _ => None,
+        }
+    }
+
+    /// A single block: `holder = Copy(x); <mid>; retain(x); <between>;
+    /// release(x); <tail>` and a `Return`. `x` is `Local(1)` (a String),
+    /// `holder` is `Local(2)`.
+    fn body_with(
+        tcx: &mut TyCtxt,
+        mid: Vec<Statement>,
+        between: Vec<Statement>,
+        tail: Vec<Statement>,
+    ) -> Body {
+        let unit = tcx.unit();
+        let s = tcx.string_ty();
+        let locals = vec![
+            decl(unit), // L0 return
+            decl(s),    // L1 x
+            decl(s),    // L2 holder
+            decl(s),    // L3 spare String
+            decl(unit), // L4 retain dest
+            decl(unit), // L5 release dest
+        ];
+        let mut stmts = vec![copy(2, 1)];
+        stmts.extend(mid);
+        stmts.push(rc_call(4, "gos_rt_rc_retain", Place::local(Local(1))));
+        stmts.extend(between);
+        stmts.push(rc_call(5, "gos_rt_rc_release", Place::local(Local(1))));
+        stmts.extend(tail);
+        Body {
+            name: "t".into(),
+            def: None,
+            arity: 0,
+            locals,
+            blocks: vec![BasicBlock {
+                id: BlockId(0),
+                stmts,
+                terminator: Terminator::Return,
+                span: span(),
+            }],
+            span: span(),
+        }
+    }
+
+    #[test]
+    fn cancels_tight_nonescaping_pair() {
+        let mut tcx = TyCtxt::new();
+        let mut body = body_with(&mut tcx, vec![], vec![], vec![]);
+        elide_redundant_rc_pairs(&mut body, &EscapeSet::default(), &tcx);
+        let stmts = &body.blocks[0].stmts;
+        // retain at index 1, release at index 2 are both cancelled.
+        assert!(
+            is_nop(&stmts[1]),
+            "retain should be cancelled: {:?}",
+            stmts[1].kind
+        );
+        assert!(
+            is_nop(&stmts[2]),
+            "release should be cancelled: {:?}",
+            stmts[2].kind
+        );
+    }
+
+    #[test]
+    fn keeps_pair_when_value_used_between() {
+        let mut tcx = TyCtxt::new();
+        // `L3 = Copy(L1)` between the retain and the release reads `x`,
+        // so the bracket is not tight - both ops are preserved.
+        let mut body = body_with(&mut tcx, vec![], vec![copy(3, 1)], vec![]);
+        elide_redundant_rc_pairs(&mut body, &EscapeSet::default(), &tcx);
+        let names: Vec<Option<&str>> = body.blocks[0].stmts.iter().map(intrinsic_name).collect();
+        assert!(
+            names.contains(&Some("gos_rt_rc_retain")) && names.contains(&Some("gos_rt_rc_release")),
+            "pair must be kept when the value is used between retain and release"
+        );
+    }
+
+    #[test]
+    fn keeps_pair_when_value_live_after_release() {
+        let mut tcx = TyCtxt::new();
+        // `L3 = Copy(L1)` after the release keeps `x` live, so the
+        // forward-liveness guard preserves both ops.
+        let mut body = body_with(&mut tcx, vec![], vec![], vec![copy(3, 1)]);
+        elide_redundant_rc_pairs(&mut body, &EscapeSet::default(), &tcx);
+        let names: Vec<Option<&str>> = body.blocks[0].stmts.iter().map(intrinsic_name).collect();
+        assert!(
+            names.contains(&Some("gos_rt_rc_retain")) && names.contains(&Some("gos_rt_rc_release")),
+            "pair must be kept when the value is read after the release"
+        );
+    }
+
+    #[test]
+    fn keeps_field_projection_release() {
+        let mut tcx = TyCtxt::new();
+        // A field-projected release arg (`x.0`) is never a bare-local
+        // pair: the aggregate-teardown accounting must be left intact.
+        let mut body = body_with(&mut tcx, vec![], vec![], vec![]);
+        if let StatementKind::Assign {
+            rvalue: Rvalue::CallIntrinsic { args, .. },
+            ..
+        } = &mut body.blocks[0].stmts[2].kind
+        {
+            args[0] = Operand::Copy(Place {
+                local: Local(1),
+                projection: vec![Projection::Field(0)],
+            });
+        }
+        elide_redundant_rc_pairs(&mut body, &EscapeSet::default(), &tcx);
+        assert!(
+            !is_nop(&body.blocks[0].stmts[1]),
+            "retain must be kept when the release is field-projected"
+        );
+    }
+
+    #[test]
+    fn keeps_escaping_value() {
+        let mut tcx = TyCtxt::new();
+        let mut body = body_with(&mut tcx, vec![], vec![], vec![]);
+        // Mark `x` (Local 1) as escaping: the pair must be preserved.
+        let escape = crate::escape::analyse(&{
+            // A body where L1 flows into the return slot escapes.
+            let mut b = body.clone();
+            b.blocks[0].stmts.insert(0, copy(0, 1));
+            b
+        });
+        elide_redundant_rc_pairs(&mut body, &escape, &tcx);
+        assert!(
+            !is_nop(&body.blocks[0].stmts[1]),
+            "retain must be kept for an escaping value"
+        );
+    }
+
+    /// Builds a `for i in 0..len(xs)` loop over an `[i64]` vec that reads
+    /// `xs[i]`, matching the lowerer's post-optimise shape, and returns
+    /// the body plus a `TyCtxt`.
+    fn counted_loop_body(tcx: &mut TyCtxt) -> Body {
+        use gossamer_types::IntTy;
+        let unit = tcx.unit();
+        let i64t = tcx.int_ty(IntTy::I64);
+        let slice = tcx.intern(gossamer_types::TyKind::Slice(i64t));
+        let boolt = tcx.intern(gossamer_types::TyKind::Bool);
+        // L0 ret(unit), L1 xs(slice), L2 bound, L3 counter, L4 cmp(bool),
+        // L5 idx, L6 elem, L7 unit
+        let locals = vec![
+            decl(unit),
+            decl(slice),
+            decl(i64t),
+            decl(i64t),
+            decl(boolt),
+            decl(i64t),
+            decl(i64t),
+            decl(unit),
+        ];
+        let sp = span();
+        let call = |callee: &str, args: Vec<Operand>, dst: u32, target: u32| Terminator::Call {
+            callee: Operand::Const(ConstValue::Str(callee.to_string())),
+            args,
+            destination: Place::local(Local(dst)),
+            target: Some(BlockId(target)),
+        };
+        let blocks = vec![
+            // bb0: bound = len(xs); init counter = 0
+            BasicBlock {
+                id: BlockId(0),
+                stmts: vec![assign(
+                    Place::local(Local(3)),
+                    Rvalue::Use(Operand::Const(ConstValue::Int(0))),
+                )],
+                terminator: call(
+                    "gos_rt_vec_len",
+                    vec![Operand::Copy(Place::local(Local(1)))],
+                    2,
+                    1,
+                ),
+                span: sp,
+            },
+            // bb1 header: cmp = counter < bound; switch
+            BasicBlock {
+                id: BlockId(1),
+                stmts: vec![assign(
+                    Place::local(Local(4)),
+                    Rvalue::BinaryOp {
+                        op: BinOp::Lt,
+                        lhs: Operand::Copy(Place::local(Local(3))),
+                        rhs: Operand::Copy(Place::local(Local(2))),
+                    },
+                )],
+                terminator: Terminator::SwitchInt {
+                    discriminant: Operand::Copy(Place::local(Local(4))),
+                    arms: vec![(0, BlockId(3))],
+                    default: BlockId(2),
+                },
+                span: sp,
+            },
+            // bb2 body: idx = counter; elem = xs[idx]; -> latch via call target
+            BasicBlock {
+                id: BlockId(2),
+                stmts: vec![copy(5, 3)],
+                terminator: call(
+                    "gos_rt_vec_get_i64",
+                    vec![
+                        Operand::Copy(Place::local(Local(1))),
+                        Operand::Copy(Place::local(Local(5))),
+                    ],
+                    6,
+                    4,
+                ),
+                span: sp,
+            },
+            // bb3 exit
+            BasicBlock {
+                id: BlockId(3),
+                stmts: vec![],
+                terminator: Terminator::Return,
+                span: sp,
+            },
+            // bb4 latch: counter += 1; goto header
+            BasicBlock {
+                id: BlockId(4),
+                stmts: vec![assign(
+                    Place::local(Local(3)),
+                    Rvalue::BinaryOp {
+                        op: BinOp::Add,
+                        lhs: Operand::Copy(Place::local(Local(3))),
+                        rhs: Operand::Const(ConstValue::Int(1)),
+                    },
+                )],
+                terminator: Terminator::Goto { target: BlockId(1) },
+                span: sp,
+            },
+        ];
+        Body {
+            name: "t".into(),
+            def: None,
+            arity: 1,
+            locals,
+            blocks,
+            span: sp,
+        }
+    }
+
+    #[test]
+    fn bounds_rewrites_counted_loop_get() {
+        let mut tcx = TyCtxt::new();
+        let mut body = counted_loop_body(&mut tcx);
+        bounds_check_elim(&mut body, &tcx);
+        let Terminator::Call { callee, .. } = &body.blocks[2].terminator else {
+            panic!("expected call terminator")
+        };
+        assert_eq!(
+            callee,
+            &Operand::Const(ConstValue::Str("gos_rt_vec_get_i64_unchecked".to_string())),
+            "the proven in-range read should be rewritten to the unchecked callee"
+        );
+    }
+
+    #[test]
+    fn bounds_keeps_check_when_bound_is_not_len() {
+        let mut tcx = TyCtxt::new();
+        let mut body = counted_loop_body(&mut tcx);
+        // Make the bound an opaque non-negative constant instead of
+        // `len(xs)`: the read must stay checked.
+        body.blocks[0].terminator = Terminator::Goto { target: BlockId(1) };
+        body.blocks[0].stmts.push(assign(
+            Place::local(Local(2)),
+            Rvalue::Use(Operand::Const(ConstValue::Int(3))),
+        ));
+        bounds_check_elim(&mut body, &tcx);
+        let Terminator::Call { callee, .. } = &body.blocks[2].terminator else {
+            panic!("expected call terminator")
+        };
+        assert_eq!(
+            callee,
+            &Operand::Const(ConstValue::Str("gos_rt_vec_get_i64".to_string())),
+            "a bound that is not the vec's length must keep the checked read"
+        );
+    }
 }

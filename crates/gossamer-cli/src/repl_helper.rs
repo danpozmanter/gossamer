@@ -40,8 +40,103 @@ impl GosReplHelper {
 
 impl Helper for GosReplHelper {}
 
+/// Every Gossamer keyword, completed when the cursor word is unqualified.
+/// Mirrors `gossamer_lex::Keyword`; the enum exposes no all-variants
+/// iterator, so the set is listed here and kept in step with the lexer.
+const KEYWORDS: &[&str] = &[
+    "as", "async", "await", "break", "const", "continue", "crate", "defer", "else", "enum",
+    "extern", "false", "fn", "for", "go", "if", "impl", "in", "let", "loop", "match", "mod", "mut",
+    "package", "pub", "return", "select", "self", "static", "struct", "super", "trait", "true",
+    "type", "unsafe", "use", "where", "while", "yield",
+];
+
 impl Completer for GosReplHelper {
     type Candidate = String;
+
+    /// Completes the identifier-or-path word ending at the cursor against
+    /// the keyword set and the standard-library surface (`std::registry`):
+    /// module paths and their `module::item` members. Returns the byte
+    /// offset where the replacement begins plus the prefix-matching
+    /// candidates, sorted and de-duplicated.
+    fn complete(
+        &self,
+        line: &str,
+        pos: usize,
+        _ctx: &rustyline::Context<'_>,
+    ) -> rustyline::Result<(usize, Vec<String>)> {
+        Ok(complete_at(line, pos))
+    }
+}
+
+/// Computes completion candidates for the word ending at `pos`. Split out
+/// from the trait method so it is testable without a rustyline `Context`.
+fn complete_at(line: &str, pos: usize) -> (usize, Vec<String>) {
+    let start = word_start(line, pos);
+    let word = &line[start..pos];
+    if word.is_empty() {
+        return (start, Vec::new());
+    }
+    let mut out: Vec<String> = Vec::new();
+    if !word.contains(':') {
+        out.extend(
+            KEYWORDS
+                .iter()
+                .filter(|kw| kw.starts_with(word))
+                .map(|kw| (*kw).to_string()),
+        );
+    }
+    for module in gossamer_std::registry::modules() {
+        for prefix in module_prefixes(module.path) {
+            if prefix.starts_with(word) {
+                out.push(prefix.to_string());
+            }
+            for item in module.items {
+                let qualified = format!("{prefix}::{}", item.name);
+                if qualified.starts_with(word) {
+                    out.push(qualified);
+                }
+            }
+        }
+    }
+    out.sort();
+    out.dedup();
+    (start, out)
+}
+
+/// The module path forms a user might type to reach a module: the canonical
+/// path (`std::strings`), the `std::`-stripped form used after `use std::…`
+/// (`strings`, `encoding::json`), and the bare last segment (`json`).
+fn module_prefixes(path: &'static str) -> Vec<&'static str> {
+    let mut forms = vec![path];
+    if let Some(stripped) = path.strip_prefix("std::") {
+        if !forms.contains(&stripped) {
+            forms.push(stripped);
+        }
+    }
+    if let Some(last) = path.rsplit("::").next() {
+        if !forms.contains(&last) {
+            forms.push(last);
+        }
+    }
+    forms
+}
+
+/// Byte offset of the start of the identifier-or-path word ending at `pos`.
+/// Walks back over identifier bytes and `:` path separators so a
+/// partially-typed `strings::sp` completes as a single unit. Only ASCII
+/// identifier bytes are consumed, so `start` lands on a char boundary.
+fn word_start(line: &str, pos: usize) -> usize {
+    let bytes = line.as_bytes();
+    let mut start = pos;
+    while start > 0 {
+        let c = bytes[start - 1];
+        if c.is_ascii_alphanumeric() || c == b'_' || c == b':' {
+            start -= 1;
+        } else {
+            break;
+        }
+    }
+    start
 }
 
 impl Hinter for GosReplHelper {
@@ -158,6 +253,11 @@ impl Highlighter for GosReplHelper {
                         out.push_str(text);
                     }
                 }
+                TokenKind::Label => {
+                    out.push_str(CYAN_BOLD);
+                    out.push_str(text);
+                    out.push_str(RESET);
+                }
                 TokenKind::Punct(_) | TokenKind::Whitespace | TokenKind::Invalid => {
                     out.push_str(text);
                 }
@@ -172,5 +272,41 @@ impl Highlighter for GosReplHelper {
 
     fn highlight_char(&self, _line: &str, _pos: usize, _kind: CmdKind) -> bool {
         true
+    }
+}
+
+#[cfg(test)]
+mod repl_helper_tests {
+    use super::complete_at;
+
+    #[test]
+    fn keyword_prefix_completes() {
+        let (start, cands) = complete_at("le", 2);
+        assert_eq!(start, 0);
+        assert!(cands.iter().any(|c| c == "let"));
+    }
+
+    #[test]
+    fn empty_word_yields_nothing() {
+        let (_, cands) = complete_at("let x = ", 8);
+        assert!(cands.is_empty());
+    }
+
+    #[test]
+    fn qualified_path_completes_member() {
+        let (start, cands) = complete_at("println!(strings::jo", 20);
+        assert_eq!(start, 9);
+        assert!(
+            cands.iter().any(|c| c == "strings::join"),
+            "expected strings::join in {cands:?}"
+        );
+        // A qualified word must not pull in keyword candidates.
+        assert!(cands.iter().all(|c| c.contains("::")));
+    }
+
+    #[test]
+    fn completion_offset_is_word_start_not_line_start() {
+        let (start, _) = complete_at("    fo", 6);
+        assert_eq!(start, 4);
     }
 }

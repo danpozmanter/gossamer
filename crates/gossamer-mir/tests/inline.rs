@@ -145,6 +145,24 @@ fn aggregate_returning_callee_inlines_and_keeps_field_types() {
 }
 
 #[test]
+fn self_recursive_callee_is_not_inlined() {
+    let (mut bodies, tcx) = lower(
+        "fn fac(n: i64) -> i64 { if n <= 0 { 1 } else { n * fac(n - 1) } }\n\
+         fn run(n: i64) -> i64 { fac(n) + 1 }\n",
+    );
+    gossamer_mir::inline_general(&mut bodies);
+    for b in &mut bodies {
+        optimise(b, &tcx);
+    }
+    // `fac` is self-recursive, so it is never registered as a callee; `run`
+    // keeps a real call rather than splicing the body one level per pass.
+    assert!(
+        call_count(&bodies, "run") >= 1,
+        "self-recursive callee must stay a real call"
+    );
+}
+
+#[test]
 fn callee_with_const_and_indexed_args_inlines() {
     let (mut bodies, tcx) = lower(
         "fn pick(xs: &[i64], i: i64, bias: i64) -> i64 { xs[i] + bias }\n\

@@ -1,0 +1,50 @@
+// Functional record update: `Type { ..base, field: value }` builds a new
+// struct from `base`, overriding the named fields. The spread may appear in
+// any position (`{ ..base, x: 1 }` or `{ x: 1, ..base }`); explicit fields
+// win over the base's value for the same name.
+//
+// Fields filled from `base` share its heap children (strings, vecs, nested
+// nodes); the base keeps its own share and reclaims it at its drop, so the
+// new struct retains its copy. Output must be bit-identical across the VM,
+// Cranelift, and LLVM tiers and free of double-frees.
+
+struct User { name: String, role: String, age: i64 }
+struct Bag { tags: [String], label: String, n: i64 }
+struct Team { lead: User, members: [String], size: i64 }
+
+fn main() {
+    let base = User { name: format!("ada"), role: format!("admin"), age: 30 }
+
+    // Spread-first, override one scalar field. `base` is read again after,
+    // so its strings must still be live.
+    let older = User { ..base, age: 31 }
+    println!("{} {} {}", older.name, older.role, older.age)
+
+    // Spread-last, override a String field with a fresh value.
+    let renamed = User { name: format!("ada2"), ..base }
+    println!("{} {} {}", renamed.name, renamed.role, renamed.age)
+
+    println!("base intact: {} {} {}", base.name, base.role, base.age)
+
+    // A Vec<String> field rides through the spread untouched while a scalar
+    // is overridden; the base's vec and strings stay live for it.
+    let mut tags: [String] = []
+    tags.push(format!("x"))
+    tags.push(format!("y"))
+    let bag = Bag { tags: tags, label: format!("first"), n: 1 }
+    let bag2 = Bag { ..bag, n: 2 }
+    println!("{} {} {} {}", bag2.tags[0], bag2.tags[1], bag2.label, bag2.n)
+    println!("bag intact: {} {}", bag.tags[0], bag.label)
+
+    // A struct with a String field stored as another struct's field: the
+    // nested heap children are shared into the new aggregate's slot and must
+    // be retained there, so the source and the new owner each free once.
+    let lead = User { name: format!("lin"), role: format!("eng"), age: 40 }
+    let mut roster: [String] = []
+    roster.push(format!("ben"))
+    roster.push(format!("cleo"))
+    let team = Team { lead: lead, members: roster, size: 3 }
+    let grown = Team { ..team, size: 4 }
+    println!("{} {} {} {}", grown.lead.name, grown.members[0], grown.members[1], grown.size)
+    println!("lead intact: {} {}", lead.name, lead.role)
+}

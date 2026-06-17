@@ -1,0 +1,56 @@
+// Generic functions with trait bounds, dispatched statically. One generic
+// `report<T: Shape>` is instantiated for two concrete types; each call
+// dispatches `s.name()` / `s.area()` to that type's own impl. The compiled
+// tiers monomorphise the body per instantiation and rewrite the trait-method
+// call to the concrete impl symbol, so output is bit-identical across the VM,
+// Cranelift, and LLVM tiers - and a `String`-returning trait method renders
+// as text, not its pointer bits.
+
+trait Shape {
+    fn name(&self) -> String;
+    fn area(&self) -> i64;
+}
+
+struct Square {
+    side: i64,
+}
+
+struct Rect {
+    w: i64,
+    h: i64,
+}
+
+impl Shape for Square {
+    fn name(&self) -> String {
+        format!("square")
+    }
+    fn area(&self) -> i64 {
+        self.side * self.side
+    }
+}
+
+impl Shape for Rect {
+    fn name(&self) -> String {
+        format!("rect")
+    }
+    fn area(&self) -> i64 {
+        self.w * self.h
+    }
+}
+
+fn report<T: Shape>(s: &T) -> String {
+    format!("{}: {}", s.name(), s.area())
+}
+
+fn bigger<T: Shape>(s: &T, threshold: i64) -> bool {
+    s.area() > threshold
+}
+
+fn main() {
+    let sq = Square { side: 4 }
+    let r = Rect { w: 3, h: 5 }
+    println!("{}", report(&sq))
+    println!("{}", report(&r))
+    println!("{}", bigger(&sq, 10))
+    println!("{}", bigger(&r, 100))
+}

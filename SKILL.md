@@ -224,6 +224,18 @@ fn main() {
   this, and it cannot also declare an explicit `fn main`.
 - **Bindings.** `let name = expr`, `let mut name = expr`, `let
   Point { x, y } = p`, `let (a, b) = pair`.
+- **Functional record update.** `Type { ..base, field: value }` spreads
+  a base value and overrides named fields; the `..base` may appear in
+  any position (`{ ..base, x: 1 }` or `{ x: 1, ..base }`), explicit
+  fields win, and only one spread is allowed. Base-copied fields keep
+  the base usable afterward (its heap children are retained).
+- **Generic bounds (static dispatch).** `fn f<T: Trait>(x: &T)` calls
+  `Trait`'s methods on `x`; each call site instantiates `T`
+  independently, an argument that does not `impl Trait` is a `GT0017`
+  error, and every instantiation monomorphises to the concrete impl on
+  all three tiers. Single-bound struct-typed parameters today; no
+  `dyn Trait`, operator traits, associated types, or supertrait method
+  inheritance through the bound.
 - **References.** `&x` read-shared, `&mut x` exclusive write -
   aliasing intent only; the runtime owns memory. **No lifetimes, no
   borrow checker.**

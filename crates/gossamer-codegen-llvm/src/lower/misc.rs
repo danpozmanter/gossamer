@@ -505,23 +505,16 @@ impl<'a> Lowerer<'a> {
                     Some(TyKind::Float(_)) => ConcatKind::Float,
                     Some(TyKind::String | TyKind::Ref { .. }) => ConcatKind::StrPtr,
                     Some(TyKind::Int(int_ty)) => {
-                        // Every ≤64-bit int lives as a signed i64 at
-                        // runtime and prints signed - the VM renders
-                        // `0u64 - 1` as `-1`. The one exception the
-                        // VM makes is display provenance: a value
-                        // produced by an explicit `as u64`/`as usize`
-                        // cast becomes `Value::Uint` and prints
-                        // unsigned. Mirror that statically: route a
-                        // local through the unsigned printer only
-                        // when all its writers are such casts.
-                        // u128 keeps the unsigned printer outright.
-                        let uint_provenance = int_width(*int_ty) <= 64
-                            && int_ty_is_unsigned_llvm(*int_ty)
-                            && p.projection.is_empty()
-                            && gossamer_mir::local_is_uint_cast(self.body, self.tcx, p.local);
-                        if uint_provenance
-                            || (int_ty_is_unsigned_llvm(*int_ty) && int_width(*int_ty) > 64)
-                        {
+                        // A `u64` / `usize` / `u128` is the only unsigned
+                        // family whose value can exceed `i64::MAX`, so it
+                        // selects the unsigned printer: a value above 2^63
+                        // renders as a large positive decimal rather than a
+                        // negative i64. The narrower unsigned types
+                        // (`u8`/`u16`/`u32`) keep the signed printer - their
+                        // float-cast / wrapping results (`-1.5 as u8 == -1`)
+                        // print signed, matching the VM, which only boxes a
+                        // `u64`/`usize` format argument as `Value::Uint`.
+                        if int_ty_is_unsigned_llvm(*int_ty) && int_width(*int_ty) >= 64 {
                             ConcatKind::Uint
                         } else {
                             ConcatKind::Int
@@ -567,13 +560,33 @@ impl<'a> Lowerer<'a> {
                         }
                         _ => ConcatKind::Unsupported,
                     },
+                    // Tuple of scalar elements: route through
+                    // `gos_rt_tuple_format`. Mixed/aggregate element
+                    // types (or narrow ints whose flat-slot bytes
+                    // aren't a full i64) fall back to Unsupported.
+                    Some(TyKind::Tuple(elems)) => {
+                        if !elems.is_empty()
+                            && elems.iter().all(|e| self.tuple_elem_tag(*e).is_some())
+                        {
+                            ConcatKind::Tuple
+                        } else {
+                            ConcatKind::Unsupported
+                        }
+                    }
+                    // Scalar-keyed, scalar/string-valued HashMap:
+                    // route through `gos_rt_map_format`.
+                    Some(TyKind::HashMap { key, value }) => {
+                        if self.map_kv_supported(*key) && self.map_kv_supported(*value) {
+                            ConcatKind::Map
+                        } else {
+                            ConcatKind::Unsupported
+                        }
+                    }
                     // Aggregate / collection / variant types we
                     // can't yet route. Refuse loudly so the
                     // backend triggers fallback.
                     Some(
-                        kind @ (TyKind::Tuple(_)
-                        | TyKind::HashMap { .. }
-                        | TyKind::Sender(_)
+                        kind @ (TyKind::Sender(_)
                         | TyKind::Receiver(_)
                         | TyKind::JoinHandle(_)
                         | TyKind::Adt { .. }
@@ -595,6 +608,35 @@ impl<'a> Lowerer<'a> {
             }
             Operand::FnRef { .. } => ConcatKind::Int,
         }
+    }
+
+    /// Per-element tag for `gos_rt_tuple_format`, or `None` when the
+    /// element type can't be rendered from a raw 8-byte tuple slot.
+    /// Integers are restricted to 64-bit width and floats to `f64`
+    /// because a narrower scalar stores fewer than 8 bytes into its
+    /// slot, so reading the slot back as an i64 / f64 bit pattern
+    /// would pick up adjacent bytes. `bool` (low bit) and `char` (low
+    /// 32 bits) are read with a mask, so both are safe.
+    pub(crate) fn tuple_elem_tag(&self, elem: Ty) -> Option<u8> {
+        match self.tcx.kind(self.unwrap_ref(elem)) {
+            Some(TyKind::Int(i)) if int_width(*i) == 64 => Some(0),
+            Some(TyKind::Duration | TyKind::Instant) => Some(0),
+            Some(TyKind::Float(FloatTy::F64)) => Some(2),
+            Some(TyKind::Bool) => Some(3),
+            Some(TyKind::Char) => Some(4),
+            Some(TyKind::String) => Some(5),
+            _ => None,
+        }
+    }
+
+    /// True when a `HashMap` key/value type is one `gos_rt_map_format`
+    /// renders from its live storage: an integer (rendered as a signed
+    /// decimal, matching the VM) or a `String` (rendered bare).
+    pub(crate) fn map_kv_supported(&self, ty: Ty) -> bool {
+        matches!(
+            self.tcx.kind(self.unwrap_ref(ty)),
+            Some(TyKind::Int(_) | TyKind::String)
+        )
     }
 
     /// Sign- or zero-extends a value to `i64` for the Int print

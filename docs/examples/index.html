@@ -375,6 +375,12 @@
     
       
         
+          
+        
+      
+        
+      
+        
       
     
     
@@ -392,8 +398,9 @@
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
         
           
-          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
-            
+          <div class="md-nav__link md-nav__container">
+            <a href="../language/" class="md-nav__link ">
+              
   
   
   <span class="md-ellipsis">
@@ -407,8 +414,14 @@
   
   
 
-            <span class="md-nav__icon md-icon"></span>
-          </label>
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
         
         <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_5">
@@ -420,6 +433,8 @@
 
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
+            
+              
             
               
                 
@@ -436,6 +451,34 @@
     
   
     Top-level statements
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../language/arena/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Arena blocks
   
 
     
@@ -520,6 +563,10 @@
     
       
         
+          
+        
+      
+        
       
         
       
@@ -543,8 +590,9 @@
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_8" >
         
           
-          <label class="md-nav__link" for="__nav_8" id="__nav_8_label" tabindex="">
-            
+          <div class="md-nav__link md-nav__container">
+            <a href="../stdlib/" class="md-nav__link ">
+              
   
   
   <span class="md-ellipsis">
@@ -558,8 +606,14 @@
   
   
 
-            <span class="md-nav__icon md-icon"></span>
-          </label>
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_8" id="__nav_8_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
         
         <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_8_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_8">
@@ -571,6 +625,8 @@
 
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
+            
+              
             
               
                 
@@ -1684,6 +1740,15 @@ threads naturally:</p>
   parameters). Each construction site is a separate monomorphisation;
   parameters are inferred from the field values at the call site.
   Runs under <code>gos run</code> and <code>gos build</code>.</li>
+<li><strong><code>trait_bounds.gos</code></strong> - generic functions with trait bounds dispatched
+  statically. One <code>report&lt;T: Shape&gt;(s: &amp;T)</code> serves every type that
+  implements <code>Shape</code>; the bound is enforced at compile time and each
+  instantiation monomorphises to a direct call. Identical output under
+  <code>gos run</code>, the Cranelift JIT, and <code>gos build</code>.</li>
+<li><strong><code>record_update.gos</code></strong> - functional record update
+  (<code>Config { ..base, port: 443 }</code>): build a new struct from an existing
+  one, overriding only the changed fields, with the base still usable
+  afterward. Runs under <code>gos run</code> and <code>gos build</code>.</li>
 <li><strong><code>go_spawn.gos</code></strong> - goroutine fan-out with no channels.
   Every construct lowers through native codegen, so <code>gos build</code>
   produces a working binary.</li>

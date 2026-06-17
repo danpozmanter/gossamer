@@ -261,6 +261,43 @@ pub unsafe extern "C" fn gos_rt_vec_sort_i64(v: *mut GosVec) {
     });
 }
 
+/// Sorts a `Vec<String>` (heap `GosVec` whose 8-byte slots hold
+/// `*const c_char` element pointers) lexicographically in place by
+/// UTF-8 byte order, matching the VM's `xs.sort()`. `xs.sort()` on a
+/// string vec routes here instead of the i64 sort, which would order
+/// the elements by pointer address rather than by value.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_vec_sort_str(v: *mut GosVec) {
+    ffi_entry!((), {
+        if v.is_null() {
+            return;
+        }
+        let vec = unsafe { &mut *v };
+        if vec.len <= 1 || vec.ptr.is_null() {
+            return;
+        }
+        let len_usize = vec.len.max(0) as usize;
+        let slots = unsafe { std::slice::from_raw_parts_mut(vec.ptr.cast::<usize>(), len_usize) };
+        slots.sort_by(|&a, &b| {
+            let sa = if a == 0 {
+                ""
+            } else {
+                unsafe { CStr::from_ptr(a as *const c_char) }
+                    .to_str()
+                    .unwrap_or("")
+            };
+            let sb = if b == 0 {
+                ""
+            } else {
+                unsafe { CStr::from_ptr(b as *const c_char) }
+                    .to_str()
+                    .unwrap_or("")
+            };
+            sa.cmp(sb)
+        });
+    });
+}
+
 /// Sorts a flat `[T; len]` buffer of `elem_bytes`-wide elements in
 /// place using the closure callback at `env`. The closure body sig
 /// is `(env, *const T, *const T) -> i64` - multi-slot aggregates
@@ -559,6 +596,23 @@ pub unsafe extern "C" fn gos_rt_vec_set_i64(v: *mut GosVec, idx: i64, value: i64
         if idx < 0 || idx >= vec.len {
             return;
         }
+        unsafe { crate::c_abi::vec::vec_elem_store_i64(vec, idx, value) };
+    });
+}
+
+/// Writes an `i64`-shaped element to a `Vec` at `idx` WITHOUT the
+/// null/bounds guard of [`gos_rt_vec_set_i64`]. Emitted only by the
+/// counted-loop bounds-check elision, where the index is proven in
+/// `[0, len)` against this same vec and the receiver is non-null. The
+/// LLVM tier inlines this branch-free; the symbol exists so AOT
+/// declare/link resolves.
+///
+/// # Safety
+/// `v` must be a non-null `GosVec` and `idx` in `[0, v.len)`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_vec_set_i64_unchecked(v: *mut GosVec, idx: i64, value: i64) {
+    ffi_entry!((), {
+        let vec = unsafe { &mut *v };
         unsafe { crate::c_abi::vec::vec_elem_store_i64(vec, idx, value) };
     });
 }

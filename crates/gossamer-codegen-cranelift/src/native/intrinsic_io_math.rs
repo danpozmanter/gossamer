@@ -352,6 +352,20 @@ pub(super) fn lower_intrinsic_call_io_math(
                         let fref = module.declare_func_in_func(f, builder.func);
                         builder.ins().call(fref, &[s]);
                     }
+                    PrintKind::Tuple => {
+                        let s = emit_tuple_format_value(
+                            module, builder, body, tcx, arg, value, intrinsics,
+                        )?;
+                        let f = intrinsics.extern_fn_by_name(module, "gos_rt_concat_str")?;
+                        let fref = module.declare_func_in_func(f, builder.func);
+                        builder.ins().call(fref, &[s]);
+                    }
+                    PrintKind::Map => {
+                        let s = emit_map_format_value(module, builder, value, intrinsics)?;
+                        let f = intrinsics.extern_fn_by_name(module, "gos_rt_concat_str")?;
+                        let fref = module.declare_func_in_func(f, builder.func);
+                        builder.ins().call(fref, &[s]);
+                    }
                     PrintKind::Unsupported(_) => {
                         let placeholder = intrinsics.intern_string(module, "<value>")?;
                         let p = intrinsics.static_string_body_ptr(module, builder, placeholder);

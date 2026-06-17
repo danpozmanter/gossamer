@@ -349,6 +349,17 @@ pub(super) fn emit_per_arg_print(
                 let fref2 = module.declare_func_in_func(print_str, builder.func);
                 builder.ins().call(fref2, &[msg]);
             }
+            PrintKind::Tuple => {
+                let s =
+                    emit_tuple_format_value(module, builder, body, tcx, arg, value, intrinsics)?;
+                let fref = module.declare_func_in_func(print_str, builder.func);
+                builder.ins().call(fref, &[s]);
+            }
+            PrintKind::Map => {
+                let s = emit_map_format_value(module, builder, value, intrinsics)?;
+                let fref = module.declare_func_in_func(print_str, builder.func);
+                builder.ins().call(fref, &[s]);
+            }
             PrintKind::Unsupported(_) => unreachable!("checked above"),
         }
     }
@@ -391,6 +402,48 @@ pub(super) fn emit_vec_print(
     let pref = module.declare_func_in_func(print_str, builder.func);
     builder.ins().call(pref, &[s]);
     Ok(())
+}
+
+/// Emits `gos_rt_tuple_format(buf, n, tags)` and returns the rendered
+/// string pointer. `value` is the address of the tuple's flat
+/// `[N x i64]` slot buffer; the tag array is materialised as a
+/// read-only data object holding one byte per element.
+pub(super) fn emit_tuple_format_value(
+    module: &mut dyn Module,
+    builder: &mut FunctionBuilder<'_>,
+    body: &Body,
+    tcx: &TyCtxt,
+    arg: &Operand,
+    value: ir::Value,
+    intrinsics: &mut IntrinsicContext,
+) -> Result<ir::Value> {
+    let ptr_ty = module.target_config().pointer_type();
+    let Some(tags) = tuple_tags(tcx, body, arg) else {
+        bail!("native codegen: tuple element type is not formattable on the compiled tier");
+    };
+    let n = tags.len() as i64;
+    let tags_data = intrinsics.intern_tuple_tags(module, &tags)?;
+    let tags_global = module.declare_data_in_func(tags_data, builder.func);
+    let tags_ptr = builder.ins().global_value(ptr_ty, tags_global);
+    let n_v = builder.ins().iconst(types::I64, n);
+    let f = intrinsics.extern_fn_by_name(module, "gos_rt_tuple_format")?;
+    let fref = module.declare_func_in_func(f, builder.func);
+    let call = builder.ins().call(fref, &[value, n_v, tags_ptr]);
+    Ok(builder.inst_results(call)[0])
+}
+
+/// Emits `gos_rt_map_format(map)` and returns the rendered string
+/// pointer. `value` is the `GosMap` pointer.
+pub(super) fn emit_map_format_value(
+    module: &mut dyn Module,
+    builder: &mut FunctionBuilder<'_>,
+    value: ir::Value,
+    intrinsics: &mut IntrinsicContext,
+) -> Result<ir::Value> {
+    let f = intrinsics.extern_fn_by_name(module, "gos_rt_map_format")?;
+    let fref = module.declare_func_in_func(f, builder.func);
+    let call = builder.ins().call(fref, &[value]);
+    Ok(builder.inst_results(call)[0])
 }
 
 pub(super) fn emit_args_to_concat_string(
@@ -573,6 +626,19 @@ pub(super) fn emit_args_to_concat_string(
                 let err_ref = module.declare_func_in_func(error_msg_fn, builder.func);
                 let call = builder.ins().call(err_ref, &[value]);
                 let s = builder.inst_results(call)[0];
+                let f = intrinsics.extern_fn_by_name(module, "gos_rt_concat_str")?;
+                let fref = module.declare_func_in_func(f, builder.func);
+                builder.ins().call(fref, &[s]);
+            }
+            PrintKind::Tuple => {
+                let s =
+                    emit_tuple_format_value(module, builder, body, tcx, arg, value, intrinsics)?;
+                let f = intrinsics.extern_fn_by_name(module, "gos_rt_concat_str")?;
+                let fref = module.declare_func_in_func(f, builder.func);
+                builder.ins().call(fref, &[s]);
+            }
+            PrintKind::Map => {
+                let s = emit_map_format_value(module, builder, value, intrinsics)?;
                 let f = intrinsics.extern_fn_by_name(module, "gos_rt_concat_str")?;
                 let fref = module.declare_func_in_func(f, builder.func);
                 builder.ins().call(fref, &[s]);

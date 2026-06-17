@@ -129,6 +129,21 @@ fn pat_binding_names(pat: &gossamer_hir::HirPat, out: &mut Vec<String>) {
                 pat_binding_names(p, out);
             }
         }
+        HirPatKind::Slice {
+            prefix,
+            rest,
+            suffix,
+        } => {
+            for p in prefix {
+                pat_binding_names(p, out);
+            }
+            if let Some(rest) = rest {
+                pat_binding_names(rest, out);
+            }
+            for p in suffix {
+                pat_binding_names(p, out);
+            }
+        }
         HirPatKind::Struct { fields, .. } => {
             for f in fields {
                 match &f.pattern {
@@ -295,13 +310,17 @@ impl Scan<'_> {
                     self.expr(&arm.body);
                 }
             }
-            HirExprKind::Loop { body } => self.expr(body),
-            HirExprKind::While { condition, body } => {
+            HirExprKind::Loop { body, .. } => self.expr(body),
+            HirExprKind::While {
+                condition, body, ..
+            } => {
                 self.expr(condition);
                 self.expr(body);
             }
             HirExprKind::Block(b) => self.block(b),
-            HirExprKind::Return(Some(e)) | HirExprKind::Break(Some(e)) => self.expr(e),
+            HirExprKind::Return(Some(e)) | HirExprKind::Break { value: Some(e), .. } => {
+                self.expr(e)
+            }
             HirExprKind::Tuple(items) => {
                 for i in items {
                     self.expr(i);
@@ -334,9 +353,9 @@ impl Scan<'_> {
             }
             HirExprKind::Literal(_)
             | HirExprKind::Path { .. }
-            | HirExprKind::Continue
+            | HirExprKind::Continue { .. }
             | HirExprKind::Return(None)
-            | HirExprKind::Break(None)
+            | HirExprKind::Break { value: None, .. }
             | HirExprKind::Placeholder => {}
         }
     }
@@ -463,8 +482,8 @@ impl<'a> LoopEligibility<'a> {
             // Any break/continue/return can bypass the pop emitted at the
             // body's fall-through exit, leaving the region open.
             HirExprKind::Return(_)
-            | HirExprKind::Break(_)
-            | HirExprKind::Continue
+            | HirExprKind::Break { .. }
+            | HirExprKind::Continue { .. }
             | HirExprKind::Go(_)
             | HirExprKind::Select { .. }
             | HirExprKind::Closure { .. }

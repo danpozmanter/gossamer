@@ -1,0 +1,35 @@
+// Bounds-check elision (item 5): a `for i in 0..xs.len()` loop whose
+// counter is a monotone non-negative induction variable and whose vec is
+// not mutated rewrites the `xs[i]` reads/writes to the bounds-free
+// runtime path. The negative case (the bound is a parameter the pass
+// cannot prove equals `xs.len()`) keeps the checked path. Output must be
+// bit-identical across the VM, Cranelift, and LLVM tiers.
+
+fn scale_and_sum(xs: &mut [i64], factor: i64) -> i64 {
+    for i in 0..xs.len() {
+        xs[i] = xs[i] * factor
+    }
+    let mut total = 0
+    for i in 0..xs.len() {
+        total = total + xs[i]
+    }
+    total
+}
+
+// Negative: the bound `n` is a parameter the pass cannot prove equals
+// `xs.len()`, so the indexed reads stay bounds-checked. The result is
+// identical regardless.
+fn sum_prefix(xs: &[i64], n: i64) -> i64 {
+    let mut total = 0
+    for i in 0..n {
+        total = total + xs[i]
+    }
+    total
+}
+
+fn main() {
+    let mut xs = [2, 4, 6, 8]
+    println!("scaled = {}", scale_and_sum(&mut xs, 5))
+    let ys = [10, 20, 30, 40, 50]
+    println!("prefix = {}", sum_prefix(&ys, 3))
+}

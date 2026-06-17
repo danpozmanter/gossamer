@@ -344,8 +344,76 @@ impl<'a> Lowerer<'a> {
                 )
                 .unwrap();
             }
+            ConcatKind::Map => {
+                declare_rt(&mut self.runtime_refs, "gos_rt_map_format");
+                writeln!(
+                    self.out,
+                    "  {dest} = call ptr @gos_rt_map_format(ptr {value})"
+                )
+                .unwrap();
+            }
             _ => unreachable!("emit_aggregate_format called with non-aggregate kind"),
         }
         dest
+    }
+
+    /// Routes an aggregate-print operand to its runtime formatter.
+    /// `Tuple` needs the operand to recompute its per-element tags;
+    /// every other aggregate kind is fully described by `kind` +
+    /// `value` and delegates to [`Self::emit_aggregate_format`].
+    pub(crate) fn emit_concat_aggregate(
+        &mut self,
+        arg: &Operand,
+        kind: ConcatKind,
+        value: &str,
+    ) -> Result<String, BuildError> {
+        match kind {
+            ConcatKind::Tuple => self.emit_tuple_format(arg, value),
+            _ => Ok(self.emit_aggregate_format(kind, value)),
+        }
+    }
+
+    /// Emits the `gos_rt_tuple_format(buf, n, tags)` call for a tuple
+    /// operand. `value` is the address of the tuple's flat `[N x i64]`
+    /// slot buffer; the tag array is interned as a module constant of
+    /// raw bytes (one per element) and its body pointer passed as
+    /// `tags`.
+    fn emit_tuple_format(&mut self, arg: &Operand, value: &str) -> Result<String, BuildError> {
+        let Operand::Copy(p) = arg else {
+            return Err(BuildError::Unsupported(
+                "tuple format expects a place operand",
+            ));
+        };
+        let leaf = self.unwrap_ref(self.place_leaf_ty(p));
+        let Some(TyKind::Tuple(elems)) = self.tcx.kind(leaf) else {
+            return Err(BuildError::Unsupported(
+                "tuple format on a non-tuple operand",
+            ));
+        };
+        let elems: Vec<Ty> = elems.clone();
+        let mut tags: Vec<u8> = Vec::with_capacity(elems.len());
+        for e in &elems {
+            match self.tuple_elem_tag(*e) {
+                Some(t) => tags.push(t),
+                None => {
+                    return Err(BuildError::Unsupported(
+                        "tuple element type is not formattable on the compiled tier",
+                    ));
+                }
+            }
+        }
+        let n = elems.len();
+        // The tag bytes are all < 0x80, so each maps to a single UTF-8
+        // byte: the interned constant's body is exactly the tag array.
+        let tag_str: String = tags.iter().map(|&b| b as char).collect();
+        let (tags_global, _) = self.strings.borrow_mut().intern(&tag_str);
+        declare_rt(&mut self.runtime_refs, "gos_rt_tuple_format");
+        let dest = self.fresh();
+        writeln!(
+            self.out,
+            "  {dest} = call ptr @gos_rt_tuple_format(ptr {value}, i64 {n}, ptr {tags_global})"
+        )
+        .unwrap();
+        Ok(dest)
     }
 }

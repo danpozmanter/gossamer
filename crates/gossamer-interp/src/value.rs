@@ -1219,26 +1219,8 @@ impl fmt::Display for Value {
             Self::Builtin(inner) => write!(out, "<builtin {}>", inner.name),
             Self::Native(inner) => write!(out, "<native {}>", inner.name),
             Self::Channel(ch) => write!(out, "{ch:?}"),
-            Self::Map(map) => {
-                out.write_str("{")?;
-                for (i, (k, v)) in map.lock().iter().enumerate() {
-                    if i > 0 {
-                        out.write_str(", ")?;
-                    }
-                    write!(out, "{}: {v}", k.to_value())?;
-                }
-                out.write_str("}")
-            }
-            Self::IntMap(map) => {
-                out.write_str("{")?;
-                for (i, (k, v)) in map.lock().iter().enumerate() {
-                    if i > 0 {
-                        out.write_str(", ")?;
-                    }
-                    write!(out, "{k}: {v}")?;
-                }
-                out.write_str("}")
-            }
+            Self::Map(map) => write_map(out, &map.lock()),
+            Self::IntMap(map) => write_int_map(out, &map.lock()),
             Self::Uint(n) => write!(out, "{n}"),
             Self::Weak(_) => out.write_str("<weak>"),
             Self::Void => out.write_str("<void>"),
@@ -1258,6 +1240,44 @@ fn write_tuple(out: &mut fmt::Formatter<'_>, parts: &[Value]) -> fmt::Result {
         out.write_str(",")?;
     }
     out.write_str(")")
+}
+
+/// Renders a `HashMap` as `{k: v, …}` with entries sorted by key so
+/// the output is deterministic and byte-identical to the compiled
+/// tiers' `gos_rt_map_format` (an `FxHashMap`'s bucket order is
+/// neither stable nor shared across tiers).
+fn write_map(
+    out: &mut fmt::Formatter<'_>,
+    map: &rustc_hash::FxHashMap<MapKey, Value>,
+) -> fmt::Result {
+    out.write_str("{")?;
+    let mut entries: Vec<(&MapKey, &Value)> = map.iter().collect();
+    entries.sort_by(|a, b| a.0.cmp(b.0));
+    for (i, (k, v)) in entries.iter().enumerate() {
+        if i > 0 {
+            out.write_str(", ")?;
+        }
+        write!(out, "{}: {v}", k.to_value())?;
+    }
+    out.write_str("}")
+}
+
+/// Key-sorted rendering of an `i64`-keyed, `i64`-valued map. Mirrors
+/// [`write_map`] for the [`Value::IntMap`] storage shape.
+fn write_int_map(
+    out: &mut fmt::Formatter<'_>,
+    map: &rustc_hash::FxHashMap<i64, i64>,
+) -> fmt::Result {
+    out.write_str("{")?;
+    let mut entries: Vec<(&i64, &i64)> = map.iter().collect();
+    entries.sort_by_key(|&(k, _)| *k);
+    for (i, (k, v)) in entries.iter().enumerate() {
+        if i > 0 {
+            out.write_str(", ")?;
+        }
+        write!(out, "{k}: {v}")?;
+    }
+    out.write_str("}")
 }
 
 fn write_array(out: &mut fmt::Formatter<'_>, parts: &[Value]) -> fmt::Result {

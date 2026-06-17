@@ -363,6 +363,21 @@ pub fn walk_pattern_mut<V: VisitorMut + ?Sized>(visitor: &mut V, pattern: &mut P
                 visitor.visit_pattern(item);
             }
         }
+        PatternKind::Slice {
+            prefix,
+            rest,
+            suffix,
+        } => {
+            for item in prefix {
+                visitor.visit_pattern(item);
+            }
+            if let Some(rest) = rest {
+                visitor.visit_pattern(rest);
+            }
+            for item in suffix {
+                visitor.visit_pattern(item);
+            }
+        }
         PatternKind::Struct { fields, .. } => {
             for field in fields {
                 if let Some(pattern) = &mut field.pattern {

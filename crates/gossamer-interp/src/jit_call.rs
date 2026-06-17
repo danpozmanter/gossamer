@@ -33,11 +33,162 @@
 // the macro-generated dispatch keeps each shape in one place.
 #![allow(clippy::too_many_lines)]
 
+use std::ffi::c_char;
 use std::mem;
+use std::sync::Arc;
 
 use gossamer_codegen_cranelift::{JitFn, JitKind};
+use gossamer_runtime::c_abi as rt;
 
-use crate::value::Value;
+use crate::value::{SmolStr, Value};
+
+/// One trampoline-owned native object built for an aggregate parameter,
+/// recorded so it can be written back (for `&mut` params) and freed once
+/// the JIT body returns. `cell` is `Some` only for a `&mut` argument
+/// whose mutations the caller must observe.
+type NativeArg = (JitKind, i64, Option<Arc<parking_lot::Mutex<Value>>>);
+
+/// Builds a fresh, trampoline-owned native object for an aggregate
+/// parameter from the VM value, returning its heap pointer as `i64`.
+/// `None` when `value` is not a shape this kind can marshal (the caller
+/// then falls back to bytecode).
+fn build_native_arg(kind: JitKind, value: &Value) -> Option<i64> {
+    match kind {
+        JitKind::NativeVecI64 => build_native_vec_i64(value),
+        JitKind::NativeStr => build_native_str(value),
+        _ => None,
+    }
+}
+
+/// Builds an owned `*mut GosVec` of 8-byte `i64` slots from a VM integer
+/// vector. Returns the pointer as `i64` (RC = 1, trampoline-owned).
+fn build_native_vec_i64(value: &Value) -> Option<i64> {
+    // SAFETY: `gos_rt_vec_new_typed` returns an owned header (RC = 1) or
+    // null; `gos_rt_vec_push_i64` copies each value into the buffer. We
+    // own the result until `free_native` reclaims it.
+    unsafe {
+        let v = rt::gos_rt_vec_new_typed(8, rt::vec::vec_elem_kind::PRIMITIVE);
+        if v.is_null() {
+            return None;
+        }
+        match value {
+            Value::IntArray(arc) => {
+                for &n in arc.iter() {
+                    rt::gos_rt_vec_push_i64(v, n);
+                }
+            }
+            Value::Array(arc) => {
+                for elem in arc.iter() {
+                    match elem {
+                        Value::Int(n) => rt::gos_rt_vec_push_i64(v, *n),
+                        Value::Bool(b) => rt::gos_rt_vec_push_i64(v, i64::from(*b)),
+                        Value::Char(c) => rt::gos_rt_vec_push_i64(v, *c as i64),
+                        _ => {
+                            rt::gos_rt_vec_free(v);
+                            return None;
+                        }
+                    }
+                }
+            }
+            _ => {
+                rt::gos_rt_vec_free(v);
+                return None;
+            }
+        }
+        Some(v as i64)
+    }
+}
+
+/// Builds an owned `*mut c_char` cstring from a VM string. Returns the
+/// pointer as `i64` (trampoline-owned).
+fn build_native_str(value: &Value) -> Option<i64> {
+    match value {
+        Value::String(s) => Some(rt::alloc_cstring(s.as_str().as_bytes()) as i64),
+        _ => None,
+    }
+}
+
+/// Reads a native return pointer back into an owned VM value WITHOUT
+/// freeing the native object (the caller frees it, deduped against the
+/// params, so a body returning its own param frees exactly once).
+fn native_ptr_to_value(kind: JitKind, ptr: i64) -> Value {
+    match kind {
+        JitKind::NativeVecI64 => {
+            if ptr == 0 {
+                return Value::IntArray(Arc::new(Vec::new()));
+            }
+            let v = ptr as *const rt::vec::GosVec;
+            // SAFETY: `v` is a live `GosVec` (a param we built or the
+            // body's owned return); `len`/`get` read initialised slots.
+            let len = unsafe { rt::gos_rt_vec_len(v) }.max(0);
+            let mut out = Vec::with_capacity(len as usize);
+            for i in 0..len {
+                out.push(unsafe { rt::gos_rt_vec_get_i64(v, i) });
+            }
+            Value::IntArray(Arc::new(out))
+        }
+        JitKind::NativeStr => {
+            if ptr == 0 {
+                return Value::String(SmolStr::default());
+            }
+            let s = ptr as *const c_char;
+            // SAFETY: `s` is a live cstring; `gos_rt_str_len` reads its
+            // length header and the bytes are valid for that length.
+            let len = unsafe { rt::gos_rt_str_len(s) }.max(0) as usize;
+            let bytes = unsafe { std::slice::from_raw_parts(s.cast::<u8>(), len) };
+            Value::String(SmolStr::from_str(&String::from_utf8_lossy(bytes)))
+        }
+        _ => Value::Unit,
+    }
+}
+
+/// Frees one trampoline-owned native object through its runtime
+/// reference-counted reclaim entry (`gos_rt_vec_free` decrements the vec
+/// header RC; `gos_rt_str_free` checks the allocator tag).
+///
+/// # Safety
+/// `ptr` must be a live object built by `build_native_arg` (or returned
+/// by the body for that kind) and not already freed.
+unsafe fn free_native(kind: JitKind, ptr: i64) {
+    match kind {
+        JitKind::NativeVecI64 => unsafe { rt::gos_rt_vec_free(ptr as *mut rt::vec::GosVec) },
+        JitKind::NativeStr => unsafe { rt::gos_rt_str_free(ptr as *mut c_char) },
+        _ => {}
+    }
+}
+
+/// Reads each `&mut` parameter's mutated native object back into its VM
+/// write-back cell so the caller observes in-place mutations.
+fn writeback_natives(natives: &[NativeArg]) {
+    for (kind, ptr, cell) in natives {
+        if let Some(cell) = cell {
+            *cell.lock() = native_ptr_to_value(*kind, *ptr);
+        }
+    }
+}
+
+/// Frees every trampoline-owned native object exactly once, deduped by
+/// pointer. `ret` is the native aggregate return (if any); a body that
+/// returns one of its own params yields `ret == param ptr`, so the dedup
+/// frees that single allocation once - never a double free, never a leak.
+fn free_natives(natives: &[NativeArg], ret: Option<(JitKind, i64)>) {
+    let mut freed: Vec<i64> = Vec::with_capacity(natives.len() + 1);
+    let mut free_once = |kind: JitKind, ptr: i64| {
+        if ptr == 0 || freed.contains(&ptr) {
+            return;
+        }
+        freed.push(ptr);
+        // SAFETY: each pointer is a distinct live object we built (or the
+        // body's owned return), freed at most once by the dedup above.
+        unsafe { free_native(kind, ptr) };
+    };
+    for (kind, ptr, _) in natives {
+        free_once(*kind, *ptr);
+    }
+    if let Some((kind, ptr)) = ret {
+        free_once(kind, ptr);
+    }
+}
 
 /// Result of attempting to dispatch through the JIT trampoline.
 pub(crate) enum Dispatch {
@@ -108,6 +259,12 @@ macro_rules! call_through {
             }
             // Canonicalized to I64 before dispatch; never reaches a stub.
             JitKind::EnumPtr(_) => unreachable!("EnumPtr returns are canonicalized to I64"),
+            // Native aggregate returns are canonicalized to I64 in `prepare`
+            // and re-wrapped by `invoke_prepared_native`; the stub only ever
+            // sees the I64 shape.
+            JitKind::NativeStr | JitKind::NativeVecI64 => {
+                unreachable!("native aggregate returns are canonicalized to I64")
+            }
         }
     }};
 }
@@ -1414,10 +1571,21 @@ pub(crate) struct Prepared {
     pub(crate) jit: std::sync::Arc<JitFn>,
     /// The stub resolved for this body's `(arity, shape)`.
     stub: StubFn,
-    /// Return kind with `EnumPtr` canonicalised to `I64`.
+    /// Return kind with `EnumPtr` and native aggregates canonicalised to
+    /// `I64` (the stub reads a raw integer register; the post-call step
+    /// re-wraps it).
     ret_kind: JitKind,
     /// `Some(shape_idx)` when the real return was `EnumPtr`.
     enum_return: Option<u32>,
+    /// `Some(kind)` when the real return was a native aggregate
+    /// (`NativeStr` / `NativeVecI64`); the raw pointer is read back and
+    /// freed after the call.
+    native_return: Option<JitKind>,
+    /// `true` when any param or the return is a native aggregate, routing
+    /// dispatch through `invoke_prepared_native`. The scalar/enum fast
+    /// path (no native marshalling, no per-call allocation) stays
+    /// untouched when this is `false`.
+    has_native: bool,
     /// Set after the first full-shape marshal succeeds. Subsequent
     /// calls trust the proven scalar shapes (the type checker fixed the
     /// call site) and skip the per-kind `match`, still re-checking
@@ -1438,15 +1606,23 @@ pub(crate) fn prepare(jit: std::sync::Arc<JitFn>) -> Option<Prepared> {
         }
     }
     let stub = resolve_stub(jit.params.len(), shape)?;
-    let (ret_kind, enum_return) = match jit.returns {
-        JitKind::EnumPtr(idx) => (JitKind::I64, Some(idx)),
-        other => (other, None),
+    let (ret_kind, enum_return, native_return) = match jit.returns {
+        JitKind::EnumPtr(idx) => (JitKind::I64, Some(idx), None),
+        k @ (JitKind::NativeStr | JitKind::NativeVecI64) => (JitKind::I64, None, Some(k)),
+        other => (other, None, None),
     };
+    let has_native = native_return.is_some()
+        || jit
+            .params
+            .iter()
+            .any(|k| matches!(k, JitKind::NativeStr | JitKind::NativeVecI64));
     Some(Prepared {
         jit,
         stub,
         ret_kind,
         enum_return,
+        native_return,
+        has_native,
         verified: std::cell::Cell::new(false),
     })
 }
@@ -1457,6 +1633,12 @@ pub(crate) fn invoke_prepared(p: &Prepared, args: &[Value]) -> Dispatch {
     let jit = &p.jit;
     if jit.params.len() != args.len() {
         return Dispatch::Fallback;
+    }
+    // Bodies with a native aggregate param or return marshal through a
+    // separate path that owns the runtime objects it builds; the scalar
+    // fast path below stays allocation-free.
+    if p.has_native {
+        return invoke_prepared_native(p, args);
     }
     let mut slots: [Slot; MAX_ARGS] = [Slot::I(0); MAX_ARGS];
     // Fast marshal once shapes are proven for this resolved entry.
@@ -1478,6 +1660,9 @@ pub(crate) fn invoke_prepared(p: &Prepared, args: &[Value]) -> Dispatch {
                     _ => return Dispatch::Fallback,
                 }
             }
+            // Native aggregate kinds are dispatched by `invoke_prepared_native`
+            // above; the `has_native` guard makes this unreachable here.
+            (JitKind::NativeStr | JitKind::NativeVecI64, _) => return Dispatch::Fallback,
             (_, true) => match value {
                 Value::Int(n) => Slot::I(*n),
                 Value::Bool(b) => Slot::I(i64::from(*b)),
@@ -1536,6 +1721,114 @@ pub(crate) fn invoke_prepared(p: &Prepared, args: &[Value]) -> Dispatch {
             eprintln!("jit: panic inside JIT-compiled body; falling back to bytecode");
             Dispatch::Fallback
         }
+    }
+}
+
+/// Dispatch for a body with a native aggregate (`String` / `Vec<i64>`)
+/// param or return. Builds a fresh runtime object for each aggregate
+/// param from the VM value, calls the stub, reads any aggregate return
+/// back into a VM value, writes mutated `&mut` params back, then frees
+/// every object it built. All native objects are trampoline-owned and
+/// reclaimed through the runtime's RC reclaim entries, so the VM values
+/// the caller passed are never aliased or freed by this path.
+fn invoke_prepared_native(p: &Prepared, args: &[Value]) -> Dispatch {
+    let jit = &p.jit;
+    let mut slots: [Slot; MAX_ARGS] = [Slot::I(0); MAX_ARGS];
+    let mut natives: Vec<NativeArg> = Vec::new();
+    for (i, (kind, value)) in jit.params.iter().zip(args.iter()).enumerate() {
+        let slot = match kind {
+            JitKind::NativeStr | JitKind::NativeVecI64 => {
+                // Unwrap a `&mut` write-back cell so we marshal its inner
+                // aggregate; record the cell so mutations flow back.
+                let (inner, cell) = match value {
+                    Value::MutCell(c) => (c.lock().clone(), Some(c.clone())),
+                    other => (other.clone(), None),
+                };
+                let Some(ptr) = build_native_arg(*kind, &inner) else {
+                    free_natives(&natives, None);
+                    return Dispatch::Fallback;
+                };
+                natives.push((*kind, ptr, cell));
+                Slot::I(ptr)
+            }
+            JitKind::EnumPtr(idx) => match value {
+                Value::NativeEnum(h) if h.shape.index == *idx => Slot::I(h.ptr as i64),
+                _ => {
+                    free_natives(&natives, None);
+                    return Dispatch::Fallback;
+                }
+            },
+            JitKind::Value => Slot::I(value.to_raw() as i64),
+            JitKind::F64 => {
+                if let Value::Float(x) = value {
+                    Slot::F(*x)
+                } else {
+                    free_natives(&natives, None);
+                    return Dispatch::Fallback;
+                }
+            }
+            JitKind::I64 | JitKind::Bool | JitKind::Unit => match value {
+                Value::Int(n) => Slot::I(*n),
+                Value::Bool(b) => Slot::I(i64::from(*b)),
+                Value::Unit => Slot::I(0),
+                _ => {
+                    free_natives(&natives, None);
+                    return Dispatch::Fallback;
+                }
+            },
+        };
+        slots[i] = slot;
+    }
+    let n = jit.params.len();
+    // SAFETY: `prepare` resolved `stub` for this body's `(arity, shape,
+    // ret)` triple; native aggregate slots cross as pointer-sized i64
+    // values matching the flat-ABI signature. `catch_unwind` demotes a
+    // boundary panic to a `Fallback`.
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| unsafe {
+        (p.stub)(jit.ptr, &slots[..n], p.ret_kind)
+    }));
+    let raw = match outcome {
+        Ok(Some(v)) => v,
+        Ok(None) => {
+            free_natives(&natives, None);
+            return Dispatch::Fallback;
+        }
+        Err(_) => {
+            eprintln!("jit: panic inside JIT-compiled body; falling back to bytecode");
+            free_natives(&natives, None);
+            return Dispatch::Fallback;
+        }
+    };
+    // Re-wrap the return, write back `&mut` params, then free every
+    // native object exactly once (the return is deduped against params).
+    if let Some(nret) = p.native_return {
+        let Value::Int(ret_ptr) = raw else {
+            free_natives(&natives, None);
+            return Dispatch::Fallback;
+        };
+        let result = native_ptr_to_value(nret, ret_ptr);
+        writeback_natives(&natives);
+        free_natives(&natives, Some((nret, ret_ptr)));
+        Dispatch::Ok(result)
+    } else if let Some(shape_idx) = p.enum_return {
+        let Value::Int(ret_ptr) = raw else {
+            free_natives(&natives, None);
+            return Dispatch::Fallback;
+        };
+        let Some(shape) = crate::value::native_shape(shape_idx) else {
+            free_natives(&natives, None);
+            return Dispatch::Fallback;
+        };
+        writeback_natives(&natives);
+        free_natives(&natives, None);
+        Dispatch::Ok(Value::NativeEnum(Arc::new(crate::value::NativeEnumOwner {
+            ptr: ret_ptr as usize,
+            shape,
+        })))
+    } else {
+        writeback_natives(&natives);
+        free_natives(&natives, None);
+        Dispatch::Ok(raw)
     }
 }
 

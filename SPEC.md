@@ -450,6 +450,18 @@ struct Wrapper(i32, i32);     // tuple struct
 struct Marker;                // unit struct
 ```
 
+**Functional record update.** A struct literal may spread a base value
+with `..base` and override individual fields:
+
+```
+let p2 = Point { ..p1, x: 10.0 }     // x overridden, y copied from p1
+let p3 = Point { x: 10.0, ..p1 }     // spread in any position
+```
+
+Explicit fields win over the base for the same name; exactly one `..base`
+spread is allowed. Fields copied from the base share its heap children and
+are retained, so the base stays usable after the update.
+
 ### 3.7 Enums (sum types)
 
 ```
@@ -482,6 +494,30 @@ Traits support:
 - Bounds on trait generics.
 - Supertraits (`trait Foo: Bar + Baz`).
 - Default methods.
+
+**Trait bounds on generic functions (static dispatch).** A generic
+function may bound its type parameters by a trait and call the trait's
+methods on a parameter receiver:
+
+```
+trait Shape { fn name(&self) -> String; fn area(&self) -> i64; }
+fn report<T: Shape>(s: &T) -> String {
+    format!("{}: {}", s.name(), s.area())
+}
+```
+
+Each call site instantiates the type parameters independently, so one
+generic function serves any number of concrete types in a program. The
+bound is enforced at the call site: passing a type with no matching
+`impl` is a compile error (`GT0017`). A method called on a bound
+parameter resolves to the trait method's declared return type. Every
+instantiation is monomorphised and the trait-method call is lowered to
+the concrete impl's symbol (`Square::name`), giving static dispatch that
+is bit-identical across the bytecode VM, the Cranelift JIT, and the LLVM
+AOT tiers. The currently-supported surface is single-bound type
+parameters with struct arguments; `dyn Trait`, operator traits,
+associated-type projection in bounds, blanket impls, and supertrait
+method inheritance through a bound are not yet part of static dispatch.
 
 Gossamer does **not** support:
 

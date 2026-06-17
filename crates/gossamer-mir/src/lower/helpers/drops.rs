@@ -1349,6 +1349,25 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
                         field_gaps[bi][si + 1].push((true, place.local, f, w));
                     }
                 }
+                // Aggregate construction `dest = Aggregate[.., Copy(src), ..]`
+                // whose operand copies a by-value aggregate: the new struct's
+                // slot shares each of `src`'s RC field pointers, so retain them
+                // (mirrors the whole-local struct-copy retain above). The shared
+                // pointers are reached through `src` itself - a one-level
+                // projection equivalent to the new aggregate's nested slot - so
+                // the source's at-death release is balanced by the new owner's.
+                if let Rvalue::Aggregate { operands, .. } = rvalue {
+                    for op in operands {
+                        if let Operand::Copy(src) = op
+                            && src.projection.is_empty()
+                            && (src.local.0 as usize) < body.locals.len()
+                        {
+                            for (f, w) in agg_rc_fields(body.locals[src.local.0 as usize].ty) {
+                                field_gaps[bi][si + 1].push((true, src.local, f, w));
+                            }
+                        }
+                    }
+                }
             }
         }
         if matches!(block.terminator, Terminator::Return) {

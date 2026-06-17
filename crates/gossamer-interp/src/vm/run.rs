@@ -1454,6 +1454,15 @@ impl Vm {
                     *ints.get_unchecked_mut(dst_i as usize) =
                         ints.get_unchecked(lhs_i as usize).wrapping_shr(shift);
                 },
+                Op::ShrU64 {
+                    dst_i,
+                    lhs_i,
+                    rhs_i,
+                } => unsafe {
+                    let shift = (*ints.get_unchecked(rhs_i as usize) & 63) as u32;
+                    *ints.get_unchecked_mut(dst_i as usize) =
+                        (*ints.get_unchecked(lhs_i as usize) as u64).wrapping_shr(shift) as i64;
+                },
                 Op::LtI64 {
                     dst_v,
                     lhs_i,
@@ -1506,6 +1515,46 @@ impl Vm {
                 } => unsafe {
                     *registers.get_unchecked_mut(dst_v as usize) = Value::Bool(
                         *ints.get_unchecked(lhs_i as usize) != *ints.get_unchecked(rhs_i as usize),
+                    );
+                },
+                Op::LtU64 {
+                    dst_v,
+                    lhs_i,
+                    rhs_i,
+                } => unsafe {
+                    *registers.get_unchecked_mut(dst_v as usize) = Value::Bool(
+                        (*ints.get_unchecked(lhs_i as usize) as u64)
+                            < (*ints.get_unchecked(rhs_i as usize) as u64),
+                    );
+                },
+                Op::LeU64 {
+                    dst_v,
+                    lhs_i,
+                    rhs_i,
+                } => unsafe {
+                    *registers.get_unchecked_mut(dst_v as usize) = Value::Bool(
+                        (*ints.get_unchecked(lhs_i as usize) as u64)
+                            <= (*ints.get_unchecked(rhs_i as usize) as u64),
+                    );
+                },
+                Op::GtU64 {
+                    dst_v,
+                    lhs_i,
+                    rhs_i,
+                } => unsafe {
+                    *registers.get_unchecked_mut(dst_v as usize) = Value::Bool(
+                        (*ints.get_unchecked(lhs_i as usize) as u64)
+                            > (*ints.get_unchecked(rhs_i as usize) as u64),
+                    );
+                },
+                Op::GeU64 {
+                    dst_v,
+                    lhs_i,
+                    rhs_i,
+                } => unsafe {
+                    *registers.get_unchecked_mut(dst_v as usize) = Value::Bool(
+                        (*ints.get_unchecked(lhs_i as usize) as u64)
+                            >= (*ints.get_unchecked(rhs_i as usize) as u64),
                     );
                 },
                 Op::UnboxI64 { dst_i, src_v } => {

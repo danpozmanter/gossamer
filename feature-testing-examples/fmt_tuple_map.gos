@@ -1,0 +1,27 @@
+// `{}` / `{:?}` on tuples and HashMaps lowers on the compiled tiers
+// (previously a hard `gos build` error for tuples) and renders
+// identically to the VM. `{:?}` aliases Display in Gossamer, so both
+// specs produce the same text. Map entries are key-sorted so every
+// tier agrees byte-for-byte.
+use std::collections::HashMap
+
+fn main() {
+    let scalar = (1, 2, 3)
+    println!("{}", scalar)
+    println!("{:?}", scalar)
+
+    let mixed = (1, "hi", 3.5)
+    println!("{}", mixed)
+    println!("{:?}", mixed)
+
+    let single = (42,)
+    println!("{}", single)
+    println!("{:?}", single)
+
+    let mut m: HashMap<String, i64> = HashMap::new()
+    m.insert("zebra", 1)
+    m.insert("apple", 2)
+    m.insert("mango", 3)
+    println!("{}", m)
+    println!("{:?}", m)
+}

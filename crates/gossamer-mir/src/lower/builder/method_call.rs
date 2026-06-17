@@ -1275,7 +1275,13 @@ impl<'a> Builder<'a> {
             "to_upper" => Some("gos_rt_str_to_upper"),
             "push" => Some("gos_rt_vec_push"),
             "pop" => Some("gos_rt_vec_pop_opt"),
-            "sort" => Some("gos_rt_vec_sort_i64"),
+            "sort" => Some(
+                if vec_element_kind(self.tcx, receiver_ty) == VecElemKind::Str {
+                    "gos_rt_vec_sort_str"
+                } else {
+                    "gos_rt_vec_sort_i64"
+                },
+            ),
             "iter" => match &receiver_kind_flat {
                 // HashMap `.iter()` is handled before the helper-name
                 // dispatch: the `for (k, v) in m.iter()` shape by
@@ -1838,7 +1844,23 @@ impl<'a> Builder<'a> {
                 }
                 "gos_rt_btmap_insert" | "gos_rt_flag_set_short" => self.tcx.unit(),
                 "gos_rt_deque_push_back" => self.tcx.unit(),
-                "gos_rt_deque_pop_front" => self.option_i64_adt_ty(),
+                // `VecDeque<T>::pop_front` returns `Option<T>`. Recover the
+                // element from the deque's sole generic so a `VecDeque<String>`
+                // binds its Some-payload as a String rather than the pointer
+                // bits an i64 payload would render.
+                "gos_rt_deque_pop_front" => {
+                    let recv_mir_ty = self.locals[receiver_local.0 as usize].ty;
+                    let elem = self
+                        .first_generic_of(receiver.ty)
+                        .or_else(|| self.first_generic_of(recv_mir_ty))
+                        .or_else(|| self.first_generic_of(ty))
+                        .unwrap_or_else(|| self.tcx.int_ty(gossamer_types::IntTy::I64));
+                    let substs = gossamer_types::Substs::from_types([elem]);
+                    self.tcx.intern(gossamer_types::TyKind::Adt {
+                        def: gossamer_resolve::DefId::local(u32::MAX - 1),
+                        substs,
+                    })
+                }
                 "gos_rt_deque_is_empty" => self.tcx.bool_ty(),
                 "gos_rt_router_add"
                 | "gos_rt_router_get"
@@ -2324,7 +2346,23 @@ impl<'a> Builder<'a> {
                 }
                 "gos_rt_btmap_insert" | "gos_rt_flag_set_short" => self.tcx.unit(),
                 "gos_rt_deque_push_back" => self.tcx.unit(),
-                "gos_rt_deque_pop_front" => self.option_i64_adt_ty(),
+                // `VecDeque<T>::pop_front` returns `Option<T>`. Recover the
+                // element from the deque's sole generic so a `VecDeque<String>`
+                // binds its Some-payload as a String rather than the pointer
+                // bits an i64 payload would render.
+                "gos_rt_deque_pop_front" => {
+                    let recv_mir_ty = self.locals[receiver_local.0 as usize].ty;
+                    let elem = self
+                        .first_generic_of(receiver.ty)
+                        .or_else(|| self.first_generic_of(recv_mir_ty))
+                        .or_else(|| self.first_generic_of(ty))
+                        .unwrap_or_else(|| self.tcx.int_ty(gossamer_types::IntTy::I64));
+                    let substs = gossamer_types::Substs::from_types([elem]);
+                    self.tcx.intern(gossamer_types::TyKind::Adt {
+                        def: gossamer_resolve::DefId::local(u32::MAX - 1),
+                        substs,
+                    })
+                }
                 "gos_rt_deque_is_empty" => self.tcx.bool_ty(),
                 "gos_rt_router_add"
                 | "gos_rt_router_get"
@@ -2809,6 +2847,17 @@ impl<'a> Builder<'a> {
                 _ => runtime_symbol,
             };
         }
+        // `<stdlib-call>.method()` consumed in place: the HIR receiver type
+        // is an unresolved `Var`, so the type-guarded Vec / String / HashMap
+        // arms in the dispatch table above were skipped and the method is
+        // about to fall through to an undefined bare `@method` symbol. The
+        // lowered receiver carries the real MIR type - re-key the guarded
+        // dispatch off it so `env::args().first()` resolves the same as
+        // `let a = env::args(); a.first()` on every tier.
+        if runtime_symbol.is_none() {
+            runtime_symbol =
+                self.seq_str_method_from_lowered(method.name.as_str(), lowered_recv_ty, args.len());
+        }
 
         if let Some(sym) = runtime_symbol {
             return self.dispatch_via_runtime_symbol(
@@ -2902,5 +2951,113 @@ impl<'a> Builder<'a> {
         });
         self.set_current(next);
         Some(dest)
+    }
+
+    /// Resolve the runtime symbol for the type-guarded Vec / String /
+    /// HashMap method surface from a receiver type recovered after lowering.
+    ///
+    /// The top-of-method dispatch table keys on the HIR receiver type, which
+    /// is an unresolved inference `Var` when a stdlib call is used directly
+    /// as a receiver (`env::args().first()`, `s.split_whitespace()` consumed
+    /// in place) - stdlib return types are not all pinned in the checker. The
+    /// lowered MIR receiver type is ground truth, so re-keying the guarded
+    /// dispatch off it lets a chained temporary resolve the same symbol as a
+    /// `let`-bound receiver, identically across the VM, Cranelift, and LLVM
+    /// tiers. Mirrors the guarded arms in [`Self::lower_method_call`]'s table.
+    fn seq_str_method_from_lowered(
+        &self,
+        name: &str,
+        receiver_ty: Ty,
+        args_len: usize,
+    ) -> Option<&'static str> {
+        use gossamer_types::TyKind;
+        let mut ty = receiver_ty;
+        while let TyKind::Ref { inner, .. } = self.tcx.kind_of(ty) {
+            ty = *inner;
+        }
+        let kind = self.tcx.kind_of(ty).clone();
+        let is_seq = matches!(
+            kind,
+            TyKind::Vec(_) | TyKind::Slice(_) | TyKind::Array { .. }
+        );
+        let elem_str = |this: &Self| vec_element_kind(this.tcx, ty) == VecElemKind::Str;
+        match name {
+            // String receiver surface.
+            "contains" if matches!(kind, TyKind::String) => Some("gos_rt_str_contains"),
+            "find" if matches!(kind, TyKind::String) => Some("gos_rt_str_find_opt"),
+            "rfind" if matches!(kind, TyKind::String) => Some("gos_rt_str_rfind_opt"),
+            "split_once" if matches!(kind, TyKind::String) => Some("gos_rt_str_split_once"),
+            "rsplit_once" if matches!(kind, TyKind::String) => Some("gos_rt_str_rsplit_once"),
+            "count" if matches!(kind, TyKind::String) => Some("gos_rt_str_count"),
+            "trim_start_matches" if matches!(kind, TyKind::String) => {
+                Some("gos_rt_str_lstrip_chars")
+            }
+            "trim_end_matches" if matches!(kind, TyKind::String) => Some("gos_rt_str_rstrip_chars"),
+            "center" if matches!(kind, TyKind::String) => Some("gos_rt_str_center"),
+            "slice" if matches!(kind, TyKind::String) => Some("gos_rt_str_slice"),
+            "substring" if matches!(kind, TyKind::String) => Some("gos_rt_str_substring"),
+            "split_whitespace" if matches!(kind, TyKind::String) => {
+                Some("gos_rt_str_split_whitespace")
+            }
+            "splitn" if matches!(kind, TyKind::String) => Some("gos_rt_str_splitn"),
+            "to_title" if matches!(kind, TyKind::String) => Some("gos_rt_str_to_title"),
+            "trim_matches" if matches!(kind, TyKind::String) => Some("gos_rt_str_trim_matches"),
+            "replacen" if matches!(kind, TyKind::String) => Some("gos_rt_str_replacen"),
+            "pad_left" if matches!(kind, TyKind::String) => Some("gos_rt_str_pad_left"),
+            "pad_right" if matches!(kind, TyKind::String) => Some("gos_rt_str_pad_right"),
+            "contains_any" if matches!(kind, TyKind::String) => Some("gos_rt_str_contains_any"),
+            "contains_rune" if matches!(kind, TyKind::String) => Some("gos_rt_str_contains_rune"),
+            "equal_fold" if matches!(kind, TyKind::String) => Some("gos_rt_str_equal_fold"),
+            "find_any" if matches!(kind, TyKind::String) => Some("gos_rt_str_index_any"),
+            "index_rune" if matches!(kind, TyKind::String) => Some("gos_rt_str_index_rune"),
+            "rfind_any" if matches!(kind, TyKind::String) => Some("gos_rt_str_last_index_any"),
+            "strip_prefix" if matches!(kind, TyKind::String) => Some("gos_rt_str_strip_prefix"),
+            "strip_suffix" if matches!(kind, TyKind::String) => Some("gos_rt_str_strip_suffix"),
+            // Vec / Slice / Array receiver surface.
+            "slice" if matches!(kind, TyKind::Vec(_) | TyKind::Slice(_)) => {
+                Some("gos_rt_vec_slice_result")
+            }
+            "slice" if matches!(kind, TyKind::Array { .. }) => {
+                let elem_kind = match &kind {
+                    TyKind::Array { elem, .. } => self.tcx.kind_of(*elem),
+                    _ => unreachable!(),
+                };
+                Some(if matches!(elem_kind, TyKind::Float(_)) {
+                    "gos_rt_floatarr_slice_result"
+                } else {
+                    "gos_rt_intarr_slice_result"
+                })
+            }
+            "first" if is_seq => Some("gos_rt_vec_first"),
+            "last" if is_seq => Some("gos_rt_vec_last"),
+            "reversed" if is_seq => Some("gos_rt_vec_reversed"),
+            "join" if args_len == 1 && is_seq && elem_str(self) => Some("gos_rt_strings_join"),
+            "contains" if is_seq => Some(if elem_str(self) {
+                "gos_rt_vec_contains_str"
+            } else {
+                "gos_rt_vec_contains_i64"
+            }),
+            "index_of" if is_seq => Some(if elem_str(self) {
+                "gos_rt_vec_index_of_str"
+            } else {
+                "gos_rt_vec_index_of_i64"
+            }),
+            "count_of" if is_seq => Some(if elem_str(self) {
+                "gos_rt_vec_count_of_str"
+            } else {
+                "gos_rt_vec_count_of_i64"
+            }),
+            // HashMap receiver surface.
+            "keys" if matches!(kind, TyKind::HashMap { .. }) => Some("gos_rt_map_keys_vec"),
+            "values" if matches!(kind, TyKind::HashMap { .. }) => Some("gos_rt_map_values_vec"),
+            "pop" if matches!(kind, TyKind::HashMap { .. }) => {
+                Some(if hashmap_key_kind(self.tcx, ty) == VecElemKind::Str {
+                    "gos_rt_map_pop_str"
+                } else {
+                    "gos_rt_map_pop_i64"
+                })
+            }
+            _ => None,
+        }
     }
 }

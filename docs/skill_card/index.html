@@ -375,6 +375,12 @@
     
       
         
+          
+        
+      
+        
+      
+        
       
     
     
@@ -392,8 +398,9 @@
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
         
           
-          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
-            
+          <div class="md-nav__link md-nav__container">
+            <a href="../language/" class="md-nav__link ">
+              
   
   
   <span class="md-ellipsis">
@@ -407,8 +414,14 @@
   
   
 
-            <span class="md-nav__icon md-icon"></span>
-          </label>
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
         
         <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_5">
@@ -420,6 +433,8 @@
 
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
+            
+              
             
               
                 
@@ -436,6 +451,34 @@
     
   
     Top-level statements
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../language/arena/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Arena blocks
   
 
     
@@ -520,6 +563,10 @@
     
       
         
+          
+        
+      
+        
       
         
       
@@ -543,8 +590,9 @@
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_8" >
         
           
-          <label class="md-nav__link" for="__nav_8" id="__nav_8_label" tabindex="">
-            
+          <div class="md-nav__link md-nav__container">
+            <a href="../stdlib/" class="md-nav__link ">
+              
   
   
   <span class="md-ellipsis">
@@ -558,8 +606,14 @@
   
   
 
-            <span class="md-nav__icon md-icon"></span>
-          </label>
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_8" id="__nav_8_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
         
         <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_8_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_8">
@@ -571,6 +625,8 @@
 
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
+            
+              
             
               
                 
@@ -2257,6 +2313,18 @@ variant.</p>
   this, and it cannot also declare an explicit <code>fn main</code>.</li>
 <li><strong>Bindings.</strong> <code>let name = expr</code>, <code>let mut name = expr</code>, <code>let
   Point { x, y } = p</code>, <code>let (a, b) = pair</code>.</li>
+<li><strong>Functional record update.</strong> <code>Type { ..base, field: value }</code> spreads
+  a base value and overrides named fields; the <code>..base</code> may appear in
+  any position (<code>{ ..base, x: 1 }</code> or <code>{ x: 1, ..base }</code>), explicit
+  fields win, and only one spread is allowed. Base-copied fields keep
+  the base usable afterward (its heap children are retained).</li>
+<li><strong>Generic bounds (static dispatch).</strong> <code>fn f&lt;T: Trait&gt;(x: &amp;T)</code> calls
+  <code>Trait</code>'s methods on <code>x</code>; each call site instantiates <code>T</code>
+  independently, an argument that does not <code>impl Trait</code> is a <code>GT0017</code>
+  error, and every instantiation monomorphises to the concrete impl on
+  all three tiers. Single-bound struct-typed parameters today; no
+  <code>dyn Trait</code>, operator traits, associated types, or supertrait method
+  inheritance through the bound.</li>
 <li><strong>References.</strong> <code>&amp;x</code> read-shared, <code>&amp;mut x</code> exclusive write -
   aliasing intent only; the runtime owns memory. <strong>No lifetimes, no
   borrow checker.</strong></li>

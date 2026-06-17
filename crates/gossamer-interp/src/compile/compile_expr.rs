@@ -39,6 +39,21 @@ fn collect_pattern_binding_names(pat: &HirPat, out: &mut Vec<String>) {
                 collect_pattern_binding_names(p, out);
             }
         }
+        HirPatKind::Slice {
+            prefix,
+            rest,
+            suffix,
+        } => {
+            for p in prefix {
+                collect_pattern_binding_names(p, out);
+            }
+            if let Some(rest) = rest {
+                collect_pattern_binding_names(rest, out);
+            }
+            for p in suffix {
+                collect_pattern_binding_names(p, out);
+            }
+        }
         HirPatKind::Struct { fields, .. } => {
             for f in fields {
                 match &f.pattern {
@@ -365,7 +380,14 @@ impl<'tcx> FnBuilder<'tcx> {
                 then_branch,
                 else_branch,
             } => self.compile_if(condition, then_branch, else_branch.as_deref()),
-            HirExprKind::While { condition, body } => self.compile_while(condition, body),
+            HirExprKind::While {
+                condition,
+                body,
+                label,
+            } => {
+                self.pending_loop_label.clone_from(label);
+                self.compile_while(condition, body)
+            }
             // `Loop { body }` - native register-VM lowering. The typed
             // for-loop fast paths (`for i in a..b`, `for x in xs.iter()`,
             // `for (k, v) in map.iter()`) are tried first as an
@@ -375,13 +397,20 @@ impl<'tcx> FnBuilder<'tcx> {
             // through the generic emitter: its `next()` call rides the
             // `&mut self` write-back path in `compile_method_call`, so
             // the iterator's state advances natively each iteration.
-            HirExprKind::Loop { body } => {
+            HirExprKind::Loop { body, label } => {
+                // Re-arm the pending label at each fast-path attempt: a
+                // fast path that fires takes it at its own `LoopCtx`
+                // push; one that bails leaves the next attempt to set
+                // it again.
+                self.pending_loop_label.clone_from(label);
                 if let Some(reg) = self.try_compile_for_loop_range(body)? {
                     return Ok(reg);
                 }
+                self.pending_loop_label.clone_from(label);
                 if let Some(reg) = self.try_compile_for_loop_vec_iter(body)? {
                     return Ok(reg);
                 }
+                self.pending_loop_label.clone_from(label);
                 self.compile_loop(body)
             }
             HirExprKind::Block(block) => {
@@ -392,7 +421,9 @@ impl<'tcx> FnBuilder<'tcx> {
                 })
             }
             HirExprKind::Return(value) => self.compile_return(value.as_deref()),
-            HirExprKind::Break(value) => self.compile_break(value.as_deref()),
+            HirExprKind::Break { value, label } => {
+                self.compile_break(value.as_deref(), label.as_deref())
+            }
             // Native `continue` - emit a forward jump that the
             // enclosing loop emitter patches once it knows the
             // address of its per-iteration step op. Routing through
@@ -402,22 +433,17 @@ impl<'tcx> FnBuilder<'tcx> {
             // direct jump-to-header bypasses the counter
             // increment that lives at the bottom of the body and
             // produces a livelock.
-            HirExprKind::Continue => {
-                let defer_depth = self
-                    .loop_stack
-                    .last()
-                    .ok_or(RuntimeError::Unsupported("continue outside of loop"))?
-                    .defer_depth;
+            HirExprKind::Continue { label } => {
+                let idx = self
+                    .resolve_loop_target(label.as_deref())
+                    .ok_or(RuntimeError::Unsupported("continue outside of loop"))?;
+                let defer_depth = self.loop_stack[idx].defer_depth;
                 // Run the defers of the blocks nested inside the loop body
                 // before jumping to the next iteration; the loop's own
                 // enclosing frames stay pending.
                 self.emit_defers_above(defer_depth)?;
                 let patch = self.emit(Op::Jump { target: 0 });
-                self.loop_stack
-                    .last_mut()
-                    .expect("loop ctx")
-                    .continue_patches
-                    .push(patch);
+                self.loop_stack[idx].continue_patches.push(patch);
                 Ok(self.load_unit())
             }
             // Native method dispatch - emits an `Op::MethodCall`
@@ -1003,6 +1029,137 @@ impl<'tcx> FnBuilder<'tcx> {
                     self.emit_pattern_test(elem, part, fails)?;
                 }
             }
+            HirPatKind::Slice {
+                prefix,
+                rest,
+                suffix,
+            } => {
+                // `len = scrut.len()` as a boxed `Value::Int`.
+                let len_reg = self.alloc_reg();
+                let len_name = self.global_idx("len");
+                let cache_idx = self.alloc_cache_idx();
+                self.emit(Op::MethodCall {
+                    dst: len_reg,
+                    receiver: scrut,
+                    name_idx: len_name,
+                    args: 0,
+                    argc: 0,
+                    cache_idx,
+                });
+                let n_prefix = i64::try_from(prefix.len())
+                    .map_err(|_| RuntimeError::Unsupported("slice prefix too long"))?;
+                let n_suffix = i64::try_from(suffix.len())
+                    .map_err(|_| RuntimeError::Unsupported("slice suffix too long"))?;
+                // Length guard: `len >= n_prefix + n_suffix` with a `..`,
+                // `len == n_prefix` for a fixed-length slice pattern.
+                let bound = if rest.is_some() {
+                    n_prefix + n_suffix
+                } else {
+                    n_prefix
+                };
+                let bound_reg = self.load_int_value(bound);
+                let test = self.alloc_reg();
+                if rest.is_some() {
+                    self.emit(Op::Ge {
+                        dst: test,
+                        lhs: len_reg,
+                        rhs: bound_reg,
+                    });
+                } else {
+                    self.emit(Op::Eq {
+                        dst: test,
+                        lhs: len_reg,
+                        rhs: bound_reg,
+                    });
+                }
+                fails.push(self.emit(Op::BranchIfNot {
+                    cond: test,
+                    target: 0,
+                }));
+                // Prefix elements: `scrut[i]`.
+                for (i, sub) in prefix.iter().enumerate() {
+                    let idx_reg = self.load_int_value(i as i64);
+                    let elem = self.alloc_reg();
+                    self.emit(Op::IndexGet {
+                        dst: elem,
+                        base: scrut,
+                        index: idx_reg,
+                    });
+                    self.emit_pattern_test(elem, sub, fails)?;
+                }
+                // Suffix elements: `scrut[len - n_suffix + j]`.
+                for (j, sub) in suffix.iter().enumerate() {
+                    let off_reg = self.load_int_value(j as i64 - n_suffix);
+                    let idx_reg = self.alloc_reg();
+                    let add_cache = self.next_arith_cache();
+                    self.emit(Op::AddInt {
+                        dst: idx_reg,
+                        lhs: len_reg,
+                        rhs: off_reg,
+                        cache_idx: add_cache,
+                    });
+                    let elem = self.alloc_reg();
+                    self.emit(Op::IndexGet {
+                        dst: elem,
+                        base: scrut,
+                        index: idx_reg,
+                    });
+                    self.emit_pattern_test(elem, sub, fails)?;
+                }
+                // `..rest` binding: `scrut.slice(n_prefix, len - n_suffix)`
+                // yields `Ok(sub)`; extract the payload and bind it.
+                if let Some(rest) = rest {
+                    if let HirPatKind::Binding { name, .. } = &rest.kind {
+                        let lo_reg = self.load_int_value(n_prefix);
+                        let neg_suffix = self.load_int_value(-n_suffix);
+                        let hi_reg = self.alloc_reg();
+                        let hi_cache = self.next_arith_cache();
+                        self.emit(Op::AddInt {
+                            dst: hi_reg,
+                            lhs: len_reg,
+                            rhs: neg_suffix,
+                            cache_idx: hi_cache,
+                        });
+                        let args_start = self.next_reg;
+                        self.next_reg = self
+                            .next_reg
+                            .checked_add(2)
+                            .expect("register overflow reserving slice args");
+                        self.emit(Op::Move {
+                            dst: args_start,
+                            src: lo_reg,
+                        });
+                        self.emit(Op::Move {
+                            dst: args_start + 1,
+                            src: hi_reg,
+                        });
+                        let slice_res = self.alloc_reg();
+                        let slice_name = self.global_idx("slice");
+                        let slice_cache = self.alloc_cache_idx();
+                        self.emit(Op::MethodCall {
+                            dst: slice_res,
+                            receiver: scrut,
+                            name_idx: slice_name,
+                            args: args_start,
+                            argc: 2,
+                            cache_idx: slice_cache,
+                        });
+                        let sub = self.alloc_reg();
+                        self.emit(Op::VariantField {
+                            dst: sub,
+                            src: slice_res,
+                            idx: 0,
+                        });
+                        self.bind_local(
+                            &name.name,
+                            TypedReg {
+                                reg: sub,
+                                kind: RegKind::Value,
+                            },
+                        );
+                    }
+                }
+            }
             HirPatKind::Or(alts) if !pattern_has_binding(pat) => {
                 // No alternative binds, so each alt is a pure test.
                 // Emit them as a short-circuit OR: the first alt that
@@ -1112,6 +1269,14 @@ impl<'tcx> FnBuilder<'tcx> {
         Ok(dst)
     }
 
+    /// Loads an `i64` constant into a fresh boxed `Value::Int` register.
+    pub(crate) fn load_int_value(&mut self, value: i64) -> Reg {
+        let idx = self.const_idx(ConstKey::Int(value), Value::Int(value));
+        let dst = self.alloc_reg();
+        self.emit(Op::LoadConst { dst, idx });
+        dst
+    }
+
     /// Typed binary-op compile. Emits `AddF64` / `LtI64` /
     /// etc. when both operands share a concrete numeric kind;
     /// otherwise falls back to the generic `binary_op` path
@@ -1150,11 +1315,13 @@ impl<'tcx> FnBuilder<'tcx> {
             return self.emit_binary_f64(op, lhs_f, rhs_f);
         }
         if lk == RegKind::I64 && rk == RegKind::I64 {
+            let lhs_unsigned = self.is_unsigned64_ty(lhs.ty);
+            let rhs_unsigned = self.is_unsigned64_ty(rhs.ty);
             let lhs_tr = self.compile_expr_ex(lhs)?;
             let rhs_tr = self.compile_expr_ex(rhs)?;
             let lhs_i = self.as_i64(lhs_tr);
             let rhs_i = self.as_i64(rhs_tr);
-            return self.emit_binary_i64(op, lhs_i, rhs_i);
+            return self.emit_binary_i64(op, lhs_i, rhs_i, lhs_unsigned, rhs_unsigned);
         }
         // Struct `==` / `!=` routes to the derived `<Type>::eq` method,
         // which the bytecode `Op::Eq` (scalar / structural) can't express
@@ -1906,7 +2073,19 @@ impl<'tcx> FnBuilder<'tcx> {
             expected: u16::MAX as usize,
             found: args.len(),
         })?;
-        let name_idx = self.global_idx(&name.name);
+        // `m.pop(k)` on a HashMap mutates the map in place (it is an
+        // `Arc<Mutex<..>>`) and returns `Option<V>`. The name-global `pop`
+        // resolves to the Vec pop builtin, and the mutating-writeback below
+        // would then overwrite the map binding with that result; route to
+        // the qualified map builtin and suppress the writeback instead.
+        let is_map_pop = name.name == "pop"
+            && args.len() == 1
+            && matches!(self.tcx.kind(receiver.ty), Some(TyKind::HashMap { .. }));
+        let name_idx = self.global_idx(if is_map_pop {
+            "HashMap::pop"
+        } else {
+            &name.name
+        });
         let dst = self.alloc_reg();
         let cache_idx = self.alloc_cache_idx();
         self.emit(Op::MethodCall {
@@ -1926,7 +2105,7 @@ impl<'tcx> FnBuilder<'tcx> {
         // the result back through the place-store protocol so the
         // mutation persists - matching the compiled tiers, which mutate
         // the backing storage in place.
-        if Self::is_mutating_method_name(name.name.as_str()) {
+        if !is_map_pop && Self::is_mutating_method_name(name.name.as_str()) {
             match &receiver.kind {
                 HirExprKind::Path { segments, .. } if segments.len() == 1 => {
                     if let Some(target) = self.lookup_local(&segments[0].name) {
@@ -2109,6 +2288,11 @@ impl<'tcx> FnBuilder<'tcx> {
         let mut cell_takes: Vec<(Reg, Reg)> = Vec::new();
         let mut place_takes: Vec<(&HirExpr, Reg)> = Vec::new();
         let mut arg_regs: Vec<Reg> = Vec::with_capacity(args.len());
+        // A `println!`/`format!` lowers to `__concat(...)`; an unsigned-64
+        // argument is boxed as `Value::Uint` so it renders unsigned (a
+        // `u64` above 2^63 prints as a large positive decimal). Mirrors the
+        // LLVM tier choosing the unsigned printer by declared type.
+        let concat_call = Self::callee_is_concat(callee);
         for arg in args {
             if let Some(home) = self.mut_ref_arg_home(arg) {
                 let cell = self.alloc_reg();
@@ -2127,6 +2311,12 @@ impl<'tcx> FnBuilder<'tcx> {
                 });
                 place_takes.push((place, cell));
                 arg_regs.push(cell);
+            } else if concat_call && self.is_unsigned64_ty(arg.ty) {
+                let tr = self.compile_expr_ex(arg)?;
+                let src_i = self.as_i64(tr);
+                let dst_v = self.alloc_reg();
+                self.emit(Op::I64ToUint { dst_v, src_i });
+                arg_regs.push(dst_v);
             } else {
                 arg_regs.push(self.compile_expr(arg)?);
             }
@@ -2169,6 +2359,16 @@ impl<'tcx> FnBuilder<'tcx> {
             self.compile_place_store(place, tmp)?;
         }
         Ok(dst)
+    }
+
+    /// True when a call's callee is the `__concat` string builder that
+    /// `format!`/`println!` lower to. Used to box unsigned-64 arguments as
+    /// `Value::Uint` so they render unsigned.
+    fn callee_is_concat(callee: &HirExpr) -> bool {
+        let HirExprKind::Path { segments, .. } = &callee.kind else {
+            return false;
+        };
+        segments.last().is_some_and(|s| s.name == "__concat")
     }
 
     /// Returns the home register of a `&mut Vec<T>` / `&mut [T]`

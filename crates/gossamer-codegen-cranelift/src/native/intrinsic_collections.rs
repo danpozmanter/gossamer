@@ -752,18 +752,20 @@ pub(super) fn lower_intrinsic_call_collections(
             );
             Ok(true)
         }
-        "gos_rt_vec_from_arr" => {
+        "gos_rt_vec_from_arr" | "gos_rt_vec_borrow_arr" => {
             // Wraps a fixed-size array `[T; N]` in a heap GosVec.
             // Args: (elem_bytes: i64 -> coerced to u32, data: ptr,
             // len: i64). The MIR side emits this at the binding-
             // call boundary when a Vec<T> param meets a [T; N]
-            // arg.
-            let new_fn = intrinsics.extern_fn(
-                module,
-                "gos_rt_vec_from_arr",
-                &[types::I32, ptr_ty, types::I64],
-                &[ptr_ty],
-            )?;
+            // arg. `borrow_arr` is the non-owning view variant for a
+            // `&[T]` parameter (same construction, identical ABI).
+            let sym: &'static str = if name == "gos_rt_vec_borrow_arr" {
+                "gos_rt_vec_borrow_arr"
+            } else {
+                "gos_rt_vec_from_arr"
+            };
+            let new_fn =
+                intrinsics.extern_fn(module, sym, &[types::I32, ptr_ty, types::I64], &[ptr_ty])?;
             let fref = module.declare_func_in_func(new_fn, builder.func);
             let elem_bytes = match args.first() {
                 Some(a) => lower_operand(

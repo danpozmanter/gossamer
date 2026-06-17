@@ -511,27 +511,59 @@ impl<'a> Builder<'a> {
                 self.tcx.float_ty(gossamer_types::FloatTy::F64)
             }
             "gos_rt_vec_contains_i64" | "gos_rt_vec_contains_str" => self.tcx.bool_ty(),
-            // 0.7.0 Option<i64> / Option<T> returns. The runtime
-            // packs the Some-payload as the raw i64 in the
-            // GosResult; MIR pins the dest as
-            // `Option<i64>`. For `Vec<String>.first()`, the i64
-            // payload is a c_char ptr; the match arm reads it as
-            // a String elsewhere via the receiver's element type.
-            "gos_rt_str_rfind_opt"
-            | "gos_rt_vec_first"
-            | "gos_rt_vec_last"
-            | "gos_rt_vec_pop_opt"
-            | "gos_rt_vec_index_of_i64"
-            | "gos_rt_vec_index_of_str"
-            | "gos_rt_map_pop_i64"
-            | "gos_rt_map_pop_str"
-            | "gos_rt_deque_pop_front" => {
+            // `index_of` / `rfind` yield an `Option<i64>` index; the
+            // payload genuinely is an integer regardless of element type.
+            "gos_rt_str_rfind_opt" | "gos_rt_vec_index_of_i64" | "gos_rt_vec_index_of_str" => {
                 let i = self.tcx.int_ty(gossamer_types::IntTy::I64);
                 let substs = gossamer_types::Substs::from_types([i]);
                 self.tcx.intern(gossamer_types::TyKind::Adt {
                     def: gossamer_resolve::DefId::local(u32::MAX - 1),
                     substs,
                 })
+            }
+            // `first` / `last` / `pop` over a sequence (and `pop` over a
+            // deque / map) return `Option<elem>`. Prefer the typeck-resolved
+            // Option Adt; otherwise synthesise it from the receiver's element
+            // type so a `Vec<String>` binds its Some-payload as a String even
+            // when the call is consumed inline - the match-arm element-type
+            // recovery only fires for path-bound receivers, leaving an inline
+            // `match xs.first() { Some(s) => .. }` to render the pointer bits.
+            "gos_rt_vec_first"
+            | "gos_rt_vec_last"
+            | "gos_rt_vec_pop_opt"
+            | "gos_rt_map_pop_i64"
+            | "gos_rt_map_pop_str"
+            | "gos_rt_deque_pop_front" => {
+                use gossamer_types::TyKind;
+                if matches!(self.tcx.kind_of(ty), TyKind::Adt { .. }) {
+                    ty
+                } else {
+                    let elem = self
+                        .seq_elem_of(receiver_ty)
+                        .or_else(|| self.seq_elem_of(lowered_recv_ty))
+                        .or_else(|| {
+                            // HashMap pop yields `Option<value>` - take the
+                            // value type, not the leading key generic.
+                            let mut flat = receiver_ty;
+                            while let TyKind::Ref { inner, .. } = self.tcx.kind_of(flat) {
+                                flat = *inner;
+                            }
+                            if let TyKind::HashMap { value, .. } = self.tcx.kind_of(flat) {
+                                Some(*value)
+                            } else {
+                                None
+                            }
+                        })
+                        // VecDeque<T> pop_front - the element is the sole generic.
+                        .or_else(|| self.first_generic_of(receiver_ty))
+                        .or_else(|| self.first_generic_of(lowered_recv_ty))
+                        .unwrap_or_else(|| self.tcx.int_ty(gossamer_types::IntTy::I64));
+                    let substs = gossamer_types::Substs::from_types([elem]);
+                    self.tcx.intern(TyKind::Adt {
+                        def: gossamer_resolve::DefId::local(u32::MAX - 1),
+                        substs,
+                    })
+                }
             }
             // HashMap::get returns Option<V>. Prefer the HIR call type
             // when it's already an Adt (proper Option<V> wrapper from

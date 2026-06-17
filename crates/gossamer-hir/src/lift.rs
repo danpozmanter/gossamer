@@ -356,15 +356,17 @@ impl Lifter {
                     self.visit_expr(&mut arm.body);
                 }
             }
-            HirExprKind::Loop { body } | HirExprKind::While { body, .. } => {
+            HirExprKind::Loop { body, .. } | HirExprKind::While { body, .. } => {
                 self.visit_expr(body);
             }
             HirExprKind::Block(block) => self.visit_block(block),
             HirExprKind::Return(Some(inner))
-            | HirExprKind::Break(Some(inner))
+            | HirExprKind::Break {
+                value: Some(inner), ..
+            }
             | HirExprKind::Cast { value: inner, .. } => self.visit_expr(inner),
             HirExprKind::Go(inner) => self.lift_go_inner(inner),
-            HirExprKind::Return(None) | HirExprKind::Break(None) => {}
+            HirExprKind::Return(None) | HirExprKind::Break { value: None, .. } => {}
             HirExprKind::Tuple(elems) => {
                 for e in elems {
                     self.visit_expr(e);
@@ -410,7 +412,7 @@ impl Lifter {
             }
             HirExprKind::Literal(_)
             | HirExprKind::Path { .. }
-            | HirExprKind::Continue
+            | HirExprKind::Continue { .. }
             | HirExprKind::Placeholder => {}
         }
 
@@ -796,6 +798,21 @@ pub fn collect_pattern_names<S: std::hash::BuildHasher + Clone>(
                 collect_pattern_names(sub, out);
             }
         }
+        HirPatKind::Slice {
+            prefix,
+            rest,
+            suffix,
+        } => {
+            for sub in prefix {
+                collect_pattern_names(sub, out);
+            }
+            if let Some(rest) = rest {
+                collect_pattern_names(rest, out);
+            }
+            for sub in suffix {
+                collect_pattern_names(sub, out);
+            }
+        }
         HirPatKind::Struct { fields, .. } => {
             for f in fields {
                 if let Some(sub) = &f.pattern {
@@ -865,10 +882,9 @@ fn is_closed<S: std::hash::BuildHasher + Clone>(
             }
             true
         }
-        HirExprKind::Literal(_) | HirExprKind::Continue | HirExprKind::Placeholder => true,
-        HirExprKind::Return(inner) | HirExprKind::Break(inner) => {
-            inner.as_ref().is_none_or(|e| is_closed(e, bound))
-        }
+        HirExprKind::Literal(_) | HirExprKind::Continue { .. } | HirExprKind::Placeholder => true,
+        HirExprKind::Return(inner) => inner.as_ref().is_none_or(|e| is_closed(e, bound)),
+        HirExprKind::Break { value, .. } => value.as_ref().is_none_or(|e| is_closed(e, bound)),
         HirExprKind::Call { callee, args } => {
             is_closed(callee, bound) && args.iter().all(|a| is_closed(a, bound))
         }
@@ -909,7 +925,7 @@ fn is_closed<S: std::hash::BuildHasher + Clone>(
             }
             true
         }
-        HirExprKind::Loop { body } => is_closed(body, bound),
+        HirExprKind::Loop { body, .. } => is_closed(body, bound),
         HirExprKind::While {
             condition, body, ..
         } => is_closed(condition, bound) && is_closed(body, bound),
@@ -1002,7 +1018,7 @@ fn capture_ty_in_expr(expr: &HirExpr, name: &str) -> Option<gossamer_types::Ty> 
                 })
             })
         }
-        HirExprKind::Loop { body } => capture_ty_in_expr(body, name),
+        HirExprKind::Loop { body, .. } => capture_ty_in_expr(body, name),
         HirExprKind::While {
             condition, body, ..
         } => capture_ty_in_expr(condition, name).or_else(|| capture_ty_in_expr(body, name)),
@@ -1026,8 +1042,9 @@ fn capture_ty_in_expr(expr: &HirExpr, name: &str) -> Option<gossamer_types::Ty> 
         HirExprKind::LiftedClosure { captures, .. } => {
             captures.iter().find_map(|c| capture_ty_in_expr(c, name))
         }
-        HirExprKind::Return(inner) | HirExprKind::Break(inner) => {
-            inner.as_ref().and_then(|e| capture_ty_in_expr(e, name))
+        HirExprKind::Return(inner) => inner.as_ref().and_then(|e| capture_ty_in_expr(e, name)),
+        HirExprKind::Break { value, .. } => {
+            value.as_ref().and_then(|e| capture_ty_in_expr(e, name))
         }
         _ => None,
     }
@@ -1094,9 +1111,14 @@ fn walk_free<S: std::hash::BuildHasher + Clone>(
                 }
             }
         }
-        HirExprKind::Literal(_) | HirExprKind::Continue | HirExprKind::Placeholder => {}
-        HirExprKind::Return(inner) | HirExprKind::Break(inner) => {
+        HirExprKind::Literal(_) | HirExprKind::Continue { .. } | HirExprKind::Placeholder => {}
+        HirExprKind::Return(inner) => {
             if let Some(e) = inner {
+                walk_free(e, bound, out, seen);
+            }
+        }
+        HirExprKind::Break { value, .. } => {
+            if let Some(e) = value {
                 walk_free(e, bound, out, seen);
             }
         }
@@ -1150,10 +1172,12 @@ fn walk_free<S: std::hash::BuildHasher + Clone>(
                 walk_free_with(&arm.body, &arm_bound, out, seen);
             }
         }
-        HirExprKind::Loop { body } => {
+        HirExprKind::Loop { body, .. } => {
             walk_free(body, bound, out, seen);
         }
-        HirExprKind::While { condition, body } => {
+        HirExprKind::While {
+            condition, body, ..
+        } => {
             walk_free(condition, bound, out, seen);
             walk_free(body, bound, out, seen);
         }

@@ -86,6 +86,39 @@ impl BindingEntry {
     }
 }
 
+/// Gossamer crates redirected by every emitted `[patch]` block so a
+/// binding's copy resolves to the toolchain's own source.
+const PATCHED_CRATES: [&str; 3] = ["gossamer-runtime", "gossamer-std", "gossamer-binding"];
+
+/// Source a binding pulls its `gossamer-*` crates from, used as the
+/// `[patch.<key>]` table key in the generated build-root manifest.
+///
+/// `[patch]` only takes effect from the workspace-root manifest cargo
+/// actually builds (the runner / staticlib), and only for the exact
+/// source the dependency resolves through: crates.io deps are patched
+/// under `[patch.crates-io]`, git deps under `[patch."<git-url>"]`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GossamerPatchSource {
+    /// `[patch.crates-io]` - the binding declares a crates.io
+    /// `gossamer-* = "<req>"` requirement (`=X.Y.Z`, `>=X.Y.Z`, ...).
+    CratesIo,
+    /// `[patch."<git-url>"]` - the binding pulls gossamer-* from a git repo.
+    Git(String),
+}
+
+impl GossamerPatchSource {
+    /// TOML table key for the `[patch.<key>]` header. The git form is
+    /// quoted because a URL carries `:` / `/` which a bare TOML key
+    /// disallows.
+    #[must_use]
+    pub fn table_key(&self) -> String {
+        match self {
+            Self::CratesIo => "crates-io".to_string(),
+            Self::Git(url) => format!("\"{url}\""),
+        }
+    }
+}
+
 /// Inputs for rendering the runner's `Cargo.toml` / `main.rs`.
 #[derive(Debug, Clone)]
 pub struct RenderInput<'a> {
@@ -100,6 +133,10 @@ pub struct RenderInput<'a> {
     pub bindings: &'a [BindingEntry],
     /// Cargo profile to build with.
     pub profile: Profile,
+    /// Sources whose `gossamer-*` crates must be redirected to the
+    /// toolchain checkout via `[patch]`. Empty when every binding
+    /// already resolves gossamer-* to this checkout by path.
+    pub patch_sources: &'a [GossamerPatchSource],
 }
 
 /// Renders the runner's `Cargo.toml`.
@@ -169,9 +206,37 @@ fn render_each(body: &str, binding: &BindingEntry) -> String {
 
 fn substitute_top(s: &str, input: &RenderInput) -> String {
     let gossamer_root = input.gossamer_root.display().to_string();
+    let patch = render_patch_block(&gossamer_root, input.patch_sources);
     s.replace("{{ project_id }}", input.project_id)
         .replace("{{ fingerprint_hex }}", input.fingerprint_hex)
         .replace("{{ gossamer_root }}", &gossamer_root)
+        .replace("{{ gossamer_patch }}", &patch)
+}
+
+/// Renders the `[patch.<key>]` blocks that redirect each binding's
+/// `gossamer-*` crates to the toolchain checkout, so cargo unifies
+/// them with the runner's own gossamer-runtime rather than linking a
+/// second copy (which would collide on the `#[global_allocator]`).
+///
+/// Returns the empty string when no patching is needed (every binding
+/// already resolves gossamer-* to this checkout by path).
+fn render_patch_block(gossamer_root: &str, sources: &[GossamerPatchSource]) -> String {
+    let mut out = String::new();
+    for src in sources {
+        out.push_str("\n[patch.");
+        out.push_str(&src.table_key());
+        out.push_str("]\n");
+        for crate_name in PATCHED_CRATES {
+            // Single-quoted TOML literal so Windows backslashes round-trip.
+            out.push_str(crate_name);
+            out.push_str(" = { path = '");
+            out.push_str(gossamer_root);
+            out.push_str("/crates/");
+            out.push_str(crate_name);
+            out.push_str("' }\n");
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -212,6 +277,7 @@ mod tests {
             gossamer_root: &root,
             bindings: &bindings,
             profile: Profile::Debug,
+            patch_sources: &[],
         };
         let out = render_cargo_toml(&input);
         // Byte-stability: rendering twice produces identical output.
@@ -233,6 +299,7 @@ mod tests {
             gossamer_root: &root,
             bindings: &bindings,
             profile: Profile::Debug,
+            patch_sources: &[],
         };
         let out = render_main_rs(&input);
         let again = render_main_rs(&input);
@@ -252,6 +319,7 @@ mod tests {
             gossamer_root: &root,
             bindings: &bindings,
             profile: Profile::Debug,
+            patch_sources: &[],
         };
         let out = render_sigs_dump_rs(&input);
         assert!(out.contains("extern crate echo_binding;"));
@@ -267,6 +335,7 @@ mod tests {
             gossamer_root: &root,
             bindings: &bindings,
             profile: Profile::Release,
+            patch_sources: &[],
         };
         let cargo = render_staticlib_cargo_toml(&input);
         let _: toml::Value = toml::from_str(&cargo).expect("staticlib Cargo.toml parses");
@@ -285,10 +354,72 @@ mod tests {
             gossamer_root: &root,
             bindings: &empty,
             profile: Profile::Debug,
+            patch_sources: &[],
         };
         let out = render_cargo_toml(&input);
         assert!(toml::from_str::<toml::Value>(&out).is_ok());
         let main = render_main_rs(&input);
         assert!(syn::parse_file(&main).is_ok());
+    }
+
+    #[test]
+    fn patch_block_redirects_crates_io_and_git_sources() {
+        let (root, bindings, _) = sample_input(Profile::Debug);
+        let sources = vec![
+            GossamerPatchSource::CratesIo,
+            GossamerPatchSource::Git("https://github.com/dpup/gossamer".to_string()),
+        ];
+        let input = RenderInput {
+            project_id: "example.com/proj",
+            fingerprint_hex: "deadbeefcafe",
+            gossamer_root: &root,
+            bindings: &bindings,
+            profile: Profile::Debug,
+            patch_sources: &sources,
+        };
+        let out = render_cargo_toml(&input);
+        // Both patch tables are emitted with the right header keys.
+        assert!(
+            out.contains("[patch.crates-io]"),
+            "missing crates-io patch:\n{out}"
+        );
+        assert!(
+            out.contains("[patch.\"https://github.com/dpup/gossamer\"]"),
+            "missing git patch:\n{out}"
+        );
+        // Every gossamer crate is redirected at the checkout under each source.
+        assert!(
+            out.contains("gossamer-runtime = { path = '/abs/gossamer/crates/gossamer-runtime' }")
+        );
+        assert!(out.contains("gossamer-std = { path = '/abs/gossamer/crates/gossamer-std' }"));
+        assert!(
+            out.contains("gossamer-binding = { path = '/abs/gossamer/crates/gossamer-binding' }")
+        );
+        // The generated manifest still parses as TOML.
+        let _: toml::Value = toml::from_str(&out).expect("patched Cargo.toml parses");
+        // The compiled-mode (`gos build --release`) build root is also
+        // a workspace root, so it carries the same patch block.
+        let staticlib = render_staticlib_cargo_toml(&input);
+        assert!(
+            staticlib.contains("[patch.crates-io]"),
+            "staticlib missing patch:\n{staticlib}"
+        );
+        let _: toml::Value =
+            toml::from_str(&staticlib).expect("patched staticlib Cargo.toml parses");
+    }
+
+    #[test]
+    fn empty_patch_sources_emit_no_patch_table() {
+        let (root, bindings, _) = sample_input(Profile::Debug);
+        let input = RenderInput {
+            project_id: "example.com/proj",
+            fingerprint_hex: "deadbeefcafe",
+            gossamer_root: &root,
+            bindings: &bindings,
+            profile: Profile::Debug,
+            patch_sources: &[],
+        };
+        let out = render_cargo_toml(&input);
+        assert!(!out.contains("[patch."), "no patch table expected:\n{out}");
     }
 }

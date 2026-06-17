@@ -16,7 +16,7 @@
 
 #![forbid(unsafe_code)]
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use gossamer_ast::{
     EnumDecl, EnumVariant, GenericArg, ItemKind, ModulePath, NodeId, SourceFile, StructBody,
@@ -364,6 +364,83 @@ fn derive_list(attrs: &gossamer_ast::Attrs) -> Vec<String> {
 /// hand-written methods; the `==` / `!=` operators route to the
 /// synthesized `eq` in MIR (see the builder's binary-op lowering).
 #[must_use]
+/// Head name of a `Type` that is a single-segment path (`Point` ->
+/// `"Point"`), used to attach an `impl` block to its target type.
+fn type_head_name(ty: &gossamer_ast::Type) -> Option<&str> {
+    match &ty.kind {
+        TypeKind::Path(path) if path.segments.len() == 1 => {
+            Some(path.segments[0].name.name.as_str())
+        }
+        _ => None,
+    }
+}
+
+/// Types for which the user already wrote an `impl Type { fn fmt(&self) -> ... }`,
+/// so the synthesizer must not emit a conflicting structural `fmt`.
+fn types_with_user_fmt(parsed: &SourceFile) -> HashSet<String> {
+    let mut out = HashSet::new();
+    for item in &parsed.items {
+        if let ItemKind::Impl(decl) = &item.kind
+            && decl.trait_ref.is_none()
+            && let Some(name) = type_head_name(&decl.self_ty)
+            && decl
+                .items
+                .iter()
+                .any(|i| matches!(i, gossamer_ast::ImplItem::Fn(f) if f.name.name == "fmt"))
+        {
+            out.insert(name.to_string());
+        }
+    }
+    out
+}
+
+/// Scalar field types a synthesized `fmt` can render directly via
+/// `format!("{}", field)` on every tier.
+fn is_scalar_fmt_name(name: &str) -> bool {
+    matches!(
+        name,
+        "i8" | "i16"
+            | "i32"
+            | "i64"
+            | "isize"
+            | "u8"
+            | "u16"
+            | "u32"
+            | "u64"
+            | "usize"
+            | "f32"
+            | "f64"
+            | "bool"
+            | "char"
+            | "String"
+    )
+}
+
+/// Whether a field type renders inside a synthesized `fmt` on the compiled
+/// tiers: a scalar, or a struct / enum that itself ends up with a `fmt`
+/// (tracked in `formattable`). Containers (`Vec`, `Option`, tuple, `HashMap`),
+/// references-to-containers, channels, and function types are excluded -
+/// `{}` on them does not lower through the implicit `fmt` path, so a type
+/// carrying one keeps the runtime's default render and gets no implicit `fmt`.
+fn ty_is_renderable(ty: &gossamer_ast::Type, formattable: &HashSet<String>) -> bool {
+    match &ty.kind {
+        TypeKind::Path(path) if path.segments.len() == 1 => {
+            let seg = &path.segments[0];
+            if !seg.generics.is_empty() {
+                return false;
+            }
+            let name = seg.name.name.as_str();
+            is_scalar_fmt_name(name) || formattable.contains(name)
+        }
+        TypeKind::Ref { inner, .. } => ty_is_renderable(inner, formattable),
+        _ => false,
+    }
+}
+
+/// Synthesizes `impl` blocks for the `#[derive(...)]` traits, plus a
+/// structural `fmt` for every struct / enum that is formattable but has no
+/// `fmt` of its own, so `{}` / `{:?}` lowers on the compiled tiers exactly as
+/// it renders on the VM. Returns the appended source.
 pub fn synthesize_derive_impls(parsed: &SourceFile) -> String {
     let struct_names: HashSet<String> = parsed
         .items
@@ -375,9 +452,83 @@ pub fn synthesize_derive_impls(parsed: &SourceFile) -> String {
             _ => None,
         })
         .collect();
-    let mut out = String::new();
+    let user_fmt = types_with_user_fmt(parsed);
+
+    // Field types per struct / enum, used to grow the `formattable` set.
+    let mut field_tys: HashMap<String, Vec<&gossamer_ast::Type>> = HashMap::new();
+    for item in &parsed.items {
+        match &item.kind {
+            ItemKind::Struct(decl) => {
+                if let StructBody::Named(fields) = &decl.body {
+                    field_tys.insert(
+                        decl.name.name.clone(),
+                        fields.iter().map(|f| &f.ty).collect(),
+                    );
+                }
+            }
+            ItemKind::Enum(decl) if decl.generics.params.is_empty() => {
+                field_tys.insert(
+                    decl.name.name.clone(),
+                    decl.variants.iter().flat_map(variant_fields).collect(),
+                );
+            }
+            _ => {}
+        }
+    }
+    // A type ends up with a `fmt` if the user wrote one or a `#[derive(Debug)]`
+    // requests one; seed the formattable set with those, then grow it to the
+    // fixpoint of types whose every field is a scalar or an already-formattable
+    // type. A struct/enum reaches a `fmt` only if all its fields actually
+    // render - so a field referencing a non-formattable type (or a container)
+    // never produces a `format!("{}", field)` the compiled tiers cannot lower.
+    let mut formattable: HashSet<String> = HashSet::new();
     for item in &parsed.items {
         let derives = derive_list(&item.attrs);
+        let name = match &item.kind {
+            ItemKind::Struct(d) if matches!(&d.body, StructBody::Named(_)) => Some(&d.name.name),
+            ItemKind::Enum(d) if d.generics.params.is_empty() => Some(&d.name.name),
+            _ => None,
+        };
+        if let Some(n) = name
+            && (derives.iter().any(|d| d == "Debug") || user_fmt.contains(n))
+        {
+            formattable.insert(n.clone());
+        }
+    }
+    loop {
+        let mut changed = false;
+        for (name, tys) in &field_tys {
+            if formattable.contains(name) {
+                continue;
+            }
+            if tys.iter().all(|ty| ty_is_renderable(ty, &formattable)) {
+                formattable.insert(name.clone());
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+
+    let mut out = String::new();
+    for item in &parsed.items {
+        let mut derives = derive_list(&item.attrs);
+        // Synthesize a structural `fmt` for every formattable struct / enum that
+        // lacks one, so `{}` / `{:?}` lowers on the compiled tiers exactly as it
+        // renders on the VM.
+        let implicit_target = match &item.kind {
+            ItemKind::Struct(d) if matches!(&d.body, StructBody::Named(_)) => Some(&d.name.name),
+            ItemKind::Enum(d) if d.generics.params.is_empty() => Some(&d.name.name),
+            _ => None,
+        };
+        if let Some(tn) = implicit_target
+            && formattable.contains(tn)
+            && !user_fmt.contains(tn)
+            && !derives.iter().any(|d| d == "Debug")
+        {
+            derives.push("Debug".to_string());
+        }
         if derives.is_empty() {
             continue;
         }
@@ -394,6 +545,17 @@ pub fn synthesize_derive_impls(parsed: &SourceFile) -> String {
         }
     }
     out
+}
+
+/// Iterator over the payload field types of an enum variant (empty for unit
+/// variants), for the implicit-`fmt` formattability check.
+fn variant_fields(v: &EnumVariant) -> impl Iterator<Item = &gossamer_ast::Type> {
+    let tys: Vec<&gossamer_ast::Type> = match &v.body {
+        StructBody::Unit => Vec::new(),
+        StructBody::Tuple(fields) => fields.iter().map(|f| &f.ty).collect(),
+        StructBody::Named(fields) => fields.iter().map(|f| &f.ty).collect(),
+    };
+    tys.into_iter()
 }
 
 /// The match pattern and the value-reconstruction for one enum variant,

@@ -25,5 +25,16 @@ fn main() -> Result<(), errors::Error> {
     println!("arr slice len: {}", mid.len())
     println!("arr slice first: {}", mid[0])
 
+    // A `Vec<String>` slice must carry the element type through its
+    // Result, so the sub-vec indexes strings instead of rendering the
+    // raw String pointer bits back as an i64 on the compiled tiers.
+    let mut names: Vec<String> = []
+    names.push(format!("alpha"))
+    names.push(format!("beta"))
+    names.push(format!("gamma"))
+    let some = names.slice(0, 2)?
+    println!("name slice len: {}", some.len())
+    println!("name slice: {} {}", some[0], some[1])
+
     Ok(())
 }

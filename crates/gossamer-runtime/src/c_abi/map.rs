@@ -981,6 +981,147 @@ pub unsafe extern "C" fn gos_rt_map_clear(m: *mut GosMap) {
     });
 }
 
+/// Renders a tuple's flat slot buffer to `(a, b, …)` (a 1-tuple
+/// gets a trailing comma, `(a,)`), matching the VM's `Display`.
+/// `p` points at `n` contiguous 8-byte slots; `tags[i]` selects how
+/// slot `i` is interpreted: `0` = Int, `2` = Float (the slot's bits
+/// are an `f64`), `3` = Bool (low bit), `4` = Char (low 32 bits as a
+/// code point), `5` = Str (the slot is a c-string pointer). Integers
+/// and floats route through `crate::builtins::format_int` /
+/// `format_float` so the rendering is byte-identical to the VM.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_tuple_format(
+    p: *const i64,
+    n: i64,
+    tags: *const u8,
+) -> *mut c_char {
+    ffi_entry!(std::ptr::null_mut(), {
+        if p.is_null() || tags.is_null() || n <= 0 {
+            return alloc_cstring(b"()");
+        }
+        let n = n as usize;
+        let mut out = String::from("(");
+        for i in 0..n {
+            if i > 0 {
+                out.push_str(", ");
+            }
+            let word = unsafe { p.add(i).read_unaligned() };
+            let tag = unsafe { *tags.add(i) };
+            match tag {
+                0 => out.push_str(&crate::builtins::format_int(word)),
+                2 => out.push_str(&crate::builtins::format_float(f64::from_bits(word as u64))),
+                3 => out.push_str(crate::builtins::format_bool(word & 1 != 0)),
+                4 => {
+                    if let Some(c) = char::from_u32(word as u32) {
+                        out.push(c);
+                    }
+                }
+                5 => {
+                    let sp: *const c_char = std::ptr::with_exposed_provenance(word as usize);
+                    if !sp.is_null() {
+                        out.push_str(&unsafe { CStr::from_ptr(sp) }.to_string_lossy());
+                    }
+                }
+                _ => {}
+            }
+        }
+        if n == 1 {
+            out.push(',');
+        }
+        out.push(')');
+        alloc_cstring(out.as_bytes())
+    })
+}
+
+/// Renders a `HashMap` to `{k: v, k2: v2}`, sorting entries by key so
+/// the output is deterministic and byte-identical across tiers (an
+/// `FxHashMap`'s bucket order is neither stable nor the same as the
+/// VM's). Keys and values render the way the VM's `Display` does -
+/// integers via `format_int`, strings bare. Empty maps and storage
+/// shapes whose values aren't scalar (struct-keyed / byte-erased)
+/// render as `{}`; the codegen only routes scalar-keyed, scalar- or
+/// string-valued maps here.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_map_format(m: *const GosMap) -> *mut c_char {
+    ffi_entry!(std::ptr::null_mut(), {
+        if m.is_null() {
+            return alloc_cstring(b"{}");
+        }
+        let map = unsafe { &*m };
+        let storage = map.storage.lock();
+        let mut out = String::from("{");
+        let push_entry = |out: &mut String, first: &mut bool, k: &str, v: &str| {
+            if *first {
+                *first = false;
+            } else {
+                out.push_str(", ");
+            }
+            out.push_str(k);
+            out.push_str(": ");
+            out.push_str(v);
+        };
+        let mut first = true;
+        match &*storage {
+            MapStorage::I64I64(inner) => {
+                let mut entries: Vec<(i64, i64)> = inner.iter().map(|(k, v)| (*k, *v)).collect();
+                entries.sort_unstable_by_key(|(k, _)| *k);
+                for (k, v) in entries {
+                    push_entry(
+                        &mut out,
+                        &mut first,
+                        &crate::builtins::format_int(k),
+                        &crate::builtins::format_int(v),
+                    );
+                }
+            }
+            MapStorage::StrI64(inner) => {
+                let mut entries: Vec<(&[u8], i64)> =
+                    inner.iter().map(|(k, v)| (k.as_ref(), *v)).collect();
+                entries.sort_unstable_by(|a, b| a.0.cmp(b.0));
+                for (k, v) in entries {
+                    push_entry(
+                        &mut out,
+                        &mut first,
+                        &String::from_utf8_lossy(k),
+                        &crate::builtins::format_int(v),
+                    );
+                }
+            }
+            MapStorage::StrStr(inner) => {
+                let mut entries: Vec<(&[u8], &[u8])> = inner
+                    .iter()
+                    .map(|(k, v)| (k.as_ref(), v.as_ref()))
+                    .collect();
+                entries.sort_unstable_by(|a, b| a.0.cmp(b.0));
+                for (k, v) in entries {
+                    push_entry(
+                        &mut out,
+                        &mut first,
+                        &String::from_utf8_lossy(k),
+                        &String::from_utf8_lossy(v),
+                    );
+                }
+            }
+            MapStorage::I64Str(inner) => {
+                let mut entries: Vec<(i64, &[u8])> =
+                    inner.iter().map(|(k, v)| (*k, v.as_ref())).collect();
+                entries.sort_unstable_by_key(|(k, _)| *k);
+                for (k, v) in entries {
+                    push_entry(
+                        &mut out,
+                        &mut first,
+                        &crate::builtins::format_int(k),
+                        &String::from_utf8_lossy(v),
+                    );
+                }
+            }
+            MapStorage::Empty | MapStorage::Bytes(_) | MapStorage::SkeyVal(_) => {}
+        }
+        out.push('}');
+        alloc_cstring(out.as_bytes())
+    })
+}
+
 /// Drops a `HashMap` allocated by [`gos_rt_map_new`] /
 /// [`gos_rt_map_new_with_capacity`]. The MIR's drop-insertion pass
 /// emits a call to this at every function return for any local

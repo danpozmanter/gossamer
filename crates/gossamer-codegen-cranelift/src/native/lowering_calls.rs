@@ -459,6 +459,8 @@ pub(super) fn lower_generic_rt_call(
         "gos_rt_vec_get_i64" => (&[ptr_ty, types::I64], Some(types::I64)),
         "gos_rt_vec_set_i64" => (&[ptr_ty, types::I64, types::I64], None),
         "gos_rt_vec_format_i64" => (&[ptr_ty], Some(ptr_ty)),
+        "gos_rt_tuple_format" => (&[ptr_ty, types::I64, ptr_ty], Some(ptr_ty)),
+        "gos_rt_map_format" => (&[ptr_ty], Some(ptr_ty)),
         "gos_rt_chan_recv_option" => (&[ptr_ty], Some(ptr_ty)),
         "gos_rt_chan_try_recv_option" => (&[ptr_ty], Some(ptr_ty)),
         "gos_rt_result_new" => (&[types::I64, types::I64], Some(ptr_ty)),
@@ -622,6 +624,7 @@ pub(super) fn lower_generic_rt_call(
         "gos_rt_flag_cell_load_f64" => (&[ptr_ty], Some(types::F64)),
         "gos_rt_flag_cell_load_vec" => (&[ptr_ty], Some(ptr_ty)),
         "gos_rt_vec_sort_i64" => (&[ptr_ty], None),
+        "gos_rt_vec_sort_str" => (&[ptr_ty], None),
         "gos_rt_arr_sort_by_i64" => (&[ptr_ty, types::I64, ptr_ty], None),
         "gos_rt_vec_sort_by_i64" => (&[ptr_ty, ptr_ty], None),
         // Aggregate-stride variants. Vec form reads `elem_bytes`

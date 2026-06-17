@@ -252,14 +252,6 @@ impl<'src> Parser<'src> {
         token_text(self.peek())
     }
 
-    /// Consumes an identifier token and returns its span if present.
-    pub(crate) fn eat_ident(&mut self) -> Option<Span> {
-        if matches!(self.peek().kind, TokenKind::Ident) {
-            return Some(self.bump().span);
-        }
-        None
-    }
-
     /// Enters a scope where unparenthesised struct literals are forbidden.
     pub(crate) fn enter_no_struct(&mut self) {
         self.no_struct_literal_depth = self.no_struct_literal_depth.saturating_add(1);
@@ -378,6 +370,7 @@ fn token_text(token: Token) -> String {
         }
         TokenKind::LineComment | TokenKind::BlockComment => "comment".to_string(),
         TokenKind::Whitespace => "whitespace".to_string(),
+        TokenKind::Label => "label".to_string(),
         TokenKind::Invalid => "invalid token".to_string(),
     }
 }

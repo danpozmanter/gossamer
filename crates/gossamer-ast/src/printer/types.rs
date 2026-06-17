@@ -154,6 +154,37 @@ impl Printer {
                 }
                 self.write(")");
             }
+            PatternKind::Slice {
+                prefix,
+                rest,
+                suffix,
+            } => {
+                self.write("[");
+                let mut first = true;
+                let mut sep = |this: &mut Self| {
+                    if first {
+                        first = false;
+                    } else {
+                        this.write(", ");
+                    }
+                };
+                for item in prefix {
+                    sep(self);
+                    self.print_pattern(item);
+                }
+                if let Some(rest) = rest {
+                    sep(self);
+                    self.write("..");
+                    if !matches!(rest.kind, PatternKind::Wildcard) {
+                        self.print_pattern(rest);
+                    }
+                }
+                for item in suffix {
+                    sep(self);
+                    self.print_pattern(item);
+                }
+                self.write("]");
+            }
             PatternKind::Struct { path, fields, rest } => {
                 self.print_struct_pattern(path, fields, *rest);
             }

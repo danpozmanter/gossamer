@@ -14,7 +14,7 @@ use crate::paths::repl_history_path;
 pub(crate) fn cmd_repl() -> Result<()> {
     use rustyline::error::ReadlineError;
     use rustyline::history::FileHistory;
-    use rustyline::{ColorMode, Config, EditMode, Editor};
+    use rustyline::{ColorMode, CompletionType, Config, EditMode, Editor};
 
     use crate::repl_helper::GosReplHelper;
 
@@ -31,6 +31,7 @@ pub(crate) fn cmd_repl() -> Result<()> {
     let config = Config::builder()
         .edit_mode(EditMode::Emacs)
         .color_mode(ColorMode::Enabled)
+        .completion_type(CompletionType::List)
         .auto_add_history(false)
         .build();
     let mut editor: Editor<GosReplHelper, FileHistory> =

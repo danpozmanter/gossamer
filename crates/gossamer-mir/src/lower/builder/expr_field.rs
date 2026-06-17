@@ -207,6 +207,30 @@ impl<'a> Builder<'a> {
                 place
                     .projection
                     .push(crate::ir::Projection::Field(projection_idx));
+                // A field filled from `..base` shares the base's heap child;
+                // the base still owns its copy and releases it at its own
+                // drop, so the new struct takes its own share. Without this,
+                // an RC field (String / Vec / nested node) is freed twice.
+                if let Some(field_ty) = field_tys.as_ref().and_then(|t| t.get(idx)).copied()
+                    && self.tcx.is_rc_managed(field_ty)
+                {
+                    use gossamer_types::TyKind;
+                    let retain = match self.tcx.kind_of(field_ty) {
+                        TyKind::Vec(_) | TyKind::Slice(_) => "gos_rt_vec_retain",
+                        _ if self.tcx.is_weak_ty(field_ty) => "gos_rt_rc_weak_retain",
+                        _ => "gos_rt_rc_retain",
+                    };
+                    let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+                    let retain_dest = self.fresh(i64_ty);
+                    self.emit_assign(
+                        Place::local(retain_dest),
+                        Rvalue::CallIntrinsic {
+                            name: retain,
+                            args: vec![Operand::Copy(place.clone())],
+                        },
+                        span,
+                    );
+                }
                 operands.push(Operand::Copy(place));
             } else {
                 return None;
@@ -396,7 +420,34 @@ impl<'a> Builder<'a> {
                         // Adt / Tuple with a known field at `pos`,
                         // substituting any generic `Param` against the
                         // receiver's concrete type arguments.
-                        let recv_local_ty = self.locals[place.local.0 as usize].ty;
+                        // The receiver type is the root local's type with
+                        // its projection applied - not the bare local type.
+                        // For a nested receiver like `t.0` (the first element
+                        // of a tuple), the field offset must be taken on the
+                        // projected `P`, or `t.0.x` reads element-0's type
+                        // (the whole `P`) instead of `x`'s `i64`.
+                        let mut recv_local_ty = self.locals[place.local.0 as usize].ty;
+                        for proj in &place.projection {
+                            if let crate::ir::Projection::Field(fidx) = proj {
+                                let mut w = recv_local_ty;
+                                while let gossamer_types::TyKind::Ref { inner, .. } =
+                                    self.tcx.kind_of(w)
+                                {
+                                    w = *inner;
+                                }
+                                recv_local_ty = match self.tcx.kind_of(w).clone() {
+                                    gossamer_types::TyKind::Adt { def, .. } => self
+                                        .tcx
+                                        .struct_field_tys(def)
+                                        .and_then(|t| t.get(*fidx as usize).copied())
+                                        .unwrap_or(recv_local_ty),
+                                    gossamer_types::TyKind::Tuple(elems) => {
+                                        elems.get(*fidx as usize).copied().unwrap_or(recv_local_ty)
+                                    }
+                                    _ => recv_local_ty,
+                                };
+                            }
+                        }
                         let mut walk = recv_local_ty;
                         while let gossamer_types::TyKind::Ref { inner, .. } = self.tcx.kind_of(walk)
                         {

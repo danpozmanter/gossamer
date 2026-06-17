@@ -16,7 +16,7 @@ use std::collections::{HashMap, HashSet};
 use gossamer_resolve::DefId;
 use gossamer_types::{GenericArg, Substs, Ty, TyCtxt, TyKind};
 
-use crate::ir::{Body, Operand, Rvalue, StatementKind, Terminator};
+use crate::ir::{Body, ConstValue, Operand, Rvalue, StatementKind, Terminator};
 
 /// Cap on the number of fixed-point iterations the monomorphiser
 /// will run before bailing. Real workloads converge in ≤ 5; the
@@ -38,6 +38,13 @@ const MAX_MONOMORPHISE_ITERATIONS: u32 = 32;
 /// `MAX_MONOMORPHISE_ITERATIONS` as a runaway guard.
 pub fn monomorphise(bodies: &mut Vec<Body>, tcx: &mut TyCtxt) {
     let mut emitted: HashSet<String> = HashSet::new();
+    // Source defs whose specialisation rewrote a trait-method call on a
+    // type-parameter receiver. Only these need their call sites routed to
+    // the mangled copy (and their now-dead template dropped): a scalar
+    // generic keeps calling its template, which the compiled tiers lower
+    // through the uniform pointer-width ABI. Routing a scalar generic to a
+    // copy instead would mis-pass an `i64` argument as a pointer.
+    let mut trait_specialised_defs: HashSet<u32> = HashSet::new();
     for iteration in 0..MAX_MONOMORPHISE_ITERATIONS {
         let mut needs: HashMap<DefId, Vec<Substs>> = HashMap::new();
         for body in bodies.iter() {
@@ -74,6 +81,9 @@ pub fn monomorphise(bodies: &mut Vec<Body>, tcx: &mut TyCtxt) {
                 for local in &mut copy.locals {
                     local.ty = resolve(tcx, local.ty);
                 }
+                if rewrite_trait_method_calls(&mut copy, substs, tcx) {
+                    trait_specialised_defs.insert(def.local);
+                }
                 specialised.push(copy);
             }
         }
@@ -89,12 +99,104 @@ pub fn monomorphise(bodies: &mut Vec<Body>, tcx: &mut TyCtxt) {
             or the cap needs to be raised after auditing the offending bodies"
         );
     }
+    // Route every call to a trait-specialised generic to its mangled copy
+    // by name (the copy carries the concrete impl dispatch), then drop the
+    // now-dead template - emitting it would leave an unresolved trait-method
+    // call. Scalar generics are untouched and keep calling their template.
+    if !trait_specialised_defs.is_empty() {
+        for body in bodies.iter_mut() {
+            for block in &mut body.blocks {
+                if let Terminator::Call { callee, .. } = &mut block.terminator
+                    && let Operand::FnRef { def, substs } = callee
+                    && trait_specialised_defs.contains(&def.local)
+                    && !substs.is_empty()
+                {
+                    *callee = Operand::Const(ConstValue::Str(mangled_name(*def, substs)));
+                }
+            }
+        }
+        bodies.retain(|b| {
+            b.def
+                .is_none_or(|d| !trait_specialised_defs.contains(&d.local))
+        });
+    }
     // Resolve every local's type one last time so specialised
     // copies + originals share the resolved (no-Var) state.
     for body in bodies.iter_mut() {
         for local in &mut body.locals {
             local.ty = resolve(tcx, local.ty);
         }
+    }
+}
+
+/// Static trait dispatch for a monomorphised generic body: a method
+/// call on a type-parameter receiver (`x.describe()` where `x: &T`)
+/// lowers to a bare `describe` callee the compiled tiers cannot link.
+/// For this instantiation the receiver's parameter resolves to a concrete
+/// type via `substs`, so rewrite the callee to that type's impl symbol
+/// (`Dog::describe`), which already exists as a real function. The trait
+/// bound checked at the call site guarantees the impl is present.
+fn rewrite_trait_method_calls(copy: &mut Body, substs: &Substs, tcx: &TyCtxt) -> bool {
+    let subst_tys: Vec<Option<Ty>> = substs
+        .as_slice()
+        .iter()
+        .map(|a| match a {
+            GenericArg::Type(t) => Some(*t),
+            GenericArg::Const(_) => None,
+        })
+        .collect();
+    let local_tys: Vec<Ty> = copy.locals.iter().map(|l| l.ty).collect();
+    let mut rewrote = false;
+    for block in &mut copy.blocks {
+        let Terminator::Call { callee, args, .. } = &mut block.terminator else {
+            continue;
+        };
+        let Operand::Const(ConstValue::Str(name)) = callee else {
+            continue;
+        };
+        if name.contains("::") {
+            continue;
+        }
+        let Some(Operand::Copy(recv)) = args.first() else {
+            continue;
+        };
+        if !recv.projection.is_empty() {
+            continue;
+        }
+        let Some(recv_ty) = local_tys.get(recv.local.0 as usize).copied() else {
+            continue;
+        };
+        let Some(idx) = param_index(tcx, recv_ty) else {
+            continue;
+        };
+        let Some(Some(concrete)) = subst_tys.get(idx) else {
+            continue;
+        };
+        if let Some(cname) = adt_name(tcx, *concrete) {
+            *callee = Operand::Const(ConstValue::Str(format!("{cname}::{name}")));
+            rewrote = true;
+        }
+    }
+    rewrote
+}
+
+/// Generic-parameter index of a receiver type (`&T` / `T`), or `None`.
+fn param_index(tcx: &TyCtxt, ty: Ty) -> Option<usize> {
+    let mut t = ty;
+    while let TyKind::Ref { inner, .. } = tcx.kind_of(t).clone() {
+        t = inner;
+    }
+    match tcx.kind_of(t) {
+        TyKind::Param { idx, .. } => Some(idx.0 as usize),
+        _ => None,
+    }
+}
+
+/// Source name of a concrete named type, or `None` for non-ADTs.
+fn adt_name(tcx: &TyCtxt, ty: Ty) -> Option<String> {
+    match tcx.kind_of(ty).clone() {
+        TyKind::Adt { def, .. } => tcx.def_name(def).map(str::to_string),
+        _ => None,
     }
 }
 

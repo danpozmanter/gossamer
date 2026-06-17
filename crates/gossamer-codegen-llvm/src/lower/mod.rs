@@ -261,6 +261,13 @@ pub(super) enum ConcatKind {
     JsonValue,
     /// `errors::Error` rendered via `gos_rt_error_message`.
     ErrorMessage,
+    /// A tuple of scalar elements rendered via `gos_rt_tuple_format`.
+    /// The per-element tag array is computed at the emit site from the
+    /// tuple's element types.
+    Tuple,
+    /// A scalar-keyed, scalar/string-valued `HashMap` rendered via
+    /// `gos_rt_map_format`.
+    Map,
     Unsupported,
 }
 

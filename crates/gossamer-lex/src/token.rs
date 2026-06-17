@@ -43,6 +43,11 @@ pub enum TokenKind {
     CharLit,
     /// A byte literal `b'x'`.
     ByteLit,
+    /// A loop label `'name` (the leading apostrophe is included in the
+    /// span). Distinguished from a char literal by the lexer: a `'`
+    /// followed by an identifier whose character run does not terminate
+    /// at a closing `'` is a label.
+    Label,
     /// A byte string literal `b"..."`.
     ByteStringLit,
     /// A raw byte string literal `br"..."` with `hashes` surrounding `#` characters.

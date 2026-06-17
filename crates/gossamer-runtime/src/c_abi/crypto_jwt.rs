@@ -16,7 +16,7 @@
 //! canonicalization, producing byte-identical tokens.
 //!
 //! Parity contract with `gossamer-std/src/jwt.rs`:
-//! - Claims canonicalization ([`normalize_claims`]) mirrors
+//! - Claims canonicalization (`normalize_claims`) mirrors
 //!   `Claims::from_json` + `Claims::to_json`: registered claims are
 //!   type-validated, a single-element `aud` collapses to a bare
 //!   string, `exp`/`nbf`/`iat` coerce to integer seconds, and every
