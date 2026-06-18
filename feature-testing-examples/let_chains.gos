@@ -1,0 +1,52 @@
+// Let-chains in `if` and `while` conditions: a sequence of clauses
+// joined by `&&`, where each clause is `let PAT = expr` or a boolean.
+// Earlier `let` bindings are in scope for later clauses and the body.
+
+fn first_positive(a: Option<i64>, b: Option<i64>) -> i64 {
+    if let Some(x) = a && let Some(y) = b && x > 0 && y > 0 {
+        x + y
+    } else {
+        -1
+    }
+}
+
+fn main() {
+    println!("{}", first_positive(Some(3), Some(4)))
+    println!("{}", first_positive(Some(-1), Some(4)))
+    println!("{}", first_positive(Some(3), None))
+    println!("{}", first_positive(None, Some(4)))
+
+    // Earlier binding feeds a later clause's scrutinee.
+    let pair = Some(Some(42))
+    if let Some(inner) = pair && let Some(v) = inner {
+        println!("nested {}", v)
+    }
+
+    // Mixed let + bool clause, no else branch.
+    let opt = Some(10)
+    let mut total = 0
+    if let Some(v) = opt && v > 5 {
+        total += v
+    }
+    println!("total {}", total)
+
+    // Plain boolean conditions still parse with `&&` and `||`.
+    let a = 1
+    let b = 2
+    if a < b && b < 10 {
+        println!("ordered")
+    }
+    if a > 5 || b < 5 {
+        println!("either")
+    }
+
+    // while-let chain: bind an element and test it each iteration.
+    let xs = [3, 2, 1, 0, 5]
+    let mut i = 0
+    let mut sum = 0
+    while i < xs.len() && let n = xs[i] && n > 0 {
+        sum += n
+        i += 1
+    }
+    println!("sum {}", sum)
+}

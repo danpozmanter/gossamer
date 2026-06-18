@@ -795,16 +795,19 @@ impl Resolver {
         let Some(head) = path.segments.first() else {
             return;
         };
-        // `super::name` inside an inline child module (`mod tests {}`,
-        // etc.) refers to the parent scope's bare name. The resolver
-        // registers parent-scope items under their bare name in the
-        // same module table the child reads from, so dropping the
-        // `super::` prefix lets the regular flat lookup find them.
+        // `super::name` / `crate::name` / `self::name` inside an inline
+        // child module (`mod tests {}`, an auto-bundled sibling, etc.)
+        // refer to an enclosing scope. The auto-bundle flattens a
+        // package into top-level inline modules whose items the resolver
+        // registers under their qualified path, so dropping the leading
+        // navigation prefix lets the regular qualified / flat lookup
+        // find them - `crate::helper::shout` resolves the same top-level
+        // `helper` module as `super::helper::shout` does from depth 1.
         let effective: Vec<&str> = path
             .segments
             .iter()
             .map(|s| s.name.name.as_str())
-            .skip_while(|s| *s == "super")
+            .skip_while(|s| matches!(*s, "super" | "crate" | "self"))
             .collect();
         // Try the fully-qualified `mod1::mod2::name` form first so
         // sibling-module call sites (`other::greet`) resolve directly

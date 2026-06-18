@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Result, anyhow};
 
 use crate::loaders::load_and_check;
-use crate::paths::{default_main_entry, read_entry_source};
+use crate::paths::{read_entry_source, resolve_entry_arg};
 
 /// How `gos run` executes a program. Single-variant marker kept so
 /// the cli dispatcher's call sites do not need to be rewritten; the
@@ -24,10 +24,7 @@ pub(crate) enum RunMode {
 /// `gos run` dispatcher: walks the project root for a default entry
 /// point when no path is supplied.
 pub(crate) fn dispatch(path: Option<PathBuf>, mode: RunMode, args: &[String]) -> Result<()> {
-    let resolved = match path {
-        Some(p) => p,
-        None => default_main_entry()?,
-    };
+    let resolved = resolve_entry_arg(path)?;
     run(&resolved, mode, args)
 }
 

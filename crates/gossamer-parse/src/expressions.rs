@@ -3,10 +3,13 @@
 
 #![forbid(unsafe_code)]
 
+use gossamer_ast::visitor::{
+    VisitorMut, walk_expr_mut, walk_item_mut, walk_pattern_mut, walk_stmt_mut, walk_type_mut,
+};
 use gossamer_ast::{
-    ArrayExpr, AssignOp, BinaryOp, Block, ClosureParam, Expr, ExprKind, FieldSelector, Ident,
-    Label, Literal, MacroCall, MacroDelim, MatchArm, PathExpr, PathSegment, Pattern, PatternKind,
-    RangeKind, StructExprField, UnaryOp,
+    ArrayExpr, AssignOp, BinaryOp, Block, ClosureParam, Expr, ExprKind, FieldSelector, Ident, Item,
+    Label, Literal, MacroCall, MacroDelim, MatchArm, NodeIdGenerator, PathExpr, PathSegment,
+    Pattern, PatternKind, RangeKind, Stmt, StmtKind, StructExprField, Type, UnaryOp,
 };
 use gossamer_lex::{Keyword, Punct, Span, TokenKind};
 
@@ -16,6 +19,36 @@ use crate::patterns::{byte_literal_value, char_literal_value, string_literal_val
 
 /// Precedence level strictly stronger than any binary operator.
 const PREC_BELOW_ASSIGN: u8 = 17;
+
+/// Maximum precedence for a single clause inside an `if`/`while`
+/// condition chain. Equal to `&&`'s precedence so a clause stops at
+/// the next `&&` separator (and rejects an unparenthesised `||`,
+/// which binds looser than `&&`).
+const COND_CLAUSE_PREC: u8 = BinaryOp::And.precedence();
+
+/// A single clause in an `if`/`while` condition chain.
+enum CondClause {
+    /// `let PAT = SCRUTINEE`; the binding is in scope for later
+    /// clauses and the branch body.
+    Let {
+        /// Pattern that must match for the clause to succeed.
+        pattern: Pattern,
+        /// Value tested against the pattern.
+        scrutinee: Expr,
+    },
+    /// A boolean sub-expression that must evaluate to `true`.
+    Bool(Expr),
+}
+
+/// The parsed head of an `if`/`while`: either an ordinary boolean
+/// expression or a chain of `&&`-joined clauses with at least one
+/// `let` binding.
+enum Condition {
+    /// No `let` clause; a normal boolean expression.
+    Plain(Expr),
+    /// One or more `&&`-joined clauses, at least one of which binds.
+    Chain(Vec<CondClause>),
+}
 
 impl Parser<'_> {
     /// Parses a full expression, including assignment at statement position.
@@ -47,7 +80,15 @@ impl Parser<'_> {
     }
 
     fn parse_expr_with_prec_inner(&mut self, max_prec: u8, allow_assign: bool) -> Expr {
-        let mut lhs = self.parse_prefix();
+        let lhs = self.parse_prefix();
+        self.continue_binary(lhs, max_prec, allow_assign)
+    }
+
+    /// Resumes Pratt-style precedence climbing from an already-parsed
+    /// left-hand side. Used both by the core driver and by condition
+    /// parsing, where a `&&`-chain is parsed clause-by-clause and then
+    /// rejoined into a normal expression when no `let` clause appears.
+    fn continue_binary(&mut self, mut lhs: Expr, max_prec: u8, allow_assign: bool) -> Expr {
         loop {
             if allow_assign && self.peek_assign_op().is_some() {
                 lhs = self.parse_assignment(lhs);
@@ -715,11 +756,8 @@ impl Parser<'_> {
 
     fn parse_if_expr(&mut self) -> ExprKind {
         self.bump();
-        if self.at_keyword(Keyword::Let) {
-            return self.parse_if_let_expr();
-        }
         self.enter_no_struct();
-        let condition = self.parse_expr_no_assign();
+        let condition = self.parse_condition();
         self.leave_no_struct();
         self.expect_punct(Punct::LBrace, "to open `if` branch");
         let then_block_span_start = self.last_span();
@@ -745,63 +783,234 @@ impl Parser<'_> {
         } else {
             None
         };
-        ExprKind::If {
-            condition: Box::new(condition),
-            then_branch: Box::new(then_expr),
-            else_branch,
+        match condition {
+            Condition::Plain(condition) => ExprKind::If {
+                condition: Box::new(condition),
+                then_branch: Box::new(then_expr),
+                else_branch,
+            },
+            Condition::Chain(clauses) => self.desugar_if_chain(clauses, then_expr, else_branch),
         }
     }
 
-    /// Parses `if let PAT = SCRUTINEE { THEN } else? { ELSE? }` and lowers
-    /// to a `match` expression. Called after the leading `if` is consumed
-    /// and `let` is the next token.
-    fn parse_if_let_expr(&mut self) -> ExprKind {
-        self.bump();
-        let pattern = self.parse_pattern();
-        self.expect_punct(Punct::Eq, "after `if let` pattern");
-        self.enter_no_struct();
-        let scrutinee = self.parse_expr_no_assign();
-        self.leave_no_struct();
-        self.expect_punct(Punct::LBrace, "to open `if let` branch");
-        let then_start = self.last_span();
-        let then_block = self.parse_block_body();
-        let then_span = self.join(then_start, self.last_span());
-        let then_expr = Expr::new(self.alloc_id(), then_span, ExprKind::Block(then_block));
-        let else_expr = if self.eat_keyword(Keyword::Else) {
-            if self.at_keyword(Keyword::If) {
-                let start = self.peek_span();
-                let kind = self.parse_if_expr();
-                let end = self.last_span();
-                let span = self.join(start, end);
-                Expr::new(self.alloc_id(), span, kind)
-            } else {
-                self.expect_punct(Punct::LBrace, "to open `else` branch");
-                let start = self.last_span();
-                let block = self.parse_block_body();
-                let span = self.join(start, self.last_span());
-                Expr::new(self.alloc_id(), span, ExprKind::Block(block))
+    /// Parses an `if`/`while` condition, recognising `let`-chains.
+    ///
+    /// Each clause is parsed at [`COND_CLAUSE_PREC`] so it stops at the
+    /// next `&&`. When no clause binds a `let`, the `&&` chain is folded
+    /// back into a single boolean expression and full-precedence parsing
+    /// resumes - so plain `&&`/`||` conditions are unchanged.
+    fn parse_condition(&mut self) -> Condition {
+        let mut clauses = vec![self.parse_cond_clause()];
+        while self.at_punct(Punct::AmpAmp) {
+            self.bump();
+            clauses.push(self.parse_cond_clause());
+        }
+        let has_let = clauses
+            .iter()
+            .any(|clause| matches!(clause, CondClause::Let { .. }));
+        if has_let {
+            if self.peek_binary_op().is_some() {
+                self.record(
+                    ParseError::Unexpected {
+                        expected: "`&&`; `let` in a condition can only be chained with `&&`"
+                            .to_string(),
+                        found: self.peek_text(),
+                    },
+                    self.peek_span(),
+                );
+                // Consume the trailing operand so the branch-opening `{`
+                // is still found and the parse does not cascade.
+                let stub = Expr::new(self.alloc_id(), self.peek_span(), ExprKind::Error);
+                let _ = self.continue_binary(stub, PREC_BELOW_ASSIGN, false);
             }
+            return Condition::Chain(clauses);
+        }
+        let mut iter = clauses.into_iter();
+        let Some(CondClause::Bool(mut expr)) = iter.next() else {
+            unreachable!("a condition without a `let` clause is all boolean");
+        };
+        for clause in iter {
+            let CondClause::Bool(rhs) = clause else {
+                unreachable!("a condition without a `let` clause is all boolean");
+            };
+            let span = self.join(expr.span, rhs.span);
+            expr = Expr::new(
+                self.alloc_id(),
+                span,
+                ExprKind::Binary {
+                    op: BinaryOp::And,
+                    lhs: Box::new(expr),
+                    rhs: Box::new(rhs),
+                },
+            );
+        }
+        Condition::Plain(self.continue_binary(expr, PREC_BELOW_ASSIGN, false))
+    }
+
+    /// Parses one clause of a condition chain: either `let PAT = EXPR`
+    /// or a boolean expression, stopping at the next `&&`.
+    fn parse_cond_clause(&mut self) -> CondClause {
+        if self.at_keyword(Keyword::Let) {
+            self.bump();
+            let pattern = self.parse_pattern();
+            self.expect_punct(Punct::Eq, "after `let` pattern in condition");
+            let scrutinee = self.parse_expr_with_prec(COND_CLAUSE_PREC, false);
+            CondClause::Let { pattern, scrutinee }
+        } else {
+            CondClause::Bool(self.parse_expr_with_prec(COND_CLAUSE_PREC, false))
+        }
+    }
+
+    /// Lowers an `if` let-chain to nested `match`/`if` so every tier
+    /// sees only constructs it already handles. The chain succeeds only
+    /// when every `let` matches and every boolean is `true`; any failure
+    /// runs the `else` branch (an empty block when none was written).
+    fn desugar_if_chain(
+        &mut self,
+        clauses: Vec<CondClause>,
+        then_expr: Expr,
+        else_branch: Option<Box<Expr>>,
+    ) -> ExprKind {
+        let else_template = else_branch.map(|boxed| *boxed);
+        let mut acc = then_expr;
+        for clause in clauses.into_iter().rev() {
+            acc = match clause {
+                CondClause::Bool(cond) => {
+                    let fail = self.make_chain_else(else_template.as_ref());
+                    self.make_if_clause(cond, acc, fail)
+                }
+                CondClause::Let { pattern, scrutinee } if is_irrefutable_binding(&pattern) => {
+                    self.make_block_let(pattern, scrutinee, acc)
+                }
+                CondClause::Let { pattern, scrutinee } => {
+                    let fail = self.make_chain_else(else_template.as_ref());
+                    self.make_match_clause(pattern, scrutinee, acc, fail)
+                }
+            };
+        }
+        acc.kind
+    }
+
+    /// `if cond { acc } else { fail }`.
+    fn make_if_clause(&mut self, cond: Expr, acc: Expr, fail: Expr) -> Expr {
+        let span = self.join(cond.span, acc.span);
+        let then_block = self.wrap_in_block(acc);
+        let else_block = self.wrap_in_block(fail);
+        Expr::new(
+            self.alloc_id(),
+            span,
+            ExprKind::If {
+                condition: Box::new(cond),
+                then_branch: Box::new(then_block),
+                else_branch: Some(Box::new(else_block)),
+            },
+        )
+    }
+
+    /// `match scrutinee { pattern => acc, _ => fail }` for a refutable
+    /// `let` clause.
+    fn make_match_clause(
+        &mut self,
+        pattern: Pattern,
+        scrutinee: Expr,
+        acc: Expr,
+        fail: Expr,
+    ) -> Expr {
+        let span = self.join(scrutinee.span, acc.span);
+        let wildcard = Pattern::new(self.alloc_id(), fail.span, PatternKind::Wildcard);
+        Expr::new(
+            self.alloc_id(),
+            span,
+            ExprKind::Match {
+                scrutinee: Box::new(scrutinee),
+                arms: vec![
+                    MatchArm {
+                        pattern,
+                        guard: None,
+                        body: acc,
+                    },
+                    MatchArm {
+                        pattern: wildcard,
+                        guard: None,
+                        body: fail,
+                    },
+                ],
+            },
+        )
+    }
+
+    /// `{ let pattern = scrutinee; acc }` for an irrefutable `let`
+    /// clause. The binding always succeeds, so the chain has no failure
+    /// edge here and the bound value types through ordinary `let`
+    /// inference.
+    fn make_block_let(&mut self, pattern: Pattern, scrutinee: Expr, acc: Expr) -> Expr {
+        let span = self.join(scrutinee.span, acc.span);
+        let stmt_span = self.join(pattern.span, scrutinee.span);
+        let let_stmt = Stmt::new(
+            self.alloc_id(),
+            stmt_span,
+            StmtKind::Let {
+                pattern,
+                ty: None,
+                init: Some(Box::new(scrutinee)),
+            },
+        );
+        let block = Block {
+            stmts: vec![let_stmt],
+            tail: Some(Box::new(acc)),
+            synthetic: true,
+        };
+        Expr::new(self.alloc_id(), span, ExprKind::Block(block))
+    }
+
+    /// Builds a fresh `else`-branch expression for one failure site of a
+    /// chain. A written `else` is deep-cloned with fresh node ids so each
+    /// site is an independent subtree; a missing `else` yields unit.
+    fn make_chain_else(&mut self, template: Option<&Expr>) -> Expr {
+        if let Some(expr) = template {
+            self.clone_with_fresh_ids(expr)
         } else {
             let span = self.last_span();
             Expr::new(self.alloc_id(), span, ExprKind::Block(Block::empty()))
-        };
-        let wildcard_span = else_expr.span;
-        let wildcard = Pattern::new(self.alloc_id(), wildcard_span, PatternKind::Wildcard);
-        ExprKind::Match {
-            scrutinee: Box::new(scrutinee),
-            arms: vec![
-                MatchArm {
-                    pattern,
-                    guard: None,
-                    body: then_expr,
-                },
-                MatchArm {
-                    pattern: wildcard,
-                    guard: None,
-                    body: else_expr,
-                },
-            ],
         }
+    }
+
+    /// Builds an unlabelled `break` for a `while` chain's failure edge.
+    /// It targets the synthetic loop that replaces the `while`, so a
+    /// failed clause exits the loop.
+    fn make_loop_break(&mut self, span: Span) -> Expr {
+        Expr::new(
+            self.alloc_id(),
+            span,
+            ExprKind::Break {
+                label: None,
+                value: None,
+            },
+        )
+    }
+
+    /// Wraps an expression in a synthetic block unless it already is one,
+    /// so `if`-branch slots always hold a block.
+    fn wrap_in_block(&mut self, expr: Expr) -> Expr {
+        if matches!(expr.kind, ExprKind::Block(_)) {
+            return expr;
+        }
+        let span = expr.span;
+        let block = Block {
+            stmts: Vec::new(),
+            tail: Some(Box::new(expr)),
+            synthetic: true,
+        };
+        Expr::new(self.alloc_id(), span, ExprKind::Block(block))
+    }
+
+    /// Deep-clones an expression subtree, assigning every node a fresh
+    /// id so the copy is independent for resolution and type-checking.
+    fn clone_with_fresh_ids(&mut self, expr: &Expr) -> Expr {
+        let mut cloned = expr.clone();
+        let mut reassign = ReassignIds { ids: &mut self.ids };
+        reassign.visit_expr(&mut cloned);
+        cloned
     }
 
     fn parse_match_expr(&mut self) -> ExprKind {
@@ -853,71 +1062,54 @@ impl Parser<'_> {
 
     fn parse_while_expr(&mut self, label: Option<Label>) -> ExprKind {
         self.bump();
-        if self.at_keyword(Keyword::Let) {
-            return self.parse_while_let_expr(label);
-        }
         self.enter_no_struct();
-        let condition = self.parse_expr_no_assign();
+        let condition = self.parse_condition();
         self.leave_no_struct();
         self.expect_punct(Punct::LBrace, "to open `while` body");
-        let body = self.parse_block_body();
-        let span = self.last_span();
-        let id = self.alloc_id();
-        let body_expr = Expr::new(id, span, ExprKind::Block(body));
-        ExprKind::While {
-            label,
-            condition: Box::new(condition),
-            body: Box::new(body_expr),
-        }
-    }
-
-    /// Parses `while let PAT = SCRUTINEE { BODY }` and lowers to
-    /// `loop { match SCRUTINEE { PAT => BODY, _ => break } }`.
-    /// Called after the leading `while` is consumed and `let` is next.
-    fn parse_while_let_expr(&mut self, label: Option<Label>) -> ExprKind {
-        self.bump();
-        let pattern = self.parse_pattern();
-        self.expect_punct(Punct::Eq, "after `while let` pattern");
-        self.enter_no_struct();
-        let scrutinee = self.parse_expr_no_assign();
-        self.leave_no_struct();
-        self.expect_punct(Punct::LBrace, "to open `while let` body");
         let body_start = self.last_span();
         let body_block = self.parse_block_body();
         let body_span = self.join(body_start, self.last_span());
         let body_expr = Expr::new(self.alloc_id(), body_span, ExprKind::Block(body_block));
-        let break_span = body_span;
-        let break_expr = Expr::new(
-            self.alloc_id(),
-            break_span,
-            ExprKind::Break {
-                label: None,
-                value: None,
+        match condition {
+            Condition::Plain(condition) => ExprKind::While {
+                label,
+                condition: Box::new(condition),
+                body: Box::new(body_expr),
             },
-        );
-        let wildcard = Pattern::new(self.alloc_id(), break_span, PatternKind::Wildcard);
-        let match_expr = Expr::new(
-            self.alloc_id(),
-            body_span,
-            ExprKind::Match {
-                scrutinee: Box::new(scrutinee),
-                arms: vec![
-                    MatchArm {
-                        pattern,
-                        guard: None,
-                        body: body_expr,
-                    },
-                    MatchArm {
-                        pattern: wildcard,
-                        guard: None,
-                        body: break_expr,
-                    },
-                ],
-            },
-        );
+            Condition::Chain(clauses) => self.desugar_while_chain(label, clauses, body_expr),
+        }
+    }
+
+    /// Lowers a `while` let-chain to `loop { match/if ... }`. On success
+    /// the body runs and the loop iterates; any failed clause `break`s
+    /// out of the loop. The body's own `break`/`continue` target this
+    /// loop, matching ordinary `while` semantics.
+    fn desugar_while_chain(
+        &mut self,
+        label: Option<Label>,
+        clauses: Vec<CondClause>,
+        body_expr: Expr,
+    ) -> ExprKind {
+        let body_span = body_expr.span;
+        let mut acc = body_expr;
+        for clause in clauses.into_iter().rev() {
+            acc = match clause {
+                CondClause::Bool(cond) => {
+                    let fail = self.make_loop_break(body_span);
+                    self.make_if_clause(cond, acc, fail)
+                }
+                CondClause::Let { pattern, scrutinee } if is_irrefutable_binding(&pattern) => {
+                    self.make_block_let(pattern, scrutinee, acc)
+                }
+                CondClause::Let { pattern, scrutinee } => {
+                    let fail = self.make_loop_break(body_span);
+                    self.make_match_clause(pattern, scrutinee, acc, fail)
+                }
+            };
+        }
         let loop_body_block = Block {
             stmts: Vec::new(),
-            tail: Some(Box::new(match_expr)),
+            tail: Some(Box::new(acc)),
             synthetic: true,
         };
         let loop_body = Expr::new(self.alloc_id(), body_span, ExprKind::Block(loop_body_block));
@@ -1634,6 +1826,57 @@ impl Parser<'_> {
             }
             _ => None,
         }
+    }
+}
+
+/// Reassigns a fresh node id to every node in a cloned subtree.
+///
+/// Desugaring a let-chain `else` branch duplicates the written block at
+/// each failure site; each copy must own a distinct set of node ids so
+/// resolution and type-checking treat the copies independently.
+struct ReassignIds<'a> {
+    ids: &'a mut NodeIdGenerator,
+}
+
+impl VisitorMut for ReassignIds<'_> {
+    fn visit_expr(&mut self, expr: &mut Expr) {
+        expr.id = self.ids.next();
+        walk_expr_mut(self, expr);
+    }
+
+    fn visit_pattern(&mut self, pattern: &mut Pattern) {
+        pattern.id = self.ids.next();
+        walk_pattern_mut(self, pattern);
+    }
+
+    fn visit_stmt(&mut self, stmt: &mut Stmt) {
+        stmt.id = self.ids.next();
+        walk_stmt_mut(self, stmt);
+    }
+
+    fn visit_type(&mut self, ty: &mut Type) {
+        ty.id = self.ids.next();
+        walk_type_mut(self, ty);
+    }
+
+    fn visit_item(&mut self, item: &mut Item) {
+        item.id = self.ids.next();
+        walk_item_mut(self, item);
+    }
+}
+
+/// Returns `true` for patterns that always match, so a `let` clause
+/// using them binds unconditionally and lowers to a plain binding with
+/// no failure edge.
+fn is_irrefutable_binding(pattern: &Pattern) -> bool {
+    match &pattern.kind {
+        PatternKind::Wildcard => true,
+        PatternKind::Ident { subpattern, .. } => subpattern
+            .as_ref()
+            .is_none_or(|sub| is_irrefutable_binding(sub)),
+        PatternKind::Tuple(elems) => elems.iter().all(is_irrefutable_binding),
+        PatternKind::Ref { inner, .. } => is_irrefutable_binding(inner),
+        _ => false,
     }
 }
 

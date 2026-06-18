@@ -230,6 +230,9 @@ thread_local! {
     pub(crate) static TCP_STREAM_REGISTRY: RefCell<StdHashMap<i64, net_std::TcpStream>> =
         RefCell::new(StdHashMap::new());
     #[allow(clippy::missing_const_for_thread_local)]
+    pub(crate) static TLS_STREAM_REGISTRY: RefCell<StdHashMap<i64, net_std::TlsStream>> =
+        RefCell::new(StdHashMap::new());
+    #[allow(clippy::missing_const_for_thread_local)]
     pub(crate) static TCP_LISTENER_REGISTRY: RefCell<StdHashMap<i64, net_std::TcpListener>> =
         RefCell::new(StdHashMap::new());
     #[allow(clippy::missing_const_for_thread_local)]

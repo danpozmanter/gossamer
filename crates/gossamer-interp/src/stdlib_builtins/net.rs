@@ -127,6 +127,12 @@ pub(crate) fn install_net(globals: &mut Vec<(&'static str, Value)>) {
         ),
         ("TcpStream::write", builtin_tcp_stream_write),
         ("TcpStream::write_all", builtin_tcp_stream_write),
+        ("TcpStream::start_tls", builtin_tcp_stream_start_tls),
+        (
+            "TcpStream::start_tls_insecure",
+            builtin_tcp_stream_start_tls_insecure,
+        ),
+        ("TcpStream::start_tls_ca", builtin_tcp_stream_start_tls_ca),
         ("TcpStream::close", builtin_tcp_stream_close),
         ("UdpSocket::bind", builtin_udp_bind),
         ("UdpSocket::send_to", builtin_udp_send_to),
@@ -267,20 +273,37 @@ pub(crate) fn builtin_tcp_stream_read(args: &[Value]) -> RuntimeResult<Value> {
         .and_then(value_to_int)
         .unwrap_or(4096)
         .clamp(1, 1 << 24);
-    let res = TCP_STREAM_REGISTRY.with(|r| {
-        let mut reg = r.borrow_mut();
-        let Some(stream) = reg.get_mut(&id) else {
-            return Err("TcpStream::read: stale handle".to_string());
-        };
-        let mut buf = vec![0u8; max as usize];
-        match stream.read(&mut buf) {
-            Ok(n) => {
-                buf.truncate(n);
-                Ok(buf)
+    let res = if tls_has(id) {
+        TLS_STREAM_REGISTRY.with(|r| {
+            let mut reg = r.borrow_mut();
+            let Some(stream) = reg.get_mut(&id) else {
+                return Err("TcpStream::read: stale handle".to_string());
+            };
+            let mut buf = vec![0u8; max as usize];
+            match stream.read(&mut buf) {
+                Ok(n) => {
+                    buf.truncate(n);
+                    Ok(buf)
+                }
+                Err(e) => Err(e.to_string()),
             }
-            Err(e) => Err(e.to_string()),
-        }
-    });
+        })
+    } else {
+        TCP_STREAM_REGISTRY.with(|r| {
+            let mut reg = r.borrow_mut();
+            let Some(stream) = reg.get_mut(&id) else {
+                return Err("TcpStream::read: stale handle".to_string());
+            };
+            let mut buf = vec![0u8; max as usize];
+            match stream.read(&mut buf) {
+                Ok(n) => {
+                    buf.truncate(n);
+                    Ok(buf)
+                }
+                Err(e) => Err(e.to_string()),
+            }
+        })
+    };
     match res {
         Ok(bytes) => Ok(ok_variant(Value::Array(Arc::new(
             bytes
@@ -296,22 +319,35 @@ pub(crate) fn builtin_tcp_stream_read_to_string(args: &[Value]) -> RuntimeResult
     let Some(id) = args.first().and_then(handle_id) else {
         return Ok(err_variant("TcpStream::read_to_string: missing handle"));
     };
-    let res = TCP_STREAM_REGISTRY.with(|r| {
-        let mut reg = r.borrow_mut();
-        let Some(stream) = reg.get_mut(&id) else {
-            return Err("TcpStream::read_to_string: stale handle".to_string());
-        };
+    let read_all = |stream: &mut dyn FnMut(&mut [u8]) -> Result<usize, String>| {
         let mut out = Vec::new();
         let mut chunk = [0u8; 4096];
         loop {
-            match stream.read(&mut chunk) {
+            match stream(&mut chunk) {
                 Ok(0) => break,
                 Ok(n) => out.extend_from_slice(&chunk[..n]),
-                Err(e) => return Err(e.to_string()),
+                Err(e) => return Err(e),
             }
         }
         Ok(String::from_utf8_lossy(&out).into_owned())
-    });
+    };
+    let res = if tls_has(id) {
+        TLS_STREAM_REGISTRY.with(|r| {
+            let mut reg = r.borrow_mut();
+            let Some(stream) = reg.get_mut(&id) else {
+                return Err("TcpStream::read_to_string: stale handle".to_string());
+            };
+            read_all(&mut |b| stream.read(b).map_err(|e| e.to_string()))
+        })
+    } else {
+        TCP_STREAM_REGISTRY.with(|r| {
+            let mut reg = r.borrow_mut();
+            let Some(stream) = reg.get_mut(&id) else {
+                return Err("TcpStream::read_to_string: stale handle".to_string());
+            };
+            read_all(&mut |b| stream.read(b).map_err(|e| e.to_string()))
+        })
+    };
     match res {
         Ok(s) => Ok(ok_variant(Value::String(s.into()))),
         Err(e) => Ok(err_variant(e)),
@@ -337,22 +373,115 @@ pub(crate) fn builtin_tcp_stream_write(args: &[Value]) -> RuntimeResult<Value> {
             ));
         }
     };
-    let res = TCP_STREAM_REGISTRY.with(|r| {
-        let mut reg = r.borrow_mut();
-        let Some(stream) = reg.get_mut(&id) else {
-            return Err("TcpStream::write: stale handle".to_string());
-        };
-        stream.write_all(&bytes).map_err(|e| e.to_string())
-    });
+    let res = if tls_has(id) {
+        TLS_STREAM_REGISTRY.with(|r| {
+            let mut reg = r.borrow_mut();
+            let Some(stream) = reg.get_mut(&id) else {
+                return Err("TcpStream::write: stale handle".to_string());
+            };
+            stream.write_all(&bytes).map_err(|e| e.to_string())
+        })
+    } else {
+        TCP_STREAM_REGISTRY.with(|r| {
+            let mut reg = r.borrow_mut();
+            let Some(stream) = reg.get_mut(&id) else {
+                return Err("TcpStream::write: stale handle".to_string());
+            };
+            stream.write_all(&bytes).map_err(|e| e.to_string())
+        })
+    };
     match res {
         Ok(()) => Ok(ok_variant(Value::Int(bytes.len() as i64))),
         Err(e) => Ok(err_variant(e)),
     }
 }
 
+/// True when `id` names an upgraded TLS stream rather than a plaintext
+/// socket. `read` / `write` / `close` consult this so the existing
+/// `net::TcpStream` method surface drives either transport.
+fn tls_has(id: i64) -> bool {
+    TLS_STREAM_REGISTRY.with(|r| r.borrow().contains_key(&id))
+}
+
+pub(crate) fn builtin_tcp_stream_start_tls(args: &[Value]) -> RuntimeResult<Value> {
+    let Some(id) = args.first().and_then(handle_id) else {
+        return Ok(err_variant("TcpStream::start_tls: missing handle"));
+    };
+    let host = match arg_str_at(args, 1, "TcpStream::start_tls", "host") {
+        Ok(s) => s,
+        Err(v) => return Ok(v),
+    };
+    let Some(stream) = TCP_STREAM_REGISTRY.with(|r| r.borrow_mut().remove(&id)) else {
+        return Ok(err_variant("TcpStream::start_tls: stale handle"));
+    };
+    match stream.start_tls(&host) {
+        Ok(tls) => {
+            let nid = next_net_id();
+            TLS_STREAM_REGISTRY.with(|r| {
+                r.borrow_mut().insert(nid, tls);
+            });
+            Ok(ok_variant(handle_struct("net::TcpStream", nid)))
+        }
+        Err(e) => Ok(err_variant(format!("{e}"))),
+    }
+}
+
+pub(crate) fn builtin_tcp_stream_start_tls_insecure(args: &[Value]) -> RuntimeResult<Value> {
+    let Some(id) = args.first().and_then(handle_id) else {
+        return Ok(err_variant("TcpStream::start_tls_insecure: missing handle"));
+    };
+    let host = match arg_str_at(args, 1, "TcpStream::start_tls_insecure", "host") {
+        Ok(s) => s,
+        Err(v) => return Ok(v),
+    };
+    let Some(stream) = TCP_STREAM_REGISTRY.with(|r| r.borrow_mut().remove(&id)) else {
+        return Ok(err_variant("TcpStream::start_tls_insecure: stale handle"));
+    };
+    match stream.start_tls_insecure(&host) {
+        Ok(tls) => {
+            let nid = next_net_id();
+            TLS_STREAM_REGISTRY.with(|r| {
+                r.borrow_mut().insert(nid, tls);
+            });
+            Ok(ok_variant(handle_struct("net::TcpStream", nid)))
+        }
+        Err(e) => Ok(err_variant(format!("{e}"))),
+    }
+}
+
+pub(crate) fn builtin_tcp_stream_start_tls_ca(args: &[Value]) -> RuntimeResult<Value> {
+    let Some(id) = args.first().and_then(handle_id) else {
+        return Ok(err_variant("TcpStream::start_tls_ca: missing handle"));
+    };
+    let host = match arg_str_at(args, 1, "TcpStream::start_tls_ca", "host") {
+        Ok(s) => s,
+        Err(v) => return Ok(v),
+    };
+    let ca_pem = match arg_str_at(args, 2, "TcpStream::start_tls_ca", "ca_pem") {
+        Ok(s) => s,
+        Err(v) => return Ok(v),
+    };
+    let Some(stream) = TCP_STREAM_REGISTRY.with(|r| r.borrow_mut().remove(&id)) else {
+        return Ok(err_variant("TcpStream::start_tls_ca: stale handle"));
+    };
+    match stream.start_tls_ca(&host, &ca_pem) {
+        Ok(tls) => {
+            let nid = next_net_id();
+            TLS_STREAM_REGISTRY.with(|r| {
+                r.borrow_mut().insert(nid, tls);
+            });
+            Ok(ok_variant(handle_struct("net::TcpStream", nid)))
+        }
+        Err(e) => Ok(err_variant(format!("{e}"))),
+    }
+}
+
 pub(crate) fn builtin_tcp_stream_close(args: &[Value]) -> RuntimeResult<Value> {
     if let Some(id) = args.first().and_then(handle_id) {
         TCP_STREAM_REGISTRY.with(|r| {
+            r.borrow_mut().remove(&id);
+        });
+        TLS_STREAM_REGISTRY.with(|r| {
             r.borrow_mut().remove(&id);
         });
     }

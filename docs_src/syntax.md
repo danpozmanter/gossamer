@@ -140,14 +140,41 @@ let same = clamp(0, 100, add(10, double(3)))
 - `_` - wildcard.
 - `name` / `mut name` - bind.
 - `Some(inner)` / `None` - variant destructure.
-- `Point { x, y }` - struct destructure.
+- `Point { x, y }` / `Point { x: a, y: b }` - struct destructure (and renamed).
 - `(a, b)` - tuple destructure.
-- `1..=5` - range.
+- `1..=5` / `1..5` - closed and exclusive range.
+- `..=hi` / `..hi` / `lo..` / `lo..=` - open-ended range (an open end
+  covers up to the type maximum).
 - `a | b` - or-pattern.
 - `x @ 1..=3` - `@`-binding.
 - `..` - rest.
 
 Guards: `Some(n) if n > 0 => ...`
+
+Range patterns are opaque to exhaustiveness, so a `_` arm is still
+required. The struct, variant, tuple, and or-pattern forms also work in
+irrefutable `let` bindings: `let Point { x, y } = p`, `let Shape::Pair(m,
+n) = s`, `let (A(g, _) | B(g)) = v` (or-pattern alternatives must bind the
+same names).
+
+## Conditions and let-chains
+
+An `if` or `while` condition may chain clauses with `&&`, where each
+clause is either `let PAT = expr` or a boolean. Earlier `let` bindings
+are in scope for later clauses and the body:
+
+```gossamer
+if let Some(x) = a && let Some(y) = b && x > 0 {
+    use(x + y)
+}
+while i < xs.len() && let n = xs[i] && n > 0 {
+    sum += n
+    i += 1
+}
+```
+
+A `let` clause chain is `&&`-only: `||` cannot join `let` clauses
+without parentheses.
 
 ## Loops
 

@@ -1,0 +1,32 @@
+// VM let-destructure: struct field patterns (shorthand and renamed),
+// nested struct patterns, enum tuple-variant patterns (the same
+// `HirPatKind::Variant` lowering a tuple-struct pattern uses), and
+// irrefutable or-patterns binding shared names from the matching arm.
+struct Point { x: i64, y: i64 }
+struct Nested { p: Point, label: String }
+enum Shape { Pair(i64, i64), Single(i64) }
+
+fn main() {
+    let p = Point { x: 3, y: 4 }
+    let Point { x, y } = p
+    println!("{} {}", x, y)
+
+    let Point { x: a, y: b } = p
+    println!("{} {}", a, b)
+
+    let nested = Nested { p: Point { x: 10, y: 20 }, label: "hi" }
+    let Nested { p: Point { x: nx, y: ny }, label } = nested
+    println!("{} {} {}", nx, ny, label)
+
+    let s = Shape::Pair(1, 2)
+    let Shape::Pair(m, n) = s
+    println!("{} {}", m, n)
+
+    let s_or = Shape::Pair(5, 6)
+    let (Shape::Pair(g, _) | Shape::Single(g)) = s_or
+    println!("{}", g)
+
+    let s_or2 = Shape::Single(99)
+    let (Shape::Pair(g2, _) | Shape::Single(g2)) = s_or2
+    println!("{}", g2)
+}

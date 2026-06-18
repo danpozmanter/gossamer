@@ -1,0 +1,88 @@
+// Cross-tier round-trip for bidirectional WebSocket messaging
+// (RFC 6455). An echo server is bound on a goroutine via
+// `websocket::serve`; a `websocket::connect` client then sends a text
+// message, `recv`s the echo, and verifies it. All three tiers - the
+// bytecode VM (`gos run`), the Cranelift JIT, and the LLVM AOT runtime
+// (`gos build` / `--release`) - drive the same `gossamer_ws` framing
+// engine, so the output is bit-identical.
+//
+// The serve goroutine never returns (it loops accepting connections),
+// so `process::exit(0)` ends the run once the client verifies the echo.
+// Binds a fixed loopback port, serialized under SERVER_PORT_LOCK by
+// `websocket_echo_parity_across_tiers` in
+// crates/gossamer-cli/tests/tier_parity.rs.
+
+use std::http::websocket
+use std::process
+use std::time
+
+const ADDR: String = "127.0.0.1:23971"
+const URL: String = "ws://127.0.0.1:23971/"
+
+struct Echo { }
+
+impl Echo {
+    // Blocking recv/send loop on one connection: echo every text
+    // message back until the peer closes (recv returns Err).
+    fn handle(&self, ws: i64) {
+        loop {
+            match websocket::recv(ws) {
+                Ok(msg) => {
+                    if let Err(_) = websocket::send_text(ws, msg) {
+                        break
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+    }
+}
+
+fn serve_echo() {
+    if let Err(e) = websocket::serve(&ADDR, Echo { }) {
+        eprintln!("ws serve failed: {e}")
+    }
+}
+
+// Polls until the server completes a WebSocket handshake; binding is
+// asynchronous, so readiness is observable only by connecting.
+fn await_ready() {
+    let mut tries = 0
+    while tries < 400 {
+        if let Ok(ws) = websocket::connect(&URL) {
+            let _ = websocket::close(ws)
+            return
+        }
+        time::sleep(25)
+        tries += 1
+    }
+}
+
+fn main() {
+    go serve_echo()
+    await_ready()
+
+    let ws = match websocket::connect(&URL) {
+        Ok(h) => h,
+        Err(e) => {
+            println!("connect error: {e}")
+            process::exit(1)
+        }
+    }
+    if let Err(e) = websocket::send_text(ws, &"hello-ws") {
+        println!("send error: {e}")
+        process::exit(1)
+    }
+    match websocket::recv(ws) {
+        Ok(echo) => {
+            if echo == "hello-ws" {
+                println!("ws echo: ok")
+            } else {
+                println!("ws echo: MISMATCH {echo}")
+            }
+        }
+        Err(e) => println!("recv error: {e}"),
+    }
+    let _ = websocket::close(ws)
+    process::exit(0)
+}

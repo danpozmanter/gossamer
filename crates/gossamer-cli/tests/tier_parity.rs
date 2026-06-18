@@ -236,6 +236,17 @@ const SPECS: &[Spec] = &[
     spec("feature-testing-examples/fmt_struct_enum.gos"),
     spec("feature-testing-examples/fmt_tuple_map.gos"),
     spec("feature-testing-examples/string_concat_chain.gos"),
+    // Irrefutable let-pattern destructuring (struct / tuple-struct / enum
+    // variant / nested / or-pattern) and const generic array length.
+    spec("feature-testing-examples/let_destructure_struct.gos"),
+    spec("feature-testing-examples/const_generic_array_len.gos"),
+    // Let-chains, open-ended range patterns, fixed-array slice patterns,
+    // bounds-safe String.byte_at, and in-place / flat numeric Vec growth.
+    spec("feature-testing-examples/let_chains.gos"),
+    spec("feature-testing-examples/open_ended_ranges.gos"),
+    spec("feature-testing-examples/slice_pattern_fixed_array.gos"),
+    spec("feature-testing-examples/string_byte_at_oob.gos"),
+    spec("feature-testing-examples/vec_inplace_growth.gos"),
     spec("feature-testing-examples/record_update.gos"),
     spec("feature-testing-examples/trait_bounds.gos"),
     spec("feature-testing-examples/nested_field_access.gos"),
@@ -365,6 +376,20 @@ const SPECS: &[Spec] = &[
     },
     Spec {
         skip_all: Some(
+            "binds a fixed loopback TLS port - covered serially by \
+             http_serve_tls_parity_across_tiers",
+        ),
+        ..spec("feature-testing-examples/http_serve_tls_roundtrip.gos")
+    },
+    Spec {
+        skip_all: Some(
+            "binds a fixed loopback port - covered serially by \
+             http_server_headers_parity_across_tiers",
+        ),
+        ..spec("feature-testing-examples/http_server_headers.gos")
+    },
+    Spec {
+        skip_all: Some(
             "binds a fixed loopback port - covered serially by \
              http_middleware_bearer_parity_across_tiers",
         ),
@@ -476,7 +501,15 @@ const SPECS: &[Spec] = &[
         ),
         ..spec("feature-testing-examples/http_websocket_accept.gos")
     },
+    Spec {
+        skip_all: Some(
+            "binds a fixed loopback port - covered serially by \
+             websocket_echo_parity_across_tiers",
+        ),
+        ..spec("feature-testing-examples/websocket_echo.gos")
+    },
     spec("feature-testing-examples/http_serve_err_binding.gos"),
+    spec("feature-testing-examples/http3_serve_err_binding.gos"),
     spec("feature-testing-examples/integer_overflow_edges.gos"),
     spec("feature-testing-examples/iter_combinator_chain.gos"),
     spec("feature-testing-examples/iter_extra.gos"),
@@ -485,6 +518,8 @@ const SPECS: &[Spec] = &[
     spec("feature-testing-examples/bytes_builder.gos"),
     spec("feature-testing-examples/net_ip.gos"),
     spec("feature-testing-examples/net_tcp_echo.gos"),
+    spec("feature-testing-examples/net_tls_client.gos"),
+    spec("feature-testing-examples/net_tls_client_modes.gos"),
     spec("feature-testing-examples/json_round_trip_fuzz.gos"),
     spec("feature-testing-examples/method_dispatch_collision.gos"),
     spec("feature-testing-examples/mutex_poison_recovery.gos"),
@@ -666,6 +701,11 @@ const SPECS: &[Spec] = &[
     // slice / rest patterns (`[a, b]`, `[first, ..rest]`, `[.., last]`).
     spec("feature-testing-examples/labeled_loops.gos"),
     spec("feature-testing-examples/slice_patterns.gos"),
+    // Gossamer-native SQL driver dispatch: a `.gos` struct registers
+    // itself as a std::database::sql driver (sql::register_native) and
+    // is driven through the full Conn/Stmt/Rows facade. Cross-tier
+    // gate for the register_native bridge + native_* side-channel.
+    spec("feature-testing-examples/sql_native_driver.gos"),
 ];
 
 #[derive(Debug)]
@@ -1312,6 +1352,46 @@ fn http_websocket_accept_parity_across_tiers() {
     );
 }
 
+/// Bidirectional WebSocket messaging (RFC 6455): an echo server bound
+/// via `websocket::serve` on a goroutine, a `websocket::connect` client
+/// that sends a text message and verifies the echo. All three tiers
+/// drive the shared `gossamer_ws` framing engine, so the output is
+/// bit-identical on the bytecode VM, Cranelift JIT, and LLVM AOT.
+#[test]
+fn websocket_echo_parity_across_tiers() {
+    self_terminating_server_parity(
+        "feature-testing-examples/websocket_echo.gos",
+        &["ws echo: ok"],
+    );
+}
+
+/// `http::serve_tls` (server-side HTTPS) terminating a real TLS
+/// handshake, plus the three `TcpStream::start_tls*` client modes
+/// (skip-verify, public-root verify, custom-CA verify), must behave
+/// identically on every tier. A private CA signs a localhost leaf the
+/// server presents; `start_tls_insecure` and `start_tls_ca` complete
+/// the request while the public-root `start_tls` rejects the private
+/// chain - bit-identically on the bytecode VM, Cranelift JIT, and LLVM
+/// AOT.
+#[test]
+fn http_serve_tls_parity_across_tiers() {
+    self_terminating_server_parity(
+        "feature-testing-examples/http_serve_tls_roundtrip.gos",
+        &["insecure: ok", "default-verify: rejected", "custom-ca: ok"],
+    );
+}
+
+/// The compiled HTTP server must emit the RFC 9110 origin headers
+/// `Date` and `Server` that the interp tier already sends, so a client
+/// observes the same response-header set on every tier.
+#[test]
+fn http_server_headers_parity_across_tiers() {
+    self_terminating_server_parity(
+        "feature-testing-examples/http_server_headers.gos",
+        &["server-header: true", "date-header: true"],
+    );
+}
+
 /// `match http::serve(..) { Err(e) => println!("{}", e) }` must
 /// compile and run identically on every tier. The serve expression
 /// is `Result<(), errors::Error>`-typed (the Err binding used to
@@ -1340,6 +1420,59 @@ fn http_serve_err_binding_parity_across_tiers() {
             "{} must not panic on serve failure\n--- stderr ---\n{}",
             tier.label(),
             run.stderr,
+        );
+    }
+}
+
+/// `http_h3::serve` is the QUIC + HTTP/3 server entry, wired across
+/// all three tiers through the shared `gossamer-http3` engine. A full
+/// QUIC round trip is too slow / nondeterministic for the parity walk
+/// (the loopback handshake takes tens of seconds), so this fixture
+/// exercises the same handler-fn-ptr dispatch and `Result<(), Error>`
+/// surface deterministically: HTTP/3 mandates TLS, so the server
+/// reads the cert / key PEM before binding, and a missing cert file
+/// is the caller's `Err` value on every tier - not a panic. The cert
+/// read goes through `std::fs::read` on both tiers, so the OS error
+/// tail is identical; this pins the stable prefix and asserts
+/// cross-tier equality of the full line.
+#[test]
+fn http3_serve_err_binding_parity_across_tiers() {
+    let fixture = spec("feature-testing-examples/http3_serve_err_binding.gos");
+    let stable_prefix = "about to bind\nError: http_h3::serve: h3 io: read cert:";
+    let mut outputs: Vec<(String, String)> = Vec::new();
+    for tier in [Tier::Vm, Tier::Cranelift, Tier::Llvm] {
+        let run =
+            run_tier(&fixture, tier).unwrap_or_else(|e| panic!("{} error: {e}", tier.label()));
+        assert_eq!(
+            run.code,
+            Some(0),
+            "{} must exit 0 - a cert read failure is the caller's Err value, not a panic\n\
+             --- stdout ---\n{}\n--- stderr ---\n{}",
+            tier.label(),
+            run.stdout,
+            run.stderr,
+        );
+        assert!(
+            run.stdout.starts_with(stable_prefix),
+            "{} stdout must carry the stable cert-read-error prefix\n--- stdout ---\n{}",
+            tier.label(),
+            run.stdout,
+        );
+        assert!(
+            !run.stderr.contains("GX0005"),
+            "{} must not panic on a cert read failure\n--- stderr ---\n{}",
+            tier.label(),
+            run.stderr,
+        );
+        outputs.push((tier.label().to_string(), run.stdout));
+    }
+    // The OS error tail is machine-specific but identical across
+    // tiers on the same host: every tier's full stdout must match.
+    let (first_label, first_out) = &outputs[0];
+    for (label, out) in &outputs[1..] {
+        assert_eq!(
+            out, first_out,
+            "{label} stdout must match {first_label} byte-for-byte",
         );
     }
 }

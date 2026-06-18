@@ -190,6 +190,11 @@ struct TypeChecker<'a> {
     /// trait names. After a call's parameters resolve to concrete types,
     /// each bound is checked against [`Self::trait_impl_types`].
     fn_param_bounds: HashMap<gossamer_resolve::DefId, Vec<Vec<String>>>,
+    /// Per-position flags marking which of each generic function's
+    /// parameters are const parameters, keyed by `DefId`. Lets a call
+    /// site record a `GenericArg::Const` (rather than a type argument)
+    /// at each const position when inferring the substitution.
+    fn_generic_const_mask: HashMap<gossamer_resolve::DefId, Vec<bool>>,
     /// Set of concrete type names implementing each trait, keyed by trait
     /// name. Built from every `impl Trait for Type` block so a generic
     /// call can verify a `T: Trait` bound is satisfied by the argument.
@@ -215,6 +220,12 @@ struct TypeChecker<'a> {
     /// `GenericParam::Type` carries an `Ident` without a
     /// resolver-assigned `NodeId`.
     current_generic_scope: HashMap<String, (crate::ParamIdx, Box<str>)>,
+    /// Currently-active const-generic-parameter name → `ParamIdx`
+    /// mapping, populated alongside [`Self::current_generic_scope`].
+    /// Lets a `[T; N]` array-length expression naming a const
+    /// parameter type as a symbolic [`crate::ArrayLen::Param`] rather
+    /// than collapsing to a concrete `0`.
+    current_const_generic_scope: HashMap<String, crate::ParamIdx>,
     /// Trait names declared in this source file. Populated upfront
     /// by `collect_signatures` from every `ItemKind::Trait`. Used
     /// by `register_fn_sig` to validate that each `<T: Bound>`
@@ -236,6 +247,13 @@ struct TypeChecker<'a> {
     /// as a VALUE, which is only legal for the
     /// [`crate::std_fn_values`] tabled set (GT0015 otherwise).
     callee_path_nodes: std::collections::HashSet<NodeId>,
+}
+
+/// Saved generic-parameter scopes restored by
+/// [`TypeChecker::leave_generic_scope`].
+struct GenericScope {
+    types: HashMap<String, (crate::ParamIdx, Box<str>)>,
+    consts: HashMap<String, crate::ParamIdx>,
 }
 
 impl<'a> TypeChecker<'a> {
@@ -264,10 +282,12 @@ impl<'a> TypeChecker<'a> {
             struct_generic_arity: HashMap::new(),
             fn_generic_arity: HashMap::new(),
             fn_param_bounds: HashMap::new(),
+            fn_generic_const_mask: HashMap::new(),
             trait_impl_types: HashMap::new(),
             trait_method_ret: HashMap::new(),
             current_param_bounds: Vec::new(),
             current_generic_scope: HashMap::new(),
+            current_const_generic_scope: HashMap::new(),
             declared_trait_names: std::collections::HashSet::new(),
             write_arg_bindings: HashMap::new(),
             callee_path_nodes: std::collections::HashSet::new(),
@@ -305,44 +325,63 @@ impl<'a> TypeChecker<'a> {
     /// its position so `type_from_ast_path` renders references as
     /// the right `TyKind::Param`. Returns the prior scope so the
     /// caller can restore it.
-    /// Per-type-parameter list of bound trait names for a generics clause,
-    /// in parameter order (`<T: A + B, U>` -> `[[A, B], []]`).
+    /// Per-parameter list of bound trait names for a generics clause,
+    /// indexed by full parameter position so const and lifetime slots
+    /// keep their place (`<'a, T: A + B, const N: usize>` ->
+    /// `[[], [A, B], []]`).
     fn type_param_bounds(generics: &gossamer_ast::Generics) -> Vec<Vec<String>> {
         generics
             .params
             .iter()
-            .filter_map(|p| match p {
-                gossamer_ast::GenericParam::Type { bounds, .. } => Some(
-                    bounds
-                        .iter()
-                        .filter_map(|b| b.path.segments.last())
-                        .map(|s| s.name.name.clone())
-                        .collect(),
-                ),
-                _ => None,
+            .map(|p| match p {
+                gossamer_ast::GenericParam::Type { bounds, .. } => bounds
+                    .iter()
+                    .filter_map(|b| b.path.segments.last())
+                    .map(|s| s.name.name.clone())
+                    .collect(),
+                _ => Vec::new(),
             })
             .collect()
     }
 
-    fn enter_generic_scope(
-        &mut self,
-        generics: &gossamer_ast::Generics,
-    ) -> HashMap<String, (crate::ParamIdx, Box<str>)> {
-        let prior = std::mem::take(&mut self.current_generic_scope);
+    /// Per-parameter flags marking which generic positions are const
+    /// parameters, indexed by full parameter position.
+    fn const_param_mask(generics: &gossamer_ast::Generics) -> Vec<bool> {
+        generics
+            .params
+            .iter()
+            .map(|p| matches!(p, gossamer_ast::GenericParam::Const { .. }))
+            .collect()
+    }
+
+    fn enter_generic_scope(&mut self, generics: &gossamer_ast::Generics) -> GenericScope {
+        let prior_types = std::mem::take(&mut self.current_generic_scope);
+        let prior_consts = std::mem::take(&mut self.current_const_generic_scope);
         for (i, param) in generics.params.iter().enumerate() {
-            if let gossamer_ast::GenericParam::Type { name, .. } = param {
-                let owned: Box<str> = name.name.clone().into_boxed_str();
-                self.current_generic_scope
-                    .insert(name.name.clone(), (crate::ParamIdx(i as u32), owned));
+            match param {
+                gossamer_ast::GenericParam::Type { name, .. } => {
+                    let owned: Box<str> = name.name.clone().into_boxed_str();
+                    self.current_generic_scope
+                        .insert(name.name.clone(), (crate::ParamIdx(i as u32), owned));
+                }
+                gossamer_ast::GenericParam::Const { name, .. } => {
+                    self.current_const_generic_scope
+                        .insert(name.name.clone(), crate::ParamIdx(i as u32));
+                }
+                gossamer_ast::GenericParam::Lifetime { .. } => {}
             }
         }
-        prior
+        GenericScope {
+            types: prior_types,
+            consts: prior_consts,
+        }
     }
 
     /// Restores a generic-parameter scope saved by
     /// [`Self::enter_generic_scope`].
-    fn leave_generic_scope(&mut self, prior: HashMap<String, (crate::ParamIdx, Box<str>)>) {
-        self.current_generic_scope = prior;
+    fn leave_generic_scope(&mut self, prior: GenericScope) {
+        self.current_generic_scope = prior.types;
+        self.current_const_generic_scope = prior.consts;
     }
 
     /// Verifies each instantiated type parameter of a generic call
@@ -410,14 +449,53 @@ impl<'a> TypeChecker<'a> {
     /// malformed declaration produces a deferred unification
     /// error rather than a panic.
     fn subst_params_in_ty(&mut self, ty: Ty, substs: &[Ty]) -> Ty {
-        if substs.is_empty() {
+        self.subst_generics_in_ty(ty, substs, &[])
+    }
+
+    /// Infers a const generic array length from a call argument: a
+    /// parameter typed `[T; N]` (peeling references) matched against an
+    /// argument of concrete length yields `(N's param index, length)`.
+    fn infer_array_const_len(&self, param_ty: Ty, arg_ty: Ty) -> Option<(usize, i128)> {
+        let mut p = param_ty;
+        while let TyKind::Ref { inner, .. } = self.tcx.kind_of(p) {
+            p = *inner;
+        }
+        let TyKind::Array {
+            len: crate::ArrayLen::Param(idx),
+            ..
+        } = self.tcx.kind_of(p)
+        else {
+            return None;
+        };
+        let idx = idx.0 as usize;
+        let mut a = arg_ty;
+        while let TyKind::Ref { inner, .. } = self.tcx.kind_of(a) {
+            a = *inner;
+        }
+        let TyKind::Array {
+            len: crate::ArrayLen::Concrete(n),
+            ..
+        } = self.tcx.kind_of(a)
+        else {
+            return None;
+        };
+        Some((idx, *n as i128))
+    }
+
+    /// Like [`Self::subst_params_in_ty`] but also rewrites a const
+    /// generic array length (`[T; N]` where `N` is the `idx`-th
+    /// parameter) to a concrete `ArrayLen` when `const_substs[idx]`
+    /// supplies a value. Used at generic call sites where the const
+    /// argument is inferred from the array argument's length.
+    fn subst_generics_in_ty(&mut self, ty: Ty, substs: &[Ty], const_substs: &[Option<i128>]) -> Ty {
+        if substs.is_empty() && const_substs.iter().all(Option::is_none) {
             return ty;
         }
         let kind = self.tcx.kind_of(ty).clone();
         match kind {
             TyKind::Param { idx, .. } => substs.get(idx.0 as usize).copied().unwrap_or(ty),
             TyKind::Ref { inner, mutability } => {
-                let new_inner = self.subst_params_in_ty(inner, substs);
+                let new_inner = self.subst_generics_in_ty(inner, substs, const_substs);
                 if new_inner == inner {
                     ty
                 } else {
@@ -430,7 +508,7 @@ impl<'a> TypeChecker<'a> {
             TyKind::Tuple(elems) => {
                 let new_elems: Vec<Ty> = elems
                     .iter()
-                    .map(|e| self.subst_params_in_ty(*e, substs))
+                    .map(|e| self.subst_generics_in_ty(*e, substs, const_substs))
                     .collect();
                 if new_elems == elems {
                     ty
@@ -439,18 +517,19 @@ impl<'a> TypeChecker<'a> {
                 }
             }
             TyKind::Array { elem, len } => {
-                let new_elem = self.subst_params_in_ty(elem, substs);
-                if new_elem == elem {
+                let new_elem = self.subst_generics_in_ty(elem, substs, const_substs);
+                let new_len = subst_array_len(len, const_substs);
+                if new_elem == elem && new_len == len {
                     ty
                 } else {
                     self.tcx.intern(TyKind::Array {
                         elem: new_elem,
-                        len,
+                        len: new_len,
                     })
                 }
             }
             TyKind::Slice(elem) => {
-                let new = self.subst_params_in_ty(elem, substs);
+                let new = self.subst_generics_in_ty(elem, substs, const_substs);
                 if new == elem {
                     ty
                 } else {
@@ -458,7 +537,7 @@ impl<'a> TypeChecker<'a> {
                 }
             }
             TyKind::Vec(elem) => {
-                let new = self.subst_params_in_ty(elem, substs);
+                let new = self.subst_generics_in_ty(elem, substs, const_substs);
                 if new == elem {
                     ty
                 } else {
@@ -466,8 +545,8 @@ impl<'a> TypeChecker<'a> {
                 }
             }
             TyKind::HashMap { key, value } => {
-                let new_k = self.subst_params_in_ty(key, substs);
-                let new_v = self.subst_params_in_ty(value, substs);
+                let new_k = self.subst_generics_in_ty(key, substs, const_substs);
+                let new_v = self.subst_generics_in_ty(value, substs, const_substs);
                 if new_k == key && new_v == value {
                     ty
                 } else {
@@ -478,7 +557,7 @@ impl<'a> TypeChecker<'a> {
                 }
             }
             TyKind::Sender(inner) => {
-                let new = self.subst_params_in_ty(inner, substs);
+                let new = self.subst_generics_in_ty(inner, substs, const_substs);
                 if new == inner {
                     ty
                 } else {
@@ -486,7 +565,7 @@ impl<'a> TypeChecker<'a> {
                 }
             }
             TyKind::Receiver(inner) => {
-                let new = self.subst_params_in_ty(inner, substs);
+                let new = self.subst_generics_in_ty(inner, substs, const_substs);
                 if new == inner {
                     ty
                 } else {
@@ -494,7 +573,7 @@ impl<'a> TypeChecker<'a> {
                 }
             }
             TyKind::JoinHandle(inner) => {
-                let new = self.subst_params_in_ty(inner, substs);
+                let new = self.subst_generics_in_ty(inner, substs, const_substs);
                 if new == inner {
                     ty
                 } else {
@@ -1045,17 +1124,25 @@ impl<'a> TypeChecker<'a> {
             self.fn_sigs.insert(def, sig);
             // Record the generic arity and per-parameter bounds so each
             // call site can instantiate the parameters independently and
-            // verify the argument types satisfy the declared bounds.
-            let type_params: Vec<&gossamer_ast::GenericParam> = decl
-                .generics
-                .params
-                .iter()
-                .filter(|p| matches!(p, gossamer_ast::GenericParam::Type { .. }))
-                .collect();
-            if !type_params.is_empty() {
-                self.fn_generic_arity.insert(def, type_params.len());
+            // verify the argument types satisfy the declared bounds. The
+            // arity counts every parameter position (so a const or type
+            // parameter's `ParamIdx` indexes the substitution vector
+            // directly); the const mask records which positions take a
+            // `GenericArg::Const`.
+            let has_type_or_const = decl.generics.params.iter().any(|p| {
+                matches!(
+                    p,
+                    gossamer_ast::GenericParam::Type { .. }
+                        | gossamer_ast::GenericParam::Const { .. }
+                )
+            });
+            if has_type_or_const {
+                self.fn_generic_arity
+                    .insert(def, decl.generics.params.len());
                 self.fn_param_bounds
                     .insert(def, Self::type_param_bounds(&decl.generics));
+                self.fn_generic_const_mask
+                    .insert(def, Self::const_param_mask(&decl.generics));
             }
         }
         // Validate that every declared trait bound on the fn's
@@ -1746,6 +1833,64 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
+    /// Substitutes a generic function's signature for one call site:
+    /// type parameters become the fresh inference variables in `vars`,
+    /// and const parameters are inferred from the array arguments whose
+    /// lengths name them. Re-records the callee as a `FnDef` carrying the
+    /// resolved substitution so MIR monomorphisation reads the concrete
+    /// instantiation.
+    fn instantiate_generic_sig(
+        &mut self,
+        callee: &Expr,
+        def: gossamer_resolve::DefId,
+        vars: &[Ty],
+        sig: FnSig,
+        arg_tys: &[Ty],
+    ) -> FnSig {
+        let n = vars.len();
+        let const_mask = self
+            .fn_generic_const_mask
+            .get(&def)
+            .cloned()
+            .unwrap_or_default();
+        // Infer each const generic from the array argument whose length
+        // names it (`sum_arr([1, 2, 3])` => N = 3), so the substituted
+        // `[T; N]` carries the concrete count.
+        let mut const_substs: Vec<Option<i128>> = vec![None; n];
+        for (param, arg_ty) in sig.inputs.iter().zip(arg_tys.iter()) {
+            if let Some((idx, value)) = self.infer_array_const_len(*param, *arg_ty)
+                && idx < n
+            {
+                const_substs[idx] = Some(value);
+            }
+        }
+        let new_sig = FnSig {
+            inputs: sig
+                .inputs
+                .iter()
+                .map(|t| self.subst_generics_in_ty(*t, vars, &const_substs))
+                .collect(),
+            output: self.subst_generics_in_ty(sig.output, vars, &const_substs),
+        };
+        // Const positions carry the inferred value; every other position
+        // carries its fresh type variable (pinned by argument unification).
+        let subst_args: Vec<crate::GenericArg> = (0..n)
+            .map(|i| {
+                if const_mask.get(i).copied().unwrap_or(false) {
+                    crate::GenericArg::Const(const_substs[i].unwrap_or(0))
+                } else {
+                    crate::GenericArg::Type(vars[i])
+                }
+            })
+            .collect();
+        let fndef = self.tcx.intern(TyKind::FnDef {
+            def,
+            substs: crate::Substs::from_args(subst_args),
+        });
+        self.record(callee.id, fndef);
+        new_sig
+    }
+
     fn check_call_inner(
         &mut self,
         callee: &Expr,
@@ -1784,23 +1929,7 @@ impl<'a> TypeChecker<'a> {
                     .map(|n| (def, (0..n).map(|_| self.fresh()).collect::<Vec<Ty>>()))
             });
             if let Some((def, vars)) = &inst {
-                sig = FnSig {
-                    inputs: sig
-                        .inputs
-                        .iter()
-                        .map(|t| self.subst_params_in_ty(*t, vars))
-                        .collect(),
-                    output: self.subst_params_in_ty(sig.output, vars),
-                };
-                // Re-record the callee so the MIR lowerer monomorphises
-                // against the resolved concrete types once the fresh
-                // variables are pinned by argument unification below.
-                let substs_obj = crate::Substs::from_types(vars.iter().copied());
-                let fndef = self.tcx.intern(TyKind::FnDef {
-                    def: *def,
-                    substs: substs_obj,
-                });
-                self.record(callee.id, fndef);
+                sig = self.instantiate_generic_sig(callee, *def, vars, sig, arg_tys);
             }
             if sig.inputs.len() == arg_tys.len() {
                 for (param, (arg_ty, arg_expr)) in sig.inputs.iter().zip(arg_tys.iter().zip(args)) {
@@ -3472,7 +3601,7 @@ impl<'a> TypeChecker<'a> {
                 }
                 self.tcx.intern(TyKind::Array {
                     elem: elem_ty,
-                    len: elems.len(),
+                    len: crate::ArrayLen::Concrete(elems.len()),
                 })
             }
             ArrayExpr::Repeat { value, count } => {
@@ -3487,7 +3616,10 @@ impl<'a> TypeChecker<'a> {
                 let elem_ty = self.check_expr(value);
                 self.check_expr(count);
                 if let Some(len) = self.evaluate_array_len(count) {
-                    self.tcx.intern(TyKind::Array { elem: elem_ty, len })
+                    self.tcx.intern(TyKind::Array {
+                        elem: elem_ty,
+                        len: crate::ArrayLen::Concrete(len),
+                    })
                 } else {
                     // Non-constant count: the result is a heap-allocated Vec.
                     self.tcx.intern(TyKind::Vec(elem_ty))
@@ -3598,7 +3730,9 @@ impl<'a> TypeChecker<'a> {
             .iter()
             .map(|arg| match arg {
                 gossamer_ast::GenericArg::Type(t) => crate::GenericArg::Type(self.type_from_ast(t)),
-                gossamer_ast::GenericArg::Const(_) => crate::GenericArg::Const(0),
+                gossamer_ast::GenericArg::Const(expr) => {
+                    crate::GenericArg::Const(self.evaluate_generic_const_arg(expr))
+                }
             })
             .collect();
         crate::Substs::from_args(args)
@@ -3715,7 +3849,7 @@ impl<'a> TypeChecker<'a> {
             }
             AstTypeKind::Array { elem, len } => {
                 let elem_ty = self.type_from_ast(elem);
-                let count = self.evaluate_array_len(len).unwrap_or(0);
+                let count = self.array_len_from_ast(len);
                 self.tcx.intern(TyKind::Array {
                     elem: elem_ty,
                     len: count,
@@ -4043,6 +4177,27 @@ impl<'a> TypeChecker<'a> {
         matches!(self.tcx.kind(ty), Some(TyKind::Int(_)))
     }
 
+    /// Types an array-length expression. A literal yields a concrete
+    /// count; a bare path naming a const generic parameter in scope
+    /// yields a symbolic `Param` length linked to that parameter's
+    /// position; anything else falls back to a concrete `0`.
+    fn array_len_from_ast(&mut self, expr: &Expr) -> crate::ArrayLen {
+        if let Some(len) = self.evaluate_array_len(expr) {
+            return crate::ArrayLen::Concrete(len);
+        }
+        if let ExprKind::Path(path) = &expr.kind
+            && path.segments.len() == 1
+            && let Some(seg) = path.segments.first()
+            && let Some(idx) = self
+                .current_const_generic_scope
+                .get(&seg.name.name)
+                .copied()
+        {
+            return crate::ArrayLen::Param(idx);
+        }
+        crate::ArrayLen::Concrete(0)
+    }
+
     /// Evaluates an array-length expression to a `usize`, emitting a
     /// diagnostic when the literal magnitude exceeds `usize::MAX`.
     /// Returns `None` for non-literal forms (the caller falls back to
@@ -4131,7 +4286,10 @@ impl<'a> TypeChecker<'a> {
                 let tys: Vec<Ty> = parts.iter().map(|p| self.type_of_pattern(p)).collect();
                 self.tcx.intern(TyKind::Tuple(tys))
             }
-            PatternKind::Range { lo, .. } => self.type_of_literal(lo, pattern.span),
+            PatternKind::Range { lo, hi, .. } => match lo.as_ref().or(hi.as_ref()) {
+                Some(bound) => self.type_of_literal(bound, pattern.span),
+                None => self.fresh(),
+            },
             PatternKind::Or(alts) => match alts.first() {
                 Some(first) => self.type_of_pattern(first),
                 None => self.fresh(),
@@ -4384,6 +4542,19 @@ fn seed_checker_stdlib_struct_fields(
         let def = gossamer_resolve::DefId::local(u32::MAX - offset);
         let list: Vec<(String, Ty)> = fields.iter().map(|(n, t)| ((*n).to_string(), *t)).collect();
         map.insert(def, list);
+    }
+}
+
+/// Resolves a symbolic array length against a const-substitution list:
+/// a `Param(idx)` length becomes `Concrete` when `const_substs[idx]`
+/// holds a non-negative value; every other length is unchanged.
+fn subst_array_len(len: crate::ArrayLen, const_substs: &[Option<i128>]) -> crate::ArrayLen {
+    let crate::ArrayLen::Param(idx) = len else {
+        return len;
+    };
+    match const_substs.get(idx.0 as usize).copied().flatten() {
+        Some(v) if v >= 0 => crate::ArrayLen::Concrete(v as usize),
+        _ => len,
     }
 }
 

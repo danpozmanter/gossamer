@@ -35,7 +35,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Result, anyhow};
 
 use crate::paths::{
-    default_main_entry, default_unit_name, platform_exe_name, read_entry_source,
+    default_unit_name, platform_exe_name, read_entry_source, resolve_entry_arg,
     resolve_output_path,
 };
 
@@ -52,10 +52,7 @@ pub(crate) fn dispatch(
     if let Err(err) = crate::binding_dispatch::ensure_external_signatures() {
         eprintln!("warning: failed to load rust-binding signatures: {err}");
     }
-    let resolved = match path {
-        Some(p) => p,
-        None => default_main_entry()?,
-    };
+    let resolved = resolve_entry_arg(path)?;
     run(
         &resolved,
         target,

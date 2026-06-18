@@ -200,9 +200,7 @@ impl Printer {
                 self.write(")");
             }
             PatternKind::Range { lo, hi, kind } => {
-                self.print_literal(lo);
-                self.write(kind.as_str());
-                self.print_literal(hi);
+                self.print_range_pattern(lo.as_ref(), hi.as_ref(), *kind);
             }
             PatternKind::Or(alts) => {
                 for (index, alt) in alts.iter().enumerate() {
@@ -220,6 +218,21 @@ impl Printer {
                 self.print_pattern(inner);
             }
             PatternKind::Error => self.write("<error>"),
+        }
+    }
+
+    fn print_range_pattern(
+        &mut self,
+        lo: Option<&crate::expr::Literal>,
+        hi: Option<&crate::expr::Literal>,
+        kind: crate::common::RangeKind,
+    ) {
+        if let Some(lo) = lo {
+            self.print_literal(lo);
+        }
+        self.write(kind.as_str());
+        if let Some(hi) = hi {
+            self.print_literal(hi);
         }
     }
 

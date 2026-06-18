@@ -190,6 +190,11 @@ pub const HTTP: StdModule = StdModule {
             doc: "Convenience: bind and serve an HTTP handler. `Result<(), Error>` - a bind failure is an Err value.",
         },
         StdItem {
+            name: "serve_tls",
+            kind: StdItemKind::Function,
+            doc: "TLS-terminating server: `serve_tls(addr, cert_pem, key_pem, handler) -> Result<(), Error>`. Builds a rustls config from the PEM cert chain + key and serves HTTPS with the same handler contract as `serve`.",
+        },
+        StdItem {
             name: "Client",
             kind: StdItemKind::Type,
             doc: "HTTP client; configure redirects and timeout via `Client::builder()`.",
@@ -499,6 +504,36 @@ pub const HTTP_WEBSOCKET: StdModule = StdModule {
             name: "is_websocket_upgrade",
             kind: StdItemKind::Function,
             doc: "Test whether an incoming Request carries a WebSocket upgrade handshake. Interp tier.",
+        },
+        StdItem {
+            name: "serve",
+            kind: StdItemKind::Function,
+            doc: "serve(addr, handler) -> Result<(), Error>: bind, upgrade each connection, dispatch the handler's handle(&self, ws) per connection.",
+        },
+        StdItem {
+            name: "connect",
+            kind: StdItemKind::Function,
+            doc: "connect(url) -> Result<i64, Error>: client TCP connect + RFC 6455 upgrade; returns a WebSocket handle.",
+        },
+        StdItem {
+            name: "send_text",
+            kind: StdItemKind::Function,
+            doc: "send_text(ws, s) -> Result<(), Error>: send one text frame.",
+        },
+        StdItem {
+            name: "send_binary",
+            kind: StdItemKind::Function,
+            doc: "send_binary(ws, data) -> Result<(), Error>: send one binary frame.",
+        },
+        StdItem {
+            name: "recv",
+            kind: StdItemKind::Function,
+            doc: "recv(ws) -> Result<String, Error>: next text message; Err on close/error.",
+        },
+        StdItem {
+            name: "close",
+            kind: StdItemKind::Function,
+            doc: "close(ws) -> Result<(), Error>: send a close frame and release the handle.",
         },
     ],
 };

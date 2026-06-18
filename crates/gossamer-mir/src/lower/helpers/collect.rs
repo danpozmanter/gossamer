@@ -995,8 +995,15 @@ pub(crate) fn lower_fn(
     builder.push_local(return_ty, None, false);
     let arity = u32::try_from(decl.params.len()).expect("arity overflow");
     for param in &decl.params {
+        // A const generic array parameter (`xs: [T; N]`) has a length that is
+        // unknown in the generic body, so it is carried as a runtime-length
+        // sequence: the body iterates / indexes / measures it through the
+        // `Vec` paths, and the caller hands over a GosVec built from the
+        // concrete-length argument. This keeps every tier reading the real
+        // length instead of a length baked from the symbolic parameter.
+        let param_ty = const_generic_array_as_vec(builder.tcx, param.ty).unwrap_or(param.ty);
         let local = builder.push_local(
-            param.ty,
+            param_ty,
             param_name(&param.pattern),
             param_mutable(&param.pattern),
         );
@@ -1106,6 +1113,26 @@ pub(crate) fn lower_fn(
     })
 }
 
+/// Returns `Vec<T>` for a const generic array parameter `[T; N]`
+/// (peeling any leading reference), or `None` for every other type.
+/// The body then treats the parameter as a runtime-length sequence.
+pub(crate) fn const_generic_array_as_vec(tcx: &mut TyCtxt, ty: Ty) -> Option<Ty> {
+    use gossamer_types::{ArrayLen, TyKind};
+    let mut peeled = ty;
+    while let TyKind::Ref { inner, .. } = tcx.kind_of(peeled) {
+        peeled = *inner;
+    }
+    if let TyKind::Array {
+        elem,
+        len: ArrayLen::Param(_),
+    } = tcx.kind_of(peeled)
+    {
+        let elem = *elem;
+        return Some(tcx.intern(TyKind::Vec(elem)));
+    }
+    None
+}
+
 pub(crate) fn param_name(pattern: &HirPat) -> Option<Ident> {
     match &pattern.kind {
         HirPatKind::Binding { name, .. } => Some(name.clone()),
@@ -1115,6 +1142,62 @@ pub(crate) fn param_name(pattern: &HirPat) -> Option<Ident> {
 
 pub(crate) fn param_mutable(pattern: &HirPat) -> bool {
     matches!(&pattern.kind, HirPatKind::Binding { mutable: true, .. })
+}
+
+/// Collects the binding names a pattern introduces, in source order,
+/// skipping duplicates. Used to find the consistent variable set shared
+/// across an or-pattern's alternatives.
+pub(crate) fn collect_pattern_binding_names(pattern: &HirPat, out: &mut Vec<String>) {
+    let push = |name: &str, out: &mut Vec<String>| {
+        if !out.iter().any(|n| n == name) {
+            out.push(name.to_string());
+        }
+    };
+    match &pattern.kind {
+        HirPatKind::Binding { name, .. } => push(name.name.as_str(), out),
+        HirPatKind::At { name, sub, .. } => {
+            push(name.name.as_str(), out);
+            collect_pattern_binding_names(sub, out);
+        }
+        HirPatKind::Ref { inner, .. } => collect_pattern_binding_names(inner, out),
+        HirPatKind::Tuple(subs) | HirPatKind::Variant { fields: subs, .. } => {
+            for sub in subs {
+                collect_pattern_binding_names(sub, out);
+            }
+        }
+        HirPatKind::Struct { fields, .. } => {
+            for field in fields {
+                match &field.pattern {
+                    Some(sub) => collect_pattern_binding_names(sub, out),
+                    None => push(field.name.name.as_str(), out),
+                }
+            }
+        }
+        HirPatKind::Slice {
+            prefix,
+            rest,
+            suffix,
+        } => {
+            for sub in prefix {
+                collect_pattern_binding_names(sub, out);
+            }
+            if let Some(rest) = rest {
+                collect_pattern_binding_names(rest, out);
+            }
+            for sub in suffix {
+                collect_pattern_binding_names(sub, out);
+            }
+        }
+        HirPatKind::Or(branches) => {
+            if let Some(first) = branches.first() {
+                collect_pattern_binding_names(first, out);
+            }
+        }
+        HirPatKind::Wildcard
+        | HirPatKind::Rest
+        | HirPatKind::Literal(_)
+        | HirPatKind::Range { .. } => {}
+    }
 }
 
 pub(crate) fn pattern_kind_label(pattern: &HirPat) -> &'static str {

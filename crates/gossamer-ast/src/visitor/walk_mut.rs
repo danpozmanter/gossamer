@@ -391,8 +391,12 @@ pub fn walk_pattern_mut<V: VisitorMut + ?Sized>(visitor: &mut V, pattern: &mut P
             }
         }
         PatternKind::Range { lo, hi, .. } => {
-            visitor.visit_literal(lo);
-            visitor.visit_literal(hi);
+            if let Some(lo) = lo {
+                visitor.visit_literal(lo);
+            }
+            if let Some(hi) = hi {
+                visitor.visit_literal(hi);
+            }
         }
         PatternKind::Ref { inner, .. } => visitor.visit_pattern(inner),
     }

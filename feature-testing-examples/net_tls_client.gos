@@ -1,0 +1,69 @@
+// Cross-tier fixture for `std::net` client TLS upgrade
+// (`TcpStream::start_tls`). Proves the upgrade path is wired
+// identically on the bytecode VM, the Cranelift JIT, and the LLVM AOT
+// tier - the same method dispatch, the same `gos_rt_tcp_start_tls`
+// runtime call, and the same Result marshalling.
+//
+// The server half is a plaintext loopback that consumes the client's
+// ClientHello and replies with non-TLS bytes, so the rustls handshake
+// driven by the first read on the upgraded stream rejects the peer.
+// The client reports a single deterministic status code over a channel,
+// so the element type crossing the goroutine boundary is an i64 -
+// identical on every tier. Binds 127.0.0.1:0 (ephemeral port) so it
+// runs as a plain stdout-parity fixture with no fixed-port contention.
+
+use std::net
+use std::sync::channel
+
+const REJECTED: i64 = 1
+const UNEXPECTED_OK: i64 = 0
+const CONNECT_FAILED: i64 = -1
+
+fn client(addr: String, tx: Sender<i64>) {
+    let stream = match net::TcpStream::connect(&addr) {
+        Ok(s) => s,
+        Err(_) => { tx.send(CONNECT_FAILED); return }
+    }
+    // `start_tls` sets up the rustls client session; the TLS handshake
+    // itself is driven lazily by the first read on the upgraded stream.
+    let tls = match stream.start_tls("localhost") {
+        Ok(s) => s,
+        Err(_) => { tx.send(REJECTED); return }
+    }
+    match tls.read_to_string() {
+        Ok(_) => tx.send(UNEXPECTED_OK),
+        Err(_) => tx.send(REJECTED),
+    }
+}
+
+fn main() {
+    let listener = match net::TcpListener::bind("127.0.0.1:0") {
+        Ok(l) => l,
+        Err(e) => { println!("bind failed: {}", e); return }
+    }
+    let addr = match listener.local_addr() {
+        Ok(a) => a,
+        Err(e) => { println!("addr failed: {}", e); return }
+    }
+    let (tx, rx) = channel()
+    go client(addr, tx)
+    let (stream, _peer) = match listener.accept() {
+        Ok(p) => p,
+        Err(e) => { println!("accept failed: {}", e); return }
+    }
+    let _ = stream.read(512)
+    let _ = stream.write([1, 2, 3, 4, 5])
+    let _ = stream.close()
+    let _ = listener.close()
+    let code = match rx.recv() {
+        Some(c) => c,
+        None => { println!("no client result"); return }
+    }
+    if code == REJECTED {
+        println!("tls handshake rejected")
+    } else if code == UNEXPECTED_OK {
+        println!("tls handshake UNEXPECTEDLY ok")
+    } else {
+        println!("client connect failed")
+    }
+}

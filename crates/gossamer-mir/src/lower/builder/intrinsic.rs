@@ -134,7 +134,7 @@ impl<'a> Builder<'a> {
             }
             TyKind::Array { len, .. } => {
                 let len_local = self.fresh(i64_ty);
-                let len_i128 = i128::try_from(*len).unwrap_or(0);
+                let len_i128 = i128::try_from(len.to_usize()).unwrap_or(0);
                 self.emit_assign(
                     Place::local(len_local),
                     Rvalue::Use(Operand::Const(ConstValue::Int(len_i128))),
@@ -1531,7 +1531,7 @@ impl<'a> Builder<'a> {
                 ];
                 let helper = if let Some(len) = arr_len {
                     let len_local = self.fresh(i64_ty);
-                    let len_i128 = i128::try_from(len).unwrap_or(0);
+                    let len_i128 = i128::try_from(len.to_usize()).unwrap_or(0);
                     self.emit_assign(
                         Place::local(len_local),
                         Rvalue::Use(Operand::Const(ConstValue::Int(len_i128))),

@@ -151,6 +151,27 @@ fn http_max_conn() -> usize {
     cap
 }
 
+/// Per-connection idle / slow-read timeout in milliseconds. Mirrors the
+/// interp tier's 30s default; `GOSSAMER_HTTP_READ_TIMEOUT_MS=0` disables
+/// it.
+const DEFAULT_HTTP_READ_TIMEOUT_MS: u64 = 30_000;
+
+/// Sets `SO_RCVTIMEO` on a connection socket from
+/// `GOSSAMER_HTTP_READ_TIMEOUT_MS`. Returns true when a timeout is in
+/// force, so the read loop can treat a lapse as a dead connection.
+fn apply_read_timeout(stream: &TcpStream) -> bool {
+    let ms = std::env::var("GOSSAMER_HTTP_READ_TIMEOUT_MS")
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(DEFAULT_HTTP_READ_TIMEOUT_MS);
+    if ms == 0 {
+        return false;
+    }
+    stream
+        .set_read_timeout(Some(std::time::Duration::from_millis(ms)))
+        .is_ok()
+}
+
 const RESPONSE_503_BYTES: &[u8] =
     b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
 
@@ -269,50 +290,182 @@ pub unsafe extern "C-unwind" fn gos_rt_http_serve(
         // next iteration. In-flight per-connection threads run to
         // completion; the listener fd is closed by the OS at
         // process exit.
-        loop {
-            if crate::sched_global::is_shutdown_requested() {
-                break;
-            }
-            let stream = match listener.accept() {
-                Ok((s, _)) => s,
-                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
-                Err(_) => break,
+        accept_serve(listener, move |stream| {
+            let Some(mut conn) = HttpConn::wrap(stream) else {
+                return;
             };
-            let _ = stream.set_nodelay(true);
-            let cap = http_max_conn();
-            let current = HTTP_ACTIVE_CONNS.fetch_add(1, Ordering::AcqRel);
-            if current >= cap {
-                HTTP_ACTIVE_CONNS.fetch_sub(1, Ordering::AcqRel);
-                // Best-effort 503 + close; ignore write errors -
-                // the client might already be gone.
-                let mut stream = stream;
-                use std::io::Write;
-                let _ = stream.write_all(RESPONSE_503_BYTES);
-                let _ = stream.flush();
-                continue;
-            }
-            // Spawn a dedicated OS thread for this connection. On
-            // EAGAIN (extremely rare; would mean the system is out
-            // of thread quota), roll back the cap counter and drop
-            // the socket - the kernel will RST it.
-            let spawn_result = std::thread::Builder::new()
-                .name("gos-http-conn".to_string())
-                .spawn(move || {
-                    let _guard = HttpConnGuard;
-                    let Some(mut conn) = HttpConn::wrap(stream) else {
-                        return;
-                    };
-                    handle_http_conn(&mut conn, env_addr, fn_addr);
-                });
-            if spawn_result.is_err() {
-                HTTP_ACTIVE_CONNS.fetch_sub(1, Ordering::AcqRel);
-            }
-        }
+            handle_http_conn(&mut conn, env_addr, fn_addr);
+        });
     }
     // The accept loop exited: graceful shutdown request or a fatal
     // listener error. Either way the server ran - report `Ok(())`,
     // matching the interp's `bind_and_run` return shape.
     super::vec::pack_result(0, 0)
+}
+
+/// Accept loop shared by the plaintext and TLS servers: each accepted
+/// socket runs `serve_conn` on a dedicated OS thread (blocking I/O only
+/// stalls its own thread). `HTTP_ACTIVE_CONNS` caps the live thread
+/// count at `GOSSAMER_HTTP_MAX_CONN` (default 4096), replying 503 past
+/// the cap so a runaway client cannot exhaust the fd / thread budget.
+/// A graceful shutdown request (from `gos_rt_exit`) breaks the loop on
+/// its next iteration; in-flight connection threads run to completion.
+pub(crate) fn accept_serve<F>(listener: TcpListener, serve_conn: F)
+where
+    F: Fn(TcpStream) + Send + Sync + Clone + 'static,
+{
+    loop {
+        if crate::sched_global::is_shutdown_requested() {
+            break;
+        }
+        let stream = match listener.accept() {
+            Ok((s, _)) => s,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(_) => break,
+        };
+        let _ = stream.set_nodelay(true);
+        let cap = http_max_conn();
+        let current = HTTP_ACTIVE_CONNS.fetch_add(1, Ordering::AcqRel);
+        if current >= cap {
+            HTTP_ACTIVE_CONNS.fetch_sub(1, Ordering::AcqRel);
+            // Best-effort 503 + close; ignore write errors -
+            // the client might already be gone.
+            let mut stream = stream;
+            use std::io::Write;
+            let _ = stream.write_all(RESPONSE_503_BYTES);
+            let _ = stream.flush();
+            continue;
+        }
+        // Spawn a dedicated OS thread for this connection. On
+        // EAGAIN (extremely rare; would mean the system is out
+        // of thread quota), roll back the cap counter and drop
+        // the socket - the kernel will RST it.
+        let serve = serve_conn.clone();
+        let spawn_result = std::thread::Builder::new()
+            .name("gos-http-conn".to_string())
+            .spawn(move || {
+                let _guard = HttpConnGuard;
+                serve(stream);
+            });
+        if spawn_result.is_err() {
+            HTTP_ACTIVE_CONNS.fetch_sub(1, Ordering::AcqRel);
+        }
+    }
+}
+
+/// TLS-terminating HTTP/1.1 server:
+/// `serve_tls(addr, cert_pem, key_pem, handler)`. Mirror of
+/// [`gos_rt_http_serve`] that builds a rustls server config from the
+/// PEM-encoded certificate chain and private key, then drives each
+/// accepted connection through the same request/response core after TLS
+/// termination - so HTTPS handlers behave identically to plaintext ones.
+/// Returns the Gossamer `Result<(), http::Error>`: `Err` on bind or
+/// TLS-config failure, `Ok(())` on graceful shutdown.
+#[unsafe(no_mangle)]
+pub unsafe extern "C-unwind" fn gos_rt_http_serve_tls(
+    addr: *const c_char,
+    cert_pem: *const c_char,
+    key_pem: *const c_char,
+    handler_env: *mut u8,
+    handler_fn: i64,
+) -> i128 {
+    {
+        let addr_s = if addr.is_null() {
+            "0.0.0.0:8443".to_string()
+        } else {
+            unsafe { CStr::from_ptr(addr).to_string_lossy().into_owned() }
+        };
+        let cert = if cert_pem.is_null() {
+            String::new()
+        } else {
+            unsafe { CStr::from_ptr(cert_pem).to_string_lossy().into_owned() }
+        };
+        let key = if key_pem.is_null() {
+            String::new()
+        } else {
+            unsafe { CStr::from_ptr(key_pem).to_string_lossy().into_owned() }
+        };
+        let server_config = match build_server_config_from_pem(cert.as_bytes(), key.as_bytes()) {
+            Ok(c) => c,
+            Err(e) => return http_serve_err_result(&format!("http::serve_tls: {e}")),
+        };
+        let listener = match TcpListener::bind(&addr_s) {
+            Ok(l) => l,
+            Err(e) => return http_serve_err_result(&format!("http::serve_tls: {e}")),
+        };
+        let env_addr = handler_env as usize;
+        let fn_addr = handler_fn as usize;
+        accept_serve(listener, move |stream| {
+            serve_tls_conn(stream, env_addr, fn_addr, server_config.clone());
+        });
+    }
+    super::vec::pack_result(0, 0)
+}
+
+/// rustls-terminated server connection. Blocking I/O on a dedicated
+/// per-connection thread; rustls drives the record layer synchronously,
+/// the server-side mirror of the client `TlsStream` in gossamer-std.
+struct TlsServerConn {
+    inner: rustls::StreamOwned<rustls::ServerConnection, TcpStream>,
+}
+
+impl HttpIo for TlsServerConn {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        std::io::Read::read(&mut self.inner, buf)
+    }
+    fn write_all(&mut self, buf: &[u8]) -> std::io::Result<()> {
+        std::io::Write::write_all(&mut self.inner, buf)?;
+        std::io::Write::flush(&mut self.inner)
+    }
+}
+
+/// Wraps an accepted socket in a rustls server session and serves it
+/// through the shared request/response core. A handshake that never
+/// completes is dropped when the connection thread's read loop returns.
+fn serve_tls_conn(
+    stream: TcpStream,
+    env_addr: usize,
+    fn_addr: usize,
+    server_config: std::sync::Arc<rustls::ServerConfig>,
+) {
+    let Ok(conn) = rustls::ServerConnection::new(server_config) else {
+        return;
+    };
+    // Idle / slow-read timeout on the underlying socket: a stalled
+    // handshake or request surfaces as a read error that ends the
+    // connection thread (slowloris defense), parity with the plaintext
+    // path.
+    let _ = apply_read_timeout(&stream);
+    let mut tls = TlsServerConn {
+        inner: rustls::StreamOwned::new(conn, stream),
+    };
+    handle_http_conn(&mut tls, env_addr, fn_addr);
+}
+
+/// Builds a rustls `ServerConfig` from a PEM certificate chain and
+/// private key. No client-certificate verification.
+fn build_server_config_from_pem(
+    cert_pem: &[u8],
+    key_pem: &[u8],
+) -> Result<std::sync::Arc<rustls::ServerConfig>, String> {
+    use rustls::pki_types::pem::PemObject;
+    use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let certs = CertificateDer::pem_slice_iter(cert_pem)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| format!("parse certificate PEM: {e}"))?;
+    if certs.is_empty() {
+        return Err("no certificates in PEM".to_string());
+    }
+    let key = PrivateKeyDer::pem_slice_iter(key_pem)
+        .next()
+        .ok_or_else(|| "no private key in PEM".to_string())?
+        .map_err(|e| format!("parse key PEM: {e}"))?;
+    let config = rustls::ServerConfig::builder()
+        .with_no_client_auth()
+        .with_single_cert(certs, key)
+        .map_err(|e| format!("build server config: {e}"))?;
+    Ok(std::sync::Arc::new(config))
 }
 
 type HandlerFn = unsafe extern "C" fn(env: *mut u8, req: *mut GosHttpRequest) -> i128;
@@ -342,10 +495,28 @@ pub unsafe extern "C" fn gos_rt_http2_bind_and_run_h2c(
     }
 }
 
+/// Byte transport for one HTTP connection. Implemented by [`HttpConn`]
+/// (plaintext, goroutine-aware netpoller I/O) and [`TlsServerConn`]
+/// (rustls-terminated, blocking I/O), so the request/response core
+/// drives a cleartext or TLS socket through a single code path.
+trait HttpIo {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize>;
+    fn write_all(&mut self, buf: &[u8]) -> std::io::Result<()>;
+}
+
+impl HttpIo for HttpConn {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        HttpConn::read(self, buf)
+    }
+    fn write_all(&mut self, buf: &[u8]) -> std::io::Result<()> {
+        HttpConn::write_all(self, buf)
+    }
+}
+
 /// Pulls one read's worth of bytes into `accum`. Returns `false`
 /// on clean EOF or a socket error - the caller closes the
 /// connection.
-fn read_more(conn: &mut HttpConn, accum: &mut Vec<u8>, buf: &mut [u8]) -> bool {
+fn read_more<C: HttpIo>(conn: &mut C, accum: &mut Vec<u8>, buf: &mut [u8]) -> bool {
     match conn.read(buf) {
         Ok(0) | Err(_) => false,
         Ok(n) => {
@@ -355,10 +526,15 @@ fn read_more(conn: &mut HttpConn, accum: &mut Vec<u8>, buf: &mut [u8]) -> bool {
     }
 }
 
-fn handle_http_conn(conn: &mut HttpConn, env_addr: usize, fn_addr: usize) {
+fn handle_http_conn<C: HttpIo>(conn: &mut C, env_addr: usize, fn_addr: usize) {
     let mut scratch = ConnScratch::new();
     let mut accum: Vec<u8> = Vec::with_capacity(8192);
     let mut buf: Vec<u8> = vec![0u8; 8192];
+    // Tracks whether a `100 Continue` interim response has already been
+    // sent for the request currently being assembled, so the body-wait
+    // re-entry below does not emit it more than once. Reset when a
+    // request completes (a pipelined successor may also expect it).
+    let mut continue_sent = false;
     loop {
         let Some(header_end) = find_header_end(&accum) else {
             if read_more(conn, &mut accum, &mut buf) {
@@ -366,6 +542,15 @@ fn handle_http_conn(conn: &mut HttpConn, env_addr: usize, fn_addr: usize) {
             }
             return;
         };
+        // RFC 9110 §10.1.1: grant a client waiting on
+        // `Expect: 100-continue` before its body is read, matching the
+        // interp tier.
+        if !continue_sent && request_expects_continue(&accum[..header_end]) {
+            if conn.write_all(b"HTTP/1.1 100 Continue\r\n\r\n").is_err() {
+                return;
+            }
+            continue_sent = true;
+        }
         // Consume the body too: `req_end` covers the header section
         // plus the body bytes (Content-Length-declared, or the full
         // chunked frame). Anything past it is the next pipelined
@@ -476,6 +661,7 @@ fn handle_http_conn(conn: &mut HttpConn, env_addr: usize, fn_addr: usize) {
                     return;
                 }
                 accum.drain(..req_end);
+                continue_sent = false;
                 continue;
             }
             if !extract_response_into(result_ptr, &mut scratch.response_buf) {
@@ -501,7 +687,15 @@ fn handle_http_conn(conn: &mut HttpConn, env_addr: usize, fn_addr: usize) {
         // preserving any pipelined remainder. `drain` shifts the
         // tail into place; capacity is retained.
         accum.drain(..req_end);
+        continue_sent = false;
     }
+}
+
+/// True when the request signals `Expect: 100-continue` (RFC 9110
+/// §10.1.1), so the server should grant the interim response before the
+/// body is read.
+fn request_expects_continue(header_section: &[u8]) -> bool {
+    header_value(header_section, b"expect").is_some_and(|v| v.eq_ignore_ascii_case(b"100-continue"))
 }
 
 /// Connection wrapper that bridges a non-blocking [`TcpStream`] to
@@ -513,6 +707,9 @@ struct HttpConn {
     stream: TcpStream,
     mio_stream: mio::net::TcpStream,
     last_source: Option<crate::sched::PollSource>,
+    /// When true, a read that blocks past `SO_RCVTIMEO` is treated as a
+    /// timed-out connection rather than a netpoller-park retry.
+    read_timeout: bool,
 }
 
 impl HttpConn {
@@ -524,10 +721,15 @@ impl HttpConn {
         // clone is retained so any other path that needs non-blocking
         // semantics can still register it with the netpoller.
         let cloned = stream.try_clone().ok()?;
+        // Idle / slow-read timeout (slowloris defense), parity with the
+        // interp tier's `read_timeout`. `GOSSAMER_HTTP_READ_TIMEOUT_MS=0`
+        // disables it.
+        let read_timeout = apply_read_timeout(&stream);
         Some(Self {
             mio_stream: mio::net::TcpStream::from_std(cloned),
             stream,
             last_source: None,
+            read_timeout,
         })
     }
 
@@ -535,6 +737,18 @@ impl HttpConn {
         loop {
             match std::io::Read::read(&mut self.stream, buf) {
                 Ok(n) => return Ok(n),
+                // With `SO_RCVTIMEO` set the blocking socket surfaces a
+                // lapsed read as WouldBlock / TimedOut; treat it as a
+                // dead connection so a stalled peer cannot hold a thread.
+                Err(e)
+                    if self.read_timeout
+                        && matches!(
+                            e.kind(),
+                            std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                        ) =>
+                {
+                    return Err(e);
+                }
                 Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                     self.wait(crate::sched::Interest::Readable)?;
                 }
@@ -626,7 +840,7 @@ pub(crate) unsafe fn drop_handler_result(result: i128) {
 /// header section (request line + headers, up to the trailing
 /// `\r\n\r\n`), or `None` when absent. Header-name match is
 /// case-insensitive per RFC 7230 §3.2.
-fn header_value<'a>(header_section: &'a [u8], name: &[u8]) -> Option<&'a [u8]> {
+pub(crate) fn header_value<'a>(header_section: &'a [u8], name: &[u8]) -> Option<&'a [u8]> {
     for line in header_section.split(|&b| b == b'\n') {
         let line = line.strip_suffix(b"\r").unwrap_or(line);
         let Some(colon) = line.iter().position(|&b| b == b':') else {
@@ -909,6 +1123,56 @@ fn is_valid_header_name(name: &str) -> bool {
 /// Writes `result`'s response payload (status + headers +
 /// body) into `out` as raw HTTP/1.1 bytes. Returns false if
 /// `result` doesn't carry a valid OK response.
+/// Default `Server` identity, byte-identical to the interp tier
+/// (`gossamer-std/src/http.rs` Config default).
+const SERVER_HEADER: &str = concat!("gossamer/", env!("CARGO_PKG_VERSION"));
+
+/// Current wall-clock time as an RFC 1123 / RFC 9110 HTTP-date
+/// (`Sun, 06 Nov 1994 08:49:37 GMT`). Uses the same civil-time
+/// conversion as `gos_rt_time_format_rfc3339`, so the rendering matches
+/// the interp tier's `time::format_rfc1123_gmt` byte for byte.
+fn http_date_now() -> String {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs() as i64);
+    let days = secs.div_euclid(86_400);
+    let is_leap = |yr: i64| (yr % 4 == 0 && yr % 100 != 0) || yr % 400 == 0;
+    let year_days = |yr: i64| if is_leap(yr) { 366 } else { 365 };
+    let mut year = 1970_i64;
+    let mut remain = days;
+    while remain >= year_days(year) {
+        remain -= year_days(year);
+        year += 1;
+    }
+    let dim = |m: i64, yr: i64| -> i64 {
+        match m {
+            1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+            4 | 6 | 9 | 11 => 30,
+            2 if is_leap(yr) => 29,
+            2 => 28,
+            _ => 30,
+        }
+    };
+    let mut month = 1_i64;
+    while remain >= dim(month, year) {
+        remain -= dim(month, year);
+        month += 1;
+    }
+    let day = remain + 1;
+    let tod = secs.rem_euclid(86_400);
+    let dow =
+        ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][((days + 4).rem_euclid(7)) as usize];
+    let mo = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ][(month - 1) as usize];
+    format!(
+        "{dow}, {day:02} {mo} {year:04} {h:02}:{mi:02}:{s:02} GMT",
+        h = tod / 3600,
+        mi = (tod % 3600) / 60,
+        s = tod % 60,
+    )
+}
+
 pub(crate) fn extract_response_into(result: i128, out: &mut Vec<u8>) -> bool {
     if super::vec::gos_rt_result_disc(result) != 0 {
         return false;
@@ -945,6 +1209,8 @@ pub(crate) fn extract_response_into(result: i128, out: &mut Vec<u8>) -> bool {
     out.extend_from_slice(b"\r\n");
     let mut has_content_length = false;
     let mut has_content_type = false;
+    let mut has_date = false;
+    let mut has_server = false;
     for (k, v) in &response.headers {
         // Never emit a header whose name or value carries a CR, LF, or
         // NUL - those bytes would split the response and let an attacker
@@ -961,12 +1227,30 @@ pub(crate) fn extract_response_into(result: i128, out: &mut Vec<u8>) -> bool {
         if k.eq_ignore_ascii_case("content-type") {
             has_content_type = true;
         }
+        if k.eq_ignore_ascii_case("date") {
+            has_date = true;
+        }
+        if k.eq_ignore_ascii_case("server") {
+            has_server = true;
+        }
         // Canonical wire casing is lowercase on every tier: the
         // interp server writes through the lowercase-keyed
         // `Headers` map, so handler-given names normalize here.
         out.extend_from_slice(k.to_ascii_lowercase().as_bytes());
         out.extend_from_slice(b": ");
         out.extend_from_slice(v.as_bytes());
+        out.extend_from_slice(b"\r\n");
+    }
+    // RFC 9110 origin-server headers, matching the interp tier: a Date
+    // (unless the handler set one) and a Server identity.
+    if !has_date {
+        out.extend_from_slice(b"date: ");
+        out.extend_from_slice(http_date_now().as_bytes());
+        out.extend_from_slice(b"\r\n");
+    }
+    if !has_server {
+        out.extend_from_slice(b"server: ");
+        out.extend_from_slice(SERVER_HEADER.as_bytes());
         out.extend_from_slice(b"\r\n");
     }
     if !has_content_type {
@@ -988,6 +1272,63 @@ pub(crate) fn extract_response_into(result: i128, out: &mut Vec<u8>) -> bool {
     out.extend_from_slice(b"connection: keep-alive\r\n\r\n");
     out.extend_from_slice(body_bytes);
     true
+}
+
+/// A handler response decomposed into `(status, headers, body)` for
+/// transports that frame the response themselves (HTTP/3, HTTP/2).
+pub(crate) type StructuredResponse = (u16, Vec<(String, String)>, Vec<u8>);
+
+/// Extracts a handler `result`'s response as a [`StructuredResponse`]
+/// for transports that frame the response themselves (HTTP/3, HTTP/2)
+/// rather than emitting HTTP/1.1 wire bytes. Header names are
+/// lowercased and CR/LF/NUL-bearing headers are dropped with the same
+/// gate as [`extract_response_into`]; an absent content-type is
+/// defaulted identically so the body the handler returned is served
+/// byte-for-byte across tiers. Returns `None` when `result` is an
+/// `Err` or carries a null response.
+pub(crate) fn extract_response_struct(result: i128) -> Option<StructuredResponse> {
+    if super::vec::gos_rt_result_disc(result) != 0 {
+        return None;
+    }
+    let response_ptr = super::vec::gos_rt_result_payload(result) as *const GosHttpResponse;
+    if response_ptr.is_null() {
+        return None;
+    }
+    let response = unsafe { &*response_ptr };
+    // A streamed response cannot be framed by the buffered h3 path;
+    // release the pending reader so the upstream connection closes
+    // rather than leaking, matching the h2c bridge and the interp
+    // tier. The buffered `body` (empty for a pure stream) is served.
+    if response.stream_handle >= 0 {
+        drop(super::http_client::stream_take_for_serve(
+            response.stream_handle,
+        ));
+    }
+    let body: Vec<u8> = match &response.body_bytes {
+        Some(bytes) => bytes.clone(),
+        None if response.body.is_null() => Vec::new(),
+        None => unsafe { CStr::from_ptr(response.body.as_ptr()).to_bytes().to_vec() },
+    };
+    let mut headers: Vec<(String, String)> = Vec::with_capacity(response.headers.len() + 1);
+    let mut has_content_type = false;
+    for (k, v) in &response.headers {
+        if !is_valid_header_name(k) || !is_valid_header_value(v) {
+            continue;
+        }
+        if k.eq_ignore_ascii_case("content-type") {
+            has_content_type = true;
+        }
+        headers.push((k.to_ascii_lowercase(), v.clone()));
+    }
+    if !has_content_type {
+        let ct = if response.content_type.is_empty() {
+            "text/plain; charset=utf-8".to_string()
+        } else {
+            response.content_type.clone()
+        };
+        headers.push(("content-type".to_string(), ct));
+    }
+    Some((response.status as u16, headers, body))
 }
 
 /// Returns the stream-registry handle when `result` is an Ok
@@ -1021,6 +1362,8 @@ fn extract_stream_head_into(result: i128, out: &mut Vec<u8>) {
     out.extend_from_slice(status_reason(response.status).as_bytes());
     out.extend_from_slice(b"\r\n");
     let mut has_content_type = false;
+    let mut has_date = false;
+    let mut has_server = false;
     for (k, v) in &response.headers {
         // Drop CR/LF/NUL-bearing headers - see `extract_response_into`.
         if !is_valid_header_name(k) || !is_valid_header_value(v) {
@@ -1032,10 +1375,26 @@ fn extract_stream_head_into(result: i128, out: &mut Vec<u8>) {
         if k.eq_ignore_ascii_case("content-type") {
             has_content_type = true;
         }
+        if k.eq_ignore_ascii_case("date") {
+            has_date = true;
+        }
+        if k.eq_ignore_ascii_case("server") {
+            has_server = true;
+        }
         // Lowercase wire casing - same rule as `extract_response_into`.
         out.extend_from_slice(k.to_ascii_lowercase().as_bytes());
         out.extend_from_slice(b": ");
         out.extend_from_slice(v.as_bytes());
+        out.extend_from_slice(b"\r\n");
+    }
+    if !has_date {
+        out.extend_from_slice(b"date: ");
+        out.extend_from_slice(http_date_now().as_bytes());
+        out.extend_from_slice(b"\r\n");
+    }
+    if !has_server {
+        out.extend_from_slice(b"server: ");
+        out.extend_from_slice(SERVER_HEADER.as_bytes());
         out.extend_from_slice(b"\r\n");
     }
     if !has_content_type {
@@ -1057,7 +1416,7 @@ fn extract_stream_head_into(result: i128, out: &mut Vec<u8>) {
 /// terminal frame so the client sees the truncation. A handle that
 /// was already served (or never registered) drains as an empty
 /// chunked body, matching the interp tier.
-fn drain_stream_chunked(conn: &mut HttpConn, handle: i64) -> bool {
+fn drain_stream_chunked<C: HttpIo>(conn: &mut C, handle: i64) -> bool {
     let Some(arc) = super::http_client::stream_take_for_serve(handle) else {
         return conn.write_all(b"0\r\n\r\n").is_ok();
     };

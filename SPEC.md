@@ -572,6 +572,27 @@ The bare form `name<T>(...)` is also accepted when the parser can
 disambiguate with one-token lookahead after the closing `>` (must be
 `(`, `::`, or `{`).
 
+A const parameter over an array length binds the length of a fixed-size
+array parameter:
+
+```
+fn sum<const N: usize>(xs: [i64; N]) -> i64 {
+    let mut acc = 0
+    for x in xs { acc += x }
+    acc
+}
+```
+
+`N` is inferred from the array argument's length at the call site and
+keyed into monomorphisation, so each distinct length instantiates an
+independent specialisation that runs identically on the bytecode VM,
+the Cranelift JIT, and the LLVM AOT tiers. The body may iterate the
+parameter and read `xs.len()`, the const may appear in the return type
+(`-> [i64; N]`), and a function may take more than one const parameter
+(`<const N: usize, const M: usize>`). The const is inferred from a
+`[T; N]` argument; it is not yet usable as a bare value expression in
+the body or as a repeat count (`[0; N]`).
+
 > **Conformance (0.5.0)** `status: scaffolded` for non-scalar generic
 > arguments. Monomorphisation specialises each `(def, substs)` pair
 > through a flat-i64-per-slot ABI; aggregates (struct, tuple, array)
@@ -648,7 +669,18 @@ LetStmt = "let" [ "mut" ] Pattern [ ":" Type ] [ "=" Expr ] ";"
 - `let mut x = 1` - mutable binding.
 - `let (a, b) = pair` - destructuring.
 - `let Point { x, y } = p` - struct destructuring.
+- `let Point { x: a, y: b } = p` - renamed struct destructuring.
+- `let Nested { p: Point { x, y }, label } = n` - nested struct.
+- `let Shape::Pair(m, n) = s` - enum / tuple-struct variant.
+- `let (A(g, _) | B(g)) = v` - or-pattern (alternatives must bind the
+  same names).
 - `let x: i64 = 1` - annotated.
+
+A `let` pattern must be irrefutable (it always matches); a refutable
+pattern requires `let ... else { ... }` (the `else` block must diverge).
+Irrefutable struct, nested-struct, variant, and or-pattern destructuring
+bind correct values on the bytecode VM, the Cranelift JIT, and the LLVM
+AOT tiers.
 
 Shadowing is permitted.
 
@@ -683,11 +715,31 @@ and borrow checking, this is pure ergonomics.
 #### `if`
 
 ```
-IfExpr = "if" Expr Block [ "else" ( IfExpr | Block ) ]
+IfExpr      = "if" Condition Block [ "else" ( IfExpr | Block ) ]
+Condition   = CondClause { "&&" CondClause }
+CondClause  = "let" Pattern "=" Expr | Expr
 ```
 
 An `if` without an `else` has type `()`. With `else`, both arms must
 produce the same type (or one is `!`).
+
+A condition is a let-chain: a sequence of clauses joined by `&&`, where
+each clause is either a `let` binding (`let PAT = expr`, which matches a
+refutable pattern against a scrutinee) or a boolean expression. The chain
+holds when every clause holds: each `let` clause must match and each
+boolean clause must be `true`. Earlier `let` bindings are in scope for
+every later clause and for the body and `else` branch.
+
+```
+if let Some(x) = a && let Some(y) = b && x > 0 {
+  use(x + y)
+}
+```
+
+A `let` clause chain is `&&`-only: joining `let` clauses with `||`
+without parentheses is a parse error (`GP0001`). The construct is a
+front-end desugar into nested `match`, so it runs identically across all
+tiers.
 
 #### `match`
 
@@ -697,8 +749,13 @@ MatchArm  = Pattern [ "if" Expr ] "=>" ( Expr | Block )
 ```
 
 `match` is exhaustive. Non-exhaustive `match` is a compile error.
-Patterns support literals, wildcards (`_`), ranges (`1..=10`),
-bindings, struct/enum destructuring, and or-patterns (`A | B`).
+Patterns support literals, wildcards (`_`), ranges, bindings,
+struct/enum destructuring, and or-patterns (`A | B`). Ranges may be
+closed (`1..=10`), exclusive (`1..10`), or open-ended - `..=hi` and
+`..hi` (open start) and `lo..` and `lo..=` (open end, covering up to
+the type maximum inclusive). Range patterns are opaque to exhaustiveness
+analysis, so a `_` arm is still required even when the ranges appear to
+cover the type; `..=` with no upper bound is a parse error.
 
 ```
 match divide(a, b) {
@@ -710,10 +767,15 @@ match divide(a, b) {
 #### `while`, `loop`, `for`
 
 ```
-WhileExpr  = "while" Expr Block
+WhileExpr  = "while" Condition Block
 LoopExpr   = "loop" Block
 ForExpr    = "for" Pattern "in" Expr Block
 ```
+
+A `while` condition is the same let-chain form as `if` (see above): a
+sequence of `let PAT = expr` and boolean clauses joined by `&&`, with
+earlier bindings in scope for later clauses and the body. The loop runs
+while the whole chain holds.
 
 `for` desugars to a loop that calls `.next()` on an iterator. Any type
 implementing `Iterator<Item = T>` (see §10.4 on stdlib traits) can be
@@ -995,12 +1057,26 @@ Pattern = LiteralPattern
         | "(" Pattern { "," Pattern } ")"   // tuple
         | Path ( "(" PatternList ")" | "{" FieldPatternList "}" )  // struct/enum
         | Pattern "|" Pattern                // or-pattern
-        | Literal ".." Literal               // range
-        | Literal "..=" Literal              // range inclusive
+        | Literal ".." Literal               // range, exclusive
+        | Literal "..=" Literal              // range, inclusive
+        | ".." Literal                       // open-start, exclusive
+        | "..=" Literal                      // open-start, inclusive
+        | Literal ".."                       // open-end, exclusive
+        | Literal "..="                      // open-end, inclusive
         | "&" Pattern                        // ref pattern
         | "mut" IdentPattern                 // mutable binding
         | ".." Pattern?                      // rest pattern
 ```
+
+An open-ended range covers up to the type's maximum (inclusive). `..=`
+with no upper bound is a parse error. Range patterns are opaque to the
+exhaustiveness checker, so a match using only ranges still needs a `_`
+arm.
+
+A `let` binding (§4.1) and a `let` clause in an `if` / `while` condition
+(§4.4) require an irrefutable pattern (or an `else` branch that diverges,
+for `let ... else`). Struct, nested-struct, variant, and or-pattern
+destructuring in irrefutable position bind identically across all tiers.
 
 Exhaustiveness is checked via matrix decomposition (the Maranget
 algorithm, same as Rust).

@@ -1,0 +1,21 @@
+// Const-generic array length reaches codegen as the concrete `N`, so a
+// `[T; N]` parameter iterates its real length on the bytecode VM, the
+// Cranelift JIT, and the LLVM AOT tiers. The const arg is threaded through
+// substitution and keyed into monomorphization.
+
+fn sum_arr<const N: usize>(xs: [i64; N]) -> i64 {
+    let mut acc = 0
+    for x in xs {
+        acc += x
+    }
+    acc
+}
+
+fn len_arr<const N: usize>(xs: [i64; N]) -> i64 {
+    xs.len()
+}
+
+fn main() {
+    println!("{} {}", sum_arr([1, 2, 3]), sum_arr([10, 20, 30, 40, 50]))
+    println!("{} {}", len_arr([1, 2, 3]), len_arr([10, 20, 30, 40, 50]))
+}

@@ -279,7 +279,9 @@ impl TyCtxt {
             }
             TyKind::Array { elem, len } => {
                 let elem_bytes = self.slot_bytes(*elem).max(8);
-                u32::try_from(*len).unwrap_or(1).saturating_mul(elem_bytes)
+                u32::try_from(len.to_usize())
+                    .unwrap_or(1)
+                    .saturating_mul(elem_bytes)
             }
             TyKind::Adt { def, .. } => {
                 if def.local == u32::MAX || def.local == u32::MAX - 1 {

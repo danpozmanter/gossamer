@@ -39,4 +39,4 @@ pub use trait_index::{
     TraitEntry, TraitError,
 };
 pub use traits::{Predicate, TraitRef};
-pub use ty::{ClosureKind, FloatTy, FnSig, IntTy, Mutbl, ParamIdx, Ty, TyKind, TyVid};
+pub use ty::{ArrayLen, ClosureKind, FloatTy, FnSig, IntTy, Mutbl, ParamIdx, Ty, TyKind, TyVid};

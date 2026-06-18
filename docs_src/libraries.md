@@ -75,17 +75,55 @@ modules contain items only.
 
 ## Module layout
 
+A package spans files and directories:
+
 ```
 src/
 ├── main.gos       # binary entry  (default; override via [[bin]].path)
 ├── lib.gos        # library root  (default; override via [lib].path)
 ├── widget.gos     # submodule `widget`
 └── sub/
-    └── mod.gos    # submodule `sub`
+    ├── mod.gos    # submodule `sub`
+    └── deep/
+        └── mod.gos  # submodule `sub::deep`
 ```
 
-Each `.gos` file is its own module. Declare `pub` on anything
-you want visible to dependent crates.
+A sibling `src/<name>.gos` is the module `name`. A subdirectory is a
+module when it carries a `mod.gos` root (`src/<dir>/mod.gos` is the
+module `dir`), and it may nest its own sibling files and
+subdirectories, recursively. Each `.gos` file is its own module;
+declare `pub` on anything you want visible to other modules or to
+dependent packages.
+
+The entry (or library root) declares the top-level modules with
+`mod NAME;`:
+
+```gossamer
+// src/main.gos
+mod widget;
+mod sub;
+
+fn main() {
+    println!("{}", widget::greet(&"world"))
+    println!("{}", sub::ping())
+}
+```
+
+```gossamer
+// src/widget.gos
+pub fn greet(name: &String) -> String {
+    // Reach another module from the package root with `crate::`,
+    // or one level up with `super::`.
+    crate::sub::banner() + ", " + name
+}
+```
+
+A module reaches another by a navigation path: `crate::other::item`
+(rooted at the package), `super::other::item` (one level up), or
+`self::child::item` (a child of the current module). `gos run`,
+`gos build`, and `gos check` all assemble the package the same way, so
+a directory argument (`gos run my_project`) or `gos check src/` checks
+the whole package as one unit.
 
 ## Unit + integration tests
 

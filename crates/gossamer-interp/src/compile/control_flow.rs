@@ -78,7 +78,7 @@ impl<'tcx> FnBuilder<'tcx> {
             defer_depth: self.defer_stack.len(),
             label,
         });
-        let _ = self.compile_expr(body)?;
+        self.compile_loop_body(body)?;
         self.emit(Op::Jump { target: loop_start });
         let after = self.cur_idx();
         self.patch_jump(exit_patch, after);
@@ -109,7 +109,7 @@ impl<'tcx> FnBuilder<'tcx> {
             defer_depth: self.defer_stack.len(),
             label,
         });
-        let _ = self.compile_expr(body)?;
+        self.compile_loop_body(body)?;
         self.emit(Op::Jump { target: loop_start });
         let after = self.cur_idx();
         let ctx = self.loop_stack.pop().expect("loop stack underflow on loop");

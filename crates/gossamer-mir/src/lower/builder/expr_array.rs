@@ -196,7 +196,7 @@ impl<'a> Builder<'a> {
                 match (elem_unresolved, elem_ty) {
                     (true, Some(et)) => self.tcx.intern(TyKind::Array {
                         elem: et,
-                        len: elems.len(),
+                        len: gossamer_types::ArrayLen::Concrete(elems.len()),
                     }),
                     _ => ty,
                 }
@@ -204,7 +204,7 @@ impl<'a> Builder<'a> {
             _ => match elem_ty {
                 Some(et) => self.tcx.intern(TyKind::Array {
                     elem: et,
-                    len: elems.len(),
+                    len: gossamer_types::ArrayLen::Concrete(elems.len()),
                 }),
                 None => ty,
             },

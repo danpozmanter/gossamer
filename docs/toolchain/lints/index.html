@@ -3056,7 +3056,7 @@ else { A }</code>. Flip the branches and drop the <code>!</code>.</p>
 <p>Concatenating an empty string literal is a no-op. Drop the
 <code>"" +</code> or <code>+ ""</code>.</p>
 <h2 id="println_newline_only"><code>println_newline_only</code><a class="headerlink" href="#println_newline_only" title="Permanent link">&para;</a></h2>
-<p><code>println!("")</code> already writes a newline. Don't pass <code>"\n"</code>
+<p><code>println("")</code> already writes a newline. Don't pass <code>"\n"</code>
 and don't call it twice to emit a blank line.</p>
 <h2 id="match_same_arms"><code>match_same_arms</code><a class="headerlink" href="#match_same_arms" title="Permanent link">&para;</a></h2>
 <p>Two match arms share the same body. Either collapse them with
@@ -3101,7 +3101,7 @@ expression. Drop the parens: <code>if cond { ... }</code>.</p>
 <p><code>match () { ... }</code> has exactly one reachable arm. Drop the match
 and run the body directly.</p>
 <h2 id="panic_without_message"><code>panic_without_message</code><a class="headerlink" href="#panic_without_message" title="Permanent link">&para;</a></h2>
-<p><code>panic!()</code> with no argument leaves the post-mortem with nothing
+<p><code>panic()</code> with no argument leaves the post-mortem with nothing
 to render. Always pass a brief explanation.</p>
 <h2 id="empty_loop"><code>empty_loop</code><a class="headerlink" href="#empty_loop" title="Permanent link">&para;</a></h2>
 <p><code>loop {}</code> with no body busy-waits forever at 100% CPU. Add a

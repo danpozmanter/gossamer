@@ -1355,12 +1355,48 @@ pub(super) fn lower_intrinsic_call_io_math(
                 t if t == types::I32 && ptr_ty == types::I64 => builder.ins().uextend(ptr_ty, idx),
                 _ => idx,
             };
-            let addr = builder.ins().iadd(ptr, idx_ptr);
-            let byte = builder.ins().load(types::I8, MemFlags::trusted(), addr, 0);
-            let value = builder.ins().uextend(types::I64, byte);
             if !destination.projection.is_empty() {
                 bail!("native codegen: gos_rt_str_byte_at destination cannot have projections");
             }
+            // Bound the read by the string's byte length: any index outside
+            // `[0, len)` yields 0 without dereferencing past the content.
+            // `gos_rt_str_len` is O(1) for header-carrying strings and is
+            // null-safe (returns 0 for a null pointer).
+            let str_len_fn =
+                intrinsics.extern_fn(module, "gos_rt_str_len", &[ptr_ty], &[types::I64])?;
+            let str_len_ref = module.declare_func_in_func(str_len_fn, builder.func);
+            let len_call = builder.ins().call(str_len_ref, &[ptr]);
+            let len = builder.inst_results(len_call)[0];
+            let idx_i64 = match value_type(idx, builder) {
+                t if t == types::I64 => idx,
+                t if t == types::I32 => builder.ins().sextend(types::I64, idx),
+                _ => idx,
+            };
+            let ge0 = builder
+                .ins()
+                .icmp_imm(IntCC::SignedGreaterThanOrEqual, idx_i64, 0);
+            let lt_len = builder.ins().icmp(IntCC::SignedLessThan, idx_i64, len);
+            let in_bounds = builder.ins().band(ge0, lt_len);
+            let read_blk = builder.create_block();
+            let oob_blk = builder.create_block();
+            let done_blk = builder.create_block();
+            builder.append_block_param(done_blk, types::I64);
+            builder.ins().brif(in_bounds, read_blk, &[], oob_blk, &[]);
+
+            builder.switch_to_block(read_blk);
+            let addr = builder.ins().iadd(ptr, idx_ptr);
+            let byte = builder.ins().load(types::I8, MemFlags::trusted(), addr, 0);
+            let read_val = builder.ins().uextend(types::I64, byte);
+            builder
+                .ins()
+                .jump(done_blk, &[ir::BlockArg::Value(read_val)]);
+
+            builder.switch_to_block(oob_blk);
+            let zero = builder.ins().iconst(types::I64, 0);
+            builder.ins().jump(done_blk, &[ir::BlockArg::Value(zero)]);
+
+            builder.switch_to_block(done_blk);
+            let value = builder.block_params(done_blk)[0];
             define_var_to(
                 builder,
                 locals,

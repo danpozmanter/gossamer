@@ -145,7 +145,7 @@ impl<'a> Lowerer<'a> {
         let Some(TyKind::Array { len, .. }) = self.tcx.kind(peeled) else {
             return;
         };
-        let len_val = *len;
+        let len_val = len.to_usize();
         declare_rt(&mut self.runtime_refs, "gos_rt_panic_oob");
         // Intern the `"array index"` label through the shared
         // module-wide string pool so multiple checks (in this

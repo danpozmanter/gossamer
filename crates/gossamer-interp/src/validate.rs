@@ -634,6 +634,27 @@ pub(crate) fn validate_chunk(chunk: &FnChunk) -> Result<(), ValidationError> {
                 check_pool(op_idx, u32::from(name_idx), consts_len, PoolKind::Consts)?;
                 check_v(op_idx, value)?;
             }
+            Op::VecPush { receiver, value } => {
+                check_v(op_idx, receiver)?;
+                check_v(op_idx, value)?;
+            }
+            Op::VecPop { dst, receiver } => {
+                check_v(op_idx, dst)?;
+                check_v(op_idx, receiver)?;
+            }
+            Op::VecInsert {
+                receiver,
+                index,
+                value,
+            } => {
+                check_v(op_idx, receiver)?;
+                check_v(op_idx, index)?;
+                check_v(op_idx, value)?;
+            }
+            Op::VecRemove { receiver, index } => {
+                check_v(op_idx, receiver)?;
+                check_v(op_idx, index)?;
+            }
             Op::TupleIndex { dst, receiver, .. } | Op::TupleTailIndex { dst, receiver, .. } => {
                 check_v(op_idx, dst)?;
                 check_v(op_idx, receiver)?;

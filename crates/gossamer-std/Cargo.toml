@@ -23,6 +23,7 @@ gossamer-runtime = { workspace = true }
 gossamer-sched = { workspace = true }
 gossamer-coro = { workspace = true }
 gossamer-template = { workspace = true }
+gossamer-ws = { workspace = true }
 thiserror = { workspace = true }
 parking_lot = { workspace = true }
 mio = { workspace = true }
@@ -73,12 +74,13 @@ ring = "0.17"
 h2 = "0.4"
 http = "1"
 bytes = "1"
-tokio = { version = "1", default-features = false, features = ["io-util", "rt", "net", "time", "sync", "macros"] }
+tokio = { version = "1", default-features = false, features = ["io-util"] }
 
-# HTTP/3 stack (`std::http_h3` - quinn + h3 + h3-quinn).
-quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
-h3 = "0.0.8"
-h3-quinn = "0.0.10"
+# HTTP/3 stack (`std::http_h3`). The QUIC + h3 engine lives in the
+# standalone `gossamer-http3` crate so the interpreter (here) and the
+# compiled-tier runtime share one implementation; this crate only
+# adapts the engine's wire types to `std::http` types.
+gossamer-http3 = { workspace = true }
 
 # Crypto primitives (`std::crypto`). RSA is intentionally excluded -
 # the `rsa 0.9.x` crate is the only pure-Rust option and carries
@@ -151,8 +153,8 @@ unicode-normalization = { workspace = true }
 unicode-segmentation = { workspace = true }
 
 [dev-dependencies]
-# Self-signed PEM keypair generation for `http_h3` round-trip
-# tests. Never compiled into the shipped crate.
+# Self-signed PEM keypair generation for native-client TLS tests.
+# Never compiled into the shipped crate.
 rcgen = { version = "0.14", default-features = false, features = ["ring", "pem"] }
 
 [target.'cfg(unix)'.dependencies]
@@ -171,11 +173,3 @@ windows-sys = { version = "0.61", features = [
     "Win32_System_Threading",
     "Win32_Storage_FileSystem",
 ] }
-
-
-[features]
-# Opt-in heavy/long-running network tests (e.g. h3 QUIC handshake
-# round-trip). Off by default so the standard test suite stays
-# fast; enable in environments where the network handshake
-# latency is acceptable (`cargo test --features slow-network-tests`).
-slow-network-tests = []

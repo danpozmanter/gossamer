@@ -154,7 +154,7 @@ pub(super) fn emit_array_bounds_check(
     let TyKind::Array { len, .. } = tcx.kind_of(peeled).clone() else {
         return Ok(());
     };
-    let len_i64 = i64::try_from(len).unwrap_or(i64::MAX);
+    let len_i64 = i64::try_from(len.to_usize()).unwrap_or(i64::MAX);
     // Widen the index to i64 for both the compare and the
     // helper-call payload. Cranelift requires both icmp operands to
     // share a type.

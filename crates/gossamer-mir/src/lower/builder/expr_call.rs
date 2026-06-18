@@ -70,6 +70,49 @@ impl<'a> Builder<'a> {
                     return Some(local);
                 }
             }
+            // `http::serve_tls(addr, cert_pem, key_pem, handler)` - the
+            // TLS-terminating variant. Same handler-fn-ptr dispatch as
+            // `http::serve`, with the cert + key PEM threaded ahead of
+            // the handler.
+            if joined == "http::serve_tls" && args.len() == 4 {
+                if let Some(local) =
+                    self.lower_http_serve_tls(&args[0], &args[1], &args[2], &args[3], ty, span)
+                {
+                    return Some(local);
+                }
+            }
+            // `websocket::serve(addr, handler)` - same handler-fn-ptr
+            // dispatch as `http::serve`, but resolves the handler's
+            // `handle(&self, ws: i64)` method and emits `gos_rt_ws_serve`.
+            if matches!(
+                joined.as_str(),
+                "websocket::serve" | "http::websocket::serve"
+            ) && args.len() == 2
+            {
+                if let Some(local) = self.lower_websocket_serve(&args[0], &args[1], ty, span) {
+                    return Some(local);
+                }
+            }
+            // `http_h3::serve(addr, cert_path, key_path, handler)` -
+            // same handler-fn-ptr dispatch as `http::serve` with two
+            // extra leading string args (the TLS keypair file paths).
+            if joined == "http_h3::serve" && args.len() == 4 {
+                if let Some(local) =
+                    self.lower_http3_serve(&args[0], &args[1], &args[2], &args[3], ty, span)
+                {
+                    return Some(local);
+                }
+            }
+            // `sql::register_native(name, driver)` (autoderive-mangled
+            // to `__gos_sql_register_native`): capture the driver's env
+            // + `gos_fn_addr("<Type>::dispatch")` so the runtime can
+            // dispatch back into the `.gos` driver per op. Same Rust ->
+            // Gossamer bridge as `http::serve`.
+            if joined == "__gos_sql_register_native" && args.len() == 2 {
+                if let Some(local) = self.lower_sql_register_native(&args[0], &args[1], ty, span) {
+                    return Some(local);
+                }
+            }
             // `http::serve_h2c(addr, handler, config)` - ignore the
             // config argument in compiled mode and use the runtime
             // default; reuses the same handler-fn-ptr dispatch as
@@ -558,10 +601,22 @@ impl<'a> Builder<'a> {
                 if let TyKind::Array { elem, len } = self.tcx.kind_of(local_inner).clone() {
                     if let Some(expected) = expected_opt {
                         let expected_inner = deref(self, expected);
+                        // A const generic array parameter (`[T; N]`) is carried
+                        // by the callee as a runtime-length sequence, so a
+                        // concrete-length array argument is coerced to a GosVec
+                        // just like a `Vec<T>` / `[T]` parameter.
+                        let expected_is_const_array = matches!(
+                            self.tcx.kind_of(expected_inner),
+                            TyKind::Array {
+                                len: gossamer_types::ArrayLen::Param(_),
+                                ..
+                            }
+                        );
                         if matches!(
                             self.tcx.kind_of(expected_inner),
                             TyKind::Vec(_) | TyKind::Slice(_)
-                        ) {
+                        ) || expected_is_const_array
+                        {
                             // A `&[T]` parameter borrows: the caller's array
                             // outlives the call and reclaims its element
                             // children at its own drop. Build a non-owning

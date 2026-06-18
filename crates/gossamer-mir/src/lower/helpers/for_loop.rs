@@ -112,7 +112,9 @@ pub(crate) fn aggr_size_bytes(tcx: &gossamer_types::TyCtxt, ty: Ty) -> i64 {
         }
         TyKind::Array { elem, len } => {
             let elem_bytes = aggr_size_bytes(tcx, *elem).max(8);
-            i64::try_from(*len).unwrap_or(1).saturating_mul(elem_bytes)
+            i64::try_from(len.to_usize())
+                .unwrap_or(1)
+                .saturating_mul(elem_bytes)
         }
         TyKind::Adt { def, .. } => {
             // `Result<T,E>` / `Option<T>` are the 2-word by-value `i128`

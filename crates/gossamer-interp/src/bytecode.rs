@@ -611,6 +611,47 @@ pub enum Op {
         /// Register holding the value to store.
         value: Reg,
     },
+    /// `receiver.push(value)` - in-place append. `Arc::make_mut`s the
+    /// receiver register's backing storage (`Array` / `IntArray` /
+    /// `FloatVec`) and pushes, retaining spare capacity for amortized
+    /// O(1) growth. Emitted only for a bare-local Vec receiver in
+    /// statement position, where the method's result is discarded.
+    VecPush {
+        /// Register holding the Vec, mutated in place.
+        receiver: Reg,
+        /// Register holding the value to append.
+        value: Reg,
+    },
+    /// `dst = receiver.pop()` - in-place removal of the last element.
+    /// `dst` receives `Some(last)` / `None`; the receiver register's
+    /// backing storage shrinks in place, retaining capacity.
+    VecPop {
+        /// Destination register for the popped `Option`.
+        dst: Reg,
+        /// Register holding the Vec, mutated in place.
+        receiver: Reg,
+    },
+    /// `receiver.insert(index, value)` - in-place insert at `index`.
+    /// Mutates the receiver register's backing storage in place.
+    /// Emitted only for a bare-local Vec receiver in statement
+    /// position.
+    VecInsert {
+        /// Register holding the Vec, mutated in place.
+        receiver: Reg,
+        /// Register holding the insertion index.
+        index: Reg,
+        /// Register holding the value to insert.
+        value: Reg,
+    },
+    /// `receiver.remove(index)` - in-place removal at `index`. Mutates
+    /// the receiver register's backing storage in place. Emitted only
+    /// for a bare-local Vec receiver in statement position.
+    VecRemove {
+        /// Register holding the Vec, mutated in place.
+        receiver: Reg,
+        /// Register holding the index to remove.
+        index: Reg,
+    },
     /// `dst = receiver.N` - native tuple / positional-field
     /// read.
     TupleIndex {

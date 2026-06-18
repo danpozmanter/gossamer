@@ -49,10 +49,16 @@ use std::ffi::CStr;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::os::raw::c_char;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::{Arc, LazyLock};
 
 use parking_lot::Mutex;
+use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
+use rustls::pki_types::pem::PemObject;
+use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
+use rustls::{
+    ClientConnection, DigitallySignedStruct, RootCertStore, SignatureScheme, StreamOwned,
+};
 
 // Process-global handle registries shared with every linked copy of the
 // runtime. `Option` so the `Mutex::new(None)` initialiser is const.
@@ -98,6 +104,204 @@ fn insert_stream(s: TcpStream) -> i64 {
         .get_or_insert_with(HashMap::new)
         .insert(h, Arc::new(s));
     h
+}
+
+// --- TLS upgrade --------------------------------------------------
+//
+// `start_tls` wraps an already-connected plaintext stream in a rustls
+// client session and registers it under a fresh handle in the SAME
+// integer namespace as plain streams. `read` / `write` / `close`
+// consult `TLS_STREAMS` first, so the existing `net::TcpStream` method
+// surface transparently drives either an encrypted or a plaintext
+// socket - no separate language-level type is needed.
+//
+// rustls' `StreamOwned` mutates its session state on every I/O, so the
+// stream is held behind `Arc<Mutex<_>>` (unlike the `Arc<TcpStream>`
+// plaintext path, where `&TcpStream` is `Read`/`Write`). One PostgreSQL
+// connection is request/response-serialised, so the per-op lock never
+// contends.
+type TlsStream = StreamOwned<ClientConnection, TcpStream>;
+
+static TLS_STREAMS: Mutex<Option<HashMap<i64, Arc<Mutex<TlsStream>>>>> = Mutex::new(None);
+
+fn tls_clone(h: i64) -> Option<Arc<Mutex<TlsStream>>> {
+    TLS_STREAMS.lock().as_ref().and_then(|m| m.get(&h).cloned())
+}
+
+/// Shared TLS client config: ring provider, webpki roots, verification
+/// always on - the same trust anchors as the HTTP client so an upgraded
+/// stream validates certificates identically on every tier.
+static TLS_CLIENT_CONFIG: LazyLock<Arc<rustls::ClientConfig>> = LazyLock::new(|| {
+    let mut roots = RootCertStore::empty();
+    roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+    let provider = Arc::new(rustls::crypto::ring::default_provider());
+    // ring always supports the default protocol versions; the only
+    // error path is a provider missing them, which cannot happen here.
+    let config = rustls::ClientConfig::builder_with_provider(provider)
+        .with_safe_default_protocol_versions()
+        .expect("ring provider supports default protocol versions")
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+    Arc::new(config)
+});
+
+/// `net::TcpStream::start_tls(h, host) -> Result<TcpStream, Error>`.
+/// Upgrades an already-connected plaintext stream to TLS in place once
+/// the caller has finished any plaintext pre-handshake (e.g.
+/// PostgreSQL's `SSLRequest`). Returns a fresh handle for the encrypted
+/// stream; the plaintext handle `h` is consumed.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_tcp_start_tls(h: i64, host: *const c_char) -> i128 {
+    ffi_entry!(0i128, {
+        start_tls_with(h, host, Arc::clone(&TLS_CLIENT_CONFIG))
+    })
+}
+
+/// `net::TcpStream::start_tls_insecure(h, host) -> Result<TcpStream, Error>`.
+/// Encrypts the connection without authenticating the peer certificate
+/// (PostgreSQL `sslmode=require`).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_tcp_start_tls_insecure(h: i64, host: *const c_char) -> i128 {
+    ffi_entry!(0i128, {
+        start_tls_with(h, host, Arc::clone(&TLS_CLIENT_CONFIG_INSECURE))
+    })
+}
+
+/// `net::TcpStream::start_tls_ca(h, host, ca_pem) -> Result<TcpStream, Error>`.
+/// Verifies the server certificate chain and hostname against the
+/// PEM-encoded CA bundle in `ca_pem` (PostgreSQL `sslmode=verify-full`
+/// against a private CA).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_tcp_start_tls_ca(
+    h: i64,
+    host: *const c_char,
+    ca_pem: *const c_char,
+) -> i128 {
+    ffi_entry!(0i128, {
+        let ca = cstr_to_str(ca_pem);
+        let config = match tls_config_ca(ca.as_bytes()) {
+            Ok(c) => c,
+            Err(e) => return tcp_err(&format!("start_tls_ca: {e}")),
+        };
+        start_tls_with(h, host, config)
+    })
+}
+
+/// Shared TLS upgrade: duplicate the connected socket, drop the
+/// plaintext handle so no caller reads cleartext on it, and register a
+/// rustls client session built from `config` under a fresh handle.
+fn start_tls_with(h: i64, host: *const c_char, config: Arc<rustls::ClientConfig>) -> i128 {
+    let Some(stream) = stream_clone(h) else {
+        return tcp_err("TcpStream::start_tls: stale handle");
+    };
+    let host = cstr_to_str(host);
+    let sock = match stream.try_clone() {
+        Ok(s) => s,
+        Err(e) => return tcp_err(&format!("start_tls: {e}")),
+    };
+    if let Some(m) = TCP_STREAMS.lock().as_mut() {
+        m.remove(&h);
+    }
+    let Ok(name) = ServerName::try_from(host.clone()) else {
+        return tcp_err(&format!("start_tls: invalid server name `{host}`"));
+    };
+    let conn = match ClientConnection::new(config, name) {
+        Ok(c) => c,
+        Err(e) => return tcp_err(&format!("start_tls: {e}")),
+    };
+    let nh = next_handle();
+    TLS_STREAMS
+        .lock()
+        .get_or_insert_with(HashMap::new)
+        .insert(nh, Arc::new(Mutex::new(StreamOwned::new(conn, sock))));
+    super::vec::gos_rt_result_new(0, nh)
+}
+
+/// Client config that accepts any server certificate (PostgreSQL
+/// `sslmode=require`); handshake signatures are still checked against
+/// the presented key, only chain and hostname verification are skipped.
+static TLS_CLIENT_CONFIG_INSECURE: LazyLock<Arc<rustls::ClientConfig>> = LazyLock::new(|| {
+    let provider = Arc::new(rustls::crypto::ring::default_provider());
+    let config = rustls::ClientConfig::builder_with_provider(provider.clone())
+        .with_safe_default_protocol_versions()
+        .expect("ring provider supports default protocol versions")
+        .dangerous()
+        .with_custom_certificate_verifier(Arc::new(NoCertVerify(provider)))
+        .with_no_client_auth();
+    Arc::new(config)
+});
+
+/// Builds a client config that validates the server certificate chain
+/// and hostname against `ca_pem` rather than the bundled public roots.
+fn tls_config_ca(ca_pem: &[u8]) -> Result<Arc<rustls::ClientConfig>, String> {
+    let mut roots = RootCertStore::empty();
+    let mut added = 0usize;
+    for cert in CertificateDer::pem_slice_iter(ca_pem) {
+        let cert = cert.map_err(|e| format!("parse CA: {e}"))?;
+        roots.add(cert).map_err(|e| format!("add CA: {e}"))?;
+        added += 1;
+    }
+    if added == 0 {
+        return Err("no certificates in CA PEM".to_string());
+    }
+    let provider = Arc::new(rustls::crypto::ring::default_provider());
+    let config = rustls::ClientConfig::builder_with_provider(provider)
+        .with_safe_default_protocol_versions()
+        .expect("ring provider supports default protocol versions")
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+    Ok(Arc::new(config))
+}
+
+/// Server-certificate verifier that accepts any presented chain. Mirror
+/// of the interp-tier verifier in `gossamer-std/src/net.rs` so an
+/// insecure upgrade behaves identically on every execution tier.
+#[derive(Debug)]
+struct NoCertVerify(Arc<rustls::crypto::CryptoProvider>);
+
+impl ServerCertVerifier for NoCertVerify {
+    fn verify_server_cert(
+        &self,
+        _end_entity: &CertificateDer<'_>,
+        _intermediates: &[CertificateDer<'_>],
+        _server_name: &ServerName<'_>,
+        _ocsp_response: &[u8],
+        _now: UnixTime,
+    ) -> Result<ServerCertVerified, rustls::Error> {
+        Ok(ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls12_signature(
+            message,
+            cert,
+            dss,
+            &self.0.signature_verification_algorithms,
+        )
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls13_signature(
+            message,
+            cert,
+            dss,
+            &self.0.signature_verification_algorithms,
+        )
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+        self.0.signature_verification_algorithms.supported_schemes()
+    }
 }
 
 /// `net::TcpListener::bind(addr) -> Result<TcpListener, Error>`.
@@ -193,19 +397,25 @@ pub unsafe extern "C" fn gos_rt_tcp_stream_connect(addr: *const c_char) -> i128 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_tcp_stream_read(h: i64, max: i64) -> i128 {
     ffi_entry!(0i128, {
-        let Some(stream) = stream_clone(h) else {
-            return tcp_err("TcpStream::read: stale handle");
-        };
         let cap = max.clamp(1, 1 << 24) as usize;
         let mut buf = vec![0u8; cap];
-        let mut reader: &TcpStream = &stream;
-        match reader.read(&mut buf) {
-            Ok(n) => {
-                buf.truncate(n);
-                super::vec::gos_rt_result_new(0, super::encoding::bytes_to_gosvec(&buf) as i64)
+        let n = if let Some(tls) = tls_clone(h) {
+            let mut guard = tls.lock();
+            match guard.read(&mut buf) {
+                Ok(n) => n,
+                Err(e) => return tcp_err(&format!("{e}")),
             }
-            Err(e) => tcp_err(&format!("{e}")),
-        }
+        } else if let Some(stream) = stream_clone(h) {
+            let mut reader: &TcpStream = &stream;
+            match reader.read(&mut buf) {
+                Ok(n) => n,
+                Err(e) => return tcp_err(&format!("{e}")),
+            }
+        } else {
+            return tcp_err("TcpStream::read: stale handle");
+        };
+        buf.truncate(n);
+        super::vec::gos_rt_result_new(0, super::encoding::bytes_to_gosvec(&buf) as i64)
     })
 }
 
@@ -214,18 +424,28 @@ pub unsafe extern "C" fn gos_rt_tcp_stream_read(h: i64, max: i64) -> i128 {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_tcp_stream_read_to_string(h: i64) -> i128 {
     ffi_entry!(0i128, {
-        let Some(stream) = stream_clone(h) else {
-            return tcp_err("TcpStream::read_to_string: stale handle");
-        };
-        let mut reader: &TcpStream = &stream;
         let mut out = Vec::new();
         let mut chunk = [0u8; 4096];
-        loop {
-            match reader.read(&mut chunk) {
-                Ok(0) => break,
-                Ok(n) => out.extend_from_slice(&chunk[..n]),
-                Err(e) => return tcp_err(&format!("{e}")),
+        if let Some(tls) = tls_clone(h) {
+            let mut guard = tls.lock();
+            loop {
+                match guard.read(&mut chunk) {
+                    Ok(0) => break,
+                    Ok(n) => out.extend_from_slice(&chunk[..n]),
+                    Err(e) => return tcp_err(&format!("{e}")),
+                }
             }
+        } else if let Some(stream) = stream_clone(h) {
+            let mut reader: &TcpStream = &stream;
+            loop {
+                match reader.read(&mut chunk) {
+                    Ok(0) => break,
+                    Ok(n) => out.extend_from_slice(&chunk[..n]),
+                    Err(e) => return tcp_err(&format!("{e}")),
+                }
+            }
+        } else {
+            return tcp_err("TcpStream::read_to_string: stale handle");
         }
         let s = String::from_utf8_lossy(&out);
         super::vec::gos_rt_result_new(0, super::string::alloc_cstring(s.as_bytes()) as i64)
@@ -239,14 +459,23 @@ pub unsafe extern "C" fn gos_rt_tcp_stream_read_to_string(h: i64) -> i128 {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_tcp_stream_write(h: i64, data: *const super::vec::GosVec) -> i128 {
     ffi_entry!(0i128, {
-        let Some(stream) = stream_clone(h) else {
-            return tcp_err("TcpStream::write: stale handle");
-        };
         let bytes = unsafe { super::encoding::gosvec_u8(data) };
-        let mut writer: &TcpStream = &stream;
-        match writer.write_all(&bytes) {
-            Ok(()) => super::vec::gos_rt_result_new(0, bytes.len() as i64),
-            Err(e) => tcp_err(&format!("{e}")),
+        if let Some(tls) = tls_clone(h) {
+            // rustls buffers plaintext until flushed; flush so the
+            // encrypted record reaches the peer before the call returns.
+            let mut guard = tls.lock();
+            match guard.write_all(&bytes).and_then(|()| guard.flush()) {
+                Ok(()) => super::vec::gos_rt_result_new(0, bytes.len() as i64),
+                Err(e) => tcp_err(&format!("{e}")),
+            }
+        } else if let Some(stream) = stream_clone(h) {
+            let mut writer: &TcpStream = &stream;
+            match writer.write_all(&bytes) {
+                Ok(()) => super::vec::gos_rt_result_new(0, bytes.len() as i64),
+                Err(e) => tcp_err(&format!("{e}")),
+            }
+        } else {
+            tcp_err("TcpStream::write: stale handle")
         }
     })
 }
@@ -256,6 +485,9 @@ pub unsafe extern "C" fn gos_rt_tcp_stream_write(h: i64, data: *const super::vec
 pub unsafe extern "C" fn gos_rt_tcp_stream_close(h: i64) {
     ffi_entry!((), {
         if let Some(m) = TCP_STREAMS.lock().as_mut() {
+            m.remove(&h);
+        }
+        if let Some(m) = TLS_STREAMS.lock().as_mut() {
             m.remove(&h);
         }
     });

@@ -259,6 +259,27 @@ fn value_register(v: Value) -> i64 {
     id
 }
 
+/// Removes the value behind `handle` and returns it. A missing
+/// handle resolves to `Value::Null` so a driver passing a stale id
+/// stores a NULL column rather than aborting.
+fn value_take(handle: i64) -> Value {
+    let mut guard = VALUE_HANDLES.lock();
+    guard
+        .as_mut()
+        .and_then(|m| m.remove(&handle))
+        .unwrap_or(Value::Null)
+}
+
+/// Clones the value behind `handle` without consuming it. A missing
+/// handle resolves to `Value::Null`.
+fn value_peek(handle: i64) -> Value {
+    let guard = VALUE_HANDLES.lock();
+    guard
+        .as_ref()
+        .and_then(|m| m.get(&handle).cloned())
+        .unwrap_or(Value::Null)
+}
+
 // --- safe core -----------------------------------------------------
 //
 // One implementation shared by the C-ABI shims below and the
@@ -322,6 +343,14 @@ fn params_take(handle: i64) -> Vec<Value> {
         .as_mut()
         .and_then(|m| m.remove(&handle))
         .unwrap_or_default()
+}
+
+/// Takes (consumes) a bound parameter list by handle. Exposed so the
+/// interpreter's native-driver path can hand the params to a
+/// `native_facade_*` op (the Rust-driver shims consume the list
+/// internally).
+pub fn params_take_public(handle: i64) -> Vec<Value> {
+    params_take(handle)
 }
 
 /// Prepares + executes `sql` with the bound parameter list (consumed).
@@ -1514,6 +1543,1344 @@ pub unsafe extern "C" fn gos_rt_sql_migrate_up(conn: i64, dir: *const c_char) ->
     sql_migrate_up(conn, &c_str_to_string(dir))
 }
 
+// --- native (Gossamer-implemented) driver dispatch ------------------
+//
+// A `.gos` driver registers a stateless struct exposing one method,
+// `fn dispatch(&self, op: i64, h: i64) -> i64`. Rust never marshals a
+// complex value across the boundary: only the op code and the token
+// `h` cross. Inputs and outputs flow through `SQL_NATIVE_SLOTS`, a
+// per-token side-channel the driver reads/writes through the
+// `native_*` helpers. The compiled tier dispatches through a Rust
+// `GossamerDriver` registered in `crate::sql`; the interpreter
+// dispatches through `NativeDispatch::call_fn` in its own sql
+// builtins. Both share this one slot table and helper set.
+
+/// Op codes shared with the `.gos` driver (mirror as a `const` block
+/// in Gossamer source). A negative dispatch return is an error whose
+/// message the driver set via `native_set_error`.
+pub mod op {
+    pub const OPEN: i64 = 0;
+    pub const CLOSE: i64 = 1;
+    pub const PREPARE: i64 = 2;
+    pub const STMT_EXECUTE: i64 = 3;
+    pub const STMT_QUERY: i64 = 4;
+    pub const STMT_CLOSE: i64 = 5;
+    pub const ROWS_NEXT: i64 = 6;
+    pub const ROWS_CLOSE: i64 = 7;
+    pub const BEGIN_WITH: i64 = 8;
+    pub const COMMIT: i64 = 9;
+    pub const ROLLBACK: i64 = 10;
+    pub const TX_EXECUTE: i64 = 11;
+    pub const TX_EXECUTE_PARAMS: i64 = 12;
+    pub const TX_QUERY_PARAMS: i64 = 13;
+    pub const PING: i64 = 14;
+    pub const SET_BUSY_TIMEOUT: i64 = 15;
+    pub const INTERRUPT: i64 = 16;
+    pub const COPY_IN: i64 = 17;
+    pub const COPY_OUT: i64 = 18;
+    pub const LISTEN: i64 = 19;
+    pub const UNLISTEN: i64 = 20;
+    pub const POLL_NOTIFICATION: i64 = 21;
+}
+
+/// Per-token side-channel between the SQL façade (Rust) and the
+/// `.gos` driver. Inputs are populated before a dispatch; outputs are
+/// drained after it. The façade serializes per connection, so a given
+/// token never sees concurrent dispatch; distinct tokens use distinct
+/// slots and run concurrently.
+#[derive(Default)]
+struct Slot {
+    // inputs (driver reads)
+    url: String,
+    sql: String,
+    parent: i64,
+    out_handle: i64,
+    iso: i64,
+    timeout: i64,
+    channel: String,
+    params: Vec<Value>,
+    data: Vec<u8>,
+    // outputs (driver writes)
+    error: String,
+    row: Vec<Value>,
+    row_present: bool,
+    columns: Vec<String>,
+    out_bytes: Vec<u8>,
+    notif_chan: String,
+    notif_payload: String,
+    notif_pid: i64,
+    notif_present: bool,
+}
+
+static SQL_NATIVE_SLOTS: Mutex<Option<HashMap<i64, Slot>>> = Mutex::new(None);
+
+fn slot_with<R>(token: i64, f: impl FnOnce(&mut Slot) -> R) -> R {
+    let mut guard = SQL_NATIVE_SLOTS.lock();
+    let map = guard.get_or_insert_with(HashMap::new);
+    f(map.entry(token).or_default())
+}
+
+fn slot_remove(token: i64) {
+    let mut guard = SQL_NATIVE_SLOTS.lock();
+    if let Some(map) = guard.as_mut() {
+        map.remove(&token);
+    }
+}
+
+/// Allocates a fresh native-driver slot token. Exposed so the
+/// interpreter and the compiled adapter share one id namespace with
+/// the rest of the SQL handle registries.
+pub fn native_alloc_token() -> i64 {
+    next_handle()
+}
+
+// --- slot accessors used by both tiers' adapters -------------------
+
+/// Records the per-op inputs for the next dispatch on `token`,
+/// overwriting any previous output state.
+#[derive(Default)]
+struct SlotInputs<'a> {
+    url: &'a str,
+    sql: &'a str,
+    parent: i64,
+    out_handle: i64,
+    iso: i64,
+    timeout: i64,
+    channel: &'a str,
+    params: Vec<Value>,
+    data: Vec<u8>,
+}
+
+fn slot_set_inputs(token: i64, inputs: SlotInputs<'_>) {
+    slot_with(token, |s| {
+        s.url = inputs.url.to_string();
+        s.sql = inputs.sql.to_string();
+        s.parent = inputs.parent;
+        s.out_handle = inputs.out_handle;
+        s.iso = inputs.iso;
+        s.timeout = inputs.timeout;
+        s.channel = inputs.channel.to_string();
+        s.params = inputs.params;
+        s.data = inputs.data;
+        s.error.clear();
+        s.row.clear();
+        s.row_present = false;
+        s.columns.clear();
+        s.out_bytes.clear();
+        s.notif_chan.clear();
+        s.notif_payload.clear();
+        s.notif_pid = 0;
+        s.notif_present = false;
+    });
+}
+
+/// Drains a slot's error message after a failing (`< 0`) dispatch.
+fn slot_take_error(token: i64) -> String {
+    slot_with(token, |s| std::mem::take(&mut s.error))
+}
+
+/// Drains a slot's emitted columns (after a query op set them under
+/// the rows token).
+fn slot_take_columns(token: i64) -> Vec<String> {
+    slot_with(token, |s| std::mem::take(&mut s.columns))
+}
+
+/// Drains a slot's row if the driver marked one present.
+fn slot_take_row(token: i64) -> Option<Vec<Value>> {
+    slot_with(token, |s| {
+        if s.row_present {
+            s.row_present = false;
+            Some(std::mem::take(&mut s.row))
+        } else {
+            None
+        }
+    })
+}
+
+/// Drains a slot's emitted bytes (copy-out).
+fn slot_take_bytes(token: i64) -> Vec<u8> {
+    slot_with(token, |s| std::mem::take(&mut s.out_bytes))
+}
+
+/// Drains a slot's notification if the driver set one present.
+fn slot_take_notification(token: i64) -> Option<Notification> {
+    slot_with(token, |s| {
+        if s.notif_present {
+            s.notif_present = false;
+            Some(Notification {
+                channel: std::mem::take(&mut s.notif_chan),
+                payload: std::mem::take(&mut s.notif_payload),
+                process_id: s.notif_pid,
+            })
+        } else {
+            None
+        }
+    })
+}
+
+// --- native_* helpers the .gos driver calls (shared safe core) ------
+//
+// These read inputs from / write outputs to the slot keyed by `h`.
+// Both tiers' C-ABI shims and interp builtins delegate here.
+
+pub fn native_url(h: i64) -> String {
+    slot_with(h, |s| s.url.clone())
+}
+
+pub fn native_sql(h: i64) -> String {
+    slot_with(h, |s| s.sql.clone())
+}
+
+pub fn native_parent(h: i64) -> i64 {
+    slot_with(h, |s| s.parent)
+}
+
+pub fn native_out_handle(h: i64) -> i64 {
+    slot_with(h, |s| s.out_handle)
+}
+
+pub fn native_iso(h: i64) -> i64 {
+    slot_with(h, |s| s.iso)
+}
+
+pub fn native_timeout(h: i64) -> i64 {
+    slot_with(h, |s| s.timeout)
+}
+
+pub fn native_channel(h: i64) -> String {
+    slot_with(h, |s| s.channel.clone())
+}
+
+pub fn native_param_count(h: i64) -> i64 {
+    slot_with(h, |s| s.params.len() as i64)
+}
+
+/// Returns a fresh `sql::Value` handle for the i-th bound parameter
+/// (cloned), readable through the `sql::value_*_of` accessors.
+pub fn native_param(h: i64, i: i64) -> i64 {
+    let v = slot_with(h, |s| {
+        usize::try_from(i)
+            .ok()
+            .and_then(|idx| s.params.get(idx).cloned())
+            .unwrap_or(Value::Null)
+    });
+    value_register(v)
+}
+
+pub fn native_data(h: i64) -> Vec<u8> {
+    slot_with(h, |s| s.data.clone())
+}
+
+pub fn native_push_column(h: i64, name: &str) {
+    slot_with(h, |s| s.columns.push(name.to_string()));
+}
+
+/// Pushes the value behind `value_handle` (consumed) onto the row the
+/// driver is building under `h`.
+pub fn native_push_value(h: i64, value_handle: i64) {
+    let v = value_take(value_handle);
+    slot_with(h, |s| s.row.push(v));
+}
+
+pub fn native_row_ready(h: i64) {
+    slot_with(h, |s| s.row_present = true);
+}
+
+pub fn native_set_error(h: i64, msg: &str) {
+    slot_with(h, |s| s.error = msg.to_string());
+}
+
+pub fn native_emit_bytes(h: i64, data: &[u8]) {
+    slot_with(h, |s| s.out_bytes = data.to_vec());
+}
+
+pub fn native_set_notification(h: i64, chan: &str, payload: &str, pid: i64) {
+    slot_with(h, |s| {
+        s.notif_chan = chan.to_string();
+        s.notif_payload = payload.to_string();
+        s.notif_pid = pid;
+        s.notif_present = true;
+    });
+}
+
+// --- sql::Value handle constructors + accessors for the .gos driver -
+//
+// The driver turns a `__gos_sql_Value` enum into a handle with the
+// `value_*` constructors and reads a param handle back with the
+// `value_*_of` accessors. Both reuse the existing VALUE_HANDLES
+// registry.
+
+pub fn native_value_null() -> i64 {
+    value_register(Value::Null)
+}
+
+pub fn native_value_bool(b: bool) -> i64 {
+    value_register(Value::Bool(b))
+}
+
+pub fn native_value_int(n: i64) -> i64 {
+    value_register(Value::Int(n))
+}
+
+pub fn native_value_float(f: f64) -> i64 {
+    value_register(Value::Float(f))
+}
+
+pub fn native_value_text(s: &str) -> i64 {
+    value_register(Value::Text(s.to_string()))
+}
+
+pub fn native_value_blob(data: &[u8]) -> i64 {
+    value_register(Value::Blob(data.to_vec()))
+}
+
+/// Coarse kind of the value behind `handle`: 0 Null, 1 Bool, 2 Int,
+/// 3 Float, 4 Text, 5 Blob. The handle is left in place.
+pub fn native_value_kind(handle: i64) -> i64 {
+    match value_peek(handle) {
+        Value::Null => 0,
+        Value::Bool(_) => 1,
+        Value::Int(_) => 2,
+        Value::Float(_) => 3,
+        Value::Text(_) => 4,
+        Value::Blob(_) => 5,
+    }
+}
+
+pub fn native_value_int_of(handle: i64) -> i64 {
+    match value_peek(handle) {
+        Value::Int(n) => n,
+        Value::Bool(b) => i64::from(b),
+        _ => 0,
+    }
+}
+
+pub fn native_value_float_of(handle: i64) -> f64 {
+    match value_peek(handle) {
+        Value::Float(f) => f,
+        Value::Int(n) => n as f64,
+        _ => 0.0,
+    }
+}
+
+pub fn native_value_text_of(handle: i64) -> String {
+    match value_peek(handle) {
+        Value::Text(s) => s,
+        _ => String::new(),
+    }
+}
+
+pub fn native_value_blob_of(handle: i64) -> Vec<u8> {
+    match value_peek(handle) {
+        Value::Blob(b) => b,
+        _ => Vec::new(),
+    }
+}
+
+// --- connection-handle stash (the one retained Gossamer value) ------
+//
+// The goroutine-per-connection design needs one Gossamer value per
+// token: the connection's command `Sender`, represented as its i64
+// handle. The channel itself is kept alive by the connection
+// goroutine, which owns the matching `Receiver` as a local for its
+// whole lifetime; this stash holds the `Sender` handle so the
+// stateless `dispatch` can route a command to the owning connection.
+// The stash is cleared on the CLOSE op, after which the goroutine
+// drains and exits and the channel is reclaimed.
+
+static SQL_NATIVE_CONN_HANDLE: Mutex<Option<HashMap<i64, i64>>> = Mutex::new(None);
+
+/// Stashes one Gossamer value (its i64 representation) under token `h`.
+pub fn native_set_handle(h: i64, value: i64) {
+    let mut guard = SQL_NATIVE_CONN_HANDLE.lock();
+    guard.get_or_insert_with(HashMap::new).insert(h, value);
+}
+
+/// Returns the value stashed under `h` (0 if none). The driver
+/// annotates the i64 back to its `Sender<Command>` at the call site.
+pub fn native_handle(h: i64) -> i64 {
+    let guard = SQL_NATIVE_CONN_HANDLE.lock();
+    guard.as_ref().and_then(|m| m.get(&h).copied()).unwrap_or(0)
+}
+
+/// Forgets the stashed handle under `h`. Called from the CLOSE adapter
+/// and slot teardown; the goroutine that observes the closed command
+/// channel then exits.
+fn native_drop_handle(h: i64) {
+    let mut guard = SQL_NATIVE_CONN_HANDLE.lock();
+    if let Some(map) = guard.as_mut() {
+        map.remove(&h);
+    }
+}
+
+// --- compiled-tier adapter -----------------------------------------
+
+/// A transmuted `gos_fn_addr("<Type>::dispatch")` plus the driver's
+/// env pointer. The driver is a ZST whose `dispatch` never reads
+/// `self`, so the env pointer dangling after `register` returns is
+/// harmless; `call` only crosses the op code and token.
+#[derive(Clone, Copy)]
+struct Dispatcher {
+    env: usize,
+    fn_addr: usize,
+}
+
+// SAFETY: the dispatch fn pointer is a stable code address and the
+// env is treated as an opaque pointer that the ZST driver never
+// dereferences; the façade serializes per connection so no token is
+// dispatched concurrently.
+unsafe impl Send for Dispatcher {}
+unsafe impl Sync for Dispatcher {}
+
+type DispatchFn = unsafe extern "C" fn(env: *mut u8, op: i64, h: i64) -> i64;
+
+impl Dispatcher {
+    fn call(&self, op: i64, h: i64) -> i64 {
+        // SAFETY: `fn_addr` came from `gos_fn_addr("<Type>::dispatch")`
+        // at the user's `sql::register_native` call site; the signature
+        // matches the compiled `dispatch(&self, op, h) -> i64` ABI.
+        let f: DispatchFn = unsafe { std::mem::transmute::<usize, DispatchFn>(self.fn_addr) };
+        unsafe { f(self.env as *mut u8, op, h) }
+    }
+}
+
+/// A `.gos`-implemented driver registered into `crate::sql`.
+struct GossamerDriver {
+    name: String,
+    disp: Dispatcher,
+}
+
+impl Driver for GossamerDriver {
+    fn name(&self) -> &str {
+        &self.name
+    }
+    fn open(&self, url: &str) -> Result<Box<dyn ConnectionImpl>, Error> {
+        let token = next_handle();
+        slot_set_inputs(
+            token,
+            SlotInputs {
+                url,
+                ..Default::default()
+            },
+        );
+        let rc = self.disp.call(op::OPEN, token);
+        if rc < 0 {
+            let msg = slot_take_error(token);
+            slot_remove(token);
+            return Err(Error::driver(self.name.clone(), msg));
+        }
+        Ok(Box::new(GossamerConnection {
+            name: self.name.clone(),
+            disp: self.disp,
+            token,
+        }))
+    }
+}
+
+/// Maps a `< 0` dispatch return into an `Error::driver` carrying the
+/// driver's slot message; `>= 0` returns are the success value.
+fn dispatch_result(name: &str, disp: &Dispatcher, op: i64, token: i64) -> Result<i64, Error> {
+    let rc = disp.call(op, token);
+    if rc < 0 {
+        Err(Error::driver(name.to_string(), slot_take_error(token)))
+    } else {
+        Ok(rc)
+    }
+}
+
+struct GossamerConnection {
+    name: String,
+    disp: Dispatcher,
+    token: i64,
+}
+
+impl ConnectionImpl for GossamerConnection {
+    fn prepare(&mut self, sql: &str) -> Result<Box<dyn StatementImpl>, Error> {
+        let stmt_token = next_handle();
+        slot_set_inputs(
+            stmt_token,
+            SlotInputs {
+                sql,
+                parent: self.token,
+                ..Default::default()
+            },
+        );
+        dispatch_result(&self.name, &self.disp, op::PREPARE, stmt_token).inspect_err(|_| {
+            slot_remove(stmt_token);
+        })?;
+        Ok(Box::new(GossamerStatement {
+            name: self.name.clone(),
+            disp: self.disp,
+            token: stmt_token,
+        }))
+    }
+
+    fn begin(&mut self) -> Result<Box<dyn TransactionImpl>, Error> {
+        self.begin_with(IsolationLevel::Default)
+    }
+
+    fn begin_with(&mut self, iso: IsolationLevel) -> Result<Box<dyn TransactionImpl>, Error> {
+        let tx_token = next_handle();
+        slot_set_inputs(
+            tx_token,
+            SlotInputs {
+                parent: self.token,
+                iso: iso_code(iso),
+                ..Default::default()
+            },
+        );
+        dispatch_result(&self.name, &self.disp, op::BEGIN_WITH, tx_token).inspect_err(|_| {
+            slot_remove(tx_token);
+        })?;
+        Ok(Box::new(GossamerTransaction {
+            name: self.name.clone(),
+            disp: self.disp,
+            token: tx_token,
+        }))
+    }
+
+    fn ping(&mut self) -> Result<(), Error> {
+        slot_set_inputs(self.token, SlotInputs::default());
+        dispatch_result(&self.name, &self.disp, op::PING, self.token).map(|_| ())
+    }
+
+    fn set_busy_timeout(&mut self, ms: i64) -> Result<(), Error> {
+        slot_set_inputs(
+            self.token,
+            SlotInputs {
+                timeout: ms,
+                ..Default::default()
+            },
+        );
+        dispatch_result(&self.name, &self.disp, op::SET_BUSY_TIMEOUT, self.token).map(|_| ())
+    }
+
+    fn interrupt(&self) {
+        slot_set_inputs(self.token, SlotInputs::default());
+        let _ = self.disp.call(op::INTERRUPT, self.token);
+    }
+
+    fn copy_in(&mut self, sql: &str, data: &[u8]) -> Result<u64, Error> {
+        slot_set_inputs(
+            self.token,
+            SlotInputs {
+                sql,
+                data: data.to_vec(),
+                ..Default::default()
+            },
+        );
+        dispatch_result(&self.name, &self.disp, op::COPY_IN, self.token).map(|n| n as u64)
+    }
+
+    fn copy_out(&mut self, sql: &str) -> Result<Vec<u8>, Error> {
+        slot_set_inputs(
+            self.token,
+            SlotInputs {
+                sql,
+                ..Default::default()
+            },
+        );
+        dispatch_result(&self.name, &self.disp, op::COPY_OUT, self.token)?;
+        Ok(slot_take_bytes(self.token))
+    }
+
+    fn listen(&mut self, channel: &str) -> Result<(), Error> {
+        slot_set_inputs(
+            self.token,
+            SlotInputs {
+                channel,
+                ..Default::default()
+            },
+        );
+        dispatch_result(&self.name, &self.disp, op::LISTEN, self.token).map(|_| ())
+    }
+
+    fn unlisten(&mut self, channel: &str) -> Result<(), Error> {
+        slot_set_inputs(
+            self.token,
+            SlotInputs {
+                channel,
+                ..Default::default()
+            },
+        );
+        dispatch_result(&self.name, &self.disp, op::UNLISTEN, self.token).map(|_| ())
+    }
+
+    fn poll_notification(&mut self, timeout_ms: i64) -> Result<Option<Notification>, Error> {
+        slot_set_inputs(
+            self.token,
+            SlotInputs {
+                timeout: timeout_ms,
+                ..Default::default()
+            },
+        );
+        dispatch_result(&self.name, &self.disp, op::POLL_NOTIFICATION, self.token)?;
+        Ok(slot_take_notification(self.token))
+    }
+
+    fn close(&mut self) -> Result<(), Error> {
+        slot_set_inputs(self.token, SlotInputs::default());
+        let r = dispatch_result(&self.name, &self.disp, op::CLOSE, self.token).map(|_| ());
+        native_drop_handle(self.token);
+        slot_remove(self.token);
+        r
+    }
+}
+
+struct GossamerStatement {
+    name: String,
+    disp: Dispatcher,
+    token: i64,
+}
+
+impl StatementImpl for GossamerStatement {
+    fn execute(&mut self, params: &[Value]) -> Result<u64, Error> {
+        slot_set_inputs(
+            self.token,
+            SlotInputs {
+                params: params.to_vec(),
+                ..Default::default()
+            },
+        );
+        dispatch_result(&self.name, &self.disp, op::STMT_EXECUTE, self.token).map(|n| n as u64)
+    }
+
+    fn query(&mut self, params: &[Value]) -> Result<Box<dyn RowsImpl>, Error> {
+        let rows_token = next_handle();
+        slot_set_inputs(
+            self.token,
+            SlotInputs {
+                params: params.to_vec(),
+                out_handle: rows_token,
+                ..Default::default()
+            },
+        );
+        // The rows token's slot must exist so the driver can emit
+        // columns under it during the query dispatch.
+        slot_set_inputs(
+            rows_token,
+            SlotInputs {
+                parent: self.token,
+                ..Default::default()
+            },
+        );
+        dispatch_result(&self.name, &self.disp, op::STMT_QUERY, self.token).inspect_err(|_| {
+            slot_remove(rows_token);
+        })?;
+        let columns = slot_take_columns(rows_token);
+        Ok(Box::new(GossamerRows {
+            name: self.name.clone(),
+            disp: self.disp,
+            token: rows_token,
+            columns,
+        }))
+    }
+}
+
+impl Drop for GossamerStatement {
+    fn drop(&mut self) {
+        slot_set_inputs(self.token, SlotInputs::default());
+        let _ = self.disp.call(op::STMT_CLOSE, self.token);
+        slot_remove(self.token);
+    }
+}
+
+struct GossamerRows {
+    name: String,
+    disp: Dispatcher,
+    token: i64,
+    columns: Vec<String>,
+}
+
+impl RowsImpl for GossamerRows {
+    fn next_row(&mut self) -> Result<Option<Vec<Value>>, Error> {
+        // Reset row state before the advance, per the protocol.
+        slot_with(self.token, |s| {
+            s.row.clear();
+            s.row_present = false;
+            s.error.clear();
+        });
+        dispatch_result(&self.name, &self.disp, op::ROWS_NEXT, self.token)?;
+        Ok(slot_take_row(self.token))
+    }
+    fn columns(&self) -> &[String] {
+        &self.columns
+    }
+}
+
+impl Drop for GossamerRows {
+    fn drop(&mut self) {
+        slot_set_inputs(self.token, SlotInputs::default());
+        let _ = self.disp.call(op::ROWS_CLOSE, self.token);
+        slot_remove(self.token);
+    }
+}
+
+struct GossamerTransaction {
+    name: String,
+    disp: Dispatcher,
+    token: i64,
+}
+
+impl TransactionImpl for GossamerTransaction {
+    fn commit(&mut self) -> Result<(), Error> {
+        slot_set_inputs(self.token, SlotInputs::default());
+        let r = dispatch_result(&self.name, &self.disp, op::COMMIT, self.token).map(|_| ());
+        slot_remove(self.token);
+        r
+    }
+
+    fn rollback(&mut self) -> Result<(), Error> {
+        slot_set_inputs(self.token, SlotInputs::default());
+        let r = dispatch_result(&self.name, &self.disp, op::ROLLBACK, self.token).map(|_| ());
+        slot_remove(self.token);
+        r
+    }
+
+    fn execute(&mut self, sql: &str) -> Result<u64, Error> {
+        slot_set_inputs(
+            self.token,
+            SlotInputs {
+                sql,
+                ..Default::default()
+            },
+        );
+        dispatch_result(&self.name, &self.disp, op::TX_EXECUTE, self.token).map(|n| n as u64)
+    }
+
+    fn execute_params(&mut self, sql: &str, params: &[Value]) -> Result<u64, Error> {
+        slot_set_inputs(
+            self.token,
+            SlotInputs {
+                sql,
+                params: params.to_vec(),
+                ..Default::default()
+            },
+        );
+        dispatch_result(&self.name, &self.disp, op::TX_EXECUTE_PARAMS, self.token).map(|n| n as u64)
+    }
+
+    fn query_params(&mut self, sql: &str, params: &[Value]) -> Result<Box<dyn RowsImpl>, Error> {
+        let rows_token = next_handle();
+        slot_set_inputs(
+            self.token,
+            SlotInputs {
+                sql,
+                params: params.to_vec(),
+                out_handle: rows_token,
+                ..Default::default()
+            },
+        );
+        slot_set_inputs(
+            rows_token,
+            SlotInputs {
+                parent: self.token,
+                ..Default::default()
+            },
+        );
+        dispatch_result(&self.name, &self.disp, op::TX_QUERY_PARAMS, self.token).inspect_err(
+            |_| {
+                slot_remove(rows_token);
+            },
+        )?;
+        let columns = slot_take_columns(rows_token);
+        Ok(Box::new(GossamerRows {
+            name: self.name.clone(),
+            disp: self.disp,
+            token: rows_token,
+            columns,
+        }))
+    }
+}
+
+fn iso_code(iso: IsolationLevel) -> i64 {
+    match iso {
+        IsolationLevel::Default => 0,
+        IsolationLevel::ReadUncommitted => 1,
+        IsolationLevel::ReadCommitted => 2,
+        IsolationLevel::RepeatableRead => 3,
+        IsolationLevel::Serializable => 4,
+    }
+}
+
+// --- interpreter-tier facade helpers -------------------------------
+//
+// The compiled tier dispatches through the `GossamerDriver` adapter
+// above (fn-addr transmute). The interpreter cannot transmute a code
+// address, so it dispatches through `NativeDispatch::call_fn` inside
+// its own sql builtins and drives the same slots through these
+// `pub` helpers, parameterized by a dispatch closure
+// (`Fn(op, token) -> i64`). The slot orchestration is identical to the
+// compiled adapter; only the call mechanism differs.
+
+/// Tracks a native result-set cursor on the interpreter tier: the
+/// emitted column names and the most recent Row handle (cursor
+/// semantics - advancing frees the previous Row).
+struct NativeRows {
+    columns: Vec<String>,
+    current_row: i64,
+}
+
+static NATIVE_ROWS: Mutex<Option<HashMap<i64, NativeRows>>> = Mutex::new(None);
+
+fn native_record_error(token: i64) -> i64 {
+    sql_set_last_error(slot_take_error(token));
+    -1
+}
+
+/// OPEN op: returns a fresh connection token, or -1 (message set).
+pub fn native_facade_open(url: &str, dispatch: impl Fn(i64, i64) -> i64) -> i64 {
+    let token = next_handle();
+    slot_set_inputs(
+        token,
+        SlotInputs {
+            url,
+            ..Default::default()
+        },
+    );
+    if dispatch(op::OPEN, token) < 0 {
+        let rc = native_record_error(token);
+        slot_remove(token);
+        return rc;
+    }
+    token
+}
+
+/// PREPARE op: returns a fresh statement token, or -1.
+pub fn native_facade_prepare(conn: i64, sql: &str, dispatch: impl Fn(i64, i64) -> i64) -> i64 {
+    let stmt = next_handle();
+    slot_set_inputs(
+        stmt,
+        SlotInputs {
+            sql,
+            parent: conn,
+            ..Default::default()
+        },
+    );
+    if dispatch(op::PREPARE, stmt) < 0 {
+        let rc = native_record_error(stmt);
+        slot_remove(stmt);
+        return rc;
+    }
+    stmt
+}
+
+/// BEGIN_WITH op: returns a fresh transaction token, or -1.
+pub fn native_facade_begin(conn: i64, iso: i64, dispatch: impl Fn(i64, i64) -> i64) -> i64 {
+    let tx = next_handle();
+    slot_set_inputs(
+        tx,
+        SlotInputs {
+            parent: conn,
+            iso,
+            ..Default::default()
+        },
+    );
+    if dispatch(op::BEGIN_WITH, tx) < 0 {
+        let rc = native_record_error(tx);
+        slot_remove(tx);
+        return rc;
+    }
+    tx
+}
+
+/// A no-input scalar op (PING / INTERRUPT) returning the dispatch
+/// result, or -1 (message set).
+pub fn native_facade_scalar(token: i64, op: i64, dispatch: impl Fn(i64, i64) -> i64) -> i64 {
+    slot_set_inputs(token, SlotInputs::default());
+    let rc = dispatch(op, token);
+    if rc < 0 {
+        native_record_error(token)
+    } else {
+        rc
+    }
+}
+
+/// SET_BUSY_TIMEOUT op.
+pub fn native_facade_set_busy_timeout(
+    conn: i64,
+    ms: i64,
+    dispatch: impl Fn(i64, i64) -> i64,
+) -> i64 {
+    slot_set_inputs(
+        conn,
+        SlotInputs {
+            timeout: ms,
+            ..Default::default()
+        },
+    );
+    let rc = dispatch(op::SET_BUSY_TIMEOUT, conn);
+    if rc < 0 {
+        native_record_error(conn)
+    } else {
+        rc
+    }
+}
+
+/// STMT_EXECUTE / TX_EXECUTE op family for a statement-or-tx token
+/// carrying bound params. Returns rows affected, or -1.
+pub fn native_facade_execute(
+    token: i64,
+    op: i64,
+    sql: &str,
+    params: Vec<Value>,
+    dispatch: impl Fn(i64, i64) -> i64,
+) -> i64 {
+    slot_set_inputs(
+        token,
+        SlotInputs {
+            sql,
+            params,
+            ..Default::default()
+        },
+    );
+    let rc = dispatch(op, token);
+    if rc < 0 {
+        native_record_error(token)
+    } else {
+        rc
+    }
+}
+
+/// STMT_QUERY / TX_QUERY_PARAMS op: dispatches the query, captures the
+/// emitted columns under a fresh rows token, and returns that token
+/// (registered in the native-rows registry), or -1.
+pub fn native_facade_query(
+    token: i64,
+    op: i64,
+    sql: &str,
+    params: Vec<Value>,
+    dispatch: impl Fn(i64, i64) -> i64,
+) -> i64 {
+    let rows = next_handle();
+    slot_set_inputs(
+        token,
+        SlotInputs {
+            sql,
+            params,
+            out_handle: rows,
+            ..Default::default()
+        },
+    );
+    slot_set_inputs(
+        rows,
+        SlotInputs {
+            parent: token,
+            ..Default::default()
+        },
+    );
+    if dispatch(op, token) < 0 {
+        let rc = native_record_error(token);
+        slot_remove(rows);
+        return rc;
+    }
+    let columns = slot_take_columns(rows);
+    NATIVE_ROWS.lock().get_or_insert_with(HashMap::new).insert(
+        rows,
+        NativeRows {
+            columns,
+            current_row: 0,
+        },
+    );
+    rows
+}
+
+/// ROWS_NEXT op: advances the native cursor, registering the row in
+/// the shared Row registry. Returns a Row handle, 0 on end-of-set, or
+/// -1. Mirrors `sql_rows_next_row`'s cursor semantics.
+pub fn native_facade_rows_next(rows: i64, dispatch: impl Fn(i64, i64) -> i64) -> i64 {
+    let Some(columns) = NATIVE_ROWS
+        .lock()
+        .as_ref()
+        .and_then(|m| m.get(&rows))
+        .map(|nr| nr.columns.clone())
+    else {
+        sql_set_last_error(INVALID_ROWS);
+        return -1;
+    };
+    slot_with(rows, |s| {
+        s.row.clear();
+        s.row_present = false;
+        s.error.clear();
+    });
+    if dispatch(op::ROWS_NEXT, rows) < 0 {
+        return native_record_error(rows);
+    }
+    let prev = NATIVE_ROWS
+        .lock()
+        .as_ref()
+        .and_then(|m| m.get(&rows))
+        .map_or(0, |nr| nr.current_row);
+    let Some(values) = slot_take_row(rows) else {
+        row_unregister(prev);
+        native_rows_drop(rows, &dispatch);
+        return 0;
+    };
+    row_unregister(prev);
+    let row = row_register(Row { values, columns });
+    if let Some(map) = NATIVE_ROWS.lock().as_mut()
+        && let Some(nr) = map.get_mut(&rows)
+    {
+        nr.current_row = row;
+    }
+    row
+}
+
+/// Comma-joined column names for a native rows token.
+pub fn native_facade_rows_columns(rows: i64) -> String {
+    let guard = NATIVE_ROWS.lock();
+    guard
+        .as_ref()
+        .and_then(|m| m.get(&rows))
+        .map(|nr| nr.columns.join(","))
+        .unwrap_or_default()
+}
+
+/// True when `token` names a live native result-set cursor.
+pub fn native_is_rows(token: i64) -> bool {
+    NATIVE_ROWS
+        .lock()
+        .as_ref()
+        .is_some_and(|m| m.contains_key(&token))
+}
+
+fn native_rows_drop(rows: i64, dispatch: &impl Fn(i64, i64) -> i64) {
+    let entry = NATIVE_ROWS.lock().as_mut().and_then(|m| m.remove(&rows));
+    if let Some(nr) = entry {
+        row_unregister(nr.current_row);
+    }
+    slot_set_inputs(rows, SlotInputs::default());
+    let _ = dispatch(op::ROWS_CLOSE, rows);
+    slot_remove(rows);
+}
+
+/// ROWS_CLOSE op: releases a native cursor (idempotent, returns 0).
+pub fn native_facade_rows_close(rows: i64, dispatch: impl Fn(i64, i64) -> i64) -> i64 {
+    if native_is_rows(rows) {
+        native_rows_drop(rows, &dispatch);
+    }
+    0
+}
+
+/// STMT_CLOSE op: releases a native statement (idempotent, returns 0).
+pub fn native_facade_stmt_close(stmt: i64, dispatch: impl Fn(i64, i64) -> i64) -> i64 {
+    slot_set_inputs(stmt, SlotInputs::default());
+    let _ = dispatch(op::STMT_CLOSE, stmt);
+    slot_remove(stmt);
+    0
+}
+
+/// COMMIT / ROLLBACK op: finalizes and releases a native transaction.
+pub fn native_facade_tx_finish(tx: i64, op: i64, dispatch: impl Fn(i64, i64) -> i64) -> i64 {
+    slot_set_inputs(tx, SlotInputs::default());
+    let rc = dispatch(op, tx);
+    let out = if rc < 0 { native_record_error(tx) } else { rc };
+    slot_remove(tx);
+    out
+}
+
+/// CLOSE op: closes a native connection, dropping its stashed handle
+/// and slot. Returns 0, or -1.
+pub fn native_facade_close(conn: i64, dispatch: impl Fn(i64, i64) -> i64) -> i64 {
+    slot_set_inputs(conn, SlotInputs::default());
+    let rc = dispatch(op::CLOSE, conn);
+    let out = if rc < 0 {
+        native_record_error(conn)
+    } else {
+        rc
+    };
+    native_drop_handle(conn);
+    slot_remove(conn);
+    out
+}
+
+/// COPY_IN op.
+pub fn native_facade_copy_in(
+    conn: i64,
+    sql: &str,
+    data: Vec<u8>,
+    dispatch: impl Fn(i64, i64) -> i64,
+) -> i64 {
+    slot_set_inputs(
+        conn,
+        SlotInputs {
+            sql,
+            data,
+            ..Default::default()
+        },
+    );
+    let rc = dispatch(op::COPY_IN, conn);
+    if rc < 0 {
+        native_record_error(conn)
+    } else {
+        rc
+    }
+}
+
+/// COPY_OUT op: runs the copy and stores the emitted bytes in the
+/// connection's copy-out slot for `sql_copy_out_take`. Returns the
+/// byte count, or -1.
+pub fn native_facade_copy_out(conn: i64, sql: &str, dispatch: impl Fn(i64, i64) -> i64) -> i64 {
+    slot_set_inputs(
+        conn,
+        SlotInputs {
+            sql,
+            ..Default::default()
+        },
+    );
+    if dispatch(op::COPY_OUT, conn) < 0 {
+        return native_record_error(conn);
+    }
+    let bytes = slot_take_bytes(conn);
+    let n = bytes.len() as i64;
+    sql_copy_out_store(conn, bytes);
+    n
+}
+
+/// LISTEN / UNLISTEN op.
+pub fn native_facade_listen(
+    conn: i64,
+    op: i64,
+    channel: &str,
+    dispatch: impl Fn(i64, i64) -> i64,
+) -> i64 {
+    slot_set_inputs(
+        conn,
+        SlotInputs {
+            channel,
+            ..Default::default()
+        },
+    );
+    let rc = dispatch(op, conn);
+    if rc < 0 {
+        native_record_error(conn)
+    } else {
+        rc
+    }
+}
+
+/// POLL_NOTIFICATION op: 1 when one arrived (stored for the
+/// `sql_notification_*` getters), 0 on none, -1 on error.
+pub fn native_facade_poll_notification(
+    conn: i64,
+    timeout_ms: i64,
+    dispatch: impl Fn(i64, i64) -> i64,
+) -> i64 {
+    slot_set_inputs(
+        conn,
+        SlotInputs {
+            timeout: timeout_ms,
+            ..Default::default()
+        },
+    );
+    if dispatch(op::POLL_NOTIFICATION, conn) < 0 {
+        return native_record_error(conn);
+    }
+    match slot_take_notification(conn) {
+        Some(n) => {
+            let mut guard = LAST_NOTIFICATION.lock();
+            guard.get_or_insert_with(HashMap::new).insert(conn, n);
+            1
+        }
+        None => 0,
+    }
+}
+
+/// Builds and registers a `.gos` driver (compiled tier). `name` is the
+/// driver name for `sql::open`; `env`/`fn_addr` are the driver value's
+/// env pointer and the address of its `dispatch` method.
+pub fn register_native_driver(name: &str, env: usize, fn_addr: usize) {
+    crate::sql::register(Arc::new(GossamerDriver {
+        name: name.to_string(),
+        disp: Dispatcher { env, fn_addr },
+    }));
+}
+
+/// `sql::register_native(name, driver)` (compiled tier). The MIR
+/// lowerer passes the driver value's env pointer and the address of
+/// `<Type>::dispatch`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_sql_register_native(
+    name: *const c_char,
+    env: *mut u8,
+    fn_addr: i64,
+) {
+    register_native_driver(&c_str_to_string(name), env as usize, fn_addr as usize);
+}
+
+// --- native_* C-ABI shims (compiled tier) --------------------------
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_sql_native_url(h: i64) -> *mut c_char {
+    alloc_cstring(native_url(h).as_bytes())
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_sql_native_sql(h: i64) -> *mut c_char {
+    alloc_cstring(native_sql(h).as_bytes())
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_sql_native_parent(h: i64) -> i64 {
+    native_parent(h)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_sql_native_out_handle(h: i64) -> i64 {
+    native_out_handle(h)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_sql_native_iso(h: i64) -> i64 {
+    native_iso(h)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_sql_native_timeout(h: i64) -> i64 {
+    native_timeout(h)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_sql_native_channel(h: i64) -> *mut c_char {
+    alloc_cstring(native_channel(h).as_bytes())
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_sql_native_param_count(h: i64) -> i64 {
+    native_param_count(h)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_sql_native_param(h: i64, i: i64) -> i64 {
+    native_param(h, i)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_sql_native_data(h: i64) -> *mut super::vec::GosVec {
+    bytes_to_gosvec(&native_data(h))
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_sql_native_push_column(h: i64, name: *const c_char) {
+    native_push_column(h, &c_str_to_string(name));
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_sql_native_push_value(h: i64, value_handle: i64) {
+    native_push_value(h, value_handle);
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_sql_native_row_ready(h: i64) {
+    native_row_ready(h);
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_sql_native_set_error(h: i64, msg: *const c_char) {
+    native_set_error(h, &c_str_to_string(msg));
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_sql_native_emit_bytes(h: i64, data: *const super::vec::GosVec) {
+    // SAFETY: codegen passes a live GosVec pointer for a `[u8]` arg.
+    let bytes = unsafe { super::encoding::gosvec_u8(data) };
+    native_emit_bytes(h, &bytes);
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_sql_native_set_notification(
+    h: i64,
+    chan: *const c_char,
+    payload: *const c_char,
+    pid: i64,
+) {
+    native_set_notification(h, &c_str_to_string(chan), &c_str_to_string(payload), pid);
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_sql_native_set_handle(h: i64, value: i64) {
+    native_set_handle(h, value);
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_sql_native_handle(h: i64) -> i64 {
+    native_handle(h)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_sql_native_value_null() -> i64 {
+    native_value_null()
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_sql_native_value_bool(b: i64) -> i64 {
+    native_value_bool(b != 0)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_sql_native_value_int(n: i64) -> i64 {
+    native_value_int(n)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_sql_native_value_float(f: f64) -> i64 {
+    native_value_float(f)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_sql_native_value_text(s: *const c_char) -> i64 {
+    native_value_text(&c_str_to_string(s))
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_sql_native_value_blob(data: *const super::vec::GosVec) -> i64 {
+    // SAFETY: codegen passes a live GosVec pointer for a `[u8]` arg.
+    let bytes = unsafe { super::encoding::gosvec_u8(data) };
+    native_value_blob(&bytes)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_sql_native_value_kind(handle: i64) -> i64 {
+    native_value_kind(handle)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_sql_native_value_int_of(handle: i64) -> i64 {
+    native_value_int_of(handle)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_sql_native_value_float_of(handle: i64) -> f64 {
+    native_value_float_of(handle)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_sql_native_value_text_of(handle: i64) -> *mut c_char {
+    alloc_cstring(native_value_text_of(handle).as_bytes())
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_sql_native_value_blob_of(handle: i64) -> *mut super::vec::GosVec {
+    bytes_to_gosvec(&native_value_blob_of(handle))
+}
+
+/// Materializes `bytes` as a one-byte-per-slot `[u8]` GosVec (the
+/// runtime's `[u8]` ABI), matching `gos_rt_sql_row_get_blob_vec`.
+fn bytes_to_gosvec(bytes: &[u8]) -> *mut super::vec::GosVec {
+    let out = unsafe { super::vec::gos_rt_vec_with_capacity(8, bytes.len() as i64) };
+    // SAFETY: gos_rt_vec_with_capacity returns a live GosVec sized for
+    // `bytes.len()` 8-byte slots.
+    let vref = unsafe { &mut *out };
+    if !vref.ptr.is_null() {
+        let dst = vref.ptr.as_ptr().cast::<i64>();
+        for (idx, b) in bytes.iter().enumerate() {
+            unsafe { *dst.add(idx) = i64::from(*b) };
+        }
+        vref.len = bytes.len() as i64;
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -1721,5 +3088,87 @@ mod tests {
         assert_eq!(sql_rows_close(rows), 0, "cursor still closable after error");
         assert!(stale(first));
         assert_eq!(sql_conn_close(conn), 0);
+    }
+
+    /// Drives the native-driver facade helpers with a closure standing
+    /// in for a `.gos` driver's `dispatch`, exercising the shared slot
+    /// orchestration both tiers run (the compiled adapter transmutes a
+    /// fn-addr; the interp re-enters the VM; both land here). A trivial
+    /// driver: STMT_QUERY emits one column under the rows token, the
+    /// first ROWS_NEXT yields one Text row, the next ends the set.
+    #[test]
+    fn native_facade_drives_a_one_row_cursor() {
+        let _guard = ERROR_SLOT_LOCK.lock();
+        let pending = std::cell::Cell::new(false);
+        let dispatch = |op: i64, h: i64| -> i64 {
+            match op {
+                op::OPEN | op::PREPARE | op::STMT_CLOSE | op::ROWS_CLOSE | op::CLOSE => 0,
+                op::STMT_QUERY => {
+                    let rows = native_out_handle(h);
+                    native_push_column(rows, "greeting");
+                    pending.set(true);
+                    0
+                }
+                op::ROWS_NEXT => {
+                    if pending.get() {
+                        native_push_value(h, native_value_text("hello"));
+                        native_row_ready(h);
+                        pending.set(false);
+                    }
+                    0
+                }
+                _ => {
+                    native_set_error(h, "unsupported op");
+                    -1
+                }
+            }
+        };
+
+        let conn = native_facade_open("memory://x", dispatch);
+        assert!(conn > 0, "open: {}", sql_take_last_error());
+        let stmt = native_facade_prepare(conn, "SELECT greeting", dispatch);
+        assert!(stmt > 0);
+        let rows = native_facade_query(
+            stmt,
+            op::STMT_QUERY,
+            "SELECT greeting",
+            Vec::new(),
+            dispatch,
+        );
+        assert!(rows > 0);
+        assert_eq!(native_facade_rows_columns(rows), "greeting");
+
+        let row = native_facade_rows_next(rows, dispatch);
+        assert!(row > 0, "first advance yields a row");
+        assert_eq!(sql_row_get_text(row, "greeting"), "hello");
+        assert_eq!(sql_row_kind(row, "greeting"), 4, "Text column");
+
+        assert_eq!(
+            native_facade_rows_next(rows, dispatch),
+            0,
+            "second advance ends the set"
+        );
+        assert!(stale(row), "end-of-set releases the final row");
+
+        assert_eq!(native_facade_stmt_close(stmt, dispatch), 0);
+        assert_eq!(native_facade_close(conn, dispatch), 0);
+    }
+
+    /// A `< 0` dispatch return surfaces the driver's slot error message
+    /// through `sql_take_last_error`, the sentinel convention both tiers
+    /// share.
+    #[test]
+    fn native_facade_open_reports_driver_error() {
+        let _guard = ERROR_SLOT_LOCK.lock();
+        let dispatch = |op: i64, h: i64| -> i64 {
+            if op == op::OPEN {
+                native_set_error(h, "connection refused");
+                return -1;
+            }
+            0
+        };
+        let conn = native_facade_open("memory://x", dispatch);
+        assert_eq!(conn, -1);
+        assert!(sql_take_last_error().contains("connection refused"));
     }
 }

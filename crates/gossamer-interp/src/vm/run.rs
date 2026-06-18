@@ -1043,6 +1043,100 @@ impl Vm {
                     let recv = &mut registers[receiver as usize];
                     field_set(recv, field_name.as_str(), new_value)?;
                 }
+                Op::VecPush { receiver, value } => {
+                    let new_value = registers[value as usize].clone();
+                    match &mut registers[receiver as usize] {
+                        Value::Array(items) => Arc::make_mut(items).push(new_value),
+                        Value::IntArray(data) => {
+                            if let Value::Int(n) = new_value {
+                                Arc::make_mut(data).push(n);
+                            }
+                        }
+                        Value::FloatVec(data) => match new_value {
+                            Value::Float(f) => Arc::make_mut(data).push(f),
+                            Value::Int(n) => Arc::make_mut(data).push(n as f64),
+                            _ => {}
+                        },
+                        _ => {}
+                    }
+                }
+                Op::VecPop { dst, receiver } => {
+                    let popped = match &mut registers[receiver as usize] {
+                        Value::Array(items) => Arc::make_mut(items).pop(),
+                        Value::IntArray(data) => Arc::make_mut(data).pop().map(Value::Int),
+                        Value::FloatVec(data) => Arc::make_mut(data).pop().map(Value::Float),
+                        _ => None,
+                    };
+                    registers[dst as usize] = match popped {
+                        Some(v) => Value::variant("Some", vec![v]),
+                        None => Value::variant("None", vec![]),
+                    };
+                }
+                Op::VecInsert {
+                    receiver,
+                    index,
+                    value,
+                } => {
+                    // A negative index is a no-op, matching the
+                    // `builtin_insert` fallback; a positive index past
+                    // the end clamps to the length (an append).
+                    let idx = match &registers[index as usize] {
+                        Value::Int(n) if *n >= 0 => *n as usize,
+                        _ => continue,
+                    };
+                    let new_value = registers[value as usize].clone();
+                    match &mut registers[receiver as usize] {
+                        Value::Array(items) => {
+                            let v = Arc::make_mut(items);
+                            v.insert(idx.min(v.len()), new_value);
+                        }
+                        Value::IntArray(data) => {
+                            if let Value::Int(n) = new_value {
+                                let v = Arc::make_mut(data);
+                                v.insert(idx.min(v.len()), n);
+                            }
+                        }
+                        Value::FloatVec(data) => {
+                            let f = match new_value {
+                                Value::Float(f) => Some(f),
+                                Value::Int(n) => Some(n as f64),
+                                _ => None,
+                            };
+                            if let Some(f) = f {
+                                let v = Arc::make_mut(data);
+                                v.insert(idx.min(v.len()), f);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                Op::VecRemove { receiver, index } => {
+                    let idx = match &registers[index as usize] {
+                        Value::Int(n) if *n >= 0 => *n as usize,
+                        _ => continue,
+                    };
+                    match &mut registers[receiver as usize] {
+                        Value::Array(items) => {
+                            let v = Arc::make_mut(items);
+                            if idx < v.len() {
+                                v.remove(idx);
+                            }
+                        }
+                        Value::IntArray(data) => {
+                            let v = Arc::make_mut(data);
+                            if idx < v.len() {
+                                v.remove(idx);
+                            }
+                        }
+                        Value::FloatVec(data) => {
+                            let v = Arc::make_mut(data);
+                            if idx < v.len() {
+                                v.remove(idx);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
                 Op::TupleIndex {
                     dst,
                     receiver,
@@ -2247,18 +2341,24 @@ impl Vm {
                         Value::Int(n) => *n,
                         _ => start_val,
                     };
-                    let elems: Vec<Value> = if inclusive {
+                    // A materialised range is integer by construction, so
+                    // it lands in flat `Value::IntArray` storage (8 bytes
+                    // per element) rather than boxed `Value::Array` (16).
+                    // Every consumer (indexing, `len`, iteration, the
+                    // read-only collection helpers) handles `IntArray`
+                    // identically to a boxed array of `Value::Int`.
+                    let elems: Vec<i64> = if inclusive {
                         if end_val >= start_val {
-                            (start_val..=end_val).map(Value::Int).collect()
+                            (start_val..=end_val).collect()
                         } else {
                             Vec::new()
                         }
                     } else if end_val > start_val {
-                        (start_val..end_val).map(Value::Int).collect()
+                        (start_val..end_val).collect()
                     } else {
                         Vec::new()
                     };
-                    registers[dst as usize] = Value::Array(Arc::new(elems));
+                    registers[dst as usize] = Value::IntArray(Arc::new(elems));
                 }
                 Op::VariantIs {
                     dst,

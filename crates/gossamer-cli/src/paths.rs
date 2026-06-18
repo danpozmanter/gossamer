@@ -42,17 +42,20 @@ pub(crate) fn read_entry_source(file: &PathBuf) -> Result<String> {
     Ok(bundle_sibling_modules(&resolved, entry))
 }
 
-/// Wraps every sibling `*.gos` file in the same directory as `entry`
-/// in `mod NAME { ... }` and concatenates them onto `source`. Skips
-/// the entry file itself, files whose name starts with `_`, and
-/// any `*_test.gos` files (which the test runner picks up
-/// separately). When the entry already declares
-/// `mod NAME;` for a sibling, the external declaration is rewritten
-/// to a comment so the synthetic inline body is the sole definition.
+/// Auto-bundles a multi-file package into the entry source so the
+/// resolver sees one inline module tree. Every sibling `*.gos` file in
+/// the entry's directory becomes `mod <stem> { ... }`, and every
+/// subdirectory holding a `mod.gos` becomes `mod <dir> { ... }` whose
+/// body is that `mod.gos` plus its own files and subdirectories,
+/// recursively. The entry file itself, `_`-prefixed scratch files, and
+/// `*_test.gos` files are skipped. A `mod NAME;` declaration for a
+/// bundled module is rewritten to a comment so the synthetic inline
+/// body is the sole definition.
 ///
-/// This is the SKILL-card "sibling auto-bundle" contract: items
-/// inside `src/<name>.gos` become reachable from `src/main.gos` as
-/// `name::item` (and as a bare `item` via HIR-flatten visibility).
+/// This is the "sibling auto-bundle" contract: items inside
+/// `src/<name>.gos` are reachable from `src/main.gos` as `name::item`,
+/// items inside `src/<dir>/mod.gos` as `dir::item`, and a module
+/// reaches a sibling module via `super::sibling::item`.
 pub(crate) fn bundle_sibling_modules(entry: &Path, source: String) -> String {
     let Some(dir) = entry.parent() else {
         return source;
@@ -65,64 +68,115 @@ pub(crate) fn bundle_sibling_modules(entry: &Path, source: String) -> String {
     if !is_inside_project(dir) {
         return source;
     }
-    let entry_name = entry.file_name().and_then(|s| s.to_str()).unwrap_or("");
     let entry_stem = entry.file_stem().and_then(|s| s.to_str()).unwrap_or("");
-    let mut siblings: Vec<(String, PathBuf)> = Vec::new();
-    let Ok(read) = fs::read_dir(dir) else {
-        return source;
-    };
-    for entry_res in read {
-        let Ok(dirent) = entry_res else { continue };
-        let path = dirent.path();
-        if !path.is_file() {
-            continue;
-        }
-        let Some(file_name) = path.file_name().and_then(|s| s.to_str()) else {
-            continue;
-        };
-        if file_name == entry_name {
-            continue;
-        }
-        if path.extension().and_then(|s| s.to_str()) != Some("gos") {
-            continue;
-        }
-        let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
-            continue;
-        };
-        if stem == entry_stem {
-            continue;
-        }
-        if stem.starts_with('_') || stem.ends_with("_test") {
-            continue;
-        }
-        if !is_valid_module_ident(stem) {
-            continue;
-        }
-        siblings.push((stem.to_string(), path));
-    }
-    if siblings.is_empty() {
+    let modules = collect_package_modules(dir, Some(entry_stem));
+    if modules.is_empty() {
         return source;
     }
-    siblings.sort_by(|a, b| a.0.cmp(&b.0));
-    let mut bundled = neutralize_external_mod_decls(
-        &source,
-        &siblings.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>(),
-    );
-    for (name, path) in &siblings {
-        let Ok(body) = fs::read_to_string(path) else {
-            continue;
-        };
-        bundled.push('\n');
-        bundled.push_str("// auto-bundled sibling module: ");
-        bundled.push_str(path.to_string_lossy().as_ref());
-        bundled.push('\n');
-        bundled.push_str("mod ");
-        bundled.push_str(name);
-        bundled.push_str(" {\n");
-        bundled.push_str(&body);
-        bundled.push_str("\n}\n");
+    let names: Vec<&str> = modules.iter().map(|m| m.name.as_str()).collect();
+    let mut bundled = neutralize_external_mod_decls(&source, &names);
+    for module in &modules {
+        append_inline_module(&mut bundled, module);
     }
     bundled
+}
+
+/// One auto-bundled module: its `name`, its already-assembled `body`,
+/// and the source path it came from (for the bundle comment).
+struct BundledModule {
+    name: String,
+    body: String,
+    origin: PathBuf,
+}
+
+/// Collects the modules declared by the contents of `dir`: each
+/// sibling `*.gos` file (a leaf module) and each subdirectory holding a
+/// `mod.gos` (a nested module, assembled recursively). `skip_stem`
+/// excludes the entry file at the top level; `mod.gos` is always
+/// excluded here because it is the body of its own directory module,
+/// not a sibling. Results are sorted by name for deterministic output.
+fn collect_package_modules(dir: &Path, skip_stem: Option<&str>) -> Vec<BundledModule> {
+    let mut modules: Vec<BundledModule> = Vec::new();
+    let Ok(read) = fs::read_dir(dir) else {
+        return modules;
+    };
+    for dirent in read.flatten() {
+        let path = dirent.path();
+        if path.is_file() {
+            if path.extension().and_then(|s| s.to_str()) != Some("gos") {
+                continue;
+            }
+            let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+                continue;
+            };
+            if stem == "mod" || Some(stem) == skip_stem {
+                continue;
+            }
+            if stem.starts_with('_') || stem.ends_with("_test") {
+                continue;
+            }
+            if !is_valid_module_ident(stem) {
+                continue;
+            }
+            let Ok(body) = fs::read_to_string(&path) else {
+                continue;
+            };
+            modules.push(BundledModule {
+                name: stem.to_string(),
+                body,
+                origin: path,
+            });
+        } else if path.is_dir() {
+            // A subdirectory is a module only when it carries a
+            // `mod.gos` root - the documented `src/<dir>/mod.gos`
+            // convention. Directories without one (e.g. `target`)
+            // are ignored.
+            let mod_gos = path.join("mod.gos");
+            if !mod_gos.is_file() {
+                continue;
+            }
+            let Some(dir_name) = path.file_name().and_then(|s| s.to_str()) else {
+                continue;
+            };
+            if dir_name.starts_with('_') || !is_valid_module_ident(dir_name) {
+                continue;
+            }
+            modules.push(BundledModule {
+                name: dir_name.to_string(),
+                body: assemble_dir_module(&path),
+                origin: mod_gos,
+            });
+        }
+    }
+    modules.sort_by(|a, b| a.name.cmp(&b.name));
+    modules
+}
+
+/// Builds the body of a directory module: its `mod.gos` contents with
+/// any `mod NAME;` for a child neutralized, followed by each child file
+/// and subdirectory inlined as a nested module.
+fn assemble_dir_module(dir: &Path) -> String {
+    let root = fs::read_to_string(dir.join("mod.gos")).unwrap_or_default();
+    let children = collect_package_modules(dir, None);
+    let names: Vec<&str> = children.iter().map(|m| m.name.as_str()).collect();
+    let mut body = neutralize_external_mod_decls(&root, &names);
+    for child in &children {
+        append_inline_module(&mut body, child);
+    }
+    body
+}
+
+/// Appends `mod <name> { <body> }` (with a provenance comment) to `out`.
+fn append_inline_module(out: &mut String, module: &BundledModule) {
+    out.push('\n');
+    out.push_str("// auto-bundled module: ");
+    out.push_str(module.origin.to_string_lossy().as_ref());
+    out.push('\n');
+    out.push_str("mod ");
+    out.push_str(&module.name);
+    out.push_str(" {\n");
+    out.push_str(&module.body);
+    out.push_str("\n}\n");
 }
 
 /// Comments out any line that exactly matches `mod NAME;` for one
@@ -252,6 +306,18 @@ pub(crate) fn default_test_root() -> Result<PathBuf> {
         return Ok(root);
     }
     std::env::current_dir().context("read current directory")
+}
+
+/// Resolves an entry-point command argument to a concrete `.gos` file.
+/// `None` uses the nearest project's conventional entry; a directory
+/// argument resolves that directory's project entry (so `gos run
+/// my_project` works); a file argument is used as given.
+pub(crate) fn resolve_entry_arg(path: Option<PathBuf>) -> Result<PathBuf> {
+    match path {
+        None => default_main_entry(),
+        Some(p) if p.is_dir() => resolve_project_entry(&p),
+        Some(p) => Ok(p),
+    }
 }
 
 /// Default entry point for whole-project run/build commands.
@@ -552,5 +618,55 @@ mod tests {
         let root = scratch_project("empty", MANIFEST, &[]);
         let err = resolve_project_entry(&root).unwrap_err().to_string();
         assert!(err.contains("no .gos source"), "unexpected: {err}");
+    }
+
+    #[test]
+    fn bundle_includes_siblings_and_subdirectory_modules() {
+        let root = std::env::temp_dir().join(format!("gos-bundle-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("src").join("sub").join("deep")).unwrap();
+        fs::write(root.join("project.toml"), MANIFEST).unwrap();
+        let entry = root.join("src").join("main.gos");
+        fs::write(&entry, "mod helper;\nmod sub;\nfn main() { }\n").unwrap();
+        fs::write(root.join("src").join("helper.gos"), "pub fn h() { }\n").unwrap();
+        fs::write(root.join("src").join("sub").join("mod.gos"), "pub fn ping() { }\n").unwrap();
+        fs::write(
+            root.join("src").join("sub").join("deep").join("mod.gos"),
+            "pub fn depth() { }\n",
+        )
+        .unwrap();
+
+        let bundled = bundle_sibling_modules(&entry, fs::read_to_string(&entry).unwrap());
+        // Flat sibling -> top-level module.
+        assert!(bundled.contains("mod helper {"), "no helper module:\n{bundled}");
+        assert!(bundled.contains("pub fn h"), "no helper body:\n{bundled}");
+        // Subdirectory with mod.gos -> module, recursively including its
+        // own subdirectory module.
+        assert!(bundled.contains("mod sub {"), "no sub module:\n{bundled}");
+        assert!(bundled.contains("pub fn ping"), "no sub body:\n{bundled}");
+        assert!(bundled.contains("mod deep {"), "no nested deep module:\n{bundled}");
+        assert!(bundled.contains("pub fn depth"), "no deep body:\n{bundled}");
+        // The entry's `mod NAME;` declarations are neutralized so the
+        // synthetic inline bodies are the sole definitions.
+        assert!(
+            bundled.contains("(sibling auto-bundled)"),
+            "mod decls not neutralized:\n{bundled}"
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn loose_file_outside_project_is_not_bundled() {
+        let dir = std::env::temp_dir().join(format!("gos-loose-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let entry = dir.join("a.gos");
+        fs::write(&entry, "fn main() { }\n").unwrap();
+        fs::write(dir.join("b.gos"), "pub fn other() { }\n").unwrap();
+        // No project.toml -> a loose-file invocation must not pull in
+        // unrelated siblings.
+        let bundled = bundle_sibling_modules(&entry, "fn main() { }\n".to_string());
+        assert!(!bundled.contains("mod b"), "loose file wrongly bundled:\n{bundled}");
+        let _ = fs::remove_dir_all(&dir);
     }
 }

@@ -38,7 +38,15 @@ use std::net::{
     SocketAddr, TcpListener as StdTcpListener, TcpStream as StdTcpStream, ToSocketAddrs,
     UdpSocket as StdUdpSocket,
 };
+use std::sync::{Arc, LazyLock};
 use std::time::Duration;
+
+use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
+use rustls::pki_types::pem::PemObject;
+use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
+use rustls::{
+    ClientConnection, DigitallySignedStruct, RootCertStore, SignatureScheme, StreamOwned,
+};
 
 use crate::io::IoError;
 use crate::sched_global;
@@ -356,6 +364,212 @@ impl TcpStream {
         };
         sched_global::with_poller(|p| p.register_io(mio_handle, interest, gid))?;
         Ok(())
+    }
+}
+
+/// A TLS client stream layered over a blocking TCP socket.
+///
+/// Produced by [`TcpStream::start_tls`] once any plaintext
+/// pre-handshake (e.g. PostgreSQL's `SSLRequest`) is complete. The
+/// underlying socket is switched to blocking mode and left out of the
+/// netpoller: rustls drives the handshake and record layer
+/// synchronously, and the goroutine scheduler tolerates the parked OS
+/// thread.
+pub struct TlsStream {
+    inner: StreamOwned<ClientConnection, StdTcpStream>,
+}
+
+impl TlsStream {
+    /// Reads up to `buf.len()` decrypted bytes; `Ok(0)` is a clean close.
+    pub fn read(&mut self, buf: &mut [u8]) -> Result<usize, IoError> {
+        self.inner
+            .read(buf)
+            .map_err(|e| IoError::from_std(e, "TlsStream::read"))
+    }
+
+    /// Encrypts and writes `buf` in full, flushing the record to the
+    /// peer before returning.
+    pub fn write_all(&mut self, buf: &[u8]) -> Result<(), IoError> {
+        self.inner
+            .write_all(buf)
+            .map_err(|e| IoError::from_std(e, "TlsStream::write"))?;
+        self.inner
+            .flush()
+            .map_err(|e| IoError::from_std(e, "TlsStream::flush"))
+    }
+}
+
+impl TcpStream {
+    /// Upgrades this connected stream to a TLS client session for
+    /// `host`, consuming the plaintext stream. Verification uses the
+    /// webpki root store - the same trust anchors as the HTTP client.
+    /// The TLS equivalent of PostgreSQL `sslmode=verify-full` against a
+    /// publicly-trusted CA.
+    pub fn start_tls(self, host: &str) -> Result<TlsStream, IoError> {
+        self.upgrade_tls(host, tls_client_config())
+    }
+
+    /// Upgrades this connected stream to a TLS client session for
+    /// `host` without authenticating the peer certificate. The
+    /// connection is encrypted but the server is not verified - the TLS
+    /// equivalent of PostgreSQL `sslmode=require`. Prefer
+    /// [`TcpStream::start_tls`] or [`TcpStream::start_tls_ca`] whenever
+    /// the peer's trust anchor is known.
+    pub fn start_tls_insecure(self, host: &str) -> Result<TlsStream, IoError> {
+        self.upgrade_tls(host, tls_client_config_insecure())
+    }
+
+    /// Upgrades this connected stream to a TLS client session for
+    /// `host`, verifying the server certificate chain and hostname
+    /// against the PEM-encoded CA bundle in `ca_pem` instead of the
+    /// bundled public roots - the TLS equivalent of PostgreSQL
+    /// `sslmode=verify-full` against a private CA.
+    pub fn start_tls_ca(self, host: &str, ca_pem: &str) -> Result<TlsStream, IoError> {
+        let config = tls_client_config_ca(ca_pem.as_bytes())?;
+        self.upgrade_tls(host, config)
+    }
+
+    /// Shared upgrade path: switch the socket to blocking, resolve the
+    /// SNI hostname, and hand the stream to a rustls client session
+    /// built from `config`.
+    fn upgrade_tls(
+        self,
+        host: &str,
+        config: Arc<rustls::ClientConfig>,
+    ) -> Result<TlsStream, IoError> {
+        self.inner
+            .set_nonblocking(false)
+            .map_err(|e| IoError::from_std(e, "start_tls: set_blocking"))?;
+        let name = ServerName::try_from(host.to_string()).map_err(|_| {
+            IoError::from_std(
+                io::Error::other(format!("invalid server name `{host}`")),
+                "start_tls",
+            )
+        })?;
+        let conn = ClientConnection::new(config, name)
+            .map_err(|e| IoError::from_std(io::Error::other(format!("{e}")), "start_tls"))?;
+        Ok(TlsStream {
+            inner: StreamOwned::new(conn, self.inner),
+        })
+    }
+}
+
+/// Shared TLS client config (ring provider, webpki roots, verification
+/// always on) - identical trust anchors to the compiled-tier
+/// `gos_rt_tcp_start_tls`, so an upgraded stream validates the same on
+/// every execution tier.
+fn tls_client_config() -> Arc<rustls::ClientConfig> {
+    static CONFIG: LazyLock<Arc<rustls::ClientConfig>> = LazyLock::new(|| {
+        let mut roots = RootCertStore::empty();
+        roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+        let provider = Arc::new(rustls::crypto::ring::default_provider());
+        let config = rustls::ClientConfig::builder_with_provider(provider)
+            .with_safe_default_protocol_versions()
+            .expect("ring provider supports default protocol versions")
+            .with_root_certificates(roots)
+            .with_no_client_auth();
+        Arc::new(config)
+    });
+    CONFIG.clone()
+}
+
+/// Client config that accepts any server certificate (PostgreSQL
+/// `sslmode=require`). Built once and shared; verification is delegated
+/// to [`NoCertVerify`], which still validates the handshake signature
+/// against the presented key but skips chain and hostname checks.
+fn tls_client_config_insecure() -> Arc<rustls::ClientConfig> {
+    static CONFIG: LazyLock<Arc<rustls::ClientConfig>> = LazyLock::new(|| {
+        let provider = Arc::new(rustls::crypto::ring::default_provider());
+        let config = rustls::ClientConfig::builder_with_provider(provider.clone())
+            .with_safe_default_protocol_versions()
+            .expect("ring provider supports default protocol versions")
+            .dangerous()
+            .with_custom_certificate_verifier(Arc::new(NoCertVerify(provider)))
+            .with_no_client_auth();
+        Arc::new(config)
+    });
+    CONFIG.clone()
+}
+
+/// Client config that validates the server certificate chain and
+/// hostname against the CA bundle in `ca_pem` rather than the bundled
+/// public roots (PostgreSQL `sslmode=verify-full` against a private CA).
+fn tls_client_config_ca(ca_pem: &[u8]) -> Result<Arc<rustls::ClientConfig>, IoError> {
+    let mut roots = RootCertStore::empty();
+    let mut added = 0usize;
+    for cert in CertificateDer::pem_slice_iter(ca_pem) {
+        let cert = cert.map_err(|e| {
+            IoError::from_std(io::Error::other(format!("{e}")), "start_tls_ca: parse CA")
+        })?;
+        roots.add(cert).map_err(|e| {
+            IoError::from_std(io::Error::other(format!("{e}")), "start_tls_ca: add CA")
+        })?;
+        added += 1;
+    }
+    if added == 0 {
+        return Err(IoError::from_std(
+            io::Error::other("no certificates in CA PEM"),
+            "start_tls_ca",
+        ));
+    }
+    let provider = Arc::new(rustls::crypto::ring::default_provider());
+    let config = rustls::ClientConfig::builder_with_provider(provider)
+        .with_safe_default_protocol_versions()
+        .expect("ring provider supports default protocol versions")
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+    Ok(Arc::new(config))
+}
+
+/// Server-certificate verifier that accepts any presented chain. The
+/// handshake signature is still checked against the presented key via
+/// the crypto provider; only the chain-to-root and hostname checks are
+/// skipped. Backs [`TcpStream::start_tls_insecure`].
+#[derive(Debug)]
+struct NoCertVerify(Arc<rustls::crypto::CryptoProvider>);
+
+impl ServerCertVerifier for NoCertVerify {
+    fn verify_server_cert(
+        &self,
+        _end_entity: &CertificateDer<'_>,
+        _intermediates: &[CertificateDer<'_>],
+        _server_name: &ServerName<'_>,
+        _ocsp_response: &[u8],
+        _now: UnixTime,
+    ) -> Result<ServerCertVerified, rustls::Error> {
+        Ok(ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls12_signature(
+            message,
+            cert,
+            dss,
+            &self.0.signature_verification_algorithms,
+        )
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls13_signature(
+            message,
+            cert,
+            dss,
+            &self.0.signature_verification_algorithms,
+        )
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+        self.0.signature_verification_algorithms.supported_schemes()
     }
 }
 

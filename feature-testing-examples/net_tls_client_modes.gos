@@ -1,0 +1,97 @@
+// Cross-tier fixture for the `TcpStream::start_tls_*` verification
+// modes used by pure-Gossamer TLS clients (e.g. a PostgreSQL driver).
+//
+// Phase 1 exercises `start_tls_ca`: a CA bundle with no certificates is
+// rejected before any socket I/O, identically on every tier (the rustls
+// client config cannot be built without a trust anchor).
+//
+// Phase 2 exercises `start_tls_insecure`: skipping certificate
+// verification still requires a real TLS peer, so an upgrade against a
+// plaintext loopback server that replies with non-TLS bytes is rejected
+// at the handshake. This proves the insecure path is wired end to end
+// (config built, handshake driven, Result marshalled) on the bytecode
+// VM, the Cranelift JIT, and the LLVM AOT tier.
+//
+// Both phases bind 127.0.0.1:0 (ephemeral ports) and report a single
+// deterministic line, so this runs as a plain stdout-parity fixture.
+
+use std::net
+use std::sync::channel
+
+const REJECTED: i64 = 1
+const UNEXPECTED_OK: i64 = 0
+const CONNECT_FAILED: i64 = -1
+
+fn insecure_client(addr: String, tx: Sender<i64>) {
+    let stream = match net::TcpStream::connect(&addr) {
+        Ok(s) => s,
+        Err(_) => { tx.send(CONNECT_FAILED); return }
+    }
+    let tls = match stream.start_tls_insecure("localhost") {
+        Ok(s) => s,
+        Err(_) => { tx.send(REJECTED); return }
+    }
+    match tls.read_to_string() {
+        Ok(_) => tx.send(UNEXPECTED_OK),
+        Err(_) => tx.send(REJECTED),
+    }
+}
+
+fn phase_ca() {
+    let listener = match net::TcpListener::bind("127.0.0.1:0") {
+        Ok(l) => l,
+        Err(e) => { println!("ca bind failed: {}", e); return }
+    }
+    let addr = match listener.local_addr() {
+        Ok(a) => a,
+        Err(e) => { println!("ca addr failed: {}", e); return }
+    }
+    // A connect into the listen backlog succeeds without an explicit
+    // accept; start_tls_ca rejects the empty CA bundle before any I/O.
+    let probe = match net::TcpStream::connect(&addr) {
+        Ok(s) => s,
+        Err(e) => { println!("ca connect failed: {}", e); return }
+    }
+    match probe.start_tls_ca("localhost", &"not a certificate") {
+        Ok(_) => println!("ca UNEXPECTEDLY accepted empty bundle"),
+        Err(_) => println!("ca rejected empty bundle"),
+    }
+    let _ = listener.close()
+}
+
+fn phase_insecure() {
+    let listener = match net::TcpListener::bind("127.0.0.1:0") {
+        Ok(l) => l,
+        Err(e) => { println!("insecure bind failed: {}", e); return }
+    }
+    let addr = match listener.local_addr() {
+        Ok(a) => a,
+        Err(e) => { println!("insecure addr failed: {}", e); return }
+    }
+    let (tx, rx) = channel()
+    go insecure_client(addr, tx)
+    let (stream, _peer) = match listener.accept() {
+        Ok(p) => p,
+        Err(e) => { println!("insecure accept failed: {}", e); return }
+    }
+    let _ = stream.read(512)
+    let _ = stream.write([1, 2, 3, 4, 5])
+    let _ = stream.close()
+    let _ = listener.close()
+    let code = match rx.recv() {
+        Some(c) => c,
+        None => { println!("no insecure result"); return }
+    }
+    if code == REJECTED {
+        println!("insecure rejected junk peer")
+    } else if code == UNEXPECTED_OK {
+        println!("insecure UNEXPECTEDLY handshook junk peer")
+    } else {
+        println!("insecure connect failed")
+    }
+}
+
+fn main() {
+    phase_ca()
+    phase_insecure()
+}

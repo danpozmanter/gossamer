@@ -1,0 +1,18 @@
+[package]
+name = "gossamer-ws"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "RFC 6455 WebSocket framing engine for the Gossamer language."
+
+[lints]
+workspace = true
+
+[dependencies]
+thiserror = { workspace = true }
+
+[dev-dependencies]
+parking_lot = { workspace = true }

@@ -1,0 +1,63 @@
+// Cross-tier check that the HTTP server emits the RFC 9110 origin
+// headers `Date` and `Server` on every tier. The interp server has
+// always added them; the compiled server now matches. The Date value
+// is wall-clock and not asserted - only its presence is, so the run is
+// deterministic. Self-terminating via `process::exit`; binds a fixed
+// loopback port, serialized under SERVER_PORT_LOCK by
+// `http_server_headers_parity_across_tiers`.
+
+use std::http
+use std::process
+use std::time
+
+const ADDR: String = "127.0.0.1:23962"
+const URL: String = "http://127.0.0.1:23962/"
+
+struct App { }
+
+impl http::Handler for App {
+    fn serve(&self, _r: http::Request) -> http::Response {
+        http::Response::text(200, "hi")
+    }
+}
+
+fn serve() {
+    if let Err(e) = http::serve(&ADDR, App { }) {
+        eprintln!("serve failed: {e}")
+    }
+}
+
+fn await_ready() {
+    let mut tries = 0
+    while tries < 400 {
+        if let Ok(_) = http::get(&URL, []) {
+            return
+        }
+        time::sleep(25)
+        tries += 1
+    }
+}
+
+fn main() {
+    go serve()
+    await_ready()
+    match http::get(&URL, []) {
+        Ok(r) => {
+            let mut has_server = false
+            let mut has_date = false
+            for (k, _v) in r.headers {
+                let lower = k.to_lower()
+                if lower == "server" {
+                    has_server = true
+                }
+                if lower == "date" {
+                    has_date = true
+                }
+            }
+            println!("server-header: {}", has_server)
+            println!("date-header: {}", has_date)
+        }
+        Err(e) => println!("get error: {}", e),
+    }
+    process::exit(0)
+}

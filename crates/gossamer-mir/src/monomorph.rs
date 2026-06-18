@@ -71,6 +71,18 @@ pub fn monomorphise(bodies: &mut Vec<Body>, tcx: &mut TyCtxt) {
                 if substs.is_empty() {
                     continue;
                 }
+                // A substitution made up only of const arguments needs no
+                // specialised copy: a const generic array parameter is lowered
+                // to a runtime-length sequence, so one body serves every value
+                // of the const. The recorded const still keys this call's
+                // `Substs` for typing; only the code copy is unnecessary.
+                if substs
+                    .as_slice()
+                    .iter()
+                    .all(|a| matches!(a, GenericArg::Const(_)))
+                {
+                    continue;
+                }
                 let name = mangled_name(*def, substs);
                 if !emitted.insert(name.clone()) {
                     continue;

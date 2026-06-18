@@ -1230,6 +1230,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_http2_bind_and_run_h2c as *const u8,
         ),
         (
+            "gos_rt_http3_serve",
+            crate::c_abi::gos_rt_http3_serve as *const u8,
+        ),
+        (
             "gos_rt_http_bearer_ok",
             crate::c_abi::gos_rt_http_bearer_ok as *const u8,
         ),
@@ -1472,6 +1476,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
         (
             "gos_rt_http_serve",
             crate::c_abi::gos_rt_http_serve as *const u8,
+        ),
+        (
+            "gos_rt_http_serve_tls",
+            crate::c_abi::gos_rt_http_serve_tls as *const u8,
         ),
         (
             "gos_rt_http_session_sign",
@@ -3398,6 +3406,126 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_sql_migrate_up as *const u8,
         ),
         (
+            "gos_rt_sql_register_native",
+            crate::c_abi::gos_rt_sql_register_native as *const u8,
+        ),
+        (
+            "gos_rt_sql_native_url",
+            crate::c_abi::gos_rt_sql_native_url as *const u8,
+        ),
+        (
+            "gos_rt_sql_native_sql",
+            crate::c_abi::gos_rt_sql_native_sql as *const u8,
+        ),
+        (
+            "gos_rt_sql_native_parent",
+            crate::c_abi::gos_rt_sql_native_parent as *const u8,
+        ),
+        (
+            "gos_rt_sql_native_out_handle",
+            crate::c_abi::gos_rt_sql_native_out_handle as *const u8,
+        ),
+        (
+            "gos_rt_sql_native_iso",
+            crate::c_abi::gos_rt_sql_native_iso as *const u8,
+        ),
+        (
+            "gos_rt_sql_native_timeout",
+            crate::c_abi::gos_rt_sql_native_timeout as *const u8,
+        ),
+        (
+            "gos_rt_sql_native_channel",
+            crate::c_abi::gos_rt_sql_native_channel as *const u8,
+        ),
+        (
+            "gos_rt_sql_native_param_count",
+            crate::c_abi::gos_rt_sql_native_param_count as *const u8,
+        ),
+        (
+            "gos_rt_sql_native_param",
+            crate::c_abi::gos_rt_sql_native_param as *const u8,
+        ),
+        (
+            "gos_rt_sql_native_data",
+            crate::c_abi::gos_rt_sql_native_data as *const u8,
+        ),
+        (
+            "gos_rt_sql_native_push_column",
+            crate::c_abi::gos_rt_sql_native_push_column as *const u8,
+        ),
+        (
+            "gos_rt_sql_native_push_value",
+            crate::c_abi::gos_rt_sql_native_push_value as *const u8,
+        ),
+        (
+            "gos_rt_sql_native_row_ready",
+            crate::c_abi::gos_rt_sql_native_row_ready as *const u8,
+        ),
+        (
+            "gos_rt_sql_native_set_error",
+            crate::c_abi::gos_rt_sql_native_set_error as *const u8,
+        ),
+        (
+            "gos_rt_sql_native_emit_bytes",
+            crate::c_abi::gos_rt_sql_native_emit_bytes as *const u8,
+        ),
+        (
+            "gos_rt_sql_native_set_notification",
+            crate::c_abi::gos_rt_sql_native_set_notification as *const u8,
+        ),
+        (
+            "gos_rt_sql_native_set_handle",
+            crate::c_abi::gos_rt_sql_native_set_handle as *const u8,
+        ),
+        (
+            "gos_rt_sql_native_handle",
+            crate::c_abi::gos_rt_sql_native_handle as *const u8,
+        ),
+        (
+            "gos_rt_sql_native_value_null",
+            crate::c_abi::gos_rt_sql_native_value_null as *const u8,
+        ),
+        (
+            "gos_rt_sql_native_value_bool",
+            crate::c_abi::gos_rt_sql_native_value_bool as *const u8,
+        ),
+        (
+            "gos_rt_sql_native_value_int",
+            crate::c_abi::gos_rt_sql_native_value_int as *const u8,
+        ),
+        (
+            "gos_rt_sql_native_value_float",
+            crate::c_abi::gos_rt_sql_native_value_float as *const u8,
+        ),
+        (
+            "gos_rt_sql_native_value_text",
+            crate::c_abi::gos_rt_sql_native_value_text as *const u8,
+        ),
+        (
+            "gos_rt_sql_native_value_blob",
+            crate::c_abi::gos_rt_sql_native_value_blob as *const u8,
+        ),
+        (
+            "gos_rt_sql_native_value_kind",
+            crate::c_abi::gos_rt_sql_native_value_kind as *const u8,
+        ),
+        (
+            "gos_rt_sql_native_value_int_of",
+            crate::c_abi::gos_rt_sql_native_value_int_of as *const u8,
+        ),
+        (
+            "gos_rt_sql_native_value_float_of",
+            crate::c_abi::gos_rt_sql_native_value_float_of as *const u8,
+        ),
+        (
+            "gos_rt_sql_native_value_text_of",
+            crate::c_abi::gos_rt_sql_native_value_text_of as *const u8,
+        ),
+        (
+            "gos_rt_sql_native_value_blob_of",
+            crate::c_abi::gos_rt_sql_native_value_blob_of as *const u8,
+        ),
+        (
             "gos_rt_sql_notification_channel",
             crate::c_abi::gos_rt_sql_notification_channel as *const u8,
         ),
@@ -4053,6 +4181,18 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_tcp_listener_local_addr as *const u8,
         ),
         (
+            "gos_rt_tcp_start_tls",
+            crate::c_abi::gos_rt_tcp_start_tls as *const u8,
+        ),
+        (
+            "gos_rt_tcp_start_tls_ca",
+            crate::c_abi::gos_rt_tcp_start_tls_ca as *const u8,
+        ),
+        (
+            "gos_rt_tcp_start_tls_insecure",
+            crate::c_abi::gos_rt_tcp_start_tls_insecure as *const u8,
+        ),
+        (
             "gos_rt_tcp_stream_close",
             crate::c_abi::gos_rt_tcp_stream_close as *const u8,
         ),
@@ -4662,12 +4802,33 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_ws_accept_key as *const u8,
         ),
         (
+            "gos_rt_ws_close",
+            crate::c_abi::gos_rt_ws_close as *const u8,
+        ),
+        (
             "gos_rt_ws_frame_text",
             crate::c_abi::gos_rt_ws_frame_text as *const u8,
         ),
         (
             "gos_rt_ws_is_upgrade",
             crate::c_abi::gos_rt_ws_is_upgrade as *const u8,
+        ),
+        ("gos_rt_ws_recv", crate::c_abi::gos_rt_ws_recv as *const u8),
+        (
+            "gos_rt_ws_send_binary",
+            crate::c_abi::gos_rt_ws_send_binary as *const u8,
+        ),
+        (
+            "gos_rt_ws_send_text",
+            crate::c_abi::gos_rt_ws_send_text as *const u8,
+        ),
+        (
+            "gos_rt_ws_serve",
+            crate::c_abi::gos_rt_ws_serve as *const u8,
+        ),
+        (
+            "gos_rt_ws_serve_connect",
+            crate::c_abi::gos_rt_ws_serve_connect as *const u8,
         ),
         (
             "gos_rt_x509_parse_pem_raw",

@@ -1546,15 +1546,25 @@ impl<'a> Builder<'a> {
         use gossamer_types::TyKind;
         let bool_ty = self.tcx.bool_ty();
         let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
-        let elem_ty = {
+        let (elem_ty, fixed_array) = {
             let mut base = self.locals[scrutinee.0 as usize].ty;
             while let TyKind::Ref { inner, .. } = self.tcx.kind_of(base) {
                 base = *inner;
             }
-            match self.tcx.kind_of(base) {
-                TyKind::Vec(e) | TyKind::Slice(e) | TyKind::Array { elem: e, .. } => *e,
-                _ => i64_ty,
+            match self.tcx.kind_of(base).clone() {
+                TyKind::Array { elem, len } => (elem, Some(len)),
+                TyKind::Vec(e) | TyKind::Slice(e) => (e, None),
+                _ => (i64_ty, None),
             }
+        };
+        // A fixed-size `[T; N]` scrutinee is a flat stack aggregate, not a
+        // GosVec. Materialize it as a heap vector so the length / element /
+        // slice helpers below read a real header instead of treating the
+        // first stack slot as a vec length and a bogus capacity.
+        let scrutinee = if let Some(len) = fixed_array {
+            self.coerce_array_to_vec(scrutinee, elem_ty, len, span)
+        } else {
+            scrutinee
         };
         // len = gos_rt_vec_len(scrutinee)
         let len_local = self.fresh(i64_ty);
@@ -1845,6 +1855,238 @@ impl<'a> Builder<'a> {
                 span,
             );
         }
+    }
+
+    /// Bind the locals introduced by an irrefutable struct or tuple-struct
+    /// `let` pattern. Each field is read through a `Projection::Field` of the
+    /// destructured aggregate and bound to a fresh local; nested patterns
+    /// recurse, so `let Nested { p: Point { x, y }, label } = n` binds `x`,
+    /// `y`, and `label` to the projected field values.
+    pub(crate) fn bind_aggregate_let_pattern(
+        &mut self,
+        aggregate: Local,
+        pattern: &HirPat,
+        span: Span,
+    ) {
+        match &pattern.kind {
+            HirPatKind::Binding { name, .. } => {
+                self.bind_local(name.name.as_str(), aggregate);
+            }
+            HirPatKind::At { name, sub, .. } => {
+                self.bind_local(name.name.as_str(), aggregate);
+                self.bind_aggregate_let_pattern(aggregate, sub, span);
+            }
+            HirPatKind::Ref { inner, .. } => {
+                self.bind_aggregate_let_pattern(aggregate, inner, span);
+            }
+            HirPatKind::Tuple(sub_patterns) => {
+                for (idx, sub) in sub_patterns.iter().enumerate() {
+                    self.bind_let_field(aggregate, idx, sub, span);
+                }
+            }
+            HirPatKind::Variant { fields, .. } => {
+                // Tuple-struct payload: positional fields in declaration order.
+                for (idx, sub) in fields.iter().enumerate() {
+                    self.bind_let_field(aggregate, idx, sub, span);
+                }
+            }
+            HirPatKind::Struct { name, fields, .. } => {
+                let order = self.structs.get(&name.name).cloned();
+                for f in fields {
+                    let Some(idx) = order
+                        .as_ref()
+                        .and_then(|o| o.iter().position(|n| n == &f.name.name))
+                    else {
+                        continue;
+                    };
+                    match &f.pattern {
+                        Some(sub) => self.bind_let_field(aggregate, idx, sub, span),
+                        None => {
+                            // Shorthand `{ x }` binds the field name to its value.
+                            let field_ty = self
+                                .aggregate_field_ty(aggregate, idx)
+                                .unwrap_or_else(|| self.tcx.int_ty(gossamer_types::IntTy::I64));
+                            let elem = self.push_local(
+                                field_ty,
+                                Some(Ident::new(f.name.name.as_str())),
+                                false,
+                            );
+                            self.emit_field_copy(aggregate, idx, elem, span);
+                            self.bind_local(f.name.name.as_str(), elem);
+                        }
+                    }
+                }
+            }
+            HirPatKind::Or(branches) => {
+                self.bind_or_let_pattern(aggregate, branches, span);
+            }
+            HirPatKind::Wildcard
+            | HirPatKind::Rest
+            | HirPatKind::Literal(_)
+            | HirPatKind::Range { .. }
+            | HirPatKind::Slice { .. } => {}
+        }
+    }
+
+    /// Bind the locals introduced by an irrefutable `let` or-pattern
+    /// `(A | B | ...)`. Every alternative binds the same set of names (the
+    /// language requires consistent bindings), so each alternative's
+    /// discriminant predicate selects, at runtime, the projections that
+    /// feed one shared result local per name. The matching alternative
+    /// writes the bound name's value into that result local; control then
+    /// merges and the name resolves to it for the rest of the scope.
+    pub(crate) fn bind_or_let_pattern(
+        &mut self,
+        scrutinee: Local,
+        branches: &[HirPat],
+        span: Span,
+    ) {
+        let mut names: Vec<String> = Vec::new();
+        if let Some(first) = branches.first() {
+            collect_pattern_binding_names(first, &mut names);
+        }
+        let mut results: HashMap<String, Local> = HashMap::new();
+        let merge = self.new_block(span);
+        for branch in branches {
+            let matched = self.new_block(span);
+            let next = self.new_block(span);
+            self.push_scope();
+            // Defer Result/Option payload extraction to the matched block so
+            // a non-matching alternative never dereferences the wrong payload.
+            self.payload_defer_block = Some(matched);
+            let Some(pred) = self.lower_pattern_predicate(scrutinee, branch, span) else {
+                let kind = pattern_kind_label(branch);
+                panic!(
+                    "MIR lower: irrefutable let or-pattern has unsupported alternative \
+                     shape ({kind}); add explicit destructuring for it"
+                );
+            };
+            self.payload_defer_block = None;
+            self.terminate(Terminator::SwitchInt {
+                discriminant: Operand::Copy(Place::local(pred)),
+                arms: vec![(0, next)],
+                default: matched,
+            });
+            self.set_current(matched);
+            for name in &names {
+                let Some(src) = self.lookup_local(name) else {
+                    continue;
+                };
+                let src_ty = self.locals[src.0 as usize].ty;
+                let dst = match results.get(name).copied() {
+                    Some(existing) => {
+                        let existing_ty = self.locals[existing.0 as usize].ty;
+                        let existing_loose = matches!(
+                            self.tcx.kind_of(existing_ty),
+                            gossamer_types::TyKind::Var(_)
+                                | gossamer_types::TyKind::Error
+                                | gossamer_types::TyKind::Never
+                        );
+                        let src_concrete = !matches!(
+                            self.tcx.kind_of(src_ty),
+                            gossamer_types::TyKind::Var(_)
+                                | gossamer_types::TyKind::Error
+                                | gossamer_types::TyKind::Never
+                        );
+                        if existing_loose && src_concrete {
+                            self.locals[existing.0 as usize].ty = src_ty;
+                        }
+                        existing
+                    }
+                    None => {
+                        let l = self.push_local(src_ty, Some(Ident::new(name.as_str())), false);
+                        results.insert(name.clone(), l);
+                        l
+                    }
+                };
+                if let Some(sn) = self.local_struct.get(&src).cloned() {
+                    self.local_struct.insert(dst, sn);
+                }
+                if let Some(rk) = self.local_runtime_kind.get(&src).copied() {
+                    self.local_runtime_kind.insert(dst, rk);
+                }
+                if let Some(en) = self.local_elem_struct.get(&src).cloned() {
+                    self.local_elem_struct.insert(dst, en);
+                }
+                self.emit_assign(
+                    Place::local(dst),
+                    Rvalue::Use(Operand::Copy(Place::local(src))),
+                    span,
+                );
+            }
+            self.terminate(Terminator::Goto { target: merge });
+            self.pop_scope();
+            self.set_current(next);
+        }
+        // An exhaustive or-pattern always matches one alternative; the
+        // fall-through past the last alternative is unreachable but kept
+        // wired so the CFG has no dangling block.
+        self.terminate(Terminator::Goto { target: merge });
+        self.set_current(merge);
+        for (name, local) in &results {
+            self.bind_local(name, *local);
+        }
+    }
+
+    /// Project field `idx` of `aggregate` into a fresh local, then recurse
+    /// into `sub` so nested destructure binds its leaf names.
+    fn bind_let_field(&mut self, aggregate: Local, idx: usize, sub: &HirPat, span: Span) {
+        if matches!(sub.kind, HirPatKind::Wildcard | HirPatKind::Rest) {
+            return;
+        }
+        let field_ty = self.let_field_ty(aggregate, idx, sub);
+        let elem = self.push_local(field_ty, param_name(sub), param_mutable(sub));
+        self.emit_field_copy(aggregate, idx, elem, span);
+        self.bind_aggregate_let_pattern(elem, sub, span);
+    }
+
+    /// Type for a destructured field local. The declared aggregate field type
+    /// is preferred (it carries the nested Adt / tuple type that lets the
+    /// recursion project further); the sub-pattern's own type is the fallback.
+    fn let_field_ty(&mut self, aggregate: Local, idx: usize, sub: &HirPat) -> Ty {
+        use gossamer_types::TyKind;
+        let concrete = |t: Ty| !matches!(self.tcx.kind_of(t), TyKind::Var(_) | TyKind::Error);
+        if let Some(ft) = self.aggregate_field_ty(aggregate, idx)
+            && concrete(ft)
+        {
+            return ft;
+        }
+        if !matches!(
+            self.tcx.kind_of(sub.ty),
+            TyKind::Var(_) | TyKind::Error | TyKind::Never
+        ) {
+            return sub.ty;
+        }
+        self.tcx.int_ty(gossamer_types::IntTy::I64)
+    }
+
+    /// Declared type of field `idx` of the aggregate held by `local`, looking
+    /// through references. `None` when the local is not a struct / tuple.
+    fn aggregate_field_ty(&self, local: Local, idx: usize) -> Option<Ty> {
+        use gossamer_types::TyKind;
+        let mut ty = self.locals[local.0 as usize].ty;
+        while let TyKind::Ref { inner, .. } = self.tcx.kind_of(ty) {
+            ty = *inner;
+        }
+        match self.tcx.kind_of(ty) {
+            TyKind::Adt { def, .. } => self
+                .tcx
+                .struct_field_tys(*def)
+                .and_then(|tys| tys.get(idx).copied()),
+            TyKind::Tuple(elems) => elems.get(idx).copied(),
+            _ => None,
+        }
+    }
+
+    /// Emit `dest = aggregate.idx` reading the field by projection.
+    fn emit_field_copy(&mut self, aggregate: Local, idx: usize, dest: Local, span: Span) {
+        let place = Place {
+            local: aggregate,
+            projection: vec![crate::ir::Projection::Field(
+                u32::try_from(idx).expect("field projection overflow"),
+            )],
+        };
+        self.emit_assign(Place::local(dest), Rvalue::Use(Operand::Copy(place)), span);
     }
 
     /// Index into `loop_stack` of the loop a `break`/`continue` targets:
@@ -2245,7 +2487,7 @@ impl<'a> Builder<'a> {
                                 break;
                             }
                             TyKind::Array { len, elem } => {
-                                if let Ok(l) = i64::try_from(*len) {
+                                if let Ok(l) = i64::try_from(len.to_usize()) {
                                     found_len = Some(l);
                                     found_elem = Some(*elem);
                                 }
@@ -2496,7 +2738,7 @@ impl<'a> Builder<'a> {
                 let len_opt = loop {
                     match self.tcx.kind_of(cur) {
                         TyKind::Array { len, .. } => {
-                            break i64::try_from(*len).ok();
+                            break i64::try_from(len.to_usize()).ok();
                         }
                         TyKind::Vec(elem) | TyKind::Slice(elem) => {
                             let elem = *elem;

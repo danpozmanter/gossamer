@@ -1372,6 +1372,25 @@ impl<'a> Lowerer<'a> {
         // The GEP indexes with i64; widen a narrow-typed index so the
         // emitted `getelementptr ... i64 {idx}` doesn't reference an i32.
         let i_v = self.widen_to_i64(&args[1], &i_v);
+        // Bound the read by the string's byte length so any index outside
+        // `[0, len)` yields 0 without dereferencing past the content.
+        // `gos_rt_str_len` is O(1) for header-carrying strings and is
+        // null-safe (returns 0 for a null pointer).
+        declare_rt(&mut self.runtime_refs, "gos_rt_str_len");
+        let len = self.fresh();
+        writeln!(self.out, "  {len} = call i64 @gos_rt_str_len(ptr {s_v})").unwrap();
+        let ge0 = self.fresh();
+        writeln!(self.out, "  {ge0} = icmp sge i64 {i_v}, 0").unwrap();
+        let ltlen = self.fresh();
+        writeln!(self.out, "  {ltlen} = icmp slt i64 {i_v}, {len}").unwrap();
+        let inb = self.fresh();
+        writeln!(self.out, "  {inb} = and i1 {ge0}, {ltlen}").unwrap();
+        let read = self.fresh_label("byte_in");
+        let oob = self.fresh_label("byte_oob");
+        let done = self.fresh_label("byte_done");
+        writeln!(self.out, "  br i1 {inb}, label %{read}, label %{oob}").unwrap();
+
+        writeln!(self.out, "{read}:").unwrap();
         let addr = self.fresh();
         writeln!(
             self.out,
@@ -1382,9 +1401,21 @@ impl<'a> Lowerer<'a> {
         writeln!(self.out, "  {byte} = load i8, ptr {addr}").unwrap();
         let ext = self.fresh();
         writeln!(self.out, "  {ext} = zext i8 {byte} to i64").unwrap();
+        writeln!(self.out, "  br label %{done}").unwrap();
+
+        writeln!(self.out, "{oob}:").unwrap();
+        writeln!(self.out, "  br label %{done}").unwrap();
+
+        writeln!(self.out, "{done}:").unwrap();
+        let res = self.fresh();
+        writeln!(
+            self.out,
+            "  {res} = phi i64 [ {ext}, %{read} ], [ 0, %{oob} ]"
+        )
+        .unwrap();
         if !is_unit(self.tcx, self.body.local_ty(destination.local)) {
             let slot = local_slot(destination.local);
-            writeln!(self.out, "  store i64 {ext}, ptr {slot}").unwrap();
+            writeln!(self.out, "  store i64 {res}, ptr {slot}").unwrap();
         }
         emit_terminator_branch(&mut self.out, target);
         Ok(())

@@ -430,18 +430,20 @@ pub unsafe extern "C" fn gos_rt_str_chars(s: *const c_char) -> *mut GosVec {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_str_byte_at(s: *const c_char, i: i64) -> i64 {
     ffi_entry!(-1, {
+        // The read is bounded by the string's byte length so any index
+        // outside `[0, len)` returns 0 without touching memory past the
+        // content. `gos_rt_str_len` is O(1) for header-carrying strings
+        // (the length is stored at `ptr[-5]`) and falls back to `strlen`
+        // for bare c-strings.
         if s.is_null() || i < 0 {
             return 0;
         }
-        // Strings are null-terminated and treated as immutable
-        // bytes. The previous implementation called
-        // `CStr::from_ptr(s).to_bytes()` which walks the string with
-        // `strlen` on every access - fasta-style hot loops doing
-        // `s[idx % len]` paid O(strlen) per byte. The user's loop is
-        // expected to keep `idx` in range (e.g. `% alu_len` against
-        // a precomputed `alu_len = alu.len()`); reading past the
-        // null terminator returns zero, which is what callers expect
-        // anyway.
+        let len = unsafe { gos_rt_str_len(s) };
+        if i >= len {
+            return 0;
+        }
+        // SAFETY: `i` lies in `[0, len)`, so the byte at offset `i` is
+        // within the string's content bytes.
         let byte = unsafe { *s.cast::<u8>().add(i as usize) };
         i64::from(byte)
     })

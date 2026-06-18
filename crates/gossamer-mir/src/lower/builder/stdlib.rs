@@ -329,33 +329,7 @@ impl<'a> Builder<'a> {
     ) -> Option<Local> {
         let addr_local = self.lower_expr(addr_expr)?;
         let handler_local = self.lower_expr(handler_expr)?;
-        // If the handler is a stateful runtime type (Router /
-        // FileServer / Proxy), its `serve` method lives in
-        // gossamer-runtime, not in user code. Pick the matching
-        // gos_rt_* runtime symbol; otherwise fall back to the
-        // user-defined `{T}::serve` lookup.
-        let handler_runtime_kind = self.local_runtime_kind.get(&handler_local).copied();
-        let serve_fn_name = match handler_runtime_kind {
-            Some("http::Router") => "gos_rt_router_serve".to_string(),
-            Some("http::FileServer") => "gos_rt_file_server_serve".to_string(),
-            Some("http::Proxy") => "gos_rt_proxy_forward".to_string(),
-            Some("http::Middleware") => "gos_rt_middleware_serve".to_string(),
-            _ => {
-                let handler_ty = self.locals[handler_local.0 as usize].ty;
-                let handler_struct = self.struct_name_of(handler_ty)?;
-                self.handler_dispatch_symbol(format!("{handler_struct}::serve"))
-            }
-        };
-        let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
-        let fn_addr_local = self.fresh(i64_ty);
-        self.emit_assign(
-            Place::local(fn_addr_local),
-            Rvalue::CallIntrinsic {
-                name: "gos_fn_addr",
-                args: vec![Operand::Const(ConstValue::Str(serve_fn_name))],
-            },
-            span,
-        );
+        let fn_addr_local = self.handler_fn_addr_local(handler_local, "serve", span)?;
         // The runtime shim returns the packed `Result<(), Error>`
         // directly: `Err` on bind failure, `Ok(())` when the accept
         // loop exits. Typing the destination as the Result ADT keeps
@@ -370,6 +344,195 @@ impl<'a> Builder<'a> {
             args: vec![
                 Operand::Copy(Place::local(addr_local)),
                 Operand::Copy(Place::local(handler_local)),
+                Operand::Copy(Place::local(fn_addr_local)),
+            ],
+            destination: Place::local(dest),
+            target: Some(next),
+        });
+        self.set_current(next);
+        Some(dest)
+    }
+
+    /// `http::serve_tls(addr, cert_pem, key_pem, handler)` - TLS variant
+    /// of [`Self::lower_http_serve`]. Threads the certificate and key
+    /// PEM ahead of the handler env + serve-method address so the
+    /// runtime terminates TLS before dispatching back into Gossamer.
+    pub(crate) fn lower_http_serve_tls(
+        &mut self,
+        addr_expr: &HirExpr,
+        cert_expr: &HirExpr,
+        key_expr: &HirExpr,
+        handler_expr: &HirExpr,
+        _ty: Ty,
+        span: Span,
+    ) -> Option<Local> {
+        let addr_local = self.lower_expr(addr_expr)?;
+        let cert_local = self.lower_expr(cert_expr)?;
+        let key_local = self.lower_expr(key_expr)?;
+        let handler_local = self.lower_expr(handler_expr)?;
+        let fn_addr_local = self.handler_fn_addr_local(handler_local, "serve", span)?;
+        let result_ty = self.result_unit_error_adt_ty();
+        let dest = self.fresh(result_ty);
+        let next = self.new_block(span);
+        self.terminate(Terminator::Call {
+            callee: Operand::Const(ConstValue::Str("gos_rt_http_serve_tls".to_string())),
+            args: vec![
+                Operand::Copy(Place::local(addr_local)),
+                Operand::Copy(Place::local(cert_local)),
+                Operand::Copy(Place::local(key_local)),
+                Operand::Copy(Place::local(handler_local)),
+                Operand::Copy(Place::local(fn_addr_local)),
+            ],
+            destination: Place::local(dest),
+            target: Some(next),
+        });
+        self.set_current(next);
+        Some(dest)
+    }
+
+    /// Resolves a handler value's dispatch method (`method`) to a
+    /// `gos_fn_addr` local. If the handler is a stateful runtime type
+    /// (Router / FileServer / Proxy / Middleware), its `serve` lives in
+    /// gossamer-runtime; otherwise the user-defined `{T}::{method}` is
+    /// looked up. Shared by the HTTP serve lowerings (`serve`) and the
+    /// WebSocket serve lowering (`handle`).
+    fn handler_fn_addr_local(
+        &mut self,
+        handler_local: Local,
+        method: &str,
+        span: Span,
+    ) -> Option<Local> {
+        let handler_runtime_kind = self.local_runtime_kind.get(&handler_local).copied();
+        let serve_fn_name = match handler_runtime_kind {
+            Some("http::Router") => "gos_rt_router_serve".to_string(),
+            Some("http::FileServer") => "gos_rt_file_server_serve".to_string(),
+            Some("http::Proxy") => "gos_rt_proxy_forward".to_string(),
+            Some("http::Middleware") => "gos_rt_middleware_serve".to_string(),
+            _ => {
+                let handler_ty = self.locals[handler_local.0 as usize].ty;
+                let handler_struct = self.struct_name_of(handler_ty)?;
+                self.handler_dispatch_symbol(format!("{handler_struct}::{method}"))
+            }
+        };
+        let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+        let fn_addr_local = self.fresh(i64_ty);
+        self.emit_assign(
+            Place::local(fn_addr_local),
+            Rvalue::CallIntrinsic {
+                name: "gos_fn_addr",
+                args: vec![Operand::Const(ConstValue::Str(serve_fn_name))],
+            },
+            span,
+        );
+        Some(fn_addr_local)
+    }
+
+    /// `http_h3::serve(addr, cert_path, key_path, handler)` - HTTP/3
+    /// variant of [`Self::lower_http_serve`]. Threads the TLS keypair
+    /// file paths ahead of the handler env + serve-method address.
+    pub(crate) fn lower_http3_serve(
+        &mut self,
+        addr_expr: &HirExpr,
+        cert_expr: &HirExpr,
+        key_expr: &HirExpr,
+        handler_expr: &HirExpr,
+        _ty: Ty,
+        span: Span,
+    ) -> Option<Local> {
+        let addr_local = self.lower_expr(addr_expr)?;
+        let cert_local = self.lower_expr(cert_expr)?;
+        let key_local = self.lower_expr(key_expr)?;
+        let handler_local = self.lower_expr(handler_expr)?;
+        let fn_addr_local = self.handler_fn_addr_local(handler_local, "serve", span)?;
+        let result_ty = self.result_unit_error_adt_ty();
+        let dest = self.fresh(result_ty);
+        let next = self.new_block(span);
+        self.terminate(Terminator::Call {
+            callee: Operand::Const(ConstValue::Str("gos_rt_http3_serve".to_string())),
+            args: vec![
+                Operand::Copy(Place::local(addr_local)),
+                Operand::Copy(Place::local(cert_local)),
+                Operand::Copy(Place::local(key_local)),
+                Operand::Copy(Place::local(handler_local)),
+                Operand::Copy(Place::local(fn_addr_local)),
+            ],
+            destination: Place::local(dest),
+            target: Some(next),
+        });
+        self.set_current(next);
+        Some(dest)
+    }
+
+    /// `websocket::serve(addr, handler)` - binds a WebSocket listener and
+    /// dispatches each upgraded connection to the handler's
+    /// `handle(&self, ws: i64)` method. Mirrors [`Self::lower_http_serve`]:
+    /// passes the handler env + `gos_fn_addr("{T}::handle")` so the
+    /// runtime can call back into Gossamer code per connection.
+    pub(crate) fn lower_websocket_serve(
+        &mut self,
+        addr_expr: &HirExpr,
+        handler_expr: &HirExpr,
+        _ty: Ty,
+        span: Span,
+    ) -> Option<Local> {
+        let addr_local = self.lower_expr(addr_expr)?;
+        let handler_local = self.lower_expr(handler_expr)?;
+        let fn_addr_local = self.handler_fn_addr_local(handler_local, "handle", span)?;
+        let result_ty = self.result_unit_error_adt_ty();
+        let dest = self.fresh(result_ty);
+        let next = self.new_block(span);
+        self.terminate(Terminator::Call {
+            callee: Operand::Const(ConstValue::Str("gos_rt_ws_serve".to_string())),
+            args: vec![
+                Operand::Copy(Place::local(addr_local)),
+                Operand::Copy(Place::local(handler_local)),
+                Operand::Copy(Place::local(fn_addr_local)),
+            ],
+            destination: Place::local(dest),
+            target: Some(next),
+        });
+        self.set_current(next);
+        Some(dest)
+    }
+
+    /// `sql::register_native(name, driver)`: register a Gossamer-
+    /// implemented SQL driver. Captures the driver value's env local +
+    /// `gos_fn_addr("<Type>::dispatch")` and emits
+    /// `gos_rt_sql_register_native(name_ptr, env, fn_addr)`, which
+    /// builds a `GossamerDriver` and registers it in `crate::sql`. The
+    /// driver struct is stateless (a ZST whose `dispatch` never reads
+    /// `self`), so the env pointer dangling after the call returns is
+    /// harmless. Return type is unit.
+    pub(crate) fn lower_sql_register_native(
+        &mut self,
+        name_expr: &HirExpr,
+        driver_expr: &HirExpr,
+        _ty: Ty,
+        span: Span,
+    ) -> Option<Local> {
+        let name_local = self.lower_expr(name_expr)?;
+        let driver_local = self.lower_expr(driver_expr)?;
+        let driver_ty = self.locals[driver_local.0 as usize].ty;
+        let driver_struct = self.struct_name_of(driver_ty)?;
+        let dispatch_fn_name = self.handler_dispatch_symbol(format!("{driver_struct}::dispatch"));
+        let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+        let fn_addr_local = self.fresh(i64_ty);
+        self.emit_assign(
+            Place::local(fn_addr_local),
+            Rvalue::CallIntrinsic {
+                name: "gos_fn_addr",
+                args: vec![Operand::Const(ConstValue::Str(dispatch_fn_name))],
+            },
+            span,
+        );
+        let unit_ty = self.tcx.unit();
+        let dest = self.fresh(unit_ty);
+        let next = self.new_block(span);
+        self.terminate(Terminator::Call {
+            callee: Operand::Const(ConstValue::Str("gos_rt_sql_register_native".to_string())),
+            args: vec![
+                Operand::Copy(Place::local(name_local)),
+                Operand::Copy(Place::local(driver_local)),
                 Operand::Copy(Place::local(fn_addr_local)),
             ],
             destination: Place::local(dest),

@@ -157,7 +157,7 @@ impl<'a> Builder<'a> {
             return raw;
         };
         let elem_ty = *elem;
-        let len_val = *len;
+        let len_val = len.to_usize();
         let elem_bytes = self.elem_bytes_of(elem_ty);
         let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
         let elem_bytes_local = self.fresh(i64_ty);
@@ -192,10 +192,11 @@ impl<'a> Builder<'a> {
         &mut self,
         raw: Local,
         elem_ty: Ty,
-        len: usize,
+        len: gossamer_types::ArrayLen,
         span: Span,
     ) -> Local {
         use gossamer_types::TyKind;
+        let len = len.to_usize();
         let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
 
         // Nested array: `Array{Array{T,N},M}` → `Vec<Vec<T>>`.
@@ -206,6 +207,7 @@ impl<'a> Builder<'a> {
             len: inner_len,
         } = self.tcx.kind_of(elem_ty).clone()
         {
+            let inner_len = inner_len.to_usize();
             let inner_elem_bytes = self.elem_bytes_of(inner_elem);
             let inner_elem_bytes_local = self.fresh(i64_ty);
             self.emit_assign(
@@ -286,13 +288,14 @@ impl<'a> Builder<'a> {
         &mut self,
         raw: Local,
         elem_ty: Ty,
-        len: usize,
+        len: gossamer_types::ArrayLen,
         span: Span,
     ) -> Local {
         use gossamer_types::TyKind;
         if matches!(self.tcx.kind_of(elem_ty), TyKind::Array { .. }) {
             return self.coerce_array_to_vec(raw, elem_ty, len, span);
         }
+        let len = len.to_usize();
         let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
         let elem_bytes = self.elem_bytes_of(elem_ty);
         let elem_bytes_local = self.fresh(i64_ty);

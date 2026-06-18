@@ -22,6 +22,7 @@ gossamer-resolve = { workspace = true }
 gossamer-runtime = { workspace = true }
 gossamer-std = { workspace = true }
 gossamer-types = { workspace = true }
+gossamer-ws = { workspace = true }
 parking_lot = { workspace = true }
 rustc-hash = "2"
 thiserror = { workspace = true }

@@ -226,7 +226,7 @@ impl<'a> Builder<'a> {
         loop {
             match self.tcx.kind_of(peeled) {
                 TyKind::Array { len, elem } => {
-                    arr_len = i64::try_from(*len).ok();
+                    arr_len = i64::try_from(len.to_usize()).ok();
                     found_elem = Some(*elem);
                     break;
                 }

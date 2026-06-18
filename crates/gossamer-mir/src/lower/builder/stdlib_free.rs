@@ -1165,6 +1165,104 @@ impl<'a> Builder<'a> {
                 "gos_rt_sql_migrate_up",
                 self.tcx.int_ty(gossamer_types::IntTy::I64),
             ),
+            // Gossamer-native driver side-channel helpers. The `.gos`
+            // driver reads inputs / writes outputs through these; the
+            // writers return unit, the readers their slot field type,
+            // and the value constructors / accessors traffic in
+            // sql::Value handles (i64).
+            "__gos_sql_native_url" => ("gos_rt_sql_native_url", self.tcx.string_ty()),
+            "__gos_sql_native_sql" => ("gos_rt_sql_native_sql", self.tcx.string_ty()),
+            "__gos_sql_native_parent" => (
+                "gos_rt_sql_native_parent",
+                self.tcx.int_ty(gossamer_types::IntTy::I64),
+            ),
+            "__gos_sql_native_out_handle" => (
+                "gos_rt_sql_native_out_handle",
+                self.tcx.int_ty(gossamer_types::IntTy::I64),
+            ),
+            "__gos_sql_native_iso" => (
+                "gos_rt_sql_native_iso",
+                self.tcx.int_ty(gossamer_types::IntTy::I64),
+            ),
+            "__gos_sql_native_timeout" => (
+                "gos_rt_sql_native_timeout",
+                self.tcx.int_ty(gossamer_types::IntTy::I64),
+            ),
+            "__gos_sql_native_channel" => ("gos_rt_sql_native_channel", self.tcx.string_ty()),
+            "__gos_sql_native_param_count" => (
+                "gos_rt_sql_native_param_count",
+                self.tcx.int_ty(gossamer_types::IntTy::I64),
+            ),
+            "__gos_sql_native_param" => (
+                "gos_rt_sql_native_param",
+                self.tcx.int_ty(gossamer_types::IntTy::I64),
+            ),
+            "__gos_sql_native_data" => {
+                let u8_ty = self.tcx.int_ty(gossamer_types::IntTy::U8);
+                (
+                    "gos_rt_sql_native_data",
+                    self.tcx.intern(gossamer_types::TyKind::Vec(u8_ty)),
+                )
+            }
+            "__gos_sql_native_push_column" => ("gos_rt_sql_native_push_column", self.tcx.unit()),
+            "__gos_sql_native_push_value" => ("gos_rt_sql_native_push_value", self.tcx.unit()),
+            "__gos_sql_native_row_ready" => ("gos_rt_sql_native_row_ready", self.tcx.unit()),
+            "__gos_sql_native_set_error" => ("gos_rt_sql_native_set_error", self.tcx.unit()),
+            "__gos_sql_native_emit_bytes" => ("gos_rt_sql_native_emit_bytes", self.tcx.unit()),
+            "__gos_sql_native_set_notification" => {
+                ("gos_rt_sql_native_set_notification", self.tcx.unit())
+            }
+            "__gos_sql_native_set_handle" => ("gos_rt_sql_native_set_handle", self.tcx.unit()),
+            "__gos_sql_native_handle" => (
+                "gos_rt_sql_native_handle",
+                self.tcx.int_ty(gossamer_types::IntTy::I64),
+            ),
+            "__gos_sql_native_value_null" => (
+                "gos_rt_sql_native_value_null",
+                self.tcx.int_ty(gossamer_types::IntTy::I64),
+            ),
+            "__gos_sql_native_value_bool" => (
+                "gos_rt_sql_native_value_bool",
+                self.tcx.int_ty(gossamer_types::IntTy::I64),
+            ),
+            "__gos_sql_native_value_int" => (
+                "gos_rt_sql_native_value_int",
+                self.tcx.int_ty(gossamer_types::IntTy::I64),
+            ),
+            "__gos_sql_native_value_float" => (
+                "gos_rt_sql_native_value_float",
+                self.tcx.int_ty(gossamer_types::IntTy::I64),
+            ),
+            "__gos_sql_native_value_text" => (
+                "gos_rt_sql_native_value_text",
+                self.tcx.int_ty(gossamer_types::IntTy::I64),
+            ),
+            "__gos_sql_native_value_blob" => (
+                "gos_rt_sql_native_value_blob",
+                self.tcx.int_ty(gossamer_types::IntTy::I64),
+            ),
+            "__gos_sql_native_value_kind" => (
+                "gos_rt_sql_native_value_kind",
+                self.tcx.int_ty(gossamer_types::IntTy::I64),
+            ),
+            "__gos_sql_native_value_int_of" => (
+                "gos_rt_sql_native_value_int_of",
+                self.tcx.int_ty(gossamer_types::IntTy::I64),
+            ),
+            "__gos_sql_native_value_float_of" => (
+                "gos_rt_sql_native_value_float_of",
+                self.tcx.float_ty(gossamer_types::FloatTy::F64),
+            ),
+            "__gos_sql_native_value_text_of" => {
+                ("gos_rt_sql_native_value_text_of", self.tcx.string_ty())
+            }
+            "__gos_sql_native_value_blob_of" => {
+                let u8_ty = self.tcx.int_ty(gossamer_types::IntTy::U8);
+                (
+                    "gos_rt_sql_native_value_blob_of",
+                    self.tcx.intern(gossamer_types::TyKind::Vec(u8_ty)),
+                )
+            }
             // tar/zip write take `[(String,[u8])]` tuples and return
             // Result<[u8]> - no struct, so they lower directly.
             "archive::tar::write" | "tar::write" => {
@@ -2420,6 +2518,21 @@ impl<'a> Builder<'a> {
             }
             "http::websocket::accept" | "websocket::accept" => {
                 ("gos_rt_ws_accept", self.result_response_error_adt_ty())
+            }
+            "http::websocket::connect" | "websocket::connect" => {
+                ("gos_rt_ws_serve_connect", self.result_i64_error_adt_ty())
+            }
+            "http::websocket::send_text" | "websocket::send_text" => {
+                ("gos_rt_ws_send_text", self.result_unit_error_adt_ty())
+            }
+            "http::websocket::send_binary" | "websocket::send_binary" => {
+                ("gos_rt_ws_send_binary", self.result_unit_error_adt_ty())
+            }
+            "http::websocket::recv" | "websocket::recv" => {
+                ("gos_rt_ws_recv", self.result_string_error_adt_ty())
+            }
+            "http::websocket::close" | "websocket::close" => {
+                ("gos_rt_ws_close", self.result_unit_error_adt_ty())
             }
             "http::cookie::parse_cookie_header" | "cookie::parse_cookie_header" => {
                 ("gos_rt_http_cookie_parse_header", self.string_pair_vec_ty())

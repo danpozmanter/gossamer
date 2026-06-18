@@ -16,6 +16,18 @@ version. This page is auto-generated from the catalogue in
 | [`GP0002`](#gp0002) | Parser | unexpected end of input |
 | [`GP0003`](#gp0003) | Parser | unterminated delimiter |
 | [`GP0004`](#gp0004) | Parser | chained comparison without parentheses |
+| [`GP0005`](#gp0005) | Parser | chained range operator |
+| [`GP0006`](#gp0006) | Parser | struct literal in scrutinee |
+| [`GP0007`](#gp0007) | Parser | pipe right-hand side not callable |
+| [`GP0008`](#gp0008) | Parser | assignment outside statement position |
+| [`GP0009`](#gp0009) | Parser | expected integer literal |
+| [`GP0010`](#gp0010) | Parser | expected string literal |
+| [`GP0011`](#gp0011) | Parser | invalid tuple index |
+| [`GP0012`](#gp0012) | Parser | malformed label |
+| [`GP0013`](#gp0013) | Parser | malformed attribute |
+| [`GP0014`](#gp0014) | Parser | malformed `use` declaration |
+| [`GP0015`](#gp0015) | Parser | unexpected construct |
+| [`GP0016`](#gp0016) | Parser | reserved `extern` keyword |
 | [`GR0001`](#gr0001) | Resolve | unresolved name |
 | [`GR0002`](#gr0002) | Resolve | wrong namespace |
 | [`GR0003`](#gr0003) | Resolve | duplicate item |
@@ -50,6 +62,78 @@ A balanced construct (block, tuple, array, string literal) was left unterminated
 **Parser** - chained comparison without parentheses
 
 Comparison operators like `==` / `!=` / `<` are not associative. Parenthesise the operands: `(a == b) && (b == c)`.
+
+## `GP0005` <a id="gp0005"></a>
+
+**Parser** - chained range operator
+
+Range operators (`..`, `..=`) are not associative. Parenthesise the operands: `(a..b)..c`.
+
+## `GP0006` <a id="gp0006"></a>
+
+**Parser** - struct literal in scrutinee
+
+A braced struct literal in the scrutinee of `if`/`while`/`match` is ambiguous with the block. Wrap the literal in `(...)`.
+
+## `GP0007` <a id="gp0007"></a>
+
+**Parser** - pipe right-hand side not callable
+
+The right-hand side of `|>` must be a callable: a function reference, a method call, or a closure.
+
+## `GP0008` <a id="gp0008"></a>
+
+**Parser** - assignment outside statement position
+
+Assignment (`=`, `+=`, …) only appears at statement position. If you need an expression, return the right-hand side directly.
+
+## `GP0009` <a id="gp0009"></a>
+
+**Parser** - expected integer literal
+
+An integer literal is required at this position.
+
+## `GP0010` <a id="gp0010"></a>
+
+**Parser** - expected string literal
+
+A string literal is required at this position.
+
+## `GP0011` <a id="gp0011"></a>
+
+**Parser** - invalid tuple index
+
+A tuple index must be a plain decimal integer (`p.0`, `p.1`). Hex, binary, or octal indices are not accepted.
+
+## `GP0012` <a id="gp0012"></a>
+
+**Parser** - malformed label
+
+A label identifier is required after the leading `'`.
+
+## `GP0013` <a id="gp0013"></a>
+
+**Parser** - malformed attribute
+
+An attribute is malformed. Accepted forms are `#[attr]`, `#[attr(args)]`, and `#[attr = value]`.
+
+## `GP0014` <a id="gp0014"></a>
+
+**Parser** - malformed `use` declaration
+
+A `use` declaration could not be parsed. Check the path for stray punctuation or an unfinished brace list.
+
+## `GP0015` <a id="gp0015"></a>
+
+**Parser** - unexpected construct
+
+Two consecutive tokens formed something the parser does not recognise.
+
+## `GP0016` <a id="gp0016"></a>
+
+**Parser** - reserved `extern` keyword
+
+The `extern` keyword is reserved in 0.5.0 but has no source-level item form. Gossamer's FFI surface is the `[rust-bindings]` section of `project.toml` plus the `gossamer-binding` crate.
 
 ## `GR0001` <a id="gr0001"></a>
 

@@ -83,10 +83,17 @@ fn write_tuple(tcx: &TyCtxt, parts: &[Ty], out: &mut String) {
     out.push(')');
 }
 
-fn write_array(tcx: &TyCtxt, elem: Ty, len: usize, out: &mut String) {
+fn write_array(tcx: &TyCtxt, elem: Ty, len: crate::ArrayLen, out: &mut String) {
     out.push('[');
     write_ty(tcx, elem, out);
-    let _ = write!(out, "; {len}]");
+    match len {
+        crate::ArrayLen::Concrete(n) => {
+            let _ = write!(out, "; {n}]");
+        }
+        crate::ArrayLen::Param(idx) => {
+            let _ = write!(out, "; N{}]", idx.as_u32());
+        }
+    }
 }
 
 fn write_slice(tcx: &TyCtxt, elem: Ty, out: &mut String) {

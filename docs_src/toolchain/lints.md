@@ -238,7 +238,7 @@ Concatenating an empty string literal is a no-op. Drop the
 
 ## `println_newline_only`
 
-`println!("")` already writes a newline. Don't pass `"\n"`
+`println("")` already writes a newline. Don't pass `"\n"`
 and don't call it twice to emit a blank line.
 
 ## `match_same_arms`
@@ -309,7 +309,7 @@ and run the body directly.
 
 ## `panic_without_message`
 
-`panic!()` with no argument leaves the post-mortem with nothing
+`panic()` with no argument leaves the post-mortem with nothing
 to render. Always pass a brief explanation.
 
 ## `empty_loop`

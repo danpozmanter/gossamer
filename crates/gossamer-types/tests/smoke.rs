@@ -147,6 +147,9 @@ fn adt_with_substs_renders_with_generics() {
 fn array_renders_with_length() {
     let mut tcx = TyCtxt::new();
     let u8_ = tcx.int_ty(IntTy::U8);
-    let arr: Ty = tcx.intern(TyKind::Array { elem: u8_, len: 16 });
+    let arr: Ty = tcx.intern(TyKind::Array {
+        elem: u8_,
+        len: gossamer_types::ArrayLen::Concrete(16),
+    });
     assert_eq!(render_ty(&tcx, arr), "[u8; 16]");
 }

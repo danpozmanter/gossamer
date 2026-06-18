@@ -156,7 +156,7 @@ pub(super) fn type_slot_count(tcx: &TyCtxt, ty: Ty) -> u32 {
             .map(|t| type_slot_count(tcx, *t))
             .sum::<u32>()
             .max(1),
-        TyKind::Array { elem, len } => u32::try_from(len)
+        TyKind::Array { elem, len } => u32::try_from(len.to_usize())
             .unwrap_or(1)
             .saturating_mul(type_slot_count(tcx, elem)),
         TyKind::Adt { def, .. } => {

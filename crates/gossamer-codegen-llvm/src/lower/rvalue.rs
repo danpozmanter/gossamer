@@ -110,7 +110,7 @@ impl<'a> Lowerer<'a> {
                 // `gos_rt_len`.
                 let ty = self.place_leaf_ty(place);
                 if let Some(TyKind::Array { len, .. }) = self.tcx.kind(ty) {
-                    return Ok(format!("{len}"));
+                    return Ok(format!("{}", len.to_usize()));
                 }
                 // A bare local of Vec/Slice type with a non-String
                 // element reads its length straight from the leading

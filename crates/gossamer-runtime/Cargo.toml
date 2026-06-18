@@ -87,11 +87,19 @@ gossamer-coro = { workspace = true }
 gossamer-pkg = { workspace = true }
 gossamer-abi = { workspace = true }
 gossamer-template = { workspace = true }
+gossamer-ws = { workspace = true }
 # `gos_rt_http_stream` uses ureq for the wire request so the
 # compiled tier matches the interp's `http::stream` semantics.
 # Same feature set as gossamer-std (TLS via rustls, gzip, cookies)
 # for parity with `gos run`.
 ureq = { version = "3", features = ["cookies"] }
+
+# Raw TLS-over-socket (`net::TcpStream::start_tls`) for the compiled
+# tier. Same rustls feature set + roots as gossamer-std's HTTP client
+# so the upgraded stream verifies certificates identically on every
+# tier (ring provider, webpki roots).
+rustls = { version = "0.23", default-features = false, features = ["std", "tls12", "ring"] }
+webpki-roots = "1"
 
 # HTTP/2 server compiled into libgossamer_runtime.a so
 # `http2::bind_and_run_h2c` works under `gos build`. Tokio is
@@ -102,6 +110,13 @@ h2 = "0.4"
 http = "1"
 bytes = "1"
 tokio = { version = "1", default-features = false, features = ["io-util"] }
+
+# HTTP/3 server + client (`std::http_h3` compiled-tier shim). The
+# QUIC + h3 engine is shared with the interpreter via the standalone
+# `gossamer-http3` crate; the C-ABI shim in `c_abi::http3` marshals
+# the engine's wire types into the same `GosHttpRequest` /
+# `GosHttpResponse` path the h1 / h2 servers use.
+gossamer-http3 = { workspace = true }
 
 # UUID generation (`std::uuid` compiled-tier helpers).
 uuid = { version = "1", features = ["v4", "v7"] }

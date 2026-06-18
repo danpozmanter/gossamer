@@ -12,7 +12,8 @@ use anyhow::{Result, anyhow};
 
 use crate::loaders::{collect_top_level_names, load_or_parse, print_timings};
 use crate::paths::{
-    collect_lint_targets, default_test_root, friendly_io_error, read_source, stderr_supports_colour,
+    collect_lint_targets, default_test_root, friendly_io_error, read_entry_source,
+    resolve_project_entry, stderr_supports_colour,
 };
 
 /// `gos check` dispatcher: routes between single-file and
@@ -32,6 +33,16 @@ pub(crate) fn dispatch(
     let meta = fs::metadata(&resolved).map_err(|e| friendly_io_error(e, &resolved))?;
     if meta.is_file() {
         return run(&resolved, timings, message_format);
+    }
+    // A project directory is checked as one bundled unit (the entry plus
+    // its auto-bundled sibling / subdirectory modules), so cross-module
+    // references resolve exactly as they do under `gos run` / `gos
+    // build`. Without this, each file is type-checked in isolation and a
+    // valid `crate::other::item` call reports a false unresolved-name
+    // error. A directory without a single resolvable entry falls back to
+    // the per-file sweep below.
+    if let Ok(entry) = resolve_project_entry(&resolved) {
+        return run(&entry, timings, message_format);
     }
     let files = collect_lint_targets(&resolved)?;
     if files.is_empty() {
@@ -75,7 +86,7 @@ pub(crate) fn run(
     timings: bool,
     message_format: crate::cli::MessageFormat,
 ) -> Result<()> {
-    let user_source = read_source(file)?;
+    let user_source = read_entry_source(file)?;
     // Augment with the synthesized serde free functions (`__gos_serde_*`)
     // so `to_json::<T>(..)` / `from_json::<T>(..)` resolve, exactly as
     // `gos run` / `gos build` do before reaching the source map.

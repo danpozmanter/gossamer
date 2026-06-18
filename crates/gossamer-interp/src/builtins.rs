@@ -326,6 +326,24 @@ fn install_io_builtins(globals: &mut Vec<(&'static str, Value)>) {
 fn install_http_builtins(globals: &mut Vec<(&'static str, Value)>) {
     globals.push(("http::serve", native("http::serve", native_http_serve)));
     globals.push((
+        "http::serve_tls",
+        native("http::serve_tls", native_http_serve_tls),
+    ));
+    globals.push((
+        "websocket::serve",
+        native(
+            "websocket::serve",
+            crate::stdlib_builtins::http_ws::native_websocket_serve,
+        ),
+    ));
+    globals.push((
+        "http::websocket::serve",
+        native(
+            "http::websocket::serve",
+            crate::stdlib_builtins::http_ws::native_websocket_serve,
+        ),
+    ));
+    globals.push((
         "Router::serve",
         native("Router::serve", crate::stdlib_builtins::native_router_serve),
     ));
@@ -350,6 +368,10 @@ fn install_http_builtins(globals: &mut Vec<(&'static str, Value)>) {
     globals.push((
         "http::serve_h2c",
         native("http::serve_h2c", native_http2_bind_and_run_h2c),
+    ));
+    globals.push((
+        "http_h3::serve",
+        native("http_h3::serve", native_http3_serve),
     ));
     globals.push((
         "http::Http2Config::default",
@@ -2779,6 +2801,107 @@ fn native_http_serve(dispatch: &mut dyn NativeDispatch, args: &[Value]) -> Runti
     }
 }
 
+/// `http::serve_tls(addr, cert_pem, key_pem, handler) -> Result<(), Error>`.
+///
+/// TLS-terminating variant of [`native_http_serve`]: builds a rustls
+/// server config from the PEM-encoded certificate chain and private
+/// key, then dispatches each request through the same handler contract
+/// after TLS termination - so HTTPS handlers behave identically to the
+/// plaintext path on every tier.
+fn native_http_serve_tls(
+    dispatch: &mut dyn NativeDispatch,
+    args: &[Value],
+) -> RuntimeResult<Value> {
+    if args.len() < 4 {
+        return Err(RuntimeError::Arity {
+            expected: 4,
+            found: args.len(),
+        });
+    }
+    let addr = match &args[0] {
+        Value::String(s) => s.as_str().to_string(),
+        other => {
+            return Err(RuntimeError::Type(format!(
+                "expected address string, got {other}"
+            )));
+        }
+    };
+    let cert_pem = match &args[1] {
+        Value::String(s) => s.as_str().to_string(),
+        other => {
+            return Err(RuntimeError::Type(format!(
+                "expected cert PEM string, got {other}"
+            )));
+        }
+    };
+    let key_pem = match &args[2] {
+        Value::String(s) => s.as_str().to_string(),
+        other => {
+            return Err(RuntimeError::Type(format!(
+                "expected key PEM string, got {other}"
+            )));
+        }
+    };
+    let handler = args[3].clone();
+
+    let tls_config = match gossamer_std::tls::server_config(gossamer_std::tls::CertKey {
+        cert_pem: cert_pem.into_bytes(),
+        key_pem: key_pem.into_bytes(),
+    }) {
+        Ok(c) => c,
+        Err(e) => return Ok(err_variant(format!("http::serve_tls: {e}"))),
+    };
+
+    let mut config = http_std::server::Config::default();
+    let override_max = HTTP_MAX_REQUESTS_OVERRIDE.load(Ordering::SeqCst);
+    if override_max > 0 {
+        config.max_requests = Some(override_max);
+    } else if let Ok(raw) = std::env::var("GOSSAMER_HTTP_MAX_REQUESTS") {
+        if let Ok(n) = raw.parse::<u64>() {
+            config.max_requests = Some(n);
+        }
+    }
+    let shutdown = Arc::clone(&config.shutdown);
+    install_sigint_handler(shutdown);
+
+    let errors = Mutex::new(Vec::<String>::new());
+    let dispatch_cell = std::cell::RefCell::new(dispatch);
+    let serve_method_name = match &handler {
+        Value::Struct(inner) => format!("{}::serve", inner.name),
+        _ => "serve".to_string(),
+    };
+    let result = http_std::server::bind_and_run_tls(&addr, &tls_config, &config, |request| {
+        let request_value = request_to_value(&request);
+        let mut guard = dispatch_cell.borrow_mut();
+        let dispatched = guard.call_fn(&serve_method_name, vec![handler.clone(), request_value]);
+        drop(guard);
+        match dispatched {
+            Ok(value) => value_to_response(&value).unwrap_or_else(|| {
+                errors
+                    .lock()
+                    .unwrap()
+                    .push("handler did not return http::Response".to_string());
+                http_std::Response::text(
+                    http_std::StatusCode::INTERNAL_SERVER_ERROR,
+                    "internal server error",
+                )
+            }),
+            Err(err) => {
+                errors.lock().unwrap().push(format!("{err}"));
+                http_std::Response::text(
+                    http_std::StatusCode::INTERNAL_SERVER_ERROR,
+                    "internal server error",
+                )
+            }
+        }
+    });
+
+    match result {
+        Ok(()) => Ok(Value::variant("Ok", vec![Value::Unit])),
+        Err(err) => Ok(err_variant(format!("http::serve_tls: {err}"))),
+    }
+}
+
 /// `http2::bind_and_run_h2c(addr: String, handler) -> Result<(), Error>`.
 ///
 /// Boots an HTTP/2 cleartext server. The handler is a struct
@@ -2909,6 +3032,171 @@ fn native_http2_bind_and_run_h2c(
             }
             Err(mpsc::RecvTimeoutError::Timeout) => continue,
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+    }
+
+    Ok(Value::variant("Ok", vec![Value::Unit]))
+}
+
+/// `http_h3::serve(addr, cert_path, key_path, handler) ->
+/// Result<(), Error>`.
+///
+/// Boots a QUIC + HTTP/3 server through the shared
+/// [`gossamer_std::http_h3`] adapter. The engine drives its handler
+/// closure on a private tokio runtime thread, so - exactly like the
+/// h2 builtin - each request is marshalled over an mpsc channel back
+/// to the interpreter thread, where the not-`Send` `NativeDispatch`
+/// invokes the user handler.
+#[allow(
+    clippy::too_many_lines,
+    clippy::items_after_statements,
+    clippy::needless_continue
+)]
+fn native_http3_serve(dispatch: &mut dyn NativeDispatch, args: &[Value]) -> RuntimeResult<Value> {
+    if args.len() < 4 {
+        return Err(RuntimeError::Arity {
+            expected: 4,
+            found: args.len(),
+        });
+    }
+    let str_arg = |v: &Value, what: &str| -> RuntimeResult<String> {
+        match v {
+            Value::String(s) => Ok(s.as_str().to_string()),
+            other => Err(RuntimeError::Type(format!(
+                "expected {what} string, got {other}"
+            ))),
+        }
+    };
+    let addr = str_arg(&args[0], "address")?;
+    let cert_path = str_arg(&args[1], "cert path")?;
+    let key_path = str_arg(&args[2], "key path")?;
+    let handler = args[3].clone();
+
+    // Resolve the handler's specific `T::serve` impl by struct name,
+    // matching `native_http_serve` (the bare `serve` global is
+    // overwritten as each impl loads, so dispatching on it would
+    // pick the last-loaded one).
+    let serve_method_name = match &handler {
+        Value::Struct(inner) => format!("{}::serve", inner.name),
+        _ => "serve".to_string(),
+    };
+
+    use std::sync::mpsc;
+    let (req_tx, req_rx) = mpsc::channel::<(http_std::Request, mpsc::Sender<http_std::Response>)>();
+
+    let shutdown = Arc::new(AtomicBool::new(false));
+    install_sigint_handler(Arc::clone(&shutdown));
+    let max_requests = HTTP_MAX_REQUESTS_OVERRIDE.load(Ordering::SeqCst);
+
+    let shutdown_for_server = Arc::clone(&shutdown);
+    let req_tx_for_server = req_tx.clone();
+    let bind_addr = addr.clone();
+    let (boot_tx, boot_rx) = mpsc::channel::<Result<(), String>>();
+    std::thread::Builder::new()
+        .name("gossamer-http3-accept".to_string())
+        .spawn(move || {
+            let handler_fn = move |req: http_std::Request| -> http_std::Response {
+                if shutdown_for_server.load(Ordering::Acquire) {
+                    return http_std::Response {
+                        status: http_std::StatusCode(503),
+                        headers: http_std::Headers::new(),
+                        body: b"shutting down".to_vec(),
+                        raw_header_pairs: Vec::new(),
+                        body_stream: None,
+                    };
+                }
+                let (resp_tx, resp_rx) = mpsc::channel();
+                if req_tx_for_server.send((req, resp_tx)).is_err() {
+                    return http_std::Response {
+                        status: http_std::StatusCode(500),
+                        headers: http_std::Headers::new(),
+                        body: b"dispatch channel closed".to_vec(),
+                        raw_header_pairs: Vec::new(),
+                        body_stream: None,
+                    };
+                }
+                match resp_rx.recv_timeout(Duration::from_secs(30)) {
+                    Ok(r) => r,
+                    Err(_) => http_std::Response {
+                        status: http_std::StatusCode(504),
+                        headers: http_std::Headers::new(),
+                        body: b"handler timeout".to_vec(),
+                        raw_header_pairs: Vec::new(),
+                        body_stream: None,
+                    },
+                }
+            };
+            // `gossamer_std::http_h3::serve` validates the address,
+            // reads the keypair, and binds before its accept loop
+            // runs - so a synchronous `Err` is a startup failure the
+            // caller must see. Forward the bind outcome over `boot`
+            // and, on success, block here driving the endpoint.
+            match gossamer_std::http_h3::serve(&bind_addr, &cert_path, &key_path, handler_fn) {
+                Ok(()) => {
+                    let _ = boot_tx.send(Ok(()));
+                }
+                Err(e) => {
+                    let _ = boot_tx.send(Err(e.to_string()));
+                }
+            }
+        })
+        .map_err(|e| RuntimeError::Panic(format!("http_h3::serve spawn: {e}")))?;
+    drop(req_tx);
+
+    let dispatch_cell = std::cell::RefCell::new(dispatch);
+    let mut served: u64 = 0;
+    loop {
+        // A startup failure (bad address, unreadable cert/key, bind
+        // error) arrives on `boot` before any request - surface it as
+        // the caller's `Err`, matching the native tier.
+        if let Ok(Err(msg)) = boot_rx.try_recv() {
+            return Ok(err_variant(format!("http_h3::serve: {msg}")));
+        }
+        if shutdown.load(Ordering::Acquire) {
+            break;
+        }
+        match req_rx.recv_timeout(Duration::from_millis(50)) {
+            Ok((req, resp_tx)) => {
+                let request_value = request_to_value(&req);
+                let mut guard = dispatch_cell.borrow_mut();
+                let dispatched =
+                    guard.call_fn(&serve_method_name, vec![handler.clone(), request_value]);
+                drop(guard);
+                let response = match dispatched {
+                    Ok(value) => value_to_response(&value).unwrap_or_else(|| http_std::Response {
+                        status: http_std::StatusCode(500),
+                        headers: http_std::Headers::new(),
+                        body: b"handler did not return http::Response".to_vec(),
+                        raw_header_pairs: Vec::new(),
+                        body_stream: None,
+                    }),
+                    Err(err) => http_std::Response {
+                        status: http_std::StatusCode(500),
+                        headers: http_std::Headers::new(),
+                        body: format!("handler error: {err}").into_bytes(),
+                        raw_header_pairs: Vec::new(),
+                        body_stream: None,
+                    },
+                };
+                let _ = resp_tx.send(response);
+                served = served.saturating_add(1);
+                if max_requests > 0 && served >= max_requests {
+                    shutdown.store(true, Ordering::Release);
+                    break;
+                }
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => continue,
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                // The server thread ended before any request - the only
+                // pre-shutdown exit is a startup failure (bad address,
+                // unreadable cert/key, bind error). Its outcome is now
+                // definitively on `boot`; surface an `Err` so the caller
+                // sees the same failure value the native tier returns.
+                if let Ok(Err(msg)) = boot_rx.recv() {
+                    return Ok(err_variant(format!("http_h3::serve: {msg}")));
+                }
+                break;
+            }
         }
     }
 
@@ -5759,36 +6047,76 @@ fn builtin_insert(args: &[Value]) -> RuntimeResult<Value> {
     if matches!(args.first(), Some(Value::Map(_))) {
         return builtin_map_insert(args);
     }
-    let Some(Value::Array(parts)) = args.first() else {
-        return Ok(args.first().cloned().unwrap_or(Value::Unit));
-    };
     let idx = match args.get(1) {
         Some(Value::Int(n)) if *n >= 0 => *n as usize,
-        _ => return Ok(Value::Array(Arc::clone(parts))),
+        // A non-positive index leaves the sequence unchanged.
+        _ => return Ok(args.first().cloned().unwrap_or(Value::Unit)),
     };
     let value = args.get(2).cloned().unwrap_or(Value::Unit);
-    let mut owned = parts.as_ref().clone();
-    let cap = owned.len().min(idx);
-    owned.insert(cap, value);
-    Ok(Value::Array(Arc::new(owned)))
+    match args.first() {
+        Some(Value::Array(parts)) => {
+            let mut owned = parts.as_ref().clone();
+            let at = owned.len().min(idx);
+            owned.insert(at, value);
+            Ok(Value::Array(Arc::new(owned)))
+        }
+        Some(Value::IntArray(data)) => {
+            let mut owned = data.as_ref().clone();
+            if let Value::Int(n) = value {
+                let at = owned.len().min(idx);
+                owned.insert(at, n);
+            }
+            Ok(Value::IntArray(Arc::new(owned)))
+        }
+        Some(Value::FloatVec(data)) => {
+            let mut owned = data.as_ref().clone();
+            let f = match value {
+                Value::Float(f) => Some(f),
+                Value::Int(n) => Some(n as f64),
+                _ => None,
+            };
+            if let Some(f) = f {
+                let at = owned.len().min(idx);
+                owned.insert(at, f);
+            }
+            Ok(Value::FloatVec(Arc::new(owned)))
+        }
+        _ => Ok(args.first().cloned().unwrap_or(Value::Unit)),
+    }
 }
 
 fn builtin_remove(args: &[Value]) -> RuntimeResult<Value> {
     if matches!(args.first(), Some(Value::Map(_))) {
         return builtin_map_remove(args);
     }
-    let Some(Value::Array(parts)) = args.first() else {
-        return Ok(args.first().cloned().unwrap_or(Value::Unit));
-    };
     let idx = match args.get(1) {
         Some(Value::Int(n)) if *n >= 0 => *n as usize,
-        _ => return Ok(Value::Array(Arc::clone(parts))),
+        _ => return Ok(args.first().cloned().unwrap_or(Value::Unit)),
     };
-    let mut owned = parts.as_ref().clone();
-    if idx < owned.len() {
-        owned.remove(idx);
+    match args.first() {
+        Some(Value::Array(parts)) => {
+            let mut owned = parts.as_ref().clone();
+            if idx < owned.len() {
+                owned.remove(idx);
+            }
+            Ok(Value::Array(Arc::new(owned)))
+        }
+        Some(Value::IntArray(data)) => {
+            let mut owned = data.as_ref().clone();
+            if idx < owned.len() {
+                owned.remove(idx);
+            }
+            Ok(Value::IntArray(Arc::new(owned)))
+        }
+        Some(Value::FloatVec(data)) => {
+            let mut owned = data.as_ref().clone();
+            if idx < owned.len() {
+                owned.remove(idx);
+            }
+            Ok(Value::FloatVec(Arc::new(owned)))
+        }
+        _ => Ok(args.first().cloned().unwrap_or(Value::Unit)),
     }
-    Ok(Value::Array(Arc::new(owned)))
 }
 
 fn builtin_clear(args: &[Value]) -> RuntimeResult<Value> {
@@ -5803,27 +6131,62 @@ fn builtin_clear(args: &[Value]) -> RuntimeResult<Value> {
 }
 
 fn builtin_extend(args: &[Value]) -> RuntimeResult<Value> {
-    let Some(Value::Array(parts)) = args.first() else {
-        return Ok(args.first().cloned().unwrap_or(Value::Unit));
-    };
-    let mut owned = parts.as_ref().clone();
-    if let Some(Value::Array(extra)) = args.get(1) {
-        owned.extend(extra.iter().cloned());
+    match args.first() {
+        Some(Value::Array(parts)) => {
+            let mut owned = parts.as_ref().clone();
+            if let Some(extra) = args.get(1).and_then(array_as_values) {
+                owned.extend(extra);
+            }
+            Ok(Value::Array(Arc::new(owned)))
+        }
+        Some(Value::IntArray(data)) => {
+            let mut owned = data.as_ref().clone();
+            if let Some(extra) = args.get(1).and_then(array_as_values) {
+                owned.extend(extra.into_iter().filter_map(|v| match v {
+                    Value::Int(n) => Some(n),
+                    _ => None,
+                }));
+            }
+            Ok(Value::IntArray(Arc::new(owned)))
+        }
+        Some(Value::FloatVec(data)) => {
+            let mut owned = data.as_ref().clone();
+            if let Some(extra) = args.get(1).and_then(array_as_values) {
+                owned.extend(extra.into_iter().filter_map(|v| match v {
+                    Value::Float(f) => Some(f),
+                    Value::Int(n) => Some(n as f64),
+                    _ => None,
+                }));
+            }
+            Ok(Value::FloatVec(Arc::new(owned)))
+        }
+        _ => Ok(args.first().cloned().unwrap_or(Value::Unit)),
     }
-    Ok(Value::Array(Arc::new(owned)))
 }
 
 fn builtin_truncate(args: &[Value]) -> RuntimeResult<Value> {
-    let Some(Value::Array(parts)) = args.first() else {
-        return Ok(args.first().cloned().unwrap_or(Value::Unit));
-    };
     let cap = match args.get(1) {
         Some(Value::Int(n)) if *n >= 0 => *n as usize,
-        _ => return Ok(Value::Array(Arc::clone(parts))),
+        _ => return Ok(args.first().cloned().unwrap_or(Value::Unit)),
     };
-    let mut owned = parts.as_ref().clone();
-    owned.truncate(cap);
-    Ok(Value::Array(Arc::new(owned)))
+    match args.first() {
+        Some(Value::Array(parts)) => {
+            let mut owned = parts.as_ref().clone();
+            owned.truncate(cap);
+            Ok(Value::Array(Arc::new(owned)))
+        }
+        Some(Value::IntArray(data)) => {
+            let mut owned = data.as_ref().clone();
+            owned.truncate(cap);
+            Ok(Value::IntArray(Arc::new(owned)))
+        }
+        Some(Value::FloatVec(data)) => {
+            let mut owned = data.as_ref().clone();
+            owned.truncate(cap);
+            Ok(Value::FloatVec(Arc::new(owned)))
+        }
+        _ => Ok(args.first().cloned().unwrap_or(Value::Unit)),
+    }
 }
 
 fn builtin_sort(args: &[Value]) -> RuntimeResult<Value> {
@@ -5855,12 +6218,24 @@ fn builtin_sort(args: &[Value]) -> RuntimeResult<Value> {
 }
 
 fn builtin_reverse(args: &[Value]) -> RuntimeResult<Value> {
-    let Some(Value::Array(parts)) = args.first() else {
-        return Ok(args.first().cloned().unwrap_or(Value::Unit));
-    };
-    let mut owned = parts.as_ref().clone();
-    owned.reverse();
-    Ok(Value::Array(Arc::new(owned)))
+    match args.first() {
+        Some(Value::Array(parts)) => {
+            let mut owned = parts.as_ref().clone();
+            owned.reverse();
+            Ok(Value::Array(Arc::new(owned)))
+        }
+        Some(Value::IntArray(data)) => {
+            let mut owned = data.as_ref().clone();
+            owned.reverse();
+            Ok(Value::IntArray(Arc::new(owned)))
+        }
+        Some(Value::FloatVec(data)) => {
+            let mut owned = data.as_ref().clone();
+            owned.reverse();
+            Ok(Value::FloatVec(Arc::new(owned)))
+        }
+        _ => Ok(args.first().cloned().unwrap_or(Value::Unit)),
+    }
 }
 
 fn builtin_swap(args: &[Value]) -> RuntimeResult<Value> {

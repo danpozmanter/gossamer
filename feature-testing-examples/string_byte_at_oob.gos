@@ -1,0 +1,16 @@
+// `String.byte_at` bounds the read by the string's byte length and returns
+// 0 for any index outside `[0, len)`, with no out-of-bounds heap access, on
+// the bytecode VM, the Cranelift JIT, and the LLVM AOT tiers.
+
+fn main() {
+    let s = "hi"
+    println!("{}", s.byte_at(0))
+    println!("{}", s.byte_at(1))
+    println!("{}", s.byte_at(2))
+    println!("{}", s.byte_at(1000000))
+    println!("{}", s.byte_at(-1))
+
+    let t = "ABC"
+    println!("{} {} {}", t.byte_at(0), t.byte_at(1), t.byte_at(2))
+    println!("{}", "hi".byte_at(1000000))
+}

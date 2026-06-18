@@ -185,7 +185,7 @@ pub(crate) fn slot_count(tcx: &TyCtxt, ty: Ty) -> Option<u32> {
             // single i64 slot and makes a 3-element array literal
             // overflow into adjacent locals.
             let elem_slots = slot_count(tcx, *elem).unwrap_or(1).max(1);
-            Some(elem_slots * (*len as u32))
+            Some(elem_slots * (len.to_usize() as u32))
         }
         TyKind::Adt { def, .. } => {
             // `Result<T,E>` (sentinel `u32::MAX`) and `Option<T>`

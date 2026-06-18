@@ -1646,11 +1646,32 @@ impl Lowerer<'_> {
                 inner: Box::new(self.lower_pat(inner)),
                 mutable: matches!(mutability, Mutability::Mutable),
             },
-            AstPatKind::Range { lo, hi, kind } => HirPatKind::Range {
-                lo: lower_literal(lo),
-                hi: lower_literal(hi),
-                inclusive: matches!(kind, gossamer_ast::RangeKind::Inclusive),
-            },
+            AstPatKind::Range { lo, hi, kind } => {
+                let inclusive = matches!(kind, gossamer_ast::RangeKind::Inclusive);
+                // An open bound denotes the scrutinee type's extreme, so
+                // synthesise a type-correct min/max literal and lower to a
+                // closed `lo..=hi` / `lo..hi` predicate the compiled tiers
+                // already handle. An open end always reaches the maximum,
+                // hence inclusive of it.
+                match (lo, hi) {
+                    (Some(lo), Some(hi)) => HirPatKind::Range {
+                        lo: lower_literal(lo),
+                        hi: lower_literal(hi),
+                        inclusive,
+                    },
+                    (None, Some(hi)) => HirPatKind::Range {
+                        lo: int_extreme_literal(self.tcx, ty, Extreme::Min),
+                        hi: lower_literal(hi),
+                        inclusive,
+                    },
+                    (Some(lo), None) => HirPatKind::Range {
+                        lo: lower_literal(lo),
+                        hi: int_extreme_literal(self.tcx, ty, Extreme::Max),
+                        inclusive: true,
+                    },
+                    (None, None) => HirPatKind::Wildcard,
+                }
+            }
             AstPatKind::Error => HirPatKind::Wildcard,
         }
         .erase_unused(ty)
@@ -1671,6 +1692,62 @@ trait PatKindExt {
 impl PatKindExt for HirPatKind {
     fn erase_unused(self, _ty: gossamer_types::Ty) -> Self {
         self
+    }
+}
+
+/// Which end of an integer type's representable range to synthesise for
+/// an open-ended range pattern.
+#[derive(Clone, Copy)]
+enum Extreme {
+    Min,
+    Max,
+}
+
+/// Builds the min/max integer literal for `ty`, used to close an
+/// open-ended range pattern. A non-integer or unresolved type falls back
+/// to `i64`'s extreme; unsigned 64-bit maxima saturate at `i64::MAX`
+/// (above which `u64` aliases `i64` semantics anyway).
+fn int_extreme_literal(tcx: &TyCtxt, ty: gossamer_types::Ty, extreme: Extreme) -> HirLiteral {
+    let int_ty = resolve_int_ty(tcx, ty).unwrap_or(gossamer_types::IntTy::I64);
+    let value = match extreme {
+        Extreme::Min => int_ty_min(int_ty),
+        Extreme::Max => int_ty_max(int_ty),
+    };
+    HirLiteral::Int(value.to_string())
+}
+
+/// Peels references and returns the concrete integer type behind `ty`.
+fn resolve_int_ty(tcx: &TyCtxt, ty: gossamer_types::Ty) -> Option<gossamer_types::IntTy> {
+    use gossamer_types::TyKind;
+    match tcx.kind(ty)? {
+        TyKind::Int(int_ty) => Some(*int_ty),
+        TyKind::Ref { inner, .. } => resolve_int_ty(tcx, *inner),
+        _ => None,
+    }
+}
+
+fn int_ty_min(int_ty: gossamer_types::IntTy) -> i64 {
+    use gossamer_types::IntTy;
+    match int_ty {
+        IntTy::I8 => i64::from(i8::MIN),
+        IntTy::I16 => i64::from(i16::MIN),
+        IntTy::I32 => i64::from(i32::MIN),
+        IntTy::I64 | IntTy::I128 | IntTy::Isize => i64::MIN,
+        IntTy::U8 | IntTy::U16 | IntTy::U32 | IntTy::U64 | IntTy::U128 | IntTy::Usize => 0,
+    }
+}
+
+fn int_ty_max(int_ty: gossamer_types::IntTy) -> i64 {
+    use gossamer_types::IntTy;
+    match int_ty {
+        IntTy::I8 => i64::from(i8::MAX),
+        IntTy::I16 => i64::from(i16::MAX),
+        IntTy::I32 => i64::from(i32::MAX),
+        IntTy::I64 | IntTy::I128 | IntTy::Isize => i64::MAX,
+        IntTy::U8 => i64::from(u8::MAX),
+        IntTy::U16 => i64::from(u16::MAX),
+        IntTy::U32 => i64::from(u32::MAX),
+        IntTy::U64 | IntTy::U128 | IntTy::Usize => i64::MAX,
     }
 }
 

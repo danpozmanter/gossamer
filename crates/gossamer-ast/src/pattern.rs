@@ -84,12 +84,14 @@ pub enum PatternKind {
         /// Sub-patterns, one per positional field.
         elems: Vec<Pattern>,
     },
-    /// Range pattern `lo..hi` or `lo..=hi`.
+    /// Range pattern `lo..hi`, `lo..=hi`, or an open-ended form
+    /// (`..=hi`, `..hi`, `lo..`, `lo..=`). At least one bound is always
+    /// present; a missing bound denotes the scrutinee type's extreme.
     Range {
-        /// Lower bound literal.
-        lo: Literal,
-        /// Upper bound literal.
-        hi: Literal,
+        /// Lower bound literal, or `None` for an open start.
+        lo: Option<Literal>,
+        /// Upper bound literal, or `None` for an open end.
+        hi: Option<Literal>,
         /// Whether the range is inclusive of the upper bound.
         kind: RangeKind,
     },

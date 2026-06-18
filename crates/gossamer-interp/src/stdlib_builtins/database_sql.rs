@@ -22,9 +22,23 @@ use crate::builtins::{BuiltinFnPub, as_str, builtin_pub, value_to_int};
 use crate::value::{RuntimeResult, Value};
 
 pub(crate) fn install_database_sql(globals: &mut Vec<(&'static str, Value)>) {
+    // Gossamer-native driver dispatch. The dispatch-routable ops
+    // (open / conn / stmt / rows / tx) are `native(...)`-style so they
+    // can re-enter the VM for a `.gos` driver; they fall through to the
+    // Rust-driver safe core for non-native tokens, so they fully
+    // replace the plain raw builtins for those ops. The pure
+    // side-channel helpers need no dispatch context.
+    for (name, call) in super::database_sql_native::native_dispatch_builtins() {
+        globals.push((name, Value::native(name, call)));
+    }
+    for (name, call) in super::database_sql_native::native_helper_builtins() {
+        globals.push((name, builtin_pub(name, call)));
+    }
     for (name, call) in [
-        ("__gos_sql_open_raw", builtin_sql_open_raw as BuiltinFnPub),
-        ("__gos_sql_last_error_raw", builtin_sql_last_error_raw),
+        (
+            "__gos_sql_last_error_raw",
+            builtin_sql_last_error_raw as BuiltinFnPub,
+        ),
         ("__gos_sql_drivers_raw", builtin_sql_drivers_raw),
         ("__gos_sql_params_new_raw", builtin_sql_params_new_raw),
         (
@@ -51,26 +65,6 @@ pub(crate) fn install_database_sql(globals: &mut Vec<(&'static str, Value)>) {
             "__gos_sql_params_push_blob_raw",
             builtin_sql_params_push_blob_raw,
         ),
-        ("__gos_sql_conn_execute_raw", builtin_sql_conn_execute_raw),
-        ("__gos_sql_conn_query_raw", builtin_sql_conn_query_raw),
-        ("__gos_sql_conn_begin_raw", builtin_sql_conn_begin_raw),
-        (
-            "__gos_sql_conn_begin_with_raw",
-            builtin_sql_conn_begin_with_raw,
-        ),
-        ("__gos_sql_conn_ping_raw", builtin_sql_conn_ping_raw),
-        (
-            "__gos_sql_conn_set_busy_timeout_raw",
-            builtin_sql_conn_set_busy_timeout_raw,
-        ),
-        (
-            "__gos_sql_conn_interrupt_raw",
-            builtin_sql_conn_interrupt_raw,
-        ),
-        ("__gos_sql_conn_close_raw", builtin_sql_conn_close_raw),
-        ("__gos_sql_rows_next_row_raw", builtin_sql_rows_next_row_raw),
-        ("__gos_sql_rows_close_raw", builtin_sql_rows_close_raw),
-        ("__gos_sql_rows_columns_raw", builtin_sql_rows_columns_raw),
         ("__gos_sql_row_kind_raw", builtin_sql_row_kind_raw),
         ("__gos_sql_row_get_i64_raw", builtin_sql_row_get_i64_raw),
         ("__gos_sql_row_get_f64_raw", builtin_sql_row_get_f64_raw),
@@ -78,9 +72,6 @@ pub(crate) fn install_database_sql(globals: &mut Vec<(&'static str, Value)>) {
         ("__gos_sql_row_get_text_raw", builtin_sql_row_get_text_raw),
         ("__gos_sql_row_get_blob_raw", builtin_sql_row_get_blob_raw),
         ("__gos_sql_row_width_raw", builtin_sql_row_width_raw),
-        ("__gos_sql_tx_commit_raw", builtin_sql_tx_commit_raw),
-        ("__gos_sql_tx_rollback_raw", builtin_sql_tx_rollback_raw),
-        ("__gos_sql_tx_execute_raw", builtin_sql_tx_execute_raw),
         ("__gos_sql_tx_savepoint_raw", builtin_sql_tx_savepoint_raw),
         (
             "__gos_sql_tx_release_savepoint_raw",
@@ -91,31 +82,8 @@ pub(crate) fn install_database_sql(globals: &mut Vec<(&'static str, Value)>) {
             builtin_sql_tx_rollback_to_savepoint_raw,
         ),
         (
-            "__gos_sql_tx_execute_params_raw",
-            builtin_sql_tx_execute_params_raw,
-        ),
-        (
-            "__gos_sql_tx_query_params_raw",
-            builtin_sql_tx_query_params_raw,
-        ),
-        ("__gos_sql_conn_prepare_raw", builtin_sql_conn_prepare_raw),
-        ("__gos_sql_stmt_execute_raw", builtin_sql_stmt_execute_raw),
-        ("__gos_sql_stmt_query_raw", builtin_sql_stmt_query_raw),
-        ("__gos_sql_stmt_close_raw", builtin_sql_stmt_close_raw),
-        ("__gos_sql_conn_copy_in_raw", builtin_sql_conn_copy_in_raw),
-        (
-            "__gos_sql_conn_copy_out_run_raw",
-            builtin_sql_conn_copy_out_run_raw,
-        ),
-        (
             "__gos_sql_conn_copy_out_take_raw",
             builtin_sql_conn_copy_out_take_raw,
-        ),
-        ("__gos_sql_conn_listen_raw", builtin_sql_conn_listen_raw),
-        ("__gos_sql_conn_unlisten_raw", builtin_sql_conn_unlisten_raw),
-        (
-            "__gos_sql_conn_poll_notification_raw",
-            builtin_sql_conn_poll_notification_raw,
         ),
         (
             "__gos_sql_notification_channel_raw",
@@ -167,13 +135,6 @@ fn arg_bytes(args: &[Value], i: usize) -> Vec<u8> {
             .collect(),
         _ => Vec::new(),
     }
-}
-
-fn builtin_sql_open_raw(args: &[Value]) -> RuntimeResult<Value> {
-    Ok(Value::Int(sql_core::sql_open_handle(
-        &arg_str(args, 0),
-        &arg_str(args, 1),
-    )))
 }
 
 fn builtin_sql_last_error_raw(_args: &[Value]) -> RuntimeResult<Value> {
@@ -230,66 +191,6 @@ fn builtin_sql_params_push_blob_raw(args: &[Value]) -> RuntimeResult<Value> {
     )))
 }
 
-fn builtin_sql_conn_execute_raw(args: &[Value]) -> RuntimeResult<Value> {
-    Ok(Value::Int(sql_core::sql_conn_execute_params(
-        arg_i64(args, 0),
-        &arg_str(args, 1),
-        arg_i64(args, 2),
-    )))
-}
-
-fn builtin_sql_conn_query_raw(args: &[Value]) -> RuntimeResult<Value> {
-    Ok(Value::Int(sql_core::sql_conn_query_params(
-        arg_i64(args, 0),
-        &arg_str(args, 1),
-        arg_i64(args, 2),
-    )))
-}
-
-fn builtin_sql_conn_begin_raw(args: &[Value]) -> RuntimeResult<Value> {
-    Ok(Value::Int(sql_core::sql_conn_begin(arg_i64(args, 0))))
-}
-
-fn builtin_sql_conn_begin_with_raw(args: &[Value]) -> RuntimeResult<Value> {
-    Ok(Value::Int(sql_core::sql_conn_begin_with(
-        arg_i64(args, 0),
-        arg_i64(args, 1),
-    )))
-}
-
-fn builtin_sql_conn_ping_raw(args: &[Value]) -> RuntimeResult<Value> {
-    Ok(Value::Int(sql_core::sql_conn_ping(arg_i64(args, 0))))
-}
-
-fn builtin_sql_conn_set_busy_timeout_raw(args: &[Value]) -> RuntimeResult<Value> {
-    Ok(Value::Int(sql_core::sql_conn_set_busy_timeout(
-        arg_i64(args, 0),
-        arg_i64(args, 1),
-    )))
-}
-
-fn builtin_sql_conn_interrupt_raw(args: &[Value]) -> RuntimeResult<Value> {
-    Ok(Value::Int(sql_core::sql_conn_interrupt(arg_i64(args, 0))))
-}
-
-fn builtin_sql_conn_close_raw(args: &[Value]) -> RuntimeResult<Value> {
-    Ok(Value::Int(sql_core::sql_conn_close(arg_i64(args, 0))))
-}
-
-fn builtin_sql_rows_next_row_raw(args: &[Value]) -> RuntimeResult<Value> {
-    Ok(Value::Int(sql_core::sql_rows_next_row(arg_i64(args, 0))))
-}
-
-fn builtin_sql_rows_close_raw(args: &[Value]) -> RuntimeResult<Value> {
-    Ok(Value::Int(sql_core::sql_rows_close(arg_i64(args, 0))))
-}
-
-fn builtin_sql_rows_columns_raw(args: &[Value]) -> RuntimeResult<Value> {
-    Ok(Value::String(
-        sql_core::sql_rows_columns_joined(arg_i64(args, 0)).into(),
-    ))
-}
-
 fn builtin_sql_row_kind_raw(args: &[Value]) -> RuntimeResult<Value> {
     Ok(Value::Int(sql_core::sql_row_kind(
         arg_i64(args, 0),
@@ -338,21 +239,6 @@ fn builtin_sql_row_width_raw(args: &[Value]) -> RuntimeResult<Value> {
     Ok(Value::Int(sql_core::sql_row_width(arg_i64(args, 0))))
 }
 
-fn builtin_sql_tx_commit_raw(args: &[Value]) -> RuntimeResult<Value> {
-    Ok(Value::Int(sql_core::sql_tx_commit(arg_i64(args, 0))))
-}
-
-fn builtin_sql_tx_rollback_raw(args: &[Value]) -> RuntimeResult<Value> {
-    Ok(Value::Int(sql_core::sql_tx_rollback(arg_i64(args, 0))))
-}
-
-fn builtin_sql_tx_execute_raw(args: &[Value]) -> RuntimeResult<Value> {
-    Ok(Value::Int(sql_core::sql_tx_execute(
-        arg_i64(args, 0),
-        &arg_str(args, 1),
-    )))
-}
-
 fn builtin_sql_tx_savepoint_raw(args: &[Value]) -> RuntimeResult<Value> {
     Ok(Value::Int(sql_core::sql_tx_savepoint(
         arg_i64(args, 0),
@@ -374,67 +260,6 @@ fn builtin_sql_tx_rollback_to_savepoint_raw(args: &[Value]) -> RuntimeResult<Val
     )))
 }
 
-fn builtin_sql_tx_execute_params_raw(args: &[Value]) -> RuntimeResult<Value> {
-    Ok(Value::Int(sql_core::sql_tx_execute_params(
-        arg_i64(args, 0),
-        &arg_str(args, 1),
-        arg_i64(args, 2),
-    )))
-}
-
-fn builtin_sql_tx_query_params_raw(args: &[Value]) -> RuntimeResult<Value> {
-    Ok(Value::Int(sql_core::sql_tx_query_params(
-        arg_i64(args, 0),
-        &arg_str(args, 1),
-        arg_i64(args, 2),
-    )))
-}
-
-fn builtin_sql_conn_prepare_raw(args: &[Value]) -> RuntimeResult<Value> {
-    Ok(Value::Int(sql_core::sql_conn_prepare(
-        arg_i64(args, 0),
-        &arg_str(args, 1),
-    )))
-}
-
-fn builtin_sql_stmt_execute_raw(args: &[Value]) -> RuntimeResult<Value> {
-    Ok(Value::Int(sql_core::sql_stmt_execute(
-        arg_i64(args, 0),
-        arg_i64(args, 1),
-    )))
-}
-
-fn builtin_sql_stmt_query_raw(args: &[Value]) -> RuntimeResult<Value> {
-    Ok(Value::Int(sql_core::sql_stmt_query(
-        arg_i64(args, 0),
-        arg_i64(args, 1),
-    )))
-}
-
-fn builtin_sql_stmt_close_raw(args: &[Value]) -> RuntimeResult<Value> {
-    Ok(Value::Int(sql_core::sql_stmt_close(arg_i64(args, 0))))
-}
-
-fn builtin_sql_conn_copy_in_raw(args: &[Value]) -> RuntimeResult<Value> {
-    Ok(Value::Int(sql_core::sql_conn_copy_in(
-        arg_i64(args, 0),
-        &arg_str(args, 1),
-        &arg_bytes(args, 2),
-    )))
-}
-
-fn builtin_sql_conn_copy_out_run_raw(args: &[Value]) -> RuntimeResult<Value> {
-    let handle = arg_i64(args, 0);
-    match sql_core::sql_conn_copy_out(handle, &arg_str(args, 1)) {
-        Some(bytes) => {
-            let n = bytes.len() as i64;
-            sql_core::sql_copy_out_store(handle, bytes);
-            Ok(Value::Int(n))
-        }
-        None => Ok(Value::Int(-1)),
-    }
-}
-
 fn builtin_sql_conn_copy_out_take_raw(args: &[Value]) -> RuntimeResult<Value> {
     let bytes = sql_core::sql_copy_out_take(arg_i64(args, 0));
     Ok(Value::Array(Arc::new(
@@ -442,27 +267,6 @@ fn builtin_sql_conn_copy_out_take_raw(args: &[Value]) -> RuntimeResult<Value> {
             .into_iter()
             .map(|b| Value::Int(i64::from(b)))
             .collect(),
-    )))
-}
-
-fn builtin_sql_conn_listen_raw(args: &[Value]) -> RuntimeResult<Value> {
-    Ok(Value::Int(sql_core::sql_conn_listen(
-        arg_i64(args, 0),
-        &arg_str(args, 1),
-    )))
-}
-
-fn builtin_sql_conn_unlisten_raw(args: &[Value]) -> RuntimeResult<Value> {
-    Ok(Value::Int(sql_core::sql_conn_unlisten(
-        arg_i64(args, 0),
-        &arg_str(args, 1),
-    )))
-}
-
-fn builtin_sql_conn_poll_notification_raw(args: &[Value]) -> RuntimeResult<Value> {
-    Ok(Value::Int(sql_core::sql_conn_poll_notification(
-        arg_i64(args, 0),
-        arg_i64(args, 1),
     )))
 }
 

@@ -18,7 +18,7 @@ Go-shaped: goroutines, channels. Source files end in `.gos`. The
 toolchain binary is `gos`. Every project ships a `project.toml`
 manifest.
 
-Status: pre-1.0.0 (currently 0.14.0). The surface is stable to
+Status: pre-1.0.0 (currently 0.17.0). The surface is stable to
 write against, and features ship across all three tiers (bytecode
 VM, in-process JIT, LLVM AOT) - see "current gaps" at the bottom.
 
@@ -55,8 +55,9 @@ first time through, leave it alone.
 - **`#[derive(Clone, PartialEq, Eq, Default, Debug, Hash)]`** on
   structs and enums - synthesized as real source, so `==`,
   `.clone()`, `Type::default()`, `{:?}` work on every tier. Enums
-  derive when variants are all tuple/unit; `#[default]` picks the
-  `Default` variant. Don't hand-roll field-wise eq/clone.
+  derive for tuple, unit, and struct-payload (`Rect { w, h }`)
+  variants; `#[default]` picks the `Default` variant. Don't hand-roll
+  field-wise eq/clone.
 - **`defer expr` for cleanup.** Runs when control leaves the
   enclosing `{ }` block by any path (fall-through, `return`,
   `break`, `continue`), LIFO order. In a loop body it runs each
@@ -128,6 +129,27 @@ if let Tree::Node(value, _, _) = node { println!("node = {value}") }
 
 Use `match` (not `if let … else`) when you genuinely need every
 variant.
+
+### Let-chains - bind and test in one condition
+
+An `if` / `while` condition may chain clauses with `&&`, where each
+clause is either `let PAT = expr` or a boolean. Earlier `let`
+bindings are in scope for later clauses and the body, so a nested
+`match` collapses to one line. `||` cannot join `let` clauses without
+parentheses (a `let` clause chain is `&&`-only).
+
+```gossamer
+if let Some(x) = a && let Some(y) = b && x > 0 {   // bind both, then test
+    use(x + y)
+}
+if let Some(inner) = pair && let Some(v) = inner {  // later clause uses earlier bind
+    println!("nested {v}")
+}
+while i < xs.len() && let n = xs[i] && n > 0 {       // while-let chain
+    sum += n
+    i += 1
+}
+```
 
 ## 3. The `|>` forward-pipe operator
 
@@ -236,6 +258,14 @@ fn main() {
   all three tiers. Single-bound struct-typed parameters today; no
   `dyn Trait`, operator traits, associated types, or supertrait method
   inheritance through the bound.
+- **Const-generic array length.** `fn sum<const N: usize>(xs: [i64; N])
+  -> i64` takes a fixed-size array of any length; `N` is inferred from
+  the argument's length and the function monomorphises correctly on all
+  three tiers. The body iterates `xs` and reads `xs.len()`, `N` may
+  appear in the return type (`-> [i64; N]`), and multiple const params
+  (`<const N: usize, const M: usize>`) instantiate independently. Scope:
+  `N` is inferred from a `[T; N]` argument; it is not yet usable as a
+  bare value expression in the body or as a repeat count (`[0; N]`).
 - **References.** `&x` read-shared, `&mut x` exclusive write -
   aliasing intent only; the runtime owns memory. **No lifetimes, no
   borrow checker.**
@@ -254,10 +284,17 @@ fn main() {
   == 300`, NaN → 0). Other `as` shapes are GT0005; `as i128/u128` is
   GT0014.
 - **Patterns.** `_`, literals, `name`, `mut name`, `Variant(…)`,
-  `Struct { … }`, tuples `(a, b)`, ranges `1..=5`, or-patterns
-  `a | b`, `@`-bindings `x @ 1..=3`, rest `..`. Guards: `Some(n) if
-  n > 0 => …`. Used in `let`, `for`, params, `match`, `if let`,
-  `while let`.
+  `Struct { … }`, tuples `(a, b)`, ranges - closed `1..=5`, exclusive
+  `1..5`, and open-ended `..=hi` / `..hi` / `lo..` / `lo..=` (an open
+  end covers up to the type maximum) - or-patterns `a | b`, `@`-bindings
+  `x @ 1..=3`, rest `..`. Range patterns are opaque to exhaustiveness, so
+  a `_` arm is still required; `..=` with no upper bound is a parse error.
+  Guards: `Some(n) if n > 0 => …`. Used in `let`, `for`, params, `match`,
+  `if let`, `while let`. Irrefutable `let` destructuring binds struct
+  patterns (`let Point { x, y } = p`, renamed `let Point { x: a, y: b }
+  = p`), nested structs, enum / tuple-struct variants (`let Shape::Pair(m,
+  n) = s`), and or-patterns (`let (A(g, _) | B(g)) = v`, alternatives must
+  bind the same names) on every tier.
 - **`if let` / `while let`** desugar to `match` - shorter reading,
   no new behavior.
 - **`let PAT = expr else { … }`** - the else block must diverge
@@ -586,11 +623,11 @@ repo examples and write a small test when unsure.
   `String` methods: `split_once(sep) -> Option<(String, String)>`,
   `rsplit_once`, `count(needle)`, `find_any(chars)`/`rfind_any(chars)
   -> Option<i64>`, `center(w, c)`, `slice(a, b) -> Result<String, _>`,
-  `substring(a, b) -> String` (out-of-range clamps rather than erroring;
-  see the tier caveat in §15), `byte_at(i) -> i64`. Prefer `to_lower`
-  over the `to_lowercase` alias. Join with `strings::join(&parts, sep)`,
-  not the `parts.join(sep)` method (the latter mis-dispatches and drops
-  the elements).
+  `substring(a, b) -> String` (out-of-range clamps rather than erroring,
+  identically on every tier), `byte_at(i) -> i64` (0 outside `[0, len)`,
+  identically on every tier). Prefer `to_lower` over the `to_lowercase`
+  alias. Both `strings::join(&parts, sep)` and the `parts.join(sep)`
+  method on a `[String]` work and produce the same result.
 - `std::strconv` - `parse_int/i64/u64/float/f64/bool`,
   `format_int/i64/float/f64`, `itoa`, `atoi`, `parse_i64_radix(s, base)`
   / `format_i64_radix(n, base)` (bases 2..=36), `quote`/`unquote`.
@@ -815,21 +852,18 @@ fn main() -> Result<(), flag::Error> {
 - `+` on `String` copies; for heavy assembly use
   `std::bytes::Builder` or a `mut String` with `+=`.
 - Method dispatch is name-global in places. Qualified path calls
-  (`Point::origin()`) always work. `String` / `HashMap` / `Vec`
+  (`Point::origin()`) always work, and `String` / `HashMap` / `Vec`
   receivers dispatch by type (a `String::` / `HashMap::` / `Vec::`
   key resolved ahead of the bare name), so `s.to_title()` reaches the
-  string op, not `unicode::to_title`. (Exception: `parts.join(sep)` on
-  a `[String]` mis-dispatches and returns just the separator - use
-  `strings::join(&parts, sep)`.) Remaining trap: once any struct carries
-  `#[derive(Clone)]`, calling `.clone()` on a *`String`* receiver can
-  dispatch to the struct's derived clone under `gos run` (a `GX0001`
-  runtime error); compiled tiers resolve it. Strings are values - bind
-  or borrow instead of cloning, and don't shadow built-in method names.
-- `#[derive(...)]` does not yet cover enums with struct-payload
-  variants (`Rect { w, h }`); tuple and unit variants derive fine.
-- `u64` above 2^63 aliases i64 semantics: every ≤64-bit integer runs
-  signed-i64 arithmetic; unsigned display fires only for explicit
-  `as u64` / `as usize` results.
+  string op, not `unicode::to_title`, and `parts.join(sep)` on a
+  `[String]` reaches `strings::join`. Strings are values - bind or
+  borrow instead of cloning, and don't shadow built-in method names.
+- `u64` / `usize` at or above 2^63 compare, shift, and display as
+  unsigned by their declared type on the bytecode VM and the LLVM AOT
+  tier; `+` / `-` / `*` run at i64 width (identical bit results).
+  Residual gap: the in-process Cranelift JIT still compares and shifts
+  such values as signed, so a hot large-`u64` loop can differ between
+  `gos run` and `gos build` - cross-check with `gos build` when it matters.
 
 ### Tier-divergence traps
 

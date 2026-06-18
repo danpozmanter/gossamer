@@ -57,6 +57,104 @@ impl<'tcx> FnBuilder<'tcx> {
                 }
                 Ok(())
             }
+            HirPatKind::Struct { fields, .. } => {
+                for fp in fields {
+                    let fname_idx = self.const_idx(
+                        ConstKey::String(fp.name.name.clone()),
+                        Value::String(SmolStr::from(fp.name.name.as_str())),
+                    );
+                    let dst = self.alloc_reg();
+                    let cache_idx = self.alloc_field_cache_idx();
+                    self.emit(Op::FieldGet {
+                        dst,
+                        receiver: init_reg,
+                        name_idx: fname_idx,
+                        cache_idx,
+                    });
+                    match &fp.pattern {
+                        Some(sub) => self.bind_pattern_locals(sub, dst)?,
+                        None => self.bind_local(
+                            &fp.name.name,
+                            TypedReg {
+                                reg: dst,
+                                kind: RegKind::Value,
+                            },
+                        ),
+                    }
+                }
+                Ok(())
+            }
+            HirPatKind::Variant { fields, .. } => {
+                for (i, fp) in fields.iter().enumerate() {
+                    let dst = self.alloc_reg();
+                    let idx = u16::try_from(i)
+                        .map_err(|_| RuntimeError::Unsupported("variant arity exceeds 65535"))?;
+                    self.emit(Op::VariantField {
+                        dst,
+                        src: init_reg,
+                        idx,
+                    });
+                    self.bind_pattern_locals(fp, dst)?;
+                }
+                Ok(())
+            }
+            HirPatKind::Or(alts) => {
+                // Irrefutable let: the alternatives jointly cover the
+                // value's type, so exactly one matches at runtime and
+                // the final alternative is the guaranteed fallback. Every
+                // alternative binds the same names; one shared register
+                // per name is the single home the following code reads,
+                // so each alternative copies its freshly-extracted
+                // bindings into those shared registers before continuing.
+                let mut names: Vec<String> = Vec::new();
+                super::compile_expr::collect_pattern_binding_names(pattern, &mut names);
+                let shared: Vec<(String, Reg)> = names
+                    .into_iter()
+                    .map(|name| (name, self.alloc_reg()))
+                    .collect();
+                let mut matched: Vec<InstrIdx> = Vec::new();
+                let last = alts.len().saturating_sub(1);
+                for (i, alt) in alts.iter().enumerate() {
+                    let mut alt_fails: Vec<InstrIdx> = Vec::new();
+                    self.push_scope();
+                    if i == last {
+                        self.bind_pattern_locals(alt, init_reg)?;
+                    } else {
+                        self.emit_pattern_test(init_reg, alt, &mut alt_fails)?;
+                    }
+                    for (name, dst) in &shared {
+                        if let Some(src) = self.lookup_local(name) {
+                            let src_v = self.as_value(src);
+                            self.emit(Op::Move {
+                                dst: *dst,
+                                src: src_v,
+                            });
+                        }
+                    }
+                    self.pop_scope();
+                    if i != last {
+                        matched.push(self.emit(Op::Jump { target: 0 }));
+                        let next_alt = self.cur_idx();
+                        for f in alt_fails {
+                            self.patch_jump(f, next_alt);
+                        }
+                    }
+                }
+                let cont = self.cur_idx();
+                for m in matched {
+                    self.patch_jump(m, cont);
+                }
+                for (name, reg) in &shared {
+                    self.bind_local(
+                        name,
+                        TypedReg {
+                            reg: *reg,
+                            kind: RegKind::Value,
+                        },
+                    );
+                }
+                Ok(())
+            }
             HirPatKind::Wildcard | HirPatKind::Literal(_) | HirPatKind::Rest => Ok(()),
             other => Err(RuntimeError::Type(format!(
                 "let-pattern shape {other:?} is not yet handled by the VM compiler"
@@ -915,6 +1013,59 @@ impl<'tcx> FnBuilder<'tcx> {
         }))
     }
 
+    /// Lowers a numeric `Vec::new()` to a flat empty `IntArray` /
+    /// `FloatVec` (8 bytes per element) instead of the boxed
+    /// `Value::Array` the generic `Vec::new` builtin returns. The local
+    /// is tagged flat so a following `push` loop grows the flat backing
+    /// store in place. Only the zero-argument `Vec::new()` is taken;
+    /// `Vec::with_capacity(n)` keeps the generic path so its capacity
+    /// argument (and any side effect) is still evaluated.
+    pub(crate) fn try_build_empty_typed_vec(
+        &mut self,
+        callee: &HirExpr,
+        args: &[HirExpr],
+        result_ty: Ty,
+    ) -> RuntimeResult<Option<TypedReg>> {
+        if !args.is_empty() {
+            return Ok(None);
+        }
+        let HirExprKind::Path { segments, .. } = &callee.kind else {
+            return Ok(None);
+        };
+        let n = segments.len();
+        if n < 2 || segments[n - 2].name.as_str() != "Vec" || segments[n - 1].name.as_str() != "new"
+        {
+            return Ok(None);
+        }
+        let Some(elem) = self.array_elem_ty(result_ty) else {
+            return Ok(None);
+        };
+        let dst = self.alloc_reg();
+        match self.tcx.kind(elem) {
+            Some(TyKind::Int(IntTy::I64 | IntTy::Isize | IntTy::Usize)) => {
+                self.emit(Op::BuildIntArray {
+                    dst_v: dst,
+                    first_i: 0,
+                    count: 0,
+                });
+                self.flat_int_locals.insert(dst);
+            }
+            Some(TyKind::Float(FloatTy::F64)) => {
+                self.emit(Op::BuildFloatVec {
+                    dst_v: dst,
+                    first_f: 0,
+                    count: 0,
+                });
+                self.flat_float_locals.insert(dst);
+            }
+            _ => return Ok(None),
+        }
+        Ok(Some(TypedReg {
+            reg: dst,
+            kind: RegKind::Value,
+        }))
+    }
+
     /// Mirror of [`Self::try_build_float_array`] for the
     /// primitive `[i64; N]` shape. When the literal's element
     /// type is `i64` we emit `Op::BuildIntArray` (writing into
@@ -1678,7 +1829,7 @@ impl<'tcx> FnBuilder<'tcx> {
             defer_depth: self.defer_stack.len(),
             label: self.pending_loop_label.take(),
         });
-        let _ = self.compile_expr(&some_arm.body)?;
+        self.compile_loop_body(&some_arm.body)?;
         // `continue` jumps here: the same fused inc-and-test op
         // the body's bottom fall-through executes. Routing
         // `continue` directly to `header` would re-test the
@@ -1991,7 +2142,7 @@ impl<'tcx> FnBuilder<'tcx> {
             defer_depth: self.defer_stack.len(),
             label: self.pending_loop_label.take(),
         });
-        let _ = self.compile_expr(&some_arm.body)?;
+        self.compile_loop_body(&some_arm.body)?;
         // `continue` jumps here so the counter increment + jump
         // back to the bounds check still run. A direct jump to
         // `header` would re-check bounds without advancing the

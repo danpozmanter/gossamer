@@ -22,7 +22,7 @@ fn peel_ref_wrappers_expr(expr: &HirExpr) -> &HirExpr {
 /// per name so every alternative writes the same destinations. For
 /// nested or-patterns only the first alternative is walked, since all
 /// alternatives bind the same set of names by typecheck invariant.
-fn collect_pattern_binding_names(pat: &HirPat, out: &mut Vec<String>) {
+pub(crate) fn collect_pattern_binding_names(pat: &HirPat, out: &mut Vec<String>) {
     fn push_unique(out: &mut Vec<String>, name: &str) {
         if !out.iter().any(|n| n == name) {
             out.push(name.to_string());
@@ -104,6 +104,9 @@ impl<'tcx> FnBuilder<'tcx> {
             HirExprKind::Unary { op, operand } => self.compile_unary_ex(*op, operand),
             HirExprKind::Call { callee, args } => {
                 if let Some(tr) = self.try_intrinsic_call(callee, args)? {
+                    return Ok(tr);
+                }
+                if let Some(tr) = self.try_build_empty_typed_vec(callee, args, expr.ty)? {
                     return Ok(tr);
                 }
                 if let Some(tr) = self.try_inline_user_call(callee, args)? {
@@ -855,7 +858,7 @@ impl<'tcx> FnBuilder<'tcx> {
     /// onto `fails` for every test that must jump to the next arm on
     /// mismatch; on the fall-through (match) path the pattern's
     /// bindings are live in the current scope.
-    fn emit_pattern_test(
+    pub(crate) fn emit_pattern_test(
         &mut self,
         scrut: Reg,
         pat: &HirPat,
@@ -1672,6 +1675,84 @@ impl<'tcx> FnBuilder<'tcx> {
         Ok(result)
     }
 
+    /// Emits a dedicated in-place Vec op (`VecPush` / `VecInsert` /
+    /// `VecRemove`) for a bare-local Vec receiver whose mutating
+    /// method's result is discarded (statement position). Returns
+    /// `true` when it handled the call. The op mutates the receiver
+    /// register's backing storage directly via `Arc::make_mut`, so a
+    /// `push` loop grows in amortized O(1) instead of deep-copying the
+    /// whole Vec per call. Other receiver shapes (index / field /
+    /// temporary) and expression-position uses keep the generic
+    /// builtin + writeback path, which produces the same final state.
+    pub(crate) fn try_compile_inplace_vec_stmt(
+        &mut self,
+        receiver: &HirExpr,
+        name: &Ident,
+        args: &[HirExpr],
+    ) -> RuntimeResult<bool> {
+        let HirExprKind::Path { segments, .. } = &receiver.kind else {
+            return Ok(false);
+        };
+        let [seg] = segments.as_slice() else {
+            return Ok(false);
+        };
+        // Concrete Vec-like receivers only. `String` / `bytes::Builder`
+        // also carry `push` / `insert` / `remove` but back onto different
+        // storage, and an unresolved `Var` receiver (e.g. `String::new()`)
+        // can be any of them - those keep the generic dispatch, which
+        // selects the right builtin by the runtime value's type.
+        let is_concrete_vec = matches!(
+            self.tcx.kind(receiver.ty),
+            Some(TyKind::Vec(_) | TyKind::Slice(_) | TyKind::Array { .. })
+        );
+        let target_reg = match self.lookup_local(&seg.name) {
+            Some(target) if target.kind == RegKind::Value => target.reg,
+            _ => return Ok(false),
+        };
+        // A flat typed-storage local (`IntArray` / `FloatVec`) or a local
+        // tagged at `let` time as a Vec constructor / array literal is a
+        // Vec even when its static type stayed an inference var.
+        if !is_concrete_vec
+            && !self.flat_int_locals.contains(&target_reg)
+            && !self.flat_float_locals.contains(&target_reg)
+            && !self.collection_locals.contains(&target_reg)
+        {
+            return Ok(false);
+        }
+        match (name.name.as_str(), args.len()) {
+            ("push", 1) => {
+                let recv = self.compile_expr(receiver)?;
+                let value = self.compile_expr(&args[0])?;
+                self.emit(Op::VecPush {
+                    receiver: recv,
+                    value,
+                });
+                Ok(true)
+            }
+            ("insert", 2) => {
+                let recv = self.compile_expr(receiver)?;
+                let index = self.compile_expr(&args[0])?;
+                let value = self.compile_expr(&args[1])?;
+                self.emit(Op::VecInsert {
+                    receiver: recv,
+                    index,
+                    value,
+                });
+                Ok(true)
+            }
+            ("remove", 1) => {
+                let recv = self.compile_expr(receiver)?;
+                let index = self.compile_expr(&args[0])?;
+                self.emit(Op::VecRemove {
+                    receiver: recv,
+                    index,
+                });
+                Ok(true)
+            }
+            _ => Ok(false),
+        }
+    }
+
     pub(crate) fn compile_method_call(
         &mut self,
         receiver: &HirExpr,
@@ -1938,16 +2019,17 @@ impl<'tcx> FnBuilder<'tcx> {
             }
         }
         let receiver_reg = self.compile_expr(receiver)?;
-        // `xs.pop()` evaluates to `Option<last>` while the mutating
-        // writeback shortens the receiver. `builtin_pop` only
-        // returns the shortened aggregate, so capture `Some(last)`
-        // / `None` via the non-mutating `last` builtin first, then
-        // run the mutating call + writeback as usual.
-        // Unresolved receiver types (`Var` / missing) still take the
-        // sequence: the dominant producer is a stdlib call like
-        // `os::read_file` whose Vec result type the checker leaves
-        // open; user receivers with their own `pop` are `Adt`-typed
-        // and excluded.
+        // `xs.pop()` evaluates to `Option<last>` while shortening the
+        // receiver. `Op::VecPop` does both in one in-place step: it
+        // returns `Some(last)` / `None` and shrinks the receiver
+        // register's backing storage without copying it. A bare-local
+        // receiver's register is the local's own slot, so the mutation
+        // persists; a temporary receiver's mutation is discarded, which
+        // matches the compiled tiers (pop on a temporary is a no-op).
+        // Unresolved receiver types (`Var` / missing) still take this
+        // path: the dominant producer is a stdlib call like
+        // `os::read_file` whose Vec result type the checker leaves open;
+        // user receivers with their own `pop` are `Adt`-typed and excluded.
         if name.name == "pop"
             && args.is_empty()
             && matches!(
@@ -1958,38 +2040,10 @@ impl<'tcx> FnBuilder<'tcx> {
             )
         {
             let opt_dst = self.alloc_reg();
-            let last_idx = self.global_idx("last");
-            let last_cache = self.alloc_cache_idx();
-            self.emit(Op::MethodCall {
+            self.emit(Op::VecPop {
                 dst: opt_dst,
                 receiver: receiver_reg,
-                name_idx: last_idx,
-                args: self.next_reg,
-                argc: 0,
-                cache_idx: last_cache,
             });
-            let pop_dst = self.alloc_reg();
-            let pop_idx = self.global_idx("pop");
-            let pop_cache = self.alloc_cache_idx();
-            self.emit(Op::MethodCall {
-                dst: pop_dst,
-                receiver: receiver_reg,
-                name_idx: pop_idx,
-                args: self.next_reg,
-                argc: 0,
-                cache_idx: pop_cache,
-            });
-            if let HirExprKind::Path { segments, .. } = &receiver.kind
-                && segments.len() == 1
-                && let Some(target) = self.lookup_local(&segments[0].name)
-                && target.kind == RegKind::Value
-                && target.reg == receiver_reg
-            {
-                self.emit(Op::Move {
-                    dst: target.reg,
-                    src: pop_dst,
-                });
-            }
             return Ok(opt_dst);
         }
         // Super-instruction fast path for `<stream>.write_byte(<b>)`.

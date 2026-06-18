@@ -435,8 +435,17 @@ impl<'a> Builder<'a> {
                                 stmt.span,
                             );
                         }
-                        if let HirPatKind::Tuple(sub_patterns) = &pattern.kind {
-                            self.bind_tuple_pattern(local, sub_patterns, stmt.span);
+                        match &pattern.kind {
+                            HirPatKind::Tuple(sub_patterns) => {
+                                self.bind_tuple_pattern(local, sub_patterns, stmt.span);
+                            }
+                            HirPatKind::Struct { .. } | HirPatKind::Variant { .. } => {
+                                self.bind_aggregate_let_pattern(local, pattern, stmt.span);
+                            }
+                            HirPatKind::Or(branches) => {
+                                self.bind_or_let_pattern(local, branches, stmt.span);
+                            }
+                            _ => {}
                         }
                     }
                 }

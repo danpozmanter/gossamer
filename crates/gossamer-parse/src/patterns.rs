@@ -99,8 +99,34 @@ impl Parser<'_> {
         PatternKind::Error
     }
 
+    /// Parses a leading `..` / `..=`. Followed by a literal it is an
+    /// open-start range pattern (`..hi` / `..=hi`); a bare `..` is the
+    /// rest pattern. A bare `..=` with no upper bound is rejected.
     fn parse_range_pattern_or_rest(&mut self) -> PatternKind {
+        let inclusive = self.at_punct(Punct::DotDotEq);
         self.bump();
+        let kind = if inclusive {
+            RangeKind::Inclusive
+        } else {
+            RangeKind::Exclusive
+        };
+        if let Some(hi) = self.try_parse_literal_pattern() {
+            return PatternKind::Range {
+                lo: None,
+                hi: Some(hi),
+                kind,
+            };
+        }
+        if inclusive {
+            self.record(
+                ParseError::Unexpected {
+                    expected: "upper bound after `..=`".to_string(),
+                    found: self.peek_text(),
+                },
+                self.peek_span(),
+            );
+            return PatternKind::Error;
+        }
         PatternKind::Rest
     }
 
@@ -263,9 +289,14 @@ impl Parser<'_> {
                 self.bump();
                 RangeKind::Exclusive
             };
-            if let Some(hi) = self.try_parse_literal_pattern() {
-                return PatternKind::Range { lo, hi, kind };
-            }
+            // `lo..hi` / `lo..=hi` when a bound follows; otherwise an
+            // open-end range `lo..` / `lo..=` up to the type maximum.
+            let hi = self.try_parse_literal_pattern();
+            return PatternKind::Range {
+                lo: Some(lo),
+                hi,
+                kind,
+            };
         }
         PatternKind::Literal(lo)
     }

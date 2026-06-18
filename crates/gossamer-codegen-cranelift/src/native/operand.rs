@@ -354,7 +354,7 @@ pub(super) fn operand_print_kind(body: &Body, tcx: &TyCtxt, operand: &Operand) -
                 // ("{:?}", nums)` printed `<value>` even though
                 // the array is fully typed and the helper exists.
                 TyKind::Array { elem, len } => {
-                    let n = i64::try_from(*len).unwrap_or(0);
+                    let n = i64::try_from(len.to_usize()).unwrap_or(0);
                     match tcx.kind_of(*elem) {
                         TyKind::Int(_) => PrintKind::ArrI64(n),
                         TyKind::Float(_) => PrintKind::ArrF64(n),

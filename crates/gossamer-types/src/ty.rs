@@ -151,6 +151,41 @@ impl ParamIdx {
     }
 }
 
+/// Length of a fixed-size array `[T; N]`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ArrayLen {
+    /// A statically-known element count.
+    Concrete(usize),
+    /// A const generic parameter, referenced by its position in the
+    /// defining item's generics list. Every instantiation is
+    /// monomorphised first, replacing this with a `Concrete` length, so
+    /// codegen only ever observes concrete array lengths.
+    Param(ParamIdx),
+}
+
+impl ArrayLen {
+    /// The concrete element count, or `0` for a const generic parameter
+    /// that was never substituted (only reachable in an un-instantiated
+    /// generic template, which never executes).
+    #[must_use]
+    pub const fn to_usize(self) -> usize {
+        match self {
+            Self::Concrete(n) => n,
+            Self::Param(_) => 0,
+        }
+    }
+
+    /// The concrete element count, or `None` for a const generic
+    /// parameter that has not yet been substituted.
+    #[must_use]
+    pub const fn concrete(self) -> Option<usize> {
+        match self {
+            Self::Concrete(n) => Some(n),
+            Self::Param(_) => None,
+        }
+    }
+}
+
 /// Signature of a bare function pointer or `fn`-typed item.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct FnSig {
@@ -206,8 +241,8 @@ pub enum TyKind {
     Array {
         /// Element type.
         elem: Ty,
-        /// Element count.
-        len: usize,
+        /// Element count - concrete, or a const generic parameter.
+        len: ArrayLen,
     },
     /// Unsized slice `[T]`, always seen through a reference at runtime.
     Slice(Ty),

@@ -537,7 +537,7 @@ impl<'a> Lowerer<'a> {
                     Some(TyKind::JsonValue) => ConcatKind::JsonValue,
                     Some(TyKind::DynError) => ConcatKind::ErrorMessage,
                     Some(TyKind::Array { elem, len }) => {
-                        let n = i64::try_from(*len).unwrap_or(0);
+                        let n = i64::try_from(len.to_usize()).unwrap_or(0);
                         match self.tcx.kind(*elem) {
                             Some(TyKind::Int(_)) => ConcatKind::ArrI64(n),
                             Some(TyKind::Float(_)) => ConcatKind::ArrF64(n),

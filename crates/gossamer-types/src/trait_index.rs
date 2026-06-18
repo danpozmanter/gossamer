@@ -444,7 +444,7 @@ impl TypeLowerer<'_> {
                 let count = evaluate_const_int(len).unwrap_or(0);
                 self.tcx.intern(TyKind::Array {
                     elem: elem_ty,
-                    len: count,
+                    len: crate::ArrayLen::Concrete(count),
                 })
             }
             AstTypeKind::Slice(inner) => {

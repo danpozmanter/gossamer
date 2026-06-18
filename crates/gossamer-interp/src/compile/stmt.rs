@@ -49,6 +49,32 @@ impl<'tcx> FnBuilder<'tcx> {
         }
     }
 
+    /// Tags a freshly-bound register as holding a Vec when its
+    /// initializer is a Vec constructor (`Vec::new` / `Vec::with_capacity`)
+    /// or an array literal whose static type stayed an inference var.
+    /// A statement-position `v.push(x)` on such a local then lowers to the
+    /// in-place `Op::VecPush` even though the receiver's HIR type is
+    /// unresolved. Concrete `Vec` / `Slice` / `Array` types and flat
+    /// typed-storage locals already carry their own signal.
+    fn record_vec_init(&mut self, init: &HirExpr, reg: Reg) {
+        let is_vec_ctor = match &init.kind {
+            HirExprKind::Call { callee, .. } => match &callee.kind {
+                HirExprKind::Path { segments, .. } => {
+                    let n = segments.len();
+                    n >= 2
+                        && segments[n - 2].name.as_str() == "Vec"
+                        && matches!(segments[n - 1].name.as_str(), "new" | "with_capacity")
+                }
+                _ => false,
+            },
+            HirExprKind::Array(_) => true,
+            _ => false,
+        };
+        if is_vec_ctor {
+            self.collection_locals.insert(reg);
+        }
+    }
+
     /// `true` when `receiver` is a path bound to a `flag::Set` duration
     /// cell, so a `time::Duration` accessor in method form dispatches on
     /// the cell's element type.
@@ -82,6 +108,7 @@ impl<'tcx> FnBuilder<'tcx> {
                             tr
                         };
                         self.record_flag_init(init, typed.reg);
+                        self.record_vec_init(init, typed.reg);
                         self.bind_local(&name.name, typed);
                     } else {
                         // Declared-only - default to Value; an
@@ -112,6 +139,14 @@ impl<'tcx> FnBuilder<'tcx> {
                 // emitted for a value nothing reads.
                 if let HirExprKind::Assign { place, value } = &expr.kind {
                     self.compile_assign_store(place, value)?;
+                } else if let HirExprKind::MethodCall {
+                    receiver,
+                    name,
+                    args,
+                } = &expr.kind
+                    && self.try_compile_inplace_vec_stmt(receiver, name, args)?
+                {
+                    // Handled by a dedicated in-place Vec op; result discarded.
                 } else {
                     let _ = self.compile_expr(expr)?;
                 }
