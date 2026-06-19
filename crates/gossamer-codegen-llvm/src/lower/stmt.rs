@@ -366,15 +366,28 @@ impl<'a> Lowerer<'a> {
         // to every aggregate slot count, including N==1: a 1-slot
         // `Bag { items: Vec<String> }` value-semantically holds a
         // Vec ptr at offset 0, NOT the Bag's address itself.
-        if place.projection.is_empty()
-            && leaf_llvm == "ptr"
+        let dest_slots = slot_count(self.tcx, dest_ty_mir);
+        // A single word stored into a *multi-slot* aggregate is a pointer to a
+        // heap copy of that aggregate (a genuine multi-slot value is
+        // materialised slot-by-slot, never as one word), so its contents are
+        // copied in. Covers a boxed pointer carried as `i64` - e.g.
+        // `gos_rt_select_value` for a struct channel payload.
+        let heap_aggregate_store = place.projection.is_empty()
             && is_aggregate(self.tcx, dest_ty_mir)
-            && slot_count(self.tcx, dest_ty_mir).is_some_and(|n| n >= 1)
-        {
-            let bytes = u64::from(slot_count(self.tcx, dest_ty_mir).unwrap_or(1).max(1)) * 8;
+            && dest_slots.is_some_and(|n| n >= 1)
+            && (leaf_llvm == "ptr" || (leaf_llvm == "i64" && dest_slots.is_some_and(|n| n >= 2)));
+        if heap_aggregate_store {
+            let bytes = u64::from(dest_slots.unwrap_or(1).max(1)) * 8;
+            let src_ptr = if leaf_llvm == "ptr" {
+                value.clone()
+            } else {
+                let p = self.fresh();
+                writeln!(self.out, "  {p} = inttoptr i64 {value} to ptr").unwrap();
+                p
+            };
             writeln!(
                 self.out,
-                "  call void @llvm.memcpy.p0.p0.i64(ptr {addr}, ptr {value}, i64 {bytes}, i1 false)"
+                "  call void @llvm.memcpy.p0.p0.i64(ptr {addr}, ptr {src_ptr}, i64 {bytes}, i1 false)"
             )
             .unwrap();
         } else {

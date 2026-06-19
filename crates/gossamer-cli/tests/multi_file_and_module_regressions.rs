@@ -1299,3 +1299,86 @@ fn main() {}
         );
     }
 }
+
+#[test]
+fn cross_module_struct_field_access_resolves_on_all_tiers() {
+    // `pub struct Rec` lives in src/util.gos; src/main.gos uses `&util::Rec`
+    // as a param annotation and `&mut util::Rec` for a writeback. Both are
+    // type-path annotations that must resolve to the struct's Adt so that
+    // field access lowers to a real Field projection on every tier.
+    let dir = fresh_dir("cross-mod-struct");
+    let src = dir.join("src");
+    fs::create_dir_all(&src).unwrap();
+    fs::write(
+        dir.join("project.toml"),
+        "[project]\nid = \"example.com/xmod2\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    fs::write(
+        src.join("util.gos"),
+        concat!(
+            "pub struct Rec { pub name: String, pub age: i64 }\n",
+            "pub fn make(name: String, age: i64) -> Rec { Rec { name: name, age: age } }\n",
+            "pub fn birthday(r: &mut util::Rec) { r.age += 1 }\n",
+        ),
+    )
+    .unwrap();
+    fs::write(
+        src.join("main.gos"),
+        concat!(
+            "fn describe(r: &util::Rec) -> String {\n",
+            "    format!(\"{} is {}\", r.name, r.age)\n",
+            "}\n",
+            "fn main() {\n",
+            "    let mut r = util::make(\"ada\", 36)\n",
+            "    util::birthday(&mut r)\n",
+            "    println!(\"{}\", describe(&r))\n",
+            "}\n",
+        ),
+    )
+    .unwrap();
+
+    let run_out = Command::new(gos_bin())
+        .arg("run")
+        .current_dir(&dir)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .expect("gos run");
+    assert!(
+        run_out.status.success(),
+        "gos run failed:\nstderr: {}",
+        String::from_utf8_lossy(&run_out.stderr),
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&run_out.stdout).trim(),
+        "ada is 37",
+        "VM stdout mismatch",
+    );
+
+    let build_out = Command::new(gos_bin())
+        .arg("build")
+        .current_dir(&dir)
+        .output()
+        .expect("gos build");
+    assert!(
+        build_out.status.success(),
+        "gos build failed:\nstderr: {}",
+        String::from_utf8_lossy(&build_out.stderr),
+    );
+    let mut bin_path = dir.join("target/debug/xmod2");
+    if !std::env::consts::EXE_EXTENSION.is_empty() {
+        bin_path.set_extension(std::env::consts::EXE_EXTENSION);
+    }
+    assert!(bin_path.is_file(), "expected binary at {bin_path:?}");
+    let nat = run_native(&bin_path);
+    let _ = fs::remove_dir_all(&dir);
+    assert_eq!(nat.2, Some(0), "native stderr: {}", nat.1);
+    assert_eq!(
+        nat.0.trim(),
+        "ada is 37",
+        "native stdout mismatch: {:?}",
+        nat.0
+    );
+}

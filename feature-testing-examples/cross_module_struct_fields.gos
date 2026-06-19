@@ -1,0 +1,20 @@
+// Cross-module struct field access via qualified type-path annotation.
+// `util::Rec` appears in a `&util::Rec` param and a `&mut util::Rec`
+// param - both are type-position uses that the type resolver must map
+// to the struct's Adt, not the module's Adt, so field access lowers to
+// a real Field projection on every tier.
+mod util {
+    pub struct Rec { pub name: String, pub age: i64 }
+    pub fn make(name: String, age: i64) -> Rec { Rec { name: name, age: age } }
+    pub fn birthday(r: &mut util::Rec) { r.age += 1 }
+}
+
+fn describe(r: &util::Rec) -> String {
+    format!("{} is {}", r.name, r.age)
+}
+
+fn main() {
+    let mut r = util::make("ada", 36)
+    util::birthday(&mut r)
+    println!("{}", describe(&r))
+}

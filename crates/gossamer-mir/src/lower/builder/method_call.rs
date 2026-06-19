@@ -1720,6 +1720,16 @@ impl<'a> Builder<'a> {
                 }
                 (Some("net::TcpStream"), "start_tls_ca") => Some("gos_rt_tcp_start_tls_ca"),
                 (Some("net::TcpStream"), "close") => Some("gos_rt_tcp_stream_close"),
+                (Some("net::UnixListener"), "accept") => Some("gos_rt_unix_listener_accept"),
+                (Some("net::UnixListener"), "close") => Some("gos_rt_unix_listener_close"),
+                (Some("net::UnixStream"), "read") => Some("gos_rt_unix_stream_read"),
+                (Some("net::UnixStream"), "read_to_string") => {
+                    Some("gos_rt_unix_stream_read_to_string")
+                }
+                (Some("net::UnixStream"), "write" | "write_all") => {
+                    Some("gos_rt_unix_stream_write")
+                }
+                (Some("net::UnixStream"), "close") => Some("gos_rt_unix_stream_close"),
                 (Some("net::UdpSocket"), "send_to") => Some("gos_rt_udp_send_to"),
                 (Some("net::UdpSocket"), "recv_from") => Some("gos_rt_udp_recv_from"),
                 (Some("net::UdpSocket"), "local_addr") => Some("gos_rt_udp_local_addr"),
@@ -1786,6 +1796,7 @@ impl<'a> Builder<'a> {
                     "gos_rt_http_client_request"
                         | "gos_rt_http_client_request_bytes"
                         | "gos_rt_tcp_stream_write"
+                        | "gos_rt_unix_stream_write"
                         | "gos_rt_udp_send_to"
                         | "gos_rt_flag_set_parse"
                 );
@@ -1952,14 +1963,18 @@ impl<'a> Builder<'a> {
                 | "gos_rt_bytes_buffer_clear" => self.tcx.unit(),
                 "gos_rt_tcp_listener_local_addr"
                 | "gos_rt_tcp_stream_read_to_string"
+                | "gos_rt_unix_stream_read_to_string"
                 | "gos_rt_udp_local_addr" => self.result_string_error_adt_ty(),
                 "gos_rt_tcp_stream_write"
+                | "gos_rt_unix_stream_write"
                 | "gos_rt_udp_send_to"
                 | "gos_rt_tcp_start_tls"
                 | "gos_rt_tcp_start_tls_insecure"
                 | "gos_rt_tcp_start_tls_ca" => self.result_i64_error_adt_ty(),
-                "gos_rt_tcp_stream_read" => self.result_vec_u8_error_ty(),
-                "gos_rt_tcp_listener_accept" => {
+                "gos_rt_tcp_stream_read" | "gos_rt_unix_stream_read" => {
+                    self.result_vec_u8_error_ty()
+                }
+                "gos_rt_tcp_listener_accept" | "gos_rt_unix_listener_accept" => {
                     let i = self.tcx.int_ty(gossamer_types::IntTy::I64);
                     let s = self.tcx.string_ty();
                     let tup = self.tcx.intern(gossamer_types::TyKind::Tuple(vec![i, s]));
@@ -1974,9 +1989,11 @@ impl<'a> Builder<'a> {
                         .intern(gossamer_types::TyKind::Tuple(vec![vec_u8, s]));
                     self.result_of(tup)
                 }
-                "gos_rt_tcp_listener_close" | "gos_rt_tcp_stream_close" | "gos_rt_udp_close" => {
-                    self.tcx.unit()
-                }
+                "gos_rt_tcp_listener_close"
+                | "gos_rt_tcp_stream_close"
+                | "gos_rt_unix_listener_close"
+                | "gos_rt_unix_stream_close"
+                | "gos_rt_udp_close" => self.tcx.unit(),
                 _ => self.tcx.int_ty(gossamer_types::IntTy::I64),
             };
             let dest = self.fresh(pinned);
@@ -2014,6 +2031,7 @@ impl<'a> Builder<'a> {
                 | "gos_rt_set_difference"
                 | "gos_rt_set_symmetric_difference" => Some("collections::HashSet"),
                 "gos_rt_tcp_listener_accept" => Some("net::accept_pair"),
+                "gos_rt_unix_listener_accept" => Some("net::unix_accept_pair"),
                 "gos_rt_tcp_start_tls"
                 | "gos_rt_tcp_start_tls_insecure"
                 | "gos_rt_tcp_start_tls_ca" => Some("net::TcpStream"),
@@ -2240,6 +2258,14 @@ impl<'a> Builder<'a> {
             (Some("net::TcpStream"), "start_tls_insecure") => Some("gos_rt_tcp_start_tls_insecure"),
             (Some("net::TcpStream"), "start_tls_ca") => Some("gos_rt_tcp_start_tls_ca"),
             (Some("net::TcpStream"), "close") => Some("gos_rt_tcp_stream_close"),
+            (Some("net::UnixListener"), "accept") => Some("gos_rt_unix_listener_accept"),
+            (Some("net::UnixListener"), "close") => Some("gos_rt_unix_listener_close"),
+            (Some("net::UnixStream"), "read") => Some("gos_rt_unix_stream_read"),
+            (Some("net::UnixStream"), "read_to_string") => {
+                Some("gos_rt_unix_stream_read_to_string")
+            }
+            (Some("net::UnixStream"), "write" | "write_all") => Some("gos_rt_unix_stream_write"),
+            (Some("net::UnixStream"), "close") => Some("gos_rt_unix_stream_close"),
             (Some("net::UdpSocket"), "send_to") => Some("gos_rt_udp_send_to"),
             (Some("net::UdpSocket"), "recv_from") => Some("gos_rt_udp_recv_from"),
             (Some("net::UdpSocket"), "local_addr") => Some("gos_rt_udp_local_addr"),
@@ -2298,6 +2324,7 @@ impl<'a> Builder<'a> {
                     "gos_rt_http_client_request"
                         | "gos_rt_http_client_request_bytes"
                         | "gos_rt_tcp_stream_write"
+                        | "gos_rt_unix_stream_write"
                         | "gos_rt_udp_send_to"
                         | "gos_rt_flag_set_parse"
                 );
@@ -2489,14 +2516,18 @@ impl<'a> Builder<'a> {
                 | "gos_rt_bytes_buffer_clear" => self.tcx.unit(),
                 "gos_rt_tcp_listener_local_addr"
                 | "gos_rt_tcp_stream_read_to_string"
+                | "gos_rt_unix_stream_read_to_string"
                 | "gos_rt_udp_local_addr" => self.result_string_error_adt_ty(),
                 "gos_rt_tcp_stream_write"
+                | "gos_rt_unix_stream_write"
                 | "gos_rt_udp_send_to"
                 | "gos_rt_tcp_start_tls"
                 | "gos_rt_tcp_start_tls_insecure"
                 | "gos_rt_tcp_start_tls_ca" => self.result_i64_error_adt_ty(),
-                "gos_rt_tcp_stream_read" => self.result_vec_u8_error_ty(),
-                "gos_rt_tcp_listener_accept" => {
+                "gos_rt_tcp_stream_read" | "gos_rt_unix_stream_read" => {
+                    self.result_vec_u8_error_ty()
+                }
+                "gos_rt_tcp_listener_accept" | "gos_rt_unix_listener_accept" => {
                     let i = self.tcx.int_ty(gossamer_types::IntTy::I64);
                     let s = self.tcx.string_ty();
                     let tup = self.tcx.intern(gossamer_types::TyKind::Tuple(vec![i, s]));
@@ -2511,9 +2542,11 @@ impl<'a> Builder<'a> {
                         .intern(gossamer_types::TyKind::Tuple(vec![vec_u8, s]));
                     self.result_of(tup)
                 }
-                "gos_rt_tcp_listener_close" | "gos_rt_tcp_stream_close" | "gos_rt_udp_close" => {
-                    self.tcx.unit()
-                }
+                "gos_rt_tcp_listener_close"
+                | "gos_rt_tcp_stream_close"
+                | "gos_rt_unix_listener_close"
+                | "gos_rt_unix_stream_close"
+                | "gos_rt_udp_close" => self.tcx.unit(),
                 _ => self.tcx.int_ty(gossamer_types::IntTy::I64),
             };
             let dest = self.fresh(pinned);
@@ -2545,6 +2578,7 @@ impl<'a> Builder<'a> {
                 | "gos_rt_set_difference"
                 | "gos_rt_set_symmetric_difference" => Some("collections::HashSet"),
                 "gos_rt_tcp_listener_accept" => Some("net::accept_pair"),
+                "gos_rt_unix_listener_accept" => Some("net::unix_accept_pair"),
                 "gos_rt_tcp_start_tls"
                 | "gos_rt_tcp_start_tls_insecure"
                 | "gos_rt_tcp_start_tls_ca" => Some("net::TcpStream"),

@@ -7,9 +7,9 @@
 //!
 //! Public surface mirrors [`crate::http_h2`]:
 //!
-//! - [`serve`] - bind a UDP socket, run a quinn endpoint, dispatch
-//!   every accepted request to a [`crate::http::Handler`].
-//! - [`Client`] - issue HTTP/3 requests against a remote endpoint.
+//! - [`serve`][crate::http_h3::serve] - bind a UDP socket, run a quinn endpoint, dispatch
+//!   every accepted request to a [`Handler`][crate::http_h3::Handler].
+//! - [`Client`][crate::http_h3::Client] - issue HTTP/3 requests against a remote endpoint.
 
 #![allow(
     clippy::missing_errors_doc,

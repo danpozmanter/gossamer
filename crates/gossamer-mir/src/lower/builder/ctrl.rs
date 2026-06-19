@@ -1443,8 +1443,14 @@ impl<'a> Builder<'a> {
                                 self.local_elem_struct.entry(payload_local).or_insert(elem);
                             }
                         } else if let HirPatKind::Tuple(sub_pats) = &first.kind {
-                            // `Some((a, b))` - unpack the tuple payload
-                            // into individual field bindings.
+                            // `Ok((a, b))` / `Some((a, b))` - unpack the tuple
+                            // payload. Carry the scrutinee's runtime kind onto
+                            // the tuple payload first so an `accept()` pair
+                            // re-tags its stream element (net::TcpStream /
+                            // net::UnixStream) for method dispatch.
+                            if let Some(rk) = self.local_runtime_kind.get(&scrutinee).copied() {
+                                self.local_runtime_kind.entry(payload_local).or_insert(rk);
+                            }
                             self.bind_tuple_pattern(payload_local, sub_pats, span);
                         }
                         // Restore the header block so the caller sees
@@ -1783,8 +1789,16 @@ impl<'a> Builder<'a> {
         // through the `Ok(p)`/match-result kind propagation. Re-tag the
         // stream element so `stream.read(..)` dispatches to the runtime
         // helper rather than reading the raw i64 handle.
-        let accept_pair =
-            self.local_runtime_kind.get(&tuple_local).copied() == Some("net::accept_pair");
+        let accept_kind = self.local_runtime_kind.get(&tuple_local).copied();
+        let accept_pair = matches!(
+            accept_kind,
+            Some("net::accept_pair" | "net::unix_accept_pair")
+        );
+        let accept_stream_kind = if accept_kind == Some("net::unix_accept_pair") {
+            "net::UnixStream"
+        } else {
+            "net::TcpStream"
+        };
         let rest_pos = sub_patterns
             .iter()
             .position(|p| matches!(p.kind, HirPatKind::Rest));
@@ -1840,7 +1854,7 @@ impl<'a> Builder<'a> {
             self.bind_local(name.name.as_str(), element_local);
             if accept_pair && field_idx == 0 {
                 self.local_runtime_kind
-                    .insert(element_local, "net::TcpStream");
+                    .insert(element_local, accept_stream_kind);
             }
             let projection = vec![crate::ir::Projection::Field(
                 u32::try_from(field_idx).expect("tuple projection overflow"),
@@ -2592,9 +2606,28 @@ impl<'a> Builder<'a> {
                                         _ => self.tcx.int_ty(gossamer_types::IntTy::I64),
                                     }
                                 } else {
+                                    let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
                                     match self.hash_map_value_kind(recv_ty) {
                                         Some(MapValueKind::String) => self.tcx.string_ty(),
-                                        _ => self.tcx.int_ty(gossamer_types::IntTy::I64),
+                                        // A struct value is stored as a boxed
+                                        // pointer; bind `v` as a reference (a
+                                        // single box-pointer word) so field
+                                        // access derefs the box rather than
+                                        // reading the pointer bits inline.
+                                        Some(MapValueKind::Other) => {
+                                            let value_struct = self
+                                                .hash_map_kv_tys(recv_ty)
+                                                .map(|(_, v)| v)
+                                                .filter(|v| self.struct_name_of(*v).is_some());
+                                            match value_struct {
+                                                Some(v) => self.tcx.intern(TyKind::Ref {
+                                                    mutability: gossamer_types::Mutbl::Not,
+                                                    inner: v,
+                                                }),
+                                                None => i64_ty,
+                                            }
+                                        }
+                                        _ => i64_ty,
                                     }
                                 };
                                 for_vec_elem = Some(elem);

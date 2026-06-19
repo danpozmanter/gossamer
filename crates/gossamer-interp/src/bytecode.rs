@@ -652,6 +652,18 @@ pub enum Op {
         /// Register holding the index to remove.
         index: Reg,
     },
+    /// `dst = Vec::remove(receiver, index)` - the Result-returning free-fn
+    /// form. Removes the element at `index` from the receiver's backing
+    /// storage in place and writes `Ok(element)` (or `Err` on out-of-range)
+    /// into `dst`. Emitted for `Vec::remove(xs, i)` over a bare-local Vec.
+    VecRemoveAt {
+        /// Register receiving `Result<T, errors::Error>`.
+        dst: Reg,
+        /// Register holding the Vec, mutated in place.
+        receiver: Reg,
+        /// Register holding the index to remove.
+        index: Reg,
+    },
     /// `dst = receiver.N` - native tuple / positional-field
     /// read.
     TupleIndex {

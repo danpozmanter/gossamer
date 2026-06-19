@@ -276,6 +276,7 @@ const SPECS: &[Spec] = &[
     spec("feature-testing-examples/usize_compare.gos"),
     spec("feature-testing-examples/u64_unsigned.gos"),
     spec("feature-testing-examples/channel_close_drain.gos"),
+    spec("feature-testing-examples/chan_struct_payload.gos"),
     spec("feature-testing-examples/channel_timers.gos"),
     Spec {
         nondeterministic: true,
@@ -518,6 +519,13 @@ const SPECS: &[Spec] = &[
     spec("feature-testing-examples/bytes_builder.gos"),
     spec("feature-testing-examples/net_ip.gos"),
     spec("feature-testing-examples/net_tcp_echo.gos"),
+    spec("feature-testing-examples/net_unix_echo.gos"),
+    spec("feature-testing-examples/vec_remove_inplace.gos"),
+    spec("feature-testing-examples/map_value_heap_children.gos"),
+    spec("feature-testing-examples/map_pop_then_drop.gos"),
+    spec("feature-testing-examples/map_struct_value_access.gos"),
+    spec("feature-testing-examples/chan_struct_local_recv.gos"),
+    spec("feature-testing-examples/chan_select_struct_payload.gos"),
     spec("feature-testing-examples/net_tls_client.gos"),
     spec("feature-testing-examples/net_tls_client_modes.gos"),
     spec("feature-testing-examples/json_round_trip_fuzz.gos"),
@@ -706,6 +714,11 @@ const SPECS: &[Spec] = &[
     // is driven through the full Conn/Stmt/Rows facade. Cross-tier
     // gate for the register_native bridge + native_* side-channel.
     spec("feature-testing-examples/sql_native_driver.gos"),
+    // Qualified type-path annotation (`util::Rec` in `&util::Rec` param and
+    // `&mut util::Rec` param) resolves to the struct's Adt on all tiers so
+    // field access lowers to a real Field projection instead of falling
+    // through to the json accessor.
+    spec("feature-testing-examples/cross_module_struct_fields.gos"),
 ];
 
 #[derive(Debug)]

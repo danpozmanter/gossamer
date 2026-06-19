@@ -606,6 +606,31 @@ impl Resolver {
         let Some(head) = path.segments.first() else {
             return;
         };
+        // A sibling-module-qualified user type (`util::Rec`) registers under
+        // its joined `mod::Type` key in the type namespace. Strip leading
+        // module-relative prefixes so `super::util::Rec` resolves the same
+        // flattened key as `util::Rec`, mirroring `resolve_struct_literal`.
+        let effective: Vec<&str> = path
+            .segments
+            .iter()
+            .map(|s| s.name.name.as_str())
+            .skip_while(|s| matches!(*s, "super" | "crate" | "self"))
+            .collect();
+        if effective.len() > 1 {
+            if let Some(resolution) = self
+                .scopes
+                .lookup_type(&effective.join("::"))
+                .map(|b| b.resolution)
+            {
+                if let Some(anchor) = anchor {
+                    self.resolutions.insert(anchor, resolution);
+                }
+                for segment in &path.segments {
+                    self.resolve_generic_args(&segment.generics);
+                }
+                return;
+            }
+        }
         let name = &head.name.name;
         let resolution = if is_self_type(name) {
             Resolution::Err

@@ -926,6 +926,17 @@ impl<'a> Builder<'a> {
             // its `is_cancelled` / `cancel` / `done` / `done_chan` calls
             // route through the type here.
             "Context" => Some("context::Context"),
+            // `net::TcpStream` / `TcpListener` / `UdpSocket` / `UnixStream`
+            // / `UnixListener` flowing through a struct field or parameter
+            // (no local construction tag) recover their handle kind from
+            // the named sentinel Adt the checker now resolves the
+            // annotation to, so `conn.sock.read(..)` dispatches to the
+            // runtime helper instead of an undefined name-global symbol.
+            "TcpStream" => Some("net::TcpStream"),
+            "TcpListener" => Some("net::TcpListener"),
+            "UdpSocket" => Some("net::UdpSocket"),
+            "UnixStream" => Some("net::UnixStream"),
+            "UnixListener" => Some("net::UnixListener"),
             _ => None,
         }
     }

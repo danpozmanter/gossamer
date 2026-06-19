@@ -139,6 +139,18 @@ pub(crate) fn install_net(globals: &mut Vec<(&'static str, Value)>) {
         ("UdpSocket::recv_from", builtin_udp_recv_from),
         ("UdpSocket::local_addr", builtin_udp_local_addr),
         ("UdpSocket::close", builtin_udp_close),
+        ("UnixListener::bind", builtin_unix_listener_bind),
+        ("UnixListener::accept", builtin_unix_listener_accept),
+        ("UnixListener::close", builtin_unix_listener_close),
+        ("UnixStream::connect", builtin_unix_stream_connect),
+        ("UnixStream::read", builtin_unix_stream_read),
+        (
+            "UnixStream::read_to_string",
+            builtin_unix_stream_read_to_string,
+        ),
+        ("UnixStream::write", builtin_unix_stream_write),
+        ("UnixStream::write_all", builtin_unix_stream_write),
+        ("UnixStream::close", builtin_unix_stream_close),
     ];
     for (short, call) in entries {
         let qualified: &'static str = Box::leak(format!("net::{short}").into_boxed_str());
@@ -394,6 +406,236 @@ pub(crate) fn builtin_tcp_stream_write(args: &[Value]) -> RuntimeResult<Value> {
         Ok(()) => Ok(ok_variant(Value::Int(bytes.len() as i64))),
         Err(e) => Ok(err_variant(e)),
     }
+}
+
+// --- Unix-domain sockets ------------------------------------------
+//
+// AF_UNIX stream sockets. The real implementation is `#[cfg(unix)]`;
+// on non-unix targets every entry point returns an `Err`, matching the
+// compiled tier's Windows stub.
+
+#[cfg(unix)]
+pub(crate) fn builtin_unix_listener_bind(args: &[Value]) -> RuntimeResult<Value> {
+    let path = match arg_str_at(args, 0, "UnixListener::bind", "path") {
+        Ok(s) => s,
+        Err(v) => return Ok(v),
+    };
+    match std::os::unix::net::UnixListener::bind(&path) {
+        Ok(l) => {
+            let id = next_net_id();
+            UNIX_LISTENER_REGISTRY.with(|r| {
+                r.borrow_mut().insert(id, l);
+            });
+            Ok(ok_variant(handle_struct("net::UnixListener", id)))
+        }
+        Err(e) => Ok(err_variant(format!("{e}"))),
+    }
+}
+
+#[cfg(unix)]
+pub(crate) fn builtin_unix_listener_accept(args: &[Value]) -> RuntimeResult<Value> {
+    let Some(id) = args.first().and_then(handle_id) else {
+        return Ok(err_variant("UnixListener::accept: missing handle"));
+    };
+    let res = UNIX_LISTENER_REGISTRY.with(|r| {
+        let reg = r.borrow();
+        let Some(l) = reg.get(&id) else {
+            return Err("UnixListener::accept: stale handle".to_string());
+        };
+        l.accept().map_err(|e| e.to_string())
+    });
+    match res {
+        Ok((stream, addr)) => {
+            let sid = next_net_id();
+            UNIX_STREAM_REGISTRY.with(|r| {
+                r.borrow_mut().insert(sid, stream);
+            });
+            let addr_str = addr
+                .as_pathname()
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            let pair = Value::Tuple(Arc::new(vec![
+                handle_struct("net::UnixStream", sid),
+                Value::String(addr_str.into()),
+            ]));
+            Ok(ok_variant(pair))
+        }
+        Err(e) => Ok(err_variant(e)),
+    }
+}
+
+#[cfg(unix)]
+pub(crate) fn builtin_unix_listener_close(args: &[Value]) -> RuntimeResult<Value> {
+    if let Some(id) = args.first().and_then(handle_id) {
+        UNIX_LISTENER_REGISTRY.with(|r| {
+            r.borrow_mut().remove(&id);
+        });
+    }
+    Ok(Value::Unit)
+}
+
+#[cfg(unix)]
+pub(crate) fn builtin_unix_stream_connect(args: &[Value]) -> RuntimeResult<Value> {
+    let path = match arg_str_at(args, 0, "UnixStream::connect", "path") {
+        Ok(s) => s,
+        Err(v) => return Ok(v),
+    };
+    match std::os::unix::net::UnixStream::connect(&path) {
+        Ok(s) => {
+            let id = next_net_id();
+            UNIX_STREAM_REGISTRY.with(|r| {
+                r.borrow_mut().insert(id, s);
+            });
+            Ok(ok_variant(handle_struct("net::UnixStream", id)))
+        }
+        Err(e) => Ok(err_variant(format!("{e}"))),
+    }
+}
+
+#[cfg(unix)]
+pub(crate) fn builtin_unix_stream_read(args: &[Value]) -> RuntimeResult<Value> {
+    let Some(id) = args.first().and_then(handle_id) else {
+        return Ok(err_variant("UnixStream::read: missing handle"));
+    };
+    let max = args
+        .get(1)
+        .and_then(value_to_int)
+        .unwrap_or(4096)
+        .clamp(1, 1 << 24);
+    let res = UNIX_STREAM_REGISTRY.with(|r| {
+        let mut reg = r.borrow_mut();
+        let Some(stream) = reg.get_mut(&id) else {
+            return Err("UnixStream::read: stale handle".to_string());
+        };
+        let mut buf = vec![0u8; max as usize];
+        match stream.read(&mut buf) {
+            Ok(n) => {
+                buf.truncate(n);
+                Ok(buf)
+            }
+            Err(e) => Err(e.to_string()),
+        }
+    });
+    match res {
+        Ok(bytes) => Ok(ok_variant(Value::Array(Arc::new(
+            bytes
+                .into_iter()
+                .map(|b| Value::Int(i64::from(b)))
+                .collect(),
+        )))),
+        Err(e) => Ok(err_variant(e)),
+    }
+}
+
+#[cfg(unix)]
+pub(crate) fn builtin_unix_stream_read_to_string(args: &[Value]) -> RuntimeResult<Value> {
+    let Some(id) = args.first().and_then(handle_id) else {
+        return Ok(err_variant("UnixStream::read_to_string: missing handle"));
+    };
+    let res = UNIX_STREAM_REGISTRY.with(|r| {
+        let mut reg = r.borrow_mut();
+        let Some(stream) = reg.get_mut(&id) else {
+            return Err("UnixStream::read_to_string: stale handle".to_string());
+        };
+        let mut out = Vec::new();
+        let mut chunk = [0u8; 4096];
+        loop {
+            match stream.read(&mut chunk) {
+                Ok(0) => break,
+                Ok(n) => out.extend_from_slice(&chunk[..n]),
+                Err(e) => return Err(e.to_string()),
+            }
+        }
+        Ok(String::from_utf8_lossy(&out).into_owned())
+    });
+    match res {
+        Ok(s) => Ok(ok_variant(Value::String(s.into()))),
+        Err(e) => Ok(err_variant(e)),
+    }
+}
+
+#[cfg(unix)]
+pub(crate) fn builtin_unix_stream_write(args: &[Value]) -> RuntimeResult<Value> {
+    use std::io::Write as _;
+    let Some(id) = args.first().and_then(handle_id) else {
+        return Ok(err_variant("UnixStream::write: missing handle"));
+    };
+    let bytes: Vec<u8> = match args.get(1) {
+        Some(Value::String(s)) => s.as_bytes().to_vec(),
+        Some(Value::Array(arr)) => arr
+            .iter()
+            .filter_map(|v| match v {
+                Value::Int(n) => u8::try_from(*n).ok(),
+                _ => None,
+            })
+            .collect(),
+        _ => {
+            return Ok(err_variant(
+                "UnixStream::write: expected string or byte array",
+            ));
+        }
+    };
+    let res = UNIX_STREAM_REGISTRY.with(|r| {
+        let mut reg = r.borrow_mut();
+        let Some(stream) = reg.get_mut(&id) else {
+            return Err("UnixStream::write: stale handle".to_string());
+        };
+        stream.write_all(&bytes).map_err(|e| e.to_string())
+    });
+    match res {
+        Ok(()) => Ok(ok_variant(Value::Int(bytes.len() as i64))),
+        Err(e) => Ok(err_variant(e)),
+    }
+}
+
+#[cfg(unix)]
+pub(crate) fn builtin_unix_stream_close(args: &[Value]) -> RuntimeResult<Value> {
+    if let Some(id) = args.first().and_then(handle_id) {
+        UNIX_STREAM_REGISTRY.with(|r| {
+            r.borrow_mut().remove(&id);
+        });
+    }
+    Ok(Value::Unit)
+}
+
+#[cfg(not(unix))]
+fn unix_unsupported(op: &str) -> RuntimeResult<Value> {
+    Ok(err_variant(format!(
+        "net::{op}: Unix-domain sockets are not supported on this platform"
+    )))
+}
+
+#[cfg(not(unix))]
+pub(crate) fn builtin_unix_listener_bind(_args: &[Value]) -> RuntimeResult<Value> {
+    unix_unsupported("UnixListener::bind")
+}
+#[cfg(not(unix))]
+pub(crate) fn builtin_unix_listener_accept(_args: &[Value]) -> RuntimeResult<Value> {
+    unix_unsupported("UnixListener::accept")
+}
+#[cfg(not(unix))]
+pub(crate) fn builtin_unix_listener_close(_args: &[Value]) -> RuntimeResult<Value> {
+    Ok(Value::Unit)
+}
+#[cfg(not(unix))]
+pub(crate) fn builtin_unix_stream_connect(_args: &[Value]) -> RuntimeResult<Value> {
+    unix_unsupported("UnixStream::connect")
+}
+#[cfg(not(unix))]
+pub(crate) fn builtin_unix_stream_read(_args: &[Value]) -> RuntimeResult<Value> {
+    unix_unsupported("UnixStream::read")
+}
+#[cfg(not(unix))]
+pub(crate) fn builtin_unix_stream_read_to_string(_args: &[Value]) -> RuntimeResult<Value> {
+    unix_unsupported("UnixStream::read_to_string")
+}
+#[cfg(not(unix))]
+pub(crate) fn builtin_unix_stream_write(_args: &[Value]) -> RuntimeResult<Value> {
+    unix_unsupported("UnixStream::write")
+}
+#[cfg(not(unix))]
+pub(crate) fn builtin_unix_stream_close(_args: &[Value]) -> RuntimeResult<Value> {
+    Ok(Value::Unit)
 }
 
 /// True when `id` names an upgraded TLS stream rather than a plaintext

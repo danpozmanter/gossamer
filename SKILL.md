@@ -623,11 +623,9 @@ repo examples and write a small test when unsure.
   `String` methods: `split_once(sep) -> Option<(String, String)>`,
   `rsplit_once`, `count(needle)`, `find_any(chars)`/`rfind_any(chars)
   -> Option<i64>`, `center(w, c)`, `slice(a, b) -> Result<String, _>`,
-  `substring(a, b) -> String` (out-of-range clamps rather than erroring,
-  identically on every tier), `byte_at(i) -> i64` (0 outside `[0, len)`,
-  identically on every tier). Prefer `to_lower` over the `to_lowercase`
-  alias. Both `strings::join(&parts, sep)` and the `parts.join(sep)`
-  method on a `[String]` work and produce the same result.
+  `substring(a, b) -> String` (out-of-range clamps), `byte_at(i) -> i64`
+  (0 outside `[0, len)`). Prefer `to_lower` over `to_lowercase`. Both
+  `strings::join(&parts, sep)` and `parts.join(sep)` on `[String]` work.
 - `std::strconv` - `parse_int/i64/u64/float/f64/bool`,
   `format_int/i64/float/f64`, `itoa`, `atoi`, `parse_i64_radix(s, base)`
   / `format_i64_radix(n, base)` (bases 2..=36), `quote`/`unquote`.
@@ -635,14 +633,12 @@ repo examples and write a small test when unsure.
   `is_valid`, `valid_rune/string`, `full_rune(_in_string)`,
   `rune_start`, `decode_rune/last_rune/first` (+ `_in_string`),
   `encode_rune`, `append_rune`.
-- `std::unicode` - full Unicode 16: general-category predicates
-  (`is_letter/digit/number/space/upper/lower/title/punct/symbol/mark/print/graphic/control/assigned`,
+- `std::unicode` - full Unicode 16: category predicates
+  (`is_letter/digit/number/space/upper/lower/title/punct/symbol/...`,
   `combining_class`); casing (`to_upper/lower/title`, `simple_fold`,
-  `to_upper_str/lower_str`, `fold_case`); normalization
-  (`nfc/nfd/nfkc/nfkd`, `is_nf*`); segmentation
-  (`graphemes`, `grapheme_count`, `words`, `word_bounds/count`,
-  `sentences`, `sentence_count`). Identifiers follow UAX #31, so
-  `let café = 1`, `let π = 3.14` parse.
+  `fold_case`, `to_upper_str/lower_str`); normalization
+  (`nfc/nfd/nfkc/nfkd`); segmentation (`graphemes`, `words`,
+  `sentences` + count variants). UAX #31 identifiers: `let café = 1`.
 - `std::collections` - `Vec`, `HashMap`, `HashSet` (real set:
   `insert`, `remove`, `contains`, `len`, `is_empty`, `clear`,
   `to_vec`, `iter`; algebra: `union`, `intersection`, `difference`,
@@ -654,39 +650,21 @@ repo examples and write a small test when unsure.
   `resolve` / `lookup` (DNS). `std::net::url` - parse + render +
   escape.
 - `std::http` - `Method`, `StatusCode`, `Headers`, `Request`,
-  `Response`, `Handler`, `serve` (returns `Result<(), Error>`; a
-  bind failure is the caller's `Err`). One client engine on every
-  tier. Client surface: `Client { get, post, put, options, delete,
-  head, request, request_bytes, stream }` plus free wrappers
-  `http::get(url, headers)`, `post(url, body, ct)`, `put`,
-  `options`, `delete`, `head`, `request(method, url, body, headers)`,
-  `request_bytes(method, url, body: [u8], headers)`, and
-  `stream(method, url, body, headers) -> ResponseStream` whose
-  `next_line()` reads SSE/chunked bodies line-by-line and
-  `next_chunk(max) -> Option<[u8]>` reads byte frames. Configured:
-  `Client::builder().max_redirects(n).timeout_ms(ms).build()`;
-  `max_redirects(0)` returns the raw 3xx with `Location` intact. The
-  client `Response` carries `status`, `body`, `raw_bytes`,
-  `content_type`, `location`, `headers: [(String, String)]`. Server
-  side: `Request.headers` and `Request.raw_body` (`[u8]`) populated,
-  `r.path` strips the query (`r.query` keeps it); handlers return
-  `Result<Response, Error>` or a bare `http::Response`, built via
-  `Response::text` / `Response::json` or a plain struct literal;
-  `Response::with_header(k, v)` chains (replace-then-push,
-  case-insensitive); `Response::stream(status, ct, upstream)` streams
-  a `ResponseStream` in chunked frames (proxy passthrough). Bodies
-  cap at 1 MiB (413 beyond). Method strings are case-insensitive;
-  unknown methods → `Err(transport)`.
-- `std::http` server stack: `http::cookie` (RFC 6265), `csrf`
-  (double-submit + Origin/Referer), `form`
-  (`x-www-form-urlencoded`), `multipart` (RFC 7578 streaming),
-  `query` (typed query wrapper), `session` (signed-cookie),
-  `state` (`AppState` typemap + `State<T>` DI), `health` (`Probe` +
-  `Health`), `middleware` (`body_limit`, `timeout`, `hsts`,
-  `security_headers`, `cache_control`, `etag`, `bearer_auth`,
-  `rate_limit`, `compress_gzip`, `safe_defaults`, `logger`,
-  `recoverer`, `request_id`, `cors`, `basic_auth`); HTTP/2 push +
-  trailers. `std::http_h3` - HTTP/3 server + client (RFC 9114).
+  `Response`, `Handler`, `serve` (returns `Result<(), Error>`). HTTP
+  client: `Client::builder().max_redirects(n).timeout_ms(ms).build()`;
+  free wrappers `http::get/post/put/delete/options/head/request/
+  request_bytes`; `stream(...)` → `ResponseStream` (`next_line()`,
+  `next_chunk(max)`) for SSE/chunked. `Response`: `status`, `body`,
+  `raw_bytes`, `content_type`, `location`, `headers: [(String, String)]`.
+  Server: `Request.raw_body ([u8])`, `r.path` strips query (`r.query`
+  keeps it); `Response::text/json`, `Response::with_header(k, v)`,
+  `Response::stream(status, ct, upstream)`; bodies cap at 1 MiB.
+- `std::http` server stack: `cookie`, `csrf`, `form`, `multipart`,
+  `query`, `session`, `state` (`AppState`/`State<T>`), `health`,
+  `middleware` (`body_limit`, `timeout`, `hsts`, `security_headers`,
+  `bearer_auth`, `rate_limit`, `compress_gzip`, `cors`, `basic_auth`,
+  `logger`, and more); HTTP/2 push + trailers. `std::http_h3` - HTTP/3
+  server + client (RFC 9114).
 - `std::encoding::{json, base64, hex, binary}`. Every user struct
   gets generic serializer free functions called with a turbofish:
   `from_json::<Type>(text) -> Result<Type, _>` and
@@ -703,24 +681,16 @@ repo examples and write a small test when unsure.
   `from_json` text converters; auto-derived `from_yaml::<T>` /
   `to_yaml::<T>` on every struct compose these with the JSON pair.
   Also `encoding::toml` (`toml::to_json` / `from_json`).
-- `std::database::sql` - driver-pluggable SQL modelled on Go's
-  `database/sql` (no driver in the box; a Rust crate implements the
-  `Driver` trait via `[rust-bindings]`). `open(driver, url) ->
-  Result<Conn, _>`; `Conn`: `execute(sql, &[Value])`, `query`,
-  `query_each(sql, params, f)` (leak-proof), `prepare(sql) -> Stmt`,
-  `begin` / `begin_with(IsolationLevel)`, `copy_in`/`copy_out`,
-  `listen`/`unlisten`/`poll_notification`, `ping`,
-  `set_busy_timeout`, `interrupt`, `close`; `Tx`: `commit`,
-  `rollback`, `execute(_params)`, `query`, savepoints; `Rows::next_row()
-  -> Option<Row>` (cursor semantics; `defer rows.close()` for early
-  exits), `columns()`; `Row` getters (`get_i64/f64/bool/text/blob`,
-  `get_opt_*`, `is_null`, `width`); `Value`
-  (Null/Bool/Int/Float/Text/Blob) with positional `$N` binding;
-  `Pool::open(_with)` + `acquire`/`live`/`idle`/`close_idle`;
-  `migrate::up(&mut conn, dir) -> i64` (forward-only
-  `<version>_<slug>.sql`); `Select` fluent builder (`new(t).columns(&[..])
-  .where_eq(col, v).order_by(col, asc).limit(n)` → `render()` /
-  `params()`).
+- `std::database::sql` - driver-pluggable SQL (no driver bundled;
+  implement `Driver` via `[rust-bindings]`). `open(driver, url) ->
+  Result<Conn, _>`; `Conn`: `execute/query/query_each/prepare`,
+  `begin/begin_with(IsolationLevel)`, `copy_in/copy_out`,
+  `listen/unlisten/poll_notification`, `ping`, `close`; `Tx`:
+  `commit/rollback/savepoints`; `Rows.next_row() -> Option<Row>`
+  (cursor; `defer rows.close()`), `columns()`; `Row`:
+  `get_i64/f64/bool/text/blob`, `get_opt_*`, `is_null`, `width`;
+  `Value` (Null/Bool/Int/Float/Text/Blob), positional `$N`; `Pool`;
+  `migrate::up(&mut conn, dir) -> i64`; `Select` fluent builder.
 - `std::sync` - `Mutex`, `RwLock`, atomics, `channel`, `Once`,
   `WaitGroup` (`new`/`add`/`done`/`wait`), `Map` (concurrent
   string→string: `set`/`get`/`delete`/`len`/`contains`/`keys`). For
@@ -789,65 +759,11 @@ The optional `[project] entry` key names the entry source directly,
 overriding the convention search; the resolved entry is the only file
 allowed to carry top-level statements.
 
-## 14. Worked example - HTTP server with method + path routing
+Qualified type-path annotations (`util::Rec` in params, `let` bindings,
+and return types) resolve correctly to the struct's fields across sibling
+modules on all tiers.
 
-Route per (method, path); keep each handler a one-job free
-function. Lift dispatch into one `App::serve` that matches and
-forwards - never inline the response shape in the dispatcher. Full
-pattern in `examples/web_server.gos`.
-
-```gossamer
-use std::http
-
-fn health(_r: http::Request) -> Result<http::Response, http::Error> {
-    Ok(http::Response::text(200, "ok"))
-}
-fn list_users(_r: http::Request) -> Result<http::Response, http::Error> {
-    Ok(http::Response::json(200, "[{\"id\":1,\"name\":\"ada\"}]"))
-}
-fn create_user(r: http::Request) -> Result<http::Response, http::Error> {
-    Ok(http::Response::json(201, format!("{{\"body\":\"{}\"}}", r.body)))
-}
-
-struct App { }
-
-impl http::Handler for App {
-    fn serve(&self, r: http::Request) -> Result<http::Response, http::Error> {
-        let method = &r.method
-        let path = r.path()
-        if path == "/health" { return health(r) }
-        if path == "/users" {
-            if method == "POST" { return create_user(r) }
-            return list_users(r)
-        }
-        Ok(http::Response::text(404, "not found"))
-    }
-}
-
-fn main() -> Result<(), http::Error> {
-    http::serve("0.0.0.0:8080", App { })
-}
-```
-
-Mirrors Go's `http.ServeMux`: free-function handlers, one match per
-(method, path), `path.starts_with` for prefix routes.
-
-CLI flags, for contrast:
-
-```gossamer
-use std::{env, flag}
-
-fn main() -> Result<(), flag::Error> {
-    let mut fs = flag::Set::new("myapp")
-    let port = fs.uint("port", 8080, "listen port")
-    let verbose = fs.bool("verbose", false, "chatty output")
-    let _ = fs.parse(env::args())?
-    if verbose { println!("starting on port {}", port) }   // cells auto-deref
-    Ok(())
-}
-```
-
-## 15. Current gaps (pre-1.0.0)
+## 14. Current gaps (pre-1.0.0)
 
 - `+` on `String` copies; for heavy assembly use
   `std::bytes::Builder` or a `mut String` with `+=`.
@@ -878,7 +794,7 @@ bug - reduce it and check against `gos test` (interpreter) **and**
   `gos build`/`gos run` with `GR0003: name 'tests' defined multiple
   times` - name them `mod foo_tests`, `mod bar_tests`, etc.
 
-## 16. Style checklist
+## 15. Style checklist
 
 (The idioms in §2 are the rules; this is the quick scan.)
 
@@ -906,14 +822,14 @@ bug - reduce it and check against `gos test` (interpreter) **and**
 - Derive `Debug`, `Clone`, `PartialEq` when cheap; `Default` for
   zero-valued types.
 
-## 17. Where to read more
+## 16. Where to read more
 
 - Language spec: `SPEC.md`. Style guide: `GUIDELINES.md`.
 - Rendered docs: `docs_src/` → `site/`.
 - Examples: `examples/` - start with `hello_world.gos`,
   `function_piping.gos`, `go_spawn.gos`, `concurrency.gos`.
 
-## 18. When in doubt
+## 17. When in doubt
 
 Run it. `gos check` gives rustc-class diagnostics with source
 excerpts and did-you-mean suggestions; `gos explain <CODE>` expands

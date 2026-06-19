@@ -691,7 +691,7 @@ pub unsafe extern "C" fn gos_rt_vec_first(v: *const GosVec) -> i128 {
         if vec.len <= 0 {
             return unsafe { gos_rt_result_new(1, 0) };
         }
-        let value = unsafe { crate::c_abi::vec::vec_elem_load_i64(vec, 0) };
+        let value = unsafe { crate::c_abi::vec::vec_elem_payload_word(vec, 0) };
         unsafe { gos_rt_result_new(0, value) }
     })
 }
@@ -708,7 +708,7 @@ pub unsafe extern "C" fn gos_rt_vec_last(v: *const GosVec) -> i128 {
         if vec.len <= 0 {
             return unsafe { gos_rt_result_new(1, 0) };
         }
-        let value = unsafe { crate::c_abi::vec::vec_elem_load_i64(vec, vec.len - 1) };
+        let value = unsafe { crate::c_abi::vec::vec_elem_payload_word(vec, vec.len - 1) };
         unsafe { gos_rt_result_new(0, value) }
     })
 }
@@ -992,7 +992,7 @@ pub unsafe extern "C" fn gos_rt_vec_insert_safe(v: *const GosVec, idx: i64, valu
 /// `Vec::remove(xs, i) -> Result<T, errors::Error>` - returns the
 /// removed element as Ok or Err on out-of-range.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_vec_remove_safe(v: *const GosVec, idx: i64) -> i128 {
+pub unsafe extern "C" fn gos_rt_vec_remove_safe(v: *mut GosVec, idx: i64) -> i128 {
     ffi_entry!(0i128, {
         let len = if v.is_null() { 0 } else { unsafe { (*v).len } };
         if v.is_null() || idx < 0 || idx >= len {
@@ -1001,8 +1001,20 @@ pub unsafe extern "C" fn gos_rt_vec_remove_safe(v: *const GosVec, idx: i64) -> i
             let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
             return unsafe { gos_rt_result_new(1, err as i64) };
         }
-        let src = unsafe { &*v };
-        let removed = unsafe { crate::c_abi::vec::vec_elem_load_i64(src, idx) };
+        let vec = unsafe { &mut *v };
+        let removed = unsafe { crate::c_abi::vec::vec_elem_load_i64(vec, idx) };
+        // Shift the tail [idx+1, len) down one element so the removal is
+        // reflected in place (the caller owns the returned element, so its
+        // pointer-bearing payload is not freed here).
+        let stride = vec.elem_bytes as usize;
+        if !vec.ptr.is_null() && idx + 1 < len {
+            let base = vec.ptr.as_ptr();
+            let dst = unsafe { base.add(idx as usize * stride) };
+            let src = unsafe { base.add((idx as usize + 1) * stride) };
+            let count = ((len - idx - 1) as usize) * stride;
+            unsafe { std::ptr::copy(src, dst, count) };
+        }
+        vec.len = len - 1;
         unsafe { gos_rt_result_new(0, removed) }
     })
 }
@@ -1021,7 +1033,7 @@ pub unsafe extern "C" fn gos_rt_vec_pop_opt(v: *mut GosVec) -> i128 {
             return unsafe { gos_rt_result_new(1, 0) };
         }
         vec.len -= 1;
-        let value = unsafe { crate::c_abi::vec::vec_elem_load_i64(vec, vec.len) };
+        let value = unsafe { crate::c_abi::vec::vec_elem_payload_word(vec, vec.len) };
         unsafe { gos_rt_result_new(0, value) }
     })
 }

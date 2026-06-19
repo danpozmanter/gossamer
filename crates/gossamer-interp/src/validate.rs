@@ -655,6 +655,15 @@ pub(crate) fn validate_chunk(chunk: &FnChunk) -> Result<(), ValidationError> {
                 check_v(op_idx, receiver)?;
                 check_v(op_idx, index)?;
             }
+            Op::VecRemoveAt {
+                dst,
+                receiver,
+                index,
+            } => {
+                check_v(op_idx, dst)?;
+                check_v(op_idx, receiver)?;
+                check_v(op_idx, index)?;
+            }
             Op::TupleIndex { dst, receiver, .. } | Op::TupleTailIndex { dst, receiver, .. } => {
                 check_v(op_idx, dst)?;
                 check_v(op_idx, receiver)?;

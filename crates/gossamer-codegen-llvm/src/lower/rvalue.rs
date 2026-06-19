@@ -301,6 +301,20 @@ impl<'a> Lowerer<'a> {
                 continue;
             }
             if chan_send_spill && i == 1 {
+                // A by-value aggregate (struct / tuple / array) lives in
+                // the sending frame's stack alloca; storing its address
+                // into the channel hands the receiver - on its own
+                // goroutine stack - a pointer that dangles the moment the
+                // sender's frame is reused. Heap-copy it (RC-aware) so the
+                // channel carries a stable pointer the receiver owns,
+                // matching the `gos_rt_result_new` Ok-payload path.
+                if let Some(heap_v) = self.maybe_heap_copy_aggregate(arg) {
+                    let slot = self.fresh();
+                    writeln!(self.out, "  {slot} = alloca i64").unwrap();
+                    writeln!(self.out, "  store i64 {heap_v}, ptr {slot}").unwrap();
+                    let _ = write!(arg_text, "ptr {slot}");
+                    continue;
+                }
                 // Spill the value into a fresh 8-byte stack slot
                 // (the channel element width is at most one
                 // word in the current runtime ABI) and pass the

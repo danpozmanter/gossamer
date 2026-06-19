@@ -470,6 +470,20 @@ pub(crate) unsafe fn vec_elem_load_i64(v: &GosVec, idx: i64) -> i64 {
     }
 }
 
+/// Reads element `idx` of `v` as the word an `Option<T>` payload carries.
+/// A scalar / `String` / single-word element is the word itself (its value
+/// or heap pointer). A multi-word element (a struct or tuple, `elem_bytes >
+/// 8`) is stored inline; the payload must be a *pointer* to that element so
+/// the consumer derefs it for field access, not the truncated first word.
+/// `idx` must already be bounds-checked by the caller.
+pub(crate) unsafe fn vec_elem_payload_word(v: &GosVec, idx: i64) -> i64 {
+    if v.elem_bytes > 8 {
+        unsafe { v.ptr.add((idx as usize) * (v.elem_bytes as usize)) as i64 }
+    } else {
+        unsafe { vec_elem_load_i64(v, idx) }
+    }
+}
+
 /// Writes `value` to element `idx` of `v`, truncating to the
 /// header's `elem_bytes`. Same preconditions as
 /// [`vec_elem_load_i64`].

@@ -415,6 +415,17 @@ impl TyCtxt {
         ) {
             return false;
         }
+        // `net::TcpStream` / `TcpListener` / `UdpSocket` / `UnixStream` /
+        // `UnixListener` (sentinels `u32::MAX - 16 ..= - 12`) are bare i64
+        // socket handles with no RC header - never reference-counted, freed
+        // by `close` / process teardown like the other opaque handles above.
+        if matches!(
+            self.kind(ty),
+            Some(TyKind::Adt { def, .. })
+                if (u32::MAX - 16..=u32::MAX - 12).contains(&def.local)
+        ) {
+            return false;
+        }
         // Inline-able user enums are by-value (their payload's RC, if any, is
         // released per-discriminant on drop), never RC-managed as a whole.
         if self.is_inline_enum_ty(ty) {

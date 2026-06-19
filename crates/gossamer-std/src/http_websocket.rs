@@ -7,9 +7,9 @@
 //! lives in the dependency-light `gossamer-ws` crate so every execution
 //! tier - the bytecode VM, the Cranelift JIT, and the LLVM AOT runtime -
 //! shares one framing engine and the wire behaviour is identical. This
-//! module keeps the http-dependent server-side handshake ([`accept`]),
-//! which turns an incoming [`Request`] into the `101 Switching
-//! Protocols` [`Response`], and re-exports the codec so the historical
+//! module keeps the http-dependent server-side handshake ([`accept`][crate::http_websocket::accept]),
+//! which turns an incoming [`Request`][crate::http::Request] into the `101 Switching
+//! Protocols` [`Response`][crate::http::Response], and re-exports the codec so the historical
 //! `gossamer_std::http_websocket::{WebSocket, Message}` path keeps
 //! working.
 

@@ -401,10 +401,37 @@ impl<'a> Builder<'a> {
                 for (arm, block) in arms.iter().zip(arm_blocks) {
                     self.set_current(block);
                     self.push_scope();
-                    if let HirSelectOp::Recv { pattern, .. } = &arm.op {
+                    if let HirSelectOp::Recv { pattern, channel } = &arm.op {
                         match &pattern.kind {
                             HirPatKind::Binding { name, .. } => {
-                                self.bind_local(&name.name, recv_val);
+                                // `gos_rt_select_value` is the raw word the
+                                // firing arm produced - a scalar, or a boxed
+                                // pointer for a struct payload. Bind the name
+                                // through a local typed as the channel's
+                                // element so a struct payload box-derefs on
+                                // field access instead of reading the pointer
+                                // bits inline.
+                                let mut ch_ty = channel.ty;
+                                while let gossamer_types::TyKind::Ref { inner, .. } =
+                                    self.tcx.kind_of(ch_ty)
+                                {
+                                    ch_ty = *inner;
+                                }
+                                let elem_ty = match self.tcx.kind_of(ch_ty) {
+                                    gossamer_types::TyKind::Receiver(e) => *e,
+                                    _ => i64_ty,
+                                };
+                                if elem_ty == i64_ty {
+                                    self.bind_local(&name.name, recv_val);
+                                } else {
+                                    let bound = self.fresh(elem_ty);
+                                    self.emit_assign(
+                                        Place::local(bound),
+                                        Rvalue::Use(Operand::Copy(Place::local(recv_val))),
+                                        span,
+                                    );
+                                    self.bind_local(&name.name, bound);
+                                }
                             }
                             HirPatKind::Wildcard => {}
                             _ => panic!(

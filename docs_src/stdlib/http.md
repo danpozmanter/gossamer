@@ -15,6 +15,7 @@ HTTP/1.1 and HTTP/2 client and server. HTTP/2 negotiates via ALPN over TLS autom
 | `Headers` | type | Case-insensitive header map. |
 | `Server` | type | HTTP server bound to a TCP listener. |
 | `serve` | fn | Convenience: bind and serve an HTTP handler. `Result<(), Error>` - a bind failure is an Err value. |
+| `serve_tls` | fn | TLS-terminating server: `serve_tls(addr, cert_pem, key_pem, handler) -> Result<(), Error>`. Builds a rustls config from the PEM cert chain + key and serves HTTPS with the same handler contract as `serve`. |
 | `Client` | type | HTTP client; configure redirects and timeout via `Client::builder()`. |
 | `ResponseStream` | type | Streaming response body from `http::stream`; `next_line` / `next_chunk`, consumed by `Response::stream`. |
 | `request` | fn | One-shot request with a string body: `(method, url, body, headers) -> Result<Response, Error>`. |

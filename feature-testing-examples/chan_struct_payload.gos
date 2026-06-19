@@ -1,0 +1,34 @@
+// A multi-field struct - including one carrying a reply channel - sent
+// over a channel and received on another goroutine must arrive intact on
+// every tier. Exercises the aggregate-over-channel heap-copy and the
+// Sender/Receiver element-type resolution.
+
+use std::sync::channel
+
+struct Cmd { op: i64, x: i64, reply: Sender<i64> }
+
+fn worker(rx: Receiver<Cmd>) {
+    while let Some(cmd) = rx.recv() {
+        let result = if cmd.op == 1 { cmd.x * cmd.x } else { cmd.x + cmd.x }
+        cmd.reply.send(result)
+        if cmd.op == 0 { break }
+    }
+}
+
+fn main() {
+    let (tx, rx) = channel()
+    go worker(rx)
+    let mut total = 0
+    let mut i = 1
+    while i <= 5 {
+        let (rtx, rrx) = channel()
+        let op = if i < 5 { 1 } else { 0 }
+        tx.send(Cmd { op: op, x: i, reply: rtx })
+        match rrx.recv() {
+            Some(v) => total += v,
+            None => {}
+        }
+        i += 1
+    }
+    println!("total {}", total)
+}

@@ -825,13 +825,31 @@ fn helper_set_notification(args: &[Value]) -> RuntimeResult<Value> {
     Ok(Value::Unit)
 }
 
+// The per-connection handle stash holds a whole Gossamer `Value` (the
+// connection goroutine's command `Sender`), not an i64: on the interp
+// tier a channel is a `Value::Channel`, not an integer handle, so the
+// shared `sql_core` i64 map (used by the compiled tier, where a channel
+// IS an i64 handle) cannot round-trip it. Keyed by connection token.
+static HANDLE_VALUES: Mutex<Vec<(i64, Value)>> = Mutex::new(Vec::new());
+
 fn helper_set_handle(args: &[Value]) -> RuntimeResult<Value> {
-    sql_core::native_set_handle(arg_i64(args, 0), arg_i64(args, 1));
+    let h = arg_i64(args, 0);
+    let v = args.get(1).cloned().unwrap_or(Value::Unit);
+    let mut guard = HANDLE_VALUES.lock();
+    guard.retain(|(k, _)| *k != h);
+    guard.push((h, v));
     Ok(Value::Unit)
 }
 
 fn helper_handle(args: &[Value]) -> RuntimeResult<Value> {
-    Ok(Value::Int(sql_core::native_handle(arg_i64(args, 0))))
+    let h = arg_i64(args, 0);
+    let v = HANDLE_VALUES
+        .lock()
+        .iter()
+        .find(|(k, _)| *k == h)
+        .map(|(_, v)| v.clone())
+        .unwrap_or(Value::Int(0));
+    Ok(v)
 }
 
 fn helper_value_null(_args: &[Value]) -> RuntimeResult<Value> {

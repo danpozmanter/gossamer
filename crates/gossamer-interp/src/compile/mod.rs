@@ -125,15 +125,18 @@ pub(crate) fn is_mut_ref_vec(tcx: &TyCtxt, ty: Ty) -> bool {
 
 /// Returns `true` when `ty` is a `&mut T` whose mutation through the
 /// reference must be visible to the caller on every tier: `&mut Vec<T>`
-/// / `&mut [T]` (the cell-protocol shapes above) plus `&mut <scalar
-/// primitive>` (`i*` / `u*` / `f*` / `bool` / `char`) and `&mut String`
-/// (a flat `*mut c_char` whose pointer IS the value). The compiled
-/// tiers pass each of these by pointer, so `*p = v` writes back; the VM
-/// must match. Used to decide that a call carrying such an argument
-/// participates in the `MutCell` write-back + `*p = …` deref-assign
-/// protocol. Aggregates (`struct` / `enum` /
-/// fixed `[T; N]`) are deliberately excluded: their by-value vs
-/// by-pointer treatment varies and a blanket write-back would diverge.
+/// / `&mut [T]` (the cell-protocol shapes above), `&mut <scalar
+/// primitive>` (`i*` / `u*` / `f*` / `bool` / `char`), `&mut String`
+/// (a flat `*mut c_char` whose pointer IS the value), and `&mut <struct
+/// / enum>` (the compiled tiers pass an aggregate `&mut` by pointer, so
+/// a field write or `*p = v` reaches the caller - the VM must match, or
+/// a free function mutating a `&mut Struct` param silently no-ops under
+/// `gos run` while writing back under `gos build`). Used to decide that
+/// a call carrying such an argument participates in the `MutCell`
+/// write-back + `*p = …` deref-assign protocol. Only fixed `[T; N]`
+/// arrays are excluded: the compiled tiers copy them at the call
+/// boundary, so a cell write-back there would itself create a
+/// divergence.
 pub(crate) fn is_mut_ref_writeback(tcx: &TyCtxt, ty: Ty) -> bool {
     if is_mut_ref_vec(tcx, ty) {
         return true;
@@ -147,7 +150,14 @@ pub(crate) fn is_mut_ref_writeback(tcx: &TyCtxt, ty: Ty) -> bool {
     };
     matches!(
         tcx.kind(*inner),
-        Some(TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Char | TyKind::String)
+        Some(
+            TyKind::Int(_)
+                | TyKind::Float(_)
+                | TyKind::Bool
+                | TyKind::Char
+                | TyKind::String
+                | TyKind::Adt { .. }
+        )
     )
 }
 

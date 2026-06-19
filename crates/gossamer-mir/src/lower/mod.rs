@@ -216,6 +216,7 @@ pub fn lower_program(program: &HirProgram, tcx: &mut TyCtxt) -> Vec<Body> {
         insert_vec_elem_metas(body, tcx);
         insert_early_releases(body, tcx);
         hoist_loop_carried_releases(body, tcx);
+        crate::opt::suppress_container_moved_releases(body);
         if std::env::var("GOS_DUMP_MIR_RC").is_ok() {
             eprintln!("=== MIR(post-rc) {} ===", body.name);
             for block in &body.blocks {

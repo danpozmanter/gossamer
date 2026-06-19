@@ -107,7 +107,7 @@ impl<'a> Lowerer<'a> {
                              wrap it in a closure: `|x| f(x)`",
                         ));
                     }
-                    return Ok(format!("@\"{name}\""));
+                    return Ok(format!("@\"{}\"", mangle_fn_name(&name)));
                 }
                 Err(BuildError::Unsupported("FnRef operand not yet lowered"))
             }

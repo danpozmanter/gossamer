@@ -648,6 +648,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_crypto_hmac_sha256_mac as *const u8,
         ),
         (
+            "gos_rt_crypto_sha256_digest",
+            crate::c_abi::gos_rt_crypto_sha256_digest as *const u8,
+        ),
+        (
             "gos_rt_crypto_md5_hex",
             crate::c_abi::gos_rt_crypto_md5_hex as *const u8,
         ),
@@ -4171,6 +4175,38 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
         (
             "gos_rt_tcp_listener_bind",
             crate::c_abi::gos_rt_tcp_listener_bind as *const u8,
+        ),
+        (
+            "gos_rt_unix_listener_bind",
+            crate::c_abi::gos_rt_unix_listener_bind as *const u8,
+        ),
+        (
+            "gos_rt_unix_listener_accept",
+            crate::c_abi::gos_rt_unix_listener_accept as *const u8,
+        ),
+        (
+            "gos_rt_unix_listener_close",
+            crate::c_abi::gos_rt_unix_listener_close as *const u8,
+        ),
+        (
+            "gos_rt_unix_stream_connect",
+            crate::c_abi::gos_rt_unix_stream_connect as *const u8,
+        ),
+        (
+            "gos_rt_unix_stream_read",
+            crate::c_abi::gos_rt_unix_stream_read as *const u8,
+        ),
+        (
+            "gos_rt_unix_stream_read_to_string",
+            crate::c_abi::gos_rt_unix_stream_read_to_string as *const u8,
+        ),
+        (
+            "gos_rt_unix_stream_write",
+            crate::c_abi::gos_rt_unix_stream_write as *const u8,
+        ),
+        (
+            "gos_rt_unix_stream_close",
+            crate::c_abi::gos_rt_unix_stream_close as *const u8,
         ),
         (
             "gos_rt_tcp_listener_close",

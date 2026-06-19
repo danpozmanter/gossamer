@@ -2314,6 +2314,46 @@ impl<'tcx> FnBuilder<'tcx> {
                 }
             }
         }
+        // `Vec::remove(xs, i)` over a bare-local Vec: mutate the local in
+        // place and return `Ok(element)`, matching the compiled tier's
+        // in-place `gos_rt_vec_remove_safe`. Other receiver shapes keep the
+        // generic builtin (which reads the element without mutating - a
+        // tier divergence the in-place op avoids for the common case).
+        if args.len() == 2
+            && let HirExprKind::Path { segments, .. } = &callee.kind
+        {
+            let segs: Vec<&str> = segments.iter().map(|s| s.name.as_str()).collect();
+            if matches!(
+                segs.as_slice(),
+                ["Vec", "remove"] | ["collections", "Vec", "remove"]
+            ) && let HirExprKind::Path {
+                segments: arg_segs, ..
+            } = &args[0].kind
+                && let [seg] = arg_segs.as_slice()
+            {
+                if let Some(target) = self.lookup_local(&seg.name)
+                    && target.kind == RegKind::Value
+                {
+                    let reg = target.reg;
+                    let is_vec = matches!(
+                        self.tcx.kind(args[0].ty),
+                        Some(TyKind::Vec(_) | TyKind::Slice(_) | TyKind::Array { .. })
+                    ) || self.flat_int_locals.contains(&reg)
+                        || self.flat_float_locals.contains(&reg)
+                        || self.collection_locals.contains(&reg);
+                    if is_vec {
+                        let index = self.compile_expr(&args[1])?;
+                        let dst = self.alloc_reg();
+                        self.emit(Op::VecRemoveAt {
+                            dst,
+                            receiver: reg,
+                            index,
+                        });
+                        return Ok(dst);
+                    }
+                }
+            }
+        }
         let callee_reg = self.compile_expr(callee)?;
         let argc = u16::try_from(args.len()).map_err(|_| RuntimeError::Arity {
             expected: u16::MAX as usize,

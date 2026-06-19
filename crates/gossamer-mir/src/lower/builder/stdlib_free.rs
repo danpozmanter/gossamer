@@ -1954,6 +1954,12 @@ impl<'a> Builder<'a> {
             "net::TcpStream::connect" => {
                 ("gos_rt_tcp_stream_connect", self.result_i64_error_adt_ty())
             }
+            "net::UnixListener::bind" => {
+                ("gos_rt_unix_listener_bind", self.result_i64_error_adt_ty())
+            }
+            "net::UnixStream::connect" => {
+                ("gos_rt_unix_stream_connect", self.result_i64_error_adt_ty())
+            }
             "net::UdpSocket::bind" => ("gos_rt_udp_bind", self.result_i64_error_adt_ty()),
             "heap::push" => {
                 let i = self.tcx.int_ty(gossamer_types::IntTy::I64);
@@ -2593,6 +2599,13 @@ impl<'a> Builder<'a> {
             "crypto::sha256::hex" | "sha256::hex" | "crypto::sha256_hex" => {
                 ("gos_rt_sha256_hex", self.tcx.string_ty())
             }
+            "crypto::sha256::digest" | "sha256::digest" => {
+                let u8_ty = self.tcx.int_ty(gossamer_types::IntTy::U8);
+                (
+                    "gos_rt_crypto_sha256_digest",
+                    self.tcx.intern(gossamer_types::TyKind::Vec(u8_ty)),
+                )
+            }
             "crypto::insecure::md5_hex" | "insecure::md5_hex" => {
                 ("gos_rt_crypto_md5_hex", self.tcx.string_ty())
             }
@@ -2646,8 +2659,48 @@ impl<'a> Builder<'a> {
                 } else {
                     "gos_rt_map_pop_i64"
                 };
-                let i = self.tcx.int_ty(gossamer_types::IntTy::I64);
-                let substs = gossamer_types::Substs::from_types([i]);
+                // The Option payload is the map's value type, recovered from
+                // the first argument's HashMap (peeling any `&` / `&mut`). A
+                // struct-valued pop binds `p: Struct`, so `p.field` lowers to
+                // a `Field` projection rather than the dynamic json accessor.
+                let mut flat = args[0].ty;
+                while let gossamer_types::TyKind::Ref { inner, .. } = self.tcx.kind_of(flat) {
+                    flat = *inner;
+                }
+                let value_ty =
+                    if let gossamer_types::TyKind::HashMap { value, .. } = self.tcx.kind_of(flat) {
+                        *value
+                    } else {
+                        self.tcx.int_ty(gossamer_types::IntTy::I64)
+                    };
+                let substs = gossamer_types::Substs::from_types([value_ty]);
+                let opt_ty = self.tcx.intern(gossamer_types::TyKind::Adt {
+                    def: gossamer_resolve::DefId::local(u32::MAX - 1),
+                    substs,
+                });
+                (sym, opt_ty)
+            }
+            // `HashMap::get(m, k) -> Option<V>` free-fn form, mirroring the
+            // `m.get(k)` method. Without this arm the LLVM lowerer emits a
+            // call to an undefined `@HashMap::get` symbol.
+            "HashMap::get" | "collections::HashMap::get" if !args.is_empty() => {
+                let key_kind = hashmap_key_kind(self.tcx, args[0].ty);
+                let sym = if key_kind == VecElemKind::Str {
+                    "gos_rt_map_get_str_opt"
+                } else {
+                    "gos_rt_map_get_i64_opt"
+                };
+                let mut flat = args[0].ty;
+                while let gossamer_types::TyKind::Ref { inner, .. } = self.tcx.kind_of(flat) {
+                    flat = *inner;
+                }
+                let value_ty =
+                    if let gossamer_types::TyKind::HashMap { value, .. } = self.tcx.kind_of(flat) {
+                        *value
+                    } else {
+                        self.tcx.int_ty(gossamer_types::IntTy::I64)
+                    };
+                let substs = gossamer_types::Substs::from_types([value_ty]);
                 let opt_ty = self.tcx.intern(gossamer_types::TyKind::Adt {
                     def: gossamer_resolve::DefId::local(u32::MAX - 1),
                     substs,
@@ -2930,6 +2983,8 @@ impl<'a> Builder<'a> {
             }
             "gos_rt_tcp_listener_bind" => Some("net::TcpListener"),
             "gos_rt_tcp_stream_connect" => Some("net::TcpStream"),
+            "gos_rt_unix_listener_bind" => Some("net::UnixListener"),
+            "gos_rt_unix_stream_connect" => Some("net::UnixStream"),
             "gos_rt_udp_bind" => Some("net::UdpSocket"),
             // 0.4.0 stateful HTTP types.
             "gos_rt_router_new" => Some("http::Router"),

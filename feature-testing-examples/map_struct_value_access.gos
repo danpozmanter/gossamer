@@ -1,0 +1,66 @@
+// A HashMap whose values are structs with heap (String) fields, read back
+// through every access path: qualified `HashMap::get` / `HashMap::pop`,
+// `m.iter()`, `m.values()`, and `m.keys()`. Each path must deref the stored
+// box pointer rather than read the pointer bits inline. Allocation churn
+// between writes and reads surfaces any premature free. Deterministic
+// output on every tier.
+
+use std::collections::HashMap
+
+struct Rec { label: String, weight: i64 }
+
+fn churn() -> i64 {
+    let mut acc = 0
+    let mut i = 0
+    while i < 8000 {
+        let s = format!("x-{}", i)
+        acc += s.len()
+        i += 1
+    }
+    acc
+}
+
+fn main() {
+    let mut m: HashMap<i64, Rec> = HashMap::new()
+    let mut k = 1
+    while k <= 5 {
+        m.insert(k, Rec { label: format!("rec-{}", k), weight: k * 10 })
+        k += 1
+    }
+    let _ = churn()
+
+    // for (k, v) in m.iter()
+    let mut iter_sum = 0
+    for (key, v) in m.iter() {
+        iter_sum += key + v.weight
+    }
+
+    // for v in m.values()
+    let mut values_sum = 0
+    for v in m.values() {
+        values_sum += v.weight
+    }
+
+    // for k in m.keys()
+    let mut keys_sum = 0
+    for key in m.keys() {
+        keys_sum += key
+    }
+
+    // qualified HashMap::get
+    let got = match HashMap::get(m, 3) {
+        Some(r) => r.label,
+        None => format!("missing"),
+    }
+
+    // qualified HashMap::pop
+    let popped = match HashMap::pop(m, 5) {
+        Some(r) => r.weight,
+        None => -1,
+    }
+
+    println!(
+        "iter={} values={} keys={} got={} popped={} remaining={}",
+        iter_sum, values_sum, keys_sum, got, popped, m.len()
+    )
+}

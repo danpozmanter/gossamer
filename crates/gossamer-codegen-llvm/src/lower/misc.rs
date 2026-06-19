@@ -484,6 +484,24 @@ impl<'a> Lowerer<'a> {
             "  call void @llvm.memcpy.p0.p0.i64(ptr {heap}, ptr {src}, i64 {bytes}, i1 false)"
         )
         .unwrap();
+        // The leak allocator raw-copies the aggregate's words, so any
+        // guarded (RC) child it now shares - a `String` / `Vec` field of a
+        // map-stored struct - must be retained, or it is freed when the
+        // inserting scope's original aggregate is released and the
+        // map-held copy dangles. The bytes leak with the map entry (the
+        // documented "map storage never releases values" contract), so
+        // there is no symmetric release.
+        if leak
+            && let Some(sym) = self.tcx.aggr_copy_meta(local_ty)
+            && !sym.is_empty()
+        {
+            declare_rt(&mut self.runtime_refs, "gos_rt_aggr_retain_children");
+            writeln!(
+                self.out,
+                "  call void @gos_rt_aggr_retain_children(ptr {heap}, ptr @\"{sym}\")"
+            )
+            .unwrap();
+        }
         let heap_i64 = self.fresh();
         writeln!(self.out, "  {heap_i64} = ptrtoint ptr {heap} to i64").unwrap();
         Some(heap_i64)

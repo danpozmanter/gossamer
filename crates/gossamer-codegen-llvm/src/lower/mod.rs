@@ -420,8 +420,72 @@ fn escape_ident(name: &str) -> String {
 /// and the declaration emitter in `emit` agree without a post-hoc
 /// `out.replace("@\"main\"", ...)` pass that doubled the IR
 /// string's peak heap on big programs.
-pub(crate) fn mangle_fn_name(name: &str) -> &str {
-    if name == "main" { "gos_main" } else { name }
+pub(crate) fn mangle_fn_name(name: &str) -> std::borrow::Cow<'_, str> {
+    use std::borrow::Cow;
+    // The user's `main` becomes `gos_main`; the C runtime owns the real
+    // `main`.
+    if name == "main" {
+        return Cow::Borrowed("gos_main");
+    }
+    // Only a user function whose name shadows a libc / system symbol the
+    // statically-linked Rust runtime calls is renamed. Renaming every user
+    // function (a reserved-namespace prefix) regressed RC-heavy code, so the
+    // mangle is scoped to the exact collision: a user `fn getenv` otherwise
+    // interposes libc's `getenv` and the runtime's `gos_rt_os_env` ->
+    // `std::env::var` -> `getenv` path recurses into the user function until
+    // the stack overflows. `gosu_<name>` cannot collide with any of these.
+    if shadows_c_runtime_symbol(name) {
+        return Cow::Owned(format!("gosu_{name}"));
+    }
+    Cow::Borrowed(name)
+}
+
+/// True when `name` matches a libc / system symbol the statically-linked
+/// Rust runtime (libstd + gossamer-runtime + mimalloc) references, so a
+/// user function of the same name would interpose it at link time. The set
+/// is the C runtime surface those crates actually call - the allocator,
+/// the environment, the memory/string intrinsics, process control, and the
+/// raw I/O / socket syscalls. (Compiler-synthesized helpers carry `gos_*`
+/// / `__*` names and never reach here.)
+fn shadows_c_runtime_symbol(name: &str) -> bool {
+    matches!(
+        name,
+        // environment
+        "getenv" | "setenv" | "unsetenv" | "putenv" | "environ"
+        // allocator
+        | "malloc" | "calloc" | "realloc" | "free" | "aligned_alloc"
+        | "posix_memalign" | "malloc_usable_size" | "reallocarray" | "valloc"
+        // memory / string intrinsics
+        | "memcpy" | "memmove" | "memset" | "memcmp" | "memchr" | "bcmp"
+        | "strlen" | "strnlen" | "strcmp" | "strncmp" | "strcpy" | "strncpy"
+        | "strcat" | "strncat" | "strchr" | "strrchr" | "strstr" | "strdup"
+        // stdio / formatted output
+        | "printf" | "fprintf" | "sprintf" | "snprintf" | "vsnprintf"
+        | "puts" | "fputs" | "fputc" | "putchar" | "fwrite" | "fread"
+        | "fopen" | "fclose" | "fflush" | "fdopen" | "setvbuf"
+        // raw I/O / fs syscalls
+        | "read" | "write" | "pread" | "pwrite" | "open" | "openat" | "close"
+        | "lseek" | "fsync" | "fstat" | "stat" | "lstat" | "fcntl" | "ioctl"
+        | "dup" | "dup2" | "pipe" | "poll" | "select" | "mmap" | "munmap"
+        | "mprotect" | "madvise"
+        // sockets
+        | "socket" | "connect" | "bind" | "listen" | "accept" | "send"
+        | "recv" | "sendto" | "recvfrom" | "setsockopt" | "getsockopt"
+        | "shutdown" | "getaddrinfo" | "freeaddrinfo" | "gethostbyname"
+        | "getsockname" | "getpeername"
+        // process / signals / threads
+        | "exit" | "_exit" | "abort" | "atexit" | "system" | "getpid"
+        | "fork" | "execve" | "execvp" | "waitpid" | "wait" | "kill"
+        | "signal" | "sigaction" | "raise" | "sysconf" | "getrandom"
+        | "pthread_create" | "pthread_join" | "pthread_mutex_lock"
+        | "pthread_mutex_unlock" | "pthread_self" | "sched_yield"
+        | "dlopen" | "dlsym" | "dlclose" | "dlerror"
+        // time
+        | "time" | "clock_gettime" | "gettimeofday" | "nanosleep"
+        | "usleep" | "sleep" | "localtime" | "gmtime" | "mktime"
+        // rng / math the runtime may pull
+        | "rand" | "srand" | "random" | "srandom" | "arc4random"
+    )
 }
 
 /// Maps user-level math path names onto the LLVM intrinsic

@@ -1129,10 +1129,21 @@ pub(super) fn lower_intrinsic_call_handles(
                 )?,
                 None => bail!("chan_send: missing channel arg"),
             };
-            let value = match args.get(1) {
+            let mut value = match args.get(1) {
                 Some(a) => lower_operand(module, builder, locals, body, tcx, a, None, intrinsics)?,
                 None => builder.ins().iconst(types::I64, 0),
             };
+            // A multi-slot aggregate value lives in the sender frame's
+            // backing slot; storing its address into the channel hands the
+            // receiver - on its own goroutine stack - a pointer that
+            // dangles once the sender frame is reused. Heap-copy it so the
+            // channel carries a stable pointer the receiver owns.
+            if let Some(slots) = args
+                .get(1)
+                .and_then(|a| operand_aggregate_slots(body, tcx, a))
+            {
+                value = clone_aggregate_value(module, builder, intrinsics, value, slots)?;
+            }
             let v64 = coerce_arg_to(builder, value, types::I64)?;
             let slot = builder.create_sized_stack_slot(StackSlotData::new(
                 StackSlotKind::ExplicitSlot,
@@ -1168,10 +1179,16 @@ pub(super) fn lower_intrinsic_call_handles(
                 )?,
                 None => bail!("chan_try_send: missing channel arg"),
             };
-            let value = match args.get(1) {
+            let mut value = match args.get(1) {
                 Some(a) => lower_operand(module, builder, locals, body, tcx, a, None, intrinsics)?,
                 None => builder.ins().iconst(types::I64, 0),
             };
+            if let Some(slots) = args
+                .get(1)
+                .and_then(|a| operand_aggregate_slots(body, tcx, a))
+            {
+                value = clone_aggregate_value(module, builder, intrinsics, value, slots)?;
+            }
             let v64 = coerce_arg_to(builder, value, types::I64)?;
             let slot = builder.create_sized_stack_slot(StackSlotData::new(
                 StackSlotKind::ExplicitSlot,

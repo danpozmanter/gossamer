@@ -35,8 +35,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Result, anyhow};
 
 use crate::paths::{
-    default_unit_name, platform_exe_name, read_entry_source, resolve_entry_arg,
-    resolve_output_path,
+    default_unit_name, platform_exe_name, read_entry_source, resolve_entry_arg, resolve_output_path,
 };
 
 /// `gos build` dispatcher: walks the project root for a default

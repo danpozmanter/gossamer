@@ -238,6 +238,16 @@ thread_local! {
     #[allow(clippy::missing_const_for_thread_local)]
     pub(crate) static UDP_REGISTRY: RefCell<StdHashMap<i64, net_std::UdpSocket>> =
         RefCell::new(StdHashMap::new());
+    #[cfg(unix)]
+    #[allow(clippy::missing_const_for_thread_local)]
+    pub(crate) static UNIX_STREAM_REGISTRY:
+        RefCell<StdHashMap<i64, std::os::unix::net::UnixStream>> =
+        RefCell::new(StdHashMap::new());
+    #[cfg(unix)]
+    #[allow(clippy::missing_const_for_thread_local)]
+    pub(crate) static UNIX_LISTENER_REGISTRY:
+        RefCell<StdHashMap<i64, std::os::unix::net::UnixListener>> =
+        RefCell::new(StdHashMap::new());
 }
 
 pub(crate) fn next_net_id() -> i64 {

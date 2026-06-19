@@ -102,6 +102,16 @@ pub unsafe extern "C" fn gos_rt_crypto_hmac_sha256_mac(
     super::encoding::bytes_to_gosvec(&mac)
 }
 
+/// `crypto::sha256::digest(data: &[u8]) -> [u8; 32]` - the raw 32-byte
+/// digest (not the hex string). The argument is a Gossamer `[u8]`
+/// (`GosVec`), so the digest covers arbitrary binary input including
+/// embedded NUL.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_crypto_sha256_digest(input: *const GosVec) -> *mut GosVec {
+    let bytes = unsafe { super::encoding::gosvec_u8(input) };
+    super::encoding::bytes_to_gosvec(&gossamer_pkg::sha256::digest(&bytes))
+}
+
 /// Reference HMAC-SHA256 over arbitrary `key` / `message`. Kept
 /// in the runtime so the compiled tier doesn't need to round-
 /// trip through `gossamer-std`. RFC 2104 block size for SHA-256

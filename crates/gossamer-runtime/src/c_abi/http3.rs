@@ -4,8 +4,8 @@
 //! certificate / key file paths, and the handler as an
 //! `(env_ptr, fn_addr)` pair. Each accepted request is marshalled
 //! into the same [`GosHttpRequest`] struct the h1 / h2 servers use
-//! and the handler's response is extracted with the shared
-//! [`extract_response_struct`] path, so the body and headers a
+//! and the handler's response is extracted through the shared HTTP
+//! response lowering path, so the body and headers a
 //! handler returns are served byte-for-byte across every tier.
 //!
 //! The QUIC + h3 engine lives in [`gossamer_http3`]; this shim only

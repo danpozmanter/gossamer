@@ -59,12 +59,18 @@ mod tests {
     #[test]
     fn registry_is_sorted() {
         let names: Vec<&str> = REGISTRY.iter().map(|e| e.name).collect();
+
         let mut sorted = names.clone();
         sorted.sort_unstable();
-        assert_eq!(
-            names, sorted,
-            "REGISTRY must be sorted alphabetically by name for lookup correctness"
-        );
+
+        if let Some((idx, (actual, expected))) = names
+            .iter()
+            .zip(sorted.iter())
+            .enumerate()
+            .find(|(_, (a, b))| a != b)
+        {
+            panic!("REGISTRY out of order at index {idx}: found {actual:?}, expected {expected:?}");
+        }
     }
 
     #[test]
@@ -99,7 +105,7 @@ mod tests {
             );
             assert!(
                 decl.contains(&format!("@{}", entry.name)),
-                "declare does not contain symbol name for {}: {}",
+                "declare does not contain symbol name for {0}: {1}",
                 entry.name,
                 decl
             );
@@ -123,7 +129,7 @@ mod tests {
                 let decl = entry.llvm_declare();
                 assert!(
                     decl.starts_with("declare void "),
-                    "void return type must produce 'declare void' for {}: {}",
+                    "void return type must produce 'declare void' for {0}: {1}",
                     entry.name,
                     decl
                 );
@@ -136,7 +142,7 @@ mod tests {
         for entry in REGISTRY {
             assert!(
                 !entry.docs.is_empty(),
-                "entry {} has an empty docs field",
+                "entry {0} has an empty docs field",
                 entry.name
             );
         }

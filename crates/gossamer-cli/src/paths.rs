@@ -629,7 +629,11 @@ mod tests {
         let entry = root.join("src").join("main.gos");
         fs::write(&entry, "mod helper;\nmod sub;\nfn main() { }\n").unwrap();
         fs::write(root.join("src").join("helper.gos"), "pub fn h() { }\n").unwrap();
-        fs::write(root.join("src").join("sub").join("mod.gos"), "pub fn ping() { }\n").unwrap();
+        fs::write(
+            root.join("src").join("sub").join("mod.gos"),
+            "pub fn ping() { }\n",
+        )
+        .unwrap();
         fs::write(
             root.join("src").join("sub").join("deep").join("mod.gos"),
             "pub fn depth() { }\n",
@@ -638,13 +642,19 @@ mod tests {
 
         let bundled = bundle_sibling_modules(&entry, fs::read_to_string(&entry).unwrap());
         // Flat sibling -> top-level module.
-        assert!(bundled.contains("mod helper {"), "no helper module:\n{bundled}");
+        assert!(
+            bundled.contains("mod helper {"),
+            "no helper module:\n{bundled}"
+        );
         assert!(bundled.contains("pub fn h"), "no helper body:\n{bundled}");
         // Subdirectory with mod.gos -> module, recursively including its
         // own subdirectory module.
         assert!(bundled.contains("mod sub {"), "no sub module:\n{bundled}");
         assert!(bundled.contains("pub fn ping"), "no sub body:\n{bundled}");
-        assert!(bundled.contains("mod deep {"), "no nested deep module:\n{bundled}");
+        assert!(
+            bundled.contains("mod deep {"),
+            "no nested deep module:\n{bundled}"
+        );
         assert!(bundled.contains("pub fn depth"), "no deep body:\n{bundled}");
         // The entry's `mod NAME;` declarations are neutralized so the
         // synthetic inline bodies are the sole definitions.
@@ -666,7 +676,10 @@ mod tests {
         // No project.toml -> a loose-file invocation must not pull in
         // unrelated siblings.
         let bundled = bundle_sibling_modules(&entry, "fn main() { }\n".to_string());
-        assert!(!bundled.contains("mod b"), "loose file wrongly bundled:\n{bundled}");
+        assert!(
+            !bundled.contains("mod b"),
+            "loose file wrongly bundled:\n{bundled}"
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 }

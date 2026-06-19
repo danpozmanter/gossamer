@@ -1286,11 +1286,7 @@ fn emit_dwarf_metadata(out: &mut String, bodies: &[Body]) {
     //    compile unit is !51.
     let mut subprogram_lines: Vec<String> = Vec::new();
     for (idx, body) in bodies.iter().enumerate() {
-        let llvm_name = if body.name == "main" {
-            "gos_main"
-        } else {
-            body.name.as_str()
-        };
+        let llvm_name = crate::lower::mangle_fn_name(&body.name);
         let id = 100u32 + u32::try_from(idx).unwrap_or(u32::MAX);
         // Best-effort: stamp every function with the body name and
         // a stable scopeLine of 1. Real source line numbers will

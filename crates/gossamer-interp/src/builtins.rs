@@ -5381,7 +5381,7 @@ pub(crate) fn builtin_str_or_vec_slice(args: &[Value]) -> RuntimeResult<Value> {
     }
 }
 
-fn slice_err(msg: String) -> Value {
+pub(crate) fn slice_err(msg: String) -> Value {
     Value::variant(
         "Err",
         vec![errors_struct(msg, Value::variant("None", vec![]))],

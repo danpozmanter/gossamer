@@ -170,7 +170,7 @@ impl<'a> Lowerer<'a> {
         writeln!(
             self.out,
             "define {ret_ty} @\"{name}\"({params}) {{",
-            name = escape_ident(mangle_fn_name(&self.body.name)),
+            name = escape_ident(&mangle_fn_name(&self.body.name)),
             ret_ty = ret_ty,
             params = params,
         )

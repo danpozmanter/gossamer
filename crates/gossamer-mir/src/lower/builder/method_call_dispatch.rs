@@ -679,9 +679,38 @@ impl<'a> Builder<'a> {
             "gos_rt_ovec_contains_i64"
             | "gos_rt_oset_contains_i64"
             | "gos_rt_omap_contains_key_i64" => self.tcx.bool_ty(),
-            "gos_rt_map_keys_vec" | "gos_rt_map_values_vec" => {
+            "gos_rt_map_keys_vec" => {
                 let i = self.tcx.int_ty(gossamer_types::IntTy::I64);
                 self.tcx.intern(gossamer_types::TyKind::Vec(i))
+            }
+            // `m.values()` yields the stored value words. A struct value is
+            // stored as a boxed pointer, so the element is typed as a
+            // reference to the value type: `for v in m.values()` then binds a
+            // box pointer (a single word) and field access derefs it, instead
+            // of materialising an inline struct from the pointer bits. Scalar
+            // and string values keep their direct element type.
+            "gos_rt_map_values_vec" => {
+                use gossamer_types::TyKind;
+                let mut flat = receiver_ty;
+                while let TyKind::Ref { inner, .. } = self.tcx.kind_of(flat) {
+                    flat = *inner;
+                }
+                let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+                let elem = match self.tcx.kind_of(flat) {
+                    TyKind::HashMap { value, .. } => {
+                        let value = *value;
+                        if self.struct_name_of(value).is_some() {
+                            self.tcx.intern(TyKind::Ref {
+                                mutability: gossamer_types::Mutbl::Not,
+                                inner: value,
+                            })
+                        } else {
+                            value
+                        }
+                    }
+                    _ => i64_ty,
+                };
+                self.tcx.intern(TyKind::Vec(elem))
             }
             "gos_rt_str_slice"
             | "gos_rt_toml_to_json"

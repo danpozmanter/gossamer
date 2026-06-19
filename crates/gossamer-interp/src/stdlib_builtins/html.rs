@@ -158,6 +158,10 @@ pub(crate) fn install_encoding_base64_hex(globals: &mut Vec<(&'static str, Value
     ] {
         let q: &'static str = Box::leak(format!("encoding::{short}").into_boxed_str());
         globals.push((q, crate::builtins::builtin_pub(q, call)));
+        // The `use std::encoding::base64` alias makes the call resolve to the
+        // short `base64::encode` / `hex::encode` form; bind it too so the
+        // interpreter matches the compiled tiers.
+        globals.push((short, crate::builtins::builtin_pub(short, call)));
     }
 }
 

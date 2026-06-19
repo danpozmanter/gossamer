@@ -630,11 +630,35 @@ impl<'a> Lowerer<'a> {
             )
             .unwrap();
             writeln!(self.out, "  store ptr {tmp}, ptr {slot1}").unwrap();
-            // Store the buffer address into the destination
-            // local so downstream `.0` / `.1` projections lower
-            // as loads from `pair_buf + N*8`.
             let dest_slot = local_slot(destination.local);
-            writeln!(self.out, "  store ptr {pair_buf}, ptr {dest_slot}").unwrap();
+            let dest_ty = self.body.local_ty(destination.local);
+            if slot_count(self.tcx, dest_ty).is_some_and(|n| n >= 2) {
+                // Typeck preserved the `(Sender, Receiver)` tuple shape, so the
+                // destination is a multi-slot alloca that holds the handle
+                // pair inline (`.0` / `.1` read its slots directly). Write the
+                // channel handle into both slots - storing the buffer address
+                // would leave `.0` reading the pointer bits instead of the
+                // handle.
+                let d0 = self.fresh();
+                writeln!(
+                    self.out,
+                    "  {d0} = getelementptr i64, ptr {dest_slot}, i64 0"
+                )
+                .unwrap();
+                writeln!(self.out, "  store ptr {tmp}, ptr {d0}").unwrap();
+                let d1 = self.fresh();
+                writeln!(
+                    self.out,
+                    "  {d1} = getelementptr i64, ptr {dest_slot}, i64 1"
+                )
+                .unwrap();
+                writeln!(self.out, "  store ptr {tmp}, ptr {d1}").unwrap();
+            } else {
+                // Single-ptr destination (the tuple shape was erased): store
+                // the buffer address so downstream `.0` / `.1` projections
+                // lower as loads from `pair_buf + N*8`.
+                writeln!(self.out, "  store ptr {pair_buf}, ptr {dest_slot}").unwrap();
+            }
             emit_terminator_branch(&mut self.out, target);
             return Ok(());
         }
@@ -750,7 +774,18 @@ impl<'a> Lowerer<'a> {
             }
             return Ok(());
         }
-        let symbol = map_prelude_symbol(&name);
+        let mapped = map_prelude_symbol(&name);
+        // `map_prelude_symbol` returns the name unchanged only for a
+        // user-defined function (every runtime/prelude name maps to a
+        // distinct `gos_rt_*` symbol). Route that case through the
+        // mangler so the user symbol can't shadow a libc/runtime symbol.
+        let mangled;
+        let symbol = if mapped == name.as_str() {
+            mangled = mangle_fn_name(&name);
+            mangled.as_ref()
+        } else {
+            mapped
+        };
         self.emit_named_call(symbol, args, destination, target)
     }
 
@@ -1251,7 +1286,10 @@ impl<'a> Lowerer<'a> {
                 let sym = if self.cabi_handlers.contains_key(fname.as_str()) {
                     format!("{fname}$cabi")
                 } else {
-                    fname.clone()
+                    // Same mangling as the definition: a user function
+                    // address (`PgDriver::dispatch`) is taken as
+                    // `gosu.<name>`; `gos_rt_*` runtime symbols pass through.
+                    mangle_fn_name(fname).into_owned()
                 };
                 let tmp = self.fresh();
                 writeln!(self.out, "  {tmp} = bitcast ptr @\"{sym}\" to ptr").unwrap();

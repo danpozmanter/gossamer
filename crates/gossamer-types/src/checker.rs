@@ -1473,7 +1473,7 @@ impl<'a> TypeChecker<'a> {
                 }
             }
             ExprKind::Binary { op, lhs, rhs } => self.check_binary(*op, lhs, rhs, expr.span),
-            ExprKind::Assign { place, value, .. } => self.check_assign(place, value),
+            ExprKind::Assign { place, value, op } => self.check_assign(place, value, *op),
             ExprKind::Cast { value, ty } => {
                 let from = self.check_expr(value);
                 let to = self.type_from_ast(ty);
@@ -2039,6 +2039,40 @@ impl<'a> TypeChecker<'a> {
     /// at runtime (the interp emits `Some`/`None`), so they are typed as
     /// such; `json::get(v, k).unwrap()` and the autoderive `Some`/`None`
     /// matches both rely on it.
+    /// Return type of a qualified `HashMap::pop(m, k)` / `HashMap::get(m, k)`
+    /// free-fn call. The method form (`m.pop(k)`) is typed by
+    /// `check_method_call` from the receiver's static type; the qualified form
+    /// must recover the value type from the first argument's map type so the
+    /// `Option<V>` payload binding is the concrete value rather than an
+    /// unresolved var - a struct field read on an unresolved payload lowers to
+    /// the dynamic json accessor and faults at runtime.
+    fn check_qualified_map_accessor_ret(
+        &mut self,
+        module: &[&str],
+        last: &str,
+        arg_tys: &[Ty],
+    ) -> Option<Ty> {
+        if !matches!(
+            module,
+            ["HashMap"] | ["collections", "HashMap"] | ["std", "collections", "HashMap"]
+        ) || !matches!(last, "pop" | "get")
+        {
+            return None;
+        }
+        let value = arg_tys.first().and_then(|t| {
+            let resolved = self.infer.resolve(self.tcx, *t);
+            let peeled = match self.tcx.kind(resolved) {
+                Some(TyKind::Ref { inner, .. }) => self.infer.resolve(self.tcx, *inner),
+                _ => resolved,
+            };
+            match self.tcx.kind(peeled) {
+                Some(TyKind::HashMap { value, .. }) => Some(*value),
+                _ => None,
+            }
+        });
+        value.map(|v| self.option_adt_ty(v))
+    }
+
     fn check_stdlib_module_ret_ty(
         &mut self,
         module: &[&str],
@@ -2047,6 +2081,9 @@ impl<'a> TypeChecker<'a> {
         args: &[Expr],
         arg_tys: &[Ty],
     ) -> Option<Ty> {
+        if let Some(ty) = self.check_qualified_map_accessor_ret(module, last, arg_tys) {
+            return Some(ty);
+        }
         if matches!(
             module,
             ["json"] | ["encoding", "json"] | ["std", "encoding", "json"]
@@ -2160,6 +2197,16 @@ impl<'a> TypeChecker<'a> {
         let ty = match name {
             "__concat" | "__fmt_prec" | "__fmt_pad" | "__fmt_radix" | "__fmt_upper" => {
                 self.tcx.string_ty()
+            }
+            // `channel()` -> `(Sender<?T>, Receiver<?T>)` sharing one element
+            // var, so `tx.send(v)` unifies the element through the shared `?T`
+            // and `rx.recv()` yields `Option<?T>` with the real payload type
+            // even for an inferred (local) channel.
+            "channel" if arg_tys.is_empty() => {
+                let elem = self.fresh();
+                let sender = self.tcx.intern(TyKind::Sender(elem));
+                let receiver = self.tcx.intern(TyKind::Receiver(elem));
+                self.tcx.intern(TyKind::Tuple(vec![sender, receiver]))
             }
             "Some" => {
                 let payload = arg_tys.first().copied().unwrap_or_else(|| self.fresh());
@@ -2287,6 +2334,68 @@ impl<'a> TypeChecker<'a> {
         self.tcx.intern(TyKind::Adt { def, substs })
     }
 
+    /// `recv` / `try_recv` on a `Receiver<T>` yields `Option<T>`, and `send`
+    /// / `try_send` on a `Sender<T>` consumes a `T`. Pinning the element type
+    /// here sizes a `while let Some(p) = rx.recv()` binding by `T`'s real slot
+    /// count, so a struct sent over a channel materialises as its inline
+    /// fields rather than a single pointer word. Returns `None` for any
+    /// non-channel receiver so the caller continues normal dispatch.
+    fn check_channel_method(&mut self, method: &str, receiver_ty: Ty, args: &[Expr]) -> Option<Ty> {
+        let mut resolved = self.infer.resolve(self.tcx, receiver_ty);
+        while let Some(TyKind::Ref { inner, .. }) = self.tcx.kind(resolved) {
+            resolved = self.infer.resolve(self.tcx, *inner);
+        }
+        match self.tcx.kind(resolved) {
+            Some(TyKind::Receiver(elem)) if matches!(method, "recv" | "try_recv") => {
+                let elem = *elem;
+                for arg in args {
+                    self.check_expr(arg);
+                }
+                Some(self.option_adt_ty(elem))
+            }
+            Some(TyKind::Sender(elem)) if matches!(method, "send" | "try_send") => {
+                let elem = *elem;
+                for arg in args {
+                    let v = self.check_expr(arg);
+                    self.unify(elem, v, arg.span);
+                }
+                Some(self.tcx.unit())
+            }
+            _ => None,
+        }
+    }
+
+    /// `q.push_back(v)` on a `VecDeque<?elem>` pins the element generic to
+    /// `v`'s type, so an unannotated deque infers `VecDeque<String>` from the
+    /// first push and `pop_front()` recovers `Option<String>`. Returns
+    /// `Some(unit)` when handled, `None` for any other receiver / method.
+    fn check_deque_push_back(
+        &mut self,
+        method: &str,
+        receiver_ty: Ty,
+        span: gossamer_lex::Span,
+        args: &[Expr],
+    ) -> Option<Ty> {
+        if method != "push_back" || args.len() != 1 {
+            return None;
+        }
+        let mut resolved = self.infer.resolve(self.tcx, receiver_ty);
+        while let Some(TyKind::Ref { inner, .. }) = self.tcx.kind(resolved) {
+            resolved = self.infer.resolve(self.tcx, *inner);
+        }
+        if let Some(TyKind::Adt { def, substs }) = self.tcx.kind(resolved)
+            && def.local == u32::MAX - 9
+        {
+            let elem = substs.types().first().copied();
+            let v = self.check_expr(&args[0]);
+            if let Some(elem) = elem {
+                self.unify(elem, v, span);
+            }
+            return Some(self.tcx.unit());
+        }
+        None
+    }
+
     fn check_method_call(&mut self, method: &str, receiver: &Expr, args: &[Expr]) -> Ty {
         let receiver_ty = self.check_expr(receiver);
         // A method on a bound type-parameter receiver (`s.area()` where
@@ -2299,24 +2408,11 @@ impl<'a> TypeChecker<'a> {
             }
             return ret;
         }
-        // `q.push_back(v)` on a `VecDeque<?elem>` pins the element generic to
-        // `v`'s type, so an unannotated deque infers `VecDeque<String>` from
-        // the first push and `pop_front()` recovers `Option<String>`.
-        if method == "push_back" && args.len() == 1 {
-            let mut resolved = self.infer.resolve(self.tcx, receiver_ty);
-            while let Some(TyKind::Ref { inner, .. }) = self.tcx.kind(resolved) {
-                resolved = self.infer.resolve(self.tcx, *inner);
-            }
-            if let Some(TyKind::Adt { def, substs }) = self.tcx.kind(resolved)
-                && def.local == u32::MAX - 9
-            {
-                let elem = substs.types().first().copied();
-                let v = self.check_expr(&args[0]);
-                if let Some(elem) = elem {
-                    self.unify(elem, v, receiver.span);
-                }
-                return self.tcx.unit();
-            }
+        if let Some(ty) = self.check_channel_method(method, receiver_ty, args) {
+            return ty;
+        }
+        if let Some(ty) = self.check_deque_push_back(method, receiver_ty, receiver.span, args) {
+            return ty;
         }
         // Result/Option combinator methods (`r.map_err(f)`,
         // `o.map(f)`) have known signatures: type them through the
@@ -3163,12 +3259,27 @@ impl<'a> TypeChecker<'a> {
         rhs_ty
     }
 
-    fn check_assign(&mut self, place: &Expr, value: &Expr) -> Ty {
+    fn check_assign(&mut self, place: &Expr, value: &Expr, op: gossamer_ast::AssignOp) -> Ty {
         let place_ty = self.check_expr(place);
         // The place's type flows into the value as its expectation so
         // `v = [2, 3]` against a `Vec<i64>` slot lays a heap Vec, not
         // a fixed `[i64; 2]` desynced from the slot's layout.
         let value_ty = self.check_expr_expecting(value, Expectation::HasType(place_ty));
+        // `s += &t` / `s += &str`: String append accepts a borrowed operand
+        // on the right, mirroring the `+` concatenation operator. Only the
+        // compound `+=` form relaxes; plain `=` still requires an owned String.
+        if matches!(op, gossamer_ast::AssignOp::AddAssign) {
+            let pr = self.infer.resolve(self.tcx, place_ty);
+            if matches!(self.tcx.kind(pr), Some(TyKind::String)) {
+                let mut vr = self.infer.resolve(self.tcx, value_ty);
+                while let Some(TyKind::Ref { inner, .. }) = self.tcx.kind(vr) {
+                    vr = self.infer.resolve(self.tcx, *inner);
+                }
+                if matches!(self.tcx.kind(vr), Some(TyKind::String)) {
+                    return self.tcx.unit();
+                }
+            }
+        }
         self.unify(place_ty, value_ty, value.span);
         self.tcx.unit()
     }
@@ -4011,6 +4122,40 @@ impl<'a> TypeChecker<'a> {
                     .unwrap_or_else(|| self.fresh());
                 return self.tcx.intern(TyKind::Vec(elem));
             }
+            // `Sender<T>` / `Receiver<T>` / `JoinHandle<T>` carry their
+            // element type in a dedicated `TyKind`. Resolving the
+            // annotation to that kind (rather than a fresh inference var)
+            // lets `rx.recv()` recover `Option<T>` and a `Sender`-typed
+            // param pin the channel element - without it a struct sent
+            // over a channel infers as the default `i64` and materialises
+            // a single pointer word instead of its inline fields.
+            "Sender" => {
+                let substs = self.substs_from_ast(path);
+                let elem = substs
+                    .types()
+                    .first()
+                    .copied()
+                    .unwrap_or_else(|| self.fresh());
+                return self.tcx.intern(TyKind::Sender(elem));
+            }
+            "Receiver" => {
+                let substs = self.substs_from_ast(path);
+                let elem = substs
+                    .types()
+                    .first()
+                    .copied()
+                    .unwrap_or_else(|| self.fresh());
+                return self.tcx.intern(TyKind::Receiver(elem));
+            }
+            "JoinHandle" => {
+                let substs = self.substs_from_ast(path);
+                let elem = substs
+                    .types()
+                    .first()
+                    .copied()
+                    .unwrap_or_else(|| self.fresh());
+                return self.tcx.intern(TyKind::JoinHandle(elem));
+            }
             "HashMap" => {
                 let substs = self.substs_from_ast(path);
                 let tys = substs.types();
@@ -4145,6 +4290,30 @@ impl<'a> TypeChecker<'a> {
             _ => None,
         };
         if let Some((off, name)) = validate_handle {
+            let def = gossamer_resolve::DefId::local(u32::MAX - off);
+            self.tcx.register_def_name(def, name);
+            return self.tcx.intern(TyKind::Adt {
+                def,
+                substs: crate::Substs::new(),
+            });
+        }
+        // `net::TcpStream` / `TcpListener` / `UdpSocket` / `UnixStream` /
+        // `UnixListener` are opaque i64 socket handles with no dedicated
+        // `TyKind`. Resolving the annotation to a named sentinel Adt
+        // (instead of a fresh inference var) lets method dispatch recover
+        // the handle kind from its *type* when a socket flows through a
+        // struct field or a parameter and the construction-site tag is
+        // gone - without this `conn.sock.read(..)` lowers to an undefined
+        // name-global symbol on the compiled tiers.
+        let net_handle: Option<(u32, &str)> = match tail {
+            "TcpStream" => Some((12, "net::TcpStream")),
+            "TcpListener" => Some((13, "net::TcpListener")),
+            "UdpSocket" => Some((14, "net::UdpSocket")),
+            "UnixStream" => Some((15, "net::UnixStream")),
+            "UnixListener" => Some((16, "net::UnixListener")),
+            _ => None,
+        };
+        if let Some((off, name)) = net_handle {
             let def = gossamer_resolve::DefId::local(u32::MAX - off);
             self.tcx.register_def_name(def, name);
             return self.tcx.intern(TyKind::Adt {

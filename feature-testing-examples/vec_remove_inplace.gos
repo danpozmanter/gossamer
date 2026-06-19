@@ -1,0 +1,25 @@
+// `Vec::remove(xs, i)` (the Result-returning free-fn form) removes the
+// element in place and returns it. Verifies the removal is reflected in
+// the Vec on every tier, not just the returned value.
+
+fn main() {
+    let mut xs: [i64] = [10, 20, 30, 40, 50]
+    let r = Vec::remove(xs, 1)
+    let mut sum = 0
+    for x in xs { sum += x }
+    match r {
+        Ok(v) => println!("removed={} len={} sum={} first={}", v, xs.len(), sum, xs[0]),
+        Err(_) => println!("err"),
+    }
+    // Remove the new head, then out-of-range should Err and leave xs intact.
+    let r2 = Vec::remove(xs, 0)
+    let oob = Vec::remove(xs, 99)
+    let bad = match oob {
+        Ok(_) => 1,
+        Err(_) => 0,
+    }
+    match r2 {
+        Ok(v) => println!("removed2={} len={} oob_is_err={}", v, xs.len(), bad),
+        Err(_) => println!("err2"),
+    }
+}

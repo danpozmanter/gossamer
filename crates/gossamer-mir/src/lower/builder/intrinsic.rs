@@ -1980,6 +1980,13 @@ impl<'a> Builder<'a> {
             };
             let val_ty = match value_kind {
                 Some(MapValueKind::String) => str_ty,
+                // A struct / aggregate value is stored as a boxed pointer;
+                // type the binding as the map's value type so field access
+                // derefs the box (a bare i64 binding reads the pointer bits
+                // as inline fields and yields zero). Scalars keep i64.
+                Some(MapValueKind::Other) => {
+                    self.hash_map_kv_tys(recv_ty).map_or(i64_ty, |(_, v)| v)
+                }
                 _ => i64_ty,
             };
             let keys_helper = match key_kind {
@@ -2183,6 +2190,10 @@ impl<'a> Builder<'a> {
         };
         let val_ty = match value_kind {
             Some(MapValueKind::String) => str_ty,
+            // A struct / aggregate value is stored as a boxed pointer; type
+            // the tuple slot as the map's value type so field access derefs
+            // the box rather than reading the pointer bits as inline fields.
+            Some(MapValueKind::Other) => self.hash_map_kv_tys(recv_ty).map_or(i64_ty, |(_, v)| v),
             _ => i64_ty,
         };
         let keys_helper = match key_kind {

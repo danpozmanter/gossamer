@@ -1137,6 +1137,49 @@ impl Vm {
                         _ => {}
                     }
                 }
+                Op::VecRemoveAt {
+                    dst,
+                    receiver,
+                    index,
+                } => {
+                    let idx = match &registers[index as usize] {
+                        Value::Int(n) => *n,
+                        _ => -1,
+                    };
+                    let removed = match &mut registers[receiver as usize] {
+                        Value::Array(items) => {
+                            let v = Arc::make_mut(items);
+                            if idx >= 0 && (idx as usize) < v.len() {
+                                Some(v.remove(idx as usize))
+                            } else {
+                                None
+                            }
+                        }
+                        Value::IntArray(data) => {
+                            let v = Arc::make_mut(data);
+                            if idx >= 0 && (idx as usize) < v.len() {
+                                Some(Value::Int(v.remove(idx as usize)))
+                            } else {
+                                None
+                            }
+                        }
+                        Value::FloatVec(data) => {
+                            let v = Arc::make_mut(data);
+                            if idx >= 0 && (idx as usize) < v.len() {
+                                Some(Value::Float(v.remove(idx as usize)))
+                            } else {
+                                None
+                            }
+                        }
+                        _ => None,
+                    };
+                    registers[dst as usize] = match removed {
+                        Some(elem) => Value::variant("Ok", vec![elem]),
+                        None => {
+                            crate::builtins::slice_err(format!("remove: index {idx} out of bounds"))
+                        }
+                    };
+                }
                 Op::TupleIndex {
                     dst,
                     receiver,

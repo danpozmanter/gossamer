@@ -2310,6 +2310,79 @@ pub(crate) fn bounds_check_elim(body: &mut Body, tcx: &TyCtxt) {
     }
 }
 
+/// Argument index of the value operand for a container-insert runtime
+/// call whose stored entry aliases the value's heap subgraph, or `None`
+/// for any other callee. The map-insert family and `BTreeMap::insert`
+/// carry the value at index 2 (`m, key, value`); `HashSet::insert` at
+/// index 1 (`set, element`).
+fn container_insert_value_arg(callee: &str) -> Option<usize> {
+    match callee {
+        "gos_rt_map_insert"
+        | "gos_rt_map_insert_i64_i64"
+        | "gos_rt_map_insert_str_i64"
+        | "gos_rt_map_insert_i64_str"
+        | "gos_rt_map_insert_str_str"
+        | "gos_rt_btmap_insert" => Some(2),
+        "gos_rt_set_insert" => Some(1),
+        _ => None,
+    }
+}
+
+/// Move-into-container ownership transfer. A value inserted into a
+/// `HashMap` / `BTreeMap` / `HashSet` is heap-copied into the entry, and the
+/// copy aliases the source value's `String` / `Vec` / nested-aggregate
+/// children (the entry shares the single owning reference). The source
+/// binding's drop must therefore not release those children, or the
+/// stored entry is left pointing at freed memory. The container holds
+/// the reference until the entry is popped - where the receiving binding
+/// releases it - or the container itself is dropped.
+///
+/// Removing a release can only delay a free, never free early, so this
+/// transform cannot introduce a use-after-free or double-free: an entry
+/// that is never popped leaks its children rather than corrupting the
+/// heap. It runs after the drop-insertion pipeline so the releases it
+/// cancels are already materialised.
+pub(crate) fn suppress_container_moved_releases(body: &mut Body) {
+    let mut rooted: std::collections::BTreeSet<u32> = std::collections::BTreeSet::new();
+    for block in &body.blocks {
+        if let Terminator::Call {
+            callee: Operand::Const(ConstValue::Str(name)),
+            args,
+            ..
+        } = &block.terminator
+            && let Some(vidx) = container_insert_value_arg(name)
+            && let Some(Operand::Copy(p)) = args.get(vidx)
+            && p.projection.is_empty()
+        {
+            rooted.insert(p.local.0);
+        }
+    }
+    if rooted.is_empty() {
+        return;
+    }
+    for block in &mut body.blocks {
+        for stmt in &mut block.stmts {
+            if let StatementKind::Assign {
+                rvalue: Rvalue::CallIntrinsic { name, args },
+                ..
+            } = &stmt.kind
+                && matches!(
+                    *name,
+                    "gos_rt_rc_release" | "gos_rt_str_free" | "gos_rt_vec_free"
+                )
+                && args.len() == 1
+                && let Some(Operand::Copy(p)) = args.first()
+                && rooted.contains(&p.local.0)
+                && p.projection
+                    .iter()
+                    .all(|proj| matches!(proj, Projection::Field(_)))
+            {
+                stmt.kind = StatementKind::Nop;
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod elision_tests {
     use gossamer_lex::{SourceMap, Span};
