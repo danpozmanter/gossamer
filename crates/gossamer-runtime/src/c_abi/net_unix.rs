@@ -24,14 +24,14 @@
 #![allow(clippy::cast_lossless)]
 #![allow(clippy::wildcard_imports)]
 
-use std::ffi::CStr;
 use std::os::raw::c_char;
 
+#[cfg(unix)]
 fn cstr_to_str(p: *const c_char) -> String {
     if p.is_null() {
         String::new()
     } else {
-        unsafe { CStr::from_ptr(p).to_string_lossy().into_owned() }
+        unsafe { std::ffi::CStr::from_ptr(p).to_string_lossy().into_owned() }
     }
 }
 
