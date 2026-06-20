@@ -736,17 +736,56 @@ struct Run {
     stdout: String,
     stderr: String,
     code: Option<i32>,
+    /// Crash cause instead of an opaque number (signal name on unix,
+    /// NTSTATUS name on Windows); `None` only if the process never
+    /// reported an exit status.
+    exit_text: Option<String>,
+    /// True when the deadline elapsed and the child was killed.
+    timed_out: bool,
+    /// Executable path that was launched.
+    exe: PathBuf,
+    /// Space-joined command line (exe + args), for reproduction.
+    cmdline: String,
+    /// Working directory the child ran in.
+    workdir: PathBuf,
 }
 
 fn normalize_newlines(s: &str) -> String {
     s.replace("\r\n", "\n")
 }
 
-fn run_with_timeout(mut child: Child, stdin: &[u8], deadline: Instant) -> Run {
+/// Renders an `ExitStatus` via the shared helper so a native-tier
+/// crash reads as its cause (signal / NTSTATUS) instead of a bare
+/// number. Returns `Some` whenever the process reported a status
+/// (exit code or signal); `None` only if no status was collected.
+fn render_status(status: std::process::ExitStatus) -> Option<String> {
+    if status.code().is_some() {
+        return Some(common::describe_exit(status).text);
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        if status.signal().is_some() {
+            return Some(common::describe_exit(status).text);
+        }
+    }
+    let _ = status;
+    None
+}
+
+fn run_with_timeout(
+    mut child: Child,
+    stdin: &[u8],
+    deadline: Instant,
+    exe: PathBuf,
+    cmdline: String,
+    workdir: PathBuf,
+) -> Run {
     if let Some(mut sin) = child.stdin.take() {
         let _ = sin.write_all(stdin);
         drop(sin);
     }
+    let mut timed_out = false;
     loop {
         match child.try_wait() {
             Ok(Some(_)) => break,
@@ -754,6 +793,7 @@ fn run_with_timeout(mut child: Child, stdin: &[u8], deadline: Instant) -> Run {
                 if Instant::now() >= deadline {
                     let _ = child.kill();
                     let _ = child.wait();
+                    timed_out = true;
                     break;
                 }
                 std::thread::sleep(Duration::from_millis(40));
@@ -766,22 +806,110 @@ fn run_with_timeout(mut child: Child, stdin: &[u8], deadline: Instant) -> Run {
         stdout: normalize_newlines(&String::from_utf8_lossy(&out.stdout)),
         stderr: normalize_newlines(&String::from_utf8_lossy(&out.stderr)),
         code: out.status.code(),
+        exit_text: render_status(out.status),
+        timed_out,
+        exe,
+        cmdline,
+        workdir,
     }
 }
 
+/// Formats the full per-tier execution report for a CI failure dump.
+/// Every field is shown even when empty so a crashed-before-output
+/// tier still surfaces executable path, command line, and exit cause.
+fn tier_report(label: &str, run: &Run) -> String {
+    let exit = match (run.code, &run.exit_text) {
+        (Some(c), Some(text)) => format!("{c} ({text})"),
+        (Some(c), None) => format!("{c}"),
+        (None, Some(text)) => format!("none ({text})"),
+        (None, None) => "none".to_string(),
+    };
+    let timeout = if run.timed_out { "yes" } else { "no" };
+    format!(
+        "{label}:\n  exit={exit}\n  timed_out={timeout}\n  exe={}\n  cmdline={}\n  workdir={}\n  stdout={:?}\n  stderr={:?}",
+        run.exe.display(),
+        run.cmdline,
+        run.workdir.display(),
+        run.stdout,
+        run.stderr,
+    )
+}
+
+#[test]
+fn tier_report_shows_exit_ntstatus_and_streams() {
+    let run = Run {
+        stdout: String::from("ok\n"),
+        stderr: String::new(),
+        code: Some(0),
+        exit_text: Some("exit 0".to_string()),
+        timed_out: false,
+        exe: PathBuf::from("/tmp/gos"),
+        cmdline: "/tmp/gos run examples/hello.gos".to_string(),
+        workdir: PathBuf::from("/home/daniel/dev/gossamer"),
+    };
+    let report = tier_report("vm", &run);
+    assert!(report.starts_with("vm:\n  exit=0 (exit 0)"));
+    assert!(report.contains("timed_out=no"));
+    assert!(report.contains("exe=/tmp/gos"));
+    assert!(report.contains("cmdline=/tmp/gos run examples/hello.gos"));
+    assert!(report.contains("workdir=/home/daniel/dev/gossamer"));
+    assert!(report.contains("stdout=\"ok\\n\""));
+    assert!(report.contains("stderr=\"\""));
+}
+
+#[test]
+fn tier_report_handles_crash_and_timeout() {
+    // 0xC0000005 reinterpreted as i32 is -1073741819 — this is how
+    // Rust's ExitStatus::code() surfaces a Windows NTSTATUS exit.
+    // exit_text carries the decoded name so the CI log reads as the
+    // cause, not a number.
+    let run = Run {
+        stdout: String::new(),
+        stderr: String::from("fault"),
+        code: Some(-1073741819),
+        exit_text: Some("exit code 0xc0000005 (STATUS_ACCESS_VIOLATION)".to_string()),
+        timed_out: true,
+        exe: PathBuf::from("C:\\scratch\\hello.exe"),
+        cmdline: "C:\\scratch\\hello.exe".to_string(),
+        workdir: PathBuf::from("C:\\ci"),
+    };
+    let report = tier_report("cranelift", &run);
+    assert!(report.contains("exit=-1073741819 (exit code 0xc0000005 (STATUS_ACCESS_VIOLATION))"));
+    assert!(report.contains("timed_out=yes"));
+    assert!(report.contains("exe=C:\\scratch\\hello.exe"));
+    assert!(report.contains("stdout=\"\""));
+    assert!(report.contains("stderr=\"fault\""));
+}
+
 fn run_vm(src: &Path, args: &[&str], stdin: &[u8]) -> Run {
-    let mut cmd = Command::new(gos_bin());
+    let gos = gos_bin();
+    let mut cmd = Command::new(&gos);
     cmd.arg("run").arg(src);
+    let mut parts: Vec<String> = vec![gos.display().to_string(), "run".to_string()];
+    parts.push(src.display().to_string());
     if !args.is_empty() {
         cmd.arg("--").args(args);
+        parts.push("--".to_string());
+        parts.extend(args.iter().map(std::string::ToString::to_string));
     }
+    let workdir = cmd.get_current_dir().map_or_else(
+        || env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+        std::path::Path::to_path_buf,
+    );
     let child = cmd
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .expect("spawn gos run");
-    run_with_timeout(child, stdin, Instant::now() + PER_RUN_TIMEOUT)
+    run_with_timeout(
+        child,
+        stdin,
+        Instant::now() + PER_RUN_TIMEOUT,
+        gos,
+        parts.join(" "),
+        workdir,
+    )
 }
 
 fn build_native(src: &Path, release: bool, scratch: &Path) -> Result<PathBuf, String> {
@@ -846,14 +974,28 @@ fn is_executable(p: &Path) -> bool {
 }
 
 fn run_native(bin: &Path, args: &[&str], stdin: &[u8]) -> Run {
-    let child = Command::new(bin)
-        .args(args)
+    let mut cmd = Command::new(bin);
+    cmd.args(args);
+    let mut parts: Vec<String> = vec![bin.display().to_string()];
+    parts.extend(args.iter().map(std::string::ToString::to_string));
+    let workdir = cmd.get_current_dir().map_or_else(
+        || env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+        std::path::Path::to_path_buf,
+    );
+    let child = cmd
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .expect("spawn native binary");
-    run_with_timeout(child, stdin, Instant::now() + PER_RUN_TIMEOUT)
+    run_with_timeout(
+        child,
+        stdin,
+        Instant::now() + PER_RUN_TIMEOUT,
+        bin.to_path_buf(),
+        parts.join(" "),
+        workdir,
+    )
 }
 
 fn run_tier(spec: &Spec, tier: Tier) -> Result<Run, String> {
@@ -900,22 +1042,24 @@ fn stdout_matches(a: &str, b: &str, nondeterministic: bool) -> bool {
 fn divergence(spec: &Spec, lhs: (Tier, &Run), rhs: (Tier, &Run)) -> Option<String> {
     if !stdout_matches(&lhs.1.stdout, &rhs.1.stdout, spec.nondeterministic) {
         return Some(format!(
-            "{path}: stdout diverged between {a} and {b}\n  {a}: {astdout:?}\n  {b}: {bstdout:?}",
+            "{path}: stdout diverged between {a} and {b}\n  {a}: {astdout:?}\n  {b}: {bstdout:?}\n\n--- per-tier execution report ---\n{report}",
             path = spec.path,
             a = lhs.0.label(),
             b = rhs.0.label(),
             astdout = lhs.1.stdout,
             bstdout = rhs.1.stdout,
+            report = tier_report(lhs.0.label(), lhs.1) + "\n" + &tier_report(rhs.0.label(), rhs.1),
         ));
     }
     if !spec.allow_nonzero && lhs.1.code != rhs.1.code {
         return Some(format!(
-            "{path}: exit code diverged: {a}={ac:?} {b}={bc:?}",
+            "{path}: exit code diverged: {a}={ac:?} {b}={bc:?}\n\n--- per-tier execution report ---\n{report}",
             path = spec.path,
             a = lhs.0.label(),
             ac = lhs.1.code,
             b = rhs.0.label(),
             bc = rhs.1.code,
+            report = tier_report(lhs.0.label(), lhs.1) + "\n" + &tier_report(rhs.0.label(), rhs.1),
         ));
     }
     None
@@ -936,14 +1080,19 @@ fn vm_runs_every_example_without_crashing() {
         let run = match run_tier(spec, Tier::Vm) {
             Ok(r) => r,
             Err(e) => {
-                failures.push(format!("{}: vm error: {e}", spec.path));
+                failures.push(format!(
+                    "{path}: vm error (no Run produced — tier failed before execution):\n  {e}",
+                    path = spec.path,
+                ));
                 continue;
             }
         };
         if !spec.allow_nonzero && run.code != Some(0) {
             failures.push(format!(
-                "{}: vm exit={:?}\n  stderr: {}",
-                spec.path, run.code, run.stderr,
+                "{path}: vm exit={code:?}\n\n--- per-tier execution report ---\n{report}",
+                path = spec.path,
+                code = run.code,
+                report = tier_report(Tier::Vm.label(), &run),
             ));
         }
     }
@@ -1013,14 +1162,21 @@ fn parity_walk(compiled: Tier, group: usize) {
         let vm = match run_tier(spec, Tier::Vm) {
             Ok(r) => r,
             Err(e) => {
-                failures.push(format!("{}: vm error: {e}", spec.path));
+                failures.push(format!(
+                    "{path}: vm error (no Run produced — tier failed before execution):\n  {e}",
+                    path = spec.path,
+                ));
                 continue;
             }
         };
         let other = match run_tier(spec, compiled) {
             Ok(r) => r,
             Err(e) => {
-                failures.push(format!("{}: {} error: {e}", spec.path, compiled.label()));
+                failures.push(format!(
+                    "{path}: {tier} error (no Run produced — tier failed before execution):\n  {e}",
+                    path = spec.path,
+                    tier = compiled.label(),
+                ));
                 continue;
             }
         };
