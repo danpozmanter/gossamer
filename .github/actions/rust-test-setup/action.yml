@@ -11,6 +11,25 @@ inputs:
 runs:
   using: composite
   steps:
+    # The 0.17.0 dependency set (quinn/h3/rustls/ring + ICU via idna/url,
+    # zstd, bzip2, mimalloc, blake3) makes the debug `target/` directory
+    # plus the restored cargo cache exceed the ~14 GB free on ubuntu-latest.
+    # lld then dies with SIGBUS (signal 7) - the signature of a
+    # memory-mapped output file whose backing filesystem is full - across
+    # every parallel test link at once (collect2: "ld terminated with
+    # signal 7 [Bus error]"). Reclaim the runner's unused preinstalled
+    # toolchains (Android SDK, .NET, Haskell, Boost) before the build
+    # starts. Linux-only: the failure is ubuntu-specific and the paths
+    # don't exist on macOS/Windows runners.
+    - name: Free runner disk space (Linux only)
+      if: runner.os == 'Linux'
+      shell: bash
+      run: |
+        set -euo pipefail
+        df -h / | sed 's/^/before: /'
+        sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
+                    /usr/local/share/boost /usr/local/.ghcup 2>/dev/null || true
+        df -h / | sed 's/^/after:  /'
     # `gos build` shells out to `opt` and `llc` from LLVM 18+. Ubuntu
     # runners ship them at `/usr/lib/llvm-18/bin/` (auto-discovered);
     # macOS and Windows need explicit discovery + env-var pointers. These
