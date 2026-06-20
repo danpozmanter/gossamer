@@ -1980,12 +1980,28 @@ impl<'a> Builder<'a> {
             };
             let val_ty = match value_kind {
                 Some(MapValueKind::String) => str_ty,
-                // A struct / aggregate value is stored as a boxed pointer;
-                // type the binding as the map's value type so field access
-                // derefs the box (a bare i64 binding reads the pointer bits
-                // as inline fields and yields zero). Scalars keep i64.
+                // A struct value is stored as a boxed pointer; bind `v`
+                // as a reference (a single box-pointer word) so field
+                // access derefs the box. Typing the binding as the
+                // by-value struct makes the drop pass treat the blob
+                // pointer as an inline struct and release its RC fields
+                // — a use-after-free (and on Windows a misaligned-RC
+                // crash) once the map's own share is later released.
+                // Non-struct aggregates keep the value type. Mirrors the
+                // `for v in m.values()` binding in
+                // [`try_lower_for_hashmap_iter`]'s sibling in ctrl.rs.
                 Some(MapValueKind::Other) => {
-                    self.hash_map_kv_tys(recv_ty).map_or(i64_ty, |(_, v)| v)
+                    let value_struct = self
+                        .hash_map_kv_tys(recv_ty)
+                        .map(|(_, v)| v)
+                        .filter(|v| self.struct_name_of(*v).is_some());
+                    match value_struct {
+                        Some(v) => self.tcx.intern(TyKind::Ref {
+                            mutability: gossamer_types::Mutbl::Not,
+                            inner: v,
+                        }),
+                        None => self.hash_map_kv_tys(recv_ty).map_or(i64_ty, |(_, v)| v),
+                    }
                 }
                 _ => i64_ty,
             };
@@ -2190,10 +2206,25 @@ impl<'a> Builder<'a> {
         };
         let val_ty = match value_kind {
             Some(MapValueKind::String) => str_ty,
-            // A struct / aggregate value is stored as a boxed pointer; type
-            // the tuple slot as the map's value type so field access derefs
-            // the box rather than reading the pointer bits as inline fields.
-            Some(MapValueKind::Other) => self.hash_map_kv_tys(recv_ty).map_or(i64_ty, |(_, v)| v),
+            // A struct value is stored as a boxed pointer; bind the
+            // tuple slot as a reference so field access derefs the box.
+            // A by-value struct binding makes the drop pass release the
+            // blob pointer's RC fields as if they were inline — a
+            // use-after-free. Mirrors the `for (k, v) in m.iter()` and
+            // `for v in m.values()` bindings.
+            Some(MapValueKind::Other) => {
+                let value_struct = self
+                    .hash_map_kv_tys(recv_ty)
+                    .map(|(_, v)| v)
+                    .filter(|v| self.struct_name_of(*v).is_some());
+                match value_struct {
+                    Some(v) => self.tcx.intern(TyKind::Ref {
+                        mutability: gossamer_types::Mutbl::Not,
+                        inner: v,
+                    }),
+                    None => self.hash_map_kv_tys(recv_ty).map_or(i64_ty, |(_, v)| v),
+                }
+            }
             _ => i64_ty,
         };
         let keys_helper = match key_kind {
