@@ -41,7 +41,7 @@ fn main() {
 
 ## Running today
 
-- **`hello_world.gos`** - one-liner that prints via `fmt::println`.
+- **`hello_world.gos`** - one-liner that prints via `println`.
   Runs under `gos run`.
 - **`function_piping.gos`** - tour of the `|>` forward-pipe
   operator plus the `std::iter` / `std::option` combinator

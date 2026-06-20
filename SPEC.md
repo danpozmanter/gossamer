@@ -759,8 +759,8 @@ cover the type; `..=` with no upper bound is a parse error.
 
 ```
 match divide(a, b) {
-  Ok(v) => fmt::println("got:", v),
-  Err(e) => fmt::eprintln("err:", e),
+  Ok(v) => println!("got: {}", v),
+  Err(e) => eprintln!("err: {}", e),
 }
 ```
 
@@ -900,8 +900,8 @@ Example (from examples.md):
 
 ```
 select {
-  Ok(msg) = rx_ok.recv() => fmt::println("success:", msg),
-  Err(err) = rx_err.recv() => fmt::println("error:", err),
+  Ok(msg) = rx_ok.recv() => println!("success: {}", msg),
+  Err(err) = rx_err.recv() => println!("error: {}", err),
 }
 ```
 
@@ -972,8 +972,8 @@ call.
 Examples:
 
 ```
-// Equivalent to: fmt::println(format!("hello {}", name))
-name |> format!("hello {}", ..) |> fmt::println
+// Equivalent to: println(format!("hello {}", name))
+name |> format!("hello {}", ..) |> println
 ```
 
 Note: the `..` placeholder is **not** required - `|>` implicitly
@@ -981,7 +981,7 @@ targets the last position. The code above would equivalently be
 written:
 
 ```
-name |> format!("hello {}", _) |> fmt::println   // _ is optional, sugar
+name |> format!("hello {}", _) |> println   // _ is optional, sugar
 ```
 
 The explicit placeholder forms (`..` or `_`) are purely documentary;
@@ -1484,7 +1484,7 @@ let values = Vec::from([1, 2, 3])
 let first = &values[0]          // shared ref active
 values.push(4)                   // ERROR: push takes &mut self,
                                 //        but first is still active
-fmt::println(first)
+println(first)
 ```
 
 ```
