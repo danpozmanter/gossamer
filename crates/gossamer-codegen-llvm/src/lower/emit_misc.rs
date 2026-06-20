@@ -588,14 +588,29 @@ impl<'a> Lowerer<'a> {
             }
         } else {
             let tmp = self.fresh();
-            // Aggregate destinations always come back as a heap
-            // pointer; use dest_ty (typically "ptr") for them so
-            // the subsequent memcpy / store sees the right
-            // shape. Non-aggregate destinations get the
-            // registry's return type when one exists, falling
-            // back to dest_ty otherwise.
+            // Aggregate destinations come back as a heap pointer the
+            // subsequent memcpy / store dereferences. User functions
+            // heap-copy their return (see the Return lowering), so the
+            // call return is `ptr` and matches `dest_ty`. A `gos_rt_*`
+            // helper, however, may return a *scalar* `i64` that IS the
+            // box pointer (e.g. `gos_rt_map_get_or_i64` over a
+            // struct-valued map hands back the stored i64 handle, not a
+            // pointer to fresh storage). Typing that call `ptr` against
+            // the registry's `i64` declaration is an LLVM IR
+            // return-type mismatch: Linux SysV LLVM coerces the
+            // same-width integer/pointer return register and hides it,
+            // but Windows x64-64 LLVM honours the call-site type
+            // literally, so the caller reads the wrong register and the
+            // program crashes before any output. Honour the registry
+            // return for `gos_rt_*` symbols, then inttoptr the scalar
+            // into the pointer the memcpy expects. Non-aggregate
+            // destinations already take the registry return.
             let call_ret_ty = if is_aggregate(self.tcx, dest_ty_mir) {
-                dest_ty.clone()
+                if symbol.starts_with("gos_rt_") {
+                    registry_ret.clone().unwrap_or_else(|| dest_ty.clone())
+                } else {
+                    dest_ty.clone()
+                }
             } else {
                 registry_ret.clone().unwrap_or_else(|| dest_ty.clone())
             };
@@ -625,6 +640,20 @@ impl<'a> Lowerer<'a> {
                 let unwrapped = self.fresh();
                 writeln!(self.out, "  {unwrapped} = bitcast <16 x i8> {tmp} to i128").unwrap();
                 unwrapped
+            } else {
+                tmp
+            };
+            // A `gos_rt_*` helper returning a scalar `i64` box pointer into
+            // an aggregate destination handed us an integer; the memcpy /
+            // store below needs a `ptr`. Widening the integer to a pointer
+            // is a no-op bit-reinterpret on every target (both are the
+            // 64-bit GP return register); the preceding call is already
+            // typed with the registry's `i64` so the caller reads the
+            // correct register on Windows x64.
+            let tmp = if is_aggregate(self.tcx, dest_ty_mir) && call_ret_ty == "i64" {
+                let ptr_val = self.fresh();
+                writeln!(self.out, "  {ptr_val} = inttoptr i64 {tmp} to ptr").unwrap();
+                ptr_val
             } else {
                 tmp
             };
