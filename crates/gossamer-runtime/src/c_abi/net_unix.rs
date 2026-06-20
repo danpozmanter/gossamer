@@ -208,26 +208,37 @@ mod imp {
 mod imp {
     use std::os::raw::c_char;
 
-    const UNSUPPORTED: &str = "net::unix: Unix-domain sockets are not supported on this platform";
+    const UNSUPPORTED_BIND: &str =
+        "net::UnixListener::bind: Unix-domain sockets are not supported on this platform";
+    const UNSUPPORTED_ACCEPT: &str =
+        "net::UnixListener::accept: Unix-domain sockets are not supported on this platform";
+    const UNSUPPORTED_CONNECT: &str =
+        "net::UnixStream::connect: Unix-domain sockets are not supported on this platform";
+    const UNSUPPORTED_READ: &str =
+        "net::UnixStream::read: Unix-domain sockets are not supported on this platform";
+    const UNSUPPORTED_READ_TO_STRING: &str =
+        "net::UnixStream::read_to_string: Unix-domain sockets are not supported on this platform";
+    const UNSUPPORTED_WRITE: &str =
+        "net::UnixStream::write: Unix-domain sockets are not supported on this platform";
 
     pub(super) unsafe fn listener_bind(_path: *const c_char) -> i128 {
-        super::unix_err(UNSUPPORTED)
+        super::unix_err(UNSUPPORTED_BIND)
     }
     pub(super) unsafe fn listener_accept(_h: i64) -> i128 {
-        super::unix_err(UNSUPPORTED)
+        super::unix_err(UNSUPPORTED_ACCEPT)
     }
     pub(super) unsafe fn listener_close(_h: i64) {}
     pub(super) unsafe fn stream_connect(_path: *const c_char) -> i128 {
-        super::unix_err(UNSUPPORTED)
+        super::unix_err(UNSUPPORTED_CONNECT)
     }
     pub(super) unsafe fn stream_read(_h: i64, _max: i64) -> i128 {
-        super::unix_err(UNSUPPORTED)
+        super::unix_err(UNSUPPORTED_READ)
     }
     pub(super) unsafe fn stream_read_to_string(_h: i64) -> i128 {
-        super::unix_err(UNSUPPORTED)
+        super::unix_err(UNSUPPORTED_READ_TO_STRING)
     }
     pub(super) unsafe fn stream_write(_h: i64, _data: *const super::super::vec::GosVec) -> i128 {
-        super::unix_err(UNSUPPORTED)
+        super::unix_err(UNSUPPORTED_WRITE)
     }
     pub(super) unsafe fn stream_close(_h: i64) {}
 }

@@ -519,7 +519,17 @@ const SPECS: &[Spec] = &[
     spec("feature-testing-examples/bytes_builder.gos"),
     spec("feature-testing-examples/net_ip.gos"),
     spec("feature-testing-examples/net_tcp_echo.gos"),
-    spec("feature-testing-examples/net_unix_echo.gos"),
+    Spec {
+        // Unix-domain sockets are POSIX-only; on Windows every entry
+        // point returns an Err, so the program prints a bind-failure
+        // message whose format differs between VM and native.
+        skip_all: if cfg!(windows) {
+            Some("Unix-domain sockets are not available on Windows")
+        } else {
+            None
+        },
+        ..spec("feature-testing-examples/net_unix_echo.gos")
+    },
     spec("feature-testing-examples/vec_remove_inplace.gos"),
     spec("feature-testing-examples/map_value_heap_children.gos"),
     spec("feature-testing-examples/map_pop_then_drop.gos"),
