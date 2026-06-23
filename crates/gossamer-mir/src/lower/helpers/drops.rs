@@ -1002,8 +1002,129 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
             consuming_read[i] = true;
         }
     }
+    // A source read inside a loop runs on every iteration, so a static read
+    // count of 1 does not license a move: the value is re-read across the loop
+    // back-edge. Move-eliding the retain there while the destination is
+    // released each iteration over-releases the source (refcount underflow ->
+    // premature free). Compute the blocks on a cycle, then forbid move-elision
+    // for any local read inside one - keeping the balancing retain.
+    let nb = body.blocks.len();
+    let succs: Vec<Vec<usize>> = body
+        .blocks
+        .iter()
+        .map(|b| match &b.terminator {
+            Terminator::Goto { target } => vec![target.0 as usize],
+            Terminator::SwitchInt { arms, default, .. } => {
+                let mut v: Vec<usize> = arms.iter().map(|(_, t)| t.0 as usize).collect();
+                v.push(default.0 as usize);
+                v
+            }
+            Terminator::Call { target, .. } => target.iter().map(|t| t.0 as usize).collect(),
+            Terminator::Assert { target, .. } => vec![target.0 as usize],
+            Terminator::Drop { target, .. } => vec![target.0 as usize],
+            _ => Vec::new(),
+        })
+        .collect();
+    let block_in_loop: Vec<bool> = (0..nb)
+        .map(|start| {
+            // `start` lies on a cycle iff it is reachable from one of its own
+            // successors (a path leaves `start` and returns to it).
+            let mut seen = vec![false; nb];
+            let mut stack: Vec<usize> = succs[start].clone();
+            while let Some(b) = stack.pop() {
+                if b == start {
+                    return true;
+                }
+                if b >= nb || seen[b] {
+                    continue;
+                }
+                seen[b] = true;
+                stack.extend(succs[b].iter().copied());
+            }
+            false
+        })
+        .collect();
+    let mut read_in_loop = vec![false; n_locals];
+    // Locals (re)assigned inside a loop hold a fresh value each iteration, so
+    // a single read of them is a genuine move (the value is consumed and
+    // replaced, e.g. an accumulator or a per-iteration binding moved into a
+    // container). Only a loop-INVARIANT source - read in the loop but defined
+    // outside it - is re-read across the back-edge and must keep its retain.
+    let mut assigned_in_loop = vec![false; n_locals];
+    let mark_copy = |op: &Operand, out: &mut Vec<bool>| {
+        if let Operand::Copy(p) = op
+            && p.projection.is_empty()
+            && (p.local.0 as usize) < n_locals
+        {
+            out[p.local.0 as usize] = true;
+        }
+    };
+    for (bi, block) in body.blocks.iter().enumerate() {
+        if !block_in_loop[bi] {
+            continue;
+        }
+        for stmt in &block.stmts {
+            if let StatementKind::Assign { place, .. } = &stmt.kind
+                && place.projection.is_empty()
+                && (place.local.0 as usize) < n_locals
+            {
+                assigned_in_loop[place.local.0 as usize] = true;
+            }
+            if let StatementKind::Assign { rvalue, .. } = &stmt.kind {
+                match rvalue {
+                    Rvalue::Use(op)
+                    | Rvalue::UnaryOp { operand: op, .. }
+                    | Rvalue::Cast { operand: op, .. }
+                    | Rvalue::Repeat { value: op, .. } => mark_copy(op, &mut read_in_loop),
+                    Rvalue::BinaryOp { lhs, rhs, .. } => {
+                        mark_copy(lhs, &mut read_in_loop);
+                        mark_copy(rhs, &mut read_in_loop);
+                    }
+                    Rvalue::Aggregate { operands, .. } => {
+                        for op in operands {
+                            mark_copy(op, &mut read_in_loop);
+                        }
+                    }
+                    Rvalue::CallIntrinsic { args, .. } => {
+                        for op in args {
+                            mark_copy(op, &mut read_in_loop);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        match &block.terminator {
+            Terminator::SwitchInt { discriminant, .. } => {
+                mark_copy(discriminant, &mut read_in_loop);
+            }
+            Terminator::Call {
+                callee,
+                args,
+                destination,
+                ..
+            } => {
+                mark_copy(callee, &mut read_in_loop);
+                for op in args {
+                    mark_copy(op, &mut read_in_loop);
+                }
+                if destination.projection.is_empty() && (destination.local.0 as usize) < n_locals {
+                    assigned_in_loop[destination.local.0 as usize] = true;
+                }
+            }
+            Terminator::Assert { cond, .. } => mark_copy(cond, &mut read_in_loop),
+            _ => {}
+        }
+    }
+    // A loop-invariant source (read inside a loop, not reassigned there) is
+    // re-read every iteration, so its single static read is not a move.
     let moved: Vec<bool> = (0..n_locals)
-        .map(|i| owned[i] && total_reads[i] == 1 && consuming_read[i])
+        .map(|i| {
+            owned[i]
+                && total_reads[i] == 1
+                && consuming_read[i]
+                && !(read_in_loop[i] && !assigned_in_loop[i])
+        })
         .collect();
 
     // Drop retains whose source is moved (the single reference transfers

@@ -867,7 +867,12 @@ impl Lowerer<'_> {
         for _ in 0..8 {
             match self.tcx.kind(cur) {
                 Some(TyKind::Ref { inner, .. }) => cur = *inner,
-                Some(TyKind::Adt { .. }) => return true,
+                // `HashSet` (sentinel Adt, def `u32::MAX - 7`) is not a
+                // stateful iterator: it snapshots to a sorted Vec on the
+                // inline path (VM and compiled both materialise `to_vec`),
+                // so keep it off the `&mut __for_iter.next()` desugar that
+                // a real `impl Iterator` struct needs.
+                Some(TyKind::Adt { def, .. }) => return def.local != u32::MAX - 7,
                 _ => return false,
             }
         }

@@ -17,7 +17,7 @@
 
 use std::ffi::CStr;
 use std::os::raw::c_char;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use super::*;
 
@@ -54,6 +54,16 @@ const STR_ALLOC_TAG: u8 = 0xA9;
 /// `ptr[-1]` = tag, `ptr[-5..-1]` = len (u32 LE), `ptr[-9..-5]` = cap (u32 LE).
 /// Total allocation: cap + 10 bytes.
 const STR_BUILDER_TAG: u8 = 0xAB;
+
+/// High bit of a `STR_BUILDER` string's `rc:u32` field, set once the string
+/// has escaped to another goroutine (`gos_rt_rc_mark_shared`). When set,
+/// `gos_rt_str_retain` / `gos_rt_str_free` adjust the count with atomic
+/// read-modify-write instead of the non-atomic fast path, so concurrent
+/// clone/drop across goroutines cannot tear the count (the same biased-RC
+/// protocol `RcHeader` objects use via their `SHARED_BIT`). The live count is
+/// the low 31 bits; a string never reaches 2^31 references, so the bit never
+/// collides with a real count.
+pub(crate) const STR_SHARED: u32 = 1 << 31;
 
 /// Tag for static string literals emitted into rodata by codegen with a
 /// length-carrying header `[len:u32 LE][tag=0xA8][content][NUL]` (body at
@@ -177,7 +187,17 @@ pub unsafe extern "C" fn gos_rt_str_free(s: *mut c_char) {
             // Decrement; reclaim only at zero.
             let hdr = unsafe { s.cast::<u8>().sub(13) };
             let rc = u32::from_le_bytes(unsafe { [*hdr, *hdr.add(1), *hdr.add(2), *hdr.add(3)] });
-            if rc > 1 {
+            if rc & STR_SHARED != 0 {
+                // Goroutine-shared: atomic decrement of the low-31-bit count.
+                let cell = unsafe { AtomicU32::from_ptr(hdr.cast::<u32>()) };
+                let prev = cell.fetch_sub(1, Ordering::Release);
+                if prev & !STR_SHARED != 1 {
+                    return;
+                }
+                // Count reached zero: synchronize with the other goroutines'
+                // releases before reclaiming, then fall through to free.
+                std::sync::atomic::fence(Ordering::Acquire);
+            } else if rc > 1 {
                 unsafe {
                     std::ptr::copy_nonoverlapping((rc - 1).to_le_bytes().as_ptr(), hdr, 4);
                 }
@@ -217,6 +237,14 @@ pub(crate) unsafe fn gos_rt_str_retain(s: *const c_char) {
     }
     let hdr = unsafe { s.cast::<u8>().sub(13) };
     let rc = u32::from_le_bytes(unsafe { [*hdr, *hdr.add(1), *hdr.add(2), *hdr.add(3)] });
+    if rc & STR_SHARED != 0 {
+        // Goroutine-shared: atomic increment of the low-31-bit count. `hdr` is
+        // the allocation base (allocator-aligned >= 4), so the cast is sound;
+        // the count cannot reach the shared bit, so `fetch_add` preserves it.
+        let cell = unsafe { AtomicU32::from_ptr(hdr.cast_mut().cast::<u32>()) };
+        cell.fetch_add(1, Ordering::Relaxed);
+        return;
+    }
     unsafe {
         std::ptr::copy_nonoverlapping(
             rc.saturating_add(1).to_le_bytes().as_ptr(),
@@ -224,6 +252,19 @@ pub(crate) unsafe fn gos_rt_str_retain(s: *const c_char) {
             4,
         );
     }
+}
+
+/// Marks a `STR_BUILDER` string as goroutine-shared so subsequent
+/// retain/release use atomic counting. No-op for other string kinds (static /
+/// region / fixed `STR_ALLOC` strings carry no refcount). Called from
+/// `gos_rt_rc_mark_shared` when a string escapes to another goroutine.
+pub(crate) unsafe fn gos_rt_str_mark_shared(s: *const c_char) {
+    if s.is_null() || unsafe { *s.cast::<u8>().sub(1) } != STR_BUILDER_TAG {
+        return;
+    }
+    let hdr = unsafe { s.cast::<u8>().sub(13) };
+    let cell = unsafe { AtomicU32::from_ptr(hdr.cast_mut().cast::<u32>()) };
+    cell.fetch_or(STR_SHARED, Ordering::Relaxed);
 }
 
 /// Allocate an owned, NUL-terminated heap string holding `s`'s bytes (the
@@ -1273,11 +1314,12 @@ pub unsafe extern "C" fn gos_rt_str_slice(s: *const c_char, start: i64, end: i64
 }
 
 /// Splits `s` on every occurrence of `sep` and returns a fresh
-/// `*mut GosVec` of c-string pointers. Empty `sep` yields a
-/// single-element vec containing the whole string (mirrors Rust's
-/// `split` for the empty separator). Each split slice gets its
-/// own heap-allocated nul-terminated copy so the caller can
-/// hold them past the underlying string's lifetime.
+/// `*mut GosVec` of c-string pointers. Mirrors Rust's `str::split`
+/// (and `gossamer_std::strings::split`): an empty separator yields
+/// an empty leading field, one field per character, and an empty
+/// trailing field. Each split slice gets its own heap-allocated
+/// nul-terminated copy so the caller can hold them past the
+/// underlying string's lifetime.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_str_split(s: *const c_char, sep: *const c_char) -> *mut GosVec {
     ffi_entry!(std::ptr::null_mut(), {
@@ -1291,11 +1333,7 @@ pub unsafe extern "C" fn gos_rt_str_split(s: *const c_char, sep: *const c_char) 
         } else {
             unsafe { CStr::from_ptr(sep).to_str().unwrap_or("") }
         };
-        let parts: Vec<*mut c_char> = if sep.is_empty() {
-            vec![alloc_cstring(s.as_bytes())]
-        } else {
-            s.split(sep).map(|p| alloc_cstring(p.as_bytes())).collect()
-        };
+        let parts: Vec<*mut c_char> = s.split(sep).map(|p| alloc_cstring(p.as_bytes())).collect();
         // STRING-typed: the vec owns the pieces, so `gos_rt_vec_free`
         // reclaims them even when a consumer loop breaks early.
         let vec = unsafe {
@@ -1913,71 +1951,148 @@ pub unsafe extern "C" fn gos_rt_time_format_rfc3339(unix_ms: i64) -> i128 {
 }
 
 /// `time::parse_rfc3339(s) -> Result<i64, errors::Error>`.
-/// Parses a UTC RFC 3339 timestamp and returns unix milliseconds.
-/// Accepts the `YYYY-MM-DDTHH:MM:SSZ` form produced by format_rfc3339.
+/// Parses an RFC 3339 timestamp and returns unix milliseconds.
+/// Accepts `T` or space as the date/time separator; accepts `Z`,
+/// `+HH:MM`, `-HH:MM`, or no suffix (assumes UTC); sub-second
+/// fractions are accepted and dropped. A faithful port of
+/// `gossamer_std::time::parse_rfc3339` so the compiled tier matches
+/// the VM bit-for-bit (timezone offsets, day-of-month validation,
+/// and pre-1970 negative results all included).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_time_parse_rfc3339(s: *const c_char) -> i128 {
     ffi_entry!(0i128, {
-        let text = if s.is_null() {
-            return unsafe {
-                let msg = alloc_cstring(b"parse_rfc3339: null input");
-                gos_rt_result_new(1, msg as i64)
-            };
-        } else {
-            unsafe { CStr::from_ptr(s).to_str().unwrap_or("") }.trim()
-        };
-        // Minimal RFC 3339 / ISO 8601 parser: YYYY-MM-DDTHH:MM:SS[.frac]Z
-        let err = |msg: &str| -> i128 {
-            let cs = alloc_cstring(msg.as_bytes());
+        let err = || -> i128 {
+            let cs = alloc_cstring(b"time::parse: bad input");
             unsafe { gos_rt_result_new(1, cs as i64) }
         };
-        if text.len() < 19 {
-            return err("parse_rfc3339: input too short");
+        if s.is_null() {
+            return err();
         }
-        let parse_u32 = |s: &str| -> Option<u32> { s.parse::<u32>().ok() };
-        let year = parse_u32(&text[0..4]).unwrap_or(0) as i64;
-        let month = parse_u32(&text[5..7]).unwrap_or(0) as i64;
-        let day = parse_u32(&text[8..10]).unwrap_or(0) as i64;
-        let hour = parse_u32(&text[11..13]).unwrap_or(0) as i64;
-        let min = parse_u32(&text[14..16]).unwrap_or(0) as i64;
-        let sec = parse_u32(&text[17..19]).unwrap_or(0) as i64;
-        if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
-            return err("parse_rfc3339: invalid date fields");
+        let text = unsafe { CStr::from_ptr(s).to_str().unwrap_or("") };
+        match parse_rfc3339_ms(text) {
+            Some(ms) => unsafe { gos_rt_result_new(0, ms) },
+            None => err(),
         }
-        let is_leap = |yr: i64| (yr % 4 == 0 && yr % 100 != 0) || yr % 400 == 0;
-        let dim = |m: i64, yr: i64| -> i64 {
-            match m {
-                1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
-                4 | 6 | 9 | 11 => 30,
-                2 => {
-                    if is_leap(yr) {
-                        29
-                    } else {
-                        28
-                    }
-                }
-                _ => 30,
-            }
-        };
-        // Days since Unix epoch (1970-01-01).
-        let mut days: i64 = 0;
-        let mut y = 1970_i64;
-        while y < year {
-            days += if is_leap(y) { 366 } else { 365 };
-            y += 1;
-        }
-        while y > year {
-            y -= 1;
-            days -= if is_leap(y) { 366 } else { 365 };
-        }
-        for mo in 1..month {
-            days += dim(mo, year);
-        }
-        days += day - 1;
-        let unix_secs = days * 86_400 + hour * 3_600 + min * 60 + sec;
-        let unix_ms = unix_secs * 1_000;
-        unsafe { gos_rt_result_new(0, unix_ms) }
     })
+}
+
+/// Parses one zero-padded unsigned field, mirroring `parse_unsigned`
+/// in `gossamer_std::time` (rejects signs, spaces, and non-digits).
+fn parse_rfc3339_uint(bytes: &[u8]) -> Option<i64> {
+    std::str::from_utf8(bytes)
+        .ok()?
+        .parse::<u32>()
+        .ok()
+        .map(i64::from)
+}
+
+const fn is_leap_year(y: i64) -> bool {
+    (y % 4 == 0 && y % 100 != 0) || y % 400 == 0
+}
+
+const fn days_in_month(year: i64, month: i64) -> i64 {
+    match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 => {
+            if is_leap_year(year) {
+                29
+            } else {
+                28
+            }
+        }
+        _ => 0,
+    }
+}
+
+/// Howard Hinnant's `days_from_civil`, matching the i32/u32 version
+/// in `gossamer_std::time` over the representable Gregorian range.
+fn civil_to_days(y: i64, m: i64, d: i64) -> i64 {
+    let y_adj = y - i64::from(m <= 2);
+    let era = if y_adj >= 0 {
+        y_adj / 400
+    } else {
+        (y_adj - 399) / 400
+    };
+    let yoe = y_adj - era * 400;
+    let m_eff = if m > 2 { m - 3 } else { m + 9 };
+    let doy = (153 * m_eff + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146_097 + doe - 719_468
+}
+
+/// Faithful port of `gossamer_std::time::parse_rfc3339` returning
+/// unix milliseconds, or `None` for any malformed/out-of-range input.
+fn parse_rfc3339_ms(s: &str) -> Option<i64> {
+    let bytes = s.as_bytes();
+    if bytes.len() < 19 {
+        return None;
+    }
+    let year: i64 = std::str::from_utf8(&bytes[0..4])
+        .ok()?
+        .parse::<i32>()
+        .ok()? as i64;
+    if bytes[4] != b'-' {
+        return None;
+    }
+    let month = parse_rfc3339_uint(&bytes[5..7])?;
+    if bytes[7] != b'-' {
+        return None;
+    }
+    let day = parse_rfc3339_uint(&bytes[8..10])?;
+    if !matches!(bytes[10], b'T' | b' ') {
+        return None;
+    }
+    let hour = parse_rfc3339_uint(&bytes[11..13])?;
+    if bytes[13] != b':' {
+        return None;
+    }
+    let minute = parse_rfc3339_uint(&bytes[14..16])?;
+    if bytes[16] != b':' {
+        return None;
+    }
+    let second = parse_rfc3339_uint(&bytes[17..19])?;
+    let mut cursor = 19;
+    if bytes.get(cursor) == Some(&b'.') {
+        cursor += 1;
+        while cursor < bytes.len() && bytes[cursor].is_ascii_digit() {
+            cursor += 1;
+        }
+    }
+    let mut offset_seconds: i64 = 0;
+    if cursor < bytes.len() {
+        match bytes[cursor] {
+            b'Z' => cursor += 1,
+            b'+' | b'-' => {
+                if cursor + 5 >= bytes.len() {
+                    return None;
+                }
+                let sign: i64 = if bytes[cursor] == b'+' { 1 } else { -1 };
+                let oh = parse_rfc3339_uint(&bytes[cursor + 1..cursor + 3])?;
+                if bytes[cursor + 3] != b':' {
+                    return None;
+                }
+                let om = parse_rfc3339_uint(&bytes[cursor + 4..cursor + 6])?;
+                offset_seconds = sign * (oh * 3600 + om * 60);
+                cursor += 6;
+            }
+            _ => return None,
+        }
+    }
+    if cursor != bytes.len() {
+        return None;
+    }
+    if !(1..=12).contains(&month)
+        || !(1..=days_in_month(year, month)).contains(&day)
+        || hour >= 24
+        || minute >= 60
+        || second >= 60
+    {
+        return None;
+    }
+    let unix_secs = civil_to_days(year, month, day) * 86_400 + hour * 3600 + minute * 60 + second
+        - offset_seconds;
+    unix_secs.checked_mul(1_000)
 }
 
 /// `time::Duration::from_millis(n)` lowering - Duration is already
@@ -2353,19 +2468,22 @@ pub unsafe extern "C" fn gos_rt_str_contains_any(s: *const c_char, chars: *const
 }
 
 /// `strings::equal_fold(a, b) -> bool` - case-insensitive compare.
+/// Mirrors `gossamer_std::strings::equal_fold`: compares scalar by
+/// scalar and requires both sequences to end together, so a string
+/// is never equal to a fold-prefix of itself even when their byte
+/// lengths coincide (e.g. KELVIN SIGN U+212A vs "kab").
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_str_equal_fold(a: *const c_char, b: *const c_char) -> i32 {
     ffi_entry!(-1, {
-        let a = unsafe { cstr(a) };
-        let b = unsafe { cstr(b) };
-        if a.len() != b.len() && a.chars().count() != b.chars().count() {
-            return 0;
+        let mut ac = unsafe { cstr(a) }.chars();
+        let mut bc = unsafe { cstr(b) }.chars();
+        loop {
+            match (ac.next(), bc.next()) {
+                (Some(x), Some(y)) if x.to_lowercase().eq(y.to_lowercase()) => {}
+                (None, None) => return 1,
+                _ => return 0,
+            }
         }
-        let eq = a
-            .chars()
-            .zip(b.chars())
-            .all(|(ac, bc)| ac.to_lowercase().eq(bc.to_lowercase()));
-        i32::from(eq)
     })
 }
 

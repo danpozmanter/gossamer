@@ -169,6 +169,40 @@ pub(super) fn vec_elem_kind_from_dest(
     }
 }
 
+/// Per-element slot byte width for a `Vec<T>` / `Slice<T>`
+/// destination local, mirroring the MIR builder's `elem_bytes_of`
+/// so a bare `Vec::new()` (which carries no element-width argument)
+/// allocates the same stride a `[]` literal of the same type does.
+/// Returns `None` when the destination is not a statically-known
+/// vec/slice, so the caller keeps its existing scalar default.
+pub(super) fn vec_elem_bytes_from_dest(
+    body: &Body,
+    tcx: &TyCtxt,
+    dest_local: gossamer_mir::Local,
+) -> Option<i64> {
+    let ty = body.local_ty(dest_local);
+    let inner = match tcx.kind_of(ty) {
+        TyKind::Vec(inner) | TyKind::Slice(inner) => *inner,
+        _ => return None,
+    };
+    Some(elem_bytes_of_ty(tcx, inner))
+}
+
+/// Byte stride of a single element of element type `ty`, matching
+/// `Builder::elem_bytes_of` in `gossamer-mir`: bool packs to 1 byte,
+/// char occupies a full 8-byte slot, scalars/strings are 8, and
+/// aggregates take `slot_bytes`.
+fn elem_bytes_of_ty(tcx: &TyCtxt, ty: Ty) -> i64 {
+    match tcx.kind_of(ty) {
+        TyKind::Bool => 1,
+        TyKind::Char | TyKind::Int(_) | TyKind::Float(_) | TyKind::String => 8,
+        TyKind::Tuple(_) | TyKind::Array { .. } | TyKind::Adt { .. } => {
+            i64::from(tcx.slot_bytes(ty))
+        }
+        _ => 8,
+    }
+}
+
 /// 0.6.0 deep-free element-kind tags. Mirrors `vec_elem_kind` in
 /// `gossamer-runtime/src/c_abi.rs` so the codegen can pass the
 /// right discriminator to `gos_rt_vec_new_typed`. Keep these in

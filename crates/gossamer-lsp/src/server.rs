@@ -2858,6 +2858,27 @@ mod tests {
         Value::Object(params)
     }
 
+    fn inlay_hint_lines(response: &Value) -> Vec<u32> {
+        let Value::Array(items) = response else {
+            return Vec::new();
+        };
+        items
+            .iter()
+            .filter_map(|item| {
+                let Value::Object(fields) = item else {
+                    return None;
+                };
+                let Value::Object(pos) = fields.get("position")? else {
+                    return None;
+                };
+                let Value::Number(line) = pos.get("line")? else {
+                    return None;
+                };
+                Some(*line as u32)
+            })
+            .collect()
+    }
+
     #[test]
     fn inlay_hints_emits_inferred_let_type() {
         let mut state = ServerState::new();
@@ -2868,6 +2889,45 @@ mod tests {
             labels.iter().any(|l| l == ": i64"),
             "expected `: i64` hint; got {labels:?}"
         );
+    }
+
+    #[test]
+    fn inlay_hint_top_level_let_position_is_on_correct_line() {
+        // An entry file's top-level `let` becomes part of the synthesized
+        // `fn main`; the inlay hint anchor must stay on the source line
+        // where the binding appears, not collapse to line 0.
+        let mut state = ServerState::new();
+        // Full hanoi.gos content: let n is on line 12 (0-indexed).
+        let src = concat!(
+            "use std::{env, strconv}\n",
+            "\n",
+            "fn hanoi(n: i64, src: &String, dst: &String, aux: &String) {\n",
+            "    if n == 1 {\n",
+            "        println!(\"Move disk 1 from {src} to {dst}\")\n",
+            "    } else {\n",
+            "        hanoi(n - 1, src, aux, dst)\n",
+            "        println!(\"Move disk {n} from {src} to {dst}\")\n",
+            "        hanoi(n - 1, aux, dst, src)\n",
+            "    }\n",
+            "}\n",
+            "\n",
+            "let n = strconv::parse_i64(env::args().first().unwrap_or(\"3\")).unwrap_or(3)\n",
+            "hanoi(n, \"A\", \"C\", \"B\")\n",
+        );
+        state.update("file:///hanoi.gos", src);
+        let response = state.inlay_hints(&inlay_params("file:///hanoi.gos"));
+        let lines = inlay_hint_lines(&response);
+        // `let n` is on line 12 (0-indexed); the hint must not be on line 0.
+        assert!(
+            !lines.contains(&0),
+            "inlay hint must not be on line 0 (wrong position); got lines {lines:?}"
+        );
+        if !lines.is_empty() {
+            assert!(
+                lines.contains(&12),
+                "expected inlay hint on line 12; got lines {lines:?}"
+            );
+        }
     }
 
     #[test]

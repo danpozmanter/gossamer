@@ -643,7 +643,10 @@ fn install_module_builtins(globals: &mut Vec<(&'static str, Value)>) {
             ("program_name", builtin_os_program_name),
             ("env", builtin_os_env),
             ("cwd", builtin_os_cwd),
-            ("list_dir", builtin_os_list_dir),
+            // `os::list_dir` shares `fs::list_dir`'s `Result<Vec<DirInfo>,
+            // _>` shape so both tiers return the same struct (the
+            // compiled tier routes both through `gos_rt_fs_list_dir`).
+            ("list_dir", builtin_fs_list_dir),
             ("exit", builtin_os_exit),
             ("read_file", builtin_os_read_file),
             ("read_file_to_string", builtin_os_read_file_to_string),
@@ -1425,6 +1428,7 @@ fn install_method_helpers(globals: &mut Vec<(&'static str, Value)>) {
         "String::with_capacity",
         builtin("String::with_capacity", builtin_str_new),
     ));
+    globals.push(("String::from", builtin("String::from", builtin_str_from)));
     globals.push(("String::push", builtin("String::push", builtin_str_push)));
     globals.push((
         "String::push_char",
@@ -3672,80 +3676,6 @@ fn builtin_os_cwd(_args: &[Value]) -> RuntimeResult<Value> {
     }
 }
 
-fn builtin_os_list_dir(args: &[Value]) -> RuntimeResult<Value> {
-    use gossamer_ast::Ident;
-    let path = args.first().and_then(as_str).unwrap_or(".");
-    let iter = match std::fs::read_dir(path) {
-        Ok(it) => it,
-        Err(e) => return Ok(err_variant(format!("list_dir: {e}"))),
-    };
-    let mut entries: Vec<Value> = Vec::new();
-    for entry in iter.flatten() {
-        let Ok(meta) = entry.metadata() else { continue };
-        let name = entry.file_name().to_string_lossy().into_owned();
-        let kind = if meta.is_dir() {
-            "d"
-        } else if meta.is_file() {
-            "f"
-        } else {
-            "?"
-        };
-        let size = i64::try_from(meta.len()).unwrap_or(0);
-        let mtime = meta
-            .modified()
-            .ok()
-            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-            .map_or_else(String::new, |d| {
-                let secs = d.as_secs() as i64;
-                let days = secs / 86_400;
-                let mut y = 1970_i64;
-                let mut remain = days;
-                let is_leap = |yr: i64| (yr % 4 == 0 && yr % 100 != 0) || yr % 400 == 0;
-                let dy = |yr: i64| if is_leap(yr) { 366 } else { 365 };
-                while remain >= dy(y) {
-                    remain -= dy(y);
-                    y += 1;
-                }
-                let dim = |m: i64, yr: i64| -> i64 {
-                    match m {
-                        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
-                        4 | 6 | 9 | 11 => 30,
-                        2 => {
-                            if is_leap(yr) {
-                                29
-                            } else {
-                                28
-                            }
-                        }
-                        _ => 30,
-                    }
-                };
-                let mut m = 1_i64;
-                while remain >= dim(m, y) {
-                    remain -= dim(m, y);
-                    m += 1;
-                }
-                let day = remain + 1;
-                let s = secs % 86_400;
-                let h = s / 3600;
-                let mi = (s % 3600) / 60;
-                let se = s % 60;
-                format!("{y:04}-{m:02}-{day:02}T{h:02}:{mi:02}:{se:02}Z")
-            });
-        let entry_struct = Value::struct_(
-            "DirEntry",
-            vec![
-                (Ident::new("name"), Value::String(SmolStr::from(name))),
-                (Ident::new("kind"), Value::String(SmolStr::from(kind))),
-                (Ident::new("size"), Value::Int(size)),
-                (Ident::new("mtime"), Value::String(SmolStr::from(mtime))),
-            ],
-        );
-        entries.push(entry_struct);
-    }
-    Ok(ok_variant(Value::Array(Arc::new(entries))))
-}
-
 fn builtin_os_read_dir(args: &[Value]) -> RuntimeResult<Value> {
     let Some(path) = args.first().and_then(as_str) else {
         return Ok(err_variant("read_dir: path argument must be a string"));
@@ -4881,7 +4811,7 @@ fn describe_json_value(value: &json_std::Value) -> &'static str {
     match value {
         json_std::Value::Null => "null",
         json_std::Value::Bool(_) => "bool",
-        json_std::Value::Number(_) => "number",
+        json_std::Value::Int(_) | json_std::Value::Number(_) => "number",
         json_std::Value::String(_) => "string",
         json_std::Value::Array(_) => "array",
         json_std::Value::Object(_) => "object",
@@ -4892,13 +4822,12 @@ fn json_value_to_gossamer(value: &json_std::Value) -> Value {
     match value {
         json_std::Value::Null => Value::Unit,
         json_std::Value::Bool(b) => Value::Bool(*b),
-        json_std::Value::Number(n) => {
-            if n.fract() == 0.0 && n.is_finite() {
-                Value::Int(*n as i64)
-            } else {
-                Value::Float(*n)
-            }
-        }
+        // `Int` and `Number` are kept distinct so an integer round-trips
+        // as an integer and a float (including an integer-valued one like
+        // `2.0`) round-trips as a float, matching the serde-backed
+        // compiled tier.
+        json_std::Value::Int(n) => Value::Int(*n),
+        json_std::Value::Number(n) => Value::Float(*n),
         json_std::Value::String(s) => Value::String(SmolStr::from(s.clone())),
         json_std::Value::Array(items) => {
             Value::Array(Arc::new(items.iter().map(json_value_to_gossamer).collect()))
@@ -4922,7 +4851,7 @@ fn gossamer_to_json_value(value: &Value) -> json_std::Value {
         }
         Value::Unit | Value::Void | Value::Weak(_) => json_std::Value::Null,
         Value::Bool(b) => json_std::Value::Bool(*b),
-        Value::Int(n) => json_std::Value::Number(*n as f64),
+        Value::Int(n) => json_std::Value::Int(*n),
         Value::Float(f) => json_std::Value::Number(*f),
         Value::Char(c) => json_std::Value::String(c.to_string()),
         Value::String(s) => json_std::Value::String(s.as_str().to_string()),
@@ -5087,6 +5016,18 @@ fn builtin_str_new(_args: &[Value]) -> RuntimeResult<Value> {
     Ok(Value::String(SmolStr::from(String::new())))
 }
 
+/// `String::from(s)` is identity for a string argument - gos `String` is
+/// already the owned representation. Mirrors the compiled tier's identity
+/// passthrough; matches Rust's `String::from(&str)`.
+fn builtin_str_from(args: &[Value]) -> RuntimeResult<Value> {
+    match args.first() {
+        Some(Value::String(s)) => Ok(Value::String(s.clone())),
+        Some(Value::Char(c)) => Ok(Value::String(SmolStr::from(c.to_string()))),
+        Some(other) => Ok(Value::String(SmolStr::from(format!("{other}")))),
+        None => Ok(Value::String(SmolStr::from(String::new()))),
+    }
+}
+
 /// `s.push(ch)` - append a char, returning the new String. Returning
 /// the new value (not Unit) keeps the VM's mutating-method writeback
 /// idempotent: the writeback move assigns the appended String back into
@@ -5163,6 +5104,13 @@ fn builtin_str_chars(args: &[Value]) -> RuntimeResult<Value> {
 }
 
 pub(crate) fn builtin_contains(args: &[Value]) -> RuntimeResult<Value> {
+    // `HashMap`/`BTreeMap`::contains(k) is the `contains_key` alias the
+    // compiled tier exposes; route map receivers to the key-membership
+    // builtin so a `Value::Map`/`Value::IntMap` does not fall through to
+    // the always-false tail.
+    if matches!(args.first(), Some(Value::Map(_) | Value::IntMap(_))) {
+        return builtin_map_contains_key(args);
+    }
     // String::contains(substr) when both args are strings; otherwise
     // Vec::contains(&v) - element membership by value equality. The
     // compiled tier exposes both shapes under the same `contains`

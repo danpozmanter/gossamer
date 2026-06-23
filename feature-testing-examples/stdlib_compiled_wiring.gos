@@ -1,0 +1,44 @@
+// Cross-tier coverage for free functions that were bound in the
+// bytecode VM but lacked a compiled-tier dispatch arm (they passed
+// `gos run` and failed `gos build` with `opt: use of undefined
+// value`). Each now routes through a `gos_rt_*` shim so the output is
+// bit-identical across the VM, Cranelift, and LLVM tiers.
+
+use std::crypto
+use std::encoding
+use std::regex
+use std::encoding::json
+
+fn print_hex(label: &String, bytes: &[u8]) {
+    print!("{} = ", label)
+    for b in bytes {
+        print!("{:02x}", b)
+    }
+    println!("")
+}
+
+fn main() {
+    // Raw-digest byte vectors (lengths are the canonical digest sizes).
+    let d512 = crypto::sha512::digest("abc")
+    let db3 = crypto::blake3::digest("abc")
+    println!("sha512 len = {}", d512.len())
+    println!("blake3 len = {}", db3.len())
+    print_hex(&"md5", &crypto::insecure::md5("abc"))
+    print_hex(&"sha1", &crypto::insecure::sha1("abc"))
+
+    // Hex-alphabet Base32 of "foobar".
+    let raw: [u8] = [102, 111, 111, 98, 97, 114]
+    println!("base32hex = {}", encoding::base32::encode_hex(&raw))
+
+    // Regex first-match replacement.
+    match regex::compile(&"[0-9]") {
+        Ok(p) => println!("replace = {}", regex::replace(&p, &"a1b2c3", &"X")),
+        Err(_) => println!("replace = err"),
+    }
+
+    // json::Value mutator round-trip: the `&mut` update must persist.
+    let mut obj = json::Value::object()
+    json::set(&mut obj, &"name", json::Value::String("alice"))
+    json::set(&mut obj, &"age", json::Value::Int(30))
+    println!("json = {}", json::render(obj))
+}

@@ -989,6 +989,38 @@ pub unsafe extern "C" fn gos_rt_vec_insert_safe(v: *const GosVec, idx: i64, valu
     })
 }
 
+/// `xs.insert(i, v)` - in-place insert at `idx`, shifting the tail up
+/// one slot. The method form has silent in-place semantics (unlike the
+/// `Result`-returning `gos_rt_vec_insert_safe`, which builds a fresh
+/// Vec); an out-of-range index is a no-op, matching the VM. `value` is
+/// the raw 8-byte payload (i64 / `*const c_char` cast to i64), as
+/// elsewhere in the i64-erased Vec ABI.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_vec_insert_at(v: *mut GosVec, idx: i64, value: i64) {
+    ffi_entry!((), {
+        if v.is_null() {
+            return;
+        }
+        let len = unsafe { (*v).len };
+        if idx < 0 || idx > len {
+            return;
+        }
+        // Grow by one (handling region/global reallocation) with the new
+        // element parked at the tail, then rotate it down to `idx`.
+        let val_ptr = std::ptr::addr_of!(value).cast::<u8>();
+        unsafe { gos_rt_vec_push(v, val_ptr) };
+        let vec = unsafe { &mut *v };
+        let stride = vec.elem_bytes as usize;
+        if !vec.ptr.is_null() && stride > 0 && idx < len {
+            let base = vec.ptr.as_ptr();
+            let span = ((len - idx + 1) as usize) * stride;
+            let region =
+                unsafe { std::slice::from_raw_parts_mut(base.add(idx as usize * stride), span) };
+            region.rotate_right(stride);
+        }
+    });
+}
+
 /// `Vec::remove(xs, i) -> Result<T, errors::Error>` - returns the
 /// removed element as Ok or Err on out-of-range.
 #[unsafe(no_mangle)]

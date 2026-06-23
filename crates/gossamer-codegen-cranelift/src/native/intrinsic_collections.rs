@@ -661,7 +661,10 @@ pub(super) fn lower_intrinsic_call_collections(
                     Some(types::I64),
                     intrinsics,
                 )?,
-                None => builder.ins().iconst(types::I64, 8),
+                None => {
+                    let bytes = vec_elem_bytes_from_dest(body, tcx, destination.local).unwrap_or(8);
+                    builder.ins().iconst(types::I64, bytes)
+                }
             };
             let eb_i64 = coerce_arg_to(builder, eb_raw, types::I64)?;
             let eb = builder.ins().ireduce(types::I32, eb_i64);
@@ -703,7 +706,10 @@ pub(super) fn lower_intrinsic_call_collections(
                     Some(types::I64),
                     intrinsics,
                 )?,
-                None => builder.ins().iconst(types::I64, 8),
+                None => {
+                    let bytes = vec_elem_bytes_from_dest(body, tcx, destination.local).unwrap_or(8);
+                    builder.ins().iconst(types::I64, bytes)
+                }
             };
             let eb_i64 = coerce_arg_to(builder, eb_raw, types::I64)?;
             let eb = builder.ins().ireduce(types::I32, eb_i64);

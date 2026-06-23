@@ -625,6 +625,8 @@ impl<'a> Builder<'a> {
                     substs,
                 })
             }
+            // In-place `xs.insert(i, v)` returns nothing.
+            "gos_rt_vec_insert_at" => self.tcx.unit(),
             // `reversed()` copies the receiver - preserve its
             // element type so byte-packed (`Vec<u8>`) receivers
             // keep their stride-1 indexing downstream.
@@ -680,8 +682,19 @@ impl<'a> Builder<'a> {
             | "gos_rt_oset_contains_i64"
             | "gos_rt_omap_contains_key_i64" => self.tcx.bool_ty(),
             "gos_rt_map_keys_vec" => {
-                let i = self.tcx.int_ty(gossamer_types::IntTy::I64);
-                self.tcx.intern(gossamer_types::TyKind::Vec(i))
+                // The element type is the map's KEY type, so a bound
+                // `let ks = m.keys()` on a `HashMap<String, _>` iterates
+                // strings rather than reading the key pointers as i64.
+                use gossamer_types::TyKind;
+                let mut flat = receiver_ty;
+                while let TyKind::Ref { inner, .. } = self.tcx.kind_of(flat) {
+                    flat = *inner;
+                }
+                let elem = match self.tcx.kind_of(flat) {
+                    TyKind::HashMap { key, .. } => *key,
+                    _ => self.tcx.int_ty(gossamer_types::IntTy::I64),
+                };
+                self.tcx.intern(TyKind::Vec(elem))
             }
             // `m.values()` yields the stored value words. A struct value is
             // stored as a boxed pointer, so the element is typed as a

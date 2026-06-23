@@ -1477,22 +1477,19 @@ impl Parser<'_> {
             return self.expand_format_macro(&macro_name, args);
         }
 
-        // `vec![...]` / `vec![v; n]` - desugar straight to the
-        // matching array-literal HIR shape so the existing
-        // `Op::BuildIntArray` / `Op::BuildFloatVec` fast paths fire.
-        // Without this the macro lowered to `HirExprKind::Placeholder`
-        // and the runtime returned a `<stub>` struct instead of a
-        // typed vec - silently wrong.
-        if macro_name == "vec" && delim == MacroDelim::Bracket {
-            self.expect_punct(Punct::LBracket, "to open `vec!` invocation");
-            return self.parse_array_expr();
-        }
-
+        // Gossamer has no `vec!`: collection literals use the array
+        // form `[...]` / `[v; n]`, which coerces to `Vec<T>` at every
+        // expected-type site (SPEC §3.3). Steer the common Rust habit
+        // there rather than to the misleading "drop the `!`" form.
+        let expected = if macro_name == "vec" {
+            "an array literal `[...]` - Gossamer has no `vec!`; `[...]` coerces to `Vec<T>`"
+                .to_string()
+        } else {
+            format!("`{macro_name}(...)` - Gossamer has no user-defined macros, drop the `!`")
+        };
         self.record(
             ParseError::Unexpected {
-                expected: format!(
-                    "`{macro_name}(...)` - Gossamer has no user-defined macros, drop the `!`"
-                ),
+                expected,
                 found: "!".to_string(),
             },
             bang_span,

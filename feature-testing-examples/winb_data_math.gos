@@ -1,0 +1,90 @@
+// Win B DATA: cross-tier parity for std::math, math::bits, math::rand
+// (deterministic RNG) and the scalar min/max/clamp prelude. Float
+// formatting, NaN/inf, rounding edges, negative/large ints and a
+// seeded RNG sequence must be bit-identical on the VM and LLVM AOT.
+
+use std::math
+use std::math::rand
+
+fn main() {
+    // --- constants (fixed precision avoids raw-Display ambiguity) ---
+    println!("PI={:.10}", math::PI)
+    println!("E={:.10}", math::E)
+    println!("SQRT_2={:.10}", math::SQRT_2)
+    println!("LN_2={:.10}", math::LN_2)
+    println!("PHI={:.10}", math::PHI)
+
+    // --- rounding edges: half-away-from-zero, negatives ---
+    println!("round 0.5={:.1}", math::round(0.5))
+    println!("round 1.5={:.1}", math::round(1.5))
+    println!("round 2.5={:.1}", math::round(2.5))
+    println!("round -0.5={:.1}", math::round(-0.5))
+    println!("round -2.5={:.1}", math::round(-2.5))
+    println!("floor -2.1={:.1}", math::floor(-2.1))
+    println!("ceil -2.9={:.1}", math::ceil(-2.9))
+    println!("trunc -2.9={:.1}", math::trunc(-2.9))
+
+    // --- transcendental edges ---
+    println!("pow 2^-3={:.6}", math::pow(2.0, -3.0))
+    println!("pow 0^0={:.1}", math::pow(0.0, 0.0))
+    println!("sqrt 0={:.1}", math::sqrt(0.0))
+    println!("ln 1={:.1}", math::ln(1.0))
+    println!("log10 0.001={:.4}", math::log10(0.001))
+    println!("atan2={:.6}", math::atan2(1.0, 1.0))
+    println!("hypot={:.4}", math::hypot(5.0, 12.0))
+    println!("fmod -7,3={:.1}", math::fmod(-7.0, 3.0))
+    println!("copysign 3,-0={:.1}", math::copysign(3.0, -0.0))
+
+    // --- NaN / inf: predicates and raw Display ---
+    println!("is_nan(nan)={}", math::is_nan(math::nan()))
+    println!("is_inf(+inf,1)={}", math::is_inf(math::inf(1), 1))
+    println!("nan display={}", math::nan())
+    println!("+inf display={}", math::inf(1))
+    println!("-inf display={}", math::inf(-1))
+    println!("sqrt -1 is_nan={}", math::is_nan(math::sqrt(-1.0)))
+    println!("0/0 fmod is_nan={}", math::is_nan(math::fmod(0.0, 0.0)))
+
+    // --- typed int helpers + negatives ---
+    println!("min_i64={}", math::min_i64(-5, 3))
+    println!("max_i64={}", math::max_i64(-5, 3))
+    println!("abs_i64 min+1={}", math::abs_i64(-9223372036854775807))
+
+    // --- math::bits over zero, negative (all-ones), max ---
+    println!("count_ones 0={}", math::bits::count_ones(0))
+    println!("count_ones -1={}", math::bits::count_ones(-1))
+    println!("leading_zeros 1={}", math::bits::leading_zeros(1))
+    println!("trailing_zeros 8={}", math::bits::trailing_zeros(8))
+    println!("rotate_left={}", math::bits::rotate_left(1, 4))
+    println!("reverse_bytes={}", math::bits::reverse_bytes(1))
+
+    // --- scalar prelude min / max / clamp (int + float) ---
+    println!("min(3,7)={}", min(3, 7))
+    println!("max(3,7)={}", max(3, 7))
+    println!("clamp(15,0,10)={}", clamp(15, 0, 10))
+    println!("clamp(-3,0,10)={}", clamp(-3, 0, 10))
+    println!("minf={:.2}", min(3.5, 1.25))
+    println!("clampf={:.2}", clamp(5.5, 0.0, 4.0))
+
+    // --- deterministic RNG: same seed -> same sequence on both tiers ---
+    let r = rand::Rng::new(123456789)
+    print!("rng u64:")
+    for _ in 0..4 { print!(" {}", r.next_u64()) }
+    println!("")
+    print!("rng u32:")
+    for _ in 0..4 { print!(" {}", r.next_u32()) }
+    println!("")
+    print!("rng range[0,1000):")
+    for _ in 0..5 { print!(" {}", r.range_u64(0, 1000)) }
+    println!("")
+    print!("rng f64:")
+    for _ in 0..3 { print!(" {:.6}", r.next_f64()) }
+    println!("")
+    // independent RNGs with the same seed must replay identically.
+    let a = rand::Rng::new(42)
+    let b = rand::Rng::new(42)
+    println!("replay match: {}", a.next_u64() == b.next_u64())
+    // a different seed must diverge from the first draw.
+    let c = rand::Rng::new(43)
+    let d = rand::Rng::new(42)
+    println!("seed differs: {}", c.next_u64() != d.next_u64())
+}

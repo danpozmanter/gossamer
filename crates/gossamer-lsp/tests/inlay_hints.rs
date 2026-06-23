@@ -94,6 +94,32 @@ fn inlay_hints_entries_carry_position_fields() {
 }
 
 #[test]
+fn inlay_hints_for_top_level_let_anchor_on_their_own_line() {
+    // A top-level `let` (the implicit-main body) carries its inferred
+    // type as an inlay hint anchored right after the binding name, on
+    // its own line - not collapsed onto line 0.
+    let uri = "file:///hanoi.gos";
+    let source = "fn id(n: i64) -> i64 { n }\n\nlet n = id(3)\nlet _ = n\n";
+    let server = server_with(uri, source);
+    let response = server.inlay_hints(&document_params(uri));
+    let Value::Array(items) = &response else {
+        panic!("expected an array response, got {response:?}");
+    };
+    let hint = items
+        .iter()
+        .find(|h| field_str(h, "label") == Some(": i64"))
+        .unwrap_or_else(|| panic!("expected a `: i64` hint, got {items:?}"));
+    let position = field(hint, "position");
+    // `let n` sits on the third line (0-based index 2). The hint must
+    // anchor there, after the name, not on line 0.
+    assert_eq!(
+        field(position, "line"),
+        &Value::Number(2.0),
+        "hint must anchor on the binding's line: {position:?}"
+    );
+}
+
+#[test]
 fn inlay_hints_for_multiple_locals() {
     let uri = "file:///m.gos";
     let server = server_with(

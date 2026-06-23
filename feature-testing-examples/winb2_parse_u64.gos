@@ -1,0 +1,17 @@
+use std::strconv
+use std::errors
+
+fn show(label: String, r: Result<i64, errors::Error>) {
+    match r {
+        Ok(v) => println!("{} ok {}", label, v),
+        Err(e) => println!("{} err {}", label, e),
+    }
+}
+
+fn main() {
+    show("neg", strconv::parse_u64("-1"))
+    show("max", strconv::parse_u64("18446744073709551615"))
+    show("norm", strconv::parse_u64("42"))
+    show("bad", strconv::parse_u64("abc"))
+    show("empty", strconv::parse_u64(""))
+}

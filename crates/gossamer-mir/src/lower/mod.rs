@@ -228,18 +228,16 @@ pub fn lower_program(program: &HirProgram, tcx: &mut TyCtxt) -> Vec<Body> {
             }
         }
     }
-    // RC retain/release last-use elision (item 3) is implemented and unit
-    // tested but kept OFF the body pipeline: its conservative escape gate
-    // never cancels a pair on the real corpus (no benefit), while the
-    // compiled tiers double-free at teardown when it does fire (a balanced
-    // pair that is load-bearing for a value reached again at scope end). It
-    // re-enables once the gate is driven by the true SHARED_BIT / goroutine
-    // boundary rather than the intraprocedural escape set.
-    if false {
-        let capture_summary = crate::escape::build_capture_summary(&bodies);
+    // RC retain/release last-use elision (item 3). Runs after the drop
+    // passes so the teardown releases they insert are visible to the
+    // pass's post-release liveness check; a value moved into a surviving
+    // holder and dead afterward keeps only the holder's reference. The
+    // gate excludes goroutine-shared values, whose count is adjusted
+    // concurrently under the atomic protocol. `GOS_RC_NO_ELIDE` disables
+    // the pass for differential measurement and as a safety escape hatch.
+    if std::env::var_os("GOS_RC_NO_ELIDE").is_none() {
         for body in &mut bodies {
-            let escape = crate::escape::analyse_with_summary(body, &capture_summary);
-            crate::opt::elide_redundant_rc_pairs(body, &escape, tcx);
+            crate::opt::elide_redundant_rc_pairs(body, tcx);
         }
     }
     #[cfg(debug_assertions)]

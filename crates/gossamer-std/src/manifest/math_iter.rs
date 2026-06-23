@@ -69,28 +69,6 @@ use crate::registry::{StdItem, StdItemKind, StdModule};
 
 use super::*;
 
-pub const SORT: StdModule = StdModule {
-    path: "std::sort",
-    summary: "Slice sorting and binary search.",
-    items: &[
-        StdItem {
-            name: "sort",
-            kind: StdItemKind::Function,
-            doc: "Ascending unstable sort.",
-        },
-        StdItem {
-            name: "sort_stable",
-            kind: StdItemKind::Function,
-            doc: "Ascending stable sort.",
-        },
-        StdItem {
-            name: "binary_search",
-            kind: StdItemKind::Function,
-            doc: "Binary search on a sorted slice.",
-        },
-    ],
-};
-
 pub const MATH_RAND: StdModule = StdModule {
     path: "std::math::rand",
     summary: "Deterministic pseudo-random number generation.",

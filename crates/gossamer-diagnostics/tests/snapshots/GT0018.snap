@@ -1,0 +1,12 @@
+---
+source: crates/gossamer-diagnostics/tests/snapshots.rs
+expression: rendered
+---
+--- plain ---
+error[GT0018]: A call supplied the wrong number of arguments for the callee's - here
+--- framed ---
+error[GT0018]: A call supplied the wrong number of arguments for the callee's
+  --> snap.gos:2:5
+     2 |     let x = 1
+       |     ^^^^^
+     error: here

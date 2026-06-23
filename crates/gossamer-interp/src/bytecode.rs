@@ -574,6 +574,20 @@ pub enum Op {
         /// Register holding the index value.
         index: Reg,
     },
+    /// `base[index]` where the element is an aggregate (struct / tuple /
+    /// array). An out-of-range index panics with `index out of bounds`
+    /// instead of yielding the lenient zero value, matching the compiled
+    /// tiers (a zero aggregate cannot be cheaply materialized, and reading a
+    /// missing aggregate element would otherwise feed a bogus value into a
+    /// field/element access). Primitive-element indexing keeps `IndexGet`.
+    IndexGetChecked {
+        /// Destination register.
+        dst: Reg,
+        /// Register holding the base.
+        base: Reg,
+        /// Register holding the index value.
+        index: Reg,
+    },
     /// `base[index] = value` - native indexed write.
     IndexSet {
         /// Register holding the base.

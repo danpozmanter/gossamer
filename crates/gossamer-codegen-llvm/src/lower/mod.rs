@@ -314,6 +314,29 @@ fn llvm_vec_elem_kind_from_local(body: &Body, tcx: &TyCtxt, dest_local: Local) -
     }
 }
 
+/// Per-element slot byte width for a `Vec<T>` / `Slice<T>` destination
+/// local, mirroring the MIR builder's `elem_bytes_of` so a bare
+/// `Vec::new()` (which carries no element-width argument) allocates the
+/// same stride a `[]` literal of the same type does. Returns `None`
+/// when the destination is not a statically-known vec/slice, so the
+/// caller keeps its scalar default.
+fn llvm_vec_elem_bytes_from_local(body: &Body, tcx: &TyCtxt, dest_local: Local) -> Option<i64> {
+    let ty = body.local_ty(dest_local);
+    let inner = match tcx.kind(ty) {
+        Some(TyKind::Vec(inner) | TyKind::Slice(inner)) => *inner,
+        _ => return None,
+    };
+    let bytes = match tcx.kind(inner) {
+        Some(TyKind::Bool) => 1,
+        Some(TyKind::Char | TyKind::Int(_) | TyKind::Float(_) | TyKind::String) => 8,
+        Some(TyKind::Tuple(_) | TyKind::Array { .. } | TyKind::Adt { .. }) => {
+            i64::from(tcx.slot_bytes(inner))
+        }
+        _ => 8,
+    };
+    Some(bytes)
+}
+
 mod emit_aggregate;
 mod emit_misc;
 mod misc;

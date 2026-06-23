@@ -1,0 +1,58 @@
+// Regression: a recursive Box-enum value that stays live while being cloned
+// inside a loop must have its per-iteration clone retained. The clone's
+// single static read sits on the loop back-edge, so it runs every iteration;
+// move-eliding the retain there (treating the static read count of 1 as a
+// move) while the loop releases each iteration's binding over-releases the
+// shared value - refcount underflow, premature free, heap corruption at exit.
+// Exercised both sequentially and across a joined goroutine capture (where the
+// value is goroutine-shared). Output must be bit-identical on every tier.
+
+enum L {
+    Cons(i64, Box<L>),
+    Nil,
+}
+
+fn llen(l: &L) -> i64 {
+    match l {
+        L::Cons(_, rest) => 1 + llen(rest),
+        L::Nil => 0,
+    }
+}
+
+fn build(n: i64) -> L {
+    let mut acc = L::Nil
+    let mut i = 0
+    while i < n {
+        acc = L::Cons(i, Box::new(acc))
+        i += 1
+    }
+    acc
+}
+
+fn main() {
+    let shared = build(20)
+    let mut acc = 0
+    let mut i = 0
+    while i < 500 {
+        let c = shared
+        acc += llen(&c)
+        i += 1
+    }
+    println!("seq={}", acc)
+
+    let captured = build(20)
+    let h = spawn(|| {
+        let mut total = 0
+        let mut k = 0
+        while k < 500 {
+            let c = captured
+            total += llen(&c)
+            k += 1
+        }
+        total
+    })
+    match h.join() {
+        Ok(v) => println!("go={}", v),
+        Err(e) => eprintln!("worker failed: {}", e),
+    }
+}

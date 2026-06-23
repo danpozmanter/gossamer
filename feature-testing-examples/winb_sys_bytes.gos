@@ -1,0 +1,62 @@
+// Win B SYSTEM parity: std::bytes deterministic surface across tiers.
+// Builder + Buffer handle types and the stateless index_of / split /
+// replace helpers, on representative + edge inputs (empty needle,
+// absent needle, consecutive / leading / trailing separators, empty
+// replacement, multi-byte UTF-8).
+use std::bytes
+
+fn idx(h: &String, n: &String) -> String {
+    match bytes::index_of(h, n) { Some(i) => format!("{}", i), None => "<none>" }
+}
+
+fn main() {
+    // Builder: incremental assembly, len, build.
+    let mut b = bytes::Builder::new()
+    b.write(&"Hello, ")
+    b.write(&"world")
+    b.write_char('!')
+    println!("builder=[{}] len={}", b.build(), b.len())
+
+    let mut c = bytes::Builder::with_capacity(8)
+    let mut i = 0
+    while i < 3 {
+        c.write(&"ab")
+        i += 1
+    }
+    println!("cap_builder=[{}] len={}", c.build(), c.len())
+
+    // Buffer: byte accumulation.
+    let mut buf = bytes::Buffer::new()
+    println!("empty={}", buf.is_empty())
+    buf.write_str(&"hi")
+    buf.push(32)
+    buf.write_str(&"there")
+    println!("buf=[{}] len={} empty={}", buf.to_string(), buf.len(), buf.is_empty())
+    buf.clear()
+    println!("cleared len={} empty={}", buf.len(), buf.is_empty())
+
+    // index_of edge cases.
+    println!("idx(hello world, world)={}", idx(&"hello world", &"world"))
+    println!("idx(hello, '')={}", idx(&"hello", &""))
+    println!("idx(hello, xyz)={}", idx(&"hello", &"xyz"))
+    println!("idx(hi, hippo)={}", idx(&"hi", &"hippo"))
+    println!("idx(abcabc, abc)={}", idx(&"abcabc", &"abc"))
+    println!("idx(cafe\u{00e9}, \u{00e9})={}", idx(&"café", &"é"))
+
+    // split edge cases.
+    let cases = [
+        ("a,b,,c", ","), ("abc", ","), (",a,", ","),
+        ("a--b--c", "--"), ("", ","), ("xx", ""),
+    ]
+    for (h, sep) in cases {
+        let parts = bytes::split(&h, &sep)
+        println!("split({},{}) n={} joined=[{}]", h, sep, parts.len(), parts.join("|"))
+    }
+
+    // replace edge cases.
+    println!("{}", bytes::replace(&"aXbXc", &"X", &"-"))
+    println!("{}", bytes::replace(&"aXbXc", &"X", &""))
+    println!("{}", bytes::replace(&"abc", &"X", &"-"))
+    println!("{}", bytes::replace(&"abc", &"", &"-"))
+    println!("{}", bytes::replace(&"aaa", &"a", &"bb"))
+}

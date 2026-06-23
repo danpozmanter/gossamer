@@ -1,0 +1,73 @@
+// Win B SYSTEM parity: std::path pure manipulation across tiers.
+// Edge cases: empty, root, trailing slash, ".." / "." collapse,
+// hidden files, multi-dot extensions, no-extension, prefix tests.
+use std::path
+
+fn opt(o: Option<String>) -> String {
+    match o { Some(s) => s, None => "<none>" }
+}
+
+fn main() {
+    // join: trailing slash, absolute segment, empty operands
+    let joins = [
+        ("a", "b"), ("a/", "b"), ("a", "/b"), ("", "b"), ("a", ""),
+        ("a/b", "c/d"), ("/", "x"), ("a//", "b"), ("/usr", "local/bin"),
+        ("", ""), ("a", "b/"), ("dir", "../sib"),
+    ]
+    for (a, b) in joins {
+        println!("join({},{})=[{}]", a, b, path::join(&a, &b))
+    }
+
+    // split into (dir, file)
+    let paths = [
+        "/usr/local/bin", "foo.txt", "/etc", "a/b/c", "/", "",
+        "a/b/", "a/", "//", "trailing/", ".hidden", "x.tar.gz",
+    ]
+    for p in paths {
+        let (d, f) = path::split(&p)
+        println!("split({})=[{}][{}]", p, d, f)
+    }
+
+    // base / dir
+    for p in paths {
+        println!("base({})=[{}] dir=[{}]", p, path::base(&p), path::dir(&p))
+    }
+
+    // ext / extension / stem / file_name / parent
+    let names = [
+        "file.txt", "noext", ".hidden", "a/b.tar.gz", "a/b.gos",
+        "/", "", "dir/", "x.", "..", ".", "a/.config",
+    ]
+    for p in names {
+        println!("ext({})=[{}]", p, opt(path::ext(&p)))
+        println!("extension({})=[{}]", p, opt(path::extension(&p)))
+        println!("stem({})=[{}]", p, opt(path::stem(&p)))
+        println!("file_name({})=[{}]", p, opt(path::file_name(&p)))
+        println!("parent({})=[{}]", p, opt(path::parent(&p)))
+    }
+
+    // clean / normalize
+    let dirty = [
+        "a/./b/../c", "/x//y/../z", "", ".", "..", "../x", "a//b",
+        "/../..", "a/b/../../c", "./", "/./", "a/b/.", "/a/b/../../c",
+        "...", "a/...", "/",
+    ]
+    for p in dirty {
+        println!("clean({})=[{}] norm=[{}]", p, path::clean(&p), path::normalize(&p))
+    }
+
+    // is_absolute
+    for p in ["/abs", "rel", "", "/", "a/b", "//x"] {
+        println!("is_absolute({})={}", p, path::is_absolute(&p))
+    }
+
+    // has_prefix
+    let prefixes = [
+        ("/a/b/c", "/a/b"), ("/a/b/c", "/x"), ("a/b/c", "a/b"),
+        ("a/b", "a/b"), ("a/bc", "a/b"), ("/a/b/c", "/a/b/"),
+        ("a", "a"), ("a/b", "a/b/c"), ("", ""),
+    ]
+    for (p, pre) in prefixes {
+        println!("has_prefix({},{})={}", p, pre, path::has_prefix(&p, &pre))
+    }
+}

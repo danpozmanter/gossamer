@@ -47,6 +47,16 @@ impl<'tcx> FnBuilder<'tcx> {
         }
     }
 
+    /// True when `expr` has the `HashSet` sentinel `Adt` type (def
+    /// `u32::MAX - 7`, set by the checker), seeing through references.
+    /// Used by the for-loop fast path to snapshot a bare set to a Vec.
+    pub(crate) fn expr_is_hashset(&self, expr: &HirExpr) -> bool {
+        matches!(
+            self.tcx.kind(self.unwrap_ref(expr.ty)),
+            Some(TyKind::Adt { def, .. }) if def.local == u32::MAX - 7
+        )
+    }
+
     /// Bare type name to dispatch a struct `==` / `!=` through its
     /// derived `<Type>::eq` method, seeing through `&` / `&mut`. Returns
     /// `Some` only for a *struct* whose layout the compiler knows (an

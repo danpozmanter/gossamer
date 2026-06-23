@@ -145,10 +145,11 @@ pub(crate) fn builtin_time_parse_rfc3339(args: &[Value]) -> RuntimeResult<Value>
     let s = args.first().and_then(as_str).unwrap_or("").to_string();
     match gossamer_std::time::parse_rfc3339(&s) {
         Ok(st) => {
-            let ms = st.unix_millis();
-            Ok(ok_variant(Value::Int(
-                i64::try_from(ms).unwrap_or(i64::MAX),
-            )))
+            // parse_rfc3339 yields a whole-second instant, so signed
+            // seconds * 1000 is exact and preserves pre-1970 instants
+            // (unix_millis is u128-shaped and clamps them to zero).
+            let ms = st.unix_seconds().saturating_mul(1000);
+            Ok(ok_variant(Value::Int(ms)))
         }
         Err(e) => Ok(err_variant(format!("{e}"))),
     }

@@ -145,6 +145,35 @@ fn diagnostic_explanation(code: &str) -> Option<&'static str> {
                      Wrap the call in a closure instead: `|x| module::fn(x)`\n\
                      works on every tier."
         }
+        "GT0017" => {
+            "A generic call instantiates a type parameter with a concrete\n\
+                     type that does not implement a required trait bound. Add the\n\
+                     `impl Trait for Type { ... }`, or pass a type that already\n\
+                     implements the bound."
+        }
+        "GT0018" => {
+            "A call supplied the wrong number of arguments for the callee's\n\
+                     declared arity. The VM aborts on this and the native backend\n\
+                     drops or zero-fills the mismatched arguments, so the checker\n\
+                     rejects it on every tier. Pass exactly as many arguments as\n\
+                     the function declares parameters."
+        }
+        "GT0019" => {
+            "A path `Enum::Variant` named a variant the enum does not\n\
+                     declare. The resolver leaves the path unresolved and the\n\
+                     program faults at runtime (GX0002). Check the variant\n\
+                     spelling against the enum declaration."
+        }
+        "GT0020" => {
+            "A method reached through a generic bound resolves only through\n\
+                     a supertrait of that bound - e.g. `fn f<T: Pet>(p: &T)`\n\
+                     calling a method declared on `Animal` where\n\
+                     `trait Pet: Animal`. The compiled tiers cannot lower\n\
+                     supertrait-through-bound dispatch (SPEC §3.8), so it is\n\
+                     rejected uniformly. Add the method to the named bound, or\n\
+                     bound the parameter on the supertrait directly\n\
+                     (`<T: Animal>`)."
+        }
         "GM0001" => {
             "Generic monomorphization received a type substitution that the\n\
                      compiler does not yet support - typically a generic parameter\n\

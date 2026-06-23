@@ -142,9 +142,7 @@ pub(crate) fn install_strings(globals: &mut Vec<(&'static str, Value)>) {
         ("strip_suffix", builtin_strings_strip_suffix),
         ("pad_left", builtin_strings_pad_left),
         ("pad_right", builtin_strings_pad_right),
-        ("contains_rune", builtin_strings_contains_rune),
         ("contains_any", builtin_strings_contains_any),
-        ("index_rune", builtin_strings_index_rune),
         ("find_any", builtin_strings_index_any),
         ("rfind_any", builtin_strings_last_index_any),
         ("equal_fold", builtin_strings_equal_fold),
@@ -271,16 +269,6 @@ pub(crate) fn builtin_strings_count(args: &[Value]) -> RuntimeResult<Value> {
     Ok(Value::Int(text.matches(&*needle).count() as i64))
 }
 
-pub(crate) fn builtin_strings_strip_chars(args: &[Value]) -> RuntimeResult<Value> {
-    let text = args.first().and_then(as_str).unwrap_or("");
-    let cutset = args.get(1).and_then(as_str).unwrap_or("");
-    if cutset.is_empty() {
-        return Ok(Value::String(text.into()));
-    }
-    let pat: Vec<char> = cutset.chars().collect();
-    Ok(Value::String(text.trim_matches(pat.as_slice()).into()))
-}
-
 pub(crate) fn builtin_strings_lstrip_chars(args: &[Value]) -> RuntimeResult<Value> {
     let text = args.first().and_then(as_str).unwrap_or("");
     let cutset = pattern_arg(args.get(1));
@@ -301,21 +289,6 @@ pub(crate) fn builtin_strings_rstrip_chars(args: &[Value]) -> RuntimeResult<Valu
     }
     let pat: Vec<char> = cutset.chars().collect();
     Ok(Value::String(text.trim_end_matches(pat.as_slice()).into()))
-}
-
-pub(crate) fn builtin_strings_zfill(args: &[Value]) -> RuntimeResult<Value> {
-    let text = args.first().and_then(as_str).unwrap_or("");
-    let width = args.get(1).and_then(value_to_int).unwrap_or(0);
-    let cur = text.chars().count() as i64;
-    if width <= 0 || cur >= width {
-        return Ok(Value::String(text.into()));
-    }
-    let mut out = String::new();
-    for _ in 0..(width - cur) {
-        out.push('0');
-    }
-    out.push_str(text);
-    Ok(Value::String(out.into()))
 }
 
 pub(crate) fn builtin_strings_center(args: &[Value]) -> RuntimeResult<Value> {
@@ -490,35 +463,10 @@ pub(crate) fn builtin_strings_pad_right(args: &[Value]) -> RuntimeResult<Value> 
     ))
 }
 
-pub(crate) fn builtin_strings_contains_rune(args: &[Value]) -> RuntimeResult<Value> {
-    let text = args.first().and_then(as_str).unwrap_or("");
-    let r = match args.get(1) {
-        Some(Value::Char(c)) => *c,
-        Some(Value::String(s)) => s.as_str().chars().next().unwrap_or('\0'),
-        Some(Value::Int(n)) => char::from_u32(*n as u32).unwrap_or('\0'),
-        _ => '\0',
-    };
-    Ok(Value::Bool(strings_std::contains_rune(text, r)))
-}
-
 pub(crate) fn builtin_strings_contains_any(args: &[Value]) -> RuntimeResult<Value> {
     let text = args.first().and_then(as_str).unwrap_or("");
     let chars = args.get(1).and_then(as_str).unwrap_or("");
     Ok(Value::Bool(strings_std::contains_any(text, chars)))
-}
-
-pub(crate) fn builtin_strings_index_rune(args: &[Value]) -> RuntimeResult<Value> {
-    let text = args.first().and_then(as_str).unwrap_or("");
-    let r = match args.get(1) {
-        Some(Value::Char(c)) => *c,
-        Some(Value::String(s)) => s.as_str().chars().next().unwrap_or('\0'),
-        Some(Value::Int(n)) => char::from_u32(*n as u32).unwrap_or('\0'),
-        _ => '\0',
-    };
-    match strings_std::index_rune(text, r) {
-        Some(i) => Ok(some_variant(Value::Int(i as i64))),
-        None => Ok(none_variant()),
-    }
 }
 
 pub(crate) fn builtin_strings_index_any(args: &[Value]) -> RuntimeResult<Value> {

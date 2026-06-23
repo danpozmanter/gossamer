@@ -60,7 +60,13 @@ pub enum Value {
     Null,
     /// `true` / `false`.
     Bool(bool),
-    /// Numeric literal preserved as `f64`.
+    /// Integer literal that fits an `i64`, preserved exactly. Kept
+    /// distinct from `Number` so large integers (above 2^53) round-trip
+    /// without the precision loss an `f64` would impose and so `100`
+    /// renders without a trailing `.0`, matching `serde_json`.
+    Int(i64),
+    /// Non-integer numeric literal (has a fractional part or exponent),
+    /// or an integer too large for `i64`, preserved as `f64`.
     Number(f64),
     /// UTF-8 string.
     String(String),
@@ -119,31 +125,32 @@ pub fn encode_pretty(value: &Value) -> String {
     out
 }
 
-/// Builds a [`Value::Number`] from an `i64`.
+/// Builds a [`Value::Int`] from an `i64`, preserving it exactly.
 #[must_use]
 pub fn from_i64(n: i64) -> Value {
-    Value::Number(n as f64)
+    Value::Int(n)
 }
 
-/// Retrieves an `i64` from a [`Value::Number`] when the number fits
-/// exactly.
+/// Retrieves an `i64` from a [`Value::Int`], or from a [`Value::Number`]
+/// whose value is integral and within `i64` range.
 #[must_use]
 pub fn as_i64(value: &Value) -> Option<i64> {
-    if let Value::Number(n) = value {
-        if n.fract() == 0.0 && *n >= i64::MIN as f64 && *n <= i64::MAX as f64 {
-            return Some(*n as i64);
+    match value {
+        Value::Int(n) => Some(*n),
+        Value::Number(n) if n.fract() == 0.0 && *n >= i64::MIN as f64 && *n <= i64::MAX as f64 => {
+            Some(*n as i64)
         }
+        _ => None,
     }
-    None
 }
 
-/// Retrieves an `f64` from a [`Value::Number`].
+/// Retrieves an `f64` from a [`Value::Number`] or [`Value::Int`].
 #[must_use]
 pub fn as_f64(value: &Value) -> Option<f64> {
-    if let Value::Number(n) = value {
-        Some(*n)
-    } else {
-        None
+    match value {
+        Value::Number(n) => Some(*n),
+        Value::Int(n) => Some(*n as f64),
+        _ => None,
     }
 }
 
@@ -807,6 +814,17 @@ impl<'a> Parser<'a> {
         }
         let text = std::str::from_utf8(&self.bytes[start..self.cursor])
             .map_err(|_| self.error("invalid UTF-8 in number"))?;
+        // Integer-form tokens that fit `i64` are kept as `Int` so large
+        // integers round-trip exactly and render without a trailing `.0`
+        // (matching serde_json's number handling on the compiled tier).
+        // Anything with a fractional part or exponent - or too large for
+        // `i64` - falls back to `f64`.
+        let is_float = text.bytes().any(|b| matches!(b, b'.' | b'e' | b'E'));
+        if !is_float {
+            if let Ok(n) = text.parse::<i64>() {
+                return Ok(Value::Int(n));
+            }
+        }
         text.parse::<f64>()
             .map(Value::Number)
             .map_err(|_| self.error(format!("invalid number {text:?}")))
@@ -831,9 +849,16 @@ fn write_value(out: &mut String, value: &Value) {
     match value {
         Value::Null => out.push_str("null"),
         Value::Bool(b) => out.push_str(if *b { "true" } else { "false" }),
+        Value::Int(n) => {
+            let _ = write!(out, "{n}");
+        }
         Value::Number(n) => {
-            if n.is_finite() && n.fract() == 0.0 && *n >= i64::MIN as f64 && *n <= i64::MAX as f64 {
-                let _ = write!(out, "{}", *n as i64);
+            // An integer-valued `f64` renders with a trailing `.0` so it
+            // round-trips as a float (matching serde_json); a `Number`
+            // reaching here always had a fractional part or exponent in the
+            // source, so preserving the float shape is correct.
+            if n.is_finite() && n.fract() == 0.0 {
+                let _ = write!(out, "{n}.0");
             } else {
                 let _ = write!(out, "{n}");
             }
@@ -999,7 +1024,7 @@ mod tests {
         let arr = dec.decode().unwrap().unwrap();
         assert_eq!(as_array(&arr).unwrap().len(), 3);
         assert_eq!(dec.decode().unwrap(), Some(Value::String("hello".into())));
-        assert_eq!(dec.decode().unwrap(), Some(Value::Number(42.0)));
+        assert_eq!(dec.decode().unwrap(), Some(Value::Int(42)));
         assert_eq!(dec.decode().unwrap(), Some(Value::Bool(true)));
         assert_eq!(dec.decode().unwrap(), Some(Value::Null));
         assert!(dec.decode().unwrap().is_none());
@@ -1010,7 +1035,7 @@ mod tests {
         let mut buf = Vec::new();
         {
             let mut enc = Encoder::new(&mut buf);
-            enc.encode(&Value::Number(1.0)).unwrap();
+            enc.encode(&Value::Int(1)).unwrap();
             enc.encode(&Value::String("two".into())).unwrap();
         }
         assert_eq!(buf.as_slice(), b"1\n\"two\"\n".as_slice());

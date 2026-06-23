@@ -59,10 +59,42 @@ impl<R: BufRead, W: Write> Transport<R, W> {
 
     /// Writes one framed message.
     pub(crate) fn write_message(&mut self, value: &Value) -> std::io::Result<()> {
-        let payload = json::encode(value);
+        let payload = json::encode(&lsp_integers(value));
         write!(self.writer, "Content-Length: {}\r\n\r\n", payload.len())?;
         self.writer.write_all(payload.as_bytes())?;
         self.writer.flush()
+    }
+}
+
+/// Rewrites every integral `Value::Number` in `value` to `Value::Int`.
+///
+/// The LSP protocol's numeric fields (line, character, kind, severity,
+/// semantic-token deltas, ...) are all integers. `gossamer_std::json`
+/// stores them as `Value::Number(f64)`, whose encoder renders an integral
+/// float as `12.0` to preserve float shape on round-trip. The LSP wire
+/// format requires `12`: a conformant client deserializes these fields as
+/// integers and rejects (or, in `serde_json`'s case, fails `as_i64`) a
+/// float. This adapts gossamer's float-preferring model to the protocol's
+/// integer wire format at the single serialization boundary, matching the
+/// reference implementation's `JSON.stringify` semantics. Non-integral
+/// numbers (none exist in the protocol today) keep their float shape.
+fn lsp_integers(value: &Value) -> Value {
+    match value {
+        Value::Number(n)
+            if n.is_finite()
+                && n.fract() == 0.0
+                && *n >= i64::MIN as f64
+                && *n <= i64::MAX as f64 =>
+        {
+            Value::Int(*n as i64)
+        }
+        Value::Array(items) => Value::Array(items.iter().map(lsp_integers).collect()),
+        Value::Object(map) => Value::Object(
+            map.iter()
+                .map(|(k, v)| (k.clone(), lsp_integers(v)))
+                .collect(),
+        ),
+        other => other.clone(),
     }
 }
 
@@ -104,17 +136,90 @@ pub(crate) fn field_str<'v>(object: &'v Value, key: &str) -> Option<&'v str> {
     }
 }
 
-/// Extracts an `i64` field from a JSON object (LSP uses
-/// non-negative integers for line/character positions).
+/// Extracts a `u32` field from a JSON object (LSP uses non-negative
+/// integers for line/character positions).
+///
+/// Accepts both `Value::Int` (an integer literal from the client, the
+/// common case) and an integral non-negative `Value::Number` (a float
+/// literal whose value is a whole number), so a client that sends `0`
+/// or `0.0` for a position both parse.
 pub(crate) fn field_u32(object: &Value, key: &str) -> Option<u32> {
     match field(object, key) {
-        Value::Number(n) if n.is_finite() && *n >= 0.0 => {
-            if n.fract() == 0.0 {
-                Some(*n as u32)
-            } else {
-                None
-            }
-        }
+        Value::Int(n) => u32::try_from(*n).ok(),
+        Value::Number(n) if n.is_finite() && *n >= 0.0 && n.fract() == 0.0 => Some(*n as u32),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod protocol_tests {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    fn position(line: f64, character: f64) -> Value {
+        let mut p = BTreeMap::new();
+        p.insert("line".to_string(), Value::Number(line));
+        p.insert("character".to_string(), Value::Number(character));
+        Value::Object(p)
+    }
+
+    #[test]
+    fn integral_numbers_encode_without_trailing_zero() {
+        // The position fields enter as `Value::Number(12.0)`; the wire
+        // form must be `12`, not `12.0`, or a conformant client's
+        // integer parse drops the value (and silently reads 0).
+        let encoded = json::encode(&lsp_integers(&position(12.0, 5.0)));
+        assert!(
+            encoded.contains("\"line\":12") && !encoded.contains("12.0"),
+            "line must serialize as an integer: {encoded}"
+        );
+        assert!(
+            encoded.contains("\"character\":5") && !encoded.contains("5.0"),
+            "character must serialize as an integer: {encoded}"
+        );
+    }
+
+    #[test]
+    fn nested_arrays_and_objects_are_normalized() {
+        // Semantic-token data is an integer array nested under an object.
+        let mut obj = BTreeMap::new();
+        obj.insert(
+            "data".to_string(),
+            Value::Array(vec![Value::Number(2.0), Value::Number(0.0)]),
+        );
+        let encoded = json::encode(&lsp_integers(&Value::Object(obj)));
+        assert_eq!(encoded, "{\"data\":[2,0]}");
+    }
+
+    #[test]
+    fn write_message_frames_positions_as_integers() {
+        // End-to-end through the transport: a response carrying a
+        // `Value::Number(12.0)` position must reach the wire as `12`.
+        let mut sink: Vec<u8> = Vec::new();
+        {
+            let mut transport = Transport::new(&b""[..], &mut sink);
+            let response = response_ok(Value::Int(1), position(12.0, 5.0));
+            transport.write_message(&response).unwrap();
+        }
+        let framed = String::from_utf8(sink).unwrap();
+        let body = framed
+            .split("\r\n\r\n")
+            .nth(1)
+            .expect("framed message has a body");
+        assert!(
+            body.contains("\"line\":12") && !body.contains("12.0"),
+            "wire body must carry an integer line: {body}"
+        );
+    }
+
+    #[test]
+    fn field_u32_reads_integer_and_float_literals() {
+        // A client integer parses as `Value::Int`; a float literal
+        // parses as `Value::Number`. Both name a valid position.
+        let from_int = json::parse("{\"line\": 7}").unwrap();
+        let from_float = json::parse("{\"line\": 7.0}").unwrap();
+        assert_eq!(field_u32(&from_int, "line"), Some(7));
+        assert_eq!(field_u32(&from_float, "line"), Some(7));
+        assert_eq!(field_u32(&from_int, "missing"), None);
     }
 }

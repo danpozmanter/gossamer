@@ -254,28 +254,69 @@ impl<'a> Lowerer<'a> {
                     let idx_slot = local_slot(*index_local);
                     let idx_raw = self.fresh();
                     writeln!(self.out, "  {idx_raw} = load i64, ptr {idx_slot}").unwrap();
-                    // Audit C6: bounds-check the dynamic index
-                    // against the statically-known fixed-array
-                    // length. Skipped for non-Array shapes - Vec /
-                    // Slice indexing routes through the runtime
-                    // intrinsics which validate independently.
-                    self.emit_array_bounds_check(current_ty, &idx_raw);
+                    // A scalar (single-slot) fixed-array element is lenient on
+                    // an out-of-range index: it yields the element zero value,
+                    // matching the VM and Vec primitive indexing (the SKILL
+                    // zero-value-on-OOB contract, identical on every tier). The
+                    // read is still memory-safe - an out-of-range index is
+                    // clamped and the load is steered to a shared zero slot, so
+                    // it never touches memory past the array. A multi-slot
+                    // aggregate element cannot yield a cheap zero value, so it
+                    // keeps the bounds-check panic (Audit C6), matching the
+                    // aggregate Vec bounds assert.
+                    let array_len = {
+                        let mut peeled = current_ty;
+                        while let Some(TyKind::Ref { inner, .. }) = self.tcx.kind(peeled) {
+                            peeled = *inner;
+                        }
+                        match self.tcx.kind(peeled) {
+                            Some(TyKind::Array { len, .. }) => Some(len.to_usize()),
+                            _ => None,
+                        }
+                    };
                     let next = self.fresh();
-                    if stride_slots == 1 {
+                    if let (Some(len), true) = (array_len, stride_slots == 1) {
+                        let (zero_ptr, _) = self.strings.borrow_mut().intern("\0\0\0\0\0\0\0\0");
+                        let in_bounds = self.fresh();
+                        writeln!(self.out, "  {in_bounds} = icmp ult i64 {idx_raw}, {len}")
+                            .unwrap();
+                        let safe_idx = self.fresh();
                         writeln!(
                             self.out,
-                            "  {next} = getelementptr i64, ptr {current}, i64 {idx_raw}"
+                            "  {safe_idx} = select i1 {in_bounds}, i64 {idx_raw}, i64 0"
+                        )
+                        .unwrap();
+                        let gep = self.fresh();
+                        writeln!(
+                            self.out,
+                            "  {gep} = getelementptr i64, ptr {current}, i64 {safe_idx}"
+                        )
+                        .unwrap();
+                        writeln!(
+                            self.out,
+                            "  {next} = select i1 {in_bounds}, ptr {gep}, ptr {zero_ptr}"
                         )
                         .unwrap();
                     } else {
-                        let scaled = self.fresh();
-                        writeln!(self.out, "  {scaled} = mul i64 {idx_raw}, {stride_slots}")
+                        // Multi-slot aggregate element (or non-array indexable):
+                        // bounds-check and panic on OOB.
+                        self.emit_array_bounds_check(current_ty, &idx_raw);
+                        if stride_slots == 1 {
+                            writeln!(
+                                self.out,
+                                "  {next} = getelementptr i64, ptr {current}, i64 {idx_raw}"
+                            )
                             .unwrap();
-                        writeln!(
-                            self.out,
-                            "  {next} = getelementptr i64, ptr {current}, i64 {scaled}"
-                        )
-                        .unwrap();
+                        } else {
+                            let scaled = self.fresh();
+                            writeln!(self.out, "  {scaled} = mul i64 {idx_raw}, {stride_slots}")
+                                .unwrap();
+                            writeln!(
+                                self.out,
+                                "  {next} = getelementptr i64, ptr {current}, i64 {scaled}"
+                            )
+                            .unwrap();
+                        }
                     }
                     current = next;
                     // Advance current_ty to the element type so

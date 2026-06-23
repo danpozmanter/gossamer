@@ -247,6 +247,33 @@ struct TypeChecker<'a> {
     /// as a VALUE, which is only legal for the
     /// [`crate::std_fn_values`] tabled set (GT0015 otherwise).
     callee_path_nodes: std::collections::HashSet<NodeId>,
+    /// Names of every user-declared struct and enum in this source file.
+    /// Distinguishes a genuine user Adt receiver (eligible for the
+    /// name-global method-dispatch soundness check) from the sentinel
+    /// Adts the checker synthesizes (`Result`, `Option`, `http::Response`,
+    /// `VecDeque`).
+    user_type_decls: std::collections::HashSet<String>,
+    /// For every method name defined in a user `impl` block (inherent or
+    /// trait impl) or declared on a trait, the set of user type names
+    /// that own it. Lets [`Self::maybe_reject_unknown_adt_method`] reject
+    /// `b.label()` when `label` belongs to a different type than `b`.
+    user_method_owners: HashMap<String, std::collections::HashSet<String>>,
+    /// Method names declared directly on each trait, keyed by trait name.
+    /// Used with [`Self::trait_supertraits`] to detect a method reached
+    /// only through a bound's supertrait (P0-5).
+    trait_own_methods: HashMap<String, std::collections::HashSet<String>>,
+    /// Supertrait names of each trait, keyed by trait name, from the
+    /// `trait Pet: Animal` clause.
+    trait_supertraits: HashMap<String, Vec<String>>,
+    /// Callee nodes of a call sitting on the right of `|>`. The pipe
+    /// desugars `x |> f(a)` to `f(a, x)` during HIR lowering, so such a
+    /// call supplies one fewer explicit argument than the callee's
+    /// arity; the arity check accounts for the implicit piped argument.
+    pipe_stage_callees: std::collections::HashSet<NodeId>,
+    /// Declared variant names of every user enum, keyed by enum name.
+    /// Lets a `Enum::Variant` path reject an undeclared variant
+    /// (`Shape::Triangle`) at check, instead of faulting at runtime.
+    enum_variants: HashMap<String, std::collections::HashSet<String>>,
 }
 
 /// Saved generic-parameter scopes restored by
@@ -291,6 +318,12 @@ impl<'a> TypeChecker<'a> {
             declared_trait_names: std::collections::HashSet::new(),
             write_arg_bindings: HashMap::new(),
             callee_path_nodes: std::collections::HashSet::new(),
+            user_type_decls: std::collections::HashSet::new(),
+            user_method_owners: HashMap::new(),
+            trait_own_methods: HashMap::new(),
+            trait_supertraits: HashMap::new(),
+            pipe_stage_callees: std::collections::HashSet::new(),
+            enum_variants: HashMap::new(),
         }
     }
 
@@ -833,9 +866,11 @@ impl<'a> TypeChecker<'a> {
     }
 
     fn collect_signatures(&mut self, items: &[Item]) {
-        // First pass: index every trait name declared in this
-        // tree so subsequent `register_fn_sig` calls can validate
-        // `<T: Bound>` bounds against it.
+        // First pass: index every trait name + its methods + supertraits,
+        // and every user struct / enum name, so subsequent passes can
+        // validate `<T: Bound>` bounds, reject name-global method
+        // mis-dispatch, and detect supertrait-through-bound calls
+        // regardless of declaration order relative to impl blocks.
         self.collect_trait_names(items);
         for item in items {
             match &item.kind {
@@ -857,14 +892,44 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
-    /// Walks `items` recursively into inline modules and records
-    /// every `ItemKind::Trait` name. Idempotent - re-calling
-    /// adds to the existing set.
+    /// Walks `items` recursively into inline modules and records, for
+    /// later passes: every trait name (for `<T: Bound>` validation),
+    /// each trait's own method names and supertrait list (for the
+    /// supertrait-through-bound check), and every user struct / enum
+    /// name (to tell a real user Adt receiver from a synthesized
+    /// sentinel one). Idempotent - re-calling adds to the existing sets.
     fn collect_trait_names(&mut self, items: &[Item]) {
         for item in items {
             match &item.kind {
                 ItemKind::Trait(decl) => {
                     self.declared_trait_names.insert(decl.name.name.clone());
+                    let methods: std::collections::HashSet<String> = decl
+                        .items
+                        .iter()
+                        .filter_map(|it| match it {
+                            TraitItem::Fn(fn_decl) => Some(fn_decl.name.name.clone()),
+                            _ => None,
+                        })
+                        .collect();
+                    self.trait_own_methods
+                        .entry(decl.name.name.clone())
+                        .or_default()
+                        .extend(methods);
+                    let supers: Vec<String> = decl
+                        .supertraits
+                        .iter()
+                        .filter_map(|b| b.path.segments.last().map(|s| s.name.name.clone()))
+                        .collect();
+                    if !supers.is_empty() {
+                        self.trait_supertraits
+                            .insert(decl.name.name.clone(), supers);
+                    }
+                }
+                ItemKind::Struct(decl) => {
+                    self.user_type_decls.insert(decl.name.name.clone());
+                }
+                ItemKind::Enum(decl) => {
+                    self.user_type_decls.insert(decl.name.name.clone());
                 }
                 ItemKind::Mod(decl) => {
                     if let gossamer_ast::ModBody::Inline(inner) = &decl.body {
@@ -904,6 +969,13 @@ impl<'a> TypeChecker<'a> {
             if has_payload {
                 self.tcx.register_rc_managed_enum_def(def.local);
             }
+        }
+        let variant_names = self
+            .enum_variants
+            .entry(decl.name.name.clone())
+            .or_default();
+        for variant in &decl.variants {
+            variant_names.insert(variant.name.name.clone());
         }
         for variant in &decl.variants {
             if let StructBody::Tuple(fields) = &variant.body {
@@ -1038,6 +1110,38 @@ impl<'a> TypeChecker<'a> {
         } else {
             None
         };
+        // The owner type name for method-ownership tracking is recorded
+        // even for generic impls (`impl<T> Stack<T>`), so a method call
+        // on a generic user type is not falsely flagged as belonging to
+        // a different type.
+        let owner_name = match &decl.self_ty.kind {
+            gossamer_ast::ty::TypeKind::Path(tp) => tp.segments.last().map(|s| s.name.name.clone()),
+            _ => None,
+        };
+        if let Some(owner) = &owner_name {
+            for item in &decl.items {
+                if let ImplItem::Fn(fn_decl) = item {
+                    self.user_method_owners
+                        .entry(fn_decl.name.name.clone())
+                        .or_default()
+                        .insert(owner.clone());
+                }
+            }
+            // A trait impl exposes the trait's declared methods on the
+            // type even when the impl restates only some of them (a
+            // default body would otherwise be attributed to no type).
+            if let Some(trait_ref) = &decl.trait_ref
+                && let Some(trait_seg) = trait_ref.path.segments.last()
+                && let Some(methods) = self.trait_own_methods.get(&trait_seg.name.name).cloned()
+            {
+                for m in methods {
+                    self.user_method_owners
+                        .entry(m)
+                        .or_default()
+                        .insert(owner.clone());
+                }
+            }
+        }
         // Record `impl Trait for Type` so a `T: Trait` bound can be verified
         // against the concrete argument type at a generic call site.
         if let Some(trait_ref) = &decl.trait_ref
@@ -1318,6 +1422,18 @@ impl<'a> TypeChecker<'a> {
     /// (`s.method()` where `s: &T` and `T: Trait`): look the method up in
     /// each of the parameter's bound traits. `None` when the receiver is
     /// not a type parameter or no bound declares the method.
+    /// Resolves `ty` and strips any chain of `&` / `&mut` wrappers,
+    /// returning the underlying type. References are layout-transparent
+    /// in Gossamer (the runtime owns memory), so this is used wherever a
+    /// value-vs-reference distinction must not produce a diagnostic.
+    fn peel_refs(&mut self, ty: Ty) -> Ty {
+        let mut cur = self.infer.resolve(self.tcx, ty);
+        while let Some(TyKind::Ref { inner, .. }) = self.tcx.kind(cur) {
+            cur = self.infer.resolve(self.tcx, *inner);
+        }
+        cur
+    }
+
     fn param_method_ret(&mut self, receiver_ty: Ty, method: &str) -> Option<Ty> {
         let mut t = self.infer.resolve(self.tcx, receiver_ty);
         while let Some(TyKind::Ref { inner, .. }) = self.tcx.kind(t) {
@@ -1330,6 +1446,91 @@ impl<'a> TypeChecker<'a> {
         for bound in bounds {
             if let Some(ret) = self.trait_method_ret.get(&(bound, method.to_string())) {
                 return Some(*ret);
+            }
+        }
+        None
+    }
+
+    /// Rejects a method on a bound type-parameter receiver that resolves
+    /// only through a *supertrait* of one of the parameter's bounds
+    /// (P0-5: `fn describe<T: Pet>(p: &T)` calling `p.name()` where
+    /// `name` is declared on `Animal` and `trait Pet: Animal`). The
+    /// compiled tiers cannot lower supertrait-through-bound dispatch
+    /// (SPEC §3.8); it runs right on the VM but miscompiles native, so it
+    /// is rejected uniformly. Returns `true` when a diagnostic was
+    /// emitted.
+    fn reject_supertrait_method_through_bound(
+        &mut self,
+        receiver_ty: Ty,
+        method: &str,
+        span: Span,
+    ) -> bool {
+        let mut t = self.infer.resolve(self.tcx, receiver_ty);
+        while let Some(TyKind::Ref { inner, .. }) = self.tcx.kind(t) {
+            t = self.infer.resolve(self.tcx, *inner);
+        }
+        let Some(TyKind::Param { idx, .. }) = self.tcx.kind(t) else {
+            return false;
+        };
+        let idx = *idx;
+        let Some(bounds) = self.current_param_bounds.get(idx.0 as usize).cloned() else {
+            return false;
+        };
+        // If the method is declared directly on any bound, it is a normal
+        // generic-bound call (handled elsewhere), not a supertrait leak.
+        for bound in &bounds {
+            if self
+                .trait_own_methods
+                .get(bound)
+                .is_some_and(|m| m.contains(method))
+            {
+                return false;
+            }
+        }
+        for bound in &bounds {
+            if let Some(supertrait) = self.supertrait_owning_method(bound, method) {
+                let param = self
+                    .current_generic_scope
+                    .iter()
+                    .find(|(_, (pidx, _))| *pidx == idx)
+                    .map_or_else(|| "T".to_string(), |(name, _)| name.clone());
+                self.emit(
+                    TypeError::SupertraitMethodThroughBound {
+                        param,
+                        method: method.to_string(),
+                        bound: bound.clone(),
+                        supertrait,
+                    },
+                    span,
+                );
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Walks the supertrait graph of `trait_name` (transitively) and
+    /// returns the first supertrait that declares `method`, or `None`.
+    fn supertrait_owning_method(&self, trait_name: &str, method: &str) -> Option<String> {
+        let mut stack: Vec<String> = self
+            .trait_supertraits
+            .get(trait_name)
+            .cloned()
+            .unwrap_or_default();
+        let mut seen = std::collections::HashSet::new();
+        while let Some(name) = stack.pop() {
+            if !seen.insert(name.clone()) {
+                continue;
+            }
+            if self
+                .trait_own_methods
+                .get(&name)
+                .is_some_and(|m| m.contains(method))
+            {
+                return Some(name);
+            }
+            if let Some(supers) = self.trait_supertraits.get(&name) {
+                stack.extend(supers.iter().cloned());
             }
         }
         None
@@ -1507,7 +1708,7 @@ impl<'a> TypeChecker<'a> {
             } => self.check_for(pattern, iter, body),
             ExprKind::Block(block) | ExprKind::Unsafe(block) => self.check_block(block, expected),
             ExprKind::Closure { params, ret, body } => {
-                self.check_closure(params, ret.as_ref(), body)
+                self.check_closure(params, ret.as_ref(), body, expected)
             }
             ExprKind::Return(value) | ExprKind::Break { value, .. } => {
                 if let Some(value) = value {
@@ -1961,6 +2162,27 @@ impl<'a> TypeChecker<'a> {
                 }
                 return sig.output;
             }
+            // A known callee signature whose declared arity does not
+            // match the call: the VM aborts (`CallArityMismatch` in the
+            // MIR verifier) and the native backend silently drops or
+            // zero-fills the surplus/missing arguments. Reject it
+            // statically so `check` is never looser than the tiers. A
+            // call on the right of `|>` receives the piped value as an
+            // implicit trailing argument, so count it toward the arity.
+            let pipe_extra = usize::from(self.pipe_stage_callees.contains(&callee.id));
+            let effective = arg_tys.len() + pipe_extra;
+            if effective != sig.inputs.len() {
+                self.emit(
+                    TypeError::CallArityMismatch {
+                        callee: callee_display_name(callee),
+                        expected: sig.inputs.len(),
+                        found: effective,
+                    },
+                    callee.span,
+                );
+            }
+            // Fall through to the existing stdlib / fresh handling so a
+            // pipe-stage call keeps its current return typing.
         }
         // Fallback: known stdlib free functions whose signatures are
         // not present in `fn_sigs` (because they live outside user
@@ -2083,6 +2305,14 @@ impl<'a> TypeChecker<'a> {
     ) -> Option<Ty> {
         if let Some(ty) = self.check_qualified_map_accessor_ret(module, last, arg_tys) {
             return Some(ty);
+        }
+        // `env::var(name) -> Option<String>`. Typing it concretely lets the
+        // match checker reject matching its result with `Result` patterns
+        // (`Ok`/`Err`), which otherwise silently fell through on the VM and
+        // matched by discriminant on the compiled tier.
+        if matches!(module, ["env"] | ["std", "env"]) && last == "var" {
+            let s = self.tcx.string_ty();
+            return Some(self.option_adt_ty(s));
         }
         if matches!(
             module,
@@ -2396,6 +2626,30 @@ impl<'a> TypeChecker<'a> {
         None
     }
 
+    /// Expected closure parameter types for a `Vec`/slice/array
+    /// closure-combinator method (`xs.sort_by(cmp)`, `xs.map(f)`), or
+    /// `None` when the method is not such a combinator or the receiver is
+    /// not a sequence. Comparator-shaped methods take two element
+    /// parameters; the rest take one.
+    fn vec_combinator_closure_inputs(&mut self, method: &str, receiver_ty: Ty) -> Option<Vec<Ty>> {
+        let mut resolved = self.infer.resolve(self.tcx, receiver_ty);
+        while let Some(TyKind::Ref { inner, .. }) = self.tcx.kind(resolved) {
+            resolved = self.infer.resolve(self.tcx, *inner);
+        }
+        let elem = match self.tcx.kind(resolved) {
+            Some(TyKind::Vec(elem) | TyKind::Slice(elem) | TyKind::Array { elem, .. }) => *elem,
+            _ => return None,
+        };
+        match method {
+            "sort_by" | "min_by" | "max_by" => Some(vec![elem, elem]),
+            "sort_by_key" | "min_by_key" | "max_by_key" | "map" | "filter" | "filter_map"
+            | "flat_map" | "for_each" | "any" | "all" | "find" | "position" | "find_map"
+            | "take_while" | "skip_while" | "partition" | "group_by" | "count_by" | "sum_by"
+            | "product_by" => Some(vec![elem]),
+            _ => None,
+        }
+    }
+
     fn check_method_call(&mut self, method: &str, receiver: &Expr, args: &[Expr]) -> Ty {
         let receiver_ty = self.check_expr(receiver);
         // A method on a bound type-parameter receiver (`s.area()` where
@@ -2407,6 +2661,12 @@ impl<'a> TypeChecker<'a> {
                 self.check_expr(arg);
             }
             return ret;
+        }
+        if self.reject_supertrait_method_through_bound(receiver_ty, method, receiver.span) {
+            for arg in args {
+                self.check_expr(arg);
+            }
+            return self.tcx.error_ty();
         }
         if let Some(ty) = self.check_channel_method(method, receiver_ty, args) {
             return ty;
@@ -2428,6 +2688,12 @@ impl<'a> TypeChecker<'a> {
             .get(&(method.to_string(), args.len()))
             .cloned()
             .unwrap_or_default();
+        // For a `Vec`/slice/array closure-combinator (`xs.sort_by(cmp)`,
+        // `xs.map(f)`), the closure's parameters are the element type. Pin
+        // them via an expectation so a field access in the closure body
+        // resolves to the struct projection instead of the dynamic JSON path.
+        let closure_combinator_inputs = self.vec_combinator_closure_inputs(method, receiver_ty);
+        let mut arg_tys: Vec<Ty> = Vec::with_capacity(args.len());
         for (i, arg) in args.iter().enumerate() {
             // Shape literal arguments by the method's declared
             // parameter so `c.execute(&[V::I(1)])` builds a heap Vec,
@@ -2436,11 +2702,23 @@ impl<'a> TypeChecker<'a> {
             // target must be unambiguous across every same-named
             // method (non-container candidates are irrelevant - a
             // container literal cannot be meant for them).
-            let exp = match self.unique_container_expectation(&candidates, i) {
-                Some(want) => Expectation::Coerce(want),
-                None => Expectation::None,
+            let exp = match (&closure_combinator_inputs, &arg.kind) {
+                (Some(inputs), ExprKind::Closure { params, .. })
+                    if params.len() == inputs.len() =>
+                {
+                    let output = self.fresh();
+                    let sig = FnSig {
+                        inputs: inputs.clone(),
+                        output,
+                    };
+                    Expectation::HasType(self.tcx.intern(TyKind::FnPtr(sig)))
+                }
+                _ => match self.unique_container_expectation(&candidates, i) {
+                    Some(want) => Expectation::Coerce(want),
+                    None => Expectation::None,
+                },
             };
-            self.check_expr_expecting(arg, exp);
+            arg_tys.push(self.check_expr_expecting(arg, exp));
         }
         // When the receiver resolves to a non-generic Adt with a
         // recorded method return type, use it: a fresh var here
@@ -2476,52 +2754,182 @@ impl<'a> TypeChecker<'a> {
         {
             return ret;
         }
-        // Vec / Slice / Array methods whose result type is a function of the
-        // element type. Without this the checker falls through to a fresh
-        // `Var`, leaving `xs.first()` / `xs.reversed()` untyped so a chained
-        // `.unwrap()` / `.first()` / `println!` defaults the payload to i64 on
-        // the compiled tiers and renders a `[String]` element's pointer bits
-        // instead of the string.
-        {
-            let elem = match self.tcx.kind(resolved) {
-                Some(TyKind::Vec(e) | TyKind::Slice(e)) => Some(*e),
-                Some(TyKind::Array { elem, .. }) => Some(*elem),
-                _ => None,
-            };
-            if let Some(elem) = elem {
-                match (method, args.len()) {
-                    ("first" | "last", 0) => return self.option_adt_ty(elem),
-                    ("reversed" | "to_vec", 0) => return self.tcx.intern(TyKind::Vec(elem)),
-                    // `xs.slice(a, b) -> Result<Vec<elem>, errors::Error>`. The
-                    // element type must ride through, or the unwrapped Vec
-                    // indexes a `Vec<String>` slice as i64 and renders the
-                    // string pointer bits on the compiled tiers.
-                    ("slice", 2) => {
-                        let vec = self.tcx.intern(TyKind::Vec(elem));
-                        let err = self.tcx.dyn_error_ty();
-                        return self.result_adt_ty(vec, err);
-                    }
-                    _ => {}
-                }
-            }
+        if let Some(ty) = self.vec_method_ret(method, args, &arg_tys, resolved, receiver.span) {
+            return ty;
         }
-        // String methods that produce a `Vec<String>` / `Vec<char>`. The
-        // checker otherwise leaves the result a fresh `Var`, so a chained
-        // `parts.last().unwrap()` on `s.split(...)` mistypes its payload.
+        if let Some(ty) = self.set_method_ret(method, resolved) {
+            return ty;
+        }
         if matches!(self.tcx.kind(resolved), Some(TyKind::String)) {
-            match method {
-                "split" | "splitn" | "split_whitespace" | "lines" => {
-                    let s = self.tcx.string_ty();
-                    return self.tcx.intern(TyKind::Vec(s));
-                }
-                "chars" => {
-                    let c = self.tcx.intern(TyKind::Char);
-                    return self.tcx.intern(TyKind::Vec(c));
-                }
-                _ => {}
+            return self.string_method_ret(method, receiver.span);
+        }
+        self.maybe_reject_unknown_adt_method(resolved, method, receiver.span);
+        self.fresh()
+    }
+
+    /// Return type of a method on a `HashSet` receiver (sentinel `Adt`,
+    /// def `u32::MAX - 7`). Without this the set-algebra methods are left
+    /// a fresh `Var`, so iterating their result (`for e in a.union(&b)`)
+    /// could not recover the set kind and read the handle as a vec.
+    fn set_method_ret(&mut self, method: &str, resolved: Ty) -> Option<Ty> {
+        let elem = match self.tcx.kind(resolved) {
+            Some(TyKind::Adt { def, substs }) if def.local == u32::MAX - 7 => {
+                substs.types().first().copied()
+            }
+            _ => return None,
+        };
+        match method {
+            // New sets - same element type as the receiver.
+            "union" | "intersection" | "difference" | "symmetric_difference" => Some(resolved),
+            // Snapshot to a Vec of the element type.
+            "to_vec" | "iter" => {
+                let elem = elem.unwrap_or_else(|| self.tcx.string_ty());
+                Some(self.tcx.intern(TyKind::Vec(elem)))
+            }
+            "insert" | "remove" | "contains" | "is_empty" | "is_subset" | "is_superset"
+            | "is_disjoint" => Some(self.tcx.bool_ty()),
+            "len" => Some(self.tcx.int_ty(IntTy::I64)),
+            _ => None,
+        }
+    }
+
+    /// Return type of a method on a `Vec` / slice / fixed-array receiver
+    /// whose result is a function of the element type. Without this the
+    /// checker falls through to a fresh `Var`, so a chained `.first()` /
+    /// `.index_of(..).map(..)` reaches codegen with an untyped payload and
+    /// the native tier mis-represents it. Also checks the `push` / `insert`
+    /// argument against the element type (a `[i64]` accepting a `String`
+    /// pointer word is a silent memory hazard on the native backend).
+    /// Returns `None` for a non-sequence receiver so dispatch continues.
+    fn vec_method_ret(
+        &mut self,
+        method: &str,
+        args: &[Expr],
+        arg_tys: &[Ty],
+        resolved: Ty,
+        span: Span,
+    ) -> Option<Ty> {
+        let elem = match self.tcx.kind(resolved) {
+            Some(TyKind::Vec(e) | TyKind::Slice(e)) => *e,
+            Some(TyKind::Array { elem, .. }) => *elem,
+            _ => return None,
+        };
+        // References are layout-transparent (the runtime owns memory), so
+        // peel them before comparing the pushed element to the slot type.
+        let push_arg = match (method, args.len()) {
+            ("push", 1) => arg_tys.first().copied(),
+            ("insert", 2) => arg_tys.get(1).copied(),
+            _ => None,
+        };
+        if let Some(arg_ty) = push_arg {
+            let elem_peeled = self.peel_refs(elem);
+            let arg_peeled = self.peel_refs(arg_ty);
+            self.unify(elem_peeled, arg_peeled, span);
+        }
+        match (method, args.len()) {
+            ("first" | "last", 0) => Some(self.option_adt_ty(elem)),
+            ("reversed" | "to_vec", 0) => Some(self.tcx.intern(TyKind::Vec(elem))),
+            ("index_of", 1) => {
+                let i = self.tcx.int_ty(IntTy::I64);
+                Some(self.option_adt_ty(i))
+            }
+            ("count_of", 1) => Some(self.tcx.int_ty(IntTy::I64)),
+            ("contains", 1) => Some(self.tcx.bool_ty()),
+            ("slice", 2) => {
+                let vec = self.tcx.intern(TyKind::Vec(elem));
+                let err = self.tcx.dyn_error_ty();
+                Some(self.result_adt_ty(vec, err))
+            }
+            _ => None,
+        }
+    }
+
+    /// Return type of a method on a `String` receiver, with precise types
+    /// for the commonly-chained methods (so `s.rfind(&"/").map(|i| i as
+    /// i64)` types the `Option<i64>` payload rather than leaving it an
+    /// untyped var the native tier mis-represents - the P0-4 shape).
+    /// A method outside the `String` surface is the name-global dispatch
+    /// leak (a `unicode::*` char predicate like `"abc".is_letter()`, or a
+    /// typo like `"abc".bogus()`): it runs the wrong global body on the
+    /// VM and fails to lower native, so it is rejected (P0-6).
+    fn string_method_ret(&mut self, method: &str, span: Span) -> Ty {
+        match method {
+            "split" | "splitn" | "split_whitespace" | "lines" => {
+                let s = self.tcx.string_ty();
+                self.tcx.intern(TyKind::Vec(s))
+            }
+            "chars" => {
+                let c = self.tcx.intern(TyKind::Char);
+                self.tcx.intern(TyKind::Vec(c))
+            }
+            // `Option<i64>` byte offsets - the P0-4 shape.
+            "find" | "rfind" | "find_any" | "rfind_any" | "index_rune" => {
+                let i = self.tcx.int_ty(IntTy::I64);
+                self.option_adt_ty(i)
+            }
+            "contains" | "contains_any" | "contains_rune" | "starts_with" | "ends_with"
+            | "equal_fold" | "is_empty" => self.tcx.bool_ty(),
+            "len" | "count" | "byte_at" | "byte_len" => self.tcx.int_ty(IntTy::I64),
+            "clone" | "to_string" => self.tcx.string_ty(),
+            // `s.parse()` -> `Result<T, errors::Error>`: the value type T is
+            // inferred from the binding, but the error pins to the concrete
+            // error type so `{}` Display of an `Err` lowers correctly on the
+            // compiled tier (an unresolved error var rendered a garbage char).
+            "parse" => {
+                let t = self.fresh();
+                let e = self.tcx.dyn_error_ty();
+                self.result_adt_ty(t, e)
+            }
+            _ if is_string_method(method) => self.fresh(),
+            _ => {
+                self.emit(
+                    TypeError::UnresolvedMethod {
+                        ty: "String".to_string(),
+                        name: method.to_string(),
+                    },
+                    span,
+                );
+                self.tcx.error_ty()
             }
         }
-        self.fresh()
+    }
+
+    /// Rejects a method call on a concrete user struct / enum receiver
+    /// when the method demonstrably belongs to a *different* user type -
+    /// the name-global dispatch soundness hole (P0-6: `b.label()` runs
+    /// `A`'s body against `B`'s memory on the VM and fails to lower on
+    /// the native tier). Conservative on purpose: it fires only when the
+    /// method name is owned by some user type but not this one, so an
+    /// unknown method (a genuine typo with no owner anywhere) or a
+    /// builtin / derived method (`clone`) still falls through.
+    fn maybe_reject_unknown_adt_method(&mut self, resolved: Ty, method: &str, span: Span) {
+        if matches!(method, "clone") {
+            return;
+        }
+        let Some(TyKind::Adt { def, .. }) = self.tcx.kind(resolved) else {
+            return;
+        };
+        let Some(name) = self.tcx.def_name(*def).map(str::to_string) else {
+            return;
+        };
+        // Only genuine user-declared struct / enum receivers: sentinel
+        // Adts (Result / Option / http::Response / VecDeque) are not in
+        // `user_type_decls`.
+        if !self.user_type_decls.contains(&name) {
+            return;
+        }
+        let Some(owners) = self.user_method_owners.get(method) else {
+            return;
+        };
+        if !owners.contains(&name) {
+            self.emit(
+                TypeError::UnresolvedMethod {
+                    ty: name,
+                    name: method.to_string(),
+                },
+                span,
+            );
+        }
     }
 
     /// The single container-shaped (`Vec` / `Slice` / `Tuple`, ref
@@ -3121,6 +3529,16 @@ impl<'a> TypeChecker<'a> {
         if op == BinaryOp::PipeGt && matches!(rhs.kind, ExprKind::Path(_)) {
             self.callee_path_nodes.insert(rhs.id);
         }
+        // `x |> f(a)` desugars to `f(a, x)`: the call on the right gets
+        // the piped value appended as its last argument during lowering,
+        // so its declared arity is satisfied by one fewer explicit
+        // argument here. Record the callee so the arity check accounts
+        // for the implicit piped argument.
+        if op == BinaryOp::PipeGt
+            && let ExprKind::Call { callee, .. } = &rhs.kind
+        {
+            self.pipe_stage_callees.insert(callee.id);
+        }
         let lhs_ty = self.check_expr(lhs);
         let rhs_ty = self.check_expr(rhs);
         match op {
@@ -3633,15 +4051,42 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
-    fn check_closure(&mut self, params: &[ClosureParam], ret: Option<&AstType>, body: &Expr) -> Ty {
+    fn check_closure(
+        &mut self,
+        params: &[ClosureParam],
+        ret: Option<&AstType>,
+        body: &Expr,
+        expected: Expectation,
+    ) -> Ty {
         self.push_scope();
+        // When the call site expects a function of a known shape (e.g. a
+        // `Vec<T>` comparator pins `Fn(T, T) -> _`), unify each unannotated
+        // parameter with the expected input type before the body is checked.
+        // Without this a field access inside the body (`a.size`) sees the
+        // parameter as an unresolved inference var and falls back to the
+        // dynamic JSON-field path rather than the struct projection.
+        let expected_inputs: Option<Vec<Ty>> = self
+            .expectation_target(expected)
+            .map(|t| self.infer.resolve(self.tcx, t))
+            .and_then(|t| match self.tcx.kind(t) {
+                Some(TyKind::FnPtr(sig) | TyKind::FnTrait(sig))
+                    if sig.inputs.len() == params.len() =>
+                {
+                    Some(sig.inputs.clone())
+                }
+                _ => None,
+            });
         let inputs: Vec<Ty> = params
             .iter()
-            .map(|param| {
+            .enumerate()
+            .map(|(i, param)| {
                 let ty = match param.ty.as_ref() {
                     Some(ty) => self.type_from_ast(ty),
                     None => self.fresh(),
                 };
+                if let Some(want) = expected_inputs.as_ref().map(|inputs| inputs[i]) {
+                    self.unify(ty, want, body.span);
+                }
                 self.bind_pattern(&param.pattern, ty);
                 ty
             })
@@ -3740,6 +4185,32 @@ impl<'a> TypeChecker<'a> {
     }
 
     fn check_path_expr(&mut self, node: NodeId, path: &gossamer_ast::PathExpr, span: Span) -> Ty {
+        // `Enum::Variant` naming a variant the enum does not declare: the
+        // resolver resolves the path to the enum head and leaves the bad
+        // tail to fault at runtime (GX0002 `Shape::Triangle`). Reject it
+        // where the enum is known and the tail is neither a declared
+        // variant nor an associated function on the enum.
+        if path.segments.len() >= 2 {
+            let n = path.segments.len();
+            let enum_name = path.segments[n - 2].name.name.as_str();
+            let variant = path.segments[n - 1].name.name.as_str();
+            if let Some(variants) = self.enum_variants.get(enum_name)
+                && !variants.contains(variant)
+                && !self
+                    .user_method_owners
+                    .get(variant)
+                    .is_some_and(|owners| owners.contains(enum_name))
+            {
+                self.emit(
+                    TypeError::UnknownVariant {
+                        enum_name: enum_name.to_string(),
+                        variant: variant.to_string(),
+                    },
+                    span,
+                );
+                return self.tcx.error_ty();
+            }
+        }
         let Some(resolution) = self.resolutions.get(node) else {
             return self.check_std_path_value(node, path, span);
         };
@@ -4175,11 +4646,17 @@ impl<'a> TypeChecker<'a> {
                 self.tcx.register_def_name(def, "HashSet");
                 return self.tcx.intern(TyKind::Adt { def, substs });
             }
+            // `BTreeMap<K, V>` shares the `HashMap` runtime on every tier
+            // (the VM already backs it with the same sorted map, and the
+            // map's `keys()` / `iter()` sort deterministically), so it
+            // resolves to the same `TyKind::HashMap` and reaches the full
+            // map method surface rather than a partial opaque-handle path.
             "BTreeMap" => {
                 let substs = self.substs_from_ast(path);
-                let def = gossamer_resolve::DefId::local(u32::MAX - 8);
-                self.tcx.register_def_name(def, "BTreeMap");
-                return self.tcx.intern(TyKind::Adt { def, substs });
+                let tys = substs.types();
+                let key = tys.first().copied().unwrap_or_else(|| self.fresh());
+                let value = tys.get(1).copied().unwrap_or_else(|| self.fresh());
+                return self.tcx.intern(TyKind::HashMap { key, value });
             }
             // `VecDeque<T>` is an opaque ring-buffer handle at runtime with no
             // dedicated `TyKind`. Resolving the annotation to a named sentinel
@@ -4996,6 +5473,85 @@ fn cast_allowed(from: &TyKind, to: &TyKind) -> bool {
 /// declaration in a file that itself does not declare
 /// `trait Iterator` from raising a false unknown-trait
 /// diagnostic.
+/// The canonical `String` method surface. Mirrors the compiled-tier
+/// dispatch in `gossamer-mir`'s `method_call.rs` (the `TyKind::String`
+/// arms) plus the universal `push` / `push_str` building surface, so a
+/// String receiver accepts exactly what every tier can lower. A method
+/// outside this set on a `String` receiver is the name-global dispatch
+/// leak (a `unicode::*` char predicate or a typo) and is rejected. The
+/// commonly-typed methods (`find`, `len`, `contains`, ...) are handled
+/// with precise return types before this fallback and need not recur
+/// here, but listing them keeps the set self-describing.
+fn is_string_method(name: &str) -> bool {
+    matches!(
+        name,
+        "len"
+            | "is_empty"
+            | "as_bytes"
+            | "chars"
+            | "split"
+            | "splitn"
+            | "split_whitespace"
+            | "split_once"
+            | "rsplit_once"
+            | "lines"
+            | "find"
+            | "rfind"
+            | "find_any"
+            | "rfind_any"
+            | "index_rune"
+            | "contains"
+            | "contains_any"
+            | "contains_rune"
+            | "starts_with"
+            | "ends_with"
+            | "equal_fold"
+            | "count"
+            | "byte_at"
+            | "byte_len"
+            | "trim"
+            | "trim_start"
+            | "trim_end"
+            | "trim_matches"
+            | "trim_start_matches"
+            | "trim_end_matches"
+            | "replace"
+            | "replacen"
+            | "to_lower"
+            | "to_upper"
+            | "to_title"
+            | "repeat"
+            | "join"
+            | "strip_prefix"
+            | "strip_suffix"
+            | "pad_left"
+            | "pad_right"
+            | "center"
+            | "slice"
+            | "substring"
+            | "push"
+            | "push_str"
+            | "push_char"
+            | "push_byte"
+            | "parse"
+    )
+}
+
+/// Best-effort human-readable name for a call's callee expression,
+/// used in arity diagnostics. A path renders as its joined segments;
+/// anything else falls back to a generic label.
+fn callee_display_name(callee: &Expr) -> String {
+    match &callee.kind {
+        ExprKind::Path(path) => path
+            .segments
+            .iter()
+            .map(|s| s.name.name.as_str())
+            .collect::<Vec<_>>()
+            .join("::"),
+        _ => "this function".to_string(),
+    }
+}
+
 fn known_builtin_trait(name: &str) -> bool {
     matches!(
         name,

@@ -1,0 +1,19 @@
+use std::collections::HashSet
+
+fn main() {
+    let mut s: HashSet<i64> = HashSet::new()
+    s.insert(1)
+    s.insert(2)
+    s.insert(1)
+    println!("c1={} c3={} len={}", s.contains(1), s.contains(3), s.len())
+    s.remove(1)
+    println!("after_remove c1={} len={}", s.contains(1), s.len())
+
+    let mut t: HashSet<String> = HashSet::new()
+    t.insert("a")
+    t.insert("b")
+    t.insert("a")
+    println!("ca={} cz={} len={}", t.contains("a"), t.contains("z"), t.len())
+    t.remove("a")
+    println!("after ca={} len={}", t.contains("a"), t.len())
+}

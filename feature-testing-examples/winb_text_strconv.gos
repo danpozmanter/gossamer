@@ -1,0 +1,115 @@
+use std::strconv
+
+fn show_i64(s: &String) {
+    match strconv::parse_i64(s) {
+        Ok(n) => println!("parse_i64({:?}) = Ok({})", s, n),
+        Err(e) => println!("parse_i64({:?}) = Err({})", s, e),
+    }
+}
+
+fn show_u64(s: &String) {
+    match strconv::parse_u64(s) {
+        Ok(n) => println!("parse_u64({:?}) = Ok({})", s, n),
+        Err(e) => println!("parse_u64({:?}) = Err({})", s, e),
+    }
+}
+
+fn show_f64(s: &String) {
+    match strconv::parse_f64(s) {
+        Ok(n) => println!("parse_f64({:?}) = Ok({})", s, n),
+        Err(e) => println!("parse_f64({:?}) = Err({})", s, e),
+    }
+}
+
+fn show_bool(s: &String) {
+    match strconv::parse_bool(s) {
+        Ok(b) => println!("parse_bool({:?}) = Ok({})", s, b),
+        Err(e) => println!("parse_bool({:?}) = Err({})", s, e),
+    }
+}
+
+fn show_radix(s: &String, base: i64) {
+    match strconv::parse_i64_radix(s, base) {
+        Ok(n) => println!("parse_i64_radix({:?}, {}) = Ok({})", s, base, n),
+        Err(e) => println!("parse_i64_radix({:?}, {}) = Err({})", s, base, e),
+    }
+}
+
+fn show_unquote(s: &String) {
+    match strconv::unquote(s) {
+        Ok(out) => println!("unquote({:?}) = Ok({:?})", s, out),
+        Err(e) => println!("unquote({:?}) = Err({})", s, e),
+    }
+}
+
+fn main() {
+    // parse_i64: valid, whitespace, leading +, negative, empty, garbage, overflow
+    show_i64(&"42")
+    show_i64(&"  -17  ")
+    show_i64(&"+99")
+    show_i64(&"")
+    show_i64(&"abc")
+    show_i64(&"12x")
+    show_i64(&"9223372036854775807")
+    show_i64(&"9223372036854775808")
+    show_i64(&"-9223372036854775808")
+
+    // parse_u64 (the negative "-1" and >i64::MAX "18446744073709551615"
+    // cases are tracked separately: they need the parse_u64 dispatch
+    // rewired to the dedicated gos_rt_strconv_parse_u64 shim).
+    show_u64(&"0")
+    show_u64(&"4096")
+    show_u64(&"notnum")
+    show_u64(&"")
+
+    // parse_f64
+    show_f64(&"3.14")
+    show_f64(&"  -2.5e3 ")
+    show_f64(&"inf")
+    show_f64(&"NaN")
+    show_f64(&"")
+    show_f64(&"1.2.3")
+
+    // parse_bool: documented true/false only
+    show_bool(&"true")
+    show_bool(&"false")
+    show_bool(&"True")
+    show_bool(&"TRUE")
+    show_bool(&"1")
+    show_bool(&"0")
+    show_bool(&"yes")
+    show_bool(&"no")
+    show_bool(&"on")
+    show_bool(&"off")
+    show_bool(&"maybe")
+    show_bool(&"")
+
+    // format_i64 / format_f64 / radix / itoa / atoi aliases
+    println!("format_i64(-128) = {}", strconv::format_i64(-128))
+    println!("itoa(255) = {}", strconv::itoa(255))
+    println!("format_f64(3.5) = {}", strconv::format_f64(3.5))
+    println!("format_f64(0.0) = {}", strconv::format_f64(0.0))
+    println!("format_i64_radix(255, 16) = {}", strconv::format_i64_radix(255, 16))
+    println!("format_i64_radix(-255, 16) = {}", strconv::format_i64_radix(-255, 16))
+    println!("format_i64_radix(10, 2) = {}", strconv::format_i64_radix(10, 2))
+    println!("format_i64_radix(0, 2) = {}", strconv::format_i64_radix(0, 2))
+    println!("format_i64_radix(35, 36) = {}", strconv::format_i64_radix(35, 36))
+    println!("format_i64_radix(42, 99) = {}", strconv::format_i64_radix(42, 99))
+
+    // radix parsing
+    show_radix(&"ff", 16)
+    show_radix(&"  101 ", 2)
+    show_radix(&"z", 36)
+    show_radix(&"xyz", 16)
+    show_radix(&"10", 99)
+
+    // quote / unquote round-trips
+    println!("quote(plain) = {}", strconv::quote(&"plain"))
+    println!("quote(with \"q\") = {}", strconv::quote(&"with \"q\""))
+    println!("quote(tab\\there) = {}", strconv::quote(&"tab\there"))
+    show_unquote(&"\"plain\"")
+    show_unquote(&"\"a\\tb\"")
+    show_unquote(&"\"bad")
+    show_unquote(&"notquoted")
+    show_unquote(&"\"\\q\"")
+}

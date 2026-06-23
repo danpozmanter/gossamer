@@ -1042,17 +1042,11 @@ impl<'a> Builder<'a> {
             "contains_any" if matches!(&receiver_kind_flat, TyKind::String) => {
                 Some("gos_rt_str_contains_any")
             }
-            "contains_rune" if matches!(&receiver_kind_flat, TyKind::String) => {
-                Some("gos_rt_str_contains_rune")
-            }
             "equal_fold" if matches!(&receiver_kind_flat, TyKind::String) => {
                 Some("gos_rt_str_equal_fold")
             }
             "find_any" if matches!(&receiver_kind_flat, TyKind::String) => {
                 Some("gos_rt_str_index_any")
-            }
-            "index_rune" if matches!(&receiver_kind_flat, TyKind::String) => {
-                Some("gos_rt_str_index_rune")
             }
             "rfind_any" if matches!(&receiver_kind_flat, TyKind::String) => {
                 Some("gos_rt_str_last_index_any")
@@ -1395,6 +1389,12 @@ impl<'a> Builder<'a> {
                         _ => Some("gos_rt_map_insert_i64_i64"),
                     },
                 },
+                // Method-form `xs.insert(i, v)` on a Vec has silent
+                // in-place semantics (the Result-returning form is the
+                // qualified free function `Vec::insert`).
+                TyKind::Vec(_) | TyKind::Slice(_) | TyKind::Array { .. } => {
+                    Some("gos_rt_vec_insert_at")
+                }
                 _ => None,
             },
             "get" => match &receiver_kind_flat {
@@ -1444,6 +1444,11 @@ impl<'a> Builder<'a> {
                     Some(MapKeyKind::String) => Some("gos_rt_map_remove_str"),
                     _ => Some("gos_rt_map_remove_i64"),
                 },
+                // Method-form `xs.remove(i)` on a Vec removes in place; the
+                // Result-returning element is discarded by the statement.
+                TyKind::Vec(_) | TyKind::Slice(_) | TyKind::Array { .. } => {
+                    Some("gos_rt_vec_remove_safe")
+                }
                 _ => None,
             },
             "contains_key" | "contains"
@@ -1633,6 +1638,8 @@ impl<'a> Builder<'a> {
                 (Some("collections::HashSet"), "is_subset") => Some("gos_rt_set_is_subset"),
                 (Some("collections::HashSet"), "is_superset") => Some("gos_rt_set_is_superset"),
                 (Some("collections::HashSet"), "is_disjoint") => Some("gos_rt_set_is_disjoint"),
+                (Some("collections::HashSet"), "to_vec" | "iter") => Some("gos_rt_set_to_vec"),
+                (Some("collections::HashSet"), "clear") => Some("gos_rt_set_clear"),
                 (Some("collections::VecDeque"), "push_back") => Some("gos_rt_deque_push_back"),
                 (Some("collections::VecDeque"), "pop_front") => Some("gos_rt_deque_pop_front"),
                 (Some("collections::VecDeque"), "len") => Some("gos_rt_deque_len"),
@@ -1766,6 +1773,34 @@ impl<'a> Builder<'a> {
                     | "gos_rt_router_add"
             );
             let mut rt = rt;
+            // An i64-element `HashSet` stores its keys as decimal strings;
+            // passing the raw i64 to the String shims reinterprets it as a
+            // key pointer and crashes. The element kind is erased from the
+            // set's handle type, so read it from the queried element
+            // argument.
+            if matches!(
+                rt,
+                "gos_rt_set_insert" | "gos_rt_set_contains" | "gos_rt_set_remove"
+            ) && matches!(
+                args.first()
+                    .map(|a| map_key_kind_from(self.tcx, self.peel_ref_ty(a.ty))),
+                Some(MapKeyKind::I64)
+            ) {
+                rt = match rt {
+                    "gos_rt_set_insert" => "gos_rt_set_insert_i64",
+                    "gos_rt_set_contains" => "gos_rt_set_contains_i64",
+                    "gos_rt_set_remove" => "gos_rt_set_remove_i64",
+                    _ => rt,
+                };
+            }
+            // `to_vec` / `iter` carry no element argument, so recover the
+            // set's element kind from the receiver's HIR type to read an
+            // i64 set's keys back as integers (sorted numerically).
+            if rt == "gos_rt_set_to_vec"
+                && matches!(self.set_elem_kind_of(receiver), MapKeyKind::I64)
+            {
+                rt = "gos_rt_set_to_vec_i64";
+            }
             if router_handler_method && !args.is_empty() {
                 let handler_idx = args.len() - 1;
                 for arg in &args[..handler_idx] {
@@ -1840,14 +1875,26 @@ impl<'a> Builder<'a> {
                 | "gos_rt_regex_is_match"
                 | "gos_rt_bufio_scanner_scan"
                 | "gos_rt_set_insert"
+                | "gos_rt_set_insert_i64"
                 | "gos_rt_set_contains"
+                | "gos_rt_set_contains_i64"
                 | "gos_rt_set_remove"
+                | "gos_rt_set_remove_i64"
                 | "gos_rt_set_is_subset"
                 | "gos_rt_set_is_superset"
                 | "gos_rt_set_is_disjoint"
                 | "gos_rt_btmap_contains" => self.tcx.bool_ty(),
+                "gos_rt_set_to_vec" => {
+                    let s = self.tcx.string_ty();
+                    self.tcx.intern(gossamer_types::TyKind::Vec(s))
+                }
+                "gos_rt_set_to_vec_i64" => {
+                    let i = self.tcx.int_ty(gossamer_types::IntTy::I64);
+                    self.tcx.intern(gossamer_types::TyKind::Vec(i))
+                }
                 "gos_rt_http_response_status"
                 | "gos_rt_set_len"
+                | "gos_rt_set_clear"
                 | "gos_rt_btmap_len"
                 | "gos_rt_btmap_get_or" => self.tcx.int_ty(gossamer_types::IntTy::I64),
                 "gos_rt_btmap_get" => {
@@ -2368,14 +2415,26 @@ impl<'a> Builder<'a> {
                 | "gos_rt_regex_is_match"
                 | "gos_rt_bufio_scanner_scan"
                 | "gos_rt_set_insert"
+                | "gos_rt_set_insert_i64"
                 | "gos_rt_set_contains"
+                | "gos_rt_set_contains_i64"
                 | "gos_rt_set_remove"
+                | "gos_rt_set_remove_i64"
                 | "gos_rt_set_is_subset"
                 | "gos_rt_set_is_superset"
                 | "gos_rt_set_is_disjoint"
                 | "gos_rt_btmap_contains" => self.tcx.bool_ty(),
+                "gos_rt_set_to_vec" => {
+                    let s = self.tcx.string_ty();
+                    self.tcx.intern(gossamer_types::TyKind::Vec(s))
+                }
+                "gos_rt_set_to_vec_i64" => {
+                    let i = self.tcx.int_ty(gossamer_types::IntTy::I64);
+                    self.tcx.intern(gossamer_types::TyKind::Vec(i))
+                }
                 "gos_rt_http_response_status"
                 | "gos_rt_set_len"
+                | "gos_rt_set_clear"
                 | "gos_rt_btmap_len"
                 | "gos_rt_btmap_get_or" => self.tcx.int_ty(gossamer_types::IntTy::I64),
                 "gos_rt_btmap_get" => {
@@ -3062,10 +3121,8 @@ impl<'a> Builder<'a> {
             "pad_left" if matches!(kind, TyKind::String) => Some("gos_rt_str_pad_left"),
             "pad_right" if matches!(kind, TyKind::String) => Some("gos_rt_str_pad_right"),
             "contains_any" if matches!(kind, TyKind::String) => Some("gos_rt_str_contains_any"),
-            "contains_rune" if matches!(kind, TyKind::String) => Some("gos_rt_str_contains_rune"),
             "equal_fold" if matches!(kind, TyKind::String) => Some("gos_rt_str_equal_fold"),
             "find_any" if matches!(kind, TyKind::String) => Some("gos_rt_str_index_any"),
-            "index_rune" if matches!(kind, TyKind::String) => Some("gos_rt_str_index_rune"),
             "rfind_any" if matches!(kind, TyKind::String) => Some("gos_rt_str_last_index_any"),
             "strip_prefix" if matches!(kind, TyKind::String) => Some("gos_rt_str_strip_prefix"),
             "strip_suffix" if matches!(kind, TyKind::String) => Some("gos_rt_str_strip_suffix"),

@@ -158,9 +158,10 @@ by copy for `Copy` types with no opt-in needed.
 ```
 
 Unlike Rust, Gossamer does not use `&` to mean "borrow" - `&expr` takes
-a managed reference (see §4.3). The `*` operator is used only for
-pointer dereference inside `unsafe` blocks; regular method/field access
-auto-dereferences.
+a managed reference (see §4.3). As a prefix, `*expr` dereferences a
+managed reference (`&T -> T`); it works anywhere, not only inside an
+`unsafe` block. Regular method/field access auto-dereferences, so an
+explicit `*` is rarely needed.
 
 ### 2.6 Literals
 
@@ -234,6 +235,28 @@ of the previous line (`let x = a -\n  b`) or inside parentheses.
 The other binary operators (`+`, `&&`, `|>`, `==`, …) continue across
 newlines unconditionally.
 
+> **Gotcha - leading `&` / `*` / `-` starts a new statement.** Because
+> Gossamer never inserts semicolons, a line break before one of these
+> three operators is **not** a continuation. Splitting a binary
+> expression as
+>
+> ```
+> let total = subtotal
+>     - discount        // parsed as a new statement `-discount`, NOT a subtraction
+> ```
+>
+> silently changes the meaning (here `total` binds to `subtotal` and
+> `-discount` becomes a separate, discarded statement). Keep the
+> operator at the **end** of the previous line, or wrap the expression
+> in parentheses:
+>
+> ```
+> let total = subtotal -
+>     discount          // continues correctly
+> let total = (subtotal
+>     - discount)       // continues correctly
+> ```
+
 An entry file's top-level statements follow the same termination rules.
 They form the body of an implicit `fn main` (§6.10) and have no
 tail-expression value: a trailing bare expression is an ordinary
@@ -283,11 +306,11 @@ Consequences of the model:
 - Float → int casts saturate at i64 width with no narrow mask
   (`300.7 as u8 == 300`, `1e20 as i64 == i64::MAX`, NaN → 0).
 
-> **Conformance (0.5.0)** `status: not-in-0.5.0` for debug-mode
-> overflow panic. No tier emits overflow traps; arithmetic wraps at
-> 64-bit width in every build mode. The method forms `checked_add`,
-> `wrapping_add`, `saturating_add`, `overflowing_add` and friends are
-> available for explicit control and are the portable form today.
+> **Conformance** There is no debug-mode overflow panic. No tier emits
+> overflow traps; arithmetic wraps at 64-bit width in every build mode.
+> The method forms `checked_add`, `wrapping_add`, `saturating_add`,
+> `overflowing_add` and friends are available for explicit control and
+> are the portable form today.
 >
 > **Conformance** `i128` and `u128` are not yet supported on any
 > tier. The checker rejects every spelling of these types at the
@@ -329,7 +352,7 @@ bytes.
 | Type | Semantics |
 |---|---|
 | `Vec<T>` | Growable slice. Analogue of Go's `[]T`. |
-| `Array<T, N>` | Fixed-size array. Analogue of Go's `[N]T`. |
+| `[T; N]` | Fixed-size array. Analogue of Go's `[N]T`. (There is no `Array<T, N>` spelling.) |
 | `HashMap<K, V>` | Hash map. Analogue of Go's `map[K]V`. |
 | `BTreeMap<K, V>` | Ordered map. |
 | `HashSet<T>`, `BTreeSet<T>` | Sets. |
@@ -377,21 +400,27 @@ type: `let g: Vec<Vec<i64>> = [[1, 2], [3]]` builds a Vec of Vecs.
   remains accessible.
 - `&T` - a **shared managed reference** to a value of type `T`. Not a
   raw pointer. Cannot be null. Created by `&expr`. Auto-dereferenced
-  for `.` access. Liveness is guaranteed by the runtime; the compiler
-  additionally enforces a local aliasing discipline described in §7.5.
-- `&mut T` - an **exclusive managed reference**. Required to mutate
-  through a reference. Cannot coexist with any other reference (shared
-  or exclusive) to the same value within a function body. Cannot appear
-  as a struct field. Does not carry write-through across a `go` or
-  channel boundary (see the parameter-semantics paragraph below).
-- `*const T`, `*mut T` - raw pointers. Only constructible and usable
-  inside `unsafe` blocks. Used for FFI.
+  for `.` access. Liveness is guaranteed by the runtime. `&` is an
+  aliasing-intent marker; there is no compiler pass that enforces an
+  aliasing discipline today (§7.5).
+- `&mut T` - a **mutable managed reference**, used to signal write
+  intent through a reference. Exclusivity is *not* enforced: no pass
+  rejects two simultaneous `&mut` to the same value, and a `&mut T`
+  struct field is accepted. Does not carry write-through across a `go`
+  or channel boundary (see the parameter-semantics paragraph below).
+
+Raw pointers (`*const T`, `*mut T`) are **not** part of the language
+today: the type spellings do not parse (`GP0001`), and there is no safe
+or unsafe way to construct one in Gossamer source. FFI goes through the
+`gossamer-binding` ABI (§12), not raw pointers. (The `unsafe` keyword
+parses - see §8.6 - but grants no extra powers, because there is nothing
+unsafe to do.)
 
 `&T` and `&mut T` in Gossamer are not borrows in the Rust sense -
 automatic memory management already guarantees liveness. They are
-access-mode markers used by a scope-local check (§7.5) to prevent
-simultaneous mutation and reading of the same value. No lifetime
-parameters exist at any level of the language.
+aliasing-intent markers only; there is no borrow-checking or
+exclusivity-enforcement pass today (§7.5). No lifetime parameters exist
+at any level of the language.
 
 **`&mut` parameter semantics.** A `&mut Vec<T>` / `&mut [T]` parameter
 writes through to the caller's storage on every tier: element writes,
@@ -403,9 +432,9 @@ all visible in the caller's binding after the call returns. Fixed-size
 passed where a `&mut [T]` / `&mut Vec<T>` parameter is expected mutates
 the copy, and write-through for fixed arrays is not part of the
 contract. Passing the same place twice as `&mut` in a single call
-(`f(&mut v, &mut v)`) is a violation of the §7.5 discipline; where the
-check cannot see the aliasing, the resulting write order is
-unspecified. A `&mut` argument in a `go` expression does not extend
+(`f(&mut v, &mut v)`) is accepted (no exclusivity check, §7.5) and the
+resulting write order is unspecified - do not rely on it. A `&mut`
+argument in a `go` expression does not extend
 write-through across the goroutine boundary: `go f(&mut v)` hands the
 spawned call a copy, and programs must not rely on the goroutine's
 writes being visible in the caller.
@@ -477,6 +506,16 @@ pub enum Option<T> { Some(T), None }
 pub enum Result<T, E> { Ok(T), Err(E) }
 ```
 
+> **Constraint - variant names share the module namespace.** Unlike
+> Rust, a variant name is not scoped under its enum: every variant in a
+> module occupies the module's top-level name namespace. Two enums in
+> the same module therefore cannot both declare a variant with the same
+> name (`enum Color { …, C }` and `enum Grade { …, C }` collide with
+> `GR0003: the name 'C' is defined multiple times`). Give colliding
+> variants distinct names. This is also why method dispatch is largely
+> name-global. (`Option` / `Result` are special-cased and do not
+> reserve `Some` / `None` / `Ok` / `Err` against your enums.)
+
 ### 3.8 Traits
 
 ```
@@ -522,9 +561,9 @@ method inheritance through a bound are not yet part of static dispatch.
 Gossamer does **not** support:
 
 - Higher-ranked trait bounds (`for<'a> ...`).
-- Object-safety nuances beyond a simple rule: a trait is dyn-compatible
-  iff it has no associated types without defaults, no `Self:Sized`
-  constraints in methods, and no generic methods.
+- Trait objects of any kind. There is no `dyn Trait` (§3.11), so
+  object-safety / dyn-compatibility rules do not apply - polymorphism
+  is monomorphised generic bounds only.
 
 ### 3.9 Impl blocks
 
@@ -593,27 +632,25 @@ parameter and read `xs.len()`, the const may appear in the return type
 `[T; N]` argument; it is not yet usable as a bare value expression in
 the body or as a repeat count (`[0; N]`).
 
-> **Conformance (0.5.0)** `status: scaffolded` for non-scalar generic
-> arguments. Monomorphisation specialises each `(def, substs)` pair
-> through a flat-i64-per-slot ABI; aggregates (struct, tuple, array)
-> are passed as heap-allocated pointers under this ABI. Generic
-> parameters instantiated with closures or unresolved type aliases
-> are rejected at MIR time (`GM0001`). Layout-driven specialisation
-> that lifts this restriction is tracked as out-of-scope for 0.5.0
-> in `~/dev/contexts/gos/0.5.0_plan.md`.
+> **Conformance** Monomorphisation specialises each `(def, substs)`
+> pair through a flat-i64-per-slot ABI; aggregates (struct, tuple,
+> array) are passed as heap-allocated pointers under this ABI. Generic
+> parameters instantiated with closures or unresolved type aliases are
+> rejected at MIR time (`GM0001`). Layout-driven specialisation that
+> would lift this restriction is not yet implemented.
 
 ### 3.11 Dynamic dispatch
 
-`dyn Trait` is a trait object (fat pointer: data + vtable). Allocated
-on the managed heap.
+There is no `dyn Trait` and no trait-object type. `dyn` is not a
+reserved word, and the `dyn Trait` type spelling does not parse
+(`GP0001`). Polymorphism is provided by generic bounds with static
+dispatch (§3.10): `fn f<T: Trait>(x: &T)` monomorphises per call site.
+A heterogeneous collection is modelled with an `enum` whose variants
+carry the alternatives, matched exhaustively.
 
-```
-let handlers: Vec<dyn Handler> = vec![...]
-```
-
-Unlike Rust, no explicit `Box<dyn Trait>` is needed - because values in
-heap-allocated collections are already managed references, writing
-`dyn Handler` as an element type is sufficient.
+For closures, the callable trait type `Fn(args) -> ret` (§3.5) is the
+one place a value of "some callable" is passed dynamically; it is a fat
+pointer, but it is not spelled `dyn`.
 
 ### 3.12 Type aliases
 
@@ -646,10 +683,12 @@ so they compile and run identically on every tier. Fields may be primitives,
 `String`, `[T]`, **nested structs** (which derive the same traits), and the
 struct may be **generic** (`struct Wrap<T> { … }`).
 
-`#[derive(...)]` also works on **enums whose variants are all tuple
-(`Circle(f64)`) or unit (`Point`)** - `Clone`, `PartialEq` / `Eq`, `Debug`
-(`Circle(5.0)`), and `Default` (which selects the `#[default]` unit variant).
-Enums with struct-payload variants (`Rect { w, h }`) are not yet derivable.
+`#[derive(...)]` also works on **enums**, including variants with
+struct payloads. Tuple (`Circle(f64)`), unit (`Point`), and
+struct-payload (`Rect { w, h }`) variants may be mixed freely:
+`Clone`, `PartialEq` / `Eq`, `Debug` (`Rect { w: 2, h: 3 }`), and
+`Default` (which selects the `#[default]` unit variant) all derive and
+run identically on every tier.
 
 `#[derive(Hash)]` is accepted on a struct / tuple used as a `HashMap` /
 `HashSet` key: such keys are hashed and compared by value on every tier, so two
@@ -707,8 +746,10 @@ evaluate to `()`. `loop` can return a value via `break value;`.
 but requires `expr` to be a mutable place. In the absence of lifetimes
 and borrow checking, this is pure ergonomics.
 
-`*expr` (inside `unsafe`) dereferences a raw pointer. Regular
-`&T -> T` dereference is implicit at `.` and index operators.
+`*expr` dereferences a managed reference (`&T -> T`); it is not
+restricted to `unsafe` and there are no raw pointers to dereference.
+Regular `&T -> T` dereference is also implicit at `.` and index
+operators, so an explicit `*` is rarely needed.
 
 ### 4.4 Control flow
 
@@ -1031,7 +1072,7 @@ From highest to lowest:
 |---|---|---|
 | 1 | `::` path | left |
 | 2 | `.` method/field, `[]`, `()`, `?`, postfix | left |
-| 3 | unary `-`, `!`, `&`, `&mut`, `*` (unsafe) | right |
+| 3 | unary `-`, `!`, `&`, `&mut`, `*` (deref) | right |
 | 4 | `as` cast | left |
 | 5 | `*`, `/`, `%` | left |
 | 6 | `+`, `-` | left |
@@ -1362,7 +1403,7 @@ stack-allocated (escape analysis). The escape rules are:
 
 ### 7.2 Automatic memory management
 
-> **Conformance (0.5.0)** `status: implemented`. Shipped in 0.12.0:
+> **Conformance** `status: implemented`. Shipped in 0.12.0:
 > deterministic reference counting for heap enums and runtime
 > containers, drop-pass reclamation for value aggregates, weak
 > references, an on-demand cycle collector
@@ -1426,7 +1467,7 @@ The memory model is the Go 1.19 memory model verbatim:
 - Atomics via `std::sync::atomic` (sequentially consistent by default;
   relaxed/acquire/release available).
 
-> **Conformance (0.5.0)** `status: scaffolded`. The runtime race
+> **Conformance** `status: scaffolded`. The runtime race
 > detector (`gossamer-runtime::race`) records synchronisation events
 > at channel handoff, mutex unlock, and WaitGroup done. The
 > `Once::call_once` happens-before edge and the atomic-load/store
@@ -1435,7 +1476,7 @@ The memory model is the Go 1.19 memory model verbatim:
 > `--race` flag and a full happens-before instrumentation are tracked
 > as a follow-up to the codegen-shared lowering work.
 
-### 7.5 Local borrow checking
+### 7.5 References and aliasing (no borrow checker)
 
 Gossamer has no ownership transfer, no `move` keyword, and no lifetime
 annotations anywhere. All bindings stay live and accessible for the
@@ -1444,104 +1485,54 @@ closure capture all behave like Go: a managed reference for
 heap-managed types, a copy for `Copy` types. The cognitive load of "who
 owns this value now" does not exist.
 
-> **Conformance (0.5.0)** `status: not-in-0.5.0`. The scope-local
-> borrow check described in §7.5.1-7.5.4 is the v1 target. `&mut T`
-> is parsed and type-checked today, but the exclusivity enforcement
-> pass has not been implemented. Programs that would violate the
-> rule compile and run; the check is deferred to a release that
-> ships the canonical codegen pipeline.
+**There is no borrow checker and no aliasing-enforcement pass.** `&T`
+and `&mut T` are *aliasing-intent markers* only - they document whether
+a reference is used to read or to write. No compiler pass tracks
+reference activity, rejects two simultaneous `&mut`, or forbids `&mut`
+where a `&` is live. Programs that would violate a Rust-style
+exclusivity rule compile and run on every tier; `&mut counter` twice in
+a row is accepted, and a `&mut T` struct field is accepted.
 
-Automatic memory management already guarantees that no reference
-dangles. Gossamer layers one additional check on top: **within a
-single function body, a value may have many shared `&T` references, or
-exactly one `&mut T` reference, but never both at once.** The analysis
-is strictly scope-local - no lifetime parameters, no cross-function
-inference, no whole-program data-flow. One linear pass per function.
+Liveness is the one guarantee that *is* enforced - by automatic memory
+management, at runtime, not by a static check. No reference dangles
+because the runtime keeps every reachable value alive. Mutating a
+collection while iterating it, self-aliasing, and the other patterns a
+borrow checker would reject are the programmer's responsibility today;
+they are not diagnosed.
 
-The check catches the bug class automatic memory management cannot:
-iterator invalidation, simultaneous mutation and iteration, and
-accidental self-aliasing.
+#### 7.5.1 What this means in practice
 
-#### 7.5.1 The rule
+- Use `&` to signal "I only read this" and `&mut` to signal "I write
+  through this." These markers aid the reader and select the mutating
+  vs non-mutating method where dispatch distinguishes them; they do not
+  gate compilation.
+- `&mut Vec<T>` / `&mut [T]` parameters do carry write-through to the
+  caller (§3.4), so the marker is load-bearing for that data flow even
+  though exclusivity is unchecked.
+- Returning a reference from a function is permitted (the runtime keeps
+  the pointee alive); the caller receives an unconstrained `&T` /
+  `&mut T`.
+- `go` and `Sender::send` pass values the same way ordinary assignment
+  does - managed reference for heap types, copy for `Copy` types - and
+  the caller retains access to its bindings (§8.1, §8.2). Cross-
+  goroutine data races on shared mutable state are possible; prevent
+  them by communicating through channels.
 
-For every value `v` introduced in a function (parameter, `let` binding,
-field projection rooted in either), at every program point the compiler
-tracks the set of active references:
-
-- Any number of active `&T` references to `v` are permitted
-  simultaneously.
-- Exactly one active `&mut T` reference to `v` is permitted, and only
-  while no `&T` to `v` is active.
-- Creating a reference that would violate the rule is a compile error.
-
-A reference is *active* from the point of creation until the last
-point it is observably used (non-lexical lifetimes, in the Rust sense).
-After its last use, the reference is considered released and subsequent
-references may be created.
-
-```
-let values = Vec::from([1, 2, 3])
-let first = &values[0]          // shared ref active
-values.push(4)                   // ERROR: push takes &mut self,
-                                //        but first is still active
-println(first)
-```
-
-```
-let mut counter = 0
-let a = &mut counter             // exclusive ref active
-let b = &mut counter             // ERROR: cannot reborrow exclusively
-*a += 1
-```
-
-#### 7.5.2 Function calls
-
-A call `f(&mut x)` treats the argument as an exclusive borrow for the
-duration of the call. When the call returns, the borrow is released in
-the caller. Inside `f`, its body runs its own local check in exactly
-the same way. No annotation flows across the boundary.
-
-The compiler does not infer relationships between function return
-values and their inputs. Returning a reference from a function is
-permitted (the runtime keeps the pointee alive), but the caller
-receives an unconstrained `&T` or `&mut T` that begins a fresh active
-range.
-
-#### 7.5.3 Hard limits
-
-Two patterns are outright forbidden to keep the analysis tractable:
-
-- **Struct fields may not have type `&mut T`.** Tracking exclusivity
-  through heap-stored references would require lifetime parameters.
-  `&T` fields are fine - they are managed references, not tracked
-  borrows.
-- **No `&T` or `&mut T` crosses a `go` or channel boundary.** `go`
-  and `Sender::send` pass values the same way ordinary assignment does
-  - managed reference for heap types, copy for `Copy` types - and the
-  caller retains access to its bindings. Tracked reference markers
-  cannot cross because the local borrow check is scope-local. See
-  §8.1 and §8.2. This rules out one source of cross-goroutine bugs
-  but does not prevent data races on the underlying shared value;
-  those remain the programmer's responsibility, caught at runtime by
-  `--race` (post-v1) and prevented by channel-based communication.
-
-#### 7.5.4 What this replaces
+#### 7.5.2 What this deliberately omits
 
 This design deliberately does *not* include:
 
-- Explicit lifetime annotations (`'a`, `'static`, `for<'a>`).
+- A borrow checker, region inference, or any aliasing-exclusivity pass.
+- Explicit lifetime annotations (`'a`, `'static`, `for<'a>`). Lifetime
+  syntax in a generic parameter list is parsed and then ignored.
 - `Send`/`Sync` marker traits. The language accepts Go-style sharing
   discipline instead: communicate via channels; races on raw shared
-  state are detected at runtime, not blocked at compile time.
-- A region inference pass or SCC analysis. The check is one linear
-  pass per function body.
-- Any analysis that crosses function boundaries.
+  state are the programmer's responsibility, not blocked at compile
+  time.
 
-The goal is "catch most of what a borrow checker catches, for a
-fraction of the implementation cost and zero annotation burden." The
-escape hatch when the check rejects valid code is to restructure: take
-an index instead of a reference, clone, or compute the value first and
-then mutate.
+A scope-local exclusivity check (many `&T`, or one `&mut T`, never
+both) remains a candidate for a future release, but it is not part of
+the language today and nothing in this specification depends on it.
 
 ---
 
@@ -1654,27 +1645,32 @@ unsafe { ... }
 unsafe fn raw_thing() { ... }
 ```
 
-`unsafe` blocks/functions permit:
+`unsafe { ... }` blocks and `unsafe fn` declarations **parse and run**,
+but `unsafe` grants no additional powers today: there are no raw
+pointers (§3.4), so there is nothing unsafe to do. An `unsafe { ... }`
+block evaluates exactly like an ordinary block expression, and calling
+an `unsafe fn` needs no `unsafe` ceremony. The keyword is accepted for
+Rust source compatibility and as a forward-compatible marker.
 
-- Raw pointer (`*const T`, `*mut T`) deref.
-- Calling other `unsafe fn`.
-
-They do **not** disable automatic memory management or affect memory
+`unsafe` never disables automatic memory management or affects memory
 reclamation.
 
-> **Conformance (0.5.0)** `status: implemented`. Source-level
-> `extern "C"` items are **not** an `unsafe` power in 0.5.0 - they are
-> rejected at parse time (GP0016). See §12.
+> **Conformance** Source-level `extern "C"` items are **not** an
+> `unsafe` power - they are rejected at parse time (`GP0016`). The sole
+> FFI surface is the `gossamer-binding` ABI. See §12.
 
 ---
 
 ## 9. Error handling
 
-Errors are values of types implementing the `Error` trait:
+Errors are values of types implementing the `Error` trait. Because
+there is no `dyn Trait` (§3.11), the cause chain is walked through the
+concrete `errors::Error` accessors rather than a `&dyn Error`:
 
 ```
 pub trait Error: Display + Debug {
-  fn source(&self) -> Option<&dyn Error> { None }
+  fn message(&self) -> String          // this error's own message
+  fn cause(&self) -> Option<Error>     // next link in the chain, if any
 }
 ```
 
@@ -1717,7 +1713,8 @@ This is an outline; full API docs ship with the first implementation.
 - `Reader`, `Writer` traits.
 - `BufReader`, `BufWriter`.
 - `std::io::stdin()`, `stdout()`, `stderr()`.
-- `copy(r: &mut dyn Reader, w: &mut dyn Writer) -> Result<u64, Error>`.
+- `copy<R: Reader, W: Writer>(r: &mut R, w: &mut W) -> Result<u64, Error>`
+  (static dispatch via generic bounds; there is no `dyn`, §3.11).
 
 ### 10.3 `std::os`
 
@@ -1969,12 +1966,12 @@ transformation when the chain doesn't return from the enclosing fn.
 
 ### 11.1 Targets
 
-> **Conformance (0.5.0)** `status: partial`. The table below is the
-> v1 target. 0.5.0 exercises `linux-x86_64`, `linux-aarch64`,
-> `darwin-x86_64`, `darwin-aarch64`, and `windows-x86_64` in CI.
+> **Conformance** `status: partial`. The table below is the
+> v1 target. CI exercises `linux-x86_64`, `linux-aarch64`,
+> `darwin-x86_64`, `darwin-aarch64`, and `windows-x86_64`.
 > `linux-riscv64`, `freebsd-x86_64`, and `wasm32-wasi` are listed
-> aspirationally; the toolchain does not produce binaries for these
-> targets in 0.5.0. The `SmolStr` pointer-tag machinery in
+> aspirationally; the toolchain does not yet produce binaries for these
+> targets. The `SmolStr` pointer-tag machinery in
 > `gossamer-interp` is gated to `x86_64` and `aarch64` and falls back
 > to plain `String` elsewhere.
 
@@ -1982,12 +1979,12 @@ transformation when the chain doesn't return from the enclosing fn.
 |---|---|
 | linux-x86_64 | Cranelift + LLVM |
 | linux-aarch64 | Cranelift + LLVM |
-| linux-riscv64 | LLVM (planned post-0.5.0) |
+| linux-riscv64 | LLVM (planned, not yet shipped) |
 | darwin-x86_64 | Cranelift + LLVM |
 | darwin-aarch64 | Cranelift + LLVM |
 | windows-x86_64 | Cranelift + LLVM |
-| freebsd-x86_64 | LLVM (planned post-0.5.0) |
-| wasm32-wasi | planned post-0.5.0 |
+| freebsd-x86_64 | LLVM (planned, not yet shipped) |
+| wasm32-wasi | planned, not yet shipped |
 
 ### 11.2 Linking
 
@@ -1998,12 +1995,11 @@ deployment experience to `CGO_ENABLED=0` Go.
 Dynamic linking for FFI is **not** available through a source-level
 syntax. See §12 for the supported FFI mechanism (`[rust-bindings]`).
 
-> **Conformance (0.5.0)** `status: not-in-0.5.0` for static-musl
-> default linkage. Linux release binaries are currently linked
-> dynamically against the system libc via `cc`. The 0.5.0 toolchain
-> retains the `--target` flag for cross-compilation but does not
-> default to musl-static linkage; deployed Linux binaries require a
-> compatible libc.
+> **Conformance** `status: implemented`. On Linux, `gos build
+> --release` produces a fully-static musl binary by default when the
+> `x86_64-unknown-linux-musl` rustup target is installed; pass
+> `--dynamic` to force the legacy dynamic-glibc link path. The
+> `--target` flag selects a cross-compilation triple.
 
 ### 11.3 Compile modes
 
@@ -2013,17 +2009,16 @@ syntax. See §12 for the supported FFI mechanism (`[rust-bindings]`).
 | Debug build | `gos build` | LLVM | `llc -O0` (no `opt` pre-pass) | Sub-second for small programs | ~2x slower than release |
 | Release build | `gos build --release` | LLVM | `opt -O3 \| llc -O3 -mcpu=native -mattr=+prefer-256-bit` | Seconds for thousands of LoC | Vectorised, inlined |
 
-> **Conformance (0.5.0)** `status: implemented`. LLVM is the
+> **Conformance** `status: implemented`. LLVM is the
 > canonical native backend; the Cranelift code path is reserved
 > for the in-process JIT inside `gossamer-interp` and is not
 > reachable from `gos build`. Any MIR shape the LLVM lowerer
 > cannot handle is a hard `gos build` failure rather than a
 > silent per-function Cranelift fallback. The register-based
 > bytecode VM is the sole `gos run` / `gos test` engine and lowers
-> every construct natively; the tree-walker interpreter was removed
-> in 0.14.0, and the `--tree-walker` user flag in 0.5.0. VM
-> correctness is pinned by the tier-parity suite and the
-> VM-vs-LLVM-AOT differential.
+> every construct natively; the tree-walker interpreter and its
+> `--tree-walker` flag have been removed. VM correctness is pinned by
+> the tier-parity suite and the VM-vs-LLVM-AOT differential.
 
 ### 11.4 Cross-compilation
 
@@ -2039,10 +2034,10 @@ the toolchain.
 
 ## 12. FFI
 
-> **Conformance (0.5.0)** `status: rust-bindings-only`. The
+> **Conformance** `status: rust-bindings-only`. The
 > source-level `extern "C" { ... }` and `#[no_mangle] extern "C" fn`
 > item forms are **rejected at parse time** with diagnostic code
-> `GP0016`. Gossamer 0.5.0 has exactly one FFI surface: the
+> `GP0016`. Gossamer has exactly one FFI surface: the
 > `[rust-bindings]` section of `project.toml`, consumed by the
 > `gossamer-binding` crate. The `extern` keyword remains reserved.
 
@@ -2092,9 +2087,8 @@ FFI rules:
   P, so long-running native calls do not block other goroutines.
 
 See `docs_src/libraries.md` and `crates/gossamer-binding/ABI_0_4.md`
-for the binding ABI's full surface. The post-0.5.0 plan for a
-source-level `extern "C"` item form is tracked in
-`~/dev/contexts/gos/0.5.0_plan.md` as out-of-scope for this release.
+for the binding ABI's full surface. A source-level `extern "C"` item
+form is not implemented and remains out of scope.
 
 ---
 
@@ -2116,28 +2110,34 @@ error for forward-compatibility).
 
 ## 14. Macros
 
-v1 supports only the built-in macros:
+Gossamer has **exactly six** built-in macros, all format-shaped. They
+are expanded at parse time to a call on the matching variadic builtin;
+there is no runtime macro engine.
 
-- `println!`, `print!`, `eprintln!`, `eprint!`, `format!`, `write!`,
-  `writeln!`.
-- `panic!`, `unreachable!`, `todo!`, `unimplemented!`.
-- `vec!`, `map!`, `set!` (collection literals).
-- `assert!`, `assert_eq!`, `debug_assert!`.
-- `include_str!`, `include_bytes!`, `env!`.
+| Macro | Returns | Destination |
+|---|---|---|
+| `format!("…", …)` | `String` | - |
+| `println!("…", …)` | `()` | stdout + newline |
+| `print!("…", …)` | `()` | stdout, no newline |
+| `eprintln!("…", …)` | `()` | stderr + newline |
+| `eprint!("…", …)` | `()` | stderr, no newline |
+| `panic!("…", …)` | `!` | unwinds with the rendered message |
 
-> **Conformance (0.5.0)** `status: partial`. The 0.5.0 toolchain
-> implements `println!`, `print!`, `eprintln!`, `eprint!`, `format!`,
-> `panic!`, and `vec!` (which desugars to an array literal). The
-> remaining macros listed above (`write!`, `writeln!`,
-> `unreachable!`, `todo!`, `unimplemented!`, `map!`, `set!`,
-> `assert!`, `assert_eq!`, `debug_assert!`, `include_str!`,
-> `include_bytes!`, `env!`) are reserved at the lexer level but
-> rejected at parse / resolve time with a diagnostic that says
-> "Gossamer has no user-defined macros, drop the `!`". They are
-> post-0.5.0 work.
+**Every other `name!(...)` is a parse error** (`GP0001`), with a
+diagnostic steering the user to the plain-function form. This includes
+the Rust macros a newcomer reaches for: there is no `vec!`, `map!`,
+`set!`, `write!`, `writeln!`, `assert!`, `assert_eq!`, `debug_assert!`,
+`unreachable!`, `todo!`, `unimplemented!`, `include_str!`,
+`include_bytes!`, or `env!`.
 
-User-defined macros (declarative `macro_rules!` or procedural) are
-**post-v1**.
+- Collection literals use the array form `[...]` / `[v; n]`, which
+  coerces to `Vec<T>` (§3.3) - there is no `vec!`.
+- `assert(cond[, msg])` and `assert_eq(a, b[, msg])` are prelude
+  *functions* called without a `!`; `std::testing` provides the
+  non-panicking `check*` variants.
+
+User-defined macros (declarative `macro_rules!` or procedural) do not
+exist.
 
 ---
 

@@ -97,6 +97,45 @@ pub fn is_absolute(path: &str) -> bool {
     path.starts_with('/')
 }
 
+/// Returns the parent directory of `path`, or `None` when `path`
+/// has no parent directory (the root `/`, the empty string, or a
+/// bare single component such as `"file.txt"`). A trailing separator
+/// is ignored, so `parent("dir/")` is the same as `parent("dir")`.
+#[must_use]
+pub fn parent(path: &str) -> Option<String> {
+    let trimmed = path.trim_end_matches('/');
+    match trimmed.rfind('/') {
+        None => None,
+        Some(0) => Some("/".to_string()),
+        Some(idx) => Some(trimmed[..idx].to_string()),
+    }
+}
+
+/// Returns the final component of `path`, or `None` when there is
+/// none (the empty string, the root `/`, or a trailing-separator
+/// directory such as `"dir/"`).
+#[must_use]
+pub fn file_name(path: &str) -> Option<String> {
+    let name = base(path);
+    if name.is_empty() { None } else { Some(name) }
+}
+
+/// Returns the final component of `path` without its extension, or
+/// `None` when there is no final component. A leading dot (a hidden
+/// file such as `".config"`) is not treated as an extension.
+#[must_use]
+pub fn stem(path: &str) -> Option<String> {
+    let name = base(path);
+    if name.is_empty() {
+        return None;
+    }
+    let stem = match name.rfind('.') {
+        None | Some(0) => name.clone(),
+        Some(idx) => name[..idx].to_string(),
+    };
+    Some(stem)
+}
+
 /// Returns `true` when `path` references a file inside `prefix`.
 #[must_use]
 pub fn has_prefix(path: &str, prefix: &str) -> bool {
@@ -261,6 +300,34 @@ mod tests {
         assert!(has_prefix("a/b/c", "a/b"));
         assert!(has_prefix("a/b", "a/b"));
         assert!(!has_prefix("a/bc", "a/b"));
+    }
+
+    #[test]
+    fn parent_returns_none_at_root_and_for_bare_names() {
+        assert_eq!(parent("a/b/c"), Some("a/b".to_string()));
+        assert_eq!(parent("/foo"), Some("/".to_string()));
+        assert_eq!(parent("dir/"), None);
+        assert_eq!(parent("file.txt"), None);
+        assert_eq!(parent("/"), None);
+        assert_eq!(parent(""), None);
+    }
+
+    #[test]
+    fn file_name_returns_final_component() {
+        assert_eq!(file_name("a/b/c"), Some("c".to_string()));
+        assert_eq!(file_name("file.txt"), Some("file.txt".to_string()));
+        assert_eq!(file_name("dir/"), None);
+        assert_eq!(file_name("/"), None);
+        assert_eq!(file_name(""), None);
+    }
+
+    #[test]
+    fn stem_drops_extension_but_not_leading_dot() {
+        assert_eq!(stem("a/b.tar.gz"), Some("b.tar".to_string()));
+        assert_eq!(stem("file.txt"), Some("file".to_string()));
+        assert_eq!(stem(".hidden"), Some(".hidden".to_string()));
+        assert_eq!(stem("noext"), Some("noext".to_string()));
+        assert_eq!(stem("dir/"), None);
     }
 }
 

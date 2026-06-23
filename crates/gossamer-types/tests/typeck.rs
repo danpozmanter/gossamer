@@ -196,7 +196,11 @@ fn cast_allows_bool_and_char_to_integer_but_rejects_string() {
 
 #[test]
 fn cast_fails_soft_on_inference_variable_source() {
-    let src = "fn main() { let s = \"x\".to_string(); let _ = s as i64 }\n";
+    // An unannotated closure parameter stays an unresolved inference
+    // variable, so the cast check must stay soft on it. (A concrete
+    // `String` source is correctly rejected - see
+    // `cast_allows_bool_and_char_to_integer_but_rejects_string`.)
+    let src = "fn main() { let f = |x| x as i64; let _ = f }\n";
     let checked = run(src);
     assert!(
         checked.diagnostics.is_empty(),

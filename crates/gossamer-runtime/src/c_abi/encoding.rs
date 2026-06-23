@@ -118,6 +118,18 @@ pub unsafe extern "C" fn gos_rt_encoding_base32_encode(
     })
 }
 
+/// `encoding::base32::encode_hex(data)` - hex (extended) alphabet
+/// Base32 (0-9 A-V) of a byte vector. Companion to `decode_hex`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_encoding_base32_encode_hex(
+    data: *const super::vec::GosVec,
+) -> *mut c_char {
+    ffi_entry!(std::ptr::null_mut(), {
+        let bytes = unsafe { gosvec_u8(data) };
+        alloc_cstring(base32_encode_with(&bytes, BASE32_HEX_ALPHA).as_bytes())
+    })
+}
+
 /// `html::escape(s)` - HTML entity-escapes `& < > " '`. Mirrors
 /// `gossamer_std::html::escape`, which uses `&#39;` for the apostrophe
 /// (XML uses `&apos;`).
@@ -344,6 +356,10 @@ fn html_unescape(input: &str) -> String {
 const BASE32_ALPHA: &[u8; 32] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
 
 fn base32_encode(data: &[u8]) -> String {
+    base32_encode_with(data, BASE32_ALPHA)
+}
+
+fn base32_encode_with(data: &[u8], alpha: &[u8; 32]) -> String {
     let mut out = String::new();
     for chunk in data.chunks(5) {
         let mut buf = [0u8; 5];
@@ -373,7 +389,7 @@ fn base32_encode(data: &[u8]) -> String {
         };
         for (i, c) in chars.iter().enumerate() {
             if i < keep {
-                out.push(BASE32_ALPHA[*c as usize] as char);
+                out.push(alpha[*c as usize] as char);
             } else {
                 out.push('=');
             }

@@ -1,0 +1,13 @@
+struct S { a: i64, b: String }
+
+fn main() {
+    let mut v: Vec<S> = Vec::new()
+    v.push(S { a: 1, b: "x" })
+    v.push(S { a: 2, b: "yy" })
+    v.push(S { a: 3, b: "zzz" })
+    for s in v {
+        println!("{} {}", s.a, s.b)
+    }
+    let lit: Vec<S> = []
+    println!("lit_len={}", lit.len())
+}

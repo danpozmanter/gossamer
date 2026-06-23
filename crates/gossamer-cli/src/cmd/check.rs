@@ -10,7 +10,7 @@ use std::path::PathBuf;
 
 use anyhow::{Result, anyhow};
 
-use crate::loaders::{collect_top_level_names, load_or_parse, print_timings};
+use crate::loaders::print_timings;
 use crate::paths::{
     collect_lint_targets, default_test_root, friendly_io_error, read_entry_source,
     resolve_project_entry, stderr_supports_colour,
@@ -93,84 +93,37 @@ pub(crate) fn run(
     let source = gossamer_parse::autoderive::augment_source(&user_source);
     let mut map = gossamer_lex::SourceMap::new();
     let file_id = map.add_file(file.to_string_lossy().into_owned(), source.clone());
-    let cache_key = gossamer_driver::FrontendCacheKey::new(&source, env!("CARGO_PKG_VERSION"));
-    let trace = std::env::var_os("GOSSAMER_CACHE_TRACE").is_some();
-    let stage_parse = std::time::Instant::now();
-    let (sf, parse_diags) = load_or_parse(&source, file_id, &cache_key, trace);
-    let parse_elapsed = stage_parse.elapsed();
     let render_opts = gossamer_diagnostics::RenderOptions {
         colour: stderr_supports_colour(),
     };
-    let mut total_errors = parse_diags.len();
-    for diag in &parse_diags {
-        let structured = diag.to_diagnostic();
-        emit_diag(&structured, &map, render_opts, message_format);
+    // `check` runs the same authoritative front-end gate as `run` /
+    // `build` / `test` / `bench`: one parse + resolve + typecheck +
+    // exhaustiveness pass under a single fatal-error policy. Sharing the
+    // gate is what keeps `check` from drifting looser than the tiers it
+    // is meant to guard.
+    let stage = std::time::Instant::now();
+    let outcome = gossamer_driver::check_frontend(&source, file_id);
+    let elapsed = stage.elapsed();
+    for diag in &outcome.diagnostics {
+        emit_diag(diag, &map, render_opts, message_format);
     }
-    let stage_resolve = std::time::Instant::now();
-    let (resolutions, resolve_diags) = gossamer_resolve::resolve_source_file(&sf);
-    let resolve_elapsed = stage_resolve.elapsed();
-    let unresolved: Vec<_> = resolve_diags
-        .iter()
-        .filter(|d| {
-            matches!(
-                d.error,
-                gossamer_resolve::ResolveError::UnresolvedName { .. }
-                    | gossamer_resolve::ResolveError::DuplicateItem { .. }
-                    | gossamer_resolve::ResolveError::UnknownModulePath { .. }
-            )
-        })
-        .collect();
-    total_errors += unresolved.len();
-    let in_scope: Vec<&str> = collect_top_level_names(&sf);
-    for diag in unresolved {
-        let structured = diag.to_diagnostic(&in_scope);
-        emit_diag(&structured, &map, render_opts, message_format);
+    if !outcome.diagnostics.is_empty() {
+        return Err(anyhow!(
+            "check failed with {} diagnostic(s)",
+            outcome.diagnostics.len()
+        ));
     }
-    let mut tcx = gossamer_types::TyCtxt::new();
-    let stage_typeck = std::time::Instant::now();
-    let (table, type_diags) = gossamer_types::typecheck_source_file(&sf, &resolutions, &mut tcx);
-    let typeck_elapsed = stage_typeck.elapsed();
-    total_errors += type_diags.len();
-    for diag in &type_diags {
-        let structured = diag.to_diagnostic();
-        emit_diag(&structured, &map, render_opts, message_format);
-    }
-    let stage_exhaust = std::time::Instant::now();
-    let exhaustive_diags = gossamer_types::check_exhaustiveness(&sf, &resolutions, &table, &tcx);
-    let exhaust_elapsed = stage_exhaust.elapsed();
-    let nonexhaustive: Vec<_> = exhaustive_diags
-        .iter()
-        .filter(|d| {
-            matches!(
-                d.error,
-                gossamer_types::ExhaustivenessError::NonExhaustive { .. }
-            )
-        })
-        .collect();
-    total_errors += nonexhaustive.len();
-    for diag in nonexhaustive {
-        let structured = diag.to_diagnostic();
-        emit_diag(&structured, &map, render_opts, message_format);
-    }
-    if total_errors > 0 {
-        return Err(anyhow!("check failed with {total_errors} diagnostic(s)"));
-    }
-    if trace && gossamer_driver::observe_hit(&cache_key) {
-        eprintln!(
-            "cache: frontend hit for {} (parse skipped)",
-            cache_key.as_hex()
-        );
-    }
-    gossamer_driver::mark_success(&cache_key);
-    gossamer_driver::store_blob(&cache_key, &sf);
-    println!("check: ok ({} items typed)", sf.items.len());
+    println!("check: ok ({} items typed)", outcome.checked.sf.items.len());
     if timings {
+        // The shared gate runs the stages back-to-back, so only the total
+        // is meaningful here; the per-stage split is reported as a single
+        // typeck bucket.
         print_timings(
             source.len(),
-            parse_elapsed,
-            resolve_elapsed,
-            typeck_elapsed,
-            exhaust_elapsed,
+            std::time::Duration::ZERO,
+            std::time::Duration::ZERO,
+            elapsed,
+            std::time::Duration::ZERO,
         );
     }
     Ok(())

@@ -179,35 +179,26 @@ pub(crate) fn builtin_path_has_prefix(args: &[Value]) -> RuntimeResult<Value> {
 
 pub(crate) fn builtin_path_parent(args: &[Value]) -> RuntimeResult<Value> {
     let path = args.first().and_then(as_str).unwrap_or("");
-    let dir = path_std::dir(path);
-    if dir.is_empty() {
-        Ok(none_variant())
-    } else {
-        Ok(some_variant(Value::String(dir.into())))
+    match path_std::parent(path) {
+        Some(p) => Ok(some_variant(Value::String(p.into()))),
+        None => Ok(none_variant()),
     }
 }
 
 pub(crate) fn builtin_path_file_name(args: &[Value]) -> RuntimeResult<Value> {
     let path = args.first().and_then(as_str).unwrap_or("");
-    let base = path_std::base(path);
-    if base.is_empty() {
-        Ok(none_variant())
-    } else {
-        Ok(some_variant(Value::String(base.into())))
+    match path_std::file_name(path) {
+        Some(f) => Ok(some_variant(Value::String(f.into()))),
+        None => Ok(none_variant()),
     }
 }
 
 pub(crate) fn builtin_path_stem(args: &[Value]) -> RuntimeResult<Value> {
     let path = args.first().and_then(as_str).unwrap_or("");
-    let base = path_std::base(path);
-    if base.is_empty() {
-        return Ok(none_variant());
+    match path_std::stem(path) {
+        Some(s) => Ok(some_variant(Value::String(s.into()))),
+        None => Ok(none_variant()),
     }
-    let stem = match base.rfind('.') {
-        Some(idx) if idx > 0 => base[..idx].to_string(),
-        _ => base,
-    };
-    Ok(some_variant(Value::String(stem.into())))
 }
 
 pub(crate) fn builtin_path_ext(args: &[Value]) -> RuntimeResult<Value> {
@@ -237,7 +228,6 @@ pub(crate) fn install_utf8(globals: &mut Vec<(&'static str, Value)>) {
     install_module_pub(
         "utf8",
         &[
-            ("count_runes", builtin_utf8_count_runes),
             ("rune_count", builtin_utf8_count_runes),
             ("rune_count_in_string", builtin_utf8_rune_count_in_string),
             ("rune_len", builtin_utf8_rune_len),

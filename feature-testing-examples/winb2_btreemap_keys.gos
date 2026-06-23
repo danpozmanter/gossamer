@@ -1,0 +1,22 @@
+use std::collections::BTreeMap
+
+fn main() {
+    let mut m: BTreeMap<String, i64> = BTreeMap::new()
+    m.insert("banana", 2)
+    m.insert("apple", 1)
+    m.insert("cherry", 3)
+    for k in m.keys() {
+        println!("ik {}", k)
+    }
+    let ks = m.keys()
+    for k in ks {
+        println!("bk {}", k)
+    }
+    for v in m.values() {
+        println!("v {}", v)
+    }
+    for (k, val) in m.iter() {
+        println!("kv {} {}", k, val)
+    }
+    println!("contains_apple={} len={}", m.contains("apple"), m.len())
+}

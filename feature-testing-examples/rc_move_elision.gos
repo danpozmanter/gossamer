@@ -1,0 +1,61 @@
+// Exercises RC retain/release last-use elision. Each value built here is
+// moved into a surviving holder (a returned tree node, a struct field) and
+// is dead afterward, so the elision pass cancels the retain/release pair and
+// the holder keeps the single reference. Output must be bit-identical across
+// the bytecode VM, Cranelift, and LLVM tiers, and identical with the pass on
+// or off (it is reference-count preserving).
+
+enum Tree {
+    Node(Box<Tree>, Box<Tree>),
+    Leaf(i64),
+}
+
+fn build(depth: i64) -> Tree {
+    if depth <= 0 {
+        Tree::Leaf(1)
+    } else {
+        Tree::Node(build(depth - 1), build(depth - 1))
+    }
+}
+
+fn sum(t: &Tree) -> i64 {
+    match t {
+        Tree::Node(l, r) => sum(l) + sum(r),
+        Tree::Leaf(v) => v,
+    }
+}
+
+struct Named {
+    label: String,
+    tags: [String],
+}
+
+fn make_named(k: i64) -> Named {
+    let mut tags: [String] = []
+    tags.push(format!("t{}", k))
+    tags.push(format!("u{}", k))
+    Named { label: format!("name-{}", k), tags: tags }
+}
+
+fn main() {
+    let mut tree_total = 0
+    let mut i = 0
+    while i < 200 {
+        let t = build(8)
+        tree_total += sum(&t)
+        i += 1
+    }
+    println!("tree_total={}", tree_total)
+
+    let mut chars = 0
+    let mut k = 0
+    while k < 100 {
+        let n = make_named(k)
+        chars += n.label.len()
+        for tag in n.tags {
+            chars += tag.len()
+        }
+        k += 1
+    }
+    println!("named_chars={}", chars)
+}

@@ -84,11 +84,6 @@ pub const UTF8: StdModule = StdModule {
             doc: "Counts Unicode scalar values.",
         },
         StdItem {
-            name: "count_runes",
-            kind: StdItemKind::Function,
-            doc: "Counts the runes in a byte slice.",
-        },
-        StdItem {
             name: "rune_count_in_string",
             kind: StdItemKind::Function,
             doc: "Counts the runes in a String.",
@@ -305,16 +300,6 @@ pub const STRINGS: StdModule = StdModule {
             doc: "Uppercases every character.",
         },
         StdItem {
-            name: "to_lowercase",
-            kind: StdItemKind::Function,
-            doc: "Alias for to_lower (Rust-style name).",
-        },
-        StdItem {
-            name: "to_uppercase",
-            kind: StdItemKind::Function,
-            doc: "Alias for to_upper (Rust-style name).",
-        },
-        StdItem {
             name: "starts_with",
             kind: StdItemKind::Function,
             doc: "Returns whether the string starts with the given prefix.",
@@ -338,26 +323,6 @@ pub const STRINGS: StdModule = StdModule {
             name: "count",
             kind: StdItemKind::Function,
             doc: "Counts non-overlapping occurrences of `needle`.",
-        },
-        StdItem {
-            name: "strip_chars",
-            kind: StdItemKind::Function,
-            doc: "Trims any character in `cutset` from both ends.",
-        },
-        StdItem {
-            name: "lstrip_chars",
-            kind: StdItemKind::Function,
-            doc: "Trims any character in `cutset` from the left end.",
-        },
-        StdItem {
-            name: "rstrip_chars",
-            kind: StdItemKind::Function,
-            doc: "Trims any character in `cutset` from the right end.",
-        },
-        StdItem {
-            name: "zfill",
-            kind: StdItemKind::Function,
-            doc: "Pads with `'0'` on the left until at least `width` wide.",
         },
         StdItem {
             name: "center",
@@ -440,19 +405,9 @@ pub const STRINGS: StdModule = StdModule {
             doc: "Right-pads to `width` with the given character.",
         },
         StdItem {
-            name: "contains_rune",
-            kind: StdItemKind::Function,
-            doc: "Reports whether the string contains a given rune.",
-        },
-        StdItem {
             name: "contains_any",
             kind: StdItemKind::Function,
             doc: "Reports whether the string contains any rune in a set.",
-        },
-        StdItem {
-            name: "index_rune",
-            kind: StdItemKind::Function,
-            doc: "Byte index of the first occurrence of a rune, or -1.",
         },
         StdItem {
             name: "find_any",

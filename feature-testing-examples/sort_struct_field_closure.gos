@@ -1,0 +1,36 @@
+// Sorting and iterating vecs of user structs and strings.
+//
+// The comparator's parameters pin to the element type, so a named-field
+// access in the closure body (`b.weight`) lowers to a struct projection
+// instead of the dynamic JSON-field path. A single-field struct element
+// binds its slot address when iterated, so its field projection is valid.
+// Bit-identical across the VM, Cranelift, and LLVM tiers.
+
+struct Tag { id: i64 }
+struct Item { weight: i64, label: String }
+
+fn main() {
+    let mut tags: Vec<Tag> = []
+    tags.push(Tag { id: 3 })
+    tags.push(Tag { id: 1 })
+    tags.push(Tag { id: 2 })
+    tags.sort_by(|a, b| a.id - b.id)
+    for t in tags { print!("{} ", t.id) }
+    println!("")
+
+    let mut items: Vec<Item> = []
+    items.push(Item { weight: 5, label: "e" })
+    items.push(Item { weight: 1, label: "a" })
+    items.push(Item { weight: 3, label: "c" })
+    items.sort_by(|a, b| b.weight - a.weight)
+    for it in items { print!("{}:{} ", it.weight, it.label) }
+    println!("")
+
+    let mut words: Vec<String> = []
+    words.push("pear")
+    words.push("apple")
+    words.push("fig")
+    words.sort_by(|a, b| if a < b { -1 } else if a > b { 1 } else { 0 })
+    for w in words { print!("{} ", w) }
+    println!("")
+}

@@ -2050,7 +2050,26 @@ impl<'tcx> FnBuilder<'tcx> {
         };
 
         // Compile the iterable and capture it once.
-        let vec_reg = self.compile_expr(source_expr)?;
+        let mut vec_reg = self.compile_expr(source_expr)?;
+
+        // A bare `HashSet` iterand is not indexable; snapshot it to a
+        // sorted `Vec` (the same order `set.to_vec()` / `.iter()` yield)
+        // and drive that by index. The set handle would otherwise report
+        // no indexable length and the loop would never run.
+        if self.expr_is_hashset(source_expr) {
+            let snap = self.alloc_reg();
+            let to_vec_idx = self.global_idx("to_vec");
+            let cache_idx = self.alloc_cache_idx();
+            self.emit(Op::MethodCall {
+                dst: snap,
+                receiver: vec_reg,
+                name_idx: to_vec_idx,
+                args: 0,
+                argc: 0,
+                cache_idx,
+            });
+            vec_reg = snap;
+        }
 
         // Length: emit a `len()` MethodCall whose result we treat as
         // an i64 by unboxing through `as_i64`.

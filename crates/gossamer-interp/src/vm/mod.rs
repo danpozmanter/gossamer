@@ -742,6 +742,28 @@ fn detect_trivial_wrapper(decl: &gossamer_hir::HirFn) -> Option<Vec<String>> {
 /// Native indexed read: `base[i]` over arrays, strings, tuples, vecs,
 /// and structs, producing the element type's value (or its zero value
 /// for an out-of-range index).
+/// Indexing where the element is an aggregate: an out-of-range index panics
+/// with `index out of bounds` rather than yielding the lenient zero value,
+/// matching the compiled tiers' bounds assert for aggregate `Vec` elements.
+/// Primitive-element indexing stays lenient via [`index_get`].
+fn index_get_checked(base: &Value, idx: &Value) -> RuntimeResult<Value> {
+    let raw = match idx {
+        Value::Int(n) => *n,
+        _ => return Err(RuntimeError::Type("index must be integer".to_string())),
+    };
+    let len = match base {
+        Value::Array(items) | Value::Tuple(items) => items.len() as i64,
+        Value::FloatArray(fa) if fa.stride > 0 => (fa.data.len() / fa.stride as usize) as i64,
+        // Non-aggregate bases keep the lenient contract (a checked op is only
+        // emitted for aggregate element types, but be conservative).
+        _ => return index_get(base, idx),
+    };
+    if raw < 0 || raw >= len {
+        return Err(RuntimeError::Panic("index out of bounds".to_string()));
+    }
+    index_get(base, idx)
+}
+
 fn index_get(base: &Value, idx: &Value) -> RuntimeResult<Value> {
     let raw = match idx {
         Value::Int(n) => *n,

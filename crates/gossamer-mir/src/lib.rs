@@ -13,6 +13,7 @@ mod ir;
 mod lower;
 mod monomorph;
 mod opt;
+mod ownership;
 pub mod verify;
 
 pub use cleanup::{

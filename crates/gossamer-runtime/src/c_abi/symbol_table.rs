@@ -652,6 +652,18 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_crypto_sha256_digest as *const u8,
         ),
         (
+            "gos_rt_crypto_sha512_digest",
+            crate::c_abi::gos_rt_crypto_sha512_digest as *const u8,
+        ),
+        (
+            "gos_rt_crypto_blake3_digest",
+            crate::c_abi::gos_rt_crypto_blake3_digest as *const u8,
+        ),
+        (
+            "gos_rt_crypto_md5",
+            crate::c_abi::gos_rt_crypto_md5 as *const u8,
+        ),
+        (
             "gos_rt_crypto_md5_hex",
             crate::c_abi::gos_rt_crypto_md5_hex as *const u8,
         ),
@@ -678,6 +690,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
         (
             "gos_rt_crypto_scrypt_interactive",
             crate::c_abi::gos_rt_crypto_scrypt_interactive as *const u8,
+        ),
+        (
+            "gos_rt_crypto_sha1",
+            crate::c_abi::gos_rt_crypto_sha1 as *const u8,
         ),
         (
             "gos_rt_crypto_sha1_hex",
@@ -774,6 +790,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
         (
             "gos_rt_encoding_base32_encode",
             crate::c_abi::gos_rt_encoding_base32_encode as *const u8,
+        ),
+        (
+            "gos_rt_encoding_base32_encode_hex",
+            crate::c_abi::gos_rt_encoding_base32_encode_hex as *const u8,
         ),
         (
             "gos_rt_encoding_base32_encode_string",
@@ -3255,8 +3275,16 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_set_args as *const u8,
         ),
         (
+            "gos_rt_set_clear",
+            crate::c_abi::gos_rt_set_clear as *const u8,
+        ),
+        (
             "gos_rt_set_contains",
             crate::c_abi::gos_rt_set_contains as *const u8,
+        ),
+        (
+            "gos_rt_set_contains_i64",
+            crate::c_abi::gos_rt_set_contains_i64 as *const u8,
         ),
         (
             "gos_rt_set_free",
@@ -3266,11 +3294,27 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             "gos_rt_set_insert",
             crate::c_abi::gos_rt_set_insert as *const u8,
         ),
+        (
+            "gos_rt_set_insert_i64",
+            crate::c_abi::gos_rt_set_insert_i64 as *const u8,
+        ),
         ("gos_rt_set_len", crate::c_abi::gos_rt_set_len as *const u8),
         ("gos_rt_set_new", crate::c_abi::gos_rt_set_new as *const u8),
         (
             "gos_rt_set_remove",
             crate::c_abi::gos_rt_set_remove as *const u8,
+        ),
+        (
+            "gos_rt_set_remove_i64",
+            crate::c_abi::gos_rt_set_remove_i64 as *const u8,
+        ),
+        (
+            "gos_rt_set_to_vec",
+            crate::c_abi::gos_rt_set_to_vec as *const u8,
+        ),
+        (
+            "gos_rt_set_to_vec_i64",
+            crate::c_abi::gos_rt_set_to_vec_i64 as *const u8,
         ),
         (
             "gos_rt_set_union",
@@ -3864,6 +3908,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
         (
             "gos_rt_strconv_parse_i64_radix",
             crate::c_abi::gos_rt_strconv_parse_i64_radix as *const u8,
+        ),
+        (
+            "gos_rt_strconv_parse_u64",
+            crate::c_abi::gos_rt_strconv_parse_u64 as *const u8,
         ),
         (
             "gos_rt_strconv_format_i64_radix",
@@ -4717,6 +4765,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
         (
             "gos_rt_vec_index_of_str",
             crate::c_abi::gos_rt_vec_index_of_str as *const u8,
+        ),
+        (
+            "gos_rt_vec_insert_at",
+            crate::c_abi::gos_rt_vec_insert_at as *const u8,
         ),
         (
             "gos_rt_vec_insert_safe",

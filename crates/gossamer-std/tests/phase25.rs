@@ -9,7 +9,7 @@ fn parse_scalar_literals() {
     assert_eq!(parse("null").unwrap(), Value::Null);
     assert_eq!(parse("true").unwrap(), Value::Bool(true));
     assert_eq!(parse("false").unwrap(), Value::Bool(false));
-    assert_eq!(parse("42").unwrap(), Value::Number(42.0));
+    assert_eq!(parse("42").unwrap(), Value::Int(42));
     assert_eq!(parse("\"hello\"").unwrap(), Value::String("hello".into()));
 }
 
@@ -18,7 +18,7 @@ fn parse_array_of_mixed_primitives() {
     let v = parse("[1, true, null, \"str\"]").unwrap();
     if let Value::Array(parts) = v {
         assert_eq!(parts.len(), 4);
-        assert_eq!(parts[0], Value::Number(1.0));
+        assert_eq!(parts[0], Value::Int(1));
         assert_eq!(parts[1], Value::Bool(true));
         assert_eq!(parts[2], Value::Null);
         assert_eq!(parts[3], Value::String("str".into()));
@@ -32,7 +32,7 @@ fn parse_object_with_nested_types() {
     let v = parse(r#"{"name": "gossamer", "stars": 42, "tags": ["lang", "gc"]}"#).unwrap();
     if let Value::Object(map) = v {
         assert_eq!(map.get("name"), Some(&Value::String("gossamer".into())));
-        assert_eq!(map.get("stars"), Some(&Value::Number(42.0)));
+        assert_eq!(map.get("stars"), Some(&Value::Int(42)));
         assert!(matches!(map.get("tags"), Some(Value::Array(_))));
     } else {
         panic!("expected object");

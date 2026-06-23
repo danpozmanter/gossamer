@@ -1,0 +1,15 @@
+fn main() {
+    let mut xs = [1, 2, 3, 4]
+    xs.insert(0, 10)
+    xs.insert(5, 50)
+    println!("{:?}", xs)
+    xs.remove(0)
+    xs.remove(4)
+    println!("{:?}", xs)
+
+    let mut ys: Vec<String> = ["a", "b", "c"]
+    ys.insert(1, "X")
+    println!("{:?}", ys)
+    ys.remove(2)
+    println!("{:?}", ys)
+}

@@ -1,0 +1,77 @@
+// Win B collections sweep: std::collections::HashSet surface across
+// tiers. insert/remove/contains/len/is_empty and the algebra
+// (union/intersection/difference/symmetric_difference/is_subset/
+// is_superset/is_disjoint), with duplicate inserts, empty sets, and
+// struct elements. Results are inspected via len() / contains()
+// (order-independent), matching the cross-tier-stable pattern of
+// hashset_algebra.gos. Bit-identical VM vs compiled.
+//
+// Element type is String / struct here, NOT i64: the compiled tier
+// passes a raw `i64` key straight to `gos_rt_set_insert(*c_char)`
+// (no stringify), so `HashSet<i64>` segfaults on insert. Likewise
+// `.to_vec()` / `.iter()` / `.clear()` have no working compiled-tier
+// dispatch (no matching arm in the MIR method table; the runtime
+// stores `HashSet<String>` only). All reported as forbidden-file
+// fixes; this fixture stays on the working surface.
+
+use std::collections::HashSet
+
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+struct Tag { id: i64 }
+
+fn main() {
+    // insert + duplicate + len + contains.
+    let mut s: HashSet<String> = HashSet::new()
+    s.insert("a")
+    s.insert("b")
+    s.insert("b")
+    s.insert("c")
+    println!("len {} has_b {} has_z {}", s.len(), s.contains("b"), s.contains("z"))
+
+    // remove (present + absent), is_empty.
+    s.remove("b")
+    s.remove("zz")
+    println!("after remove len {} has_b {}", s.len(), s.contains("b"))
+    println!("is_empty {}", s.is_empty())
+
+    // String elements.
+    let mut ss: HashSet<String> = HashSet::new()
+    ss.insert("foo")
+    ss.insert("bar")
+    ss.insert("foo")
+    println!("str len {} has_foo {} has_baz {}", ss.len(), ss.contains("foo"), ss.contains("baz"))
+
+    // Struct elements: equal-by-value collide, lookup hits.
+    let mut tags: HashSet<Tag> = HashSet::new()
+    tags.insert(Tag { id: 1 })
+    tags.insert(Tag { id: 1 })
+    tags.insert(Tag { id: 2 })
+    println!("tag len {} has1 {} has3 {}", tags.len(),
+        tags.contains(&Tag { id: 1 }), tags.contains(&Tag { id: 3 }))
+
+    // Algebra over String sets (cardinality + membership only).
+    let mut a: HashSet<String> = HashSet::new()
+    a.insert("x"); a.insert("y"); a.insert("z")
+    let mut b: HashSet<String> = HashSet::new()
+    b.insert("y"); b.insert("z"); b.insert("w")
+    let u = a.union(b)
+    println!("union len {} has_w {} has_x {}", u.len(), u.contains("w"), u.contains("x"))
+    let i = a.intersection(b)
+    println!("inter len {} has_y {} has_x {}", i.len(), i.contains("y"), i.contains("x"))
+    let d = a.difference(b)
+    println!("diff len {} has_x {} has_y {}", d.len(), d.contains("x"), d.contains("y"))
+    let sd = a.symmetric_difference(b)
+    println!("symdiff len {} has_x {} has_w {} has_y {}",
+        sd.len(), sd.contains("x"), sd.contains("w"), sd.contains("y"))
+
+    // Predicates: subset / superset / disjoint, incl empty-set edges.
+    let mut sub: HashSet<String> = HashSet::new()
+    sub.insert("x"); sub.insert("y")
+    let empty: HashSet<String> = HashSet::new()
+    let mut far: HashSet<String> = HashSet::new()
+    far.insert("p"); far.insert("q")
+    println!("subset {} superset {} disjoint {}",
+        sub.is_subset(a), a.is_superset(sub), a.is_disjoint(far))
+    println!("empty subset {} a-disjoint-empty {}",
+        empty.is_subset(a), a.is_disjoint(empty))
+}

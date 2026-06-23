@@ -1699,7 +1699,7 @@ fn main() {
     assert!(
         stderr.contains("GT0007")
             || stderr.contains("unused `Result`")
-            || stderr.contains("type error"),
+            || stderr.contains("Result"),
         "expected GT0007 or a Result-related diagnostic in stderr; got: {stderr}"
     );
 }

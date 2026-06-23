@@ -14,8 +14,8 @@ use gossamer_mir::{
     Body, check_generic_layouts, inline_general, inline_small_callees, inline_trivial_wrappers,
     lower_program, optimise,
 };
-use gossamer_resolve::{Resolutions, resolve_source_file};
-use gossamer_types::{TyCtxt, TypeTable, typecheck_source_file};
+use gossamer_resolve::Resolutions;
+use gossamer_types::{TyCtxt, TypeTable};
 
 use crate::link::{Artifact, LinkerOptions, TranslationUnit, link};
 
@@ -287,23 +287,18 @@ fn enforce_generic_abi(bodies: &[Body], tcx: &TyCtxt) -> anyhow::Result<()> {
 /// the MIR bodies so downstream passes that need type information
 /// (e.g. the native codegen's primitive-type classification) can
 /// walk `body.local_ty(local)` back into the kind table.
+///
+/// Runs the shared front-end gate ([`crate::frontend::check_frontend`])
+/// rather than an independent parse/resolve/typecheck of its own, so
+/// the single fatal-error policy is the only frontend in the tree.
+/// This is the source-taking codegen entry point used by the legacy
+/// `compile_source` artifact path and the package builder, both of
+/// which validate the program through the gate before reaching codegen;
+/// any residual diagnostics here would have been surfaced there.
 fn lower_to_mir_with_tcx(source: &str, unit_name: &str) -> (Vec<Body>, TyCtxt) {
     let augmented = gossamer_parse::autoderive::augment_source(source);
     let mut map = SourceMap::new();
     let file = map.add_file(unit_name, augmented.clone());
-    let (sf, _parse_diags) = gossamer_parse::autoderive::parse_with_autoderive(&augmented, file);
-    let (resolutions, _resolve_diags) = resolve_source_file(&sf);
-    let mut tcx = TyCtxt::new();
-    let (table, _type_diags) = typecheck_source_file(&sf, &resolutions, &mut tcx);
-    let hir = lower_source_file(&sf, &resolutions, &table, &mut tcx);
-    let hir = lift_closures(hir, &mut tcx);
-    let mut bodies = lower_program(&hir, &mut tcx);
-    gossamer_mir::monomorphise(&mut bodies, &mut tcx);
-    inline_trivial_wrappers(&mut bodies);
-    inline_small_callees(&mut bodies);
-    inline_general(&mut bodies);
-    for body in &mut bodies {
-        optimise(body, &tcx);
-    }
-    (bodies, tcx)
+    let outcome = crate::frontend::check_frontend(&augmented, file);
+    lower_to_mir_from_frontend(outcome.checked)
 }

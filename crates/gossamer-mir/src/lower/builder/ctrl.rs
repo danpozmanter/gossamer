@@ -2284,6 +2284,17 @@ impl<'a> Builder<'a> {
             return match name.name.as_str() {
                 "split" | "splitn" | "split_whitespace" | "lines" => Some(self.tcx.string_ty()),
                 "chars" => Some(self.tcx.intern(TyKind::Char)),
+                // `set.to_vec()` / `set.iter()` snapshot a `HashSet<T>` whose
+                // handle type is erased to `i64`; recover the element type
+                // from the receiver's HIR generic so the loop binds it.
+                "to_vec" | "iter"
+                    if self.runtime_kind_from_ty(receiver.ty) == Some("collections::HashSet") =>
+                {
+                    Some(match self.set_elem_kind_of(receiver) {
+                        MapKeyKind::I64 => self.tcx.int_ty(gossamer_types::IntTy::I64),
+                        _ => self.tcx.string_ty(),
+                    })
+                }
                 "reversed" | "to_vec" | "clone" => self.for_loop_elem_ty(receiver),
                 _ => None,
             };
@@ -2312,6 +2323,35 @@ impl<'a> Builder<'a> {
             } => operand.as_ref(),
             _ => for_loop.iter_expr,
         };
+        // `for x in s` over a `HashSet` value (a bare binding, or a
+        // set-returning method like `a.union(&b)`). The set is a sentinel
+        // `Adt`, so it would otherwise hit the Adt bail-out below and lower
+        // to the iterator `next` protocol the set does not implement (0
+        // iterations on the VM, an undefined `@next` on the compiled tier).
+        // Snapshot it to a sorted `Vec<T>` - the same order `set.iter()` /
+        // `set.to_vec()` yield - and iterate that.
+        if self.runtime_kind_from_ty(probe_expr.ty) == Some("collections::HashSet")
+            || (matches!(&probe_expr.kind, HirExprKind::Path { .. })
+                && self
+                    .receiver_local_from_path(probe_expr)
+                    .and_then(|l| self.local_runtime_kind.get(&l).copied())
+                    == Some("collections::HashSet"))
+        {
+            let is_i64 = matches!(self.set_elem_kind_of(probe_expr), MapKeyKind::I64);
+            let elem_ty = if is_i64 {
+                self.tcx.int_ty(gossamer_types::IntTy::I64)
+            } else {
+                self.tcx.string_ty()
+            };
+            return self.lower_for_set(
+                probe_expr,
+                elem_ty,
+                is_i64,
+                for_loop.loop_pat,
+                for_loop.body,
+                span,
+            );
+        }
         // If the iter expression is a user-defined struct (Adt),
         // the fast-paths below would all misfire and the default
         // fallback would treat it as a runtime Vec (reading `len`
@@ -2461,7 +2501,15 @@ impl<'a> Builder<'a> {
                 // Also peel `.iter()` method calls - `for x in v.iter()`
                 // and `for x in &v` both end up wanting Vec iteration.
                 let iter_recv = match &for_loop.iter_expr.kind {
-                    HirExprKind::MethodCall { receiver, name, .. } if name.name == "iter" => {
+                    // A `HashSet` receiver must NOT be peeled: its handle is
+                    // not a `GosVec`, so iterating it directly reads the set
+                    // as a vec. Falling through lets `s.iter()` lower to
+                    // `gos_rt_set_to_vec` (a real snapshot Vec).
+                    HirExprKind::MethodCall { receiver, name, .. }
+                        if name.name == "iter"
+                            && self.runtime_kind_from_ty(receiver.ty)
+                                != Some("collections::HashSet") =>
+                    {
                         Some(receiver.as_ref())
                     }
                     _ => None,
@@ -2584,7 +2632,18 @@ impl<'a> Builder<'a> {
                 if for_vec_elem.is_none() {
                     if let HirExprKind::MethodCall { name, receiver, .. } = &for_loop.iter_expr.kind
                     {
-                        if matches!(name.name.as_str(), "reversed" | "to_vec" | "clone") {
+                        // `set.to_vec()` / `set.iter()` snapshot a `HashSet<T>`
+                        // whose handle type is erased to `i64`; recover the
+                        // element kind from the receiver's HIR generic.
+                        if matches!(name.name.as_str(), "to_vec" | "iter")
+                            && self.runtime_kind_from_ty(receiver.ty)
+                                == Some("collections::HashSet")
+                        {
+                            for_vec_elem = Some(match self.set_elem_kind_of(receiver) {
+                                MapKeyKind::I64 => self.tcx.int_ty(gossamer_types::IntTy::I64),
+                                _ => self.tcx.string_ty(),
+                            });
+                        } else if matches!(name.name.as_str(), "reversed" | "to_vec" | "clone") {
                             for_vec_elem = self.for_loop_elem_ty(receiver);
                         }
                     }

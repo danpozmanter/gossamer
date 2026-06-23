@@ -1907,6 +1907,7 @@ impl<'a> Builder<'a> {
                         use gossamer_types::{Mutbl, TyKind};
                         let base_place = self.lower_place_expr(base)?;
                         let index_local = self.lower_expr(index)?;
+                        self.emit_vec_index_bounds_assert(base_place.local, index_local, expr.span);
                         let ref_ty = self.tcx.intern(TyKind::Ref {
                             mutability: Mutbl::Mut,
                             inner: elem,
@@ -2067,6 +2068,72 @@ impl<'a> Builder<'a> {
         };
         self.emit_assign(Place::local(dest), Rvalue::Use(Operand::Copy(place)), span);
         Some(dest)
+    }
+
+    /// Emits a bounds `Assert` (`0 <= index < vec.len()`) before an
+    /// aggregate Vec element is addressed. Primitive Vec elements keep the
+    /// lenient zero-value-on-OOB contract; an aggregate element cannot
+    /// cheaply yield a zero value, and `gos_rt_vec_get_ptr` hands back a
+    /// null slot pointer on OOB which the appended `Field`/`Index`
+    /// projection would dereference. The wired `BoundsCheck` assert turns
+    /// that into a clean "index out of bounds" panic, bit-identical across
+    /// the VM, Cranelift, and LLVM tiers, and also rejects OOB aggregate
+    /// writes (`v[i].field = x`) instead of corrupting memory.
+    pub(crate) fn emit_vec_index_bounds_assert(
+        &mut self,
+        vec_local: Local,
+        index_local: Local,
+        span: Span,
+    ) {
+        let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+        let bool_ty = self.tcx.bool_ty();
+        let len = self.fresh(i64_ty);
+        let after_len = self.new_block(span);
+        self.terminate(Terminator::Call {
+            callee: Operand::Const(ConstValue::Str("gos_rt_vec_len".to_string())),
+            args: vec![Operand::Copy(Place::local(vec_local))],
+            destination: Place::local(len),
+            target: Some(after_len),
+        });
+        self.set_current(after_len);
+        let ge0 = self.fresh(bool_ty);
+        self.emit_assign(
+            Place::local(ge0),
+            Rvalue::BinaryOp {
+                op: BinOp::Ge,
+                lhs: Operand::Copy(Place::local(index_local)),
+                rhs: Operand::Const(ConstValue::Int(0)),
+            },
+            span,
+        );
+        let lt = self.fresh(bool_ty);
+        self.emit_assign(
+            Place::local(lt),
+            Rvalue::BinaryOp {
+                op: BinOp::Lt,
+                lhs: Operand::Copy(Place::local(index_local)),
+                rhs: Operand::Copy(Place::local(len)),
+            },
+            span,
+        );
+        let in_bounds = self.fresh(bool_ty);
+        self.emit_assign(
+            Place::local(in_bounds),
+            Rvalue::BinaryOp {
+                op: BinOp::BitAnd,
+                lhs: Operand::Copy(Place::local(ge0)),
+                rhs: Operand::Copy(Place::local(lt)),
+            },
+            span,
+        );
+        let ok = self.new_block(span);
+        self.terminate(Terminator::Assert {
+            cond: Operand::Copy(Place::local(in_bounds)),
+            expected: true,
+            msg: AssertMessage::BoundsCheck,
+            target: ok,
+        });
+        self.set_current(ok);
     }
 
     pub(crate) fn lower_index_access(
@@ -2291,6 +2358,17 @@ impl<'a> Builder<'a> {
             } else {
                 ("gos_rt_vec_get_i64", dest_ty)
             };
+            // Aggregate elements (struct/tuple/array, including by-value
+            // Result/Option) are addressed or read whole; an OOB read would
+            // dereference a null slot pointer or fabricate a bogus
+            // discriminant. Guard with the wired bounds assert. Primitive
+            // elements keep the lenient zero-value-on-OOB behavior.
+            if matches!(
+                self.tcx.kind_of(elem_unwrapped),
+                TyKind::Tuple(_) | TyKind::Adt { .. } | TyKind::Array { .. }
+            ) {
+                self.emit_vec_index_bounds_assert(base_local, index_local, span);
+            }
             let dest = self.fresh(dest_ty);
             let next = self.new_block(span);
             self.terminate(Terminator::Call {

@@ -327,6 +327,16 @@ unsafe fn dec_strong(h: *mut RcHeader) -> DecOutcome {
             skip: true,
         };
     }
+    // Under correct accounting a normal object's strong count never drops
+    // below zero. An underflow here means a double-free or an untagged /
+    // foreign pointer reaching RC dispatch (the `os::args()` class of bug):
+    // surface it loudly in debug builds rather than corrupting the heap. The
+    // check is debug-only, so release builds keep the branch-free fast path.
+    debug_assert!(
+        s & STRONG_COUNT_MASK > 0,
+        "gos RC underflow: release of an object whose strong count is already 0 \
+         (double-free, or an untagged/foreign pointer reached RC dispatch)"
+    );
     if s & SHARED_BIT != 0 {
         let a = unsafe { AtomicU32::from_ptr(std::ptr::addr_of_mut!((*h).strong)) };
         let prev = a.fetch_sub(1, Ordering::Release);
@@ -357,6 +367,9 @@ unsafe fn mark_shared(payload: *mut u8) {
         return;
     }
     if unsafe { crate::c_abi::string::is_gos_string(base.cast()) } {
+        // A shared string switches to atomic refcounting (it has no RC
+        // children to walk), so its concurrent clone/drop cannot tear.
+        unsafe { crate::c_abi::string::gos_rt_str_mark_shared(base.cast()) };
         return;
     }
     let mut work: Vec<*mut u8> = vec![base];
@@ -365,6 +378,9 @@ unsafe fn mark_shared(payload: *mut u8) {
             continue;
         }
         if unsafe { crate::c_abi::string::is_gos_string(p.cast()) } {
+            // A child string switches to atomic refcounting; it has no RC
+            // children of its own, so there is nothing further to walk.
+            unsafe { crate::c_abi::string::gos_rt_str_mark_shared(p.cast()) };
             continue;
         }
         let h = unsafe { header_ptr(p) };

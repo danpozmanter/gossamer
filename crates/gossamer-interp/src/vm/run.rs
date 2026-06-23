@@ -895,16 +895,16 @@ impl Vm {
                     let i = &registers[index as usize];
                     registers[dst as usize] = index_get(b, i)?;
                 }
+                Op::IndexGetChecked { dst, base, index } => {
+                    let b = &registers[base as usize];
+                    let i = &registers[index as usize];
+                    registers[dst as usize] = index_get_checked(b, i)?;
+                }
                 Op::IndexSet { base, index, value } => {
                     let new_value = registers[value as usize].clone();
                     let i = &registers[index as usize];
-                    let idx = match i {
-                        Value::Int(n) if *n >= 0 => *n as usize,
-                        Value::Int(_) => {
-                            return Err(RuntimeError::Arithmetic(
-                                "negative index into sequence".to_string(),
-                            ));
-                        }
+                    let raw = match i {
+                        Value::Int(n) => *n,
                         _ => {
                             return Err(RuntimeError::Type("index must be integer".to_string()));
                         }
@@ -912,48 +912,52 @@ impl Vm {
                     let b = &mut registers[base as usize];
                     match b {
                         Value::Array(items) | Value::Tuple(items) => {
-                            let v = Arc::make_mut(items);
-                            if idx >= v.len() {
-                                return Err(RuntimeError::Arithmetic(
-                                    "index out of bounds".to_string(),
-                                ));
+                            // A whole-element indexed write is a lenient no-op
+                            // out of range on both tiers (the compiled inline
+                            // vec store is bounds-guarded for scalar and
+                            // aggregate elements alike; only `v[i].field = x`
+                            // field projection panics, via a separate op).
+                            if raw >= 0 && (raw as usize) < items.len() {
+                                Arc::make_mut(items)[raw as usize] = new_value;
                             }
-                            v[idx] = new_value;
                         }
+                        // Scalar arrays specialize to `IntArray` / `FloatVec`,
+                        // which the compiled tier indexes with an inline
+                        // bounds-guarded store: an out-of-range write (negative
+                        // or past the end) is a lenient no-op on both tiers,
+                        // matching the lenient zero-value read contract.
                         Value::IntArray(data) => {
-                            // Mutate the underlying `Vec<i64>` in place.
-                            // `Arc::make_mut` clones if shared (rare -
-                            // a fresh `BuildIntArray` usually leaves
-                            // the array uniquely owned).
-                            let v = Arc::make_mut(data);
-                            if idx >= v.len() {
-                                return Err(RuntimeError::Arithmetic(
-                                    "index out of bounds".to_string(),
-                                ));
-                            }
-                            match new_value {
-                                Value::Int(n) => v[idx] = n,
-                                _ => {
-                                    return Err(RuntimeError::Type(
-                                        "IndexSet on IntArray expects i64 value".to_string(),
-                                    ));
+                            if raw >= 0 {
+                                let v = Arc::make_mut(data);
+                                let idx = raw as usize;
+                                if idx < v.len() {
+                                    match new_value {
+                                        Value::Int(n) => v[idx] = n,
+                                        _ => {
+                                            return Err(RuntimeError::Type(
+                                                "IndexSet on IntArray expects i64 value"
+                                                    .to_string(),
+                                            ));
+                                        }
+                                    }
                                 }
                             }
                         }
                         Value::FloatVec(data) => {
-                            let v = Arc::make_mut(data);
-                            if idx >= v.len() {
-                                return Err(RuntimeError::Arithmetic(
-                                    "index out of bounds".to_string(),
-                                ));
-                            }
-                            match new_value {
-                                Value::Float(f) => v[idx] = f,
-                                Value::Int(n) => v[idx] = n as f64,
-                                _ => {
-                                    return Err(RuntimeError::Type(
-                                        "IndexSet on FloatVec expects f64 value".to_string(),
-                                    ));
+                            if raw >= 0 {
+                                let v = Arc::make_mut(data);
+                                let idx = raw as usize;
+                                if idx < v.len() {
+                                    match new_value {
+                                        Value::Float(f) => v[idx] = f,
+                                        Value::Int(n) => v[idx] = n as f64,
+                                        _ => {
+                                            return Err(RuntimeError::Type(
+                                                "IndexSet on FloatVec expects f64 value"
+                                                    .to_string(),
+                                            ));
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -1258,7 +1262,9 @@ impl Vm {
                     };
                     let slots = Arc::make_mut(items);
                     let slot = slots.get_mut(idx).ok_or_else(|| {
-                        RuntimeError::Arithmetic("index out of bounds".to_string())
+                        // `v[i].field = x` out of range panics on the compiled
+                        // tier (the place-form bounds assert); match it here.
+                        RuntimeError::Panic("index out of bounds".to_string())
                     })?;
                     let Value::Struct(struct_arc) = slot else {
                         return Err(RuntimeError::Type(format!(
@@ -1911,7 +1917,9 @@ impl Vm {
                     };
                     let slots = Arc::make_mut(items);
                     let slot = slots.get_mut(idx).ok_or_else(|| {
-                        RuntimeError::Arithmetic("index out of bounds".to_string())
+                        // `v[i].field = x` out of range panics on the compiled
+                        // tier (the place-form bounds assert); match it here.
+                        RuntimeError::Panic("index out of bounds".to_string())
                     })?;
                     let Value::Struct(struct_arc) = slot else {
                         return Err(RuntimeError::Type(format!(
@@ -2033,6 +2041,10 @@ impl Vm {
                             unsafe {
                                 *buf.get_unchecked_mut(pos) = new_f;
                             }
+                        } else {
+                            // `v[i].field = x` out of range panics on the
+                            // compiled tier; match it here.
+                            return Err(RuntimeError::Panic("index out of bounds".to_string()));
                         }
                     } else {
                         let new_value = Value::Float(new_f);
@@ -2213,6 +2225,10 @@ impl Vm {
                     let buf = Arc::make_mut(&mut fa_inner.data);
                     if pos < buf.len() {
                         *buf.get_unchecked_mut(pos) = new_f;
+                    } else {
+                        // `v[i].field = x` out of range panics on the compiled
+                        // tier (place-form bounds assert); match it here.
+                        return Err(RuntimeError::Panic("index out of bounds".to_string()));
                     }
                 },
                 Op::FlatGetF64I {
@@ -2267,6 +2283,10 @@ impl Vm {
                     let buf = Arc::make_mut(&mut fa_inner.data);
                     if pos < buf.len() {
                         *buf.get_unchecked_mut(pos) = new_f;
+                    } else {
+                        // `v[i].field = x` out of range panics on the compiled
+                        // tier (place-form bounds assert); match it here.
+                        return Err(RuntimeError::Panic("index out of bounds".to_string()));
                     }
                 },
 
@@ -2511,12 +2531,6 @@ impl Vm {
                     value_i,
                 } => unsafe {
                     let idx = *ints.get_unchecked(index_i as usize);
-                    if idx < 0 {
-                        return Err(RuntimeError::Arithmetic(
-                            "negative index into sequence".to_string(),
-                        ));
-                    }
-                    let i = idx as usize;
                     let new_val = *ints.get_unchecked(value_i as usize);
                     let b = registers.get_unchecked_mut(base as usize);
                     // Like `IntArrayGetI64`, the `flat_int_locals` tracking
@@ -2524,25 +2538,19 @@ impl Vm {
                     // `Value::IntArray` payload when the caller passes a
                     // generic `Value::Array` (a struct-field or call-arg
                     // literal). Fall back to a generic element write rather
-                    // than aborting the hot loop.
+                    // than aborting the hot loop. An out-of-range index (negative
+                    // or past the end) is a lenient no-op, matching the compiled
+                    // tier's bounds-guarded store and the zero-value read contract.
                     match b {
                         Value::IntArray(data) => {
-                            let v = Arc::make_mut(data);
-                            if i >= v.len() {
-                                return Err(RuntimeError::Arithmetic(
-                                    "index out of bounds".to_string(),
-                                ));
+                            if idx >= 0 && (idx as usize) < data.len() {
+                                *Arc::make_mut(data).get_unchecked_mut(idx as usize) = new_val;
                             }
-                            *v.get_unchecked_mut(i) = new_val;
                         }
                         Value::Array(items) => {
-                            let v = Arc::make_mut(items);
-                            if i >= v.len() {
-                                return Err(RuntimeError::Arithmetic(
-                                    "index out of bounds".to_string(),
-                                ));
+                            if idx >= 0 && (idx as usize) < items.len() {
+                                Arc::make_mut(items)[idx as usize] = Value::Int(new_val);
                             }
-                            v[i] = Value::Int(new_val);
                         }
                         _ => {
                             return Err(RuntimeError::Type(
@@ -2662,12 +2670,6 @@ impl Vm {
                     value_f,
                 } => unsafe {
                     let idx = *ints.get_unchecked(index_i as usize);
-                    if idx < 0 {
-                        return Err(RuntimeError::Arithmetic(
-                            "negative index into sequence".to_string(),
-                        ));
-                    }
-                    let i = idx as usize;
                     let new_f = *floats.get_unchecked(value_f as usize);
                     let b = registers.get_unchecked_mut(base as usize);
                     let Value::FloatVec(data_arc) = b else {
@@ -2675,11 +2677,15 @@ impl Vm {
                             "FloatVecSetF64: receiver lost flat invariant".to_string(),
                         ));
                     };
-                    let buf = Arc::make_mut(data_arc);
-                    if i >= buf.len() {
-                        return Err(RuntimeError::Arithmetic("index out of bounds".to_string()));
+                    // Out-of-range whole-element write is a lenient no-op, like
+                    // the compiled tier's bounds-guarded store.
+                    if idx >= 0 {
+                        let buf = Arc::make_mut(data_arc);
+                        let i = idx as usize;
+                        if i < buf.len() {
+                            *buf.get_unchecked_mut(i) = new_f;
+                        }
                     }
-                    *buf.get_unchecked_mut(i) = new_f;
                 },
                 Op::BuildIntMap { dst_v } => {
                     registers[dst_v as usize] = Value::IntMap(Arc::new(parking_lot::Mutex::new(

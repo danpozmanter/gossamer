@@ -99,6 +99,26 @@ pub unsafe extern "C" fn gos_rt_crypto_sha1_hex(input: *const c_char) -> *mut c_
     })
 }
 
+/// `crypto::insecure::md5(data) -> [u8; 16]` - the raw 16-byte MD5
+/// digest (not the hex string). The argument is a Gossamer `[u8]`
+/// (`GosVec`), so the digest covers arbitrary binary input.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_crypto_md5(input: *const GosVec) -> *mut GosVec {
+    let bytes = unsafe { gosvec_u8(input) };
+    let digest: [u8; 16] = <md5::Md5 as md5::Digest>::digest(&bytes).into();
+    bytes_to_gosvec(&digest)
+}
+
+/// `crypto::insecure::sha1(data) -> [u8; 20]` - the raw 20-byte SHA-1
+/// digest (not the hex string). The argument is a Gossamer `[u8]`
+/// (`GosVec`), so the digest covers arbitrary binary input.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_crypto_sha1(input: *const GosVec) -> *mut GosVec {
+    let bytes = unsafe { gosvec_u8(input) };
+    let digest: [u8; 20] = <sha1::Sha1 as sha1::Digest>::digest(&bytes).into();
+    bytes_to_gosvec(&digest)
+}
+
 /// `crypto::kdf::pbkdf2_sha256(password, salt, iters, dklen) -> [u8]`
 /// - PBKDF2-HMAC-SHA256. Returns a fresh `Vec<u8>` of length `dklen`.
 #[unsafe(no_mangle)]

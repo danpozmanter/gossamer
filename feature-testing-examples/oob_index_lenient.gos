@@ -1,0 +1,27 @@
+// Regression: out-of-range WHOLE-element indexed writes are a lenient no-op
+// on every tier (scalar, string, and struct elements alike), matching the
+// compiled tier's bounds-guarded store and the lenient zero-value read
+// contract. In-bounds reads and writes are unaffected. Output must be
+// bit-identical across the VM, Cranelift, and LLVM tiers.
+
+struct P {
+    x: i64,
+    y: i64,
+}
+
+fn main() {
+    let mut ints: [i64] = [1, 2, 3]
+    ints[1000000] = 99
+    ints[2] = 7
+    println!("ints len={} [2]={} oob_read={}", ints.len(), ints[2], ints[5000])
+
+    let mut strs: [String] = ["a", "b"]
+    strs[1000000] = "z"
+    strs[0] = "hello"
+    println!("strs len={} [0]={}", strs.len(), strs[0])
+
+    let mut pts: [P] = [P { x: 1, y: 2 }, P { x: 3, y: 4 }]
+    pts[1000000] = P { x: 9, y: 9 }
+    pts[1].x = 30
+    println!("pts len={} [1].x={} [0].y={}", pts.len(), pts[1].x, pts[0].y)
+}

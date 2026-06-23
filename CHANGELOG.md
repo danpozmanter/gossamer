@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.18.0 - Authoritative checking, crash fixes, stdlib cleanup, syntax
+
+Closes the gap between `gos check` and what runs: a program that type-checks now compiles and runs with the same meaning on every tier, `check` rejects what the runtime or native backend would, and the memory-safety crashes that survived `check` are gone.
+
+### Safety and correctness
+
+- **`os::args()` returns owned refcounted strings, not raw `argv` pointers.** The compiled tiers wrapped libc's `argv` directly, so reference-counting on an arg (`.clone()`, drops) read an RC header off a raw pointer - corrupting an adjacent argument or freeing a libc pointer (segfault). Each arg is now a gos-tagged copy.
+- **Recursive `Box`-enum cloned in a loop no longer double-frees.** Move-elision dropped the balancing retain on a loop-invariant source read each iteration, so the enum's `Box` children were over-released (heap corruption / exit crash, deterministic under goroutine capture). Loop-invariant sources now keep the retain.
+- **More compiled-tier segfaults on ordinary programs fixed:** `Vec<Struct>::new()` + push (the backend truncated the element width to 8 bytes), `HashSet<i64>::insert` (a raw i64 passed as a key pointer), and a bound `regex::find_all` result iterated (a declared-vs-runtime return-type mismatch strode 8-byte slots over 24-byte tuples).
+- **Out-of-range indexing is consistent on every tier.** Aggregate `Vec` reads and `v[i].field` writes panic with `index out of bounds` (were a compiled segfault / VM error); whole-element, scalar, and scalar fixed-array reads/writes are a lenient no-op / zero value matching the VM and the documented contract.
+- **`String` refcounting is atomic once shared across goroutines** (a string escaping to another goroutine sets a shared bit and uses atomic retain/release), closing a clone/drop data race; the non-shared fast path is unchanged.
+- A debug-build assertion catches RC underflow (double-free or a foreign pointer reaching RC dispatch).
+
+### Compiler front-end - `gos check` is the authoritative gate
+
+- **One shared front-end across `check` / `run` / `build` / `test` / `bench`**, replacing five drifted policies. `gos build` now runs exhaustiveness (a non-exhaustive `match` no longer compiles then segfaults), and diagnostics are no longer discarded.
+- **Method, arity, and enum-variant calls are type-checked, not guessed** (the checker no longer falls through to a fresh inference variable). New `check` errors: method not on the receiver type or a free function called as a method (`GT0002`), wrong argument count (`GT0018`), unknown enum variant (`GT0019`), supertrait method through a generic bound (`GT0020`), wrong-typed `Vec` push. `String` `find`/`rfind`/`index_of` now type as `Option<i64>`, so `s.rfind(&"/").map(|i| i as i64)` matches across tiers (was native garbage).
+- Non-canonical `std` import paths (`use std::json`, bogus paths) are rejected by `run`/`build`, not just `check`. Matching a value with the wrong constructor patterns (e.g. an `Option`-returning `env::var` with `Ok`/`Err`) is a check error rather than a silent tier divergence.
+- `s.parse()`'s error type pins to `errors::Error`, so `{}` Display of an `Err` lowers correctly on the compiled tier (was a garbage char).
+
+### Standard library
+
+- **Tier-parity hardening across the stdlib.** A `stdlib_compiled_coverage` gate makes VM-only functions unrepresentable (fixed seven, including `crypto::sha512::digest` and `regex::replace`), and a broad differential sweep fixed value divergences in `strings::split`/`equal_fold`, `strconv` parsing (incl. `parse_u64` accepting negatives), `path::join`/`parent`, `time::parse_rfc3339`/`format_rfc3339`, JSON integer precision (large ints and integer-valued floats now round-trip exactly), and map `.contains(k)` (was VM-false). Coverage fixtures span strings, encoding, crypto, math, collections, iterators, and paths.
+- **Collection dispatch completeness.** Iterating a `HashSet` directly (`for x in s`), `HashSet` `to_vec`/`iter`/`clear` and i64 elements, set-algebra results (`for e in a.union(&b)`), Vec method-form `insert`/`remove`, and `BTreeMap` (routed through the `HashMap` implementation) now build and behave identically on every tier.
+- **`json::set(&mut obj, k, v)` persists fields** (it was a discarded functional call rendering `{}`); the functional form is unchanged.
+
+### Cleanup
+
+- Removed documented-but-broken entries (`std::strings` `to_lowercase`/`strip_chars`/`zfill`/..., the never-wired `std::sort` free functions) and redundant spellings (`utf8::count_runes`, `index_rune`/`contains_rune`, qualified `json::from_json`). Use `to_lower`, `trim_matches`, `pad_left`, the `.sort()`/`.sort_by()` methods, and the bare `from_json::<T>`.
+- `String::from(s)` works as identity on every tier (was a VM error / compiled build failure).
+- `vec![...]` is no longer accepted (Gossamer has six macros; `[...]` coerces to `Vec<T>`).
+- `SPEC.md` reconciled with the implementation: the non-existent borrow-checker section, `dyn Trait`, raw-pointer types, and `Array<T, N>` removed; stale version markers cleaned up.
+
 ## 0.17.0 - TLS clients and servers, WebSocket, HTTP/3, multi-file packages, and Gossamer-native database drivers
 
 ### Networking

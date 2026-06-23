@@ -463,10 +463,27 @@ impl<'tcx> FnBuilder<'tcx> {
                 let base_reg = self.compile_expr(base)?;
                 let idx_reg = self.compile_expr(index)?;
                 let dst = self.alloc_reg();
-                self.emit(Op::IndexGet {
-                    dst,
-                    base: base_reg,
-                    index: idx_reg,
+                // An aggregate element (struct / tuple / array) cannot yield a
+                // lenient zero value on an out-of-range index without feeding a
+                // bogus value into a later field/element access, so it panics
+                // with `index out of bounds` - matching the compiled tiers'
+                // bounds assert. Primitive elements keep lenient `IndexGet`.
+                let aggregate = matches!(
+                    self.tcx.kind(expr.ty),
+                    Some(TyKind::Tuple(_) | TyKind::Adt { .. } | TyKind::Array { .. })
+                );
+                self.emit(if aggregate {
+                    Op::IndexGetChecked {
+                        dst,
+                        base: base_reg,
+                        index: idx_reg,
+                    }
+                } else {
+                    Op::IndexGet {
+                        dst,
+                        base: base_reg,
+                        index: idx_reg,
+                    }
                 });
                 Ok(dst)
             }

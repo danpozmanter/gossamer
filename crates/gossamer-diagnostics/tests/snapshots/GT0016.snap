@@ -1,0 +1,12 @@
+---
+source: crates/gossamer-diagnostics/tests/snapshots.rs
+expression: rendered
+---
+--- plain ---
+error[GT0016]: `json::render` / `json::encode` was handed an enum value (often - here
+--- framed ---
+error[GT0016]: `json::render` / `json::encode` was handed an enum value (often
+  --> snap.gos:2:5
+     2 |     let x = 1
+       |     ^^^^^
+     error: here

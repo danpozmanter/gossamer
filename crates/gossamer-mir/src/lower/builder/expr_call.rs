@@ -146,6 +146,13 @@ impl<'a> Builder<'a> {
             if matches!(joined.as_str(), "Box::new" | "Arc::new" | "Rc::new") && args.len() == 1 {
                 return self.lower_expr(&args[0]);
             }
+            // `String::from(s)` is identity for a string argument - gos
+            // `String` is already the owned C-string representation and a
+            // string literal is already a `String`, mirroring Rust's
+            // `String::from(&str)` without a separate conversion.
+            if joined == "String::from" && args.len() == 1 {
+                return self.lower_expr(&args[0]);
+            }
             // `String::new()` / `String::with_capacity(_)` materialise
             // an empty owned String. Gos `String` is the runtime's
             // C-string representation, and the empty literal is the

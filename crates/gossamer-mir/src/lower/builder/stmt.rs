@@ -394,6 +394,7 @@ impl<'a> Builder<'a> {
                                     | TyKind::Adt { .. }
                                     | TyKind::Tuple(_)
                                     | TyKind::Ref { .. }
+                                    | TyKind::HashMap { .. }
                             ) || promote_inner
                                 || promote_handle
                                 || promote_array_elem

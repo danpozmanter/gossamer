@@ -328,13 +328,13 @@ fn main() {
 // std::strings (Unicode-sensitive additions)
 
 #[test]
-fn strings_contains_rune_and_split_whitespace() {
+fn strings_contains_and_split_whitespace() {
     assert_vm_output(
         "strings_unicode",
         r#"
 use std::strings
 fn main() {
-    println!("{}", strings::contains_rune("café", 'é'))
+    println!("{}", strings::contains("café", "é"))
     let fs = strings::split_whitespace("  hello   world  ")
     println!("{}", fs.len())
 }

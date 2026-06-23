@@ -11,11 +11,11 @@ fn main() {
     println!("{}", strings::trim_matches("xxhellxx", "x"))
     println!("[{}]", strings::pad_left("7", 4, '0'))
     println!("[{}]", strings::pad_right("7", 4, '.'))
-    println!("{}", strings::contains_rune("hello", 'l'))
+    println!("{}", strings::contains("hello", "l"))
     println!("{}", strings::contains_any("hello", "xyz"))
     println!("{}", strings::contains_any("hello", "xyl"))
     println!("{}", strings::equal_fold("HeLLo", "hello"))
-    match strings::index_rune("hello", 'l') { Some(i) => println!("ir={}", i), None => println!("ir=none") }
+    match strings::find("hello", "l") { Some(i) => println!("ir={}", i), None => println!("ir=none") }
     match strings::find_any("hello", "lo") { Some(i) => println!("fa={}", i), None => println!("fa=none") }
     match strings::rfind_any("hello", "lo") { Some(i) => println!("ra={}", i), None => println!("ra=none") }
     match strings::strip_prefix("foobar", "foo") { Some(s) => println!("sp={}", s), None => println!("sp=none") }

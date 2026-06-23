@@ -446,6 +446,31 @@ impl<'a> Builder<'a> {
         }
     }
 
+    /// Element kind (`I64`-like vs `String`) of a `HashSet<T>` receiver.
+    /// The set's MIR handle type is erased to a pointer-sized `i64`, so the
+    /// element type is recovered from the HIR receiver-expression type
+    /// (which still carries the generic), defaulting to `String` when it
+    /// cannot be resolved.
+    pub(crate) fn set_elem_kind_of(&self, receiver: &HirExpr) -> MapKeyKind {
+        match self.first_generic_of(receiver.ty) {
+            Some(t) => map_key_kind_from(self.tcx, self.peel_ref_ty(t)),
+            None => MapKeyKind::String,
+        }
+    }
+
+    /// Strips any leading `&T` / `&mut T` layers from `ty`, returning the
+    /// referent. Used where dispatch keys off a value's element kind and a
+    /// borrowed argument (`set.contains(&k)`) must classify like the owned
+    /// value.
+    pub(crate) fn peel_ref_ty(&self, ty: Ty) -> Ty {
+        use gossamer_types::TyKind;
+        let mut cur = ty;
+        while let TyKind::Ref { inner, .. } = self.tcx.kind_of(cur) {
+            cur = *inner;
+        }
+        cur
+    }
+
     /// Element type of a `Vec<T>` / `[T]` / `[T; N]` receiver, peeling any
     /// leading references. `None` when `ty` is not a sequence.
     pub(crate) fn seq_elem_of(&self, ty: Ty) -> Option<Ty> {

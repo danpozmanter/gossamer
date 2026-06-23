@@ -27,12 +27,12 @@ fn main() {
 
     // predicates -> bool
     println!("{}", s.contains_any("xW"))
-    println!("{}", s.contains_rune('F'))
+    println!("{}", s.contains("F"))
     println!("{}", s.equal_fold("HELLO WORLD FOO"))
 
     // search -> Option<i64>
     println!("{}", match s.find_any("WF") { Some(i) => i, None => -1 })
-    println!("{}", match s.index_rune('W') { Some(i) => i, None => -1 })
+    println!("{}", match s.find("W") { Some(i) => i, None => -1 })
     println!("{}", match s.rfind_any("lo") { Some(i) => i, None => -1 })
 
     // strip -> Option<String>

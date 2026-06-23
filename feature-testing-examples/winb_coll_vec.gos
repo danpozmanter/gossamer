@@ -1,0 +1,131 @@
+// Win B collections sweep: Vec / [T] method surface across tiers.
+// push/pop/len/contains/index_of/count_of/first/last/reversed/sort/
+// sort_by/slice/swap and the Result-returning qualified
+// Vec::insert / Vec::remove, on representative + edge inputs (empty,
+// single, duplicate, out-of-range). Bit-identical VM vs compiled.
+
+use std::collections::Vec
+
+#[derive(Clone, PartialEq, Eq, Debug)]
+struct Item { id: i64, tag: String }
+
+fn show_opt_i64(label: String, o: Option<i64>) {
+    match o {
+        Some(v) => println!("{} Some({})", label, v),
+        None => println!("{} None", label),
+    }
+}
+
+fn main() {
+    // push / pop / len on a growing Vec.
+    let mut xs: Vec<i64> = Vec::new()
+    xs.push(10)
+    xs.push(20)
+    xs.push(30)
+    println!("len {}", xs.len())
+    show_opt_i64("pop", xs.pop())
+    println!("after pop len {}", xs.len())
+
+    // pop on empty -> None.
+    let mut empty: Vec<i64> = Vec::new()
+    show_opt_i64("pop-empty", empty.pop())
+
+    // contains / index_of / count_of with duplicates and misses.
+    let ds = [1, 2, 2, 3, 2]
+    println!("contains 2 {} contains 9 {}", ds.contains(&2), ds.contains(&9))
+    show_opt_i64("index_of 2", ds.index_of(&2))
+    show_opt_i64("index_of 9", ds.index_of(&9))
+    println!("count_of 2 {} count_of 9 {}", ds.count_of(&2), ds.count_of(&9))
+
+    // first / last on populated, single, empty.
+    show_opt_i64("first", ds.first())
+    show_opt_i64("last", ds.last())
+    let single = [42]
+    show_opt_i64("single first", single.first())
+    show_opt_i64("single last", single.last())
+    let none_vec: Vec<i64> = Vec::new()
+    show_opt_i64("empty first", none_vec.first())
+    show_opt_i64("empty last", none_vec.last())
+
+    // reversed (non-mutating) then original unchanged.
+    let r = [1, 2, 3, 4]
+    let rr = r.reversed()
+    print!("reversed ")
+    for v in rr { print!("{} ", v) }
+    println!("")
+    print!("orig-after-reversed ")
+    for v in r { print!("{} ", v) }
+    println!("")
+
+    // sort / sort_by in place.
+    let mut s = [5, 3, 1, 4, 2]
+    s.sort()
+    print!("sorted ")
+    for v in s { print!("{} ", v) }
+    println!("")
+    let mut sd = [5, 3, 1, 4, 2]
+    sd.sort_by(|a, b| b - a)
+    print!("sorted-desc ")
+    for v in sd { print!("{} ", v) }
+    println!("")
+
+    // swap.
+    let mut sw = [1, 2, 3]
+    sw.swap(0, 2)
+    print!("swapped ")
+    for v in sw { print!("{} ", v) }
+    println!("")
+
+    // slice: in-range and out-of-range (Result).
+    let sl = [10, 20, 30, 40]
+    match sl.slice(1, 3) {
+        Ok(part) => { print!("slice 1..3 "); for v in part { print!("{} ", v) }; println!("") }
+        Err(e) => println!("slice err {}", e),
+    }
+    match sl.slice(2, 99) {
+        Ok(part) => { print!("slice 2..99 "); for v in part { print!("{} ", v) }; println!("") }
+        Err(_) => println!("slice oob err"),
+    }
+
+    // Qualified Vec::insert (returns a fresh Vec) / Vec::remove
+    // (in place, returns the removed element). Both Result-returning.
+    let mut iv: Vec<i64> = Vec::new()
+    iv.push(1); iv.push(2); iv.push(3)
+    match Vec::insert(iv, 1, 99) {
+        Ok(nv) => { print!("insert "); for v in nv { print!("{} ", v) }; println!("") }
+        Err(e) => println!("insert err {}", e),
+    }
+    let mut rv: Vec<i64> = Vec::new()
+    rv.push(1); rv.push(2); rv.push(3); rv.push(4)
+    match Vec::remove(rv, 0) {
+        Ok(x) => println!("removed {}", x),
+        Err(e) => println!("remove err {}", e),
+    }
+    print!("after remove "); for v in rv { print!("{} ", v) }; println!("")
+    match Vec::remove(rv, 99) {
+        Ok(x) => println!("removed-oob {}", x),
+        Err(_) => println!("remove-oob err"),
+    }
+
+    // Vec of struct elements: contains / index_of by value equality.
+    let items = [Item { id: 1, tag: "a" }, Item { id: 2, tag: "b" }, Item { id: 3, tag: "c" }]
+    println!("has b {}", items.contains(&Item { id: 2, tag: "b" }))
+    println!("has z {}", items.contains(&Item { id: 9, tag: "z" }))
+    show_opt_i64("struct index_of", items.index_of(&Item { id: 3, tag: "c" }))
+
+    // Vec of struct: iterate and read fields.
+    print!("items ")
+    for it in items { print!("{}:{} ", it.id, it.tag) }
+    println!("")
+
+    // Large collection sum to exercise growth and iteration.
+    let mut big: Vec<i64> = Vec::new()
+    let mut i = 0
+    while i < 1000 {
+        big.push(i)
+        i += 1
+    }
+    let mut total = 0
+    for v in big { total += v }
+    println!("big sum {} len {}", total, big.len())
+}

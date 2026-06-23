@@ -112,6 +112,29 @@ pub unsafe extern "C" fn gos_rt_crypto_sha256_digest(input: *const GosVec) -> *m
     super::encoding::bytes_to_gosvec(&gossamer_pkg::sha256::digest(&bytes))
 }
 
+/// `crypto::sha512::digest(data: &[u8]) -> [u8; 64]` - the raw 64-byte
+/// digest (not the hex string), mirroring `gos_rt_crypto_sha256_digest`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_crypto_sha512_digest(input: *const GosVec) -> *mut GosVec {
+    use sha2::Digest;
+    let bytes = unsafe { super::encoding::gosvec_u8(input) };
+    let mut h = sha2::Sha512::new();
+    h.update(&bytes);
+    let digest: [u8; 64] = h.finalize().into();
+    super::encoding::bytes_to_gosvec(&digest)
+}
+
+/// `crypto::blake3::digest(data: &[u8]) -> [u8; 32]` - the raw 32-byte
+/// digest (not the hex string), mirroring `gos_rt_crypto_sha256_digest`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_crypto_blake3_digest(input: *const GosVec) -> *mut GosVec {
+    let bytes = unsafe { super::encoding::gosvec_u8(input) };
+    let mut hasher = ::blake3::Hasher::new();
+    hasher.update(&bytes);
+    let digest: [u8; 32] = *hasher.finalize().as_bytes();
+    super::encoding::bytes_to_gosvec(&digest)
+}
+
 /// Reference HMAC-SHA256 over arbitrary `key` / `message`. Kept
 /// in the runtime so the compiled tier doesn't need to round-
 /// trip through `gossamer-std`. RFC 2104 block size for SHA-256

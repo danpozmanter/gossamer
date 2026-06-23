@@ -13,6 +13,7 @@
 
 pub mod binding_runner;
 pub mod build;
+pub mod frontend;
 pub mod frontend_cache;
 pub mod link;
 pub mod pipeline;
@@ -28,6 +29,7 @@ pub use build::{
     BuildCache, BuildError, BuildGraph, BuildOutput, Crate, Profile, build_workspace,
     fingerprint as crate_fingerprint, fingerprint_all, timed,
 };
+pub use frontend::{FrontendOutcome, check_frontend};
 pub use frontend_cache::{
     FrontendCacheKey, cache_dir, load_blob, load_blob_in, mark_success, mark_success_in,
     observe_hit, observe_hit_in, raw_blob_path, raw_blob_path_in, store_blob, store_blob_in,

@@ -244,64 +244,30 @@ fn validate_source(
     let render_opts = gossamer_diagnostics::RenderOptions {
         colour: crate::paths::stderr_supports_colour(),
     };
-    let (sf, parse_diags) = gossamer_parse::autoderive::parse_with_autoderive(&augmented, file_id);
-    if !parse_diags.is_empty() {
-        for diag in &parse_diags {
-            let structured = diag.to_diagnostic();
-            eprintln!(
-                "{}",
-                gossamer_diagnostics::render(&structured, &map, render_opts)
-            );
+    // `build` runs the same authoritative front-end gate as `check` /
+    // `run` - including exhaustiveness (a non-exhaustive `match` would
+    // otherwise compile to a binary that segfaults on the unmatched arm)
+    // and the canonical-`std`-path check (GR0005). Anything the gate
+    // rejects must never reach codegen.
+    let outcome = gossamer_driver::check_frontend(&augmented, file_id);
+    if !outcome.diagnostics.is_empty() {
+        for diag in &outcome.diagnostics {
+            eprintln!("{}", gossamer_diagnostics::render(diag, &map, render_opts));
         }
         return Err(anyhow!(
-            "{} parse error(s); refusing to build",
-            parse_diags.len()
+            "{} front-end error(s); refusing to build",
+            outcome.diagnostics.len()
         ));
     }
-    let (resolutions, resolve_diags) = gossamer_resolve::resolve_source_file(&sf);
-    let in_scope: Vec<&str> = crate::loaders::collect_top_level_names(&sf);
-    let unresolved: Vec<_> = resolve_diags
-        .iter()
-        .filter(|d| {
-            matches!(
-                d.error,
-                gossamer_resolve::ResolveError::UnresolvedName { .. }
-                    | gossamer_resolve::ResolveError::DuplicateItem { .. }
-            )
-        })
-        .collect();
-    if !unresolved.is_empty() {
-        for diag in &unresolved {
-            let structured = diag.to_diagnostic(&in_scope);
-            eprintln!(
-                "{}",
-                gossamer_diagnostics::render(&structured, &map, render_opts)
-            );
-        }
-        return Err(anyhow!(
-            "{} resolve error(s); refusing to build",
-            unresolved.len()
-        ));
-    }
-    let mut tcx = gossamer_types::TyCtxt::new();
-    let (table, type_diags) = gossamer_types::typecheck_source_file(&sf, &resolutions, &mut tcx);
-    if !type_diags.is_empty() {
-        for diag in &type_diags {
-            let structured = diag.to_diagnostic();
-            eprintln!(
-                "{}",
-                gossamer_diagnostics::render(&structured, &map, render_opts)
-            );
-        }
-        return Err(anyhow!(
-            "{} type error(s); refusing to build",
-            type_diags.len()
-        ));
-    }
+    // Drop the source map before backend lowering so peak RSS reflects
+    // only the live frontend artifacts.
     drop(map);
-    drop(parse_diags);
-    drop(resolve_diags);
-    drop(type_diags);
+    let gossamer_driver::CheckedFrontend {
+        sf,
+        resolutions,
+        table,
+        tcx,
+    } = outcome.checked;
     Ok((sf, resolutions, table, tcx))
 }
 

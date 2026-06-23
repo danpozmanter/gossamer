@@ -9,7 +9,6 @@ use std::collections::HashMap;
 
 use gossamer_types::{TyCtxt, TyKind};
 
-use crate::escape::EscapeSet;
 use crate::ir::{
     BasicBlock, BinOp, BlockId, Body, ConstValue, Local, Operand, Place, Projection, Rvalue,
     Statement, StatementKind, Terminator,
@@ -1678,7 +1677,7 @@ fn local_live_after(
 }
 
 /// RC retain/release last-use elision (item 3). Cancels a tightly
-/// bracketed `retain(x)` / `release(x)` pair on a non-escaping,
+/// bracketed `retain(x)` / `release(x)` pair on a non-shared,
 /// non-region, RC-managed local `x` whose reference is moved into a
 /// surviving holder.
 ///
@@ -1686,10 +1685,11 @@ fn local_live_after(
 /// - the retain is a plain strong retain (`gos_rt_rc_retain` /
 ///   `gos_rt_vec_retain`) on a bare local - never a field / weak /
 ///   aggregate accounting op;
-/// - `x` is RC-managed, not a `region` local, and `escape` reports it
-///   non-escaping (an escaped object may be shared across goroutines and
-///   carry the `SHARED_BIT` atomic boundary, where the balanced count is
-///   load-bearing);
+/// - `x` is RC-managed, not a `region` local, and the goroutine-share
+///   analysis ([`crate::ownership::ShareFacts`]) reports it not
+///   goroutine-shared (a shared object carries the `SHARED_BIT` atomic
+///   boundary, where another goroutine may concurrently adjust the count,
+///   so the balanced pair is load-bearing for that protocol);
 /// - the statement directly before the retain reads `x` (the forwarding
 ///   use whose new reference the retain accounts for) and does not
 ///   reassign it;
@@ -1703,12 +1703,13 @@ fn local_live_after(
 /// single share into that holder without changing the object's reference
 /// count at any point outside the bracket. Both members are removed or
 /// neither; a missed pair only keeps the original (correct) timing.
-pub(crate) fn elide_redundant_rc_pairs(body: &mut Body, escape: &EscapeSet, tcx: &TyCtxt) {
+pub(crate) fn elide_redundant_rc_pairs(body: &mut Body, tcx: &TyCtxt) {
     let n_blocks = body.blocks.len();
     if n_blocks == 0 {
         return;
     }
     let n_locals = body.locals.len();
+    let share = crate::ownership::ShareFacts::compute(body);
     let succs: Vec<Vec<usize>> = body
         .blocks
         .iter()
@@ -1737,7 +1738,7 @@ pub(crate) fn elide_redundant_rc_pairs(body: &mut Body, escape: &EscapeSet, tcx:
             let Some(x) = rc_bare_local_arg(args) else {
                 continue;
             };
-            if !is_rc_local(x) || !escape.is_non_escaping(x) {
+            if !is_rc_local(x) || share.is_goroutine_shared(x) {
                 continue;
             }
             // The forwarding use that the retain accounts for must sit
@@ -1775,6 +1776,13 @@ pub(crate) fn elide_redundant_rc_pairs(body: &mut Body, escape: &EscapeSet, tcx:
             }
             cancels.push((bi, ir, id));
         }
+    }
+    if !cancels.is_empty() && std::env::var_os("GOS_RC_ELIDE_STATS").is_some() {
+        eprintln!(
+            "[rc-elide] {}: cancelled {} pair(s)",
+            body.name,
+            cancels.len()
+        );
     }
     for (bi, ir, id) in cancels {
         body.blocks[bi].stmts[ir].kind = StatementKind::Nop;
@@ -2389,7 +2397,6 @@ mod elision_tests {
     use gossamer_types::TyCtxt;
 
     use super::{bounds_check_elim, elide_redundant_rc_pairs};
-    use crate::escape::EscapeSet;
     use crate::ir::{
         BasicBlock, BinOp, BlockId, Body, ConstValue, Local, LocalDecl, Operand, Place, Projection,
         Rvalue, Statement, StatementKind, Terminator,
@@ -2491,7 +2498,7 @@ mod elision_tests {
     fn cancels_tight_nonescaping_pair() {
         let mut tcx = TyCtxt::new();
         let mut body = body_with(&mut tcx, vec![], vec![], vec![]);
-        elide_redundant_rc_pairs(&mut body, &EscapeSet::default(), &tcx);
+        elide_redundant_rc_pairs(&mut body, &tcx);
         let stmts = &body.blocks[0].stmts;
         // retain at index 1, release at index 2 are both cancelled.
         assert!(
@@ -2512,7 +2519,7 @@ mod elision_tests {
         // `L3 = Copy(L1)` between the retain and the release reads `x`,
         // so the bracket is not tight - both ops are preserved.
         let mut body = body_with(&mut tcx, vec![], vec![copy(3, 1)], vec![]);
-        elide_redundant_rc_pairs(&mut body, &EscapeSet::default(), &tcx);
+        elide_redundant_rc_pairs(&mut body, &tcx);
         let names: Vec<Option<&str>> = body.blocks[0].stmts.iter().map(intrinsic_name).collect();
         assert!(
             names.contains(&Some("gos_rt_rc_retain")) && names.contains(&Some("gos_rt_rc_release")),
@@ -2526,7 +2533,7 @@ mod elision_tests {
         // `L3 = Copy(L1)` after the release keeps `x` live, so the
         // forward-liveness guard preserves both ops.
         let mut body = body_with(&mut tcx, vec![], vec![], vec![copy(3, 1)]);
-        elide_redundant_rc_pairs(&mut body, &EscapeSet::default(), &tcx);
+        elide_redundant_rc_pairs(&mut body, &tcx);
         let names: Vec<Option<&str>> = body.blocks[0].stmts.iter().map(intrinsic_name).collect();
         assert!(
             names.contains(&Some("gos_rt_rc_retain")) && names.contains(&Some("gos_rt_rc_release")),
@@ -2550,7 +2557,7 @@ mod elision_tests {
                 projection: vec![Projection::Field(0)],
             });
         }
-        elide_redundant_rc_pairs(&mut body, &EscapeSet::default(), &tcx);
+        elide_redundant_rc_pairs(&mut body, &tcx);
         assert!(
             !is_nop(&body.blocks[0].stmts[1]),
             "retain must be kept when the release is field-projected"
@@ -2558,20 +2565,46 @@ mod elision_tests {
     }
 
     #[test]
-    fn keeps_escaping_value() {
+    fn cancels_value_moved_into_returned_holder() {
         let mut tcx = TyCtxt::new();
-        let mut body = body_with(&mut tcx, vec![], vec![], vec![]);
-        // Mark `x` (Local 1) as escaping: the pair must be preserved.
-        let escape = crate::escape::analyse(&{
-            // A body where L1 flows into the return slot escapes.
-            let mut b = body.clone();
-            b.blocks[0].stmts.insert(0, copy(0, 1));
-            b
-        });
-        elide_redundant_rc_pairs(&mut body, &escape, &tcx);
+        // `x` (Local 1) is moved into the holder (`holder = Copy(x)`, the
+        // forwarding use) and the holder is then returned (`L0 =
+        // Copy(holder)`), so `x` transitively escapes the function. `x`
+        // itself is dead after the release and not goroutine-shared, so
+        // the move into the surviving holder is a pure ownership transfer
+        // and the pair cancels. This is the binary-trees case: a child
+        // moved into a returned node. The pair was previously kept because
+        // the escape gate flagged the transitive escape.
+        let mut body = body_with(&mut tcx, vec![], vec![], vec![copy(0, 2)]);
+        elide_redundant_rc_pairs(&mut body, &tcx);
         assert!(
-            !is_nop(&body.blocks[0].stmts[1]),
-            "retain must be kept for an escaping value"
+            is_nop(&body.blocks[0].stmts[1]),
+            "retain should be cancelled for a value moved into a returned holder: {:?}",
+            body.blocks[0].stmts[1].kind
+        );
+        assert!(
+            is_nop(&body.blocks[0].stmts[2]),
+            "release should be cancelled for a value moved into a returned holder: {:?}",
+            body.blocks[0].stmts[2].kind
+        );
+    }
+
+    #[test]
+    fn keeps_goroutine_shared_value() {
+        let mut tcx = TyCtxt::new();
+        // `x` (Local 1) is marked shared (it crosses a goroutine
+        // boundary), so another goroutine may concurrently adjust its
+        // count and the balanced pair is load-bearing for the atomic
+        // protocol - both ops must be preserved.
+        let mut body = body_with(&mut tcx, vec![], vec![], vec![]);
+        body.blocks[0]
+            .stmts
+            .push(rc_call(4, "gos_rt_rc_mark_shared", Place::local(Local(1))));
+        elide_redundant_rc_pairs(&mut body, &tcx);
+        let names: Vec<Option<&str>> = body.blocks[0].stmts.iter().map(intrinsic_name).collect();
+        assert!(
+            names.contains(&Some("gos_rt_rc_retain")) && names.contains(&Some("gos_rt_rc_release")),
+            "pair must be kept for a goroutine-shared value"
         );
     }
 

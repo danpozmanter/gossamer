@@ -144,10 +144,10 @@ fn main() {
 }
 
 #[test]
-fn utf8_count_runes_handles_unicode() {
+fn utf8_rune_count_handles_unicode() {
     let src = r#"
 fn main() {
-    println(utf8::count_runes("café"))
+    println(utf8::rune_count("café"))
 }
 "#;
     assert_eq!(run(src), "4\n");

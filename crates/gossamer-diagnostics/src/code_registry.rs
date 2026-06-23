@@ -391,6 +391,13 @@ pub const REGISTRY: &[(&str, &str)] = &[
                      duplicate or rename one of the imports with `use ... as ...`.",
     ),
     (
+        "GR0005",
+        "The `use` names a `std::` module path that does not exist.\n\
+                     Every module has exactly one canonical path (e.g. JSON lives\n\
+                     at `std::encoding::json`); check `gos doc` or the stdlib\n\
+                     reference for the module's path.",
+    ),
+    (
         "GT0001",
         "The type checker could not reconcile two types it expected to\n\
                      match. The primary label shows the location of the mismatch;\n\
@@ -462,6 +469,73 @@ pub const REGISTRY: &[(&str, &str)] = &[
                      decoded (out-of-range `\\u{...}`, surrogate code point,\n\
                      non-ASCII `\\x..`). Fix the escape so the resulting Unicode\n\
                      scalar value is in range.",
+    ),
+    (
+        "GT0011",
+        "A `<T: Bound>` clause names a trait the resolver does not know\n\
+                     about. Check the spelling, or bring the trait into scope so\n\
+                     the bound can be enforced.",
+    ),
+    (
+        "GT0012",
+        "An enum declares more variants than the one-byte heap\n\
+                     discriminant can index (256). Split the enum or group\n\
+                     variants into nested enums.",
+    ),
+    (
+        "GT0013",
+        "A closure was passed to a std combinator the checker has no\n\
+                     signature row for, so its parameter type cannot be inferred.\n\
+                     Annotate the parameter (`|x: String| ...`) or bind the\n\
+                     payload through a typed `match`.",
+    ),
+    (
+        "GT0014",
+        "`i128` / `u128` have no 128-bit runtime representation on any\n\
+                     tier. Use `i64` / `u64`, or split the value into two 64-bit\n\
+                     halves.",
+    ),
+    (
+        "GT0015",
+        "A std free function was used as a first-class value but is not\n\
+                     in the supported table; the compiled tiers have no symbol to\n\
+                     take the address of. Wrap the call in a closure: `|x| f(x)`.",
+    ),
+    (
+        "GT0016",
+        "`json::render` / `json::encode` was handed an enum value (often\n\
+                     a `Result` missing its `?`). Enums have no JSON form; unwrap\n\
+                     first, or use `to_json::<T>` for a struct.",
+    ),
+    (
+        "GT0017",
+        "A generic call instantiates a type parameter with a concrete\n\
+                     type that does not implement a required trait bound. Add the\n\
+                     `impl Trait for Type` or pass a type that already does.",
+    ),
+    (
+        "GT0018",
+        "A call supplied the wrong number of arguments for the callee's\n\
+                     declared arity. The VM aborts on this and the native backend\n\
+                     drops or zero-fills the mismatched arguments, so it is\n\
+                     rejected at check time. Pass exactly as many arguments as the\n\
+                     function declares parameters.",
+    ),
+    (
+        "GT0019",
+        "A path `Enum::Variant` named a variant the enum does not\n\
+                     declare. The resolver leaves the path unresolved and the\n\
+                     program faults at runtime; check the variant spelling against\n\
+                     the enum declaration.",
+    ),
+    (
+        "GT0020",
+        "A method reached through a generic bound resolves only through a\n\
+                     supertrait of that bound (e.g. `fn f<T: Pet>(p: &T)` calling a\n\
+                     method declared on `Animal` where `trait Pet: Animal`). The\n\
+                     compiled tiers cannot lower supertrait-through-bound dispatch\n\
+                     (SPEC §3.8); add the method to the named bound, or bound the\n\
+                     parameter on the supertrait directly.",
     ),
     (
         "GX0001",

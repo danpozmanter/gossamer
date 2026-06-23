@@ -1,0 +1,34 @@
+// Regression: `os::args()` elements must be owned, refcounted gos
+// strings, not raw libc `argv` pointers. Cloning one arg (an RC
+// retain) while others are still live must not corrupt any of them.
+// On a tier that exposes raw argv, the retain writes a fabricated RC
+// header into the adjacent, contiguously-packed argument and the
+// drop frees a libc-interior pointer - so a held `model` string gets
+// silently mutated or the process segfaults. Output must be
+// bit-identical across the VM, Cranelift, and LLVM tiers.
+
+use std::os
+
+fn main() {
+    let args = os::args()
+    let mut first = ""
+    let mut rest: [String] = [].to_vec()
+    let argc = args.len() as i64
+    let mut i: i64 = 0
+    while i < argc {
+        let arg = args[i].clone()
+        if first.len() == 0 {
+            first = arg
+        } else {
+            rest.push(arg)
+        }
+        i += 1
+    }
+    println!("first={}", first)
+    let n = rest.len() as i64
+    let mut k: i64 = 0
+    while k < n {
+        println!("rest[{}]={}", k, rest[k])
+        k += 1
+    }
+}

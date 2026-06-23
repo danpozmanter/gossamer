@@ -1,0 +1,12 @@
+---
+source: crates/gossamer-diagnostics/tests/snapshots.rs
+expression: rendered
+---
+--- plain ---
+error[GT0019]: A path `Enum::Variant` named a variant the enum does not - here
+--- framed ---
+error[GT0019]: A path `Enum::Variant` named a variant the enum does not
+  --> snap.gos:2:5
+     2 |     let x = 1
+       |     ^^^^^
+     error: here

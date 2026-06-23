@@ -107,7 +107,6 @@ pub const ALL_MODULES: &[StdModule] = &[
     CRYPTO_SHA256,
     CRYPTO_HMAC,
     CRYPTO_SUBTLE,
-    SORT,
     UTF8,
     MATH_RAND,
     TESTING,

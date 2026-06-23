@@ -1816,6 +1816,7 @@ pub fn parse_with_autoderive(source: &str, file: FileId) -> (SourceFile, Vec<Par
     // `lint` use the raw `parse_source_file` and are unaffected.
     diags.extend(crate::entry_main::synthesize_entry_main(&mut sf));
     rewrite_serde_generic_calls(&mut sf);
+    rewrite_json_set_mutators(&mut sf);
     rewrite_stdlib_struct_surface(&mut sf);
     inject_synthetic_uses(&mut sf, file);
     (sf, diags)
@@ -1987,6 +1988,134 @@ fn rewrite_form_file_method(expr: &mut gossamer_ast::expr::Expr) {
     };
 }
 
+/// Reports whether `e` is a place expression cheap and side-effect-free
+/// to evaluate more than once (a name, field, or constant-indexed chain).
+fn is_reevaluable_place(e: &gossamer_ast::expr::Expr) -> bool {
+    use gossamer_ast::expr::ExprKind;
+    match &e.kind {
+        ExprKind::Path(_) => true,
+        ExprKind::FieldAccess { receiver, .. } => is_reevaluable_place(receiver),
+        ExprKind::Index { base, index } => {
+            is_reevaluable_place(base)
+                && matches!(index.kind, ExprKind::Literal(_) | ExprKind::Path(_))
+        }
+        _ => false,
+    }
+}
+
+/// Wraps `place = set_call; place` into a value-yielding block so a
+/// mutator rewrite both persists the update and stays usable in
+/// expression position.
+fn writeback_block(
+    place: gossamer_ast::expr::Expr,
+    set_call: gossamer_ast::expr::Expr,
+    span: gossamer_lex::Span,
+) -> gossamer_ast::expr::ExprKind {
+    use gossamer_ast::common::AssignOp;
+    use gossamer_ast::expr::{Block, Expr, ExprKind};
+    use gossamer_ast::stmt::{Stmt, StmtKind};
+    let assign = Expr {
+        id: NodeId::DUMMY,
+        span,
+        kind: ExprKind::Assign {
+            op: AssignOp::Assign,
+            place: Box::new(place.clone()),
+            value: Box::new(set_call),
+        },
+    };
+    ExprKind::Block(Block {
+        stmts: vec![Stmt::new(
+            NodeId::DUMMY,
+            span,
+            StmtKind::Expr {
+                expr: Box::new(assign),
+                has_semi: true,
+            },
+        )],
+        tail: Some(Box::new(place)),
+        synthetic: true,
+    })
+}
+
+/// Rewrites a `json::set(&mut place, key, value)` mutator call into
+/// `{ place = json::set(place, key, value); place }` so the in-place
+/// update persists. `json::set` is a functional helper (it returns a
+/// new `json::Value`); the `&mut place` spelling reads as a mutation,
+/// so the returned value must be written back to `place`. The block
+/// also yields the updated value, keeping the call usable in
+/// expression position. The functional form (`let x = json::set(obj,
+/// k, v)`, no `&mut`) is left untouched. Returns `true` when it fired.
+fn rewrite_json_set_mutator(expr: &mut gossamer_ast::expr::Expr) -> bool {
+    use gossamer_ast::common::UnaryOp;
+    use gossamer_ast::expr::{Expr, ExprKind};
+
+    let ExprKind::Call { callee, args } = &expr.kind else {
+        return false;
+    };
+    if args.len() != 3 {
+        return false;
+    }
+    let ExprKind::Path(path) = &callee.kind else {
+        return false;
+    };
+    let segs: Vec<&str> = path.segments.iter().map(|s| s.name.name.as_str()).collect();
+    let is_json_set = matches!(
+        segs.as_slice(),
+        ["json", "set"] | ["encoding", "json", "set"] | ["std", "encoding", "json", "set"]
+    );
+    if !is_json_set {
+        return false;
+    }
+    // First arg must be `&mut place` / `&place` over a place expression
+    // that is safe to re-evaluate (a name, field, or index chain - no
+    // calls). Anything else keeps the functional semantics.
+    let ExprKind::Unary {
+        op: UnaryOp::RefMut | UnaryOp::RefShared,
+        operand,
+    } = &args[0].kind
+    else {
+        return false;
+    };
+    if !is_reevaluable_place(operand) {
+        return false;
+    }
+    let place = (**operand).clone();
+    let span = expr.span;
+    let ExprKind::Call { callee, mut args } =
+        std::mem::replace(&mut expr.kind, ExprKind::Tuple(Vec::new()))
+    else {
+        unreachable!("matched Call above");
+    };
+    // Replace the `&mut place` first argument with the bare place so
+    // the inner call lowers through the ordinary functional path.
+    args[0] = place.clone();
+    let set_call = Expr {
+        id: NodeId::DUMMY,
+        span,
+        kind: ExprKind::Call { callee, args },
+    };
+    expr.kind = writeback_block(place, set_call, span);
+    true
+}
+
+/// Walks the program rewriting every `json::set(&mut place, k, v)`
+/// mutator call into a value-yielding write-back block (see
+/// `rewrite_json_set_mutator`).
+pub fn rewrite_json_set_mutators(sf: &mut SourceFile) {
+    use gossamer_ast::VisitorMut;
+    use gossamer_ast::expr::Expr;
+    use gossamer_ast::visitor::walk_expr_mut;
+
+    struct Rewriter;
+    impl VisitorMut for Rewriter {
+        fn visit_expr(&mut self, expr: &mut Expr) {
+            walk_expr_mut(self, expr);
+            rewrite_json_set_mutator(expr);
+        }
+    }
+    Rewriter.visit_source_file(sf);
+}
+
 /// Redirects the user-facing stdlib struct surface
 /// (`encoding::pem::decode(..)`, the `pem::Block { .. }` literal,
 /// `pem::Block` type annotations) onto the injected real-struct
@@ -2143,11 +2272,13 @@ pub fn rewrite_serde_generic_calls(sf: &mut SourceFile) {
                 2 => {
                     let head = path.segments[0].name.name.as_str();
                     let tail = path.segments[1].name.name.as_str();
+                    // The bare `from_json::<T>` turbofish is the canonical
+                    // spelling; the qualified `json::from_json::<T>` is not a
+                    // second path. `from_yaml` / `from_toml` keep their
+                    // qualified spellings (the format module disambiguates).
                     let matched = matches!(
                         (head, tail),
-                        ("json", "from_json" | "to_json")
-                            | ("yaml", "from_yaml" | "to_yaml")
-                            | ("toml", "from_toml" | "to_toml")
+                        ("yaml", "from_yaml" | "to_yaml") | ("toml", "from_toml" | "to_toml")
                     );
                     if !matched {
                         return;

@@ -378,8 +378,17 @@ impl<'a> Builder<'a> {
             // Returns Option<Vec<String>> - disc=0 Some(caps), disc=1 None.
             "regex::captures" => ("gos_rt_regex_captures", self.option_vec_option_string_ty()),
             "regex::find_all" => {
+                // The runtime returns 24-byte `(start, end, text)` tuples
+                // (see `gos_rt_regex_find_all`), so a `let all = ...`
+                // binding must carry the tuple element type - otherwise the
+                // bound-Vec for-loop reads each element as a single 8-byte
+                // slot and `hit.2` indexes past the slot.
+                let i = self.tcx.int_ty(gossamer_types::IntTy::I64);
                 let s = self.tcx.string_ty();
-                let v = self.tcx.intern(gossamer_types::TyKind::Vec(s));
+                let tup = self
+                    .tcx
+                    .intern(gossamer_types::TyKind::Tuple(vec![i, i, s]));
+                let v = self.tcx.intern(gossamer_types::TyKind::Vec(tup));
                 ("gos_rt_regex_find_all", v)
             }
             "regex::captures_all" => {
@@ -396,6 +405,7 @@ impl<'a> Builder<'a> {
                 let outer = self.tcx.intern(gossamer_types::TyKind::Vec(inner));
                 ("gos_rt_regex_captures_all", outer)
             }
+            "regex::replace" => ("gos_rt_regex_replace", self.tcx.string_ty()),
             "regex::replace_all" => ("gos_rt_regex_replace_all", self.tcx.string_ty()),
             "regex::split" => {
                 let s = self.tcx.string_ty();
@@ -754,7 +764,7 @@ impl<'a> Builder<'a> {
             "strconv::parse_i64" | "strconv::parse_int" => {
                 ("gos_rt_strconv_parse_i64", self.result_i64_error_adt_ty())
             }
-            "strconv::parse_u64" => ("gos_rt_strconv_parse_i64", self.result_i64_error_adt_ty()),
+            "strconv::parse_u64" => ("gos_rt_strconv_parse_u64", self.result_i64_error_adt_ty()),
             "strconv::atoi" => ("gos_rt_strconv_atoi", self.result_i64_error_adt_ty()),
             "strconv::parse_f64" | "strconv::parse_float" => {
                 ("gos_rt_strconv_parse_f64", self.result_f64_error_adt_ty())
@@ -810,10 +820,8 @@ impl<'a> Builder<'a> {
             "strings::trim_matches" => ("gos_rt_str_trim_matches", self.tcx.string_ty()),
             "strings::pad_left" => ("gos_rt_str_pad_left", self.tcx.string_ty()),
             "strings::pad_right" => ("gos_rt_str_pad_right", self.tcx.string_ty()),
-            "strings::contains_rune" => ("gos_rt_str_contains_rune", self.tcx.bool_ty()),
             "strings::contains_any" => ("gos_rt_str_contains_any", self.tcx.bool_ty()),
             "strings::equal_fold" => ("gos_rt_str_equal_fold", self.tcx.bool_ty()),
-            "strings::index_rune" => ("gos_rt_str_index_rune", self.option_i64_adt_ty()),
             "strings::find_any" => ("gos_rt_str_index_any", self.option_i64_adt_ty()),
             "strings::rfind_any" => ("gos_rt_str_last_index_any", self.option_i64_adt_ty()),
             "strings::strip_prefix" => ("gos_rt_str_strip_prefix", self.option_string_adt_ty()),
@@ -873,6 +881,9 @@ impl<'a> Builder<'a> {
             ),
             "encoding::base32::encode" | "base32::encode" => {
                 ("gos_rt_encoding_base32_encode", self.tcx.string_ty())
+            }
+            "encoding::base32::encode_hex" | "base32::encode_hex" => {
+                ("gos_rt_encoding_base32_encode_hex", self.tcx.string_ty())
             }
             "encoding::base32::decode" | "base32::decode" => (
                 "gos_rt_encoding_base32_decode",
@@ -1790,10 +1801,6 @@ impl<'a> Builder<'a> {
                 "gos_rt_utf8_rune_count_in_string",
                 self.tcx.int_ty(gossamer_types::IntTy::I64),
             ),
-            "utf8::count_runes" => (
-                "gos_rt_utf8_count_runes",
-                self.tcx.int_ty(gossamer_types::IntTy::I64),
-            ),
             "utf8::rune_count" => (
                 "gos_rt_utf8_rune_count_in_string",
                 self.tcx.int_ty(gossamer_types::IntTy::I64),
@@ -2192,7 +2199,7 @@ impl<'a> Builder<'a> {
                 let v = self.tcx.intern(gossamer_types::TyKind::Vec(s));
                 ("gos_rt_os_args", v)
             }
-            "fs::list_dir" | "fs::walk_dir" | "path::walk" => {
+            "fs::list_dir" | "fs::walk_dir" | "path::walk" | "os::list_dir" => {
                 // Return type is `Result<Vec<DirInfo>, errors::Error>`.
                 // Pin the dest as a Result Adt whose first generic
                 // is `Vec<DirInfo>` so `.map_err(...)?` unwraps to a
@@ -2214,10 +2221,10 @@ impl<'a> Builder<'a> {
                     def: gossamer_resolve::DefId::local(u32::MAX),
                     substs,
                 });
-                let sym = if joined == "fs::list_dir" {
-                    "gos_rt_fs_list_dir"
-                } else {
+                let sym = if joined == "fs::walk_dir" || joined == "path::walk" {
                     "gos_rt_fs_walk_dir"
+                } else {
+                    "gos_rt_fs_list_dir"
                 };
                 (sym, result_ty)
             }
@@ -2606,8 +2613,36 @@ impl<'a> Builder<'a> {
                     self.tcx.intern(gossamer_types::TyKind::Vec(u8_ty)),
                 )
             }
+            "crypto::sha512::digest" | "sha512::digest" => {
+                let u8_ty = self.tcx.int_ty(gossamer_types::IntTy::U8);
+                (
+                    "gos_rt_crypto_sha512_digest",
+                    self.tcx.intern(gossamer_types::TyKind::Vec(u8_ty)),
+                )
+            }
+            "crypto::blake3::digest" | "blake3::digest" => {
+                let u8_ty = self.tcx.int_ty(gossamer_types::IntTy::U8);
+                (
+                    "gos_rt_crypto_blake3_digest",
+                    self.tcx.intern(gossamer_types::TyKind::Vec(u8_ty)),
+                )
+            }
+            "crypto::insecure::md5" | "insecure::md5" => {
+                let u8_ty = self.tcx.int_ty(gossamer_types::IntTy::U8);
+                (
+                    "gos_rt_crypto_md5",
+                    self.tcx.intern(gossamer_types::TyKind::Vec(u8_ty)),
+                )
+            }
             "crypto::insecure::md5_hex" | "insecure::md5_hex" => {
                 ("gos_rt_crypto_md5_hex", self.tcx.string_ty())
+            }
+            "crypto::insecure::sha1" | "insecure::sha1" => {
+                let u8_ty = self.tcx.int_ty(gossamer_types::IntTy::U8);
+                (
+                    "gos_rt_crypto_sha1",
+                    self.tcx.intern(gossamer_types::TyKind::Vec(u8_ty)),
+                )
             }
             "crypto::insecure::sha1_hex" | "insecure::sha1_hex" => {
                 ("gos_rt_crypto_sha1_hex", self.tcx.string_ty())
@@ -2638,8 +2673,12 @@ impl<'a> Builder<'a> {
                 "gos_rt_set_new",
                 self.tcx.int_ty(gossamer_types::IntTy::I64),
             ),
+            // `BTreeMap` is backed by the same map runtime as `HashMap`
+            // (see the checker's `TyKind::HashMap` resolution), so its
+            // constructor allocates a `GosMap`; the binding keeps its
+            // `HashMap<K, V>` type and reaches the full map method surface.
             "BTreeMap::new" | "collections::BTreeMap::new" => (
-                "gos_rt_btmap_new",
+                "gos_rt_map_new",
                 self.tcx.int_ty(gossamer_types::IntTy::I64),
             ),
             "VecDeque::new" | "collections::VecDeque::new" => (
@@ -2832,7 +2871,14 @@ impl<'a> Builder<'a> {
             "gos_rt_encoding_base64_encode"
                 | "gos_rt_encoding_hex_encode"
                 | "gos_rt_encoding_base32_encode"
+                | "gos_rt_encoding_base32_encode_hex"
                 | "gos_rt_encoding_ascii85_encode"
+                | "gos_rt_crypto_sha256_digest"
+                | "gos_rt_crypto_sha512_digest"
+                | "gos_rt_crypto_blake3_digest"
+                | "gos_rt_crypto_hmac_sha256_mac"
+                | "gos_rt_crypto_md5"
+                | "gos_rt_crypto_sha1"
                 | "gos_rt_compress_flate_compress"
                 | "gos_rt_compress_zlib_compress"
                 | "gos_rt_compress_gzip_encode"

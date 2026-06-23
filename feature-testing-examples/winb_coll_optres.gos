@@ -1,0 +1,86 @@
+// Win B collections sweep: std::option / std::result combinator
+// surface across tiers, with special attention to Option/Result
+// payloads that carry structs. map/and_then/filter/or/or_else/
+// default/default_with/zip/flatten/is_some/is_none and result
+// map/map_err/and_then/or_else/default/default_with/ok/err/is_ok/
+// is_err. Bit-identical VM vs compiled.
+
+use std::option
+use std::result
+use std::errors
+
+#[derive(Clone, PartialEq, Eq, Debug)]
+struct Point { x: i64, y: i64 }
+
+fn main() {
+    // ---- Option, scalar payloads ----
+    let some: Option<i64> = Some(3)
+    let none: Option<i64> = None
+    println!("map {}", some |> option::map(|n: i64| n + 1) |> option::default(0))
+    println!("map-none {}", none |> option::map(|n: i64| n + 1) |> option::default(-1))
+    println!("and_then {}",
+        some |> option::and_then(|n: i64| if n > 1 { Some(n * 10) } else { None }) |> option::default(0))
+    println!("filter-keep {}", some |> option::filter(|n: i64| n % 2 == 1) |> option::default(0))
+    println!("filter-drop {}", some |> option::filter(|n: i64| n % 2 == 0) |> option::default(-1))
+    println!("or {}", none |> option::or(Some(5)) |> option::default(0))
+    println!("or_else {}", none |> option::or_else(|| Some(6)) |> option::default(0))
+    println!("default_with {}", none |> option::default_with(|| 9))
+    println!("is_some {} is_none {}", some |> option::is_some, none |> option::is_none)
+
+    // zip + flatten.
+    let zipped = some |> option::zip(Some(4))
+    let mut zs = 0
+    if let Some((a, b)) = zipped { zs = a + b }
+    println!("zip {}", zs)
+    let nested: Option<Option<i64>> = Some(Some(8))
+    println!("flatten {}", nested |> option::flatten |> option::default(0))
+
+    // ---- Option, struct payloads ----
+    let sp: Option<Point> = Some(Point { x: 1, y: 2 })
+    let np: Option<Point> = None
+    match sp {
+        Some(p) => println!("struct some {} {}", p.x, p.y),
+        None => println!("struct some none"),
+    }
+    println!("struct is_some {} none is_none {}", sp |> option::is_some, np |> option::is_none)
+    // map a struct option to a scalar.
+    println!("struct map {}", sp |> option::map(|p: Point| p.x + p.y) |> option::default(0))
+    // and_then producing a new struct option, read back.
+    let moved = sp |> option::and_then(|p: Point| Some(Point { x: p.x + 10, y: p.y + 20 }))
+    match moved {
+        Some(p) => println!("struct and_then {} {}", p.x, p.y),
+        None => println!("struct and_then none"),
+    }
+
+    // ---- Result, scalar payloads ----
+    let ok: Result<i64, errors::Error> = Ok(2)
+    let bad: Result<i64, errors::Error> = Err(errors::new("boom"))
+    println!("r map {}", ok |> result::map(|n: i64| n * 3) |> result::default(0))
+    println!("r map-err-default {}",
+        bad |> result::map(|n: i64| n * 3) |> result::default(-1))
+    println!("r and_then {}", ok |> result::and_then(|n: i64| Ok(n + 10)) |> result::default(0))
+    println!("r or_else {}", bad |> result::or_else(|_e: errors::Error| Ok(7)) |> result::default(0))
+    println!("r is_ok {} is_err {}", ok |> result::is_ok, bad |> result::is_err)
+    println!("r ok->some {} err->some {}",
+        ok |> result::ok |> option::is_some, bad |> result::err |> option::is_some)
+    bad |> result::map_err(|e: errors::Error| errors::wrap(e, "ctx"))
+        |> result::default_with(|e: errors::Error| println!("r default_with {}", e))
+
+    // ---- Result, struct payloads ----
+    let rsp: Result<Point, errors::Error> = Ok(Point { x: 5, y: 6 })
+    let rbad: Result<Point, errors::Error> = Err(errors::new("nope"))
+    match rsp {
+        Ok(p) => println!("r struct ok {} {}", p.x, p.y),
+        Err(e) => println!("r struct err {}", e),
+    }
+    println!("r struct map {}", rsp |> result::map(|p: Point| p.x * p.y) |> result::default(0))
+    let rmoved = rsp |> result::and_then(|p: Point| Ok(Point { x: p.x + 1, y: p.y + 1 }))
+    match rmoved {
+        Ok(p) => println!("r struct and_then {} {}", p.x, p.y),
+        Err(_) => println!("r struct and_then err"),
+    }
+    match rbad |> result::map(|p: Point| p.x) {
+        Ok(v) => println!("r struct bad ok {}", v),
+        Err(e) => println!("r struct bad err {}", e),
+    }
+}

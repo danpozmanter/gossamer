@@ -75,11 +75,22 @@ impl<'a> Builder<'a> {
         // element. Arrays-of-T as elements aren't sortable -
         // their content fan-out makes the comparator ABI
         // ambiguous; bail out.
+        // `fs::DirInfo` and the other opaque heap-blob / handle stdlib
+        // structs (`def.local` in the `u32::MAX - 16 ..= u32::MAX - 2`
+        // sentinel range) are single pointer-valued slots, so the
+        // comparator receives the value directly like any scalar - the
+        // aggregate helper would hand it a pointer to the slot (a pointer
+        // to the pointer) and the comparison would read the wrong bytes.
+        let elem_is_opaque_handle = matches!(
+            elem_kind,
+            TyKind::Adt { def, .. } if (u32::MAX - 16..=u32::MAX - 2).contains(&def.local)
+        );
         let elem_is_scalar = matches!(
             elem_kind,
             TyKind::Int(IntTy::I64) | TyKind::String | TyKind::Bool
-        );
-        let elem_is_aggregate = matches!(elem_kind, TyKind::Tuple(_) | TyKind::Adt { .. });
+        ) || elem_is_opaque_handle;
+        let elem_is_aggregate =
+            !elem_is_opaque_handle && matches!(elem_kind, TyKind::Tuple(_) | TyKind::Adt { .. });
         if !elem_is_scalar && !elem_is_aggregate {
             return None;
         }

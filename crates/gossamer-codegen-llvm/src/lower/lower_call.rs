@@ -671,7 +671,9 @@ impl<'a> Lowerer<'a> {
             let eb_i64 = if let Some(a) = args.first() {
                 self.lower_operand(a)?
             } else {
-                "8".to_string()
+                llvm_vec_elem_bytes_from_local(self.body, self.tcx, destination.local)
+                    .unwrap_or(8)
+                    .to_string()
             };
             let eb_i32 = self.fresh();
             writeln!(self.out, "  {eb_i32} = trunc i64 {eb_i64} to i32").unwrap();
@@ -702,7 +704,9 @@ impl<'a> Lowerer<'a> {
             let eb_i64 = if let Some(a) = args.first() {
                 self.lower_operand(a)?
             } else {
-                "8".to_string()
+                llvm_vec_elem_bytes_from_local(self.body, self.tcx, destination.local)
+                    .unwrap_or(8)
+                    .to_string()
             };
             let cap_i64 = if let Some(a) = args.get(1) {
                 self.lower_operand(a)?

@@ -79,6 +79,45 @@ pub unsafe extern "C" fn gos_rt_set_remove(s: *mut GosSet, key: *const c_char) -
     })
 }
 
+// `HashSet<i64>` reuses the String-backed set: each i64 key is stored
+// as its canonical decimal string. The mapping i64 -> decimal text is
+// injective, so set membership semantics are preserved exactly. The
+// MIR dispatch routes i64-element sets here and routes `to_vec` to the
+// i64 reader that parses the keys back, so iteration order matches the
+// VM's numeric sort.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_set_insert_i64(s: *mut GosSet, key: i64) -> i64 {
+    ffi_entry!(-1, {
+        if s.is_null() {
+            return 0;
+        }
+        let s = unsafe { &mut *s };
+        i64::from(s.inner.insert(key.to_string()))
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_set_contains_i64(s: *const GosSet, key: i64) -> i64 {
+    ffi_entry!(-1, {
+        if s.is_null() {
+            return 0;
+        }
+        let s = unsafe { &*s };
+        i64::from(s.inner.contains(&key.to_string()))
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_set_remove_i64(s: *mut GosSet, key: i64) -> i64 {
+    ffi_entry!(-1, {
+        if s.is_null() {
+            return 0;
+        }
+        let s = unsafe { &mut *s };
+        i64::from(s.inner.remove(&key.to_string()))
+    })
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_set_len(s: *const GosSet) -> i64 {
     ffi_entry!(-1, {
@@ -86,6 +125,66 @@ pub unsafe extern "C" fn gos_rt_set_len(s: *const GosSet) -> i64 {
             return 0;
         }
         unsafe { (*s).inner.len() as i64 }
+    })
+}
+
+/// Snapshots a string set's keys into a fresh `Vec<String>`, sorted
+/// lexicographically so iteration order is deterministic and matches
+/// the VM's sorted `to_vec`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_set_to_vec(s: *const GosSet) -> *mut crate::c_abi::vec::GosVec {
+    ffi_entry!(std::ptr::null_mut(), {
+        let out = unsafe {
+            crate::c_abi::vec::gos_rt_vec_new_typed(8, crate::c_abi::vec::vec_elem_kind::STRING)
+        };
+        if s.is_null() {
+            return out;
+        }
+        let s = unsafe { &*s };
+        let mut keys: Vec<&str> = s.inner.iter().map(String::as_str).collect();
+        keys.sort_unstable();
+        for k in keys {
+            let cstr = crate::c_abi::string::alloc_cstring(k.as_bytes());
+            let slot = (cstr as usize as i64).to_ne_bytes();
+            unsafe { crate::c_abi::vec::gos_rt_vec_push(out, slot.as_ptr()) };
+        }
+        out
+    })
+}
+
+/// Snapshots an i64 set's keys into a fresh `Vec<i64>`, sorted
+/// numerically to match the VM's `MapKey::Int` ordering. The keys are
+/// stored as decimal text (see `gos_rt_set_insert_i64`) and parsed back.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_set_to_vec_i64(s: *const GosSet) -> *mut crate::c_abi::vec::GosVec {
+    ffi_entry!(std::ptr::null_mut(), {
+        let out = unsafe {
+            crate::c_abi::vec::gos_rt_vec_new_typed(8, crate::c_abi::vec::vec_elem_kind::PRIMITIVE)
+        };
+        if s.is_null() {
+            return out;
+        }
+        let s = unsafe { &*s };
+        let mut keys: Vec<i64> = s
+            .inner
+            .iter()
+            .filter_map(|k| k.parse::<i64>().ok())
+            .collect();
+        keys.sort_unstable();
+        for k in keys {
+            unsafe { crate::c_abi::vec::gos_rt_vec_push_i64(out, k) };
+        }
+        out
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_set_clear(s: *mut GosSet) -> *mut GosSet {
+    ffi_entry!(s, {
+        if !s.is_null() {
+            unsafe { (*s).inner.clear() };
+        }
+        s
     })
 }
 

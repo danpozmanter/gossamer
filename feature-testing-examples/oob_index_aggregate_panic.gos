@@ -1,0 +1,17 @@
+// Regression: reading an out-of-range element of a Vec whose element is an
+// aggregate (struct / tuple) panics with `index out of bounds` on every tier
+// rather than yielding a bogus value (the compiled tier dereferenced a null
+// slot pointer and segfaulted; the VM returned a scalar zero and then failed a
+// field access). Both tiers now panic identically (exit 101, empty stdout).
+// Registered with allow_nonzero; the matching exit/stdout is the assertion.
+
+struct P {
+    x: i64,
+    y: i64,
+}
+
+fn main() {
+    let v: [P] = [P { x: 1, y: 2 }]
+    let bad = v[1000000]
+    println!("unreachable {}", bad.x)
+}

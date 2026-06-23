@@ -410,8 +410,7 @@ pub unsafe extern "C" fn gos_rt_path_join(a: *const c_char, b: *const c_char) ->
         } else {
             unsafe { CStr::from_ptr(b).to_str() }.unwrap_or("")
         };
-        let joined = std::path::Path::new(a).join(b);
-        alloc_cstring(joined.to_string_lossy().as_bytes())
+        alloc_cstring(path_join(a, b).as_bytes())
     })
 }
 
@@ -516,7 +515,7 @@ pub unsafe extern "C" fn gos_rt_path_ext(p: *const c_char) -> i128 {
 
 /// `path::parent(p) -> Option<String>` - drops the trailing
 /// component. Returns None when `p` has no parent (root or
-/// single-component path).
+/// single-component path). Mirrors `gossamer_std::path::parent`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_path_parent(p: *const c_char) -> i128 {
     ffi_entry!(0i128, {
@@ -776,6 +775,24 @@ pub unsafe extern "C" fn gos_rt_net_resolve(host: *const c_char) -> i128 {
             Err(e) => err_io(&e),
         }
     })
+}
+
+/// Posix path join mirroring `gossamer_std::path::join`: collapses a
+/// trailing separator on `base` and a leading separator on `segment`
+/// to a single `/`, absorbs an absolute `segment`, and is independent
+/// of the host separator so the compiled tier matches the VM on every
+/// platform.
+fn path_join(base: &str, segment: &str) -> String {
+    if segment.starts_with('/') {
+        return segment.to_string();
+    }
+    if base.is_empty() {
+        return segment.to_string();
+    }
+    let mut out = base.trim_end_matches('/').to_string();
+    out.push('/');
+    out.push_str(segment.trim_start_matches('/'));
+    out
 }
 
 /// Lexical path clean shared by `gos_rt_path_clean` /

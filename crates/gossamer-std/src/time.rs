@@ -254,7 +254,13 @@ pub fn format_rfc1123_gmt(when: SystemTime) -> Result<String, FormatError> {
 pub fn format_rfc3339(when: SystemTime) -> Result<String, FormatError> {
     let secs = match when.0.duration_since(std::time::UNIX_EPOCH) {
         Ok(dur) => i128::from(dur.as_secs()),
-        Err(err) => -i128::from(err.duration().as_secs()),
+        // Floor toward negative infinity so a pre-epoch instant maps to
+        // the whole second that contains it (e.g. -1500ms is 23:59:58,
+        // not 23:59:59); this matches the compiled tier's `div_euclid`.
+        Err(err) => {
+            let dur = err.duration();
+            -(i128::from(dur.as_secs()) + i128::from(dur.subsec_nanos() > 0))
+        }
     };
     let civil = unix_to_civil(secs)?;
     Ok(format!(

@@ -31,16 +31,19 @@ use super::*;
 //
 //   - the raw `argv + 1` pointer, stored in `ARGS_PTR`, used by
 //     the flat-codegen Place projection with stride 8 (the
-//     legacy Var-typed callers); `gos_rt_arr_len` detects that
-//     pointer and short-circuits to `argc - 1`.
-//   - a real `*mut GosVec` whose backing `ptr` is `argv + 1` and
-//     whose `len`/`cap` are `argc - 1`, returned by
-//     `gos_rt_os_args` itself. Pinning `os::args()` to
-//     `Vec<String>` at MIR lowering then makes `args[i].len()`
-//     dispatch through `gos_rt_str_len` instead of falling into
-//     the generic `gos_rt_len` (which reads a Vec header out of
-//     a `*const c_char` pointer and crashes when the leading
-//     bytes don't form a valid length).
+//     legacy Var-typed callers) and the `flag` parser's sentinel
+//     path; `gos_rt_arr_len` detects that pointer and
+//     short-circuits to `argc - 1`. These consumers only read the
+//     bytes through `CStr`, never run RC accounting on them.
+//   - an owned `*mut GosVec` of `vec_elem_kind::STRING`, returned
+//     by `gos_rt_os_args`, holding a gos-tagged, refcounted copy
+//     of each user arg. The copies are essential: `args[i]` is a
+//     `String`, so the compiled tier emits RC retain/release on it
+//     for `.clone()` and end-of-scope drops, and those dispatch on
+//     an RC header read at a negative offset from the pointer. A
+//     raw libc `argv` pointer has no such header - the retain would
+//     corrupt the contiguous argv block and a release would free a
+//     libc-interior pointer - so the vec must own real gos strings.
 
 pub static ARGS_PTR: AtomicUsize = AtomicUsize::new(0);
 pub static ARGS_LEN: AtomicI64 = AtomicI64::new(0);
@@ -79,45 +82,48 @@ pub unsafe extern "C" fn gos_rt_set_args(argc: c_int, argv: *const *const c_char
             // strings.
 
             let user_argv = unsafe { argv.add(1) };
-            let len = i64::from(argc - 1);
+            let len = argc - 1;
+            // `ARGS_PTR` / `ARGS_LEN` keep the raw `argv + 1` view for the
+            // read-only consumers that still walk it directly: the
+            // `gos_rt_arr_len` length short-circuit and the `flag` parser's
+            // sentinel path. Those only `CStr`-read the bytes; they never run
+            // RC accounting on them, so the raw libc pointers are safe there.
             ARGS_PTR.store(user_argv as usize, Ordering::SeqCst);
-            ARGS_LEN.store(len, Ordering::SeqCst);
-            // Expose `os::args()` as a real `*mut GosVec` so the
-            // compiled tier can index it with the standard
-            // `header.ptr + i * elem_bytes` shape and dispatch
-            // `args[i].len()` to `gos_rt_str_len` once `os::args`'s
-            // return type is pinned to `Vec<String>`.
-            //
-            // `cap = 0` marks the data buffer as borrowed (libc owns
-            // `argv`), so `gos_rt_vec_free` skips its dealloc arm
-            // when GC sweep walks across this header - `len` alone is
-            // enough for `args.len()` (read at offset 0) and indexing
-            // (which only touches `ptr` and `elem_bytes`).
-            let vec = Box::into_raw(Box::new(GosVec {
-                len,
-                cap: 0,
-                elem_bytes: 8,
-                elem_kind: vec_elem_kind::PRIMITIVE,
-                _reserved: [0; 3],
-                ptr: SyncRawPtr::new(user_argv as *mut u8),
-            }));
+            ARGS_LEN.store(i64::from(len), Ordering::SeqCst);
+            // Expose `os::args()` as an owned `Vec<String>`: copy each arg
+            // into a gos-tagged, refcounted string. libc's `argv` strings are
+            // untagged and packed contiguously, so handing them to the RC
+            // retain/release dispatch that `args[i].clone()` and end-of-scope
+            // drops emit would read and write a fabricated RC header at a
+            // negative offset from the pointer - that offset lands inside the
+            // adjacent argument and corrupts it, and the release that drives
+            // the bogus count to zero frees a libc-interior pointer. Owning
+            // tagged copies makes every RC op land on a real header; the vec
+            // holds the base reference for the process lifetime (I4: string
+            // boundaries own their values), mirroring the `argv[0]` copy above.
+            let vec = unsafe { gos_rt_vec_new_typed(8, vec_elem_kind::STRING) };
+            if !vec.is_null() {
+                for i in 0..len {
+                    // SAFETY: `user_argv[0..len]` is valid (see above).
+                    let p = unsafe { *user_argv.add(i as usize) };
+                    let bytes = if p.is_null() {
+                        &b""[..]
+                    } else {
+                        unsafe { CStr::from_ptr(p).to_bytes() }
+                    };
+                    let cs = alloc_cstring(bytes) as i64;
+                    unsafe { gos_rt_vec_push(vec, std::ptr::addr_of!(cs).cast::<u8>()) };
+                }
+            }
             ARGS_VEC.store(vec as usize, Ordering::SeqCst);
         } else {
             ARGS_PTR.store(0, Ordering::SeqCst);
             ARGS_LEN.store(0, Ordering::SeqCst);
-            // Even when there are no user args, expose a valid
-            // empty `GosVec` so callers iterating `for a in
-            // env::args()` see len=0 instead of dereferencing a
-            // null header. The previous null sentinel segfaulted on
-            // the iterator's `header.ptr + 0 * elem_bytes` walk.
-            let vec = Box::into_raw(Box::new(GosVec {
-                len: 0,
-                cap: 0,
-                elem_bytes: 8,
-                elem_kind: vec_elem_kind::PRIMITIVE,
-                _reserved: [0; 3],
-                ptr: SyncRawPtr::new(std::ptr::null_mut()),
-            }));
+            // Even when there are no user args, expose a valid empty
+            // `Vec<String>` so callers iterating `for a in env::args()` see
+            // len=0 instead of dereferencing a null header, and so the
+            // element kind matches the populated branch.
+            let vec = unsafe { gos_rt_vec_new_typed(8, vec_elem_kind::STRING) };
             ARGS_VEC.store(vec as usize, Ordering::SeqCst);
         }
         // Initialise the Rust runtime's per-process state. The
@@ -726,4 +732,65 @@ pub unsafe extern "C" fn gos_rt_exec_run(prog: *const c_char, args: *mut GosVec)
             }
         }
     })
+}
+
+#[cfg(test)]
+mod args_tests {
+    use super::*;
+    use std::ffi::CStr;
+
+    /// `os::args()` must hand back owned, gos-tagged strings rather than the
+    /// raw, contiguously-packed libc `argv` pointers: `args[i]` is a `String`,
+    /// so the compiled tier emits RC retain/release on it, and that dispatch
+    /// reads an RC header at a negative offset from the pointer. A raw `argv`
+    /// pointer has no such header, so the retain corrupts the adjacent argument
+    /// and the release frees a libc-interior pointer.
+    #[test]
+    fn user_args_are_owned_gos_strings_safe_to_retain() {
+        // Mimic libc's layout: a single block of NUL-terminated, contiguous
+        // args. `argv[0]` is the program name; the rest are user args.
+        let words = ["prog", "Qwen3.6-35B", "a", "b", "c", "d"];
+        let mut block: Vec<u8> = Vec::new();
+        let mut offsets: Vec<usize> = Vec::new();
+        for w in &words {
+            offsets.push(block.len());
+            block.extend_from_slice(w.as_bytes());
+            block.push(0);
+        }
+        let base = block.as_ptr();
+        let argv: Vec<*const c_char> = offsets
+            .iter()
+            .map(|&o| unsafe { base.add(o) }.cast::<c_char>())
+            .collect();
+        unsafe { gos_rt_set_args(argv.len() as c_int, argv.as_ptr()) };
+
+        let vec = unsafe { gos_rt_os_args() };
+        assert!(!vec.is_null());
+        let len = unsafe { gos_rt_vec_len(vec) };
+        assert_eq!(len, 5, "argv[0] is the program name; 5 user args remain");
+
+        // Every element is a gos-owned (tagged) string: RC dispatch reads a
+        // real header instead of fabricating one from libc bytes.
+        for i in 0..len {
+            let p = unsafe { gos_rt_vec_get_i64(vec, i) } as *const c_char;
+            assert!(
+                unsafe { crate::c_abi::string::is_gos_string(p) },
+                "arg {i} must be a gos-owned string, not a raw argv pointer"
+            );
+        }
+
+        // Retaining and releasing every other arg must leave arg 0 byte-for-byte
+        // intact - on the raw-pointer design the retain wrote an RC header into
+        // the contiguous neighbour and mutated it.
+        let arg0 = unsafe { gos_rt_vec_get_i64(vec, 0) } as *const c_char;
+        let before = unsafe { CStr::from_ptr(arg0) }.to_bytes().to_vec();
+        for i in 1..len {
+            let p = unsafe { gos_rt_vec_get_i64(vec, i) } as *mut u8;
+            unsafe { gos_rt_rc_retain(p) };
+            unsafe { gos_rt_rc_release(p) };
+        }
+        let after = unsafe { CStr::from_ptr(arg0) }.to_bytes().to_vec();
+        assert_eq!(before, after, "retaining neighbours must not mutate arg 0");
+        assert_eq!(after, b"Qwen3.6-35B");
+    }
 }

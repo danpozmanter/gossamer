@@ -216,6 +216,66 @@ const SPECS: &[Spec] = &[
     },
     spec("examples/word_count.gos"),
     // --- feature-testing-examples/ ---
+    // `os::args()` must hand back owned, refcounted gos strings: cloning
+    // one arg while others are live must not corrupt any of them. The
+    // first arg ("Qwen3.6-35B") is held while the rest are cloned in a
+    // loop, the classic shape that exposed raw-argv-pointer corruption.
+    Spec {
+        args: &["Qwen3.6-35B", "a", "b", "c", "d"],
+        ..spec("feature-testing-examples/os_args_clone_roundtrip.gos")
+    },
+    // A recursive Box-enum cloned in a loop (the original stays live) must
+    // retain each iteration's clone; the loop-carried read must not be
+    // move-elided. Covers the sequential and goroutine-shared (captured) paths
+    // that double-freed the enum's nodes and corrupted the heap at exit.
+    spec("feature-testing-examples/rc_loop_carried_clone.gos"),
+    // Out-of-range whole-element indexed writes are a lenient no-op on every
+    // tier (scalar, string, and struct elements); in-bounds access unaffected.
+    spec("feature-testing-examples/oob_index_lenient.gos"),
+    // Out-of-range read of an aggregate-element Vec panics identically on
+    // every tier (was a compiled segfault / VM field-access error).
+    Spec {
+        allow_nonzero: true,
+        ..spec("feature-testing-examples/oob_index_aggregate_panic.gos")
+    },
+    // Win B stdlib differential-parity coverage: every function in these
+    // module groups produces bit-identical output on the VM, Cranelift, and
+    // LLVM tiers (the sweep that found and fixed the split/equal_fold/parse,
+    // path/time, and crypto-coerce divergences).
+    spec("feature-testing-examples/winb_text_strings.gos"),
+    spec("feature-testing-examples/winb_text_strconv.gos"),
+    spec("feature-testing-examples/winb_text_utf8.gos"),
+    spec("feature-testing-examples/winb_text_unicode.gos"),
+    spec("feature-testing-examples/winb_text_fmt.gos"),
+    spec("feature-testing-examples/winb_data_crypto.gos"),
+    spec("feature-testing-examples/winb_data_encoding.gos"),
+    spec("feature-testing-examples/winb_data_math.gos"),
+    spec("feature-testing-examples/winb_data_regex.gos"),
+    spec("feature-testing-examples/winb_coll_vec.gos"),
+    spec("feature-testing-examples/winb_coll_map.gos"),
+    spec("feature-testing-examples/winb_coll_set.gos"),
+    spec("feature-testing-examples/winb_coll_iter.gos"),
+    spec("feature-testing-examples/winb_coll_optres.gos"),
+    spec("feature-testing-examples/winb_sys_path.gos"),
+    spec("feature-testing-examples/winb_sys_time.gos"),
+    spec("feature-testing-examples/winb_sys_bytes.gos"),
+    spec("feature-testing-examples/winb_sys_misc.gos"),
+    // Win B integrator-fix coverage: segfaults (Vec<Struct>::new+push,
+    // HashSet<i64>::insert, regex::find_all bound-iter), silent-wrong
+    // (map contains, parse_u64, JSON integer precision), and dispatch gaps
+    // (HashSet to_vec/iter/clear, Vec method insert/remove, BTreeMap keys).
+    spec("feature-testing-examples/winb2_vec_new_struct.gos"),
+    spec("feature-testing-examples/winb2_hashset_i64.gos"),
+    spec("feature-testing-examples/winb2_regex_find_all_bound.gos"),
+    spec("feature-testing-examples/winb2_map_contains.gos"),
+    spec("feature-testing-examples/winb2_parse_u64.gos"),
+    spec("feature-testing-examples/winb2_json_int_precision.gos"),
+    spec("feature-testing-examples/winb2_hashset_to_vec.gos"),
+    spec("feature-testing-examples/winb2_vec_insert_remove.gos"),
+    spec("feature-testing-examples/winb2_btreemap_keys.gos"),
+    // 0.18.0 smaller items: String::from identity, parse-error Display,
+    // scalar fixed-array out-of-range lenient zero-value.
+    spec("feature-testing-examples/winb2_smaller_items.gos"),
     // JIT widening coverage fixtures (inliner edge-dissolving,
     // aggregate-interior bodies, char-field enums, mixed-arity).
     spec("feature-testing-examples/jit_inline_chain.gos"),
@@ -297,6 +357,7 @@ const SPECS: &[Spec] = &[
     spec("feature-testing-examples/let_else_binding.gos"),
     spec("feature-testing-examples/slice_param_coercion.gos"),
     spec("feature-testing-examples/enum_param_rc_repro.gos"),
+    spec("feature-testing-examples/sort_struct_field_closure.gos"),
     spec("feature-testing-examples/sql_driverless.gos"),
     spec("feature-testing-examples/sql_ident_quoting.gos"),
     spec("feature-testing-examples/struct_copy_reclaim.gos"),
@@ -533,6 +594,7 @@ const SPECS: &[Spec] = &[
     spec("feature-testing-examples/vec_remove_inplace.gos"),
     spec("feature-testing-examples/map_value_heap_children.gos"),
     spec("feature-testing-examples/map_pop_then_drop.gos"),
+    spec("feature-testing-examples/rc_move_elision.gos"),
     spec("feature-testing-examples/map_struct_value_access.gos"),
     spec("feature-testing-examples/chan_struct_local_recv.gos"),
     spec("feature-testing-examples/chan_select_struct_payload.gos"),
@@ -603,6 +665,7 @@ const SPECS: &[Spec] = &[
     spec("feature-testing-examples/stdlib_expansion.gos"),
     spec("feature-testing-examples/strconv_radix_quote.gos"),
     spec("feature-testing-examples/stdlib_strings_free.gos"),
+    spec("feature-testing-examples/stdlib_compiled_wiring.gos"),
     spec("feature-testing-examples/stdlib_path_free.gos"),
     spec("feature-testing-examples/stdlib_time_free.gos"),
     spec("feature-testing-examples/stdlib_hash.gos"),

@@ -22,7 +22,6 @@ A language that balances developer experience, execution efficiency, and safety.
 | Immutable by default | ✓ |  | ✓ |  | ✓ |
 | Automatic memory management |  | ✓ | ✓ | ✓ | ✓ |
 | Lightweight concurrency primitives |  | ✓ | ✓ |  | ✓ |
-| Batteries-included standard library | ✓ | ✓ |  | ✓ | ✓ |
 | Fast compilation |  | ✓ |  |  |  |
 | Small portable binaries | ✓ | ✓ |  |  | ✓ |
 | Pipe operator (`\|>`) |  |  | ✓ |  | ✓ |
@@ -39,6 +38,9 @@ the block is bump-allocated and freed wholesale when the block exits -
 pointer-bump allocation, O(slabs) reclamation, and headerless 16-byte
 nodes for small enums. See the
 [memory model](https://danpozmanter.github.io/gossamer/memory/) chapter.
+
+Standard library and some syntax inspirations come from Rust, Go, C#/F#, Kotlin,
+and Python.
 
 ## Details
 

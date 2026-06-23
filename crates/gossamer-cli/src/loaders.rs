@@ -11,35 +11,6 @@ use anyhow::{Result, anyhow};
 
 use crate::paths::stderr_supports_colour;
 
-/// Loads a parsed [`gossamer_ast::SourceFile`] from the on-disk
-/// frontend cache when `cache_key` hits, otherwise re-parses
-/// `source`. The optional `trace` flag turns on the
-/// `cache: parse skipped` log line consumers grep for.
-pub(crate) fn load_or_parse(
-    source: &str,
-    file_id: gossamer_lex::FileId,
-    cache_key: &gossamer_driver::FrontendCacheKey,
-    trace: bool,
-) -> (
-    gossamer_ast::SourceFile,
-    Vec<gossamer_parse::ParseDiagnostic>,
-) {
-    if let Some(cached) = gossamer_driver::load_blob::<gossamer_ast::SourceFile>(cache_key) {
-        if trace {
-            eprintln!("cache: parse skipped for {}", cache_key.as_hex());
-        }
-        // The cached blob is the post-synthesis `SourceFile` (stored after a
-        // successful pipeline), so the implicit `fn main` is already present.
-        return (cached, Vec::new());
-    }
-    // Source has already been augmented by the cli entry point
-    // (`gos run` / `gos build`) before reaching the source map. The autoderive
-    // wrapper also folds an entry file's top-level statements into the implicit
-    // `fn main` and injects the synthetic `use std::json` / `use std::errors`
-    // the impls depend on.
-    gossamer_parse::autoderive::parse_with_autoderive(source, file_id)
-}
-
 /// Pretty-prints frontend stage timings for `gos check --timings`.
 pub(crate) fn print_timings(
     source_len: usize,
@@ -57,27 +28,6 @@ pub(crate) fn print_timings(
         exhaust.as_secs_f64() * 1000.0,
         total.as_secs_f64() * 1000.0,
     );
-}
-
-/// Best-effort enumeration of every top-level item name a source
-/// file declares. Used to seed "did you mean ...?" suggestions in
-/// the resolver diagnostic renderer.
-pub(crate) fn collect_top_level_names(sf: &gossamer_ast::SourceFile) -> Vec<&str> {
-    let mut out = Vec::new();
-    for item in &sf.items {
-        match &item.kind {
-            gossamer_ast::ItemKind::Fn(decl) => out.push(decl.name.name.as_str()),
-            gossamer_ast::ItemKind::Struct(decl) => out.push(decl.name.name.as_str()),
-            gossamer_ast::ItemKind::Enum(decl) => out.push(decl.name.name.as_str()),
-            gossamer_ast::ItemKind::Trait(decl) => out.push(decl.name.name.as_str()),
-            gossamer_ast::ItemKind::TypeAlias(decl) => out.push(decl.name.name.as_str()),
-            gossamer_ast::ItemKind::Const(decl) => out.push(decl.name.name.as_str()),
-            gossamer_ast::ItemKind::Static(decl) => out.push(decl.name.name.as_str()),
-            gossamer_ast::ItemKind::Mod(decl) => out.push(decl.name.name.as_str()),
-            gossamer_ast::ItemKind::Impl(_) | gossamer_ast::ItemKind::AttrItem(_) => {}
-        }
-    }
-    out
 }
 
 /// Parses, resolves, type-checks, and exhaustiveness-checks
@@ -110,86 +60,27 @@ pub(crate) fn load_and_check_with_sf(
     let render_opts = gossamer_diagnostics::RenderOptions {
         colour: stderr_supports_colour(),
     };
-    let cache_key = gossamer_driver::FrontendCacheKey::new(source, env!("CARGO_PKG_VERSION"));
-    let trace = std::env::var_os("GOSSAMER_CACHE_TRACE").is_some();
-    // `load_or_parse` synthesizes the implicit `fn main` for an entry file's
-    // top-level statements, so `sf` already carries it here.
-    let (sf, parse_diags) = load_or_parse(source, file_id, &cache_key, trace);
-    if !parse_diags.is_empty() {
-        for diag in &parse_diags {
-            let structured = diag.to_diagnostic();
-            eprintln!(
-                "{}",
-                gossamer_diagnostics::render(&structured, map, render_opts)
-            );
+    // The single authoritative front-end gate: parse + resolve +
+    // typecheck + exhaustiveness under one fatal policy, shared with
+    // `gos check` / `gos build` so a program rejected by any one is
+    // rejected by all. `check_frontend` synthesizes the implicit `fn
+    // main` for an entry file's top-level statements, so `sf` carries it.
+    let outcome = gossamer_driver::check_frontend(source, file_id);
+    if !outcome.diagnostics.is_empty() {
+        for diag in &outcome.diagnostics {
+            eprintln!("{}", gossamer_diagnostics::render(diag, map, render_opts));
         }
         return Err(anyhow!(
-            "{} parse error(s); refusing to execute",
-            parse_diags.len()
+            "{} front-end error(s); refusing to execute",
+            outcome.diagnostics.len()
         ));
     }
-    let (resolutions, resolve_diags) = gossamer_resolve::resolve_source_file(&sf);
-    let in_scope: Vec<&str> = collect_top_level_names(&sf);
-    let unresolved: Vec<_> = resolve_diags
-        .iter()
-        .filter(|d| {
-            matches!(
-                d.error,
-                gossamer_resolve::ResolveError::UnresolvedName { .. }
-                    | gossamer_resolve::ResolveError::DuplicateItem { .. }
-            )
-        })
-        .collect();
-    if !unresolved.is_empty() {
-        for diag in &unresolved {
-            let structured = diag.to_diagnostic(&in_scope);
-            eprintln!(
-                "{}",
-                gossamer_diagnostics::render(&structured, map, render_opts)
-            );
-        }
-        return Err(anyhow!(
-            "{} resolve error(s); refusing to execute",
-            unresolved.len()
-        ));
-    }
-    let mut tcx = gossamer_types::TyCtxt::new();
-    let (table, type_diags) = gossamer_types::typecheck_source_file(&sf, &resolutions, &mut tcx);
-    if !type_diags.is_empty() {
-        for diag in &type_diags {
-            let structured = diag.to_diagnostic();
-            eprintln!(
-                "{}",
-                gossamer_diagnostics::render(&structured, map, render_opts)
-            );
-        }
-        return Err(anyhow!(
-            "{} type error(s); refusing to execute",
-            type_diags.len()
-        ));
-    }
-    let exhaustive_diags = gossamer_types::check_exhaustiveness(&sf, &resolutions, &table, &tcx);
-    let nonexhaustive: Vec<_> = exhaustive_diags
-        .iter()
-        .filter(|d| {
-            matches!(
-                d.error,
-                gossamer_types::ExhaustivenessError::NonExhaustive { .. }
-            )
-        })
-        .collect();
-    if !nonexhaustive.is_empty() {
-        for diag in nonexhaustive {
-            let structured = diag.to_diagnostic();
-            eprintln!(
-                "{}",
-                gossamer_diagnostics::render(&structured, map, render_opts)
-            );
-        }
-        return Err(anyhow!("non-exhaustive match; refusing to execute"));
-    }
+    let gossamer_driver::CheckedFrontend {
+        sf,
+        resolutions,
+        table,
+        mut tcx,
+    } = outcome.checked;
     let program = gossamer_hir::lower_source_file(&sf, &resolutions, &table, &mut tcx);
-    gossamer_driver::mark_success(&cache_key);
-    gossamer_driver::store_blob(&cache_key, &sf);
     Ok((program, sf, tcx))
 }

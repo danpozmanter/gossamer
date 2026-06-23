@@ -126,13 +126,11 @@ pub(crate) fn json_std_to_value(v: gossamer_std::json::Value) -> Value {
     match v {
         JV::Null => Value::Unit,
         JV::Bool(b) => Value::Bool(b),
-        JV::Number(f) => {
-            if f.fract() == 0.0 && f.abs() < 9_007_199_254_740_992.0 {
-                Value::Int(f as i64)
-            } else {
-                Value::Float(f)
-            }
-        }
+        // `Int` and `Number` are distinct so an integer round-trips
+        // exactly and a float (including integer-valued like `2.0`)
+        // round-trips as a float, matching the serde-backed compiled tier.
+        JV::Int(n) => Value::Int(n),
+        JV::Number(f) => Value::Float(f),
         JV::String(s) => Value::String(s.into()),
         JV::Array(arr) => Value::Array(Arc::new(arr.into_iter().map(json_std_to_value).collect())),
         JV::Object(map) => {
@@ -150,7 +148,7 @@ pub(crate) fn value_to_json_std(v: &Value) -> gossamer_std::json::Value {
     match v {
         Value::Unit => JV::Null,
         Value::Bool(b) => JV::Bool(*b),
-        Value::Int(n) => JV::Number(*n as f64),
+        Value::Int(n) => JV::Int(*n),
         Value::Float(f) => JV::Number(*f),
         Value::String(s) => JV::String(s.as_str().to_string()),
         Value::Array(arr) => JV::Array(arr.iter().map(value_to_json_std).collect()),

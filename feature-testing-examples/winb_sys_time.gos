@@ -1,0 +1,63 @@
+// Win B SYSTEM parity: std::time deterministic surface. Uses FIXED
+// inputs only (no now()/clock) so output is bit-identical across
+// tiers: Duration unit conversions + RFC 3339 format/parse/round-trip.
+use std::time
+
+fn fmt(ms: i64) -> String {
+    match time::format_rfc3339(ms) { Ok(s) => s, Err(_) => "<err>" }
+}
+
+fn parse(s: &String) -> String {
+    match time::parse_rfc3339(s) {
+        Ok(ms) => format!("{}", ms),
+        Err(_) => "<err>",
+    }
+}
+
+fn main() {
+    // Duration unit conversions (Duration is i64 milliseconds).
+    let d = time::Duration::from_millis(2500)
+    println!("as_millis={}", time::Duration::as_millis(d))
+    println!("as_secs={}", time::Duration::as_secs(d))
+    println!("as_micros={}", time::Duration::as_micros(d))
+    let s = time::Duration::from_secs(3)
+    println!("from_secs.as_millis={}", time::Duration::as_millis(s))
+    let u = time::Duration::from_micros(4500)
+    println!("from_micros.as_millis={}", time::Duration::as_millis(u))
+    let z = time::Duration::from_micros(999)
+    println!("from_micros(999).as_millis={}", time::Duration::as_millis(z))
+
+    // format_rfc3339 over fixed unix-ms instants.
+    let stamps = [
+        0, 1000, 1500, 1609459200000, 1640995199000,
+        951782400000, 1234567890000, 86400000, 1893456000000,
+        -1000, -1500, -86400000, -1609459200000,
+    ]
+    for ms in stamps {
+        println!("fmt({})={}", ms, fmt(ms))
+    }
+
+    // parse_rfc3339 over fixed strings: UTC, timezone offsets, space
+    // separator, fractional seconds, pre-1970, and invalid dates.
+    let strs = [
+        "1970-01-01T00:00:00Z", "2021-01-01T00:00:00Z",
+        "2021-12-31T23:59:59Z", "2000-02-29T12:00:00Z",
+        "2009-02-13T23:31:30Z",
+        "2021-01-01T00:00:00+05:00", "2021-01-01T00:00:00-05:00",
+        "2021-01-01 00:00:00", "2021-01-01T00:00:00.500Z",
+        "2021-01-01T00:00:00", "1969-12-31T23:59:59Z",
+        "1960-06-15T12:00:00Z",
+        "2021-02-31T00:00:00Z", "2021-13-01T00:00:00Z",
+        "2021-01-01T25:00:00Z", "not-a-date", "",
+    ]
+    for st in strs {
+        let ms = parse(&st)
+        println!("parse({})={}", st, ms)
+    }
+
+    // Round-trip: ms -> string -> ms must be stable.
+    for ms in stamps {
+        let back = parse(&fmt(ms))
+        println!("roundtrip({})={}", ms, back)
+    }
+}

@@ -1,0 +1,87 @@
+// Win B collections sweep: std::iter combinator surface across
+// tiers. map/filter/filter_map/fold/reduce/find/group_by/partition/
+// for_each/sum_by/take/skip/step_by + the array terminals
+// sum/count/min/max. Edge inputs: empty, single, all-filtered-out,
+// struct payloads. Bit-identical VM vs compiled.
+
+use std::iter
+use std::option
+
+#[derive(Clone, PartialEq, Eq, Debug)]
+struct Rec { k: i64, v: i64 }
+
+fn main() {
+    let xs = [1, 2, 3, 4, 5]
+
+    // map / filter / filter_map (eager -> Vec).
+    let mut ms = 0
+    for x in xs |> iter::map(|n: i64| n * 10) { ms += x }
+    println!("map sum {}", ms)
+    let mut fs = 0
+    for x in xs |> iter::filter(|n: i64| n % 2 == 1) { fs += x }
+    println!("filter odd sum {}", fs)
+    let mut fms = 0
+    for x in xs |> iter::filter_map(|n: i64| if n > 2 { Some(n * 100) } else { None }) { fms += x }
+    println!("filter_map sum {}", fms)
+
+    // fold / reduce (+ empty reduce -> None).
+    println!("fold {}", xs |> iter::fold(1000, |a: i64, b: i64| a + b))
+    println!("reduce {}", xs |> iter::reduce(|a: i64, b: i64| a * b) |> option::default(0))
+    let empty: Vec<i64> = []
+    println!("reduce empty {}", empty |> iter::reduce(|a: i64, b: i64| a + b) |> option::default(-1))
+
+    // find present + absent.
+    println!("find {}", xs |> iter::find(|n: i64| n > 3) |> option::default(0))
+    println!("find none {}", xs |> iter::find(|n: i64| n > 99) |> option::default(-1))
+
+    // array terminals: sum / count / min / max.
+    println!("sum {}", [3, 1, 2, 4] |> iter::sum)
+    println!("count {}", [3, 1, 2, 4] |> iter::count)
+    println!("min {}", [3, 1, 2, 4] |> iter::min |> option::default(0))
+    println!("max {}", [3, 1, 2, 4] |> iter::max |> option::default(0))
+
+    // sum_by, take, skip, step_by (eager free fns).
+    println!("sum_by {}", xs |> iter::sum_by(|n: i64| n * n))
+    let mut ts = 0
+    for x in xs |> iter::take(2) { ts += x }
+    println!("take2 sum {}", ts)
+    let mut ks = 0
+    for x in xs |> iter::skip(3) { ks += x }
+    println!("skip3 sum {}", ks)
+
+    // group_by + partition.
+    let groups = [1, 2, 3, 4, 5, 6] |> iter::group_by(|n: i64| n % 3)
+    println!("group_by buckets {}", groups.len())
+    let mut g0 = 0
+    for x in groups.get_or(0, []) { g0 += x }
+    let mut g1 = 0
+    for x in groups.get_or(1, []) { g1 += x }
+    let mut g2 = 0
+    for x in groups.get_or(2, []) { g2 += x }
+    println!("group sums {} {} {}", g0, g1, g2)
+    let (evens, odds) = [1, 2, 3, 4, 5, 6] |> iter::partition(|n: i64| n % 2 == 0)
+    let mut es = 0
+    for x in evens { es += x }
+    let mut os = 0
+    for x in odds { os += x }
+    println!("partition even {} odd {}", es, os)
+
+    // for_each side effects in deterministic order.
+    [10, 20, 30] |> iter::for_each(|n: i64| print!("fe{} ", n))
+    println!("")
+
+    // struct-bearing collection: iterate and read fields.
+    let recs = [Rec { k: 1, v: 10 }, Rec { k: 2, v: 20 }, Rec { k: 3, v: 30 }]
+    let mut vsum = 0
+    for r in recs { vsum += r.v }
+    println!("rec vsum {}", vsum)
+
+    // empty + single edge inputs through eager combinators.
+    let mut empty_map = 0
+    for x in empty |> iter::map(|n: i64| n * 2) { empty_map += x }
+    println!("empty map sum {}", empty_map)
+    println!("single sum_by {}", [7] |> iter::sum_by(|n: i64| n))
+    let mut allfiltered = 0
+    for x in xs |> iter::filter(|n: i64| n > 99) { allfiltered += x }
+    println!("all-filtered sum {}", allfiltered)
+}

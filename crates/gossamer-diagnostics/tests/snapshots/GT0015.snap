@@ -1,0 +1,12 @@
+---
+source: crates/gossamer-diagnostics/tests/snapshots.rs
+expression: rendered
+---
+--- plain ---
+error[GT0015]: A std free function was used as a first-class value but is not - here
+--- framed ---
+error[GT0015]: A std free function was used as a first-class value but is not
+  --> snap.gos:2:5
+     2 |     let x = 1
+       |     ^^^^^
+     error: here

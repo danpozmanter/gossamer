@@ -1,0 +1,33 @@
+use std::collections::HashSet
+
+fn main() {
+    let mut s: HashSet<String> = HashSet::new()
+    s.insert("banana")
+    s.insert("apple")
+    s.insert("cherry")
+    let v = s.to_vec()
+    for x in v {
+        println!("v {}", x)
+    }
+    for x in s.iter() {
+        println!("iter {}", x)
+    }
+    for x in s {
+        println!("bare {}", x)
+    }
+    s.clear()
+    println!("len {}", s.len())
+
+    let mut n: HashSet<i64> = HashSet::new()
+    n.insert(30)
+    n.insert(10)
+    n.insert(20)
+    for x in n.to_vec() {
+        println!("n {}", x)
+    }
+    for x in n {
+        println!("nbare {}", x)
+    }
+    n.clear()
+    println!("nlen {}", n.len())
+}

@@ -1,0 +1,17 @@
+use std::collections::HashMap
+use std::collections::BTreeMap
+
+fn main() {
+    let mut h: HashMap<String, i64> = HashMap::new()
+    h.insert("a", 1)
+    h.insert("b", 2)
+    println!("h ca={} cz={}", h.contains("a"), h.contains("z"))
+
+    let mut hi: HashMap<i64, i64> = HashMap::new()
+    hi.insert(7, 70)
+    println!("hi c7={} c9={}", hi.contains(7), hi.contains(9))
+
+    let mut b: BTreeMap<String, i64> = BTreeMap::new()
+    b.insert("k", 9)
+    println!("b ck={} cz={}", b.contains("k"), b.contains("z"))
+}

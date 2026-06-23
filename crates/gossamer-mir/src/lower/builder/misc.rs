@@ -419,9 +419,23 @@ impl<'a> Builder<'a> {
         body: &HirExpr,
         span: Span,
     ) -> Option<Local> {
-        let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
-
         let iter_local = self.lower_expr(iter_expr)?;
+        self.lower_for_vec_over_local(iter_local, elem_ty, loop_pat, body, span)
+    }
+
+    /// Iterates an already-lowered `GosVec` local (`iter_local`) by index,
+    /// binding `loop_pat` per element. Shared by `lower_for_vec` (which
+    /// lowers the iterand first) and the `HashSet` for-loop path (which
+    /// snapshots the set to a Vec before iterating).
+    pub(crate) fn lower_for_vec_over_local(
+        &mut self,
+        iter_local: Local,
+        elem_ty: Ty,
+        loop_pat: &HirPat,
+        body: &HirExpr,
+        span: Span,
+    ) -> Option<Local> {
+        let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
 
         // len = gos_rt_vec_len(vec)
         let len_local = self.fresh(i64_ty);
@@ -493,12 +507,28 @@ impl<'a> Builder<'a> {
             self.set_current(after);
             l
         } else {
-            let elem_is_multislot = matches!(
+            let elem_is_aggregate = matches!(
                 self.tcx.kind_of(elem_ty),
                 gossamer_types::TyKind::Tuple(_)
                     | gossamer_types::TyKind::Adt { .. }
                     | gossamer_types::TyKind::Array { .. }
-            ) && self.type_slot_bytes(elem_ty) > 8;
+            );
+            // A user struct stored inline in a vec is address-is-value: its
+            // field projections deref off the slot pointer. This holds at any
+            // width - a single-field struct occupies one 8-byte slot yet is
+            // still address-is-value, so it must bind the slot pointer rather
+            // than read the slot's bytes as a scalar. The opaque heap-blob
+            // stdlib structs (`fs::DirInfo` and friends, `def.local` in the
+            // `u32::MAX - 16 ..= u32::MAX` sentinel range) are `Box` handles
+            // whose slot holds a pointer, so they stay on the by-value scalar
+            // read; only genuine user structs take the slot-address path.
+            let elem_is_struct_adt = matches!(
+                self.tcx.kind_of(elem_ty),
+                gossamer_types::TyKind::Adt { def, .. }
+                    if def.local < u32::MAX - 16 && self.tcx.struct_field_tys(*def).is_some()
+            );
+            let elem_is_multislot =
+                (elem_is_aggregate && self.type_slot_bytes(elem_ty) > 8) || elem_is_struct_adt;
             // `f64` elements must be read as a float bit-pattern; everything
             // else single-slot (i64 / bool / char / String / heap-handle ptr)
             // reads through one `gos_rt_vec_get_i64`.
@@ -686,6 +716,38 @@ impl<'a> Builder<'a> {
 
         self.set_current(exit);
         Some(self.lower_unit(span))
+    }
+
+    /// `for x in set` over a bare `HashSet`: snapshot the set to a sorted
+    /// `Vec<T>` (the same deterministic order `set.to_vec()` / `.iter()`
+    /// produce on every tier) and iterate it. A `HashSet` handle is not a
+    /// `GosVec`, so iterating it directly would read the set as a vec.
+    pub(crate) fn lower_for_set(
+        &mut self,
+        set_expr: &HirExpr,
+        elem_ty: Ty,
+        is_i64: bool,
+        loop_pat: &HirPat,
+        body: &HirExpr,
+        span: Span,
+    ) -> Option<Local> {
+        let set_local = self.lower_expr(set_expr)?;
+        let vec_ty = self.tcx.intern(gossamer_types::TyKind::Vec(elem_ty));
+        let vec_local = self.fresh(vec_ty);
+        let sym = if is_i64 {
+            "gos_rt_set_to_vec_i64"
+        } else {
+            "gos_rt_set_to_vec"
+        };
+        let next = self.new_block(span);
+        self.terminate(Terminator::Call {
+            callee: Operand::Const(ConstValue::Str(sym.to_string())),
+            args: vec![Operand::Copy(Place::local(set_local))],
+            destination: Place::local(vec_local),
+            target: Some(next),
+        });
+        self.set_current(next);
+        self.lower_for_vec_over_local(vec_local, elem_ty, loop_pat, body, span)
     }
 
     pub(crate) fn lower_for_range(
