@@ -211,9 +211,10 @@ unsafe extern "C" {
 
 #[test]
 fn spec_14_implemented_macro_subset_accepted() {
-    // The 0.5.0 banner names println, print, eprintln, eprint,
-    // format, panic (paren-form) and vec (bracket-form). Each
-    // must parse and check cleanly.
+    // The 0.5.0 banner names exactly six format-shaped macros:
+    // println, print, eprintln, eprint, format, and panic. Each
+    // must parse and check cleanly. `vec!` is not a macro - the
+    // array literal `[...]` coerces to `Vec<T>` instead.
     let src = r#"
 fn main() {
     println!("p");
@@ -221,7 +222,7 @@ fn main() {
     eprintln!("e");
     eprint!("e");
     let s = format!("f {}", 1);
-    let v = vec![1, 2, 3];
+    let v = [1, 2, 3];
     if s.len() == 0 && v.len() == 0 {
         panic!("unreachable")
     }
@@ -286,16 +287,17 @@ fn main() {
     );
 }
 
-// ---------- §11.2: musl-static default is not in 0.5.0 ----------
+// ---------- §11.2: static-musl is the default link mode ----------
 //
-// This is a build-system claim, not a language one. Verifying it
-// requires running `gos build` and inspecting the produced ELF. The
-// banner exists; an end-to-end test of the linkage default is
-// expensive (~minutes) and lives in the release pipeline rather
-// than in the per-PR test suite. We pin only the doc claim here:
+// This is a build-system claim, not a language one. Verifying the
+// actual linkage requires running `gos build` and inspecting the
+// produced ELF - expensive (~minutes), so that end-to-end check
+// lives in the release pipeline rather than the per-PR suite. We
+// pin only the doc claim here: static-musl is the Linux default and
+// `--dynamic` is the opt-out.
 
 #[test]
-fn spec_11_2_banner_acknowledges_dynamic_linkage_default() {
+fn spec_11_2_banner_states_static_musl_default() {
     let spec = std::fs::read_to_string(
         std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .ancestors()
@@ -305,10 +307,10 @@ fn spec_11_2_banner_acknowledges_dynamic_linkage_default() {
     )
     .expect("read SPEC.md");
     assert!(
-        spec.contains("status: not-in-0.5.0")
-            && spec.contains("musl-static")
-            && spec.contains("linked\n> dynamically"),
-        "§11.2 banner must explicitly state the dynamic-libc default",
+        spec.contains("status: implemented")
+            && spec.contains("fully-static musl binary by default")
+            && spec.contains("`--dynamic`"),
+        "§11.2 banner must state the static-musl default and the --dynamic opt-out",
     );
 }
 

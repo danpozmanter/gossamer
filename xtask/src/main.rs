@@ -266,7 +266,7 @@ const REQUIRED_BANNERS: &[(&str, &[&str])] = &[
     ("7.5", &["not-in-0.5.0"]),
     ("8.6", &["implemented"]),
     ("11.1", &["partial"]),
-    ("11.2", &["not-in-0.5.0"]),
+    ("11.2", &["implemented"]),
     ("12", &["rust-bindings-only"]),
     ("14", &["partial"]),
 ];

@@ -306,8 +306,9 @@ Consequences of the model:
 - Float → int casts saturate at i64 width with no narrow mask
   (`300.7 as u8 == 300`, `1e20 as i64 == i64::MAX`, NaN → 0).
 
-> **Conformance** There is no debug-mode overflow panic. No tier emits
-> overflow traps; arithmetic wraps at 64-bit width in every build mode.
+> **Conformance (0.5.0)** `status: not-in-0.5.0` for debug-mode overflow
+> panic. No tier emits overflow traps; arithmetic wraps at 64-bit width
+> in every build mode.
 > The method forms `checked_add`, `wrapping_add`, `saturating_add`,
 > `overflowing_add` and friends are available for explicit control and
 > are the portable form today.
@@ -632,7 +633,8 @@ parameter and read `xs.len()`, the const may appear in the return type
 `[T; N]` argument; it is not yet usable as a bare value expression in
 the body or as a repeat count (`[0; N]`).
 
-> **Conformance** Monomorphisation specialises each `(def, substs)`
+> **Conformance (0.5.0)** `status: scaffolded` for non-scalar generic
+> arguments. Monomorphisation specialises each `(def, substs)`
 > pair through a flat-i64-per-slot ABI; aggregates (struct, tuple,
 > array) are passed as heap-allocated pointers under this ABI. Generic
 > parameters instantiated with closures or unresolved type aliases are
@@ -1403,7 +1405,7 @@ stack-allocated (escape analysis). The escape rules are:
 
 ### 7.2 Automatic memory management
 
-> **Conformance** `status: implemented`. Shipped in 0.12.0:
+> **Conformance (0.5.0)** `status: implemented`. Shipped in 0.12.0:
 > deterministic reference counting for heap enums and runtime
 > containers, drop-pass reclamation for value aggregates, weak
 > references, an on-demand cycle collector
@@ -1467,7 +1469,7 @@ The memory model is the Go 1.19 memory model verbatim:
 - Atomics via `std::sync::atomic` (sequentially consistent by default;
   relaxed/acquire/release available).
 
-> **Conformance** `status: scaffolded`. The runtime race
+> **Conformance (0.5.0)** `status: scaffolded`. The runtime race
 > detector (`gossamer-runtime::race`) records synchronisation events
 > at channel handoff, mutex unlock, and WaitGroup done. The
 > `Once::call_once` happens-before edge and the atomic-load/store
@@ -1499,6 +1501,13 @@ because the runtime keeps every reachable value alive. Mutating a
 collection while iterating it, self-aliasing, and the other patterns a
 borrow checker would reject are the programmer's responsibility today;
 they are not diagnosed.
+
+> **Conformance (0.5.0)** `status: not-in-0.5.0`. The scope-local
+> borrow check described in §7.5.1-7.5.4 is the v1 target. `&mut T`
+> is parsed and type-checked today, but the exclusivity enforcement
+> pass has not been implemented. Programs that would violate the
+> rule compile and run; the check is deferred to a release that
+> ships the canonical codegen pipeline.
 
 #### 7.5.1 What this means in practice
 
@@ -1655,9 +1664,10 @@ Rust source compatibility and as a forward-compatible marker.
 `unsafe` never disables automatic memory management or affects memory
 reclamation.
 
-> **Conformance** Source-level `extern "C"` items are **not** an
-> `unsafe` power - they are rejected at parse time (`GP0016`). The sole
-> FFI surface is the `gossamer-binding` ABI. See §12.
+> **Conformance (0.5.0)** `status: implemented`. Source-level
+> `extern "C"` items are **not** an `unsafe` power - they are rejected
+> at parse time (`GP0016`). The sole FFI surface is the
+> `gossamer-binding` ABI. See §12.
 
 ---
 
@@ -1966,7 +1976,7 @@ transformation when the chain doesn't return from the enclosing fn.
 
 ### 11.1 Targets
 
-> **Conformance** `status: partial`. The table below is the
+> **Conformance (0.5.0)** `status: partial`. The table below is the
 > v1 target. CI exercises `linux-x86_64`, `linux-aarch64`,
 > `darwin-x86_64`, `darwin-aarch64`, and `windows-x86_64`.
 > `linux-riscv64`, `freebsd-x86_64`, and `wasm32-wasi` are listed
@@ -1995,7 +2005,7 @@ deployment experience to `CGO_ENABLED=0` Go.
 Dynamic linking for FFI is **not** available through a source-level
 syntax. See §12 for the supported FFI mechanism (`[rust-bindings]`).
 
-> **Conformance** `status: implemented`. On Linux, `gos build
+> **Conformance (0.5.0)** `status: implemented`. On Linux, `gos build
 > --release` produces a fully-static musl binary by default when the
 > `x86_64-unknown-linux-musl` rustup target is installed; pass
 > `--dynamic` to force the legacy dynamic-glibc link path. The
@@ -2009,7 +2019,7 @@ syntax. See §12 for the supported FFI mechanism (`[rust-bindings]`).
 | Debug build | `gos build` | LLVM | `llc -O0` (no `opt` pre-pass) | Sub-second for small programs | ~2x slower than release |
 | Release build | `gos build --release` | LLVM | `opt -O3 \| llc -O3 -mcpu=native -mattr=+prefer-256-bit` | Seconds for thousands of LoC | Vectorised, inlined |
 
-> **Conformance** `status: implemented`. LLVM is the
+> **Conformance (0.5.0)** `status: implemented`. LLVM is the
 > canonical native backend; the Cranelift code path is reserved
 > for the in-process JIT inside `gossamer-interp` and is not
 > reachable from `gos build`. Any MIR shape the LLVM lowerer
@@ -2034,7 +2044,7 @@ the toolchain.
 
 ## 12. FFI
 
-> **Conformance** `status: rust-bindings-only`. The
+> **Conformance (0.5.0)** `status: rust-bindings-only`. The
 > source-level `extern "C" { ... }` and `#[no_mangle] extern "C" fn`
 > item forms are **rejected at parse time** with diagnostic code
 > `GP0016`. Gossamer has exactly one FFI surface: the
@@ -2138,6 +2148,15 @@ the Rust macros a newcomer reaches for: there is no `vec!`, `map!`,
 
 User-defined macros (declarative `macro_rules!` or procedural) do not
 exist.
+
+> **Conformance (0.5.0)** `status: partial`. The 0.5.0 toolchain
+> implements exactly six format-shaped macros - `println!`, `print!`,
+> `eprintln!`, `eprint!`, `format!`, and `panic!`. Every other
+> `name!(...)` form - including `vec!`, `write!`, `writeln!`,
+> `unreachable!`, `todo!`, `unimplemented!`, `map!`, `set!`, `assert!`,
+> `assert_eq!`, `debug_assert!`, `include_str!`, `include_bytes!`, and
+> `env!` - is rejected at parse time (`GP0001`). User-defined macros are
+> post-0.5.0 work.
 
 ---
 

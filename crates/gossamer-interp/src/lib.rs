@@ -154,6 +154,7 @@ pub use value::{
     Value, native_enum_to_variant, registry_stats_for_test,
 };
 pub use vm::Vm;
+pub use vm::VM_THREAD_STACK_BYTES;
 pub use vm::goroutine::join_outstanding_goroutines;
 
 /// Process-wide panic hook value registered by

@@ -16,21 +16,23 @@ pub fn join_outstanding_goroutines() {
 type GoroutineTask = Box<dyn FnOnce() + Send + 'static>;
 
 /// Spawns an OS thread that runs Gossamer goroutine code. Sizes its
-/// stack to the goroutine stack contract (`gossamer_coro::stack_size()`,
-/// matching the compiled tier's coroutines) and arms the byte-budget
-/// recursion guard at the thread's shallowest point, so deeply
-/// recursive goroutine code raises a clean `RuntimeError::StackOverflow`
-/// instead of overflowing the OS stack and aborting the whole process.
+/// stack to [`crate::vm::VM_THREAD_STACK_BYTES`] - the same reserve the
+/// main VM thread uses - because a goroutine body runs the bytecode
+/// interpreter, whose frames are large; the small compiled-tier
+/// coroutine stack would let `MAX_CALL_DEPTH`'s frames overrun the OS
+/// guard page and abort the process on a workload the main thread runs
+/// fine. The byte-budget recursion guard is armed at the thread's
+/// shallowest point as a backstop.
 fn spawn_goroutine_thread<F: FnOnce() + Send + 'static>(
     name: &str,
     body: F,
 ) -> std::io::Result<std::thread::JoinHandle<()>> {
     std::thread::Builder::new()
         .name(name.to_string())
-        .stack_size(gossamer_coro::stack_size())
+        .stack_size(crate::vm::VM_THREAD_STACK_BYTES)
         .spawn(move || {
             gossamer_coro::arm_stack_guard(
-                gossamer_coro::stack_size() - gossamer_coro::STACK_GUARD_MARGIN,
+                crate::vm::VM_THREAD_STACK_BYTES - gossamer_coro::STACK_GUARD_MARGIN,
             );
             body();
         })

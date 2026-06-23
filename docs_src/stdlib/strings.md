@@ -16,17 +16,11 @@ Polished `String` operations.
 | `replace` | fn | Replaces every occurrence of `from` with `to`. |
 | `to_lower` | fn | Lowercases every character. |
 | `to_upper` | fn | Uppercases every character. |
-| `to_lowercase` | fn | Alias for to_lower (Rust-style name). |
-| `to_uppercase` | fn | Alias for to_upper (Rust-style name). |
 | `starts_with` | fn | Returns whether the string starts with the given prefix. |
 | `ends_with` | fn | Returns whether the string ends with the given suffix. |
 | `split_once` | fn | Splits on the first occurrence of `sep`; returns Option<(String, String)>. |
 | `rsplit_once` | fn | Splits on the last occurrence of `sep`; returns Option<(String, String)>. |
 | `count` | fn | Counts non-overlapping occurrences of `needle`. |
-| `strip_chars` | fn | Trims any character in `cutset` from both ends. |
-| `lstrip_chars` | fn | Trims any character in `cutset` from the left end. |
-| `rstrip_chars` | fn | Trims any character in `cutset` from the right end. |
-| `zfill` | fn | Pads with `'0'` on the left until at least `width` wide. |
 | `center` | fn | Symmetric pad to `width` using the given pad character. |
 | `slice` | fn | Safe byte-range slice returning Result<String, errors::Error>. |
 | `split_whitespace` | fn | Splits on runs of whitespace, dropping empty fields. |
@@ -43,9 +37,7 @@ Polished `String` operations.
 | `strip_suffix` | fn | Removes a trailing suffix if present. |
 | `pad_left` | fn | Left-pads to `width` with the given character. |
 | `pad_right` | fn | Right-pads to `width` with the given character. |
-| `contains_rune` | fn | Reports whether the string contains a given rune. |
 | `contains_any` | fn | Reports whether the string contains any rune in a set. |
-| `index_rune` | fn | Byte index of the first occurrence of a rune, or -1. |
 | `find_any` | fn | Byte index of the first rune in a set, or None. |
 | `rfind_any` | fn | Byte index of the last rune in a set, or None. |
 | `equal_fold` | fn | Case-insensitive Unicode string equality. |

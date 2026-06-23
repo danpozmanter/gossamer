@@ -104,7 +104,6 @@ One page per module. Source is `crates/gossamer-std/src/`; this index is regener
 | [`std::result`](result.md) | Data-last Result combinators for pipeline chaining: map, map_err, default_with, etc. |
 | [`std::runtime`](runtime.md) | Goroutine / scheduler introspection and tuning. |
 | [`std::slog`](slog.md) | Structured, levelled logging. |
-| [`std::sort`](sort.md) | Slice sorting and binary search. |
 | [`std::strconv`](strconv.md) | Conversions between strings and primitive numeric types. |
 | [`std::strings`](strings.md) | Polished `String` operations. |
 | [`std::sync`](sync.md) | Synchronisation primitives beyond channels. |

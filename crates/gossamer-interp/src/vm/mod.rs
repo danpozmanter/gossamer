@@ -656,6 +656,20 @@ const MAX_CALL_DEPTH: usize = 40;
 #[cfg(not(debug_assertions))]
 const MAX_CALL_DEPTH: usize = 512;
 
+/// Native stack reserved for every OS thread that executes the
+/// bytecode VM - the main `gos-vm` thread and each goroutine worker.
+///
+/// A Gossamer call costs one `apply()` + `run()` pair on the real
+/// machine stack, and `run()` is a single ~2 000-line match whose
+/// debug-build frame holds every arm's locals at once (~160 KB).
+/// [`MAX_CALL_DEPTH`] bounds Gossamer recursion to a clean
+/// `RuntimeError::StackOverflow`, but those frames must fit on the
+/// native stack for the cap to be reached before the OS guard page.
+/// A fixed, generous reserve makes recursion depth uniform across
+/// hosts and between the main thread and goroutine workers; the pages
+/// stay virtual until touched.
+pub const VM_THREAD_STACK_BYTES: usize = 64 * 1024 * 1024;
+
 mod call_dispatch;
 pub(crate) mod goroutine;
 mod lifecycle;

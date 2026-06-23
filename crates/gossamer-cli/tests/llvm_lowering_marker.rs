@@ -287,8 +287,8 @@ fn main() {
         source: r#"
 fn parse_or_zero(s: String) -> i64 {
     match s.parse::<i64>() {
-        Some(n) => n,
-        None => 0,
+        Ok(n) => n,
+        Err(_) => 0,
     }
 }
 fn main() { println!("{}", parse_or_zero("42")) }

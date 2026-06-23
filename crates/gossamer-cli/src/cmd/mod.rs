@@ -29,18 +29,15 @@ pub(crate) mod watch;
 pub(crate) use run::RunMode;
 pub(crate) use test::TestOpts;
 
-/// Native stack reserved for the thread that runs the bytecode VM.
+/// Native stack reserved for the main thread that runs the bytecode VM.
 ///
-/// The OS main-thread stack is platform-dependent (8 MiB on Linux,
-/// roughly 1 MiB on Windows). The VM's native dispatch and the
-/// in-process JIT compile pass both grow the real machine stack, so a
-/// deep-recursion or `arena` program that runs on Linux overflows the
-/// smaller Windows main stack and aborts with `STATUS_STACK_OVERFLOW`.
-/// `MAX_CALL_DEPTH` caps Gossamer-level recursion, but its frames must
-/// fit on the native stack for the cap to be reached before the OS
-/// guard page is hit. A fixed, generous reserve makes execution
-/// uniform across hosts; the pages are virtual until touched.
-const VM_STACK_BYTES: usize = 64 * 1024 * 1024;
+/// Shared with the goroutine worker threads in `gossamer-interp` so
+/// every VM-executing thread has the same generous reserve: the OS
+/// main-thread stack is platform-dependent (8 MiB on Linux, roughly
+/// 1 MiB on Windows), the VM's native dispatch and in-process JIT both
+/// grow the real machine stack, and `MAX_CALL_DEPTH` only yields a
+/// clean error if its frames fit before the OS guard page.
+const VM_STACK_BYTES: usize = gossamer_interp::VM_THREAD_STACK_BYTES;
 
 /// Runs `f` on a dedicated thread with a large native stack
 /// ([`VM_STACK_BYTES`]) and returns its result, so the host's default

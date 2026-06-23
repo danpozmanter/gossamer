@@ -10,7 +10,6 @@ UTF-8 validation and scalar decoding.
 |---|---|---|
 | `is_valid` | fn | Validates a byte slice as UTF-8. |
 | `rune_count` | fn | Counts Unicode scalar values. |
-| `count_runes` | fn | Counts the runes in a byte slice. |
 | `rune_count_in_string` | fn | Counts the runes in a String. |
 | `rune_len` | fn | Number of bytes needed to encode a rune. |
 | `valid_string` | fn | Reports whether a String is valid UTF-8. |
