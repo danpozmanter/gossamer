@@ -1693,6 +1693,11 @@
 <td>Convenience: bind and serve an HTTP handler. <code>Result&lt;(), Error&gt;</code> - a bind failure is an Err value.</td>
 </tr>
 <tr>
+<td><code>serve_tls</code></td>
+<td>fn</td>
+<td>TLS-terminating server: <code>serve_tls(addr, cert_pem, key_pem, handler) -&gt; Result&lt;(), Error&gt;</code>. Builds a rustls config from the PEM cert chain + key and serves HTTPS with the same handler contract as <code>serve</code>.</td>
+</tr>
+<tr>
 <td><code>Client</code></td>
 <td>type</td>
 <td>HTTP client; configure redirects and timeout via <code>Client::builder()</code>.</td>

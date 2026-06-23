@@ -1582,6 +1582,36 @@
 <td>fn</td>
 <td>Test whether an incoming Request carries a WebSocket upgrade handshake. Interp tier.</td>
 </tr>
+<tr>
+<td><code>serve</code></td>
+<td>fn</td>
+<td>serve(addr, handler) -&gt; Result&lt;(), Error&gt;: bind, upgrade each connection, dispatch the handler's handle(&amp;self, ws) per connection.</td>
+</tr>
+<tr>
+<td><code>connect</code></td>
+<td>fn</td>
+<td>connect(url) -&gt; Result<i64, Error>: client TCP connect + RFC 6455 upgrade; returns a WebSocket handle.</td>
+</tr>
+<tr>
+<td><code>send_text</code></td>
+<td>fn</td>
+<td>send_text(ws, s) -&gt; Result&lt;(), Error&gt;: send one text frame.</td>
+</tr>
+<tr>
+<td><code>send_binary</code></td>
+<td>fn</td>
+<td>send_binary(ws, data) -&gt; Result&lt;(), Error&gt;: send one binary frame.</td>
+</tr>
+<tr>
+<td><code>recv</code></td>
+<td>fn</td>
+<td>recv(ws) -&gt; Result<String, Error>: next text message; Err on close/error.</td>
+</tr>
+<tr>
+<td><code>close</code></td>
+<td>fn</td>
+<td>close(ws) -&gt; Result&lt;(), Error&gt;: send a close frame and release the handle.</td>
+</tr>
 </tbody>
 </table>
 

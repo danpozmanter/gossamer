@@ -71,7 +71,7 @@
           GitHub
         </a>
       </p>
-      <p class="version">Open source &middot; Apache-2.0 &middot; <span class="ver-tag">v0.14.0</span> (pre-1.0)</p>
+      <p class="version">Open source &middot; Apache-2.0 &middot; <span class="ver-tag">v0.18.0</span> (pre-1.0)</p>
     </div>
   </header>
 
@@ -139,6 +139,7 @@
           <button role="tab" id="tab-pipes" aria-controls="panel-pipes">Forward pipes</button>
           <button role="tab" id="tab-web" aria-controls="panel-web">Web server</button>
           <button role="tab" id="tab-go" aria-controls="panel-go">Goroutines</button>
+          <button role="tab" id="tab-adt" aria-controls="panel-adt">ADTs and Matching</button>
         </div>
 
         <div class="tabpanel" role="tabpanel" id="panel-pipes" aria-labelledby="tab-pipes">
@@ -184,6 +185,28 @@ fn main() {
     let mut total = 0
     while let Some(v) = rx.recv() { total += v }
     println!("sum of squares: {}", total)
+}</code></pre>
+        </div>
+
+        <div class="tabpanel" role="tabpanel" id="panel-adt" aria-labelledby="tab-adt" hidden>
+<pre><code class="language-gossamer">enum Shape {
+    Circle(f64),
+    Rect { w: f64, h: f64 },
+    Triangle(f64, f64),
+}
+
+fn area(s: &amp;Shape) -&gt; f64 {
+    match s {
+        Shape::Circle(r)       =&gt; 3.14159 * r * r,
+        Shape::Rect { w, h }   =&gt; w * h,
+        Shape::Triangle(b, h)  =&gt; 0.5 * b * h,
+    }
+}
+
+// Top-level statements - no fn main() needed
+let shapes = [Shape::Circle(3.0), Shape::Rect { w: 4.0, h: 5.0 }, Shape::Triangle(6.0, 2.0)]
+for s in shapes {
+    s |&gt; area |&gt; |a| println!("area = {:.2}", a)
 }</code></pre>
         </div>
       </div>

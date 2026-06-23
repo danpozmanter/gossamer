@@ -1679,26 +1679,15 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#14-worked-example-http-server-with-method-path-routing" class="md-nav__link">
+  <a href="#14-current-gaps-pre-100" class="md-nav__link">
     <span class="md-ellipsis">
       
-        14. Worked example - HTTP server with method + path routing
+        14. Current gaps (pre-1.0.0)
       
     </span>
   </a>
   
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#15-current-gaps-pre-100" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        15. Current gaps (pre-1.0.0)
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="15. Current gaps (pre-1.0.0)">
+    <nav class="md-nav" aria-label="14. Current gaps (pre-1.0.0)">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -1718,10 +1707,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#16-style-checklist" class="md-nav__link">
+  <a href="#15-style-checklist" class="md-nav__link">
     <span class="md-ellipsis">
       
-        16. Style checklist
+        15. Style checklist
       
     </span>
   </a>
@@ -1729,10 +1718,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#17-where-to-read-more" class="md-nav__link">
+  <a href="#16-where-to-read-more" class="md-nav__link">
     <span class="md-ellipsis">
       
-        17. Where to read more
+        16. Where to read more
       
     </span>
   </a>
@@ -1740,10 +1729,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#18-when-in-doubt" class="md-nav__link">
+  <a href="#17-when-in-doubt" class="md-nav__link">
     <span class="md-ellipsis">
       
-        18. When in doubt
+        17. When in doubt
       
     </span>
   </a>
@@ -2043,26 +2032,15 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#14-worked-example-http-server-with-method-path-routing" class="md-nav__link">
+  <a href="#14-current-gaps-pre-100" class="md-nav__link">
     <span class="md-ellipsis">
       
-        14. Worked example - HTTP server with method + path routing
+        14. Current gaps (pre-1.0.0)
       
     </span>
   </a>
   
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#15-current-gaps-pre-100" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        15. Current gaps (pre-1.0.0)
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="15. Current gaps (pre-1.0.0)">
+    <nav class="md-nav" aria-label="14. Current gaps (pre-1.0.0)">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -2082,10 +2060,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#16-style-checklist" class="md-nav__link">
+  <a href="#15-style-checklist" class="md-nav__link">
     <span class="md-ellipsis">
       
-        16. Style checklist
+        15. Style checklist
       
     </span>
   </a>
@@ -2093,10 +2071,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#17-where-to-read-more" class="md-nav__link">
+  <a href="#16-where-to-read-more" class="md-nav__link">
     <span class="md-ellipsis">
       
-        17. Where to read more
+        16. Where to read more
       
     </span>
   </a>
@@ -2104,10 +2082,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#18-when-in-doubt" class="md-nav__link">
+  <a href="#17-when-in-doubt" class="md-nav__link">
     <span class="md-ellipsis">
       
-        18. When in doubt
+        17. When in doubt
       
     </span>
   </a>
@@ -2771,11 +2749,9 @@ repo examples and write a small test when unsure.</p>
   <code>String</code> methods: <code>split_once(sep) -&gt; Option&lt;(String, String)&gt;</code>,
   <code>rsplit_once</code>, <code>count(needle)</code>, <code>find_any(chars)</code>/<code>rfind_any(chars)
   -&gt; Option&lt;i64&gt;</code>, <code>center(w, c)</code>, <code>slice(a, b) -&gt; Result&lt;String, _&gt;</code>,
-  <code>substring(a, b) -&gt; String</code> (out-of-range clamps rather than erroring,
-  identically on every tier), <code>byte_at(i) -&gt; i64</code> (0 outside <code>[0, len)</code>,
-  identically on every tier). Prefer <code>to_lower</code> over the <code>to_lowercase</code>
-  alias. Both <code>strings::join(&amp;parts, sep)</code> and the <code>parts.join(sep)</code>
-  method on a <code>[String]</code> work and produce the same result.</li>
+  <code>substring(a, b) -&gt; String</code> (out-of-range clamps), <code>byte_at(i) -&gt; i64</code>
+  (0 outside <code>[0, len)</code>). Prefer <code>to_lower</code> over <code>to_lowercase</code>. Both
+  <code>strings::join(&amp;parts, sep)</code> and <code>parts.join(sep)</code> on <code>[String]</code> work.</li>
 <li><code>std::strconv</code> - <code>parse_int/i64/u64/float/f64/bool</code>,
   <code>format_int/i64/float/f64</code>, <code>itoa</code>, <code>atoi</code>, <code>parse_i64_radix(s, base)</code>
   / <code>format_i64_radix(n, base)</code> (bases 2..=36), <code>quote</code>/<code>unquote</code>.</li>
@@ -2783,14 +2759,12 @@ repo examples and write a small test when unsure.</p>
   <code>is_valid</code>, <code>valid_rune/string</code>, <code>full_rune(_in_string)</code>,
   <code>rune_start</code>, <code>decode_rune/last_rune/first</code> (+ <code>_in_string</code>),
   <code>encode_rune</code>, <code>append_rune</code>.</li>
-<li><code>std::unicode</code> - full Unicode 16: general-category predicates
-  (<code>is_letter/digit/number/space/upper/lower/title/punct/symbol/mark/print/graphic/control/assigned</code>,
+<li><code>std::unicode</code> - full Unicode 16: category predicates
+  (<code>is_letter/digit/number/space/upper/lower/title/punct/symbol/...</code>,
   <code>combining_class</code>); casing (<code>to_upper/lower/title</code>, <code>simple_fold</code>,
-  <code>to_upper_str/lower_str</code>, <code>fold_case</code>); normalization
-  (<code>nfc/nfd/nfkc/nfkd</code>, <code>is_nf*</code>); segmentation
-  (<code>graphemes</code>, <code>grapheme_count</code>, <code>words</code>, <code>word_bounds/count</code>,
-  <code>sentences</code>, <code>sentence_count</code>). Identifiers follow UAX #31, so
-  <code>let café = 1</code>, <code>let π = 3.14</code> parse.</li>
+  <code>fold_case</code>, <code>to_upper_str/lower_str</code>); normalization
+  (<code>nfc/nfd/nfkc/nfkd</code>); segmentation (<code>graphemes</code>, <code>words</code>,
+  <code>sentences</code> + count variants). UAX #31 identifiers: <code>let café = 1</code>.</li>
 <li><code>std::collections</code> - <code>Vec</code>, <code>HashMap</code>, <code>HashSet</code> (real set:
   <code>insert</code>, <code>remove</code>, <code>contains</code>, <code>len</code>, <code>is_empty</code>, <code>clear</code>,
   <code>to_vec</code>, <code>iter</code>; algebra: <code>union</code>, <code>intersection</code>, <code>difference</code>,
@@ -2802,39 +2776,21 @@ repo examples and write a small test when unsure.</p>
   <code>resolve</code> / <code>lookup</code> (DNS). <code>std::net::url</code> - parse + render +
   escape.</li>
 <li><code>std::http</code> - <code>Method</code>, <code>StatusCode</code>, <code>Headers</code>, <code>Request</code>,
-  <code>Response</code>, <code>Handler</code>, <code>serve</code> (returns <code>Result&lt;(), Error&gt;</code>; a
-  bind failure is the caller's <code>Err</code>). One client engine on every
-  tier. Client surface: <code>Client { get, post, put, options, delete,
-  head, request, request_bytes, stream }</code> plus free wrappers
-  <code>http::get(url, headers)</code>, <code>post(url, body, ct)</code>, <code>put</code>,
-  <code>options</code>, <code>delete</code>, <code>head</code>, <code>request(method, url, body, headers)</code>,
-  <code>request_bytes(method, url, body: [u8], headers)</code>, and
-  <code>stream(method, url, body, headers) -&gt; ResponseStream</code> whose
-  <code>next_line()</code> reads SSE/chunked bodies line-by-line and
-  <code>next_chunk(max) -&gt; Option&lt;[u8]&gt;</code> reads byte frames. Configured:
-  <code>Client::builder().max_redirects(n).timeout_ms(ms).build()</code>;
-  <code>max_redirects(0)</code> returns the raw 3xx with <code>Location</code> intact. The
-  client <code>Response</code> carries <code>status</code>, <code>body</code>, <code>raw_bytes</code>,
-  <code>content_type</code>, <code>location</code>, <code>headers: [(String, String)]</code>. Server
-  side: <code>Request.headers</code> and <code>Request.raw_body</code> (<code>[u8]</code>) populated,
-  <code>r.path</code> strips the query (<code>r.query</code> keeps it); handlers return
-  <code>Result&lt;Response, Error&gt;</code> or a bare <code>http::Response</code>, built via
-  <code>Response::text</code> / <code>Response::json</code> or a plain struct literal;
-  <code>Response::with_header(k, v)</code> chains (replace-then-push,
-  case-insensitive); <code>Response::stream(status, ct, upstream)</code> streams
-  a <code>ResponseStream</code> in chunked frames (proxy passthrough). Bodies
-  cap at 1 MiB (413 beyond). Method strings are case-insensitive;
-  unknown methods → <code>Err(transport)</code>.</li>
-<li><code>std::http</code> server stack: <code>http::cookie</code> (RFC 6265), <code>csrf</code>
-  (double-submit + Origin/Referer), <code>form</code>
-  (<code>x-www-form-urlencoded</code>), <code>multipart</code> (RFC 7578 streaming),
-  <code>query</code> (typed query wrapper), <code>session</code> (signed-cookie),
-  <code>state</code> (<code>AppState</code> typemap + <code>State&lt;T&gt;</code> DI), <code>health</code> (<code>Probe</code> +
-  <code>Health</code>), <code>middleware</code> (<code>body_limit</code>, <code>timeout</code>, <code>hsts</code>,
-  <code>security_headers</code>, <code>cache_control</code>, <code>etag</code>, <code>bearer_auth</code>,
-  <code>rate_limit</code>, <code>compress_gzip</code>, <code>safe_defaults</code>, <code>logger</code>,
-  <code>recoverer</code>, <code>request_id</code>, <code>cors</code>, <code>basic_auth</code>); HTTP/2 push +
-  trailers. <code>std::http_h3</code> - HTTP/3 server + client (RFC 9114).</li>
+  <code>Response</code>, <code>Handler</code>, <code>serve</code> (returns <code>Result&lt;(), Error&gt;</code>). HTTP
+  client: <code>Client::builder().max_redirects(n).timeout_ms(ms).build()</code>;
+  free wrappers <code>http::get/post/put/delete/options/head/request/
+  request_bytes</code>; <code>stream(...)</code> → <code>ResponseStream</code> (<code>next_line()</code>,
+  <code>next_chunk(max)</code>) for SSE/chunked. <code>Response</code>: <code>status</code>, <code>body</code>,
+  <code>raw_bytes</code>, <code>content_type</code>, <code>location</code>, <code>headers: [(String, String)]</code>.
+  Server: <code>Request.raw_body ([u8])</code>, <code>r.path</code> strips query (<code>r.query</code>
+  keeps it); <code>Response::text/json</code>, <code>Response::with_header(k, v)</code>,
+  <code>Response::stream(status, ct, upstream)</code>; bodies cap at 1 MiB.</li>
+<li><code>std::http</code> server stack: <code>cookie</code>, <code>csrf</code>, <code>form</code>, <code>multipart</code>,
+  <code>query</code>, <code>session</code>, <code>state</code> (<code>AppState</code>/<code>State&lt;T&gt;</code>), <code>health</code>,
+  <code>middleware</code> (<code>body_limit</code>, <code>timeout</code>, <code>hsts</code>, <code>security_headers</code>,
+  <code>bearer_auth</code>, <code>rate_limit</code>, <code>compress_gzip</code>, <code>cors</code>, <code>basic_auth</code>,
+  <code>logger</code>, and more); HTTP/2 push + trailers. <code>std::http_h3</code> - HTTP/3
+  server + client (RFC 9114).</li>
 <li><code>std::encoding::{json, base64, hex, binary}</code>. Every user struct
   gets generic serializer free functions called with a turbofish:
   <code>from_json::&lt;Type&gt;(text) -&gt; Result&lt;Type, _&gt;</code> and
@@ -2851,24 +2807,16 @@ repo examples and write a small test when unsure.</p>
   <code>from_json</code> text converters; auto-derived <code>from_yaml::&lt;T&gt;</code> /
   <code>to_yaml::&lt;T&gt;</code> on every struct compose these with the JSON pair.
   Also <code>encoding::toml</code> (<code>toml::to_json</code> / <code>from_json</code>).</li>
-<li><code>std::database::sql</code> - driver-pluggable SQL modelled on Go's
-  <code>database/sql</code> (no driver in the box; a Rust crate implements the
-  <code>Driver</code> trait via <code>[rust-bindings]</code>). <code>open(driver, url) -&gt;
-  Result&lt;Conn, _&gt;</code>; <code>Conn</code>: <code>execute(sql, &amp;[Value])</code>, <code>query</code>,
-  <code>query_each(sql, params, f)</code> (leak-proof), <code>prepare(sql) -&gt; Stmt</code>,
-  <code>begin</code> / <code>begin_with(IsolationLevel)</code>, <code>copy_in</code>/<code>copy_out</code>,
-  <code>listen</code>/<code>unlisten</code>/<code>poll_notification</code>, <code>ping</code>,
-  <code>set_busy_timeout</code>, <code>interrupt</code>, <code>close</code>; <code>Tx</code>: <code>commit</code>,
-  <code>rollback</code>, <code>execute(_params)</code>, <code>query</code>, savepoints; <code>Rows::next_row()
-  -&gt; Option&lt;Row&gt;</code> (cursor semantics; <code>defer rows.close()</code> for early
-  exits), <code>columns()</code>; <code>Row</code> getters (<code>get_i64/f64/bool/text/blob</code>,
-  <code>get_opt_*</code>, <code>is_null</code>, <code>width</code>); <code>Value</code>
-  (Null/Bool/Int/Float/Text/Blob) with positional <code>$N</code> binding;
-  <code>Pool::open(_with)</code> + <code>acquire</code>/<code>live</code>/<code>idle</code>/<code>close_idle</code>;
-  <code>migrate::up(&amp;mut conn, dir) -&gt; i64</code> (forward-only
-  <code>&lt;version&gt;_&lt;slug&gt;.sql</code>); <code>Select</code> fluent builder (<code>new(t).columns(&amp;[..])
-  .where_eq(col, v).order_by(col, asc).limit(n)</code> → <code>render()</code> /
-  <code>params()</code>).</li>
+<li><code>std::database::sql</code> - driver-pluggable SQL (no driver bundled;
+  implement <code>Driver</code> via <code>[rust-bindings]</code>). <code>open(driver, url) -&gt;
+  Result&lt;Conn, _&gt;</code>; <code>Conn</code>: <code>execute/query/query_each/prepare</code>,
+  <code>begin/begin_with(IsolationLevel)</code>, <code>copy_in/copy_out</code>,
+  <code>listen/unlisten/poll_notification</code>, <code>ping</code>, <code>close</code>; <code>Tx</code>:
+  <code>commit/rollback/savepoints</code>; <code>Rows.next_row() -&gt; Option&lt;Row&gt;</code>
+  (cursor; <code>defer rows.close()</code>), <code>columns()</code>; <code>Row</code>:
+  <code>get_i64/f64/bool/text/blob</code>, <code>get_opt_*</code>, <code>is_null</code>, <code>width</code>;
+  <code>Value</code> (Null/Bool/Int/Float/Text/Blob), positional <code>$N</code>; <code>Pool</code>;
+  <code>migrate::up(&amp;mut conn, dir) -&gt; i64</code>; <code>Select</code> fluent builder.</li>
 <li><code>std::sync</code> - <code>Mutex</code>, <code>RwLock</code>, atomics, <code>channel</code>, <code>Once</code>,
   <code>WaitGroup</code> (<code>new</code>/<code>add</code>/<code>done</code>/<code>wait</code>), <code>Map</code> (concurrent
   string→string: <code>set</code>/<code>get</code>/<code>delete</code>/<code>len</code>/<code>contains</code>/<code>keys</code>). For
@@ -2931,57 +2879,10 @@ repo examples and write a small test when unsure.</p>
 <p>The optional <code>[project] entry</code> key names the entry source directly,
 overriding the convention search; the resolved entry is the only file
 allowed to carry top-level statements.</p>
-<h2 id="14-worked-example-http-server-with-method-path-routing">14. Worked example - HTTP server with method + path routing<a class="headerlink" href="#14-worked-example-http-server-with-method-path-routing" title="Permanent link">&para;</a></h2>
-<p>Route per (method, path); keep each handler a one-job free
-function. Lift dispatch into one <code>App::serve</code> that matches and
-forwards - never inline the response shape in the dispatcher. Full
-pattern in <code>examples/web_server.gos</code>.</p>
-<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a><span class="k">use</span><span class="w"> </span><span class="n">std</span>::<span class="n">http</span>
-<a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a>
-<a id="__codelineno-18-3" name="__codelineno-18-3" href="#__codelineno-18-3"></a><span class="k">fn</span> <span class="nf">health</span><span class="p">(</span><span class="n">_r</span>: <span class="nc">http</span>::<span class="n">Request</span><span class="p">)</span><span class="w"> </span>-&gt; <span class="nb">Result</span><span class="o">&lt;</span><span class="n">http</span>::<span class="n">Response</span><span class="p">,</span><span class="w"> </span><span class="n">http</span>::<span class="n">Error</span><span class="o">&gt;</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-18-4" name="__codelineno-18-4" href="#__codelineno-18-4"></a><span class="w">    </span><span class="nb">Ok</span><span class="p">(</span><span class="n">http</span>::<span class="n">Response</span>::<span class="n">text</span><span class="p">(</span><span class="mi">200</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;ok&quot;</span><span class="p">))</span>
-<a id="__codelineno-18-5" name="__codelineno-18-5" href="#__codelineno-18-5"></a><span class="p">}</span>
-<a id="__codelineno-18-6" name="__codelineno-18-6" href="#__codelineno-18-6"></a><span class="k">fn</span> <span class="nf">list_users</span><span class="p">(</span><span class="n">_r</span>: <span class="nc">http</span>::<span class="n">Request</span><span class="p">)</span><span class="w"> </span>-&gt; <span class="nb">Result</span><span class="o">&lt;</span><span class="n">http</span>::<span class="n">Response</span><span class="p">,</span><span class="w"> </span><span class="n">http</span>::<span class="n">Error</span><span class="o">&gt;</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-18-7" name="__codelineno-18-7" href="#__codelineno-18-7"></a><span class="w">    </span><span class="nb">Ok</span><span class="p">(</span><span class="n">http</span>::<span class="n">Response</span>::<span class="n">json</span><span class="p">(</span><span class="mi">200</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;[{</span><span class="se">\&quot;</span><span class="s">id</span><span class="se">\&quot;</span><span class="s">:1,</span><span class="se">\&quot;</span><span class="s">name</span><span class="se">\&quot;</span><span class="s">:</span><span class="se">\&quot;</span><span class="s">ada</span><span class="se">\&quot;</span><span class="s">}]&quot;</span><span class="p">))</span>
-<a id="__codelineno-18-8" name="__codelineno-18-8" href="#__codelineno-18-8"></a><span class="p">}</span>
-<a id="__codelineno-18-9" name="__codelineno-18-9" href="#__codelineno-18-9"></a><span class="k">fn</span> <span class="nf">create_user</span><span class="p">(</span><span class="n">r</span>: <span class="nc">http</span>::<span class="n">Request</span><span class="p">)</span><span class="w"> </span>-&gt; <span class="nb">Result</span><span class="o">&lt;</span><span class="n">http</span>::<span class="n">Response</span><span class="p">,</span><span class="w"> </span><span class="n">http</span>::<span class="n">Error</span><span class="o">&gt;</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-18-10" name="__codelineno-18-10" href="#__codelineno-18-10"></a><span class="w">    </span><span class="nb">Ok</span><span class="p">(</span><span class="n">http</span>::<span class="n">Response</span>::<span class="n">json</span><span class="p">(</span><span class="mi">201</span><span class="p">,</span><span class="w"> </span><span class="fm">format!</span><span class="p">(</span><span class="s">&quot;{{</span><span class="se">\&quot;</span><span class="s">body</span><span class="se">\&quot;</span><span class="s">:</span><span class="se">\&quot;</span><span class="s">{}</span><span class="se">\&quot;</span><span class="s">}}&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">r</span><span class="p">.</span><span class="n">body</span><span class="p">)))</span>
-<a id="__codelineno-18-11" name="__codelineno-18-11" href="#__codelineno-18-11"></a><span class="p">}</span>
-<a id="__codelineno-18-12" name="__codelineno-18-12" href="#__codelineno-18-12"></a>
-<a id="__codelineno-18-13" name="__codelineno-18-13" href="#__codelineno-18-13"></a><span class="k">struct</span> <span class="nc">App</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="p">}</span>
-<a id="__codelineno-18-14" name="__codelineno-18-14" href="#__codelineno-18-14"></a>
-<a id="__codelineno-18-15" name="__codelineno-18-15" href="#__codelineno-18-15"></a><span class="k">impl</span><span class="w"> </span><span class="n">http</span>::<span class="n">Handler</span><span class="w"> </span><span class="k">for</span><span class="w"> </span><span class="n">App</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-18-16" name="__codelineno-18-16" href="#__codelineno-18-16"></a><span class="w">    </span><span class="k">fn</span> <span class="nf">serve</span><span class="p">(</span><span class="o">&amp;</span><span class="bp">self</span><span class="p">,</span><span class="w"> </span><span class="n">r</span>: <span class="nc">http</span>::<span class="n">Request</span><span class="p">)</span><span class="w"> </span>-&gt; <span class="nb">Result</span><span class="o">&lt;</span><span class="n">http</span>::<span class="n">Response</span><span class="p">,</span><span class="w"> </span><span class="n">http</span>::<span class="n">Error</span><span class="o">&gt;</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-18-17" name="__codelineno-18-17" href="#__codelineno-18-17"></a><span class="w">        </span><span class="kd">let</span><span class="w"> </span><span class="n">method</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="o">&amp;</span><span class="n">r</span><span class="p">.</span><span class="n">method</span>
-<a id="__codelineno-18-18" name="__codelineno-18-18" href="#__codelineno-18-18"></a><span class="w">        </span><span class="kd">let</span><span class="w"> </span><span class="n">path</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">r</span><span class="p">.</span><span class="n">path</span><span class="p">()</span>
-<a id="__codelineno-18-19" name="__codelineno-18-19" href="#__codelineno-18-19"></a><span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="n">path</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="s">&quot;/health&quot;</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="k">return</span><span class="w"> </span><span class="n">health</span><span class="p">(</span><span class="n">r</span><span class="p">)</span><span class="w"> </span><span class="p">}</span>
-<a id="__codelineno-18-20" name="__codelineno-18-20" href="#__codelineno-18-20"></a><span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="n">path</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="s">&quot;/users&quot;</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-18-21" name="__codelineno-18-21" href="#__codelineno-18-21"></a><span class="w">            </span><span class="k">if</span><span class="w"> </span><span class="n">method</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="s">&quot;POST&quot;</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="k">return</span><span class="w"> </span><span class="n">create_user</span><span class="p">(</span><span class="n">r</span><span class="p">)</span><span class="w"> </span><span class="p">}</span>
-<a id="__codelineno-18-22" name="__codelineno-18-22" href="#__codelineno-18-22"></a><span class="w">            </span><span class="k">return</span><span class="w"> </span><span class="n">list_users</span><span class="p">(</span><span class="n">r</span><span class="p">)</span>
-<a id="__codelineno-18-23" name="__codelineno-18-23" href="#__codelineno-18-23"></a><span class="w">        </span><span class="p">}</span>
-<a id="__codelineno-18-24" name="__codelineno-18-24" href="#__codelineno-18-24"></a><span class="w">        </span><span class="nb">Ok</span><span class="p">(</span><span class="n">http</span>::<span class="n">Response</span>::<span class="n">text</span><span class="p">(</span><span class="mi">404</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;not found&quot;</span><span class="p">))</span>
-<a id="__codelineno-18-25" name="__codelineno-18-25" href="#__codelineno-18-25"></a><span class="w">    </span><span class="p">}</span>
-<a id="__codelineno-18-26" name="__codelineno-18-26" href="#__codelineno-18-26"></a><span class="p">}</span>
-<a id="__codelineno-18-27" name="__codelineno-18-27" href="#__codelineno-18-27"></a>
-<a id="__codelineno-18-28" name="__codelineno-18-28" href="#__codelineno-18-28"></a><span class="k">fn</span> <span class="nf">main</span><span class="p">()</span><span class="w"> </span>-&gt; <span class="nb">Result</span><span class="o">&lt;</span><span class="p">(),</span><span class="w"> </span><span class="n">http</span>::<span class="n">Error</span><span class="o">&gt;</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-18-29" name="__codelineno-18-29" href="#__codelineno-18-29"></a><span class="w">    </span><span class="n">http</span>::<span class="n">serve</span><span class="p">(</span><span class="s">&quot;0.0.0.0:8080&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">App</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="p">})</span>
-<a id="__codelineno-18-30" name="__codelineno-18-30" href="#__codelineno-18-30"></a><span class="p">}</span>
-</code></pre></div>
-<p>Mirrors Go's <code>http.ServeMux</code>: free-function handlers, one match per
-(method, path), <code>path.starts_with</code> for prefix routes.</p>
-<p>CLI flags, for contrast:</p>
-<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a><span class="k">use</span><span class="w"> </span><span class="n">std</span>::<span class="p">{</span><span class="n">env</span><span class="p">,</span><span class="w"> </span><span class="n">flag</span><span class="p">}</span>
-<a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a>
-<a id="__codelineno-19-3" name="__codelineno-19-3" href="#__codelineno-19-3"></a><span class="k">fn</span> <span class="nf">main</span><span class="p">()</span><span class="w"> </span>-&gt; <span class="nb">Result</span><span class="o">&lt;</span><span class="p">(),</span><span class="w"> </span><span class="n">flag</span>::<span class="n">Error</span><span class="o">&gt;</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-19-4" name="__codelineno-19-4" href="#__codelineno-19-4"></a><span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="k">mut</span><span class="w"> </span><span class="n">fs</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">flag</span>::<span class="n">Set</span>::<span class="n">new</span><span class="p">(</span><span class="s">&quot;myapp&quot;</span><span class="p">)</span>
-<a id="__codelineno-19-5" name="__codelineno-19-5" href="#__codelineno-19-5"></a><span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="n">port</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">fs</span><span class="p">.</span><span class="n">uint</span><span class="p">(</span><span class="s">&quot;port&quot;</span><span class="p">,</span><span class="w"> </span><span class="mi">8080</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;listen port&quot;</span><span class="p">)</span>
-<a id="__codelineno-19-6" name="__codelineno-19-6" href="#__codelineno-19-6"></a><span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="n">verbose</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">fs</span><span class="p">.</span><span class="kt">bool</span><span class="p">(</span><span class="s">&quot;verbose&quot;</span><span class="p">,</span><span class="w"> </span><span class="kc">false</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;chatty output&quot;</span><span class="p">)</span>
-<a id="__codelineno-19-7" name="__codelineno-19-7" href="#__codelineno-19-7"></a><span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="n">_</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">fs</span><span class="p">.</span><span class="n">parse</span><span class="p">(</span><span class="n">env</span>::<span class="n">args</span><span class="p">())</span><span class="o">?</span>
-<a id="__codelineno-19-8" name="__codelineno-19-8" href="#__codelineno-19-8"></a><span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="n">verbose</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;starting on port {}&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">port</span><span class="p">)</span><span class="w"> </span><span class="p">}</span><span class="w">   </span><span class="c1">// cells auto-deref</span>
-<a id="__codelineno-19-9" name="__codelineno-19-9" href="#__codelineno-19-9"></a><span class="w">    </span><span class="nb">Ok</span><span class="p">(())</span>
-<a id="__codelineno-19-10" name="__codelineno-19-10" href="#__codelineno-19-10"></a><span class="p">}</span>
-</code></pre></div>
-<h2 id="15-current-gaps-pre-100">15. Current gaps (pre-1.0.0)<a class="headerlink" href="#15-current-gaps-pre-100" title="Permanent link">&para;</a></h2>
+<p>Qualified type-path annotations (<code>util::Rec</code> in params, <code>let</code> bindings,
+and return types) resolve correctly to the struct's fields across sibling
+modules on all tiers.</p>
+<h2 id="14-current-gaps-pre-100">14. Current gaps (pre-1.0.0)<a class="headerlink" href="#14-current-gaps-pre-100" title="Permanent link">&para;</a></h2>
 <ul>
 <li><code>+</code> on <code>String</code> copies; for heavy assembly use
   <code>std::bytes::Builder</code> or a <code>mut String</code> with <code>+=</code>.</li>
@@ -3011,7 +2912,7 @@ bug - reduce it and check against <code>gos test</code> (interpreter) <strong>an
   <code>gos build</code>/<code>gos run</code> with <code>GR0003: name 'tests' defined multiple
   times</code> - name them <code>mod foo_tests</code>, <code>mod bar_tests</code>, etc.</li>
 </ul>
-<h2 id="16-style-checklist">16. Style checklist<a class="headerlink" href="#16-style-checklist" title="Permanent link">&para;</a></h2>
+<h2 id="15-style-checklist">15. Style checklist<a class="headerlink" href="#15-style-checklist" title="Permanent link">&para;</a></h2>
 <p>(The idioms in §2 are the rules; this is the quick scan.)</p>
 <ul>
 <li><code>let</code> first, <code>let mut</code> only for a single named accumulator.</li>
@@ -3038,14 +2939,14 @@ bug - reduce it and check against <code>gos test</code> (interpreter) <strong>an
 <li>Derive <code>Debug</code>, <code>Clone</code>, <code>PartialEq</code> when cheap; <code>Default</code> for
   zero-valued types.</li>
 </ul>
-<h2 id="17-where-to-read-more">17. Where to read more<a class="headerlink" href="#17-where-to-read-more" title="Permanent link">&para;</a></h2>
+<h2 id="16-where-to-read-more">16. Where to read more<a class="headerlink" href="#16-where-to-read-more" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Language spec: <code>SPEC.md</code>. Style guide: <code>GUIDELINES.md</code>.</li>
 <li>Rendered docs: <code>docs_src/</code> → <code>site/</code>.</li>
 <li>Examples: <code>examples/</code> - start with <code>hello_world.gos</code>,
   <code>function_piping.gos</code>, <code>go_spawn.gos</code>, <code>concurrency.gos</code>.</li>
 </ul>
-<h2 id="18-when-in-doubt">18. When in doubt<a class="headerlink" href="#18-when-in-doubt" title="Permanent link">&para;</a></h2>
+<h2 id="17-when-in-doubt">17. When in doubt<a class="headerlink" href="#17-when-in-doubt" title="Permanent link">&para;</a></h2>
 <p>Run it. <code>gos check</code> gives rustc-class diagnostics with source
 excerpts and did-you-mean suggestions; <code>gos explain &lt;CODE&gt;</code> expands
 any diagnostic code. The toolchain is your first debugger.</p>
