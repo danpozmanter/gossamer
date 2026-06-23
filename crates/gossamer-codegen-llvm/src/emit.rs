@@ -1392,16 +1392,127 @@ fn collect_thunk_names_in_body(body: &Body, out: &mut std::collections::BTreeSet
     }
 }
 
-/// Collects the user functions whose address is handed to a runtime
-/// server-start shim (`gos_rt_http_serve` / `gos_rt_http2_bind_and_run_h2c`),
-/// mapped to their parameter arity. The rustc-compiled runtime invokes
-/// each through `extern "C" fn(..) -> i128`, whose Win64 ABI returns the
-/// 2-word `i128` in xmm0 - but a gossamer `define i128`/`ret i128` returns
-/// it in the GP-register pair. Each collected function therefore needs a
-/// `<16 x i8>` return thunk taken in place of its raw address. Returns an
-/// empty map off Windows, where both sides already agree on the GP pair.
+/// Runtime combinators (`combinator.rs`) whose closure callback returns the
+/// 2-word `i128` Option/Result. The rustc runtime invokes the callback
+/// through `extern "C" fn(..) -> i128`, reading the result from xmm0; the
+/// callback address lives at offset 0 of the closure env-blob passed as an
+/// argument. `map` / predicate / comparator callbacks return `i64` / `bool`,
+/// which already agree on the GP register, so they are not listed here.
+const CABI_I128_COMBINATORS: &[&str] = &[
+    "gos_rt_result_and_then",
+    "gos_rt_result_or_else",
+    "gos_rt_option_and_then",
+    "gos_rt_option_or_else",
+    "gos_rt_iter_filter_map_i64",
+    "gos_rt_iter_find_map_i64",
+];
+
+/// Resolves a fn-address local to the non-runtime function name its defining
+/// `gos_fn_addr("name")` references, within `body`. The lowering assigns the
+/// address directly, so a single pass over the body's statements suffices.
+fn resolve_fn_addr_name(body: &Body, target: gossamer_mir::Local) -> Option<String> {
+    use gossamer_mir::{ConstValue, Operand, Rvalue, StatementKind};
+    for block in &body.blocks {
+        for stmt in &block.stmts {
+            let StatementKind::Assign { place, rvalue } = &stmt.kind else {
+                continue;
+            };
+            if place.local != target || !place.projection.is_empty() {
+                continue;
+            }
+            let Rvalue::CallIntrinsic { name, args } = rvalue else {
+                continue;
+            };
+            if *name != "gos_fn_addr" {
+                continue;
+            }
+            // `__fn_thunk_*` shape thunks are linkonce-synthesized, not MIR
+            // bodies, and are shared across every call site of their shape -
+            // a name-based `$cabi` redirect would both reference an undefined
+            // symbol and corrupt unrelated (gossamer-invoked) uses of the same
+            // shape. They are excluded here; a bare-fn / non-capturing-closure
+            // callback that lowers through a shape thunk is not rewired.
+            if let Some(Operand::Const(ConstValue::Str(hname))) = args.first()
+                && !hname.starts_with("gos_rt_")
+                && !hname.starts_with("__fn_thunk_")
+            {
+                return Some(hname.clone());
+            }
+        }
+    }
+    None
+}
+
+/// True when `op` is the integer literal 0, either directly or through a local
+/// bound to `Use(Const(Int(0)))` (the closure-env builder writes the callable
+/// offset as a separate `let zero = 0` local before the `gos_store`).
+fn operand_is_zero_offset(body: &Body, op: &gossamer_mir::Operand) -> bool {
+    use gossamer_mir::{ConstValue, Operand, Rvalue, StatementKind};
+    match op {
+        Operand::Const(ConstValue::Int(0)) => true,
+        Operand::Copy(p) if p.projection.is_empty() => {
+            for block in &body.blocks {
+                for stmt in &block.stmts {
+                    if let StatementKind::Assign { place, rvalue } = &stmt.kind
+                        && place.local == p.local
+                        && place.projection.is_empty()
+                        && let Rvalue::Use(Operand::Const(ConstValue::Int(n))) = rvalue
+                    {
+                        return *n == 0;
+                    }
+                }
+            }
+            false
+        }
+        _ => false,
+    }
+}
+
+/// For a closure env-blob local, resolves the callable stored at offset 0 -
+/// the `gos_store(env, 0, gos_fn_addr("name"))` the lowering emits when it
+/// builds the env. Returns the referenced non-runtime function name.
+fn resolve_env_slot0_fn(body: &Body, env_local: gossamer_mir::Local) -> Option<String> {
+    use gossamer_mir::{Operand, Rvalue, StatementKind};
+    for block in &body.blocks {
+        for stmt in &block.stmts {
+            let StatementKind::Assign { rvalue, .. } = &stmt.kind else {
+                continue;
+            };
+            let Rvalue::CallIntrinsic { name, args } = rvalue else {
+                continue;
+            };
+            if *name != "gos_store" {
+                continue;
+            }
+            let [Operand::Copy(env), off, Operand::Copy(fn_addr)] = args.as_slice() else {
+                continue;
+            };
+            if env.local != env_local || !env.projection.is_empty() {
+                continue;
+            }
+            if !operand_is_zero_offset(body, off) {
+                continue;
+            }
+            if let Some(hname) = resolve_fn_addr_name(body, fn_addr.local) {
+                return Some(hname);
+            }
+        }
+    }
+    None
+}
+
+/// Collects the gossamer functions invoked by the rustc-compiled runtime
+/// through `extern "C" fn(..) -> i128`, mapped to their parameter arity:
+/// server-start handlers (`gos_rt_http_serve` / `gos_rt_http2_bind_and_run_h2c`,
+/// whose address is the third call argument) and the closure callbacks of the
+/// i128-returning std combinators (whose address sits at offset 0 of the env
+/// blob passed to the helper). The Win64 ABI returns the 2-word `i128` in xmm0,
+/// but a gossamer `define i128`/`ret i128` returns it in the GP-register pair,
+/// so each collected function needs a `<16 x i8>` return thunk taken in place
+/// of its raw address. Returns an empty map off Windows, where both sides
+/// already agree on the GP pair.
 fn collect_cabi_handlers(all_bodies: &[Body]) -> std::collections::BTreeMap<String, usize> {
-    use gossamer_mir::{ConstValue, Operand, Rvalue, StatementKind, Terminator};
+    use gossamer_mir::{ConstValue, Operand, Terminator};
     let mut handlers = std::collections::BTreeMap::new();
     if !target_is_windows() {
         return handlers;
@@ -1420,39 +1531,24 @@ fn collect_cabi_handlers(all_bodies: &[Body]) -> std::collections::BTreeMap<Stri
             let Operand::Const(ConstValue::Str(sym)) = callee else {
                 continue;
             };
-            // The handler fn-address is the third argument of the
-            // server-start shims: `(addr, handler_env, fn_addr)`.
-            if sym.as_str() != "gos_rt_http_serve"
-                && sym.as_str() != "gos_rt_http2_bind_and_run_h2c"
+            if sym.as_str() == "gos_rt_http_serve"
+                || sym.as_str() == "gos_rt_http2_bind_and_run_h2c"
             {
-                continue;
-            }
-            let Some(Operand::Copy(addr_place)) = args.get(2) else {
-                continue;
-            };
-            let target = addr_place.local;
-            // Find the `gos_fn_addr("name")` statement that defines the
-            // fn-address local within this body. The lowering assigns it
-            // directly, with no intervening copies.
-            for b2 in &body.blocks {
-                for stmt in &b2.stmts {
-                    let StatementKind::Assign { place, rvalue } = &stmt.kind else {
+                // Server-start shims: `(addr, handler_env, fn_addr)`.
+                if let Some(Operand::Copy(addr_place)) = args.get(2)
+                    && let Some(hname) = resolve_fn_addr_name(body, addr_place.local)
+                {
+                    let arity = arity_of(&hname);
+                    handlers.insert(hname, arity);
+                }
+            } else if CABI_I128_COMBINATORS.contains(&sym.as_str()) {
+                for arg in args {
+                    let Operand::Copy(env_place) = arg else {
                         continue;
                     };
-                    if place.local != target {
-                        continue;
-                    }
-                    let Rvalue::CallIntrinsic { name, args: ia } = rvalue else {
-                        continue;
-                    };
-                    if *name != "gos_fn_addr" {
-                        continue;
-                    }
-                    if let Some(Operand::Const(ConstValue::Str(hname))) = ia.first()
-                        && !hname.starts_with("gos_rt_")
-                    {
-                        let arity = arity_of(hname);
-                        handlers.insert(hname.clone(), arity);
+                    if let Some(hname) = resolve_env_slot0_fn(body, env_place.local) {
+                        let arity = arity_of(&hname);
+                        handlers.insert(hname, arity);
                     }
                 }
             }
