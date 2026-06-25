@@ -1979,6 +1979,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_map_keys_vec as *const u8,
         ),
         ("gos_rt_map_len", crate::c_abi::gos_rt_map_len as *const u8),
+        (
+            "gos_rt_map_mark_shared",
+            crate::c_abi::gos_rt_map_mark_shared as *const u8,
+        ),
         ("gos_rt_map_new", crate::c_abi::gos_rt_map_new as *const u8),
         (
             "gos_rt_map_new_with_capacity",

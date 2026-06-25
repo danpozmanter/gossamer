@@ -589,6 +589,7 @@ pub const REGISTRY: &[RuntimeEntry] = &[
     rt!("gos_rt_map_keys_str", (Ptr) -> Ptr, Cranelift, "Return all string keys of a GosMap as a GosVec."),
     rt!("gos_rt_map_keys_vec", (Ptr) -> Ptr, Cranelift, "Auto-dispatch m.keys() based on the live storage shape."),
     rt!("gos_rt_map_len", (Ptr) -> I64, Cranelift, "Return the number of entries in a GosMap."),
+    rt!("gos_rt_map_mark_shared", (Ptr) -> Void, Both, "Mark a GosMap (and its aggregate values) as escaped to another goroutine, so every subsequent operation synchronizes instead of taking the goroutine-local lock-free fast path. Emitted at channel-send / goroutine-spawn escape points for HashMap-typed values. Null-safe."),
     rt!("gos_rt_map_new", (I32, I32) -> Ptr, Cranelift, "Allocate an empty GosMap with given key and value type tags."),
     rt!("gos_rt_map_new_with_capacity", (I32, I32, I64) -> Ptr, Cranelift, "Allocate a GosMap with a pre-reserved capacity."),
     rt!("gos_rt_map_or_insert_i64_i64", (Ptr, I64, I64) -> I64, Cranelift, "Insert the default i64 at an i64 key if absent; return the value."),

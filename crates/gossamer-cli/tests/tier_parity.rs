@@ -229,6 +229,11 @@ const SPECS: &[Spec] = &[
     // move-elided. Covers the sequential and goroutine-shared (captured) paths
     // that double-freed the enum's nodes and corrupted the heap at exit.
     spec("feature-testing-examples/rc_loop_carried_clone.gos"),
+    // A HashMap that crosses the `go` boundary is marked shared at the spawn,
+    // so its biased lock synchronizes the two goroutines' concurrent inserts:
+    // the per-key totals are deterministic and identical on every tier (a
+    // goroutine-local map takes the lock-free fast path instead).
+    spec("feature-testing-examples/goroutine_shared_map.gos"),
     // Out-of-range whole-element indexed writes are a lenient no-op on every
     // tier (scalar, string, and struct elements); in-bounds access unaffected.
     spec("feature-testing-examples/oob_index_lenient.gos"),

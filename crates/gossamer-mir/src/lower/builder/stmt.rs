@@ -537,6 +537,13 @@ impl<'a> Builder<'a> {
                                     {
                                         a = self.coerce_array_to_vec(a, elem, len, expr.span);
                                     }
+                                    // The arg escapes to the spawned goroutine:
+                                    // switch any RC-managed value to atomic
+                                    // reference counting and flip a shared map to
+                                    // its synchronized path before the spawn
+                                    // publishes it (mirrors the expression-position
+                                    // `go` lowering).
+                                    self.emit_mark_shared_if_rc(a, expr.span);
                                     operands.push(Operand::Copy(Place::local(a)));
                                 }
                             }

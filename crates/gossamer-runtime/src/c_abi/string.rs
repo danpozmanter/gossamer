@@ -39,6 +39,25 @@ unsafe fn c_str_len(s: *const c_char) -> usize {
     unsafe { CStr::from_ptr(s).to_bytes().len() }
 }
 
+/// Borrows a runtime string's content bytes without a NUL scan when the
+/// string carries a length header (builder / static / region layouts all
+/// store `len:u32` at `ptr[-5]`); foreign / untagged pointers fall back to
+/// `strlen`. Map key shims call this instead of `CStr::from_ptr(_).to_bytes()`
+/// so hashing a k-mer key reads its length in O(1) rather than rescanning the
+/// bytes the hash is about to read again.
+///
+/// SAFETY: `s` is null or points at a valid c-string (NUL-terminated when it
+/// has no header). The returned slice borrows `s`; the caller keeps `s` alive
+/// for the borrow.
+#[inline]
+pub(crate) unsafe fn gos_str_key_bytes<'a>(s: *const c_char) -> &'a [u8] {
+    if s.is_null() {
+        return &[];
+    }
+    let len = unsafe { str_header_len(s) }.unwrap_or_else(|| unsafe { c_str_len(s) });
+    unsafe { std::slice::from_raw_parts(s.cast::<u8>(), len) }
+}
+
 /// Allocator-provenance tag written 1 byte BEFORE every cstring
 /// returned by `alloc_cstring`. `gos_rt_str_free` reads this byte
 /// and refuses to reclaim anything whose prefix does not match,

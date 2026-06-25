@@ -1,0 +1,39 @@
+// Two goroutines share one HashMap that crosses the `go` boundary and both
+// increment it concurrently. The spawn marks the map shared, so the biased
+// map lock synchronizes every access - per-key totals are deterministic (no
+// lost updates) and identical on every tier, even though the interleaving is
+// not. A goroutine-local map takes the lock-free fast path; this fixture
+// guards that the escape marking flips a genuinely shared map onto the
+// synchronized path. Channel close is the deterministic completion signal.
+use std::collections::HashMap
+use std::sync::channel
+
+fn bump(m: HashMap<i64, i64>, tx: Sender<i64>) {
+    let mut i = 0
+    while i < 4000 {
+        m.inc(i % 4, 1)
+        i += 1
+    }
+    tx.send(1)
+    tx.close()
+}
+
+fn main() {
+    let m: HashMap<i64, i64> = HashMap::new()
+    let (tx, rx) = channel()
+    go bump(m, tx)
+    let mut i = 0
+    while i < 4000 {
+        m.inc(i % 4, 1)
+        i += 1
+    }
+    while let Some(_v) = rx.recv() {}
+    let mut total = 0
+    let mut k = 0
+    while k < 4 {
+        total += m.get_or(k, 0)
+        k += 1
+    }
+    println!("total={}", total)
+    println!("k0={}", m.get_or(0, 0))
+}

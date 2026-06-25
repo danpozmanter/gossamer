@@ -29,7 +29,94 @@ use super::*;
 // 8-byte key.
 // ---------------------------------------------------------------
 
+use std::ops::{Deref, DerefMut};
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use rustc_hash::FxHashMap;
+
+/// A mutex whose lock is *biased* to the goroutine that owns the map:
+/// while the map has not escaped to another goroutine it is accessed
+/// with no locking at all, and only an escaped (shared) map pays the
+/// `parking_lot` acquire/release on each operation.
+///
+/// Gossamer's model is "share by communicating": an ordinary
+/// `HashMap` lives on one goroutine and is never touched concurrently,
+/// so the per-operation lock the unconditional mutex imposed was pure
+/// overhead on the common path (the k-mer-counter hot loop pays it tens
+/// of millions of times). A map only becomes reachable from a second
+/// goroutine through an explicit escape point - captured by a `go` /
+/// `spawn` closure, or sent on a channel - and the codegen marks it
+/// `shared` *on the owning goroutine, before the value is published*
+/// (the same protocol `RcHeader` / string values use via
+/// `gos_rt_rc_mark_shared`). After that flip every operation locks, so
+/// concurrent access to a genuinely shared map is fully synchronized -
+/// strictly safer than Go's unsynchronized maps, with zero cost when no
+/// sharing exists.
+struct BiasedLock<T> {
+    shared: AtomicBool,
+    inner: parking_lot::Mutex<T>,
+}
+
+impl<T> BiasedLock<T> {
+    fn new(value: T) -> Self {
+        BiasedLock {
+            shared: AtomicBool::new(false),
+            inner: parking_lot::Mutex::new(value),
+        }
+    }
+
+    /// Acquires access to the protected value. Lock-free for a
+    /// goroutine-local map; takes the real lock once the map is shared.
+    #[inline]
+    fn lock(&self) -> BiasedGuard<'_, T> {
+        if self.shared.load(Ordering::Acquire) {
+            BiasedGuard::Locked(self.inner.lock())
+        } else {
+            // The map is owned by a single goroutine, so no other thread
+            // can touch `inner` for the duration of this borrow. The flip
+            // to `shared` happens on this goroutine before the map is
+            // published to any other (see the type doc), so the load
+            // above cannot miss an escape that another thread could race.
+            BiasedGuard::Local(unsafe { &mut *self.inner.data_ptr() })
+        }
+    }
+
+    /// Marks the map shared so every subsequent operation synchronizes.
+    /// Called on the owning goroutine before the map escapes; idempotent.
+    #[inline]
+    fn mark_shared(&self) {
+        self.shared.store(true, Ordering::Release);
+    }
+}
+
+/// Access handle from [`BiasedLock::lock`]. Derefs to the protected
+/// value in both the lock-free and the locked case; the `Locked`
+/// variant releases the mutex on drop.
+enum BiasedGuard<'a, T> {
+    Local(&'a mut T),
+    Locked(parking_lot::MutexGuard<'a, T>),
+}
+
+impl<T> Deref for BiasedGuard<'_, T> {
+    type Target = T;
+    #[inline]
+    fn deref(&self) -> &T {
+        match self {
+            BiasedGuard::Local(r) => r,
+            BiasedGuard::Locked(g) => g,
+        }
+    }
+}
+
+impl<T> DerefMut for BiasedGuard<'_, T> {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut T {
+        match self {
+            BiasedGuard::Local(r) => r,
+            BiasedGuard::Locked(g) => g,
+        }
+    }
+}
 
 /// Layout-sensitive: the first 8 bytes hold the current element
 /// count so the generic `gos_rt_arr_len` returns the right value
@@ -37,7 +124,7 @@ use rustc_hash::FxHashMap;
 #[repr(C)]
 pub struct GosMap {
     len_cache: i64,
-    storage: parking_lot::Mutex<MapStorage>,
+    storage: BiasedLock<MapStorage>,
     /// Values are RC copy-blobs (`gos_rt_rc_alloc_copy` results): the
     /// map owns one share per stored value. Inserts release the
     /// overwritten value, removals and `gos_rt_map_free` release the
@@ -75,7 +162,7 @@ pub unsafe extern "C" fn gos_rt_map_new(_key_bytes: u32, _val_bytes: u32) -> *mu
         crate::c_abi::ledger::map_inc();
         Box::into_raw(Box::new(GosMap {
             len_cache: 0,
-            storage: parking_lot::Mutex::new(MapStorage::Empty),
+            storage: BiasedLock::new(MapStorage::Empty),
             blob_values: std::sync::atomic::AtomicBool::new(false),
         }))
     })
@@ -105,7 +192,7 @@ pub unsafe extern "C" fn gos_rt_map_new_with_capacity(
         };
         Box::into_raw(Box::new(GosMap {
             len_cache: 0,
-            storage: parking_lot::Mutex::new(storage),
+            storage: BiasedLock::new(storage),
             blob_values: std::sync::atomic::AtomicBool::new(false),
         }))
     })
@@ -199,7 +286,7 @@ pub unsafe extern "C" fn gos_rt_map_get_or_str_i64(
             return default;
         }
         let map = unsafe { &*m };
-        let key_bytes = unsafe { CStr::from_ptr(key) }.to_bytes();
+        let key_bytes = unsafe { crate::c_abi::string::gos_str_key_bytes(key) };
         let storage = map.storage.lock();
         match &*storage {
             MapStorage::StrI64(inner) => inner.get(key_bytes).copied().unwrap_or(default),
@@ -221,13 +308,13 @@ pub unsafe extern "C" fn gos_rt_map_get_or_str_str(
         let default_bytes: &[u8] = if default.is_null() {
             b""
         } else {
-            unsafe { CStr::from_ptr(default) }.to_bytes()
+            unsafe { crate::c_abi::string::gos_str_key_bytes(default) }
         };
         if m.is_null() || key.is_null() {
             return alloc_cstring(default_bytes);
         }
         let map = unsafe { &*m };
-        let key_bytes = unsafe { CStr::from_ptr(key) }.to_bytes();
+        let key_bytes = unsafe { crate::c_abi::string::gos_str_key_bytes(key) };
         let storage = map.storage.lock();
         let MapStorage::StrStr(inner) = &*storage else {
             return alloc_cstring(default_bytes);
@@ -250,7 +337,7 @@ pub unsafe extern "C" fn gos_rt_map_get_or_i64_str(
         let default_bytes: &[u8] = if default.is_null() {
             b""
         } else {
-            unsafe { CStr::from_ptr(default) }.to_bytes()
+            unsafe { crate::c_abi::string::gos_str_key_bytes(default) }
         };
         if m.is_null() {
             return alloc_cstring(default_bytes);
@@ -555,7 +642,7 @@ pub unsafe extern "C" fn gos_rt_map_insert_str_i64(m: *mut GosMap, key: *const c
             return;
         }
         let map = unsafe { &mut *m };
-        let key_bytes = unsafe { CStr::from_ptr(key) }.to_bytes().to_vec();
+        let key_bytes = unsafe { crate::c_abi::string::gos_str_key_bytes(key) }.to_vec();
         let mut storage = map.storage.lock();
         if matches!(*storage, MapStorage::Empty) {
             *storage = MapStorage::StrI64(FxHashMap::default());
@@ -593,7 +680,7 @@ pub unsafe extern "C" fn gos_rt_map_get_str_i64(m: *const GosMap, key: *const c_
             return 0;
         }
         let map = unsafe { &*m };
-        let key_bytes = unsafe { CStr::from_ptr(key) }.to_bytes();
+        let key_bytes = unsafe { crate::c_abi::string::gos_str_key_bytes(key) };
         let storage = map.storage.lock();
         match &*storage {
             MapStorage::StrI64(inner) => inner.get(key_bytes).copied().unwrap_or(0),
@@ -612,7 +699,7 @@ pub unsafe extern "C" fn gos_rt_map_get_str_opt(m: *const GosMap, key: *const c_
             return unsafe { gos_rt_result_new(1, 0) };
         }
         let map = unsafe { &*m };
-        let key_bytes = unsafe { CStr::from_ptr(key) }.to_bytes();
+        let key_bytes = unsafe { crate::c_abi::string::gos_str_key_bytes(key) };
         let storage = map.storage.lock();
         let payload: Option<i64> = match &*storage {
             MapStorage::StrI64(inner) => inner.get(key_bytes).copied(),
@@ -650,8 +737,8 @@ pub unsafe extern "C" fn gos_rt_map_insert_str_str(
             return;
         }
         let map = unsafe { &mut *m };
-        let key_bytes = unsafe { CStr::from_ptr(key) }.to_bytes().to_vec();
-        let val_bytes = unsafe { CStr::from_ptr(val) }.to_bytes().to_vec();
+        let key_bytes = unsafe { crate::c_abi::string::gos_str_key_bytes(key) }.to_vec();
+        let val_bytes = unsafe { crate::c_abi::string::gos_str_key_bytes(val) }.to_vec();
         let mut storage = map.storage.lock();
         if matches!(*storage, MapStorage::Empty) {
             *storage = MapStorage::StrStr(FxHashMap::default());
@@ -690,7 +777,7 @@ pub unsafe extern "C" fn gos_rt_map_get_str_str(
             return empty_cstring();
         }
         let map = unsafe { &*m };
-        let key_bytes = unsafe { CStr::from_ptr(key) }.to_bytes();
+        let key_bytes = unsafe { crate::c_abi::string::gos_str_key_bytes(key) };
         let storage = map.storage.lock();
         let MapStorage::StrStr(inner) = &*storage else {
             return empty_cstring();
@@ -709,7 +796,7 @@ pub unsafe extern "C" fn gos_rt_map_contains_key_str(m: *const GosMap, key: *con
             return false;
         }
         let map = unsafe { &*m };
-        let key_bytes = unsafe { CStr::from_ptr(key) }.to_bytes();
+        let key_bytes = unsafe { crate::c_abi::string::gos_str_key_bytes(key) };
         let storage = map.storage.lock();
         match &*storage {
             MapStorage::StrI64(inner) => inner.contains_key(key_bytes),
@@ -726,7 +813,7 @@ pub unsafe extern "C" fn gos_rt_map_remove_str(m: *mut GosMap, key: *const c_cha
             return false;
         }
         let map = unsafe { &mut *m };
-        let key_bytes = unsafe { CStr::from_ptr(key) }.to_bytes();
+        let key_bytes = unsafe { crate::c_abi::string::gos_str_key_bytes(key) };
         let mut storage = map.storage.lock();
         let blob_values = map_has_blob_values(map);
         let removed = match &mut *storage {
@@ -814,7 +901,7 @@ pub unsafe extern "C" fn gos_rt_map_inc_str_i64(
         if m.is_null() || key.is_null() {
             return 0;
         }
-        let key_bytes = unsafe { CStr::from_ptr(key) }.to_bytes();
+        let key_bytes = unsafe { crate::c_abi::string::gos_str_key_bytes(key) };
         let map = unsafe { &mut *m };
         let mut storage = map.storage.lock();
         if matches!(*storage, MapStorage::Empty) {
@@ -846,7 +933,7 @@ pub unsafe extern "C" fn gos_rt_map_or_insert_str_i64(
         if m.is_null() || key.is_null() {
             return default;
         }
-        let key_bytes = unsafe { CStr::from_ptr(key) }.to_bytes();
+        let key_bytes = unsafe { crate::c_abi::string::gos_str_key_bytes(key) };
         let map = unsafe { &mut *m };
         let mut storage = map.storage.lock();
         if matches!(*storage, MapStorage::Empty) {
@@ -917,7 +1004,7 @@ pub unsafe extern "C" fn gos_rt_map_insert_i64_str(m: *mut GosMap, key: i64, val
             return;
         }
         let map = unsafe { &mut *m };
-        let val_bytes = unsafe { CStr::from_ptr(val) }.to_bytes().to_vec();
+        let val_bytes = unsafe { crate::c_abi::string::gos_str_key_bytes(val) }.to_vec();
         let mut storage = map.storage.lock();
         if matches!(*storage, MapStorage::Empty) {
             *storage = MapStorage::I64Str(FxHashMap::default());
@@ -1165,6 +1252,41 @@ unsafe fn retain_blob_value(word: i64) {
     if word != 0 {
         unsafe { crate::c_abi::rc::gos_rt_rc_retain(word as usize as *mut u8) };
     }
+}
+
+/// Marks `m` shared across goroutines so every subsequent operation
+/// takes the real lock instead of the goroutine-local fast path.
+/// Codegen emits this at goroutine-spawn / channel-send escape points
+/// for `HashMap`-typed values, on the owning goroutine *before* the map
+/// is published - the same ordering `gos_rt_rc_mark_shared` relies on,
+/// so the flip races with no concurrent reader. Aggregate (RC copy-blob)
+/// values are marked shared too, since they become reachable from the
+/// other goroutine through the now-shared map. Idempotent; null-safe.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_map_mark_shared(m: *mut GosMap) {
+    ffi_entry!((), {
+        if m.is_null() {
+            return;
+        }
+        let map = unsafe { &*m };
+        if map_has_blob_values(map) {
+            let storage = map.storage.lock();
+            match &*storage {
+                MapStorage::I64I64(inner) => {
+                    for &v in inner.values() {
+                        unsafe { crate::c_abi::rc::gos_rt_rc_mark_shared(v as usize as *mut u8) };
+                    }
+                }
+                MapStorage::StrI64(inner) | MapStorage::SkeyVal(inner) => {
+                    for &v in inner.values() {
+                        unsafe { crate::c_abi::rc::gos_rt_rc_mark_shared(v as usize as *mut u8) };
+                    }
+                }
+                _ => {}
+            }
+        }
+        map.storage.mark_shared();
+    });
 }
 
 #[unsafe(no_mangle)]
@@ -1615,7 +1737,7 @@ pub unsafe extern "C" fn gos_rt_map_pop_str(m: *mut GosMap, key: *const c_char) 
             return unsafe { gos_rt_result_new(1, 0) };
         }
         let map = unsafe { &mut *m };
-        let key_bytes = unsafe { CStr::from_ptr(key).to_bytes() };
+        let key_bytes = unsafe { crate::c_abi::string::gos_str_key_bytes(key) };
         let mut storage = map.storage.lock();
         let popped: Option<i64> = match &mut *storage {
             MapStorage::StrI64(inner) => inner.remove(key_bytes),

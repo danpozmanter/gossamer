@@ -991,19 +991,40 @@ impl<'a> Builder<'a> {
     /// runtime helper never sees a scalar / non-RC pointer.
     pub(crate) fn emit_mark_shared_if_rc(&mut self, value: Local, span: Span) {
         let ty = self.locals[value.0 as usize].ty;
-        if !self.tcx.is_rc_managed(ty) {
+        // A map is not RC-managed (it is a bare runtime handle freed by
+        // `gos_rt_map_free`), so it needs its own escape signal: marking
+        // it shared flips it from the goroutine-local lock-free fast path
+        // to the synchronized one before it is published to the spawned
+        // goroutine / channel peer.
+        let callee = if self.ty_is_hashmap(ty) {
+            "gos_rt_map_mark_shared"
+        } else if self.tcx.is_rc_managed(ty) {
+            "gos_rt_rc_mark_shared"
+        } else {
             return;
-        }
+        };
         let unit_ty = self.tcx.unit();
         let dest = self.fresh(unit_ty);
         let next = self.new_block(span);
         self.terminate(Terminator::Call {
-            callee: Operand::Const(ConstValue::Str("gos_rt_rc_mark_shared".to_string())),
+            callee: Operand::Const(ConstValue::Str(callee.to_string())),
             args: vec![Operand::Copy(Place::local(value))],
             destination: Place::local(dest),
             target: Some(next),
         });
         self.set_current(next);
+    }
+
+    /// True when `t` resolves to a `HashMap` (peeling references).
+    fn ty_is_hashmap(&self, t: Ty) -> bool {
+        let mut cur = t;
+        loop {
+            match self.tcx.kind_of(cur) {
+                gossamer_types::TyKind::HashMap { .. } => return true,
+                gossamer_types::TyKind::Ref { inner, .. } => cur = *inner,
+                _ => return false,
+            }
+        }
     }
 
     /// True when `t` resolves to `String` (peeling references).
