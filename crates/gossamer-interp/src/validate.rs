@@ -545,7 +545,7 @@ pub(crate) fn validate_chunk(chunk: &FnChunk) -> Result<(), ValidationError> {
                 check_i(op_idx, index_i)?;
                 check_f(op_idx, value_f)?;
             }
-            Op::BuildIntMap { dst_v } => check_v(op_idx, dst_v)?,
+            Op::BuildIntMap { dst_v } | Op::BuildStrIntMap { dst_v } => check_v(op_idx, dst_v)?,
             Op::IntMapInc {
                 dst_i,
                 map_reg,

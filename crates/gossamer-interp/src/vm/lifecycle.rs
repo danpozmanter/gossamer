@@ -9,9 +9,10 @@ impl Vm {
             globals: Arc::new(rustc_hash::FxHashMap::default()),
             prelude: builtins::prelude_globals(),
             pool: RefCell::new(FramePool::default()),
-            mir_bodies: None,
-            tcx_snapshot: None,
-            enum_shape_defs: None,
+            mir_bodies: RefCell::new(None),
+            tcx_snapshot: RefCell::new(None),
+            enum_shape_defs: RefCell::new(None),
+            jit_droppable: Cell::new(false),
             jit: parking_lot::RwLock::new(JitState::default()),
             jit_override_count: AtomicUsize::new(0),
             chunk_state_arena: RefCell::new(Vec::new()),
@@ -49,9 +50,12 @@ impl Vm {
             globals,
             prelude: builtins::prelude_globals(),
             pool: RefCell::new(FramePool::default()),
-            mir_bodies,
-            tcx_snapshot,
-            enum_shape_defs,
+            mir_bodies: RefCell::new(mir_bodies),
+            tcx_snapshot: RefCell::new(tcx_snapshot),
+            enum_shape_defs: RefCell::new(enum_shape_defs),
+            // Worker VMs run pool tasks back-to-back; `reset_after_task`
+            // manages their MIR lifetime, so they never self-drop.
+            jit_droppable: Cell::new(false),
             jit: parking_lot::RwLock::new(JitState::default()),
             jit_override_count: AtomicUsize::new(0),
             chunk_state_arena: RefCell::new(Vec::new()),
@@ -179,8 +183,8 @@ impl Vm {
     /// Call once after `vm.call()` returns to reclaim the per-program MIR
     /// allocation before the goroutine-join phase.
     pub fn release_jit_prelude(&mut self) {
-        self.mir_bodies = None;
-        self.tcx_snapshot = None;
+        *self.mir_bodies.borrow_mut() = None;
+        *self.tcx_snapshot.borrow_mut() = None;
         // The chunk-state arena (per-call IC slots, hot counters)
         // can grow large for big programs. Trim it back to the
         // steady-state floor while goroutines drain.
@@ -396,21 +400,39 @@ impl Vm {
         // lowers from MIR and never sees the `Op::CovHit` markers, so a
         // promoted function would silently stop recording line hits.
         if jit_call::jit_enabled() && has_jit_eligible_fn(program) && !self.coverage_active() {
-            self.enum_shape_defs = Some(Arc::new(build_native_enum_shapes(program, &tcx)));
+            let shapes = build_native_enum_shapes(program, &tcx);
             let mut bodies = gossamer_mir::lower_program(program, &mut tcx);
-            gossamer_mir::inline_trivial_wrappers(&mut bodies);
-            gossamer_mir::inline_small_callees(&mut bodies);
-            gossamer_mir::inline_general(&mut bodies);
-            self.mir_bodies = Some(Arc::new(bodies));
-            // Move the owned type context into the snapshot - no clone.
-            // `load` takes `tcx` by value precisely so this hand-off is
-            // a move: it duplicated the entire `TyCtxt` at load time
-            // (the high-water allocation that set a small program's
-            // MaxRSS) when the snapshot cloned, and stranded the caller
-            // with an empty interner when it used `mem::take` on a
-            // borrow. By-value ownership makes the consume explicit and
-            // costs neither.
-            self.tcx_snapshot = Some(Arc::new(tcx));
+            // The in-process JIT's only win is eliding per-call bytecode
+            // dispatch; the VM<->native boundary cancels that for a tiny
+            // straight-line leaf, so a program with no function that does
+            // real work per cross-boundary call (a loop or recursion)
+            // gains no speed yet would fault in the Cranelift compiler
+            // (~5 MB RSS). Gate the whole compile path on a worthy body.
+            // MIR lowering above is cheap and the bodies drop here when
+            // unused.
+            if gossamer_codegen_cranelift::has_worthy_jit_body(&bodies, &tcx, &shapes) {
+                gossamer_mir::inline_trivial_wrappers(&mut bodies);
+                gossamer_mir::inline_small_callees(&mut bodies);
+                gossamer_mir::inline_general(&mut bodies);
+                *self.enum_shape_defs.borrow_mut() = Some(Arc::new(shapes));
+                *self.mir_bodies.borrow_mut() = Some(Arc::new(bodies));
+                // Move the owned type context into the snapshot - no clone.
+                // `load` takes `tcx` by value precisely so this hand-off is
+                // a move: it duplicated the entire `TyCtxt` at load time
+                // (the high-water allocation that set a small program's
+                // MaxRSS) when the snapshot cloned, and stranded the caller
+                // with an empty interner when it used `mem::take` on a
+                // borrow. By-value ownership makes the consume explicit and
+                // costs neither.
+                *self.tcx_snapshot.borrow_mut() = Some(Arc::new(tcx));
+                // A spawn-free program never hands its MIR to a child Vm, so
+                // the deferred compile can free it the moment it lands - well
+                // before the program's allocation peak.
+                self.jit_droppable
+                    .set(!program_has_spawn_sites(&self.globals));
+            } else {
+                self.jit.write().compiled = JitCompileState::Failed;
+            }
         } else {
             self.jit.write().compiled = JitCompileState::Failed;
             // No JIT snapshot to retain. Every chunk compiled against the
@@ -459,19 +481,24 @@ impl Vm {
             self.jit.write().compiled = JitCompileState::Failed;
             return;
         }
-        let Some(bodies) = self.mir_bodies.as_ref() else {
+        // Clone the Arcs out so the `RefCell` borrows release before the
+        // compile, leaving the fields free to be dropped afterwards.
+        let Some(bodies) = self.mir_bodies.borrow().clone() else {
             self.jit.write().compiled = JitCompileState::Failed;
             return;
         };
-        let Some(tcx) = self.tcx_snapshot.as_ref() else {
+        let Some(tcx) = self.tcx_snapshot.borrow().clone() else {
             self.jit.write().compiled = JitCompileState::Failed;
             return;
         };
+        let bodies = &bodies;
+        let tcx = &tcx;
         let trace = jit_call::jit_trace();
         let started = std::time::Instant::now();
         let empty = std::collections::HashMap::new();
+        let shape_defs_arc = self.enum_shape_defs.borrow().clone();
         let shape_defs: &std::collections::HashMap<u32, u32> =
-            self.enum_shape_defs.as_deref().unwrap_or(&empty);
+            shape_defs_arc.as_deref().unwrap_or(&empty);
         let artifact = match gossamer_codegen_cranelift::compile_to_jit(bodies, tcx, shape_defs) {
             Ok(art) => art,
             Err(err) => {
@@ -553,6 +580,15 @@ impl Vm {
             .store(state.overrides.len(), Ordering::Release);
         state.artifact = Some(artifact);
         state.compiled = JitCompileState::Done;
+        drop(state);
+        // Spawn-free programs hand the MIR to no child Vm, so reclaim it
+        // now (the compile is the last reader) rather than at run end -
+        // freeing the live set before the program reaches its peak.
+        if self.jit_droppable.get() {
+            *self.mir_bodies.borrow_mut() = None;
+            *self.tcx_snapshot.borrow_mut() = None;
+            *self.enum_shape_defs.borrow_mut() = None;
+        }
     }
 
     /// Evaluates a `const`/`static` initializer by compiling `expr` into

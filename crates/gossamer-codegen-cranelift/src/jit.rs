@@ -152,12 +152,80 @@ fn body_user_calls<'a>(
     (calls, unresolved)
 }
 
+/// `true` when `body`'s control-flow graph contains a cycle - i.e. the
+/// function has a loop. A back-edge to a still-open (grey) block during
+/// DFS is a cycle.
+fn body_has_loop(body: &Body) -> bool {
+    use gossamer_mir::Terminator;
+    fn successors(term: &Terminator, out: &mut Vec<usize>) {
+        out.clear();
+        match term {
+            Terminator::Goto { target } => out.push(target.0 as usize),
+            Terminator::SwitchInt { arms, default, .. } => {
+                for (_, b) in arms {
+                    out.push(b.0 as usize);
+                }
+                out.push(default.0 as usize);
+            }
+            Terminator::Call {
+                target: Some(b), ..
+            } => out.push(b.0 as usize),
+            Terminator::Assert { target, .. } | Terminator::Drop { target, .. } => {
+                out.push(target.0 as usize);
+            }
+            Terminator::Return
+            | Terminator::Unreachable
+            | Terminator::Panic { .. }
+            | Terminator::Call { target: None, .. } => {}
+        }
+    }
+    let n = body.blocks.len();
+    let mut color = vec![0u8; n]; // 0 = white, 1 = grey (on stack), 2 = black
+    let mut succ = Vec::new();
+    for start in 0..n {
+        if color[start] != 0 {
+            continue;
+        }
+        color[start] = 1;
+        let mut stack: Vec<(usize, usize)> = vec![(start, 0)];
+        while let Some(&(node, idx)) = stack.last() {
+            successors(&body.blocks[node].terminator, &mut succ);
+            if idx < succ.len() {
+                stack.last_mut().unwrap().1 += 1;
+                let next = succ[idx];
+                if next >= n {
+                    continue;
+                }
+                match color[next] {
+                    0 => {
+                        color[next] = 1;
+                        stack.push((next, 0));
+                    }
+                    1 => return true,
+                    _ => {}
+                }
+            } else {
+                color[node] = 2;
+                stack.pop();
+            }
+        }
+    }
+    false
+}
+
 /// Computes the minimal set of body names needed in the JIT module.
 ///
 /// Starts from bodies whose param/return types support JIT promotion
-/// (scalar scalars only), then BFS-expands to include every user body
-/// they transitively call - those need to be compiled too so that
-/// intra-module call references resolve at finalize time.
+/// AND that do enough work per cross-boundary call to amortize the
+/// marshalling - a loop or recursion. A tiny straight-line scalar
+/// helper (e.g. `fn a(i, j) -> f64 { 1.0 / ... }`) called from
+/// bytecode gains nothing from native compilation: the per-call
+/// boundary cost equals the bytecode dispatch it saves, and promoting
+/// it would fault in the Cranelift compiler (~5 MB RSS) for no speedup.
+/// A function with a loop, or that recurses (native self/mutual calls
+/// that never re-cross the boundary), does amortize and is kept. From
+/// those worthy roots the set BFS-expands to every user body they
+/// transitively call so intra-module call references resolve.
 fn jit_compile_set<'a>(
     bodies: &'a [Body],
     tcx: &TyCtxt,
@@ -251,6 +319,63 @@ fn jit_compile_set<'a>(
     included
 }
 
+/// `true` when at least one body is worth promoting to native code:
+/// it is JIT-promotable (scalar/enum-pointer signature) AND does
+/// substantial work per cross-boundary call - it has a loop or it
+/// recurses. The in-process JIT's only speedup is eliding per-call
+/// bytecode dispatch, which the VM<->native boundary marshalling
+/// cancels for a tiny straight-line leaf called from bytecode (e.g.
+/// `fn a(i, j) -> f64 { 1.0 / ... }` - measured 0 speedup). A program
+/// with no worthy body gains nothing but would fault in the Cranelift
+/// compiler (~5 MB RSS), so the interpreter consults this before
+/// invoking [`compile_to_jit`] and stays on bytecode when it is
+/// `false`. `compile_to_jit` itself stays unfiltered so its
+/// compile-correctness is independently testable.
+#[allow(
+    clippy::implicit_hasher,
+    reason = "single interp caller passes the same HashMap shape compile_to_jit uses"
+)]
+#[must_use]
+pub fn has_worthy_jit_body(bodies: &[Body], tcx: &TyCtxt, enum_shapes: &HashMap<u32, u32>) -> bool {
+    let all_names: std::collections::HashSet<&str> =
+        bodies.iter().map(|b| b.name.as_str()).collect();
+    let def_to_name: HashMap<u32, &str> = bodies
+        .iter()
+        .filter_map(|b| b.def.map(|d| (d.local, b.name.as_str())))
+        .collect();
+    // Names that (transitively) reach themselves - a recursive call
+    // chain stays native once compiled, so it amortizes the boundary.
+    let mut graph: HashMap<&str, Vec<&str>> = HashMap::new();
+    for b in bodies {
+        let (calls, _) = body_user_calls(b, &all_names, &def_to_name);
+        graph.insert(b.name.as_str(), calls);
+    }
+    let reaches_self = |start: &str| -> bool {
+        let mut seen = std::collections::HashSet::new();
+        let mut stack: Vec<&str> = graph.get(start).into_iter().flatten().copied().collect();
+        while let Some(node) = stack.pop() {
+            if node == start {
+                return true;
+            }
+            if seen.insert(node)
+                && let Some(succ) = graph.get(node)
+            {
+                stack.extend(succ.iter().copied());
+            }
+        }
+        false
+    };
+    // `main` is never promoted (it stays on the bytecode path so every
+    // stdlib builtin keeps firing), so its own loops do not justify
+    // standing up the JIT - only a promotable *helper* that does real
+    // work per cross-boundary call does.
+    bodies.iter().any(|b| {
+        b.name != "main"
+            && body_kinds(b, tcx, enum_shapes).is_some()
+            && (body_has_loop(b) || reaches_self(b.name.as_str()))
+    })
+}
+
 /// Compiles every body in `bodies` through cranelift-jit and returns
 /// the resulting handle table. Functions whose codegen path errors,
 /// or whose ABI shape is not supported by the dispatch trampoline,
@@ -265,6 +390,20 @@ pub fn compile_to_jit(
     tcx: &TyCtxt,
     enum_shapes: &HashMap<u32, u32>,
 ) -> Result<JitArtifact> {
+    // Decide the compile set BEFORE touching Cranelift. When no body is
+    // worth promoting (no loop, no recursion - a program of tiny
+    // straight-line helpers or aggregate-only hot functions), return an
+    // empty artifact without instantiating the JIT module: building it
+    // faults in the Cranelift compiler (~5 MB resident) that this
+    // program would never benefit from.
+    let compile_set = jit_compile_set(bodies, tcx, enum_shapes);
+    if compile_set.is_empty() {
+        return Ok(JitArtifact {
+            module: None,
+            functions: HashMap::new(),
+        });
+    }
+
     let isa = build_native_isa(false)?;
     let mut builder = JITBuilder::with_isa(isa, cranelift_module::default_libcall_names());
     let mut runtime_symbol_set = register_runtime_symbols(&mut builder);
@@ -284,7 +423,7 @@ pub fn compile_to_jit(
     // them wastes Cranelift IR capacity and inflates peak RSS.  The BFS
     // below finds the transitive closure of user-function calls from the
     // promotable roots so inter-body calls inside the compiled set resolve.
-    let compile_set = jit_compile_set(bodies, tcx, enum_shapes);
+    // (`compile_set` was computed above, before the JIT module was built.)
     // Clone only the bodies we'll actually compile. Skipping bodies
     // that can never be promoted (aggregate params/returns) saves
     // tens of megabytes of peak RSS without affecting correctness -

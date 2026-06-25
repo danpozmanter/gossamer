@@ -120,15 +120,25 @@ pub struct Vm {
     /// `Arc` so a child `Vm` can drive its own deferred JIT
     /// compile without reflowing HIR → MIR. `None` when the JIT
     /// is disabled (`gos run --no-jit` / `GOS_JIT=0`).
-    pub(crate) mir_bodies: Option<Arc<Vec<Body>>>,
+    /// `RefCell` so the deferred JIT can release the bodies the
+    /// instant `compile_to_jit` finishes (see [`Self::jit_droppable`])
+    /// rather than holding them through the whole run.
+    pub(crate) mir_bodies: RefCell<Option<Arc<Vec<Body>>>>,
     /// DefId.local -> native shape index for heap enums whose values
     /// may cross the JIT boundary as raw pointers.
-    pub(crate) enum_shape_defs: Option<Arc<std::collections::HashMap<u32, u32>>>,
+    pub(crate) enum_shape_defs: RefCell<Option<Arc<std::collections::HashMap<u32, u32>>>>,
     /// Snapshot of the type context as it stood when MIR was
     /// lowered. Cranelift's `compile_to_jit` only needs `&TyCtxt`.
     /// `Arc` so spawned goroutines reuse the parent's snapshot
     /// rather than re-lowering it.
-    pub(crate) tcx_snapshot: Option<Arc<TyCtxt>>,
+    pub(crate) tcx_snapshot: RefCell<Option<Arc<TyCtxt>>>,
+    /// True once `load` proves the program has no goroutine spawn
+    /// sites: then [`Self::try_compile_jit_lazy`] can free
+    /// `mir_bodies` / `tcx_snapshot` the moment the compile lands,
+    /// shrinking the live set before the allocation peak. Programs
+    /// that spawn keep the Arcs so late-spawned goroutines can still
+    /// inherit the MIR and tier up.
+    pub(crate) jit_droppable: Cell<bool>,
     /// JIT artifact + override map filled by
     /// [`Vm::try_compile_jit_lazy`] the first time any chunk's hot
     /// counter trips on this `Vm`. Per-`Vm` (not shared across
@@ -1265,6 +1275,31 @@ fn has_jit_eligible_fn(program: &HirProgram) -> bool {
         .any(|item| matches!(&item.kind, HirItemKind::Fn(decl) if decl.name.name != "main"))
 }
 
+/// Conservative scan for any goroutine-spawn site reachable from the
+/// loaded program. `go expr` lowers to `Op::Spawn` / `Op::SpawnMethod`;
+/// the `spawn(f)` JoinHandle builtin appears as a call referencing the
+/// `spawn` global. A spawn-free program hands its MIR to no child Vm, so
+/// the deferred JIT can free it early. Erring toward "spawns" only
+/// forfeits a goroutine tier-up optimization, never correctness.
+fn program_has_spawn_sites(globals: &rustc_hash::FxHashMap<&'static str, Global>) -> bool {
+    globals
+        .values()
+        .any(|g| matches!(g, Global::Fn(chunk) if chunk_has_spawn(chunk)))
+}
+
+fn chunk_has_spawn(chunk: &crate::bytecode::FnChunk) -> bool {
+    use crate::bytecode::Op;
+    chunk
+        .instrs
+        .iter()
+        .any(|op| matches!(op, Op::Spawn { .. } | Op::SpawnMethod { .. }))
+        || chunk.globals.iter().any(|name| name == "spawn")
+        || chunk
+            .closure_protos
+            .iter()
+            .any(|proto| chunk_has_spawn(&proto.chunk))
+}
+
 fn truthy(v: &Value) -> RuntimeResult<bool> {
     // 0.7.0 flag::Cell auto-deref so `if flags.verbose { … }`
     // works without `*`.
@@ -1386,7 +1421,9 @@ fn field_set(receiver: &mut Value, name: &str, new_value: Value) -> RuntimeResul
             return Ok(());
         }
     }
-    slots.push((crate::value::intern_type_name(name), new_value));
+    let mut grown = std::mem::take(slots).into_vec();
+    grown.push((crate::value::intern_type_name(name), new_value));
+    *slots = grown.into_boxed_slice();
     Ok(())
 }
 

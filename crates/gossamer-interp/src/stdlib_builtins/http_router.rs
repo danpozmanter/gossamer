@@ -291,7 +291,7 @@ fn inject_path_params(request: Value, captures: &[(String, String)]) -> Value {
     let Value::Struct(inner) = &request else {
         return request;
     };
-    let mut fields: Vec<(&'static str, Value)> = inner.fields.clone();
+    let mut fields: Vec<(&'static str, Value)> = inner.fields.to_vec();
     let params: Vec<Value> = captures
         .iter()
         .map(|(k, v)| {

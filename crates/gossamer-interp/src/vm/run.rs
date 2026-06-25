@@ -1292,7 +1292,11 @@ impl Vm {
                     if let Some(p) = pos {
                         field_slots[p].1 = new_value;
                     } else {
-                        field_slots.push((crate::value::intern_type_name(field_name), new_value));
+                        // Dynamic field add (e.g. `json::Object`): the
+                        // fixed-arity slice grows by one, rebuilt once.
+                        let mut grown = std::mem::take(field_slots).into_vec();
+                        grown.push((crate::value::intern_type_name(field_name), new_value));
+                        *field_slots = grown.into_boxed_slice();
                     }
                 }
                 Op::MakeClosure { dst, proto } => {
@@ -1947,7 +1951,11 @@ impl Vm {
                     if let Some(p) = pos {
                         field_slots[p].1 = new_value;
                     } else {
-                        field_slots.push((crate::value::intern_type_name(field_name), new_value));
+                        // Dynamic field add (e.g. `json::Object`): the
+                        // fixed-arity slice grows by one, rebuilt once.
+                        let mut grown = std::mem::take(field_slots).into_vec();
+                        grown.push((crate::value::intern_type_name(field_name), new_value));
+                        *field_slots = grown.into_boxed_slice();
                     }
                 }
 
@@ -2714,6 +2722,14 @@ impl Vm {
                             rustc_hash::FxBuildHasher,
                         ),
                     )));
+                }
+                Op::BuildStrIntMap { dst_v } => {
+                    registers[dst_v as usize] = Value::StrIntMap(Arc::new(
+                        parking_lot::Mutex::new(rustc_hash::FxHashMap::with_capacity_and_hasher(
+                            16,
+                            rustc_hash::FxBuildHasher,
+                        )),
+                    ));
                 }
                 Op::IntMapInc {
                     dst_i,

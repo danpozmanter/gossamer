@@ -481,6 +481,15 @@ pub enum Op {
         /// Destination `Value` register.
         dst_v: Reg,
     },
+    /// Constructs an empty `Value::StrIntMap` (typed
+    /// `HashMap<String, i64>`). Emitted in place of `HashMap::new()`
+    /// when the type checker proves the key is `String` and the value
+    /// is `i64`. String-keyed counter loops route their entries
+    /// through the unboxed `(SmolStr, i64)` storage.
+    BuildStrIntMap {
+        /// Destination `Value` register.
+        dst_v: Reg,
+    },
     /// Typed counterpart to [`Op::MapInc`] for `Value::IntMap`. Reads
     /// the key and increment from the i64 register file, mutates
     /// the map's slot in place, and writes the post-increment value

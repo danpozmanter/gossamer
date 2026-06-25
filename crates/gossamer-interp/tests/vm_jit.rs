@@ -181,8 +181,12 @@ fn jit_divide_by_zero_is_clean_panic_not_trap() {
     const CHILD_ENV: &str = "GOS_JIT_DIVZERO_CHILD";
     if std::env::var(CHILD_ENV).is_ok() {
         let _g = GosJitGuard::new();
-        let (vm, _) =
-            build_vm("fn divi(a: i64, b: i64) -> i64 { a / b }\nfn main() -> i64 { 0i64 }\n");
+        // `divi` carries a one-trip loop so it is JIT-worthy under the
+        // promote-only-real-work policy; the divide still runs natively,
+        // which is the path this regression guards.
+        let (vm, _) = build_vm(
+            "fn divi(a: i64, b: i64) -> i64 { let mut r = 0\nlet mut i = 0\nwhile i < 1 { r = a / b\ni += 1 }\nr }\nfn main() -> i64 { 0i64 }\n",
+        );
         warm_up(&vm, "divi", &[Value::Int(10), Value::Int(2)]);
         // Trip the divide-by-zero on the now-native body.
         let _ = vm.call("divi", vec![Value::Int(1), Value::Int(0)]);

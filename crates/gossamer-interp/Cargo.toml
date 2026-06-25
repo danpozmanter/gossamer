@@ -25,6 +25,7 @@ gossamer-types = { workspace = true }
 gossamer-ws = { workspace = true }
 parking_lot = { workspace = true }
 rustc-hash = "2"
+smallvec = "1"
 thiserror = { workspace = true }
 
 [features]

@@ -2633,7 +2633,7 @@ fn builtin_http_response_with_header(args: &[Value]) -> RuntimeResult<Value> {
         Value::String(SmolStr::from(name.clone())),
         Value::String(SmolStr::from(value)),
     ]));
-    let mut fields = inner.fields.clone();
+    let mut fields = inner.fields.to_vec();
     if let Some((_, slot)) = fields.iter_mut().find(|(ident, _)| (*ident) == "headers") {
         let mut items = match slot {
             Value::Array(existing) => existing.as_ref().clone(),
@@ -4913,6 +4913,13 @@ fn gossamer_to_json_value(value: &Value) -> json_std::Value {
             }
             json_std::Value::Object(out)
         }
+        Value::StrIntMap(map) => {
+            let mut out = std::collections::BTreeMap::new();
+            for (k, v) in map.lock().iter() {
+                out.insert(k.as_str().to_string(), json_std::Value::Number(*v as f64));
+            }
+            json_std::Value::Object(out)
+        }
         Value::Uint(n) => json_std::Value::Number(*n as f64),
     }
 }
@@ -4927,6 +4934,8 @@ fn builtin_len(args: &[Value]) -> RuntimeResult<Value> {
         Some(Value::IntArray(data)) => data.len(),
         Some(Value::FloatVec(data)) => data.len(),
         Some(Value::Map(m)) => m.lock().len(),
+        Some(Value::IntMap(m)) => m.lock().len(),
+        Some(Value::StrIntMap(m)) => m.lock().len(),
         _ => return Ok(Value::Int(0)),
     };
     Ok(Value::Int(i64::try_from(count).unwrap_or(i64::MAX)))
@@ -5107,7 +5116,10 @@ pub(crate) fn builtin_contains(args: &[Value]) -> RuntimeResult<Value> {
     // compiled tier exposes; route map receivers to the key-membership
     // builtin so a `Value::Map`/`Value::IntMap` does not fall through to
     // the always-false tail.
-    if matches!(args.first(), Some(Value::Map(_) | Value::IntMap(_))) {
+    if matches!(
+        args.first(),
+        Some(Value::Map(_) | Value::IntMap(_) | Value::StrIntMap(_))
+    ) {
         return builtin_map_contains_key(args);
     }
     // String::contains(substr) when both args are strings; otherwise
@@ -5256,6 +5268,15 @@ fn builtin_map_pop(args: &[Value]) -> RuntimeResult<Value> {
         Some(Value::IntMap(m)) => {
             let key = value_to_int(key_val).unwrap_or(0);
             match m.lock().remove(&key) {
+                Some(v) => Ok(some_variant(Value::Int(v))),
+                None => Ok(none_variant()),
+            }
+        }
+        Some(Value::StrIntMap(m)) => {
+            let Value::String(k) = key_val else {
+                return Ok(none_variant());
+            };
+            match m.lock().remove(k) {
                 Some(v) => Ok(some_variant(Value::Int(v))),
                 None => Ok(none_variant()),
             }
@@ -5559,6 +5580,15 @@ fn builtin_map_get(args: &[Value]) -> RuntimeResult<Value> {
                 None => Ok(none_variant()),
             }
         }
+        Some(Value::StrIntMap(map)) => {
+            let Some(Value::String(k)) = args.get(1) else {
+                return Ok(none_variant());
+            };
+            match map.lock().get(k).copied() {
+                Some(v) => Ok(some_variant(Value::Int(v))),
+                None => Ok(none_variant()),
+            }
+        }
         _ => Ok(none_variant()),
     }
 }
@@ -5578,6 +5608,13 @@ fn builtin_map_get_or(args: &[Value]) -> RuntimeResult<Value> {
         }
         Some(Value::IntMap(map)) => {
             let Some(Value::Int(k)) = args.get(1) else {
+                return Ok(default);
+            };
+            let fallback = if let Value::Int(d) = &default { *d } else { 0 };
+            Ok(Value::Int(map.lock().get(k).copied().unwrap_or(fallback)))
+        }
+        Some(Value::StrIntMap(map)) => {
+            let Some(Value::String(k)) = args.get(1) else {
                 return Ok(default);
             };
             let fallback = if let Value::Int(d) = &default { *d } else { 0 };
@@ -5618,6 +5655,21 @@ fn builtin_map_inc(args: &[Value]) -> RuntimeResult<Value> {
             guard.insert(*k, new_val);
             Ok(Value::Int(new_val))
         }
+        Some(Value::StrIntMap(map)) => {
+            let Some(Value::String(k)) = args.get(1) else {
+                return Ok(Value::Int(0));
+            };
+            let mut guard = map.lock();
+            // Borrowed-slice probe first: a repeated key (the common
+            // case when counting) updates in place with no key clone;
+            // only a first insert pays the `SmolStr` clone.
+            if let Some(slot) = guard.get_mut(k) {
+                *slot += by;
+                return Ok(Value::Int(*slot));
+            }
+            guard.insert(k.clone(), by);
+            Ok(Value::Int(by))
+        }
         _ => Ok(Value::Int(0)),
     }
 }
@@ -5652,14 +5704,32 @@ fn builtin_map_or_insert(args: &[Value]) -> RuntimeResult<Value> {
             guard.insert(*k, fallback);
             Ok(Value::Int(fallback))
         }
+        Some(Value::StrIntMap(map)) => {
+            let Some(Value::String(k)) = args.get(1) else {
+                return Ok(default);
+            };
+            let fallback = if let Value::Int(d) = &default { *d } else { 0 };
+            let mut guard = map.lock();
+            if let Some(existing) = guard.get(k).copied() {
+                return Ok(Value::Int(existing));
+            }
+            guard.insert(k.clone(), fallback);
+            Ok(Value::Int(fallback))
+        }
         _ => Ok(default),
     }
 }
 
-/// `m.inc_at(seq, start, len, by)` for `HashMap<String, i64>` -
-/// the zero-allocation analogue of `m[seq[start..start+len]] += by`.
-/// Wired into the VM builtins so `gos run` doesn't degrade
-/// to a per-iteration String build when user code uses this method.
+/// `m.inc_at(seq, start, len, by)` for `HashMap<String, i64>`.
+///
+/// DEPRECATED. This fuses substring-extraction with the counter
+/// increment into one call - a shape no other language expresses as a
+/// single stdlib primitive, so it does not belong in head-to-head
+/// benchmarks. Idiomatic code extracts the substring and calls
+/// `m.inc(key, by)`; the general `HashMap<String, i64>` path is now
+/// compact (`Value::StrIntMap`), so the fusion buys no allocation win.
+/// Retained for source compatibility; handles both the boxed `Map` and
+/// the typed `StrIntMap` storage so it never silently no-ops.
 fn builtin_map_inc_at(args: &[Value]) -> RuntimeResult<Value> {
     let by = match args.get(4) {
         Some(Value::Int(n)) => *n,
@@ -5681,14 +5751,14 @@ fn builtin_map_inc_at(args: &[Value]) -> RuntimeResult<Value> {
     // then `SmolStr::from(String)`) paid per k-mer. For k <= 22 the
     // SmolStr is stored inline (no heap alloc), so every k-nucleotide
     // input shape (k = 1, 2, 3, 4, 6, 12, 18) lands in inline storage.
-    let key = match args.get(1) {
+    let kmer = match args.get(1) {
         Some(Value::String(s)) => {
             let bytes = s.as_bytes();
             if start + len > bytes.len() {
                 return Ok(Value::Int(0));
             }
             match std::str::from_utf8(&bytes[start..start + len]) {
-                Ok(slice) => MapKey::Str(SmolStr::from_str(slice)),
+                Ok(slice) => SmolStr::from_str(slice),
                 Err(_) => return Ok(Value::Int(0)),
             }
         }
@@ -5696,6 +5766,7 @@ fn builtin_map_inc_at(args: &[Value]) -> RuntimeResult<Value> {
     };
     match args.first() {
         Some(Value::Map(map)) => {
+            let key = MapKey::Str(kmer);
             let mut guard = map.lock();
             let new_val = match guard.get(&key) {
                 Some(Value::Int(v)) => v + by,
@@ -5703,6 +5774,12 @@ fn builtin_map_inc_at(args: &[Value]) -> RuntimeResult<Value> {
             };
             guard.insert(key, Value::Int(new_val));
             Ok(Value::Int(new_val))
+        }
+        Some(Value::StrIntMap(map)) => {
+            let mut guard = map.lock();
+            let entry = guard.entry(kmer).or_insert(0);
+            *entry += by;
+            Ok(Value::Int(*entry))
         }
         _ => Ok(Value::Int(0)),
     }
@@ -5730,6 +5807,17 @@ fn builtin_map_insert(args: &[Value]) -> RuntimeResult<Value> {
             map.lock().insert(*k, v);
             Ok(Value::IntMap(Arc::clone(map)))
         }
+        Some(Value::StrIntMap(map)) => {
+            let Some(Value::String(k)) = args.get(1) else {
+                return Ok(Value::StrIntMap(Arc::clone(map)));
+            };
+            let v = match args.get(2) {
+                Some(Value::Int(n)) => *n,
+                _ => 0,
+            };
+            map.lock().insert(k.clone(), v);
+            Ok(Value::StrIntMap(Arc::clone(map)))
+        }
         _ => Ok(args.first().cloned().unwrap_or(Value::Unit)),
     }
 }
@@ -5751,6 +5839,13 @@ fn builtin_map_remove(args: &[Value]) -> RuntimeResult<Value> {
             map.lock().remove(k);
             Ok(Value::IntMap(Arc::clone(map)))
         }
+        Some(Value::StrIntMap(map)) => {
+            let Some(Value::String(k)) = args.get(1) else {
+                return Ok(Value::StrIntMap(Arc::clone(map)));
+            };
+            map.lock().remove(k);
+            Ok(Value::StrIntMap(Arc::clone(map)))
+        }
         _ => Ok(args.first().cloned().unwrap_or(Value::Unit)),
     }
 }
@@ -5770,6 +5865,12 @@ fn builtin_map_contains_key(args: &[Value]) -> RuntimeResult<Value> {
             };
             Ok(Value::Bool(map.lock().contains_key(k)))
         }
+        Some(Value::StrIntMap(map)) => {
+            let Some(Value::String(k)) = args.get(1) else {
+                return Ok(Value::Bool(false));
+            };
+            Ok(Value::Bool(map.lock().contains_key(k)))
+        }
         _ => Ok(Value::Bool(false)),
     }
 }
@@ -5778,6 +5879,7 @@ fn builtin_map_len(args: &[Value]) -> RuntimeResult<Value> {
     let n = match args.first() {
         Some(Value::Map(m)) => m.lock().len() as i64,
         Some(Value::IntMap(m)) => m.lock().len() as i64,
+        Some(Value::StrIntMap(m)) => m.lock().len() as i64,
         _ => 0,
     };
     Ok(Value::Int(n))
@@ -5799,6 +5901,11 @@ fn builtin_map_keys(args: &[Value]) -> RuntimeResult<Value> {
             keys.sort_unstable();
             out.extend(keys.into_iter().map(Value::Int));
         }
+        Some(Value::StrIntMap(map)) => {
+            let mut keys: Vec<SmolStr> = map.lock().keys().cloned().collect();
+            keys.sort_by(|a, b| a.as_str().cmp(b.as_str()));
+            out.extend(keys.into_iter().map(Value::String));
+        }
         _ => {}
     }
     Ok(Value::Array(Arc::new(out)))
@@ -5815,7 +5922,7 @@ fn builtin_map_keys(args: &[Value]) -> RuntimeResult<Value> {
 /// so both surfaces work without a registration-order foot-gun.
 fn builtin_keys_router(args: &[Value]) -> RuntimeResult<Value> {
     match args.first() {
-        Some(Value::Map(_) | Value::IntMap(_)) => builtin_map_keys(args),
+        Some(Value::Map(_) | Value::IntMap(_) | Value::StrIntMap(_)) => builtin_map_keys(args),
         Some(Value::Struct(_)) => builtin_json_keys(args),
         _ => builtin_map_keys(args),
     }
@@ -5830,7 +5937,7 @@ fn builtin_keys_router(args: &[Value]) -> RuntimeResult<Value> {
 /// evaluation.
 fn builtin_get_router(args: &[Value]) -> RuntimeResult<Value> {
     match args.first() {
-        Some(Value::Map(_) | Value::IntMap(_)) => builtin_map_get(args),
+        Some(Value::Map(_) | Value::IntMap(_) | Value::StrIntMap(_)) => builtin_map_get(args),
         _ => builtin_json_get(args),
     }
 }
@@ -5840,7 +5947,7 @@ fn builtin_get_router(args: &[Value]) -> RuntimeResult<Value> {
 /// re-introduce the silent override.
 fn builtin_values_router(args: &[Value]) -> RuntimeResult<Value> {
     match args.first() {
-        Some(Value::Map(_) | Value::IntMap(_)) => builtin_map_values(args),
+        Some(Value::Map(_) | Value::IntMap(_) | Value::StrIntMap(_)) => builtin_map_values(args),
         _ => builtin_map_values(args),
     }
 }
@@ -5863,6 +5970,12 @@ fn builtin_map_values(args: &[Value]) -> RuntimeResult<Value> {
         Some(Value::IntMap(map)) => {
             let mut entries: Vec<(i64, i64)> = map.lock().iter().map(|(k, v)| (*k, *v)).collect();
             entries.sort_by_key(|(k, _)| *k);
+            out.extend(entries.into_iter().map(|(_, v)| Value::Int(v)));
+        }
+        Some(Value::StrIntMap(map)) => {
+            let mut entries: Vec<(SmolStr, i64)> =
+                map.lock().iter().map(|(k, v)| (k.clone(), *v)).collect();
+            entries.sort_by(|a, b| a.0.as_str().cmp(b.0.as_str()));
             out.extend(entries.into_iter().map(|(_, v)| Value::Int(v)));
         }
         _ => {}
@@ -5903,6 +6016,16 @@ fn builtin_map_iter(args: &[Value]) -> RuntimeResult<Value> {
             let out: Vec<Value> = entries
                 .into_iter()
                 .map(|(k, v)| Value::Tuple(Arc::new(vec![Value::Int(k), Value::Int(v)])))
+                .collect();
+            Ok(Value::Array(Arc::new(out)))
+        }
+        Some(Value::StrIntMap(map)) => {
+            let mut entries: Vec<(SmolStr, i64)> =
+                map.lock().iter().map(|(k, v)| (k.clone(), *v)).collect();
+            entries.sort_by(|a, b| a.0.as_str().cmp(b.0.as_str()));
+            let out: Vec<Value> = entries
+                .into_iter()
+                .map(|(k, v)| Value::Tuple(Arc::new(vec![Value::String(k), Value::Int(v)])))
                 .collect();
             Ok(Value::Array(Arc::new(out)))
         }
@@ -5976,6 +6099,10 @@ fn builtin_map_clear(args: &[Value]) -> RuntimeResult<Value> {
             map.lock().clear();
             Ok(Value::IntMap(Arc::clone(map)))
         }
+        Some(Value::StrIntMap(map)) => {
+            map.lock().clear();
+            Ok(Value::StrIntMap(Arc::clone(map)))
+        }
         _ => Ok(args.first().cloned().unwrap_or(Value::Unit)),
     }
 }
@@ -5984,6 +6111,7 @@ fn builtin_map_is_empty(args: &[Value]) -> RuntimeResult<Value> {
     let empty = match args.first() {
         Some(Value::Map(m)) => m.lock().is_empty(),
         Some(Value::IntMap(m)) => m.lock().is_empty(),
+        Some(Value::StrIntMap(m)) => m.lock().is_empty(),
         _ => false,
     };
     Ok(Value::Bool(empty))
@@ -5991,7 +6119,10 @@ fn builtin_map_is_empty(args: &[Value]) -> RuntimeResult<Value> {
 
 fn builtin_insert(args: &[Value]) -> RuntimeResult<Value> {
     // Map dispatch: `m.insert(k, v)` - keyed insert, no index.
-    if matches!(args.first(), Some(Value::Map(_))) {
+    if matches!(
+        args.first(),
+        Some(Value::Map(_) | Value::IntMap(_) | Value::StrIntMap(_))
+    ) {
         return builtin_map_insert(args);
     }
     let idx = match args.get(1) {
@@ -6033,7 +6164,10 @@ fn builtin_insert(args: &[Value]) -> RuntimeResult<Value> {
 }
 
 fn builtin_remove(args: &[Value]) -> RuntimeResult<Value> {
-    if matches!(args.first(), Some(Value::Map(_))) {
+    if matches!(
+        args.first(),
+        Some(Value::Map(_) | Value::IntMap(_) | Value::StrIntMap(_))
+    ) {
         return builtin_map_remove(args);
     }
     let idx = match args.get(1) {
@@ -6067,7 +6201,10 @@ fn builtin_remove(args: &[Value]) -> RuntimeResult<Value> {
 }
 
 fn builtin_clear(args: &[Value]) -> RuntimeResult<Value> {
-    if matches!(args.first(), Some(Value::Map(_))) {
+    if matches!(
+        args.first(),
+        Some(Value::Map(_) | Value::IntMap(_) | Value::StrIntMap(_))
+    ) {
         return builtin_map_clear(args);
     }
     if matches!(args.first(), Some(Value::Array(_))) {
@@ -6386,7 +6523,7 @@ fn builtin_json_set(args: &[Value]) -> RuntimeResult<Value> {
     if inner.name != "json::Object" {
         return Ok(receiver);
     }
-    let mut fields: Vec<(&'static str, Value)> = inner.fields.clone();
+    let mut fields: Vec<(&'static str, Value)> = inner.fields.to_vec();
     if let Some(slot) = fields.iter_mut().find(|(name, _)| *name == key) {
         slot.1 = value;
     } else {

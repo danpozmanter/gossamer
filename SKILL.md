@@ -18,7 +18,7 @@ Go-shaped: goroutines, channels. Source files end in `.gos`. The
 toolchain binary is `gos`. Every project ships a `project.toml`
 manifest.
 
-Status: pre-1.0.0 (currently 0.18.1). The surface is stable to
+Status: pre-1.0.0 (currently 0.18.2). The surface is stable to
 write against, and features ship across all three tiers (bytecode
 VM, in-process JIT, LLVM AOT) - see "current gaps" at the bottom.
 

@@ -20,6 +20,7 @@ use std::fmt;
 use std::sync::{Arc, OnceLock};
 
 use parking_lot::Mutex;
+use smallvec::SmallVec;
 
 use gossamer_runtime::{
     GossamerValue, SINGLETON_FALSE, SINGLETON_TRUE, SINGLETON_UNIT, TAG_FLOAT, TAG_HEAP,
@@ -105,6 +106,14 @@ pub enum Value {
     /// frequency tables ride this variant, dropping per-iteration
     /// hash + compare cost dramatically.
     IntMap(Arc<parking_lot::Mutex<rustc_hash::FxHashMap<i64, i64>>>),
+    /// Typed `HashMap<String, i64>` aggregate. Drops both the
+    /// [`MapKey`] enum tag and the [`Value`] box around each count:
+    /// an entry is a bare `(SmolStr, i64)`, ~16 bytes lighter than
+    /// the generic `Map`'s `(MapKey, Value)`. Because a `HashMap`
+    /// stores entries inline in one contiguous bucket array, that
+    /// per-entry saving translates directly into lower peak RSS for
+    /// string-frequency tables (k-mer / n-gram / token counts).
+    StrIntMap(Arc<parking_lot::Mutex<rustc_hash::FxHashMap<SmolStr, i64>>>),
     /// Unsigned 64-bit integer - same bit pattern as `Int(n as i64)`
     /// but formats as an unsigned decimal value. Used exclusively for
     /// `x as u64` casts to preserve unsigned display semantics.
@@ -297,10 +306,14 @@ pub struct FloatArrayInner {
 pub struct VariantInner {
     /// Variant name (interned, see `intern_type_name`).
     pub name: &'static str,
-    /// Positional fields, stored inline: a variant value is ONE heap
-    /// allocation plus its field buffer (was three - outer Arc, inner
-    /// `Arc<Vec>`, buffer). Sharing still goes through the outer Arc.
-    pub fields: Vec<Value>,
+    /// Positional fields stored inline for the common arity (≤ 2):
+    /// `Some(x)`, `Ok`/`Err`, and a two-child enum node (linked-list
+    /// `Cons`, tree `Node`) keep their payload in the same heap block
+    /// as the `Arc<VariantInner>` header - one allocation per value
+    /// instead of two, and 64 bytes rather than 80 for a two-field
+    /// node (it lands in a smaller `mimalloc` size class). Arity > 2
+    /// spills to the heap. Sharing goes through the outer `Arc`.
+    pub fields: SmallVec<[Value; 2]>,
 }
 
 /// Boxed payload of [`Value::Struct`].
@@ -313,8 +326,10 @@ pub struct StructInner {
     /// instance of the type) rather than an owned `String`, so a struct
     /// instance no longer heap-allocates its field names - for a program
     /// holding millions of structs that removed millions of per-field
-    /// allocations and shrank each slot from 40 to 32 bytes.
-    pub fields: Vec<(&'static str, Value)>,
+    /// allocations and shrank each slot from 40 to 32 bytes. A
+    /// `Box<[_]>` (not `Vec`) drops the unused capacity word: a struct's
+    /// field count is fixed at construction.
+    pub fields: Box<[(&'static str, Value)]>,
 }
 
 /// Boxed payload of [`Value::Builtin`]. Builtins are constructed
@@ -693,7 +708,7 @@ impl Value {
     pub fn variant(name: impl AsRef<str>, fields: Vec<Value>) -> Self {
         Self::Variant(Arc::new(VariantInner {
             name: intern_type_name(name.as_ref()),
-            fields,
+            fields: SmallVec::from_vec(fields),
         }))
     }
     /// Constructs a [`Value::Struct`].
@@ -701,7 +716,7 @@ impl Value {
     pub fn struct_(name: impl AsRef<str>, fields: Vec<(&'static str, Value)>) -> Self {
         Self::Struct(Arc::new(StructInner {
             name: intern_type_name(name.as_ref()),
-            fields,
+            fields: fields.into_boxed_slice(),
         }))
     }
     /// Constructs a [`Value::FloatArray`].
@@ -1110,6 +1125,7 @@ impl Value {
             }
             Self::Map(_)
             | Self::IntMap(_)
+            | Self::StrIntMap(_)
             | Self::Builtin(_)
             | Self::Native(_)
             | Self::Weak(_)
@@ -1252,6 +1268,7 @@ impl fmt::Display for Value {
             Self::Channel(ch) => write!(out, "{ch:?}"),
             Self::Map(map) => write_map(out, &map.lock()),
             Self::IntMap(map) => write_int_map(out, &map.lock()),
+            Self::StrIntMap(map) => write_str_int_map(out, &map.lock()),
             Self::Uint(n) => write!(out, "{n}"),
             Self::Weak(_) => out.write_str("<weak>"),
             Self::Void => out.write_str("<void>"),
@@ -1307,6 +1324,25 @@ fn write_int_map(
             out.write_str(", ")?;
         }
         write!(out, "{k}: {v}")?;
+    }
+    out.write_str("}")
+}
+
+/// Key-sorted rendering of a `String`-keyed, `i64`-valued map.
+/// Mirrors [`write_map`] for the [`Value::StrIntMap`] storage shape,
+/// quoting keys exactly as the generic map's string keys render.
+fn write_str_int_map(
+    out: &mut fmt::Formatter<'_>,
+    map: &rustc_hash::FxHashMap<SmolStr, i64>,
+) -> fmt::Result {
+    out.write_str("{")?;
+    let mut entries: Vec<(&SmolStr, &i64)> = map.iter().collect();
+    entries.sort_by(|a, b| a.0.as_str().cmp(b.0.as_str()));
+    for (i, (k, v)) in entries.iter().enumerate() {
+        if i > 0 {
+            out.write_str(", ")?;
+        }
+        write!(out, "{}: {v}", k.as_str())?;
     }
     out.write_str("}")
 }

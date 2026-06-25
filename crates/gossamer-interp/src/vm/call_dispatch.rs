@@ -225,9 +225,9 @@ impl Vm {
         F: FnOnce(&mut Vm) + Send + 'static,
     {
         let globals = Arc::clone(&self.globals);
-        let mir_bodies = self.mir_bodies.clone();
-        let tcx_snapshot = self.tcx_snapshot.clone();
-        let enum_shape_defs = self.enum_shape_defs.clone();
+        let mir_bodies = self.mir_bodies.borrow().clone();
+        let tcx_snapshot = self.tcx_snapshot.borrow().clone();
+        let enum_shape_defs = self.enum_shape_defs.borrow().clone();
         crate::vm::goroutine::pool().spawn(Box::new(move || {
             thread_local! {
                 static THREAD_VM: std::cell::OnceCell<std::cell::RefCell<Option<Vm>>> =

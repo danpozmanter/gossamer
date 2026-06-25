@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.18.2 - Interpreter memory improvements
+
+Reduces `gos run` (bytecode VM) peak memory. Output stays bit-identical
+across the VM, the Cranelift JIT, and the LLVM AOT tier.
+
+- The in-process JIT compiles a function only when it does real work per
+  cross-boundary call (it has a loop or it recurses); a program with no
+  such function stays on the bytecode path instead of faulting in the
+  Cranelift compiler.
+- `HashMap<String, i64>` stores unboxed `(SmolStr, i64)` entries and
+  probes by borrowed key, dropping the per-entry key tag and the boxed
+  count.
+- Enum and struct payloads of small arity are stored inline in the
+  value's heap block rather than in a separate buffer.
+- A spawn-free program releases its lowered MIR and type-context
+  snapshot once the deferred JIT settles, rather than holding them until
+  exit.
+- The `GosStruct` derive no longer trips the unstable `str_as_str`
+  feature; the generated field lookup slices the struct's fields
+  directly.
+
 ## 0.18.1 - Stability and minor performance sweep.
 
 A stability sweep that closes the programs which still passed `gos check` on 0.18.0 and then segfaulted, printed uninitialised memory, or diverged across tiers - plus the memory leak and use-after-free found alongside them.

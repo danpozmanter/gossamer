@@ -1883,7 +1883,14 @@ impl<'tcx> FnBuilder<'tcx> {
         // `get_or` call is never lowered.
         if name.name == "insert" && args.len() == 2 {
             if let Some((key_expr, by_expr)) = match_map_inc_pattern(receiver, &args[0], &args[1]) {
-                if matches!(self.tcx.kind(receiver.ty), Some(TyKind::HashMap { .. })) {
+                // `StrIntMap` has no typed counter-bump op; let it fall
+                // through to the generic `get_or` + `insert` builtins,
+                // which dispatch on its storage. The `Op::MapInc` /
+                // `Op::IntMapInc` super-instructions only cover the boxed
+                // `Map` and the `IntMap`.
+                if matches!(self.tcx.kind(receiver.ty), Some(TyKind::HashMap { .. }))
+                    && !self.is_str_int_map_ty(receiver.ty)
+                {
                     // Typed `HashMap<i64, i64>` route: use
                     // `Op::IntMapInc` so the key + delta stay in
                     // the i64 register file the whole time.
@@ -1932,6 +1939,7 @@ impl<'tcx> FnBuilder<'tcx> {
         if name.name == "inc_at"
             && args.len() == 4
             && matches!(self.tcx.kind(receiver.ty), Some(TyKind::HashMap { .. }))
+            && !self.is_str_int_map_ty(receiver.ty)
         {
             let map_reg = self.compile_expr(receiver)?;
             let seq_reg = self.compile_expr(&args[0])?;
@@ -2340,6 +2348,13 @@ impl<'tcx> FnBuilder<'tcx> {
                 if matches!(segs.as_slice(), ["HashMap", "new"]) && self.is_int_map_ty(result_ty) {
                     let dst = self.alloc_reg();
                     self.emit(Op::BuildIntMap { dst_v: dst });
+                    return Ok(dst);
+                }
+                if matches!(segs.as_slice(), ["HashMap", "new"])
+                    && self.is_str_int_map_ty(result_ty)
+                {
+                    let dst = self.alloc_reg();
+                    self.emit(Op::BuildStrIntMap { dst_v: dst });
                     return Ok(dst);
                 }
             }

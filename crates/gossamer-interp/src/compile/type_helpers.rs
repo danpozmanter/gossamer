@@ -316,4 +316,22 @@ impl<'tcx> FnBuilder<'tcx> {
         );
         key_is_i64 && value_is_i64
     }
+
+    /// Returns `true` when `ty` resolves to `HashMap<String, i64>`,
+    /// the typed shape that rides through `Value::StrIntMap`. Like
+    /// [`Self::is_int_map_ty`], a partially-erased generic falls back
+    /// to the boxed `Value::Map` rather than risk a typed op on a
+    /// non-matching payload.
+    pub(crate) fn is_str_int_map_ty(&self, ty: gossamer_types::Ty) -> bool {
+        let ty = self.unwrap_ref(ty);
+        let Some(TyKind::HashMap { key, value }) = self.tcx.kind(ty) else {
+            return false;
+        };
+        let key_is_string = matches!(self.tcx.kind(*key), Some(TyKind::String));
+        let value_is_i64 = matches!(
+            self.tcx.kind(*value),
+            Some(TyKind::Int(IntTy::I64 | IntTy::Isize | IntTy::Usize))
+        );
+        key_is_string && value_is_i64
+    }
 }

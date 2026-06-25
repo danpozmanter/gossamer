@@ -349,7 +349,7 @@ pub(crate) fn builtin_http_request_header(args: &[Value]) -> RuntimeResult<Value
         Value::String(SmolStr::from(name.to_string())),
         Value::String(SmolStr::from(value.to_string())),
     ]));
-    let mut fields = inner.fields.clone();
+    let mut fields = inner.fields.to_vec();
     if let Some((_, slot)) = fields.iter_mut().find(|(ident, _)| (*ident) == "headers") {
         let mut items = match slot {
             Value::Array(existing) => existing.as_ref().clone(),
@@ -369,7 +369,7 @@ pub(crate) fn builtin_http_request_body(args: &[Value]) -> RuntimeResult<Value> 
     let inner = expect_request(args, "Request::body")?;
     let body = args.get(1).and_then(as_str).unwrap_or("");
     let body_value = Value::String(SmolStr::from(body.to_string()));
-    let mut fields = inner.fields.clone();
+    let mut fields = inner.fields.to_vec();
     if let Some((_, slot)) = fields.iter_mut().find(|(ident, _)| (*ident) == "body") {
         *slot = body_value;
     } else {

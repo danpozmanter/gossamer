@@ -27,7 +27,7 @@ mod native;
 pub mod native_symbols;
 
 pub use emit::{FunctionText, Module, emit_function, emit_module};
-pub use jit::{JitArtifact, JitFn, JitKind, compile_to_jit};
+pub use jit::{JitArtifact, JitFn, JitKind, compile_to_jit, has_worthy_jit_body};
 pub use native::{
     CompileOptions, NativeObject, compile_to_object, compile_to_object_at_path,
     compile_to_object_at_path_with_options, compile_to_object_with_options,
