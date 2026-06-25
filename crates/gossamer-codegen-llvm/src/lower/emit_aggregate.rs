@@ -353,20 +353,25 @@ impl<'a> Lowerer<'a> {
                 .unwrap();
             }
             // The operand is the by-value `i128` enum (disc + payload), not a
-            // buffer pointer; pass it directly to the runtime debug formatter.
+            // buffer pointer. It crosses the `extern "C"` boundary through
+            // `fat_i128_call_arg`, which on Win64 spills it to a 16-byte slot
+            // and passes `ptr` (matching the runtime's `__int128` ABI) and on
+            // SysV passes the bare `i128`.
             ConcatKind::Option(payload_kind) => {
                 declare_rt(&mut self.runtime_refs, "gos_rt_debug_option");
+                let opt_arg = self.fat_i128_call_arg(value);
                 writeln!(
                     self.out,
-                    "  {dest} = call ptr @gos_rt_debug_option(i128 {value}, i64 {payload_kind})"
+                    "  {dest} = call ptr @gos_rt_debug_option({opt_arg}, i64 {payload_kind})"
                 )
                 .unwrap();
             }
             ConcatKind::Result(ok_kind, err_kind) => {
                 declare_rt(&mut self.runtime_refs, "gos_rt_debug_result");
+                let res_arg = self.fat_i128_call_arg(value);
                 writeln!(
                     self.out,
-                    "  {dest} = call ptr @gos_rt_debug_result(i128 {value}, i64 {ok_kind}, i64 {err_kind})"
+                    "  {dest} = call ptr @gos_rt_debug_result({res_arg}, i64 {ok_kind}, i64 {err_kind})"
                 )
                 .unwrap();
             }
