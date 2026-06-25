@@ -1,0 +1,53 @@
+// Tier-parity coverage for iterating a HashMap reached through a `&HashMap`
+// function parameter. The compiled tiers materialise `m.iter()` into a real
+// `Vec<(K, V)>` only after peeling the `&` off the receiver type; without the
+// peel a `&HashMap` slipped through to the generic vec-iter path and read the
+// map handle as a `*mut GosVec` (garbage length / non-termination). Output
+// must be byte-identical across the VM, Cranelift, and LLVM tiers. Iteration
+// order is unobservable here: sums are order-independent and the dump is
+// sorted.
+
+use std::collections::HashMap
+
+fn sum_via_forloop(m: &HashMap<String, i64>) -> i64 {
+    let mut s = 0
+    for (k, v) in m.iter() { s += v }
+    s
+}
+
+fn entries_via_let(m: &HashMap<String, i64>) -> i64 {
+    let e: [(String, i64)] = m.iter()
+    e.len() as i64
+}
+
+fn dump_sorted(m: &HashMap<String, i64>) {
+    let mut e: [(String, i64)] = m.iter()
+    e.sort_by(|a, b| if a.0 < b.0 { -1 } else if a.0 > b.0 { 1 } else { 0 })
+    for (k, v) in e { print!("{}={} ", k, v) }
+    println!("")
+}
+
+fn sum_int(m: &HashMap<i64, i64>) -> i64 {
+    let mut s = 0
+    for (k, v) in m.iter() { s += k + v }
+    s
+}
+
+fn main() {
+    let mut m: HashMap<String, i64> = HashMap::new()
+    m.inc("apple", 2)
+    m.inc("banana", 5)
+    m.inc("apple", 1)
+    m.inc("cherry", 3)
+    println!("len={}", m.len())
+    println!("forloop_sum={}", sum_via_forloop(&m))
+    println!("let_entries={}", entries_via_let(&m))
+    print!("sorted: ")
+    dump_sorted(&m)
+
+    let mut mi: HashMap<i64, i64> = HashMap::new()
+    mi.inc(10, 1)
+    mi.inc(20, 1)
+    mi.inc(10, 4)
+    println!("int_forloop={}", sum_int(&mi))
+}

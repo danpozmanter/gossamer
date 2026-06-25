@@ -491,9 +491,18 @@ impl<'a> Builder<'a> {
         // compiled tiers. Materialising here makes both forms behave
         // identically across the VM, Cranelift, and LLVM tiers.
         if method.name.as_str() == "iter" && args.is_empty() {
-            let recv_ty_for_kind = self
+            let mut recv_ty_for_kind = self
                 .receiver_local_from_path(receiver)
                 .map_or(receiver.ty, |l| self.locals[l.0 as usize].ty);
+            // Peel `&` / `&mut` so `m.iter()` on a `&HashMap` parameter is
+            // recognised as a map receiver and materialised; otherwise it falls
+            // through to the generic `gos_rt_arr_iter` path, which reads the map
+            // handle as a `*mut GosVec`. The handle the runtime helpers receive
+            // is the same value `m.len()` / `m.get_or()` already pass through a
+            // borrow, so only the receiver-type check needs the peel.
+            while let TyKind::Ref { inner, .. } = self.tcx.kind_of(recv_ty_for_kind) {
+                recv_ty_for_kind = *inner;
+            }
             if matches!(self.tcx.kind_of(recv_ty_for_kind), TyKind::HashMap { .. }) {
                 return MethodLowering::Handled(self.materialize_hashmap_entries(
                     receiver,

@@ -48,6 +48,21 @@
         });
         select(0);
       });
+      // Keep the hero version current from GitHub's latest published
+      // release, so it stays accurate between releases. The value baked
+      // into the markup is the fallback shown when the API is unreachable
+      // (offline or rate-limited).
+      fetch("https://api.github.com/repos/danpozmanter/gossamer/releases/latest", {
+        headers: { "Accept": "application/vnd.github+json" }
+      })
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (rel) {
+          if (rel && rel.tag_name) {
+            var tag = document.querySelector(".ver-tag");
+            if (tag) tag.textContent = rel.tag_name;
+          }
+        })
+        .catch(function () {});
     });
   </script>
 </head>
@@ -71,7 +86,7 @@
           GitHub
         </a>
       </p>
-      <p class="version">Open source &middot; Apache-2.0 &middot; <span class="ver-tag">v0.18.0</span> (pre-1.0)</p>
+      <p class="version">Open source &middot; Apache-2.0 &middot; <span class="ver-tag">v0.18.2</span> (pre-1.0)</p>
     </div>
   </header>
 

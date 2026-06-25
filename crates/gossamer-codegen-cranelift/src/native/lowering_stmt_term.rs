@@ -338,6 +338,229 @@ pub(super) fn lower_statement(
     Ok(())
 }
 
+/// True when `op` is a `Vec`/`Slice` (or `&` to one) whose element provably
+/// occupies an 8-byte stride in every construction path: the word-width ints,
+/// `f64`, and nested `Vec`/`Slice` handle slots. Mirrors the LLVM backend's
+/// `vec_operand_has_word_elem`. Narrower elements (`bool`, `u8` byte buffers,
+/// `i32`, `String`, aggregates) keep the runtime call so the header-driven
+/// stride / load width stays correct.
+fn vec_operand_has_word_elem(body: &Body, tcx: &TyCtxt, op: &Operand) -> bool {
+    let Operand::Copy(pl) = op else {
+        return false;
+    };
+    if !pl.projection.is_empty() {
+        return false;
+    }
+    let mut ty = body.local_ty(pl.local);
+    while let TyKind::Ref { inner, .. } = tcx.kind_of(ty) {
+        ty = *inner;
+    }
+    let elem = match tcx.kind_of(ty) {
+        TyKind::Vec(e) | TyKind::Slice(e) => *e,
+        _ => return false,
+    };
+    matches!(
+        tcx.kind_of(elem),
+        TyKind::Int(IntTy::I64 | IntTy::U64 | IntTy::Isize | IntTy::Usize)
+            | TyKind::Float(FloatTy::F64)
+            | TyKind::Vec(_)
+            | TyKind::Slice(_)
+    )
+}
+
+/// Inline the word-stride `Vec`/`Slice` element get/set runtime calls
+/// (`gos_rt_vec_get_i64` / `gos_rt_vec_set_i64` and their `_unchecked`
+/// variants) as direct loads/stores off the `GosVec` header, mirroring the
+/// LLVM backend's inline fast path so a JIT-compiled hot loop keeps the
+/// loop-invariant data-pointer and length in registers instead of an opaque
+/// per-element call. Returns `Ok(true)` when handled inline; `Ok(false)`
+/// leaves the call to the generic dispatch unchanged.
+///
+/// Only the provably-8-byte-stride elements ([`vec_operand_has_word_elem`])
+/// take this path. Semantics match the runtime exactly: a checked get with a
+/// null receiver or out-of-range index yields the zero word, and a checked
+/// set in the same case is a no-op. GosVec layout: `len@0`, `ptr@24`.
+fn try_lower_vec_index_inline(
+    module: &mut dyn Module,
+    builder: &mut FunctionBuilder<'_>,
+    locals: &mut HashMap<Local, Variable>,
+    body: &Body,
+    tcx: &TyCtxt,
+    blocks: &HashMap<u32, ir::Block>,
+    name: &str,
+    args: &[Operand],
+    destination: &Place,
+    target: Option<&gossamer_mir::BlockId>,
+    intrinsics: &mut IntrinsicContext,
+) -> Result<bool> {
+    let (is_get, checked, want_args) = match name {
+        "gos_rt_vec_get_i64" => (true, true, 2),
+        "gos_rt_vec_get_i64_unchecked" => (true, false, 2),
+        "gos_rt_vec_set_i64" => (false, true, 3),
+        "gos_rt_vec_set_i64_unchecked" => (false, false, 3),
+        _ => return Ok(false),
+    };
+    if args.len() != want_args || !vec_operand_has_word_elem(body, tcx, &args[0]) {
+        return Ok(false);
+    }
+    let ptr_ty = module.target_config().pointer_type();
+    let vec_raw = lower_operand(
+        module,
+        builder,
+        locals,
+        body,
+        tcx,
+        &args[0],
+        Some(ptr_ty),
+        intrinsics,
+    )?;
+    let vec_ptr = coerce_arg_to(builder, vec_raw, ptr_ty).unwrap_or(vec_raw);
+    let idx_raw = lower_operand(
+        module,
+        builder,
+        locals,
+        body,
+        tcx,
+        &args[1],
+        Some(types::I64),
+        intrinsics,
+    )?;
+    let idx = match value_type(idx_raw, builder) {
+        t if t == types::I64 => idx_raw,
+        t if t.is_int() && t.bits() < 64 => builder.ins().sextend(types::I64, idx_raw),
+        _ => idx_raw,
+    };
+    let idx_ptr = if ptr_ty == types::I64 {
+        idx
+    } else {
+        builder.ins().ireduce(ptr_ty, idx)
+    };
+    if is_get {
+        if checked {
+            let check_b = builder.create_block();
+            let load_b = builder.create_block();
+            let dflt_b = builder.create_block();
+            let cont_b = builder.create_block();
+            builder.append_block_param(cont_b, types::I64);
+            let null = builder.ins().iconst(ptr_ty, 0);
+            let isnull = builder.ins().icmp(IntCC::Equal, vec_ptr, null);
+            builder.ins().brif(isnull, dflt_b, &[], check_b, &[]);
+            builder.switch_to_block(check_b);
+            let len = builder
+                .ins()
+                .load(types::I64, MemFlags::trusted(), vec_ptr, 0);
+            let zero_i = builder.ins().iconst(types::I64, 0);
+            let lo = builder.ins().icmp(IntCC::SignedLessThan, idx, zero_i);
+            let hi = builder
+                .ins()
+                .icmp(IntCC::SignedGreaterThanOrEqual, idx, len);
+            let bad = builder.ins().bor(lo, hi);
+            builder.ins().brif(bad, dflt_b, &[], load_b, &[]);
+            builder.switch_to_block(load_b);
+            let v = load_vec_word(builder, ptr_ty, vec_ptr, idx_ptr);
+            builder.ins().jump(cont_b, &[ir::BlockArg::Value(v)]);
+            builder.switch_to_block(dflt_b);
+            let zero = builder.ins().iconst(types::I64, 0);
+            builder.ins().jump(cont_b, &[ir::BlockArg::Value(zero)]);
+            builder.switch_to_block(cont_b);
+            let result = builder.block_params(cont_b)[0];
+            store_call_result(
+                module,
+                builder,
+                locals,
+                body,
+                tcx,
+                destination,
+                result,
+                intrinsics,
+            )?;
+        } else {
+            let v = load_vec_word(builder, ptr_ty, vec_ptr, idx_ptr);
+            store_call_result(
+                module,
+                builder,
+                locals,
+                body,
+                tcx,
+                destination,
+                v,
+                intrinsics,
+            )?;
+        }
+    } else {
+        let val = lower_operand(
+            module, builder, locals, body, tcx, &args[2], None, intrinsics,
+        )?;
+        if checked {
+            let check_b = builder.create_block();
+            let store_b = builder.create_block();
+            let cont_b = builder.create_block();
+            let null = builder.ins().iconst(ptr_ty, 0);
+            let isnull = builder.ins().icmp(IntCC::Equal, vec_ptr, null);
+            builder.ins().brif(isnull, cont_b, &[], check_b, &[]);
+            builder.switch_to_block(check_b);
+            let len = builder
+                .ins()
+                .load(types::I64, MemFlags::trusted(), vec_ptr, 0);
+            let zero_i = builder.ins().iconst(types::I64, 0);
+            let lo = builder.ins().icmp(IntCC::SignedLessThan, idx, zero_i);
+            let hi = builder
+                .ins()
+                .icmp(IntCC::SignedGreaterThanOrEqual, idx, len);
+            let bad = builder.ins().bor(lo, hi);
+            builder.ins().brif(bad, cont_b, &[], store_b, &[]);
+            builder.switch_to_block(store_b);
+            store_vec_word(builder, ptr_ty, vec_ptr, idx_ptr, val);
+            builder.ins().jump(cont_b, &[]);
+            builder.switch_to_block(cont_b);
+        } else {
+            store_vec_word(builder, ptr_ty, vec_ptr, idx_ptr, val);
+        }
+    }
+    match target {
+        Some(block_id) => {
+            let block = blocks[&block_id.as_u32()];
+            builder.ins().jump(block, &[]);
+        }
+        None => {
+            builder.ins().trap(ir::TrapCode::user(1).unwrap());
+        }
+    }
+    Ok(true)
+}
+
+/// Element address for a word-stride `GosVec`: load the data pointer from
+/// header offset 24, then `data_ptr + idx*8`, and load the 8-byte word.
+fn load_vec_word(
+    builder: &mut FunctionBuilder<'_>,
+    ptr_ty: ir::Type,
+    vec_ptr: ir::Value,
+    idx_ptr: ir::Value,
+) -> ir::Value {
+    let dptr = builder.ins().load(ptr_ty, MemFlags::trusted(), vec_ptr, 24);
+    let eight = builder.ins().iconst(ptr_ty, 8);
+    let off = builder.ins().imul(idx_ptr, eight);
+    let ea = builder.ins().iadd(dptr, off);
+    builder.ins().load(types::I64, MemFlags::trusted(), ea, 0)
+}
+
+/// Store the 8-byte word `val` into a word-stride `GosVec` element address
+/// (`data_ptr + idx*8`). `val` keeps its native type (`i64` or `f64`); both
+/// write the same 8 bytes the runtime helper would.
+fn store_vec_word(
+    builder: &mut FunctionBuilder<'_>,
+    ptr_ty: ir::Type,
+    vec_ptr: ir::Value,
+    idx_ptr: ir::Value,
+    val: ir::Value,
+) {
+    let dptr = builder.ins().load(ptr_ty, MemFlags::trusted(), vec_ptr, 24);
+    let eight = builder.ins().iconst(ptr_ty, 8);
+    let off = builder.ins().imul(idx_ptr, eight);
+    let ea = builder.ins().iadd(dptr, off);
+    builder.ins().store(MemFlags::trusted(), val, ea, 0);
+}
+
 pub(super) fn lower_terminator(
     module: &mut dyn Module,
     builder: &mut FunctionBuilder<'_>,
@@ -502,6 +725,27 @@ pub(super) fn lower_terminator(
                             }
                         }
                     }
+                    return Ok(());
+                }
+            }
+            // Word-stride Vec/Slice element get/set: inline the load/store off
+            // the GosVec header instead of an opaque per-element runtime call,
+            // mirroring the LLVM backend so a JIT-compiled hot index loop keeps
+            // the data-pointer / length in registers.
+            if let Operand::Const(ConstValue::Str(name)) = callee {
+                if try_lower_vec_index_inline(
+                    module,
+                    builder,
+                    locals,
+                    body,
+                    tcx,
+                    &*blocks,
+                    name,
+                    args,
+                    destination,
+                    target.as_ref(),
+                    intrinsics,
+                )? {
                     return Ok(());
                 }
             }

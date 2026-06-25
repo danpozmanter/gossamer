@@ -549,10 +549,16 @@ pub unsafe extern "C" fn gos_rt_str_substring(
         if s.is_null() {
             return alloc_cstring(b"");
         }
-        let bytes = unsafe { CStr::from_ptr(s) }.to_bytes();
-        let len = bytes.len() as i64;
-        let lo = start.clamp(0, len) as usize;
-        let hi = end.clamp(0, len).max(start.clamp(0, len)) as usize;
+        // O(1) length from the string's length header (every runtime-built
+        // string carries one); an untagged rodata literal falls back to
+        // strlen. Sizing the slice from the header keeps `substring`
+        // proportional to the slice length, not the source length, so a
+        // sliding-window scan over one string stays linear.
+        let len = unsafe { str_header_len(s) }.unwrap_or_else(|| unsafe { c_str_len(s) });
+        let len_i = len as i64;
+        let lo = start.clamp(0, len_i) as usize;
+        let hi = end.clamp(0, len_i).max(start.clamp(0, len_i)) as usize;
+        let bytes = unsafe { std::slice::from_raw_parts(s.cast::<u8>(), len) };
         alloc_cstring(&bytes[lo..hi])
     })
 }

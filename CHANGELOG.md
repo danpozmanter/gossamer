@@ -1,5 +1,45 @@
 # Changelog
 
+## 0.18.3 - Compiled-tier hot-path performance and parity
+
+Removes two super-linear blowups and a correctness gap from the compiled
+tiers. Idiomatic `Vec<T>` element access in hot loops now lowers to inline IR
+instead of an opaque per-element runtime call, so the optimizer keeps the data
+pointer and length in registers, elides redundant bounds checks, and
+vectorizes - the way fixed-size `[T; N]` access already did. `String.substring`
+no longer rescans its whole source per call, so substring-heavy code (parsers,
+k-mer scans) stays linear. Output stays bit-identical across the VM, the
+Cranelift JIT, and the LLVM AOT tier.
+
+- `String.substring(a, b)` reads its source length from the string's O(1)
+  length header (the same path `gos_rt_str_len` / `String.slice` already use)
+  instead of an O(len) `strlen` per call. A sliding-window substring scan over
+  a long string was O(n^2); the per-call `strlen` also made the static-musl
+  release build (scalar libc `strlen`) several times slower than the debug
+  build (SIMD `strlen`). On k-nucleotide this drops the compiled tiers from
+  minutes/hours into the same order as the interpreter and reference C/Go/Rust.
+- `m.iter()` on a `&HashMap` parameter now materialises real entries on the
+  compiled tiers: the receiver type is peeled past `&` before the map
+  dispatch, so a borrowed map no longer falls through to the generic vec-iter
+  path and read its handle as a `*mut GosVec` (which returned a garbage-length
+  Vec / failed to terminate).
+
+- The LLVM backend now inlines a word-stride `Vec<f64>` (and nested `Vec`)
+  element get/set, not only the integer element types. A `Vec<f64>` matvec
+  read was lowering to `call @gos_rt_vec_get_i64`, which `opt -O3` could not
+  see through; it now lowers to a hoistable load off the GosVec header. On a
+  sequential-read microbenchmark a `Vec<f64>` kernel drops from ~11x slower
+  than `[f64; N]` to parity at `-O3`, and the spectral-norm benchmark
+  (`Vec<f64>`, N=17393) drops by an order of magnitude.
+- The Cranelift JIT inlines the same word-stride `Vec` get/set off the GosVec
+  header (`len@0`, `ptr@24`) instead of calling the runtime helper per
+  element.
+- The bytecode VM's typed flat-local read fast paths (`IntArrayGetI64`,
+  `FloatVecGetF64`) now yield the lenient zero value on an out-of-range or
+  negative index, matching the generic indexed read, the compiled tiers, and
+  the sibling no-op writes. A `let x = v[oob]` on a scalar `Vec` previously
+  panicked on the VM while the compiled tiers returned zero.
+
 ## 0.18.2 - Interpreter memory improvements
 
 Reduces `gos run` (bytecode VM) peak memory. Output stays bit-identical

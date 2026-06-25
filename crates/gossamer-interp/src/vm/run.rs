@@ -2502,12 +2502,6 @@ impl Vm {
                     index_i,
                 } => unsafe {
                     let idx = *ints.get_unchecked(index_i as usize);
-                    if idx < 0 {
-                        return Err(RuntimeError::Arithmetic(
-                            "negative index into sequence".to_string(),
-                        ));
-                    }
-                    let i = idx as usize;
                     let b = registers.get_unchecked(base as usize);
                     // `IntArrayGetI64` is the typed fast path that the
                     // bytecode compiler emits when `flat_int_locals`
@@ -2523,32 +2517,31 @@ impl Vm {
                     // shape; the surrounding hot loop pays one
                     // discriminant match per index instead of
                     // aborting.
-                    let value = match b {
-                        Value::IntArray(data) => {
-                            if i >= data.len() {
-                                return Err(RuntimeError::Arithmetic(
-                                    "index out of bounds".to_string(),
+                    //
+                    // An out-of-range index (negative or past the end) yields
+                    // the lenient zero value, matching the generic `IndexGet`,
+                    // the compiled tiers' bounds-guarded read, and the sibling
+                    // `IntArraySetI64` no-op write.
+                    let value = if idx < 0 {
+                        0
+                    } else {
+                        let i = idx as usize;
+                        match b {
+                            Value::IntArray(data) => data.get(i).copied().unwrap_or(0),
+                            Value::Array(items) => match items.get(i) {
+                                Some(Value::Int(n)) => *n,
+                                _ => 0,
+                            },
+                            Value::FloatVec(_) | Value::FloatArray(_) => {
+                                return Err(RuntimeError::Type(
+                                    "IntArrayGetI64: receiver is a float array".to_string(),
                                 ));
                             }
-                            *data.get_unchecked(i)
-                        }
-                        Value::Array(items) => {
-                            let Some(Value::Int(n)) = items.get(i) else {
-                                return Err(RuntimeError::Arithmetic(
-                                    "index out of bounds".to_string(),
+                            _ => {
+                                return Err(RuntimeError::Type(
+                                    "IntArrayGetI64: receiver lost flat invariant".to_string(),
                                 ));
-                            };
-                            *n
-                        }
-                        Value::FloatVec(_) | Value::FloatArray(_) => {
-                            return Err(RuntimeError::Type(
-                                "IntArrayGetI64: receiver is a float array".to_string(),
-                            ));
-                        }
-                        _ => {
-                            return Err(RuntimeError::Type(
-                                "IntArrayGetI64: receiver lost flat invariant".to_string(),
-                            ));
+                            }
                         }
                     };
                     *ints.get_unchecked_mut(dst_i as usize) = value;
@@ -2655,39 +2648,32 @@ impl Vm {
                     index_i,
                 } => unsafe {
                     let idx = *ints.get_unchecked(index_i as usize);
-                    if idx < 0 {
-                        return Err(RuntimeError::Arithmetic(
-                            "negative index into sequence".to_string(),
-                        ));
-                    }
-                    let i = idx as usize;
                     let b = registers.get_unchecked(base as usize);
                     // Tolerate generic `Value::Array(Vec<Value::Float>)`
                     // alongside `Value::FloatVec(Vec<f64>)` - same
                     // tracking-vs-actual-shape skew the IntArray fast
                     // path has to handle when a typed receiver passes
                     // through a non-promoting ABI boundary.
-                    let value = match b {
-                        Value::FloatVec(data) => {
-                            if i >= data.len() {
-                                return Err(RuntimeError::Arithmetic(
-                                    "index out of bounds".to_string(),
+                    //
+                    // An out-of-range index (negative or past the end) yields
+                    // the lenient zero value, matching the generic `IndexGet`,
+                    // the compiled tiers' bounds-guarded read, and the sibling
+                    // `FloatVecSetF64` no-op write.
+                    let value = if idx < 0 {
+                        0.0
+                    } else {
+                        let i = idx as usize;
+                        match b {
+                            Value::FloatVec(data) => data.get(i).copied().unwrap_or(0.0),
+                            Value::Array(items) => match items.get(i) {
+                                Some(Value::Float(f)) => *f,
+                                _ => 0.0,
+                            },
+                            _ => {
+                                return Err(RuntimeError::Type(
+                                    "FloatVecGetF64: receiver lost flat invariant".to_string(),
                                 ));
                             }
-                            *data.get_unchecked(i)
-                        }
-                        Value::Array(items) => {
-                            let Some(Value::Float(f)) = items.get(i) else {
-                                return Err(RuntimeError::Arithmetic(
-                                    "index out of bounds".to_string(),
-                                ));
-                            };
-                            *f
-                        }
-                        _ => {
-                            return Err(RuntimeError::Type(
-                                "FloatVecGetF64: receiver lost flat invariant".to_string(),
-                            ));
                         }
                     };
                     *floats.get_unchecked_mut(dst_f as usize) = value;

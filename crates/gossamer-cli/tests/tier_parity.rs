@@ -298,6 +298,10 @@ const SPECS: &[Spec] = &[
     spec("feature-testing-examples/jit_inline_const_args.gos"),
     spec("feature-testing-examples/jit_enum_char_field.gos"),
     spec("feature-testing-examples/jit_inline_vec_ops.gos"),
+    // Word-stride Vec<f64>/Vec<i64> element get/set lower to inline
+    // load/store off the GosVec header on the compiled tiers; covers read,
+    // write, nested Vec, scalar lenient OOB, and an aggregate element type.
+    spec("feature-testing-examples/vec_f64_inline_index.gos"),
     spec("feature-testing-examples/jit_mixed_arity6.gos"),
     spec("feature-testing-examples/jit_aggregate_param.gos"),
     // Bytecode VM user-function inliner - must stay bit-identical to the
@@ -673,6 +677,15 @@ const SPECS: &[Spec] = &[
     spec("feature-testing-examples/string_concatenation_stress.gos"),
     spec("feature-testing-examples/string_method_surface.gos"),
     spec("feature-testing-examples/string_unicode_boundaries.gos"),
+    // Byte-range `substring` reads its source length from the O(1) string
+    // header (not an O(len) strlen), so a sliding-window k-mer scan stays
+    // linear; covers literal + built sources, clamping, and HashMap<String>
+    // k-mer counting.
+    spec("feature-testing-examples/str_substring_kmer.gos"),
+    // `m.iter()` on a `&HashMap` parameter materialises real entries on the
+    // compiled tiers (the receiver type is peeled past `&` before the map
+    // dispatch); previously a borrowed map iterated as a bogus Vec.
+    spec("feature-testing-examples/hashmap_ref_param_iter.gos"),
     spec("feature-testing-examples/time_monotonic_vs_wall.gos"),
     spec("feature-testing-examples/tw_go_block.gos"),
     spec("feature-testing-examples/trait_object_dispatch.gos"),

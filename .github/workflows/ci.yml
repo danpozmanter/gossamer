@@ -153,11 +153,46 @@ jobs:
               echo "============ end ${crate} :: ${label} (full log above is collapsed) ============"
             fi
           }
+          # The macOS and Windows runners exist to catch failures that appear
+          # ONLY off Linux - platform ABI / calling convention, object format,
+          # linking, OS syscalls, and the Cranelift JIT / LLVM codegen. A test
+          # therefore earns its cross-platform run only if its outcome can
+          # differ by OS. The binaries below cannot: they either execute no
+          # generated code at all (front-end check / parse / typecheck, the
+          # `gos fmt` / `gos doc` / feature-status tooling text, static source
+          # and symbol-registry scans, a pure-Rust unit test) or they construct
+          # a target object in memory deterministically (the COFF / Mach-O
+          # object-format checks cross-build their target's bytes on any host,
+          # so the Linux run already exercises them fully). Any failure they
+          # could surface is visible on Linux too, so running them on macOS and
+          # Windows reveals nothing the Linux job does not. They run on Linux;
+          # anything NOT listed here - in particular every test that runs `gos
+          # run` (which can JIT) or `gos build` - stays cross-platform, so a
+          # newly added test is cross-platform by default (drift can only
+          # over-test, never lose coverage). `rc_soundness` already self-skips
+          # off Linux at runtime; listing it drops the redundant build+spawn.
+          linux_only="
+            client_error_display dispatch_consistency doc_emit_stdlib
+            feature_status fmt_faithful stdlib_compiled_coverage
+            stdlib_export_drift rc_soundness
+            emit dispatch_parity coff_pic_reloc macho_dead_strip
+          "
+          skip_off_linux() {
+            case "${RUNNER_OS:-Linux}" in Linux) return 1 ;; esac
+            local name
+            for name in $linux_only; do [ "$name" = "$1" ] && return 0; done
+            return 1
+          }
           for crate in gossamer-cli gossamer-codegen-cranelift; do
             run_target "$crate" lib --lib
             for f in crates/"$crate"/tests/*.rs; do
               [ -e "$f" ] || continue
-              run_target "$crate" "$(basename "$f" .rs)" --test "$(basename "$f" .rs)"
+              name="$(basename "$f" .rs)"
+              if skip_off_linux "$name"; then
+                echo "::notice::skip ${crate}::${name} on ${RUNNER_OS} (platform-invariant; covered on Linux)"
+                continue
+              fi
+              run_target "$crate" "$name" --test "$name"
             done
           done
           exit "$rc"

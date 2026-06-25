@@ -6,7 +6,40 @@
 
 A language that balances developer experience, execution efficiency, and safety.
 
-**Extensible in Rust.**
+## Motivations
+
+Why build Gossamer? Why use it?
+
+I enjoy building web services and command line tools. 
+I always have another idea I want to explore, another service I want to deploy, 
+or another manual task I want to automate with a script.
+
+I love the confidence that comes from Rust and F#: the feeling that if it
+ compiles, it probably works. Algebraic data types, pattern matching, and 
+ explicit error handling feel like a natural way to build correct and 
+ maintainable software.
+
+I also love having a REPL open or being able to iterate quickly on a script 
+without waiting for a compile step.
+
+Go, meanwhile, is an incredible tool for building and shipping software. 
+It feels fast, minimal, and frictionless: a garbage-collected language with
+ built-in concurrency and an extensive standard library.
+
+### A Single Language?
+
+What if one language could combine all of those ideas?
+
+What if I could iterate quickly in a REPL or script, then compile the exact
+ same program into an optimized standalone binary with no code changes?
+
+What if that language could be productive and lightweight while interpreted, 
+but deliver performance closer to Go or Rust when compiled?
+
+I built Gossamer because I wanted that language for myself.
+
+My goal is for Gossamer to replace Rust, Go, F#, Kotlin, and Python for most of
+ my own projects and use cases.
 
 ## Features inspired by multiple languages:
 
@@ -38,6 +71,8 @@ the block is bump-allocated and freed wholesale when the block exits -
 pointer-bump allocation, O(slabs) reclamation, and headerless 16-byte
 nodes for small enums. See the
 [memory model](https://danpozmanter.github.io/gossamer/memory/) chapter.
+
+**Gossamer is Extensible in Rust.**
 
 Standard library and some syntax inspirations come from Rust, Go, C#/F#, Kotlin,
 and Python.

@@ -1950,9 +1950,17 @@ impl<'a> Builder<'a> {
         if name.name != "iter" {
             return None;
         }
-        let recv_ty = self
+        let mut recv_ty = self
             .receiver_local_from_path(receiver)
             .map_or(receiver.ty, |l| self.locals[l.0 as usize].ty);
+        // Peel `&` / `&mut` so `for (k, v) in m.iter()` over a `&HashMap`
+        // parameter is recognised as a map receiver; otherwise it falls through
+        // to the generic for-vec path, which reads the map handle as a Vec. The
+        // downstream key / value kind helpers already peel, and the receiver
+        // handle matches what `m.len()` / `m.get_or()` pass through a borrow.
+        while let TyKind::Ref { inner, .. } = self.tcx.kind_of(recv_ty) {
+            recv_ty = *inner;
+        }
         let recv_runtime_kind = self
             .receiver_local_from_path(receiver)
             .and_then(|l| self.local_runtime_kind.get(&l).copied());

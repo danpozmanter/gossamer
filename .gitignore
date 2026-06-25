@@ -18,3 +18,4 @@ target
 
 ## mkdocs
 __pycache__/
+site/

@@ -523,17 +523,22 @@ impl<'a> Lowerer<'a> {
         }
         // Inline primitive Vec index get/set/get_ptr (lenient bounds: null /
         // out-of-range → 0 / no-op / null, matching the runtime). Removes a
-        // per-element FFI call from hot index loops (BFS, scans) and lets
-        // LLVM hoist the loop-invariant len/ptr loads.
-        // Only inline when the element is a primitive int/bool - exactly the
-        // hot index-loop case (queue/visited/scans). A heap-pointer Adt
-        // element (e.g. `Vec<DirInfo>`, where `&entries[i]` has
-        // reference-through-handle semantics the generic call-result path
-        // handles) keeps the runtime call.
+        // per-element FFI call from hot index loops (BFS, scans, numeric
+        // kernels) and lets LLVM hoist the loop-invariant len/ptr loads and
+        // vectorize the body.
+        // Inline when the element is a single-word scalar with no read-time
+        // ownership: integer/bool and `f64` (the numeric-kernel case - a
+        // `Vec<f64>` matvec read is bit-identical to the i64 path through the
+        // bitcast in `store_i64_as`). A heap-pointer Adt element (e.g.
+        // `Vec<DirInfo>`, where `&entries[i]` has reference-through-handle
+        // semantics the generic call-result path handles) keeps the runtime
+        // call.
         if name == "gos_rt_vec_get_i64"
             && args.len() == 2
-            && (is_primitive_int_llvm(&render_ty(self.tcx, self.body.local_ty(destination.local)))
-                || self.vec_operand_elem_is_vec(&args[0]))
+            && (is_inline_vec_scalar_llvm(&render_ty(
+                self.tcx,
+                self.body.local_ty(destination.local),
+            )) || self.vec_operand_elem_is_vec(&args[0]))
         {
             self.lower_vec_get_i64_inline(args, destination, target)?;
             return Ok(());
@@ -548,7 +553,7 @@ impl<'a> Lowerer<'a> {
         }
         if name == "gos_rt_vec_set_i64"
             && args.len() == 3
-            && is_primitive_int_llvm(&self.operand_llvm_ty(&args[2]))
+            && is_inline_vec_scalar_llvm(&self.operand_llvm_ty(&args[2]))
         {
             self.lower_vec_set_i64_inline(args, destination, target)?;
             return Ok(());
@@ -1411,4 +1416,14 @@ impl<'a> Lowerer<'a> {
 /// inline Vec get/set fast path (the loaded i64 maps cleanly to these).
 fn is_primitive_int_llvm(ty: &str) -> bool {
     matches!(ty, "i64" | "i32" | "i16" | "i8" | "i1")
+}
+
+/// True for the scalar element kinds the inline Vec get/set fast path can
+/// carry through an i64 word: the integer/bool types of
+/// [`is_primitive_int_llvm`] plus `f64` (`double`), whose 8-byte word the
+/// inline helpers bitcast to/from i64 (`store_i64_as` / `value_to_i64`).
+/// `f32` (`float`) is a 4-byte stride the word-load path would over-read and
+/// has no `store_i64_as` arm, so it stays on the runtime call.
+fn is_inline_vec_scalar_llvm(ty: &str) -> bool {
+    is_primitive_int_llvm(ty) || ty == "double"
 }
