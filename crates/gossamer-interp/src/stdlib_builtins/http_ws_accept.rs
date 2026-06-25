@@ -45,7 +45,7 @@ fn header_lookup(request: &Value, name: &str) -> Option<String> {
         return None;
     };
     for (field, val) in &inner.fields {
-        if field.name != "headers" {
+        if (*field) != "headers" {
             continue;
         }
         if let Value::Array(arr) = val {
@@ -81,10 +81,10 @@ fn upgrade_response(token: &str) -> Value {
     })
     .collect();
     let fields = vec![
-        (Ident::new("status"), Value::Int(101)),
-        (Ident::new("body"), Value::String(SmolStr::from(""))),
-        (Ident::new("content_type"), Value::String(SmolStr::from(""))),
-        (Ident::new("headers"), Value::Array(Arc::new(headers))),
+        ("status", Value::Int(101)),
+        ("body", Value::String(SmolStr::from(""))),
+        ("content_type", Value::String(SmolStr::from(""))),
+        ("headers", Value::Array(Arc::new(headers))),
     ];
     Value::struct_("Response", fields)
 }

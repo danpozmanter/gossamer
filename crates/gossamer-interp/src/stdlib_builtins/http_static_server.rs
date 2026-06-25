@@ -49,11 +49,8 @@ pub(crate) fn builtin_file_server_new(args: &[Value]) -> RuntimeResult<Value> {
     let root = arg_str(args.first());
     let prefix = arg_str(args.get(1));
     let fields = vec![
-        (Ident::new("__fs_root"), Value::String(SmolStr::from(root))),
-        (
-            Ident::new("__fs_prefix"),
-            Value::String(SmolStr::from(prefix)),
-        ),
+        ("__fs_root", Value::String(SmolStr::from(root))),
+        ("__fs_prefix", Value::String(SmolStr::from(prefix))),
     ];
     Ok(Value::struct_("FileServer", fields))
 }
@@ -63,7 +60,7 @@ fn file_server_fields(v: Option<&Value>) -> (String, String) {
     let mut prefix = String::new();
     if let Some(Value::Struct(inner)) = v {
         for (field, val) in &inner.fields {
-            match (field.name.as_str(), val) {
+            match ((*field), val) {
                 ("__fs_root", Value::String(s)) => root = s.as_str().to_string(),
                 ("__fs_prefix", Value::String(s)) => prefix = s.as_str().to_string(),
                 _ => {}
@@ -80,7 +77,7 @@ fn request_header(req: Option<&Value>, name: &str) -> Option<String> {
         return None;
     };
     for (field, val) in &inner.fields {
-        if field.name == "headers"
+        if (*field) == "headers"
             && let Value::Array(items) = val
         {
             for item in items.iter() {
@@ -116,29 +113,26 @@ fn header_array(pairs: &[(&str, String)]) -> Value {
 fn file_response(status: i64, bytes: &[u8], mime: &str, headers: &[(&str, String)]) -> Value {
     let body: Vec<Value> = bytes.iter().map(|b| Value::Int(i64::from(*b))).collect();
     let fields = vec![
-        (Ident::new("status"), Value::Int(status)),
-        (Ident::new("body"), Value::Array(Arc::new(body))),
+        ("status", Value::Int(status)),
+        ("body", Value::Array(Arc::new(body))),
         (
-            Ident::new("content_type"),
+            "content_type",
             Value::String(SmolStr::from(mime.to_string())),
         ),
-        (Ident::new("headers"), header_array(headers)),
+        ("headers", header_array(headers)),
     ];
     Value::struct_("Response", fields)
 }
 
 fn forbidden_response() -> Value {
     let fields = vec![
-        (Ident::new("status"), Value::Int(403)),
+        ("status", Value::Int(403)),
+        ("body", Value::String(SmolStr::from("forbidden"))),
         (
-            Ident::new("body"),
-            Value::String(SmolStr::from("forbidden")),
-        ),
-        (
-            Ident::new("content_type"),
+            "content_type",
             Value::String(SmolStr::from("text/plain; charset=utf-8")),
         ),
-        (Ident::new("headers"), Value::Array(Arc::new(Vec::new()))),
+        ("headers", Value::Array(Arc::new(Vec::new()))),
     ];
     Value::struct_("Response", fields)
 }

@@ -1,6 +1,5 @@
 #![allow(clippy::missing_safety_doc)]
 #![allow(missing_docs)]
-#![allow(clippy::too_many_lines)]
 #![allow(clippy::needless_range_loop)]
 #![allow(clippy::wildcard_imports)]
 #![allow(clippy::similar_names)]
@@ -37,7 +36,7 @@ use gossamer_hir::{
     HirLiteral, HirMatchArm, HirPat, HirPatKind, HirProgram, HirStmt, HirStmtKind, HirUnaryOp,
 };
 use gossamer_lex::Span;
-use gossamer_types::{Ty, TyCtxt};
+use gossamer_types::{Ty, TyCtxt, TyKind};
 
 use crate::ir::{
     BasicBlock, BinOp, BlockId, Body, ConstValue, Local, LocalDecl, Operand, Place, Rvalue,
@@ -48,6 +47,22 @@ use super::*;
 
 use super::Builder;
 
+/// Outcome of an early method-dispatch guard in `Builder::lower_method_call`.
+enum MethodLowering {
+    /// A guard claimed the call; carries the value to return.
+    Handled(Option<Local>),
+    /// No guard matched; fall through to the next dispatch stage.
+    Pass,
+}
+
+/// Outcome of the name-keyed runtime-symbol lookup.
+enum SymbolLookup {
+    /// The lowering must stop and return `None` (a `return None` table arm).
+    Bail,
+    /// A runtime symbol was resolved (`Some("")` = identity, `None` = no symbol).
+    Found(Option<&'static str>),
+}
+
 impl<'a> Builder<'a> {
     pub(crate) fn lower_method_call(
         &mut self,
@@ -57,13 +72,161 @@ impl<'a> Builder<'a> {
         ty: Ty,
         span: Span,
     ) -> Option<Local> {
-        use gossamer_types::TyKind;
+        // Stage 1 - early method-name guards, grouped by receiver category.
+        // Each returns `Handled(result)` to claim the call, `Pass` to fall through.
+        if let MethodLowering::Handled(r) =
+            self.lower_rc_weak_method(receiver, method, args, ty, span)
+        {
+            return r;
+        }
+        if let MethodLowering::Handled(r) =
+            self.lower_time_unit_method(receiver, method, args, span)
+        {
+            return r;
+        }
+        if let MethodLowering::Handled(r) =
+            self.lower_join_handle_method(receiver, method, args, span)
+        {
+            return r;
+        }
+        if let MethodLowering::Handled(r) =
+            self.lower_json_clone_method(receiver, method, args, span)
+        {
+            return r;
+        }
+        if let MethodLowering::Handled(r) =
+            self.lower_result_map_eager_method(receiver, method, args, ty, span)
+        {
+            return r;
+        }
+        if let MethodLowering::Handled(r) =
+            self.lower_hashmap_iter_binding_method(receiver, method, args, span)
+        {
+            return r;
+        }
+        if let MethodLowering::Handled(r) =
+            self.lower_array_to_vec_method(receiver, method, args, ty, span)
+        {
+            return r;
+        }
+        if let MethodLowering::Handled(r) =
+            self.lower_array_mutation_method(receiver, method, args, ty, span)
+        {
+            return r;
+        }
+        if let MethodLowering::Handled(r) =
+            self.lower_map_idiom_method(receiver, method, args, ty, span)
+        {
+            return r;
+        }
+        if let MethodLowering::Handled(r) =
+            self.lower_string_push_method(receiver, method, args, span)
+        {
+            return r;
+        }
+
+        // Stage 2 - recover the receiver's dispatch kind, then the two
+        // receiver-shape early returns (header fold, fixed-array len).
+        let (receiver_ty, receiver_kind_flat) = self.receiver_dispatch_kinds(receiver);
+        if let MethodLowering::Handled(r) =
+            self.lower_headers_fold_method(receiver, method, args, span)
+        {
+            return r;
+        }
+        if let MethodLowering::Handled(r) =
+            self.lower_fixed_array_len_method(method, args, &receiver_kind_flat, span)
+        {
+            return r;
+        }
+
+        // Stage 3 - name-keyed runtime-symbol table; a user impl of the same
+        // name shadows a bare-name runtime builtin.
+        let mut runtime_symbol = match self.runtime_symbol_by_name(
+            receiver,
+            method,
+            args,
+            &receiver_kind_flat,
+            receiver_ty,
+        ) {
+            SymbolLookup::Bail => return None,
+            SymbolLookup::Found(s) => s,
+        };
+        if runtime_symbol.is_some()
+            && let Some(sname) = self
+                .struct_name_of(receiver_ty)
+                .or_else(|| self.struct_name_from_expr(receiver))
+            && self
+                .impl_methods
+                .contains_key(&format!("{sname}::{}", method.name.as_str()))
+        {
+            runtime_symbol = None;
+        }
+
+        // Stage 4 - receiver-runtime-kind dispatch (before lowering).
+        let receiver_runtime_kind = self
+            .receiver_local_from_path(receiver)
+            .and_then(|l| self.local_runtime_kind.get(&l).copied())
+            .or_else(|| self.expr_runtime_kind(receiver))
+            .or_else(|| self.runtime_kind_from_ty(receiver.ty));
+        if let Some(rt) = self.kind_dispatch_symbol(receiver_runtime_kind, method) {
+            return self.lower_kind_dispatch_call(rt, receiver, args, ty, span);
+        }
+
+        // Stage 5 - Option / Result predicates (is_some / is_ok / ...).
+        if let MethodLowering::Handled(r) = self.lower_option_result_predicate(
+            receiver,
+            method,
+            &receiver_kind_flat,
+            receiver_ty,
+            span,
+        ) {
+            return r;
+        }
+
+        // Stage 6 - dispatch on the lowered receiver's runtime kind.
+        let receiver_local = self.lower_expr(receiver)?;
+        let lowered_runtime_kind = self.local_runtime_kind.get(&receiver_local).copied();
+        if let Some(rt) = self.lowered_kind_dispatch_symbol(lowered_runtime_kind, method) {
+            return self.lower_lowered_kind_dispatch_call(
+                rt,
+                receiver,
+                receiver_local,
+                args,
+                ty,
+                span,
+            );
+        }
+
+        // Stage 7 - runtime-symbol fallback, user-impl, generic call.
+        self.lower_method_call_fallback(
+            receiver,
+            receiver_local,
+            method,
+            args,
+            ty,
+            span,
+            runtime_symbol,
+            receiver_ty,
+        )
+    }
+
+    /// `x.downgrade()` / `w.upgrade()` - RC strong<->weak conversions.
+    fn lower_rc_weak_method(
+        &mut self,
+        receiver: &HirExpr,
+        method: &Ident,
+        args: &[HirExpr],
+        ty: Ty,
+        span: Span,
+    ) -> MethodLowering {
         // `x.downgrade()` - create a `Weak<T>` from a strong RC value.
         // `gos_rt_rc_downgrade` bumps the weak count and returns the same
         // payload pointer, now typed `Weak<T>` so the drop pass releases
         // it through `gos_rt_rc_weak_release`.
         if method.name.as_str() == "downgrade" && args.is_empty() {
-            let recv_local = self.lower_expr(receiver)?;
+            let Some(recv_local) = self.lower_expr(receiver) else {
+                return MethodLowering::Handled(None);
+            };
             let recv_ty = self.locals[recv_local.0 as usize].ty;
             let weak_ty = self.weak_adt_ty(recv_ty);
             let dest = self.fresh(weak_ty);
@@ -75,7 +238,7 @@ impl<'a> Builder<'a> {
                 target: Some(next),
             });
             self.set_current(next);
-            return Some(dest);
+            return MethodLowering::Handled(Some(dest));
         }
         // `w.upgrade()` - turn a `Weak<T>` back into `Option<T>`.
         // `gos_rt_rc_weak_upgrade_opt` boxes `Some(payload)` when the
@@ -86,7 +249,9 @@ impl<'a> Builder<'a> {
         // alive for the duration of the match arm), so no strong count is
         // taken and nothing is released for it here.
         if method.name.as_str() == "upgrade" && args.is_empty() {
-            let recv_local = self.lower_expr(receiver)?;
+            let Some(recv_local) = self.lower_expr(receiver) else {
+                return MethodLowering::Handled(None);
+            };
             let recv_ty = self.locals[recv_local.0 as usize].ty;
             let payload_ty = self.weak_payload_ty(recv_ty).unwrap_or(ty);
             let opt_ty = self.option_payload_adt_ty(payload_ty);
@@ -99,8 +264,19 @@ impl<'a> Builder<'a> {
                 target: Some(next),
             });
             self.set_current(next);
-            return Some(dest);
+            return MethodLowering::Handled(Some(dest));
         }
+        MethodLowering::Pass
+    }
+
+    /// `d.as_millis()` / `inst.elapsed_ms()` - transparent time accessors.
+    fn lower_time_unit_method(
+        &mut self,
+        receiver: &HirExpr,
+        method: &Ident,
+        args: &[HirExpr],
+        span: Span,
+    ) -> MethodLowering {
         // `d.as_millis()` / `d.as_secs()` / `d.as_micros()` - method
         // form of the `time::Duration` accessors. The receiver's static
         // type carries the transparent Duration tag (its runtime value is
@@ -127,7 +303,9 @@ impl<'a> Builder<'a> {
                     "as_micros" => "gos_rt_duration_as_micros",
                     _ => "gos_rt_duration_as_millis",
                 };
-                let recv_local = self.lower_expr(receiver)?;
+                let Some(recv_local) = self.lower_expr(receiver) else {
+                    return MethodLowering::Handled(None);
+                };
                 let recv_local = self.auto_deref_cell(recv_local, span);
                 let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
                 let dest = self.fresh(i64_ty);
@@ -139,7 +317,7 @@ impl<'a> Builder<'a> {
                     target: Some(next),
                 });
                 self.set_current(next);
-                return Some(dest);
+                return MethodLowering::Handled(Some(dest));
             }
         }
         // `inst.elapsed_ms()` - method form of the `time::Instant`
@@ -153,7 +331,9 @@ impl<'a> Builder<'a> {
                 recv_kind = self.tcx.kind_of(inner).clone();
             }
             if matches!(recv_kind, TyKind::Instant) {
-                let recv_local = self.lower_expr(receiver)?;
+                let Some(recv_local) = self.lower_expr(receiver) else {
+                    return MethodLowering::Handled(None);
+                };
                 let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
                 let dest = self.fresh(i64_ty);
                 let next = self.new_block(span);
@@ -164,9 +344,20 @@ impl<'a> Builder<'a> {
                     target: Some(next),
                 });
                 self.set_current(next);
-                return Some(dest);
+                return MethodLowering::Handled(Some(dest));
             }
         }
+        MethodLowering::Pass
+    }
+
+    /// `h.join()` - block on a spawned goroutine's outcome.
+    fn lower_join_handle_method(
+        &mut self,
+        receiver: &HirExpr,
+        method: &Ident,
+        args: &[HirExpr],
+        span: Span,
+    ) -> MethodLowering {
         // `h.join()` - block on a spawned goroutine's outcome.
         // `gos_rt_join` recvs the SpawnOutcome over the handle's
         // one-shot channel and packs it into `Result<T, String>` (Ok
@@ -181,7 +372,9 @@ impl<'a> Builder<'a> {
                 .peek_struct_type(receiver)
                 .is_some_and(|t| matches!(self.tcx.kind_of(t), TyKind::JoinHandle(_)))
         {
-            let recv_local = self.lower_expr(receiver)?;
+            let Some(recv_local) = self.lower_expr(receiver) else {
+                return MethodLowering::Handled(None);
+            };
             let recv_ty = self.locals[recv_local.0 as usize].ty;
             let elem = match self.tcx.kind_of(recv_ty).clone() {
                 TyKind::JoinHandle(e) => e,
@@ -197,8 +390,19 @@ impl<'a> Builder<'a> {
                 target: Some(next),
             });
             self.set_current(next);
-            return Some(dest);
+            return MethodLowering::Handled(Some(dest));
         }
+        MethodLowering::Pass
+    }
+
+    /// `.clone()` on a `json::Value` receiver - identity copy keeping the tag.
+    fn lower_json_clone_method(
+        &mut self,
+        receiver: &HirExpr,
+        method: &Ident,
+        args: &[HirExpr],
+        span: Span,
+    ) -> MethodLowering {
         // `.clone()` on a `json::Value` receiver. The generic
         // identity-copy arm walks `match self.tcx.kind_of(ty)` and
         // falls through to `_ =>` for `JsonValue`, then the MIR
@@ -221,7 +425,9 @@ impl<'a> Builder<'a> {
         // `gos_rt_vec_free`, producing a double free at scope end.
         if method.name.as_str() == "clone" && args.is_empty() && self.is_json_value_ty(receiver.ty)
         {
-            let recv_local = self.lower_expr(receiver)?;
+            let Some(recv_local) = self.lower_expr(receiver) else {
+                return MethodLowering::Handled(None);
+            };
             let recv_mir_ty = self.locals[recv_local.0 as usize].ty;
             let dest = self.fresh(recv_mir_ty);
             if let Some(rk) = self.local_runtime_kind.get(&recv_local).copied() {
@@ -232,8 +438,20 @@ impl<'a> Builder<'a> {
                 Rvalue::Use(Operand::Copy(Place::local(recv_local))),
                 span,
             );
-            return Some(dest);
+            return MethodLowering::Handled(Some(dest));
         }
+        MethodLowering::Pass
+    }
+
+    /// `result.map(_)` / `map_err(_)` when the lowered receiver is a Result Adt.
+    fn lower_result_map_eager_method(
+        &mut self,
+        receiver: &HirExpr,
+        method: &Ident,
+        args: &[HirExpr],
+        ty: Ty,
+        span: Span,
+    ) -> MethodLowering {
         // `result.map_err(closure)` / `result.map(closure)` when the
         // HIR receiver type is unresolved but its lowered MIR type
         // turns out to be a Result Adt. Without this short-circuit
@@ -249,10 +467,21 @@ impl<'a> Builder<'a> {
                 if let Some(local) =
                     self.try_lower_result_map_with_eager_recv(receiver, method, &args[0], ty, span)
                 {
-                    return Some(local);
+                    return MethodLowering::Handled(Some(local));
                 }
             }
         }
+        MethodLowering::Pass
+    }
+
+    /// `let entries = m.iter()` on a HashMap - materialise `Vec<(K, V)>`.
+    fn lower_hashmap_iter_binding_method(
+        &mut self,
+        receiver: &HirExpr,
+        method: &Ident,
+        args: &[HirExpr],
+        span: Span,
+    ) -> MethodLowering {
         // `let entries = m.iter()` on a HashMap - materialise a real
         // `Vec<(K, V)>` of entries. The `for (k, v) in m.iter()` form
         // is lowered earlier in `try_lower_for_hashmap_iter`; this
@@ -266,9 +495,25 @@ impl<'a> Builder<'a> {
                 .receiver_local_from_path(receiver)
                 .map_or(receiver.ty, |l| self.locals[l.0 as usize].ty);
             if matches!(self.tcx.kind_of(recv_ty_for_kind), TyKind::HashMap { .. }) {
-                return self.materialize_hashmap_entries(receiver, recv_ty_for_kind, span);
+                return MethodLowering::Handled(self.materialize_hashmap_entries(
+                    receiver,
+                    recv_ty_for_kind,
+                    span,
+                ));
             }
         }
+        MethodLowering::Pass
+    }
+
+    /// `[].to_vec()` / `[a, b].to_vec()` on array-literal receivers.
+    fn lower_array_to_vec_method(
+        &mut self,
+        receiver: &HirExpr,
+        method: &Ident,
+        args: &[HirExpr],
+        ty: Ty,
+        span: Span,
+    ) -> MethodLowering {
         // `[].to_vec()` - the empty-array literal carries no
         // element type, so the generic `gos_rt_vec_clone` arm
         // produces a `GosVec { elem_bytes: 0, … }`. Subsequent
@@ -311,7 +556,7 @@ impl<'a> Builder<'a> {
                     target: Some(next),
                 });
                 self.set_current(next);
-                return Some(dest);
+                return MethodLowering::Handled(Some(dest));
             }
         }
         // `[a, b, c].to_vec()` on a non-empty literal-array
@@ -335,10 +580,12 @@ impl<'a> Builder<'a> {
             && let HirExprKind::Array(gossamer_hir::HirArrayExpr::List(elems)) = &receiver.kind
             && !elems.is_empty()
         {
-            let raw = self.lower_expr(receiver)?;
+            let Some(raw) = self.lower_expr(receiver) else {
+                return MethodLowering::Handled(None);
+            };
             let raw_ty = self.locals[raw.0 as usize].ty;
             let TyKind::Array { elem: elem_ty, len } = self.tcx.kind_of(raw_ty) else {
-                return None;
+                return MethodLowering::Handled(None);
             };
             let elem_bytes = self.elem_bytes_of(*elem_ty);
             let len_val = len.to_usize();
@@ -370,8 +617,20 @@ impl<'a> Builder<'a> {
                 target: Some(next),
             });
             self.set_current(next);
-            return Some(dest);
+            return MethodLowering::Handled(Some(dest));
         }
+        MethodLowering::Pass
+    }
+
+    /// `arr.swap(i, j)` / `xs.sort_by(closure)` in-place array operations.
+    fn lower_array_mutation_method(
+        &mut self,
+        receiver: &HirExpr,
+        method: &Ident,
+        args: &[HirExpr],
+        ty: Ty,
+        span: Span,
+    ) -> MethodLowering {
         // `arr.swap(i, j)` super-instruction. The generic Call
         // fallback at the end of this function would lower this as
         // `Call(Const(Str("swap")), …)` which the cranelift backend
@@ -384,7 +643,7 @@ impl<'a> Builder<'a> {
             if let Some(swap_local) =
                 self.try_lower_array_swap(receiver, &args[0], &args[1], ty, span)
             {
-                return Some(swap_local);
+                return MethodLowering::Handled(Some(swap_local));
             }
         }
         // `xs.sort_by(closure)` for `[i64; N]` / `[i64]` / `Vec<i64>`.
@@ -396,16 +655,28 @@ impl<'a> Builder<'a> {
         // `(env, *const T, *const T) -> i64` callback.
         if method.name.as_str() == "sort_by" && args.len() == 1 {
             if let Some(local) = self.try_lower_sort_by(receiver, &args[0], ty, span) {
-                return Some(local);
+                return MethodLowering::Handled(Some(local));
             }
         }
+        MethodLowering::Pass
+    }
+
+    /// Map counter idioms: fused `insert(k, get_or+by)`, `inc`, struct-keyed ops.
+    fn lower_map_idiom_method(
+        &mut self,
+        receiver: &HirExpr,
+        method: &Ident,
+        args: &[HirExpr],
+        ty: Ty,
+        span: Span,
+    ) -> MethodLowering {
         // Fused-increment peephole: `m.insert(k, m.get_or(k, 0)
         // + by)` (or `… + 1`) on an i64-keyed map collapses into
         // a single `gos_rt_map_inc_i64(m, k, by)` call. Halves
         // the lock + hash work on every counter-style loop.
         if method.name.as_str() == "insert" && args.len() == 2 {
             if let Some(local) = self.try_lower_map_inc(receiver, &args[0], &args[1], ty, span) {
-                return Some(local);
+                return MethodLowering::Handled(Some(local));
             }
         }
         // `m.inc(key)` / `m.inc(key, by)` for `HashMap<String, i64>`.
@@ -426,10 +697,17 @@ impl<'a> Builder<'a> {
                 };
                 if key_kind_ok {
                     let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
-                    let recv_local = self.lower_expr(receiver)?;
-                    let key_local = self.lower_expr(&args[0])?;
+                    let Some(recv_local) = self.lower_expr(receiver) else {
+                        return MethodLowering::Handled(None);
+                    };
+                    let Some(key_local) = self.lower_expr(&args[0]) else {
+                        return MethodLowering::Handled(None);
+                    };
                     let by_local = if args.len() == 2 {
-                        self.lower_expr(&args[1])?
+                        match self.lower_expr(&args[1]) {
+                            Some(v) => v,
+                            None => return MethodLowering::Handled(None),
+                        }
                     } else {
                         let l = self.fresh(i64_ty);
                         self.emit_assign(
@@ -452,7 +730,7 @@ impl<'a> Builder<'a> {
                         target: Some(next),
                     });
                     self.set_current(next);
-                    return Some(dest);
+                    return MethodLowering::Handled(Some(dest));
                 }
             }
         }
@@ -466,8 +744,19 @@ impl<'a> Builder<'a> {
         ) && let Some(local) =
             self.try_lower_struct_key_map_op(receiver, method.name.as_str(), args, span)
         {
-            return Some(local);
+            return MethodLowering::Handled(Some(local));
         }
+        MethodLowering::Pass
+    }
+
+    /// `s.push_str/push/push_char/push_byte(_)` on an owned `String` receiver.
+    fn lower_string_push_method(
+        &mut self,
+        receiver: &HirExpr,
+        method: &Ident,
+        args: &[HirExpr],
+        span: Span,
+    ) -> MethodLowering {
         // `b.push_str(s)` on an owned `String` receiver. The runtime
         // models gos `String` as `*const c_char` (immutable
         // nul-terminated bytes), so true in-place mutation isn't
@@ -487,7 +776,9 @@ impl<'a> Builder<'a> {
                 peeled = *inner;
             }
             if matches!(self.tcx.kind_of(peeled), TyKind::String) {
-                let arg_local = self.lower_expr(&args[0])?;
+                let Some(arg_local) = self.lower_expr(&args[0]) else {
+                    return MethodLowering::Handled(None);
+                };
                 let concat_dest = self.fresh(recv_ty);
                 let next = self.new_block(span);
                 self.terminate(Terminator::Call {
@@ -505,7 +796,7 @@ impl<'a> Builder<'a> {
                     Rvalue::Use(Operand::Copy(Place::local(concat_dest))),
                     span,
                 );
-                return Some(self.lower_unit(span));
+                return MethodLowering::Handled(Some(self.lower_unit(span)));
             }
         }
         // `s.push(ch)` on an owned `String` receiver. Gos `String` is
@@ -525,7 +816,9 @@ impl<'a> Builder<'a> {
                 peeled = *inner;
             }
             if matches!(self.tcx.kind_of(peeled), TyKind::String) {
-                let arg_local = self.lower_expr(&args[0])?;
+                let Some(arg_local) = self.lower_expr(&args[0]) else {
+                    return MethodLowering::Handled(None);
+                };
                 let concat_dest = self.fresh(recv_ty);
                 let next = self.new_block(span);
                 self.terminate(Terminator::Call {
@@ -543,7 +836,7 @@ impl<'a> Builder<'a> {
                     Rvalue::Use(Operand::Copy(Place::local(concat_dest))),
                     span,
                 );
-                return Some(self.lower_unit(span));
+                return MethodLowering::Handled(Some(self.lower_unit(span)));
             }
         }
         // `s.push_char(c)` on a String receiver. Same receiver-rebind
@@ -559,7 +852,9 @@ impl<'a> Builder<'a> {
                 peeled = *inner;
             }
             if matches!(self.tcx.kind_of(peeled), TyKind::String) {
-                let arg_local = self.lower_expr(&args[0])?;
+                let Some(arg_local) = self.lower_expr(&args[0]) else {
+                    return MethodLowering::Handled(None);
+                };
                 let dest = self.fresh(recv_ty);
                 let next = self.new_block(span);
                 self.terminate(Terminator::Call {
@@ -577,7 +872,7 @@ impl<'a> Builder<'a> {
                     Rvalue::Use(Operand::Copy(Place::local(dest))),
                     span,
                 );
-                return Some(self.lower_unit(span));
+                return MethodLowering::Handled(Some(self.lower_unit(span)));
             }
         }
         // `s.push_byte(b)` on a String receiver. Same receiver-rebind
@@ -593,7 +888,9 @@ impl<'a> Builder<'a> {
                 peeled = *inner;
             }
             if matches!(self.tcx.kind_of(peeled), TyKind::String) {
-                let arg_local = self.lower_expr(&args[0])?;
+                let Some(arg_local) = self.lower_expr(&args[0]) else {
+                    return MethodLowering::Handled(None);
+                };
                 let dest = self.fresh(recv_ty);
                 let next = self.new_block(span);
                 self.terminate(Terminator::Call {
@@ -611,20 +908,14 @@ impl<'a> Builder<'a> {
                     Rvalue::Use(Operand::Copy(Place::local(dest))),
                     span,
                 );
-                return Some(self.lower_unit(span));
+                return MethodLowering::Handled(Some(self.lower_unit(span)));
             }
         }
+        MethodLowering::Pass
+    }
 
-        // Prefer the MIR local's pinned type over the HIR receiver
-        // type when the receiver is a Path bound to a local - the
-        // type checker may have left the HIR type as an inference
-        // variable, but we pin runtime-helper return types
-        // (`gos_rt_stream_read_to_string` → `String`, etc.) on the
-        // MIR side at line ~2026. Without this lookup `s.len()`
-        // for `let s = stdin.read_to_string()` falls through the
-        // `len` dispatch's default arm to `gos_rt_len` - which
-        // misinterprets the C-string pointer as a length-prefixed
-        // buffer and returns the first 8 data bytes.
+    /// Recover the receiver's flattened dispatch kind and its ground type.
+    fn receiver_dispatch_kinds(&mut self, receiver: &HirExpr) -> (Ty, TyKind) {
         let receiver_ty = self
             .receiver_local_from_path(receiver)
             .map_or(receiver.ty, |local| self.locals[local.0 as usize].ty);
@@ -749,12 +1040,17 @@ impl<'a> Builder<'a> {
                 }
             }
         }
+        (receiver_ty, receiver_kind_flat)
+    }
 
-        // Detect `recv.headers.<insert|get>(name[, value])` where
-        // `recv` is an `http::Response`/`http::Request`. Fold the
-        // chain into a single `gos_rt_http_*_set_header` /
-        // `_get_header` call so the intermediate headers handle
-        // never has to be represented.
+    /// Fold `recv.headers.insert/get(...)` into a single runtime header call.
+    fn lower_headers_fold_method(
+        &mut self,
+        receiver: &HirExpr,
+        method: &Ident,
+        args: &[HirExpr],
+        span: Span,
+    ) -> MethodLowering {
         if let HirExprKind::Field {
             receiver: inner,
             name: field_name,
@@ -799,11 +1095,15 @@ impl<'a> Builder<'a> {
                     };
                     if let Some((rt, ret_ty, want_args)) = helper {
                         if args.len() == want_args {
-                            let inner_local = self.lower_expr(inner)?;
+                            let Some(inner_local) = self.lower_expr(inner) else {
+                                return MethodLowering::Handled(None);
+                            };
                             let mut ops = Vec::with_capacity(args.len() + 1);
                             ops.push(Operand::Copy(Place::local(inner_local)));
                             for a in args {
-                                let al = self.lower_expr(a)?;
+                                let Some(al) = self.lower_expr(a) else {
+                                    return MethodLowering::Handled(None);
+                                };
                                 ops.push(Operand::Copy(Place::local(al)));
                             }
                             let dest = self.fresh(ret_ty);
@@ -815,28 +1115,24 @@ impl<'a> Builder<'a> {
                                 target: Some(next),
                             });
                             self.set_current(next);
-                            return Some(dest);
+                            return MethodLowering::Handled(Some(dest));
                         }
                     }
                 }
             }
         }
+        MethodLowering::Pass
+    }
 
-        // Stdlib dispatch table. First by method name alone -
-        // covers receivers whose HIR type is still an unresolved
-        // inference variable (common post-checker). The runtime
-        // helpers accept any receiver shape and return a safe
-        // default (0, empty, null) for inputs the native runtime
-        // doesn't yet represent.
-        //
-        // When the callee name is empty the method is identity
-        // (currently `.to_string()` / `.clone()` on any scalar or
-        // string-shaped receiver - the GC already aliases the
-        // buffer).
-        // `.len()` on a fixed-size `[T; N]` array is a compile-time
-        // constant - the inline stack aggregate has no GosVec header
-        // for `gos_rt_len` to read (routing it there returned header
-        // garbage, e.g. `[1, 2, 3].len() == 1` natively).
+    /// `.len()` on a fixed-size `[T; N]` array - a compile-time constant.
+    fn lower_fixed_array_len_method(
+        &mut self,
+        method: &Ident,
+        args: &[HirExpr],
+        receiver_kind_flat: &TyKind,
+        span: Span,
+    ) -> MethodLowering {
+        let receiver_kind_flat = receiver_kind_flat.clone();
         if method.name.as_str() == "len"
             && args.is_empty()
             && let TyKind::Array { len, .. } = &receiver_kind_flat
@@ -849,9 +1145,26 @@ impl<'a> Builder<'a> {
                 Rvalue::Use(Operand::Const(ConstValue::Int(n as i128))),
                 span,
             );
-            return Some(dest);
+            return MethodLowering::Handled(Some(dest));
         }
-        let mut runtime_symbol: Option<&'static str> = match method.name.as_str() {
+        MethodLowering::Pass
+    }
+
+    /// Name-keyed runtime-symbol dispatch table (`Bail` = stop the lowering).
+    #[allow(
+        clippy::too_many_lines,
+        reason = "flat method-name dispatch table; arm order encodes guarded/unguarded same-name shadowing"
+    )]
+    fn runtime_symbol_by_name(
+        &self,
+        receiver: &HirExpr,
+        method: &Ident,
+        args: &[HirExpr],
+        receiver_kind_flat: &TyKind,
+        receiver_ty: Ty,
+    ) -> SymbolLookup {
+        let receiver_kind_flat = receiver_kind_flat.clone();
+        SymbolLookup::Found(match method.name.as_str() {
             // `.to_string()` routes to the runtime numeric
             // formatter for integer / float receivers. String
             // receivers fall through to the identity copy.
@@ -1286,7 +1599,7 @@ impl<'a> Builder<'a> {
                 // receiver slipped past both; fall back to a MIR error
                 // rather than the `gos_rt_arr_iter` path, which would
                 // reinterpret the `*mut GosMap` as a `*mut GosVec`.
-                TyKind::HashMap { .. } => return None,
+                TyKind::HashMap { .. } => return SymbolLookup::Bail,
                 _ => Some("gos_rt_arr_iter"),
             },
             "to_vec" => match &receiver_kind_flat {
@@ -1524,591 +1837,639 @@ impl<'a> Builder<'a> {
             "write_byte_range_to_stdout" => Some("gos_rt_heap_u8_write_bytes_to_stdout"),
             "write_byte_lines_to_stdout" => Some("gos_rt_heap_u8_write_lines_to_stdout"),
             _ => None,
-        };
-        let _ = receiver_kind;
+        })
+    }
 
-        // A user struct's own `impl` method always wins over a bare-name
-        // runtime builtin of the same name. The table above resolves
-        // several names (`load` / `store` / `add` / `lock` / `wait` /
-        // ...) with no receiver-type guard, so `store.load(req)` on a
-        // user `Store` with `fn load(&self, ...)` would otherwise hijack
-        // to `gos_rt_atomic_i64_load`. Generalises the `close` guard: a
-        // pure runtime handle (`AtomicI64`, `Mutex`, `WaitGroup`) carries
-        // no `impl` block, so this only fires for genuine user methods.
-        if runtime_symbol.is_some()
-            && let Some(sname) = self
-                .struct_name_of(receiver_ty)
-                .or_else(|| self.struct_name_from_expr(receiver))
-            && self
-                .impl_methods
-                .contains_key(&format!("{sname}::{}", method.name.as_str()))
-        {
-            runtime_symbol = None;
+    /// Receiver-runtime-kind dispatch table (flag/http/stdlib handles).
+    fn kind_dispatch_symbol(
+        &self,
+        rk: Option<&'static str>,
+        method: &Ident,
+    ) -> Option<&'static str> {
+        self.kind_dispatch_symbol_a(rk, method)
+            .or_else(|| self.kind_dispatch_symbol_b(rk, method))
+    }
+
+    /// First half of the receiver-runtime-kind dispatch table.
+    fn kind_dispatch_symbol_a(
+        &self,
+        rk: Option<&'static str>,
+        method: &Ident,
+    ) -> Option<&'static str> {
+        match (rk, method.name.as_str()) {
+            (Some("flag::Set"), "string") => Some("gos_rt_flag_set_string"),
+            (Some("flag::Set"), "int") => Some("gos_rt_flag_set_int"),
+            (Some("flag::Set"), "uint") => Some("gos_rt_flag_set_uint"),
+            (Some("flag::Set"), "float") => Some("gos_rt_flag_set_float"),
+            (Some("flag::Set"), "bool") => Some("gos_rt_flag_set_bool"),
+            (Some("flag::Set"), "duration") => Some("gos_rt_flag_set_duration"),
+            (Some("flag::Set"), "string_list") => Some("gos_rt_flag_set_string_list"),
+            (Some("flag::Set"), "short") => Some("gos_rt_flag_set_short"),
+            (Some("flag::Set"), "usage") => Some("gos_rt_flag_set_usage"),
+            (Some("flag::Set"), "parse") => Some("gos_rt_flag_set_parse"),
+            // 0.4.0 stateful HTTP types - method-call dispatch.
+            (Some("http::Router"), "add") => Some("gos_rt_router_add"),
+            (Some("http::Router"), "get") => Some("gos_rt_router_get"),
+            (Some("http::Router"), "post") => Some("gos_rt_router_post"),
+            (Some("http::Router"), "put") => Some("gos_rt_router_put"),
+            (Some("http::Router"), "delete") => Some("gos_rt_router_delete"),
+            (Some("http::Router"), "patch") => Some("gos_rt_router_patch"),
+            (Some("http::Router"), "head") => Some("gos_rt_router_head"),
+            (Some("http::Router"), "options") => Some("gos_rt_router_options"),
+            (Some("http::Router"), "serve") => Some("gos_rt_router_serve"),
+            (Some("http::FileServer"), "serve") => Some("gos_rt_file_server_serve"),
+            (Some("http::NativeClient"), "get") => Some("gos_rt_native_client_get"),
+            (Some("http::Proxy"), "forward") => Some("gos_rt_proxy_forward"),
+            (Some("http::Client"), "get") => Some("gos_rt_http_client_get"),
+            (Some("http::Client"), "post") => Some("gos_rt_http_client_post"),
+            (Some("http::Client"), "put") => Some("gos_rt_http_client_put"),
+            (Some("http::Client"), "options") => Some("gos_rt_http_client_options"),
+            (Some("http::Client"), "delete") => Some("gos_rt_http_client_delete"),
+            (Some("http::Client"), "head") => Some("gos_rt_http_client_head"),
+            (Some("http::Client"), "request") => Some("gos_rt_http_client_request"),
+            (Some("http::Client"), "request_bytes") => Some("gos_rt_http_client_request_bytes"),
+            (Some("http::ClientBuilder"), "max_redirects") => {
+                Some("gos_rt_http_client_builder_max_redirects")
+            }
+            (Some("http::ClientBuilder"), "timeout_ms") => {
+                Some("gos_rt_http_client_builder_timeout_ms")
+            }
+            (Some("http::ClientBuilder"), "cookie_jar") => {
+                Some("gos_rt_http_client_builder_cookie_jar")
+            }
+            (Some("http::ClientBuilder"), "proxy") => Some("gos_rt_http_client_builder_proxy"),
+            (Some("http::ClientBuilder"), "build") => Some("gos_rt_http_client_builder_build"),
+            (Some("http::Request"), "header") => Some("gos_rt_http_request_header"),
+            (Some("http::Request"), "body") => Some("gos_rt_http_request_body"),
+            (Some("http::Request"), "send") => Some("gos_rt_http_request_send"),
+            (Some("http::Request"), "path") => Some("gos_rt_http_request_path"),
+            (Some("http::Request"), "path_value") => Some("gos_rt_http_request_path_value"),
+            (Some("http::Request"), "path_int") => Some("gos_rt_http_request_path_int"),
+            (Some("http::Request"), "path_float") => Some("gos_rt_http_request_path_float"),
+            (Some("http::Request"), "method") => Some("gos_rt_http_request_method"),
+            (Some("http::Request"), "value") => Some("gos_rt_http_request_value"),
+            (Some("http::Request"), "set_value") => Some("gos_rt_http_request_set_value"),
+            (Some("http::Request"), "form_value") => Some("gos_rt_http_request_form_value"),
+            (Some("http::Request"), "basic_auth") => Some("gos_rt_http_request_basic_auth"),
+            (Some("http::Response"), "with_header") => Some("gos_rt_http_response_with_header"),
+            (Some("http::Response"), "status") => Some("gos_rt_http_response_status"),
+            (Some("http::Response"), "body") => Some("gos_rt_http_response_body"),
+            (Some("bufio::Scanner"), "scan") => Some("gos_rt_bufio_scanner_scan"),
+            (Some("bufio::Scanner"), "text") => Some("gos_rt_bufio_scanner_text"),
+            (Some("errors::Error"), "message") => Some("gos_rt_error_message"),
+            (Some("errors::Error"), "cause") => Some("gos_rt_error_cause"),
+            (Some("errors::Error"), "is") => Some("gos_rt_error_is"),
+            (Some("regex::Pattern"), "is_match") => Some("gos_rt_regex_is_match"),
+            (Some("regex::Pattern"), "find") => Some("gos_rt_regex_find"),
+            (Some("regex::Pattern"), "find_all") => Some("gos_rt_regex_find_all"),
+            (Some("regex::Pattern"), "replace") => Some("gos_rt_regex_replace"),
+            (Some("regex::Pattern"), "replace_all") => Some("gos_rt_regex_replace_all"),
+            (Some("regex::Pattern"), "split") => Some("gos_rt_regex_split"),
+            (Some("collections::HashSet"), "insert") => Some("gos_rt_set_insert"),
+            (Some("collections::HashSet"), "contains") => Some("gos_rt_set_contains"),
+            (Some("collections::HashSet"), "remove") => Some("gos_rt_set_remove"),
+            (Some("collections::HashSet"), "len") => Some("gos_rt_set_len"),
+            (Some("collections::HashSet"), "union") => Some("gos_rt_set_union"),
+            (Some("collections::HashSet"), "intersection") => Some("gos_rt_set_intersection"),
+            (Some("collections::HashSet"), "difference") => Some("gos_rt_set_difference"),
+            (Some("collections::HashSet"), "symmetric_difference") => {
+                Some("gos_rt_set_symmetric_difference")
+            }
+            (Some("collections::HashSet"), "is_subset") => Some("gos_rt_set_is_subset"),
+            (Some("collections::HashSet"), "is_superset") => Some("gos_rt_set_is_superset"),
+            (Some("collections::HashSet"), "is_disjoint") => Some("gos_rt_set_is_disjoint"),
+            (Some("collections::HashSet"), "to_vec" | "iter") => Some("gos_rt_set_to_vec"),
+            (Some("collections::HashSet"), "clear") => Some("gos_rt_set_clear"),
+            (Some("collections::VecDeque"), "push_back") => Some("gos_rt_deque_push_back"),
+            (Some("collections::VecDeque"), "pop_front") => Some("gos_rt_deque_pop_front"),
+            (Some("collections::VecDeque"), "len") => Some("gos_rt_deque_len"),
+            (Some("collections::VecDeque"), "is_empty") => Some("gos_rt_deque_is_empty"),
+            (Some("collections::BTreeMap"), "insert") => Some("gos_rt_btmap_insert"),
+            (Some("collections::BTreeMap"), "get") => Some("gos_rt_btmap_get"),
+            (Some("collections::BTreeMap"), "get_or") => Some("gos_rt_btmap_get_or"),
+            (Some("collections::BTreeMap"), "contains" | "contains_key") => {
+                Some("gos_rt_btmap_contains")
+            }
+            (Some("collections::BTreeMap"), "len") => Some("gos_rt_btmap_len"),
+            (Some("collections::BTreeMap"), "keys") => Some("gos_rt_btmap_keys"),
+            _ => None,
         }
+    }
 
-        // Receiver-shape-aware dispatch. Reads the kind tag from
-        // a path-bound receiver, or inspects a chained method
-        // call to recover its result kind for the
-        // `a.b().c()`-style shapes.
-        let receiver_runtime_kind = self
-            .receiver_local_from_path(receiver)
-            .and_then(|l| self.local_runtime_kind.get(&l).copied())
-            .or_else(|| self.expr_runtime_kind(receiver))
-            .or_else(|| self.runtime_kind_from_ty(receiver.ty));
-        let kind_dispatch: Option<&'static str> =
-            match (receiver_runtime_kind, method.name.as_str()) {
-                (Some("flag::Set"), "string") => Some("gos_rt_flag_set_string"),
-                (Some("flag::Set"), "int") => Some("gos_rt_flag_set_int"),
-                (Some("flag::Set"), "uint") => Some("gos_rt_flag_set_uint"),
-                (Some("flag::Set"), "float") => Some("gos_rt_flag_set_float"),
-                (Some("flag::Set"), "bool") => Some("gos_rt_flag_set_bool"),
-                (Some("flag::Set"), "duration") => Some("gos_rt_flag_set_duration"),
-                (Some("flag::Set"), "string_list") => Some("gos_rt_flag_set_string_list"),
-                (Some("flag::Set"), "short") => Some("gos_rt_flag_set_short"),
-                (Some("flag::Set"), "usage") => Some("gos_rt_flag_set_usage"),
-                (Some("flag::Set"), "parse") => Some("gos_rt_flag_set_parse"),
-                // 0.4.0 stateful HTTP types - method-call dispatch.
-                (Some("http::Router"), "add") => Some("gos_rt_router_add"),
-                (Some("http::Router"), "get") => Some("gos_rt_router_get"),
-                (Some("http::Router"), "post") => Some("gos_rt_router_post"),
-                (Some("http::Router"), "put") => Some("gos_rt_router_put"),
-                (Some("http::Router"), "delete") => Some("gos_rt_router_delete"),
-                (Some("http::Router"), "patch") => Some("gos_rt_router_patch"),
-                (Some("http::Router"), "head") => Some("gos_rt_router_head"),
-                (Some("http::Router"), "options") => Some("gos_rt_router_options"),
-                (Some("http::Router"), "serve") => Some("gos_rt_router_serve"),
-                (Some("http::FileServer"), "serve") => Some("gos_rt_file_server_serve"),
-                (Some("http::NativeClient"), "get") => Some("gos_rt_native_client_get"),
-                (Some("http::Proxy"), "forward") => Some("gos_rt_proxy_forward"),
-                (Some("http::Client"), "get") => Some("gos_rt_http_client_get"),
-                (Some("http::Client"), "post") => Some("gos_rt_http_client_post"),
-                (Some("http::Client"), "put") => Some("gos_rt_http_client_put"),
-                (Some("http::Client"), "options") => Some("gos_rt_http_client_options"),
-                (Some("http::Client"), "delete") => Some("gos_rt_http_client_delete"),
-                (Some("http::Client"), "head") => Some("gos_rt_http_client_head"),
-                (Some("http::Client"), "request") => Some("gos_rt_http_client_request"),
-                (Some("http::Client"), "request_bytes") => Some("gos_rt_http_client_request_bytes"),
-                (Some("http::ClientBuilder"), "max_redirects") => {
-                    Some("gos_rt_http_client_builder_max_redirects")
-                }
-                (Some("http::ClientBuilder"), "timeout_ms") => {
-                    Some("gos_rt_http_client_builder_timeout_ms")
-                }
-                (Some("http::ClientBuilder"), "cookie_jar") => {
-                    Some("gos_rt_http_client_builder_cookie_jar")
-                }
-                (Some("http::ClientBuilder"), "proxy") => Some("gos_rt_http_client_builder_proxy"),
-                (Some("http::ClientBuilder"), "build") => Some("gos_rt_http_client_builder_build"),
-                (Some("http::Request"), "header") => Some("gos_rt_http_request_header"),
-                (Some("http::Request"), "body") => Some("gos_rt_http_request_body"),
-                (Some("http::Request"), "send") => Some("gos_rt_http_request_send"),
-                (Some("http::Request"), "path") => Some("gos_rt_http_request_path"),
-                (Some("http::Request"), "path_value") => Some("gos_rt_http_request_path_value"),
-                (Some("http::Request"), "path_int") => Some("gos_rt_http_request_path_int"),
-                (Some("http::Request"), "path_float") => Some("gos_rt_http_request_path_float"),
-                (Some("http::Request"), "method") => Some("gos_rt_http_request_method"),
-                (Some("http::Request"), "value") => Some("gos_rt_http_request_value"),
-                (Some("http::Request"), "set_value") => Some("gos_rt_http_request_set_value"),
-                (Some("http::Request"), "form_value") => Some("gos_rt_http_request_form_value"),
-                (Some("http::Request"), "basic_auth") => Some("gos_rt_http_request_basic_auth"),
-                (Some("http::Response"), "with_header") => Some("gos_rt_http_response_with_header"),
-                (Some("http::Response"), "status") => Some("gos_rt_http_response_status"),
-                (Some("http::Response"), "body") => Some("gos_rt_http_response_body"),
-                (Some("bufio::Scanner"), "scan") => Some("gos_rt_bufio_scanner_scan"),
-                (Some("bufio::Scanner"), "text") => Some("gos_rt_bufio_scanner_text"),
-                (Some("errors::Error"), "message") => Some("gos_rt_error_message"),
-                (Some("errors::Error"), "cause") => Some("gos_rt_error_cause"),
-                (Some("errors::Error"), "is") => Some("gos_rt_error_is"),
-                (Some("regex::Pattern"), "is_match") => Some("gos_rt_regex_is_match"),
-                (Some("regex::Pattern"), "find") => Some("gos_rt_regex_find"),
-                (Some("regex::Pattern"), "find_all") => Some("gos_rt_regex_find_all"),
-                (Some("regex::Pattern"), "replace") => Some("gos_rt_regex_replace"),
-                (Some("regex::Pattern"), "replace_all") => Some("gos_rt_regex_replace_all"),
-                (Some("regex::Pattern"), "split") => Some("gos_rt_regex_split"),
-                (Some("collections::HashSet"), "insert") => Some("gos_rt_set_insert"),
-                (Some("collections::HashSet"), "contains") => Some("gos_rt_set_contains"),
-                (Some("collections::HashSet"), "remove") => Some("gos_rt_set_remove"),
-                (Some("collections::HashSet"), "len") => Some("gos_rt_set_len"),
-                (Some("collections::HashSet"), "union") => Some("gos_rt_set_union"),
-                (Some("collections::HashSet"), "intersection") => Some("gos_rt_set_intersection"),
-                (Some("collections::HashSet"), "difference") => Some("gos_rt_set_difference"),
-                (Some("collections::HashSet"), "symmetric_difference") => {
-                    Some("gos_rt_set_symmetric_difference")
-                }
-                (Some("collections::HashSet"), "is_subset") => Some("gos_rt_set_is_subset"),
-                (Some("collections::HashSet"), "is_superset") => Some("gos_rt_set_is_superset"),
-                (Some("collections::HashSet"), "is_disjoint") => Some("gos_rt_set_is_disjoint"),
-                (Some("collections::HashSet"), "to_vec" | "iter") => Some("gos_rt_set_to_vec"),
-                (Some("collections::HashSet"), "clear") => Some("gos_rt_set_clear"),
-                (Some("collections::VecDeque"), "push_back") => Some("gos_rt_deque_push_back"),
-                (Some("collections::VecDeque"), "pop_front") => Some("gos_rt_deque_pop_front"),
-                (Some("collections::VecDeque"), "len") => Some("gos_rt_deque_len"),
-                (Some("collections::VecDeque"), "is_empty") => Some("gos_rt_deque_is_empty"),
-                (Some("collections::BTreeMap"), "insert") => Some("gos_rt_btmap_insert"),
-                (Some("collections::BTreeMap"), "get") => Some("gos_rt_btmap_get"),
-                (Some("collections::BTreeMap"), "get_or") => Some("gos_rt_btmap_get_or"),
-                (Some("collections::BTreeMap"), "contains" | "contains_key") => {
-                    Some("gos_rt_btmap_contains")
-                }
-                (Some("collections::BTreeMap"), "len") => Some("gos_rt_btmap_len"),
-                (Some("collections::BTreeMap"), "keys") => Some("gos_rt_btmap_keys"),
-                (Some("sync::Map"), "set" | "insert") => Some("gos_rt_sync_map_set"),
-                (Some("sync::Map"), "get") => Some("gos_rt_sync_map_get"),
-                (Some("sync::Map"), "delete" | "remove") => Some("gos_rt_sync_map_delete"),
-                (Some("sync::Map"), "len") => Some("gos_rt_sync_map_len"),
-                (Some("sync::Map"), "contains" | "contains_key") => {
-                    Some("gos_rt_sync_map_contains")
-                }
-                (Some("sync::Map"), "keys") => Some("gos_rt_sync_map_keys"),
-                (Some("math::rand::Rng"), "next_u64") => Some("gos_rt_math_rng_next_u64"),
-                (Some("math::rand::Rng"), "next_u32") => Some("gos_rt_math_rng_next_u32"),
-                (Some("math::rand::Rng"), "range_u64") => Some("gos_rt_math_rng_range_u64"),
-                (Some("math::rand::Rng"), "next_f64") => Some("gos_rt_math_rng_next_f64"),
-                (Some("validate::FieldError"), "path") => Some("gos_rt_field_error_path"),
-                (Some("validate::FieldError"), "message") => Some("gos_rt_field_error_message"),
-                (Some("validate::FieldError"), "code") => Some("gos_rt_field_error_code"),
-                (Some("validate::Errors"), "add") => Some("gos_rt_validate_errors_add"),
-                (Some("validate::Errors"), "is_empty") => Some("gos_rt_validate_errors_is_empty"),
-                (Some("validate::Errors"), "len") => Some("gos_rt_validate_errors_len"),
-                (Some("validate::Errors"), "count") => Some("gos_rt_validate_errors_count"),
-                (Some("validate::Errors"), "get") => Some("gos_rt_validate_errors_get"),
-                (Some("validate::Errors"), "collect") => Some("gos_rt_validate_errors_collect"),
-                (Some("sync::RwLock"), "get") => Some("gos_rt_rwlock_get"),
-                (Some("sync::RwLock"), "set") => Some("gos_rt_rwlock_set"),
-                // AtomicBool load/store route to the bool-typed shims so
-                // the load result renders `true` / `false`; the name-only
-                // table below keeps AtomicI64 on the i64 path.
-                (Some("sync::AtomicBool"), "load") => Some("gos_rt_atomic_bool_load"),
-                (Some("sync::AtomicBool"), "store") => Some("gos_rt_atomic_bool_store"),
-                (Some("context::Context"), "is_cancelled") => Some("gos_rt_ctx_is_cancelled"),
-                (Some("context::Context"), "cancel") => Some("gos_rt_ctx_cancel"),
-                (Some("context::Context"), "done") => Some("gos_rt_ctx_done"),
-                (Some("context::Context"), "done_chan") => Some("gos_rt_ctx_cancelled"),
-                (Some("metrics::Counter"), "inc") => Some("gos_rt_metrics_counter_inc"),
-                (Some("metrics::Counter"), "value") => Some("gos_rt_metrics_counter_value"),
-                (Some("metrics::Gauge"), "set") => Some("gos_rt_metrics_gauge_set"),
-                (Some("metrics::Gauge"), "inc") => Some("gos_rt_metrics_gauge_inc"),
-                (Some("metrics::Gauge"), "dec") => Some("gos_rt_metrics_gauge_dec"),
-                (Some("metrics::Gauge"), "value") => Some("gos_rt_metrics_gauge_value"),
-                (Some("metrics::Histogram"), "observe") => Some("gos_rt_metrics_histogram_observe"),
-                (Some("metrics::Histogram"), "sum") => Some("gos_rt_metrics_histogram_sum"),
-                (Some("metrics::Histogram"), "count") => Some("gos_rt_metrics_histogram_count"),
-                (Some("metrics::Registry"), "register") => Some("gos_rt_metrics_registry_register"),
-                (Some("metrics::Registry"), "render") => Some("gos_rt_metrics_registry_render"),
-                (Some("trace::Tracer"), "start_span") => Some("gos_rt_trace_tracer_start_span"),
-                (Some("trace::Span"), "set_attribute") => Some("gos_rt_trace_span_set_attribute"),
-                (Some("trace::Span"), "set_status") => Some("gos_rt_trace_span_set_status"),
-                (Some("trace::Span"), "end") => Some("gos_rt_trace_span_end"),
-                (Some("trace::EndedSpan"), "to_otlp_json") => {
-                    Some("gos_rt_trace_ended_to_otlp_json")
-                }
-                (Some("bytes::Builder"), "write") => Some("gos_rt_bytes_builder_write"),
-                (Some("bytes::Builder"), "write_char") => Some("gos_rt_bytes_builder_write_char"),
-                (Some("bytes::Builder"), "build") => Some("gos_rt_bytes_builder_build"),
-                (Some("bytes::Builder"), "as_str") => Some("gos_rt_bytes_builder_as_str"),
-                (Some("bytes::Builder"), "len") => Some("gos_rt_bytes_builder_len"),
-                (Some("bytes::Buffer"), "write_str") => Some("gos_rt_bytes_buffer_write_str"),
-                (Some("bytes::Buffer"), "push") => Some("gos_rt_bytes_buffer_push"),
-                (Some("bytes::Buffer"), "len") => Some("gos_rt_bytes_buffer_len"),
-                (Some("bytes::Buffer"), "is_empty") => Some("gos_rt_bytes_buffer_is_empty"),
-                (Some("bytes::Buffer"), "clear") => Some("gos_rt_bytes_buffer_clear"),
-                (Some("bytes::Buffer"), "to_string") => Some("gos_rt_bytes_buffer_to_string"),
-                (Some("net::TcpListener"), "accept") => Some("gos_rt_tcp_listener_accept"),
-                (Some("net::TcpListener"), "local_addr") => Some("gos_rt_tcp_listener_local_addr"),
-                (Some("net::TcpListener"), "close") => Some("gos_rt_tcp_listener_close"),
-                (Some("net::TcpStream"), "read") => Some("gos_rt_tcp_stream_read"),
-                (Some("net::TcpStream"), "read_to_string") => {
-                    Some("gos_rt_tcp_stream_read_to_string")
-                }
-                (Some("net::TcpStream"), "write" | "write_all") => Some("gos_rt_tcp_stream_write"),
-                (Some("net::TcpStream"), "start_tls") => Some("gos_rt_tcp_start_tls"),
-                (Some("net::TcpStream"), "start_tls_insecure") => {
-                    Some("gos_rt_tcp_start_tls_insecure")
-                }
-                (Some("net::TcpStream"), "start_tls_ca") => Some("gos_rt_tcp_start_tls_ca"),
-                (Some("net::TcpStream"), "close") => Some("gos_rt_tcp_stream_close"),
-                (Some("net::UnixListener"), "accept") => Some("gos_rt_unix_listener_accept"),
-                (Some("net::UnixListener"), "close") => Some("gos_rt_unix_listener_close"),
-                (Some("net::UnixStream"), "read") => Some("gos_rt_unix_stream_read"),
-                (Some("net::UnixStream"), "read_to_string") => {
-                    Some("gos_rt_unix_stream_read_to_string")
-                }
-                (Some("net::UnixStream"), "write" | "write_all") => {
-                    Some("gos_rt_unix_stream_write")
-                }
-                (Some("net::UnixStream"), "close") => Some("gos_rt_unix_stream_close"),
-                (Some("net::UdpSocket"), "send_to") => Some("gos_rt_udp_send_to"),
-                (Some("net::UdpSocket"), "recv_from") => Some("gos_rt_udp_recv_from"),
-                (Some("net::UdpSocket"), "local_addr") => Some("gos_rt_udp_local_addr"),
-                (Some("net::UdpSocket"), "close") => Some("gos_rt_udp_close"),
-                _ => None,
-            };
-        if let Some(rt) = kind_dispatch {
-            // Lower the receiver + args, emit a Call to the
-            // runtime helper, return the dest local. Pin a
-            // sensible return type for the destination.
-            let receiver_local = self.lower_expr(receiver)?;
-            let mut arg_operands = Vec::with_capacity(args.len() + 1);
-            arg_operands.push(Operand::Copy(Place::local(receiver_local)));
-            // `xs.slice(a, b)` on a `[T; N]` literal needs the
-            // static length: the inline buffer carries no length
-            // prefix, so the runtime helper takes
-            // `(ptr, len, start, end)` instead of the
-            // `(ptr, start, end)` shape used by Vec receivers.
-            // Splice the constant N read from the receiver's MIR
-            // type before the user-supplied start/end args.
-            // Router HTTP-verb methods take (router, pattern,
-            // env, fn_addr) - synthesize the handler's env+fn_addr
-            // from the trailing user argument (must be a struct
-            // whose impl Handler { fn serve(...) }).
-            let router_handler_method = matches!(
-                rt,
-                "gos_rt_router_get"
-                    | "gos_rt_router_post"
-                    | "gos_rt_router_put"
-                    | "gos_rt_router_delete"
-                    | "gos_rt_router_patch"
-                    | "gos_rt_router_head"
-                    | "gos_rt_router_options"
-                    | "gos_rt_router_add"
-            );
-            let mut rt = rt;
-            // An i64-element `HashSet` stores its keys as decimal strings;
-            // passing the raw i64 to the String shims reinterprets it as a
-            // key pointer and crashes. The element kind is erased from the
-            // set's handle type, so read it from the queried element
-            // argument.
-            if matches!(
-                rt,
-                "gos_rt_set_insert" | "gos_rt_set_contains" | "gos_rt_set_remove"
-            ) && matches!(
-                args.first()
-                    .map(|a| map_key_kind_from(self.tcx, self.peel_ref_ty(a.ty))),
-                Some(MapKeyKind::I64)
-            ) {
-                rt = match rt {
-                    "gos_rt_set_insert" => "gos_rt_set_insert_i64",
-                    "gos_rt_set_contains" => "gos_rt_set_contains_i64",
-                    "gos_rt_set_remove" => "gos_rt_set_remove_i64",
-                    _ => rt,
-                };
+    /// Second half of the receiver-runtime-kind dispatch table.
+    fn kind_dispatch_symbol_b(
+        &self,
+        rk: Option<&'static str>,
+        method: &Ident,
+    ) -> Option<&'static str> {
+        match (rk, method.name.as_str()) {
+            (Some("sync::Map"), "set" | "insert") => Some("gos_rt_sync_map_set"),
+            (Some("sync::Map"), "get") => Some("gos_rt_sync_map_get"),
+            (Some("sync::Map"), "delete" | "remove") => Some("gos_rt_sync_map_delete"),
+            (Some("sync::Map"), "len") => Some("gos_rt_sync_map_len"),
+            (Some("sync::Map"), "contains" | "contains_key") => Some("gos_rt_sync_map_contains"),
+            (Some("sync::Map"), "keys") => Some("gos_rt_sync_map_keys"),
+            (Some("math::rand::Rng"), "next_u64") => Some("gos_rt_math_rng_next_u64"),
+            (Some("math::rand::Rng"), "next_u32") => Some("gos_rt_math_rng_next_u32"),
+            (Some("math::rand::Rng"), "range_u64") => Some("gos_rt_math_rng_range_u64"),
+            (Some("math::rand::Rng"), "next_f64") => Some("gos_rt_math_rng_next_f64"),
+            (Some("validate::FieldError"), "path") => Some("gos_rt_field_error_path"),
+            (Some("validate::FieldError"), "message") => Some("gos_rt_field_error_message"),
+            (Some("validate::FieldError"), "code") => Some("gos_rt_field_error_code"),
+            (Some("validate::Errors"), "add") => Some("gos_rt_validate_errors_add"),
+            (Some("validate::Errors"), "is_empty") => Some("gos_rt_validate_errors_is_empty"),
+            (Some("validate::Errors"), "len") => Some("gos_rt_validate_errors_len"),
+            (Some("validate::Errors"), "count") => Some("gos_rt_validate_errors_count"),
+            (Some("validate::Errors"), "get") => Some("gos_rt_validate_errors_get"),
+            (Some("validate::Errors"), "collect") => Some("gos_rt_validate_errors_collect"),
+            (Some("sync::RwLock"), "get") => Some("gos_rt_rwlock_get"),
+            (Some("sync::RwLock"), "set") => Some("gos_rt_rwlock_set"),
+            // AtomicBool load/store route to the bool-typed shims so
+            // the load result renders `true` / `false`; the name-only
+            // table below keeps AtomicI64 on the i64 path.
+            (Some("sync::AtomicBool"), "load") => Some("gos_rt_atomic_bool_load"),
+            (Some("sync::AtomicBool"), "store") => Some("gos_rt_atomic_bool_store"),
+            (Some("context::Context"), "is_cancelled") => Some("gos_rt_ctx_is_cancelled"),
+            (Some("context::Context"), "cancel") => Some("gos_rt_ctx_cancel"),
+            (Some("context::Context"), "done") => Some("gos_rt_ctx_done"),
+            (Some("context::Context"), "done_chan") => Some("gos_rt_ctx_cancelled"),
+            (Some("metrics::Counter"), "inc") => Some("gos_rt_metrics_counter_inc"),
+            (Some("metrics::Counter"), "value") => Some("gos_rt_metrics_counter_value"),
+            (Some("metrics::Gauge"), "set") => Some("gos_rt_metrics_gauge_set"),
+            (Some("metrics::Gauge"), "inc") => Some("gos_rt_metrics_gauge_inc"),
+            (Some("metrics::Gauge"), "dec") => Some("gos_rt_metrics_gauge_dec"),
+            (Some("metrics::Gauge"), "value") => Some("gos_rt_metrics_gauge_value"),
+            (Some("metrics::Histogram"), "observe") => Some("gos_rt_metrics_histogram_observe"),
+            (Some("metrics::Histogram"), "sum") => Some("gos_rt_metrics_histogram_sum"),
+            (Some("metrics::Histogram"), "count") => Some("gos_rt_metrics_histogram_count"),
+            (Some("metrics::Registry"), "register") => Some("gos_rt_metrics_registry_register"),
+            (Some("metrics::Registry"), "render") => Some("gos_rt_metrics_registry_render"),
+            (Some("trace::Tracer"), "start_span") => Some("gos_rt_trace_tracer_start_span"),
+            (Some("trace::Span"), "set_attribute") => Some("gos_rt_trace_span_set_attribute"),
+            (Some("trace::Span"), "set_status") => Some("gos_rt_trace_span_set_status"),
+            (Some("trace::Span"), "end") => Some("gos_rt_trace_span_end"),
+            (Some("trace::EndedSpan"), "to_otlp_json") => Some("gos_rt_trace_ended_to_otlp_json"),
+            (Some("bytes::Builder"), "write") => Some("gos_rt_bytes_builder_write"),
+            (Some("bytes::Builder"), "write_char") => Some("gos_rt_bytes_builder_write_char"),
+            (Some("bytes::Builder"), "build") => Some("gos_rt_bytes_builder_build"),
+            (Some("bytes::Builder"), "as_str") => Some("gos_rt_bytes_builder_as_str"),
+            (Some("bytes::Builder"), "len") => Some("gos_rt_bytes_builder_len"),
+            (Some("bytes::Buffer"), "write_str") => Some("gos_rt_bytes_buffer_write_str"),
+            (Some("bytes::Buffer"), "push") => Some("gos_rt_bytes_buffer_push"),
+            (Some("bytes::Buffer"), "len") => Some("gos_rt_bytes_buffer_len"),
+            (Some("bytes::Buffer"), "is_empty") => Some("gos_rt_bytes_buffer_is_empty"),
+            (Some("bytes::Buffer"), "clear") => Some("gos_rt_bytes_buffer_clear"),
+            (Some("bytes::Buffer"), "to_string") => Some("gos_rt_bytes_buffer_to_string"),
+            (Some("net::TcpListener"), "accept") => Some("gos_rt_tcp_listener_accept"),
+            (Some("net::TcpListener"), "local_addr") => Some("gos_rt_tcp_listener_local_addr"),
+            (Some("net::TcpListener"), "close") => Some("gos_rt_tcp_listener_close"),
+            (Some("net::TcpStream"), "read") => Some("gos_rt_tcp_stream_read"),
+            (Some("net::TcpStream"), "read_to_string") => Some("gos_rt_tcp_stream_read_to_string"),
+            (Some("net::TcpStream"), "write" | "write_all") => Some("gos_rt_tcp_stream_write"),
+            (Some("net::TcpStream"), "start_tls") => Some("gos_rt_tcp_start_tls"),
+            (Some("net::TcpStream"), "start_tls_insecure") => Some("gos_rt_tcp_start_tls_insecure"),
+            (Some("net::TcpStream"), "start_tls_ca") => Some("gos_rt_tcp_start_tls_ca"),
+            (Some("net::TcpStream"), "close") => Some("gos_rt_tcp_stream_close"),
+            (Some("net::UnixListener"), "accept") => Some("gos_rt_unix_listener_accept"),
+            (Some("net::UnixListener"), "close") => Some("gos_rt_unix_listener_close"),
+            (Some("net::UnixStream"), "read") => Some("gos_rt_unix_stream_read"),
+            (Some("net::UnixStream"), "read_to_string") => {
+                Some("gos_rt_unix_stream_read_to_string")
             }
-            // `to_vec` / `iter` carry no element argument, so recover the
-            // set's element kind from the receiver's HIR type to read an
-            // i64 set's keys back as integers (sorted numerically).
-            if rt == "gos_rt_set_to_vec"
-                && matches!(self.set_elem_kind_of(receiver), MapKeyKind::I64)
-            {
-                rt = "gos_rt_set_to_vec_i64";
-            }
-            if router_handler_method && !args.is_empty() {
-                let handler_idx = args.len() - 1;
-                for arg in &args[..handler_idx] {
-                    let a = self.lower_expr(arg)?;
-                    let a = self.auto_deref_cell(a, span);
-                    arg_operands.push(Operand::Copy(Place::local(a)));
-                }
-                let handler_local = self.lower_expr(&args[handler_idx])?;
-                match self.emit_router_handler_abi(handler_local, span) {
-                    RouterHandlerAbi::Bare(fn_addr) => {
-                        arg_operands.push(fn_addr);
-                        if let Some(bare_rt) = Self::router_bare_variant(rt) {
-                            rt = bare_rt;
-                        }
-                    }
-                    RouterHandlerAbi::WithEnv { env, fn_addr } => {
-                        arg_operands.push(env);
-                        arg_operands.push(fn_addr);
-                    }
-                }
-            } else {
-                // `Client::request` / `request_bytes` take Vec-shaped
-                // body/header args; coerce `[a, b]` array literals to
-                // the heap GosVec shape the runtime ABI expects (same
-                // treatment as the free `http::request` lowering).
-                let coerce_vec_args = matches!(
-                    rt,
-                    "gos_rt_http_client_request"
-                        | "gos_rt_http_client_request_bytes"
-                        | "gos_rt_tcp_stream_write"
-                        | "gos_rt_unix_stream_write"
-                        | "gos_rt_udp_send_to"
-                        | "gos_rt_flag_set_parse"
-                );
-                for arg in args {
-                    let a = self.lower_expr(arg)?;
-                    let a = self.auto_deref_cell(a, span);
-                    let a = if coerce_vec_args {
-                        let lt = self.locals[a.0 as usize].ty;
-                        if let TyKind::Array { elem, len } = self.tcx.kind_of(lt).clone() {
-                            self.coerce_array_to_vec(a, elem, len, span)
-                        } else {
-                            a
-                        }
-                    } else {
-                        a
-                    };
-                    // A value sent on a channel escapes to the receiving
-                    // goroutine: switch any RC-managed value to atomic
-                    // reference counting before it is enqueued.
-                    if rt == "gos_rt_chan_send" {
-                        self.emit_mark_shared_if_rc(a, span);
-                    }
-                    arg_operands.push(Operand::Copy(Place::local(a)));
-                }
-            }
-            let pinned: Ty = match rt {
-                "gos_rt_error_message"
-                | "gos_rt_bufio_scanner_text"
-                | "gos_rt_http_response_body"
-                | "gos_rt_http_request_path"
-                | "gos_rt_http_request_path_value"
-                | "gos_rt_http_request_value"
-                | "gos_rt_http_request_form_value"
-                | "gos_rt_http_request_method"
-                | "gos_rt_regex_find"
-                | "gos_rt_regex_replace"
-                | "gos_rt_regex_replace_all"
-                | "gos_rt_strings_join"
-                | "gos_rt_flag_set_usage" => self.tcx.string_ty(),
-                "gos_rt_error_is"
-                | "gos_rt_regex_is_match"
-                | "gos_rt_bufio_scanner_scan"
-                | "gos_rt_set_insert"
-                | "gos_rt_set_insert_i64"
-                | "gos_rt_set_contains"
-                | "gos_rt_set_contains_i64"
-                | "gos_rt_set_remove"
-                | "gos_rt_set_remove_i64"
-                | "gos_rt_set_is_subset"
-                | "gos_rt_set_is_superset"
-                | "gos_rt_set_is_disjoint"
-                | "gos_rt_btmap_contains" => self.tcx.bool_ty(),
-                "gos_rt_set_to_vec" => {
-                    let s = self.tcx.string_ty();
-                    self.tcx.intern(gossamer_types::TyKind::Vec(s))
-                }
-                "gos_rt_set_to_vec_i64" => {
-                    let i = self.tcx.int_ty(gossamer_types::IntTy::I64);
-                    self.tcx.intern(gossamer_types::TyKind::Vec(i))
-                }
-                "gos_rt_http_response_status"
-                | "gos_rt_set_len"
-                | "gos_rt_set_clear"
-                | "gos_rt_btmap_len"
-                | "gos_rt_btmap_get_or" => self.tcx.int_ty(gossamer_types::IntTy::I64),
-                "gos_rt_btmap_get" => {
-                    let i = self.tcx.int_ty(gossamer_types::IntTy::I64);
-                    let substs = gossamer_types::Substs::from_types([i]);
-                    self.tcx.intern(gossamer_types::TyKind::Adt {
-                        def: gossamer_resolve::DefId::local(u32::MAX - 1),
-                        substs,
-                    })
-                }
-                "gos_rt_btmap_insert" | "gos_rt_flag_set_short" => self.tcx.unit(),
-                "gos_rt_deque_push_back" => self.tcx.unit(),
-                // `VecDeque<T>::pop_front` returns `Option<T>`. Recover the
-                // element from the deque's sole generic so a `VecDeque<String>`
-                // binds its Some-payload as a String rather than the pointer
-                // bits an i64 payload would render.
-                "gos_rt_deque_pop_front" => {
-                    let recv_mir_ty = self.locals[receiver_local.0 as usize].ty;
-                    let elem = self
-                        .first_generic_of(receiver.ty)
-                        .or_else(|| self.first_generic_of(recv_mir_ty))
-                        .or_else(|| self.first_generic_of(ty))
-                        .unwrap_or_else(|| self.tcx.int_ty(gossamer_types::IntTy::I64));
-                    let substs = gossamer_types::Substs::from_types([elem]);
-                    self.tcx.intern(gossamer_types::TyKind::Adt {
-                        def: gossamer_resolve::DefId::local(u32::MAX - 1),
-                        substs,
-                    })
-                }
-                "gos_rt_deque_is_empty" => self.tcx.bool_ty(),
-                "gos_rt_router_add"
-                | "gos_rt_router_get"
+            (Some("net::UnixStream"), "write" | "write_all") => Some("gos_rt_unix_stream_write"),
+            (Some("net::UnixStream"), "close") => Some("gos_rt_unix_stream_close"),
+            (Some("net::UdpSocket"), "send_to") => Some("gos_rt_udp_send_to"),
+            (Some("net::UdpSocket"), "recv_from") => Some("gos_rt_udp_recv_from"),
+            (Some("net::UdpSocket"), "local_addr") => Some("gos_rt_udp_local_addr"),
+            (Some("net::UdpSocket"), "close") => Some("gos_rt_udp_close"),
+            _ => None,
+        }
+    }
+
+    /// Lower a runtime-kind dispatched call: lower receiver, build args, emit.
+    fn lower_kind_dispatch_call(
+        &mut self,
+        rt: &'static str,
+        receiver: &HirExpr,
+        args: &[HirExpr],
+        ty: Ty,
+        span: Span,
+    ) -> Option<Local> {
+        let receiver_local = self.lower_expr(receiver)?;
+        let (arg_operands, rt) =
+            self.kind_dispatch_arg_operands(rt, receiver, receiver_local, args, span)?;
+        let pinned = self.dispatch_pinned_ty(rt, receiver, receiver_local, ty);
+        let dest = self.fresh(pinned);
+        if let Some(k) = self.dispatch_dest_kind(rt) {
+            self.local_runtime_kind.insert(dest, k);
+        }
+        let next = self.new_block(span);
+        self.terminate(Terminator::Call {
+            callee: Operand::Const(ConstValue::Str(rt.to_string())),
+            args: arg_operands,
+            destination: Place::local(dest),
+            target: Some(next),
+        });
+        self.set_current(next);
+        Some(dest)
+    }
+
+    /// Build the argument operand list for a pre-lowering kind-dispatched call.
+    fn kind_dispatch_arg_operands(
+        &mut self,
+        rt: &'static str,
+        receiver: &HirExpr,
+        receiver_local: Local,
+        args: &[HirExpr],
+        span: Span,
+    ) -> Option<(Vec<Operand>, &'static str)> {
+        let mut arg_operands = Vec::with_capacity(args.len() + 1);
+        arg_operands.push(Operand::Copy(Place::local(receiver_local)));
+        // `xs.slice(a, b)` on a `[T; N]` literal needs the
+        // static length: the inline buffer carries no length
+        // prefix, so the runtime helper takes
+        // `(ptr, len, start, end)` instead of the
+        // `(ptr, start, end)` shape used by Vec receivers.
+        // Splice the constant N read from the receiver's MIR
+        // type before the user-supplied start/end args.
+        // Router HTTP-verb methods take (router, pattern,
+        // env, fn_addr) - synthesize the handler's env+fn_addr
+        // from the trailing user argument (must be a struct
+        // whose impl Handler { fn serve(...) }).
+        let router_handler_method = matches!(
+            rt,
+            "gos_rt_router_get"
                 | "gos_rt_router_post"
                 | "gos_rt_router_put"
                 | "gos_rt_router_delete"
                 | "gos_rt_router_patch"
                 | "gos_rt_router_head"
                 | "gos_rt_router_options"
-                | "gos_rt_router_add_fn"
-                | "gos_rt_router_get_fn"
-                | "gos_rt_router_post_fn"
-                | "gos_rt_router_put_fn"
-                | "gos_rt_router_delete_fn"
-                | "gos_rt_router_patch_fn"
-                | "gos_rt_router_head_fn"
-                | "gos_rt_router_options_fn" => self.tcx.unit(),
-                "gos_rt_regex_find_all" | "gos_rt_regex_split" | "gos_rt_flag_set_parse" => {
-                    let s = self.tcx.string_ty();
-                    self.tcx.intern(gossamer_types::TyKind::Vec(s))
-                }
-                "gos_rt_error_cause" => self.option_adt_ty(),
-                "gos_rt_sync_map_get" => self.option_string_adt_ty(),
-                "gos_rt_sync_map_keys" | "gos_rt_btmap_keys" => {
-                    let s = self.tcx.string_ty();
-                    self.tcx.intern(gossamer_types::TyKind::Vec(s))
-                }
-                "gos_rt_sync_map_len" => self.tcx.int_ty(gossamer_types::IntTy::I64),
-                "gos_rt_sync_map_contains" => self.tcx.bool_ty(),
-                "gos_rt_sync_map_set" | "gos_rt_sync_map_delete" => self.tcx.unit(),
-                "gos_rt_http_request_send"
-                | "gos_rt_http_client_request"
-                | "gos_rt_http_client_request_bytes" => self.result_response_error_adt_ty(),
-                "gos_rt_http_request_path_int" => self.option_i64_adt_ty(),
-                "gos_rt_http_request_path_float" => self.option_f64_adt_ty(),
-                "gos_rt_http_request_basic_auth" => self.option_pair_string_adt_ty(),
-                "gos_rt_math_rng_next_f64" => self.tcx.float_ty(gossamer_types::FloatTy::F64),
-                "gos_rt_field_error_path"
-                | "gos_rt_field_error_message"
-                | "gos_rt_field_error_code"
-                | "gos_rt_validate_errors_get"
-                | "gos_rt_validate_errors_collect"
-                | "gos_rt_metrics_registry_render"
-                | "gos_rt_trace_ended_to_otlp_json" => self.tcx.string_ty(),
-                "gos_rt_validate_errors_is_empty"
-                | "gos_rt_ctx_is_cancelled"
-                | "gos_rt_atomic_bool_load"
-                | "gos_rt_ctx_done" => self.tcx.bool_ty(),
-                "gos_rt_ctx_cancelled" => {
-                    let i = self.tcx.int_ty(gossamer_types::IntTy::I64);
-                    self.tcx.intern(gossamer_types::TyKind::Receiver(i))
-                }
-                "gos_rt_atomic_bool_store" => self.tcx.unit(),
-                "gos_rt_validate_errors_len"
-                | "gos_rt_validate_errors_count"
-                | "gos_rt_rwlock_get"
-                | "gos_rt_metrics_counter_value"
-                | "gos_rt_metrics_histogram_count" => self.tcx.int_ty(gossamer_types::IntTy::I64),
-                "gos_rt_metrics_gauge_value" | "gos_rt_metrics_histogram_sum" => {
-                    self.tcx.float_ty(gossamer_types::FloatTy::F64)
-                }
-                "gos_rt_validate_errors_add"
-                | "gos_rt_rwlock_set"
-                | "gos_rt_ctx_cancel"
-                | "gos_rt_metrics_counter_inc"
-                | "gos_rt_metrics_gauge_set"
-                | "gos_rt_metrics_gauge_inc"
-                | "gos_rt_metrics_gauge_dec"
-                | "gos_rt_metrics_histogram_observe"
-                | "gos_rt_metrics_registry_register"
-                | "gos_rt_trace_span_set_attribute"
-                | "gos_rt_trace_span_set_status" => self.tcx.unit(),
-                "gos_rt_bytes_builder_build"
-                | "gos_rt_bytes_builder_as_str"
-                | "gos_rt_bytes_buffer_to_string" => self.tcx.string_ty(),
-                "gos_rt_bytes_builder_len" | "gos_rt_bytes_buffer_len" => {
-                    self.tcx.int_ty(gossamer_types::IntTy::I64)
-                }
-                "gos_rt_bytes_buffer_is_empty" => self.tcx.bool_ty(),
-                "gos_rt_bytes_builder_write"
-                | "gos_rt_bytes_builder_write_char"
-                | "gos_rt_bytes_buffer_write_str"
-                | "gos_rt_bytes_buffer_push"
-                | "gos_rt_bytes_buffer_clear" => self.tcx.unit(),
-                "gos_rt_tcp_listener_local_addr"
-                | "gos_rt_tcp_stream_read_to_string"
-                | "gos_rt_unix_stream_read_to_string"
-                | "gos_rt_udp_local_addr" => self.result_string_error_adt_ty(),
-                "gos_rt_tcp_stream_write"
-                | "gos_rt_unix_stream_write"
-                | "gos_rt_udp_send_to"
-                | "gos_rt_tcp_start_tls"
-                | "gos_rt_tcp_start_tls_insecure"
-                | "gos_rt_tcp_start_tls_ca" => self.result_i64_error_adt_ty(),
-                "gos_rt_tcp_stream_read" | "gos_rt_unix_stream_read" => {
-                    self.result_vec_u8_error_ty()
-                }
-                "gos_rt_tcp_listener_accept" | "gos_rt_unix_listener_accept" => {
-                    let i = self.tcx.int_ty(gossamer_types::IntTy::I64);
-                    let s = self.tcx.string_ty();
-                    let tup = self.tcx.intern(gossamer_types::TyKind::Tuple(vec![i, s]));
-                    self.result_of(tup)
-                }
-                "gos_rt_udp_recv_from" => {
-                    let u8_ty = self.tcx.int_ty(gossamer_types::IntTy::U8);
-                    let vec_u8 = self.tcx.intern(gossamer_types::TyKind::Vec(u8_ty));
-                    let s = self.tcx.string_ty();
-                    let tup = self
-                        .tcx
-                        .intern(gossamer_types::TyKind::Tuple(vec![vec_u8, s]));
-                    self.result_of(tup)
-                }
-                "gos_rt_tcp_listener_close"
-                | "gos_rt_tcp_stream_close"
-                | "gos_rt_unix_listener_close"
-                | "gos_rt_unix_stream_close"
-                | "gos_rt_udp_close" => self.tcx.unit(),
-                _ => self.tcx.int_ty(gossamer_types::IntTy::I64),
+                | "gos_rt_router_add"
+        );
+        let mut rt = rt;
+        // An i64-element `HashSet` stores its keys as decimal strings;
+        // passing the raw i64 to the String shims reinterprets it as a
+        // key pointer and crashes. The element kind is erased from the
+        // set's handle type, so read it from the queried element
+        // argument.
+        if matches!(
+            rt,
+            "gos_rt_set_insert" | "gos_rt_set_contains" | "gos_rt_set_remove"
+        ) && matches!(
+            args.first()
+                .map(|a| map_key_kind_from(self.tcx, self.peel_ref_ty(a.ty))),
+            Some(MapKeyKind::I64)
+        ) {
+            rt = match rt {
+                "gos_rt_set_insert" => "gos_rt_set_insert_i64",
+                "gos_rt_set_contains" => "gos_rt_set_contains_i64",
+                "gos_rt_set_remove" => "gos_rt_set_remove_i64",
+                _ => rt,
             };
-            let dest = self.fresh(pinned);
-            // Tag chained dest locals so further method calls
-            // dispatch correctly: get/post return Request, and
-            // header/body return Request again. `send` returns a
-            // Result<Response, errors::Error> Adt (no tag - the
-            // sentinel Ok payload drives downstream dispatch, same
-            // as `http::get`).
-            let dest_kind: Option<&'static str> = match rt {
-                "gos_rt_http_client_get"
-                | "gos_rt_http_client_post"
-                | "gos_rt_http_client_put"
-                | "gos_rt_http_client_options"
-                | "gos_rt_http_client_delete"
-                | "gos_rt_http_client_head" => Some("http::Request"),
-                "gos_rt_http_request_header"
-                | "gos_rt_http_request_body"
-                | "gos_rt_http_request_set_value" => Some("http::Request"),
-                "gos_rt_http_client_builder_max_redirects"
-                | "gos_rt_http_client_builder_timeout_ms"
-                | "gos_rt_http_client_builder_cookie_jar"
-                | "gos_rt_http_client_builder_proxy" => Some("http::ClientBuilder"),
-                "gos_rt_http_client_builder_build" => Some("http::Client"),
-                "gos_rt_http_response_with_header" => Some("http::Response"),
-                "gos_rt_flag_set_string" => Some("flag::Cell::String"),
-                "gos_rt_flag_set_int" => Some("flag::Cell::Int"),
-                "gos_rt_flag_set_uint" => Some("flag::Cell::Uint"),
-                "gos_rt_flag_set_float" => Some("flag::Cell::Float"),
-                "gos_rt_flag_set_bool" => Some("flag::Cell::Bool"),
-                "gos_rt_flag_set_duration" => Some("flag::Cell::Duration"),
-                "gos_rt_flag_set_string_list" => Some("flag::Cell::StringList"),
-                "gos_rt_set_union"
-                | "gos_rt_set_intersection"
-                | "gos_rt_set_difference"
-                | "gos_rt_set_symmetric_difference" => Some("collections::HashSet"),
-                "gos_rt_tcp_listener_accept" => Some("net::accept_pair"),
-                "gos_rt_unix_listener_accept" => Some("net::unix_accept_pair"),
-                "gos_rt_tcp_start_tls"
-                | "gos_rt_tcp_start_tls_insecure"
-                | "gos_rt_tcp_start_tls_ca" => Some("net::TcpStream"),
-                "gos_rt_trace_tracer_start_span" => Some("trace::Span"),
-                "gos_rt_trace_span_end" => Some("trace::EndedSpan"),
-                _ => None,
-            };
-            if let Some(k) = dest_kind {
-                self.local_runtime_kind.insert(dest, k);
-            }
-            let next = self.new_block(span);
-            self.terminate(Terminator::Call {
-                callee: Operand::Const(ConstValue::Str(rt.to_string())),
-                args: arg_operands,
-                destination: Place::local(dest),
-                target: Some(next),
-            });
-            self.set_current(next);
-            return Some(dest);
         }
-        // `is_some` / `is_ok` / `is_none` / `is_err`. When the
-        // receiver is a `*mut GosResult` Result/Option Adt,
-        // dispatch through the runtime helper that reads `disc`.
-        // For non-Result receivers (legacy intrinsics that still
-        // return raw inner values tagged Result-shaped) fall back
-        // to the constant-true/false synthesis so the previous
-        // lowering shape is preserved - those call sites assume
-        // the happy path is always taken.
+        // `to_vec` / `iter` carry no element argument, so recover the
+        // set's element kind from the receiver's HIR type to read an
+        // i64 set's keys back as integers (sorted numerically).
+        if rt == "gos_rt_set_to_vec" && matches!(self.set_elem_kind_of(receiver), MapKeyKind::I64) {
+            rt = "gos_rt_set_to_vec_i64";
+        }
+        if router_handler_method && !args.is_empty() {
+            let handler_idx = args.len() - 1;
+            for arg in &args[..handler_idx] {
+                let a = self.lower_expr(arg)?;
+                let a = self.auto_deref_cell(a, span);
+                arg_operands.push(Operand::Copy(Place::local(a)));
+            }
+            let handler_local = self.lower_expr(&args[handler_idx])?;
+            match self.emit_router_handler_abi(handler_local, span) {
+                RouterHandlerAbi::Bare(fn_addr) => {
+                    arg_operands.push(fn_addr);
+                    if let Some(bare_rt) = Self::router_bare_variant(rt) {
+                        rt = bare_rt;
+                    }
+                }
+                RouterHandlerAbi::WithEnv { env, fn_addr } => {
+                    arg_operands.push(env);
+                    arg_operands.push(fn_addr);
+                }
+            }
+        } else {
+            // `Client::request` / `request_bytes` take Vec-shaped
+            // body/header args; coerce `[a, b]` array literals to
+            // the heap GosVec shape the runtime ABI expects (same
+            // treatment as the free `http::request` lowering).
+            let coerce_vec_args = matches!(
+                rt,
+                "gos_rt_http_client_request"
+                    | "gos_rt_http_client_request_bytes"
+                    | "gos_rt_tcp_stream_write"
+                    | "gos_rt_unix_stream_write"
+                    | "gos_rt_udp_send_to"
+                    | "gos_rt_flag_set_parse"
+            );
+            for arg in args {
+                let a = self.lower_expr(arg)?;
+                let a = self.auto_deref_cell(a, span);
+                let a = if coerce_vec_args {
+                    let lt = self.locals[a.0 as usize].ty;
+                    if let TyKind::Array { elem, len } = self.tcx.kind_of(lt).clone() {
+                        self.coerce_array_to_vec(a, elem, len, span)
+                    } else {
+                        a
+                    }
+                } else {
+                    a
+                };
+                // A value sent on a channel escapes to the receiving
+                // goroutine: switch any RC-managed value to atomic
+                // reference counting before it is enqueued.
+                if rt == "gos_rt_chan_send" {
+                    self.emit_mark_shared_if_rc(a, span);
+                }
+                arg_operands.push(Operand::Copy(Place::local(a)));
+            }
+        }
+        Some((arg_operands, rt))
+    }
+
+    /// Pin the MIR result type for a dispatched runtime symbol.
+    #[allow(
+        clippy::too_many_lines,
+        reason = "flat runtime-symbol to MIR-result-type table; one arm per symbol"
+    )]
+    fn dispatch_pinned_ty(
+        &mut self,
+        rt: &'static str,
+        receiver: &HirExpr,
+        receiver_local: Local,
+        ty: Ty,
+    ) -> Ty {
+        match rt {
+            "gos_rt_error_message"
+            | "gos_rt_bufio_scanner_text"
+            | "gos_rt_http_response_body"
+            | "gos_rt_http_request_path"
+            | "gos_rt_http_request_path_value"
+            | "gos_rt_http_request_value"
+            | "gos_rt_http_request_form_value"
+            | "gos_rt_http_request_method"
+            | "gos_rt_regex_find"
+            | "gos_rt_regex_replace"
+            | "gos_rt_regex_replace_all"
+            | "gos_rt_strings_join"
+            | "gos_rt_flag_set_usage" => self.tcx.string_ty(),
+            "gos_rt_error_is"
+            | "gos_rt_regex_is_match"
+            | "gos_rt_bufio_scanner_scan"
+            | "gos_rt_set_insert"
+            | "gos_rt_set_insert_i64"
+            | "gos_rt_set_contains"
+            | "gos_rt_set_contains_i64"
+            | "gos_rt_set_remove"
+            | "gos_rt_set_remove_i64"
+            | "gos_rt_set_is_subset"
+            | "gos_rt_set_is_superset"
+            | "gos_rt_set_is_disjoint"
+            | "gos_rt_btmap_contains" => self.tcx.bool_ty(),
+            "gos_rt_set_to_vec" => {
+                let s = self.tcx.string_ty();
+                self.tcx.intern(gossamer_types::TyKind::Vec(s))
+            }
+            "gos_rt_set_to_vec_i64" => {
+                let i = self.tcx.int_ty(gossamer_types::IntTy::I64);
+                self.tcx.intern(gossamer_types::TyKind::Vec(i))
+            }
+            "gos_rt_http_response_status"
+            | "gos_rt_set_len"
+            | "gos_rt_set_clear"
+            | "gos_rt_btmap_len"
+            | "gos_rt_btmap_get_or" => self.tcx.int_ty(gossamer_types::IntTy::I64),
+            "gos_rt_btmap_get" => {
+                let i = self.tcx.int_ty(gossamer_types::IntTy::I64);
+                let substs = gossamer_types::Substs::from_types([i]);
+                self.tcx.intern(gossamer_types::TyKind::Adt {
+                    def: gossamer_resolve::DefId::local(u32::MAX - 1),
+                    substs,
+                })
+            }
+            "gos_rt_btmap_insert" | "gos_rt_flag_set_short" => self.tcx.unit(),
+            "gos_rt_deque_push_back" => self.tcx.unit(),
+            // `VecDeque<T>::pop_front` returns `Option<T>`. Recover the
+            // element from the deque's sole generic so a `VecDeque<String>`
+            // binds its Some-payload as a String rather than the pointer
+            // bits an i64 payload would render.
+            "gos_rt_deque_pop_front" => {
+                let recv_mir_ty = self.locals[receiver_local.0 as usize].ty;
+                let elem = self
+                    .first_generic_of(receiver.ty)
+                    .or_else(|| self.first_generic_of(recv_mir_ty))
+                    .or_else(|| self.first_generic_of(ty))
+                    .unwrap_or_else(|| self.tcx.int_ty(gossamer_types::IntTy::I64));
+                let substs = gossamer_types::Substs::from_types([elem]);
+                self.tcx.intern(gossamer_types::TyKind::Adt {
+                    def: gossamer_resolve::DefId::local(u32::MAX - 1),
+                    substs,
+                })
+            }
+            "gos_rt_deque_is_empty" => self.tcx.bool_ty(),
+            "gos_rt_router_add"
+            | "gos_rt_router_get"
+            | "gos_rt_router_post"
+            | "gos_rt_router_put"
+            | "gos_rt_router_delete"
+            | "gos_rt_router_patch"
+            | "gos_rt_router_head"
+            | "gos_rt_router_options"
+            | "gos_rt_router_add_fn"
+            | "gos_rt_router_get_fn"
+            | "gos_rt_router_post_fn"
+            | "gos_rt_router_put_fn"
+            | "gos_rt_router_delete_fn"
+            | "gos_rt_router_patch_fn"
+            | "gos_rt_router_head_fn"
+            | "gos_rt_router_options_fn" => self.tcx.unit(),
+            "gos_rt_regex_find_all" | "gos_rt_regex_split" | "gos_rt_flag_set_parse" => {
+                let s = self.tcx.string_ty();
+                self.tcx.intern(gossamer_types::TyKind::Vec(s))
+            }
+            "gos_rt_error_cause" => self.option_adt_ty(),
+            "gos_rt_arr_iter_next" => {
+                // Recover element type from the iterator local's MIR
+                // type (pinned to the original Vec<T> by `gos_rt_arr_iter`
+                // dispatch) so `Some(s)` binds `s` with the right type.
+                let mut iter_ty = self.locals[receiver_local.0 as usize].ty;
+                while let TyKind::Ref { inner, .. } = self.tcx.kind_of(iter_ty) {
+                    iter_ty = *inner;
+                }
+                let elem_opt = match self.tcx.kind_of(iter_ty) {
+                    TyKind::Vec(e) | TyKind::Slice(e) => Some(*e),
+                    TyKind::Array { elem, .. } => Some(*elem),
+                    _ => None,
+                };
+                if let Some(elem) = elem_opt {
+                    let substs = gossamer_types::Substs::from_types([elem]);
+                    self.tcx.intern(gossamer_types::TyKind::Adt {
+                        def: gossamer_resolve::DefId::local(u32::MAX - 1),
+                        substs,
+                    })
+                } else if matches!(self.tcx.kind_of(ty), TyKind::Adt { .. }) {
+                    ty
+                } else {
+                    self.option_adt_ty()
+                }
+            }
+            "gos_rt_sync_map_get" => self.option_string_adt_ty(),
+            "gos_rt_sync_map_keys" | "gos_rt_btmap_keys" => {
+                let s = self.tcx.string_ty();
+                self.tcx.intern(gossamer_types::TyKind::Vec(s))
+            }
+            "gos_rt_sync_map_len" => self.tcx.int_ty(gossamer_types::IntTy::I64),
+            "gos_rt_sync_map_contains" => self.tcx.bool_ty(),
+            "gos_rt_sync_map_set" | "gos_rt_sync_map_delete" => self.tcx.unit(),
+            "gos_rt_http_request_send"
+            | "gos_rt_http_client_request"
+            | "gos_rt_http_client_request_bytes" => self.result_response_error_adt_ty(),
+            "gos_rt_http_request_path_int" => self.option_i64_adt_ty(),
+            "gos_rt_http_request_path_float" => self.option_f64_adt_ty(),
+            "gos_rt_http_request_basic_auth" => self.option_pair_string_adt_ty(),
+            "gos_rt_math_rng_next_f64" => self.tcx.float_ty(gossamer_types::FloatTy::F64),
+            "gos_rt_field_error_path"
+            | "gos_rt_field_error_message"
+            | "gos_rt_field_error_code"
+            | "gos_rt_validate_errors_get"
+            | "gos_rt_validate_errors_collect"
+            | "gos_rt_metrics_registry_render"
+            | "gos_rt_trace_ended_to_otlp_json" => self.tcx.string_ty(),
+            "gos_rt_validate_errors_is_empty"
+            | "gos_rt_ctx_is_cancelled"
+            | "gos_rt_atomic_bool_load"
+            | "gos_rt_ctx_done" => self.tcx.bool_ty(),
+            "gos_rt_ctx_cancelled" => {
+                let i = self.tcx.int_ty(gossamer_types::IntTy::I64);
+                self.tcx.intern(gossamer_types::TyKind::Receiver(i))
+            }
+            "gos_rt_atomic_bool_store" => self.tcx.unit(),
+            "gos_rt_validate_errors_len"
+            | "gos_rt_validate_errors_count"
+            | "gos_rt_rwlock_get"
+            | "gos_rt_metrics_counter_value"
+            | "gos_rt_metrics_histogram_count" => self.tcx.int_ty(gossamer_types::IntTy::I64),
+            "gos_rt_metrics_gauge_value" | "gos_rt_metrics_histogram_sum" => {
+                self.tcx.float_ty(gossamer_types::FloatTy::F64)
+            }
+            "gos_rt_validate_errors_add"
+            | "gos_rt_rwlock_set"
+            | "gos_rt_ctx_cancel"
+            | "gos_rt_metrics_counter_inc"
+            | "gos_rt_metrics_gauge_set"
+            | "gos_rt_metrics_gauge_inc"
+            | "gos_rt_metrics_gauge_dec"
+            | "gos_rt_metrics_histogram_observe"
+            | "gos_rt_metrics_registry_register"
+            | "gos_rt_trace_span_set_attribute"
+            | "gos_rt_trace_span_set_status" => self.tcx.unit(),
+            "gos_rt_bytes_builder_build"
+            | "gos_rt_bytes_builder_as_str"
+            | "gos_rt_bytes_buffer_to_string" => self.tcx.string_ty(),
+            "gos_rt_bytes_builder_len" | "gos_rt_bytes_buffer_len" => {
+                self.tcx.int_ty(gossamer_types::IntTy::I64)
+            }
+            "gos_rt_bytes_buffer_is_empty" => self.tcx.bool_ty(),
+            "gos_rt_bytes_builder_write"
+            | "gos_rt_bytes_builder_write_char"
+            | "gos_rt_bytes_buffer_write_str"
+            | "gos_rt_bytes_buffer_push"
+            | "gos_rt_bytes_buffer_clear" => self.tcx.unit(),
+            "gos_rt_tcp_listener_local_addr"
+            | "gos_rt_tcp_stream_read_to_string"
+            | "gos_rt_unix_stream_read_to_string"
+            | "gos_rt_udp_local_addr" => self.result_string_error_adt_ty(),
+            "gos_rt_tcp_stream_write"
+            | "gos_rt_unix_stream_write"
+            | "gos_rt_udp_send_to"
+            | "gos_rt_tcp_start_tls"
+            | "gos_rt_tcp_start_tls_insecure"
+            | "gos_rt_tcp_start_tls_ca" => self.result_i64_error_adt_ty(),
+            "gos_rt_tcp_stream_read" | "gos_rt_unix_stream_read" => self.result_vec_u8_error_ty(),
+            "gos_rt_tcp_listener_accept" | "gos_rt_unix_listener_accept" => {
+                let i = self.tcx.int_ty(gossamer_types::IntTy::I64);
+                let s = self.tcx.string_ty();
+                let tup = self.tcx.intern(gossamer_types::TyKind::Tuple(vec![i, s]));
+                self.result_of(tup)
+            }
+            "gos_rt_udp_recv_from" => {
+                let u8_ty = self.tcx.int_ty(gossamer_types::IntTy::U8);
+                let vec_u8 = self.tcx.intern(gossamer_types::TyKind::Vec(u8_ty));
+                let s = self.tcx.string_ty();
+                let tup = self
+                    .tcx
+                    .intern(gossamer_types::TyKind::Tuple(vec![vec_u8, s]));
+                self.result_of(tup)
+            }
+            "gos_rt_tcp_listener_close"
+            | "gos_rt_tcp_stream_close"
+            | "gos_rt_unix_listener_close"
+            | "gos_rt_unix_stream_close"
+            | "gos_rt_udp_close" => self.tcx.unit(),
+            _ => self.tcx.int_ty(gossamer_types::IntTy::I64),
+        }
+    }
+
+    /// Tag a dispatched call's destination with its chained runtime kind.
+    fn dispatch_dest_kind(&self, rt: &'static str) -> Option<&'static str> {
+        match rt {
+            "gos_rt_http_client_get"
+            | "gos_rt_http_client_post"
+            | "gos_rt_http_client_put"
+            | "gos_rt_http_client_options"
+            | "gos_rt_http_client_delete"
+            | "gos_rt_http_client_head" => Some("http::Request"),
+            "gos_rt_http_request_header"
+            | "gos_rt_http_request_body"
+            | "gos_rt_http_request_set_value" => Some("http::Request"),
+            "gos_rt_http_client_builder_max_redirects"
+            | "gos_rt_http_client_builder_timeout_ms"
+            | "gos_rt_http_client_builder_cookie_jar"
+            | "gos_rt_http_client_builder_proxy" => Some("http::ClientBuilder"),
+            "gos_rt_http_client_builder_build" => Some("http::Client"),
+            "gos_rt_http_response_with_header" => Some("http::Response"),
+            "gos_rt_flag_set_string" => Some("flag::Cell::String"),
+            "gos_rt_flag_set_int" => Some("flag::Cell::Int"),
+            "gos_rt_flag_set_uint" => Some("flag::Cell::Uint"),
+            "gos_rt_flag_set_float" => Some("flag::Cell::Float"),
+            "gos_rt_flag_set_bool" => Some("flag::Cell::Bool"),
+            "gos_rt_flag_set_duration" => Some("flag::Cell::Duration"),
+            "gos_rt_flag_set_string_list" => Some("flag::Cell::StringList"),
+            "gos_rt_set_union"
+            | "gos_rt_set_intersection"
+            | "gos_rt_set_difference"
+            | "gos_rt_set_symmetric_difference" => Some("collections::HashSet"),
+            "gos_rt_tcp_listener_accept" => Some("net::accept_pair"),
+            "gos_rt_unix_listener_accept" => Some("net::unix_accept_pair"),
+            "gos_rt_tcp_start_tls"
+            | "gos_rt_tcp_start_tls_insecure"
+            | "gos_rt_tcp_start_tls_ca" => Some("net::TcpStream"),
+            "gos_rt_trace_tracer_start_span" => Some("trace::Span"),
+            "gos_rt_trace_span_end" => Some("trace::EndedSpan"),
+            _ => None,
+        }
+    }
+
+    /// `is_some` / `is_ok` / `is_none` / `is_err` on a lowered receiver.
+    fn lower_option_result_predicate(
+        &mut self,
+        receiver: &HirExpr,
+        method: &Ident,
+        receiver_kind_flat: &TyKind,
+        receiver_ty: Ty,
+        span: Span,
+    ) -> MethodLowering {
+        let receiver_kind_flat = receiver_kind_flat.clone();
         if let name @ ("is_some" | "is_ok" | "is_none" | "is_err") = method.name.as_str() {
-            let receiver_local = self.lower_expr(receiver)?;
+            let Some(receiver_local) = self.lower_expr(receiver) else {
+                return MethodLowering::Handled(None);
+            };
             let lowered_ty = self.locals[receiver_local.0 as usize].ty;
             let lowered_is_result = matches!(self.tcx.kind_of(lowered_ty), TyKind::Adt { .. })
                 && self.is_result_or_option_adt(lowered_ty);
@@ -2129,7 +2490,7 @@ impl<'a> Builder<'a> {
                     target: Some(next),
                 });
                 self.set_current(next);
-                return Some(dest);
+                return MethodLowering::Handled(Some(dest));
             }
             // Legacy: receiver is the inner value with a
             // null/zero sentinel for the missing case.
@@ -2140,14 +2501,28 @@ impl<'a> Builder<'a> {
                 Rvalue::Use(Operand::Const(ConstValue::Bool(constant))),
                 span,
             );
-            return Some(dest);
+            return MethodLowering::Handled(Some(dest));
         }
+        MethodLowering::Pass
+    }
 
-        let receiver_local = self.lower_expr(receiver)?;
-        let lowered_kind_dispatch: Option<&'static str> = match (
-            self.local_runtime_kind.get(&receiver_local).copied(),
-            method.name.as_str(),
-        ) {
+    /// Lowered-receiver-runtime-kind dispatch table.
+    fn lowered_kind_dispatch_symbol(
+        &self,
+        rk: Option<&'static str>,
+        method: &Ident,
+    ) -> Option<&'static str> {
+        self.lowered_kind_dispatch_symbol_a(rk, method)
+            .or_else(|| self.lowered_kind_dispatch_symbol_b(rk, method))
+    }
+
+    /// First half of the lowered-receiver-runtime-kind dispatch table.
+    fn lowered_kind_dispatch_symbol_a(
+        &self,
+        rk: Option<&'static str>,
+        method: &Ident,
+    ) -> Option<&'static str> {
+        match (rk, method.name.as_str()) {
             (Some("flag::Set"), "string") => Some("gos_rt_flag_set_string"),
             (Some("flag::Set"), "int") => Some("gos_rt_flag_set_int"),
             (Some("flag::Set"), "uint") => Some("gos_rt_flag_set_uint"),
@@ -2241,6 +2616,17 @@ impl<'a> Builder<'a> {
             }
             (Some("collections::BTreeMap"), "len") => Some("gos_rt_btmap_len"),
             (Some("collections::BTreeMap"), "keys") => Some("gos_rt_btmap_keys"),
+            _ => None,
+        }
+    }
+
+    /// Second half of the lowered-receiver-runtime-kind dispatch table.
+    fn lowered_kind_dispatch_symbol_b(
+        &self,
+        rk: Option<&'static str>,
+        method: &Ident,
+    ) -> Option<&'static str> {
+        match (rk, method.name.as_str()) {
             (Some("sync::Map"), "set" | "insert") => Some("gos_rt_sync_map_set"),
             (Some("sync::Map"), "get") => Some("gos_rt_sync_map_get"),
             (Some("sync::Map"), "delete" | "remove") => Some("gos_rt_sync_map_delete"),
@@ -2319,538 +2705,140 @@ impl<'a> Builder<'a> {
             (Some("net::UdpSocket"), "close") => Some("gos_rt_udp_close"),
             (Some("vec::Iter"), "next") => Some("gos_rt_arr_iter_next"),
             _ => None,
-        };
-        if let Some(rt) = lowered_kind_dispatch {
-            let mut arg_operands = Vec::with_capacity(args.len() + 1);
-            arg_operands.push(Operand::Copy(Place::local(receiver_local)));
-            // Router HTTP-verb methods take (router, pattern,
-            // env, fn_addr) - synthesize the handler's env+fn_addr
-            // from the last user argument (must be a struct whose
-            // impl Handler { fn serve(...) }).
-            let router_handler_method = matches!(
-                rt,
-                "gos_rt_router_get"
-                    | "gos_rt_router_post"
-                    | "gos_rt_router_put"
-                    | "gos_rt_router_delete"
-                    | "gos_rt_router_patch"
-                    | "gos_rt_router_head"
-                    | "gos_rt_router_options"
-                    | "gos_rt_router_add"
-            );
-            let mut rt = rt;
-            if router_handler_method && !args.is_empty() {
-                let handler_idx = args.len() - 1;
-                // Lower non-handler args (method-name for add,
-                // pattern for verb methods).
-                for arg in &args[..handler_idx] {
-                    let a = self.lower_expr(arg)?;
-                    let a = self.auto_deref_cell(a, span);
-                    arg_operands.push(Operand::Copy(Place::local(a)));
-                }
-                let handler_local = self.lower_expr(&args[handler_idx])?;
-                match self.emit_router_handler_abi(handler_local, span) {
-                    RouterHandlerAbi::Bare(fn_addr) => {
-                        arg_operands.push(fn_addr);
-                        if let Some(bare_rt) = Self::router_bare_variant(rt) {
-                            rt = bare_rt;
-                        }
-                    }
-                    RouterHandlerAbi::WithEnv { env, fn_addr } => {
-                        arg_operands.push(env);
-                        arg_operands.push(fn_addr);
-                    }
-                }
-            } else {
-                // `Client::request` / `request_bytes` take Vec-shaped
-                // body/header args; coerce `[a, b]` array literals to
-                // the heap GosVec shape the runtime ABI expects (same
-                // treatment as the free `http::request` lowering).
-                let coerce_vec_args = matches!(
-                    rt,
-                    "gos_rt_http_client_request"
-                        | "gos_rt_http_client_request_bytes"
-                        | "gos_rt_tcp_stream_write"
-                        | "gos_rt_unix_stream_write"
-                        | "gos_rt_udp_send_to"
-                        | "gos_rt_flag_set_parse"
-                );
-                for arg in args {
-                    let a = self.lower_expr(arg)?;
-                    let a = self.auto_deref_cell(a, span);
-                    let a = if coerce_vec_args {
-                        let lt = self.locals[a.0 as usize].ty;
-                        if let TyKind::Array { elem, len } = self.tcx.kind_of(lt).clone() {
-                            self.coerce_array_to_vec(a, elem, len, span)
-                        } else {
-                            a
-                        }
-                    } else {
-                        a
-                    };
-                    // A value sent on a channel escapes to the receiving
-                    // goroutine: switch any RC-managed value to atomic
-                    // reference counting before it is enqueued.
-                    if rt == "gos_rt_chan_send" {
-                        self.emit_mark_shared_if_rc(a, span);
-                    }
-                    arg_operands.push(Operand::Copy(Place::local(a)));
-                }
-            }
-            let pinned: Ty = match rt {
-                "gos_rt_error_message"
-                | "gos_rt_bufio_scanner_text"
-                | "gos_rt_http_response_body"
-                | "gos_rt_http_request_path"
-                | "gos_rt_http_request_path_value"
-                | "gos_rt_http_request_value"
-                | "gos_rt_http_request_form_value"
-                | "gos_rt_http_request_method"
-                | "gos_rt_regex_find"
-                | "gos_rt_regex_replace"
-                | "gos_rt_regex_replace_all"
-                | "gos_rt_strings_join"
-                | "gos_rt_flag_set_usage" => self.tcx.string_ty(),
-                "gos_rt_error_is"
-                | "gos_rt_regex_is_match"
-                | "gos_rt_bufio_scanner_scan"
-                | "gos_rt_set_insert"
-                | "gos_rt_set_insert_i64"
-                | "gos_rt_set_contains"
-                | "gos_rt_set_contains_i64"
-                | "gos_rt_set_remove"
-                | "gos_rt_set_remove_i64"
-                | "gos_rt_set_is_subset"
-                | "gos_rt_set_is_superset"
-                | "gos_rt_set_is_disjoint"
-                | "gos_rt_btmap_contains" => self.tcx.bool_ty(),
-                "gos_rt_set_to_vec" => {
-                    let s = self.tcx.string_ty();
-                    self.tcx.intern(gossamer_types::TyKind::Vec(s))
-                }
-                "gos_rt_set_to_vec_i64" => {
-                    let i = self.tcx.int_ty(gossamer_types::IntTy::I64);
-                    self.tcx.intern(gossamer_types::TyKind::Vec(i))
-                }
-                "gos_rt_http_response_status"
-                | "gos_rt_set_len"
-                | "gos_rt_set_clear"
-                | "gos_rt_btmap_len"
-                | "gos_rt_btmap_get_or" => self.tcx.int_ty(gossamer_types::IntTy::I64),
-                "gos_rt_btmap_get" => {
-                    let i = self.tcx.int_ty(gossamer_types::IntTy::I64);
-                    let substs = gossamer_types::Substs::from_types([i]);
-                    self.tcx.intern(gossamer_types::TyKind::Adt {
-                        def: gossamer_resolve::DefId::local(u32::MAX - 1),
-                        substs,
-                    })
-                }
-                "gos_rt_btmap_insert" | "gos_rt_flag_set_short" => self.tcx.unit(),
-                "gos_rt_deque_push_back" => self.tcx.unit(),
-                // `VecDeque<T>::pop_front` returns `Option<T>`. Recover the
-                // element from the deque's sole generic so a `VecDeque<String>`
-                // binds its Some-payload as a String rather than the pointer
-                // bits an i64 payload would render.
-                "gos_rt_deque_pop_front" => {
-                    let recv_mir_ty = self.locals[receiver_local.0 as usize].ty;
-                    let elem = self
-                        .first_generic_of(receiver.ty)
-                        .or_else(|| self.first_generic_of(recv_mir_ty))
-                        .or_else(|| self.first_generic_of(ty))
-                        .unwrap_or_else(|| self.tcx.int_ty(gossamer_types::IntTy::I64));
-                    let substs = gossamer_types::Substs::from_types([elem]);
-                    self.tcx.intern(gossamer_types::TyKind::Adt {
-                        def: gossamer_resolve::DefId::local(u32::MAX - 1),
-                        substs,
-                    })
-                }
-                "gos_rt_deque_is_empty" => self.tcx.bool_ty(),
-                "gos_rt_router_add"
-                | "gos_rt_router_get"
+        }
+    }
+
+    /// Lower a lowered-receiver runtime-kind dispatched call.
+    fn lower_lowered_kind_dispatch_call(
+        &mut self,
+        rt: &'static str,
+        receiver: &HirExpr,
+        receiver_local: Local,
+        args: &[HirExpr],
+        ty: Ty,
+        span: Span,
+    ) -> Option<Local> {
+        let (arg_operands, rt) =
+            self.lowered_kind_dispatch_arg_operands(rt, receiver_local, args, span)?;
+        let pinned = self.dispatch_pinned_ty(rt, receiver, receiver_local, ty);
+        let dest = self.fresh(pinned);
+        if let Some(k) = self.dispatch_dest_kind(rt) {
+            self.local_runtime_kind.insert(dest, k);
+        }
+        let next = self.new_block(span);
+        self.terminate(Terminator::Call {
+            callee: Operand::Const(ConstValue::Str(rt.to_string())),
+            args: arg_operands,
+            destination: Place::local(dest),
+            target: Some(next),
+        });
+        self.set_current(next);
+        Some(dest)
+    }
+
+    /// Build the argument operand list for a post-lowering kind-dispatched call.
+    fn lowered_kind_dispatch_arg_operands(
+        &mut self,
+        rt: &'static str,
+        receiver_local: Local,
+        args: &[HirExpr],
+        span: Span,
+    ) -> Option<(Vec<Operand>, &'static str)> {
+        let mut arg_operands = Vec::with_capacity(args.len() + 1);
+        arg_operands.push(Operand::Copy(Place::local(receiver_local)));
+        // Router HTTP-verb methods take (router, pattern,
+        // env, fn_addr) - synthesize the handler's env+fn_addr
+        // from the last user argument (must be a struct whose
+        // impl Handler { fn serve(...) }).
+        let router_handler_method = matches!(
+            rt,
+            "gos_rt_router_get"
                 | "gos_rt_router_post"
                 | "gos_rt_router_put"
                 | "gos_rt_router_delete"
                 | "gos_rt_router_patch"
                 | "gos_rt_router_head"
                 | "gos_rt_router_options"
-                | "gos_rt_router_add_fn"
-                | "gos_rt_router_get_fn"
-                | "gos_rt_router_post_fn"
-                | "gos_rt_router_put_fn"
-                | "gos_rt_router_delete_fn"
-                | "gos_rt_router_patch_fn"
-                | "gos_rt_router_head_fn"
-                | "gos_rt_router_options_fn" => self.tcx.unit(),
-                "gos_rt_regex_find_all" | "gos_rt_regex_split" | "gos_rt_flag_set_parse" => {
-                    let s = self.tcx.string_ty();
-                    self.tcx.intern(gossamer_types::TyKind::Vec(s))
-                }
-                "gos_rt_error_cause" => self.option_adt_ty(),
-                "gos_rt_arr_iter_next" => {
-                    // Recover element type from the iterator local's MIR
-                    // type (pinned to the original Vec<T> by `gos_rt_arr_iter`
-                    // dispatch) so `Some(s)` binds `s` with the right type.
-                    let mut iter_ty = self.locals[receiver_local.0 as usize].ty;
-                    while let TyKind::Ref { inner, .. } = self.tcx.kind_of(iter_ty) {
-                        iter_ty = *inner;
+                | "gos_rt_router_add"
+        );
+        let mut rt = rt;
+        if router_handler_method && !args.is_empty() {
+            let handler_idx = args.len() - 1;
+            // Lower non-handler args (method-name for add,
+            // pattern for verb methods).
+            for arg in &args[..handler_idx] {
+                let a = self.lower_expr(arg)?;
+                let a = self.auto_deref_cell(a, span);
+                arg_operands.push(Operand::Copy(Place::local(a)));
+            }
+            let handler_local = self.lower_expr(&args[handler_idx])?;
+            match self.emit_router_handler_abi(handler_local, span) {
+                RouterHandlerAbi::Bare(fn_addr) => {
+                    arg_operands.push(fn_addr);
+                    if let Some(bare_rt) = Self::router_bare_variant(rt) {
+                        rt = bare_rt;
                     }
-                    let elem_opt = match self.tcx.kind_of(iter_ty) {
-                        TyKind::Vec(e) | TyKind::Slice(e) => Some(*e),
-                        TyKind::Array { elem, .. } => Some(*elem),
-                        _ => None,
-                    };
-                    if let Some(elem) = elem_opt {
-                        let substs = gossamer_types::Substs::from_types([elem]);
-                        self.tcx.intern(gossamer_types::TyKind::Adt {
-                            def: gossamer_resolve::DefId::local(u32::MAX - 1),
-                            substs,
-                        })
-                    } else if matches!(self.tcx.kind_of(ty), TyKind::Adt { .. }) {
-                        ty
+                }
+                RouterHandlerAbi::WithEnv { env, fn_addr } => {
+                    arg_operands.push(env);
+                    arg_operands.push(fn_addr);
+                }
+            }
+        } else {
+            // `Client::request` / `request_bytes` take Vec-shaped
+            // body/header args; coerce `[a, b]` array literals to
+            // the heap GosVec shape the runtime ABI expects (same
+            // treatment as the free `http::request` lowering).
+            let coerce_vec_args = matches!(
+                rt,
+                "gos_rt_http_client_request"
+                    | "gos_rt_http_client_request_bytes"
+                    | "gos_rt_tcp_stream_write"
+                    | "gos_rt_unix_stream_write"
+                    | "gos_rt_udp_send_to"
+                    | "gos_rt_flag_set_parse"
+            );
+            for arg in args {
+                let a = self.lower_expr(arg)?;
+                let a = self.auto_deref_cell(a, span);
+                let a = if coerce_vec_args {
+                    let lt = self.locals[a.0 as usize].ty;
+                    if let TyKind::Array { elem, len } = self.tcx.kind_of(lt).clone() {
+                        self.coerce_array_to_vec(a, elem, len, span)
                     } else {
-                        self.option_adt_ty()
+                        a
                     }
-                }
-                "gos_rt_sync_map_get" => self.option_string_adt_ty(),
-                "gos_rt_sync_map_keys" | "gos_rt_btmap_keys" => {
-                    let s = self.tcx.string_ty();
-                    self.tcx.intern(gossamer_types::TyKind::Vec(s))
-                }
-                "gos_rt_sync_map_len" => self.tcx.int_ty(gossamer_types::IntTy::I64),
-                "gos_rt_sync_map_contains" => self.tcx.bool_ty(),
-                "gos_rt_sync_map_set" | "gos_rt_sync_map_delete" => self.tcx.unit(),
-                "gos_rt_http_request_send"
-                | "gos_rt_http_client_request"
-                | "gos_rt_http_client_request_bytes" => self.result_response_error_adt_ty(),
-                "gos_rt_http_request_path_int" => self.option_i64_adt_ty(),
-                "gos_rt_http_request_path_float" => self.option_f64_adt_ty(),
-                "gos_rt_http_request_basic_auth" => self.option_pair_string_adt_ty(),
-                "gos_rt_math_rng_next_f64" => self.tcx.float_ty(gossamer_types::FloatTy::F64),
-                "gos_rt_field_error_path"
-                | "gos_rt_field_error_message"
-                | "gos_rt_field_error_code"
-                | "gos_rt_validate_errors_get"
-                | "gos_rt_validate_errors_collect"
-                | "gos_rt_metrics_registry_render"
-                | "gos_rt_trace_ended_to_otlp_json" => self.tcx.string_ty(),
-                "gos_rt_validate_errors_is_empty"
-                | "gos_rt_ctx_is_cancelled"
-                | "gos_rt_atomic_bool_load"
-                | "gos_rt_ctx_done" => self.tcx.bool_ty(),
-                "gos_rt_ctx_cancelled" => {
-                    let i = self.tcx.int_ty(gossamer_types::IntTy::I64);
-                    self.tcx.intern(gossamer_types::TyKind::Receiver(i))
-                }
-                "gos_rt_atomic_bool_store" => self.tcx.unit(),
-                "gos_rt_validate_errors_len"
-                | "gos_rt_validate_errors_count"
-                | "gos_rt_rwlock_get"
-                | "gos_rt_metrics_counter_value"
-                | "gos_rt_metrics_histogram_count" => self.tcx.int_ty(gossamer_types::IntTy::I64),
-                "gos_rt_metrics_gauge_value" | "gos_rt_metrics_histogram_sum" => {
-                    self.tcx.float_ty(gossamer_types::FloatTy::F64)
-                }
-                "gos_rt_validate_errors_add"
-                | "gos_rt_rwlock_set"
-                | "gos_rt_ctx_cancel"
-                | "gos_rt_metrics_counter_inc"
-                | "gos_rt_metrics_gauge_set"
-                | "gos_rt_metrics_gauge_inc"
-                | "gos_rt_metrics_gauge_dec"
-                | "gos_rt_metrics_histogram_observe"
-                | "gos_rt_metrics_registry_register"
-                | "gos_rt_trace_span_set_attribute"
-                | "gos_rt_trace_span_set_status" => self.tcx.unit(),
-                "gos_rt_bytes_builder_build"
-                | "gos_rt_bytes_builder_as_str"
-                | "gos_rt_bytes_buffer_to_string" => self.tcx.string_ty(),
-                "gos_rt_bytes_builder_len" | "gos_rt_bytes_buffer_len" => {
-                    self.tcx.int_ty(gossamer_types::IntTy::I64)
-                }
-                "gos_rt_bytes_buffer_is_empty" => self.tcx.bool_ty(),
-                "gos_rt_bytes_builder_write"
-                | "gos_rt_bytes_builder_write_char"
-                | "gos_rt_bytes_buffer_write_str"
-                | "gos_rt_bytes_buffer_push"
-                | "gos_rt_bytes_buffer_clear" => self.tcx.unit(),
-                "gos_rt_tcp_listener_local_addr"
-                | "gos_rt_tcp_stream_read_to_string"
-                | "gos_rt_unix_stream_read_to_string"
-                | "gos_rt_udp_local_addr" => self.result_string_error_adt_ty(),
-                "gos_rt_tcp_stream_write"
-                | "gos_rt_unix_stream_write"
-                | "gos_rt_udp_send_to"
-                | "gos_rt_tcp_start_tls"
-                | "gos_rt_tcp_start_tls_insecure"
-                | "gos_rt_tcp_start_tls_ca" => self.result_i64_error_adt_ty(),
-                "gos_rt_tcp_stream_read" | "gos_rt_unix_stream_read" => {
-                    self.result_vec_u8_error_ty()
-                }
-                "gos_rt_tcp_listener_accept" | "gos_rt_unix_listener_accept" => {
-                    let i = self.tcx.int_ty(gossamer_types::IntTy::I64);
-                    let s = self.tcx.string_ty();
-                    let tup = self.tcx.intern(gossamer_types::TyKind::Tuple(vec![i, s]));
-                    self.result_of(tup)
-                }
-                "gos_rt_udp_recv_from" => {
-                    let u8_ty = self.tcx.int_ty(gossamer_types::IntTy::U8);
-                    let vec_u8 = self.tcx.intern(gossamer_types::TyKind::Vec(u8_ty));
-                    let s = self.tcx.string_ty();
-                    let tup = self
-                        .tcx
-                        .intern(gossamer_types::TyKind::Tuple(vec![vec_u8, s]));
-                    self.result_of(tup)
-                }
-                "gos_rt_tcp_listener_close"
-                | "gos_rt_tcp_stream_close"
-                | "gos_rt_unix_listener_close"
-                | "gos_rt_unix_stream_close"
-                | "gos_rt_udp_close" => self.tcx.unit(),
-                _ => self.tcx.int_ty(gossamer_types::IntTy::I64),
-            };
-            let dest = self.fresh(pinned);
-            let dest_kind: Option<&'static str> = match rt {
-                "gos_rt_http_client_get"
-                | "gos_rt_http_client_post"
-                | "gos_rt_http_client_put"
-                | "gos_rt_http_client_options"
-                | "gos_rt_http_client_delete"
-                | "gos_rt_http_client_head" => Some("http::Request"),
-                "gos_rt_http_request_header"
-                | "gos_rt_http_request_body"
-                | "gos_rt_http_request_set_value" => Some("http::Request"),
-                "gos_rt_http_client_builder_max_redirects"
-                | "gos_rt_http_client_builder_timeout_ms"
-                | "gos_rt_http_client_builder_cookie_jar"
-                | "gos_rt_http_client_builder_proxy" => Some("http::ClientBuilder"),
-                "gos_rt_http_client_builder_build" => Some("http::Client"),
-                "gos_rt_http_response_with_header" => Some("http::Response"),
-                "gos_rt_flag_set_string" => Some("flag::Cell::String"),
-                "gos_rt_flag_set_int" => Some("flag::Cell::Int"),
-                "gos_rt_flag_set_uint" => Some("flag::Cell::Uint"),
-                "gos_rt_flag_set_float" => Some("flag::Cell::Float"),
-                "gos_rt_flag_set_bool" => Some("flag::Cell::Bool"),
-                "gos_rt_flag_set_duration" => Some("flag::Cell::Duration"),
-                "gos_rt_flag_set_string_list" => Some("flag::Cell::StringList"),
-                "gos_rt_set_union"
-                | "gos_rt_set_intersection"
-                | "gos_rt_set_difference"
-                | "gos_rt_set_symmetric_difference" => Some("collections::HashSet"),
-                "gos_rt_tcp_listener_accept" => Some("net::accept_pair"),
-                "gos_rt_unix_listener_accept" => Some("net::unix_accept_pair"),
-                "gos_rt_tcp_start_tls"
-                | "gos_rt_tcp_start_tls_insecure"
-                | "gos_rt_tcp_start_tls_ca" => Some("net::TcpStream"),
-                "gos_rt_trace_tracer_start_span" => Some("trace::Span"),
-                "gos_rt_trace_span_end" => Some("trace::EndedSpan"),
-                _ => None,
-            };
-            if let Some(k) = dest_kind {
-                self.local_runtime_kind.insert(dest, k);
-            }
-            let next = self.new_block(span);
-            self.terminate(Terminator::Call {
-                callee: Operand::Const(ConstValue::Str(rt.to_string())),
-                args: arg_operands,
-                destination: Place::local(dest),
-                target: Some(next),
-            });
-            self.set_current(next);
-            return Some(dest);
-        }
-        // A `gos_rt_vec_*` / strings-join shim reads a `GosVec` header, but a
-        // `[T; N]` array-literal receiver (`["a", "b"].contains(..)` /
-        // `.join(..)`) is a flat, header-less buffer. Coerce it to a heap
-        // `GosVec` first so the shim doesn't read past the inline storage (a
-        // native-tier segfault). The flat-array-aware `gos_rt_intarr_*` /
-        // `gos_rt_floatarr_*` slice shims keep the raw array.
-        let receiver_local = match runtime_symbol {
-            Some(sym) if sym.starts_with("gos_rt_vec_") || sym == "gos_rt_strings_join" => {
-                match self
-                    .tcx
-                    .kind_of(self.locals[receiver_local.0 as usize].ty)
-                    .clone()
-                {
-                    TyKind::Array { elem, len } => {
-                        self.coerce_array_to_vec(receiver_local, elem, len, span)
-                    }
-                    _ => receiver_local,
-                }
-            }
-            _ => receiver_local,
-        };
-        let mut arg_operands = Vec::with_capacity(args.len() + 1);
-        arg_operands.push(Operand::Copy(Place::local(receiver_local)));
-        // `xs.slice(a, b)` on a `[T; N]` literal receiver: splice
-        // the static length read from `TyKind::Array { len }` between
-        // the receiver pointer and the user-supplied `start` / `end`.
-        // The runtime helper takes `(ptr, len, start, end)` because
-        // inline `[T; N]` storage carries no length prefix.
-        if matches!(
-            runtime_symbol,
-            Some("gos_rt_intarr_slice_result" | "gos_rt_floatarr_slice_result")
-        ) {
-            let recv_ty_kind = self.tcx.kind_of(receiver.ty);
-            let recv_ty_kind = if let TyKind::Ref { inner, .. } = recv_ty_kind {
-                self.tcx.kind_of(*inner)
-            } else {
-                recv_ty_kind
-            };
-            if let TyKind::Array { len: array_len, .. } = recv_ty_kind {
-                let n = i128::try_from(array_len.to_usize()).unwrap_or(0);
-                arg_operands.push(Operand::Const(ConstValue::Int(n)));
-            }
-        }
-        // A `HashMap<_, Vec<_>>` insert / or_insert whose value is an
-        // inline `[a, b, c]` array literal must marshal a real heap
-        // `GosVec` (with the RC header the map's blob ownership and the
-        // later `.len()` / index reads depend on), not the header-less
-        // stack `[T; N]` buffer the literal lowers to. The key arg is a
-        // String / i64 (never an Array) so it is left untouched.
-        let coerce_map_value = matches!(
-            runtime_symbol,
-            Some(
-                "gos_rt_map_insert_i64_i64"
-                    | "gos_rt_map_insert_str_i64"
-                    | "gos_rt_map_or_insert_i64_i64"
-                    | "gos_rt_map_or_insert_str_i64"
-            )
-        );
-        // String methods whose needle / pattern argument is a `&str`
-        // the runtime helper reads as a `*const c_char`. A `char`
-        // literal (`s.contains('e')`, `s.replace('l', "L")`) lowers to
-        // an i32 codepoint, so it must be converted to a one-char
-        // String via `gos_rt_char_to_str` before the call - otherwise
-        // the helper dereferences the codepoint as a pointer. Mirrors
-        // the front-end coercion the free-function form already gets.
-        let coerce_char_needle = matches!(
-            runtime_symbol,
-            Some(
-                "gos_rt_str_contains"
-                    | "gos_rt_str_find_opt"
-                    | "gos_rt_str_rfind_opt"
-                    | "gos_rt_str_replace"
-                    | "gos_rt_str_replacen"
-                    | "gos_rt_str_starts_with"
-                    | "gos_rt_str_ends_with"
-                    | "gos_rt_str_trim_matches"
-                    | "gos_rt_str_lstrip_chars"
-                    | "gos_rt_str_rstrip_chars"
-                    | "gos_rt_str_split_once"
-                    | "gos_rt_str_rsplit_once"
-                    | "gos_rt_str_count"
-                    | "gos_rt_str_strip_prefix"
-                    | "gos_rt_str_strip_suffix"
-                    | "gos_rt_str_split"
-            )
-        );
-        for arg in args {
-            let a = self.lower_expr(arg)?;
-            // 0.7.0 flag::Cell auto-deref at the call boundary -
-            // mirrors the bytecode VM's auto-unwrap shape so
-            // `get_comic(flags.number)` works without `*`.
-            let a = self.auto_deref_cell(a, span);
-            let a = if coerce_map_value {
-                let lt = self.locals[a.0 as usize].ty;
-                if let TyKind::Array { elem, len } = self.tcx.kind_of(lt).clone() {
-                    self.coerce_array_to_vec(a, elem, len, span)
                 } else {
                     a
-                }
-            } else {
-                a
-            };
-            let a = if coerce_char_needle {
-                self.coerce_char_arg_to_str(a, span)
-            } else {
-                a
-            };
-            arg_operands.push(Operand::Copy(Place::local(a)));
-        }
-
-        // `gos_rt_result_map_err` / `gos_rt_result_map` expect a
-        // closure handle whose first 8 bytes hold the lifted
-        // function's address. The HIR lift pass turns
-        // non-capturing closures into a bare-name path
-        // (`__closure_N`) which lowers to a string-literal pointer
-        // - passing that to the helper segfaults the moment it
-        // transmutes the first 8 ASCII bytes into a function
-        // pointer. Wrap the arg as a 16-byte heap blob
-        // `[fn_addr, _]` so the helper's first-word load resolves
-        // to the actual lifted function.
-        // Dispatch closure args by capture shape. Two distinct
-        // ABIs are in play and the runtime helpers separate them
-        // explicitly:
-        //
-        //   - **Capturing closures** lift to `extern "C" fn(env,
-        //     payload) -> ret`. The MIR-side LiftedClosure node
-        //     produces a heap-allocated env blob whose first slot
-        //     is the lifted function's address; the rest are the
-        //     captured values. Dispatched through
-        //     `gos_rt_result_map` / `_map_err` (env-first ABI).
-        //
-        //   - **Non-capturing closures** lift to `extern "C" fn
-        //     (payload) -> ret` - no env. The HIR lift pass turns
-        //     them into a bare `Path` that lowers to a fn-name
-        //     constant; `local_fn_name` is then set on the local.
-        //     Dispatched through `gos_rt_result_map_bare` /
-        //     `_map_err_bare` (no-env ABI), passing the function
-        //     address directly.
-        //
-        // Pre-fix the same `gos_rt_result_map` was used for both,
-        // with the call site wrapping the bare fn-pointer in a
-        // 16-byte `[fn_addr, _]` blob and praying the C ABI's
-        // unused-arg semantics would let the closure's first
-        // param shadow the env pointer. On x86_64 it didn't -
-        // RDI/RSI assignment matched the helper's perspective
-        // (env_ptr, payload), so the closure's `v` param shadowed
-        // RDI = env_ptr while the actual payload sat unread in
-        // RSI. The closure body then transformed env_ptr instead
-        // of payload, which corrupted the resulting Result and
-        // produced the askq round-2 strlen-on-bad-pointer crash.
-        // See `~/dev/contexts/lang/fix_architecture_ownership.md`
-        // root-cause #3.
-        if matches!(
-            runtime_symbol,
-            Some("gos_rt_result_map_err" | "gos_rt_result_map")
-        ) && arg_operands.len() == 2
-        {
-            let closure_local = match &arg_operands[1] {
-                Operand::Copy(p) if p.projection.is_empty() => Some(p.local),
-                _ => None,
-            };
-            if let Some(local) = closure_local
-                && let Some(fn_name) = self.local_fn_name.get(&local).cloned()
-            {
-                // Non-capturing path: pass the lifted fn addr as a
-                // raw i64 and dispatch through the `_bare` helper
-                // that calls it as `f(payload)` - single arg, no
-                // env. Switch the dispatched symbol to the bare
-                // variant.
-                let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
-                let fn_addr_local = self.fresh(i64_ty);
-                self.emit_assign(
-                    Place::local(fn_addr_local),
-                    Rvalue::CallIntrinsic {
-                        name: "gos_fn_addr",
-                        args: vec![Operand::Const(ConstValue::Str(fn_name))],
-                    },
-                    span,
-                );
-                arg_operands[1] = Operand::Copy(Place::local(fn_addr_local));
-                runtime_symbol = match runtime_symbol {
-                    Some("gos_rt_result_map") => Some("gos_rt_result_map_bare"),
-                    Some("gos_rt_result_map_err") => Some("gos_rt_result_map_err_bare"),
-                    other => other,
                 };
+                // A value sent on a channel escapes to the receiving
+                // goroutine: switch any RC-managed value to atomic
+                // reference counting before it is enqueued.
+                if rt == "gos_rt_chan_send" {
+                    self.emit_mark_shared_if_rc(a, span);
+                }
+                arg_operands.push(Operand::Copy(Place::local(a)));
             }
-            // Capturing-closure path: the LiftedClosure lowering
-            // already produced an `env_ptr` whose first 8 bytes
-            // hold the lifted fn addr. The original
-            // `gos_rt_result_map(_err)` env-first dispatch is
-            // correct for this shape; nothing to rewrite.
         }
+        Some((arg_operands, rt))
+    }
 
+    /// Runtime-symbol fallback: refine the symbol then dispatch / emit.
+    fn lower_method_call_fallback(
+        &mut self,
+        receiver: &HirExpr,
+        receiver_local: Local,
+        method: &Ident,
+        args: &[HirExpr],
+        ty: Ty,
+        span: Span,
+        runtime_symbol: Option<&'static str>,
+        receiver_ty: Ty,
+    ) -> Option<Local> {
+        let (receiver_local, mut arg_operands) =
+            self.build_fallback_arg_operands(runtime_symbol, receiver_local, receiver, args, span)?;
+        let runtime_symbol =
+            self.rewrite_result_map_closure_arg(runtime_symbol, &mut arg_operands, span);
         // Re-check the dispatch for Result/Option methods now that
         // the receiver has been lowered. The HIR-side `receiver_ty`
         // is often a `Var` for chained method calls (e.g.
@@ -2986,6 +2974,236 @@ impl<'a> Builder<'a> {
                 arg_operands,
             );
         }
+        self.emit_fallback_call(
+            receiver,
+            receiver_local,
+            method,
+            ty,
+            span,
+            arg_operands,
+            receiver_ty,
+        )
+    }
+
+    /// Coerce the receiver and build the operand list for the fallback call.
+    fn build_fallback_arg_operands(
+        &mut self,
+        runtime_symbol: Option<&'static str>,
+        receiver_local: Local,
+        receiver: &HirExpr,
+        args: &[HirExpr],
+        span: Span,
+    ) -> Option<(Local, Vec<Operand>)> {
+        let receiver_local = match runtime_symbol {
+            Some(sym) if sym.starts_with("gos_rt_vec_") || sym == "gos_rt_strings_join" => {
+                match self
+                    .tcx
+                    .kind_of(self.locals[receiver_local.0 as usize].ty)
+                    .clone()
+                {
+                    TyKind::Array { elem, len } => {
+                        self.coerce_array_to_vec(receiver_local, elem, len, span)
+                    }
+                    _ => receiver_local,
+                }
+            }
+            _ => receiver_local,
+        };
+        let mut arg_operands = Vec::with_capacity(args.len() + 1);
+        arg_operands.push(Operand::Copy(Place::local(receiver_local)));
+        // `xs.slice(a, b)` on a `[T; N]` literal receiver: splice
+        // the static length read from `TyKind::Array { len }` between
+        // the receiver pointer and the user-supplied `start` / `end`.
+        // The runtime helper takes `(ptr, len, start, end)` because
+        // inline `[T; N]` storage carries no length prefix.
+        if matches!(
+            runtime_symbol,
+            Some("gos_rt_intarr_slice_result" | "gos_rt_floatarr_slice_result")
+        ) {
+            let recv_ty_kind = self.tcx.kind_of(receiver.ty);
+            let recv_ty_kind = if let TyKind::Ref { inner, .. } = recv_ty_kind {
+                self.tcx.kind_of(*inner)
+            } else {
+                recv_ty_kind
+            };
+            if let TyKind::Array { len: array_len, .. } = recv_ty_kind {
+                let n = i128::try_from(array_len.to_usize()).unwrap_or(0);
+                arg_operands.push(Operand::Const(ConstValue::Int(n)));
+            }
+        }
+        // A `HashMap<_, Vec<_>>` insert / or_insert whose value is an
+        // inline `[a, b, c]` array literal must marshal a real heap
+        // `GosVec` (with the RC header the map's blob ownership and the
+        // later `.len()` / index reads depend on), not the header-less
+        // stack `[T; N]` buffer the literal lowers to. The key arg is a
+        // String / i64 (never an Array) so it is left untouched.
+        let coerce_map_value = matches!(
+            runtime_symbol,
+            Some(
+                "gos_rt_map_insert_i64_i64"
+                    | "gos_rt_map_insert_str_i64"
+                    | "gos_rt_map_or_insert_i64_i64"
+                    | "gos_rt_map_or_insert_str_i64"
+            )
+        );
+        // String methods whose needle / pattern argument is a `&str`
+        // the runtime helper reads as a `*const c_char`. A `char`
+        // literal (`s.contains('e')`, `s.replace('l', "L")`) lowers to
+        // an i32 codepoint, so it must be converted to a one-char
+        // String via `gos_rt_char_to_str` before the call - otherwise
+        // the helper dereferences the codepoint as a pointer. Mirrors
+        // the front-end coercion the free-function form already gets.
+        let coerce_char_needle = matches!(
+            runtime_symbol,
+            Some(
+                "gos_rt_str_contains"
+                    | "gos_rt_str_find_opt"
+                    | "gos_rt_str_rfind_opt"
+                    | "gos_rt_str_replace"
+                    | "gos_rt_str_replacen"
+                    | "gos_rt_str_starts_with"
+                    | "gos_rt_str_ends_with"
+                    | "gos_rt_str_trim_matches"
+                    | "gos_rt_str_lstrip_chars"
+                    | "gos_rt_str_rstrip_chars"
+                    | "gos_rt_str_split_once"
+                    | "gos_rt_str_rsplit_once"
+                    | "gos_rt_str_count"
+                    | "gos_rt_str_strip_prefix"
+                    | "gos_rt_str_strip_suffix"
+                    | "gos_rt_str_split"
+            )
+        );
+        for arg in args {
+            let a = self.lower_expr(arg)?;
+            // 0.7.0 flag::Cell auto-deref at the call boundary -
+            // mirrors the bytecode VM's auto-unwrap shape so
+            // `get_comic(flags.number)` works without `*`.
+            let a = self.auto_deref_cell(a, span);
+            let a = if coerce_map_value {
+                let lt = self.locals[a.0 as usize].ty;
+                if let TyKind::Array { elem, len } = self.tcx.kind_of(lt).clone() {
+                    self.coerce_array_to_vec(a, elem, len, span)
+                } else {
+                    a
+                }
+            } else {
+                a
+            };
+            let a = if coerce_char_needle {
+                self.coerce_char_arg_to_str(a, span)
+            } else {
+                a
+            };
+            arg_operands.push(Operand::Copy(Place::local(a)));
+        }
+        Some((receiver_local, arg_operands))
+    }
+
+    /// Rewrite a non-capturing `map`/`map_err` closure arg to the bare-fn ABI.
+    fn rewrite_result_map_closure_arg(
+        &mut self,
+        runtime_symbol: Option<&'static str>,
+        arg_operands: &mut Vec<Operand>,
+        span: Span,
+    ) -> Option<&'static str> {
+        let mut runtime_symbol = runtime_symbol;
+        // `gos_rt_result_map_err` / `gos_rt_result_map` expect a
+        // closure handle whose first 8 bytes hold the lifted
+        // function's address. The HIR lift pass turns
+        // non-capturing closures into a bare-name path
+        // (`__closure_N`) which lowers to a string-literal pointer
+        // - passing that to the helper segfaults the moment it
+        // transmutes the first 8 ASCII bytes into a function
+        // pointer. Wrap the arg as a 16-byte heap blob
+        // `[fn_addr, _]` so the helper's first-word load resolves
+        // to the actual lifted function.
+        // Dispatch closure args by capture shape. Two distinct
+        // ABIs are in play and the runtime helpers separate them
+        // explicitly:
+        //
+        //   - **Capturing closures** lift to `extern "C" fn(env,
+        //     payload) -> ret`. The MIR-side LiftedClosure node
+        //     produces a heap-allocated env blob whose first slot
+        //     is the lifted function's address; the rest are the
+        //     captured values. Dispatched through
+        //     `gos_rt_result_map` / `_map_err` (env-first ABI).
+        //
+        //   - **Non-capturing closures** lift to `extern "C" fn
+        //     (payload) -> ret` - no env. The HIR lift pass turns
+        //     them into a bare `Path` that lowers to a fn-name
+        //     constant; `local_fn_name` is then set on the local.
+        //     Dispatched through `gos_rt_result_map_bare` /
+        //     `_map_err_bare` (no-env ABI), passing the function
+        //     address directly.
+        //
+        // Pre-fix the same `gos_rt_result_map` was used for both,
+        // with the call site wrapping the bare fn-pointer in a
+        // 16-byte `[fn_addr, _]` blob and praying the C ABI's
+        // unused-arg semantics would let the closure's first
+        // param shadow the env pointer. On x86_64 it didn't -
+        // RDI/RSI assignment matched the helper's perspective
+        // (env_ptr, payload), so the closure's `v` param shadowed
+        // RDI = env_ptr while the actual payload sat unread in
+        // RSI. The closure body then transformed env_ptr instead
+        // of payload, which corrupted the resulting Result and
+        // produced the askq round-2 strlen-on-bad-pointer crash.
+        // See `~/dev/contexts/lang/fix_architecture_ownership.md`
+        // root-cause #3.
+        if matches!(
+            runtime_symbol,
+            Some("gos_rt_result_map_err" | "gos_rt_result_map")
+        ) && arg_operands.len() == 2
+        {
+            let closure_local = match &arg_operands[1] {
+                Operand::Copy(p) if p.projection.is_empty() => Some(p.local),
+                _ => None,
+            };
+            if let Some(local) = closure_local
+                && let Some(fn_name) = self.local_fn_name.get(&local).cloned()
+            {
+                // Non-capturing path: pass the lifted fn addr as a
+                // raw i64 and dispatch through the `_bare` helper
+                // that calls it as `f(payload)` - single arg, no
+                // env. Switch the dispatched symbol to the bare
+                // variant.
+                let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+                let fn_addr_local = self.fresh(i64_ty);
+                self.emit_assign(
+                    Place::local(fn_addr_local),
+                    Rvalue::CallIntrinsic {
+                        name: "gos_fn_addr",
+                        args: vec![Operand::Const(ConstValue::Str(fn_name))],
+                    },
+                    span,
+                );
+                arg_operands[1] = Operand::Copy(Place::local(fn_addr_local));
+                runtime_symbol = match runtime_symbol {
+                    Some("gos_rt_result_map") => Some("gos_rt_result_map_bare"),
+                    Some("gos_rt_result_map_err") => Some("gos_rt_result_map_err_bare"),
+                    other => other,
+                };
+            }
+            // Capturing-closure path: the LiftedClosure lowering
+            // already produced an `env_ptr` whose first 8 bytes
+            // hold the lifted fn addr. The original
+            // `gos_rt_result_map(_err)` env-first dispatch is
+            // correct for this shape; nothing to rewrite.
+        }
+        runtime_symbol
+    }
+
+    /// Emit the user-impl method call or the generic by-name fallback call.
+    fn emit_fallback_call(
+        &mut self,
+        receiver: &HirExpr,
+        receiver_local: Local,
+        method: &Ident,
+        ty: Ty,
+        span: Span,
+        arg_operands: Vec<Operand>,
+        receiver_ty: Ty,
+    ) -> Option<Local> {
         // User-defined `impl` method dispatch: when the receiver's
         // static type names a known struct, look up the mangled
         // method name (`Struct::method`) and emit a direct call
@@ -3085,7 +3303,6 @@ impl<'a> Builder<'a> {
         receiver_ty: Ty,
         args_len: usize,
     ) -> Option<&'static str> {
-        use gossamer_types::TyKind;
         let mut ty = receiver_ty;
         while let TyKind::Ref { inner, .. } = self.tcx.kind_of(ty) {
             ty = *inner;

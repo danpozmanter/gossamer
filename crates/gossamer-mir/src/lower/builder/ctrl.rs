@@ -39,6 +39,15 @@ use gossamer_hir::{
 use gossamer_lex::Span;
 use gossamer_types::{Ty, TyCtxt};
 
+/// Panic message for a `match` whose arms did not cover the scrutinee
+/// at runtime. The exhaustiveness checker rejects non-exhaustive matches
+/// at `check` time; this backstop only fires on a value the checker
+/// believed impossible (an exhaustiveness blind spot). Emitting a clean
+/// panic instead of `Terminator::Unreachable` keeps the compiled tiers
+/// memory-safe - `Unreachable` lowers to undefined behaviour (a segfault
+/// on LLVM, a trap on Cranelift) - so "if it builds it runs" holds.
+const NON_EXHAUSTIVE_MATCH_MESSAGE: &str = "non-exhaustive match: no pattern matched the value";
+
 use crate::ir::{
     BasicBlock, BinOp, BlockId, Body, ConstValue, Local, LocalDecl, Operand, Place, Rvalue,
     Statement, StatementKind, Terminator, UnOp,
@@ -250,10 +259,12 @@ impl<'a> Builder<'a> {
         // SwitchInt / Goto terminator below.
         let dispatch_block = self.current;
         let default = default_block.unwrap_or_else(|| {
-            let unreachable_block = self.new_block(span);
-            self.set_current(unreachable_block);
-            self.terminate(Terminator::Unreachable);
-            unreachable_block
+            let panic_block = self.new_block(span);
+            self.set_current(panic_block);
+            self.terminate(Terminator::Panic {
+                message: NON_EXHAUSTIVE_MATCH_MESSAGE.to_string(),
+            });
+            panic_block
         });
         if let Some(block) = dispatch_block {
             self.set_current(block);
@@ -443,12 +454,15 @@ impl<'a> Builder<'a> {
 
             self.set_current(next_block);
         }
-        // Ran past every arm without matching. Match is supposed
-        // to be exhaustive; jump to join with the result-local
-        // left at its default zero value (the `fresh` above didn't
-        // initialise it). This branch is reachable only when the
-        // exhaustiveness checker missed something.
-        self.terminate(Terminator::Goto { target: join });
+        // Ran past every guarded arm without matching. The match was
+        // assumed exhaustive; a value reaching here is a guard gap the
+        // checker could not see. Panic cleanly instead of falling through
+        // to `join` with an uninitialised result local, which the
+        // compiled tiers would read as garbage (a pointer-typed result
+        // becomes a wild pointer).
+        self.terminate(Terminator::Panic {
+            message: NON_EXHAUSTIVE_MATCH_MESSAGE.to_string(),
+        });
         self.set_current(join);
         Some(result_local)
     }
@@ -866,9 +880,31 @@ impl<'a> Builder<'a> {
                         // type when it is resolved, falling back to the HIR
                         // sub-pattern type (free structs have no variant entry)
                         // and finally I64.
+                        // A free struct has no enum-variant field-type entry,
+                        // so its field type comes from the scrutinee's struct
+                        // definition. This is authoritative: a binding
+                        // sub-pattern's own inferred type can be left `Var` or
+                        // mis-resolved (a `String` from a `format!` use site),
+                        // which would decode the I64 slot as the wrong shape.
+                        let scrut_field_ty = {
+                            let mut t = self.locals[scrutinee.0 as usize].ty;
+                            while let gossamer_types::TyKind::Ref { inner, .. } =
+                                self.tcx.kind_of(t)
+                            {
+                                t = *inner;
+                            }
+                            match self.tcx.kind_of(t) {
+                                gossamer_types::TyKind::Adt { def, .. } => self
+                                    .tcx
+                                    .struct_field_tys(*def)
+                                    .and_then(|tys| tys.get(pos).copied()),
+                                _ => None,
+                            }
+                        };
                         let declared_field_ty = declared_tys
                             .as_ref()
                             .and_then(|tys| tys.get(pos).copied())
+                            .or(scrut_field_ty)
                             .filter(|&ty| {
                                 !matches!(
                                     self.tcx.kind_of(ty),
@@ -1195,7 +1231,33 @@ impl<'a> Builder<'a> {
                                     Rvalue::Use(Operand::Const(ConstValue::Int((i * 8) as i128))),
                                     span,
                                 );
-                                let field_local = self.fresh(i64_ty);
+                                // A multi-slot aggregate field (e.g. the
+                                // `Point` of `Shape::Dot(Point { x, y })`) is a
+                                // boxed pointer: type the field local as the
+                                // aggregate so `gos_enum_load` materialises it
+                                // by value, then the nested struct / tuple
+                                // pattern reads real field slots.
+                                let nested_ty = declared_tys
+                                    .as_ref()
+                                    .and_then(|tys| tys.get(i).copied())
+                                    .filter(|&t| {
+                                        !matches!(
+                                            self.tcx.kind_of(t),
+                                            gossamer_types::TyKind::Var(_)
+                                                | gossamer_types::TyKind::Error
+                                        )
+                                    })
+                                    .filter(|&t| self.is_boxable_aggregate_payload(t));
+                                let field_local = match nested_ty {
+                                    Some(t) => {
+                                        let fl = self.fresh(t);
+                                        if let Some(sname) = self.struct_name_of(t) {
+                                            self.local_struct.insert(fl, sname);
+                                        }
+                                        fl
+                                    }
+                                    None => self.fresh(i64_ty),
+                                };
                                 self.emit_assign(
                                     Place::local(field_local),
                                     Rvalue::CallIntrinsic {
@@ -1819,9 +1881,6 @@ impl<'a> Builder<'a> {
             if matches!(sub.kind, HirPatKind::Rest | HirPatKind::Wildcard) {
                 continue;
             }
-            let HirPatKind::Binding { name, mutable } = &sub.kind else {
-                continue;
-            };
             let field_idx = if let Some(rest_idx) = rest_pos {
                 if i < rest_idx {
                     i
@@ -1849,8 +1908,31 @@ impl<'a> Builder<'a> {
             } else {
                 sub.ty
             };
+            // A nested destructuring sub-pattern (`(b, c)`, `Point { x, y }`,
+            // a tuple-struct variant) extracts its field into a fresh local
+            // and recurses; a bare `else { continue }` skipped it, leaving its
+            // bindings unmaterialised (`let (a, (b, c)) = t` lost b and c).
+            let (name, mutable) = match &sub.kind {
+                HirPatKind::Binding { name, mutable } => (name, *mutable),
+                _ => {
+                    let field_local = self.push_local(elem_ty, None, false);
+                    let place = Place {
+                        local: tuple_local,
+                        projection: vec![crate::ir::Projection::Field(
+                            u32::try_from(field_idx).expect("tuple projection overflow"),
+                        )],
+                    };
+                    self.emit_assign(
+                        Place::local(field_local),
+                        Rvalue::Use(Operand::Copy(place)),
+                        span,
+                    );
+                    self.bind_aggregate_let_pattern(field_local, sub, span);
+                    continue;
+                }
+            };
             let element_local =
-                self.push_local(elem_ty, Some(Ident::new(name.name.as_str())), *mutable);
+                self.push_local(elem_ty, Some(Ident::new(name.name.as_str())), mutable);
             self.bind_local(name.name.as_str(), element_local);
             if accept_pair && field_idx == 0 {
                 self.local_runtime_kind
@@ -2501,14 +2583,14 @@ impl<'a> Builder<'a> {
                 // Also peel `.iter()` method calls - `for x in v.iter()`
                 // and `for x in &v` both end up wanting Vec iteration.
                 let iter_recv = match &for_loop.iter_expr.kind {
-                    // A `HashSet` receiver must NOT be peeled: its handle is
-                    // not a `GosVec`, so iterating it directly reads the set
-                    // as a vec. Falling through lets `s.iter()` lower to
-                    // `gos_rt_set_to_vec` (a real snapshot Vec).
+                    // A `HashSet` / `HashMap` receiver must NOT be peeled: its
+                    // handle is not a `GosVec`, and a map yields `(K, V)` PAIRS
+                    // rather than its receiver's element type. Falling through
+                    // lets `s.iter()` / `m.iter()` lower to the runtime
+                    // snapshot Vec (`gos_rt_set_to_vec` / the map-iter pair
+                    // vec) with the right element type from `iter_expr.ty`.
                     HirExprKind::MethodCall { receiver, name, .. }
-                        if name.name == "iter"
-                            && self.runtime_kind_from_ty(receiver.ty)
-                                != Some("collections::HashSet") =>
+                        if name.name == "iter" && !self.receiver_is_map_or_set(receiver) =>
                     {
                         Some(receiver.as_ref())
                     }
@@ -2610,7 +2692,18 @@ impl<'a> Builder<'a> {
                 // look at the call target name + walk the
                 // dispatch table to reach the Vec(elem) shape.
                 let mut for_vec_elem: Option<Ty> = None;
-                if let TyKind::Vec(elem) = self.tcx.kind_of(cur) {
+                // `m.keys()` / `m.values()` carry a `Vec<K>` / `Vec<V>` type, but
+                // their runtime snapshot stores struct values as boxed pointers.
+                // The map-specific block below binds those as a box-pointer `Ref`
+                // so field access derefs the box; the generic `Vec(elem)`
+                // extraction here would instead bind the bare struct and read the
+                // pointer bits inline. Leave those two to the specialized path.
+                let is_map_keys_values = matches!(
+                    &for_loop.iter_expr.kind,
+                    HirExprKind::MethodCall { name, .. }
+                        if matches!(name.name.as_str(), "keys" | "values")
+                );
+                if !is_map_keys_values && let TyKind::Vec(elem) = self.tcx.kind_of(cur) {
                     for_vec_elem = Some(*elem);
                 }
                 if for_vec_elem.is_none() {

@@ -19,9 +19,11 @@
 
 #![forbid(unsafe_code)]
 
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
-use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+use parking_lot::Mutex;
 
 use crate::errors::Error;
 
@@ -92,7 +94,7 @@ impl Lifecycle {
             hook();
             return;
         }
-        let mut guard = self.inner.hooks.lock().expect("lifecycle hooks lock");
+        let mut guard = self.inner.hooks.lock();
         guard.push(Box::new(hook));
     }
 
@@ -247,7 +249,7 @@ impl Lifecycle {
     fn drain_hooks(&self) {
         let started = Instant::now();
         let hooks = {
-            let mut guard = self.inner.hooks.lock().expect("lifecycle hooks lock");
+            let mut guard = self.inner.hooks.lock();
             std::mem::take(&mut *guard)
         };
         // LIFO order - last registered runs first (defer semantics).
@@ -300,11 +302,11 @@ mod tests {
         for i in 0..5 {
             let order = Arc::clone(&order);
             lc.on_shutdown(move || {
-                order.lock().unwrap().push(i);
+                order.lock().push(i);
             });
         }
         lc.shutdown();
-        let captured = order.lock().unwrap().clone();
+        let captured = order.lock().clone();
         assert_eq!(captured, vec![4, 3, 2, 1, 0]);
     }
 
@@ -389,5 +391,29 @@ mod tests {
         lc.ready();
         lc.notify_stopping();
         lc.notify_status("draining");
+    }
+
+    #[test]
+    fn panic_while_holding_lock_does_not_poison_it() {
+        // parking_lot locks carry no poison state: a panic unwinding
+        // through a held guard releases the lock cleanly, so the next
+        // acquisition still succeeds and observes the data the
+        // panicking section wrote. A std::sync::Mutex would surface a
+        // poisoned Err on the second acquisition instead.
+        let data = Arc::new(Mutex::new(0u32));
+        let data_for_worker = Arc::clone(&data);
+        let worker = std::thread::spawn(move || {
+            let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let mut guard = data_for_worker.lock();
+                *guard = 42;
+                panic!("boom while holding the lock");
+            }));
+            assert!(outcome.is_err(), "the worker closure must have panicked");
+        });
+        // join() establishes happens-before with the worker's guard
+        // drop - no sleep needed for determinism.
+        worker.join().expect("worker thread must not abort");
+        let guard = data.lock();
+        assert_eq!(*guard, 42);
     }
 }

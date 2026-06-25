@@ -4,17 +4,16 @@
 //! `Value::Struct` without depending on `gossamer-ast` from the
 //! binding crate.
 
-use gossamer_ast::Ident;
-use gossamer_interp::value::Value;
+use gossamer_interp::value::{Value, intern_field_name};
 
 /// Builds a `Value::Struct` with the supplied name and ordered
-/// field list. Field names are converted to `Ident`s on the way
-/// in so the wire layout matches `Value::struct_` exactly.
+/// field list. Field names are interned to `&'static str` on the
+/// way in so the wire layout matches `Value::struct_` exactly.
 #[must_use]
 pub fn build_struct(name: &str, fields: Vec<(String, Value)>) -> Value {
-    let mapped: Vec<(Ident, Value)> = fields
+    let mapped: Vec<(&'static str, Value)> = fields
         .into_iter()
-        .map(|(k, v)| (Ident::new(k), v))
+        .map(|(k, v)| (intern_field_name(&k), v))
         .collect();
     Value::struct_(name, mapped)
 }
@@ -22,9 +21,9 @@ pub fn build_struct(name: &str, fields: Vec<(String, Value)>) -> Value {
 /// Looks up a struct's field value by name, returning
 /// `Value::Unit` if missing. Used by the derive's `FromGos`.
 #[must_use]
-pub fn struct_field<'a>(fields: &'a [(Ident, Value)], name: &str) -> &'a Value {
+pub fn struct_field<'a>(fields: &'a [(&'static str, Value)], name: &str) -> &'a Value {
     fields
         .iter()
-        .find_map(|(k, v)| if k.name == name { Some(v) } else { None })
+        .find_map(|(k, v)| if *k == name { Some(v) } else { None })
         .unwrap_or(&Value::Unit)
 }

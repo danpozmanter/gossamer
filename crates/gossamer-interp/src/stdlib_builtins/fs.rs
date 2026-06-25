@@ -156,21 +156,15 @@ pub(crate) fn builtin_fs_metadata(args: &[Value]) -> RuntimeResult<Value> {
         Ok(meta) => {
             let fields = vec![
                 (
-                    Ident::new("size"),
+                    "size",
                     Value::Int(i64::try_from(meta.len()).unwrap_or(i64::MAX)),
                 ),
-                (Ident::new("is_file"), Value::Bool(meta.is_file())),
-                (Ident::new("is_dir"), Value::Bool(meta.is_dir())),
+                ("is_file", Value::Bool(meta.is_file())),
+                ("is_dir", Value::Bool(meta.is_dir())),
+                ("is_symlink", Value::Bool(meta.file_type().is_symlink())),
+                ("readonly", Value::Bool(meta.permissions().readonly())),
                 (
-                    Ident::new("is_symlink"),
-                    Value::Bool(meta.file_type().is_symlink()),
-                ),
-                (
-                    Ident::new("readonly"),
-                    Value::Bool(meta.permissions().readonly()),
-                ),
-                (
-                    Ident::new("modified_unix_ms"),
+                    "modified_unix_ms",
                     Value::Int(
                         meta.modified()
                             .ok()

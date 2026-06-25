@@ -172,6 +172,19 @@ pub(crate) fn arg_is_float(tcx: &gossamer_types::TyCtxt, expr: &HirExpr) -> bool
     matches!(tcx.kind_of(expr.ty), TyKind::Float(_))
 }
 
+/// True when `expr` types as `char` (peeling references). Used by the
+/// `min`/`max`/`clamp` dispatch to keep the result `char`-typed - the
+/// codepoint compares correctly as an i64, but the result must print as a
+/// character, not its codepoint integer.
+pub(crate) fn arg_is_char(tcx: &gossamer_types::TyCtxt, expr: &HirExpr) -> bool {
+    use gossamer_types::TyKind;
+    let mut walk = expr.ty;
+    while let TyKind::Ref { inner, .. } = tcx.kind_of(walk) {
+        walk = *inner;
+    }
+    matches!(tcx.kind_of(walk), TyKind::Char)
+}
+
 /// True when `expr` types as `Vec<u8>` / `&Vec<u8>` / `&[u8]` /
 /// `[u8]` - used by the `os::write_file` dispatcher to pick the
 /// bytes-shaped runtime helper for binary writes (preserves NUL

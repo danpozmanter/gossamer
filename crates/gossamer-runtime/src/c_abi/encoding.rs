@@ -620,6 +620,7 @@ macro_rules! put_fixed {
     };
 }
 
+put_fixed!(gos_rt_bin_put_u8, u8, to_be_bytes, 1);
 put_fixed!(gos_rt_bin_put_u16_be, u16, to_be_bytes, 2);
 put_fixed!(gos_rt_bin_put_u16_le, u16, to_le_bytes, 2);
 put_fixed!(gos_rt_bin_put_u32_be, u32, to_be_bytes, 4);
@@ -645,6 +646,7 @@ macro_rules! get_fixed {
     };
 }
 
+get_fixed!(gos_rt_bin_get_u8, u8, from_be_bytes, 1);
 get_fixed!(gos_rt_bin_get_u16_be, u16, from_be_bytes, 2);
 get_fixed!(gos_rt_bin_get_u16_le, u16, from_le_bytes, 2);
 get_fixed!(gos_rt_bin_get_u32_be, u32, from_be_bytes, 4);
@@ -732,6 +734,42 @@ pub unsafe extern "C" fn gos_rt_bin_varint(data: *const super::vec::GosVec) -> i
             }
             Err(e) => err_result(&e),
         }
+    })
+}
+
+fn uvarint_encode(mut x: u64) -> Vec<u8> {
+    let mut out = Vec::new();
+    while x >= 0x80 {
+        out.push((x as u8) | 0x80);
+        x >>= 7;
+    }
+    out.push(x as u8);
+    out
+}
+
+/// `encoding::binary::put_uvarint(buf, x) -> [u8]` - LEB128 encoding of
+/// an unsigned varint. Mirrors the `put_*` shape: the buffer argument is
+/// ignored and a fresh byte vector is returned.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_bin_put_uvarint(
+    _buf: *const super::vec::GosVec,
+    v: i64,
+) -> *mut super::vec::GosVec {
+    ffi_entry!(std::ptr::null_mut(), {
+        bytes_to_gosvec(&uvarint_encode(v as u64))
+    })
+}
+
+/// `encoding::binary::put_varint(buf, x) -> [u8]` - zigzag + LEB128
+/// encoding of a signed varint.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_bin_put_varint(
+    _buf: *const super::vec::GosVec,
+    v: i64,
+) -> *mut super::vec::GosVec {
+    ffi_entry!(std::ptr::null_mut(), {
+        let ux = ((v << 1) ^ (v >> 63)) as u64;
+        bytes_to_gosvec(&uvarint_encode(ux))
     })
 }
 

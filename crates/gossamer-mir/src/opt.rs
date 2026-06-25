@@ -1115,8 +1115,19 @@ fn fold_binary(op: BinOp, lhs: &ConstValue, rhs: &ConstValue) -> Option<ConstVal
             BinOp::Add => Some(ConstValue::Int(x.wrapping_add(*y))),
             BinOp::Sub => Some(ConstValue::Int(x.wrapping_sub(*y))),
             BinOp::Mul => Some(ConstValue::Int(x.wrapping_mul(*y))),
-            BinOp::Div if *y != 0 => Some(ConstValue::Int(x.wrapping_div(*y))),
-            BinOp::Rem if *y != 0 => Some(ConstValue::Int(x.wrapping_rem(*y))),
+            // Integer `/` and `%` run at i64 width at runtime (the VM uses
+            // `i64::wrapping_div`/`wrapping_rem`; the compiled tiers `sdiv` an
+            // i64). Folding at the constants' full i128 width would disagree
+            // for a `u64`/`usize` operand at or above 2^63, whose i64 bit
+            // pattern is negative (`10^19 / 3` folds to the unsigned 3.33e18
+            // at i128 but the runtime produces the signed-i64 result). Fold at
+            // i64 width so the constant matches every tier.
+            BinOp::Div if *y != 0 => Some(ConstValue::Int(i128::from(
+                (*x as i64).wrapping_div(*y as i64),
+            ))),
+            BinOp::Rem if *y != 0 => Some(ConstValue::Int(i128::from(
+                (*x as i64).wrapping_rem(*y as i64),
+            ))),
             BinOp::BitAnd => Some(ConstValue::Int(x & y)),
             BinOp::BitOr => Some(ConstValue::Int(x | y)),
             BinOp::BitXor => Some(ConstValue::Int(x ^ y)),

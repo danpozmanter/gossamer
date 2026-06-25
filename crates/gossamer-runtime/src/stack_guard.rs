@@ -422,7 +422,7 @@ mod windows {
         // SAFETY: SetThreadStackGuarantee writes through the
         // pointer; `guarantee` is a stack-resident u32.
         unsafe {
-            let _ = SetThreadStackGuarantee(&mut guarantee);
+            let _ = SetThreadStackGuarantee(&raw mut guarantee);
         }
         FILTER_ONCE.call_once(|| {
             // SAFETY: installing a process-wide filter pointer is
@@ -470,7 +470,7 @@ mod windows {
                     h,
                     MSG.as_ptr(),
                     MSG.len() as u32,
-                    &mut written,
+                    &raw mut written,
                     std::ptr::null_mut(),
                 );
             }

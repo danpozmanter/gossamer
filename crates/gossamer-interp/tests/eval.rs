@@ -588,13 +588,7 @@ fn manhattan(p: Point) -> i64 {
     }
 }
 "#;
-    let p = Value::struct_(
-        "Point",
-        vec![
-            (gossamer_ast::Ident::new("x"), Value::Int(3)),
-            (gossamer_ast::Ident::new("y"), Value::Int(4)),
-        ],
-    );
+    let p = Value::struct_("Point", vec![("x", Value::Int(3)), ("y", Value::Int(4))]);
     let result = call_and_return(source, "manhattan", vec![p]);
     assert!(matches!(result, Value::Int(7)));
 }
@@ -613,10 +607,10 @@ fn width_only(r: Rect) -> i64 {
     let r = Value::struct_(
         "Rect",
         vec![
-            (gossamer_ast::Ident::new("x"), Value::Int(0)),
-            (gossamer_ast::Ident::new("y"), Value::Int(0)),
-            (gossamer_ast::Ident::new("w"), Value::Int(100)),
-            (gossamer_ast::Ident::new("h"), Value::Int(50)),
+            ("x", Value::Int(0)),
+            ("y", Value::Int(0)),
+            ("w", Value::Int(100)),
+            ("h", Value::Int(50)),
         ],
     );
     let result = call_and_return(source, "width_only", vec![r]);

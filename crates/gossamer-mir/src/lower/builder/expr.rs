@@ -1363,14 +1363,15 @@ impl<'a> Builder<'a> {
             });
             self.set_current(ok);
         }
-        // Signed `MIN / -1`: the wrapped result the VM produces
-        // (`MIN` for `/`, `0` for `%`) instead of a trapping `sdiv`.
-        // LLVM/Cranelift fold this away when the divisor is a constant
-        // other than -1. Unsigned division never overflows this way.
+        // Signed `MIN / -1`: the wrapped result the VM produces (`MIN` for
+        // `/`, `0` for `%`) instead of a trapping `sdiv`. Only the widths that
+        // actually overflow the i64 runtime representation need the guard:
+        // integer arithmetic runs at i64 width, so `i8`/`i16`/`i32 MIN / -1`
+        // do NOT overflow there (the VM's `i64::wrapping_div` yields the
+        // non-wrapped `+2^(n-1)`); guarding them with the narrow MIN would
+        // const-fold the wrong wrapped value. Only `i64`/`isize` (and the
+        // rejected `i128`) overflow.
         let signed_min: Option<i128> = match int_ty {
-            Some(gossamer_types::IntTy::I8) => Some(i128::from(i8::MIN)),
-            Some(gossamer_types::IntTy::I16) => Some(i128::from(i16::MIN)),
-            Some(gossamer_types::IntTy::I32) => Some(i128::from(i32::MIN)),
             Some(gossamer_types::IntTy::I64 | gossamer_types::IntTy::Isize) => {
                 Some(i128::from(i64::MIN))
             }
@@ -2347,10 +2348,32 @@ impl<'a> Builder<'a> {
                 self.tcx.kind_of(elem_unwrapped),
                 TyKind::Adt { def, .. } if def.local == u32::MAX || def.local == u32::MAX - 1
             );
-            let elem_is_multislot = matches!(
+            // A user struct is address-is-value even at a single 8-byte
+            // slot - its `.field` projections dereference off the slot
+            // pointer, so it must come back through `gos_rt_vec_get_ptr`
+            // like any multi-slot aggregate. Read as an `i64` scalar it
+            // would hand back the boxed pointer's bits, and the following
+            // `.field` access would dereference a wrong address. Opaque
+            // stdlib handle structs (`def.local` in the sentinel range)
+            // carry their handle inline and stay on the scalar read; enums
+            // (no struct fields) keep the get_i64 handle the matcher wants.
+            let elem_is_struct_adt = matches!(
+                self.tcx.kind_of(elem_unwrapped),
+                TyKind::Adt { def, .. }
+                    if def.local < u32::MAX - 16 && self.tcx.struct_field_tys(*def).is_some()
+            );
+            // A tuple element is address-is-value at any width, exactly like a
+            // user struct - a single-element tuple `(T,)` occupies one 8-byte
+            // slot yet its `.0` projection still dereferences off the slot
+            // pointer, so it must come back through `gos_rt_vec_get_ptr` too.
+            // (`Result`/`Option` are handled by `elem_is_result_option` above.)
+            let elem_is_tuple = matches!(self.tcx.kind_of(elem_unwrapped), TyKind::Tuple(_));
+            let elem_is_multislot = (matches!(
                 self.tcx.kind_of(elem_unwrapped),
                 TyKind::Tuple(_) | TyKind::Adt { .. } | TyKind::Array { .. }
-            ) && self.type_slot_bytes(elem_unwrapped) > 8;
+            ) && self.type_slot_bytes(elem_unwrapped) > 8)
+                || elem_is_struct_adt
+                || elem_is_tuple;
             let (helper, dest_ty) = if elem_is_result_option {
                 ("gos_rt_vec_get_i128", elem_unwrapped)
             } else if elem_is_multislot {

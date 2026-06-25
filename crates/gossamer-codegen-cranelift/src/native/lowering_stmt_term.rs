@@ -126,8 +126,8 @@ use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
 use cranelift_module::{DataDescription, DataId, FuncId, Linkage, Module, ModuleDeclarations};
 use cranelift_object::{ObjectBuilder, ObjectModule};
 use gossamer_mir::{
-    BinOp, Body, ConstValue, Local, Operand, Place, Projection, Rvalue, StatementKind, Terminator,
-    UnOp,
+    AssertMessage, BinOp, Body, ConstValue, Local, Operand, Place, Projection, Rvalue,
+    StatementKind, Terminator, UnOp,
 };
 use gossamer_types::{FloatTy, IntTy, Ty, TyCtxt, TyKind};
 use rayon::prelude::*;
@@ -776,40 +776,47 @@ pub(super) fn lower_terminator(
                 let is_variant = name.chars().next().is_some_and(char::is_uppercase);
                 if name.contains("::") || is_variant {
                     // Option / Result variant constructors with a
-                    // payload (`Ok(v)`, `Some(v)`, `Err(e)`) lower
-                    // to identity: the wrapped value passes through
+                    // payload (`Ok(v)`, `Some(v)`, `Err(e)`) lower to
+                    // identity: the wrapped value passes through
                     // unchanged so `r.unwrap()` (also identity)
-                    // recovers it. Variants without a payload
-                    // (`None`, no-payload user-enum constructors)
-                    // continue to default to zero.
-                    let result_value =
-                        if matches!(name.as_str(), "Ok" | "Some" | "Err") && !args.is_empty() {
-                            lower_operand(
-                                module, builder, locals, body, tcx, &args[0], None, intrinsics,
-                            )?
-                        } else {
-                            builder.ins().iconst(types::I64, 0)
-                        };
-                    store_call_result(
-                        module,
-                        builder,
-                        locals,
-                        body,
-                        tcx,
-                        destination,
-                        result_value,
-                        intrinsics,
-                    )?;
-                    match target {
-                        Some(block_id) => {
-                            let block = blocks[&block_id.as_u32()];
-                            builder.ins().jump(block, &[]);
+                    // recovers it.
+                    if matches!(name.as_str(), "Ok" | "Some" | "Err") && !args.is_empty() {
+                        let result_value = lower_operand(
+                            module, builder, locals, body, tcx, &args[0], None, intrinsics,
+                        )?;
+                        store_call_result(
+                            module,
+                            builder,
+                            locals,
+                            body,
+                            tcx,
+                            destination,
+                            result_value,
+                            intrinsics,
+                        )?;
+                        match target {
+                            Some(block_id) => {
+                                let block = blocks[&block_id.as_u32()];
+                                builder.ins().jump(block, &[]);
+                            }
+                            None => {
+                                builder.ins().trap(ir::TrapCode::user(1).unwrap());
+                            }
                         }
-                        None => {
-                            builder.ins().trap(ir::TrapCode::user(1).unwrap());
-                        }
+                        return Ok(());
                     }
-                    return Ok(());
+                    // Any other qualified or capitalised callee that
+                    // reaches here matched neither the intrinsic
+                    // dispatch, the runtime-symbol table, nor a user
+                    // body - the cranelift backend has no lowering for
+                    // it. Emitting a typed-zero default would silently
+                    // corrupt the result; refuse so JIT compilation of
+                    // this program aborts and the bytecode VM (which
+                    // resolves the call correctly) runs it instead.
+                    bail!(
+                        "native codegen: refusing to emit zero-stub for unresolved \
+                         qualified/variant call '{name}' - the bytecode VM resolves it correctly"
+                    );
                 }
                 // 0.8.0: no soft-zero fallback. An unknown call
                 // name is a hard error - silent zero stubs hide
@@ -927,7 +934,7 @@ pub(super) fn lower_terminator(
             cond,
             expected,
             target,
-            ..
+            msg,
         } => {
             let value = lower_operand(module, builder, locals, body, tcx, cond, None, intrinsics)?;
             let value_ty = value_type(value, builder);
@@ -941,13 +948,16 @@ pub(super) fn lower_terminator(
                 .icmp(ir::condcodes::IntCC::Equal, value, expected_value);
             builder.ins().brif(matched, pass, &[], fail, &[]);
             builder.switch_to_block(fail);
-            builder.ins().trap(ir::TrapCode::user(3).unwrap());
+            // A failed assertion renders `error[GX0005]` and exits /
+            // unwinds through the runtime, matching the VM and AOT
+            // tiers, instead of a bare illegal-instruction trap.
+            emit_runtime_panic(module, builder, intrinsics, assert_message_text(msg))?;
             builder.switch_to_block(pass);
             let block = blocks[&target.as_u32()];
             builder.ins().jump(block, &[]);
         }
-        Terminator::Panic { .. } => {
-            builder.ins().trap(ir::TrapCode::user(4).unwrap());
+        Terminator::Panic { message } => {
+            emit_runtime_panic(module, builder, intrinsics, message)?;
         }
         Terminator::Drop { target, .. } => {
             // No destructors to run today; treat the drop as a
@@ -957,8 +967,59 @@ pub(super) fn lower_terminator(
             builder.ins().jump(block, &[]);
         }
         Terminator::Unreachable => {
-            builder.ins().trap(ir::TrapCode::user(2).unwrap());
+            // A well-formed program never reaches this terminator. If a
+            // miscompiled path does, render a clean diagnostic and exit /
+            // unwind through the runtime rather than executing an
+            // illegal-instruction trap.
+            emit_runtime_panic(module, builder, intrinsics, UNREACHABLE_PANIC_MSG)?;
         }
     }
+    Ok(())
+}
+
+/// Diagnostic text rendered by `Terminator::Unreachable` if a
+/// miscompiled path ever reaches it.
+pub(super) const UNREACHABLE_PANIC_MSG: &str = "internal error: reached unreachable code\n";
+
+/// Diagnostic text for each assertion kind, mirroring the LLVM
+/// backend's strings so panic output is identical across tiers.
+pub(super) fn assert_message_text(msg: &AssertMessage) -> &'static str {
+    match msg {
+        AssertMessage::BoundsCheck => "index out of bounds\n",
+        AssertMessage::Overflow => "arithmetic overflow\n",
+        AssertMessage::DivideByZero => "divide by zero\n",
+    }
+}
+
+/// Every fixed panic message the terminator lowering can emit. The
+/// JIT pre-interns these as data before its parallel codegen phase so
+/// `emit_runtime_panic` never declares a fresh string mid-parallel.
+/// Keep in sync with [`assert_message_text`] and [`UNREACHABLE_PANIC_MSG`].
+pub(super) const STATIC_PANIC_MESSAGES: &[&str] = &[
+    "index out of bounds\n",
+    "arithmetic overflow\n",
+    "divide by zero\n",
+    UNREACHABLE_PANIC_MSG,
+];
+
+/// Emits a call to the runtime panic shim with a static message,
+/// followed by a trap that serves as the block's unreachable
+/// terminator (the shim is `-> !`: it renders `error[GX0005]` and
+/// exits on the main goroutine or unwinds inside a spawned one).
+/// Mirrors the LLVM backend's `gos_rt_panic` lowering so the
+/// in-process JIT tier produces the same clean diagnostic the VM and
+/// AOT tiers do instead of a raw machine trap.
+fn emit_runtime_panic(
+    module: &mut dyn Module,
+    builder: &mut FunctionBuilder<'_>,
+    intrinsics: &mut IntrinsicContext,
+    message: &str,
+) -> Result<()> {
+    let panic_fn = intrinsics.extern_fn_by_name(module, "gos_rt_panic")?;
+    let panic_ref = module.declare_func_in_func(panic_fn, builder.func);
+    let msg_data = intrinsics.intern_string(module, message)?;
+    let msg_ptr = intrinsics.static_string_body_ptr(module, builder, msg_data);
+    let _ = builder.ins().call(panic_ref, &[msg_ptr]);
+    builder.ins().trap(ir::TrapCode::user(4).unwrap());
     Ok(())
 }

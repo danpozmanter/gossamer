@@ -173,9 +173,6 @@ fn install_native_handlers() {
     // `Win32::Foundation` into the crate's `core` module.
     use windows_sys::core::BOOL;
     static ONCE: Once = Once::new();
-    if std::env::var("GOSSAMER_SIGNAL_DISABLE_HANDLERS").is_ok() {
-        return;
-    }
     // Win32 invokes the handler on a fresh worker thread per
     // event, so taking parking_lot locks + writing to stderr is
     // safe - this is not an async-signal context like Unix.
@@ -196,6 +193,9 @@ fn install_native_handlers() {
             let _ = gossamer_runtime::sigquit::render_to(&mut stderr);
         }
         1
+    }
+    if std::env::var("GOSSAMER_SIGNAL_DISABLE_HANDLERS").is_ok() {
+        return;
     }
     ONCE.call_once(|| {
         // SAFETY: the function pointer is valid for the program

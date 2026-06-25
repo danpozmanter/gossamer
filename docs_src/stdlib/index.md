@@ -80,7 +80,6 @@ One page per module. Source is `crates/gossamer-std/src/`; this index is regener
 | [`std::iter`](iter.md) | Sequence adapters over Vec<T>: map, filter, fold, zip, enumerate, chain, etc. |
 | [`std::jwt`](jwt.md) | RFC 7519 sign / verify for HS256 / HS384 / HS512, ES256, and EdDSA tokens. |
 | [`std::lifecycle`](lifecycle.md) | Graceful-shutdown coordinator with signal handling and sd_notify support. |
-| [`std::log`](log.md) | Flat line-oriented logging (Go's `log` shape). |
 | [`std::math`](math.md) | Mathematical constants and f64 functions (Go's math package shape). |
 | [`std::math::big`](math_big.md) | Arbitrary-precision integers (num-bigint). |
 | [`std::math::bits`](math_bits.md) | Integer bit-manipulation operations (Go's math/bits shape). |
@@ -98,7 +97,6 @@ One page per module. Source is `crates/gossamer-std/src/`; this index is regener
 | [`std::os::user`](os_user.md) | POSIX user / group lookup. Unix-backed by `nix`; Windows falls back to env vars. |
 | [`std::panic`](panic.md) | Panic / `catch_unwind` integration. |
 | [`std::path`](path.md) | POSIX-style path manipulation. |
-| [`std::path::native`](path_native.md) | Native-separator wrappers over `std::path` (backslash on Windows). |
 | [`std::process`](process.md) | Spawn child processes, exit the current process (Rust std::process shape). |
 | [`std::regex`](regex.md) | Compiled regular expressions (Rust `regex` crate syntax; no backreferences or look-around). |
 | [`std::result`](result.md) | Data-last Result combinators for pipeline chaining: map, map_err, default_with, etc. |

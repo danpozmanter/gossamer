@@ -1,0 +1,31 @@
+// A closure capturing an inline aggregate (struct / tuple) reads every field
+// correctly, not just the first. The capture is copied to a stable heap box
+// and the closure body materialises it by value, so a captured value survives
+// the frame that built it (an escaping closure) and reads fields past index 0.
+
+struct Point {
+    x: i64,
+    y: i64,
+    z: i64,
+}
+
+fn apply(f: Fn(i64) -> i64, n: i64) -> i64 {
+    f(n)
+}
+
+fn make_adder(p: Point) -> Fn(i64) -> i64 {
+    |n: i64| p.x + p.y + p.z + n
+}
+
+fn main() {
+    let p = Point { x: 10, y: 20, z: 30 }
+    println!("{}", apply(|n: i64| p.x + n, 1))
+    println!("{}", apply(|n: i64| p.y + n, 2))
+    println!("{}", apply(|n: i64| p.z + n, 3))
+
+    let t = (100, 200, 300)
+    println!("{}", apply(|n: i64| t.1 + n, 0))
+
+    let escaping = make_adder(Point { x: 1, y: 2, z: 3 })
+    println!("{}", escaping(100))
+}

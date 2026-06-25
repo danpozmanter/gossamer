@@ -39,8 +39,6 @@ fn os_module_lists_filesystem_helpers() {
         "args",
         "env",
         "exit",
-        "open",
-        "create",
         "read_file",
         "write_file",
         "exists",

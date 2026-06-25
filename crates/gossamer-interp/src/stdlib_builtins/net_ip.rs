@@ -131,9 +131,9 @@ pub(crate) fn ip_to_value(ip: gossamer_std::net::ip::Ip) -> Value {
     Value::struct_(
         "net::ip::Ip",
         Arc::unwrap_or_clone(Arc::new(vec![
-            (Ident::new("__tag"), Value::String(tag.into())),
-            (Ident::new("__str"), Value::String(ip.to_string().into())),
-            (Ident::new("__octets"), bytes_to_value_array(&octets)),
+            ("__tag", Value::String(tag.into())),
+            ("__str", Value::String(ip.to_string().into())),
+            ("__octets", bytes_to_value_array(&octets)),
         ])),
     )
 }
@@ -142,7 +142,7 @@ pub(crate) fn ip_from_value(v: &Value) -> Option<gossamer_std::net::ip::Ip> {
     let s = match v {
         Value::Struct(inner) if inner.name == "net::ip::Ip" => {
             inner.fields.iter().find_map(|(i, val)| {
-                if i.name == "__str" {
+                if (*i) == "__str" {
                     if let Value::String(s) = val {
                         Some(s.as_str().to_string())
                     } else {

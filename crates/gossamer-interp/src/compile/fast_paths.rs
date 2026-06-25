@@ -860,9 +860,12 @@ impl<'tcx> FnBuilder<'tcx> {
         array_ty: Ty,
         elems: &[HirExpr],
     ) -> RuntimeResult<Option<TypedReg>> {
-        // Require a concrete array-of-struct shape.
+        // Require a fixed-size `[S; N]` array shape. The flat
+        // `FloatArray` representation has no growth path, so a
+        // growable `Vec`/`Slice` of all-f64 structs must keep the
+        // boxed `Array(Struct)` form that `push`/`pop` understand.
         let elem_ty = match self.tcx.kind(array_ty) {
-            Some(TyKind::Array { elem, .. } | TyKind::Vec(elem) | TyKind::Slice(elem)) => *elem,
+            Some(TyKind::Array { elem, .. }) => *elem,
             _ => return Ok(None),
         };
         let (def, struct_name) = match self.tcx.kind(elem_ty) {

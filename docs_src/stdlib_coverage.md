@@ -35,7 +35,6 @@ Glyphs: ✓ supported · ◑ partial · ✗ missing.
 | `std::errors` | ✓ | ✓ | ✓ | new, wrap, is, chain, join. |
 | `std::flag` | ✓ | ✓ | ✓ | Set with string/int/uint/float/bool/duration/string_list, --help, equals form. Subcommands deferred to v1.x. |
 | `std::path` | ✓ | ✓ | ✓ | join, split, base, dir, ext, clean. |
-| `std::path::native` | ✓ | ✓ | ✓ | SEPARATOR, join, clean, to_posix, to_native. |
 | `std::fs` | ✓ | ✓ | ✓ | read_dir, walk_dir, mkdir_all, remove_all, copy, rename. |
 | `std::bytes` | ✓ | ✓ | ✓ | Buffer, Builder, index_of, split, replace. |
 | `std::bufio` | ✓ | ✓ | ✓ | Reader, Writer, Scanner with split_lines / split_words. |

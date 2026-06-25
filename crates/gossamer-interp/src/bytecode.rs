@@ -140,6 +140,13 @@ pub enum Op {
     Return { value: Reg },
     /// `ret ()`.
     ReturnUnit,
+    /// Diverges with `RuntimeError::Panic`, reading the message from the
+    /// `Value::String` at `consts[msg]`. Emitted on a `match`'s
+    /// fall-through path so a value that escapes every arm (a guard gap
+    /// the exhaustiveness checker could not see) panics cleanly, matching
+    /// the compiled tiers' `Terminator::Panic` rather than returning a
+    /// zero value.
+    Panic { msg: ConstIdx },
     /// `dst = closure value` - builds a [`crate::value::Closure`]
     /// from the proto at `FnChunk::closure_protos[proto]`. The
     /// handler snapshots each register named in the proto's
@@ -1115,6 +1122,21 @@ pub enum Op {
         /// Destination Value register (holds the cell during the call).
         dst: Reg,
         /// Register holding the aggregate to share.
+        src: Reg,
+    },
+    /// `registers[dst] = MutCell(take(registers[src]))` - like
+    /// [`Op::CellNew`] but *moves* the source register's value into the
+    /// cell, leaving it `Unit`. Used for a `&mut self` method receiver
+    /// rooted at a local: the receiver is republished into the same place
+    /// by the matching [`Op::CellTake`] on return, and moving (rather than
+    /// cloning) keeps its refcount at one so the callee's first field
+    /// write mutates in place instead of forcing a copy-on-write clone.
+    /// The emitter evaluates every call argument before this op, so an
+    /// argument that reads the receiver still sees its live value.
+    CellNewMove {
+        /// Destination Value register (holds the cell during the call).
+        dst: Reg,
+        /// Register whose value is moved into the cell (left `Unit`).
         src: Reg,
     },
     /// `registers[dst] = cell.inner` - reads a write-back cell's

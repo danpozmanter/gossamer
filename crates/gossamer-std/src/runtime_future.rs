@@ -129,7 +129,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
+    use parking_lot::Mutex;
     use std::time::Duration;
 
     /// Future that returns Ready on the first poll. Sanity test
@@ -153,7 +153,7 @@ mod tests {
         let done_for_g = Arc::clone(&done);
         gossamer_runtime::sched_global::spawn(Box::new(move || {
             let v = drive(ImmediateReady(42_i64));
-            *result_for_g.lock().unwrap() = Some(v);
+            *result_for_g.lock() = Some(v);
             done_for_g.store(true, Ordering::Release);
         }));
         // Spin briefly waiting for the goroutine to finish.
@@ -164,7 +164,7 @@ mod tests {
             }
             std::thread::sleep(Duration::from_millis(5));
         }
-        assert_eq!(*result.lock().unwrap(), Some(42));
+        assert_eq!(*result.lock(), Some(42));
     }
 
     /// Future that returns Pending on the first poll, schedules a
@@ -199,7 +199,7 @@ mod tests {
             let v = drive(WakesOnce {
                 polled: AtomicBool::new(false),
             });
-            *result_for_g.lock().unwrap() = Some(v);
+            *result_for_g.lock() = Some(v);
             done_for_g.store(true, Ordering::Release);
         }));
         // The property under test is wake DELIVERY, not latency: a
@@ -222,6 +222,6 @@ mod tests {
             "external wake not delivered within 120s - parked goroutine \
              likely lost its wake (see sched/multi.rs retired-inbox invariant)"
         );
-        assert_eq!(*result.lock().unwrap(), Some(7));
+        assert_eq!(*result.lock(), Some(7));
     }
 }

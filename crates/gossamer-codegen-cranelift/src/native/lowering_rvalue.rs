@@ -225,7 +225,8 @@ pub(super) fn lower_rvalue(
                 let call = builder.ins().call(fref, &[a64, b64]);
                 builder.inst_results(call)[0]
             } else {
-                lower_binop(builder, *op, a, b)?
+                let unsigned = cmp_shift_is_unsigned(tcx, body, lhs, rhs);
+                lower_binop(builder, *op, a, b, unsigned)?
             }
         }
         Rvalue::UnaryOp { op, operand } => {
@@ -905,11 +906,39 @@ pub(super) fn lower_const(
     })
 }
 
+/// Whether `< <= > >=` and `>>` on these operands must use unsigned
+/// machine ops. Mirrors the LLVM backend and the VM: only `u64` /
+/// `usize` (values that can exceed `i64::MAX`) need unsigned compare
+/// plus logical shift; every signed type and every `<=32`-bit
+/// unsigned type masks below `2^63` and compares identically as
+/// signed. A constant operand carries no declared signedness, so the
+/// place operand decides; two constants stay signed.
+fn cmp_shift_is_unsigned(tcx: &TyCtxt, body: &Body, lhs: &Operand, rhs: &Operand) -> bool {
+    let pick = |op: &Operand| -> Option<IntTy> {
+        let Operand::Copy(place) = op else {
+            return None;
+        };
+        let mut ty = resolve_place_ty(tcx, body, place);
+        while let TyKind::Ref { inner, .. } = tcx.kind_of(ty) {
+            ty = *inner;
+        }
+        match tcx.kind_of(ty) {
+            TyKind::Int(i) => Some(*i),
+            _ => None,
+        }
+    };
+    matches!(
+        pick(lhs).or_else(|| pick(rhs)),
+        Some(IntTy::U64 | IntTy::Usize | IntTy::U128)
+    )
+}
+
 pub(super) fn lower_binop(
     builder: &mut FunctionBuilder<'_>,
     op: BinOp,
     a: ir::Value,
     b: ir::Value,
+    unsigned: bool,
 ) -> Result<ir::Value> {
     let mut a_ty = value_type(a, builder);
     let mut b_ty = value_type(b, builder);
@@ -981,20 +1010,40 @@ pub(super) fn lower_binop(
         BinOp::BitOr => builder.ins().bor(a, b),
         BinOp::BitXor => builder.ins().bxor(a, b),
         BinOp::Shl => builder.ins().ishl(a, b),
-        // All ≤64-bit ints are signed-i64 runtime values, so `>>`
-        // is always the arithmetic shift (VM reference:
-        // `wrapping_shr` on `i64`).
-        BinOp::Shr => builder.ins().sshr(a, b),
+        // `u64` / `usize` operands shift logically (`ushr`); every
+        // signed type and the narrower unsigned types keep the
+        // arithmetic shift, matching the LLVM backend and the VM
+        // (`wrapping_shr` over the declared signedness).
+        BinOp::Shr => {
+            if unsigned {
+                builder.ins().ushr(a, b)
+            } else {
+                builder.ins().sshr(a, b)
+            }
+        }
         BinOp::Eq => compare_bool(builder, ir::condcodes::IntCC::Equal, a, b),
         BinOp::Ne => compare_bool(builder, ir::condcodes::IntCC::NotEqual, a, b),
-        BinOp::Lt => compare_bool(builder, ir::condcodes::IntCC::SignedLessThan, a, b),
-        BinOp::Le => compare_bool(builder, ir::condcodes::IntCC::SignedLessThanOrEqual, a, b),
-        BinOp::Gt => compare_bool(builder, ir::condcodes::IntCC::SignedGreaterThan, a, b),
-        BinOp::Ge => compare_bool(
-            builder,
-            ir::condcodes::IntCC::SignedGreaterThanOrEqual,
-            a,
-            b,
-        ),
+        BinOp::Lt => compare_bool(builder, int_cmp_cc(BinOp::Lt, unsigned), a, b),
+        BinOp::Le => compare_bool(builder, int_cmp_cc(BinOp::Le, unsigned), a, b),
+        BinOp::Gt => compare_bool(builder, int_cmp_cc(BinOp::Gt, unsigned), a, b),
+        BinOp::Ge => compare_bool(builder, int_cmp_cc(BinOp::Ge, unsigned), a, b),
     })
+}
+
+/// Cranelift integer condition for an ordered comparison, selecting
+/// the unsigned variant for `u64` / `usize` operands. Equality is
+/// sign-independent and handled by the caller.
+fn int_cmp_cc(op: BinOp, unsigned: bool) -> ir::condcodes::IntCC {
+    use ir::condcodes::IntCC;
+    match (op, unsigned) {
+        (BinOp::Lt, false) => IntCC::SignedLessThan,
+        (BinOp::Lt, true) => IntCC::UnsignedLessThan,
+        (BinOp::Le, false) => IntCC::SignedLessThanOrEqual,
+        (BinOp::Le, true) => IntCC::UnsignedLessThanOrEqual,
+        (BinOp::Gt, false) => IntCC::SignedGreaterThan,
+        (BinOp::Gt, true) => IntCC::UnsignedGreaterThan,
+        (BinOp::Ge, false) => IntCC::SignedGreaterThanOrEqual,
+        (BinOp::Ge, true) => IntCC::UnsignedGreaterThanOrEqual,
+        _ => unreachable!("int_cmp_cc only handles ordered comparisons"),
+    }
 }

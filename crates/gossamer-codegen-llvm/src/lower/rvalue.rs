@@ -277,10 +277,34 @@ impl<'a> Lowerer<'a> {
             name,
             "gos_rt_map_insert_i64_i64" | "gos_rt_map_insert_str_i64"
         );
+        // `gos_rt_enum_box_aggr(size, meta, src)`: the second argument names a
+        // module-global `RC_KIND_STRUCT` meta blob (the box's child layout),
+        // and the third is the source aggregate's stack slot ADDRESS - not the
+        // value its first word holds.
+        let enum_box_aggr = matches!(name, "gos_rt_enum_box_aggr");
         let mut arg_text = String::new();
         for (i, arg) in args.iter().enumerate() {
             if i > 0 {
                 arg_text.push_str(", ");
+            }
+            if enum_box_aggr && i == 1 {
+                let meta = match arg {
+                    Operand::Const(ConstValue::Str(sym)) if !sym.is_empty() => {
+                        format!("@\"{sym}\"")
+                    }
+                    _ => "null".to_string(),
+                };
+                let _ = write!(arg_text, "ptr {meta}");
+                continue;
+            }
+            if enum_box_aggr
+                && i == 2
+                && let Operand::Copy(place) = arg
+                && place.projection.is_empty()
+            {
+                let slot = local_slot(place.local);
+                let _ = write!(arg_text, "ptr {slot}");
+                continue;
             }
             let a_ty = self.operand_llvm_ty(arg);
             let a_v = self.lower_operand(arg)?;

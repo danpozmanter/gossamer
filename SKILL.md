@@ -18,7 +18,7 @@ Go-shaped: goroutines, channels. Source files end in `.gos`. The
 toolchain binary is `gos`. Every project ships a `project.toml`
 manifest.
 
-Status: pre-1.0.0 (currently 0.17.0). The surface is stable to
+Status: pre-1.0.0 (currently 0.18.1). The surface is stable to
 write against, and features ship across all three tiers (bytecode
 VM, in-process JIT, LLVM AOT) - see "current gaps" at the bottom.
 
@@ -42,9 +42,12 @@ first time through, leave it alone.
 - **`for x in xs` over collections - no `.iter()`, no `*x`.** The
   binding is the value for `Copy` types, a borrow otherwise.
 - **Bare integer indices - no `as usize`.** `arr[i]` works for
-  `i: i64`. An index outside `[0, len)` yields the element type's
-  zero value rather than panicking (identical on every tier) - so
-  guard with `len()` when absence must differ from zero.
+  `i: i64`. For scalar element types an index outside `[0, len)`
+  yields the element's zero value rather than panicking (identical on
+  every tier) - so guard with `len()` when absence must differ from
+  zero. For aggregate elements (`Vec<Struct>`, `v[i].field`) an
+  out-of-range access panics with `index out of bounds` on every
+  tier rather than fabricating a zero aggregate.
 - **`arr.swap(i, j)`** over the manual three-line temp dance.
 - **`m.inc(k)` / `m.inc(k, by)`** for counters; `m.or_insert(k,
   default)` for get-or-fill.
@@ -356,8 +359,8 @@ fn load_config(path: &String) -> Result<String, errors::Error> {
 - `errors::newf(fmt, args…)` - format-shaped constructor, e.g.
   `errors::newf("status {}", code)`.
 - `errors::wrap(cause, msg)` - add a higher-level message.
-- `errors::is(err, needle)` / `errors::chain(err)` - walk/iterate
-  the cause chain.
+- `errors::is(err, needle)` - test the cause chain for a needle;
+  walk the chain directly with `err.cause()`.
 - `errors::join([err, err])` - combine several.
 
 Rendering a wrapped error with `{}` prints the colon-joined chain
@@ -583,7 +586,7 @@ mod arith_tests {
 ```
 
 Doc-tests: fenced code inside a `//` doc-comment block is compiled
-and run by `gos test`. Mark non-runnable fences ` ```text `.
+and run by `gos test`. Mark non-runnable fences ` ```text ```.
 
 ## 12. Standard library surface
 
@@ -602,14 +605,10 @@ repo examples and write a small test when unsure.
 - `std::fs` - `read`, `read_to_string`, `write`, `read_dir`,
   `walk_dir`, `create_dir(_all)`, `remove_file/dir(_all)`,
   `remove_all`, `copy`, `rename`, `exists`, `is_file/dir/symlink`,
-  `file_size`, `metadata`, `canonicalize`, `glob`, `eval_symlinks`,
-  `mmap_read/write`, `lock_exclusive/shared`, `write_atomic`,
-  `hard_link`, `set_permissions_mode`, `chown`, `TempDir`,
-  `temp_file(prefix)`, `fs::watch::Watcher`.
+  `file_size`, `metadata`, `canonicalize`.
 - `std::path` - pure manipulation (no I/O): `join`, `split`, `base`,
   `dir`, `ext`, `clean`, `is_absolute`, `has_prefix`, `matches`,
-  `parent`, `file_name`, `stem`, `normalize`. `path::native` for
-  Windows-style paths.
+  `parent`, `file_name`, `stem`, `normalize`.
 - `std::os` - `family()`, `arch()`; `write_file(path, &Vec<u8>)`
   (binary-safe) and `read_file(path) -> Result<Vec<u8>, _>` /
   `read_file_to_string`.
@@ -661,10 +660,9 @@ repo examples and write a small test when unsure.
   `Response::stream(status, ct, upstream)`; bodies cap at 1 MiB.
 - `std::http` server stack: `cookie`, `csrf`, `form`, `multipart`,
   `query`, `session`, `state` (`AppState`/`State<T>`), `health`,
-  `middleware` (`body_limit`, `timeout`, `hsts`, `security_headers`,
-  `bearer_auth`, `rate_limit`, `compress_gzip`, `cors`, `basic_auth`,
-  `logger`, and more); HTTP/2 push + trailers. `std::http_h3` - HTTP/3
-  server + client (RFC 9114).
+  `middleware` (`accepts_gzip`, `bearer_ok`, `decode_basic_auth`,
+  `new_request_id`, `tag`); HTTP/2 push + trailers. `std::http_h3` -
+  HTTP/3 server + client (RFC 9114).
 - `std::encoding::{json, base64, hex, binary}`. Every user struct
   gets generic serializer free functions called with a turbofish:
   `from_json::<Type>(text) -> Result<Type, _>` and
@@ -794,42 +792,14 @@ bug - reduce it and check against `gos test` (interpreter) **and**
   `gos build`/`gos run` with `GR0003: name 'tests' defined multiple
   times` - name them `mod foo_tests`, `mod bar_tests`, etc.
 
-## 15. Style checklist
-
-(The idioms in §2 are the rules; this is the quick scan.)
-
-- `let` first, `let mut` only for a single named accumulator.
-- Compound assignment everywhere (`x += 1`).
-- `if let` / `while let` for refutable patterns; `match` only when
-  you need every variant.
-- Tuple-destructure at the binding; no `pair.0` reach-through.
-- `for x in xs`, not `xs.iter()`; no `as usize` on indices.
-- Use the helpers: `arr.swap`, `m.inc`, `m.or_insert`.
-- Pipe (`|>`) when a value flows through more than one call.
-- `iter::*` over hand-rolled `for` for transformations
-  (`xs |> iter::for_each(handle)`, `xs |> iter::sum_by(|n| n*n)`);
-  keep `for` for complex state / early-return / `break`/`continue`.
-  The combinators (`map`, `filter`, `filter_map`, `fold`, `reduce`,
-  `find`, `group_by`, `partition`, …) are free functions in
-  `std::iter`, data-last. Collections carry no `.map`/`.filter`/
-  `.fold` - only mutating methods (`push`, `sort`, `inc`,
-  `or_insert`).
-- `option::*` / `result::*` for in-pipeline chaining; `?` for
-  short-circuit propagation.
-- One statement per line; omit semicolons. No emojis. No committed
-  TODO/FIXME (open an issue). Doc every `pub` item with a single
-  `//` line directly above it.
-- Derive `Debug`, `Clone`, `PartialEq` when cheap; `Default` for
-  zero-valued types.
-
-## 16. Where to read more
+## 15. Where to read more
 
 - Language spec: `SPEC.md`. Style guide: `GUIDELINES.md`.
 - Rendered docs: `docs_src/` → `site/`.
 - Examples: `examples/` - start with `hello_world.gos`,
   `function_piping.gos`, `go_spawn.gos`, `concurrency.gos`.
 
-## 17. When in doubt
+## 16. When in doubt
 
 Run it. `gos check` gives rustc-class diagnostics with source
 excerpts and did-you-mean suggestions; `gos explain <CODE>` expands

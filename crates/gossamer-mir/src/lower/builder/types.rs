@@ -920,6 +920,24 @@ impl<'a> Builder<'a> {
         })
     }
 
+    /// True when an `iter()` receiver is a `HashMap` / `BTreeMap` (both
+    /// `TyKind::HashMap`) or a `HashSet`. Such receivers must NOT be peeled
+    /// to drive the for-loop: their handle is not a `GosVec`, and a map's
+    /// `.iter()` yields `(K, V)` PAIRS, not the receiver's element type -
+    /// so iteration must run over the runtime snapshot Vec the method
+    /// produces (with the element type from the `.iter()` result), not the
+    /// receiver. (`HashMap` is not a named Adt, so `runtime_kind_from_ty`
+    /// returns `None` for it - this checks the kind directly.)
+    pub(crate) fn receiver_is_map_or_set(&self, receiver: &gossamer_hir::HirExpr) -> bool {
+        use gossamer_types::TyKind;
+        let mut cur = receiver.ty;
+        while let TyKind::Ref { inner, .. } = self.tcx.kind_of(cur) {
+            cur = *inner;
+        }
+        matches!(self.tcx.kind_of(cur), TyKind::HashMap { .. })
+            || self.runtime_kind_from_ty(receiver.ty) == Some("collections::HashSet")
+    }
+
     /// Recovers the runtime-kind tag of an opaque-handle stdlib type from
     /// the receiver's *type* when the construction-site tag was lost - e.g.
     /// a `HashSet<String>` flowing in as a function parameter or out as a
@@ -1149,6 +1167,70 @@ impl<'a> Builder<'a> {
             symbol
         };
         self.tcx.register_aggr_copy_meta(ty, symbol.clone());
+        Some(symbol)
+    }
+
+    /// Word offsets of every RC-managed child (`String` or RC-node) of a
+    /// by-value aggregate `ty`, recursing through inline sub-structs / tuples
+    /// at absolute word offsets. The same field set the drop pass releases
+    /// (`aggregate_rc_field_paths`): `Vec` / `Slice` fields and inline-enum /
+    /// sentinel ADTs are excluded (a `Vec` carries no `RcHeader`, and those
+    /// ADTs run their own teardown). One word per child - RC-managed fields
+    /// are a single pointer slot.
+    pub(crate) fn aggr_rc_child_words(&self, ty: Ty) -> Vec<i64> {
+        let mut out = Vec::new();
+        self.collect_aggr_rc_words(ty, 0, 0, &mut out);
+        out
+    }
+
+    fn collect_aggr_rc_words(&self, ty: Ty, base_word: i64, depth: u32, out: &mut Vec<i64>) {
+        use gossamer_types::TyKind;
+        if depth > 16 {
+            return;
+        }
+        let field_tys: Vec<Ty> = match self.tcx.kind_of(ty) {
+            TyKind::Adt { def, .. }
+                if def.local < u32::MAX - 16 && !self.tcx.is_inline_enum_ty(ty) =>
+            {
+                match self.tcx.struct_field_tys(*def) {
+                    Some(fields) => fields.to_vec(),
+                    None => return,
+                }
+            }
+            TyKind::Tuple(elems) => elems.clone(),
+            _ => return,
+        };
+        let mut word = base_word;
+        for fty in field_tys {
+            let fwords = i64::from(self.type_slot_bytes(fty).max(8) / 8);
+            if self.tcx.is_rc_managed(fty)
+                && !matches!(self.tcx.kind_of(fty), TyKind::Vec(_) | TyKind::Slice(_))
+            {
+                out.push(word);
+            } else if matches!(self.tcx.kind_of(fty), TyKind::Tuple(_) | TyKind::Adt { .. }) {
+                // Inline sub-struct / tuple: its fields occupy these slots.
+                self.collect_aggr_rc_words(fty, word, depth + 1, out);
+            }
+            word += fwords;
+        }
+    }
+
+    /// Registers (idempotently) the `RC_KIND_STRUCT` child-word meta for an
+    /// enum-payload box of aggregate type `ty`, returning its symbol, or
+    /// `None` when the aggregate has no RC children (a scalar struct like
+    /// `Point` - its box is a meta-less leaf the release walk frees directly).
+    pub(crate) fn ensure_aggr_struct_meta(&mut self, ty: Ty) -> Option<String> {
+        let words = self.aggr_rc_child_words(ty);
+        if words.is_empty() {
+            return None;
+        }
+        let symbol = format!("gos_rc_meta_boxaggr_{}", ty.as_u32());
+        if self.tcx.rc_meta(&symbol).is_some() {
+            return Some(symbol);
+        }
+        let mut blob = vec![gossamer_abi::rc::RC_KIND_STRUCT, 1, 0, words.len() as i64];
+        blob.extend_from_slice(&words);
+        self.tcx.register_rc_meta(symbol.clone(), blob);
         Some(symbol)
     }
 

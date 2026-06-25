@@ -64,7 +64,7 @@ pub(crate) fn install_math_rand(globals: &mut Vec<(&'static str, Value)>) {
 fn rng_handle(id: i64) -> Value {
     Value::struct_(
         "rand::Rng",
-        Arc::unwrap_or_clone(Arc::new(vec![(Ident::new("__rng"), Value::Int(id))])),
+        Arc::unwrap_or_clone(Arc::new(vec![("__rng", Value::Int(id))])),
     )
 }
 
@@ -72,7 +72,7 @@ fn rng_id_of(value: &Value) -> Option<i64> {
     if let Value::Struct(inner) = value {
         if inner.name == "rand::Rng" {
             for (i, v) in &inner.fields {
-                if i.name == "__rng" {
+                if (*i) == "__rng" {
                     if let Value::Int(n) = v {
                         return Some(*n);
                     }

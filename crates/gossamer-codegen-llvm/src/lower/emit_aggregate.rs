@@ -352,6 +352,24 @@ impl<'a> Lowerer<'a> {
                 )
                 .unwrap();
             }
+            // The operand is the by-value `i128` enum (disc + payload), not a
+            // buffer pointer; pass it directly to the runtime debug formatter.
+            ConcatKind::Option(payload_kind) => {
+                declare_rt(&mut self.runtime_refs, "gos_rt_debug_option");
+                writeln!(
+                    self.out,
+                    "  {dest} = call ptr @gos_rt_debug_option(i128 {value}, i64 {payload_kind})"
+                )
+                .unwrap();
+            }
+            ConcatKind::Result(ok_kind, err_kind) => {
+                declare_rt(&mut self.runtime_refs, "gos_rt_debug_result");
+                writeln!(
+                    self.out,
+                    "  {dest} = call ptr @gos_rt_debug_result(i128 {value}, i64 {ok_kind}, i64 {err_kind})"
+                )
+                .unwrap();
+            }
             _ => unreachable!("emit_aggregate_format called with non-aggregate kind"),
         }
         dest

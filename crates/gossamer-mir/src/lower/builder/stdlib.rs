@@ -813,6 +813,55 @@ impl<'a> Builder<'a> {
         Some(dest)
     }
 
+    /// True when an enum-variant payload of type `ty` is a multi-slot
+    /// by-value aggregate (struct / tuple / fixed array > 1 word) that must
+    /// be heap-boxed to fit the one-word payload slot. Sentinel ADTs
+    /// (`Option` / `Result`, `u32::MAX` / `- 1`), opaque handles, and
+    /// inline-able enums are by-value or single-pointer values handled
+    /// elsewhere and are never boxed here.
+    pub(crate) fn is_boxable_aggregate_payload(&self, ty: Ty) -> bool {
+        use gossamer_types::TyKind;
+        if self.type_slot_bytes(ty) <= 8 {
+            return false;
+        }
+        match self.tcx.kind_of(ty) {
+            TyKind::Adt { def, .. } => def.local < u32::MAX - 16 && !self.tcx.is_inline_enum_ty(ty),
+            TyKind::Tuple(_) | TyKind::Array { .. } => true,
+            _ => false,
+        }
+    }
+
+    /// Boxes the multi-slot aggregate in `payload_local` into an RC cell and
+    /// returns a fresh local holding the box pointer. The box carries the
+    /// aggregate's `RC_KIND_STRUCT` child-word meta (so its release reclaims
+    /// `String` / nested-node children) and retains those children at copy
+    /// time (so they outlive the source aggregate's scope-end teardown).
+    fn box_aggregate_payload(&mut self, payload_local: Local, agg_ty: Ty, span: Span) -> Local {
+        let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+        let size_bytes = i128::from(self.type_slot_bytes(agg_ty));
+        let meta_sym = self.ensure_aggr_struct_meta(agg_ty).unwrap_or_default();
+        let size_local = self.fresh(i64_ty);
+        self.emit_assign(
+            Place::local(size_local),
+            Rvalue::Use(Operand::Const(ConstValue::Int(size_bytes))),
+            span,
+        );
+        let boxed = self.fresh(i64_ty);
+        self.emit_assign(
+            Place::local(boxed),
+            Rvalue::CallIntrinsic {
+                name: "gos_rt_enum_box_aggr",
+                args: vec![
+                    Operand::Copy(Place::local(size_local)),
+                    Operand::Const(ConstValue::Str(meta_sym)),
+                    Operand::Copy(Place::local(payload_local)),
+                ],
+            },
+            span,
+        );
+        boxed
+    }
+
     pub(crate) fn lower_user_enum_ctor(
         &mut self,
         enum_name: &str,
@@ -932,10 +981,22 @@ impl<'a> Builder<'a> {
         for (i, arg) in args.iter().enumerate() {
             let payload_local = self.lower_expr(arg)?;
             let payload_ty = self.locals[payload_local.0 as usize].ty;
-            if payload_ty == ty || self.tcx.is_rc_managed(payload_ty) {
+            // A multi-slot aggregate payload (struct / tuple / array > 1 word)
+            // does not fit the one-word payload slot. Heap-box it into an RC
+            // cell and store the POINTER; the box owns its RC children (a
+            // `String` / nested node field) and is reclaimed when the enum's
+            // child release frees it. Sentinel ADTs (Option / Result) are
+            // by-value 2-word values handled by their own path, never boxed.
+            if self.is_boxable_aggregate_payload(payload_ty) {
+                let boxed = self.box_aggregate_payload(payload_local, payload_ty, span);
                 child_offsets.push(i as i64);
+                payload_locals.push(boxed);
+            } else {
+                if payload_ty == ty || self.tcx.is_rc_managed(payload_ty) {
+                    child_offsets.push(i as i64);
+                }
+                payload_locals.push(payload_local);
             }
-            payload_locals.push(payload_local);
         }
 
         // Register this variant's child-layout meta and obtain the

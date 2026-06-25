@@ -732,29 +732,9 @@ pub const UTF16: StdModule = StdModule {
             doc: "Number of UTF-16 code units needed to encode r (1 or 2).",
         },
         StdItem {
-            name: "encode_rune",
-            kind: StdItemKind::Function,
-            doc: "Encodes r as 1 or 2 u16 code units.",
-        },
-        StdItem {
             name: "decode_surrogate_pair",
             kind: StdItemKind::Function,
             doc: "Decodes a high+low surrogate pair to a char.",
-        },
-        StdItem {
-            name: "append_rune",
-            kind: StdItemKind::Function,
-            doc: "Appends the UTF-16 encoding of r to a Vec<u16>.",
-        },
-        StdItem {
-            name: "encode",
-            kind: StdItemKind::Function,
-            doc: "Encodes a []char to Vec<u16>.",
-        },
-        StdItem {
-            name: "decode",
-            kind: StdItemKind::Function,
-            doc: "Decodes a []u16 to Vec<char>, replacing surrogates with U+FFFD.",
         },
         StdItem {
             name: "encode_string",

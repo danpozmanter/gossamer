@@ -139,7 +139,7 @@ pub(crate) fn builtin_ws_is_upgrade(args: &[Value]) -> RuntimeResult<Value> {
     let mut has_upgrade_ws = false;
     let mut has_connection_upgrade = false;
     for (i, v) in &inner.fields {
-        if i.name == "headers" {
+        if (*i) == "headers" {
             if let Value::Array(arr) = v {
                 for entry in arr.iter() {
                     if let Value::Tuple(t) = entry {
@@ -163,16 +163,21 @@ pub(crate) fn builtin_ws_is_upgrade(args: &[Value]) -> RuntimeResult<Value> {
     Ok(Value::Bool(has_upgrade_ws && has_connection_upgrade))
 }
 
-// Router: free-fn API over a thread-local registry. The full
+// Router: free-fn API over a process-global registry. The full
 // method-chain shape (`r.get(...)`, `r.serve(req)`) lives in the
 // follow-on bridge (#54); this surface is enough to write
 // dispatchers in Gossamer source by hand.
-thread_local! {
-    #[allow(clippy::missing_const_for_thread_local)]
-    pub(crate) static ROUTER_REGISTRY: RefCell<StdHashMap<i64, RefCell<RouterTable>>> =
-        RefCell::new(StdHashMap::new());
-    pub(crate) static NEXT_ROUTER_ID: RefCell<i64> = const { RefCell::new(1) };
-}
+//
+// Process-global (not `thread_local!`): goroutines run on an OS
+// worker-thread pool, so a router handle minted on one thread must
+// resolve on another - `http::serve` dispatches each request's handler
+// on a goroutine that may run on a different worker than the one that
+// built the router. Mirrors the `sync::*` registries. `GlobalReg` is in
+// scope via the `use super::*;` re-export of `set::*`.
+pub(crate) static ROUTER_REGISTRY: GlobalReg<StdHashMap<i64, RefCell<RouterTable>>> =
+    GlobalReg::new(|| parking_lot::ReentrantMutex::new(RefCell::new(StdHashMap::new())));
+pub(crate) static NEXT_ROUTER_ID: GlobalReg<i64> =
+    GlobalReg::new(|| parking_lot::ReentrantMutex::new(RefCell::new(1)));
 
 #[derive(Default)]
 pub(crate) struct RouterTable {

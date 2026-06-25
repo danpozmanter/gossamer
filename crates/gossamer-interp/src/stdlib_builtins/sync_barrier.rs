@@ -120,14 +120,14 @@ pub(crate) fn install_sync_barrier(globals: &mut Vec<(&'static str, Value)>) {
 pub(crate) fn barrier_handle(id: i64) -> Value {
     Value::struct_(
         "sync::Barrier",
-        Arc::unwrap_or_clone(Arc::new(vec![(Ident::new("__barrier"), Value::Int(id))])),
+        Arc::unwrap_or_clone(Arc::new(vec![("__barrier", Value::Int(id))])),
     )
 }
 
 pub(crate) fn barrier_id_of(value: &Value) -> Option<i64> {
     if let Value::Struct(inner) = value {
         for (ident, v) in &inner.fields {
-            if ident.name == "__barrier" {
+            if (*ident) == "__barrier" {
                 if let Value::Int(n) = v {
                     return Some(*n);
                 }

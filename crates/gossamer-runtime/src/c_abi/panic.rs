@@ -107,20 +107,35 @@ pub unsafe extern "C-unwind" fn gos_rt_panic(msg: *const c_char) {
         unsafe { CStr::from_ptr(msg).to_string_lossy().into_owned() }
     };
     install_silent_gos_hook();
-    if !call_user_panic_hook(&text) {
-        // Match the unified diagnostic-code prefix the VM /
-        // tree-walker use so both execution modes tag panics with
-        // `error[GX0005]` - keeps user-visible stderr identical
-        // whether `gos run` took the native path or fell back.
+    let hooked = call_user_panic_hook(&text);
+    // per-goroutine panic isolation. If the panic originates inside a spawned
+    // goroutine, raise a Rust panic the coroutine wrapper catches - the
+    // scheduler continues running other goroutines. If we're on the main thread
+    // (no active coroutine), a panic in `fn main()` is fatal, just like in Rust.
+    if gossamer_coro::in_goroutine() {
+        // Stash the message so a `spawn`-created join handle can deliver
+        // `Err(message)` from its unwinding Drop-guard before the coroutine
+        // wrapper catches and isolates this panic.
+        set_last_goroutine_panic(&text);
+        // A panic in a JOINABLE (`spawn`) body is observed through `join()`,
+        // which delivers it as `Err`. Suppress the eager report so stderr stays
+        // clean, matching the VM's silent `spawn`+`join` path. A fire-and-forget
+        // `go` panic is unobserved, so it still reports - eagerly, so the report
+        // is reliable even when `main` exits right after.
+        if !hooked && !gossamer_coro::in_joinable_spawn() {
+            eprintln!("error[GX0005]: panic: {text}");
+        }
+        std::panic::panic_any(GosPanic(text));
+    }
+    // Fatal main-goroutine panic: report (with the active call stack), flush
+    // buffered stdout (a plain `abort` would drop it), and exit with the pinned
+    // panic code 101 - matching Rust; no core is dumped for an ordinary panic.
+    if !hooked {
+        // Match the unified diagnostic-code prefix the VM / tree-walker use so
+        // both execution modes tag panics with `error[GX0005]`.
         eprintln!("error[GX0005]: panic: {text}");
-        // Inline the active goroutine's call stack so the operator
-        // can locate the failing frame without a separate SIGQUIT
-        // round-trip. Empty when no frame info has been published
-        // (e.g. a fall-back tier without stack-push hooks).
         let trace = crate::sigquit::render_active_panic_trace();
         if trace.is_empty() {
-            // Compiled tier keeps no per-call shadow stack - recover the
-            // call chain by unwinding the real machine stack.
             let native = crate::sigquit::render_native_panic_trace();
             if !native.is_empty() {
                 eprint!("{native}");
@@ -129,24 +144,6 @@ pub unsafe extern "C-unwind" fn gos_rt_panic(msg: *const c_char) {
             eprint!("{trace}");
         }
     }
-    // per-goroutine panic isolation. If the
-    // panic originates inside a spawned goroutine, raise a Rust
-    // panic the coroutine wrapper catches - the scheduler
-    // continues running other goroutines. If we're on the main
-    // thread (no active coroutine), keep the pre-0.6 behaviour
-    // and abort the process: a panic in `fn main()` is fatal,
-    // just like in Rust.
-    if gossamer_coro::in_goroutine() {
-        // Stash the message so a `spawn`-created join handle can
-        // deliver `Err(message)` from its unwinding Drop-guard before
-        // the coroutine wrapper catches and isolates this panic.
-        set_last_goroutine_panic(&text);
-        std::panic::panic_any(GosPanic(text));
-    }
-    // Fatal main-goroutine panic: flush buffered stdout (a plain
-    // `abort` would drop it) and exit with the pinned panic code 101,
-    // matching Rust - scripts can rely on it, and no core is dumped
-    // for an ordinary user panic.
     unsafe {
         gos_rt_flush_stdout();
     }

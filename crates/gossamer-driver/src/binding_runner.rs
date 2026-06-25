@@ -1280,7 +1280,7 @@ fn pid_alive(pid: u32) -> bool {
                 return GetLastError() != ERROR_INVALID_PARAMETER;
             }
             let mut code: u32 = 0;
-            let ok = GetExitCodeProcess(h, &mut code);
+            let ok = GetExitCodeProcess(h, &raw mut code);
             CloseHandle(h);
             ok != 0 && code == STILL_ACTIVE as u32
         }

@@ -81,21 +81,21 @@ pub(crate) fn install_metrics(globals: &mut Vec<(&'static str, Value)>) {
 fn metric_handle(kind: &'static str, id: i64) -> Value {
     Value::struct_(
         kind,
-        Arc::unwrap_or_clone(Arc::new(vec![(Ident::new("__metric"), Value::Int(id))])),
+        Arc::unwrap_or_clone(Arc::new(vec![("__metric", Value::Int(id))])),
     )
 }
 
 fn registry_handle(id: i64) -> Value {
     Value::struct_(
         "metrics::Registry",
-        Arc::unwrap_or_clone(Arc::new(vec![(Ident::new("__registry"), Value::Int(id))])),
+        Arc::unwrap_or_clone(Arc::new(vec![("__registry", Value::Int(id))])),
     )
 }
 
 fn handle_id(value: &Value, field: &str) -> Option<i64> {
     if let Value::Struct(inner) = value {
         for (i, v) in &inner.fields {
-            if i.name == field {
+            if (*i) == field {
                 if let Value::Int(n) = v {
                     return Some(*n);
                 }

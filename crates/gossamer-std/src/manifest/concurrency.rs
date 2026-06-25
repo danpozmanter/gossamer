@@ -72,33 +72,11 @@ use super::*;
 pub const CONTEXT: StdModule = StdModule {
     path: "std::context",
     summary: "Request-scoped cancellation, deadlines, and timeouts.",
-    items: &[
-        StdItem {
-            name: "Context",
-            kind: StdItemKind::Type,
-            doc: "Cancellation-aware context handle.",
-        },
-        StdItem {
-            name: "background",
-            kind: StdItemKind::Function,
-            doc: "Root context - never cancelled.",
-        },
-        StdItem {
-            name: "with_cancel",
-            kind: StdItemKind::Function,
-            doc: "Child context plus explicit cancel handle.",
-        },
-        StdItem {
-            name: "with_deadline",
-            kind: StdItemKind::Function,
-            doc: "Child context that cancels at the supplied instant.",
-        },
-        StdItem {
-            name: "with_timeout",
-            kind: StdItemKind::Function,
-            doc: "Child context that cancels after the supplied duration.",
-        },
-    ],
+    items: &[StdItem {
+        name: "Context",
+        kind: StdItemKind::Type,
+        doc: "Cancellation-aware context handle.",
+    }],
 };
 
 pub const THREAD: StdModule = StdModule {
@@ -106,19 +84,9 @@ pub const THREAD: StdModule = StdModule {
     summary: "Native OS threads. For goroutines use the `go expr` syntax.",
     items: &[
         StdItem {
-            name: "spawn",
-            kind: StdItemKind::Function,
-            doc: "Spawns a new OS thread; returns a JoinHandle.",
-        },
-        StdItem {
             name: "JoinHandle",
             kind: StdItemKind::Type,
             doc: "Owned handle to a spawned OS thread.",
-        },
-        StdItem {
-            name: "join",
-            kind: StdItemKind::Function,
-            doc: "Waits for the thread to finish; returns its result.",
         },
         StdItem {
             name: "yield_now",

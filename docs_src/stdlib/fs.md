@@ -28,7 +28,5 @@ Filesystem reading, writing, and traversal (Rust std::fs shape).
 | `file_size` | fn | Returns the file's size in bytes; 0 on error. |
 | `metadata` | fn | Returns filesystem metadata for a path. |
 | `canonicalize` | fn | Resolves a path to an absolute, symlink-free canonical form. |
-| `glob` | fn | Returns paths matching a glob pattern (*, ?, [abc], **). |
-| `eval_symlinks` | fn | Resolves all symlinks along a path; mirrors Go's filepath.EvalSymlinks. |
 | `list_dir` | fn | Returns directory entries with name/size/kind metadata. |
 

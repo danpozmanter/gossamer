@@ -21,7 +21,6 @@ use std::sync::{Arc, OnceLock};
 
 use parking_lot::Mutex;
 
-use gossamer_ast::Ident;
 use gossamer_runtime::{
     GossamerValue, SINGLETON_FALSE, SINGLETON_TRUE, SINGLETON_UNIT, TAG_FLOAT, TAG_HEAP,
     TAG_IMMEDIATE, TAG_SINGLETON, fits_i56, from_f64, from_heap_handle, from_i64, from_singleton,
@@ -203,7 +202,19 @@ pub enum MapKey {
     /// the type/variant name plus each field's `MapKey`, recursively. Two
     /// equal-valued aggregates at distinct allocations produce equal keys, so
     /// `HashMap<Point, _>` keys by content the way the compiled tier does.
-    Agg(&'static str, Box<[MapKey]>),
+    /// Boxed so the rare aggregate-key case does not widen every `MapKey`
+    /// (a scalar/string key stays 16 bytes instead of paying for two inline
+    /// fat pointers).
+    Agg(Box<AggKey>),
+}
+
+/// Boxed payload of [`MapKey::Agg`]: an aggregate map key hashed by value.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct AggKey {
+    /// Type / variant name (`""` for a tuple, `"[]"` for an array).
+    pub name: &'static str,
+    /// Each field's key, recursively.
+    pub fields: Box<[MapKey]>,
 }
 
 impl MapKey {
@@ -219,21 +230,30 @@ impl MapKey {
             // which hashes the raw 8 bytes.
             Value::Float(f) => Self::Int(f.to_bits() as i64),
             Value::String(s) => Self::Str(s.clone()),
-            Value::Tuple(vals) => Self::Agg("", vals.iter().map(Self::from_value).collect()),
-            Value::Array(vals) => Self::Agg("[]", vals.iter().map(Self::from_value).collect()),
-            Value::IntArray(ns) => Self::Agg("[]", ns.iter().map(|n| Self::Int(*n)).collect()),
-            Value::Struct(inner) => Self::Agg(
-                inner.name,
-                inner
+            Value::Tuple(vals) => Self::Agg(Box::new(AggKey {
+                name: "",
+                fields: vals.iter().map(Self::from_value).collect(),
+            })),
+            Value::Array(vals) => Self::Agg(Box::new(AggKey {
+                name: "[]",
+                fields: vals.iter().map(Self::from_value).collect(),
+            })),
+            Value::IntArray(ns) => Self::Agg(Box::new(AggKey {
+                name: "[]",
+                fields: ns.iter().map(|n| Self::Int(*n)).collect(),
+            })),
+            Value::Struct(inner) => Self::Agg(Box::new(AggKey {
+                name: inner.name,
+                fields: inner
                     .fields
                     .iter()
                     .map(|(_, fv)| Self::from_value(fv))
                     .collect(),
-            ),
-            Value::Variant(inner) => Self::Agg(
-                inner.name,
-                inner.fields.iter().map(Self::from_value).collect(),
-            ),
+            })),
+            Value::Variant(inner) => Self::Agg(Box::new(AggKey {
+                name: inner.name,
+                fields: inner.fields.iter().map(Self::from_value).collect(),
+            })),
             _ => Self::NonHashable,
         }
     }
@@ -250,7 +270,7 @@ impl MapKey {
             // Aggregate keys don't round-trip to their original typed shape
             // (field names / element types aren't retained); `keys()` over a
             // struct-keyed map is unsupported, matching the compiled tier.
-            Self::NonHashable | Self::Agg(..) => Value::Unit,
+            Self::NonHashable | Self::Agg(_) => Value::Unit,
         }
     }
 }
@@ -288,9 +308,13 @@ pub struct VariantInner {
 pub struct StructInner {
     /// Struct name (interned, see `intern_type_name`).
     pub name: &'static str,
-    /// Field name/value pairs in declaration order, stored inline
-    /// (one allocation plus the buffer; sharing via the outer Arc).
-    pub fields: Vec<(Ident, Value)>,
+    /// Field name/value pairs in declaration order, stored inline. The
+    /// field name is an interned `&'static str` (shared across every
+    /// instance of the type) rather than an owned `String`, so a struct
+    /// instance no longer heap-allocates its field names - for a program
+    /// holding millions of structs that removed millions of per-field
+    /// allocations and shrank each slot from 40 to 32 bytes.
+    pub fields: Vec<(&'static str, Value)>,
 }
 
 /// Boxed payload of [`Value::Builtin`]. Builtins are constructed
@@ -616,6 +640,15 @@ pub(crate) fn intern_type_name(name: &str) -> &'static str {
     leaked
 }
 
+/// Interns a struct field name to a `&'static str` with a leak
+/// bounded by the program's fixed set of field names. Exposed for
+/// `gossamer-binding`'s `#[derive(GosStruct)]` glue, which builds a
+/// `Value::Struct` from runtime field-name strings.
+#[must_use]
+pub fn intern_field_name(name: &str) -> &'static str {
+    intern_type_name(name)
+}
+
 /// Shared empty `Arc<Vec<Value>>` sentinel returned by every
 /// constructor that would otherwise allocate a fresh empty `Vec`
 /// plus Arc header (~32 B per call). All empty-payload variants
@@ -626,11 +659,11 @@ pub(crate) fn empty_value_arc() -> Arc<Vec<Value>> {
     Arc::clone(EMPTY.get_or_init(|| Arc::new(Vec::new())))
 }
 
-/// Shared empty `Arc<Vec<(Ident, Value)>>` sentinel for
+/// Shared empty `Arc<Vec<(&'static str, Value)>>` sentinel for
 /// field-less struct constructors.
 #[must_use]
-pub(crate) fn empty_struct_fields() -> Arc<Vec<(Ident, Value)>> {
-    static EMPTY: OnceLock<Arc<Vec<(Ident, Value)>>> = OnceLock::new();
+pub(crate) fn empty_struct_fields() -> Arc<Vec<(&'static str, Value)>> {
+    static EMPTY: OnceLock<Arc<Vec<(&'static str, Value)>>> = OnceLock::new();
     Arc::clone(EMPTY.get_or_init(|| Arc::new(Vec::new())))
 }
 
@@ -665,7 +698,7 @@ impl Value {
     }
     /// Constructs a [`Value::Struct`].
     #[must_use]
-    pub fn struct_(name: impl AsRef<str>, fields: Vec<(Ident, Value)>) -> Self {
+    pub fn struct_(name: impl AsRef<str>, fields: Vec<(&'static str, Value)>) -> Self {
         Self::Struct(Arc::new(StructInner {
             name: intern_type_name(name.as_ref()),
             fields,
@@ -954,10 +987,11 @@ impl Value {
         let mut out = Vec::with_capacity(elem_count);
         for i in 0..elem_count {
             let base = i * stride;
-            let mut fields: Vec<(Ident, Value)> = Vec::with_capacity(inner.field_names.len());
+            let mut fields: Vec<(&'static str, Value)> =
+                Vec::with_capacity(inner.field_names.len());
             for (j, fname) in inner.field_names.iter().enumerate() {
                 fields.push((
-                    Ident::new(fname.as_str()),
+                    crate::value::intern_type_name(fname.as_str()),
                     Value::Float(inner.data[base + j]),
                 ));
             }
@@ -1177,14 +1211,14 @@ impl fmt::Display for Value {
                     if let Some(msg) = inner
                         .fields
                         .iter()
-                        .find(|(n, _)| n.name.as_str() == "message")
+                        .find(|(n, _)| (*n) == "message")
                         .map(|(_, v)| v.clone())
                     {
                         write!(out, "{msg}")?;
                         let mut cursor = inner
                             .fields
                             .iter()
-                            .find(|(n, _)| n.name.as_str() == "cause")
+                            .find(|(n, _)| (*n) == "cause")
                             .map(|(_, v)| v.clone());
                         while let Some(Self::Variant(link)) = cursor {
                             if link.name != "Some" || link.fields.is_empty() {
@@ -1196,10 +1230,7 @@ impl fmt::Display for Value {
                             if cause.name != "errors::Error" {
                                 break;
                             }
-                            let Some((_, m)) = cause
-                                .fields
-                                .iter()
-                                .find(|(n, _)| n.name.as_str() == "message")
+                            let Some((_, m)) = cause.fields.iter().find(|(n, _)| (*n) == "message")
                             else {
                                 break;
                             };
@@ -1207,7 +1238,7 @@ impl fmt::Display for Value {
                             cursor = cause
                                 .fields
                                 .iter()
-                                .find(|(n, _)| n.name.as_str() == "cause")
+                                .find(|(n, _)| (*n) == "cause")
                                 .map(|(_, v)| v.clone());
                         }
                         return Ok(());
@@ -1309,7 +1340,7 @@ fn write_variant(out: &mut fmt::Formatter<'_>, name: &str, fields: &[Value]) -> 
 fn write_struct(
     out: &mut fmt::Formatter<'_>,
     name: &str,
-    fields: &[(Ident, Value)],
+    fields: &[(&'static str, Value)],
 ) -> fmt::Result {
     out.write_str(name)?;
     out.write_str(" { ")?;
@@ -1317,7 +1348,7 @@ fn write_struct(
         if i > 0 {
             out.write_str(", ")?;
         }
-        write!(out, "{}: {value}", ident.name)?;
+        write!(out, "{}: {value}", (*ident))?;
     }
     out.write_str(" }")
 }
@@ -1728,4 +1759,15 @@ pub fn native_enum_to_variant(owner: &NativeEnumOwner) -> Value {
         })
         .collect();
     Value::variant(variant.name, fields)
+}
+
+#[cfg(test)]
+mod mapkey_size_tests {
+    use super::MapKey;
+    // 0.18.1: boxing the rare aggregate-key arm keeps the common
+    // scalar/string keys at 16 bytes instead of 40.
+    #[test]
+    fn mapkey_is_two_words() {
+        assert_eq!(std::mem::size_of::<MapKey>(), 16);
+    }
 }

@@ -1,0 +1,32 @@
+// Iterating a struct / tuple-keyed map for its scalar values
+// (`for (_, v) in m.iter()`) yields every entry's value. A struct key hashes
+// to opaque bytes the runtime cannot round-trip, so the loop is driven from
+// the values snapshot rather than the (empty) key snapshot - matching the VM,
+// which walks the live entries directly.
+
+use std::collections::HashMap
+
+struct Key {
+    a: i64,
+}
+
+fn main() {
+    let mut counts: HashMap<Key, i64> = HashMap::new()
+    counts.insert(Key { a: 1 }, 100)
+    counts.insert(Key { a: 2 }, 200)
+    counts.insert(Key { a: 3 }, 300)
+    let mut total = 0
+    for (_, v) in counts.iter() {
+        total += v
+    }
+    println!("{}", total)
+
+    let mut pairs: HashMap<(i64, i64), i64> = HashMap::new()
+    pairs.insert((1, 2), 10)
+    pairs.insert((3, 4), 20)
+    let mut sum = 0
+    for (_, v) in pairs.iter() {
+        sum += v
+    }
+    println!("{}", sum)
+}

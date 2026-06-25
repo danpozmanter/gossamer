@@ -74,21 +74,6 @@ pub const RUNTIME: StdModule = StdModule {
     summary: "Goroutine / scheduler introspection and tuning.",
     items: &[
         StdItem {
-            name: "max_procs",
-            kind: StdItemKind::Function,
-            doc: "Returns the current goroutine concurrency cap.",
-        },
-        StdItem {
-            name: "set_max_procs",
-            kind: StdItemKind::Function,
-            doc: "Sets the goroutine concurrency cap (GOMAXPROCS-equivalent).",
-        },
-        StdItem {
-            name: "num_cpus",
-            kind: StdItemKind::Function,
-            doc: "Logical CPU cores visible to the process.",
-        },
-        StdItem {
             name: "collect_cycles",
             kind: StdItemKind::Function,
             doc: "Runs the reference-cycle collector and returns objects reclaimed.",
@@ -139,11 +124,6 @@ pub const ERRORS: StdModule = StdModule {
             name: "is",
             kind: StdItemKind::Function,
             doc: "Checks whether an error's chain contains a matching message.",
-        },
-        StdItem {
-            name: "chain",
-            kind: StdItemKind::Function,
-            doc: "Iterator over an error and its ancestor causes.",
         },
         StdItem {
             name: "join",
@@ -269,48 +249,6 @@ pub const TESTING: StdModule = StdModule {
     ],
 };
 
-pub const LOG: StdModule = StdModule {
-    path: "std::log",
-    summary: "Flat line-oriented logging (Go's `log` shape).",
-    items: &[
-        StdItem {
-            name: "println",
-            kind: StdItemKind::Function,
-            doc: "Logs a line to the configured output.",
-        },
-        StdItem {
-            name: "printf",
-            kind: StdItemKind::Function,
-            doc: "Logs a pre-formatted line to the configured output.",
-        },
-        StdItem {
-            name: "fatal",
-            kind: StdItemKind::Function,
-            doc: "Logs and exits the process with status 1.",
-        },
-        StdItem {
-            name: "set_output",
-            kind: StdItemKind::Function,
-            doc: "Redirects log output to a writer.",
-        },
-        StdItem {
-            name: "set_prefix",
-            kind: StdItemKind::Function,
-            doc: "Sets a prefix prepended to every log line.",
-        },
-        StdItem {
-            name: "set_flags",
-            kind: StdItemKind::Function,
-            doc: "Configures timestamp / file:line decoration bits.",
-        },
-        StdItem {
-            name: "flags",
-            kind: StdItemKind::Function,
-            doc: "Returns the current decoration flag set.",
-        },
-    ],
-};
-
 pub const TIME: StdModule = StdModule {
     path: "std::time",
     summary: "Wall-clock and monotonic time facilities.",
@@ -386,18 +324,11 @@ pub const TIME: StdModule = StdModule {
 pub const PANIC: StdModule = StdModule {
     path: "std::panic",
     summary: "Panic / `catch_unwind` integration.",
-    items: &[
-        StdItem {
-            name: "panic",
-            kind: StdItemKind::Macro,
-            doc: "Aborts the current goroutine with a message.",
-        },
-        StdItem {
-            name: "catch_unwind",
-            kind: StdItemKind::Function,
-            doc: "Runs a closure, catching any panic it raises.",
-        },
-    ],
+    items: &[StdItem {
+        name: "panic",
+        kind: StdItemKind::Macro,
+        doc: "Aborts the current goroutine with a message.",
+    }],
 };
 
 pub const UUID: StdModule = StdModule {
@@ -534,21 +465,6 @@ pub const TRACE: StdModule = StdModule {
             name: "SpanGuard",
             kind: StdItemKind::Type,
             doc: "RAII guard returned by `enter_span`; restores the prior active span on drop.",
-        },
-        StdItem {
-            name: "enter_span",
-            kind: StdItemKind::Function,
-            doc: "Sets `ctx` as the active span on the current goroutine; returns a SpanGuard.",
-        },
-        StdItem {
-            name: "current_span_context",
-            kind: StdItemKind::Function,
-            doc: "Reads the active SpanContext, if any.",
-        },
-        StdItem {
-            name: "with_span_context",
-            kind: StdItemKind::Function,
-            doc: "Runs `f` with `ctx` installed as the active SpanContext.",
         },
     ],
 };

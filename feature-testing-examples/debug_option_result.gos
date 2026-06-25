@@ -1,0 +1,23 @@
+// `{:?}` of an `Option<T>` / `Result<T, E>` with scalar / String payloads
+// renders on the compiled tiers (LLVM AOT + Cranelift JIT) exactly as it does
+// on the bytecode VM: `Some(<payload>)` / `None` / `Ok(<payload>)` /
+// `Err(<payload>)`, payloads Display-style (no string quoting). The by-value
+// `i128` enum is decoded by `gos_rt_debug_option` / `gos_rt_debug_result`.
+
+fn main() {
+    println!("{:?}", Some(5))
+    println!("{:?}", Some("hi"))
+    let none: Option<i64> = None
+    println!("{:?}", none)
+    println!("{:?}", Some(3.5))
+    println!("{:?}", Some(true))
+    println!("{:?}", Some('z'))
+
+    let ok: Result<i64, String> = Ok(7)
+    println!("{:?}", ok)
+    let err: Result<i64, String> = Err("bad")
+    println!("{:?}", err)
+
+    let combined = format!("{:?} and {:?}", Some(1), none)
+    println!("{}", combined)
+}

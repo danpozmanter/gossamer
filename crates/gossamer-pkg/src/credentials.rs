@@ -244,17 +244,20 @@ fn restrict_to_owner(path: &Path) -> std::io::Result<()> {
 
     unsafe {
         let mut token: HANDLE = std::ptr::null_mut();
-        if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) == 0 {
+        if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &raw mut token) == 0 {
             return Err(io::Error::last_os_error());
         }
         // Two-call pattern: size the buffer, then read TOKEN_USER.
         let mut len: u32 = 0;
-        GetTokenInformation(token, TokenUser, std::ptr::null_mut(), 0, &mut len);
+        GetTokenInformation(token, TokenUser, std::ptr::null_mut(), 0, &raw mut len);
         let mut buf = vec![0u8; len as usize];
-        if GetTokenInformation(token, TokenUser, buf.as_mut_ptr().cast(), len, &mut len) == 0 {
+        if GetTokenInformation(token, TokenUser, buf.as_mut_ptr().cast(), len, &raw mut len) == 0 {
             CloseHandle(token);
             return Err(io::Error::last_os_error());
         }
+        // The global allocator returns memory aligned to at least 16 bytes, so
+        // the `Vec<u8>` backing store satisfies `TOKEN_USER`'s 8-byte alignment.
+        #[allow(clippy::cast_ptr_alignment)]
         let token_user = &*buf.as_ptr().cast::<TOKEN_USER>();
         let sid = token_user.User.Sid;
 
@@ -271,7 +274,7 @@ fn restrict_to_owner(path: &Path) -> std::io::Result<()> {
         };
 
         let mut acl: *mut ACL = std::ptr::null_mut();
-        let rc = SetEntriesInAclW(1, &mut ea, std::ptr::null_mut(), &mut acl);
+        let rc = SetEntriesInAclW(1, &raw const ea, std::ptr::null_mut(), &raw mut acl);
         CloseHandle(token);
         if rc != ERROR_SUCCESS {
             return Err(io::Error::from_raw_os_error(rc as i32));
@@ -283,7 +286,7 @@ fn restrict_to_owner(path: &Path) -> std::io::Result<()> {
             .chain(std::iter::once(0))
             .collect();
         let rc = SetNamedSecurityInfoW(
-            wide.as_ptr() as *mut u16,
+            wide.as_ptr().cast_mut(),
             SE_FILE_OBJECT,
             DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
             std::ptr::null_mut(),

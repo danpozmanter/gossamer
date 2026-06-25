@@ -30,6 +30,7 @@ const MUST_BE_BOUNDED: &[&str] = &[
     "transient_string",
     "returned_string",
     "string_in_struct",
+    "string_in_nested_struct",
 ];
 
 /// (name, source). N is baked into each source, sized so a leak clears the cap.
@@ -163,6 +164,32 @@ fn main() {
         inner.push(format!("value-{}", i))
         outer.push(inner)
         total += outer[0][0].len()
+        i += 1
+    }
+    println!("{}", total)
+}
+"#,
+    ),
+    (
+        // 0.18.1: a `String` nested inside a by-value sub-struct was never
+        // released when the outer struct died (the per-field RC teardown
+        // walked only the outer struct's direct fields), so RSS grew with N.
+        // The teardown now recurses into by-value sub-structs, with matching
+        // recursive retains at every sub-aggregate copy / extract / `..base`
+        // site so the nested share is freed exactly once.
+        "string_in_nested_struct",
+        r#"
+struct Inner { name: String, tag: String }
+struct Outer { inner: Inner, id: i64 }
+fn make(i: i64) -> i64 {
+    let o = Outer { inner: Inner { name: format!("n-{}", i), tag: format!("t-{}", i) }, id: i }
+    o.id
+}
+fn main() {
+    let mut total: i64 = 0
+    let mut i: i64 = 0
+    while i < 3000000 {
+        total += make(i)
         i += 1
     }
     println!("{}", total)

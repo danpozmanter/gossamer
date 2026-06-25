@@ -11,8 +11,6 @@
 #![allow(clippy::unnecessary_wraps)]
 use std::sync::Arc;
 
-use gossamer_ast::Ident;
-
 use crate::builtins::{
     CELL_REGISTRY, FlagDef, FlagKind, NEXT_SET_ID, PROGRAM_ARGS, SET_REGISTRY, SetState, as_str,
     make_cell, ok_variant, value_to_int,
@@ -39,10 +37,7 @@ pub(crate) fn builtin_flag_set_new(args: &[Value]) -> RuntimeResult<Value> {
             },
         );
     });
-    Ok(Value::struct_(
-        "Set",
-        vec![(Ident::new("__id"), Value::Int(id as i64))],
-    ))
+    Ok(Value::struct_("Set", vec![("__id", Value::Int(id as i64))]))
 }
 
 fn set_id_from_value(value: &Value) -> Option<u64> {
@@ -50,7 +45,7 @@ fn set_id_from_value(value: &Value) -> Option<u64> {
         Value::Struct(inner) if inner.name == "Set" => inner
             .fields
             .iter()
-            .find(|(ident, _)| ident.name == "__id")
+            .find(|(ident, _)| (*ident) == "__id")
             .and_then(|(_, v)| match v {
                 Value::Int(n) => Some(*n as u64),
                 _ => None,

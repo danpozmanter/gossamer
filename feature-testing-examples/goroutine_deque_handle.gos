@@ -1,0 +1,46 @@
+// Cross-tier regression for a cross-goroutine VecDeque handle. The worker
+// goroutine builds a `VecDeque<i64>`, then parks on `gate.recv()` - a
+// yield point the scheduler can resume on a DIFFERENT OS worker thread
+// than the one the deque was built on. The push/pop/len after the yield
+// must still hit the same deque. The VM previously kept its VecDeque
+// registry in `thread_local!` storage, so after such a migration the
+// handle resolved to nothing on the new worker thread: the post-yield
+// push no-op'd and the drain collapsed to the empty-deque defaults. The
+// registry is now process-global, so all three tiers agree. The deque is
+// owned by a single goroutine throughout, so the compiled tier (where a
+// deque is a raw pointer) never sees sharing or concurrent access;
+// channel close is the deterministic completion signal - no sleeps.
+
+use std::sync::channel
+use std::collections::VecDeque
+
+fn worker(gate: Receiver<i64>, tx: Sender<i64>) {
+    let mut q: VecDeque<i64> = VecDeque::new()
+    q.push_back(10)
+    q.push_back(20)
+    let _ = gate.recv()
+    q.push_back(30)
+    tx.send(q.len())
+    while let Some(v) = q.pop_front() {
+        tx.send(v)
+    }
+    tx.send(if q.is_empty() { 1 } else { 0 })
+    tx.close()
+}
+
+fn main() {
+    let (gate_tx, gate_rx) = channel()
+    let (tx, rx) = channel()
+    go worker(gate_rx, tx)
+    gate_tx.send(1)
+    gate_tx.close()
+    let mut vals = []
+    while let Some(v) = rx.recv() {
+        vals.push(v)
+    }
+    let mut i = 0
+    while i < vals.len() {
+        println!("v={}", vals[i])
+        i += 1
+    }
+}

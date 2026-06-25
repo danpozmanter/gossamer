@@ -994,6 +994,64 @@ pub extern "C" fn gos_rt_result_payload_i128(r: i128) -> i128 {
     }
 }
 
+/// Renders a single enum payload word for `{:?}` Debug output, matching the
+/// VM's Display-style rendering (no string quoting). `kind`: 0=i64, 1=u64,
+/// 2=f64 (bit pattern), 3=bool, 4=char, 5=String pointer.
+fn debug_payload_string(payload: i64, kind: i64) -> String {
+    match kind {
+        1 => (payload as u64).to_string(),
+        2 => format!("{}", f64::from_bits(payload as u64)),
+        3 => if payload != 0 { "true" } else { "false" }.to_string(),
+        4 => char::from_u32(payload as u32).map_or_else(String::new, |c| c.to_string()),
+        5 => {
+            if payload == 0 {
+                String::new()
+            } else {
+                let sptr: *const std::ffi::c_char =
+                    std::ptr::with_exposed_provenance(payload as usize);
+                unsafe { std::ffi::CStr::from_ptr(sptr) }
+                    .to_string_lossy()
+                    .into_owned()
+            }
+        }
+        _ => payload.to_string(),
+    }
+}
+
+/// `{:?}` of an `Option<T>` (the by-value `i128` enum, disc 0 = Some): renders
+/// `Some(<payload>)` or `None`, matching the VM. `payload_kind` selects the
+/// payload formatter (see `debug_payload_string`).
+#[unsafe(no_mangle)]
+pub extern "C" fn gos_rt_debug_option(opt: i128, payload_kind: i64) -> *mut std::ffi::c_char {
+    let s = if result_disc_of(opt) != 0 {
+        "None".to_string()
+    } else {
+        format!(
+            "Some({})",
+            debug_payload_string(result_payload_of(opt), payload_kind)
+        )
+    };
+    super::string::alloc_cstring(s.as_bytes())
+}
+
+/// `{:?}` of a `Result<T, E>` (the by-value `i128` enum, disc 0 = Ok): renders
+/// `Ok(<payload>)` or `Err(<payload>)`, matching the VM. `ok_kind` / `err_kind`
+/// select the per-arm payload formatter.
+#[unsafe(no_mangle)]
+pub extern "C" fn gos_rt_debug_result(
+    res: i128,
+    ok_kind: i64,
+    err_kind: i64,
+) -> *mut std::ffi::c_char {
+    let payload = result_payload_of(res);
+    let s = if result_disc_of(res) == 0 {
+        format!("Ok({})", debug_payload_string(payload, ok_kind))
+    } else {
+        format!("Err({})", debug_payload_string(payload, err_kind))
+    };
+    super::string::alloc_cstring(s.as_bytes())
+}
+
 /// `result.unwrap()` / `option.unwrap()`. Returns the payload on the happy
 /// path; panics on Err / None.
 #[unsafe(no_mangle)]

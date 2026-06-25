@@ -756,3 +756,229 @@ fn bare_std_path_as_pipe_rhs_stays_legal() {
         "pipe-rhs bare std paths must not trip GT0015, got {diagnostics:?}"
     );
 }
+
+fn has_code(diags: &[gossamer_types::TypeDiagnostic], code: &str) -> bool {
+    diags.iter().any(|d| d.error.code() == code)
+}
+
+// 0.18.1 authoritativeness fixes: each program below passed `gos check`
+// on 0.18.0 and then SIGSEGV'd, printed garbage, or failed to build on
+// the compiled tier. The checker now rejects them so "if it builds it
+// runs" holds. Each test also has a valid sibling that must NOT trip.
+
+#[test]
+fn index_on_scalar_is_rejected() {
+    // 0.18.0: compiled tier read through the i64 as a pointer (SIGSEGV).
+    let d = diagnostics_for("fn main() { let x = 5; let y = x[0]; println!(\"{}\", y) }\n");
+    assert!(has_code(&d, "GT0021"), "{d:?}");
+}
+
+#[test]
+fn index_on_vec_and_string_is_accepted() {
+    let d = diagnostics_for(
+        "fn main() { let xs = [1, 2, 3]; let s = \"hi\"; println!(\"{} {}\", xs[0], s.byte_at(0)) }\n",
+    );
+    assert!(!has_code(&d, "GT0021"), "{d:?}");
+}
+
+#[test]
+fn call_of_scalar_value_is_rejected() {
+    // 0.18.0: compiled tier emitted a call through a non-function symbol.
+    let d = diagnostics_for("fn main() { let x = 5; let y = x(3); println!(\"{}\", y) }\n");
+    assert!(has_code(&d, "GT0022"), "{d:?}");
+}
+
+#[test]
+fn qualified_associated_call_is_not_flagged_as_non_callable() {
+    // `String::new()` types its callee as `String`; it must not trip GT0022.
+    let d = diagnostics_for("fn main() { let s = String::new(); println!(\"{}\", s) }\n");
+    assert!(!has_code(&d, "GT0022"), "{d:?}");
+}
+
+#[test]
+fn constructor_calls_are_not_flagged_as_non_callable() {
+    let d = diagnostics_for("fn main() { let o = Some(5); let r = Ok(1); println!(\"ok\") }\n");
+    assert!(!has_code(&d, "GT0022"), "{d:?}");
+}
+
+#[test]
+fn out_of_range_tuple_index_is_rejected() {
+    // 0.18.0: compiled tier read out-of-object memory (garbage / leak).
+    let d = diagnostics_for("fn main() { let t = (1, 2); let x = t.5; println!(\"{}\", x) }\n");
+    assert!(has_code(&d, "GT0023"), "{d:?}");
+}
+
+#[test]
+fn positional_index_on_struct_is_rejected() {
+    let d = diagnostics_for(
+        "struct P { x: i64, y: i64 }\nfn main() { let p = P { x: 1, y: 2 }; let v = p.0; println!(\"{}\", v) }\n",
+    );
+    assert!(has_code(&d, "GT0023"), "{d:?}");
+}
+
+#[test]
+fn in_range_tuple_index_is_accepted() {
+    let d = diagnostics_for("fn main() { let t = (1, 2, 3); println!(\"{} {}\", t.0, t.2) }\n");
+    assert!(!has_code(&d, "GT0023"), "{d:?}");
+}
+
+#[test]
+fn method_call_with_wrong_arity_is_rejected() {
+    // 0.18.0: VM aborted (GX0003) but the compiled tier zero-filled the
+    // missing argument and returned a wrong result (tier divergence).
+    let d = diagnostics_for(
+        "struct A { x: i64 }\nimpl A { fn add(&self, a: i64, b: i64) -> i64 { self.x + a + b } }\nfn main() { let a = A { x: 1 }; println!(\"{}\", a.add(2)) }\n",
+    );
+    assert!(has_code(&d, "GT0018"), "{d:?}");
+}
+
+#[test]
+fn method_call_with_correct_arity_is_accepted() {
+    let d = diagnostics_for(
+        "struct A { x: i64 }\nimpl A { fn add(&self, a: i64, b: i64) -> i64 { self.x + a + b } }\nfn main() { let a = A { x: 1 }; println!(\"{}\", a.add(2, 3)) }\n",
+    );
+    assert!(!has_code(&d, "GT0018"), "{d:?}");
+}
+
+#[test]
+fn piped_method_call_counts_the_implicit_argument() {
+    // `5 |> a.add(2)` desugars to `a.add(2, 5)`: arity is satisfied.
+    let d = diagnostics_for(
+        "struct A { x: i64 }\nimpl A { fn add(&self, a: i64, b: i64) -> i64 { self.x + a + b } }\nfn main() { let a = A { x: 1 }; println!(\"{}\", 5 |> a.add(2)) }\n",
+    );
+    assert!(!has_code(&d, "GT0018"), "{d:?}");
+}
+
+#[test]
+fn nonexistent_method_on_user_struct_is_rejected() {
+    // 0.18.0: a typo passed check; the compiled build failed on an
+    // undefined `@A::bogus` symbol.
+    let d = diagnostics_for(
+        "struct A { x: i64 }\nfn main() { let a = A { x: 1 }; let y = a.bogus(); println!(\"{}\", y) }\n",
+    );
+    assert!(has_code(&d, "GT0002"), "{d:?}");
+}
+
+#[test]
+fn real_method_on_user_struct_is_accepted() {
+    let d = diagnostics_for(
+        "struct A { x: i64 }\nimpl A { fn get(&self) -> i64 { self.x } }\nfn main() { let a = A { x: 1 }; println!(\"{}\", a.get()) }\n",
+    );
+    assert!(!has_code(&d, "GT0002"), "{d:?}");
+}
+
+#[test]
+fn strings_free_fn_rejects_integer_in_string_slot() {
+    // 0.18.x: an integer in a `String` parameter of a `strings::` free
+    // function passed check, then the compiled string shim dereferenced
+    // it as a pointer (SIGSEGV the VM masked).
+    let d = diagnostics_for(
+        "use std::strings\nfn main() { let r = strings::contains(&\"hello\", 5)\nprintln!(\"{}\", r) }\n",
+    );
+    assert!(
+        d.iter().any(
+            |x| matches!(&x.error, TypeError::TypeMismatch { expected, found }
+                if expected == "String" && found == "{integer}")
+        ),
+        "expected String/{{integer}} mismatch, got {d:?}"
+    );
+}
+
+#[test]
+fn strings_free_fn_rejects_misordered_integer_argument() {
+    // `splitn(text, n, sep)`: an integer landing in the `sep` slot is a
+    // mis-ordered call that the compiled tier would crash on.
+    let d = diagnostics_for(
+        "use std::strings\nfn main() { let p = strings::splitn(&\"a,b\", 2, 5)\nprintln!(\"{}\", p.len()) }\n",
+    );
+    assert!(
+        d.iter()
+            .any(|x| matches!(&x.error, TypeError::TypeMismatch { .. })),
+        "expected a type mismatch for the integer separator, got {d:?}"
+    );
+}
+
+#[test]
+fn strings_free_fn_rejects_float_in_string_slot() {
+    // A float literal is a lenient inference var, so it slips past a
+    // plain `String` unification; it must be rejected explicitly.
+    let d = diagnostics_for(
+        "use std::strings\nfn main() { let r = strings::contains(&\"hi\", 1.5)\nprintln!(\"{}\", r) }\n",
+    );
+    assert!(
+        d.iter().any(
+            |x| matches!(&x.error, TypeError::TypeMismatch { expected, found }
+                if expected == "String" && found == "{float}")
+        ),
+        "expected String/{{float}} mismatch, got {d:?}"
+    );
+}
+
+#[test]
+fn user_fn_rejects_float_in_string_parameter() {
+    let d = diagnostics_for(
+        "fn f(s: &String) -> i64 { s.len() }\nfn main() { println!(\"{}\", f(1.5)) }\n",
+    );
+    assert!(
+        d.iter().any(
+            |x| matches!(&x.error, TypeError::TypeMismatch { expected, found }
+                if expected == "String" && found == "{float}")
+        ),
+        "expected String/{{float}} mismatch, got {d:?}"
+    );
+}
+
+#[test]
+fn string_method_rejects_integer_in_string_slot() {
+    // The same crash via method form: `s.contains(5)` dispatches to the
+    // string shim with the receiver as the implicit first argument.
+    let d = diagnostics_for(
+        "fn main() { let s = \"hi\"\nlet r = s.contains(5)\nprintln!(\"{}\", r) }\n",
+    );
+    assert!(
+        d.iter().any(
+            |x| matches!(&x.error, TypeError::TypeMismatch { expected, found }
+                if expected == "String" && found == "{integer}")
+        ),
+        "expected String/{{integer}} mismatch, got {d:?}"
+    );
+}
+
+#[test]
+fn string_method_accepts_string_and_char_patterns() {
+    let d = diagnostics_for(
+        "fn main() {\n\
+         let s = \"hello world\"\n\
+         let _ = s.contains(&\"world\")\n\
+         let _ = s.contains('w')\n\
+         let _ = s.replace(&\"o\", &\"0\")\n\
+         let _ = s.splitn(2, &\" \")\n\
+         }\n",
+    );
+    assert!(
+        !d.iter()
+            .any(|x| matches!(&x.error, TypeError::TypeMismatch { .. })),
+        "valid string-method calls must type clean, got {d:?}"
+    );
+}
+
+#[test]
+fn strings_free_fn_accepts_string_and_char_patterns() {
+    // A real string needle, a `char` needle, and a `char` pad all type
+    // cleanly - the validation must not reject the legitimate shapes.
+    let d = diagnostics_for(
+        "use std::strings\nfn main() {\n\
+         let s = \"hello\"\n\
+         let _ = strings::contains(&s, &\"ell\")\n\
+         let _ = strings::contains(&s, 'e')\n\
+         let _ = strings::replace(&s, &\"l\", &\"L\")\n\
+         let _ = strings::pad_left(&\"7\", 4, '0')\n\
+         let _ = strings::repeat(&\"ab\", 3)\n\
+         }\n",
+    );
+    assert!(
+        !d.iter()
+            .any(|x| matches!(&x.error, TypeError::TypeMismatch { .. })),
+        "valid string-function calls must type clean, got {d:?}"
+    );
+}

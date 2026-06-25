@@ -360,10 +360,67 @@ pub(super) fn emit_per_arg_print(
                 let fref = module.declare_func_in_func(print_str, builder.func);
                 builder.ins().call(fref, &[s]);
             }
+            PrintKind::Option(payload_kind) => {
+                let s = emit_debug_option_value(module, builder, value, payload_kind, intrinsics)?;
+                let fref = module.declare_func_in_func(print_str, builder.func);
+                builder.ins().call(fref, &[s]);
+            }
+            PrintKind::Result(ok_kind, err_kind) => {
+                let s =
+                    emit_debug_result_value(module, builder, value, ok_kind, err_kind, intrinsics)?;
+                let fref = module.declare_func_in_func(print_str, builder.func);
+                builder.ins().call(fref, &[s]);
+            }
             PrintKind::Unsupported(_) => unreachable!("checked above"),
         }
     }
     Ok(())
+}
+
+/// Emits `gos_rt_debug_option(opt_i128, kind)` and returns the rendered string
+/// pointer. `value` is the by-value `i128` Option enum.
+pub(super) fn emit_debug_option_value(
+    module: &mut dyn Module,
+    builder: &mut FunctionBuilder<'_>,
+    value: ir::Value,
+    payload_kind: u8,
+    intrinsics: &mut IntrinsicContext,
+) -> Result<ir::Value> {
+    let ptr_ty = module.target_config().pointer_type();
+    let f = intrinsics.extern_fn(
+        module,
+        "gos_rt_debug_option",
+        &[types::I128, types::I64],
+        &[ptr_ty],
+    )?;
+    let fref = module.declare_func_in_func(f, builder.func);
+    let kind_v = builder.ins().iconst(types::I64, i64::from(payload_kind));
+    let call = builder.ins().call(fref, &[value, kind_v]);
+    Ok(builder.inst_results(call)[0])
+}
+
+/// Emits `gos_rt_debug_result(res_i128, ok_kind, err_kind)` and returns the
+/// rendered string pointer. `value` is the by-value `i128` Result enum.
+pub(super) fn emit_debug_result_value(
+    module: &mut dyn Module,
+    builder: &mut FunctionBuilder<'_>,
+    value: ir::Value,
+    ok_kind: u8,
+    err_kind: u8,
+    intrinsics: &mut IntrinsicContext,
+) -> Result<ir::Value> {
+    let ptr_ty = module.target_config().pointer_type();
+    let f = intrinsics.extern_fn(
+        module,
+        "gos_rt_debug_result",
+        &[types::I128, types::I64, types::I64],
+        &[ptr_ty],
+    )?;
+    let fref = module.declare_func_in_func(f, builder.func);
+    let ok_v = builder.ins().iconst(types::I64, i64::from(ok_kind));
+    let err_v = builder.ins().iconst(types::I64, i64::from(err_kind));
+    let call = builder.ins().call(fref, &[value, ok_v, err_v]);
+    Ok(builder.inst_results(call)[0])
 }
 
 pub(super) fn emit_arr_print(
@@ -639,6 +696,19 @@ pub(super) fn emit_args_to_concat_string(
             }
             PrintKind::Map => {
                 let s = emit_map_format_value(module, builder, value, intrinsics)?;
+                let f = intrinsics.extern_fn_by_name(module, "gos_rt_concat_str")?;
+                let fref = module.declare_func_in_func(f, builder.func);
+                builder.ins().call(fref, &[s]);
+            }
+            PrintKind::Option(payload_kind) => {
+                let s = emit_debug_option_value(module, builder, value, payload_kind, intrinsics)?;
+                let f = intrinsics.extern_fn_by_name(module, "gos_rt_concat_str")?;
+                let fref = module.declare_func_in_func(f, builder.func);
+                builder.ins().call(fref, &[s]);
+            }
+            PrintKind::Result(ok_kind, err_kind) => {
+                let s =
+                    emit_debug_result_value(module, builder, value, ok_kind, err_kind, intrinsics)?;
                 let f = intrinsics.extern_fn_by_name(module, "gos_rt_concat_str")?;
                 let fref = module.declare_func_in_func(f, builder.func);
                 builder.ins().call(fref, &[s]);

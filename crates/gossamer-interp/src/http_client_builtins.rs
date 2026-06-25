@@ -35,8 +35,6 @@
 #![allow(clippy::unnecessary_wraps)]
 use std::sync::Arc;
 
-use gossamer_ast::Ident;
-
 use crate::value::{RuntimeError, RuntimeResult, SmolStr, Value};
 
 fn as_str(value: &Value) -> Option<&str> {
@@ -90,15 +88,12 @@ fn config_fields(
     timeout_ms: i64,
     cookie_jar: bool,
     proxy: &str,
-) -> Vec<(Ident, Value)> {
+) -> Vec<(&'static str, Value)> {
     vec![
-        (Ident::new("max_redirects"), Value::Int(max_redirects)),
-        (Ident::new("timeout_ms"), Value::Int(timeout_ms)),
-        (Ident::new("cookie_jar"), Value::Bool(cookie_jar)),
-        (
-            Ident::new("proxy"),
-            Value::String(SmolStr::from(proxy.to_string())),
-        ),
+        ("max_redirects", Value::Int(max_redirects)),
+        ("timeout_ms", Value::Int(timeout_ms)),
+        ("cookie_jar", Value::Bool(cookie_jar)),
+        ("proxy", Value::String(SmolStr::from(proxy.to_string()))),
     ]
 }
 
@@ -117,7 +112,7 @@ fn int_field(inner: &crate::value::StructInner, name: &str) -> Option<i64> {
     inner
         .fields
         .iter()
-        .find(|(ident, _)| ident.name == name)
+        .find(|(ident, _)| (*ident) == name)
         .and_then(|(_, v)| match v {
             Value::Int(n) => Some(*n),
             _ => None,
@@ -128,7 +123,7 @@ fn bool_field(inner: &crate::value::StructInner, name: &str) -> Option<bool> {
     inner
         .fields
         .iter()
-        .find(|(ident, _)| ident.name == name)
+        .find(|(ident, _)| (*ident) == name)
         .and_then(|(_, v)| match v {
             Value::Bool(b) => Some(*b),
             _ => None,
@@ -139,7 +134,7 @@ fn str_field(inner: &crate::value::StructInner, name: &str) -> Option<String> {
     inner
         .fields
         .iter()
-        .find(|(ident, _)| ident.name == name)
+        .find(|(ident, _)| (*ident) == name)
         .and_then(|(_, v)| as_str(v).map(str::to_string))
 }
 
@@ -253,7 +248,7 @@ pub(crate) fn builtin_http_client_builder_build(args: &[Value]) -> RuntimeResult
         ) {
             Ok(client) => {
                 let id = client_registry_register(client);
-                fields.push((Ident::new("__client"), Value::Int(id)));
+                fields.push(("__client", Value::Int(id)));
             }
             Err(e) => return Ok(crate::builtins::err_variant(e)),
         }
@@ -355,7 +350,7 @@ pub(crate) fn builtin_http_request_header(args: &[Value]) -> RuntimeResult<Value
         Value::String(SmolStr::from(value.to_string())),
     ]));
     let mut fields = inner.fields.clone();
-    if let Some((_, slot)) = fields.iter_mut().find(|(ident, _)| ident.name == "headers") {
+    if let Some((_, slot)) = fields.iter_mut().find(|(ident, _)| (*ident) == "headers") {
         let mut items = match slot {
             Value::Array(existing) => existing.as_ref().clone(),
             _ => Vec::new(),
@@ -363,7 +358,7 @@ pub(crate) fn builtin_http_request_header(args: &[Value]) -> RuntimeResult<Value
         items.push(pair);
         *slot = Value::Array(Arc::new(items));
     } else {
-        fields.push((Ident::new("headers"), Value::Array(Arc::new(vec![pair]))));
+        fields.push(("headers", Value::Array(Arc::new(vec![pair]))));
     }
     Ok(Value::struct_("Request", fields))
 }
@@ -375,10 +370,10 @@ pub(crate) fn builtin_http_request_body(args: &[Value]) -> RuntimeResult<Value> 
     let body = args.get(1).and_then(as_str).unwrap_or("");
     let body_value = Value::String(SmolStr::from(body.to_string()));
     let mut fields = inner.fields.clone();
-    if let Some((_, slot)) = fields.iter_mut().find(|(ident, _)| ident.name == "body") {
+    if let Some((_, slot)) = fields.iter_mut().find(|(ident, _)| (*ident) == "body") {
         *slot = body_value;
     } else {
-        fields.push((Ident::new("body"), body_value));
+        fields.push(("body", body_value));
     }
     Ok(Value::struct_("Request", fields))
 }
@@ -389,7 +384,7 @@ pub(crate) fn builtin_http_request_send(args: &[Value]) -> RuntimeResult<Value> 
         inner
             .fields
             .iter()
-            .find(|(ident, _)| ident.name == name)
+            .find(|(ident, _)| (*ident) == name)
             .map(|(_, v)| v)
     };
     let url = field("url").and_then(as_str).unwrap_or("").to_string();
@@ -439,7 +434,7 @@ pub(crate) fn builtin_http_response_bytes(args: &[Value]) -> RuntimeResult<Value
     let body = inner
         .fields
         .iter()
-        .find(|(ident, _)| ident.name == "body")
+        .find(|(ident, _)| (*ident) == "body")
         .and_then(|(_, v)| as_str(v))
         .unwrap_or_default();
     let bytes: Vec<Value> = body.bytes().map(|b| Value::Int(i64::from(b))).collect();
@@ -543,7 +538,7 @@ fn handle_field(value: &Value, expected_name: &str) -> Option<i64> {
         return None;
     }
     for (ident, val) in &inner.fields {
-        if ident.name == "__handle" {
+        if (*ident) == "__handle" {
             if let Value::Int(n) = val {
                 return Some(*n);
             }
@@ -570,17 +565,11 @@ fn lift_response(resp: gossamer_std::http::Response) -> Value {
     let location = resp.headers.get("location").unwrap_or("").to_string();
     let status = i64::from(resp.status.0);
     let mut fields = vec![
-        (Ident::new("status"), Value::Int(status)),
-        (Ident::new("body"), Value::String(body_str.into())),
-        (Ident::new("raw_bytes"), Value::Array(Arc::new(raw))),
-        (
-            Ident::new("content_type"),
-            Value::String(SmolStr::from(content_type)),
-        ),
-        (
-            Ident::new("location"),
-            Value::String(SmolStr::from(location)),
-        ),
+        ("status", Value::Int(status)),
+        ("body", Value::String(body_str.into())),
+        ("raw_bytes", Value::Array(Arc::new(raw))),
+        ("content_type", Value::String(SmolStr::from(content_type))),
+        ("location", Value::String(SmolStr::from(location))),
     ];
     // The wire sequence (order + duplicates - `set-cookie` repeats)
     // is what the compiled tiers lift, so prefer it; the sorted
@@ -597,7 +586,7 @@ fn lift_response(resp: gossamer_std::http::Response) -> Value {
             .map(|(name, value)| header_pair_value(name, value))
             .collect()
     };
-    fields.push((Ident::new("headers"), Value::Array(Arc::new(headers))));
+    fields.push(("headers", Value::Array(Arc::new(headers))));
     Value::struct_("Response", fields)
 }
 
@@ -804,12 +793,9 @@ pub(crate) fn builtin_http_stream(args: &[Value]) -> RuntimeResult<Value> {
                 .to_string();
             let handle = stream_register(stream);
             let fields = vec![
-                (Ident::new("__handle"), Value::Int(handle)),
-                (Ident::new("status"), Value::Int(status)),
-                (
-                    Ident::new("content_type"),
-                    Value::String(SmolStr::from(content_type)),
-                ),
+                ("__handle", Value::Int(handle)),
+                ("status", Value::Int(status)),
+                ("content_type", Value::String(SmolStr::from(content_type))),
             ];
             Ok(crate::builtins::ok_variant(Value::struct_(
                 "ResponseStream",
@@ -871,17 +857,11 @@ pub(crate) fn builtin_response_stream_next_chunk(args: &[Value]) -> RuntimeResul
 
 fn pending_request_for(method: &str, url: &str, client_id: Option<i64>) -> Value {
     let mut fields = vec![
-        (
-            Ident::new("method"),
-            Value::String(SmolStr::from(method.to_string())),
-        ),
-        (
-            Ident::new("url"),
-            Value::String(SmolStr::from(url.to_string())),
-        ),
+        ("method", Value::String(SmolStr::from(method.to_string()))),
+        ("url", Value::String(SmolStr::from(url.to_string()))),
     ];
     if let Some(id) = client_id {
-        fields.push((Ident::new("__client"), Value::Int(id)));
+        fields.push(("__client", Value::Int(id)));
     }
     Value::struct_("Request", fields)
 }
@@ -1012,7 +992,7 @@ mod tests {
         inner
             .fields
             .iter()
-            .find(|(ident, _)| ident.name == name)
+            .find(|(ident, _)| (*ident) == name)
             .map(|(_, v)| v)
     }
 
@@ -1106,7 +1086,7 @@ mod tests {
         let msg = err
             .fields
             .iter()
-            .find(|(ident, _)| ident.name == "message")
+            .find(|(ident, _)| (*ident) == "message")
             .and_then(|(_, v)| as_str(v))
             .unwrap_or("");
         assert!(
@@ -1122,7 +1102,7 @@ mod tests {
         inner
             .fields
             .iter()
-            .find(|(ident, _)| ident.name == name)
+            .find(|(ident, _)| (*ident) == name)
             .map(|(_, v)| v)
     }
 
@@ -1151,7 +1131,7 @@ mod tests {
         };
         err.fields
             .iter()
-            .find(|(ident, _)| ident.name == "message")
+            .find(|(ident, _)| (*ident) == "message")
             .and_then(|(_, v)| as_str(v))
             .unwrap_or("")
             .to_string()
@@ -1394,7 +1374,7 @@ mod tests {
         let (_, headers_val) = lifted
             .fields
             .iter()
-            .find(|(ident, _)| ident.name == "headers")
+            .find(|(ident, _)| (*ident) == "headers")
             .expect("lifted Response must carry a `headers` field");
         let Value::Array(items) = headers_val else {
             panic!("`headers` must be an array, got {headers_val:?}");
@@ -1433,7 +1413,7 @@ mod tests {
         let (_, headers_val) = lifted
             .fields
             .iter()
-            .find(|(ident, _)| ident.name == "headers")
+            .find(|(ident, _)| (*ident) == "headers")
             .expect("lifted Response must carry a `headers` field");
         let Value::Array(items) = headers_val else {
             panic!("`headers` must be an array, got {headers_val:?}");
@@ -1471,7 +1451,7 @@ mod tests {
         let (_, headers_val) = lifted
             .fields
             .iter()
-            .find(|(ident, _)| ident.name == "headers")
+            .find(|(ident, _)| (*ident) == "headers")
             .expect("lifted Response must carry a `headers` field");
         let Value::Array(items) = headers_val else {
             panic!("`headers` must be an array, got {headers_val:?}");

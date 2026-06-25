@@ -263,7 +263,11 @@ impl Vm {
         self.spawn_on_pool(move |vm| {
             if let Err(err) = vm.dispatch_call(&callee, args) {
                 if !vm.invoke_panic_hook(&crate::panic_message(&err)) {
-                    eprintln!("goroutine panic (isolated): {err}");
+                    // Report an unobserved goroutine panic with the same single
+                    // `error[GX0005]: panic: ...` line the compiled runtime
+                    // emits (`gos_rt_panic`), so stderr is identical whether the
+                    // goroutine ran on the VM or native code.
+                    eprintln!("{err}");
                 }
             }
         });

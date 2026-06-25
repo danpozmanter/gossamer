@@ -13,7 +13,6 @@ Error construction, wrapping, and chain traversal.
 | `newf` | fn | Constructs a fresh error from a format template, e.g. `newf("status {}", code)`. |
 | `wrap` | fn | Wraps a cause with a higher-level message. |
 | `is` | fn | Checks whether an error's chain contains a matching message. |
-| `chain` | fn | Iterator over an error and its ancestor causes. |
 | `join` | fn | Joins a list of errors into one; messages are joined with "; " (None for an empty list). |
 
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->

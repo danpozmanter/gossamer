@@ -1,0 +1,12 @@
+---
+source: crates/gossamer-diagnostics/tests/snapshots.rs
+expression: rendered
+---
+--- plain ---
+error[GT0021]: `value[index]` was used on a type that cannot be indexed. Only - here
+--- framed ---
+error[GT0021]: `value[index]` was used on a type that cannot be indexed. Only
+  --> snap.gos:2:5
+     2 |     let x = 1
+       |     ^^^^^
+     error: here

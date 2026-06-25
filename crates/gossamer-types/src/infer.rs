@@ -182,6 +182,43 @@ impl InferCtxt {
         }
     }
 
+    /// Whether `ty` resolves to an as-yet-unbound integer-constrained
+    /// inference variable - an unsuffixed integer literal whose width
+    /// has not been pinned. Such a value is laid out as a machine
+    /// integer on every tier, so routing it into a `String` parameter
+    /// makes the compiled string shims dereference it as a pointer.
+    #[must_use]
+    pub fn is_integer_constrained_var(&mut self, tcx: &TyCtxt, ty: Ty) -> bool {
+        let resolved = self.resolve(tcx, ty);
+        let vid = match tcx.kind(resolved) {
+            Some(TyKind::Var(vid)) => *vid,
+            _ => return false,
+        };
+        let root = self.root_of(vid);
+        self.integer_constrained
+            .get(root as usize)
+            .copied()
+            .unwrap_or(false)
+    }
+
+    /// Whether `ty` resolves to an as-yet-unbound float-default
+    /// inference variable - an unsuffixed float literal. Such a value
+    /// unifies leniently with concrete types, so it must be rejected
+    /// explicitly where only a string is acceptable.
+    #[must_use]
+    pub fn is_float_literal_var(&mut self, tcx: &TyCtxt, ty: Ty) -> bool {
+        let resolved = self.resolve(tcx, ty);
+        let vid = match tcx.kind(resolved) {
+            Some(TyKind::Var(vid)) => *vid,
+            _ => return false,
+        };
+        let root = self.root_of(vid);
+        self.float_literal
+            .get(root as usize)
+            .copied()
+            .unwrap_or(false)
+    }
+
     fn walk_var(&self, tcx: &TyCtxt, vid: TyVid) -> Option<Ty> {
         let mut idx = vid.0;
         loop {

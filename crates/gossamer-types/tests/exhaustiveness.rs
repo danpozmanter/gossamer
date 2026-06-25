@@ -170,6 +170,76 @@ fn main() {
     );
 }
 
+fn non_exhaustive(diagnostics: &[gossamer_types::ExhaustivenessDiagnostic]) -> bool {
+    diagnostics
+        .iter()
+        .any(|d| matches!(d.error, ExhaustivenessError::NonExhaustive { .. }))
+}
+
+// 0.18.1: an `i64` scrutinee with no wildcard arm was treated as
+// exhaustive, so the compiled tier ran off the end of the dispatch and
+// SIGSEGV'd. A non-enumerable scalar now requires a catch-all.
+#[test]
+fn int_match_without_wildcard_is_non_exhaustive() {
+    let diagnostics = run("fn f(n: i64) -> i64 { match n { 0 => 10, 1 => 20, } }\n");
+    assert!(non_exhaustive(&diagnostics), "{diagnostics:?}");
+}
+
+#[test]
+fn int_match_with_wildcard_is_exhaustive() {
+    let diagnostics = run("fn f(n: i64) -> i64 { match n { 0 => 10, _ => 0, } }\n");
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+}
+
+#[test]
+fn int_match_with_binding_catch_all_is_exhaustive() {
+    let diagnostics = run("fn f(n: i64) -> i64 { match n { 0 => 10, other => other, } }\n");
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+}
+
+#[test]
+fn string_match_without_wildcard_is_non_exhaustive() {
+    let diagnostics = run("fn f(s: String) -> i64 { match s { \"a\" => 1, \"b\" => 2, } }\n");
+    assert!(non_exhaustive(&diagnostics), "{diagnostics:?}");
+}
+
+// 0.18.1: `Option` / `Result` are built-in sentinel ADTs absent from the
+// user-enum table, so a missing-variant match was treated as exhaustive
+// and the compiled tier read an uninitialised discriminant (garbage).
+#[test]
+fn option_match_missing_none_is_non_exhaustive() {
+    let diagnostics = run("fn f(o: Option<i64>) -> i64 { match o { Some(n) => n, } }\n");
+    assert!(non_exhaustive(&diagnostics), "{diagnostics:?}");
+}
+
+#[test]
+fn option_match_both_arms_is_exhaustive() {
+    let diagnostics = run("fn f(o: Option<i64>) -> i64 { match o { Some(n) => n, None => 0, } }\n");
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+}
+
+#[test]
+fn result_match_missing_err_is_non_exhaustive() {
+    let diagnostics = run("fn f(r: Result<i64, i64>) -> i64 { match r { Ok(n) => n, } }\n");
+    assert!(non_exhaustive(&diagnostics), "{diagnostics:?}");
+}
+
+#[test]
+fn result_match_both_arms_is_exhaustive() {
+    let diagnostics =
+        run("fn f(r: Result<i64, i64>) -> i64 { match r { Ok(n) => n, Err(e) => e, } }\n");
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+}
+
+// 0.18.1: a guarded-only `Some` arm does not prove `Some` is covered, so
+// `Some(0)` fell through; with `Option` now enumerable this is reported.
+#[test]
+fn guarded_only_some_arm_leaves_some_uncovered() {
+    let diagnostics =
+        run("fn f(o: Option<i64>) -> i64 { match o { Some(n) if n > 0 => n, None => 0, } }\n");
+    assert!(non_exhaustive(&diagnostics), "{diagnostics:?}");
+}
+
 #[test]
 fn example_programs_have_no_spurious_exhaustiveness_errors() {
     for name in ["hello_world.gos", "line_count.gos", "web_server.gos"] {

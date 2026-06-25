@@ -125,6 +125,128 @@ fn registry_members_match_manifest() {
     );
 }
 
+/// Manifest `Function` items whose implementation is reached through a
+/// parse-time call rewrite (`gossamer-parse`), so the public spelling is
+/// absent from the interp builtin registry yet the call resolves on every
+/// tier. A closed, mechanism-annotated list: each entry is rewritten /
+/// injected by a named mechanism in `gossamer-parse` (verified to build +
+/// run). The resolver never sees these names - the rewrite fires before
+/// resolution - so the three-segment phantom gate cannot reject them.
+const MANIFEST_IMPL_VIA_REWRITE: &[&str] = &[
+    // `Parser::rewrite_errors_newf` desugars to `errors::new(format!(..))`.
+    "errors::newf",
+    // `rewrite_stdlib_struct_surface` maps these to injected
+    // `__gos_http_*` wrappers (HTTP_SECURITY_WRAPPERS).
+    "http::csrf::extract_token",
+    "http::csrf::origin_allowed",
+    "http::csrf::check",
+    "http::csrf::attach_cookie",
+    "http::session::with_session",
+    "http::multipart::parse",
+];
+
+#[test]
+fn manifest_functions_have_implementations() {
+    use std::collections::{HashMap, HashSet};
+
+    use gossamer_std::manifest::feature_status::{Status, lookup};
+
+    // Canonical path (no `std::`) -> itself, plus last-segment -> path,
+    // so a registered `json::parse` and a manifest `encoding::json` both
+    // reach the same canonical module. Mirrors the binding map in
+    // `registry_members_match_manifest`, inverted.
+    let mut binding_to_paths: HashMap<&str, Vec<&str>> = HashMap::new();
+    for m in gossamer_std::manifest::ALL_MODULES {
+        let path = m.path.strip_prefix("std::").unwrap_or(m.path);
+        binding_to_paths.entry(path).or_default().push(path);
+        if let Some(seg) = path.rsplit("::").next() {
+            binding_to_paths.entry(seg).or_default().push(path);
+        }
+    }
+
+    // (canonical_path, member) pairs the interp actually binds, reached
+    // by reverse-mapping every registered free-function name through its
+    // binding spelling. `module::Type::method` names are type-associated
+    // methods, never manifest free-function members, so they are skipped.
+    let mut implemented: HashSet<(&str, &str)> = HashSet::new();
+    for name in gossamer_interp::registered_names() {
+        if !name.contains("::") || !name.chars().next().is_some_and(char::is_lowercase) {
+            continue;
+        }
+        let mut segs: Vec<&str> = name.split("::").collect();
+        if segs.first() == Some(&"std") {
+            segs.remove(0);
+        }
+        let member = segs[segs.len() - 1];
+        let binding_segs = &segs[..segs.len() - 1];
+        if binding_segs
+            .last()
+            .is_some_and(|s| s.chars().next().is_some_and(char::is_uppercase))
+        {
+            continue;
+        }
+        let binding = binding_segs.join("::");
+        if let Some(paths) = binding_to_paths.get(binding.as_str()) {
+            for p in paths {
+                implemented.insert((*p, member));
+            }
+        }
+    }
+
+    let phantoms: Vec<String> = gossamer_std::manifest::ALL_MODULES
+        .iter()
+        // A module whose lifecycle status departs from `Shipped`
+        // (Experimental / Planned) is honestly disclosed by
+        // `gos feature-status`; its surface is allowed to have gaps.
+        .filter(|m| lookup(m.path).is_none_or(|e| e.status == Status::Shipped))
+        .flat_map(|m| {
+            let path = m.path.strip_prefix("std::").unwrap_or(m.path);
+            m.items
+                .iter()
+                .filter(|it| it.kind == gossamer_std::registry::StdItemKind::Function)
+                .map(move |it| (path, it.name))
+        })
+        .filter(|(path, name)| !implemented.contains(&(*path, *name)))
+        .map(|(path, name)| format!("{path}::{name}"))
+        .filter(|p| !MANIFEST_IMPL_VIA_REWRITE.contains(&p.as_str()))
+        .collect();
+
+    assert!(
+        phantoms.is_empty(),
+        "{n} manifest Function item(s) advertise a function that resolves to NO \
+         implementation - they are listed by `gos doc` and default to \"Shipped\" in \
+         the feature-status registry, pass `gos check` (for 3-segment paths), then \
+         fail at runtime with GX0002 / a compiled build error.\nEither wire the \
+         function on all three tiers (interp builtin + c_abi shim + cranelift + llvm \
+         dispatch) and add a tier-parity fixture, or remove the StdItem from its \
+         manifest/*.rs module:\n  {phantoms:#?}",
+        n = phantoms.len()
+    );
+
+    // Guard the allowlist against rot: every rewrite-backed entry must
+    // still be an advertised manifest Function, else it is dead weight
+    // masking a future regression.
+    let manifest_fns: std::collections::HashSet<String> = gossamer_std::manifest::ALL_MODULES
+        .iter()
+        .flat_map(|m| {
+            let path = m.path.strip_prefix("std::").unwrap_or(m.path);
+            m.items
+                .iter()
+                .filter(|it| it.kind == gossamer_std::registry::StdItemKind::Function)
+                .map(move |it| format!("{path}::{}", it.name))
+        })
+        .collect();
+    let stale: Vec<&&str> = MANIFEST_IMPL_VIA_REWRITE
+        .iter()
+        .filter(|p| !manifest_fns.contains(**p))
+        .collect();
+    assert!(
+        stale.is_empty(),
+        "MANIFEST_IMPL_VIA_REWRITE entries no longer advertised as manifest \
+         Functions (remove them): {stale:#?}"
+    );
+}
+
 #[test]
 fn stdlib_module_paths_match_manifest() {
     let mut live: Vec<&str> = gossamer_std::manifest::ALL_MODULES

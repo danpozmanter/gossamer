@@ -268,6 +268,14 @@ pub(super) enum ConcatKind {
     /// A scalar-keyed, scalar/string-valued `HashMap` rendered via
     /// `gos_rt_map_format`.
     Map,
+    /// `{:?}` of an `Option<T>` with a scalar / String payload, rendered
+    /// via `gos_rt_debug_option`. The `u8` is the payload formatter kind
+    /// (see `debug_payload_kind`).
+    Option(u8),
+    /// `{:?}` of a `Result<T, E>` with scalar / String payloads, rendered
+    /// via `gos_rt_debug_result`. The two `u8`s are the Ok / Err payload
+    /// formatter kinds.
+    Result(u8, u8),
     Unsupported,
 }
 
@@ -416,8 +424,12 @@ fn int_cmp_pred(op: BinOp, signed: bool) -> &'static str {
 
 fn float_cmp_pred(op: BinOp) -> &'static str {
     match op {
+        // `oeq` is false when either operand is NaN, so `NaN == NaN` is
+        // false - matching IEEE and the VM. `!=` must be the *unordered*
+        // `une` (true when either side is NaN) so `NaN != NaN` is true; the
+        // ordered `one` would wrongly report `false` for any NaN operand.
         BinOp::Eq => "oeq",
-        BinOp::Ne => "one",
+        BinOp::Ne => "une",
         BinOp::Lt => "olt",
         BinOp::Le => "ole",
         BinOp::Gt => "ogt",

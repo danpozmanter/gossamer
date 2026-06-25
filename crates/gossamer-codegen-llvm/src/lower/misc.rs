@@ -600,6 +600,31 @@ impl<'a> Lowerer<'a> {
                             ConcatKind::Unsupported
                         }
                     }
+                    // `{:?}` of an `Option<T>` / `Result<T, E>` with scalar /
+                    // String payloads: render through the runtime debug helper.
+                    // User structs / enums with a `#[derive(Debug)]` fmt are
+                    // routed to that fmt before reaching here, so this only
+                    // catches the built-in by-value enums. Aggregate / nested
+                    // payloads fall through to Unsupported.
+                    Some(TyKind::Adt { def, substs })
+                        if (def.local == u32::MAX || def.local == u32::MAX - 1) =>
+                    {
+                        let tys = substs.types();
+                        if def.local == u32::MAX - 1 {
+                            match tys.first().and_then(|t| self.debug_payload_kind(*t)) {
+                                Some(k) => ConcatKind::Option(k),
+                                None => ConcatKind::Unsupported,
+                            }
+                        } else {
+                            match (
+                                tys.first().and_then(|t| self.debug_payload_kind(*t)),
+                                tys.get(1).and_then(|t| self.debug_payload_kind(*t)),
+                            ) {
+                                (Some(ok), Some(err)) => ConcatKind::Result(ok, err),
+                                _ => ConcatKind::Unsupported,
+                            }
+                        }
+                    }
                     // Aggregate / collection / variant types we
                     // can't yet route. Refuse loudly so the
                     // backend triggers fallback.
@@ -625,6 +650,25 @@ impl<'a> Lowerer<'a> {
                 }
             }
             Operand::FnRef { .. } => ConcatKind::Int,
+        }
+    }
+
+    /// Maps an `Option` / `Result` payload type to the `gos_rt_debug_*`
+    /// formatter kind (0=i64, 1=u64, 2=f64, 3=bool, 4=char, 5=String), or
+    /// `None` for an aggregate / nested payload the scalar helper can't render.
+    pub(crate) fn debug_payload_kind(&self, ty: Ty) -> Option<u8> {
+        let ty = self.unwrap_ref(ty);
+        match self.tcx.kind(ty) {
+            // The VM stores an `Option` / `Result` payload as a plain i64 with
+            // no width info, so a `u64` payload renders signed inside `{:?}`
+            // (`u64::MAX` => `-1`). Match that signed rendering for parity - a
+            // bare `u64` outside an enum still prints unsigned via `Uint`.
+            Some(TyKind::Int(_)) => Some(0),
+            Some(TyKind::Float(_)) => Some(2),
+            Some(TyKind::Bool) => Some(3),
+            Some(TyKind::Char) => Some(4),
+            Some(TyKind::String) => Some(5),
+            _ => None,
         }
     }
 
@@ -831,6 +875,12 @@ impl<'a> Lowerer<'a> {
                     return value.to_string();
                 }
             }
+            // Floating-point width changes are value-preserving
+            // conversions, not bit reinterpretations: `fptrunc`
+            // narrows double → float (f32), `fpext` widens the
+            // other way. A `bitcast` between them is invalid IR.
+            ("double", "float") => "fptrunc",
+            ("float", "double") => "fpext",
             // Integer ↔ floating-point conversions use `sitofp`
             // / `fptosi` (signed) - `bitcast` reinterprets bits
             // and produces a denormal float for small integers,

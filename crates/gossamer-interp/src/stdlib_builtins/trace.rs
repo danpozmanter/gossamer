@@ -83,14 +83,14 @@ pub(crate) fn install_trace(globals: &mut Vec<(&'static str, Value)>) {
 fn handle(kind: &'static str, field: &'static str, id: i64) -> Value {
     Value::struct_(
         kind,
-        Arc::unwrap_or_clone(Arc::new(vec![(Ident::new(field), Value::Int(id))])),
+        Arc::unwrap_or_clone(Arc::new(vec![(field, Value::Int(id))])),
     )
 }
 
 fn handle_id(value: &Value, field: &str) -> Option<i64> {
     if let Value::Struct(inner) = value {
         for (i, v) in &inner.fields {
-            if i.name == field {
+            if (*i) == field {
                 if let Value::Int(n) = v {
                     return Some(*n);
                 }

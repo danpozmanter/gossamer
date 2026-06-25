@@ -1,0 +1,14 @@
+// Integer divide-by-zero panics with GX0005 identically on every tier
+// (the divisor is loop-computed so it is not const-folded away). stdout
+// up to the panic is compared; the panic itself goes to stderr and exits
+// 101, so this fixture runs with allow_nonzero.
+
+fn main() {
+    let xs = [4, 6, 10]
+    let mut z = 0
+    for x in xs { z += x }
+    z -= 20
+    println!("before")
+    println!("{}", 100 / z)
+    println!("after")
+}

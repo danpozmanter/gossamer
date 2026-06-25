@@ -49,6 +49,7 @@ pub fn typecheck_source_file(
     // width.
     checker.infer.default_unresolved_int_vars(checker.tcx);
     checker.infer.default_unresolved_float_vars(checker.tcx);
+    checker.check_deferred_structural();
     checker.resolve_table();
     (checker.table, checker.diagnostics)
 }
@@ -106,6 +107,24 @@ impl Expectation {
     }
 }
 
+/// A structural use (`value[i]` / `value(args)` / `value.N`) whose
+/// operand type was still an unresolved inference variable when first
+/// checked. Unsuffixed integer/float literals (`let x = 5`) only
+/// default to a concrete scalar after the whole file is checked, so the
+/// soundness check is deferred and re-run once defaulting has happened.
+#[derive(Clone, Copy)]
+enum DeferredStructuralKind {
+    Index,
+    Call,
+    TupleField(u64),
+}
+
+struct DeferredStructural {
+    ty: Ty,
+    span: Span,
+    kind: DeferredStructuralKind,
+}
+
 struct TypeChecker<'a> {
     tcx: &'a mut TyCtxt,
     infer: InferCtxt,
@@ -150,6 +169,14 @@ struct TypeChecker<'a> {
     /// checked; drives literal re-typing at explicit `return`
     /// statements (the block-tail path is handled in `check_fn`).
     current_fn_ret: Option<Ty>,
+    /// Per-enclosing-`loop` break-value type var plus whether any value
+    /// break fired. A `loop` pushes `(fresh_var, false)`; each `break value`
+    /// inside unifies its value with the var and sets the flag, so `let x =
+    /// loop { break v }` infers `x` as `v`'s type. The flag distinguishes a
+    /// value break whose type is still an unresolved (e.g. integer-literal)
+    /// var from a loop with no value break at all - the former yields the
+    /// var (it defaults later), the latter stays divergent (`never`).
+    loop_break_tys: Vec<(Ty, bool)>,
     /// Declared return types of non-generic `impl` methods, keyed by
     /// `(self type name, method name, arity)`. When a method-call
     /// receiver resolves to that Adt, the call types as the declared
@@ -157,6 +184,15 @@ struct TypeChecker<'a> {
     /// `sel.params()` reaches MIR untyped and the compiled tier
     /// guesses the element layout.
     method_ret_types: HashMap<(String, String, usize), Ty>,
+    /// Declared argument arity (excluding `self`) of each non-generic
+    /// user method, keyed by `(type_name, method_name)`. Drives the
+    /// method-call arity check (GT0018): a call with the wrong count
+    /// aborts on the VM and zero-fills/drops on the compiled tier, so it
+    /// is rejected statically the same way free calls are.
+    method_arities: HashMap<(String, String), usize>,
+    /// Structural uses whose operand was an unresolved inference var at
+    /// first check; re-validated after integer/float defaulting.
+    deferred_structural: Vec<DeferredStructural>,
     /// Tuple-variant payload types keyed by `(enum_name,
     /// variant_name)`. Drives literal re-typing at variant
     /// constructor sites so `Value::Blob([1, 2, 3])` records a heap
@@ -303,7 +339,10 @@ impl<'a> TypeChecker<'a> {
             fn_sigs: HashMap::new(),
             method_arg_sigs: HashMap::new(),
             current_fn_ret: None,
+            loop_break_tys: Vec::new(),
             method_ret_types: HashMap::new(),
+            method_arities: HashMap::new(),
+            deferred_structural: Vec::new(),
             enum_variant_payloads: HashMap::new(),
             const_tys: HashMap::new(),
             struct_generic_arity: HashMap::new(),
@@ -1174,6 +1213,8 @@ impl<'a> TypeChecker<'a> {
                     };
                     self.method_ret_types
                         .insert((name.clone(), fn_decl.name.name.clone(), arity), ret);
+                    self.method_arities
+                        .insert((name.clone(), fn_decl.name.name.clone()), arity);
                 }
             }
         }
@@ -1615,6 +1656,55 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
+    /// Type of a `loop` expression: the unified type of its value-carrying
+    /// breaks (`let x = loop { break v }` => `x: typeof(v)`); a value-less
+    /// loop keeps the divergent `never` type.
+    fn check_loop(&mut self, body: &Expr) -> Ty {
+        let break_ty = self.fresh();
+        self.loop_break_tys.push((break_ty, false));
+        self.check_expr(body);
+        let (break_ty, used) = self.loop_break_tys.pop().expect("loop stack");
+        if used {
+            self.infer.resolve(self.tcx, break_ty)
+        } else {
+            self.tcx.never()
+        }
+    }
+
+    /// Type-checks a `return value` / `break value`; both diverge (`never`)
+    /// but thread their value into the enclosing function return type or the
+    /// loop break-type var respectively.
+    fn check_return_or_break(&mut self, expr: &Expr, value: Option<&Expr>) -> Ty {
+        if let Some(value) = value {
+            // `return [..]` carries the declared return shape the same way the
+            // block-tail path does, so an explicit `return []` in a `-> [T]` fn
+            // is shaped as a Vec rather than a fixed `[T; 0]`.
+            let value_expected = match (&expr.kind, self.current_fn_ret) {
+                (ExprKind::Return(_), Some(ret)) => Expectation::HasType(ret),
+                _ => Expectation::None,
+            };
+            let got = self.check_expr_expecting(value, value_expected);
+            // The expectation only shapes literal containers; unify the checked
+            // value against the declared return type so a non-literal mismatch
+            // is reported the same way a block tail is.
+            if let (ExprKind::Return(_), Some(ret)) = (&expr.kind, self.current_fn_ret) {
+                self.unify(ret, got, value.span);
+            }
+            // `break value` unifies its value with the enclosing loop's
+            // break-type var and marks the loop as value-yielding.
+            if matches!(expr.kind, ExprKind::Break { .. }) {
+                let break_ty = self.loop_break_tys.last_mut().map(|last| {
+                    last.1 = true;
+                    last.0
+                });
+                if let Some(break_ty) = break_ty {
+                    self.unify(break_ty, got, value.span);
+                }
+            }
+        }
+        self.tcx.never()
+    }
+
     #[allow(
         clippy::too_many_lines,
         reason = "expression dispatch - arms map 1:1 to ExprKind variants; splitting hides the dispatch table"
@@ -1629,7 +1719,7 @@ impl<'a> TypeChecker<'a> {
                 name,
                 args,
                 ..
-            } => self.check_method_call(&name.name, receiver, args),
+            } => self.check_method_call(expr.id, &name.name, receiver, args),
             ExprKind::FieldAccess { receiver, field } => {
                 let receiver_ty = self.check_expr(receiver);
                 match field {
@@ -1643,36 +1733,12 @@ impl<'a> TypeChecker<'a> {
                         }
                     }
                     gossamer_ast::FieldSelector::Index(idx) => {
-                        let resolved = self.infer.resolve(self.tcx, receiver_ty);
-                        if let TyKind::Tuple(elems) = self.tcx.kind_of(resolved).clone() {
-                            elems
-                                .get(*idx as usize)
-                                .copied()
-                                .unwrap_or_else(|| self.fresh())
-                        } else {
-                            self.fresh()
-                        }
+                        self.check_tuple_field(receiver_ty, *idx, expr.span)
                     }
                 }
             }
             ExprKind::Unary { op, operand } => self.check_unary(*op, operand, expr.span, expected),
-            ExprKind::Index { base, index } => {
-                let base_ty = self.check_expr(base);
-                self.check_expr(index);
-                let mut cur = self.infer.resolve(self.tcx, base_ty);
-                loop {
-                    match self.tcx.kind_of(cur).clone() {
-                        TyKind::Ref { inner, .. } => cur = inner,
-                        TyKind::Array { elem, .. } | TyKind::Slice(elem) | TyKind::Vec(elem) => {
-                            return elem;
-                        }
-                        TyKind::String => {
-                            return self.tcx.int_ty(IntTy::I64);
-                        }
-                        _ => return self.fresh(),
-                    }
-                }
-            }
+            ExprKind::Index { base, index } => self.check_index_expr(base, index, expr.span),
             ExprKind::Binary { op, lhs, rhs } => self.check_binary(*op, lhs, rhs, expr.span),
             ExprKind::Assign { place, value, op } => self.check_assign(place, value, *op),
             ExprKind::Cast { value, ty } => {
@@ -1687,10 +1753,7 @@ impl<'a> TypeChecker<'a> {
                 else_branch,
             } => self.check_if(condition, then_branch, else_branch.as_deref(), expected),
             ExprKind::Match { scrutinee, arms } => self.check_match(scrutinee, arms, expected),
-            ExprKind::Loop { body, .. } => {
-                self.check_expr(body);
-                self.tcx.never()
-            }
+            ExprKind::Loop { body, .. } => self.check_loop(body),
             ExprKind::While {
                 condition, body, ..
             } => {
@@ -1711,26 +1774,7 @@ impl<'a> TypeChecker<'a> {
                 self.check_closure(params, ret.as_ref(), body, expected)
             }
             ExprKind::Return(value) | ExprKind::Break { value, .. } => {
-                if let Some(value) = value {
-                    // `return [..]` carries the declared return shape
-                    // the same way the block-tail path does - without
-                    // this an explicit `return []` in a `-> [T]` fn
-                    // stays a fixed `[T; 0]` and the caller reads a
-                    // stack address where a Vec header was expected.
-                    let value_expected = match (&expr.kind, self.current_fn_ret) {
-                        (ExprKind::Return(_), Some(ret)) => Expectation::HasType(ret),
-                        _ => Expectation::None,
-                    };
-                    let got = self.check_expr_expecting(value, value_expected);
-                    // The expectation only shapes literal containers;
-                    // unify the checked value against the declared
-                    // return type so a non-literal `return s` mismatch
-                    // is reported the same way a block tail is.
-                    if let (ExprKind::Return(_), Some(ret)) = (&expr.kind, self.current_fn_ret) {
-                        self.unify(ret, got, value.span);
-                    }
-                }
-                self.tcx.never()
+                self.check_return_or_break(expr, value.as_deref())
             }
             ExprKind::Continue { .. } => self.tcx.never(),
             ExprKind::Tuple(elems) => {
@@ -1884,6 +1928,83 @@ impl<'a> TypeChecker<'a> {
             }
             ExprKind::Select(arms) => self.check_select(arms),
             ExprKind::MacroCall(_) | ExprKind::Error => self.fresh(),
+        }
+    }
+
+    /// Type of `value.N` positional access. Rejects access on a concrete
+    /// non-tuple receiver and out-of-range indices (GT0023); a still-
+    /// unresolved receiver is deferred for re-check after defaulting.
+    fn check_tuple_field(&mut self, receiver_ty: Ty, idx: u32, span: Span) -> Ty {
+        let mut resolved = self.infer.resolve(self.tcx, receiver_ty);
+        while let TyKind::Ref { inner, .. } = self.tcx.kind_of(resolved).clone() {
+            resolved = self.infer.resolve(self.tcx, inner);
+        }
+        match self.tcx.kind_of(resolved).clone() {
+            TyKind::Tuple(elems) => elems.get(idx as usize).copied().unwrap_or_else(|| {
+                let ty = render_ty(self.tcx, resolved);
+                self.emit(
+                    TypeError::NoTupleField {
+                        ty,
+                        index: u64::from(idx),
+                    },
+                    span,
+                );
+                self.fresh()
+            }),
+            TyKind::Var(_) => {
+                self.deferred_structural.push(DeferredStructural {
+                    ty: resolved,
+                    span,
+                    kind: DeferredStructuralKind::TupleField(u64::from(idx)),
+                });
+                self.fresh()
+            }
+            other => {
+                if !is_soft_for_structural_use(&other) {
+                    let ty = render_ty(self.tcx, resolved);
+                    self.emit(
+                        TypeError::NoTupleField {
+                            ty,
+                            index: u64::from(idx),
+                        },
+                        span,
+                    );
+                }
+                self.fresh()
+            }
+        }
+    }
+
+    /// Element type of `base[index]`. Rejects indexing a concrete
+    /// non-indexable receiver (GT0021); a still-unresolved receiver is
+    /// deferred for re-check after defaulting.
+    fn check_index_expr(&mut self, base: &Expr, index: &Expr, span: Span) -> Ty {
+        let base_ty = self.check_expr(base);
+        self.check_expr(index);
+        let mut cur = self.infer.resolve(self.tcx, base_ty);
+        loop {
+            match self.tcx.kind_of(cur).clone() {
+                TyKind::Ref { inner, .. } => cur = inner,
+                TyKind::Array { elem, .. } | TyKind::Slice(elem) | TyKind::Vec(elem) => {
+                    return elem;
+                }
+                TyKind::String => return self.tcx.int_ty(IntTy::I64),
+                TyKind::Var(_) => {
+                    self.deferred_structural.push(DeferredStructural {
+                        ty: cur,
+                        span,
+                        kind: DeferredStructuralKind::Index,
+                    });
+                    return self.fresh();
+                }
+                other => {
+                    if !is_soft_for_structural_use(&other) {
+                        let ty = render_ty(self.tcx, cur);
+                        self.emit(TypeError::NotIndexable { ty }, span);
+                    }
+                    return self.fresh();
+                }
+            }
         }
     }
 
@@ -2065,13 +2186,30 @@ impl<'a> TypeChecker<'a> {
                 const_substs[idx] = Some(value);
             }
         }
+        // A const-generic array return (`-> [T; N]`) is carried as a runtime
+        // GosVec - the same representation as the by-value `[T; N]` parameter
+        // it is derived from. The call-site result type is therefore `Vec<T>`,
+        // not the substituted fixed-length array: binding it as `[T; k]` would
+        // make the caller read the heap Vec inline and treat the buffer pointer
+        // as element 0.
+        let output = match self.tcx.kind_of(sig.output) {
+            TyKind::Array {
+                elem,
+                len: crate::ArrayLen::Param(_),
+            } => {
+                let elem = *elem;
+                let elem = self.subst_generics_in_ty(elem, vars, &const_substs);
+                self.tcx.intern(TyKind::Vec(elem))
+            }
+            _ => self.subst_generics_in_ty(sig.output, vars, &const_substs),
+        };
         let new_sig = FnSig {
             inputs: sig
                 .inputs
                 .iter()
                 .map(|t| self.subst_generics_in_ty(*t, vars, &const_substs))
                 .collect(),
-            output: self.subst_generics_in_ty(sig.output, vars, &const_substs),
+            output,
         };
         // Const positions carry the inferred value; every other position
         // carries its fresh type variable (pinned by argument unification).
@@ -2134,28 +2272,7 @@ impl<'a> TypeChecker<'a> {
             }
             if sig.inputs.len() == arg_tys.len() {
                 for (param, (arg_ty, arg_expr)) in sig.inputs.iter().zip(arg_tys.iter().zip(args)) {
-                    // Auto-coerce `T` ↔ `&T` at call boundaries: a
-                    // signature param `&Shape` accepts a `Shape`
-                    // argument and vice versa. Native lowering
-                    // already treats every value-vs-reference
-                    // distinction as a no-op (the GC owns
-                    // everything), so enforcing strict match here
-                    // would only produce diagnostics on programs
-                    // the runtime accepts.
-                    let param_inner = match self.tcx.kind(*param) {
-                        Some(TyKind::Ref { inner, .. }) => Some(*inner),
-                        _ => None,
-                    };
-                    let arg_inner = match self.tcx.kind(*arg_ty) {
-                        Some(TyKind::Ref { inner, .. }) => Some(*inner),
-                        _ => None,
-                    };
-                    let (lhs, rhs) = match (param_inner, arg_inner) {
-                        (Some(p), None) => (p, *arg_ty),
-                        (None, Some(a)) => (*param, a),
-                        _ => (*param, *arg_ty),
-                    };
-                    self.unify(lhs, rhs, arg_expr.span);
+                    self.check_sig_param_arg(*param, *arg_ty, arg_expr.span);
                 }
                 if let Some((def, vars)) = &inst {
                     self.check_trait_bounds(*def, vars, callee.span);
@@ -2196,6 +2313,19 @@ impl<'a> TypeChecker<'a> {
             let Some(last) = last.first().copied() else {
                 return self.fresh();
             };
+            // `strings::` free functions have no `FnSig` to unify
+            // against, so validate their string-typed argument slots
+            // here. Skipped when the callee resolves to a user `FnDef`
+            // (a user module named `strings` keeps its own typing) or
+            // when the value is piped in (`|>` appends the data argument
+            // during lowering, shifting the positions this table keys
+            // on).
+            if matches!(module, ["strings"] | ["std", "strings"])
+                && !matches!(self.tcx.kind(resolved), Some(TyKind::FnDef { .. }))
+                && !self.pipe_stage_callees.contains(&callee.id)
+            {
+                self.check_strings_free_call_args(last, args, arg_tys);
+            }
             // Data-last std combinators (`result::map_err(f, r)`,
             // `iter::map(f, xs)`, ...): the signature table pins
             // closure params to the data payload type. Gated on the
@@ -2250,7 +2380,32 @@ impl<'a> TypeChecker<'a> {
                 return ty;
             }
         }
+        self.reject_noncallable_callee(callee, callee_ty);
         self.fresh()
+    }
+
+    /// After a call failed every resolution path: if the callee is a
+    /// concrete, fully-known value that can never be a function or an ADT
+    /// constructor, reject it (`GT0022`) - the compiled tier would emit a
+    /// call through a non-function symbol. A qualified path callee
+    /// (`String::new`) types loosely as the receiving type and is never
+    /// flagged; an inference-var callee (e.g. an unsuffixed `let x = 5`)
+    /// is deferred for re-check after defaulting.
+    fn reject_noncallable_callee(&mut self, callee: &Expr, callee_ty: Ty) {
+        let resolved_callee = self.infer.resolve(self.tcx, callee_ty);
+        let callee_kind = self.tcx.kind_of(resolved_callee).clone();
+        let qualified_path_callee =
+            matches!(&callee.kind, ExprKind::Path(p) if p.segments.len() >= 2);
+        if matches!(callee_kind, TyKind::Var(_)) {
+            self.deferred_structural.push(DeferredStructural {
+                ty: resolved_callee,
+                span: callee.span,
+                kind: DeferredStructuralKind::Call,
+            });
+        } else if is_definitely_not_callable_value(&callee_kind) && !qualified_path_callee {
+            let ty = render_ty(self.tcx, resolved_callee);
+            self.emit(TypeError::NotCallable { ty }, callee.span);
+        }
     }
 
     /// Concrete return type of a stdlib `json` / `errors` / `fs` / `os`
@@ -2293,6 +2448,134 @@ impl<'a> TypeChecker<'a> {
             }
         });
         value.map(|v| self.option_adt_ty(v))
+    }
+
+    /// Rejects a non-string argument in a string-typed parameter slot
+    /// of a `strings::` free-function call. The stdlib free path has no
+    /// `FnSig` to unify against, so without this the checker accepts an
+    /// integer where a `String` is expected and the compiled string
+    /// shims dereference it as a pointer (a SIGSEGV the VM masks).
+    fn check_strings_free_call_args(&mut self, name: &str, args: &[Expr], arg_tys: &[Ty]) {
+        let Some(shapes) = strings_fn_str_params(name) else {
+            return;
+        };
+        for &(idx, shape) in shapes {
+            let (Some(arg), Some(&arg_ty)) = (args.get(idx), arg_tys.get(idx)) else {
+                continue;
+            };
+            self.check_str_param_arg(shape, arg_ty, arg.span);
+        }
+    }
+
+    /// Unifies one call argument against its declared parameter type,
+    /// peeling a single reference on either side. Native lowering treats
+    /// every value-vs-reference distinction as a no-op (the runtime owns
+    /// memory), so a `&Shape` parameter accepts a `Shape` argument and
+    /// vice versa.
+    fn check_sig_param_arg(&mut self, param: Ty, arg_ty: Ty, span: Span) {
+        let param_inner = match self.tcx.kind(param) {
+            Some(TyKind::Ref { inner, .. }) => Some(*inner),
+            _ => None,
+        };
+        let arg_inner = match self.tcx.kind(arg_ty) {
+            Some(TyKind::Ref { inner, .. }) => Some(*inner),
+            _ => None,
+        };
+        let (lhs, rhs) = match (param_inner, arg_inner) {
+            (Some(p), None) => (p, arg_ty),
+            (None, Some(a)) => (param, a),
+            _ => (param, arg_ty),
+        };
+        // An unsuffixed float literal is an inference var that unifies
+        // leniently with any concrete type, so a `String` parameter would
+        // silently accept it and the compiled tier reads its f64 bits as a
+        // string pointer. Reject it here; an integer literal is already
+        // caught by the unifier's integer-constraint check.
+        if matches!(
+            self.tcx.kind(self.infer.resolve(self.tcx, lhs)),
+            Some(TyKind::String)
+        ) && self.infer.is_float_literal_var(self.tcx, rhs)
+        {
+            self.emit_str_slot_mismatch("{float}", span);
+        } else {
+            self.unify(lhs, rhs, span);
+        }
+    }
+
+    /// Validates the string-typed arguments of a `String` method call
+    /// (`s.contains(x)`). The method dispatches to the same `strings::`
+    /// shim as the free function with the receiver as the implicit first
+    /// argument, so the explicit args occupy parameter positions 1..
+    fn check_strings_method_call_args(&mut self, method: &str, args: &[Expr], arg_tys: &[Ty]) {
+        let Some(shapes) = strings_fn_str_params(method) else {
+            return;
+        };
+        for &(pos, shape) in shapes {
+            // Position 0 is the receiver, already known to be a `String`.
+            let Some(idx) = pos.checked_sub(1) else {
+                continue;
+            };
+            let (Some(arg), Some(&arg_ty)) = (args.get(idx), arg_tys.get(idx)) else {
+                continue;
+            };
+            self.check_str_param_arg(shape, arg_ty, arg.span);
+        }
+    }
+
+    /// Validates one argument against a string-shaped parameter slot.
+    fn check_str_param_arg(&mut self, shape: StrArgShape, arg_ty: Ty, span: Span) {
+        // `&"hi"` (a `Ref<String>`) is layout-transparent to its inner
+        // `String` at every call boundary; validate the referent.
+        let resolved = self.infer.resolve(self.tcx, arg_ty);
+        let inner = match self.tcx.kind(resolved) {
+            Some(TyKind::Ref { inner, .. }) => *inner,
+            _ => resolved,
+        };
+        // Unsuffixed numeric literals are inference variables that unify
+        // leniently with any concrete type, so a single expected `String`
+        // would not reject them. Catch them up front - in either slot
+        // shape - so a `5` / `1.5` in a string position is rejected with
+        // the same `{integer}` / `{float}` rendering a user call shows.
+        if self.infer.is_integer_constrained_var(self.tcx, inner) {
+            self.emit_str_slot_mismatch("{integer}", span);
+            return;
+        }
+        if self.infer.is_float_literal_var(self.tcx, inner) {
+            self.emit_str_slot_mismatch("{float}", span);
+            return;
+        }
+        match shape {
+            StrArgShape::Str => {
+                // A `String` slot admits only a real string; reuse the
+                // unifier to reject every other concrete type (`char`,
+                // `bool`, an `Adt`, ...) with a precise mismatch.
+                let s = self.tcx.string_ty();
+                self.unify(s, inner, span);
+            }
+            StrArgShape::StrOrChar => {
+                // A pattern / pad slot also admits a `char`, so the
+                // unifier (single expected type) is too strict; reject
+                // only the numeric / bool shapes the backend would
+                // misread as a string pointer.
+                let r = self.infer.resolve(self.tcx, inner);
+                if matches!(
+                    self.tcx.kind(r),
+                    Some(TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool)
+                ) {
+                    self.emit_str_slot_mismatch(&render_ty(self.tcx, r), span);
+                }
+            }
+        }
+    }
+
+    fn emit_str_slot_mismatch(&mut self, found: &str, span: Span) {
+        self.emit(
+            TypeError::TypeMismatch {
+                expected: "String".to_string(),
+                found: found.to_string(),
+            },
+            span,
+        );
     }
 
     fn check_stdlib_module_ret_ty(
@@ -2650,7 +2933,13 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
-    fn check_method_call(&mut self, method: &str, receiver: &Expr, args: &[Expr]) -> Ty {
+    fn check_method_call(
+        &mut self,
+        call_id: NodeId,
+        method: &str,
+        receiver: &Expr,
+        args: &[Expr],
+    ) -> Ty {
         let receiver_ty = self.check_expr(receiver);
         // A method on a bound type-parameter receiver (`s.area()` where
         // `s: &T`, `T: Shape`) resolves to the trait method's declared
@@ -2760,11 +3049,59 @@ impl<'a> TypeChecker<'a> {
         if let Some(ty) = self.set_method_ret(method, resolved) {
             return ty;
         }
+        if let Some(ty) = self.map_method_ret(method, resolved) {
+            return ty;
+        }
         if matches!(self.tcx.kind(resolved), Some(TyKind::String)) {
+            // `s.contains(x)` dispatches to the same `strings::` shim as
+            // the free function with the receiver as the implicit first
+            // argument; validate the explicit args so an integer in a
+            // string slot is rejected here too. Skipped under `|>`,
+            // which appends the piped value as a trailing argument.
+            if !self.pipe_stage_callees.contains(&call_id) {
+                self.check_strings_method_call_args(method, args, &arg_tys);
+            }
             return self.string_method_ret(method, receiver.span);
         }
+        self.check_method_arity(call_id, resolved, method, args, receiver.span);
         self.maybe_reject_unknown_adt_method(resolved, method, receiver.span);
         self.fresh()
+    }
+
+    /// Rejects a method call whose argument count does not match the
+    /// receiver method's declared arity. A call on the right of `|>`
+    /// receives the piped value as an implicit trailing argument, so it
+    /// is counted toward the supplied arity. Mirrors the free-call
+    /// GT0018 check, which method calls never reached.
+    fn check_method_arity(
+        &mut self,
+        call_id: NodeId,
+        resolved: Ty,
+        method: &str,
+        args: &[Expr],
+        span: Span,
+    ) {
+        let Some(TyKind::Adt { def, .. }) = self.tcx.kind(resolved) else {
+            return;
+        };
+        let Some(name) = self.tcx.def_name(*def).map(str::to_string) else {
+            return;
+        };
+        let Some(&expected) = self.method_arities.get(&(name.clone(), method.to_string())) else {
+            return;
+        };
+        let pipe_extra = usize::from(self.pipe_stage_callees.contains(&call_id));
+        let effective = args.len() + pipe_extra;
+        if effective != expected {
+            self.emit(
+                TypeError::CallArityMismatch {
+                    callee: format!("{name}::{method}"),
+                    expected,
+                    found: effective,
+                },
+                span,
+            );
+        }
     }
 
     /// Return type of a method on a `HashSet` receiver (sentinel `Adt`,
@@ -2788,6 +3125,31 @@ impl<'a> TypeChecker<'a> {
             }
             "insert" | "remove" | "contains" | "is_empty" | "is_subset" | "is_superset"
             | "is_disjoint" => Some(self.tcx.bool_ty()),
+            "len" => Some(self.tcx.int_ty(IntTy::I64)),
+            _ => None,
+        }
+    }
+
+    /// Return type of a method on a `HashMap` / `BTreeMap` receiver whose
+    /// result depends on the key/value types. Without this `m.iter()` is a
+    /// fresh `Var`, so the for-vec lowering can't see the `(K, V)` element
+    /// type and mis-sizes the element (especially when a destructure slot
+    /// is `_`). Returns `None` for a non-map receiver so dispatch continues.
+    fn map_method_ret(&mut self, method: &str, resolved: Ty) -> Option<Ty> {
+        let (key, value) = match self.tcx.kind(resolved) {
+            Some(TyKind::HashMap { key, value }) => (*key, *value),
+            _ => return None,
+        };
+        match method {
+            // `m.iter()` yields `(K, V)` pairs.
+            "iter" => {
+                let pair = self.tcx.intern(TyKind::Tuple(vec![key, value]));
+                Some(self.tcx.intern(TyKind::Vec(pair)))
+            }
+            "keys" => Some(self.tcx.intern(TyKind::Vec(key))),
+            "values" => Some(self.tcx.intern(TyKind::Vec(value))),
+            "get" => Some(self.option_adt_ty(value)),
+            "contains" | "contains_key" | "is_empty" => Some(self.tcx.bool_ty()),
             "len" => Some(self.tcx.int_ty(IntTy::I64)),
             _ => None,
         }
@@ -2871,6 +3233,36 @@ impl<'a> TypeChecker<'a> {
             | "equal_fold" | "is_empty" => self.tcx.bool_ty(),
             "len" | "count" | "byte_at" | "byte_len" => self.tcx.int_ty(IntTy::I64),
             "clone" | "to_string" => self.tcx.string_ty(),
+            // Methods that return a fresh `String` (runtime `*mut c_char`):
+            // pinning the result type so chained calls (`s.trim().len()`) and
+            // typed bindings lower from a known type instead of an inference
+            // var carrying an untyped heap payload into MIR.
+            "trim" | "trim_start" | "trim_end" | "trim_matches" | "trim_start_matches"
+            | "trim_end_matches" | "to_upper" | "to_lower" | "to_uppercase" | "to_lowercase"
+            | "to_title" | "replace" | "replacen" | "repeat" | "pad_left" | "pad_right"
+            | "center" | "substring" => self.tcx.string_ty(),
+            // `as_bytes` -> `[u8]` (runtime `*mut GosVec` of bytes).
+            "as_bytes" => {
+                let u8_ty = self.tcx.int_ty(IntTy::U8);
+                self.tcx.intern(TyKind::Vec(u8_ty))
+            }
+            // `split_once` / `rsplit_once` -> `Option<(String, String)>`.
+            "split_once" | "rsplit_once" => {
+                let s = self.tcx.string_ty();
+                let pair = self.tcx.intern(TyKind::Tuple(vec![s, s]));
+                self.option_adt_ty(pair)
+            }
+            // `strip_prefix` / `strip_suffix` -> `Option<String>`.
+            "strip_prefix" | "strip_suffix" => {
+                let s = self.tcx.string_ty();
+                self.option_adt_ty(s)
+            }
+            // `slice(a, b) -> Result<String, errors::Error>` (out-of-range Err).
+            "slice" => {
+                let s = self.tcx.string_ty();
+                let e = self.tcx.dyn_error_ty();
+                self.result_adt_ty(s, e)
+            }
             // `s.parse()` -> `Result<T, errors::Error>`: the value type T is
             // inferred from the binding, but the error pins to the concrete
             // error type so `{}` Display of an `Err` lowers correctly on the
@@ -2902,6 +3294,56 @@ impl<'a> TypeChecker<'a> {
     /// method name is owned by some user type but not this one, so an
     /// unknown method (a genuine typo with no owner anywhere) or a
     /// builtin / derived method (`clone`) still falls through.
+    /// Re-validates deferred structural uses (`value[i]` / `value(args)`
+    /// / `value.N`) after integer/float defaulting has given unsuffixed
+    /// literals their concrete type. An operand that resolved to a
+    /// concrete non-indexable / non-callable / non-tuple type is
+    /// rejected here, so `let x = 5; x[0]` - whose `x` was an inference
+    /// var at first check - is caught instead of faulting on the
+    /// compiled tier.
+    fn check_deferred_structural(&mut self) {
+        let deferred = std::mem::take(&mut self.deferred_structural);
+        for d in deferred {
+            let mut resolved = self.infer.resolve(self.tcx, d.ty);
+            while let TyKind::Ref { inner, .. } = self.tcx.kind_of(resolved).clone() {
+                resolved = self.infer.resolve(self.tcx, inner);
+            }
+            let kind = self.tcx.kind_of(resolved).clone();
+            match d.kind {
+                DeferredStructuralKind::Index => {
+                    let indexable = matches!(
+                        kind,
+                        TyKind::Array { .. } | TyKind::Slice(_) | TyKind::Vec(_) | TyKind::String
+                    );
+                    if !indexable && !is_soft_for_structural_use(&kind) {
+                        let ty = render_ty(self.tcx, resolved);
+                        self.emit(TypeError::NotIndexable { ty }, d.span);
+                    }
+                }
+                DeferredStructuralKind::Call => {
+                    if is_definitely_not_callable_value(&kind) {
+                        let ty = render_ty(self.tcx, resolved);
+                        self.emit(TypeError::NotCallable { ty }, d.span);
+                    }
+                }
+                DeferredStructuralKind::TupleField(idx) => match &kind {
+                    TyKind::Tuple(elems) => {
+                        if idx as usize >= elems.len() {
+                            let ty = render_ty(self.tcx, resolved);
+                            self.emit(TypeError::NoTupleField { ty, index: idx }, d.span);
+                        }
+                    }
+                    other => {
+                        if !is_soft_for_structural_use(other) {
+                            let ty = render_ty(self.tcx, resolved);
+                            self.emit(TypeError::NoTupleField { ty, index: idx }, d.span);
+                        }
+                    }
+                },
+            }
+        }
+    }
+
     fn maybe_reject_unknown_adt_method(&mut self, resolved: Ty, method: &str, span: Span) {
         if matches!(method, "clone") {
             return;
@@ -2918,10 +3360,17 @@ impl<'a> TypeChecker<'a> {
         if !self.user_type_decls.contains(&name) {
             return;
         }
-        let Some(owners) = self.user_method_owners.get(method) else {
-            return;
-        };
-        if !owners.contains(&name) {
+        // `user_method_owners` records every impl and trait method, so a
+        // method name that no user type owns is a genuine typo /
+        // nonexistent method on a concrete user receiver. Previously this
+        // case returned early (only a name owned by *another* type was
+        // rejected), so a typo passed `check` and the compiled tier
+        // failed to build with an undefined `@Type::method` symbol.
+        let owned_here = self
+            .user_method_owners
+            .get(method)
+            .is_some_and(|owners| owners.contains(&name));
+        if !owned_here {
             self.emit(
                 TypeError::UnresolvedMethod {
                     ty: name,
@@ -3539,6 +3988,13 @@ impl<'a> TypeChecker<'a> {
         {
             self.pipe_stage_callees.insert(callee.id);
         }
+        // `x |> recv.m(a)` desugars to `recv.m(a, x)`: the piped value
+        // lands as the method's last argument during lowering, so the
+        // declared arity is satisfied by one fewer explicit argument
+        // here. Record the call node so the arity check adds it back.
+        if op == BinaryOp::PipeGt && matches!(rhs.kind, ExprKind::MethodCall { .. }) {
+            self.pipe_stage_callees.insert(rhs.id);
+        }
         let lhs_ty = self.check_expr(lhs);
         let rhs_ty = self.check_expr(rhs);
         match op {
@@ -3946,7 +4402,13 @@ impl<'a> TypeChecker<'a> {
             let starting = self.infer.resolve(self.tcx, iter_ty);
             let is_var = matches!(self.tcx.kind(starting), Some(TyKind::Var(_)));
             let starting = if is_var {
-                if let ExprKind::MethodCall { receiver, .. } = &iter.kind {
+                // Only `.iter()` / `.into_iter()` produce the receiver's
+                // element type. Other methods (`m.get_or(k, d)`,
+                // `m.values()`) return a different shape, so falling back to
+                // the receiver there would derive the wrong element type.
+                if let ExprKind::MethodCall { receiver, name, .. } = &iter.kind
+                    && matches!(name.name.as_str(), "iter" | "into_iter")
+                {
                     let recv_ty = self.check_expr(receiver);
                     self.infer.resolve(self.tcx, recv_ty)
                 } else {
@@ -5078,9 +5540,94 @@ impl<'a> TypeChecker<'a> {
     }
 }
 
+/// True when a type is too unresolved or opaque to soundly reject a
+/// structural use (`value[i]`, `value.N`) against it. Hard errors are
+/// emitted only for concrete, fully-known types; an inference variable,
+/// already-errored type, generic parameter, unresolved alias, or trait
+/// object fails soft so inference, generics, and name-resolved stdlib
+/// paths are never falsely rejected.
+fn is_soft_for_structural_use(kind: &TyKind) -> bool {
+    matches!(
+        kind,
+        TyKind::Var(_)
+            | TyKind::Error
+            | TyKind::Param { .. }
+            | TyKind::Alias { .. }
+            | TyKind::Dyn(_)
+    )
+}
+
+/// True when a type is a concrete runtime value that is provably not a
+/// function and not an ADT constructor, so `value(args)` on it can never
+/// resolve to a callable on any tier. ADTs are deliberately excluded:
+/// `Some(x)` / `Ok(x)` / `MyEnum::Variant(x)` type their callee as an
+/// `Option` / `Result` / enum ADT, and rejecting those would break
+/// constructor calls.
+fn is_definitely_not_callable_value(kind: &TyKind) -> bool {
+    matches!(
+        kind,
+        TyKind::Bool
+            | TyKind::Char
+            | TyKind::String
+            | TyKind::Int(_)
+            | TyKind::Float(_)
+            | TyKind::Unit
+            | TyKind::Tuple(_)
+            | TyKind::Array { .. }
+            | TyKind::Slice(_)
+            | TyKind::Vec(_)
+            | TyKind::HashMap { .. }
+            | TyKind::Sender(_)
+            | TyKind::Receiver(_)
+            | TyKind::JoinHandle(_)
+            | TyKind::Duration
+            | TyKind::Instant
+            | TyKind::JsonValue
+            | TyKind::DynError
+    )
+}
+
 /// Canonical std combinator module name for a call path's module
 /// segments, or `None` when the path is not `result` / `option` /
 /// `iter` (bare or `std::`-qualified).
+/// Required shape of one `strings::` free-function parameter slot,
+/// used to make `check` reject a non-string argument that the
+/// compiled string shims would otherwise dereference as a string
+/// pointer.
+#[derive(Clone, Copy)]
+enum StrArgShape {
+    /// Must be a `String` (a `&String` borrow peels to the same).
+    Str,
+    /// A pattern or pad slot: a `String` or a `char` (a single-char
+    /// pattern coerces to its one-byte string on every tier).
+    StrOrChar,
+}
+
+/// String-typed parameter positions of the canonical `strings::` free
+/// functions, keyed by function name. Only positions that must hold a
+/// string-shaped value are listed; integer width / count positions are
+/// left out so the several integer widths the runtime accepts there are
+/// not rejected. Argument order mirrors the interpreter's free-function
+/// table (`stdlib_builtins/strings.rs`), so e.g. `splitn(text, n, sep)`
+/// has its separator at index 2. Returns `None` for an unlisted name.
+fn strings_fn_str_params(name: &str) -> Option<&'static [(usize, StrArgShape)]> {
+    use StrArgShape::{Str, StrOrChar};
+    Some(match name {
+        "split" | "contains" | "find" | "rfind" | "split_once" | "rsplit_once" | "count"
+        | "starts_with" | "ends_with" | "strip_prefix" | "strip_suffix" | "contains_any"
+        | "find_any" | "rfind_any" | "trim_matches" | "trim_start_matches" | "trim_end_matches" => {
+            &[(0, Str), (1, StrOrChar)]
+        }
+        "splitn" => &[(0, Str), (2, StrOrChar)],
+        "replace" | "replacen" => &[(0, Str), (1, StrOrChar), (2, StrOrChar)],
+        "equal_fold" => &[(0, Str), (1, Str)],
+        "center" | "pad_left" | "pad_right" => &[(0, Str), (2, StrOrChar)],
+        "split_whitespace" | "trim" | "trim_start" | "trim_end" | "to_lower" | "to_upper"
+        | "to_title" | "lines" | "repeat" | "slice" | "substring" | "byte_at" => &[(0, Str)],
+        _ => return None,
+    })
+}
+
 fn combinator_module_name(module: &[&str]) -> Option<&'static str> {
     match module {
         ["result"] | ["std", "result"] => Some("result"),

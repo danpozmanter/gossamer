@@ -1064,7 +1064,7 @@ fn op_label(tag: usize) -> &'static str {
         for (op, name) in entries {
             let t = op_tag(*op);
             if t < MAX_OPS {
-                out[t] = Some(*name);
+                out[t] = Somename.name;
             }
         }
         out

@@ -79,6 +79,14 @@ use gossamer_types::{FloatTy, IntTy, Ty, TyCtxt, TyKind};
 use crate::bytecode::{ConstIdx, FnChunk, GlobalIdx, InstrIdx, Op, Reg};
 use crate::value::{RuntimeError, RuntimeResult, SmolStr, Value};
 
+/// Panic message for a `match` that runs off the end without any arm
+/// matching. Kept bit-identical to the compiled tiers' constant in
+/// `gossamer-mir` so the bytecode VM and LLVM/Cranelift output the same
+/// GX panic text on a non-exhaustive match (a checker blind spot such as
+/// an unenumerable integer payload).
+pub(crate) const NON_EXHAUSTIVE_MATCH_MESSAGE: &str =
+    "non-exhaustive match: no pattern matched the value";
+
 /// Kind of a virtual register. Phase-1 typed opcodes target
 /// these kinds directly to skip the `Value` enum pack/unpack
 /// that dominates numeric kernels. Unknown / aggregate

@@ -93,17 +93,14 @@ pub(crate) fn install_bytes_builder(globals: &mut Vec<(&'static str, Value)>) {
 // ---------------------------------------------------------------
 
 fn builder_handle(id: i64) -> Value {
-    Value::struct_(
-        "bytes::Builder",
-        vec![(Ident::new("__builder"), Value::Int(id))],
-    )
+    Value::struct_("bytes::Builder", vec![("__builder", Value::Int(id))])
 }
 
 fn builder_id_of(value: &Value) -> Option<i64> {
     if let Value::Struct(inner) = value {
         if inner.name == "bytes::Builder" {
             for (i, v) in &inner.fields {
-                if i.name == "__builder" {
+                if (*i) == "__builder" {
                     if let Value::Int(n) = v {
                         return Some(*n);
                     }
@@ -175,17 +172,14 @@ pub(crate) fn builtin_builder_len(args: &[Value]) -> RuntimeResult<Value> {
 // ---------------------------------------------------------------
 
 fn buffer_handle(id: i64) -> Value {
-    Value::struct_(
-        "bytes::Buffer",
-        vec![(Ident::new("__buffer"), Value::Int(id))],
-    )
+    Value::struct_("bytes::Buffer", vec![("__buffer", Value::Int(id))])
 }
 
 fn buffer_id_of(value: &Value) -> Option<i64> {
     if let Value::Struct(inner) = value {
         if inner.name == "bytes::Buffer" {
             for (i, v) in &inner.fields {
-                if i.name == "__buffer" {
+                if (*i) == "__buffer" {
                     if let Value::Int(n) = v {
                         return Some(*n);
                     }

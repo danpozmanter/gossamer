@@ -4,7 +4,6 @@
 
 use std::sync::Arc;
 
-use gossamer_ast::Ident;
 use gossamer_interp::{Channel, SmolStr, Value};
 
 /// Manual structural equality for `Value`.  Needed because `Value`
@@ -38,7 +37,7 @@ fn values_equal(a: &Value, b: &Value) -> bool {
                 && a.fields
                     .iter()
                     .zip(b.fields.iter())
-                    .all(|((ia, va), (ib, vb))| ia.name == ib.name && values_equal(va, vb))
+                    .all(|((ia, va), (ib, vb))| ia == ib && values_equal(va, vb))
         }
         (Value::Channel(_), Value::Channel(_)) => {
             // Channels have no structural equality; roundtrip is
@@ -132,13 +131,7 @@ fn variant_roundtrips() {
 
 #[test]
 fn struct_roundtrips() {
-    let v = Value::struct_(
-        "Point",
-        vec![
-            (Ident::new("x"), Value::Int(1)),
-            (Ident::new("y"), Value::Int(2)),
-        ],
-    );
+    let v = Value::struct_("Point", vec![("x", Value::Int(1)), ("y", Value::Int(2))]);
     assert!(values_equal(&Value::from_raw(v.to_raw()), &v));
 }
 
@@ -165,10 +158,7 @@ fn nested_aggregate_roundtrips() {
     let v = Value::Tuple(Arc::new(vec![
         Value::Array(Arc::new(vec![Value::struct_(
             "Pair",
-            vec![
-                (Ident::new("a"), Value::Int(1)),
-                (Ident::new("b"), Value::Int(2)),
-            ],
+            vec![("a", Value::Int(1)), ("b", Value::Int(2))],
         )])),
         Value::Bool(true),
     ]));

@@ -1,0 +1,48 @@
+// `&mut self` method dispatch on a local receiver. The VM rides a
+// move-based write-back cell so the callee mutates `self` in place, yet
+// value semantics still hold: an independent copy taken before the call
+// must not observe the mutation, and an argument that reads the receiver
+// must see its pre-call value. Output is bit-identical on every tier.
+
+struct Counter { value: i64, hits: i64 }
+
+impl Counter {
+    fn bump(&mut self, by: i64) {
+        self.value += by
+        self.hits += 1
+    }
+    fn double(&mut self) {
+        self.value += self.value
+    }
+}
+
+struct Bag { items: Vec<i64>, total: i64 }
+
+impl Bag {
+    fn add(&mut self, x: i64) {
+        self.items.push(x)
+        self.total += x
+    }
+}
+
+fn main() {
+    // Value semantics: `snapshot` is an independent copy.
+    let mut c = Counter { value: 10, hits: 0 }
+    let snapshot = c
+    c.bump(5)
+    c.bump(c.value) // argument reads the live receiver (15), not 0
+    c.double()
+    println!(
+        "c.value={} c.hits={} snap.value={} snap.hits={}",
+        c.value, c.hits, snapshot.value, snapshot.hits
+    )
+
+    // Mutation across many iterations on a heap-field struct.
+    let mut bag = Bag { items: [], total: 0 }
+    let mut i = 1
+    while i <= 6 {
+        bag.add(i * i)
+        i += 1
+    }
+    println!("bag.total={} bag.len={}", bag.total, bag.items.len())
+}

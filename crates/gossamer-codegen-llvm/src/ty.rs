@@ -38,8 +38,14 @@ pub(crate) fn render_ty(tcx: &TyCtxt, ty: Ty) -> String {
             | IntTy::Usize,
         )) => "i64".to_string(),
         Some(TyKind::Int(IntTy::I128 | IntTy::U128)) => "i128".to_string(),
-        Some(TyKind::Float(FloatTy::F32)) => "float".to_string(),
-        Some(TyKind::Float(FloatTy::F64)) => "double".to_string(),
+        // `f32` is represented as `double` at runtime, matching the
+        // bytecode VM, which computes every float operation at f64 width
+        // and stores f32 values as f64 - the `f32` annotation only rounds
+        // at an explicit `as f32` cast (see `lower_cast`). Rendering it as
+        // a 32-bit `float` made compiled-tier f32 arithmetic diverge from
+        // the VM (`3.5 / 1.5` differed in the trailing digits) and produced
+        // width-mismatched IR against the 8-byte slot model.
+        Some(TyKind::Float(FloatTy::F32 | FloatTy::F64)) => "double".to_string(),
         Some(TyKind::Char) => "i32".to_string(),
         // `Result<T,E>` (sentinel def `u32::MAX`) and `Option<T>`
         // (`u32::MAX - 1`) are a 2-word by-value `i128` (disc + payload),

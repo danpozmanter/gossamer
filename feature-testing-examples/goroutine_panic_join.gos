@@ -1,0 +1,40 @@
+// A panic in a `spawn`ed goroutine is OBSERVED through its `join()` handle:
+// the joiner receives `Err(message)` and the runtime prints nothing to stderr -
+// the caller owns the error. `join()` synchronises, so the output is
+// deterministic across the bytecode VM, the Cranelift JIT, and the LLVM AOT
+// tiers. A goroutine that returns normally delivers `Ok(value)`.
+
+struct Worker {
+    id: i64,
+}
+
+impl Worker {
+    fn run(&mut self) -> i64 {
+        if self.id < 0 {
+            panic!("bad id")
+        }
+        self.id * 10
+    }
+}
+
+fn main() {
+    let good = spawn(|| {
+        let mut w = Worker { id: 4 }
+        w.run()
+    })
+    match good.join() {
+        Ok(v) => println!("ok {}", v),
+        Err(_) => println!("good failed"),
+    }
+
+    let bad = spawn(|| {
+        let mut w = Worker { id: -1 }
+        w.run()
+    })
+    match bad.join() {
+        Ok(v) => println!("ok {}", v),
+        Err(_) => println!("caught panic"),
+    }
+
+    println!("parent alive")
+}

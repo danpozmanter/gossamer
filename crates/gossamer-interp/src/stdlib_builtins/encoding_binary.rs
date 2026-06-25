@@ -106,11 +106,13 @@ use crate::value::{MapKey, NativeCall, NativeDispatch, RuntimeResult, Value};
 use super::*;
 
 pub(crate) fn install_encoding_binary(globals: &mut Vec<(&'static str, Value)>) {
-    use gossamer_std::encoding::binary as bin;
-
     install_module_pub(
         "encoding::binary",
         &[
+            ("get_u8", builtin_bin_get_u8),
+            ("put_u8", builtin_bin_put_u8),
+            ("put_uvarint", builtin_bin_put_uvarint),
+            ("put_varint", builtin_bin_put_varint),
             ("put_u16_be", builtin_bin_put_u16_be),
             ("put_u32_be", builtin_bin_put_u32_be),
             ("get_u16_be", builtin_bin_get_u16_be),
@@ -136,10 +138,38 @@ pub(crate) fn install_encoding_binary(globals: &mut Vec<(&'static str, Value)>) 
     ] {
         globals.push((*name, crate::builtins::builtin_pub(name, *f)));
     }
+}
 
-    // Suppress unused warning - the module `bin` is only used for its
-    // associated functions, which we call through the function pointers below.
-    let _ = bin::get_u8;
+pub(crate) fn builtin_bin_get_u8(args: &[Value]) -> RuntimeResult<Value> {
+    let bytes = bytes_from_value(args.first().unwrap_or(&Value::Unit));
+    if bytes.is_empty() {
+        return Ok(err_variant("binary: buffer too short".to_string()));
+    }
+    Ok(ok_variant(Value::Int(i64::from(
+        gossamer_std::encoding::binary::get_u8(&bytes),
+    ))))
+}
+pub(crate) fn builtin_bin_put_u8(args: &[Value]) -> RuntimeResult<Value> {
+    let v = args.get(1).and_then(value_to_int).unwrap_or(0) as u8;
+    let mut buf = [0u8; 1];
+    gossamer_std::encoding::binary::put_u8(&mut buf, v);
+    Ok(Value::Array(Arc::new(vec![Value::Int(i64::from(buf[0]))])))
+}
+pub(crate) fn builtin_bin_put_uvarint(args: &[Value]) -> RuntimeResult<Value> {
+    let v = args.get(1).and_then(value_to_int).unwrap_or(0) as u64;
+    let mut buf = [0u8; 10];
+    let n = gossamer_std::encoding::binary::put_uvarint(&mut buf, v);
+    Ok(Value::Array(Arc::new(
+        buf[..n].iter().map(|&b| Value::Int(i64::from(b))).collect(),
+    )))
+}
+pub(crate) fn builtin_bin_put_varint(args: &[Value]) -> RuntimeResult<Value> {
+    let v = args.get(1).and_then(value_to_int).unwrap_or(0);
+    let mut buf = [0u8; 10];
+    let n = gossamer_std::encoding::binary::put_varint(&mut buf, v);
+    Ok(Value::Array(Arc::new(
+        buf[..n].iter().map(|&b| Value::Int(i64::from(b))).collect(),
+    )))
 }
 
 pub(crate) fn bytes_from_value(v: &Value) -> Vec<u8> {

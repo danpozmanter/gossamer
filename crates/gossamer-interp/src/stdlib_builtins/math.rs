@@ -298,22 +298,38 @@ pub(crate) fn builtin_math_clamp(args: &[Value]) -> RuntimeResult<Value> {
 }
 
 pub(crate) fn builtin_math_min(args: &[Value]) -> RuntimeResult<Value> {
+    // Bare `min(xs)` over a single Vec/array argument is the Option-returning
+    // reduction (`Some(smallest)` / `None`), not the two-arg scalar compare.
+    if args.len() == 1 {
+        return super::iter::builtin_iter_min(args);
+    }
     if let Some(Value::Float(_)) = args.first() {
         return Ok(Value::Float(math_std::min_f64(
             arg_f64(args, 0),
             arg_f64(args, 1),
         )));
     }
+    if let (Some(Value::Char(a)), Some(Value::Char(b))) = (args.first(), args.get(1)) {
+        return Ok(Value::Char(*a.min(b)));
+    }
     let x = args.first().and_then(value_to_int).unwrap_or(0);
     let y = args.get(1).and_then(value_to_int).unwrap_or(0);
     Ok(Value::Int(math_std::min_i64(x, y)))
 }
 pub(crate) fn builtin_math_max(args: &[Value]) -> RuntimeResult<Value> {
+    // Bare `max(xs)` over a single Vec/array argument is the Option-returning
+    // reduction (`Some(largest)` / `None`), not the two-arg scalar compare.
+    if args.len() == 1 {
+        return super::iter::builtin_iter_max(args);
+    }
     if let Some(Value::Float(_)) = args.first() {
         return Ok(Value::Float(math_std::max_f64(
             arg_f64(args, 0),
             arg_f64(args, 1),
         )));
+    }
+    if let (Some(Value::Char(a)), Some(Value::Char(b))) = (args.first(), args.get(1)) {
+        return Ok(Value::Char(*a.max(b)));
     }
     let x = args.first().and_then(value_to_int).unwrap_or(0);
     let y = args.get(1).and_then(value_to_int).unwrap_or(0);

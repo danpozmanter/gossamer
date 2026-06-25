@@ -75,8 +75,80 @@ use super::*;
 /// here - and because every new reference retains, this is balanced with
 /// no callee-signature analysis.
 /// One field-level retain/release in the by-value-aggregate teardown:
-/// `(is_retain, aggregate_local, field_index, is_weak)`.
-type FieldGap = (bool, Local, u32, bool);
+/// `(is_retain, aggregate_local, field_projection_path, is_weak)`. The
+/// path is the chain of field indices from the aggregate local down to
+/// the RC slot - one element for a direct field, more for a field nested
+/// inside a by-value sub-struct or tuple.
+type FieldGap = (bool, Local, Vec<u32>, bool);
+
+/// RC-managed field projection paths of one by-value aggregate local:
+/// each `(field_projection_path, is_weak)`.
+type AggFieldPaths = Vec<(Vec<u32>, bool)>;
+
+/// RC-managed field projection paths within a by-value aggregate, each
+/// paired with whether it is a weak reference. Recurses through by-value
+/// struct and tuple fields, so an `Outer { inner: Inner { s: String } }`
+/// releases `inner.s` when `Outer` dies; a non-recursive walk left the
+/// nested `String` retained forever. The same filter the top level uses
+/// applies at every depth: heap-managed `Vec` / `Slice` fields and
+/// sentinel / inline-enum ADTs are excluded (their own teardown frees
+/// them), and the whole sentinel range (`u32::MAX - 16 ..`) is skipped
+/// because those ADTs lower to opaque one-slot handles whose declared
+/// field lists do not describe the alloca. Shared with the struct-literal
+/// `..base` retain (`expr_field.rs`) so retain and release recurse in
+/// lockstep and a nested shared field is freed exactly once.
+pub(crate) fn aggregate_rc_field_paths(tcx: &TyCtxt, ty: Ty) -> Vec<(Vec<u32>, bool)> {
+    fn recursable(tcx: &TyCtxt, ty: Ty) -> bool {
+        use gossamer_types::TyKind;
+        match tcx.kind_of(ty) {
+            TyKind::Adt { def, .. } => def.local < u32::MAX - 16 && !tcx.is_inline_enum_ty(ty),
+            TyKind::Tuple(_) => true,
+            _ => false,
+        }
+    }
+    fn walk(
+        tcx: &TyCtxt,
+        ty: Ty,
+        prefix: &mut Vec<u32>,
+        depth: usize,
+        out: &mut Vec<(Vec<u32>, bool)>,
+    ) {
+        use gossamer_types::TyKind;
+        // By-value aggregates cannot contain themselves (infinite size), so
+        // this terminates; the depth cap is a defensive backstop only.
+        if depth > 16 {
+            return;
+        }
+        let field_tys: Vec<Ty> = match tcx.kind_of(ty) {
+            TyKind::Adt { def, .. } if def.local < u32::MAX - 16 && !tcx.is_inline_enum_ty(ty) => {
+                match tcx.struct_field_tys(*def) {
+                    Some(fields) => fields.to_vec(),
+                    None => return,
+                }
+            }
+            TyKind::Tuple(elems) => elems.clone(),
+            _ => return,
+        };
+        for (i, t) in field_tys.iter().enumerate() {
+            let idx = u32::try_from(i).unwrap_or(0);
+            if tcx.is_rc_managed(*t)
+                && !matches!(tcx.kind_of(*t), TyKind::Vec(_) | TyKind::Slice(_))
+            {
+                prefix.push(idx);
+                out.push((prefix.clone(), tcx.is_weak_ty(*t)));
+                prefix.pop();
+            } else if recursable(tcx, *t) {
+                prefix.push(idx);
+                walk(tcx, *t, prefix, depth + 1, out);
+                prefix.pop();
+            }
+        }
+    }
+    let mut out = Vec::new();
+    let mut prefix = Vec::new();
+    walk(tcx, ty, &mut prefix, 0, &mut out);
+    out
+}
 
 /// Forward-propagates a concrete local type through `B = Copy(A)` chains: when
 /// `A` has a resolved type but `B` was left an inference variable, `B` takes
@@ -186,41 +258,7 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
     // (field_index, is_weak). In the LLVM backend such aggregates are stack
     // slots with no heap teardown, so the RC fields they retain at
     // construction/copy must be released when the local dies.
-    let agg_rc_fields = |ty: Ty| -> Vec<(u32, bool)> {
-        use gossamer_types::TyKind;
-        let collect = |tys: &[Ty]| -> Vec<(u32, bool)> {
-            tys.iter()
-                .enumerate()
-                .filter(|(_, t)| {
-                    tcx.is_rc_managed(**t)
-                        && !matches!(
-                            tcx.kind_of(**t),
-                            gossamer_types::TyKind::Vec(_) | gossamer_types::TyKind::Slice(_)
-                        )
-                })
-                .map(|(i, t)| (u32::try_from(i).unwrap_or(0), tcx.is_weak_ty(*t)))
-                .collect()
-        };
-        match tcx.kind_of(ty) {
-            // The whole sentinel range is excluded, not just
-            // Result/Option: `http::Response` (u32::MAX - 5) lowers as
-            // an OPAQUE one-slot runtime handle and the heap-blob
-            // sentinels (DirInfo/Output/ResponseStream) as one-slot
-            // pointers - per-field stack accounting over their
-            // DECLARED field lists reads and releases past the 1-slot
-            // alloca, clobbering adjacent stack memory.
-            TyKind::Adt { def, .. } if def.local < u32::MAX - 16 && !tcx.is_inline_enum_ty(ty) => {
-                tcx.struct_field_tys(*def).map(collect).unwrap_or_default()
-            }
-            // A by-value tuple is a stack slot like a struct: each RC-managed
-            // element retained when the tuple (or a destructured binding) takes
-            // a reference must be released when that owner dies. `is_rc_managed`
-            // already excludes Result/Option/inline-enum elements, so a packed
-            // 2-word element never enters the per-field accounting.
-            TyKind::Tuple(elems) => collect(elems),
-            _ => Vec::new(),
-        }
-    };
+    let agg_rc_fields = |ty: Ty| -> Vec<(Vec<u32>, bool)> { aggregate_rc_field_paths(tcx, ty) };
     // (No early-out on `is_rc` locals alone: a function may only copy a
     // borrowed RC *parameter* into its return slot - e.g. `fn id(t: Tree)
     // -> Tree { t }` - which still needs a return-copy retain. The
@@ -860,7 +898,10 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
                     {
                         if let crate::ir::Projection::Field(fidx) = p.projection[0] {
                             let base_ty = body.locals[p.local.0 as usize].ty;
-                            if agg_rc_fields(base_ty).iter().any(|(f, _)| *f == fidx) {
+                            if agg_rc_fields(base_ty)
+                                .iter()
+                                .any(|(path, _)| path.as_slice() == [fidx])
+                            {
                                 owned[i] = true;
                             }
                         }
@@ -1245,7 +1286,7 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
                 && (src.local.0 as usize) < n_locals
                 && agg_rc_fields(body.locals[src.local.0 as usize].ty)
                     .iter()
-                    .any(|(f, _)| *f == fidx)
+                    .any(|(path, _)| path.as_slice() == [fidx])
             {
                 retain_sites.push((block_idx, stmt_idx, place.local, 1));
             }
@@ -1329,7 +1370,7 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
     // By-value aggregate locals (struct / tuple, not a parameter / region)
     // carrying RC fields that need per-field retain (on copy) + release (on
     // drop), since the stack-slot aggregate itself has no heap teardown.
-    let agg_locals: Vec<(usize, Vec<(u32, bool)>)> = ((arity + 1)..n_locals)
+    let agg_locals: Vec<(usize, AggFieldPaths)> = ((arity + 1)..n_locals)
         .filter(|&i| !body.locals[i].region && !extraction_seed[i] && !vec_borrow_agg[i])
         .filter_map(|i| {
             let fields = agg_rc_fields(body.locals[i].ty);
@@ -1453,7 +1494,7 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
                     .find(|(l, _)| *l == place.local.0 as usize)
                 {
                     for (f, w) in fields {
-                        field_gaps[bi][si].push((false, place.local, *f, *w));
+                        field_gaps[bi][si].push((false, place.local, f.clone(), *w));
                     }
                 }
                 // Struct copy `dest = Copy(src)` where `src` is an aggregate:
@@ -1467,6 +1508,26 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
                     && (src.local.0 as usize) < body.locals.len()
                 {
                     for (f, w) in agg_rc_fields(body.locals[src.local.0 as usize].ty) {
+                        field_gaps[bi][si + 1].push((true, place.local, f, w));
+                    }
+                }
+                // Sub-aggregate field extract `dest = Copy(src.field)` where
+                // the extracted value is itself a by-value struct/tuple: `dest`
+                // becomes its own agg-local and releases its nested RC fields at
+                // death, so it must retain its share here. Keyed on DEST's type
+                // (the extracted sub-aggregate). A direct RC-field extract (dest
+                // is a `String`/`Vec`) has no aggregate RC fields, so this is a
+                // no-op there - those are retained by the owned-extract path.
+                if let Rvalue::Use(Operand::Copy(src)) = rvalue
+                    && !src.projection.is_empty()
+                    && src
+                        .projection
+                        .iter()
+                        .all(|p| matches!(p, crate::ir::Projection::Field(_)))
+                    && place.projection.is_empty()
+                    && (place.local.0 as usize) < body.locals.len()
+                {
+                    for (f, w) in agg_rc_fields(body.locals[place.local.0 as usize].ty) {
                         field_gaps[bi][si + 1].push((true, place.local, f, w));
                     }
                 }
@@ -1497,7 +1558,7 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
                     field_gaps[bi][len].push((
                         false,
                         Local(u32::try_from(*li).unwrap_or(0)),
-                        *f,
+                        f.clone(),
                         *w,
                     ));
                 }
@@ -1513,7 +1574,7 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
                 .find(|(l, _)| *l == destination.local.0 as usize)
         {
             for (f, w) in fields {
-                field_gaps[bi][len].push((false, destination.local, *f, *w));
+                field_gaps[bi][len].push((false, destination.local, f.clone(), *w));
             }
         }
     }
@@ -1561,7 +1622,10 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
                         kind: StatementKind::Assign {
                             place: Place {
                                 local: Local(u32::try_from(*li).unwrap_or(0)),
-                                projection: vec![crate::ir::Projection::Field(*f)],
+                                projection: f
+                                    .iter()
+                                    .map(|idx| crate::ir::Projection::Field(*idx))
+                                    .collect(),
                             },
                             rvalue: Rvalue::Use(Operand::Const(ConstValue::Int(0))),
                         },
@@ -1597,11 +1661,11 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
                     next_unit += 1;
                     new_stmts.push(rc_call_stmt(name, dest, local, span));
                 }
-                for &(is_retain, local, fidx, is_weak) in &block_field_gaps[g] {
-                    if is_retain != pass_retain {
+                for (is_retain, local, path, is_weak) in &block_field_gaps[g] {
+                    if *is_retain != pass_retain {
                         continue;
                     }
-                    let name = match (is_retain, is_weak) {
+                    let name = match (*is_retain, *is_weak) {
                         (true, false) => "gos_rt_rc_retain",
                         (false, false) => "gos_rt_rc_release",
                         (true, true) => "gos_rt_rc_weak_retain",
@@ -1609,7 +1673,7 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
                     };
                     let dest = Local(u32::try_from(next_unit).expect("local overflow"));
                     next_unit += 1;
-                    new_stmts.push(field_rc_call_stmt(name, dest, local, fidx, span));
+                    new_stmts.push(field_rc_call_stmt(name, dest, *local, path, span));
                 }
             }
             if let Some(stmt) = orig_iter.next() {
@@ -1706,7 +1770,7 @@ fn field_rc_call_stmt(
     name: &'static str,
     dest: Local,
     local: Local,
-    field_idx: u32,
+    field_path: &[u32],
     span: gossamer_lex::Span,
 ) -> Statement {
     Statement {
@@ -1716,7 +1780,10 @@ fn field_rc_call_stmt(
                 name,
                 args: vec![Operand::Copy(Place {
                     local,
-                    projection: vec![crate::ir::Projection::Field(field_idx)],
+                    projection: field_path
+                        .iter()
+                        .map(|idx| crate::ir::Projection::Field(*idx))
+                        .collect(),
                 })],
             },
         },

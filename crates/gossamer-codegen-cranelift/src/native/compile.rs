@@ -534,6 +534,19 @@ pub(crate) fn lower_program_full(
     for &s in &["", " ", ", ", "<value>", "array index"] {
         intrinsics.intern_string(module, s)?;
     }
+    // Fixed diagnostic strings the Assert / Unreachable terminators
+    // hand to `gos_rt_panic`, plus every dynamic `panic!` message, so
+    // the parallel phase never declares a fresh string.
+    for &s in STATIC_PANIC_MESSAGES {
+        intrinsics.intern_string(module, s)?;
+    }
+    for body in bodies {
+        for block in &body.blocks {
+            if let Terminator::Panic { message } = &block.terminator {
+                intrinsics.intern_string(module, message)?;
+            }
+        }
+    }
     for body in bodies {
         for s in collect_body_str_consts(body) {
             if s.starts_with("__fn_thunk_") {

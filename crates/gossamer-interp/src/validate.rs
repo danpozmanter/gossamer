@@ -346,6 +346,9 @@ pub(crate) fn validate_chunk(chunk: &FnChunk) -> Result<(), ValidationError> {
             }
             Op::Return { value } => check_v(op_idx, value)?,
             Op::ReturnUnit => {}
+            Op::Panic { msg } => {
+                check_pool(op_idx, u32::from(msg), consts_len, PoolKind::Consts)?;
+            }
             Op::MakeClosure { dst, proto } => {
                 check_v(op_idx, dst)?;
                 check_pool(op_idx, proto, closure_protos_len, PoolKind::ClosureProtos)?;
@@ -485,7 +488,7 @@ pub(crate) fn validate_chunk(chunk: &FnChunk) -> Result<(), ValidationError> {
                 check_v(op_idx, dst)?;
                 check_v(op_idx, src)?;
             }
-            Op::CellNew { dst, src } => {
+            Op::CellNew { dst, src } | Op::CellNewMove { dst, src } => {
                 check_v(op_idx, dst)?;
                 check_v(op_idx, src)?;
             }

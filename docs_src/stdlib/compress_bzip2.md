@@ -8,8 +8,6 @@ bzip2 encoder / decoder (BZh format).
 
 | Name | Kind | Description |
 |---|---|---|
-| `encode` | fn | One-shot bzip2 compress. |
-| `decode` | fn | One-shot bzip2 decompress. |
-| `compress` | fn | One-shot bzip2 compress (alias of encode). |
-| `decompress` | fn | One-shot bzip2 decompress (alias of decode). |
+| `compress` | fn | One-shot bzip2 compress. |
+| `decompress` | fn | One-shot bzip2 decompress. |
 

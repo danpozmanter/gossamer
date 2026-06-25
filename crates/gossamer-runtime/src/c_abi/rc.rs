@@ -355,6 +355,43 @@ unsafe fn dec_strong(h: *mut RcHeader) -> DecOutcome {
     }
 }
 
+/// Saturating weak increment. Mirrors the strong path's `STRONG_IMMORTAL`
+/// pin: once the 8-bit weak count reaches `u8::MAX` it is never bumped
+/// again, so it can never wrap to a small value and let `try_reclaim`
+/// free a block that outstanding `Weak`s still observe. A pinned block
+/// leaks rather than risk a use-after-free, the same conservative choice
+/// the strong count makes at saturation.
+#[inline]
+unsafe fn inc_weak(h: *const RcHeader) {
+    let _ = unsafe {
+        (*h).weak
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |w| {
+                if w == u8::MAX { None } else { Some(w + 1) }
+            })
+    };
+}
+
+/// Saturating weak decrement. Returns the previous count when the count
+/// was actually decremented (so the caller can reclaim at the 1 -> 0
+/// edge), or `None` when the count is pinned at `u8::MAX`. A pinned count
+/// is never decremented: lowering it could later reach 0 while weaks that
+/// were dropped from the saturated total still observe the block, so the
+/// block stays pinned (leaked) for good.
+#[inline]
+unsafe fn dec_weak(h: *const RcHeader) -> Option<u8> {
+    unsafe {
+        (*h).weak
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |w| {
+                if w == u8::MAX {
+                    None
+                } else {
+                    Some(w.saturating_sub(1))
+                }
+            })
+            .ok()
+    }
+}
+
 /// Marks `payload` and its reachable RC subgraph as shared (escaped to
 /// another goroutine), so subsequent retains/releases use atomics and
 /// the cycle collector leaves them alone. Idempotent and cycle-safe
@@ -868,7 +905,7 @@ fn os_page_size() -> usize {
         use windows_sys::Win32::System::SystemInformation::{GetSystemInfo, SYSTEM_INFO};
         let mut info: SYSTEM_INFO = unsafe { std::mem::zeroed() };
         // SAFETY: GetSystemInfo fills the struct; no preconditions.
-        unsafe { GetSystemInfo(&mut info) };
+        unsafe { GetSystemInfo(&raw mut info) };
         (info.dwPageSize as usize).max(4096)
     };
     PAGE.store(size, Ordering::Relaxed);
@@ -1376,7 +1413,7 @@ pub unsafe extern "C" fn gos_rt_rc_downgrade(payload: *mut u8) -> *mut u8 {
         return std::ptr::null_mut();
     }
     let h = unsafe { header_ptr(base) };
-    unsafe { (*h).weak.fetch_add(1, Ordering::Relaxed) };
+    unsafe { inc_weak(h) };
     payload
 }
 
@@ -1393,7 +1430,7 @@ pub unsafe extern "C" fn gos_rt_rc_weak_retain(payload: *mut u8) {
         return;
     }
     let h = unsafe { header_ptr(payload) };
-    unsafe { (*h).weak.fetch_add(1, Ordering::Relaxed) };
+    unsafe { inc_weak(h) };
 }
 
 /// Decrement the weak count; if both strong and weak counts are now zero,
@@ -1410,11 +1447,11 @@ pub unsafe extern "C" fn gos_rt_rc_weak_release(payload: *mut u8) {
         return;
     }
     let h = unsafe { header_ptr(payload) };
-    // prev is the old weak count; the new value is prev - 1. When prev == 1
-    // the count just reached 0, so the allocation can be reclaimed if nothing
-    // else pins it.
-    let prev = unsafe { (*h).weak.fetch_sub(1, Ordering::Relaxed) };
-    if prev == 1 {
+    // `dec_weak` returns the old weak count; the new value is prev - 1. When
+    // prev == 1 the count just reached 0, so the allocation can be reclaimed
+    // if nothing else pins it. A count pinned at `u8::MAX` yields `None` and
+    // is never decremented, so a saturated block is never reclaimed.
+    if unsafe { dec_weak(h) } == Some(1) {
         unsafe { try_reclaim(payload) };
     }
 }
@@ -1827,6 +1864,60 @@ pub unsafe extern "C" fn gos_rt_aggr_retain_children(base: *mut u8, meta: *const
     unsafe {
         visit_guarded_children(base, meta, |child| {
             gos_rt_rc_retain(child);
+        });
+    }
+}
+
+/// Heap-box a multi-slot aggregate that is a user-enum variant payload:
+/// allocate an RC cell carrying `meta` (an `RC_KIND_STRUCT` child-word list),
+/// copy `size` bytes from `src`, and retain every RC child the box now
+/// co-owns. The enum's variant meta lists this box's slot as a child, so the
+/// enum's release frees the box; the box's own release walk then reclaims its
+/// `String` / RC-node children exactly once. The retain balances the source
+/// aggregate's scope-end teardown release, so the box keeps a live reference
+/// even after the constructing frame returns. Inside a `region { … }` the
+/// bytes are bump-allocated and freed wholesale at pop, so the box is
+/// meta-less and its children are not retained (region objects never run the
+/// per-node teardown walk).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_enum_box_aggr(
+    size: u64,
+    meta: *const i64,
+    src: *const u8,
+) -> *mut u8 {
+    let in_region = region_active();
+    let payload = unsafe { gos_rt_rc_alloc(size, if in_region { std::ptr::null() } else { meta }) };
+    if payload.is_null() || src.is_null() {
+        return payload;
+    }
+    unsafe { std::ptr::copy_nonoverlapping(src, payload, size as usize) };
+    if in_region {
+        return payload;
+    }
+    unsafe {
+        visit_children_raw(payload, |c| {
+            gos_rt_rc_retain(c);
+        });
+    }
+    payload
+}
+
+/// Retain every RC child `payload` names through its header meta - a `String`
+/// (`gos_rt_str_retain`) or RC-node (`gos_rt_rc_retain`) child. Used after a
+/// multi-slot aggregate enum payload is materialised by value into a match
+/// binding: the binding co-owns the box's children, so its scope-end teardown
+/// release is balanced by this retain. `payload` is the box pointer; its
+/// children are the same pointers the binding now aliases. Null-safe; a
+/// region-arena box is left untouched.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_rc_retain_children(payload: *mut u8) {
+    let base = untag_rc(payload);
+    if base.is_null() || in_region_arena(base) {
+        return;
+    }
+    unsafe {
+        visit_children_raw(base, |c| {
+            gos_rt_rc_retain(c);
         });
     }
 }
@@ -2485,6 +2576,55 @@ mod tests {
             gos_rt_rc_weak_release(p);
         }
         assert_eq!(rc_live_count(), base);
+    }
+
+    #[test]
+    fn weak_count_saturates_instead_of_wrapping() {
+        // The weak count is an 8-bit field. More than 255 live `Weak`s drive
+        // it past `u8::MAX`; a bare wrapping `fetch_add` would roll the count
+        // back to a small value (300 increments -> 44, or exactly 256 -> 0),
+        // and a wrap to 0 would let `try_reclaim` free a block that 256
+        // outstanding weaks still observe (use-after-free). Saturating the
+        // count pins it at `u8::MAX` and leaks the block instead.
+        let _g = count_guard();
+        let base = rc_live_count();
+        const WEAKS: usize = 300;
+        unsafe {
+            let p = gos_rt_rc_alloc(8, std::ptr::null());
+            for _ in 0..WEAKS {
+                gos_rt_rc_weak_retain(p);
+            }
+            // Pinned at the maximum, not wrapped to `WEAKS % 256` (= 44).
+            assert_eq!(weak_of(p), u8::MAX as usize, "weak count pins at u8::MAX");
+
+            // The referent dies, but the block must survive: every one of the
+            // 300 weaks still observes it.
+            gos_rt_rc_release(p);
+            assert_eq!(strong_of(p), 0, "strong release destroyed the payload");
+            assert_eq!(
+                rc_live_count(),
+                base + 1,
+                "saturated weak count pins the block; it is never reclaimed \
+                 while weaks may still observe it"
+            );
+
+            // A pinned count is immortal: releasing weaks never decrements it,
+            // so `try_reclaim` can never be re-enabled and free the block out
+            // from under the remaining (uncounted) weaks.
+            for _ in 0..WEAKS {
+                gos_rt_rc_weak_release(p);
+            }
+            assert_eq!(
+                weak_of(p),
+                u8::MAX as usize,
+                "pinned weak count is never decremented"
+            );
+            assert_eq!(
+                rc_live_count(),
+                base + 1,
+                "the block stays pinned (leaked) rather than risk a use-after-free"
+            );
+        }
     }
 
     #[test]

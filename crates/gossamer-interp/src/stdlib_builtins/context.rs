@@ -77,7 +77,7 @@ pub(crate) fn install_context(globals: &mut Vec<(&'static str, Value)>) {
 fn ctx_handle(id: i64) -> Value {
     Value::struct_(
         "context::Context",
-        Arc::unwrap_or_clone(Arc::new(vec![(Ident::new("__ctx"), Value::Int(id))])),
+        Arc::unwrap_or_clone(Arc::new(vec![("__ctx", Value::Int(id))])),
     )
 }
 
@@ -85,7 +85,7 @@ fn ctx_id_of(value: &Value) -> Option<i64> {
     if let Value::Struct(inner) = value {
         if inner.name == "context::Context" {
             for (i, v) in &inner.fields {
-                if i.name == "__ctx" {
+                if (*i) == "__ctx" {
                     if let Value::Int(n) = v {
                         return Some(*n);
                     }

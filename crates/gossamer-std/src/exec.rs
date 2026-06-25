@@ -46,9 +46,11 @@ use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read};
 use std::path::PathBuf;
 use std::process::{self, ChildStderr, ChildStdout};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
+
+use parking_lot::Mutex;
 
 use crate::context::Context;
 use crate::io::IoError;
@@ -222,10 +224,7 @@ pub struct Child {
 impl Child {
     /// Blocks until the child exits; returns its [`ExitStatus`].
     pub fn wait(self) -> Result<ExitStatus, IoError> {
-        let mut guard = self
-            .inner
-            .lock()
-            .map_err(|_| IoError::Other("wait: poisoned child mutex".into()))?;
+        let mut guard = self.inner.lock();
         let Some(child) = guard.as_mut() else {
             return Err(IoError::Other("wait: child already reaped".into()));
         };
@@ -245,10 +244,7 @@ impl Child {
         let deadline = Instant::now() + Duration::from_millis(ms);
         loop {
             {
-                let mut guard = self
-                    .inner
-                    .lock()
-                    .map_err(|_| IoError::Other("wait_with_timeout: poisoned".into()))?;
+                let mut guard = self.inner.lock();
                 let Some(child) = guard.as_mut() else {
                     return Ok(Some(ExitStatus { code: None }));
                 };
@@ -273,10 +269,7 @@ impl Child {
     /// Sends SIGKILL (Unix) / `TerminateProcess` (Windows). The
     /// caller must still `wait` on the child afterwards to reap it.
     pub fn kill(&mut self) -> Result<(), IoError> {
-        let mut guard = self
-            .inner
-            .lock()
-            .map_err(|_| IoError::Other("kill: poisoned child mutex".into()))?;
+        let mut guard = self.inner.lock();
         let Some(child) = guard.as_mut() else {
             return Ok(());
         };
@@ -620,9 +613,7 @@ fn spawn_cancel_watcher(
 }
 
 fn has_exited(inner: &Arc<Mutex<Option<process::Child>>>) -> bool {
-    let Ok(mut guard) = inner.lock() else {
-        return true;
-    };
+    let mut guard = inner.lock();
     let Some(child) = guard.as_mut() else {
         return true;
     };
@@ -872,12 +863,12 @@ fn wait_pid_timeout_windows(pid: u32, ms: u32) -> i64 {
             return -2;
         }
         let mut code: u32 = 0;
-        let ok = GetExitCodeProcess(handle, &mut code);
+        let ok = GetExitCodeProcess(handle, &raw mut code);
         let _ = CloseHandle(handle);
         if ok == 0 {
             return -2;
         }
-        code as i64
+        i64::from(code)
     }
 }
 

@@ -116,8 +116,18 @@ fn run_and_check(cmd: &mut Command, port: u16) {
         .stderr(std::process::Stdio::piped())
         .spawn()
         .expect("spawn");
-    std::thread::sleep(Duration::from_millis(800));
     let addr = format!("127.0.0.1:{port}");
+    // Wait for readiness instead of a fixed sleep: poll `/health` until it
+    // answers 200 or a bounded deadline elapses. A fixed 800ms guess raced
+    // the server's bind on a loaded machine.
+    let ready = (0..200).any(|_| {
+        if curl(&addr, "/health").1 == 200 {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(25));
+        false
+    });
+    assert!(ready, "router server did not become ready on {addr}");
     let (h_body, h_code) = curl(&addr, "/health");
     let (e_body, e_code) = curl(&addr, "/echo");
     let (m_body, m_code) = curl(&addr, "/missing");

@@ -337,6 +337,11 @@ impl<'a> Builder<'a> {
                 self.option_payload_adt_ty(val_ty),
                 None,
             ),
+            "pop" if args.len() == 1 => (
+                "gos_rt_map_pop_skey",
+                self.option_payload_adt_ty(val_ty),
+                None,
+            ),
             "contains_key" | "contains" if args.len() == 1 => {
                 ("gos_rt_map_contains_skey", self.tcx.bool_ty(), None)
             }
@@ -607,10 +612,14 @@ impl<'a> Builder<'a> {
                 self.set_current(next);
                 Some(dest)
             }
-            ("iter::min", 1) => {
+            // Bare prelude `min(xs)` / `max(xs)` over a `Vec`/array return
+            // `Option<T>`, exactly like `iter::min`/`iter::max`. The two-arg
+            // scalar forms (`min(a, b)`) are handled separately; only the
+            // single Vec/array argument reaches here.
+            ("iter::min" | "min" | "math::min", 1) => {
                 self.lower_iter_simple_vec_i64_opt("gos_rt_iter_min_i64", args, span)
             }
-            ("iter::max", 1) => {
+            ("iter::max" | "max" | "math::max", 1) => {
                 self.lower_iter_simple_vec_i64_opt("gos_rt_iter_max_i64", args, span)
             }
             ("iter::range", 2) => {
@@ -1958,22 +1967,37 @@ impl<'a> Builder<'a> {
         if elems.len() != 2 {
             return None;
         }
-        let HirPatKind::Binding {
-            name: key_name,
-            mutable: key_mut,
-        } = &elems[0].kind
-        else {
-            return None;
+        // Accept a `Binding` (bind the name) or `_` (read the slot but
+        // bind no name) in either tuple position. The key is read either
+        // way - the value lookup needs it - so a `_` key just suppresses
+        // its user-visible binding. A literal or nested sub-pattern is
+        // left to the generic for-vec path.
+        let key_binding = match &elems[0].kind {
+            HirPatKind::Binding { name, mutable } => Some((name.clone(), *mutable)),
+            HirPatKind::Wildcard => None,
+            _ => return None,
         };
-        let HirPatKind::Binding {
-            name: val_name,
-            mutable: val_mut,
-        } = &elems[1].kind
-        else {
-            return None;
+        let val_binding = match &elems[1].kind {
+            HirPatKind::Binding { name, mutable } => Some((name.clone(), *mutable)),
+            HirPatKind::Wildcard => None,
+            _ => return None,
         };
         let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
         let str_ty = self.tcx.string_ty();
+        // A struct / tuple key hashes to opaque bytes the runtime cannot turn
+        // back into the user's value, so `keys()` is empty and cannot drive the
+        // loop. When the key is unused (`_`) and the values are scalar, iterate
+        // the live values directly - matching the VM, which yields each entry's
+        // value. (A used key needs key materialisation, and String / struct
+        // values need owned-pointer recovery; both fall through to the generic
+        // path for now.)
+        if !is_btmap
+            && key_binding.is_none()
+            && matches!(self.hash_map_key_kind(recv_ty), Some(MapKeyKind::Other))
+            && matches!(self.hash_map_value_kind(recv_ty), Some(MapValueKind::I64))
+        {
+            return self.lower_for_struct_keyed_values(receiver, for_loop.loop_pat, for_loop, span);
+        }
         let (key_ty, val_ty, keys_helper, get_or_helper) = if is_btmap {
             // BTreeMap is hard-coded to `<String, i64>` in the
             // runtime today (see `GosBtMap`). Mirror that shape
@@ -2098,8 +2122,14 @@ impl<'a> Builder<'a> {
             target: Some(after_ptr),
         });
         self.set_current(after_ptr);
-        let key_local = self.push_local(key_ty, Some(key_name.clone()), *key_mut);
-        self.bind_local(&key_name.name, key_local);
+        let key_local = self.push_local(
+            key_ty,
+            key_binding.as_ref().map(|(n, _)| n.clone()),
+            key_binding.as_ref().is_some_and(|(_, m)| *m),
+        );
+        if let Some((name, _)) = &key_binding {
+            self.bind_local(&name.name, key_local);
+        }
         let after_load = self.new_block(span);
         let zero_off = self.fresh(i64_ty);
         self.emit_assign(
@@ -2137,8 +2167,14 @@ impl<'a> Builder<'a> {
             );
             l
         };
-        let val_local = self.push_local(val_ty, Some(val_name.clone()), *val_mut);
-        self.bind_local(&val_name.name, val_local);
+        let val_local = self.push_local(
+            val_ty,
+            val_binding.as_ref().map(|(n, _)| n.clone()),
+            val_binding.as_ref().is_some_and(|(_, m)| *m),
+        );
+        if let Some((name, _)) = &val_binding {
+            self.bind_local(&name.name, val_local);
+        }
         let after_val = self.new_block(span);
         self.terminate(Terminator::Call {
             callee: Operand::Const(ConstValue::Str(get_or_helper.to_string())),
@@ -2151,6 +2187,159 @@ impl<'a> Builder<'a> {
             target: Some(after_val),
         });
         self.set_current(after_val);
+
+        let _ = self.lower_expr(for_loop.body);
+        self.pop_scope();
+        self.terminate(Terminator::Goto { target: step_block });
+
+        self.set_current(step_block);
+        let one = self.fresh(i64_ty);
+        self.emit_assign(
+            Place::local(one),
+            Rvalue::Use(Operand::Const(ConstValue::Int(1))),
+            span,
+        );
+        let bumped = self.fresh(i64_ty);
+        self.emit_assign(
+            Place::local(bumped),
+            Rvalue::BinaryOp {
+                op: BinOp::Add,
+                lhs: Operand::Copy(Place::local(counter)),
+                rhs: Operand::Copy(Place::local(one)),
+            },
+            span,
+        );
+        self.emit_assign(
+            Place::local(counter),
+            Rvalue::Use(Operand::Copy(Place::local(bumped))),
+            span,
+        );
+        self.terminate(Terminator::Goto { target: header });
+
+        self.set_current(exit);
+        let unit_ty = self.tcx.unit();
+        let unit = self.fresh(unit_ty);
+        self.emit_assign(
+            Place::local(unit),
+            Rvalue::Use(Operand::Const(ConstValue::Int(0))),
+            span,
+        );
+        Some(unit)
+    }
+
+    /// Lowers `for (_, v) in m.iter()` over a struct / tuple-keyed map by
+    /// driving the loop from the values snapshot. The key bytes a struct-keyed
+    /// map stores are opaque (no `keys()` round-trip), so a key-driven loop
+    /// would never iterate; reading the values directly yields each entry's
+    /// value exactly as the VM's `m.iter()` does. The value binding's runtime
+    /// kind selects the values helper and per-element getter.
+    fn lower_for_struct_keyed_values(
+        &mut self,
+        receiver: &HirExpr,
+        loop_pat: &HirPat,
+        for_loop: &ForLoopShape<'_>,
+        span: Span,
+    ) -> Option<Local> {
+        let HirPatKind::Tuple(elems) = &loop_pat.kind else {
+            return None;
+        };
+        let val_binding = match &elems[1].kind {
+            HirPatKind::Binding { name, mutable } => Some((name.clone(), *mutable)),
+            HirPatKind::Wildcard => None,
+            _ => return None,
+        };
+        let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+        let str_ty = self.tcx.string_ty();
+        let recv_ty = self
+            .receiver_local_from_path(receiver)
+            .map_or(receiver.ty, |l| self.locals[l.0 as usize].ty);
+        let (val_ty, values_helper, getter) = match self.hash_map_value_kind(recv_ty) {
+            Some(MapValueKind::String) => (str_ty, "gos_rt_map_values_str", "gos_rt_vec_get_ptr"),
+            Some(MapValueKind::Other) => {
+                // Struct / aggregate values are boxed pointers in the snapshot.
+                let v = self.hash_map_kv_tys(recv_ty).map_or(i64_ty, |(_, v)| v);
+                (v, "gos_rt_map_values_vec", "gos_rt_vec_get_ptr")
+            }
+            _ => (
+                i64_ty,
+                "gos_rt_map_values_i64",
+                "gos_rt_vec_get_i64_unchecked",
+            ),
+        };
+
+        let recv_local = self.lower_expr(receiver)?;
+        let vals_vec_ty = self.tcx.intern(gossamer_types::TyKind::Vec(val_ty));
+        let vals_vec = self.fresh(vals_vec_ty);
+        let after_vals = self.new_block(span);
+        self.terminate(Terminator::Call {
+            callee: Operand::Const(ConstValue::Str(values_helper.to_string())),
+            args: vec![Operand::Copy(Place::local(recv_local))],
+            destination: Place::local(vals_vec),
+            target: Some(after_vals),
+        });
+        self.set_current(after_vals);
+
+        let len_local = self.fresh(i64_ty);
+        let after_len = self.new_block(span);
+        self.terminate(Terminator::Call {
+            callee: Operand::Const(ConstValue::Str("gos_rt_vec_len".to_string())),
+            args: vec![Operand::Copy(Place::local(vals_vec))],
+            destination: Place::local(len_local),
+            target: Some(after_len),
+        });
+        self.set_current(after_len);
+
+        let counter = self.push_local(i64_ty, None, true);
+        self.emit_assign(
+            Place::local(counter),
+            Rvalue::Use(Operand::Const(ConstValue::Int(0))),
+            span,
+        );
+        let header = self.new_block(span);
+        let body_block = self.new_block(span);
+        let step_block = self.new_block(span);
+        let exit = self.new_block(span);
+        self.terminate(Terminator::Goto { target: header });
+
+        self.set_current(header);
+        let bool_ty = self.tcx.bool_ty();
+        let cmp = self.fresh(bool_ty);
+        self.emit_assign(
+            Place::local(cmp),
+            Rvalue::BinaryOp {
+                op: BinOp::Lt,
+                lhs: Operand::Copy(Place::local(counter)),
+                rhs: Operand::Copy(Place::local(len_local)),
+            },
+            span,
+        );
+        self.terminate(Terminator::SwitchInt {
+            discriminant: Operand::Copy(Place::local(cmp)),
+            arms: vec![(0, exit)],
+            default: body_block,
+        });
+
+        self.set_current(body_block);
+        self.push_scope();
+        let val_local = self.push_local(
+            val_ty,
+            val_binding.as_ref().map(|(n, _)| n.clone()),
+            val_binding.as_ref().is_some_and(|(_, m)| *m),
+        );
+        if let Some((name, _)) = &val_binding {
+            self.bind_local(&name.name, val_local);
+        }
+        let after_get = self.new_block(span);
+        self.terminate(Terminator::Call {
+            callee: Operand::Const(ConstValue::Str(getter.to_string())),
+            args: vec![
+                Operand::Copy(Place::local(vals_vec)),
+                Operand::Copy(Place::local(counter)),
+            ],
+            destination: Place::local(val_local),
+            target: Some(after_get),
+        });
+        self.set_current(after_get);
 
         let _ = self.lower_expr(for_loop.body);
         self.pop_scope();

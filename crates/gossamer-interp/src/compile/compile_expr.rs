@@ -762,13 +762,16 @@ impl<'tcx> FnBuilder<'tcx> {
                 self.patch_jump(f, next);
             }
         }
-        // No arm matched - exhaustiveness guarantees this is dead for
-        // well-typed programs, but the register file must stay valid.
-        let unit = self.load_unit();
-        self.emit(Op::Move {
-            dst: result,
-            src: unit,
-        });
+        // No arm matched. Exhaustiveness covers well-typed programs, but a
+        // checker blind spot (e.g. an unenumerable integer payload like
+        // `Some(2)` against `Some(0) | Some(1) | None`) can reach here.
+        // Panic cleanly with the same message the compiled tiers emit
+        // rather than falling through with a zero/default value.
+        let msg = self.const_idx(
+            ConstKey::String(NON_EXHAUSTIVE_MATCH_MESSAGE.to_string()),
+            Value::String(SmolStr::from(NON_EXHAUSTIVE_MATCH_MESSAGE)),
+        );
+        self.emit(Op::Panic { msg });
         let end = self.cur_idx();
         for j in end_jumps {
             self.patch_jump(j, end);
@@ -2263,8 +2266,19 @@ impl<'tcx> FnBuilder<'tcx> {
             .checked_add(argc)
             .expect("register overflow reserving mut-self method args");
         let place_reg = self.compile_expr(place)?;
+        // Evaluate every argument BEFORE capturing the receiver, so an argument
+        // that reads the receiver (`c.bump(c.value)`) still sees its live value
+        // - `CellNewMove` empties the receiver's register immediately after.
+        let mut arg_regs: Vec<Reg> = Vec::with_capacity(args.len());
+        for arg in args {
+            arg_regs.push(self.compile_expr(arg)?);
+        }
         let cell = self.alloc_reg();
-        self.emit(Op::CellNew {
+        // Move (not clone) the receiver into the cell. `CellTake` below
+        // republishes the post-call `self` into the same place, and moving
+        // keeps the receiver's refcount at one so the callee's first field
+        // write mutates in place instead of forcing a copy-on-write clone.
+        self.emit(Op::CellNewMove {
             dst: cell,
             src: place_reg,
         });
@@ -2272,12 +2286,11 @@ impl<'tcx> FnBuilder<'tcx> {
             dst: args_start,
             src: cell,
         });
-        for (i, arg) in args.iter().enumerate() {
-            let r = self.compile_expr(arg)?;
+        for (i, r) in arg_regs.iter().enumerate() {
             let slot = args_start
                 .checked_add(u16::try_from(i + 1).expect("argc overflow"))
                 .expect("register overflow");
-            self.emit(Op::Move { dst: slot, src: r });
+            self.emit(Op::Move { dst: slot, src: *r });
         }
         let dst = self.alloc_reg();
         let cache_idx = self.alloc_cache_idx();

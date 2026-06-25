@@ -196,8 +196,8 @@ impl Runner {
     where
         F: FnOnce() -> Result<(), Error> + Send + 'static,
     {
+        use parking_lot::Mutex as StdMutex;
         use std::sync::Arc;
-        use std::sync::Mutex as StdMutex;
         if worker_count <= 1 || cases.len() <= 1 {
             for (name, body) in cases {
                 self.run(name, body);
@@ -212,14 +212,14 @@ impl Runner {
                 .collect::<Vec<_>>(),
         ));
         let results: Arc<StdMutex<Vec<(usize, TestResult)>>> = Arc::new(StdMutex::new(Vec::new()));
-        let mut handles = Vec::with_capacity(worker_count.min(queue.lock().expect("lock").len()));
+        let mut handles = Vec::with_capacity(worker_count.min(queue.lock().len()));
         for _ in 0..worker_count {
             let queue = Arc::clone(&queue);
             let results = Arc::clone(&results);
             handles.push(std::thread::spawn(move || {
                 loop {
                     let next = {
-                        let mut q = queue.lock().expect("queue lock");
+                        let mut q = queue.lock();
                         q.pop()
                     };
                     let Some((idx, name, body)) = next else {
@@ -238,17 +238,14 @@ impl Runner {
                             error: Some(err.message().to_string()),
                         },
                     };
-                    results.lock().expect("results lock").push((idx, result));
+                    results.lock().push((idx, result));
                 }
             }));
         }
         for h in handles {
             let _ = h.join();
         }
-        let mut collected = Arc::try_unwrap(results)
-            .expect("arc unwrap")
-            .into_inner()
-            .expect("lock");
+        let mut collected = Arc::try_unwrap(results).expect("arc unwrap").into_inner();
         collected.sort_by_key(|(idx, _)| *idx);
         for (_, r) in collected {
             self.results.push(r);

@@ -69,7 +69,7 @@ pub(crate) fn install_rwlock(globals: &mut Vec<(&'static str, Value)>) {
 fn lock_handle(id: i64) -> Value {
     Value::struct_(
         "sync::RwLock",
-        Arc::unwrap_or_clone(Arc::new(vec![(Ident::new("__rwlock"), Value::Int(id))])),
+        Arc::unwrap_or_clone(Arc::new(vec![("__rwlock", Value::Int(id))])),
     )
 }
 
@@ -77,7 +77,7 @@ fn lock_id_of(value: &Value) -> Option<i64> {
     if let Value::Struct(inner) = value {
         if inner.name == "sync::RwLock" {
             for (i, v) in &inner.fields {
-                if i.name == "__rwlock" {
+                if (*i) == "__rwlock" {
                     if let Value::Int(n) = v {
                         return Some(*n);
                     }

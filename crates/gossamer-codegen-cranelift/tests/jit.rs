@@ -127,6 +127,117 @@ fn jit_compiles_simple_arithmetic_function() {
     assert_eq!(result, 42);
 }
 
+fn i64_decl(ty: gossamer_types::Ty) -> LocalDecl {
+    LocalDecl {
+        ty,
+        debug_name: None,
+        mutable: false,
+        region: false,
+    }
+}
+
+#[test]
+fn jit_unresolved_qualified_call_aborts_compile_not_zero_stub() {
+    // fn f(x: i64) -> i64 { Foo::bar(x) }
+    //
+    // `Foo::bar` has no cranelift lowering (not an intrinsic, runtime
+    // symbol, or user body). The backend must refuse to compile the
+    // body so the VM (which resolves the call correctly) runs it,
+    // rather than silently lowering the call to a zero constant and
+    // returning garbage.
+    let mut tcx = TyCtxt::new();
+    let i64_ty = tcx.int_ty(IntTy::I64);
+    let body = Body {
+        name: "f".to_string(),
+        def: None,
+        arity: 1,
+        locals: vec![i64_decl(i64_ty), i64_decl(i64_ty), i64_decl(i64_ty)],
+        blocks: vec![
+            BasicBlock {
+                id: gossamer_mir::BlockId(0),
+                stmts: vec![],
+                terminator: Terminator::Call {
+                    callee: Operand::Const(ConstValue::Str("Foo::bar".to_string())),
+                    args: vec![Operand::Copy(place(1))],
+                    destination: place(2),
+                    target: Some(gossamer_mir::BlockId(1)),
+                },
+                span: dummy_span(),
+            },
+            BasicBlock {
+                id: gossamer_mir::BlockId(1),
+                stmts: vec![Statement {
+                    span: dummy_span(),
+                    kind: StatementKind::Assign {
+                        place: place(0),
+                        rvalue: Rvalue::Use(Operand::Copy(place(2))),
+                    },
+                }],
+                terminator: Terminator::Return,
+                span: dummy_span(),
+            },
+        ],
+        span: dummy_span(),
+    };
+    let result = compile_to_jit(&[body], &tcx, &std::collections::HashMap::new());
+    assert!(
+        result.is_err(),
+        "compile_to_jit must refuse an unresolved qualified call instead of \
+         emitting a silent zero-stub"
+    );
+}
+
+#[test]
+fn jit_some_constructor_still_compiles_as_identity() {
+    // fn f(x: i64) -> i64 { Some(x) }
+    //
+    // The BUG 3 fix must not over-refuse: `Ok` / `Some` / `Err` with a
+    // payload lower to an identity pass-through and must still compile.
+    let mut tcx = TyCtxt::new();
+    let i64_ty = tcx.int_ty(IntTy::I64);
+    let body = Body {
+        name: "f".to_string(),
+        def: None,
+        arity: 1,
+        locals: vec![i64_decl(i64_ty), i64_decl(i64_ty), i64_decl(i64_ty)],
+        blocks: vec![
+            BasicBlock {
+                id: gossamer_mir::BlockId(0),
+                stmts: vec![],
+                terminator: Terminator::Call {
+                    callee: Operand::Const(ConstValue::Str("Some".to_string())),
+                    args: vec![Operand::Copy(place(1))],
+                    destination: place(2),
+                    target: Some(gossamer_mir::BlockId(1)),
+                },
+                span: dummy_span(),
+            },
+            BasicBlock {
+                id: gossamer_mir::BlockId(1),
+                stmts: vec![Statement {
+                    span: dummy_span(),
+                    kind: StatementKind::Assign {
+                        place: place(0),
+                        rvalue: Rvalue::Use(Operand::Copy(place(2))),
+                    },
+                }],
+                terminator: Terminator::Return,
+                span: dummy_span(),
+            },
+        ],
+        span: dummy_span(),
+    };
+    let artifact = compile_to_jit(&[body], &tcx, &std::collections::HashMap::new())
+        .expect("Some(x) lowers to identity and must still compile");
+    let f = artifact.functions.get("f").expect("f present");
+    // SAFETY: `f` is live for the duration of `artifact`.
+    let result: i64 = unsafe {
+        let g: extern "C" fn(i64) -> i64 = mem::transmute(f.ptr);
+        g(7)
+    };
+    assert_eq!(result, 7, "Some(x) must pass its payload through unchanged");
+}
+
 #[test]
 fn jit_artifact_drops_without_panic() {
     let mut tcx = TyCtxt::new();

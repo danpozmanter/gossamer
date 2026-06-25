@@ -216,13 +216,22 @@ pub(crate) fn collect_fn_inputs(program: &HirProgram) -> HashMap<gossamer_resolv
     out
 }
 
-pub(crate) fn collect_fn_returns(program: &HirProgram) -> HashMap<gossamer_resolve::DefId, Ty> {
+pub(crate) fn collect_fn_returns(
+    program: &HirProgram,
+    tcx: &mut TyCtxt,
+) -> HashMap<gossamer_resolve::DefId, Ty> {
     let mut out = HashMap::new();
     for item in &program.items {
         match &item.kind {
             HirItemKind::Fn(decl) => {
                 if let Some(def) = item.def {
                     if let Some(ret) = decl.ret {
+                        // A const-generic array return (`-> [T; N]`) is carried
+                        // as a runtime GosVec; record the `Vec<T>` representation
+                        // so every consumer (call-site dest typing, return ABI)
+                        // agrees with the callee body and never reads the heap
+                        // Vec as an inline `[T; N]` aggregate.
+                        let ret = const_generic_array_as_vec(tcx, ret).unwrap_or(ret);
                         out.insert(def, ret);
                     }
                 }
@@ -991,7 +1000,13 @@ pub(crate) fn lower_fn(
         &mut builder.grows_bindings,
         &mut builder.grows_elem_ty,
     );
+    // A const generic array return (`-> [T; N]`) is carried as a runtime
+    // GosVec exactly like the `[T; N]` parameter it is derived from, so the
+    // return local takes the `Vec<T>` representation. Without this the body
+    // returns a Vec pointer through an inline-array return ABI and the caller
+    // reads a struct-return slot as a sequence.
     let return_ty = decl.ret.unwrap_or_else(|| builder.tcx.unit());
+    let return_ty = const_generic_array_as_vec(builder.tcx, return_ty).unwrap_or(return_ty);
     builder.push_local(return_ty, None, false);
     let arity = u32::try_from(decl.params.len()).expect("arity overflow");
     for param in &decl.params {

@@ -1,0 +1,64 @@
+// A single-field struct occupies one 8-byte slot but is still an
+// address-is-value aggregate: copying it out of a Vec / HashMap by value
+// must bind the slot pointer (so a later `.field` dereferences the box),
+// not read the slot as a scalar. Reading it as a scalar handed back the
+// boxed pointer's bits, and the field access then dereferenced a wrong
+// address - a segfault on the compiled tier. Every access path must match
+// the VM bit-for-bit.
+
+use std::collections::HashMap
+
+struct One { v: i64 }
+struct Named { s: String }
+struct Wrap { inner: One, tag: i64 }
+
+fn make(n: i64) -> One {
+    One { v: n * 3 }
+}
+
+fn main() {
+    // copy a single-field struct out of a Vec by index, then read its field
+    let mut xs: Vec<One> = []
+    let mut i = 0
+    while i < 6 {
+        xs.push(One { v: i * i })
+        i += 1
+    }
+    let picked = xs[5]
+    let mut idx_sum = 0
+    let mut j = 0
+    while j < xs.len() {
+        idx_sum += xs[j].v
+        j += 1
+    }
+
+    // for-loop over the same Vec
+    let mut loop_sum = 0
+    for one in xs {
+        loop_sum += one.v
+    }
+
+    // single-field struct as a HashMap value, read via get and values()
+    let mut m: HashMap<i64, One> = HashMap::new()
+    m.insert(1, One { v: 100 })
+    m.insert(2, One { v: 200 })
+    let got = match HashMap::get(m, 2) {
+        Some(c) => c.v,
+        None => -1,
+    }
+    let mut val_sum = 0
+    for v in m.values() {
+        val_sum += v.v
+    }
+
+    // single String field (heap), returned from a function, nested in a struct
+    let named = Named { s: format!("len{}", make(7).v) }
+    let mut ws: Vec<Wrap> = []
+    ws.push(Wrap { inner: One { v: 9 }, tag: 1 })
+    let w = ws[0]
+
+    println!(
+        "picked={} idx_sum={} loop_sum={} got={} val_sum={} named={} w={} {}",
+        picked.v, idx_sum, loop_sum, got, val_sum, named.s, w.inner.v, w.tag
+    )
+}

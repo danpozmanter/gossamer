@@ -248,6 +248,35 @@ pub enum TypeError {
         /// The supertrait that actually declares the method.
         supertrait: String,
     },
+    /// `value[index]` where `value`'s type cannot be indexed (only
+    /// `[T]` / `[T; N]` / `Vec<T>` / `String` are). The VM faults at
+    /// runtime (GX0001) and the compiled tier reads through the value
+    /// as a base pointer (SIGSEGV), so it is rejected at check.
+    #[error("type `{ty}` cannot be indexed")]
+    NotIndexable {
+        /// Receiver type as rendered.
+        ty: String,
+    },
+    /// `value(args)` where `value`'s type is not callable (not a `fn`
+    /// item, `fn(..)` pointer, or `Fn(..)` value). The VM faults
+    /// (GX0001) and the compiled tier emits a call through a
+    /// non-function symbol (build failure), so it is rejected at check.
+    #[error("type `{ty}` is not callable")]
+    NotCallable {
+        /// Callee type as rendered.
+        ty: String,
+    },
+    /// `value.N` where `value` is not a tuple, or `N` is past the
+    /// tuple's arity. The VM faults (GX0004) and the compiled tier
+    /// reads out-of-object memory (garbage / info leak), so it is
+    /// rejected at check.
+    #[error("type `{ty}` has no tuple field `.{index}`")]
+    NoTupleField {
+        /// Receiver type as rendered.
+        ty: String,
+        /// Positional index attempted.
+        index: u64,
+    },
 }
 
 impl TypeError {
@@ -275,6 +304,9 @@ impl TypeError {
             Self::CallArityMismatch { .. } => "call-arity-mismatch",
             Self::UnknownVariant { .. } => "unknown-variant",
             Self::SupertraitMethodThroughBound { .. } => "supertrait-method-through-bound",
+            Self::NotIndexable { .. } => "not-indexable",
+            Self::NotCallable { .. } => "not-callable",
+            Self::NoTupleField { .. } => "no-tuple-field",
         }
     }
 
@@ -302,6 +334,9 @@ impl TypeError {
             Self::CallArityMismatch { .. } => "GT0018",
             Self::UnknownVariant { .. } => "GT0019",
             Self::SupertraitMethodThroughBound { .. } => "GT0020",
+            Self::NotIndexable { .. } => "GT0021",
+            Self::NotCallable { .. } => "GT0022",
+            Self::NoTupleField { .. } => "GT0023",
         }
     }
 }
@@ -472,8 +507,41 @@ impl TypeDiagnostic {
                 supertrait,
                 ..
             } => out = supertrait_method_diagnostic(out, method, bound, supertrait),
+            TypeError::NotIndexable { .. }
+            | TypeError::NotCallable { .. }
+            | TypeError::NoTupleField { .. } => out = structural_use_diagnostic(out, &self.error),
         }
         out
+    }
+}
+
+/// Attaches the GT0021 / GT0022 / GT0023 help + note. Split out of
+/// `to_diagnostic` to keep that match within the line-count lint budget.
+fn structural_use_diagnostic(
+    out: gossamer_diagnostics::Diagnostic,
+    error: &TypeError,
+) -> gossamer_diagnostics::Diagnostic {
+    match error {
+        TypeError::NotIndexable { ty } => out
+            .with_help(format!(
+                "`{ty}` is not a `[T]`, `[T; N]`, `Vec<T>`, or `String`; only those can be indexed"
+            ))
+            .with_note(
+                "the VM faults (GX0001) and the compiled tier reads through the value as a pointer",
+            ),
+        TypeError::NotCallable { ty } => out
+            .with_help(format!(
+                "`{ty}` is not a function; only `fn` items, `fn(..)` pointers, and `Fn(..)` values can be called"
+            ))
+            .with_note(
+                "the VM faults (GX0001) and the compiled tier emits a call through a non-function symbol",
+            ),
+        TypeError::NoTupleField { ty, index } => out
+            .with_help(format!(
+                "`{ty}` has no field `.{index}`; positional access works only on tuples within their arity"
+            ))
+            .with_note("the VM faults (GX0004) and the compiled tier reads out-of-object memory"),
+        _ => out,
     }
 }
 

@@ -157,7 +157,7 @@ fn sync_map_id_of(value: &Value) -> Option<i64> {
     if let Value::Struct(inner) = value {
         if inner.name == "sync::Map" {
             for (i, v) in &inner.fields {
-                if i.name == "__map" {
+                if (*i) == "__map" {
                     if let Value::Int(n) = v {
                         return Some(*n);
                     }
@@ -176,7 +176,7 @@ pub(crate) fn builtin_sync_map_new(_args: &[Value]) -> RuntimeResult<Value> {
     });
     Ok(Value::struct_(
         "sync::Map",
-        Arc::unwrap_or_clone(Arc::new(vec![(Ident::new("__map"), Value::Int(id))])),
+        Arc::unwrap_or_clone(Arc::new(vec![("__map", Value::Int(id))])),
     ))
 }
 
@@ -381,7 +381,7 @@ pub(crate) fn builtin_mutex_new(args: &[Value]) -> RuntimeResult<Value> {
     });
     Ok(Value::struct_(
         "sync::Mutex",
-        Arc::unwrap_or_clone(Arc::new(vec![(Ident::new("__mutex"), Value::Int(id))])),
+        Arc::unwrap_or_clone(Arc::new(vec![("__mutex", Value::Int(id))])),
     ))
 }
 
@@ -389,7 +389,7 @@ pub(crate) fn mutex_id_of(value: &Value) -> Option<i64> {
     if let Value::Struct(inner) = value {
         if inner.name == "sync::Mutex" {
             for (i, v) in &inner.fields {
-                if i.name == "__mutex" {
+                if (*i) == "__mutex" {
                     if let Value::Int(n) = v {
                         return Some(*n);
                     }
@@ -445,7 +445,7 @@ pub(crate) fn builtin_once_new(_args: &[Value]) -> RuntimeResult<Value> {
     });
     Ok(Value::struct_(
         "sync::Once",
-        Arc::unwrap_or_clone(Arc::new(vec![(Ident::new("__once"), Value::Int(id))])),
+        Arc::unwrap_or_clone(Arc::new(vec![("__once", Value::Int(id))])),
     ))
 }
 
@@ -462,7 +462,7 @@ pub(crate) fn native_once_call(
             .fields
             .iter()
             .find_map(|(i, v)| {
-                if i.name == "__once" {
+                if (*i) == "__once" {
                     if let Value::Int(n) = v {
                         Some(*n)
                     } else {

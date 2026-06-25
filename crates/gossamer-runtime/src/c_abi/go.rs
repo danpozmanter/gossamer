@@ -274,6 +274,10 @@ pub unsafe extern "C" fn gos_rt_spawn(code: usize, env: usize) -> *mut super::ch
         let ch = unsafe { super::chan::gos_rt_chan_new(8, 1) };
         let ch_addr = ch as usize;
         spawn_task(Box::new(move || {
+            // This body is joinable: a panic here is observed through `join()`,
+            // so `gos_rt_panic` suppresses its eager report (the guard delivers
+            // `Err` instead). The scope restores the flag on the unwind too.
+            let _joinable = gossamer_coro::JoinableScope::enter(true);
             let mut guard = SpawnOutcomeGuard {
                 ch_addr,
                 armed: true,

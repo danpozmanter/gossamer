@@ -144,7 +144,7 @@ pub(crate) fn next_set_handle() -> i64 {
 pub(crate) fn set_handle(id: i64) -> Value {
     Value::struct_(
         "HashSet",
-        Arc::unwrap_or_clone(Arc::new(vec![(Ident::new("__set"), Value::Int(id))])),
+        Arc::unwrap_or_clone(Arc::new(vec![("__set", Value::Int(id))])),
     )
 }
 
@@ -152,7 +152,7 @@ pub(crate) fn set_id_of(value: &Value) -> Option<i64> {
     if let Value::Struct(inner) = value {
         if inner.name == "HashSet" {
             for (i, v) in &inner.fields {
-                if i.name == "__set" {
+                if (*i) == "__set" {
                     if let Value::Int(n) = v {
                         return Some(*n);
                     }
@@ -461,7 +461,7 @@ pub(crate) fn next_atomic_id() -> i64 {
 pub(crate) fn atomic_handle(name: &'static str, id: i64) -> Value {
     Value::struct_(
         name,
-        Arc::unwrap_or_clone(Arc::new(vec![(Ident::new("__atomic"), Value::Int(id))])),
+        Arc::unwrap_or_clone(Arc::new(vec![("__atomic", Value::Int(id))])),
     )
 }
 
@@ -469,7 +469,7 @@ pub(crate) fn atomic_id_of(value: &Value, expected: &str) -> Option<i64> {
     if let Value::Struct(inner) = value {
         if inner.name == expected {
             for (i, v) in &inner.fields {
-                if i.name == "__atomic" {
+                if (*i) == "__atomic" {
                     if let Value::Int(n) = v {
                         return Some(*n);
                     }
@@ -478,4 +478,33 @@ pub(crate) fn atomic_id_of(value: &Value, expected: &str) -> Option<i64> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod set_registry_tests {
+    use super::*;
+    use std::thread;
+
+    // A HashSet handle minted on one worker thread must stay usable
+    // from another: goroutines migrate across the OS worker pool, so the
+    // backing registry has to be process-global, not thread-local. A
+    // thread-local registry would leave the handle's entry invisible (an
+    // empty map) on the second thread, so the insert would no-op and
+    // `len` / `contains` would read 0 / false.
+    #[test]
+    fn set_handle_survives_thread_boundary() {
+        let handle = thread::spawn(|| builtin_set_new(&[]).unwrap())
+            .join()
+            .unwrap();
+        builtin_set_insert(&[handle.clone(), Value::Int(7)]).unwrap();
+        builtin_set_insert(&[handle.clone(), Value::Int(9)]).unwrap();
+        match builtin_set_len(std::slice::from_ref(&handle)).unwrap() {
+            Value::Int(n) => assert_eq!(n, 2),
+            other => panic!("expected Int, got {other:?}"),
+        }
+        match builtin_set_contains(&[handle.clone(), Value::Int(7)]).unwrap() {
+            Value::Bool(b) => assert!(b),
+            other => panic!("expected Bool, got {other:?}"),
+        }
+    }
 }

@@ -7,8 +7,10 @@
 
 use std::fmt::Write;
 use std::io::{self, Write as IoWrite};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::SystemTime;
+
+use parking_lot::Mutex;
 
 /// Severity of a log record.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -171,7 +173,7 @@ impl Handler for TextHandler {
             let _ = write!(line, " {}={}", field.key, field.value);
         }
         line.push('\n');
-        let mut sink = self.writer.lock().unwrap();
+        let mut sink = self.writer.lock();
         let _ = sink.write_all(line.as_bytes());
     }
 
@@ -213,7 +215,7 @@ impl Handler for JsonHandler {
         }
         line.push('}');
         line.push('\n');
-        let mut sink = self.writer.lock().unwrap();
+        let mut sink = self.writer.lock();
         let _ = sink.write_all(line.as_bytes());
     }
 
@@ -260,7 +262,6 @@ pub fn stderr_json(min_level: Level) -> Logger {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
 
     struct Capture {
         buf: Arc<Mutex<Vec<u8>>>,
@@ -268,7 +269,7 @@ mod tests {
 
     impl IoWrite for Capture {
         fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-            self.buf.lock().unwrap().extend_from_slice(buf);
+            self.buf.lock().extend_from_slice(buf);
             Ok(buf.len())
         }
         fn flush(&mut self) -> io::Result<()> {
@@ -288,7 +289,7 @@ mod tests {
     fn info_renders_text() {
         let (logger, buf) = handler_captures_text(Level::Info);
         logger.info("hi", [Field::new("user", "jane")]);
-        let out = String::from_utf8(buf.lock().unwrap().clone()).unwrap();
+        let out = String::from_utf8(buf.lock().clone()).unwrap();
         assert!(out.contains("INFO hi user=jane"), "was: {out}");
     }
 
@@ -296,7 +297,7 @@ mod tests {
     fn level_below_min_is_suppressed() {
         let (logger, buf) = handler_captures_text(Level::Warn);
         logger.info("ignored", []);
-        assert!(buf.lock().unwrap().is_empty());
+        assert!(buf.lock().is_empty());
     }
 
     #[test]
@@ -304,7 +305,7 @@ mod tests {
         let (root, buf) = handler_captures_text(Level::Info);
         let child = root.with(Field::new("req", "42"));
         child.warn("late", [Field::new("ms", "120")]);
-        let out = String::from_utf8(buf.lock().unwrap().clone()).unwrap();
+        let out = String::from_utf8(buf.lock().clone()).unwrap();
         assert!(out.contains("req=42"));
         assert!(out.contains("ms=120"));
     }
@@ -317,7 +318,7 @@ mod tests {
         };
         let logger = Logger::new(Arc::new(JsonHandler::new(capture, Level::Info)));
         logger.info("quote: \"x\"", []);
-        let out = String::from_utf8(buf.lock().unwrap().clone()).unwrap();
+        let out = String::from_utf8(buf.lock().clone()).unwrap();
         assert!(out.contains(r#""msg":"quote: \"x\"""#), "was: {out}");
     }
 }

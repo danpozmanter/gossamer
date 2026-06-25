@@ -15,12 +15,16 @@ use gossamer_ast::Ident;
 use crate::builtins::{BuiltinFnPub, builtin_pub, none_variant, some_variant};
 use crate::value::{RuntimeResult, Value};
 
-thread_local! {
-    static NEXT_DEQUE_HANDLE: RefCell<i64> = const { RefCell::new(1) };
-    #[allow(clippy::missing_const_for_thread_local)]
-    static DEQUE_REGISTRY: RefCell<StdHashMap<i64, StdVecDeque<Value>>> =
-        RefCell::new(StdHashMap::new());
-}
+use super::set::GlobalReg;
+
+// Process-global (not `thread_local!`): goroutines run on an OS
+// worker-thread pool, so a deque handle minted on one thread must
+// resolve on another after the goroutine migrates between workers.
+// Mirrors the `sync::*` registries.
+static NEXT_DEQUE_HANDLE: GlobalReg<i64> =
+    GlobalReg::new(|| parking_lot::ReentrantMutex::new(RefCell::new(1)));
+static DEQUE_REGISTRY: GlobalReg<StdHashMap<i64, StdVecDeque<Value>>> =
+    GlobalReg::new(|| parking_lot::ReentrantMutex::new(RefCell::new(StdHashMap::new())));
 
 /// Install all VecDeque VM builtins into the global table.
 pub(crate) fn install_deque(globals: &mut Vec<(&'static str, Value)>) {
@@ -49,7 +53,7 @@ fn next_deque_handle() -> i64 {
 fn deque_handle(id: i64) -> Value {
     Value::struct_(
         "VecDeque",
-        Arc::unwrap_or_clone(Arc::new(vec![(Ident::new("__deque"), Value::Int(id))])),
+        Arc::unwrap_or_clone(Arc::new(vec![("__deque", Value::Int(id))])),
     )
 }
 
@@ -57,7 +61,7 @@ fn deque_id_of(value: &Value) -> Option<i64> {
     if let Value::Struct(inner) = value {
         if inner.name == "VecDeque" {
             for (i, v) in &inner.fields {
-                if i.name == "__deque" {
+                if (*i) == "__deque" {
                     if let Value::Int(n) = v {
                         return Some(*n);
                     }
@@ -115,4 +119,43 @@ fn builtin_deque_is_empty(args: &[Value]) -> RuntimeResult<Value> {
     };
     let empty = DEQUE_REGISTRY.with(|r| r.borrow().get(&id).is_none_or(StdVecDeque::is_empty));
     Ok(Value::Bool(empty))
+}
+
+#[cfg(test)]
+mod deque_registry_tests {
+    use super::*;
+    use std::thread;
+
+    fn int_of(v: &Value) -> i64 {
+        match v {
+            Value::Int(n) => *n,
+            other => panic!("expected Int, got {other:?}"),
+        }
+    }
+
+    // A deque handle minted on one worker thread must stay usable from
+    // another: goroutines migrate across the OS worker pool, so the
+    // backing registry has to be process-global, not thread-local. A
+    // thread-local registry would leave the handle's entry invisible
+    // (an empty map) on the second thread, so the push would no-op and
+    // `len` would read 0.
+    #[test]
+    fn deque_handle_survives_thread_boundary() {
+        let handle = thread::spawn(|| builtin_deque_new(&[]).unwrap())
+            .join()
+            .unwrap();
+        builtin_deque_push_back(&[handle.clone(), Value::Int(10)]).unwrap();
+        builtin_deque_push_back(&[handle.clone(), Value::Int(20)]).unwrap();
+        assert_eq!(
+            int_of(&builtin_deque_len(std::slice::from_ref(&handle)).unwrap()),
+            2
+        );
+        match builtin_deque_pop_front(std::slice::from_ref(&handle)).unwrap() {
+            Value::Variant(inner) => {
+                assert_eq!(inner.name, "Some");
+                assert_eq!(int_of(&inner.fields[0]), 10);
+            }
+            other => panic!("expected Some, got {other:?}"),
+        }
+    }
 }

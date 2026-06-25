@@ -85,6 +85,24 @@ impl<'a> Builder<'a> {
         // computed. A diverging tail (e.g. `return`) leaves `current` None and
         // has already emitted the frames itself.
         let frame = self.defer_stack.pop().unwrap_or_default();
+        // Snapshot the block's value into a fresh local before the deferred
+        // expressions run, so a defer that mutates a binding the tail names
+        // (`{ defer t += 1; t }`) cannot change the value the block yields -
+        // the value is the binding's state at the tail, not after the defer.
+        let result = if self.current.is_some() && !frame.is_empty() {
+            result.map(|r| {
+                let ty = self.locals[r.0 as usize].ty;
+                let snap = self.fresh(ty);
+                self.emit_assign(
+                    Place::local(snap),
+                    Rvalue::Use(Operand::Copy(Place::local(r))),
+                    block.span,
+                );
+                snap
+            })
+        } else {
+            result
+        };
         if self.current.is_some() {
             self.emit_defer_frame(&frame);
         }

@@ -96,24 +96,14 @@ pub const COMPRESS_FLATE: StdModule = StdModule {
     summary: "Raw DEFLATE (RFC 1951) encoder / decoder.",
     items: &[
         StdItem {
-            name: "encode",
+            name: "compress",
             kind: StdItemKind::Function,
             doc: "One-shot DEFLATE compress.",
         },
         StdItem {
-            name: "decode",
-            kind: StdItemKind::Function,
-            doc: "One-shot DEFLATE decompress.",
-        },
-        StdItem {
-            name: "compress",
-            kind: StdItemKind::Function,
-            doc: "One-shot DEFLATE compress (alias of encode).",
-        },
-        StdItem {
             name: "decompress",
             kind: StdItemKind::Function,
-            doc: "One-shot DEFLATE decompress (alias of decode).",
+            doc: "One-shot DEFLATE decompress.",
         },
     ],
 };
@@ -123,24 +113,14 @@ pub const COMPRESS_ZLIB: StdModule = StdModule {
     summary: "zlib (RFC 1950) encoder / decoder.",
     items: &[
         StdItem {
-            name: "encode",
+            name: "compress",
             kind: StdItemKind::Function,
             doc: "One-shot zlib compress.",
         },
         StdItem {
-            name: "decode",
-            kind: StdItemKind::Function,
-            doc: "One-shot zlib decompress.",
-        },
-        StdItem {
-            name: "compress",
-            kind: StdItemKind::Function,
-            doc: "One-shot zlib compress (alias of encode).",
-        },
-        StdItem {
             name: "decompress",
             kind: StdItemKind::Function,
-            doc: "One-shot zlib decompress (alias of decode).",
+            doc: "One-shot zlib decompress.",
         },
     ],
 };
@@ -150,24 +130,14 @@ pub const COMPRESS_BZIP2: StdModule = StdModule {
     summary: "bzip2 encoder / decoder (BZh format).",
     items: &[
         StdItem {
-            name: "encode",
+            name: "compress",
             kind: StdItemKind::Function,
             doc: "One-shot bzip2 compress.",
         },
         StdItem {
-            name: "decode",
-            kind: StdItemKind::Function,
-            doc: "One-shot bzip2 decompress.",
-        },
-        StdItem {
-            name: "compress",
-            kind: StdItemKind::Function,
-            doc: "One-shot bzip2 compress (alias of encode).",
-        },
-        StdItem {
             name: "decompress",
             kind: StdItemKind::Function,
-            doc: "One-shot bzip2 decompress (alias of decode).",
+            doc: "One-shot bzip2 decompress.",
         },
     ],
 };

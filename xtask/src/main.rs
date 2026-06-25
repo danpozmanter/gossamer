@@ -950,13 +950,6 @@ const STDLIB_SUPPORT: &[StdlibSupport] = &[
         "join, split, base, dir, ext, clean.",
     ),
     item(
-        "std::path::native",
-        Coverage::Full,
-        Coverage::Full,
-        Coverage::Full,
-        "SEPARATOR, join, clean, to_posix, to_native.",
-    ),
-    item(
         "std::fs",
         Coverage::Full,
         Coverage::Full,

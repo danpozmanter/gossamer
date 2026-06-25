@@ -48,7 +48,13 @@ impl Vm {
                 let slot = idx as usize;
                 if let Value::MutCell(cell) = &registers[slot] {
                     let cell = Arc::clone(cell);
-                    registers[slot] = cell.lock().clone();
+                    // Move the inner value out of the cell into the param
+                    // register. With a `CellNewMove`-created cell the caller's
+                    // home register was already emptied, so this keeps the
+                    // value's refcount at one and the first field write mutates
+                    // in place. `publish_ref_cells` repopulates the cell on
+                    // return.
+                    registers[slot] = std::mem::replace(&mut *cell.lock(), Value::Unit);
                     ref_cells.push((slot, cell));
                 }
             }
@@ -118,12 +124,12 @@ impl Vm {
                             let mut set_id: u64 = 0;
                             let mut flag_name = String::new();
                             for (ident, val) in &inner.fields {
-                                if ident.name == "__set_id"
+                                if (*ident) == "__set_id"
                                     && let Value::Int(n) = val
                                 {
                                     set_id = *n as u64;
                                 }
-                                if ident.name == "__flag_name"
+                                if (*ident) == "__flag_name"
                                     && let Value::String(s) = val
                                 {
                                     flag_name = s.as_str().to_string();
@@ -379,6 +385,13 @@ impl Vm {
                     publish_ref_cells(&ref_cells, registers);
                     return Ok(Value::Unit);
                 }
+                Op::Panic { msg } => {
+                    let message = match &chunk.consts[msg as usize] {
+                        Value::String(s) => s.as_str().to_string(),
+                        _ => "panic".to_string(),
+                    };
+                    return Err(RuntimeError::Panic(message));
+                }
                 Op::MethodCall {
                     dst,
                     receiver,
@@ -542,7 +555,7 @@ impl Vm {
                             Value::Struct(inner) => {
                                 let mut fd = 1i64;
                                 for (n, v) in &inner.fields {
-                                    if n.name == "fd" {
+                                    if (*n) == "fd" {
                                         if let Value::Int(f) = v {
                                             fd = *f;
                                             break;
@@ -618,7 +631,7 @@ impl Vm {
                             Value::Struct(inner) => {
                                 let mut h = 0i64;
                                 for (n, v) in &inner.fields {
-                                    if n.name == "handle" {
+                                    if (*n) == "handle" {
                                         if let Value::Int(x) = v {
                                             h = *x;
                                             break;
@@ -681,7 +694,7 @@ impl Vm {
                             Value::Struct(inner) => {
                                 let mut h = 0i64;
                                 for (n, v) in &inner.fields {
-                                    if n.name == "handle" {
+                                    if (*n) == "handle" {
                                         if let Value::Int(x) = v {
                                             h = *x;
                                             break;
@@ -1009,7 +1022,7 @@ impl Vm {
                         if let Some(pos) = inner
                             .fields
                             .iter()
-                            .position(|(ident, _)| ident.name == field_name)
+                            .position(|(ident, _)| (*ident) == field_name)
                         {
                             slot.type_token.set(token);
                             slot.offset.set(pos as u16);
@@ -1275,11 +1288,11 @@ impl Vm {
                     let field_slots = &mut struct_inner.fields;
                     let pos = field_slots
                         .iter()
-                        .position(|(ident, _)| ident.name == field_name);
+                        .position(|(ident, _)| (*ident) == field_name);
                     if let Some(p) = pos {
                         field_slots[p].1 = new_value;
                     } else {
-                        field_slots.push((Ident::new(field_name), new_value));
+                        field_slots.push((crate::value::intern_type_name(field_name), new_value));
                     }
                 }
                 Op::MakeClosure { dst, proto } => {
@@ -1763,7 +1776,7 @@ impl Vm {
                     };
                     let mut val = 0.0f64;
                     for (ident, v) in &struct_inner.fields {
-                        if ident.name == field_name.as_str() {
+                        if (*ident) == field_name.as_str() {
                             val = match v {
                                 Value::Float(f) => *f,
                                 Value::Int(n) => *n as f64,
@@ -1812,7 +1825,7 @@ impl Vm {
                     };
                     let mut found = None;
                     for (ident, v) in &struct_inner.fields {
-                        if ident.name == field_name.as_str() {
+                        if (*ident) == field_name.as_str() {
                             found = Some(v);
                             break;
                         }
@@ -1871,7 +1884,7 @@ impl Vm {
                     };
                     let mut val = 0.0f64;
                     for (ident, v) in &struct_inner.fields {
-                        if ident.name == field_name.as_str() {
+                        if (*ident) == field_name.as_str() {
                             val = match v {
                                 Value::Float(f) => *f,
                                 Value::Int(n) => *n as f64,
@@ -1930,11 +1943,11 @@ impl Vm {
                     let field_slots = &mut struct_inner.fields;
                     let pos = field_slots
                         .iter()
-                        .position(|(ident, _)| ident.name == field_name);
+                        .position(|(ident, _)| (*ident) == field_name);
                     if let Some(p) = pos {
                         field_slots[p].1 = new_value;
                     } else {
-                        field_slots.push((Ident::new(field_name), new_value));
+                        field_slots.push((crate::value::intern_type_name(field_name), new_value));
                     }
                 }
 
@@ -2346,9 +2359,16 @@ impl Vm {
                     registers[dst as usize] =
                         Value::MutCell(Arc::new(parking_lot::Mutex::new(inner)));
                 }
+                Op::CellNewMove { dst, src } => {
+                    let inner = std::mem::replace(&mut registers[src as usize], Value::Unit);
+                    registers[dst as usize] =
+                        Value::MutCell(Arc::new(parking_lot::Mutex::new(inner)));
+                }
                 Op::CellTake { dst, cell } => {
+                    // Last use of the cell, so move its inner out rather than
+                    // clone - the caller re-homes it through this register.
                     let taken = match &registers[cell as usize] {
-                        Value::MutCell(c) => c.lock().clone(),
+                        Value::MutCell(c) => std::mem::replace(&mut *c.lock(), Value::Unit),
                         other => other.clone(),
                     };
                     registers[dst as usize] = taken;

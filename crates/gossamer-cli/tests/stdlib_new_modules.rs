@@ -76,8 +76,7 @@ fn is_executable(p: &Path) -> bool {
 fn is_executable(p: &Path) -> bool {
     p.extension()
         .and_then(|s| s.to_str())
-        .map(|e| e.eq_ignore_ascii_case("exe"))
-        .unwrap_or(false)
+        .is_some_and(|e| e.eq_ignore_ascii_case("exe"))
 }
 
 /// Compiles `main.gos` (already written under `dir`) to a native
@@ -145,26 +144,6 @@ fn assert_vm_output(tag: &str, src: &str, expected: &str) {
         }
         Err(e) => panic!("[{tag}/compiled] {e}"),
     }
-}
-
-/// VM-only probe with a mandatory documented reason. Use only when a
-/// surface genuinely cannot run on the compiled tiers and the reason
-/// is recorded inline; everything else must go through
-/// [`assert_vm_output`] so the compiled tiers stay covered.
-#[allow(dead_code)]
-fn assert_vm_only(tag: &str, src: &str, expected: &str, _reason: &str) {
-    let dir = scratch(tag);
-    let path = dir.join("main.gos");
-    fs::File::create(&path)
-        .unwrap()
-        .write_all(src.as_bytes())
-        .unwrap();
-    let (stdout, stderr, code) = run_gos(&path);
-    assert_eq!(
-        stdout.trim_end(),
-        expected,
-        "[{tag}/vm] stdout mismatch\nstderr: {stderr}\ncode: {code:?}"
-    );
 }
 
 // -----------------------------------------------------------------------

@@ -857,21 +857,35 @@ impl Resolver {
             // export model, so `module::nonexistent` slipped through
             // `check` and only failed at runtime (GX0002). The
             // generated table in `stdlib_exports` lists every
-            // `module::member` the runtime actually binds, so a
-            // two-segment value path whose head is a known stdlib
-            // module but whose full name is absent is definitively an
-            // unresolved name. User-defined module members never reach
-            // here: they resolve via the joined lookup above (a real
-            // binding) and return. Restricted to two segments so
-            // `module::Type::method` paths stay opaque-by-head.
-            if effective.len() == 2
-                && crate::stdlib_exports::STDLIB_MODULES
-                    .binary_search(&effective[0])
-                    .is_ok()
-                && crate::stdlib_exports::STDLIB_QUALIFIED
-                    .binary_search(&joined.as_str())
-                    .is_err()
-            {
+            // `module::member` the runtime actually binds, so a value
+            // path whose head is a known stdlib module but whose full
+            // name resolves to no binding is definitively an unresolved
+            // name. User-defined module members never reach here: they
+            // resolve via the joined lookup above (a real binding) and
+            // return.
+            //
+            // Two-segment `module::member` and three-segment
+            // `module::submodule::member` (all lowercase - a free
+            // function in a nested module, never a `module::Type::method`
+            // which stays opaque-by-head) are both validated. The
+            // three-segment form is the gap that let `crypto::x509::foo`
+            // / `http::health::bar`-style phantoms pass `check` then fault
+            // at runtime. Autoderive call rewrites (`csrf::check`,
+            // `errors::newf`, ...) run at parse time, so the resolver
+            // never sees those names; only genuine nested-module
+            // free-function calls reach this branch.
+            let stdlib_phantom = match effective.as_slice() {
+                [head, _member] => crate::stdlib_exports::STDLIB_MODULES
+                    .binary_search(head)
+                    .is_ok(),
+                [head, sub, member] if starts_lowercase(sub) && starts_lowercase(member) => {
+                    crate::stdlib_exports::STDLIB_MODULES
+                        .binary_search(head)
+                        .is_ok()
+                }
+                _ => false,
+            } && !self.stdlib_member_resolves(&joined, &effective);
+            if stdlib_phantom {
                 self.emit(ResolveError::UnresolvedName { name: joined }, span);
                 self.resolutions.insert(anchor, Resolution::Err);
                 for segment in &path.segments {
@@ -909,6 +923,38 @@ impl Resolver {
         for segment in &path.segments {
             self.resolve_generic_args(&segment.generics);
         }
+    }
+
+    /// True when a `module::member` (or `module::submodule::member`)
+    /// stdlib value path names something the runtime actually binds.
+    /// The export table is keyed inconsistently: some nested modules
+    /// list the full path (`math::rand::seed`), others the binding
+    /// spelling (`url::parse` for `net::url::parse`), and the
+    /// whole-module `json` lowering lists `json::get` for
+    /// `encoding::json::get`. A three-segment path is therefore known
+    /// when its full spelling is bound, or when `head::sub` is a real
+    /// module path and the `sub::member` binding spelling is bound.
+    fn stdlib_member_resolves(&self, joined: &str, effective: &[&str]) -> bool {
+        if crate::stdlib_exports::STDLIB_QUALIFIED
+            .binary_search(&joined)
+            .is_ok()
+        {
+            return true;
+        }
+        if let [head, sub, member] = effective {
+            let parent = format!("{head}::{sub}");
+            let binding_member = format!("{sub}::{member}");
+            if crate::stdlib_exports::STDLIB_MODULE_PATHS
+                .binary_search(&parent.as_str())
+                .is_ok()
+                && crate::stdlib_exports::STDLIB_QUALIFIED
+                    .binary_search(&binding_member.as_str())
+                    .is_ok()
+            {
+                return true;
+            }
+        }
+        false
     }
 
     fn resolve_struct_literal(&mut self, path: &PathExpr, anchor: NodeId, span: Span) {
@@ -1188,4 +1234,14 @@ fn path_tail(path: &ModulePath) -> Option<String> {
 
 fn is_self_type(name: &str) -> bool {
     name == "Self" || name == "self"
+}
+
+/// True when a path segment names a value-position item (module or free
+/// function) rather than a type / enum variant - its first character is
+/// lowercase or `_`. Used to keep `module::Type::method` paths
+/// opaque-by-head in stdlib phantom validation.
+fn starts_lowercase(seg: &str) -> bool {
+    seg.chars()
+        .next()
+        .is_some_and(|c| c.is_ascii_lowercase() || c == '_')
 }

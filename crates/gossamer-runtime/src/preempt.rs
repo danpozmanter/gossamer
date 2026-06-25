@@ -249,10 +249,10 @@ pub fn current_thread_handle() -> u64 {
 pub fn release_thread_handle(handle: u64) {
     #[cfg(windows)]
     {
+        use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
         if handle == 0 {
             return;
         }
-        use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
         // SAFETY: every non-zero handle returned by
         // current_thread_handle is a fresh DuplicateHandle output.
         let _ = unsafe { CloseHandle(handle as HANDLE) };

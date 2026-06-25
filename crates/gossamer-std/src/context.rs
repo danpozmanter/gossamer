@@ -34,8 +34,10 @@
 //! from deadline expiry.
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, Once, Weak};
+use std::sync::{Arc, Once, Weak};
 use std::time::{Duration, Instant};
+
+use parking_lot::Mutex;
 
 use crate::errors::Error;
 use crate::sched_global::Gid;
@@ -87,10 +89,7 @@ unsafe extern "C" fn ctx_register_hook(ctx_handle: *const u8, gid: u32) {
     if inner.cancelled.load(Ordering::Acquire) {
         return;
     }
-    let mut waiters = match inner.waiters.lock() {
-        Ok(g) => g,
-        Err(p) => p.into_inner(),
-    };
+    let mut waiters = inner.waiters.lock();
     let g = Gid(gid);
     if !waiters.contains(&g) {
         waiters.push(g);
@@ -107,10 +106,7 @@ unsafe extern "C" fn ctx_deregister_hook(ctx_handle: *const u8, gid: u32) {
     // pointee's exposed-but-correctly-aligned form.
     #[allow(clippy::cast_ptr_alignment)]
     let inner = unsafe { &*ctx_handle.cast::<Inner>() };
-    let mut waiters = match inner.waiters.lock() {
-        Ok(g) => g,
-        Err(p) => p.into_inner(),
-    };
+    let mut waiters = inner.waiters.lock();
     let g = Gid(gid);
     if let Some(pos) = waiters.iter().position(|&w| w == g) {
         waiters.swap_remove(pos);
@@ -216,7 +212,7 @@ impl Context {
         if self.is_cancelled() {
             return;
         }
-        let mut waiters = self.inner.waiters.lock().unwrap();
+        let mut waiters = self.inner.waiters.lock();
         if !waiters.contains(&gid) {
             waiters.push(gid);
         }
@@ -227,7 +223,7 @@ impl Context {
     /// whether the resume was driven by the underlying I/O or by
     /// cancel-driven unpark.
     pub fn deregister_waiter(&self, gid: Gid) {
-        let mut waiters = self.inner.waiters.lock().unwrap();
+        let mut waiters = self.inner.waiters.lock();
         if let Some(pos) = waiters.iter().position(|&w| w == gid) {
             waiters.swap_remove(pos);
         }
@@ -306,7 +302,7 @@ impl Context {
         if self.inner.cancelled.load(Ordering::Acquire) {
             return true;
         }
-        if let Some(deadline) = *self.inner.deadline.lock().unwrap() {
+        if let Some(deadline) = *self.inner.deadline.lock() {
             if Instant::now() >= deadline {
                 return true;
             }
@@ -323,14 +319,14 @@ impl Context {
         if !self.is_cancelled() {
             return None;
         }
-        if let Some(reason) = self.inner.reason.lock().unwrap().clone() {
+        if let Some(reason) = self.inner.reason.lock().clone() {
             return Some(Error::new(reason));
         }
         // The timer-driven cancel_with may not have fired yet even though
         // is_cancelled() returned true via the deadline time-check. Emit the
         // canonical deadline message here so callers don't fall through to
         // parent.err() and get None (background parent is never cancelled).
-        if let Some(deadline) = *self.inner.deadline.lock().unwrap() {
+        if let Some(deadline) = *self.inner.deadline.lock() {
             if Instant::now() >= deadline {
                 return Some(Error::new("context deadline exceeded"));
             }
@@ -344,7 +340,7 @@ impl Context {
     /// Deadline of this context, honouring parent deadlines.
     #[must_use]
     pub fn deadline(&self) -> Option<Instant> {
-        let local = *self.inner.deadline.lock().unwrap();
+        let local = *self.inner.deadline.lock();
         match (
             local,
             self.inner.parent.as_ref().and_then(Context::deadline),
@@ -375,7 +371,6 @@ pub fn with_cancel(parent: &Context) -> (Context, Cancel) {
         .inner
         .children
         .lock()
-        .unwrap()
         .push(Arc::downgrade(&child_inner));
     let child = Context {
         inner: Arc::clone(&child_inner),
@@ -393,7 +388,7 @@ pub fn with_cancel(parent: &Context) -> (Context, Cancel) {
 #[must_use]
 pub fn with_deadline(parent: &Context, deadline: Instant) -> Context {
     let (ctx, cancel) = with_cancel(parent);
-    *ctx.inner.deadline.lock().unwrap() = Some(deadline);
+    *ctx.inner.deadline.lock() = Some(deadline);
     // Schedule the active deadline timer. The TimerHandle is
     // returned by `after_func` but we deliberately do not store
     // it: cancellation of the timer is unnecessary because
@@ -506,7 +501,7 @@ fn propagate_cancel(inner: &Arc<Inner>, reason: String) {
     // first call to publish a reason is the one stored.
     let was_cancelled = inner.cancelled.swap(true, Ordering::AcqRel);
     if !was_cancelled {
-        let mut slot = inner.reason.lock().unwrap();
+        let mut slot = inner.reason.lock();
         if slot.is_none() {
             *slot = Some(reason.clone());
         }
@@ -515,7 +510,7 @@ fn propagate_cancel(inner: &Arc<Inner>, reason: String) {
     // Doing this on every call (not just the first) is harmless:
     // after the flag flipped, no new waiter can register (see
     // `register_waiter`); subsequent drains are empty.
-    let parked: Vec<Gid> = std::mem::take(&mut *inner.waiters.lock().unwrap());
+    let parked: Vec<Gid> = std::mem::take(&mut *inner.waiters.lock());
     if !parked.is_empty() {
         let scheduler = crate::sched_global::scheduler();
         for gid in parked {
@@ -523,7 +518,7 @@ fn propagate_cancel(inner: &Arc<Inner>, reason: String) {
         }
     }
     // Walk descendants. Drop dead weak refs as we go.
-    let children: Vec<Weak<Inner>> = std::mem::take(&mut *inner.children.lock().unwrap());
+    let children: Vec<Weak<Inner>> = std::mem::take(&mut *inner.children.lock());
     for weak in children {
         if let Some(child) = weak.upgrade() {
             propagate_cancel(&child, reason.clone());

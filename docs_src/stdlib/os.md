@@ -15,8 +15,6 @@ Operating-system identity and deprecated re-exports of env/process/fs.
 | `env` | fn | Deprecated: use env::var. |
 | `set_env` | fn | Deprecated: use env::set_var. |
 | `exit` | fn | Deprecated: use process::exit. |
-| `open` | fn | Deprecated: use fs::open. |
-| `create` | fn | Deprecated: use fs::create. |
 | `read_file` | fn | Deprecated: use fs::read. |
 | `read_file_to_string` | fn | Deprecated: use fs::read_to_string. |
 | `write_file` | fn | Deprecated: use fs::write. |

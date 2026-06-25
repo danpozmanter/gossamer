@@ -281,24 +281,9 @@ pub const HTTP: StdModule = StdModule {
             doc: "HTTP/2 server error: Io, Protocol, Handler.",
         },
         StdItem {
-            name: "serve_h2_connection",
-            kind: StdItemKind::Function,
-            doc: "Drive an HTTP/2 connection on the calling goroutine (bounded handler).",
-        },
-        StdItem {
-            name: "serve_h2_connection_streaming",
-            kind: StdItemKind::Function,
-            doc: "Same shape for Http2StreamingHandler.",
-        },
-        StdItem {
             name: "serve_h2c",
             kind: StdItemKind::Function,
             doc: "Bind a plain-TCP listener and serve h2c (HTTP/2 cleartext).",
-        },
-        StdItem {
-            name: "serve_h2c_streaming",
-            kind: StdItemKind::Function,
-            doc: "Same shape for Http2StreamingHandler.",
         },
         StdItem {
             name: "Trailers",
@@ -368,36 +353,6 @@ pub const HTTP_MIDDLEWARE: StdModule = StdModule {
             name: "Chain",
             kind: StdItemKind::Type,
             doc: "Helper for composing middleware in a single value.",
-        },
-        StdItem {
-            name: "logger",
-            kind: StdItemKind::Function,
-            doc: "Logs method path status bytes elapsed_ms per request.",
-        },
-        StdItem {
-            name: "recoverer",
-            kind: StdItemKind::Function,
-            doc: "Catches handler panics; returns 500.",
-        },
-        StdItem {
-            name: "request_id",
-            kind: StdItemKind::Function,
-            doc: "Stamps each response with X-Request-Id.",
-        },
-        StdItem {
-            name: "cors",
-            kind: StdItemKind::Function,
-            doc: "CORS preflight + per-response headers.",
-        },
-        StdItem {
-            name: "basic_auth",
-            kind: StdItemKind::Function,
-            doc: "HTTP Basic auth gate; constant-time compare.",
-        },
-        StdItem {
-            name: "compress_gzip",
-            kind: StdItemKind::Function,
-            doc: "Gzips bodies above a size threshold when client advertises Accept-Encoding: gzip (Rust-side wrapper).",
         },
         StdItem {
             name: "new_request_id",
@@ -553,11 +508,6 @@ pub const HTTP_SSE: StdModule = StdModule {
             doc: "One SSE event (id, event, data, retry).",
         },
         StdItem {
-            name: "serve",
-            kind: StdItemKind::Function,
-            doc: "Wraps a handler closure into an SSE response (Rust-side; streaming).",
-        },
-        StdItem {
             name: "encode_event",
             kind: StdItemKind::Function,
             doc: "Render one event block as a string: `(event, data, id) -> String`. Available in interp + compiled.",
@@ -664,11 +614,6 @@ pub const HTTP_COOKIE: StdModule = StdModule {
             doc: "Parse a Cookie request header into (name, value) pairs.",
         },
         StdItem {
-            name: "parse_set_cookie",
-            kind: StdItemKind::Function,
-            doc: "Parse a Set-Cookie response header into a Cookie.",
-        },
-        StdItem {
             name: "serialize",
             kind: StdItemKind::Function,
             doc: "Render a Cookie as a Set-Cookie header value.",
@@ -754,21 +699,6 @@ pub const HTTP_HEALTH: StdModule = StdModule {
             kind: StdItemKind::Type,
             doc: "Aggregates a set of named probes into a single status.",
         },
-        StdItem {
-            name: "always_ok",
-            kind: StdItemKind::Function,
-            doc: "Probe that always reports healthy.",
-        },
-        StdItem {
-            name: "always_fail",
-            kind: StdItemKind::Function,
-            doc: "Probe that always reports unhealthy with the given message.",
-        },
-        StdItem {
-            name: "tcp_probe",
-            kind: StdItemKind::Function,
-            doc: "Probe that opens a TCP connection within a deadline.",
-        },
     ],
 };
 
@@ -795,16 +725,6 @@ pub const HTTP_MULTIPART: StdModule = StdModule {
             name: "Form",
             kind: StdItemKind::Type,
             doc: "Parsed multipart envelope: fields + file parts.",
-        },
-        StdItem {
-            name: "parse_boundary",
-            kind: StdItemKind::Function,
-            doc: "Extract the boundary token from a Content-Type header.",
-        },
-        StdItem {
-            name: "parse_bytes",
-            kind: StdItemKind::Function,
-            doc: "Parse a full body buffer into a Form.",
         },
         StdItem {
             name: "parse",

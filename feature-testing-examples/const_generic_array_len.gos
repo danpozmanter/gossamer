@@ -15,7 +15,20 @@ fn len_arr<const N: usize>(xs: [i64; N]) -> i64 {
     xs.len()
 }
 
+// A `[T; N]` return is carried as a runtime sequence, so the caller binds
+// and iterates the result through the Vec paths - reading the real buffer
+// rather than the heap pointer as element zero.
+fn ident_arr<const N: usize>(xs: [i64; N]) -> [i64; N] {
+    xs
+}
+
 fn main() {
     println!("{} {}", sum_arr([1, 2, 3]), sum_arr([10, 20, 30, 40, 50]))
     println!("{} {}", len_arr([1, 2, 3]), len_arr([10, 20, 30, 40, 50]))
+    let r = ident_arr([7, 8, 9])
+    let mut acc = 0
+    for x in r {
+        acc += x
+    }
+    println!("{} {}", r.len(), acc)
 }

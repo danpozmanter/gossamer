@@ -1421,7 +1421,7 @@ pub unsafe extern "C" fn gos_rt_map_values_i64(m: *const GosMap) -> *mut GosVec 
                     push_val(v);
                 }
             }
-            MapStorage::StrI64(inner) => {
+            MapStorage::StrI64(inner) | MapStorage::SkeyVal(inner) => {
                 let mut entries: Vec<(&[u8], i64)> =
                     inner.iter().map(|(k, v)| (k.as_ref(), *v)).collect();
                 entries.sort_unstable_by(|a, b| a.0.cmp(b.0));
@@ -1563,7 +1563,14 @@ pub unsafe extern "C" fn gos_rt_map_values_vec(m: *const GosMap) -> *mut GosVec 
                 drop(storage);
                 unsafe { gos_rt_map_values_str(m) }
             }
-            MapStorage::SkeyVal(_) | MapStorage::Empty => unsafe { gos_rt_vec_new(8) },
+            // Struct/tuple-keyed maps store i64 values just like `I64I64`;
+            // route them through the i64 snapshot so `m.values()` / `for v in
+            // m.values()` see the real values instead of an empty Vec.
+            MapStorage::SkeyVal(_) => {
+                drop(storage);
+                unsafe { gos_rt_map_values_i64(m) }
+            }
+            MapStorage::Empty => unsafe { gos_rt_vec_new(8) },
         }
     })
 }
@@ -1626,6 +1633,41 @@ pub unsafe extern "C" fn gos_rt_map_pop_str(m: *mut GosMap, key: *const c_char) 
         match popped {
             Some(v) => unsafe { gos_rt_result_new(0, v) },
             None => unsafe { gos_rt_result_new(1, 0) },
+        }
+    })
+}
+
+/// `m.pop(k) -> Option<V>` for a struct / tuple-keyed map. Content-hashes
+/// the key via `build_skey`, removes the slot, and returns the previous
+/// value in the `gos_rt_result_new` i128 layout (0 = Some, 1 = None),
+/// matching [`gos_rt_map_pop_i64`]. The popped value's share transfers to
+/// the caller, so no blob release fires here.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_map_pop_skey(
+    m: *mut GosMap,
+    key: *const u8,
+    desc: *const c_char,
+) -> i128 {
+    ffi_entry!(unsafe { gos_rt_result_new(1, 0) }, {
+        let none = unsafe { gos_rt_result_new(1, 0) };
+        let Some(k) = (unsafe { build_skey(key, desc) }) else {
+            return none;
+        };
+        if m.is_null() {
+            return none;
+        }
+        let map = unsafe { &mut *m };
+        let mut storage = map.storage.lock();
+        let popped: Option<i64> = match &mut *storage {
+            MapStorage::SkeyVal(inner) => inner.remove(k.as_slice()),
+            _ => None,
+        };
+        if popped.is_some() {
+            map.len_cache = map.len_cache.saturating_sub(1);
+        }
+        match popped {
+            Some(v) => unsafe { gos_rt_result_new(0, v) },
+            None => none,
         }
     })
 }

@@ -8,6 +8,5 @@ Secure random bytes from the host CSPRNG.
 
 | Name | Kind | Description |
 |---|---|---|
-| `fill` | fn | Fills a buffer with random bytes. |
 | `bytes` | fn | Returns a fresh random byte vector. |
 

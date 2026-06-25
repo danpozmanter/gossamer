@@ -1,0 +1,25 @@
+// Nested by-value structs with multiple RC fields, exercised through
+// functional record update, sub-struct field extraction, and printing -
+// the shapes that drove the 0.18.1 nested-field RC teardown. Output must
+// be bit-identical across the VM, Cranelift, and LLVM tiers and free of
+// double-frees at scope teardown.
+
+struct User { name: String, role: String }
+struct Team { lead: User, members: [String], size: i64 }
+
+fn main() {
+    let lead = User { name: format!("lin"), role: format!("eng") }
+    let mut roster: [String] = []
+    roster.push(format!("ben"))
+    roster.push(format!("cleo"))
+    let team = Team { lead: lead, members: roster, size: 3 }
+
+    // Record update overriding a sibling scalar while spreading the nested
+    // `User` sub-struct and the `Vec` - the double-free shape.
+    let grown = Team { ..team, size: 4 }
+
+    // Extract the nested sub-struct, then its fields.
+    let who = grown.lead
+    println!("{} {} {} {}", who.name, who.role, grown.members[0], grown.size)
+    println!("team intact: {} {}", team.lead.name, team.members[1])
+}

@@ -124,17 +124,17 @@ pub(crate) fn builtin_static_serve_file(args: &[Value]) -> RuntimeResult<Value> 
         Ok(bytes) => {
             let mime = guess_mime_from_path(&path);
             let mut fields = vec![
-                (Ident::new("status"), Value::Int(200)),
+                ("status", Value::Int(200)),
                 (
-                    Ident::new("body"),
+                    "body",
                     Value::String(String::from_utf8_lossy(&bytes).into_owned().into()),
                 ),
                 (
-                    Ident::new("content_type"),
+                    "content_type",
                     Value::String(SmolStr::from(mime.to_string())),
                 ),
             ];
-            fields.push((Ident::new("headers"), Value::Array(Arc::new(Vec::new()))));
+            fields.push(("headers", Value::Array(Arc::new(Vec::new()))));
             Ok(ok_variant(Value::struct_(
                 "Response",
                 Arc::unwrap_or_clone(Arc::new(fields)),

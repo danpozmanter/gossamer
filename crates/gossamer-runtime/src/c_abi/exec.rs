@@ -332,7 +332,7 @@ fn wait_timeout_windows(pid: u32, ms: u32) -> i64 {
             return -2;
         }
         let mut code: u32 = 0;
-        let ok = GetExitCodeProcess(handle, &mut code);
+        let ok = GetExitCodeProcess(handle, &raw mut code);
         let _ = CloseHandle(handle);
         if ok == 0 {
             return -2;

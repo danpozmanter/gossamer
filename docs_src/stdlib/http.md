@@ -33,10 +33,7 @@ HTTP/1.1 and HTTP/2 client and server. HTTP/2 negotiates via ALPN over TLS autom
 | `Http2Config` | type | Per-connection HTTP/2 tuning (window sizes, max concurrent streams, frame caps). |
 | `Http2ServerHandle` | type | Handle to a running HTTP/2 connection for shutdown / in-flight counts. |
 | `Http2Error` | type | HTTP/2 server error: Io, Protocol, Handler. |
-| `serve_h2_connection` | fn | Drive an HTTP/2 connection on the calling goroutine (bounded handler). |
-| `serve_h2_connection_streaming` | fn | Same shape for Http2StreamingHandler. |
 | `serve_h2c` | fn | Bind a plain-TCP listener and serve h2c (HTTP/2 cleartext). |
-| `serve_h2c_streaming` | fn | Same shape for Http2StreamingHandler. |
 | `Trailers` | type | HTTP/2 trailing HEADERS (alias for Headers) - used by `ResponseWriter::write_trailers` and `Request::trailers`. |
 | `PushOptions` | type | Prioritization knobs for `ResponseWriter::push_promise` (weight, depends_on, exclusive). |
 | `PushStream` | type | Server-initiated push stream returned by `ResponseWriter::push_promise`. Supports send_head / write / write_trailers / end. |

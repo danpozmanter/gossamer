@@ -209,27 +209,54 @@ impl<'a> Builder<'a> {
                     .push(crate::ir::Projection::Field(projection_idx));
                 // A field filled from `..base` shares the base's heap child;
                 // the base still owns its copy and releases it at its own
-                // drop, so the new struct takes its own share. Without this,
-                // an RC field (String / Vec / nested node) is freed twice.
-                if let Some(field_ty) = field_tys.as_ref().and_then(|t| t.get(idx)).copied()
-                    && self.tcx.is_rc_managed(field_ty)
-                {
+                // drop, so the new struct takes its own share. A direct RC
+                // field (String / Vec / weak / boxed enum) retains its one
+                // pointer; a by-value sub-struct / tuple field shares each of
+                // its NESTED RC pointers, so retain those in lockstep with the
+                // recursive release in the drop pass - otherwise a nested
+                // `String` is freed twice.
+                if let Some(field_ty) = field_tys.as_ref().and_then(|t| t.get(idx)).copied() {
                     use gossamer_types::TyKind;
-                    let retain = match self.tcx.kind_of(field_ty) {
-                        TyKind::Vec(_) | TyKind::Slice(_) => "gos_rt_vec_retain",
-                        _ if self.tcx.is_weak_ty(field_ty) => "gos_rt_rc_weak_retain",
-                        _ => "gos_rt_rc_retain",
-                    };
                     let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
-                    let retain_dest = self.fresh(i64_ty);
-                    self.emit_assign(
-                        Place::local(retain_dest),
-                        Rvalue::CallIntrinsic {
-                            name: retain,
-                            args: vec![Operand::Copy(place.clone())],
-                        },
-                        span,
-                    );
+                    if self.tcx.is_rc_managed(field_ty) {
+                        let retain = match self.tcx.kind_of(field_ty) {
+                            TyKind::Vec(_) | TyKind::Slice(_) => "gos_rt_vec_retain",
+                            _ if self.tcx.is_weak_ty(field_ty) => "gos_rt_rc_weak_retain",
+                            _ => "gos_rt_rc_retain",
+                        };
+                        let retain_dest = self.fresh(i64_ty);
+                        self.emit_assign(
+                            Place::local(retain_dest),
+                            Rvalue::CallIntrinsic {
+                                name: retain,
+                                args: vec![Operand::Copy(place.clone())],
+                            },
+                            span,
+                        );
+                    } else {
+                        for (sub, is_weak) in
+                            crate::lower::aggregate_rc_field_paths(self.tcx, field_ty)
+                        {
+                            let mut nested = place.clone();
+                            for s in &sub {
+                                nested.projection.push(crate::ir::Projection::Field(*s));
+                            }
+                            let retain = if is_weak {
+                                "gos_rt_rc_weak_retain"
+                            } else {
+                                "gos_rt_rc_retain"
+                            };
+                            let retain_dest = self.fresh(i64_ty);
+                            self.emit_assign(
+                                Place::local(retain_dest),
+                                Rvalue::CallIntrinsic {
+                                    name: retain,
+                                    args: vec![Operand::Copy(nested)],
+                                },
+                                span,
+                            );
+                        }
+                    }
                 }
                 operands.push(Operand::Copy(place));
             } else {

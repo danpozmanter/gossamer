@@ -164,7 +164,7 @@ pub fn lower_program(program: &HirProgram, tcx: &mut TyCtxt) -> Vec<Body> {
     register_inline_enums(program, tcx);
     let impl_methods = collect_impl_methods(program);
     let fn_ret_names = collect_fn_ret_names(program);
-    let fn_returns = collect_fn_returns(program);
+    let fn_returns = collect_fn_returns(program, tcx);
     let fn_inputs = collect_fn_inputs(program);
     let mut consts = collect_const_values(program);
     // Scalar `static mut` items become real mutable module globals;

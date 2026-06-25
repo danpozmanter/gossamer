@@ -194,11 +194,13 @@ pub(crate) fn builtin_router_method_options(args: &[Value]) -> RuntimeResult<Val
     router_method_add("OPTIONS", args)
 }
 
-thread_local! {
-    #[allow(clippy::missing_const_for_thread_local)]
-    pub(crate) static ROUTER_HANDLERS: RefCell<StdHashMap<i64, Vec<Value>>> =
-        RefCell::new(StdHashMap::new());
-}
+// Process-global (not `thread_local!`): the stored handler closures are
+// keyed by the same router-handle id as `ROUTER_REGISTRY`, so they must
+// resolve on whichever worker thread the goroutine has migrated to.
+// Mirrors the `sync::*` registries. `GlobalReg` is in scope via the
+// `use super::*;` re-export of `set::*`.
+pub(crate) static ROUTER_HANDLERS: GlobalReg<StdHashMap<i64, Vec<Value>>> =
+    GlobalReg::new(|| parking_lot::ReentrantMutex::new(RefCell::new(StdHashMap::new())));
 
 /// `Router::serve(router, request)` - invoked by `http::serve`'s
 /// dispatch loop when the handler is a Router. Walks the route
@@ -260,10 +262,10 @@ pub(crate) fn native_router_serve(
 
 pub(crate) fn http_404_response() -> Value {
     let mut fields = vec![
-        (Ident::new("status"), Value::Int(404)),
-        (Ident::new("body"), Value::String("not found".into())),
+        ("status", Value::Int(404)),
+        ("body", Value::String("not found".into())),
     ];
-    fields.push((Ident::new("headers"), Value::Array(Arc::new(Vec::new()))));
+    fields.push(("headers", Value::Array(Arc::new(Vec::new()))));
     Value::struct_("Response", Arc::unwrap_or_clone(Arc::new(fields)))
 }
 
@@ -272,7 +274,7 @@ pub(crate) fn request_method_and_path(v: &Value) -> (String, String) {
     let mut path = String::new();
     if let Value::Struct(inner) = v {
         for (i, val) in &inner.fields {
-            match (i.name.as_str(), val) {
+            match ((*i), val) {
                 ("method", Value::String(s)) => method = s.as_str().to_string(),
                 ("path", Value::String(s)) => path = s.as_str().to_string(),
                 _ => {}
@@ -289,7 +291,7 @@ fn inject_path_params(request: Value, captures: &[(String, String)]) -> Value {
     let Value::Struct(inner) = &request else {
         return request;
     };
-    let mut fields: Vec<(Ident, Value)> = inner.fields.clone();
+    let mut fields: Vec<(&'static str, Value)> = inner.fields.clone();
     let params: Vec<Value> = captures
         .iter()
         .map(|(k, v)| {
@@ -299,7 +301,7 @@ fn inject_path_params(request: Value, captures: &[(String, String)]) -> Value {
             ]))
         })
         .collect();
-    fields.push((Ident::new("__params"), Value::Array(Arc::new(params))));
+    fields.push(("__params", Value::Array(Arc::new(params))));
     Value::struct_(inner.name, fields)
 }
 
@@ -311,7 +313,7 @@ fn path_param_str(args: &[Value]) -> Option<String> {
         return None;
     };
     for (field, val) in &inner.fields {
-        if field.name == "__params" {
+        if (*field) == "__params" {
             if let Value::Array(items) = val {
                 for item in items.iter() {
                     if let Value::Tuple(t) = item {
@@ -368,7 +370,7 @@ pub(crate) fn builtin_router_new(_args: &[Value]) -> RuntimeResult<Value> {
         r.borrow_mut()
             .insert(id, RefCell::new(RouterTable::default()));
     });
-    let fields = vec![(Ident::new("__router"), Value::Int(id))];
+    let fields = vec![("__router", Value::Int(id))];
     Ok(Value::struct_(
         "Router",
         Arc::unwrap_or_clone(Arc::new(fields)),
@@ -379,7 +381,7 @@ pub(crate) fn router_id_of(v: &Value) -> Option<i64> {
     if let Value::Struct(inner) = v {
         if inner.name == "Router" {
             for (i, val) in &inner.fields {
-                if i.name == "__router" {
+                if (*i) == "__router" {
                     if let Value::Int(n) = val {
                         return Some(*n);
                     }

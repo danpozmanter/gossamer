@@ -89,12 +89,9 @@ impl<'a> Lowerer<'a> {
             (UnOp::Neg, NumericKind::Int(_)) => {
                 writeln!(self.out, "  {tmp} = sub i64 0, {operand_v}").unwrap();
             }
-            (UnOp::Neg, NumericKind::Float(f)) => {
-                let ty = match f {
-                    FloatTy::F32 => "float",
-                    FloatTy::F64 => "double",
-                };
-                writeln!(self.out, "  {tmp} = fneg {ty} {operand_v}").unwrap();
+            (UnOp::Neg, NumericKind::Float(_)) => {
+                // Both f32 and f64 are represented as `double` at runtime.
+                writeln!(self.out, "  {tmp} = fneg double {operand_v}").unwrap();
             }
             (UnOp::Not, _) => {
                 // `Not` is bitwise on integers, logical on bool.
@@ -188,6 +185,49 @@ impl<'a> Lowerer<'a> {
         // hits opt's "operand type mismatch" verifier.
         let lhs_llvm = self.operand_llvm_ty(lhs);
         let rhs_llvm = self.operand_llvm_ty(rhs);
+        // `char` is the only type that renders as `i32` here, but
+        // `operand_ty` can fail to classify a bare char constant when
+        // the body has no char local to borrow, leaving `operand_llvm`
+        // as the unit return type (`void`). The operand LLVM types are
+        // authoritative: an `i32` operand is a char, so reclassify the
+        // operation as an `i32`-width `Other` so a char comparison
+        // emits `icmp ... i32` instead of the invalid `icmp ... void`.
+        if operand_llvm != "i32" && (lhs_llvm == "i32" || rhs_llvm == "i32") {
+            operand_llvm = "i32".to_string();
+            kind = NumericKind::Other;
+        }
+        // A bare float constant is carried as an f64 bit pattern and
+        // renders as `double`; `operand_ty` cannot classify it (and
+        // yields the unit return type when no float local exists to
+        // borrow), so a float operation on two constants reaches here as
+        // `Other` / `void`. Reclassify as a float op at the operand's
+        // LLVM width - which `rvalue_llvm_ty` and the store path also
+        // key off the lhs for - and coerce the operands so a mixed
+        // `float` / `double` pair (an f32 place next to an f64-bit
+        // constant) shares the operation's type via fptrunc / fpext.
+        let is_float_llvm = |t: &str| t == "float" || t == "double";
+        if is_float_llvm(&lhs_llvm) || is_float_llvm(&rhs_llvm) {
+            if matches!(kind, NumericKind::Other) {
+                operand_llvm = if is_float_llvm(&lhs_llvm) {
+                    lhs_llvm.clone()
+                } else {
+                    rhs_llvm.clone()
+                };
+                kind = NumericKind::Float(if operand_llvm == "float" {
+                    FloatTy::F32
+                } else {
+                    FloatTy::F64
+                });
+            }
+            if matches!(kind, NumericKind::Float(_)) {
+                if is_float_llvm(&lhs_llvm) {
+                    lhs_v = self.coerce_llvm_value(&lhs_v, &lhs_llvm, &operand_llvm);
+                }
+                if is_float_llvm(&rhs_llvm) {
+                    rhs_v = self.coerce_llvm_value(&rhs_v, &rhs_llvm, &operand_llvm);
+                }
+            }
+        }
         if operand_llvm == "i64" {
             if lhs_llvm == "i1" {
                 let zlhs = self.fresh();
@@ -334,7 +374,15 @@ impl<'a> Lowerer<'a> {
             };
             match pick(lhs).or_else(|| pick(rhs)) {
                 Some(i) => int_signed(i) || int_width(i) < 64,
-                None => true,
+                // Both operands are constants (a const-folded `u64`, e.g.
+                // `a >> 1` where `a` folded to a literal, carries no operand
+                // signedness). Fall back to the operation's own int type so a
+                // `u64`/`usize` still compares and shifts unsigned per its
+                // declared type instead of defaulting to signed.
+                None => match kind {
+                    NumericKind::Int(i) => int_signed(i) || int_width(i) < 64,
+                    _ => true,
+                },
             }
         };
         // LLVM `shl`/`ashr` produce poison for shift amounts >= the
@@ -388,6 +436,14 @@ impl<'a> Lowerer<'a> {
             (cmp, NumericKind::Float(_)) if is_cmp(cmp) => {
                 let pred = float_cmp_pred(cmp);
                 format!("fcmp {pred} {operand_llvm}")
+            }
+            (cmp, NumericKind::Other) if is_cmp(cmp) && operand_llvm == "i32" => {
+                // `char` comparison: compare codepoints as `i32`. Valid
+                // scalar values (0..=0x10FFFF) are positive, so the signed
+                // predicates give the natural codepoint ordering, and
+                // equality is exact.
+                let pred = int_cmp_pred(cmp, true);
+                format!("icmp {pred} {operand_llvm}")
             }
             (cmp, _) if matches!(cmp, BinOp::Eq | BinOp::Ne) => {
                 let pred = if matches!(cmp, BinOp::Eq) { "eq" } else { "ne" };
@@ -496,6 +552,44 @@ impl<'a> Lowerer<'a> {
         };
         let dst_kind = numeric_kind(self.tcx, target);
         let dst_llvm = render_ty(self.tcx, target);
+        // Cast to `f32`: although f32 is represented as `double`, an
+        // explicit `as f32` must round the value to f32 precision (the VM
+        // rounds: `0.1 as f32` is `0.100000001…`). Bring the source to a
+        // double, then round-trip through `float` (fptrunc + fpext),
+        // leaving the result as the double the rest of the pipeline
+        // expects. A cast to `f64` from a double-represented source needs
+        // no rounding and falls through to the generic paths below.
+        if matches!(dst_kind, NumericKind::Float(FloatTy::F32)) {
+            let as_double = match src_kind {
+                NumericKind::Float(_) => self.coerce_llvm_value(&src_v, &src_llvm, "double"),
+                NumericKind::Int(i) => {
+                    let op = if int_signed(i) || int_width(i) <= 64 {
+                        "sitofp"
+                    } else {
+                        "uitofp"
+                    };
+                    let tmp = self.fresh();
+                    writeln!(self.out, "  {tmp} = {op} {src_llvm} {src_v} to double").unwrap();
+                    tmp
+                }
+                NumericKind::Other => {
+                    let wide = self.fresh();
+                    writeln!(self.out, "  {wide} = zext {src_llvm} {src_v} to i64").unwrap();
+                    let tmp = self.fresh();
+                    writeln!(self.out, "  {tmp} = sitofp i64 {wide} to double").unwrap();
+                    tmp
+                }
+            };
+            let narrowed = self.fresh();
+            writeln!(
+                self.out,
+                "  {narrowed} = fptrunc double {as_double} to float"
+            )
+            .unwrap();
+            let widened = self.fresh();
+            writeln!(self.out, "  {widened} = fpext float {narrowed} to double").unwrap();
+            return Ok(widened);
+        }
         // Int → narrow int under the i64 runtime model: both sides
         // render as i64, but the cast is the language's single
         // masking point (VM parity: `300 as u8` == 44, `200 as i8`
@@ -689,6 +783,8 @@ impl<'a> Lowerer<'a> {
                 | ConcatKind::JsonValue
                 | ConcatKind::ErrorMessage
                 | ConcatKind::Tuple
+                | ConcatKind::Option(_)
+                | ConcatKind::Result(_, _)
                 | ConcatKind::Map) => {
                     let str_ptr = self.emit_concat_aggregate(arg, kind, &value)?;
                     writeln!(self.out, "  call void @gos_rt_concat_str(ptr {str_ptr})").unwrap();

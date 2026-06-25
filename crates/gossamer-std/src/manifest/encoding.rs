@@ -450,11 +450,6 @@ pub const ENCODING_BASE32: StdModule = StdModule {
             doc: "Bytes -> base32 string.",
         },
         StdItem {
-            name: "encode_padded",
-            kind: StdItemKind::Function,
-            doc: "With explicit = padding.",
-        },
-        StdItem {
             name: "decode",
             kind: StdItemKind::Function,
             doc: "Base32 string -> bytes.",

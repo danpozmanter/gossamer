@@ -662,7 +662,7 @@ const MAX_CALL_DEPTH: usize = 512;
 /// A Gossamer call costs one `apply()` + `run()` pair on the real
 /// machine stack, and `run()` is a single ~2 000-line match whose
 /// debug-build frame holds every arm's locals at once (~160 KB).
-/// [`MAX_CALL_DEPTH`] bounds Gossamer recursion to a clean
+/// `MAX_CALL_DEPTH` bounds Gossamer recursion to a clean
 /// `RuntimeError::StackOverflow`, but those frames must fit on the
 /// native stack for the cap to be reached before the OS guard page.
 /// A fixed, generous reserve makes recursion depth uniform across
@@ -816,10 +816,11 @@ fn index_get(base: &Value, idx: &Value) -> RuntimeResult<Value> {
         Value::FloatArray(fa_inner) => {
             let stride = fa_inner.stride as usize;
             let base_idx = i * stride;
-            let mut fields: Vec<(Ident, Value)> = Vec::with_capacity(fa_inner.field_names.len());
+            let mut fields: Vec<(&'static str, Value)> =
+                Vec::with_capacity(fa_inner.field_names.len());
             for (j, fname) in fa_inner.field_names.iter().enumerate() {
                 fields.push((
-                    Ident::new(fname.as_str()),
+                    crate::value::intern_type_name(fname.as_str()),
                     Value::Float(fa_inner.data[base_idx + j]),
                 ));
             }
@@ -845,9 +846,15 @@ fn qualified_key(receiver: &Value, method: &str) -> Option<&'static str> {
         Value::String(_) => Some(intern_qualified("String", method)),
         // `Vec`-receiver methods resolve by type so a bare name shared with
         // another module's free function (`path::join` vs `strings::join`)
-        // dispatches correctly. Only names registered under `Vec::` reroute;
+        // or a same-named user free function (`fn first(xs)` calling
+        // `xs.first()`) dispatches to the builtin. Every array-shaped value -
+        // boxed `Array`, the scalar-flat `IntArray` / `FloatVec`, and the
+        // all-f64 `FloatArray` - is a `Vec`/slice receiver, so all four route
+        // through the `Vec::` key. Only names registered under `Vec::` reroute;
         // the rest fall back to the bare lookup.
-        Value::Array(_) => Some(intern_qualified("Vec", method)),
+        Value::Array(_) | Value::IntArray(_) | Value::FloatVec(_) | Value::FloatArray(_) => {
+            Some(intern_qualified("Vec", method))
+        }
         _ => None,
     }
 }
@@ -1333,12 +1340,12 @@ pub(crate) fn auto_deref_cell(v: &Value) -> Option<Value> {
     let mut set_id: u64 = 0;
     let mut flag_name = String::new();
     for (ident, val) in &inner.fields {
-        if ident.name == "__set_id"
+        if (*ident) == "__set_id"
             && let Value::Int(n) = val
         {
             set_id = *n as u64;
         }
-        if ident.name == "__flag_name"
+        if (*ident) == "__flag_name"
             && let Value::String(s) = val
         {
             flag_name = s.as_str().to_string();
@@ -1351,7 +1358,7 @@ pub(crate) fn auto_deref_cell(v: &Value) -> Option<Value> {
 /// so partially-typed programs keep running.
 fn field_get(receiver: &Value, name: &str) -> RuntimeResult<Value> {
     if let Value::Struct(inner) = receiver {
-        if let Some((_, v)) = inner.fields.iter().find(|(ident, _)| ident.name == name) {
+        if let Some((_, v)) = inner.fields.iter().find(|(ident, _)| (*ident) == name) {
             return Ok(v.clone());
         }
         return Ok(Value::Unit);
@@ -1374,12 +1381,12 @@ fn field_set(receiver: &mut Value, name: &str, new_value: Value) -> RuntimeResul
     let struct_inner = Arc::make_mut(struct_arc);
     let slots = &mut struct_inner.fields;
     for (ident, slot) in slots.iter_mut() {
-        if ident.name == name {
+        if (*ident) == name {
             *slot = new_value;
             return Ok(());
         }
     }
-    slots.push((Ident::new(name), new_value));
+    slots.push((crate::value::intern_type_name(name), new_value));
     Ok(())
 }
 

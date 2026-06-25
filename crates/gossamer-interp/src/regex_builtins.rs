@@ -1,14 +1,14 @@
 //! VM hooks for `std::regex`. An opaque Pattern handle
-//! is stashed in a per-thread registry; the `Value::Struct`
+//! is stashed in a process-global registry; the `Value::Struct`
 //! exposed to Gossamer carries the handle id alongside the
 //! original source so diagnostics can render the pattern.
 
 use std::cell::RefCell;
 use std::sync::Arc;
 
-use gossamer_ast::Ident;
 use gossamer_std::regex as regex_std;
 
+use crate::stdlib_builtins::set::GlobalReg;
 use crate::value::{RuntimeError, RuntimeResult, SmolStr, Value};
 
 /// Flat list of `(short-name, fn pointer)` entries passed to the
@@ -32,25 +32,26 @@ pub(crate) const ENTRIES: &[(&str, Entry)] = &[
 // ------------------------------------------------------------------
 // regex builtins - opaque handle backed by REGEX_REGISTRY.
 
-thread_local! {
-    static NEXT_REGEX_ID: RefCell<u64> = const { RefCell::new(1) };
-    // HashMap::new with the default RandomState hasher is not yet
-    // const-callable on our MSRV; the HashMap is allocated lazily
-    // on first thread-local access regardless.
-    #[allow(clippy::missing_const_for_thread_local)]
-    static REGEX_REGISTRY: RefCell<std::collections::HashMap<u64, regex_std::Pattern>> =
-        RefCell::new(std::collections::HashMap::new());
-}
+// Process-global (not `thread_local!`): goroutines run on an OS
+// worker-thread pool, so a compiled-pattern handle minted on one thread
+// must resolve on another after the goroutine migrates between workers
+// (a regex compiled before a `go`/channel hand-off has to match inside
+// the spawned goroutine). `regex_std::Pattern` is `Send` (wraps a
+// `regex::Regex`), so it is safe to share behind the global mutex.
+// Mirrors the `sync::*` registries.
+static NEXT_REGEX_ID: GlobalReg<u64> =
+    GlobalReg::new(|| parking_lot::ReentrantMutex::new(RefCell::new(1)));
+static REGEX_REGISTRY: GlobalReg<std::collections::HashMap<u64, regex_std::Pattern>> =
+    GlobalReg::new(|| {
+        parking_lot::ReentrantMutex::new(RefCell::new(std::collections::HashMap::new()))
+    });
 
 fn regex_handle(id: u64, source: &str) -> Value {
     Value::struct_(
         "regex::Pattern",
         vec![
-            (Ident::new("__regex_id"), Value::Int(id as i64)),
-            (
-                Ident::new("__source"),
-                Value::String(SmolStr::from(source.to_string())),
-            ),
+            ("__regex_id", Value::Int(id as i64)),
+            ("__source", Value::String(SmolStr::from(source.to_string()))),
         ],
     )
 }
@@ -67,7 +68,7 @@ fn regex_id_from(value: &Value) -> RuntimeResult<u64> {
         ));
     }
     for (ident, v) in &inner.fields {
-        if ident.name == "__regex_id" {
+        if (*ident) == "__regex_id" {
             if let Value::Int(id) = v {
                 return Ok(*id as u64);
             }

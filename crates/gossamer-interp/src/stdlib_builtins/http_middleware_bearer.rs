@@ -37,7 +37,7 @@ fn request_header(req: &Value, name: &str) -> Option<String> {
         return None;
     };
     for (field, val) in &inner.fields {
-        if field.name == "headers" {
+        if (*field) == "headers" {
             if let Value::Array(items) = val {
                 for item in items.iter() {
                     if let Value::Tuple(t) = item {

@@ -538,6 +538,26 @@ pub const REGISTRY: &[(&str, &str)] = &[
                      parameter on the supertrait directly.",
     ),
     (
+        "GT0021",
+        "`value[index]` was used on a type that cannot be indexed. Only\n\
+                     `[T]`, `[T; N]`, `Vec<T>`, and `String` support indexing. The\n\
+                     VM faults (GX0001) and the compiled tier reads through the\n\
+                     value as a base pointer (segfault), so it is rejected at check.",
+    ),
+    (
+        "GT0022",
+        "`value(args)` was used on a type that is not callable. Only `fn`\n\
+                     items, `fn(..)` pointers, and `Fn(..)` values can be called.\n\
+                     The VM faults (GX0001) and the compiled tier emits a call\n\
+                     through a non-function symbol, so it is rejected at check.",
+    ),
+    (
+        "GT0023",
+        "`value.N` positional access was used on a non-tuple, or `N` is\n\
+                     past the tuple's arity. The VM faults (GX0004) and the compiled\n\
+                     tier reads out-of-object memory, so it is rejected at check.",
+    ),
+    (
         "GX0001",
         "A runtime value had the wrong shape for the operation. The\n\
                      interpreter catches this at execution time; the native\n\

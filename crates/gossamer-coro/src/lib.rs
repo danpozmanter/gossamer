@@ -62,6 +62,45 @@ pub fn any_goroutine_panicked() -> bool {
     GOROUTINE_PANICKED.load(Ordering::Acquire)
 }
 
+thread_local! {
+    /// `true` while the worker thread is running the body of a `spawn`ed
+    /// (joinable) goroutine, `false` for a fire-and-forget `go`. A panic in a
+    /// joinable body is OBSERVED through its `join()` handle, so `gos_rt_panic`
+    /// suppresses its eager `error[GX0005]` report and lets the outcome guard
+    /// deliver `Err` instead - matching the VM, whose `spawn`+`join` path is
+    /// silent. Set on body entry and restored on exit (including the panic
+    /// unwind) via [`JoinableScope`], so a synchronous panic - the dominant
+    /// shape - reads the correct value.
+    static IN_JOINABLE_SPAWN: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Returns `true` when the current worker is executing a joinable (`spawn`)
+/// goroutine body, so a panic here is observed through `join()`.
+#[must_use]
+pub fn in_joinable_spawn() -> bool {
+    IN_JOINABLE_SPAWN.with(std::cell::Cell::get)
+}
+
+/// Scopes `IN_JOINABLE_SPAWN` to a goroutine body, restoring the previous
+/// value on drop (so the flag is reset even when the body unwinds, and nested
+/// `go`-inside-`spawn` bodies see their own value).
+pub struct JoinableScope(bool);
+
+impl JoinableScope {
+    /// Enters a goroutine body, marking it joinable (`spawn`) or not (`go`).
+    #[must_use]
+    pub fn enter(joinable: bool) -> Self {
+        let prev = IN_JOINABLE_SPAWN.with(|c| c.replace(joinable));
+        Self(prev)
+    }
+}
+
+impl Drop for JoinableScope {
+    fn drop(&mut self) {
+        IN_JOINABLE_SPAWN.with(|c| c.set(self.0));
+    }
+}
+
 use corosensei::stack::DefaultStack;
 use corosensei::{Coroutine, CoroutineResult, Yielder};
 
@@ -241,16 +280,12 @@ impl Goroutine {
             // assert clean execution.
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(main));
             if let Err(payload) = result {
-                let msg = if let Some(p) = payload.downcast_ref::<GosPanic>() {
-                    p.0.clone()
-                } else if let Some(s) = payload.downcast_ref::<&'static str>() {
-                    (*s).to_string()
-                } else if let Some(s) = payload.downcast_ref::<String>() {
-                    s.clone()
-                } else {
-                    "(non-string panic payload)".to_string()
-                };
-                eprintln!("gossamer: goroutine panicked - {msg}; isolating, scheduler continues");
+                // The panic's `error[GX0005]` report was already printed
+                // eagerly by `gos_rt_panic` for an unobserved goroutine (and
+                // suppressed for a joinable one, whose `join()` handle delivers
+                // the error instead). Nothing to print here - just record that
+                // a goroutine panicked and isolate it from the scheduler.
+                let _ = &payload;
                 GOROUTINE_PANICKED.store(true, Ordering::Release);
             }
         });

@@ -166,12 +166,9 @@ pub(crate) fn response_value_from_native(
     resp: gossamer_std::http_native_client::NativeResponse,
 ) -> Value {
     let mut fields = vec![
+        ("status", Value::Int(i64::from(resp.status.as_u16()))),
         (
-            Ident::new("status"),
-            Value::Int(i64::from(resp.status.as_u16())),
-        ),
-        (
-            Ident::new("body"),
+            "body",
             Value::String(String::from_utf8_lossy(&resp.body).into_owned().into()),
         ),
     ];
@@ -185,6 +182,6 @@ pub(crate) fn response_value_from_native(
             ]))
         })
         .collect();
-    fields.push((Ident::new("headers"), Value::Array(Arc::new(headers))));
+    fields.push(("headers", Value::Array(Arc::new(headers))));
     Value::struct_("Response", Arc::unwrap_or_clone(Arc::new(fields)))
 }

@@ -160,6 +160,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_binding_variant_to_result as *const u8,
         ),
         (
+            "gos_rt_bin_get_u8",
+            crate::c_abi::gos_rt_bin_get_u8 as *const u8,
+        ),
+        (
             "gos_rt_bin_get_u16_be",
             crate::c_abi::gos_rt_bin_get_u16_be as *const u8,
         ),
@@ -182,6 +186,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
         (
             "gos_rt_bin_get_u64_le",
             crate::c_abi::gos_rt_bin_get_u64_le as *const u8,
+        ),
+        (
+            "gos_rt_bin_put_u8",
+            crate::c_abi::gos_rt_bin_put_u8 as *const u8,
         ),
         (
             "gos_rt_bin_put_u16_be",
@@ -214,6 +222,14 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
         (
             "gos_rt_bin_varint",
             crate::c_abi::gos_rt_bin_varint as *const u8,
+        ),
+        (
+            "gos_rt_bin_put_uvarint",
+            crate::c_abi::gos_rt_bin_put_uvarint as *const u8,
+        ),
+        (
+            "gos_rt_bin_put_varint",
+            crate::c_abi::gos_rt_bin_put_varint as *const u8,
         ),
         (
             "gos_rt_bits_add",
@@ -1935,6 +1951,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_map_contains_skey as *const u8,
         ),
         (
+            "gos_rt_map_pop_skey",
+            crate::c_abi::gos_rt_map_pop_skey as *const u8,
+        ),
+        (
             "gos_rt_map_insert_i64_str",
             crate::c_abi::gos_rt_map_insert_i64_str as *const u8,
         ),
@@ -2811,6 +2831,14 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::rc::gos_rt_aggr_retain_children as *const u8,
         ),
         (
+            "gos_rt_enum_box_aggr",
+            crate::c_abi::rc::gos_rt_enum_box_aggr as *const u8,
+        ),
+        (
+            "gos_rt_rc_retain_children",
+            crate::c_abi::rc::gos_rt_rc_retain_children as *const u8,
+        ),
+        (
             "gos_rt_option_slot_retain",
             crate::c_abi::rc::gos_rt_option_slot_retain as *const u8,
         ),
@@ -2945,6 +2973,14 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
         (
             "gos_rt_result_default_with",
             crate::c_abi::gos_rt_result_default_with as *const u8,
+        ),
+        (
+            "gos_rt_debug_option",
+            crate::c_abi::gos_rt_debug_option as *const u8,
+        ),
+        (
+            "gos_rt_debug_result",
+            crate::c_abi::gos_rt_debug_result as *const u8,
         ),
         (
             "gos_rt_result_disc",

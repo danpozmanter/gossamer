@@ -1033,6 +1033,10 @@ fn emit_native_objects(
     Ok((object_paths, Some(build.triple)))
 }
 
+// The `Result` is load-bearing on unix (the `chmod` below can fail); on
+// non-unix the body is infallible, which is the only configuration where
+// clippy sees an always-`Ok` return.
+#[allow(clippy::unnecessary_wraps)]
 fn set_executable(path: &Path) -> Result<()> {
     #[cfg(unix)]
     {

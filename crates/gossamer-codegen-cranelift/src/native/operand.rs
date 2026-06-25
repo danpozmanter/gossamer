@@ -197,6 +197,12 @@ pub(super) enum PrintKind {
     /// A scalar-keyed, scalar/string-valued `HashMap` - rendered via
     /// `gos_rt_map_format`.
     Map,
+    /// `{:?}` of an `Option<T>` with a scalar / String payload, rendered via
+    /// `gos_rt_debug_option`. The `u8` is the payload formatter kind.
+    Option(u8),
+    /// `{:?}` of a `Result<T, E>` with scalar / String payloads, rendered via
+    /// `gos_rt_debug_result`. The two `u8`s are the Ok / Err payload kinds.
+    Result(u8, u8),
     Unsupported(&'static str),
 }
 
@@ -216,6 +222,25 @@ fn tuple_elem_tag(tcx: &TyCtxt, ty: Ty) -> Option<u8> {
         TyKind::Int(IntTy::I64 | IntTy::U64 | IntTy::Isize | IntTy::Usize) => Some(0),
         TyKind::Duration | TyKind::Instant => Some(0),
         TyKind::Float(FloatTy::F64) => Some(2),
+        TyKind::Bool => Some(3),
+        TyKind::Char => Some(4),
+        TyKind::String => Some(5),
+        _ => None,
+    }
+}
+
+/// Maps an `Option` / `Result` payload type to the `gos_rt_debug_*` formatter
+/// kind (0=i64/signed, 2=f64, 3=bool, 4=char, 5=String), or `None` for an
+/// aggregate / nested payload. A `u64` payload renders signed (kind 0) to match
+/// the VM, which stores the payload as a width-less i64.
+fn debug_payload_kind(tcx: &TyCtxt, ty: Ty) -> Option<u8> {
+    let mut ty = ty;
+    while let TyKind::Ref { inner, .. } = tcx.kind_of(ty) {
+        ty = *inner;
+    }
+    match tcx.kind_of(ty) {
+        TyKind::Int(_) => Some(0),
+        TyKind::Float(_) => Some(2),
         TyKind::Bool => Some(3),
         TyKind::Char => Some(4),
         TyKind::String => Some(5),
@@ -398,6 +423,29 @@ pub(super) fn operand_print_kind(body: &Body, tcx: &TyCtxt, operand: &Operand) -
                     PrintKind::Unsupported("channel")
                 }
                 TyKind::JsonValue => PrintKind::JsonValue,
+                // `{:?}` of a built-in by-value enum (`Option` def `u32::MAX-1`,
+                // `Result` def `u32::MAX`) with scalar / String payloads -
+                // rendered via the runtime debug helper. User structs / enums
+                // with a derived fmt are routed before reaching here.
+                TyKind::Adt { def, substs }
+                    if def.local == u32::MAX || def.local == u32::MAX - 1 =>
+                {
+                    let tys = substs.types();
+                    if def.local == u32::MAX - 1 {
+                        match tys.first().and_then(|t| debug_payload_kind(tcx, *t)) {
+                            Some(k) => PrintKind::Option(k),
+                            None => PrintKind::Unsupported("struct or enum"),
+                        }
+                    } else {
+                        match (
+                            tys.first().and_then(|t| debug_payload_kind(tcx, *t)),
+                            tys.get(1).and_then(|t| debug_payload_kind(tcx, *t)),
+                        ) {
+                            (Some(ok), Some(err)) => PrintKind::Result(ok, err),
+                            _ => PrintKind::Unsupported("struct or enum"),
+                        }
+                    }
+                }
                 TyKind::Adt { .. } => PrintKind::Unsupported("struct or enum"),
                 TyKind::Closure { .. } => PrintKind::Unsupported("closure"),
                 TyKind::FnDef { .. } | TyKind::FnPtr(_) | TyKind::FnTrait(_) => {

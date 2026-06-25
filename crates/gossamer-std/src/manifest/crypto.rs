@@ -72,18 +72,11 @@ use super::*;
 pub const CRYPTO_RAND: StdModule = StdModule {
     path: "std::crypto::rand",
     summary: "Secure random bytes from the host CSPRNG.",
-    items: &[
-        StdItem {
-            name: "fill",
-            kind: StdItemKind::Function,
-            doc: "Fills a buffer with random bytes.",
-        },
-        StdItem {
-            name: "bytes",
-            kind: StdItemKind::Function,
-            doc: "Returns a fresh random byte vector.",
-        },
-    ],
+    items: &[StdItem {
+        name: "bytes",
+        kind: StdItemKind::Function,
+        doc: "Returns a fresh random byte vector.",
+    }],
 };
 
 pub const CRYPTO_SHA256: StdModule = StdModule {
@@ -249,11 +242,6 @@ pub const CRYPTO_X509: StdModule = StdModule {
             kind: StdItemKind::Function,
             doc: "Parses one PEM-encoded certificate.",
         },
-        StdItem {
-            name: "parse_der",
-            kind: StdItemKind::Function,
-            doc: "Parses one DER-encoded certificate.",
-        },
     ],
 };
 
@@ -288,16 +276,6 @@ pub const HASH_FNV: StdModule = StdModule {
     path: "std::hash::fnv",
     summary: "FNV-1a non-cryptographic hash (32-bit, 64-bit).",
     items: &[
-        StdItem {
-            name: "fnv1a_32",
-            kind: StdItemKind::Function,
-            doc: "One-shot 32-bit FNV-1a of a byte slice.",
-        },
-        StdItem {
-            name: "fnv1a_64",
-            kind: StdItemKind::Function,
-            doc: "One-shot 64-bit FNV-1a of a byte slice.",
-        },
         StdItem {
             name: "hash32",
             kind: StdItemKind::Function,
@@ -422,16 +400,6 @@ pub const CRYPTO_PASSWORD: StdModule = StdModule {
             name: "needs_rehash",
             kind: StdItemKind::Function,
             doc: "True iff the stored PHC's parameters are below the current defaults.",
-        },
-        StdItem {
-            name: "current_algorithm",
-            kind: StdItemKind::Function,
-            doc: "Active password-hash algorithm name (currently `argon2id`).",
-        },
-        StdItem {
-            name: "current_params",
-            kind: StdItemKind::Function,
-            doc: "Active parameters: (m_cost_kib, t_cost_iters, p_cost_parallelism).",
         },
     ],
 };

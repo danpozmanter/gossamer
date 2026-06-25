@@ -238,6 +238,19 @@ const SPECS: &[Spec] = &[
         allow_nonzero: true,
         ..spec("feature-testing-examples/oob_index_aggregate_panic.gos")
     },
+    // Integer divide-by-zero panics with GX0005 + exit 101 identically on
+    // every tier (the SIGFPE-vs-clean-panic class had no 3-tier gate).
+    Spec {
+        allow_nonzero: true,
+        ..spec("feature-testing-examples/div_zero_panic.gos")
+    },
+    // A match that slips past exhaustiveness (nested int payloads) panics
+    // cleanly and identically on the VM and the compiled backstop - was a
+    // VM-returns-zero / compiled-returns-garbage divergence.
+    Spec {
+        allow_nonzero: true,
+        ..spec("feature-testing-examples/non_exhaustive_match_panic.gos")
+    },
     // Win B stdlib differential-parity coverage: every function in these
     // module groups produces bit-identical output on the VM, Cranelift, and
     // LLVM tiers (the sweep that found and fixed the split/equal_fold/parse,
@@ -249,6 +262,7 @@ const SPECS: &[Spec] = &[
     spec("feature-testing-examples/winb_text_fmt.gos"),
     spec("feature-testing-examples/winb_data_crypto.gos"),
     spec("feature-testing-examples/winb_data_encoding.gos"),
+    spec("feature-testing-examples/binary_u8_varint_encode.gos"),
     spec("feature-testing-examples/winb_data_math.gos"),
     spec("feature-testing-examples/winb_data_regex.gos"),
     spec("feature-testing-examples/winb_coll_vec.gos"),
@@ -300,6 +314,9 @@ const SPECS: &[Spec] = &[
     // variant / nested / or-pattern) and const generic array length.
     spec("feature-testing-examples/let_destructure_struct.gos"),
     spec("feature-testing-examples/const_generic_array_len.gos"),
+    // Closure capturing an inline aggregate reads every field, and the heap
+    // box survives an escaping closure.
+    spec("feature-testing-examples/closure_capture_aggregate.gos"),
     // Let-chains, open-ended range patterns, fixed-array slice patterns,
     // bounds-safe String.byte_at, and in-place / flat numeric Vec growth.
     spec("feature-testing-examples/let_chains.gos"),
@@ -308,6 +325,8 @@ const SPECS: &[Spec] = &[
     spec("feature-testing-examples/string_byte_at_oob.gos"),
     spec("feature-testing-examples/vec_inplace_growth.gos"),
     spec("feature-testing-examples/record_update.gos"),
+    spec("feature-testing-examples/nested_struct_record_update.gos"),
+    spec("feature-testing-examples/map_iter_destructure.gos"),
     spec("feature-testing-examples/trait_bounds.gos"),
     spec("feature-testing-examples/nested_field_access.gos"),
     spec("feature-testing-examples/rc_elision.gos"),
@@ -596,6 +615,13 @@ const SPECS: &[Spec] = &[
     spec("feature-testing-examples/map_pop_then_drop.gos"),
     spec("feature-testing-examples/rc_move_elision.gos"),
     spec("feature-testing-examples/map_struct_value_access.gos"),
+    spec("feature-testing-examples/map_iter_wildcard_destructure.gos"),
+    spec("feature-testing-examples/mut_self_method_dispatch.gos"),
+    spec("feature-testing-examples/single_field_struct_aggregate.gos"),
+    spec("feature-testing-examples/struct_tuple_map_key.gos"),
+    spec("feature-testing-examples/struct_keyed_map_value_iter.gos"),
+    spec("feature-testing-examples/debug_option_result.gos"),
+    spec("feature-testing-examples/goroutine_panic_join.gos"),
     spec("feature-testing-examples/chan_struct_local_recv.gos"),
     spec("feature-testing-examples/chan_select_struct_payload.gos"),
     spec("feature-testing-examples/net_tls_client.gos"),
@@ -724,6 +750,13 @@ const SPECS: &[Spec] = &[
     spec("feature-testing-examples/unicode_full.gos"),
     spec("feature-testing-examples/string_len_bytes.gos"),
     spec("feature-testing-examples/concurrent_atomic.gos"),
+    // Same cross-goroutine-registry class as concurrent_atomic, for the
+    // HashSet and VecDeque handle registries: a handle built before a
+    // channel yield (which the scheduler may resume on another worker
+    // thread) must stay usable afterward. A thread-local registry lost
+    // the handle across the migration; the registries are now global.
+    spec("feature-testing-examples/goroutine_set_handle.gos"),
+    spec("feature-testing-examples/goroutine_deque_handle.gos"),
     spec("feature-testing-examples/stdlib_parity_batch.gos"),
     spec("feature-testing-examples/compress_zstd.gos"),
     spec("feature-testing-examples/compress_bzip2.gos"),
@@ -1032,8 +1065,7 @@ fn is_executable(p: &Path) -> bool {
 fn is_executable(p: &Path) -> bool {
     p.extension()
         .and_then(|s| s.to_str())
-        .map(|e| e.eq_ignore_ascii_case("exe"))
-        .unwrap_or(false)
+        .is_some_and(|e| e.eq_ignore_ascii_case("exe"))
 }
 
 fn run_native(bin: &Path, args: &[&str], stdin: &[u8]) -> Run {

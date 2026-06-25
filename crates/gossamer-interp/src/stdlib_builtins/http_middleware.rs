@@ -161,10 +161,7 @@ pub(crate) fn builtin_mw_decode_basic_auth(args: &[Value]) -> RuntimeResult<Valu
 /// `gos_rt_middleware_serve` composition.
 pub(crate) fn builtin_mw_tag(args: &[Value]) -> RuntimeResult<Value> {
     let inner = args.first().cloned().unwrap_or(Value::Unit);
-    Ok(Value::struct_(
-        "Middleware",
-        vec![(Ident::new("__mw_inner"), inner)],
-    ))
+    Ok(Value::struct_("Middleware", vec![("__mw_inner", inner)]))
 }
 
 /// Prepends `mw:` to a response body Value, preserving its String /
@@ -194,7 +191,7 @@ pub(crate) fn native_middleware_serve(
         Some(Value::Struct(s)) => s
             .fields
             .iter()
-            .find(|(f, _)| f.name == "__mw_inner")
+            .find(|(f, _)| (*f) == "__mw_inner")
             .map(|(_, v)| v.clone()),
         _ => None,
     };
@@ -215,14 +212,14 @@ pub(crate) fn native_middleware_serve(
     let Value::Struct(resp_inner) = response else {
         return Ok(result);
     };
-    let new_fields: Vec<(Ident, Value)> = resp_inner
+    let new_fields: Vec<(&'static str, Value)> = resp_inner
         .fields
         .iter()
         .map(|(f, v)| {
-            if f.name == "body" {
-                (f.clone(), prepend_mw(v))
+            if *f == "body" {
+                (*f, prepend_mw(v))
             } else {
-                (f.clone(), v.clone())
+                (*f, v.clone())
             }
         })
         .collect();

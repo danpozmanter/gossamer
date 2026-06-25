@@ -65,7 +65,7 @@ fn request_body_string(req: &Value) -> String {
         return String::new();
     };
     for (field, val) in &inner.fields {
-        if field.name == "body" {
+        if (*field) == "body" {
             if let Value::String(s) = val {
                 return s.as_str().to_string();
             }
@@ -81,7 +81,7 @@ fn request_header_value(req: &Value, name: &str) -> Option<String> {
         return None;
     };
     for (field, val) in &inner.fields {
-        if field.name == "headers" {
+        if (*field) == "headers" {
             if let Value::Array(items) = val {
                 for item in items.iter() {
                     if let Value::Tuple(t) = item {
@@ -196,7 +196,7 @@ fn values_lookup(req: &Value, name: &str) -> Option<String> {
         return None;
     };
     for (field, val) in &inner.fields {
-        if field.name == "__values" {
+        if (*field) == "__values" {
             if let Value::Array(items) = val {
                 for item in items.iter() {
                     if let Value::Tuple(t) = item {
@@ -241,7 +241,7 @@ pub(crate) fn builtin_request_set_value(args: &[Value]) -> RuntimeResult<Value> 
     // pair (replace-then-push).
     let mut pairs: Vec<Value> = Vec::new();
     for (field, val) in &inner.fields {
-        if field.name == "__values" {
+        if (*field) == "__values" {
             if let Value::Array(items) = val {
                 for item in items.iter() {
                     if let Value::Tuple(t) = item {
@@ -262,12 +262,12 @@ pub(crate) fn builtin_request_set_value(args: &[Value]) -> RuntimeResult<Value> 
     ])));
     // Rebuild the struct, dropping the old `__values` field and
     // appending the refreshed one; every other field is carried over.
-    let mut fields: Vec<(Ident, Value)> = inner
+    let mut fields: Vec<(&'static str, Value)> = inner
         .fields
         .iter()
-        .filter(|(f, _)| f.name != "__values")
+        .filter(|(f, _)| (*f) != "__values")
         .cloned()
         .collect();
-    fields.push((Ident::new("__values"), Value::Array(Arc::new(pairs))));
+    fields.push(("__values", Value::Array(Arc::new(pairs))));
     Ok(Value::struct_(inner.name, fields))
 }

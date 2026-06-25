@@ -125,7 +125,12 @@ pub fn logger<H: Handler + 'static>(inner: H) -> impl Handler {
 pub fn recoverer<H: Handler + std::panic::RefUnwindSafe + 'static>(inner: H) -> impl Handler {
     let inner = Arc::new(inner);
     move |req: &Request, params: &Params| -> Response {
-        let result = std::panic::catch_unwind(|| inner.serve(req, params));
+        // parking_lot locks in the request's `Context` are not
+        // RefUnwindSafe (no poison machinery), and they are never held
+        // across the handler call, so observing `req` after a caught
+        // panic is safe - assert it, matching the HTTP/2 path.
+        let result =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| inner.serve(req, params)));
         match result {
             Ok(r) => r,
             Err(payload) => {

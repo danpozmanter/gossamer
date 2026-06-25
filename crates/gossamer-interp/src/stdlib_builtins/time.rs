@@ -221,34 +221,49 @@ pub(crate) fn builtin_time_duration_as_micros(args: &[Value]) -> RuntimeResult<V
 //
 // Sockets are referred to from Gossamer code via opaque handle values
 // (`net::TcpStream` / `net::TcpListener` / `net::UdpSocket` structs
-// holding a __handle: i64). The Rust-side socket lives in a per-thread
-// registry keyed by handle id.
-
-thread_local! {
-    pub(crate) static NEXT_NET_ID: RefCell<i64> = const { RefCell::new(1) };
-    #[allow(clippy::missing_const_for_thread_local)]
-    pub(crate) static TCP_STREAM_REGISTRY: RefCell<StdHashMap<i64, net_std::TcpStream>> =
-        RefCell::new(StdHashMap::new());
-    #[allow(clippy::missing_const_for_thread_local)]
-    pub(crate) static TLS_STREAM_REGISTRY: RefCell<StdHashMap<i64, net_std::TlsStream>> =
-        RefCell::new(StdHashMap::new());
-    #[allow(clippy::missing_const_for_thread_local)]
-    pub(crate) static TCP_LISTENER_REGISTRY: RefCell<StdHashMap<i64, net_std::TcpListener>> =
-        RefCell::new(StdHashMap::new());
-    #[allow(clippy::missing_const_for_thread_local)]
-    pub(crate) static UDP_REGISTRY: RefCell<StdHashMap<i64, net_std::UdpSocket>> =
-        RefCell::new(StdHashMap::new());
-    #[cfg(unix)]
-    #[allow(clippy::missing_const_for_thread_local)]
-    pub(crate) static UNIX_STREAM_REGISTRY:
-        RefCell<StdHashMap<i64, std::os::unix::net::UnixStream>> =
-        RefCell::new(StdHashMap::new());
-    #[cfg(unix)]
-    #[allow(clippy::missing_const_for_thread_local)]
-    pub(crate) static UNIX_LISTENER_REGISTRY:
-        RefCell<StdHashMap<i64, std::os::unix::net::UnixListener>> =
-        RefCell::new(StdHashMap::new());
-}
+// holding a __handle: i64). The Rust-side socket lives in a
+// process-global registry keyed by handle id.
+//
+// Process-global (not `thread_local!`): goroutines run on an OS
+// worker-thread pool, so a socket handle minted on one worker must
+// resolve on another after the goroutine migrates between workers. A
+// `thread_local!` registry silently lost every cross-goroutine update.
+// Mirrors the set/deque/sync registries.
+//
+// The lock discipline is what keeps this global registry deadlock-free:
+// each socket is held behind its own `Arc<parking_lot::Mutex<_>>`, and
+// the registry mutex is held only for the O(1) map lookup that clones
+// the `Arc` out. The (possibly blocking) I/O then runs under the
+// per-socket mutex alone, never under the registry mutex. So when the
+// VM scheduler parks a goroutine inside a blocking `read` / `accept` /
+// `recv_from` (and its worker thread moves on to another goroutine),
+// only that one socket's mutex is held - the registry stays free for
+// every other socket access. The per-socket mutex serializes concurrent
+// ops on the same socket, which is correct. The stream registries wrap
+// the socket in `Option<_>` so `start_tls` can move the plaintext stream
+// out by value and `close` can drop it, modelling close idempotently.
+pub(crate) static NEXT_NET_ID: GlobalReg<i64> =
+    GlobalReg::new(|| parking_lot::ReentrantMutex::new(RefCell::new(1)));
+pub(crate) static TCP_STREAM_REGISTRY: GlobalReg<
+    StdHashMap<i64, Arc<parking_lot::Mutex<Option<net_std::TcpStream>>>>,
+> = GlobalReg::new(|| parking_lot::ReentrantMutex::new(RefCell::new(StdHashMap::new())));
+pub(crate) static TLS_STREAM_REGISTRY: GlobalReg<
+    StdHashMap<i64, Arc<parking_lot::Mutex<net_std::TlsStream>>>,
+> = GlobalReg::new(|| parking_lot::ReentrantMutex::new(RefCell::new(StdHashMap::new())));
+pub(crate) static TCP_LISTENER_REGISTRY: GlobalReg<
+    StdHashMap<i64, Arc<parking_lot::Mutex<net_std::TcpListener>>>,
+> = GlobalReg::new(|| parking_lot::ReentrantMutex::new(RefCell::new(StdHashMap::new())));
+pub(crate) static UDP_REGISTRY: GlobalReg<
+    StdHashMap<i64, Arc<parking_lot::Mutex<net_std::UdpSocket>>>,
+> = GlobalReg::new(|| parking_lot::ReentrantMutex::new(RefCell::new(StdHashMap::new())));
+#[cfg(unix)]
+pub(crate) static UNIX_STREAM_REGISTRY: GlobalReg<
+    StdHashMap<i64, Arc<parking_lot::Mutex<std::os::unix::net::UnixStream>>>,
+> = GlobalReg::new(|| parking_lot::ReentrantMutex::new(RefCell::new(StdHashMap::new())));
+#[cfg(unix)]
+pub(crate) static UNIX_LISTENER_REGISTRY: GlobalReg<
+    StdHashMap<i64, Arc<parking_lot::Mutex<std::os::unix::net::UnixListener>>>,
+> = GlobalReg::new(|| parking_lot::ReentrantMutex::new(RefCell::new(StdHashMap::new())));
 
 pub(crate) fn next_net_id() -> i64 {
     NEXT_NET_ID.with(|c| {
@@ -259,17 +274,26 @@ pub(crate) fn next_net_id() -> i64 {
     })
 }
 
+/// Clones out the per-socket `Arc` for `id` under a brief registry-lock,
+/// releasing the global registry lock before any blocking I/O runs.
+pub(crate) fn fetch_socket<T: 'static>(
+    reg: &GlobalReg<StdHashMap<i64, Arc<parking_lot::Mutex<T>>>>,
+    id: i64,
+) -> Option<Arc<parking_lot::Mutex<T>>> {
+    reg.with(|r| r.borrow().get(&id).cloned())
+}
+
 pub(crate) fn handle_struct(name: &'static str, id: i64) -> Value {
     Value::struct_(
         name,
-        Arc::unwrap_or_clone(Arc::new(vec![(Ident::new("__handle"), Value::Int(id))])),
+        Arc::unwrap_or_clone(Arc::new(vec![("__handle", Value::Int(id))])),
     )
 }
 
 pub(crate) fn handle_id(value: &Value) -> Option<i64> {
     if let Value::Struct(inner) = value {
         for (ident, v) in &inner.fields {
-            if ident.name == "__handle" {
+            if (*ident) == "__handle" {
                 if let Value::Int(n) = v {
                     return Some(*n);
                 }

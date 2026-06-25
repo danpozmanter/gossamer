@@ -175,11 +175,6 @@ pub const OS_SIGNAL: StdModule = StdModule {
             kind: StdItemKind::Function,
             doc: "Non-blocking poll: returns true if the subscribed signal has fired.",
         },
-        StdItem {
-            name: "deliver",
-            kind: StdItemKind::Function,
-            doc: "Test helper: synthesise a signal delivery without involving the OS.",
-        },
     ],
 };
 
@@ -251,38 +246,6 @@ pub const PATH: StdModule = StdModule {
             name: "has_prefix",
             kind: StdItemKind::Function,
             doc: "Reports whether the path begins with a prefix component-wise.",
-        },
-    ],
-};
-
-pub const PATH_NATIVE: StdModule = StdModule {
-    path: "std::path::native",
-    summary: "Native-separator wrappers over `std::path` (backslash on Windows).",
-    items: &[
-        StdItem {
-            name: "SEPARATOR",
-            kind: StdItemKind::Const,
-            doc: "Platform-preferred path separator character.",
-        },
-        StdItem {
-            name: "join",
-            kind: StdItemKind::Function,
-            doc: "Joins two components using the platform separator.",
-        },
-        StdItem {
-            name: "clean",
-            kind: StdItemKind::Function,
-            doc: "Canonicalises a path into native-separator form.",
-        },
-        StdItem {
-            name: "to_posix",
-            kind: StdItemKind::Function,
-            doc: "Rewrites a native-separator path into posix form.",
-        },
-        StdItem {
-            name: "to_native",
-            kind: StdItemKind::Function,
-            doc: "Rewrites a posix path into native-separator form.",
         },
     ],
 };
@@ -390,16 +353,6 @@ pub const FS: StdModule = StdModule {
             name: "canonicalize",
             kind: StdItemKind::Function,
             doc: "Resolves a path to an absolute, symlink-free canonical form.",
-        },
-        StdItem {
-            name: "glob",
-            kind: StdItemKind::Function,
-            doc: "Returns paths matching a glob pattern (*, ?, [abc], **).",
-        },
-        StdItem {
-            name: "eval_symlinks",
-            kind: StdItemKind::Function,
-            doc: "Resolves all symlinks along a path; mirrors Go's filepath.EvalSymlinks.",
         },
         StdItem {
             name: "list_dir",
@@ -578,16 +531,6 @@ pub const OS: StdModule = StdModule {
             name: "exit",
             kind: StdItemKind::Function,
             doc: "Deprecated: use process::exit.",
-        },
-        StdItem {
-            name: "open",
-            kind: StdItemKind::Function,
-            doc: "Deprecated: use fs::open.",
-        },
-        StdItem {
-            name: "create",
-            kind: StdItemKind::Function,
-            doc: "Deprecated: use fs::create.",
         },
         StdItem {
             name: "read_file",

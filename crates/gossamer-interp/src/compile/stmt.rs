@@ -134,22 +134,7 @@ impl<'tcx> FnBuilder<'tcx> {
                 Ok(false)
             }
             HirStmtKind::Expr { expr, .. } => {
-                // A bare assignment statement throws its `()` result away;
-                // compile the store directly so no `LoadConst(Unit)` is
-                // emitted for a value nothing reads.
-                if let HirExprKind::Assign { place, value } = &expr.kind {
-                    self.compile_assign_store(place, value)?;
-                } else if let HirExprKind::MethodCall {
-                    receiver,
-                    name,
-                    args,
-                } = &expr.kind
-                    && self.try_compile_inplace_vec_stmt(receiver, name, args)?
-                {
-                    // Handled by a dedicated in-place Vec op; result discarded.
-                } else {
-                    let _ = self.compile_expr(expr)?;
-                }
+                self.compile_expr_discarded(expr)?;
                 Ok(expr_diverges(expr))
             }
             HirStmtKind::Go(expr) => {
@@ -180,6 +165,29 @@ impl<'tcx> FnBuilder<'tcx> {
             }
             HirStmtKind::Item(_) => Err(RuntimeError::Unsupported("nested items")),
         }
+    }
+
+    /// Compiles `expr` purely for its side effects, discarding its value.
+    /// An assignment lowers straight to its store and an in-place Vec
+    /// mutation to its dedicated op, so neither materialises the dead
+    /// `LoadConst(Unit)` its expression form would otherwise yield - the
+    /// one register nothing reads in a tight loop body. Every other shape
+    /// compiles normally and leaves its result register unread.
+    pub(crate) fn compile_expr_discarded(&mut self, expr: &HirExpr) -> RuntimeResult<()> {
+        if let HirExprKind::Assign { place, value } = &expr.kind {
+            self.compile_assign_store(place, value)?;
+        } else if let HirExprKind::MethodCall {
+            receiver,
+            name,
+            args,
+        } = &expr.kind
+            && self.try_compile_inplace_vec_stmt(receiver, name, args)?
+        {
+            // Handled by a dedicated in-place Vec op; result discarded.
+        } else {
+            let _ = self.compile_expr(expr)?;
+        }
+        Ok(())
     }
 
     /// Compiles `place = value` in expression position, yielding the

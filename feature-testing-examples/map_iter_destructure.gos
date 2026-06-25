@@ -1,0 +1,25 @@
+// Iterating a HashMap with `for (k, v) in m.iter()`, including `_`
+// wildcards in the tuple destructure, must lower identically on every
+// tier. A `_` in a slot used to under-infer the tuple element type,
+// which ICE'd the compiled-tier for-vec lowering; the map's `.iter()`
+// is now typed `Vec<(K, V)>` and is iterated over its runtime snapshot.
+
+use std::collections::HashMap
+
+fn main() {
+    let mut m: HashMap<String, i64> = HashMap::new()
+    m.insert(format!("a"), 1)
+    m.insert(format!("b"), 2)
+    m.insert(format!("c"), 3)
+
+    let mut both = 0
+    for (k, v) in m.iter() { both += k.len() + v }
+
+    let mut vals = 0
+    for (_, v) in m.iter() { vals += v }
+
+    let mut klen = 0
+    for (k, _) in m.iter() { klen += k.len() }
+
+    println!("both={} vals={} klen={}", both, vals, klen)
+}

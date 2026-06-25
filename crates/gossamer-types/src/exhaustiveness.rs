@@ -287,8 +287,33 @@ impl Checker<'_> {
         match self.tcx.kind(ty)? {
             TyKind::Bool => Some(missing_bool(patterns)),
             TyKind::Adt { def, .. } => {
-                let variants = self.enums_by_def(*def)?;
-                Some(missing_variants(&variants, patterns))
+                if let Some(variants) = self.enums_by_def(*def) {
+                    return Some(missing_variants(&variants, patterns));
+                }
+                // `Option` / `Result` are built-in sentinel ADTs, absent from
+                // the user-enum table but finitely enumerable. Without this a
+                // `match o { Some(n) => .. }` missing `None` was treated as
+                // exhaustive, and the compiled tier read an uninitialised
+                // discriminant.
+                match self.tcx.def_name(*def) {
+                    Some("Option") => Some(missing_variants(
+                        &["Some".to_string(), "None".to_string()],
+                        patterns,
+                    )),
+                    Some("Result") => Some(missing_variants(
+                        &["Ok".to_string(), "Err".to_string()],
+                        patterns,
+                    )),
+                    _ => None,
+                }
+            }
+            // Scalar types whose value domain cannot be exhausted by listing
+            // literals require a catch-all arm. `report_non_exhaustive`
+            // returns before reaching here when an unguarded wildcard is
+            // present, so arriving here means the match has no catch-all and
+            // is therefore non-exhaustive - the witness is `_`.
+            TyKind::Int(_) | TyKind::Float(_) | TyKind::String | TyKind::Char => {
+                Some(vec!["_".to_string()])
             }
             _ => None,
         }

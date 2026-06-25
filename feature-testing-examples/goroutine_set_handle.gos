@@ -1,0 +1,46 @@
+// Cross-tier regression for a cross-goroutine HashSet handle. The worker
+// goroutine builds a `HashSet<i64>`, then parks on `gate.recv()` - a
+// yield point the scheduler can resume on a DIFFERENT OS worker thread
+// than the one the set was built on. The inserts and reads after the
+// yield must still hit the same set. The VM previously kept its HashSet
+// registry in `thread_local!` storage, so after such a migration the
+// handle resolved to nothing on the new worker thread: the post-yield
+// inserts no-op'd and the reads collapsed to the empty-set defaults
+// (VM len=0/c10=0/c30=0, compiled len=3/c10=1/c30=1). The registry is
+// now process-global, so all three tiers agree. The set is owned by a
+// single goroutine throughout, so the compiled tier (where a set is a
+// raw pointer) never sees sharing or concurrent access; channel close is
+// the deterministic completion signal - no sleeps.
+
+use std::sync::channel
+use std::collections::HashSet
+
+fn worker(gate: Receiver<i64>, tx: Sender<i64>) {
+    let s: HashSet<i64> = HashSet::new()
+    s.insert(10)
+    s.insert(20)
+    let _ = gate.recv()
+    s.insert(30)
+    s.insert(20)
+    let c10 = if s.contains(10) { 1 } else { 0 }
+    let c30 = if s.contains(30) { 1 } else { 0 }
+    tx.send(s.len())
+    tx.send(c10)
+    tx.send(c30)
+    tx.close()
+}
+
+fn main() {
+    let (gate_tx, gate_rx) = channel()
+    let (tx, rx) = channel()
+    go worker(gate_rx, tx)
+    gate_tx.send(1)
+    gate_tx.close()
+    let mut vals = []
+    while let Some(v) = rx.recv() {
+        vals.push(v)
+    }
+    println!("len={}", vals[0])
+    println!("c10={}", vals[1])
+    println!("c30={}", vals[2])
+}

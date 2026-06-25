@@ -48,17 +48,18 @@ pub fn join<T: std::fmt::Debug>(handle: JoinHandle<T>) -> Result<T, Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Arc, Mutex};
+    use parking_lot::Mutex;
+    use std::sync::Arc;
 
     #[test]
     fn spawn_and_join() {
         let counter = Arc::new(Mutex::new(0i32));
         let c2 = Arc::clone(&counter);
         let h = spawn(move || {
-            *c2.lock().unwrap() += 1;
+            *c2.lock() += 1;
         });
         join(h).expect("thread should not panic");
-        assert_eq!(*counter.lock().unwrap(), 1);
+        assert_eq!(*counter.lock(), 1);
     }
 
     #[test]

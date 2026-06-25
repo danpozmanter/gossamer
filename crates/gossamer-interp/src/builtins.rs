@@ -85,7 +85,7 @@ mod thread_local_registries {
         pub(crate) static SET_REGISTRY: RefCell<std::collections::HashMap<u64, SetState>> =
             RefCell::new(std::collections::HashMap::new());
         pub(crate) static CELL_REGISTRY: RefCell<CellMap> = RefCell::new(std::collections::HashMap::new());
-        pub(crate) static STRUCT_LAYOUTS: RefCell<std::collections::HashMap<String, Vec<String>>> =
+        pub(crate) static STRUCT_LAYOUTS: RefCell<std::collections::HashMap<String, Vec<&'static str>>> =
             RefCell::new(std::collections::HashMap::new());
     }
 }
@@ -102,7 +102,20 @@ pub(crate) use thread_local_registries::{
     reason = "stored verbatim in a RandomState-typed thread-local; generic hasher would force the thread-local to be generic too"
 )]
 pub fn set_struct_layouts(layouts: std::collections::HashMap<String, Vec<String>>) {
-    STRUCT_LAYOUTS.with(|cell| *cell.borrow_mut() = layouts);
+    // Intern each field name once, here at load time, so the per-construction
+    // path in `builtin_struct_new` copies cached `&'static str` pointers with
+    // no interning (and no global-intern lock) per struct value built.
+    let interned: std::collections::HashMap<String, Vec<&'static str>> = layouts
+        .into_iter()
+        .map(|(name, fields)| {
+            let interned_fields = fields
+                .iter()
+                .map(|f| crate::value::intern_type_name(f))
+                .collect();
+            (name, interned_fields)
+        })
+        .collect();
+    STRUCT_LAYOUTS.with(|cell| *cell.borrow_mut() = interned);
 }
 
 #[derive(Debug, Clone)]
@@ -141,9 +154,9 @@ pub(crate) fn make_cell(set_id: u64, flag_name: &str, default: Value) -> Value {
     Value::struct_(
         "__Cell",
         vec![
-            (Ident::new("__set_id"), Value::Int(set_id as i64)),
+            ("__set_id", Value::Int(set_id as i64)),
             (
-                Ident::new("__flag_name"),
+                "__flag_name",
                 Value::String(SmolStr::from(flag_name.to_string())),
             ),
         ],
@@ -1104,21 +1117,12 @@ fn flag_spec(kind: &str, long: &str, default: Value, help: &str, short: Option<c
     Value::struct_(
         "FlagSpec",
         vec![
+            ("kind", Value::String(SmolStr::from(kind.to_string()))),
+            ("long", Value::String(SmolStr::from(long.to_string()))),
+            ("default", default),
+            ("help", Value::String(SmolStr::from(help.to_string()))),
             (
-                Ident::new("kind"),
-                Value::String(SmolStr::from(kind.to_string())),
-            ),
-            (
-                Ident::new("long"),
-                Value::String(SmolStr::from(long.to_string())),
-            ),
-            (Ident::new("default"), default),
-            (
-                Ident::new("help"),
-                Value::String(SmolStr::from(help.to_string())),
-            ),
-            (
-                Ident::new("short"),
+                "short",
                 match short {
                     Some(c) => Value::Char(c),
                     None => Value::Unit,
@@ -1168,7 +1172,7 @@ fn builtin_flag_spec_bool(args: &[Value]) -> RuntimeResult<Value> {
 /// returns the `(long_name, cell_value)` pair for the generated
 /// `Flags` struct. Pulled out of `builtin_flag_define` so the
 /// entry-point stays short enough for clippy's body-length lint.
-fn register_flag_spec(set_id: u64, spec: &Value) -> Option<(Ident, Value)> {
+fn register_flag_spec(set_id: u64, spec: &Value) -> Option<(&'static str, Value)> {
     let Value::Struct(spec_inner) = spec else {
         return None;
     };
@@ -1179,29 +1183,29 @@ fn register_flag_spec(set_id: u64, spec: &Value) -> Option<(Ident, Value)> {
     }
     let kind = spec_fields
         .iter()
-        .find(|(i, _)| i.name == "kind")
+        .find(|(i, _)| (*i) == "kind")
         .and_then(|(_, v)| as_str(v))
         .unwrap_or("")
         .to_string();
     let long = spec_fields
         .iter()
-        .find(|(i, _)| i.name == "long")
+        .find(|(i, _)| (*i) == "long")
         .and_then(|(_, v)| as_str(v))
         .unwrap_or("")
         .to_string();
     let default = spec_fields
         .iter()
-        .find(|(i, _)| i.name == "default")
+        .find(|(i, _)| (*i) == "default")
         .map_or(Value::Unit, |(_, v)| v.clone());
     let help = spec_fields
         .iter()
-        .find(|(i, _)| i.name == "help")
+        .find(|(i, _)| (*i) == "help")
         .and_then(|(_, v)| as_str(v))
         .unwrap_or("")
         .to_string();
     let short = spec_fields
         .iter()
-        .find(|(i, _)| i.name == "short")
+        .find(|(i, _)| (*i) == "short")
         .and_then(|(_, v)| match v {
             Value::Char(c) => Some(*c),
             _ => None,
@@ -1227,7 +1231,7 @@ fn register_flag_spec(set_id: u64, spec: &Value) -> Option<(Ident, Value)> {
         }
     });
     let cell = make_cell(set_id, &long, default);
-    Some((Ident::new(&long), cell))
+    Some((crate::value::intern_type_name(&long), cell))
 }
 
 /// Batch constructor. Creates the internal `Set`, registers every
@@ -1258,11 +1262,8 @@ fn builtin_flag_define(args: &[Value]) -> RuntimeResult<Value> {
             },
         );
     });
-    let mut fields: Vec<(Ident, Value)> = Vec::with_capacity(specs.len() + 1);
-    fields.push((
-        Ident::new("__set_id"),
-        Value::Int(i64::try_from(set_id).unwrap_or(0)),
-    ));
+    let mut fields: Vec<(&'static str, Value)> = Vec::with_capacity(specs.len() + 1);
+    fields.push(("__set_id", Value::Int(i64::try_from(set_id).unwrap_or(0))));
     for spec in specs {
         if let Some(entry) = register_flag_spec(set_id, spec) {
             fields.push(entry);
@@ -1277,10 +1278,7 @@ fn builtin_flag_define(args: &[Value]) -> RuntimeResult<Value> {
     ));
     let set_value = Value::struct_(
         "Set",
-        vec![(
-            Ident::new("__id"),
-            Value::Int(i64::try_from(set_id).unwrap_or(0)),
-        )],
+        vec![("__id", Value::Int(i64::try_from(set_id).unwrap_or(0)))],
     );
     let _ = crate::flag_set_builtins::builtin_flag_set_parse(&[set_value, args_array]);
     Ok(Value::struct_(
@@ -1372,12 +1370,28 @@ fn install_method_helpers(globals: &mut Vec<(&'static str, Value)>) {
     globals.push(("Vec::slice", builtin("Vec::slice", builtin_vec_slice)));
     globals.push(("slice", builtin("slice", builtin_str_or_vec_slice)));
     // 0.7.0 Vec read helpers - the compiled tier exposes these as
-    // methods on any Vec; keep the interpreter in lockstep.
+    // methods on any Vec; keep the interpreter in lockstep. Each is
+    // registered under both the bare name (free-fn form `first(xs)`) and
+    // the `Vec::` qualified key so a method call on a Vec/slice receiver
+    // resolves to the builtin even when a user free function of the same
+    // name (`fn first(xs)`) is in scope - the qualified key dominates the
+    // bare-name fallback in `Op::MethodCall` dispatch.
     globals.push(("first", builtin("first", builtin_first)));
+    globals.push(("Vec::first", builtin("Vec::first", builtin_first)));
     globals.push(("last", builtin("last", builtin_last)));
+    globals.push(("Vec::last", builtin("Vec::last", builtin_last)));
     globals.push(("reversed", builtin("reversed", builtin_reversed)));
+    globals.push(("Vec::reversed", builtin("Vec::reversed", builtin_reversed)));
     globals.push(("index_of", builtin("index_of", builtin_index_of)));
+    globals.push(("Vec::index_of", builtin("Vec::index_of", builtin_index_of)));
     globals.push(("count_of", builtin("count_of", builtin_count_of)));
+    globals.push(("Vec::count_of", builtin("Vec::count_of", builtin_count_of)));
+    globals.push(("Vec::contains", builtin("Vec::contains", builtin_contains)));
+    globals.push(("Vec::len", builtin("Vec::len", builtin_len)));
+    globals.push(("Vec::sort", builtin("Vec::sort", builtin_sort)));
+    globals.push(("Vec::sort_by", native("Vec::sort_by", native_sort_by)));
+    globals.push(("Vec::reverse", builtin("Vec::reverse", builtin_reverse)));
+    globals.push(("Vec::swap", builtin("Vec::swap", builtin_swap)));
     // 0.7.0 Result-returning Vec free-fn forms + HashMap::pop, matching
     // the compiled `gos_rt_vec_insert_safe` / `_remove_safe` /
     // `gos_rt_map_pop_*` surface.
@@ -1518,8 +1532,8 @@ fn native_variant_map_err(
 
 fn errors_struct(message: String, cause: Value) -> Value {
     let fields = vec![
-        (Ident::new("message"), Value::String(SmolStr::from(message))),
-        (Ident::new("cause"), cause),
+        ("message", Value::String(SmolStr::from(message))),
+        ("cause", cause),
     ];
     Value::struct_("errors::Error", Arc::unwrap_or_clone(Arc::new(fields)))
 }
@@ -1529,7 +1543,7 @@ fn errors_message_of(v: &Value) -> Option<String> {
         && inner.name == "errors::Error"
     {
         for (name, value) in &inner.fields {
-            if name.name == "message"
+            if *name == "message"
                 && let Value::String(s) = value
             {
                 return Some(s.as_str().to_string());
@@ -1544,7 +1558,7 @@ fn errors_cause_of(v: &Value) -> Option<Value> {
         && inner.name == "errors::Error"
     {
         for (name, value) in &inner.fields {
-            if name.name == "cause" {
+            if *name == "cause" {
                 return Some(value.clone());
             }
         }
@@ -1999,7 +2013,7 @@ fn builtin_field<const TAG: char>(args: &[Value]) -> RuntimeResult<Value> {
     match args.first() {
         Some(Value::Struct(inner)) => {
             for (ident, value) in &inner.fields {
-                if ident.name == field_name {
+                if (*ident) == field_name {
                     return Ok(value.clone());
                 }
             }
@@ -2196,17 +2210,14 @@ fn builtin_print(args: &[Value]) -> RuntimeResult<Value> {
 // `Stream::method` qualified key.
 
 fn stream_of(fd: i64) -> Value {
-    Value::struct_(
-        "Stream",
-        vec![(gossamer_ast::Ident::new("fd"), Value::Int(fd))],
-    )
+    Value::struct_("Stream", vec![("fd", Value::Int(fd))])
 }
 
 fn stream_fd(value: &Value) -> i64 {
     match value {
         Value::Struct(inner) if inner.name == "Stream" => {
             for (f_name, f_val) in &inner.fields {
-                if f_name.name == "fd" {
+                if (*f_name) == "fd" {
                     if let Value::Int(n) = f_val {
                         return *n;
                     }
@@ -2558,7 +2569,7 @@ fn builtin_http_response_text(args: &[Value]) -> RuntimeResult<Value> {
             let body = inner
                 .fields
                 .iter()
-                .find(|(ident, _)| ident.name == "body")
+                .find(|(ident, _)| (*ident) == "body")
                 .and_then(|(_, v)| as_str(v))
                 .unwrap_or_default();
             return Ok(ok_variant(Value::String(SmolStr::from(body.to_string()))));
@@ -2597,13 +2608,10 @@ fn builtin_http_response_stream(args: &[Value]) -> RuntimeResult<Value> {
     };
     crate::http_client_builtins::stream_consume_for_response(handle);
     let fields = vec![
-        (Ident::new("status"), Value::Int(status)),
-        (Ident::new("body"), Value::String(SmolStr::default())),
-        (
-            Ident::new("content_type"),
-            Value::String(SmolStr::from(content_type)),
-        ),
-        (Ident::new("__stream_handle"), Value::Int(handle)),
+        ("status", Value::Int(status)),
+        ("body", Value::String(SmolStr::default())),
+        ("content_type", Value::String(SmolStr::from(content_type))),
+        ("__stream_handle", Value::Int(handle)),
     ];
     Ok(Value::struct_("Response", fields))
 }
@@ -2626,7 +2634,7 @@ fn builtin_http_response_with_header(args: &[Value]) -> RuntimeResult<Value> {
         Value::String(SmolStr::from(value)),
     ]));
     let mut fields = inner.fields.clone();
-    if let Some((_, slot)) = fields.iter_mut().find(|(ident, _)| ident.name == "headers") {
+    if let Some((_, slot)) = fields.iter_mut().find(|(ident, _)| (*ident) == "headers") {
         let mut items = match slot {
             Value::Array(existing) => existing.as_ref().clone(),
             _ => Vec::new(),
@@ -2639,7 +2647,7 @@ fn builtin_http_response_with_header(args: &[Value]) -> RuntimeResult<Value> {
         items.push(pair);
         *slot = Value::Array(Arc::new(items));
     } else {
-        fields.push((Ident::new("headers"), Value::Array(Arc::new(vec![pair]))));
+        fields.push(("headers", Value::Array(Arc::new(vec![pair]))));
     }
     Ok(Value::struct_(inner.name, fields))
 }
@@ -2648,23 +2656,20 @@ fn builtin_http2_config_default(_args: &[Value]) -> RuntimeResult<Value> {
     let c = gossamer_std::http_h2::Config::default();
     let fields = vec![
         (
-            Ident::new("max_concurrent_streams"),
+            "max_concurrent_streams",
             Value::Int(i64::from(c.max_concurrent_streams)),
         ),
         (
-            Ident::new("initial_window_size"),
+            "initial_window_size",
             Value::Int(i64::from(c.initial_window_size)),
         ),
         (
-            Ident::new("initial_connection_window_size"),
+            "initial_connection_window_size",
             Value::Int(i64::from(c.initial_connection_window_size)),
         ),
+        ("max_frame_size", Value::Int(i64::from(c.max_frame_size))),
         (
-            Ident::new("max_frame_size"),
-            Value::Int(i64::from(c.max_frame_size)),
-        ),
-        (
-            Ident::new("max_header_list_size"),
+            "max_header_list_size",
             Value::Int(i64::from(c.max_header_list_size)),
         ),
     ];
@@ -2676,10 +2681,10 @@ fn builtin_http2_config_default(_args: &[Value]) -> RuntimeResult<Value> {
 
 fn response_struct(status: i64, body: String, content_type: &str) -> Value {
     let fields = vec![
-        (Ident::new("status"), Value::Int(status)),
-        (Ident::new("body"), Value::String(body.into())),
+        ("status", Value::Int(status)),
+        ("body", Value::String(body.into())),
         (
-            Ident::new("content_type"),
+            "content_type",
             Value::String(SmolStr::from(content_type.to_string())),
         ),
     ];
@@ -3246,18 +3251,15 @@ fn request_to_value(request: &http_std::Request) -> Value {
         .collect();
     let fields = vec![
         (
-            Ident::new("method"),
+            "method",
             Value::String(SmolStr::from(request.method.as_str().to_string())),
         ),
-        (Ident::new("path"), Value::String(bare_path.into())),
-        (Ident::new("query"), Value::String(query_string.into())),
-        (
-            Ident::new("query_pairs"),
-            Value::Array(Arc::new(query_pairs)),
-        ),
-        (Ident::new("headers"), Value::Array(Arc::new(headers))),
-        (Ident::new("body"), Value::String(body_text.into())),
-        (Ident::new("raw_body"), Value::Array(Arc::new(raw_body))),
+        ("path", Value::String(bare_path.into())),
+        ("query", Value::String(query_string.into())),
+        ("query_pairs", Value::Array(Arc::new(query_pairs))),
+        ("headers", Value::Array(Arc::new(headers))),
+        ("body", Value::String(body_text.into())),
+        ("raw_body", Value::Array(Arc::new(raw_body))),
     ];
     Value::struct_("Request", Arc::unwrap_or_clone(Arc::new(fields)))
 }
@@ -3274,7 +3276,7 @@ fn value_to_response(value: &Value) -> Option<http_std::Response> {
     let mut header_pairs: Vec<(String, String)> = Vec::new();
     let mut stream_handle: Option<i64> = None;
     for (ident, v) in fields {
-        match ident.name.as_str() {
+        match *ident {
             "__stream_handle" => {
                 if let Value::Int(h) = v {
                     stream_handle = Some(*h);
@@ -3786,9 +3788,9 @@ fn builtin_exec_run(args: &[Value]) -> RuntimeResult<Value> {
             let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
             let code = i64::from(out.status.code().unwrap_or(-1));
             let fields = vec![
-                (Ident::new("stdout"), Value::String(SmolStr::from(stdout))),
-                (Ident::new("stderr"), Value::String(SmolStr::from(stderr))),
-                (Ident::new("code"), Value::Int(code)),
+                ("stdout", Value::String(SmolStr::from(stdout))),
+                ("stderr", Value::String(SmolStr::from(stderr))),
+                ("code", Value::Int(code)),
             ];
             Ok(ok_variant(Value::struct_(
                 "ExecOutput",
@@ -3934,9 +3936,9 @@ fn builtin_exec_pipeline_run(args: &[Value]) -> RuntimeResult<Value> {
     match run_pipeline_stages(stages) {
         Ok((stdout, stderr, code)) => {
             let fields = vec![
-                (Ident::new("stdout"), Value::String(SmolStr::from(stdout))),
-                (Ident::new("stderr"), Value::String(SmolStr::from(stderr))),
-                (Ident::new("code"), Value::Int(code)),
+                ("stdout", Value::String(SmolStr::from(stdout))),
+                ("stderr", Value::String(SmolStr::from(stderr))),
+                ("code", Value::Int(code)),
             ];
             Ok(ok_variant(Value::struct_(
                 "ExecOutput",
@@ -4114,16 +4116,13 @@ fn dir_info_value(entry: &fs_std::DirEntry) -> Value {
     });
     let path_str = entry.path.to_string_lossy().into_owned();
     let fields = vec![
-        (
-            Ident::new("name"),
-            Value::String(SmolStr::from(entry.name.clone())),
-        ),
-        (Ident::new("path"), Value::String(SmolStr::from(path_str))),
-        (Ident::new("is_file"), Value::Bool(entry.is_file)),
-        (Ident::new("is_dir"), Value::Bool(entry.is_dir)),
-        (Ident::new("is_symlink"), Value::Bool(entry.is_symlink)),
-        (Ident::new("size"), Value::Int(size)),
-        (Ident::new("modified_ms"), Value::Int(modified_ms)),
+        ("name", Value::String(SmolStr::from(entry.name.clone()))),
+        ("path", Value::String(SmolStr::from(path_str))),
+        ("is_file", Value::Bool(entry.is_file)),
+        ("is_dir", Value::Bool(entry.is_dir)),
+        ("is_symlink", Value::Bool(entry.is_symlink)),
+        ("size", Value::Int(size)),
+        ("modified_ms", Value::Int(modified_ms)),
     ];
     Value::struct_("DirInfo", Arc::unwrap_or_clone(Arc::new(fields)))
 }
@@ -4322,7 +4321,7 @@ fn builtin_bufio_scanner_new(args: &[Value]) -> RuntimeResult<Value> {
         Value::String(SmolStr::from("")),
     );
     let state_map = Value::Map(Arc::new(parking_lot::Mutex::new(state)));
-    let fields: Vec<(Ident, Value)> = vec![(Ident::new("__state"), state_map)];
+    let fields: Vec<(&'static str, Value)> = vec![("__state", state_map)];
     Ok(Value::struct_(
         "Scanner",
         Arc::unwrap_or_clone(Arc::new(fields)),
@@ -4336,7 +4335,7 @@ fn scanner_state(
     if let Some(Value::Struct(inner)) = args.first() {
         if inner.name == "Scanner" {
             for (name, val) in &inner.fields {
-                if name.name == "__state" {
+                if *name == "__state" {
                     if let Value::Map(m) = val {
                         return Some(Arc::clone(m));
                     }
@@ -4468,7 +4467,7 @@ fn builtin_json_get(args: &[Value]) -> RuntimeResult<Value> {
     };
     if let Value::Struct(inner) = receiver {
         for (field_name, value) in &inner.fields {
-            if field_name.name.as_str() == key {
+            if (*field_name) == key {
                 return Ok(some_variant(value.clone()));
             }
         }
@@ -4507,7 +4506,7 @@ fn builtin_json_keys(args: &[Value]) -> RuntimeResult<Value> {
     if let Some(Value::Struct(inner)) = args.first() {
         let mut out: Vec<Value> = Vec::new();
         for (name, _) in &inner.fields {
-            out.push(Value::String(SmolStr::from(name.name.as_str())));
+            out.push(Value::String(SmolStr::from(*name)));
         }
         return Ok(some_variant(Value::Array(Arc::new(out))));
     }
@@ -4705,14 +4704,14 @@ fn coerce_json_to_named_struct(value: &json_std::Value, type_name: &str) -> Resu
     let json_std::Value::Object(map) = value else {
         return Err(format!("expected JSON object for `{type_name}`"));
     };
-    let mut fields: Vec<(Ident, Value)> = Vec::with_capacity(schema.fields.len());
+    let mut fields: Vec<(&'static str, Value)> = Vec::with_capacity(schema.fields.len());
     for (field_name, kind) in &schema.fields {
         let Some(child) = map.get(field_name) else {
             return Err(format!("missing field `{field_name}`"));
         };
         let coerced =
             coerce_json_to_kind(child, kind).map_err(|m| format!("field `{field_name}`: {m}"))?;
-        fields.push((Ident::new(field_name.as_str()), coerced));
+        fields.push((crate::value::intern_type_name(field_name.as_str()), coerced));
     }
     Ok(Value::struct_(
         type_name,
@@ -4833,9 +4832,9 @@ fn json_value_to_gossamer(value: &json_std::Value) -> Value {
             Value::Array(Arc::new(items.iter().map(json_value_to_gossamer).collect()))
         }
         json_std::Value::Object(entries) => {
-            let fields: Vec<(Ident, Value)> = entries
+            let fields: Vec<(&'static str, Value)> = entries
                 .iter()
-                .map(|(k, v)| (Ident::new(k), json_value_to_gossamer(v)))
+                .map(|(k, v)| (crate::value::intern_type_name(k), json_value_to_gossamer(v)))
                 .collect();
             Value::struct_("Object", Arc::unwrap_or_clone(Arc::new(fields)))
         }
@@ -4861,7 +4860,7 @@ fn gossamer_to_json_value(value: &Value) -> json_std::Value {
         Value::Struct(inner) => {
             let mut map = std::collections::BTreeMap::new();
             for (ident, v) in &inner.fields {
-                map.insert(ident.name.clone(), gossamer_to_json_value(v));
+                map.insert((*ident).to_string(), gossamer_to_json_value(v));
             }
             json_std::Value::Object(map)
         }
@@ -6349,7 +6348,7 @@ fn builtin_json_value_object(args: &[Value]) -> RuntimeResult<Value> {
             Arc::unwrap_or_clone(Arc::new(Vec::new())),
         ));
     };
-    let mut fields: Vec<(Ident, Value)> = Vec::with_capacity(parts.len());
+    let mut fields: Vec<(&'static str, Value)> = Vec::with_capacity(parts.len());
     for entry in parts.iter() {
         let Value::Tuple(pair) = entry else { continue };
         if pair.len() < 2 {
@@ -6359,7 +6358,7 @@ fn builtin_json_value_object(args: &[Value]) -> RuntimeResult<Value> {
             Value::String(s) => s.as_str().to_string(),
             other => format!("{other:?}"),
         };
-        fields.push((Ident::new(key), pair[1].clone()));
+        fields.push((crate::value::intern_type_name(&key), pair[1].clone()));
     }
     Ok(Value::struct_(
         "json::Object",
@@ -6387,14 +6386,11 @@ fn builtin_json_set(args: &[Value]) -> RuntimeResult<Value> {
     if inner.name != "json::Object" {
         return Ok(receiver);
     }
-    let mut fields: Vec<(Ident, Value)> = inner.fields.clone();
-    if let Some(slot) = fields
-        .iter_mut()
-        .find(|(name, _)| name.name.as_str() == key)
-    {
+    let mut fields: Vec<(&'static str, Value)> = inner.fields.clone();
+    if let Some(slot) = fields.iter_mut().find(|(name, _)| *name == key) {
         slot.1 = value;
     } else {
-        fields.push((Ident::new(key), value));
+        fields.push((crate::value::intern_type_name(&key), value));
     }
     Ok(Value::struct_(
         "json::Object",
@@ -6752,7 +6748,7 @@ fn builtin_struct_new(args: &[Value]) -> RuntimeResult<Value> {
             Some(Value::Struct(inner)) => inner
                 .fields
                 .iter()
-                .find(|(n, _)| n.name.as_str() == field_name)
+                .find(|(n, _)| (*n) == field_name)
                 .map(|(_, v)| v.clone()),
             _ => None,
         }
@@ -6762,51 +6758,54 @@ fn builtin_struct_new(args: &[Value]) -> RuntimeResult<Value> {
     // share the same `fields[i]` layout, which lets the VM
     // emit compile-time offsets for field reads instead of
     // doing a linear name scan per read.
-    let fields: Vec<(Ident, Value)> = STRUCT_LAYOUTS.with(|cell| {
+    let fields: Vec<(&'static str, Value)> = STRUCT_LAYOUTS.with(|cell| {
         let layouts = cell.borrow();
         if let Some(order) = layouts.get(&name) {
-            let mut out: Vec<(Ident, Value)> = Vec::with_capacity(order.len());
+            let mut out: Vec<(&'static str, Value)> = Vec::with_capacity(order.len());
             for field_name in order {
                 let value = pairs
                     .iter()
-                    .find(|(n, _)| n == field_name)
+                    .find(|(n, _)| n.as_str() == *field_name)
                     .map(|(_, v)| v.clone())
-                    .or_else(|| lookup_base_field(field_name.as_str()))
+                    .or_else(|| lookup_base_field(field_name))
                     .unwrap_or(Value::Unit);
-                out.push((Ident::new(field_name.as_str()), value));
+                out.push((*field_name, value));
             }
             // Preserve any extra fields present in the literal
             // but not declared (should be rare; keeps program
             // state visible for debugging).
             for (n, v) in &pairs {
-                if !order.iter().any(|o| o == n) {
-                    out.push((Ident::new(n.as_str()), v.clone()));
+                // `order` holds `&'static str` but `n.as_str()` is a non-static
+                // borrow, so `[T]::contains` (which wants `&&'static str`) does
+                // not typecheck; the manual `any` is the only well-typed form.
+                #[allow(clippy::manual_contains)]
+                let declared = order.iter().any(|o| *o == n.as_str());
+                if !declared {
+                    out.push((crate::value::intern_type_name(n.as_str()), v.clone()));
                 }
             }
             out
         } else if base.is_some() {
             // Layout unknown but a base is provided: start from the
             // base's fields and overlay the explicit overrides.
-            let mut out: Vec<(Ident, Value)> = match &base {
-                Some(Value::Struct(inner)) => inner
-                    .fields
-                    .iter()
-                    .map(|(n, v)| (n.clone(), v.clone()))
-                    .collect(),
+            let mut out: Vec<(&'static str, Value)> = match &base {
+                Some(Value::Struct(inner)) => {
+                    inner.fields.iter().map(|(n, v)| (*n, v.clone())).collect()
+                }
                 _ => Vec::new(),
             };
             for (n, v) in &pairs {
-                if let Some(slot) = out.iter_mut().find(|(name, _)| name.name.as_str() == n) {
+                if let Some(slot) = out.iter_mut().find(|(name, _)| *name == n.as_str()) {
                     slot.1 = v.clone();
                 } else {
-                    out.push((Ident::new(n.as_str()), v.clone()));
+                    out.push((crate::value::intern_type_name(n.as_str()), v.clone()));
                 }
             }
             out
         } else {
             pairs
                 .into_iter()
-                .map(|(n, v)| (Ident::new(n.as_str()), v))
+                .map(|(n, v)| (crate::value::intern_type_name(n.as_str()), v))
                 .collect()
         }
     });
@@ -6917,7 +6916,7 @@ fn builtin_flag_parse(args: &[Value]) -> RuntimeResult<Value> {
     };
     let program_args = PROGRAM_ARGS.with(|cell| cell.borrow().clone());
     let entries = extract_flag_decls(decls);
-    let mut map_fields: Vec<(Ident, Value)> = Vec::new();
+    let mut map_fields: Vec<(&'static str, Value)> = Vec::new();
     let mut positional: Vec<Value> = Vec::new();
     let mut idx = 0usize;
     while idx < program_args.len() {
@@ -6947,7 +6946,7 @@ fn builtin_flag_parse(args: &[Value]) -> RuntimeResult<Value> {
                 idx += 1;
                 flag_parse_value(&entry.default, next)
             };
-            map_fields.push((Ident::new(&entry.name), parsed));
+            map_fields.push((crate::value::intern_type_name(&entry.name), parsed));
             idx += 1;
             continue;
         }
@@ -6979,7 +6978,7 @@ fn builtin_flag_parse(args: &[Value]) -> RuntimeResult<Value> {
                 idx += 1;
                 flag_parse_value(&entry.default, next)
             };
-            map_fields.push((Ident::new(&entry.name), parsed));
+            map_fields.push((crate::value::intern_type_name(&entry.name), parsed));
             idx += 1;
             continue;
         }
@@ -6988,14 +6987,14 @@ fn builtin_flag_parse(args: &[Value]) -> RuntimeResult<Value> {
     }
 
     for entry in &entries {
-        if !map_fields.iter().any(|(ident, _)| ident.name == entry.name) {
-            map_fields.push((Ident::new(&entry.name), entry.default.clone()));
+        if !map_fields.iter().any(|(ident, _)| (*ident) == entry.name) {
+            map_fields.push((
+                crate::value::intern_type_name(&entry.name),
+                entry.default.clone(),
+            ));
         }
     }
-    map_fields.push((
-        Ident::new("__positional"),
-        Value::Array(Arc::new(positional)),
-    ));
+    map_fields.push(("__positional", Value::Array(Arc::new(positional))));
     Ok(Value::struct_(
         "FlagMap",
         Arc::unwrap_or_clone(Arc::new(map_fields)),
@@ -7014,7 +7013,7 @@ fn extract_flag_decls(values: &[Value]) -> Vec<FlagDeclEntry> {
         let field_map: std::collections::HashMap<&str, &Value> = inner
             .fields
             .iter()
-            .map(|(ident, val)| (ident.name.as_str(), val))
+            .map(|(ident, val)| ((*ident), val))
             .collect();
         let Some(Value::String(flag_name)) = field_map.get("name") else {
             continue;
@@ -7071,7 +7070,7 @@ fn builtin_flag_map_get(args: &[Value]) -> RuntimeResult<Value> {
             ));
         }
     };
-    let found = map.iter().find(|(ident, _)| ident.name == key);
+    let found = map.iter().find(|(ident, _)| (*ident) == key);
     Ok(match found {
         Some((_, value)) => some_variant(value.clone()),
         None => none_variant(),
@@ -7149,7 +7148,7 @@ fn struct_handle(v: &Value, expected: &str) -> Option<i64> {
     match v {
         Value::Struct(inner) if inner.name == expected => {
             for (ident, val) in &inner.fields {
-                if ident.name == "__handle" {
+                if (*ident) == "__handle" {
                     if let Value::Int(n) = val {
                         return Some(*n);
                     }
@@ -7162,7 +7161,7 @@ fn struct_handle(v: &Value, expected: &str) -> Option<i64> {
 }
 
 fn make_handle_struct(name: &str, handle: i64) -> Value {
-    Value::struct_(name, vec![(Ident::new("__handle"), Value::Int(handle))])
+    Value::struct_(name, vec![("__handle", Value::Int(handle))])
 }
 
 fn arg_int(args: &[Value], idx: usize) -> Option<i64> {
@@ -7836,20 +7835,14 @@ mod tests {
 
     fn response_value(content_type: Option<&str>, headers: Option<Vec<Value>>) -> Value {
         let mut fields = vec![
-            (Ident::new("status"), Value::Int(200)),
-            (
-                Ident::new("body"),
-                Value::String(SmolStr::from("ok".to_string())),
-            ),
+            ("status", Value::Int(200)),
+            ("body", Value::String(SmolStr::from("ok".to_string()))),
         ];
         if let Some(ct) = content_type {
-            fields.push((
-                Ident::new("content_type"),
-                Value::String(SmolStr::from(ct.to_string())),
-            ));
+            fields.push(("content_type", Value::String(SmolStr::from(ct.to_string()))));
         }
         if let Some(items) = headers {
-            fields.push((Ident::new("headers"), Value::Array(Arc::new(items))));
+            fields.push(("headers", Value::Array(Arc::new(items))));
         }
         Value::struct_("Response", fields)
     }
@@ -7914,10 +7907,8 @@ mod tests {
         let Value::Struct(inner) = &r2 else {
             panic!("expected struct");
         };
-        let Some((_, Value::Array(items))) = inner
-            .fields
-            .iter()
-            .find(|(ident, _)| ident.name == "headers")
+        let Some((_, Value::Array(items))) =
+            inner.fields.iter().find(|(ident, _)| (*ident) == "headers")
         else {
             panic!("expected headers array");
         };

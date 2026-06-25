@@ -26,8 +26,10 @@
 
 #![forbid(unsafe_code)]
 
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+
+use parking_lot::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::crypto::rand;
@@ -374,10 +376,7 @@ struct TracerInner {
 impl TracerInner {
     fn push_ended(&self, span: EndedSpan) {
         self.seq.fetch_add(1, Ordering::Relaxed);
-        let mut list = match self.ended.lock() {
-            Ok(g) => g,
-            Err(p) => p.into_inner(),
-        };
+        let mut list = self.ended.lock();
         list.push(span);
     }
 }
@@ -438,20 +437,14 @@ impl Tracer {
     /// accumulated history. Use [`Tracer::drain_ended_spans`] to consume.
     #[must_use]
     pub fn ended_spans(&self) -> Vec<EndedSpan> {
-        let list = match self.inner.ended.lock() {
-            Ok(g) => g,
-            Err(p) => p.into_inner(),
-        };
+        let list = self.inner.ended.lock();
         list.clone()
     }
 
     /// Returns and clears the accumulated ended-span list.
     #[must_use]
     pub fn drain_ended_spans(&self) -> Vec<EndedSpan> {
-        let mut list = match self.inner.ended.lock() {
-            Ok(g) => g,
-            Err(p) => p.into_inner(),
-        };
+        let mut list = self.inner.ended.lock();
         std::mem::take(&mut *list)
     }
 }

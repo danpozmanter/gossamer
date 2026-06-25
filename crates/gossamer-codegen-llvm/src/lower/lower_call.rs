@@ -244,6 +244,8 @@ impl<'a> Lowerer<'a> {
             | ConcatKind::JsonValue
             | ConcatKind::ErrorMessage
             | ConcatKind::Tuple
+            | ConcatKind::Option(_)
+            | ConcatKind::Result(_, _)
             | ConcatKind::Map) => self.emit_concat_aggregate(arg, kind, &value),
             ConcatKind::Unsupported => unreachable!("checked above"),
         }
@@ -908,7 +910,30 @@ impl<'a> Lowerer<'a> {
             && place.projection.is_empty()
             && is_aggregate(self.tcx, self.body.local_ty(place.local))
         {
+            let local_ty = self.body.local_ty(place.local);
             let slot = local_slot(place.local);
+            // A multi-slot inline aggregate (struct / tuple / array with
+            // `slot_count == Some(n > 1)`) is address-is-value. A closure env
+            // stores one word per capture and its body reads the capture back
+            // as a pointer it dereferences (see `gos_load`), so copy the
+            // aggregate to a stable heap box and store that pointer. Storing
+            // the slot's first word (the old behaviour) made the body read the
+            // capture as the pointer and every field past the first as
+            // uninitialised slot memory; a stack slot address would dangle once
+            // the capturing frame returns. Single-slot aggregates and
+            // heap-pointer aggregates (enum / `Box`, `slot_count == None`)
+            // already hold their one word inline / as a heap pointer: load it.
+            if let Some(n) = slot_count(self.tcx, local_ty).filter(|&n| n > 1) {
+                let bytes = n * 8;
+                let boxed = self.fresh();
+                writeln!(self.out, "  {boxed} = call ptr @malloc(i64 {bytes})").unwrap();
+                writeln!(
+                    self.out,
+                    "  call void @llvm.memcpy.p0.p0.i64(ptr {boxed}, ptr {slot}, i64 {bytes}, i1 false)"
+                )
+                .unwrap();
+                return Ok((boxed, "ptr".to_string()));
+            }
             let tmp = self.fresh();
             writeln!(self.out, "  {tmp} = load ptr, ptr {slot}").unwrap();
             return Ok((tmp, "ptr".to_string()));
@@ -984,6 +1009,49 @@ impl<'a> Lowerer<'a> {
                     "  {v} = phi i64 [ 0, %{entry_l} ], [ {lv}, %{load_l} ]"
                 )
                 .unwrap();
+                // A multi-slot aggregate payload (struct / tuple / array > 1
+                // word) is stored as a POINTER to a heap-boxed copy. The
+                // loaded word is that box pointer: materialise the binding by
+                // value (memcpy the box's flat slots into the destination
+                // alloca) and retain the box's RC children so the binding's
+                // scope-end teardown release stays balanced. A null box (a
+                // unit variant with no fields) is skipped - those have no
+                // aggregate to read.
+                let dest_slots = if is_aggregate(self.tcx, dest_ty_mir) {
+                    slot_count(self.tcx, dest_ty_mir).filter(|&n| n > 1)
+                } else {
+                    None
+                };
+                if let Some(n) = dest_slots {
+                    let bytes = u64::from(n) * 8;
+                    let slot = local_slot(destination.local);
+                    let boxp = self.fresh();
+                    writeln!(self.out, "  {boxp} = inttoptr i64 {v} to ptr").unwrap();
+                    let nonnull = self.fresh();
+                    writeln!(self.out, "  {nonnull} = icmp ne i64 {v}, 0").unwrap();
+                    let copy_l = self.fresh_label("enum_aggr_copy");
+                    let after_l = self.fresh_label("enum_aggr_done");
+                    writeln!(
+                        self.out,
+                        "  br i1 {nonnull}, label %{copy_l}, label %{after_l}"
+                    )
+                    .unwrap();
+                    writeln!(self.out, "{copy_l}:").unwrap();
+                    writeln!(
+                        self.out,
+                        "  call void @llvm.memcpy.p0.p0.i64(ptr {slot}, ptr {boxp}, i64 {bytes}, i1 false)"
+                    )
+                    .unwrap();
+                    declare_rt(&mut self.runtime_refs, "gos_rt_rc_retain_children");
+                    writeln!(
+                        self.out,
+                        "  call void @gos_rt_rc_retain_children(ptr {boxp})"
+                    )
+                    .unwrap();
+                    writeln!(self.out, "  br label %{after_l}").unwrap();
+                    writeln!(self.out, "{after_l}:").unwrap();
+                    return Ok(());
+                }
                 // Bit-preserving recovery, exactly as `gos_load`: float
                 // payloads were stored as raw bits and must bitcast back.
                 let coerced = if dest_ty == "double" || dest_ty == "float" {
@@ -1114,6 +1182,29 @@ impl<'a> Lowerer<'a> {
                 }
                 let loaded = self.fresh();
                 writeln!(self.out, "  {loaded} = load i64, ptr {addr}").unwrap();
+                // An inline-aggregate capture (struct / tuple / array) is held
+                // in the env as a pointer to its data (see `lower_raw_value_arg`).
+                // Materialise the destination by copying the aggregate's bytes
+                // out of that pointer - storing the bare pointer word would
+                // leave every field past the first reading uninitialised slot
+                // memory.
+                if is_aggregate(self.tcx, dest_ty_mir)
+                    && let Some(n) = slot_count(self.tcx, dest_ty_mir).filter(|&n| n > 1)
+                {
+                    let src = self.fresh();
+                    writeln!(self.out, "  {src} = inttoptr i64 {loaded} to ptr").unwrap();
+                    let slot = local_slot(destination.local);
+                    writeln!(
+                        self.out,
+                        "  call void @llvm.memcpy.p0.p0.i64(ptr {slot}, ptr {src}, i64 {}, i1 false)",
+                        n * 8
+                    )
+                    .unwrap();
+                    if target.is_some() {
+                        emit_terminator_branch(&mut self.out, target);
+                    }
+                    return Ok(());
+                }
                 // Heap-load value recovery is bit-preserving:
                 // a `double` capture stored via `gos_store` (which
                 // bitcasts the float bits into the i64 slot)
