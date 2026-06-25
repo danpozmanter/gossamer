@@ -2139,6 +2139,45 @@ impl<'tcx> FnBuilder<'tcx> {
             });
             return Ok(dst);
         }
+        // Mirror super-instruction for `<str>.substring(<start>, <end>)`.
+        // The sliding-window k-mer counter calls this once per position;
+        // the inline handler skips the MethodCall + IC + receiver clone +
+        // `&[Value]` round-trip. Non-string receivers fall back at runtime.
+        if name.name == "substring" && args.len() == 2 {
+            let start_reg = self.compile_expr(&args[0])?;
+            let end_reg = self.compile_expr(&args[1])?;
+            let dst = self.alloc_reg();
+            self.emit(Op::StrSubstring {
+                dst,
+                recv_reg: receiver_reg,
+                start_reg,
+                end_reg,
+            });
+            return Ok(dst);
+        }
+        // Fused `m.inc(key[, by])` counter increment for a HashMap
+        // receiver. The sliding-window counter calls this once per
+        // k-mer; the inline handler acquires the map lock once and
+        // skips the MethodCall + IC + map-handle clone round-trip.
+        if name.name == "inc"
+            && (args.len() == 1 || args.len() == 2)
+            && matches!(self.tcx.kind(receiver.ty), Some(TyKind::HashMap { .. }))
+        {
+            let key_reg = self.compile_expr(&args[0])?;
+            let by_reg = if args.len() == 2 {
+                self.compile_expr(&args[1])?
+            } else {
+                self.load_int_value(1)
+            };
+            let dst = self.alloc_reg();
+            self.emit(Op::MapIncMethod {
+                dst,
+                map_reg: receiver_reg,
+                key_reg,
+                by_reg,
+            });
+            return Ok(dst);
+        }
         let arg_regs: Vec<Reg> = args
             .iter()
             .map(|a| self.compile_expr(a))

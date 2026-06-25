@@ -1,2 +1,9 @@
 [alias]
 xtask = "run --package xtask --"
+
+# CI runners (notably GitHub-hosted macOS) intermittently fail to resolve
+# index.crates.io while updating the registry index. cargo's default of 3
+# retries exhausts within a few seconds, too short to ride out a transient
+# DNS/timeout blip; widen the window with its canonical spurious-error knob.
+[net]
+retry = 10

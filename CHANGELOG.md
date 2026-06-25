@@ -2,8 +2,9 @@
 
 ## 0.18.3 - Compiled-tier hot-path performance, parity, correctness
 
-Compiled-tier hot-path speedups and tier-parity fixes. Output stays
-bit-identical across the VM, the Cranelift JIT, and the LLVM AOT tier.
+Compiled- and interpreter-tier hot-path speedups and tier-parity fixes.
+Output stays bit-identical across the VM, the Cranelift JIT, and the LLVM
+AOT tier.
 
 - Ordinary `HashMap` values are goroutine-local and take no per-operation lock;
   a map only locks once it escapes to another goroutine (codegen marks it shared
@@ -24,6 +25,14 @@ bit-identical across the VM, the Cranelift JIT, and the LLVM AOT tier.
   can hoist them (spectral-norm `Vec<f64>` drops an order of magnitude).
 - The VM's typed flat-local reads (`IntArrayGetI64`, `FloatVecGetF64`) return
   the lenient zero on an out-of-range index, matching the compiled tiers.
+- The bytecode VM gains fused super-instructions for `String.substring` and
+  `m.inc` (the sliding-window counter pattern), bypassing the per-call
+  method-dispatch + receiver clone + map lock-handle round-trip; `substring`
+  also builds its result inline with no intermediate owned `String`.
+  k-nucleotide `gos run` drops ~50% (5.28s -> 2.66s, matching CPython).
+- Building from source / CI retries a transient crates.io index resolution
+  failure up to 10 times (`net.retry` in `.cargo/config.toml`) instead of the
+  default 3, riding out brief registry DNS / timeout blips on slow runners.
 
 ## 0.18.2 - Interpreter memory improvements
 

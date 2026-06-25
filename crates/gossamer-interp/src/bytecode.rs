@@ -268,6 +268,45 @@ pub enum Op {
         /// Register holding the byte index (`Value::Int`).
         idx_reg: Reg,
     },
+    /// Specialised `<str>.substring(<start>, <end>) -> String` -
+    /// fused super-instruction for the sliding-window k-mer loop.
+    /// Bypasses the `Op::MethodCall` IC + receiver clone + `&[Value]`
+    /// buffer + builtin indirection, reading the receiver and bounds
+    /// straight from their registers. Verifies the receiver is a
+    /// `Value::String` and both bounds are `Value::Int` at runtime,
+    /// falling back to a generic `substring` dispatch on shape miss -
+    /// so emitting it for any user-defined `substring` is still
+    /// correct, just not as fast.
+    StrSubstring {
+        /// Destination value register (the resulting `Value::String`).
+        dst: Reg,
+        /// Register holding the receiver string (`Value::String`).
+        recv_reg: Reg,
+        /// Register holding the start byte index (`Value::Int`).
+        start_reg: Reg,
+        /// Register holding the end byte index (`Value::Int`).
+        end_reg: Reg,
+    },
+    /// Specialised `m.inc(key[, by]) -> i64` counter increment for a
+    /// `HashMap`-typed receiver - the method form, distinct from the
+    /// `Op::MapInc` / `Op::IntMapInc` ops that fuse the
+    /// `m.insert(k, m.get_or(k, 0) + by)` pattern. Acquires the map's
+    /// lock once and increments in place, skipping the `Op::MethodCall`
+    /// IC + map-handle clone + `&[Value]` round-trip that dominate a
+    /// counting loop. Dispatches on the actual map storage
+    /// (`StrIntMap` / `IntMap` / boxed `Map`) at runtime and falls back
+    /// to a generic `inc` dispatch on shape miss.
+    MapIncMethod {
+        /// Destination register (the post-increment `Value::Int`).
+        dst: Reg,
+        /// Register holding the map receiver.
+        map_reg: Reg,
+        /// Register holding the key.
+        key_reg: Reg,
+        /// Register holding the increment (`Value::Int`; defaults to
+        /// a loaded `1` for the `m.inc(key)` form).
+        by_reg: Reg,
+    },
     /// Specialised `m.insert(k, m.get_or(k, 0) + by)` - fused
     /// counter-increment super-instruction. Collapses the two
     /// `MethodCall`s, two IC probes, two arg-vec materialisations,

@@ -747,6 +747,133 @@ impl Vm {
                         *ints.get_unchecked_mut(dst_i as usize) = n;
                     }
                 }
+                Op::StrSubstring {
+                    dst,
+                    recv_reg,
+                    start_reg,
+                    end_reg,
+                } => {
+                    // Fast path: string receiver + integer bounds. The
+                    // borrow of `registers` ends with the match, since it
+                    // yields an owned `SmolStr`, so the destination write
+                    // below does not alias it.
+                    let bounds =
+                        match (&registers[start_reg as usize], &registers[end_reg as usize]) {
+                            (Value::Int(a), Value::Int(b)) => Some((*a, *b)),
+                            _ => None,
+                        };
+                    let fast = match (&registers[recv_reg as usize], bounds) {
+                        (Value::String(s), Some((a, b))) => {
+                            Some(crate::builtins::str_substring_inline(s.as_str(), a, b))
+                        }
+                        _ => None,
+                    };
+                    if let Some(out) = fast {
+                        registers[dst as usize] = Value::String(out);
+                        continue;
+                    }
+                    // Fallback: generic `substring` dispatch, same shape as
+                    // `U8VecGetByte`'s miss path.
+                    let recv_clone = registers[recv_reg as usize].clone();
+                    let start_clone = registers[start_reg as usize].clone();
+                    let end_clone = registers[end_reg as usize].clone();
+                    let resolved = match &recv_clone {
+                        Value::Struct(_) => qualified_key(&recv_clone, "substring")
+                            .and_then(|q| self.lookup_global(q)),
+                        _ => None,
+                    }
+                    .or_else(|| self.lookup_global("substring"));
+                    let args = vec![recv_clone, start_clone, end_clone];
+                    let result = match resolved {
+                        Some(Global::Value(Value::Builtin(builtin_inner))) => {
+                            (builtin_inner.call)(&args)?
+                        }
+                        Some(g) => self.apply(g, args)?,
+                        None => {
+                            return Err(RuntimeError::UnresolvedName("substring".to_string()));
+                        }
+                    };
+                    registers[dst as usize] = result;
+                }
+                Op::MapIncMethod {
+                    dst,
+                    map_reg,
+                    key_reg,
+                    by_reg,
+                } => {
+                    let by = match &registers[by_reg as usize] {
+                        Value::Int(n) => *n,
+                        _ => 1,
+                    };
+                    // Each arm holds the map lock only within the match and
+                    // yields an owned `Value::Int`, so the borrow of
+                    // `registers` is released before the destination write.
+                    let result = match &registers[map_reg as usize] {
+                        Value::StrIntMap(map) => {
+                            if let Value::String(k) = &registers[key_reg as usize] {
+                                let mut guard = map.lock();
+                                let new_val = if let Some(slot) = guard.get_mut(k) {
+                                    *slot += by;
+                                    *slot
+                                } else {
+                                    guard.insert(k.clone(), by);
+                                    by
+                                };
+                                Some(Value::Int(new_val))
+                            } else {
+                                None
+                            }
+                        }
+                        Value::IntMap(map) => {
+                            if let Value::Int(k) = &registers[key_reg as usize] {
+                                let mut guard = map.lock();
+                                let new_val = guard.get(k).copied().unwrap_or(0) + by;
+                                guard.insert(*k, new_val);
+                                Some(Value::Int(new_val))
+                            } else {
+                                None
+                            }
+                        }
+                        Value::Map(map) => {
+                            let key = MapKey::from_value(&registers[key_reg as usize]);
+                            let mut guard = map.lock();
+                            let new_val = match guard.get(&key) {
+                                Some(Value::Int(v)) => v + by,
+                                _ => by,
+                            };
+                            guard.insert(key, Value::Int(new_val));
+                            Some(Value::Int(new_val))
+                        }
+                        _ => None,
+                    };
+                    if let Some(v) = result {
+                        registers[dst as usize] = v;
+                        continue;
+                    }
+                    // Fallback: generic `inc` dispatch (non-map receiver or
+                    // key-type mismatch), same shape as `StrSubstring`'s miss.
+                    let map_clone = registers[map_reg as usize].clone();
+                    let key_clone = registers[key_reg as usize].clone();
+                    let by_clone = registers[by_reg as usize].clone();
+                    let resolved = match &map_clone {
+                        Value::Struct(_) => {
+                            qualified_key(&map_clone, "inc").and_then(|q| self.lookup_global(q))
+                        }
+                        _ => None,
+                    }
+                    .or_else(|| self.lookup_global("inc"));
+                    let args = vec![map_clone, key_clone, by_clone];
+                    let result = match resolved {
+                        Some(Global::Value(Value::Builtin(builtin_inner))) => {
+                            (builtin_inner.call)(&args)?
+                        }
+                        Some(g) => self.apply(g, args)?,
+                        None => {
+                            return Err(RuntimeError::UnresolvedName("inc".to_string()));
+                        }
+                    };
+                    registers[dst as usize] = result;
+                }
                 Op::Wide { idx } => {
                     // Side-table indirection for the rare
                     // 6-payload-field ops. Reads the actual

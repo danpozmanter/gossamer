@@ -421,6 +421,28 @@ pub(crate) fn validate_chunk(chunk: &FnChunk) -> Result<(), ValidationError> {
                 check_v(op_idx, u8vec_reg)?;
                 check_v(op_idx, idx_reg)?;
             }
+            Op::StrSubstring {
+                dst,
+                recv_reg,
+                start_reg,
+                end_reg,
+            } => {
+                check_v(op_idx, dst)?;
+                check_v(op_idx, recv_reg)?;
+                check_v(op_idx, start_reg)?;
+                check_v(op_idx, end_reg)?;
+            }
+            Op::MapIncMethod {
+                dst,
+                map_reg,
+                key_reg,
+                by_reg,
+            } => {
+                check_v(op_idx, dst)?;
+                check_v(op_idx, map_reg)?;
+                check_v(op_idx, key_reg)?;
+                check_v(op_idx, by_reg)?;
+            }
             Op::MapInc {
                 dst,
                 map_reg,

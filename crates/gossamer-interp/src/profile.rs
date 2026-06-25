@@ -524,6 +524,24 @@ fn op_label(tag: usize) -> &'static str {
                 "U8VecGetByte",
             ),
             (
+                O::StrSubstring {
+                    dst: 0,
+                    recv_reg: 0,
+                    start_reg: 0,
+                    end_reg: 0,
+                },
+                "StrSubstring",
+            ),
+            (
+                O::MapIncMethod {
+                    dst: 0,
+                    map_reg: 0,
+                    key_reg: 0,
+                    by_reg: 0,
+                },
+                "MapIncMethod",
+            ),
+            (
                 O::MapInc {
                     dst: 0,
                     map_reg: 0,

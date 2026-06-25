@@ -5416,27 +5416,37 @@ fn builtin_vec_slice(args: &[Value]) -> RuntimeResult<Value> {
     }
 }
 
+/// Clamping byte-range substring shared by the `substring` builtin and the
+/// VM's fused `Op::StrSubstring`. Out-of-range bounds clamp and inverted
+/// bounds yield "", mirroring the compiled tier's `gos_rt_str_substring`.
+/// Builds the `SmolStr` directly from the validated slice: substrings within
+/// the inline capacity carry no heap allocation, so materialising an
+/// intermediate owned `String` first would add a redundant heap alloc + free
+/// per call - the dominant cost when slicing many short substrings.
+pub(crate) fn str_substring_inline(s: &str, start: i64, end: i64) -> SmolStr {
+    let bytes = s.as_bytes();
+    let lo = (start.max(0) as usize).min(bytes.len());
+    let hi = (end.max(0) as usize).min(bytes.len()).max(lo);
+    let slice = &bytes[lo..hi];
+    match std::str::from_utf8(slice) {
+        Ok(valid) => SmolStr::from_str(valid),
+        Err(_) => SmolStr::from_string(String::from_utf8_lossy(slice).into_owned()),
+    }
+}
+
 fn builtin_str_substring(args: &[Value]) -> RuntimeResult<Value> {
     let Some(Value::String(s)) = args.first() else {
-        return Ok(Value::String(SmolStr::from(String::new())));
+        return Ok(Value::String(SmolStr::new()));
     };
     let start = match args.get(1) {
-        Some(Value::Int(n)) => (*n).max(0) as usize,
+        Some(Value::Int(n)) => *n,
         _ => 0,
     };
     let end = match args.get(2) {
-        Some(Value::Int(n)) => (*n).max(0) as usize,
-        _ => s.as_str().len(),
+        Some(Value::Int(n)) => *n,
+        _ => s.as_str().len() as i64,
     };
-    let bytes = s.as_str().as_bytes();
-    let lo = start.min(bytes.len());
-    let hi = end.min(bytes.len()).max(lo);
-    let slice = &bytes[lo..hi];
-    let out = std::str::from_utf8(slice).map_or_else(
-        |_| String::from_utf8_lossy(slice).into_owned(),
-        str::to_string,
-    );
-    Ok(Value::String(SmolStr::from(out)))
+    Ok(Value::String(str_substring_inline(s.as_str(), start, end)))
 }
 
 /// `String::byte_at(s, i) -> i64` - the UTF-8 byte at index `i`, or 0
