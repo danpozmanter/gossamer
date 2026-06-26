@@ -33,6 +33,12 @@ pub enum JitKind {
     NativeStr,
     /// `Vec<i64>` as a native `GosVec` pointer.
     NativeVecI64,
+    /// `Vec<f64>` as a native `GosVec` pointer.
+    NativeVecF64,
+    /// `Vec<(i64, f64)>` as a native `GosVec` of 16-byte primitive slots.
+    NativeVecTupleIF,
+    /// `U8Vec` byte-buffer handle, marshalled by copy-in / copy-back.
+    U8VecHandle,
 }
 
 /// A compiled function handle. On wasm none is ever produced.
