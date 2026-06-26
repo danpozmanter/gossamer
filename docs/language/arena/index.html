@@ -1785,9 +1785,10 @@ counting does work the program does not need. Inside an arena:</p>
 </ul>
 <h2 id="automatic-arenas-no-annotation-needed">Automatic arenas (no annotation needed)<a class="headerlink" href="#automatic-arenas-no-annotation-needed" title="Permanent link">&para;</a></h2>
 <p>You often do not have to write <code>arena { }</code> at all. The compiler runs a
-conservative escape analysis over every loop body - <code>while</code> and <code>for</code>
-alike (<code>for i in a..b</code>, <code>for x in xs</code>, <code>for (i, x) in xs.enumerate()</code>) -
-and when it can prove that everything the body allocates dies at the
+conservative escape analysis over every loop body - <code>while</code>, <code>for</code>
+(<code>for i in a..b</code>, <code>for x in xs</code>, <code>for (i, x) in xs.enumerate()</code>,
+<code>for (k, v) in m.iter()</code>), and bare <code>loop</code> alike - and when it can prove
+that everything the body allocates dies at the
 iteration boundary, it wraps the body in an arena for you. Idiomatic
 build-and-discard code gets the bulk-free path with no source change:</p>
 <div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="kd">let</span><span class="w"> </span><span class="k">mut</span><span class="w"> </span><span class="n">total</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span>
@@ -1828,10 +1829,18 @@ arena per loop iteration is a bump-pointer reset, not a fresh <code>mmap</code>.
 <h2 id="the-contract">The contract<a class="headerlink" href="#the-contract" title="Permanent link">&para;</a></h2>
 <p>Nothing allocated inside the block may be referenced after it exits.
 The block is statement-position only and yields unit (a tail
-expression is discarded), which rules out the obvious escape. The
-remaining escapes are yours to avoid: assigning to an outer binding,
-pushing into a container that outlives the block, sending down a
-channel, or capturing in a goroutine/closure that outruns the block.</p>
+expression is discarded), which rules out the obvious escape.</p>
+<p>The remaining escapes are checked for you. A conservative front-end
+analysis rejects, with <code>error[GM0003]</code>, any value allocated in the
+block that is assigned to a binding outside it, pushed into a
+container that outlives it, sent down a channel, returned, broken out
+of an enclosing loop, captured in a goroutine/closure that outruns
+the block, or passed into a function that might stash it. Reading an
+arena value through a method or a region-safe free function stays
+allowed, so build-and-discard code is unaffected. The check is sound
+by over-approximation: it may ask you to restructure a sound program,
+but it never lets an escaping one compile. Run <code>gos explain GM0003</code>
+for the details.</p>
 <p>Compute summaries inside, keep survivors outside:</p>
 <div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="kd">let</span><span class="w"> </span><span class="k">mut</span><span class="w"> </span><span class="n">best</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span>
 <a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="n">arena</span><span class="w"> </span><span class="p">{</span>
@@ -1846,7 +1855,9 @@ safe to reference anywhere.</p>
 <h2 id="the-primitive">The primitive<a class="headerlink" href="#the-primitive" title="Permanent link">&para;</a></h2>
 <p><code>runtime::arena_push()</code> / <code>runtime::arena_pop()</code> are the underlying
 calls for shapes where block structure does not fit. Prefer the block:
-it cannot be left unbalanced.</p>
+it cannot be left unbalanced, and it carries the <code>GM0003</code> escape check -
+the raw primitive is the unchecked low-level escape hatch, so the
+no-escape guarantee is yours to uphold when you reach for it.</p>
 
 
 

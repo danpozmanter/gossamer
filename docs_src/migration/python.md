@@ -90,13 +90,19 @@ Python:
 names = sorted({name.lower() for name in users if name})
 ```
 
-Gossamer (rough mirror - `|>` threads each stage):
+Gossamer - filter, lowercase, deduplicate via `HashSet`, then sort:
 
 ```gos
-let names = users
-    |> iter::filter(|n: String| n.len() > 0)
-    |> iter::map(|n: String| n.to_lower())
-    |> iter::sort_by_key(|n: String| n.len())
+use std::collections::HashSet
+
+let mut set: HashSet<String> = HashSet::new()
+for n in users {
+    if n.len() > 0 {
+        set.insert(n.to_lower())
+    }
+}
+let mut names = set.to_vec()
+names.sort()
 ```
 
 The `iter::*` module is small and uniform: combinators take the
