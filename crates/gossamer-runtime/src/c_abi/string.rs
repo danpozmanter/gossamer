@@ -117,6 +117,67 @@ unsafe fn str_header_len(s: *const c_char) -> Option<usize> {
     }
 }
 
+/// Copies `n` non-overlapping bytes from `src` to `dst`, keeping short copies
+/// inline with overlapping fixed-width loads/stores instead of calling the
+/// platform `memcpy`. The static-musl release link resolves `memcpy` to musl's
+/// scalar routine, whose per-call overhead dominates the short copies that k-mer
+/// keys and small-string content produce (glibc hides this with a SIMD ifunc;
+/// musl does not). Large copies fall through to `memcpy`, where throughput
+/// dominates and the call is amortised. This mirrors how the Go runtime's
+/// `memmove` and optimised libc `memcpy`s special-case small sizes.
+///
+/// SAFETY: `src` is readable and `dst` writable for `n` bytes, and the two
+/// ranges do not overlap.
+#[inline]
+pub(crate) unsafe fn copy_small_bytes(src: *const u8, dst: *mut u8, n: usize) {
+    unsafe {
+        if n >= 32 {
+            std::ptr::copy_nonoverlapping(src, dst, n);
+        } else if n >= 16 {
+            let a0 = (src as *const u64).read_unaligned();
+            let a1 = (src.add(8) as *const u64).read_unaligned();
+            let b0 = (src.add(n - 16) as *const u64).read_unaligned();
+            let b1 = (src.add(n - 8) as *const u64).read_unaligned();
+            (dst as *mut u64).write_unaligned(a0);
+            (dst.add(8) as *mut u64).write_unaligned(a1);
+            (dst.add(n - 16) as *mut u64).write_unaligned(b0);
+            (dst.add(n - 8) as *mut u64).write_unaligned(b1);
+        } else if n >= 8 {
+            let a = (src as *const u64).read_unaligned();
+            let b = (src.add(n - 8) as *const u64).read_unaligned();
+            (dst as *mut u64).write_unaligned(a);
+            (dst.add(n - 8) as *mut u64).write_unaligned(b);
+        } else if n >= 4 {
+            let a = (src as *const u32).read_unaligned();
+            let b = (src.add(n - 4) as *const u32).read_unaligned();
+            (dst as *mut u32).write_unaligned(a);
+            (dst.add(n - 4) as *mut u32).write_unaligned(b);
+        } else if n >= 2 {
+            let a = (src as *const u16).read_unaligned();
+            let b = (src.add(n - 2) as *const u16).read_unaligned();
+            (dst as *mut u16).write_unaligned(a);
+            (dst.add(n - 2) as *mut u16).write_unaligned(b);
+        } else if n == 1 {
+            *dst = *src;
+        }
+    }
+}
+
+/// Allocates an owned `Box<[u8]>` holding `src`'s bytes via the inline
+/// small-copy path, so short keys avoid a libc `memcpy` call (see
+/// [`copy_small_bytes`]). Used by the string-keyed map insert paths, where a
+/// k-mer key is copied into the map's own storage on a miss.
+#[inline]
+pub(crate) fn boxed_bytes(src: &[u8]) -> Box<[u8]> {
+    let mut b: Box<[std::mem::MaybeUninit<u8>]> = Box::new_uninit_slice(src.len());
+    // SAFETY: `b` has `src.len()` writable bytes, all written by the copy below;
+    // `src` and the fresh `b` are distinct allocations, so they do not overlap.
+    unsafe {
+        copy_small_bytes(src.as_ptr(), b.as_mut_ptr().cast::<u8>(), src.len());
+        b.assume_init()
+    }
+}
+
 /// Allocates a growable string with `cap` bytes of content capacity.
 /// `parts` are concatenated into the initial content (total must be <= cap).
 /// Returns a pointer to `content[0]`; the 9-byte header lives just before it.
@@ -130,17 +191,22 @@ fn alloc_growable(parts: &[&[u8]], cap: usize) -> *mut c_char {
     // wholesale at pop; `gos_rt_str_free` skips the region tag). Else a
     // boxed slice on the global allocator.
     let region_base = crate::c_abi::rc::region_alloc_bytes(total);
-    let (base, tag) = if region_base.is_null() {
-        let v: Vec<u8> = vec![0u8; total];
-        (
-            Box::into_raw(v.into_boxed_slice()).cast::<u8>(),
-            STR_BUILDER_TAG,
-        )
+    // `zero_tail` is set for the boxed branch, which allocates uninitialised:
+    // the header, content, and trailing zero region are all written below
+    // before the buffer is read or freed, so the whole-allocation `vec![0u8;
+    // total]` memset is unnecessary. Only the bytes after the content must be
+    // zero, so `strlen` stops one byte past the content; region bytes arrive
+    // pre-zeroed and need no tail fill.
+    let (base, tag, zero_tail) = if region_base.is_null() {
+        // Uninitialised heap buffer; the header, content, and trailing zero
+        // region written below cover all `total` bytes before any read. Frees
+        // reclaim it as a `Box<[u8]>` of the same layout.
+        let buf: Box<[std::mem::MaybeUninit<u8>]> = Box::new_uninit_slice(total);
+        (Box::into_raw(buf).cast::<u8>(), STR_BUILDER_TAG, true)
     } else {
-        // region bytes are already zeroed.
-        (region_base, STR_REGION_TAG)
+        (region_base, STR_REGION_TAG, false)
     };
-    // SAFETY: `base` points to `total` writable, zeroed bytes.
+    // SAFETY: `base` points to `total` writable bytes.
     unsafe {
         std::ptr::copy_nonoverlapping(1u32.to_le_bytes().as_ptr(), base, 4);
         std::ptr::copy_nonoverlapping((cap as u32).to_le_bytes().as_ptr(), base.add(4), 4);
@@ -148,10 +214,15 @@ fn alloc_growable(parts: &[&[u8]], cap: usize) -> *mut c_char {
         *base.add(12) = tag;
         let mut off = 13;
         for p in parts {
-            std::ptr::copy_nonoverlapping(p.as_ptr(), base.add(off), p.len());
+            copy_small_bytes(p.as_ptr(), base.add(off), p.len());
             off += p.len();
         }
-        // NUL already zero. Region-allocated strings are bulk-freed at
+        if zero_tail {
+            // Zero the spare capacity and NUL terminator (`cap - content_len +
+            // 1` bytes); a no-spare string writes the single trailing NUL.
+            std::ptr::write_bytes(base.add(off), 0, total - off);
+        }
+        // Region-allocated strings are bulk-freed at
         // `arena_pop` and intentionally skipped by `gos_rt_str_free`, so they
         // never `str_dec`. Counting them in the per-string leak ledger would
         // report a false positive (the memory is reclaimed wholesale at pop);
@@ -578,7 +649,10 @@ pub unsafe extern "C" fn gos_rt_str_substring(
         let lo = start.clamp(0, len_i) as usize;
         let hi = end.clamp(0, len_i).max(start.clamp(0, len_i)) as usize;
         let bytes = unsafe { std::slice::from_raw_parts(s.cast::<u8>(), len) };
-        alloc_cstring(&bytes[lo..hi])
+        // The slice length is authoritative, so skip `alloc_cstring`'s
+        // first-NUL scan over the content (a wasted pass over bytes the copy
+        // below reads again).
+        alloc_cstring_from_slices(&[&bytes[lo..hi]])
     })
 }
 

@@ -642,7 +642,7 @@ pub unsafe extern "C" fn gos_rt_map_insert_str_i64(m: *mut GosMap, key: *const c
             return;
         }
         let map = unsafe { &mut *m };
-        let key_bytes = unsafe { crate::c_abi::string::gos_str_key_bytes(key) }.to_vec();
+        let key_bytes = unsafe { crate::c_abi::string::gos_str_key_bytes(key) };
         let mut storage = map.storage.lock();
         if matches!(*storage, MapStorage::Empty) {
             *storage = MapStorage::StrI64(FxHashMap::default());
@@ -650,7 +650,7 @@ pub unsafe extern "C" fn gos_rt_map_insert_str_i64(m: *mut GosMap, key: *const c
         let MapStorage::StrI64(inner) = &mut *storage else {
             return;
         };
-        let prev = inner.insert(key_bytes.into_boxed_slice(), val);
+        let prev = inner.insert(crate::c_abi::string::boxed_bytes(key_bytes), val);
         if prev.is_none() {
             map.len_cache += 1;
         }
@@ -737,8 +737,8 @@ pub unsafe extern "C" fn gos_rt_map_insert_str_str(
             return;
         }
         let map = unsafe { &mut *m };
-        let key_bytes = unsafe { crate::c_abi::string::gos_str_key_bytes(key) }.to_vec();
-        let val_bytes = unsafe { crate::c_abi::string::gos_str_key_bytes(val) }.to_vec();
+        let key_bytes = unsafe { crate::c_abi::string::gos_str_key_bytes(key) };
+        let val_bytes = unsafe { crate::c_abi::string::gos_str_key_bytes(val) };
         let mut storage = map.storage.lock();
         if matches!(*storage, MapStorage::Empty) {
             *storage = MapStorage::StrStr(FxHashMap::default());
@@ -747,7 +747,10 @@ pub unsafe extern "C" fn gos_rt_map_insert_str_str(
             return;
         };
         if inner
-            .insert(key_bytes.into_boxed_slice(), val_bytes.into_boxed_slice())
+            .insert(
+                crate::c_abi::string::boxed_bytes(key_bytes),
+                crate::c_abi::string::boxed_bytes(val_bytes),
+            )
             .is_none()
         {
             map.len_cache += 1;
@@ -880,7 +883,7 @@ pub unsafe extern "C" fn gos_rt_map_inc_at_str_i64(
             *v += by;
             return *v;
         }
-        inner.insert(key_slice.to_vec().into_boxed_slice(), by);
+        inner.insert(crate::c_abi::string::boxed_bytes(key_slice), by);
         map.len_cache += 1;
         by
     })
@@ -914,7 +917,7 @@ pub unsafe extern "C" fn gos_rt_map_inc_str_i64(
             *v += by;
             return *v;
         }
-        inner.insert(key_bytes.to_vec().into_boxed_slice(), by);
+        inner.insert(crate::c_abi::string::boxed_bytes(key_bytes), by);
         map.len_cache += 1;
         by
     })
@@ -962,7 +965,7 @@ pub unsafe extern "C" fn gos_rt_map_or_insert_str_i64(
         // coerced literal, the stored word, and the returned word); the
         // scalar path and the key-present path are unaffected. The
         // aggregate_binding fixture exercises the working shapes.
-        inner.insert(key_bytes.to_vec().into_boxed_slice(), default);
+        inner.insert(crate::c_abi::string::boxed_bytes(key_bytes), default);
         map.len_cache += 1;
         default
     })
@@ -1004,7 +1007,7 @@ pub unsafe extern "C" fn gos_rt_map_insert_i64_str(m: *mut GosMap, key: i64, val
             return;
         }
         let map = unsafe { &mut *m };
-        let val_bytes = unsafe { crate::c_abi::string::gos_str_key_bytes(val) }.to_vec();
+        let val_bytes = unsafe { crate::c_abi::string::gos_str_key_bytes(val) };
         let mut storage = map.storage.lock();
         if matches!(*storage, MapStorage::Empty) {
             *storage = MapStorage::I64Str(FxHashMap::default());
@@ -1012,7 +1015,10 @@ pub unsafe extern "C" fn gos_rt_map_insert_i64_str(m: *mut GosMap, key: i64, val
         let MapStorage::I64Str(inner) = &mut *storage else {
             return;
         };
-        if inner.insert(key, val_bytes.into_boxed_slice()).is_none() {
+        if inner
+            .insert(key, crate::c_abi::string::boxed_bytes(val_bytes))
+            .is_none()
+        {
             map.len_cache += 1;
         }
         drop(storage);

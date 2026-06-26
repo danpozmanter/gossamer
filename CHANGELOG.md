@@ -10,14 +10,19 @@ AOT tier.
   a map only locks once it escapes to another goroutine (codegen marks it shared
   at the `go` / channel escape points, like RC values). Genuinely shared maps
   stay fully synchronized - safer than Go's unsynchronized maps - at zero cost
-  otherwise. k-nucleotide compiled drops ~25% (1.30s -> 0.97s), `--release`
-  ~24% (1.25s -> 0.95s).
+  otherwise.
 - Statement-position `go f(args)` now marks its escaping args shared (matching
   expression-position `go`): flips a shared map onto its lock and switches a
   passed `String` / struct to atomic reference counting.
 - String-keyed map ops and `String.substring` read their length from the O(1)
   string header instead of a per-call `strlen` (a sliding-window substring scan
   was O(n^2)).
+- The runtime keeps short string and map-key copies inline (overlapping
+  word loads/stores) instead of calling libc `memcpy`, and string allocations
+  zero only their trailing NUL rather than memset-ing the whole buffer. The
+  static-musl `--release` link resolves `memcpy` / `memset` to musl's scalar
+  routines, whose per-call overhead dominated the small per-k-mer copies; the
+  inline path removes it without giving up the portable static binary.
 - `m.iter()` on a `&HashMap` parameter peels past `&` before dispatch, so a
   borrowed map yields real entries instead of a garbage-length vec / hang.
 - The LLVM backend and Cranelift JIT inline word-stride `Vec<f64>` (and nested
