@@ -1,0 +1,63 @@
+// Auto-regions over `for` loops: the compiler wraps eligible `for`-loop
+// bodies in arena regions, exactly as it already does for `while`. This
+// fixture locks correctness for BOTH the regioned and not-regioned `for`
+// shapes so the escape analysis can't silently regress in either direction
+// (over-region an escaping value -> UAF/wrong output; under-region -> still
+// correct, just slower). Output must stay bit-identical across VM /
+// Cranelift / LLVM.
+
+enum Tree { Leaf, Node(Box<Tree>, Box<Tree>) }
+
+fn make(d: i64) -> Tree {
+    if d == 0 {
+        Tree::Leaf
+    } else {
+        Tree::Node(Box::new(make(d - 1)), Box::new(make(d - 1)))
+    }
+}
+
+fn count(t: &Tree) -> i64 {
+    match t {
+        Tree::Leaf => 1,
+        Tree::Node(l, r) => 1 + count(l) + count(r),
+    }
+}
+
+fn main() {
+    // ELIGIBLE for-range: each iteration builds a tree, consumes it,
+    // discards it. Only the i64 accumulator escapes -> auto-regioned.
+    let mut churn: i64 = 0
+    for _ in 0..1000 {
+        churn += count(&make(6))
+    }
+
+    // ELIGIBLE for-range binding the counter and a body-local tree.
+    let mut churn2: i64 = 0
+    for d in 0..8 {
+        let t = make(d)
+        churn2 += count(&t)
+    }
+
+    // ELIGIBLE for-over-vec of a Copy element: build + discard per element.
+    let depths: Vec<i64> = [3, 4, 5, 6]
+    let mut churn3: i64 = 0
+    for d in depths {
+        churn3 += count(&make(d))
+    }
+
+    // NOT ELIGIBLE: `kept` is an outer binding that accumulates trees
+    // across iterations (escapes the body), so the loop must NOT be
+    // regioned - the trees have to survive. A wrong escape decision here
+    // would free `kept`'s nodes mid-build (the `push` method call already
+    // makes the body ineligible; this asserts the survivors are intact).
+    let mut kept: Vec<Tree> = []
+    for _ in 0..50 {
+        kept.push(make(3))
+    }
+    let mut total: i64 = 0
+    for t in kept {
+        total += count(t)
+    }
+
+    println!("{} {} {} {}", churn, churn2, churn3, total)
+}

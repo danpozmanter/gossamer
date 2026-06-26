@@ -170,6 +170,7 @@ impl<'a> Builder<'a> {
         if let HirPatKind::Binding { name, .. } = &loop_pat.kind {
             self.bind_local(&name.name, byte_local);
         }
+        let regioned = self.begin_loop_region(body, span);
         self.loop_stack.push(LoopContext {
             continue_to: step_block,
             break_to: exit,
@@ -181,6 +182,7 @@ impl<'a> Builder<'a> {
         let _ = self.lower_expr(body);
         self.loop_stack.pop();
         self.pop_scope();
+        self.end_loop_region(regioned, span);
         self.terminate(Terminator::Goto { target: step_block });
 
         self.set_current(step_block);
@@ -376,6 +378,7 @@ impl<'a> Builder<'a> {
             }
         }
 
+        let regioned = self.begin_loop_region(body, span);
         self.loop_stack.push(LoopContext {
             continue_to: step_block,
             break_to: exit,
@@ -387,6 +390,7 @@ impl<'a> Builder<'a> {
         let _ = self.lower_expr(body);
         self.loop_stack.pop();
         self.pop_scope();
+        self.end_loop_region(regioned, span);
         self.terminate(Terminator::Goto { target: step_block });
 
         self.set_current(step_block);
@@ -683,6 +687,7 @@ impl<'a> Builder<'a> {
             }
             _ => {}
         }
+        let regioned = self.begin_loop_region(body, span);
         self.loop_stack.push(LoopContext {
             continue_to: step_block,
             break_to: exit,
@@ -694,6 +699,7 @@ impl<'a> Builder<'a> {
         let _ = self.lower_expr(body);
         self.loop_stack.pop();
         self.pop_scope();
+        self.end_loop_region(regioned, span);
         self.terminate(Terminator::Goto { target: step_block });
 
         self.set_current(step_block);
@@ -821,6 +827,12 @@ impl<'a> Builder<'a> {
                 span,
             );
         }
+        // Auto-region: a `for i in a..b` body whose allocations provably die
+        // at the iteration boundary is wrapped in an arena region, so the
+        // iteration's heap is bulk-freed at the back-edge instead of a
+        // per-node refcount teardown - the same optimisation `lower_while`
+        // applies.
+        let regioned = self.begin_loop_region(body, span);
         // `continue` skips the rest of the body but must still
         // advance the counter, so it lands on `step_block`, not
         // on `header` directly. `break` exits the loop entirely.
@@ -835,6 +847,7 @@ impl<'a> Builder<'a> {
         let _ = self.lower_expr(body);
         self.loop_stack.pop();
         self.pop_scope();
+        self.end_loop_region(regioned, span);
         self.terminate(Terminator::Goto { target: step_block });
 
         self.set_current(step_block);
@@ -1001,6 +1014,7 @@ impl<'a> Builder<'a> {
             }
             _ => {}
         }
+        let regioned = self.begin_loop_region(body, span);
         self.loop_stack.push(LoopContext {
             continue_to: step_block,
             break_to: exit,
@@ -1012,6 +1026,7 @@ impl<'a> Builder<'a> {
         let _ = self.lower_expr(body);
         self.loop_stack.pop();
         self.pop_scope();
+        self.end_loop_region(regioned, span);
         self.terminate(Terminator::Goto { target: step_block });
 
         self.set_current(step_block);
@@ -1108,6 +1123,7 @@ impl<'a> Builder<'a> {
             self.bind_local(&name.name, elem_local);
         }
         let step_block = self.new_block(span);
+        let regioned = self.begin_loop_region(body, span);
         self.loop_stack.push(LoopContext {
             continue_to: step_block,
             break_to: exit,
@@ -1119,6 +1135,7 @@ impl<'a> Builder<'a> {
         let _ = self.lower_expr(body);
         self.loop_stack.pop();
         self.pop_scope();
+        self.end_loop_region(regioned, span);
         self.terminate(Terminator::Goto { target: step_block });
 
         self.set_current(step_block);

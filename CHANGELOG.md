@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.19.0 - VM to WASM: In-browser WebAssembly playground support
+## 0.19.0 - VM to WASM: In-browser support, automatic arenas extension
 
 The bytecode VM now compiles to WebAssembly and runs Gossamer in the browser.
 
@@ -17,6 +17,34 @@ The bytecode VM now compiles to WebAssembly and runs Gossamer in the browser.
 - An execution budget caps runaway loops in the playground: an unbounded loop
   aborts with `error[GX0009]` instead of hanging the tab. Feature-gated, so
   native `gos run` carries no overhead.
+
+### Automatic arenas now cover `for` loops
+
+- The compiler's automatic arena regioning - which wraps a loop body whose
+  allocations provably die at the iteration boundary so the iteration's heap is
+  bulk-freed instead of torn down node by node - now applies to `for` loops
+  (`for i in a..b`, `for x in xs`, `for (i, x) in xs.enumerate()`), not only
+  `while`. Allocation-churn code written the idiomatic way
+  (`for _ in 0..n { let t = build(); use(&t) }`) gets the same speedup the
+  `while` form already had: a balanced-tree build-and-discard loop runs ~3-4x
+  faster on the compiled tiers, with output bit-identical across every tier.
+  The eligibility check is unchanged and conservative - when it cannot prove
+  every allocation stays inside the iteration, the loop keeps the ordinary
+  reference-counted path, so the change can only speed code up, never alter a
+  result.
+- `GOS_REGION_TRACE=1` reports, per loop, whether the body was auto-regioned,
+  and when an allocating loop was not, the reason (a method call, an escaping
+  value, a nested loop, an early exit, ...) plus a hint to wrap the body in
+  `arena { }`. Turns an unexpected slow path into a named, actionable signal.
+
+### Indexing speedups (compiled tiers)
+
+- A `[bool]` element reads and writes through a constant 1-byte stride instead
+  of loading the element width from the vector header and branching on it at
+  every access. Random-access bool work (visited-sets, bitmaps) gets faster.
+- A bounds check uses one unsigned comparison (`index >= len` catches both a
+  negative and an over-length index) in place of two signed comparisons, for
+  every checked vector and fixed-array access.
 
 ## 0.18.3 - Compiled-tier hot-path performance, parity, correctness
 

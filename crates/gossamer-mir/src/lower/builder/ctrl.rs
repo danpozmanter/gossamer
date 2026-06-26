@@ -2222,11 +2222,7 @@ impl<'a> Builder<'a> {
         // iteration's heap is bulk-freed at the back-edge instead of a
         // per-node refcount teardown. Eligibility is decided on the HIR
         // before lowering so `region_depth` flags the body's locals.
-        let regioned = self.loop_body_region_eligible(body);
-        if regioned {
-            self.emit_region_call("gos_rt_arena_push", span);
-            self.region_depth += 1;
-        }
+        let regioned = self.begin_loop_region(body, span);
         // `break` jumps to `exit`; `continue` jumps back to the
         // condition test (`header`).
         self.loop_stack.push(LoopContext {
@@ -2239,14 +2235,9 @@ impl<'a> Builder<'a> {
         });
         let _ = self.lower_expr(body);
         self.loop_stack.pop();
-        if regioned {
-            self.region_depth = self.region_depth.saturating_sub(1);
-            // Eligibility guarantees no early exit, so `current` is the
-            // body's fall-through; pop the region before the back-edge.
-            if self.current.is_some() {
-                self.emit_region_call("gos_rt_arena_pop", span);
-            }
-        }
+        // Eligibility guarantees no early exit, so `current` is the body's
+        // fall-through; the pop lands before the back-edge.
+        self.end_loop_region(regioned, span);
         self.terminate(Terminator::Goto { target: header });
 
         self.set_current(exit);
@@ -2296,9 +2287,53 @@ impl<'a> Builder<'a> {
         self.set_current(next);
     }
 
-    /// Conservative escape check: is this loop body safe to auto-region?
-    pub(crate) fn loop_body_region_eligible(&self, body: &HirExpr) -> bool {
-        crate::lower::helpers::LoopEligibility::new(&*self.tcx, self.region_unsafe).check(body)
+    /// Opens an arena region around an eligible loop body, returning whether
+    /// it was regioned. The `for`-loop fast paths (`lower_for_range`,
+    /// `_array`, `_vec`, `_enumerate`) call this where `lower_while` inlines
+    /// the same logic, so idiomatic `for x in 0..n { build; consume }` gets
+    /// the same iteration-scoped bulk-free as the `while` form. Pair with
+    /// `end_loop_region` on the body's fall-through. Eligibility rejects any
+    /// `break` / `continue` / `return`, so the only body exit is that
+    /// fall-through, where the pop is emitted.
+    pub(crate) fn begin_loop_region(&mut self, body: &HirExpr, span: Span) -> bool {
+        use crate::lower::helpers::{LoopEligibility, RegionDecision};
+        let decision = LoopEligibility::new(&*self.tcx, self.region_unsafe).decide(body);
+        if std::env::var_os("GOS_REGION_TRACE").is_some() {
+            let b = body.span;
+            match decision {
+                RegionDecision::Region => eprintln!(
+                    "[region] file {} bytes {}..{}: auto-regioned (iteration heap bulk-freed)",
+                    b.file.as_u32(),
+                    b.start,
+                    b.end
+                ),
+                RegionDecision::Reject(r) => eprintln!(
+                    "[region] file {} bytes {}..{}: NOT regioned - allocates each iteration on the slow per-node RC path: {}. Wrap the body in `arena {{ }}` to bulk-free it.",
+                    b.file.as_u32(),
+                    b.start,
+                    b.end,
+                    r.reason()
+                ),
+                RegionDecision::NoAlloc => {}
+            }
+        }
+        let regioned = matches!(decision, RegionDecision::Region);
+        if regioned {
+            self.emit_region_call("gos_rt_arena_push", span);
+            self.region_depth += 1;
+        }
+        regioned
+    }
+
+    /// Closes a region opened by `begin_loop_region`, emitting `arena_pop` on
+    /// the body's fall-through block before the loop's back-edge.
+    pub(crate) fn end_loop_region(&mut self, regioned: bool, span: Span) {
+        if regioned {
+            self.region_depth = self.region_depth.saturating_sub(1);
+            if self.current.is_some() {
+                self.emit_region_call("gos_rt_arena_pop", span);
+            }
+        }
     }
 
     pub(crate) fn lower_loop(&mut self, body: &HirExpr, ty: Ty, span: Span) -> Option<Local> {

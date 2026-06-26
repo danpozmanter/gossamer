@@ -247,12 +247,13 @@ impl<'a> Lowerer<'a> {
         writeln!(self.out, "{check}:").unwrap();
         let len = self.fresh();
         writeln!(self.out, "  {len} = load i64, ptr {v}").unwrap();
-        let lo = self.fresh();
-        writeln!(self.out, "  {lo} = icmp slt i64 {idx}, 0").unwrap();
-        let hi = self.fresh();
-        writeln!(self.out, "  {hi} = icmp sge i64 {idx}, {len}").unwrap();
+        // One unsigned compare catches both `idx < 0` (wraps to a huge
+        // unsigned value, >= len) and `idx >= len`. A `GosVec` length is
+        // always non-negative, so `(idx as u64) >= (len as u64)` is exactly
+        // `idx < 0 || idx >= len`. LLVM can't fold the two signed compares
+        // into this itself - `len` is a runtime load it can't prove >= 0.
         let bad = self.fresh();
-        writeln!(self.out, "  {bad} = or i1 {lo}, {hi}").unwrap();
+        writeln!(self.out, "  {bad} = icmp uge i64 {idx}, {len}").unwrap();
         writeln!(self.out, "  br i1 {bad}, label %{cont}, label %{store_b}").unwrap();
         writeln!(self.out, "{store_b}:").unwrap();
         let data_ptr_addr = self.fresh();
@@ -310,12 +311,13 @@ impl<'a> Lowerer<'a> {
         writeln!(self.out, "{check}:").unwrap();
         let len = self.fresh();
         writeln!(self.out, "  {len} = load i64, ptr {v}").unwrap();
-        let lo = self.fresh();
-        writeln!(self.out, "  {lo} = icmp slt i64 {idx}, 0").unwrap();
-        let hi = self.fresh();
-        writeln!(self.out, "  {hi} = icmp sge i64 {idx}, {len}").unwrap();
+        // One unsigned compare catches both `idx < 0` (wraps to a huge
+        // unsigned value, >= len) and `idx >= len`. A `GosVec` length is
+        // always non-negative, so `(idx as u64) >= (len as u64)` is exactly
+        // `idx < 0 || idx >= len`. LLVM can't fold the two signed compares
+        // into this itself - `len` is a runtime load it can't prove >= 0.
         let bad = self.fresh();
-        writeln!(self.out, "  {bad} = or i1 {lo}, {hi}").unwrap();
+        writeln!(self.out, "  {bad} = icmp uge i64 {idx}, {len}").unwrap();
         writeln!(self.out, "  br i1 {bad}, label %{dflt}, label %{load_b}").unwrap();
         writeln!(self.out, "{load_b}:").unwrap();
         let data_ptr_addr = self.fresh();
@@ -391,6 +393,26 @@ impl<'a> Lowerer<'a> {
         )
     }
 
+    /// True when the operand is a `Vec`/`[T]` whose element type is statically
+    /// `bool` - the only primitive stored at a 1-byte stride. Lets the inline
+    /// get/set emit a constant-stride byte access (load/store `i8`) instead of
+    /// loading `elem_bytes` from the header and branching on it per access.
+    /// Type-erased vecs (unknown element) keep the dynamic-stride fallback.
+    pub(crate) fn vec_operand_has_byte_elem(&self, op: &Operand) -> bool {
+        let Operand::Copy(pl) = op else {
+            return false;
+        };
+        let mut ty = self.place_leaf_ty(pl);
+        while let Some(TyKind::Ref { inner, .. }) = self.tcx.kind(ty) {
+            ty = *inner;
+        }
+        let elem = match self.tcx.kind(ty) {
+            Some(TyKind::Vec(e) | TyKind::Slice(e)) => *e,
+            _ => return false,
+        };
+        matches!(self.tcx.kind(elem), Some(TyKind::Bool))
+    }
+
     /// True when `op` is a Vec/Slice whose element is itself a
     /// Vec/Slice - an 8-byte heap-pointer slot. Indexing one returns
     /// the borrowed inner-vec pointer, a plain word load with no
@@ -424,6 +446,7 @@ impl<'a> Lowerer<'a> {
         target: Option<&gossamer_mir::BlockId>,
     ) -> Result<(), BuildError> {
         let word_elem = self.vec_operand_has_word_elem(&args[0]);
+        let byte_elem = !word_elem && self.vec_operand_has_byte_elem(&args[0]);
         let vec_ptr = self.vec_operand_ptr(&args[0])?;
         let idx = self.lower_operand(&args[1])?;
         // The inline bounds check and address math operate on i64; widen a
@@ -446,12 +469,13 @@ impl<'a> Lowerer<'a> {
         writeln!(self.out, "{check}:").unwrap();
         let len = self.fresh();
         writeln!(self.out, "  {len} = load i64, ptr {vec_ptr}").unwrap();
-        let lo = self.fresh();
-        writeln!(self.out, "  {lo} = icmp slt i64 {idx}, 0").unwrap();
-        let hi = self.fresh();
-        writeln!(self.out, "  {hi} = icmp sge i64 {idx}, {len}").unwrap();
+        // One unsigned compare catches both `idx < 0` (wraps to a huge
+        // unsigned value, >= len) and `idx >= len`. A `GosVec` length is
+        // always non-negative, so `(idx as u64) >= (len as u64)` is exactly
+        // `idx < 0 || idx >= len`. LLVM can't fold the two signed compares
+        // into this itself - `len` is a runtime load it can't prove >= 0.
         let bad = self.fresh();
-        writeln!(self.out, "  {bad} = or i1 {lo}, {hi}").unwrap();
+        writeln!(self.out, "  {bad} = icmp uge i64 {idx}, {len}").unwrap();
         writeln!(self.out, "  br i1 {bad}, label %{dflt}, label %{load}").unwrap();
         writeln!(self.out, "{load}:").unwrap();
         // Word-stride elements skip the header `elem_bytes` load: the
@@ -470,6 +494,16 @@ impl<'a> Lowerer<'a> {
             let loaded = self.fresh();
             writeln!(self.out, "  {loaded} = load i64, ptr {ea}").unwrap();
             loaded
+        } else if byte_elem {
+            // Statically-bool element: 1-byte stride, so the offset is the
+            // index itself. One `i8` load, no header `elem_bytes` load and no
+            // `is_byte` branch.
+            let ea = self.vec_elem_addr(&vec_ptr, &idx);
+            let b8 = self.fresh();
+            writeln!(self.out, "  {b8} = load i8, ptr {ea}").unwrap();
+            let b64 = self.fresh();
+            writeln!(self.out, "  {b64} = zext i8 {b8} to i64").unwrap();
+            b64
         } else {
             let eb_addr = self.fresh();
             writeln!(
@@ -546,6 +580,7 @@ impl<'a> Lowerer<'a> {
         target: Option<&gossamer_mir::BlockId>,
     ) -> Result<(), BuildError> {
         let word_elem = self.vec_operand_has_word_elem(&args[0]);
+        let byte_elem = !word_elem && self.vec_operand_has_byte_elem(&args[0]);
         let vec_ptr = self.vec_operand_ptr(&args[0])?;
         let idx = self.lower_operand(&args[1])?;
         // The address math operates on i64; widen a narrow-typed index
@@ -568,6 +603,16 @@ impl<'a> Lowerer<'a> {
             let loaded = self.fresh();
             writeln!(self.out, "  {loaded} = load i64, ptr {ea}").unwrap();
             loaded
+        } else if byte_elem {
+            // Statically-bool element: 1-byte stride, so the offset is the
+            // index itself. One `i8` load, no header `elem_bytes` load and no
+            // `is_byte` branch.
+            let ea = self.vec_elem_addr(&vec_ptr, &idx);
+            let b8 = self.fresh();
+            writeln!(self.out, "  {b8} = load i8, ptr {ea}").unwrap();
+            let b64 = self.fresh();
+            writeln!(self.out, "  {b64} = zext i8 {b8} to i64").unwrap();
+            b64
         } else {
             let eb_addr = self.fresh();
             writeln!(
@@ -627,6 +672,7 @@ impl<'a> Lowerer<'a> {
         target: Option<&gossamer_mir::BlockId>,
     ) -> Result<(), BuildError> {
         let word_elem = self.vec_operand_has_word_elem(&args[0]);
+        let byte_elem = !word_elem && self.vec_operand_has_byte_elem(&args[0]);
         let vec_ptr = self.vec_operand_ptr(&args[0])?;
         let idx = self.lower_operand(&args[1])?;
         // The inline bounds check and address math operate on i64; widen a
@@ -649,12 +695,13 @@ impl<'a> Lowerer<'a> {
         writeln!(self.out, "{check}:").unwrap();
         let len = self.fresh();
         writeln!(self.out, "  {len} = load i64, ptr {vec_ptr}").unwrap();
-        let lo = self.fresh();
-        writeln!(self.out, "  {lo} = icmp slt i64 {idx}, 0").unwrap();
-        let hi = self.fresh();
-        writeln!(self.out, "  {hi} = icmp sge i64 {idx}, {len}").unwrap();
+        // One unsigned compare catches both `idx < 0` (wraps to a huge
+        // unsigned value, >= len) and `idx >= len`. A `GosVec` length is
+        // always non-negative, so `(idx as u64) >= (len as u64)` is exactly
+        // `idx < 0 || idx >= len`. LLVM can't fold the two signed compares
+        // into this itself - `len` is a runtime load it can't prove >= 0.
         let bad = self.fresh();
-        writeln!(self.out, "  {bad} = or i1 {lo}, {hi}").unwrap();
+        writeln!(self.out, "  {bad} = icmp uge i64 {idx}, {len}").unwrap();
         writeln!(self.out, "  br i1 {bad}, label %{cont}, label %{store_b}").unwrap();
         writeln!(self.out, "{store_b}:").unwrap();
         // Word-stride elements skip the header `elem_bytes` load: the
@@ -670,6 +717,14 @@ impl<'a> Lowerer<'a> {
             writeln!(self.out, "  {off} = mul i64 {idx}, 8").unwrap();
             let ea = self.vec_elem_addr(&vec_ptr, &off);
             writeln!(self.out, "  store i64 {val}, ptr {ea}").unwrap();
+        } else if byte_elem {
+            // Statically-bool element: 1-byte stride, so the offset is the
+            // index itself. One `i8` store, no header `elem_bytes` load and no
+            // `is_byte` branch.
+            let ea = self.vec_elem_addr(&vec_ptr, &idx);
+            let v8 = self.fresh();
+            writeln!(self.out, "  {v8} = trunc i64 {val} to i8").unwrap();
+            writeln!(self.out, "  store i8 {v8}, ptr {ea}").unwrap();
         } else {
             let eb_addr = self.fresh();
             writeln!(
@@ -722,6 +777,7 @@ impl<'a> Lowerer<'a> {
         target: Option<&gossamer_mir::BlockId>,
     ) -> Result<(), BuildError> {
         let word_elem = self.vec_operand_has_word_elem(&args[0]);
+        let byte_elem = !word_elem && self.vec_operand_has_byte_elem(&args[0]);
         let vec_ptr = self.vec_operand_ptr(&args[0])?;
         let idx = self.lower_operand(&args[1])?;
         // The address math operates on i64; widen a narrow-typed index first so
@@ -741,6 +797,14 @@ impl<'a> Lowerer<'a> {
             writeln!(self.out, "  {off} = mul i64 {idx}, 8").unwrap();
             let ea = self.vec_elem_addr(&vec_ptr, &off);
             writeln!(self.out, "  store i64 {val}, ptr {ea}").unwrap();
+        } else if byte_elem {
+            // Statically-bool element: 1-byte stride, so the offset is the
+            // index itself. One `i8` store, no header `elem_bytes` load and no
+            // `is_byte` branch.
+            let ea = self.vec_elem_addr(&vec_ptr, &idx);
+            let v8 = self.fresh();
+            writeln!(self.out, "  {v8} = trunc i64 {val} to i8").unwrap();
+            writeln!(self.out, "  store i8 {v8}, ptr {ea}").unwrap();
         } else {
             let eb_addr = self.fresh();
             writeln!(

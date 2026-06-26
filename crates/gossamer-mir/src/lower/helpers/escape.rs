@@ -361,6 +361,58 @@ impl Scan<'_> {
     }
 }
 
+/// Why a loop body that allocates was not auto-regioned. Surfaced through
+/// `GOS_REGION_TRACE` so the otherwise-silent slow path (the value lives on
+/// the per-node RC teardown instead of an O(1) bulk free) becomes
+/// debuggable, and the user knows where a manual `arena { }` would pay off.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RegionReject {
+    EarlyExitOrCapture,
+    NestedLoop,
+    MethodCall,
+    EscapingArg,
+    HeapAssign,
+    UnsafeCallee,
+    UnresolvedCallee,
+    DeferGoOrItem,
+}
+
+impl RegionReject {
+    /// One-line, user-facing explanation of the rejection.
+    pub(crate) fn reason(self) -> &'static str {
+        match self {
+            Self::EarlyExitOrCapture => {
+                "body has break/continue/return/go/select/closure (would bypass the region pop or capture a value)"
+            }
+            Self::NestedLoop => "body contains a nested loop (each loop regions itself)",
+            Self::MethodCall => "body calls a method (could stash a value into an outer container)",
+            Self::EscapingArg => {
+                "body passes a non-Copy value created outside the loop into a call"
+            }
+            Self::HeapAssign => {
+                "body assigns a heap value into a binding that outlives the iteration"
+            }
+            Self::UnsafeCallee => {
+                "body calls a region-unsafe fn (spawns a goroutine, writes a static, or mutates a parameter)"
+            }
+            Self::UnresolvedCallee => "body calls through an unresolved/indirect callee",
+            Self::DeferGoOrItem => "body contains a defer, go, or nested item",
+        }
+    }
+}
+
+/// The auto-region decision for a loop body.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RegionDecision {
+    /// Eligible: the body allocates and provably nothing escapes.
+    Region,
+    /// The body allocates a heap value each iteration but was rejected - the
+    /// per-iteration heap is torn down node-by-node instead of bulk-freed.
+    Reject(RegionReject),
+    /// The body allocates nothing, so a region would be pure overhead.
+    NoAlloc,
+}
+
 /// Walks a loop body and decides whether it is safe to wrap in an arena
 /// region: no control flow escapes the region without a pop, no value
 /// created in the body outlives the iteration, and every callee is
@@ -378,6 +430,9 @@ pub(crate) struct LoopEligibility<'a> {
     /// a purely-scalar body (a counter scan, byte stores) must NOT be wrapped,
     /// or every iteration pays two `arena_push`/`arena_pop` calls for nothing.
     allocates: bool,
+    /// First rejection reason, for the `GOS_REGION_TRACE` diagnostic. Only
+    /// meaningful once `ok` is false.
+    reject: Option<RegionReject>,
 }
 
 impl<'a> LoopEligibility<'a> {
@@ -388,6 +443,15 @@ impl<'a> LoopEligibility<'a> {
             in_body: HashSet::new(),
             ok: true,
             allocates: false,
+            reject: None,
+        }
+    }
+
+    /// Marks the body ineligible and records the first rejection reason.
+    fn reject(&mut self, r: RegionReject) {
+        self.ok = false;
+        if self.reject.is_none() {
+            self.reject = Some(r);
         }
     }
 
@@ -408,10 +472,24 @@ impl<'a> LoopEligibility<'a> {
         )
     }
 
-    /// Returns true if `body` (a loop body expression) is region-eligible.
-    pub fn check(mut self, body: &HirExpr) -> bool {
+    /// Decides whether `body` (a loop body expression) is region-eligible,
+    /// reporting *why* an allocating body was rejected so `GOS_REGION_TRACE`
+    /// can explain the perf cliff. `Region` iff the body allocates and
+    /// provably nothing escapes.
+    pub fn decide(mut self, body: &HirExpr) -> RegionDecision {
+        // The walk visits the whole body (it does not stop at the first
+        // rejection), so `allocates` is accurate even when `ok` is already
+        // false - letting us tell a real perf cliff (allocates + rejected)
+        // from an irrelevant scalar loop. `ok` is monotone, so visiting extra
+        // nodes after a rejection cannot change the eligibility verdict.
         self.expr(body, true);
-        self.ok && self.allocates
+        match (self.ok, self.allocates) {
+            (true, true) => RegionDecision::Region,
+            (_, false) => RegionDecision::NoAlloc,
+            (false, true) => {
+                RegionDecision::Reject(self.reject.unwrap_or(RegionReject::EarlyExitOrCapture))
+            }
+        }
     }
 
     fn block(&mut self, b: &HirBlock, top: bool) {
@@ -427,11 +505,8 @@ impl<'a> LoopEligibility<'a> {
                 }
                 HirStmtKind::Expr { expr, .. } => self.expr(expr, false),
                 HirStmtKind::Defer(_) | HirStmtKind::Go(_) | HirStmtKind::Item(_) => {
-                    self.ok = false;
+                    self.reject(RegionReject::DeferGoOrItem);
                 }
-            }
-            if !self.ok {
-                return;
             }
         }
         if let Some(t) = &b.tail {
@@ -460,23 +535,20 @@ impl<'a> LoopEligibility<'a> {
                 // local, parameter, or global is rejected conservatively.
                 match path_root_name(inner) {
                     Some(root) if self.in_body.contains(root) => {}
-                    _ => self.ok = false,
+                    _ => self.reject(RegionReject::EscapingArg),
                 }
             }
             _ => {
                 // Field/index/etc of something - conservatively reject if
                 // it is non-Copy and not obviously in-body.
                 if !place_root_name(inner).is_some_and(|r| self.in_body.contains(r)) {
-                    self.ok = false;
+                    self.reject(RegionReject::EscapingArg);
                 }
             }
         }
     }
 
     fn expr(&mut self, e: &HirExpr, _top: bool) {
-        if !self.ok {
-            return;
-        }
         match &e.kind {
             // Control flow that would skip the region pop, or escape values.
             // Any break/continue/return can bypass the pop emitted at the
@@ -488,11 +560,11 @@ impl<'a> LoopEligibility<'a> {
             | HirExprKind::Select { .. }
             | HirExprKind::Closure { .. }
             | HirExprKind::LiftedClosure { .. } => {
-                self.ok = false;
+                self.reject(RegionReject::EarlyExitOrCapture);
             }
             // Nested loops are analyzed (and regioned) on their own.
             HirExprKind::Loop { .. } | HirExprKind::While { .. } => {
-                self.ok = false;
+                self.reject(RegionReject::NestedLoop);
             }
             HirExprKind::Call { callee, args } => {
                 if self.is_alloc_ty(e.ty) {
@@ -501,11 +573,11 @@ impl<'a> LoopEligibility<'a> {
                 match &callee.kind {
                     HirExprKind::Path { def: Some(d), .. } => {
                         if self.unsafe_fns.contains(d) {
-                            self.ok = false;
+                            self.reject(RegionReject::UnsafeCallee);
                         }
                     }
                     // Unresolved / non-path callee - cannot vet it.
-                    _ => self.ok = false,
+                    _ => self.reject(RegionReject::UnresolvedCallee),
                 }
                 for a in args {
                     self.check_arg(a);
@@ -514,13 +586,13 @@ impl<'a> LoopEligibility<'a> {
             }
             // A method call could mutate an outer container; too risky to
             // vet here, so loops containing them are never auto-regioned.
-            HirExprKind::MethodCall { .. } => self.ok = false,
+            HirExprKind::MethodCall { .. } => self.reject(RegionReject::MethodCall),
             HirExprKind::Assign { place, value } => {
                 // Only Copy-typed places (i64 accumulators, loop counters)
                 // may be assigned; storing a heap value into any binding
                 // could let it outlive the iteration.
                 if !is_copy_ty(self.tcx, place.ty) {
-                    self.ok = false;
+                    self.reject(RegionReject::HeapAssign);
                 }
                 self.expr(value, false);
             }

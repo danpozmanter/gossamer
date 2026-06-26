@@ -12,27 +12,31 @@
         <meta name="author" content="Gossamer contributors">
       
       
-        <link rel="canonical" href="https://danpozmanter.github.io/gossamer/docs/stdlib/path_native/">
+        <link rel="canonical" href="https://danpozmanter.github.io/gossamer/docs/wasm/">
       
       
+        <link rel="prev" href="../running/">
+      
+      
+        <link rel="next" href="../syntax/">
       
       
         
       
       
-      <link rel="icon" href="../../img/GossamerLogo.png">
+      <link rel="icon" href="../img/GossamerLogo.png">
       <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
     
     
       
-        <title>std::path::native - Gossamer</title>
+        <title>WebAssembly - Gossamer</title>
       
     
     
-      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      <link rel="stylesheet" href="../assets/stylesheets/main.484c7ddc.min.css">
       
         
-        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
       
       
 
@@ -51,9 +55,9 @@
       
     
     
-      <link rel="stylesheet" href="../../stylesheets/extra.css">
+      <link rel="stylesheet" href="../stylesheets/extra.css">
     
-    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
 
@@ -78,7 +82,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#stdpathnative" class="md-skip">
+        <a href="#webassembly-and-the-browser-playground" class="md-skip">
           Skip to content
         </a>
       
@@ -94,9 +98,9 @@
 
 <header class="md-header md-header--shadow" data-md-component="header">
   <nav class="md-header__inner md-grid" aria-label="Header">
-    <a href="../.." title="Gossamer" class="md-header__button md-logo" aria-label="Gossamer" data-md-component="logo">
+    <a href=".." title="Gossamer" class="md-header__button md-logo" aria-label="Gossamer" data-md-component="logo">
       
-  <img src="../../img/GossamerLogo.png" alt="logo">
+  <img src="../img/GossamerLogo.png" alt="logo">
 
     </a>
     <label class="md-header__button md-icon" for="__drawer">
@@ -113,7 +117,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              std::path::native
+              WebAssembly
             
           </span>
         </div>
@@ -231,9 +235,9 @@
 
 <nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
-    <a href="../.." title="Gossamer" class="md-nav__button md-logo" aria-label="Gossamer" data-md-component="logo">
+    <a href=".." title="Gossamer" class="md-nav__button md-logo" aria-label="Gossamer" data-md-component="logo">
       
-  <img src="../../img/GossamerLogo.png" alt="logo">
+  <img src="../img/GossamerLogo.png" alt="logo">
 
     </a>
     Gossamer
@@ -260,7 +264,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../.." class="md-nav__link">
+      <a href=".." class="md-nav__link">
         
   
   
@@ -287,7 +291,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../install/" class="md-nav__link">
+      <a href="../install/" class="md-nav__link">
         
   
   
@@ -314,7 +318,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../running/" class="md-nav__link">
+      <a href="../running/" class="md-nav__link">
         
   
   
@@ -338,10 +342,128 @@
       
   
   
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    WebAssembly
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    WebAssembly
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#what-runs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What runs
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#goroutines-in-the-browser" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Goroutines in the browser
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-is-omitted-the-browser-sandbox" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What is omitted (the browser sandbox)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#compiling-a-program-to-a-standalone-wasm" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Compiling a program to a standalone .wasm
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
   
   
     <li class="md-nav__item">
-      <a href="../../syntax/" class="md-nav__link">
+      <a href="../syntax/" class="md-nav__link">
         
   
   
@@ -391,11 +513,11 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../language/" class="md-nav__link ">
+            <a href="../language/" class="md-nav__link ">
               
   
   
@@ -413,14 +535,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="">
+              <label class="md-nav__link " for="__nav_6" id="__nav_6_label" tabindex="">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_5">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -439,7 +561,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/top_level_statements/" class="md-nav__link">
+      <a href="../language/top_level_statements/" class="md-nav__link">
         
   
   
@@ -467,7 +589,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/arena/" class="md-nav__link">
+      <a href="../language/arena/" class="md-nav__link">
         
   
   
@@ -502,7 +624,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../memory/" class="md-nav__link">
+      <a href="../memory/" class="md-nav__link">
         
   
   
@@ -529,7 +651,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../libraries/" class="md-nav__link">
+      <a href="../libraries/" class="md-nav__link">
         
   
   
@@ -583,11 +705,11 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_8" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_9" >
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../" class="md-nav__link ">
+            <a href="../stdlib/" class="md-nav__link ">
               
   
   
@@ -605,14 +727,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_8" id="__nav_8_label" tabindex="">
+              <label class="md-nav__link " for="__nav_9" id="__nav_9_label" tabindex="">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_8_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_8">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_9_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_9">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -631,7 +753,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../" class="md-nav__link">
+      <a href="../stdlib/" class="md-nav__link">
         
   
   
@@ -659,7 +781,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../prelude/" class="md-nav__link">
+      <a href="../prelude/" class="md-nav__link">
         
   
   
@@ -687,7 +809,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../method_support/" class="md-nav__link">
+      <a href="../method_support/" class="md-nav__link">
         
   
   
@@ -715,7 +837,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../stdlib_coverage/" class="md-nav__link">
+      <a href="../stdlib_coverage/" class="md-nav__link">
         
   
   
@@ -771,10 +893,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_9" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_10" >
         
           
-          <label class="md-nav__link" for="__nav_9" id="__nav_9_label" tabindex="">
+          <label class="md-nav__link" for="__nav_10" id="__nav_10_label" tabindex="">
             
   
   
@@ -792,8 +914,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_9_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_9">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_10_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_10">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -810,7 +932,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../toolchain/" class="md-nav__link">
+      <a href="../toolchain/" class="md-nav__link">
         
   
   
@@ -838,7 +960,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../toolchain/lints/" class="md-nav__link">
+      <a href="../toolchain/lints/" class="md-nav__link">
         
   
   
@@ -866,7 +988,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../toolchain/diagnostics/" class="md-nav__link">
+      <a href="../toolchain/diagnostics/" class="md-nav__link">
         
   
   
@@ -901,7 +1023,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../examples/" class="md-nav__link">
+      <a href="../examples/" class="md-nav__link">
         
   
   
@@ -947,10 +1069,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_11" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_12" >
         
           
-          <label class="md-nav__link" for="__nav_11" id="__nav_11_label" tabindex="">
+          <label class="md-nav__link" for="__nav_12" id="__nav_12_label" tabindex="">
             
   
   
@@ -968,8 +1090,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_11_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_11">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_12_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_12">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -986,7 +1108,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../deployment/" class="md-nav__link">
+      <a href="../deployment/" class="md-nav__link">
         
   
   
@@ -1014,7 +1136,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../codegen_abi/" class="md-nav__link">
+      <a href="../codegen_abi/" class="md-nav__link">
         
   
   
@@ -1074,10 +1196,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_12" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_13" >
         
           
-          <label class="md-nav__link" for="__nav_12" id="__nav_12_label" tabindex="">
+          <label class="md-nav__link" for="__nav_13" id="__nav_13_label" tabindex="">
             
   
   
@@ -1095,8 +1217,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_12_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_12">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_13_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_13">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -1113,7 +1235,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../migration/rust/" class="md-nav__link">
+      <a href="../migration/rust/" class="md-nav__link">
         
   
   
@@ -1141,7 +1263,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../migration/go/" class="md-nav__link">
+      <a href="../migration/go/" class="md-nav__link">
         
   
   
@@ -1169,7 +1291,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../migration/python/" class="md-nav__link">
+      <a href="../migration/python/" class="md-nav__link">
         
   
   
@@ -1197,7 +1319,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../migration/fsharp/" class="md-nav__link">
+      <a href="../migration/fsharp/" class="md-nav__link">
         
   
   
@@ -1225,7 +1347,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../migration/kotlin/" class="md-nav__link">
+      <a href="../migration/kotlin/" class="md-nav__link">
         
   
   
@@ -1281,10 +1403,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_13" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_14" >
         
           
-          <label class="md-nav__link" for="__nav_13" id="__nav_13_label" tabindex="">
+          <label class="md-nav__link" for="__nav_14" id="__nav_14_label" tabindex="">
             
   
   
@@ -1302,8 +1424,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_13_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_13">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_14_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_14">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -1320,7 +1442,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../design/diagnostics/" class="md-nav__link">
+      <a href="../design/diagnostics/" class="md-nav__link">
         
   
   
@@ -1348,7 +1470,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../design/runtime/" class="md-nav__link">
+      <a href="../design/runtime/" class="md-nav__link">
         
   
   
@@ -1376,7 +1498,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../design/selfhosting/" class="md-nav__link">
+      <a href="../design/selfhosting/" class="md-nav__link">
         
   
   
@@ -1411,7 +1533,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../skill_card/" class="md-nav__link">
+      <a href="../skill_card/" class="md-nav__link">
         
   
   
@@ -1438,7 +1560,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../security/" class="md-nav__link">
+      <a href="../security/" class="md-nav__link">
         
   
   
@@ -1465,7 +1587,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/" class="md-nav__link">
+      <a href="../contributing/" class="md-nav__link">
         
   
   
@@ -1512,10 +1634,43 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#public-items" class="md-nav__link">
+  <a href="#what-runs" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Public items
+        What runs
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#goroutines-in-the-browser" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Goroutines in the browser
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-is-omitted-the-browser-sandbox" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What is omitted (the browser sandbox)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#compiling-a-program-to-a-standalone-wasm" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Compiling a program to a standalone .wasm
       
     </span>
   </a>
@@ -1539,46 +1694,86 @@
 
 
 
-<h1 id="stdpathnative"><code>std::path::native</code><a class="headerlink" href="#stdpathnative" title="Permanent link">&para;</a></h1>
-<p>Status: shipped</p>
-<p>Native-separator wrappers over <code>std::path</code> (backslash on Windows).</p>
-<h2 id="public-items">Public items<a class="headerlink" href="#public-items" title="Permanent link">&para;</a></h2>
+<h1 id="webassembly-and-the-browser-playground">WebAssembly and the browser playground<a class="headerlink" href="#webassembly-and-the-browser-playground" title="Permanent link">&para;</a></h1>
+<p>Gossamer runs <strong>in the browser</strong>. The bytecode VM is compiled to
+<code>wasm32-unknown-unknown</code> and executes your code entirely client-side - no
+server round-trip, no install. It powers the runnable examples on the
+<a href="../../">home page</a>, the <a href="../../tour/">Tour of Gossamer</a>, and the standalone
+Try Gossamer editor.</p>
+<p>Output is bit-identical to native <code>gos run</code> / <code>gos build</code>.</p>
+<h2 id="what-runs">What runs<a class="headerlink" href="#what-runs" title="Permanent link">&para;</a></h2>
+<p>The whole language plus the pure standard library work unchanged:</p>
+<ul>
+<li><strong>Language</strong> - types, pattern matching, generics, traits, closures,
+  <code>Result</code> / <code>?</code>, the <code>|&gt;</code> pipe, <code>arena { }</code>, deterministic reference counting.</li>
+<li><strong>Collections</strong> - <code>Vec</code>, <code>HashMap</code>, <code>HashSet</code>, <code>BTreeMap</code>.</li>
+<li><strong>Pure stdlib</strong> - <code>math</code>, <code>encoding</code> (json / yaml / toml / base64 / hex /
+  binary / csv / pem / xml / base32), hashing (<code>crc32</code> / <code>adler32</code> / <code>fnv</code>),
+  <code>regex</code>, iterators, <code>format!</code> / <code>println!</code>, <code>strings</code>, <code>unicode</code> / <code>utf8</code>,
+  IP-address parsing, query/form parsing, HTML escaping, <code>gzip</code> / <code>flate</code> /
+  <code>zlib</code>, and non-blocking <code>time</code>.</li>
+</ul>
+<h2 id="goroutines-in-the-browser">Goroutines in the browser<a class="headerlink" href="#goroutines-in-the-browser" title="Permanent link">&para;</a></h2>
+<p>A browser tab is single-threaded, so goroutines run <strong>cooperatively and to
+completion</strong>:</p>
+<ul>
+<li><code>spawn(f)</code> + <code>handle.join()</code> works - the body runs, you collect the result.</li>
+<li>A producer that fills a channel and closes it, drained by
+  <code>while let Some(v) = rx.recv()</code>, works.</li>
+<li>Programs that need two goroutines to <strong>interleave mid-run</strong> (unbuffered
+  rendezvous, ping-pong, <code>select</code> over live producers) do not - run those with
+  native <code>gos run</code>.</li>
+</ul>
+<p>This is the same limit every language has on single-threaded WebAssembly.
+Gossamer reports it as a clean panic rather than freezing the tab.</p>
+<h2 id="what-is-omitted-the-browser-sandbox">What is omitted (the browser sandbox)<a class="headerlink" href="#what-is-omitted-the-browser-sandbox" title="Permanent link">&para;</a></h2>
+<p>A browser tab cannot touch the filesystem, open sockets, or spawn processes, so
+these are unavailable in the playground. They work normally in native <code>gos run</code>
+and <code>gos build</code>:</p>
 <table>
 <thead>
 <tr>
-<th>Name</th>
-<th>Kind</th>
-<th>Description</th>
+<th>Area</th>
+<th>In the browser</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td><code>SEPARATOR</code></td>
-<td>const</td>
-<td>Platform-preferred path separator character.</td>
+<td>Filesystem (<code>std::fs</code>)</td>
+<td>unavailable</td>
 </tr>
 <tr>
-<td><code>join</code></td>
-<td>fn</td>
-<td>Joins two components using the platform separator.</td>
+<td>Sockets, TCP / UDP / TLS, HTTP server <strong>and</strong> client</td>
+<td>unavailable</td>
 </tr>
 <tr>
-<td><code>clean</code></td>
-<td>fn</td>
-<td>Canonicalises a path into native-separator form.</td>
+<td>Processes, signals</td>
+<td>unavailable</td>
 </tr>
 <tr>
-<td><code>to_posix</code></td>
-<td>fn</td>
-<td>Rewrites a native-separator path into posix form.</td>
+<td>SQL (<code>std::database</code>)</td>
+<td>unavailable</td>
 </tr>
 <tr>
-<td><code>to_native</code></td>
-<td>fn</td>
-<td>Rewrites a posix path into native-separator form.</td>
+<td>Crypto / JWT suite, metrics, tracing, <code>uuid</code></td>
+<td>unavailable</td>
+</tr>
+<tr>
+<td>C-library codecs (<code>zstd</code>, <code>bzip2</code>)</td>
+<td>unavailable (<code>gzip</code> / <code>flate</code> / <code>zlib</code> work)</td>
 </tr>
 </tbody>
 </table>
+<p>These are exactly the limits Go and Rust hit in the browser. The escape hatch
+for any of them is a JavaScript bridge (<code>fetch</code>, <code>WebSocket</code>), which the
+playground intentionally does not wire up.</p>
+<h2 id="compiling-a-program-to-a-standalone-wasm">Compiling a program to a standalone <code>.wasm</code><a class="headerlink" href="#compiling-a-program-to-a-standalone-wasm" title="Permanent link">&para;</a></h2>
+<p>The playground compiles the <strong>interpreter</strong> to WebAssembly and runs your source
+inside it. Compiling a Gossamer <strong>program</strong> to a standalone <code>.wasm</code> artifact -
+<code>gos build --target wasm32-...</code> - is <strong>not supported yet</strong>; like the other
+cross-compilation targets, the native AOT backend currently targets the host
+ISA only. For now, "WebAssembly" means <em>run Gossamer in the browser</em>, not <em>ship
+a <code>.wasm</code> binary</em>.</p>
 
 
 
@@ -1636,10 +1831,10 @@
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.instant", "navigation.tracking", "navigation.top", "navigation.sections", "navigation.indexes", "toc.follow", "search.suggest", "search.highlight", "content.code.copy", "content.code.annotate", "content.tabs.link"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.instant", "navigation.tracking", "navigation.top", "navigation.sections", "navigation.indexes", "toc.follow", "search.suggest", "search.highlight", "content.code.copy", "content.code.annotate", "content.tabs.link"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      <script src="../assets/javascripts/bundle.79ae519e.min.js"></script>
       
     
   </body>

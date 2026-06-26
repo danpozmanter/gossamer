@@ -1,0 +1,30 @@
+// Vec<bool> read/write/iterate at a 1-byte element stride. Locks the
+// statically-bool inline index fast path (constant stride-1 i8 access,
+// no per-access elem_bytes header load) to bit-identical output across
+// VM / Cranelift / LLVM. In-bounds only - OOB bool semantics are covered
+// elsewhere.
+
+fn main() {
+    let mut flags = [false; 16]
+    let mut i = 0
+    while i < 16 {
+        flags[i] = (i % 3) == 0
+        i += 1
+    }
+    flags[5] = true
+    flags[0] = false
+
+    let mut count = 0
+    for j in 0..16 {
+        if flags[j] {
+            count += 1
+        }
+    }
+
+    // Read individual cells back through the checked path.
+    let a = if flags[3] { 1 } else { 0 }
+    let b = if flags[5] { 1 } else { 0 }
+    let c = if flags[0] { 1 } else { 0 }
+
+    println!("{} {} {} {}", count, a, b, c)
+}

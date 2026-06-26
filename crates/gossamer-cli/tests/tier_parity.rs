@@ -403,6 +403,8 @@ const SPECS: &[Spec] = &[
     spec("feature-testing-examples/cycle_collector.gos"),
     spec("feature-testing-examples/arena_regions.gos"),
     spec("feature-testing-examples/auto_regions.gos"),
+    spec("feature-testing-examples/auto_regions_for.gos"),
+    spec("feature-testing-examples/bool_vec_byte_stride.gos"),
     spec("feature-testing-examples/tuple_extract_region.gos"),
     spec("feature-testing-examples/defer_unwind_order.gos"),
     spec("feature-testing-examples/early_break_materializers.gos"),

@@ -34,6 +34,50 @@ counting does work the program does not need. Inside an arena:
 - **retain/release are no-ops** for arena values (a two-instruction
   range check at the accounting entries).
 
+## Automatic arenas (no annotation needed)
+
+You often do not have to write `arena { }` at all. The compiler runs a
+conservative escape analysis over every loop body - `while` and `for`
+alike (`for i in a..b`, `for x in xs`, `for (i, x) in xs.enumerate()`) -
+and when it can prove that everything the body allocates dies at the
+iteration boundary, it wraps the body in an arena for you. Idiomatic
+build-and-discard code gets the bulk-free path with no source change:
+
+```gossamer
+let mut total = 0
+for _ in 0..iterations {
+    let tree = build_tree(depth)   // auto-regioned: bump-allocated,
+    total += check(&tree)          // freed wholesale at the iteration end
+}
+```
+
+This is **sound by construction**. The analysis over-approximates
+escapes: if it cannot prove a body's allocations stay local - the body
+calls a method, stores a value into an outer binding, breaks/returns,
+spawns a goroutine, or calls a function that might stash a pointer - it
+does **not** region, and the values keep the ordinary reference-counted
+path. So automatic regioning can only make a program faster; it never
+changes a result. The trade-off is the reverse of the manual block: the
+worst case is a *missed speedup*, not a dangling pointer.
+
+### Seeing the decision
+
+When an allocation-heavy loop runs slower than expected, set
+`GOS_REGION_TRACE=1` at build time. Every loop prints whether it was
+auto-regioned, and if an allocating loop was not, why:
+
+```text
+[region] file 0 bytes 992..993: auto-regioned (iteration heap bulk-freed)
+[region] file 0 bytes 806..1087: NOT regioned - allocates each iteration on the
+  slow per-node RC path: body contains a nested loop. Wrap the body in `arena { }`.
+```
+
+The reason names the exact rule that disqualified the loop (a method
+call, an escaping value, a nested loop, an early exit, an unvetted
+callee), so you know whether to restructure the loop or reach for an
+explicit `arena { }` - which always works, because you are then making
+the no-escape guarantee yourself.
+
 ## Exit behavior
 
 The block desugars to `runtime::arena_push()` plus a block-scoped
