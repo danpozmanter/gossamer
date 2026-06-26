@@ -11,6 +11,15 @@ on:
       - 'crates/gossamer-playground/**'
   workflow_dispatch:
 
+env:
+  # Pin the rustup proxy to the project toolchain and suppress the
+  # rust-toolchain.toml override read, matching ci.yml. Without this the
+  # proxy dispatches cargo to 1.95.0 (per the override file) while the
+  # wasm32-unknown-unknown target below is installed onto the toolchain
+  # named by the rust-toolchain action - the two must be the same
+  # toolchain or the target is invisible to the build.
+  RUSTUP_TOOLCHAIN: 1.95.0
+
 permissions:
   contents: read
   pages: write
@@ -43,7 +52,7 @@ jobs:
       # Compile the Try Gossamer playground (the bytecode VM) to wasm and
       # drop the wasm-bindgen module into site/playground/, replacing the
       # JS stub the component falls back to when the module is absent.
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.95.0
         with:
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
