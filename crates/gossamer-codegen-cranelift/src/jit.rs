@@ -356,7 +356,37 @@ fn jit_compile_set<'a>(
 )]
 #[must_use]
 pub fn has_worthy_jit_body(bodies: &[Body], tcx: &TyCtxt, enum_shapes: &HashMap<u32, u32>) -> bool {
-    !jit_eager_loop_bodies(bodies, tcx, enum_shapes).is_empty()
+    let all_names: std::collections::HashSet<&str> =
+        bodies.iter().map(|b| b.name.as_str()).collect();
+    let def_to_name: HashMap<u32, &str> = bodies
+        .iter()
+        .filter_map(|b| b.def.map(|d| (d.local, b.name.as_str())))
+        .collect();
+    let mut graph: HashMap<&str, Vec<&str>> = HashMap::new();
+    for b in bodies {
+        let (calls, _) = body_user_calls(b, &all_names, &def_to_name);
+        graph.insert(b.name.as_str(), calls);
+    }
+    let reaches_self = |start: &str| -> bool {
+        let mut seen = std::collections::HashSet::new();
+        let mut stack: Vec<&str> = graph.get(start).into_iter().flatten().copied().collect();
+        while let Some(node) = stack.pop() {
+            if node == start {
+                return true;
+            }
+            if seen.insert(node)
+                && let Some(succ) = graph.get(node)
+            {
+                stack.extend(succ.iter().copied());
+            }
+        }
+        false
+    };
+    bodies.iter().any(|b| {
+        b.name != "main"
+            && body_kinds(b, tcx, enum_shapes).is_some()
+            && (body_has_loop(b) || reaches_self(b.name.as_str()))
+    })
 }
 
 /// Names of the bodies worth JIT-compiling on their *first* call rather
@@ -379,45 +409,20 @@ pub fn jit_eager_loop_bodies(
     tcx: &TyCtxt,
     enum_shapes: &HashMap<u32, u32>,
 ) -> Vec<String> {
-    let all_names: std::collections::HashSet<&str> =
-        bodies.iter().map(|b| b.name.as_str()).collect();
-    let def_to_name: HashMap<u32, &str> = bodies
-        .iter()
-        .filter_map(|b| b.def.map(|d| (d.local, b.name.as_str())))
-        .collect();
-    // Names that (transitively) reach themselves - a recursive call
-    // chain stays native once compiled, so it amortizes the boundary.
-    let mut graph: HashMap<&str, Vec<&str>> = HashMap::new();
-    for b in bodies {
-        let (calls, _) = body_user_calls(b, &all_names, &def_to_name);
-        graph.insert(b.name.as_str(), calls);
-    }
-    let reaches_self = |start: &str| -> bool {
-        let mut seen = std::collections::HashSet::new();
-        let mut stack: Vec<&str> = graph.get(start).into_iter().flatten().copied().collect();
-        while let Some(node) = stack.pop() {
-            if node == start {
-                return true;
-            }
-            if seen.insert(node)
-                && let Some(succ) = graph.get(node)
-            {
-                stack.extend(succ.iter().copied());
-            }
-        }
-        false
-    };
-    // `main` is never promoted (it stays on the bytecode path so every
-    // stdlib builtin keeps firing), so its own loops do not justify
-    // standing up the JIT - only a promotable *helper* that does real
-    // work per cross-boundary call does.
+    // Promote helpers that contain a loop and can be fully lowered by the
+    // JIT. Purely recursive functions (no inner loop) are intentionally
+    // excluded: their call counter accumulates naturally across recursive
+    // calls and will trip the hot threshold without paying Cranelift's
+    // compile cost on the very first invocation. Eagerly promoting them
+    // turns a fast short-recursion program (e.g. factorial) into a slow
+    // one whose startup is dominated by compilation overhead.
     bodies
         .iter()
         .filter(|b| {
             b.name != "main"
                 && body_kinds(b, tcx, enum_shapes).is_some()
                 && !body_jit_unsupported(b, tcx)
-                && (body_has_loop(b) || reaches_self(b.name.as_str()))
+                && body_has_loop(b)
         })
         .map(|b| b.name.clone())
         .collect()
