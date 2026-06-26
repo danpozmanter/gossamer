@@ -384,7 +384,11 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           prefix-key: v2-audit-stdio
-      - run: cargo install cargo-audit --locked
+      # Install cargo-audit as a prebuilt binary (GitHub Releases) -
+      # avoids compiling it from crates.io on every cache miss.
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
       - run: cargo audit
 
   docs:

@@ -44,8 +44,13 @@ jobs:
       - name: Build
         run: cargo build --release --bin gos
 
+      # Install packaging tools as prebuilt binaries (cargo-deb from
+      # GitHub Releases, cargo-generate-rpm via cargo-binstall) - avoids
+      # compiling them from crates.io on every cache miss.
       - name: Install packaging tools
-        run: cargo install --locked cargo-deb cargo-generate-rpm
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deb,cargo-generate-rpm
 
       - name: Stage tarball payload
         run: |
@@ -118,8 +123,13 @@ jobs:
           # the target explicitly into target/<triple>/release/.
           cargo build --release --target aarch64-unknown-linux-gnu -p gossamer-runtime
 
+      # Install packaging tools as prebuilt binaries (cargo-deb from
+      # GitHub Releases, cargo-generate-rpm via cargo-binstall) - avoids
+      # compiling them from crates.io on every cache miss.
       - name: Install packaging tools
-        run: cargo install --locked cargo-deb cargo-generate-rpm
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deb,cargo-generate-rpm
 
       - name: Stage tarball payload
         run: |

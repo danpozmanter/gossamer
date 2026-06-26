@@ -56,14 +56,20 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
-      - name: Install wasm-bindgen-cli
+      - name: Resolve wasm-bindgen-cli version from Cargo.lock
         # The CLI version must match the wasm-bindgen crate version exactly
         # (a mismatch is a hard "schema version" error), so pin it to whatever
         # Cargo.lock resolves rather than a floating range.
         run: |
           WBVER=$(grep -A1 '^name = "wasm-bindgen"$' Cargo.lock | sed -n 's/^version = "\(.*\)"/\1/p' | head -1)
           echo "pinning wasm-bindgen-cli to $WBVER"
-          cargo install wasm-bindgen-cli --version "=$WBVER" --locked
+          echo "WBVER=$WBVER" >> "$GITHUB_ENV"
+      # Install the exact pinned version as a prebuilt binary (GitHub
+      # Releases) - avoids compiling wasm-bindgen-cli from crates.io.
+      - name: Install wasm-bindgen-cli
+        uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-bindgen-cli@${{ env.WBVER }}
       - name: Install wasm-opt (binaryen)
         run: sudo apt-get update && sudo apt-get install -y binaryen
       - name: Build playground wasm

@@ -43,7 +43,12 @@ jobs:
         with:
           prefix-key: v1-fuzz-weekly
           workspaces: fuzz
-      - run: cargo install cargo-fuzz --locked
+      # Install cargo-fuzz as a prebuilt binary (GitHub Releases via
+      # cargo-binstall) - avoids compiling its full dependency tree
+      # from crates.io on every cache miss.
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-fuzz
       - name: Fuzz each target for one hour
         working-directory: fuzz
         # `-fork=1` runs each batch of inputs in a child process so a
@@ -91,7 +96,12 @@ jobs:
         with:
           prefix-key: v1-fuzz-cmin
           workspaces: fuzz
-      - run: cargo install cargo-fuzz --locked
+      # Install cargo-fuzz as a prebuilt binary (GitHub Releases via
+      # cargo-binstall) - avoids compiling its full dependency tree
+      # from crates.io on every cache miss.
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-fuzz
       - name: Minimise corpus
         working-directory: fuzz
         run: |

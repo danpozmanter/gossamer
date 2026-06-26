@@ -40,7 +40,12 @@ jobs:
         with:
           prefix-key: v1-fuzz
           workspaces: fuzz
-      - run: cargo install cargo-fuzz --locked
+      # Install cargo-fuzz as a prebuilt binary (GitHub Releases via
+      # cargo-binstall) - avoids compiling its full dependency tree
+      # from crates.io on every cache miss.
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-fuzz
       - name: Smoke each seed corpus for 30 s
         working-directory: fuzz
         # Mirror fuzz-weekly.yml's rss / malloc / timeout caps so
