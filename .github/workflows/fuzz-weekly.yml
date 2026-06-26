@@ -61,9 +61,11 @@ jobs:
         # well under the runner's ~7 GB ceiling; `-timeout=30` caps
         # individual-input runtime so pathological inputs don't exhaust
         # the slot.
+        # --target x86_64-unknown-linux-gnu: same rationale as fuzz.yml.
         run: |
           set -euo pipefail
-          cargo +nightly-2026-04-14 fuzz run ${{ matrix.target }} \
+          cargo +nightly-2026-04-14 fuzz run --target x86_64-unknown-linux-gnu \
+            ${{ matrix.target }} \
             -- -fork=1 -max_total_time=3600 -max_len=65536 \
                -rss_limit_mb=2048 -malloc_limit_mb=2048 -timeout=30
       - name: Upload any crash inputs
@@ -107,7 +109,8 @@ jobs:
         run: |
           set -euo pipefail
           before=$(find corpus/${{ matrix.target }} -type f 2>/dev/null | wc -l)
-          cargo +nightly-2026-04-14 fuzz cmin ${{ matrix.target }} || true
+          cargo +nightly-2026-04-14 fuzz cmin --target x86_64-unknown-linux-gnu \
+            ${{ matrix.target }} || true
           after=$(find corpus/${{ matrix.target }} -type f 2>/dev/null | wc -l)
           echo "corpus size: $before -> $after"
       - name: Open PR with minimised corpus

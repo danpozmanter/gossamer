@@ -54,9 +54,14 @@ jobs:
         # but cargo + the harness + the cached corpus still push
         # well into hundreds of MB; the explicit limits keep the
         # smoke job deterministic.
+        # --target x86_64-unknown-linux-gnu is required: newer cargo-fuzz
+        # prebuilts default to the musl triple which is incompatible with
+        # ASAN (-Zsanitizer=address requires -C target-feature=-crt-static
+        # on musl, but cargo-fuzz does not set that flag).
         run: |
           set -euo pipefail
-          cargo +nightly-2026-04-14 fuzz run ${{ matrix.target }} \
+          cargo +nightly-2026-04-14 fuzz run --target x86_64-unknown-linux-gnu \
+            ${{ matrix.target }} \
             -- -max_total_time=30 -max_len=65536 \
                -rss_limit_mb=2048 -malloc_limit_mb=2048 -timeout=30
       - name: Upload any crash inputs
