@@ -1,0 +1,82 @@
+// Auto-regions over map iteration and bare `loop`: the compiler wraps an
+// eligible `for (k, v) in m.iter()` (String-keyed), `for (_, v) in m.iter()`
+// (struct/tuple-keyed values), and bare `loop { }` body in an arena region,
+// exactly as it already does for `for x in xs`. This fixture locks correctness
+// for BOTH the regioned (build-and-discard) and not-regioned (a value escapes
+// the iteration, or a `break` disqualifies the loop) shapes, so the escape
+// analysis cannot silently regress in either direction: over-region an escaping
+// value -> UAF / wrong output; under-region -> still correct, just slower. The
+// bodies sum their results, so HashMap iteration order cannot affect the total.
+// Run with `GOS_ARENA_TRACE=1` to see the eligible loops report `auto-regioned`.
+// Output must stay bit-identical across VM / Cranelift / LLVM.
+
+use std::collections::HashMap
+
+enum Tree { Leaf, Node(Box<Tree>, Box<Tree>) }
+
+fn make(d: i64) -> Tree {
+    if d == 0 {
+        Tree::Leaf
+    } else {
+        Tree::Node(Box::new(make(d - 1)), Box::new(make(d - 1)))
+    }
+}
+
+fn count(t: &Tree) -> i64 {
+    match t {
+        Tree::Leaf => 1,
+        Tree::Node(l, r) => 1 + count(l) + count(r),
+    }
+}
+
+fn main() {
+    // ELIGIBLE String-keyed HashMap iter: each entry builds a tree from its
+    // Copy value and discards it. Only the i64 accumulator escapes -> regioned.
+    let mut depths: HashMap<String, i64> = HashMap::new()
+    depths.insert(format!("a"), 4)
+    depths.insert(format!("b"), 5)
+    depths.insert(format!("c"), 6)
+    let mut churn: i64 = 0
+    for (_, d) in depths.iter() {
+        churn += count(&make(d))
+    }
+
+    // ELIGIBLE struct/tuple-keyed map, values-driven iter: build + discard a
+    // body-local tree per value. Only the i64 accumulator escapes -> regioned.
+    let mut bykey: HashMap<(i64, i64), i64> = HashMap::new()
+    bykey.insert((1, 1), 3)
+    bykey.insert((2, 2), 5)
+    let mut churn2: i64 = 0
+    for (_, d) in bykey.iter() {
+        let t = make(d)
+        churn2 += count(&t)
+    }
+
+    // NOT ELIGIBLE: the body pushes each built tree into an outer `Vec` (a
+    // method call, and a survivor that outlives the iteration), so the map iter
+    // must NOT be regioned - the trees have to survive to be counted afterward.
+    let mut sizes: HashMap<String, i64> = HashMap::new()
+    sizes.insert(format!("x"), 2)
+    sizes.insert(format!("y"), 3)
+    let mut kept: Vec<Tree> = []
+    for (_, d) in sizes.iter() {
+        kept.push(make(d))
+    }
+    let mut total: i64 = 0
+    for t in kept {
+        total += count(t)
+    }
+
+    // Bare `loop { }` with an allocating body: it must `break` to terminate,
+    // and eligibility rejects any break, so this is NOT regioned - the wiring
+    // must preserve correctness on the ordinary reference-counted path.
+    let mut churn3: i64 = 0
+    let mut i = 0
+    loop {
+        if i >= 8 { break }
+        churn3 += count(&make(i))
+        i += 1
+    }
+
+    println!("{} {} {} {}", churn, churn2, total, churn3)
+}

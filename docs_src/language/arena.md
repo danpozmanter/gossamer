@@ -37,9 +37,10 @@ counting does work the program does not need. Inside an arena:
 ## Automatic arenas (no annotation needed)
 
 You often do not have to write `arena { }` at all. The compiler runs a
-conservative escape analysis over every loop body - `while` and `for`
-alike (`for i in a..b`, `for x in xs`, `for (i, x) in xs.enumerate()`) -
-and when it can prove that everything the body allocates dies at the
+conservative escape analysis over every loop body - `while`, `for`
+(`for i in a..b`, `for x in xs`, `for (i, x) in xs.enumerate()`,
+`for (k, v) in m.iter()`), and bare `loop` alike - and when it can prove
+that everything the body allocates dies at the
 iteration boundary, it wraps the body in an arena for you. Idiomatic
 build-and-discard code gets the bulk-free path with no source change:
 
@@ -63,12 +64,12 @@ worst case is a *missed speedup*, not a dangling pointer.
 ### Seeing the decision
 
 When an allocation-heavy loop runs slower than expected, set
-`GOS_REGION_TRACE=1` at build time. Every loop prints whether it was
+`GOS_ARENA_TRACE=1` at build time. Every loop prints whether it was
 auto-regioned, and if an allocating loop was not, why:
 
 ```text
-[region] file 0 bytes 992..993: auto-regioned (iteration heap bulk-freed)
-[region] file 0 bytes 806..1087: NOT regioned - allocates each iteration on the
+[arena] file 0 bytes 992..993: auto-regioned (iteration heap bulk-freed)
+[arena] file 0 bytes 806..1087: NOT regioned - allocates each iteration on the
   slow per-node RC path: body contains a nested loop. Wrap the body in `arena { }`.
 ```
 

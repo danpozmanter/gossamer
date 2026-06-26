@@ -18,7 +18,7 @@ The bytecode VM now compiles to WebAssembly and runs Gossamer in the browser.
   aborts with `error[GX0009]` instead of hanging the tab. Feature-gated, so
   native `gos run` carries no overhead.
 
-### Automatic arenas now cover `for` loops
+### Automatic arenas now cover `for` loops and map iteration
 
 - The compiler's automatic arena regioning - which wraps a loop body whose
   allocations provably die at the iteration boundary so the iteration's heap is
@@ -32,7 +32,13 @@ The bytecode VM now compiles to WebAssembly and runs Gossamer in the browser.
   every allocation stays inside the iteration, the loop keeps the ordinary
   reference-counted path, so the change can only speed code up, never alter a
   result.
-- `GOS_REGION_TRACE=1` reports, per loop, whether the body was auto-regioned,
+- The same regioning now also covers `for (k, v) in m.iter()` over `HashMap`
+  and `BTreeMap` (including struct- and tuple-keyed maps) and bare `loop { }`
+  bodies, so every loop form an allocation-churn body might use takes the
+  bulk-free fast path under the one conservative escape check. Coverage only -
+  the eligibility gate is unchanged, and output stays bit-identical across
+  every tier.
+- `GOS_ARENA_TRACE=1` reports, per loop, whether the body was auto-regioned,
   and when an allocating loop was not, the reason (a method call, an escaping
   value, a nested loop, an early exit, ...) plus a hint to wrap the body in
   `arena { }`. Turns an unexpected slow path into a named, actionable signal.

@@ -362,7 +362,7 @@ impl Scan<'_> {
 }
 
 /// Why a loop body that allocates was not auto-regioned. Surfaced through
-/// `GOS_REGION_TRACE` so the otherwise-silent slow path (the value lives on
+/// `GOS_ARENA_TRACE` so the otherwise-silent slow path (the value lives on
 /// the per-node RC teardown instead of an O(1) bulk free) becomes
 /// debuggable, and the user knows where a manual `arena { }` would pay off.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -430,7 +430,7 @@ pub(crate) struct LoopEligibility<'a> {
     /// a purely-scalar body (a counter scan, byte stores) must NOT be wrapped,
     /// or every iteration pays two `arena_push`/`arena_pop` calls for nothing.
     allocates: bool,
-    /// First rejection reason, for the `GOS_REGION_TRACE` diagnostic. Only
+    /// First rejection reason, for the `GOS_ARENA_TRACE` diagnostic. Only
     /// meaningful once `ok` is false.
     reject: Option<RegionReject>,
 }
@@ -473,7 +473,7 @@ impl<'a> LoopEligibility<'a> {
     }
 
     /// Decides whether `body` (a loop body expression) is region-eligible,
-    /// reporting *why* an allocating body was rejected so `GOS_REGION_TRACE`
+    /// reporting *why* an allocating body was rejected so `GOS_ARENA_TRACE`
     /// can explain the perf cliff. `Region` iff the body allocates and
     /// provably nothing escapes.
     pub fn decide(mut self, body: &HirExpr) -> RegionDecision {

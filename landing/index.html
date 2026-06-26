@@ -278,39 +278,35 @@ $ gos build --release hello.gos   # one native binary, ready to ship</code></pre
   <style>
     .cta-tour { background: transparent; border: 1px solid #38bdf8; color: #38bdf8; }
     .cta-tour:hover { background: rgba(56, 189, 248, .12); }
-    .run-bar { display: flex; justify-content: flex-end; margin: 0 0 .4rem; }
-    .run-btn {
-      font: 600 .85rem/1 "Inter", system-ui, sans-serif;
-      color: #001018; background: #38bdf8; border: 0; border-radius: 999px;
-      padding: .42rem .95rem; cursor: pointer;
-    }
-    .run-btn:hover { background: #7dd3fc; }
     .pg-host { margin-top: .5rem; }
   </style>
   <script type="module">
-    // Make every homepage code sample runnable: a Run button mounts the
-    // Try Gossamer playground in place, seeded with the sample's source.
+    // Every homepage code sample is a live, editable playground: edit the
+    // source in place and press Run (or Ctrl/Cmd-Enter) - no intermediate
+    // step. Each sample upgrades from its static highlighted block to the
+    // editor the first time its tab panel becomes visible, so editors only
+    // mount while laid out (correct CodeMirror sizing) and the wasm runtime
+    // stays lazy: it loads on the first Run, not on page load.
     import { mountPlayground } from "./playground/playground.js";
-    document.querySelectorAll(".tabpanel").forEach(function (panel) {
+    function upgrade(panel) {
       var pre = panel.querySelector("pre");
       if (!pre) return;
       var code = pre.querySelector("code");
       var source = (code ? code.textContent : pre.textContent).replace(/\n+$/, "");
-      var bar = document.createElement("div");
-      bar.className = "run-bar";
-      var btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "run-btn";
-      btn.textContent = "Run ▶";
-      bar.appendChild(btn);
-      pre.parentNode.insertBefore(bar, pre);
-      btn.addEventListener("click", function () {
-        var host = document.createElement("div");
-        host.className = "pg-host";
-        pre.replaceWith(host);
-        bar.remove();
-        mountPlayground(host, { source: source, autorun: true });
+      var host = document.createElement("div");
+      host.className = "pg-host";
+      pre.replaceWith(host);
+      mountPlayground(host, { source: source });
+    }
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (entry) {
+        if (!entry.isIntersecting) return;
+        io.unobserve(entry.target);
+        upgrade(entry.target);
       });
+    });
+    document.querySelectorAll(".tabpanel").forEach(function (panel) {
+      io.observe(panel);
     });
   </script>
 </body>

@@ -2196,8 +2196,15 @@ impl<'a> Builder<'a> {
         });
         self.set_current(after_val);
 
+        // Auto-region the body, exactly as the `for x in vec` path does: the
+        // key/value bindings are read from the snapshot above (outside the
+        // region), and only the body's per-iteration allocations are
+        // bulk-freed at the iteration boundary. Eligibility rejects any
+        // escape, so this can only speed the loop up, never change a result.
+        let regioned = self.begin_loop_region(for_loop.body, span);
         let _ = self.lower_expr(for_loop.body);
         self.pop_scope();
+        self.end_loop_region(regioned, span);
         self.terminate(Terminator::Goto { target: step_block });
 
         self.set_current(step_block);
@@ -2349,8 +2356,13 @@ impl<'a> Builder<'a> {
         });
         self.set_current(after_get);
 
+        // Auto-region the body: the value binding is read from the values
+        // snapshot above (outside the region), so only the body's
+        // per-iteration allocations are arena-freed at the boundary.
+        let regioned = self.begin_loop_region(for_loop.body, span);
         let _ = self.lower_expr(for_loop.body);
         self.pop_scope();
+        self.end_loop_region(regioned, span);
         self.terminate(Terminator::Goto { target: step_block });
 
         self.set_current(step_block);

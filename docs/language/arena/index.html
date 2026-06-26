@@ -1806,10 +1806,10 @@ changes a result. The trade-off is the reverse of the manual block: the
 worst case is a <em>missed speedup</em>, not a dangling pointer.</p>
 <h3 id="seeing-the-decision">Seeing the decision<a class="headerlink" href="#seeing-the-decision" title="Permanent link">&para;</a></h3>
 <p>When an allocation-heavy loop runs slower than expected, set
-<code>GOS_REGION_TRACE=1</code> at build time. Every loop prints whether it was
+<code>GOS_ARENA_TRACE=1</code> at build time. Every loop prints whether it was
 auto-regioned, and if an allocating loop was not, why:</p>
-<div class="language-text highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>[region] file 0 bytes 992..993: auto-regioned (iteration heap bulk-freed)
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>[region] file 0 bytes 806..1087: NOT regioned - allocates each iteration on the
+<div class="language-text highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>[arena] file 0 bytes 992..993: auto-regioned (iteration heap bulk-freed)
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>[arena] file 0 bytes 806..1087: NOT regioned - allocates each iteration on the
 <a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>  slow per-node RC path: body contains a nested loop. Wrap the body in `arena { }`.
 </code></pre></div>
 <p>The reason names the exact rule that disqualified the loop (a method

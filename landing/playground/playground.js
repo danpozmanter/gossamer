@@ -206,7 +206,7 @@ export function mountPlayground(el, opts = {}) {
 
   const outputLabel = document.createElement("span");
   outputLabel.className = "gp-output-label";
-  outputLabel.textContent = "Output";
+  outputLabel.textContent = "Output:";
 
   const status = document.createElement("span");
   status.className = "gp-status";
@@ -316,7 +316,9 @@ export function mountPlayground(el, opts = {}) {
       }
       renderDiagnostics(diags, diagnostics);
 
-      status.textContent = "Done";
+      // The rendered output below is the completion signal; a successful run
+      // leaves the header reading just "Output:" with no redundant status.
+      status.textContent = "";
     } catch (err) {
       out.replaceChildren();
       appendSegment(

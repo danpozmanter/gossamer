@@ -2298,17 +2298,17 @@ impl<'a> Builder<'a> {
     pub(crate) fn begin_loop_region(&mut self, body: &HirExpr, span: Span) -> bool {
         use crate::lower::helpers::{LoopEligibility, RegionDecision};
         let decision = LoopEligibility::new(&*self.tcx, self.region_unsafe).decide(body);
-        if std::env::var_os("GOS_REGION_TRACE").is_some() {
+        if std::env::var_os("GOS_ARENA_TRACE").is_some() {
             let b = body.span;
             match decision {
                 RegionDecision::Region => eprintln!(
-                    "[region] file {} bytes {}..{}: auto-regioned (iteration heap bulk-freed)",
+                    "[arena] file {} bytes {}..{}: auto-regioned (iteration heap bulk-freed)",
                     b.file.as_u32(),
                     b.start,
                     b.end
                 ),
                 RegionDecision::Reject(r) => eprintln!(
-                    "[region] file {} bytes {}..{}: NOT regioned - allocates each iteration on the slow per-node RC path: {}. Wrap the body in `arena {{ }}` to bulk-free it.",
+                    "[arena] file {} bytes {}..{}: NOT regioned - allocates each iteration on the slow per-node RC path: {}. Wrap the body in `arena {{ }}` to bulk-free it.",
                     b.file.as_u32(),
                     b.start,
                     b.end,
@@ -2357,6 +2357,11 @@ impl<'a> Builder<'a> {
         let result_local = self.fresh(ty);
         self.terminate(Terminator::Goto { target: header });
         self.set_current(header);
+        // Auto-region the body. Eligibility rejects any `break` / `continue` /
+        // `return`, so a terminating `loop { ... break }` is never regioned;
+        // the gate fires only for a break-free allocating body, whose sole exit
+        // is the fall-through to the back-edge where the pop is emitted.
+        let regioned = self.begin_loop_region(body, span);
         self.loop_stack.push(LoopContext {
             continue_to: header,
             break_to: exit,
@@ -2367,6 +2372,7 @@ impl<'a> Builder<'a> {
         });
         let _ = self.lower_expr(body);
         let ctx = self.loop_stack.pop().expect("loop stack underflow");
+        self.end_loop_region(regioned, span);
         self.terminate(Terminator::Goto { target: header });
         self.set_current(exit);
         if ctx.break_used {
