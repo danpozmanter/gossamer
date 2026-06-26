@@ -106,6 +106,7 @@ pub fn stack() -> Vec<StackFrame> {
 
 /// Lowest-level caller iterator. Walks the current thread's
 /// stack via `backtrace::trace`.
+#[cfg(not(target_arch = "wasm32"))]
 fn collect_frames() -> Vec<StackFrame> {
     let mut out: Vec<StackFrame> = Vec::new();
     backtrace::trace(|frame| {
@@ -129,6 +130,14 @@ fn collect_frames() -> Vec<StackFrame> {
         true
     });
     out
+}
+
+/// wasm32 has no machine-stack unwinder (`backtrace` does not build for
+/// wasm32-unknown-unknown), so caller introspection yields no frames in
+/// the playground.
+#[cfg(target_arch = "wasm32")]
+fn collect_frames() -> Vec<StackFrame> {
+    Vec::new()
 }
 
 /// Registers a finalizer for an `Arc`-managed value. Invokes

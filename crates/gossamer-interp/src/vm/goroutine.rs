@@ -23,6 +23,7 @@ type GoroutineTask = Box<dyn FnOnce() + Send + 'static>;
 /// guard page and abort the process on a workload the main thread runs
 /// fine. The byte-budget recursion guard is armed at the thread's
 /// shallowest point as a backstop.
+#[cfg(not(target_arch = "wasm32"))]
 fn spawn_goroutine_thread<F: FnOnce() + Send + 'static>(
     name: &str,
     body: F,
@@ -82,6 +83,10 @@ impl GoroutinePool {
             outstanding: AtomicU64::new(0),
             workers: AtomicUsize::new(0),
         });
+        // wasm32 is single-threaded: there are no worker threads. `go` /
+        // `spawn` run the goroutine body to completion immediately (see
+        // the wasm `spawn` below), matching the eager coro shim.
+        #[cfg(not(target_arch = "wasm32"))]
         for _ in 0..num_workers {
             let p = Arc::clone(&pool);
             let spawned = spawn_goroutine_thread("gossamer-worker", move || {
@@ -124,6 +129,7 @@ impl GoroutinePool {
     }
 
     /// Enqueues a task. Wakes one parked worker.
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn spawn(&self, task: GoroutineTask) {
         self.outstanding.fetch_add(1, Ordering::AcqRel);
         let mut inner = self.inner.lock();
@@ -131,14 +137,29 @@ impl GoroutinePool {
         self.cv.notify_one();
     }
 
+    /// Single-threaded wasm: run the goroutine body to completion
+    /// immediately. A body that tries to block reaches
+    /// `gossamer_coro::suspend`, which panics with the documented
+    /// "blocking not supported in the playground" message.
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) fn spawn(&self, task: GoroutineTask) {
+        task();
+    }
+
     /// Blocks until every queued / in-flight task has finished.
     /// Called by [`join_outstanding_goroutines`] at program exit.
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn drain(&self) {
         let mut inner = self.inner.lock();
         while self.outstanding.load(Ordering::Acquire) > 0 {
             self.drain_cv.wait(&mut inner);
         }
     }
+
+    /// wasm runs goroutines eagerly to completion in `spawn`, so there
+    /// is never anything outstanding to drain at exit.
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) fn drain(&self) {}
 }
 
 static POOL: OnceLock<Arc<GoroutinePool>> = OnceLock::new();

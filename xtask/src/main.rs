@@ -461,13 +461,16 @@ fn write_module_section(out: &mut String, module: &StdModule) {
     writeln!(out).unwrap();
 }
 
-/// GitHub-style slug for a module path suitable for markdown anchors.
+/// Slug for a module path matching python-markdown's `toc` anchor for the
+/// section heading. `toc` keeps `[A-Za-z0-9_-]` (underscore is a word
+/// character), so module paths like `std::collections::ordered_vec` must
+/// retain the `_` to resolve against the generated `#stdcollectionsordered_vec`.
 fn module_anchor(path: &str) -> String {
     let mut out = String::with_capacity(path.len());
     for ch in path.chars() {
         match ch {
             'A'..='Z' => out.push(ch.to_ascii_lowercase()),
-            'a'..='z' | '0'..='9' | '-' => out.push(ch),
+            'a'..='z' | '0'..='9' | '-' | '_' => out.push(ch),
             _ => {}
         }
     }

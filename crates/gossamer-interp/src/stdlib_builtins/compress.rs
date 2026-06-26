@@ -85,6 +85,7 @@ use crate::value::SmolStr;
 
 use gossamer_std::bufio as bufio_std;
 use gossamer_std::math as math_std;
+#[cfg(not(target_arch = "wasm32"))]
 use gossamer_std::net as net_std;
 use gossamer_std::os as os_std;
 use gossamer_std::path as path_std;
@@ -113,7 +114,16 @@ pub(crate) fn install_compress(globals: &mut Vec<(&'static str, Value)>) {
         ("flate::decompress", builtin_compress_flate_decompress),
         ("zlib::compress", builtin_compress_zlib_compress),
         ("zlib::decompress", builtin_compress_zlib_decompress),
-        ("zstd::encode", builtin_compress_zstd_encode),
+    ] {
+        let q: &'static str = Box::leak(format!("compress::{short}").into_boxed_str());
+        globals.push((q, crate::builtins::builtin_pub(q, call)));
+    }
+    // zstd is backed by a C library and is unavailable in the wasm
+    // sandbox; the gzip / flate / zlib codecs above use the pure-Rust
+    // flate2 backend and stay available on every target.
+    #[cfg(not(target_arch = "wasm32"))]
+    for (short, call) in [
+        ("zstd::encode", builtin_compress_zstd_encode as BuiltinFnPub),
         ("zstd::encode_level", builtin_compress_zstd_encode_level),
         ("zstd::decode", builtin_compress_zstd_decode),
     ] {
@@ -141,6 +151,7 @@ pub(crate) fn builtin_compress_gzip_decode(args: &[Value]) -> RuntimeResult<Valu
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn builtin_compress_zstd_encode(args: &[Value]) -> RuntimeResult<Value> {
     let input = bytes_from_value(args.first().unwrap_or(&Value::Unit));
     match gossamer_std::compress::zstd::encode(&input) {
@@ -149,6 +160,7 @@ pub(crate) fn builtin_compress_zstd_encode(args: &[Value]) -> RuntimeResult<Valu
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn builtin_compress_zstd_encode_level(args: &[Value]) -> RuntimeResult<Value> {
     let input = bytes_from_value(args.first().unwrap_or(&Value::Unit));
     let level = args.get(1).and_then(value_to_int).unwrap_or(3) as i32;
@@ -158,6 +170,7 @@ pub(crate) fn builtin_compress_zstd_encode_level(args: &[Value]) -> RuntimeResul
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn builtin_compress_zstd_decode(args: &[Value]) -> RuntimeResult<Value> {
     let input = bytes_from_value(args.first().unwrap_or(&Value::Unit));
     match gossamer_std::compress::zstd::decode(&input) {

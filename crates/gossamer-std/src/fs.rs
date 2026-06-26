@@ -6,6 +6,7 @@ use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, Sender, channel};
 
+#[cfg(not(target_arch = "wasm32"))]
 use notify::{
     Event as NotifyEvent, EventKind as NotifyEventKind, RecommendedWatcher, RecursiveMode,
     Watcher as NotifyWatcherTrait,
@@ -307,6 +308,7 @@ pub fn write_atomic(path: impl AsRef<Path>, bytes: &[u8]) -> io::Result<()> {
 
 /// Kind of filesystem change reported by [`Watcher`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg(not(target_arch = "wasm32"))]
 pub enum EventKind {
     /// A new file or directory appeared at the path.
     Created,
@@ -318,6 +320,7 @@ pub enum EventKind {
 
 /// A single filesystem change observed by [`Watcher`].
 #[derive(Debug, Clone)]
+#[cfg(not(target_arch = "wasm32"))]
 pub struct Event {
     /// Path that changed.
     pub path: String,
@@ -325,6 +328,7 @@ pub struct Event {
     pub kind: EventKind,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn translate_event_kind(kind: NotifyEventKind) -> Option<EventKind> {
     match kind {
         NotifyEventKind::Create(_) => Some(EventKind::Created),
@@ -338,6 +342,7 @@ fn translate_event_kind(kind: NotifyEventKind) -> Option<EventKind> {
 /// [`notify`] recommended watcher and a channel of translated
 /// [`Event`] values. Dropping the watcher stops further
 /// notifications.
+#[cfg(not(target_arch = "wasm32"))]
 pub struct Watcher {
     inner: Mutex<RecommendedWatcher>,
     rx: Mutex<Option<Receiver<Event>>>,
@@ -345,6 +350,7 @@ pub struct Watcher {
     tx: Sender<Event>,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl Watcher {
     /// Constructs a new watcher wired to the platform's native
     /// notification backend. The receiver returned by
@@ -393,6 +399,7 @@ impl Watcher {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn notify_to_io(err: notify::Error) -> io::Error {
     match err.kind {
         notify::ErrorKind::Io(e) => e,
@@ -404,10 +411,12 @@ fn notify_to_io(err: notify::Error) -> io::Error {
 /// as the `Mmap` is alive; dropping it unmaps the region via
 /// the platform's `munmap` / `UnmapViewOfFile`.
 #[derive(Debug)]
+#[cfg(not(target_arch = "wasm32"))]
 pub struct Mmap {
     inner: memmap2::Mmap,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl Mmap {
     /// Returns the mapped bytes as a borrowed slice. The slice is
     /// valid for the lifetime of the `Mmap`.
@@ -432,6 +441,7 @@ impl Mmap {
 /// Memory-maps `path` for read-only access. Returns
 /// `ErrorKind::InvalidInput` if the file is empty (most platforms
 /// reject zero-length mappings).
+#[cfg(not(target_arch = "wasm32"))]
 pub fn mmap_read(path: &str) -> io::Result<Mmap> {
     let file = stdfs::File::open(path)?;
     let len = file.metadata()?.len();
@@ -453,12 +463,14 @@ pub fn mmap_read(path: &str) -> io::Result<Mmap> {
 /// until any conflicting lock is released. Locks are advisory -
 /// only cooperating processes that also call the lock helpers
 /// see them.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn lock_exclusive(file: &File) -> io::Result<()> {
     fs4::FileExt::lock(file)
 }
 
 /// Acquires a shared (reader) advisory lock on `file`. Multiple
 /// shared locks may coexist; an exclusive lock blocks them.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn lock_shared(file: &File) -> io::Result<()> {
     fs4::FileExt::lock_shared(file)
 }
@@ -466,6 +478,7 @@ pub fn lock_shared(file: &File) -> io::Result<()> {
 /// Non-blocking variant of [`lock_exclusive`]. Returns
 /// `ErrorKind::WouldBlock` immediately when a conflicting lock
 /// is held.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn try_lock_exclusive(file: &File) -> io::Result<()> {
     fs4::FileExt::try_lock(file).map_err(try_lock_err_to_io)
 }
@@ -473,6 +486,7 @@ pub fn try_lock_exclusive(file: &File) -> io::Result<()> {
 /// Non-blocking variant of [`lock_shared`]. Returns
 /// `ErrorKind::WouldBlock` immediately when a conflicting lock
 /// is held.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn try_lock_shared(file: &File) -> io::Result<()> {
     fs4::FileExt::try_lock_shared(file).map_err(try_lock_err_to_io)
 }
@@ -483,6 +497,7 @@ pub fn try_lock_shared(file: &File) -> io::Result<()> {
 /// normalizes the Windows `ERROR_LOCK_VIOLATION` contention case
 /// into this variant, so callers matching on `WouldBlock` get the
 /// same shape everywhere.
+#[cfg(not(target_arch = "wasm32"))]
 fn try_lock_err_to_io(e: fs4::TryLockError) -> io::Error {
     match e {
         fs4::TryLockError::WouldBlock => io::ErrorKind::WouldBlock.into(),
@@ -492,6 +507,7 @@ fn try_lock_err_to_io(e: fs4::TryLockError) -> io::Error {
 
 /// Releases any advisory lock previously taken on `file`. Idempotent
 /// - releasing an already-unlocked handle is not an error on POSIX.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn unlock(file: &File) -> io::Result<()> {
     fs4::FileExt::unlock(file)
 }

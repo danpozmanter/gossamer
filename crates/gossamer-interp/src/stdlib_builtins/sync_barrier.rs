@@ -85,6 +85,7 @@ use crate::value::SmolStr;
 
 use gossamer_std::bufio as bufio_std;
 use gossamer_std::math as math_std;
+#[cfg(not(target_arch = "wasm32"))]
 use gossamer_std::net as net_std;
 use gossamer_std::os as os_std;
 use gossamer_std::path as path_std;

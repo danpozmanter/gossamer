@@ -1463,6 +1463,12 @@ pub enum RuntimeError {
     /// Goroutine call depth exceeded the VM limit.
     #[error("error[GX0008]: stack overflow - call depth exceeded {0} frames")]
     StackOverflow(usize),
+    /// Execution budget exhausted (the playground caps loop iterations so an
+    /// unbounded loop fails cleanly instead of hanging). Only exists under the
+    /// `fuel` feature; native `gos run` has no budget and never raises it.
+    #[cfg(feature = "fuel")]
+    #[error("error[GX0009]: execution limit reached - the program ran too long")]
+    FuelExhausted,
 }
 
 impl RuntimeError {
@@ -1480,6 +1486,8 @@ impl RuntimeError {
             Self::MatchFailure => "GX0006",
             Self::Unsupported(_) => "GX0007",
             Self::StackOverflow(_) => "GX0008",
+            #[cfg(feature = "fuel")]
+            Self::FuelExhausted => "GX0009",
         }
     }
 }

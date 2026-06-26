@@ -31,7 +31,10 @@
 // iterations and lets ASan instrument the heap (a custom global
 // allocator blinds it). Every other build - release, debug, the
 // standalone ASan job, every compiled program - keeps mimalloc.
-#[cfg(not(any(tsan, miri, fuzzing)))]
+// wasm32-unknown-unknown has no mimalloc backend (it links no libc and
+// mimalloc's C arena code does not target it); the browser playground
+// uses the default dlmalloc that ships with the wasm std.
+#[cfg(not(any(tsan, miri, fuzzing, target_arch = "wasm32")))]
 #[global_allocator]
 static GLOBAL_ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
@@ -72,7 +75,7 @@ static GLOBAL_ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
 /// the `allocator_tests` unit tests below, which assert each index still
 /// reports its documented default.
 pub fn init_process_allocator() {
-    #[cfg(not(any(tsan, miri, fuzzing)))]
+    #[cfg(not(any(tsan, miri, fuzzing, target_arch = "wasm32")))]
     {
         const MI_OPTION_PURGE_DELAY: libmimalloc_sys::mi_option_t = 15;
         const MI_OPTION_ALLOW_THP: libmimalloc_sys::mi_option_t = 43;
@@ -88,14 +91,20 @@ pub fn init_process_allocator() {
 pub mod builtins;
 pub mod c_abi;
 pub mod coverage;
-pub mod ffi;
-pub mod http2_server;
 pub mod preempt;
 pub mod race;
 pub mod replay;
 pub mod safe_daemon;
 pub mod safe_env;
 pub mod sched;
+// The process-global scheduler singleton ties together OS worker
+// threads and a mio netpoller. The wasm playground links a
+// cooperative single-threaded equivalent (eager goroutines; a
+// would-be block diverges through `gossamer_coro::suspend`).
+#[cfg(not(target_arch = "wasm32"))]
+pub mod sched_global;
+#[cfg(target_arch = "wasm32")]
+#[path = "sched_global_wasm.rs"]
 pub mod sched_global;
 pub mod sigquit;
 pub mod sql;
@@ -103,6 +112,14 @@ pub mod sql_migrate;
 pub mod sql_pool;
 pub mod stack_guard;
 pub mod value;
+
+// Native-only runtime services that pull crates with no wasm32 build:
+// `ffi` (libloading dynamic loading) and `http2_server` (h2 / tokio).
+// The wasm VM never needs either; native is unaffected.
+#[cfg(not(target_arch = "wasm32"))]
+pub mod ffi;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod http2_server;
 
 // Re-export preempt-check FFI symbols so JIT-side
 // `rt::gos_rt_preempt_check{,_and_yield}` lookups resolve through

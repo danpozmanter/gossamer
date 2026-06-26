@@ -11,7 +11,7 @@
  */
 
 const FNV_OFFSET: i64 = -3750763034362895579   // 0xcbf29ce484222325
-const FNV_PRIME:  i64 = 1099511628211           // 0x100000001b3
+const FNV_PRIME: i64 = 1099511628211           // 0x100000001b3
 
 fn fnv1a(bytes: &[u8]) -> i64 {
     let mut h: i64 = FNV_OFFSET

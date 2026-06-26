@@ -20,6 +20,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use parking_lot::Mutex;
 
 use crate::errors::Error;
+// The Prometheus exposition types stay available everywhere; only the
+// `/metrics` HTTP serve loop (which needs the gated `http::server`) is
+// wasm-gated below.
+#[cfg(not(target_arch = "wasm32"))]
 use crate::http::{Request, Response, StatusCode, server};
 
 /// Monotonic-increasing `u64` counter. Lock-free.
@@ -376,7 +380,9 @@ fn format_f64(v: f64) -> String {
 }
 
 /// Serves `/metrics` over HTTP on `addr`. Any other path returns
-/// `404`. Blocks the calling thread.
+/// `404`. Blocks the calling thread. Needs the gated `http::server`,
+/// so it is unavailable in the wasm playground.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn serve_metrics(addr: &str, registry: Registry) -> Result<(), Error> {
     let listener = TcpListener::bind(addr).map_err(|e| Error::new(format!("bind {addr}: {e}")))?;
     let config = server::Config::default();

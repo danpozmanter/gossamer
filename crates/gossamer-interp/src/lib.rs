@@ -21,8 +21,15 @@ mod cast;
 mod compile;
 pub mod external_natives;
 mod flag_set_builtins;
+#[cfg(feature = "fuel")]
+pub mod fuel;
+#[cfg(not(target_arch = "wasm32"))]
 mod http_client_builtins;
 mod jit_call;
+// No-op JIT backend used in place of `gossamer-codegen-cranelift` on
+// wasm32, where Cranelift is unavailable.
+#[cfg(target_arch = "wasm32")]
+mod jit_stub;
 pub mod profile;
 mod regex_builtins;
 mod stdlib_builtins;

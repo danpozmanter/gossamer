@@ -31,6 +31,16 @@ use crate::value::{RuntimeResult, SmolStr, Value};
 
 use super::*;
 
+/// Extracts a string argument, defaulting to empty. A private copy
+/// local to this module so the pure request-value builtins do not
+/// depend on the SSE module (gated off the wasm sandbox).
+fn arg_str(v: Option<&Value>) -> String {
+    match v {
+        Some(Value::String(s)) => s.as_str().to_string(),
+        _ => String::new(),
+    }
+}
+
 pub(crate) fn install_http_request_values(globals: &mut Vec<(&'static str, Value)>) {
     for key in ["Request::value", "http::Request::value"] {
         globals.push((

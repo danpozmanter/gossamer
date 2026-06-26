@@ -37,4 +37,9 @@ format_push_string = "allow"
 collapsible_if = "allow"
 
 [dependencies]
+
+# Stackful coroutines via native stack switching - corosensei has no
+# wasm backend. On wasm32 the goroutine engine is a cooperative eager
+# shim (see the `wasm32` cfg path in lib.rs).
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 corosensei = "0.3"

@@ -37,10 +37,10 @@ fn main() {
     println!("lcm(1071, 462) = {}", l)
 
     // Modular exponentiation for RSA-like operations.
-    let base    = math::big::uint_from_u64(2)
-    let exp     = math::big::uint_from_u64(100)
+    let base = math::big::uint_from_u64(2)
+    let exp = math::big::uint_from_u64(100)
     let modulus = math::big::uint_from_u64(1000000007)
-    let result  = math::big::uint_pow_mod(base, exp, modulus)
+    let result = math::big::uint_pow_mod(base, exp, modulus)
     println!("2^100 mod 10^9+7 = {}", result)
 
     // Comparison.

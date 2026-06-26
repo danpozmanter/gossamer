@@ -11,44 +11,79 @@
 // `forbid` cannot be locally overridden; `deny` denies everywhere else.
 #![deny(unsafe_code)]
 
-pub mod cache;
-pub mod credentials;
-pub mod edit;
-pub mod fetch;
-pub mod id;
-pub mod lockfile;
-pub mod manifest;
-pub mod publish;
-pub mod resolver;
-pub mod scaffold;
+// The Gossamer wasm playground links only the bytecode VM, which
+// reaches `gossamer_pkg` for exactly one thing: `sha256` (a pure,
+// self-contained hash used by `std::crypto` and the runtime crypto
+// shims). The package-manager surface - registry transport, signing,
+// tarball I/O, manifest/lockfile editing - is inert in a browser and
+// pulls native-only crypto/network crates (rustls, ed25519-dalek), so
+// it is gated out of the wasm build. Native is unaffected.
 pub mod sha256;
+
+#[cfg(not(target_arch = "wasm32"))]
+pub mod cache;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod credentials;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod edit;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod fetch;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod id;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod lockfile;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod manifest;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod publish;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod resolver;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod scaffold;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod signing;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod tar;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod transport;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod version;
 
+#[cfg(not(target_arch = "wasm32"))]
 pub use cache::{Cache, CacheError, CachedSource, Fetched, default_cache_root};
+#[cfg(not(target_arch = "wasm32"))]
 pub use credentials::{Credential, CredentialStore, CredentialStoreError};
+#[cfg(not(target_arch = "wasm32"))]
 pub use edit::{add_registry, pin_to_resolved, remove, tidy};
+#[cfg(not(target_arch = "wasm32"))]
 pub use fetch::{DEFAULT_REGISTRY_URL, FetchOptions, Fetcher, vendor};
+#[cfg(not(target_arch = "wasm32"))]
 pub use id::{ProjectId, ProjectIdError};
+#[cfg(not(target_arch = "wasm32"))]
 pub use lockfile::{LOCKFILE_FILENAME, LOCKFILE_HEADER, LockedEntry, Lockfile, LockfileError};
+#[cfg(not(target_arch = "wasm32"))]
 pub use manifest::{
     DependencySpec, GitRef, InlineDependency, Manifest, ManifestError, ProjectTable,
     RustBindingSpec, find_manifest,
 };
+#[cfg(not(target_arch = "wasm32"))]
 pub use publish::{PackError, PublishError, PublishedArtifact, pack_crate};
+#[cfg(not(target_arch = "wasm32"))]
 pub use resolver::{
     CacheBackedLoader, CatalogueEntry, FnLoader, NoopLoader, Requirement, RequirementSpec,
     ResolveError, Resolved, ResolvedSource, Resolver, TransitiveLoader, VersionCatalogue,
     resolve_transitive,
 };
+#[cfg(not(target_arch = "wasm32"))]
 pub use scaffold::{render_initial_manifest, render_main_source};
+#[cfg(not(target_arch = "wasm32"))]
 pub use signing::{
     SigningError, SigningKey, VerifyingKey, hex_encode, sign_bytes, verify_bytes,
     verify_signature_hex,
 };
+#[cfg(not(target_arch = "wasm32"))]
 pub use transport::{
     HttpTransport, HttpsTransport, StaticTransport, Transport, TransportError, fetch_verified,
 };
+#[cfg(not(target_arch = "wasm32"))]
 pub use version::{CaretRange, Version, VersionError};

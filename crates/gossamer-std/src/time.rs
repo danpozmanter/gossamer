@@ -679,6 +679,11 @@ impl Drop for TimerHandle {
 /// stdlib stays slim by default; once the feature is on, callers
 /// can construct a `Location` from any IANA name and convert
 /// `SystemTime`s into local civil time and back.
+///
+/// Backed by `chrono` / `chrono-tz`, which target the host clock and
+/// are gated out of the wasm playground; the rest of `std::time`
+/// (instants, durations, formatting) stays available there.
+#[cfg(not(target_arch = "wasm32"))]
 pub mod tz {
 
     use std::str::FromStr;

@@ -101,7 +101,9 @@ impl Drop for JoinableScope {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 use corosensei::stack::DefaultStack;
+#[cfg(not(target_arch = "wasm32"))]
 use corosensei::{Coroutine, CoroutineResult, Yielder};
 
 /// Default goroutine stack size in bytes (1 MiB). Override via the
@@ -214,6 +216,7 @@ pub fn stack_guard_tripped() -> bool {
 
 /// Stackful coroutine that runs a single Gossamer goroutine to
 /// completion across one or more `resume()` calls.
+#[cfg(not(target_arch = "wasm32"))]
 pub struct Goroutine {
     coro: Coroutine<(), (), (), DefaultStack>,
     yielder_slot: Arc<AtomicPtr<()>>,
@@ -229,8 +232,10 @@ pub struct Goroutine {
 // Gossamer M:N scheduler's worker pool steals goroutines off
 // peer deques. User code is documented to not rely on
 // TLS-stable-across-yield semantics.
+#[cfg(not(target_arch = "wasm32"))]
 unsafe impl Send for Goroutine {}
 
+#[cfg(not(target_arch = "wasm32"))]
 impl Goroutine {
     /// Constructs a new goroutine whose entry point is `main`. The
     /// goroutine does not start running until [`Self::resume`] is
@@ -342,6 +347,59 @@ impl Goroutine {
     }
 }
 
+/// Cooperative eager goroutine shim for single-threaded wasm32, where
+/// stackful coroutines are unavailable (no native stack switching).
+/// The body runs to completion on the first [`Self::resume`]; a body
+/// that reaches a blocking point calls [`suspend`], which is
+/// unsupported here and raises a clean error. This is the wasm
+/// playground's documented concurrency limit: `go`/`spawn` bodies that
+/// run to completion without blocking on another goroutine work; true
+/// interleaving needs the native runtime.
+#[cfg(target_arch = "wasm32")]
+pub struct Goroutine {
+    body: Option<Box<dyn FnOnce() + Send + 'static>>,
+    done: bool,
+}
+
+#[cfg(target_arch = "wasm32")]
+impl Goroutine {
+    /// Constructs a goroutine whose entry point is `main`. It does not
+    /// run until [`Self::resume`].
+    #[must_use]
+    pub fn new(main: Box<dyn FnOnce() + Send + 'static>) -> Self {
+        Self {
+            body: Some(main),
+            done: false,
+        }
+    }
+
+    /// Yielder pointer is meaningless without stackful coroutines.
+    #[must_use]
+    pub fn yielder_ptr(&self) -> *mut () {
+        std::ptr::null_mut()
+    }
+
+    /// Runs the body to completion and returns `true` (done). A panic
+    /// inside the body is contained and recorded, matching the native
+    /// goroutine isolation contract.
+    pub fn resume(&mut self) -> bool {
+        if let Some(body) = self.body.take() {
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(body));
+            if result.is_err() {
+                GOROUTINE_PANICKED.store(true, Ordering::Release);
+            }
+            self.done = true;
+        }
+        true
+    }
+
+    /// Returns whether the goroutine has finished.
+    #[must_use]
+    pub fn done(&self) -> bool {
+        self.done
+    }
+}
+
 thread_local! {
     /// Pointer to the [`Yielder`] of the goroutine currently
     /// running on this OS thread. Set by the scheduler's worker
@@ -383,6 +441,7 @@ pub fn in_goroutine() -> bool {
 /// programming error: stdlib code that may suspend the calling
 /// goroutine must check [`in_goroutine`] first if it can be
 /// invoked from a non-goroutine thread.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn suspend() {
     let ptr = CURRENT_YIELDER.with(Cell::get);
     assert!(
@@ -397,6 +456,18 @@ pub fn suspend() {
     // the worker's stack.
     let yielder: &Yielder<(), ()> = unsafe { &*ptr.cast::<Yielder<(), ()>>() };
     yielder.suspend(());
+}
+
+/// Suspension is unavailable on single-threaded wasm32 (no stackful
+/// coroutines). A goroutine that reaches a blocking point raises this
+/// rather than deadlocking the browser tab. The wasm runtime maps it
+/// to a Gossamer panic surfaced in the playground output.
+#[cfg(target_arch = "wasm32")]
+pub fn suspend() {
+    panic!(
+        "goroutine blocking/suspension is not supported in the Gossamer wasm playground; \
+         run concurrent programs with `gos run` locally",
+    );
 }
 
 // `corosensei` allocates each goroutine's stack via `mmap(PROT_NONE)` for

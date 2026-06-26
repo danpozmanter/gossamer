@@ -38,7 +38,7 @@ fn equal(a: &[i64], b: &[i64]) -> bool {
 fn main() {
     // "Hello, world!" as ASCII codes.
     let plain: [i64] = [72, 101, 108, 108, 111, 44, 32,
-                        119, 111, 114, 108, 100, 33]
+        119, 111, 114, 108, 100, 33]
     let key: i64 = 7
 
     let encrypted = shift_codes(&plain, key)

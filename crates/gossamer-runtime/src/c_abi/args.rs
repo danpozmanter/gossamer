@@ -223,7 +223,7 @@ fn runtime_init() {
     });
 }
 
-#[cfg(not(unix))]
+#[cfg(all(not(unix), not(target_arch = "wasm32")))]
 fn runtime_init() {
     use std::sync::Once;
     static ONCE: Once = Once::new();
@@ -235,6 +235,17 @@ fn runtime_init() {
             .expect("spawn rt init thread");
         let _ = handle.join();
     });
+}
+
+// wasm32-unknown-unknown has no threads, so the thread-machinery
+// pre-warm above is both impossible and unnecessary: the runtime is
+// single-threaded under the cooperative scheduler. Configure the
+// allocator and stop.
+#[cfg(target_arch = "wasm32")]
+fn runtime_init() {
+    use std::sync::Once;
+    static ONCE: Once = Once::new();
+    ONCE.call_once(configure_allocator);
 }
 
 /// Returns a `*mut GosVec` view of the user arguments. The

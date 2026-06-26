@@ -8,6 +8,7 @@ on:
       - 'landing/**'
       - 'mkdocs.yml'
       - '.github/workflows/pages.yml'
+      - 'crates/gossamer-playground/**'
   workflow_dispatch:
 
 permissions:
@@ -39,6 +40,34 @@ jobs:
           cp -r landing/. site/
       - name: Build mkdocs into site/docs/
         run: mkdocs build --strict --site-dir site/docs
+      # Compile the Try Gossamer playground (the bytecode VM) to wasm and
+      # drop the wasm-bindgen module into site/playground/, replacing the
+      # JS stub the component falls back to when the module is absent.
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - name: Install wasm-bindgen-cli
+        # The CLI version must match the wasm-bindgen crate version exactly
+        # (a mismatch is a hard "schema version" error), so pin it to whatever
+        # Cargo.lock resolves rather than a floating range.
+        run: |
+          WBVER=$(grep -A1 '^name = "wasm-bindgen"$' Cargo.lock | sed -n 's/^version = "\(.*\)"/\1/p' | head -1)
+          echo "pinning wasm-bindgen-cli to $WBVER"
+          cargo install wasm-bindgen-cli --version "=$WBVER" --locked
+      - name: Install wasm-opt (binaryen)
+        run: sudo apt-get update && sudo apt-get install -y binaryen
+      - name: Build playground wasm
+        run: |
+          cargo build --release --target wasm32-unknown-unknown -p gossamer-playground
+          wasm-bindgen target/wasm32-unknown-unknown/release/gossamer_playground.wasm \
+            --out-dir site/playground --target web
+          wasm-opt -Oz \
+            --enable-bulk-memory --enable-nontrapping-float-to-int \
+            --enable-sign-ext --enable-mutable-globals \
+            --enable-multivalue --enable-reference-types \
+            -o site/playground/gossamer_playground_bg.wasm \
+            site/playground/gossamer_playground_bg.wasm
       - uses: actions/upload-pages-artifact@v5
         with:
           path: site

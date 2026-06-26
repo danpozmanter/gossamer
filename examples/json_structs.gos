@@ -64,14 +64,14 @@ fn main() -> Result<(), errors::Error> {
     // error: `from_json: field 'age': expected integer, got string`.
     let bad = "{\"name\":\"bob\",\"age\":\"oops\",\"active\":false,\"tags\":[],\"address\":{\"city\":\"x\",\"zip\":\"0\"}}"
     match from_json::<User>(&bad) {
-        Ok(_)  => println!("unexpected: bad payload parsed clean"),
+        Ok(_) => println!("unexpected: bad payload parsed clean"),
         Err(e) => println!("rejected:   {}", e),
     }
 
     // Strict validation also rejects missing required fields.
     let missing = "{\"name\":\"carol\",\"age\":40,\"active\":true,\"tags\":[]}"
     match from_json::<User>(&missing) {
-        Ok(_)  => println!("unexpected: missing payload parsed clean"),
+        Ok(_) => println!("unexpected: missing payload parsed clean"),
         Err(e) => println!("rejected:   {}", e),
     }
     Ok(())

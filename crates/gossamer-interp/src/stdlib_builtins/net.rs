@@ -849,19 +849,6 @@ pub(crate) fn builtin_udp_close(args: &[Value]) -> RuntimeResult<Value> {
     Ok(Value::Unit)
 }
 
-// ----------------------------------------------------------------------
-// HashSet (real set, distinct from HashMap)
-
-// Process-global (not `thread_local!`): goroutines run on an OS
-// worker-thread pool, so a set handle minted on one thread must
-// resolve on another after the goroutine migrates between workers.
-// Mirrors the `sync::*` registries. `GlobalReg` is in scope via the
-// `use super::*;` re-export of `set::*`.
-pub(crate) static NEXT_SET_HANDLE: GlobalReg<i64> =
-    GlobalReg::new(|| parking_lot::ReentrantMutex::new(RefCell::new(1)));
-pub(crate) static SET_REGISTRY: GlobalReg<StdHashMap<i64, std::collections::HashSet<MapKey>>> =
-    GlobalReg::new(|| parking_lot::ReentrantMutex::new(RefCell::new(StdHashMap::new())));
-
 #[cfg(test)]
 mod net_registry_tests {
     use super::*;

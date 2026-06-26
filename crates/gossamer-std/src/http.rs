@@ -14,6 +14,7 @@ use std::collections::BTreeMap;
 // The implementation lives in the internal `http_h2` Rust module
 // because the h2 crate carries enough machinery to deserve its
 // own file; user-facing names land here.
+#[cfg(not(target_arch = "wasm32"))]
 pub use crate::http_h2::{
     Config as Http2Config, Error as Http2Error, Handler as Http2Handler, PushOptions, PushStream,
     ResponseWriter as StreamingResponseWriter, ServerHandle as Http2ServerHandle,
@@ -441,6 +442,7 @@ pub fn parse_status_line(line: &str) -> Option<(String, StatusCode, String)> {
 #[derive(Debug, Default)]
 pub struct Server;
 
+#[cfg(not(target_arch = "wasm32"))]
 impl Server {
     /// Constructs a stub server; integration replaces this.
     #[must_use]
@@ -481,6 +483,7 @@ impl Server {
 
 /// Minimal HTTP/1.1 server loop used by the interpreter's
 /// `http::serve` native builtin.
+#[cfg(not(target_arch = "wasm32"))]
 pub mod server {
     use std::io::{self, BufRead, BufReader, Read, Write};
     use std::net::{Shutdown, TcpListener, TcpStream};
@@ -1669,21 +1672,25 @@ pub mod server {
 /// is replacing `client_pool` with a poller-aware executor - the
 /// public surface here is unaffected.
 #[derive(Debug, Clone)]
+#[cfg(not(target_arch = "wasm32"))]
 pub struct Client {
     inner: std::sync::Arc<ClientInner>,
 }
 
 #[derive(Debug)]
+#[cfg(not(target_arch = "wasm32"))]
 struct ClientInner {
     agent: ureq::Agent,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl Default for Client {
     fn default() -> Self {
         Self::new()
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl Client {
     /// Constructs a default client: 30 s timeout, follow up to 10
     /// redirects, cookie jar enabled, gzip transparently decoded.
@@ -1848,6 +1855,7 @@ impl Client {
 /// Module-level convenience wrappers. Each builds an ephemeral
 /// [`Client`] with default settings, issues the request, and drops
 /// the client. Use [`Client`] directly when reuse / pooling matters.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn request(
     method: &str,
     url: &str,
@@ -1858,26 +1866,31 @@ pub fn request(
 }
 
 /// Convenience GET. See [`Client::get`].
+#[cfg(not(target_arch = "wasm32"))]
 pub fn get(url: &str, headers: &[(&str, &str)]) -> Result<Response, ClientError> {
     Client::new().do_request(Method::Get, url, None, headers)
 }
 
 /// Convenience POST. See [`Client::post`].
+#[cfg(not(target_arch = "wasm32"))]
 pub fn post(url: &str, body: &[u8], content_type: &str) -> Result<Response, ClientError> {
     Client::new().post(url, body, content_type)
 }
 
 /// Convenience PUT. See [`Client::put`].
+#[cfg(not(target_arch = "wasm32"))]
 pub fn put(url: &str, body: &[u8], content_type: &str) -> Result<Response, ClientError> {
     Client::new().put(url, body, content_type)
 }
 
 /// Convenience OPTIONS. See [`Client::options`].
+#[cfg(not(target_arch = "wasm32"))]
 pub fn options(url: &str, headers: &[(&str, &str)]) -> Result<Response, ClientError> {
     Client::new().options(url, headers)
 }
 
 /// Convenience DELETE. See [`Client::delete`].
+#[cfg(not(target_arch = "wasm32"))]
 pub fn delete(
     url: &str,
     body: Option<&[u8]>,
@@ -1887,10 +1900,12 @@ pub fn delete(
 }
 
 /// Convenience HEAD. See [`Client::head`].
+#[cfg(not(target_arch = "wasm32"))]
 pub fn head(url: &str, headers: &[(&str, &str)]) -> Result<Response, ClientError> {
     Client::new().head(url, headers)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn move_owned(
     method: Method,
     url: &str,
@@ -1955,6 +1970,7 @@ use std::io::Read;
 ///
 /// Construct via [`Client::stream`]. Drop the value to close the
 /// underlying connection.
+#[cfg(not(target_arch = "wasm32"))]
 pub struct StreamResponse {
     /// HTTP status code.
     pub status: StatusCode,
@@ -1963,6 +1979,7 @@ pub struct StreamResponse {
     reader: std::io::BufReader<Box<dyn Read + Send + Sync + 'static>>,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl std::fmt::Debug for StreamResponse {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("StreamResponse")
@@ -1972,6 +1989,7 @@ impl std::fmt::Debug for StreamResponse {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl StreamResponse {
     /// Reads one line (terminated by `\n`) from the body, blocking
     /// until a newline arrives or the stream closes. Returns
@@ -2022,6 +2040,7 @@ impl StreamResponse {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl Client {
     /// Issues a request and returns a [`StreamResponse`] whose body
     /// is read lazily. Mirrors Go's
@@ -2082,6 +2101,7 @@ impl Client {
 /// any of `"GET"`, `"POST"`, `"PUT"`, `"DELETE"`, `"PATCH"`,
 /// `"HEAD"`, `"OPTIONS"` - unknown methods return
 /// `Err(ClientError::Transport(...))`.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn stream(
     method: &str,
     url: &str,
@@ -2095,6 +2115,7 @@ pub fn stream(
 
 /// Builder for [`Client`].
 #[derive(Debug, Clone)]
+#[cfg(not(target_arch = "wasm32"))]
 pub struct ClientBuilder {
     timeout: std::time::Duration,
     max_redirects: u32,
@@ -2104,6 +2125,7 @@ pub struct ClientBuilder {
     proxy: Option<String>,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl Default for ClientBuilder {
     fn default() -> Self {
         Self {
@@ -2117,6 +2139,7 @@ impl Default for ClientBuilder {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl ClientBuilder {
     /// Sets the per-request timeout.
     #[must_use]
@@ -2238,6 +2261,7 @@ impl ClientBuilder {
 
 /// Error returned by [`Client`].
 #[derive(Debug, thiserror::Error)]
+#[cfg(not(target_arch = "wasm32"))]
 pub enum ClientError {
     /// Network / TLS / DNS-level failure.
     #[error("http: transport: {0}")]
@@ -2256,6 +2280,7 @@ pub enum ClientError {
 /// system-level network round trip - host workers stay free to
 /// schedule other goroutines. When the netpoller lands and TLS
 /// dialling becomes non-blocking, this is the single seam to swap.
+#[cfg(not(target_arch = "wasm32"))]
 mod client_pool {
     use super::ClientError;
 
@@ -2269,6 +2294,7 @@ mod client_pool {
 }
 
 #[cfg(test)]
+#[cfg(not(target_arch = "wasm32"))]
 mod tests {
     use super::*;
 

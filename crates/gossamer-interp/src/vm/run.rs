@@ -73,9 +73,22 @@ impl Vm {
         #[cfg(feature = "profile")]
         let _prof_dump = ProfDump(chunk.name);
         let mut pc: u32 = 0;
+        #[cfg(feature = "fuel")]
+        let mut prev_pc: u32 = 0;
         let instrs: &[Op] = &chunk.instrs;
         let instr_count = instrs.len();
         loop {
+            // Execution budget: a backward (or self) jump is a loop iteration.
+            // Counting them bounds total iterations so an unbounded loop aborts
+            // cleanly instead of hanging. Compiled in only under the `fuel`
+            // feature (the wasm playground); native builds carry none of this.
+            #[cfg(feature = "fuel")]
+            {
+                if pc <= prev_pc && crate::fuel::consume() {
+                    return Err(RuntimeError::FuelExhausted);
+                }
+                prev_pc = pc;
+            }
             // SAFETY: every chunk emitted by `compile.rs` ends
             // with a `Return` / `ReturnUnit`, and every jump /
             // branch target is computed from the same emit-

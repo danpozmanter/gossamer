@@ -389,6 +389,7 @@ fn is_runtime_frame(symbol: &str) -> bool {
 /// (`gos build --release` keeps `.symtab`; only DWARF is stripped).
 /// Returns empty when capture or symbolication yields nothing (e.g. a
 /// fully `--strip-all` binary).
+#[cfg(not(target_arch = "wasm32"))]
 #[must_use]
 pub fn render_native_panic_trace() -> String {
     let mut symbols: Vec<String> = Vec::new();
@@ -419,6 +420,15 @@ pub fn render_native_panic_trace() -> String {
         }
     }
     out
+}
+
+/// wasm32 has no machine-stack unwinder (`backtrace` does not build for
+/// wasm32-unknown-unknown), and the VM keeps its own shadow call stack
+/// anyway, so the native-trace path renders nothing in the playground.
+#[cfg(target_arch = "wasm32")]
+#[must_use]
+pub fn render_native_panic_trace() -> String {
+    String::new()
 }
 
 /// Installs the SIGQUIT handler. Idempotent.

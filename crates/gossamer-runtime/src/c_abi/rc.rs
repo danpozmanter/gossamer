@@ -15,7 +15,10 @@
 #![allow(unused_unsafe)]
 #![allow(clippy::wildcard_imports)]
 
-#[cfg(any(tsan, miri, fuzzing))]
+// wasm32 has no mimalloc backend, so it joins the
+// tsan/miri/fuzzing builds in routing RC blocks through the system
+// global allocator (dlmalloc) with a side size map for `dealloc`.
+#[cfg(any(tsan, miri, fuzzing, target_arch = "wasm32"))]
 use std::alloc::{Layout, alloc_zeroed, dealloc};
 use std::sync::atomic::{AtomicU8, AtomicU32, AtomicUsize, Ordering, fence};
 
@@ -576,11 +579,11 @@ unsafe fn possible_root(payload: *mut u8) {
 /// allocators).
 #[inline]
 fn rc_block_alloc_zeroed(total: usize) -> *mut u8 {
-    #[cfg(not(any(tsan, miri, fuzzing)))]
+    #[cfg(not(any(tsan, miri, fuzzing, target_arch = "wasm32")))]
     {
         unsafe { libmimalloc_sys::mi_zalloc(total).cast() }
     }
-    #[cfg(any(tsan, miri, fuzzing))]
+    #[cfg(any(tsan, miri, fuzzing, target_arch = "wasm32"))]
     {
         let Ok(layout) = Layout::from_size_align(total, RC_ALIGN) else {
             return std::ptr::null_mut();
@@ -597,11 +600,11 @@ fn rc_block_alloc_zeroed(total: usize) -> *mut u8 {
 /// that provably write every byte.
 #[inline]
 fn rc_block_alloc_unzeroed(total: usize) -> *mut u8 {
-    #[cfg(not(any(tsan, miri, fuzzing)))]
+    #[cfg(not(any(tsan, miri, fuzzing, target_arch = "wasm32")))]
     {
         unsafe { libmimalloc_sys::mi_malloc(total).cast() }
     }
-    #[cfg(any(tsan, miri, fuzzing))]
+    #[cfg(any(tsan, miri, fuzzing, target_arch = "wasm32"))]
     {
         rc_block_alloc_zeroed(total)
     }
@@ -610,11 +613,11 @@ fn rc_block_alloc_unzeroed(total: usize) -> *mut u8 {
 /// Free an RC block allocated by [`rc_block_alloc_zeroed`].
 #[inline]
 unsafe fn rc_block_free(base: *mut u8) {
-    #[cfg(not(any(tsan, miri, fuzzing)))]
+    #[cfg(not(any(tsan, miri, fuzzing, target_arch = "wasm32")))]
     {
         unsafe { libmimalloc_sys::mi_free(base.cast()) };
     }
-    #[cfg(any(tsan, miri, fuzzing))]
+    #[cfg(any(tsan, miri, fuzzing, target_arch = "wasm32"))]
     {
         // The system allocator needs the original layout back; recover
         // the size from the tsan-only side map populated at allocation.
@@ -631,7 +634,7 @@ unsafe fn rc_block_free(base: *mut u8) {
 /// Byte sizes of live RC blocks, ThreadSanitizer builds only (the
 /// system allocator's `dealloc` needs the original layout; production
 /// builds free through `mi_free`, which doesn't).
-#[cfg(any(tsan, miri, fuzzing))]
+#[cfg(any(tsan, miri, fuzzing, target_arch = "wasm32"))]
 fn tsan_sizes() -> &'static parking_lot::Mutex<std::collections::HashMap<usize, usize>> {
     static SIZES: std::sync::OnceLock<parking_lot::Mutex<std::collections::HashMap<usize, usize>>> =
         std::sync::OnceLock::new();
@@ -736,8 +739,16 @@ const REGION_SLAB_BYTES: usize = 1 << 20;
 // counted with headers - slower, never unsound.
 
 /// Virtual reservation size. Address space only; pages are committed
-/// slab-by-slab as regions actually allocate.
+/// slab-by-slab as regions actually allocate. On 32-bit wasm32 a
+/// 64 GiB (`1 << 36`) reservation overflows `usize` and there is no
+/// virtual-memory primitive anyway, so the value is an inert smaller
+/// constant there - the arena never reserves (see the
+/// `not(any(unix, windows))` `arena_reserve`), so regions stay
+/// reference-counted.
+#[cfg(not(target_arch = "wasm32"))]
 const REGION_ARENA_BYTES: usize = 1 << 36;
+#[cfg(target_arch = "wasm32")]
+const REGION_ARENA_BYTES: usize = 1 << 30;
 
 /// Base address of the reserved range. 0 = not yet initialised;
 /// `usize::MAX` = reservation failed (regions disabled).
@@ -883,6 +894,27 @@ fn arena_decommit(p: *mut u8, len: usize) {
     unsafe { VirtualFree(p.cast(), len, MEM_DECOMMIT) };
 }
 
+// Targets with no virtual-memory reservation primitive (wasm32). The
+// arena disables itself: `arena_reserve` returns null, so
+// `region_arena_base` records `usize::MAX` and every region allocation
+// falls back to headered reference-counted global allocation - sound,
+// just without the bump-allocation optimisation.
+#[cfg(not(any(unix, windows)))]
+fn arena_reserve(_len: usize) -> *mut u8 {
+    std::ptr::null_mut()
+}
+
+#[cfg(not(any(unix, windows)))]
+fn arena_release(_p: *mut u8, _len: usize) {}
+
+#[cfg(not(any(unix, windows)))]
+fn arena_commit(_p: *mut u8, _len: usize) -> bool {
+    false
+}
+
+#[cfg(not(any(unix, windows)))]
+fn arena_decommit(_p: *mut u8, _len: usize) {}
+
 /// Carve (or re-commit) a slab of `slab_size` bytes from the arena.
 /// Null when the arena is unavailable or exhausted - callers fall back
 /// to headered global allocation (sound, just unoptimised).
@@ -908,6 +940,11 @@ fn os_page_size() -> usize {
         unsafe { GetSystemInfo(&raw mut info) };
         (info.dwPageSize as usize).max(4096)
     };
+    // Targets with no OS page-size query (wasm32). The arena is
+    // disabled on these, so this is only a sane default to keep the
+    // accounting math well-formed.
+    #[cfg(not(any(unix, windows)))]
+    let size = 65536;
     PAGE.store(size, Ordering::Relaxed);
     size
 }

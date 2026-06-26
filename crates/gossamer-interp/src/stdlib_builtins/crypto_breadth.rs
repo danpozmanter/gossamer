@@ -85,6 +85,7 @@ use crate::value::SmolStr;
 
 use gossamer_std::bufio as bufio_std;
 use gossamer_std::math as math_std;
+#[cfg(not(target_arch = "wasm32"))]
 use gossamer_std::net as net_std;
 use gossamer_std::os as os_std;
 use gossamer_std::path as path_std;
@@ -441,73 +442,6 @@ pub(crate) fn builtin_crypto_x509_parse_pem(args: &[Value]) -> RuntimeResult<Val
         }
         Err(e) => Ok(err_variant(format!("{e}"))),
     }
-}
-
-// ----------------------------------------------------------------------
-// hash::crc32 and hash::adler32
-
-pub(crate) fn install_hash_crc32_adler32(globals: &mut Vec<(&'static str, Value)>) {
-    for (short, call) in [
-        (
-            "crc32::checksum",
-            builtin_hash_crc32_checksum as BuiltinFnPub,
-        ),
-        ("crc32::checksum_string", builtin_hash_crc32_checksum_string),
-        ("crc32::update", builtin_hash_crc32_update),
-        ("adler32::checksum", builtin_hash_adler32_checksum),
-        (
-            "adler32::checksum_string",
-            builtin_hash_adler32_checksum_string,
-        ),
-        ("adler32::update", builtin_hash_adler32_update),
-    ] {
-        let q: &'static str = Box::leak(format!("hash::{short}").into_boxed_str());
-        globals.push((q, crate::builtins::builtin_pub(q, call)));
-    }
-}
-
-pub(crate) fn builtin_hash_crc32_checksum(args: &[Value]) -> RuntimeResult<Value> {
-    let data = bytes_from_value(args.first().unwrap_or(&Value::Unit));
-    Ok(Value::Int(i64::from(gossamer_std::hash::crc32::checksum(
-        &data,
-    ))))
-}
-
-pub(crate) fn builtin_hash_crc32_checksum_string(args: &[Value]) -> RuntimeResult<Value> {
-    let s = args.first().and_then(as_str).unwrap_or("").to_string();
-    Ok(Value::Int(i64::from(
-        gossamer_std::hash::crc32::checksum_string(&s),
-    )))
-}
-
-pub(crate) fn builtin_hash_crc32_update(args: &[Value]) -> RuntimeResult<Value> {
-    let crc = args.first().and_then(value_to_int).unwrap_or(0) as u32;
-    let data = bytes_from_value(args.get(1).unwrap_or(&Value::Unit));
-    Ok(Value::Int(i64::from(gossamer_std::hash::crc32::update(
-        crc, &data,
-    ))))
-}
-
-pub(crate) fn builtin_hash_adler32_checksum(args: &[Value]) -> RuntimeResult<Value> {
-    let data = bytes_from_value(args.first().unwrap_or(&Value::Unit));
-    Ok(Value::Int(i64::from(
-        gossamer_std::hash::adler32::checksum(&data),
-    )))
-}
-
-pub(crate) fn builtin_hash_adler32_checksum_string(args: &[Value]) -> RuntimeResult<Value> {
-    let s = args.first().and_then(as_str).unwrap_or("").to_string();
-    Ok(Value::Int(i64::from(
-        gossamer_std::hash::adler32::checksum_string(&s),
-    )))
-}
-
-pub(crate) fn builtin_hash_adler32_update(args: &[Value]) -> RuntimeResult<Value> {
-    let adler = args.first().and_then(value_to_int).unwrap_or(1) as u32;
-    let data = bytes_from_value(args.get(1).unwrap_or(&Value::Unit));
-    Ok(Value::Int(i64::from(gossamer_std::hash::adler32::update(
-        adler, &data,
-    ))))
 }
 
 // ----------------------------------------------------------------------

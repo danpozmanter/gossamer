@@ -84,6 +84,7 @@ use crate::value::SmolStr;
 
 use gossamer_std::bufio as bufio_std;
 use gossamer_std::math as math_std;
+#[cfg(not(target_arch = "wasm32"))]
 use gossamer_std::net as net_std;
 use gossamer_std::os as os_std;
 use gossamer_std::path as path_std;
@@ -110,6 +111,7 @@ pub(crate) fn install(globals: &mut Vec<(&'static str, Value)>) {
     install_fs_extras(globals);
     install_bufio_extras(globals);
     install_time_extras(globals);
+    #[cfg(not(target_arch = "wasm32"))]
     install_net(globals);
     install_set(globals);
     install_sync_extras(globals);
@@ -121,11 +123,14 @@ pub(crate) fn install(globals: &mut Vec<(&'static str, Value)>) {
     install_encoding_binary(globals);
     install_encoding_csv(globals);
     install_encoding_pem(globals);
+    #[cfg(not(target_arch = "wasm32"))]
     install_database_sql(globals);
     install_utf16(globals);
     install_iter(globals);
     install_option(globals);
     install_result(globals);
+    // Pure hashes (sha256/sha512/blake3/hmac/subtle) register on every target;
+    // the OS-RNG `crypto::rand` registration inside is itself native-gated.
     install_crypto(globals);
     install_encoding_yaml(globals);
     install_compress(globals);
@@ -134,6 +139,7 @@ pub(crate) fn install(globals: &mut Vec<(&'static str, Value)>) {
     install_archive_tar(globals);
     install_sync_atomic_u64(globals);
     install_sync_barrier(globals);
+    #[cfg(not(target_arch = "wasm32"))]
     install_crypto_breadth(globals);
     install_hash_crc32_adler32(globals);
     install_json_builtins(globals);
@@ -145,23 +151,36 @@ pub(crate) fn install(globals: &mut Vec<(&'static str, Value)>) {
     install_encoding_base32(globals);
     install_encoding_ascii85(globals);
     install_encoding_xml(globals);
+    #[cfg(not(target_arch = "wasm32"))]
     install_crypto_insecure(globals);
+    #[cfg(not(target_arch = "wasm32"))]
     install_compress_bzip2(globals);
     install_math_big(globals);
     install_http_chunked(globals);
+    #[cfg(not(target_arch = "wasm32"))]
     install_http_sse(globals);
+    #[cfg(not(target_arch = "wasm32"))]
     install_http_native_client(globals);
     install_http_static_files(globals);
+    #[cfg(not(target_arch = "wasm32"))]
     install_http_proxy(globals);
+    #[cfg(not(target_arch = "wasm32"))]
     install_http_websocket(globals);
+    #[cfg(not(target_arch = "wasm32"))]
     install_http_router(globals);
+    #[cfg(not(target_arch = "wasm32"))]
     install_http_middleware(globals);
     install_http_request_values(globals);
+    #[cfg(not(target_arch = "wasm32"))]
     install_http_middleware_bearer(globals);
+    #[cfg(not(target_arch = "wasm32"))]
     install_http_security(globals);
+    #[cfg(not(target_arch = "wasm32"))]
     install_http_ws_accept(globals);
     install_http_ws(globals);
+    #[cfg(not(target_arch = "wasm32"))]
     install_http_static_server(globals);
+    #[cfg(not(target_arch = "wasm32"))]
     install_uuid(globals);
     install_os_user(globals);
     install_netip(globals);
@@ -173,11 +192,14 @@ pub(crate) fn install(globals: &mut Vec<(&'static str, Value)>) {
     install_container_set_map(globals);
     install_deque(globals);
     install_url_escape(globals);
+    #[cfg(not(target_arch = "wasm32"))]
     install_jwt(globals);
     install_validate(globals);
     install_rwlock(globals);
     install_context(globals);
+    #[cfg(not(target_arch = "wasm32"))]
     install_metrics(globals);
+    #[cfg(not(target_arch = "wasm32"))]
     install_trace(globals);
 }
 
@@ -219,9 +241,13 @@ pub mod container_seq;
 pub mod container_set_map;
 pub mod context;
 pub mod crypto;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod crypto_breadth;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod crypto_insecure;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod database_sql;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod database_sql_native;
 pub mod deque;
 pub mod encoding_binary;
@@ -234,28 +260,41 @@ pub mod fs;
 pub mod hash_fnv;
 pub mod html;
 pub mod http_chunked;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod http_middleware;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod http_middleware_bearer;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod http_native_client;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod http_proxy;
 pub mod http_request_values;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod http_router;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod http_security;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod http_sse;
 pub mod http_static_files;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod http_static_server;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod http_websocket;
 pub mod http_ws;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod http_ws_accept;
 pub mod iter;
 pub mod json_builtins;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod jwt;
 pub mod math;
 pub mod math_big;
 pub mod math_bits;
 pub mod math_rand;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod metrics;
 pub mod mime;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod net;
 pub mod net_ip;
 pub mod netip;
@@ -273,9 +312,11 @@ pub mod sync_barrier;
 pub mod thread;
 pub mod time;
 pub mod time_completeness;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod trace;
 pub mod unicode;
 pub mod url_escape;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod uuid;
 pub mod validate;
 pub(crate) use archive_tar::install_archive_tar;
@@ -300,10 +341,15 @@ pub(crate) use context::install_context;
 pub use context::*;
 pub(crate) use crypto::install_crypto;
 pub use crypto::*;
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) use crypto_breadth::install_crypto_breadth;
+#[cfg(not(target_arch = "wasm32"))]
 pub use crypto_breadth::*;
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) use crypto_insecure::install_crypto_insecure;
+#[cfg(not(target_arch = "wasm32"))]
 pub use crypto_insecure::*;
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) use database_sql::install_database_sql;
 pub(crate) use deque::install_deque;
 pub use deque::*;
@@ -327,37 +373,59 @@ pub(crate) use html::install_html;
 pub use html::*;
 pub(crate) use http_chunked::install_http_chunked;
 pub use http_chunked::*;
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) use http_middleware::install_http_middleware;
+#[cfg(not(target_arch = "wasm32"))]
 pub use http_middleware::*;
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) use http_middleware_bearer::install_http_middleware_bearer;
+#[cfg(not(target_arch = "wasm32"))]
 pub use http_middleware_bearer::*;
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) use http_native_client::install_http_native_client;
+#[cfg(not(target_arch = "wasm32"))]
 pub use http_native_client::*;
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) use http_proxy::install_http_proxy;
+#[cfg(not(target_arch = "wasm32"))]
 pub use http_proxy::*;
 pub(crate) use http_request_values::install_http_request_values;
 pub use http_request_values::*;
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) use http_router::install_http_router;
+#[cfg(not(target_arch = "wasm32"))]
 pub use http_router::*;
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) use http_security::install_http_security;
+#[cfg(not(target_arch = "wasm32"))]
 pub use http_security::*;
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) use http_sse::install_http_sse;
+#[cfg(not(target_arch = "wasm32"))]
 pub use http_sse::*;
 pub(crate) use http_static_files::install_http_static_files;
 pub use http_static_files::*;
+#[cfg(not(target_arch = "wasm32"))]
 pub use http_static_server::*;
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) use http_static_server::{install_http_static_server, native_file_server_serve};
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) use http_websocket::install_http_websocket;
+#[cfg(not(target_arch = "wasm32"))]
 pub use http_websocket::*;
 pub(crate) use http_ws::install_http_ws;
 pub use http_ws::*;
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) use http_ws_accept::install_http_ws_accept;
+#[cfg(not(target_arch = "wasm32"))]
 pub use http_ws_accept::*;
 pub(crate) use iter::install_iter;
 pub use iter::*;
 pub(crate) use json_builtins::install_json_builtins;
 pub use json_builtins::*;
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) use jwt::install_jwt;
+#[cfg(not(target_arch = "wasm32"))]
 pub use jwt::*;
 pub(crate) use math::install_math;
 pub use math::*;
@@ -367,11 +435,15 @@ pub(crate) use math_bits::install_math_bits;
 pub use math_bits::*;
 pub(crate) use math_rand::install_math_rand;
 pub use math_rand::*;
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) use metrics::install_metrics;
+#[cfg(not(target_arch = "wasm32"))]
 pub use metrics::*;
 pub(crate) use mime::install_mime;
 pub use mime::*;
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) use net::install_net;
+#[cfg(not(target_arch = "wasm32"))]
 pub use net::*;
 pub(crate) use net_ip::install_net_ip;
 pub use net_ip::*;
@@ -405,13 +477,17 @@ pub(crate) use time::install_time_extras;
 pub use time::*;
 pub(crate) use time_completeness::install_time_completeness;
 pub use time_completeness::*;
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) use trace::install_trace;
+#[cfg(not(target_arch = "wasm32"))]
 pub use trace::*;
 pub(crate) use unicode::install_unicode;
 pub use unicode::*;
 pub(crate) use url_escape::install_url_escape;
 pub use url_escape::*;
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) use uuid::install_uuid;
+#[cfg(not(target_arch = "wasm32"))]
 pub use uuid::*;
 pub(crate) use validate::install_validate;
 pub use validate::*;

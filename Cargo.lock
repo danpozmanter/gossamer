@@ -531,6 +531,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "console_error_panic_hook"
+version = "0.1.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a06aeb73f470f66dcdbf7223caeebb85984942f22f1adb2a088cf9668146bbbc"
+dependencies = [
+ "cfg-if",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "const-oid"
 version = "0.9.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1340,11 +1350,11 @@ dependencies = [
 
 [[package]]
 name = "gossamer-abi"
-version = "0.18.3"
+version = "0.19.0"
 
 [[package]]
 name = "gossamer-ast"
-version = "0.18.3"
+version = "0.19.0"
 dependencies = [
  "gossamer-lex",
  "serde",
@@ -1352,7 +1362,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-binding"
-version = "0.18.3"
+version = "0.19.0"
 dependencies = [
  "gossamer-ast",
  "gossamer-binding-macros",
@@ -1367,7 +1377,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-binding-macros"
-version = "0.18.3"
+version = "0.19.0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1376,7 +1386,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-cli"
-version = "0.18.3"
+version = "0.19.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -1416,7 +1426,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-codegen-cranelift"
-version = "0.18.3"
+version = "0.19.0"
 dependencies = [
  "anyhow",
  "cranelift-codegen",
@@ -1443,7 +1453,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-codegen-llvm"
-version = "0.18.3"
+version = "0.19.0"
 dependencies = [
  "anyhow",
  "gossamer-abi",
@@ -1459,14 +1469,14 @@ dependencies = [
 
 [[package]]
 name = "gossamer-coro"
-version = "0.18.3"
+version = "0.19.0"
 dependencies = [
  "corosensei",
 ]
 
 [[package]]
 name = "gossamer-diagnostics"
-version = "0.18.3"
+version = "0.19.0"
 dependencies = [
  "gossamer-ast",
  "gossamer-lex",
@@ -1478,7 +1488,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-driver"
-version = "0.18.3"
+version = "0.19.0"
 dependencies = [
  "anyhow",
  "gossamer-ast",
@@ -1506,7 +1516,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-hir"
-version = "0.18.3"
+version = "0.19.0"
 dependencies = [
  "gossamer-ast",
  "gossamer-lex",
@@ -1517,7 +1527,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-http3"
-version = "0.18.3"
+version = "0.19.0"
 dependencies = [
  "bytes",
  "h3",
@@ -1533,7 +1543,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-interp"
-version = "0.18.3"
+version = "0.19.0"
 dependencies = [
  "gossamer-ast",
  "gossamer-codegen-cranelift",
@@ -1555,7 +1565,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-lex"
-version = "0.18.3"
+version = "0.19.0"
 dependencies = [
  "insta",
  "parking_lot",
@@ -1566,7 +1576,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-lint"
-version = "0.18.3"
+version = "0.19.0"
 dependencies = [
  "gossamer-ast",
  "gossamer-diagnostics",
@@ -1576,7 +1586,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-lsp"
-version = "0.18.3"
+version = "0.19.0"
 dependencies = [
  "gossamer-ast",
  "gossamer-diagnostics",
@@ -1590,7 +1600,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-mir"
-version = "0.18.3"
+version = "0.19.0"
 dependencies = [
  "gossamer-abi",
  "gossamer-ast",
@@ -1603,7 +1613,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-parse"
-version = "0.18.3"
+version = "0.19.0"
 dependencies = [
  "gossamer-ast",
  "gossamer-diagnostics",
@@ -1614,7 +1624,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-pkg"
-version = "0.18.3"
+version = "0.19.0"
 dependencies = [
  "ed25519-dalek",
  "parking_lot",
@@ -1628,8 +1638,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "gossamer-playground"
+version = "0.19.0"
+dependencies = [
+ "console_error_panic_hook",
+ "gossamer-ast",
+ "gossamer-diagnostics",
+ "gossamer-hir",
+ "gossamer-interp",
+ "gossamer-lex",
+ "gossamer-parse",
+ "gossamer-resolve",
+ "gossamer-types",
+ "serde",
+ "serde-wasm-bindgen",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "gossamer-resolve"
-version = "0.18.3"
+version = "0.19.0"
 dependencies = [
  "gossamer-ast",
  "gossamer-diagnostics",
@@ -1641,7 +1669,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-runner-template"
-version = "0.18.3"
+version = "0.19.0"
 dependencies = [
  "syn",
  "toml",
@@ -1649,7 +1677,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-runtime"
-version = "0.18.3"
+version = "0.19.0"
 dependencies = [
  "aes-gcm",
  "argon2",
@@ -1715,14 +1743,14 @@ dependencies = [
 
 [[package]]
 name = "gossamer-sched"
-version = "0.18.3"
+version = "0.19.0"
 dependencies = [
  "gossamer-runtime",
 ]
 
 [[package]]
 name = "gossamer-std"
-version = "0.18.3"
+version = "0.19.0"
 dependencies = [
  "aes",
  "aes-gcm",
@@ -1798,7 +1826,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-template"
-version = "0.18.3"
+version = "0.19.0"
 dependencies = [
  "serde_json",
  "thiserror",
@@ -1806,7 +1834,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-types"
-version = "0.18.3"
+version = "0.19.0"
 dependencies = [
  "gossamer-ast",
  "gossamer-diagnostics",
@@ -1818,7 +1846,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-ws"
-version = "0.18.3"
+version = "0.19.0"
 dependencies = [
  "parking_lot",
  "thiserror",
@@ -2148,13 +2176,12 @@ dependencies = [
 
 [[package]]
 name = "js-sys"
-version = "0.3.97"
+version = "0.3.103"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a1840c94c045fbcf8ba2812c95db44499f7c64910a912551aaaa541decebcacf"
+checksum = "53b44bfcdb3f8d5837a46dae1ca9660a837176eee74a28b229bc626816589102"
 dependencies = [
  "cfg-if",
  "futures-util",
- "once_cell",
  "wasm-bindgen",
 ]
 
@@ -3192,6 +3219,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde-wasm-bindgen"
+version = "0.6.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8302e169f0eddcc139c70f139d19d6467353af16f9fce27e8c30158036a1e16b"
+dependencies = [
+ "js-sys",
+ "serde",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "serde_core"
 version = "1.0.228"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3827,9 +3865,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen"
-version = "0.2.120"
+version = "0.2.126"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "df52b6d9b87e0c74c9edfa1eb2d9bf85e5d63515474513aa50fa181b3c4f5db1"
+checksum = "4b067c0c11094aef6b7a801c1e34a26affafdf3d051dba08456b868789aaf9a4"
 dependencies = [
  "cfg-if",
  "once_cell",
@@ -3840,9 +3878,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-macro"
-version = "0.2.120"
+version = "0.2.126"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "78b1041f495fb322e64aca85f5756b2172e35cd459376e67f2a6c9dffcedb103"
+checksum = "167ce5e579f6bcf889c4f7175a8a5a585de84e8ff93976ce393efa5f2837aab1"
 dependencies = [
  "quote",
  "wasm-bindgen-macro-support",
@@ -3850,9 +3888,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-macro-support"
-version = "0.2.120"
+version = "0.2.126"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9dcd0ff20416988a18ac686d4d4d0f6aae9ebf08a389ff5d29012b05af2a1b41"
+checksum = "f3997c7839262f4ef12cf90b818d6340c18e80f263f1a94bf157d0ec4420380e"
 dependencies = [
  "bumpalo",
  "proc-macro2",
@@ -3863,9 +3901,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-shared"
-version = "0.2.120"
+version = "0.2.126"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "49757b3c82ebf16c57d69365a142940b384176c24df52a087fb748e2085359ea"
+checksum = "dc1b4cb0cc549fcf58d7dfc081778139b3d283a081644e833e84682ad71cea24"
 dependencies = [
  "unicode-ident",
 ]
@@ -4329,7 +4367,7 @@ dependencies = [
 
 [[package]]
 name = "xtask"
-version = "0.18.3"
+version = "0.19.0"
 dependencies = [
  "anyhow",
  "gossamer-lint",

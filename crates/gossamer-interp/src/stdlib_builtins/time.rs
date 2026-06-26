@@ -85,6 +85,7 @@ use crate::value::SmolStr;
 
 use gossamer_std::bufio as bufio_std;
 use gossamer_std::math as math_std;
+#[cfg(not(target_arch = "wasm32"))]
 use gossamer_std::net as net_std;
 use gossamer_std::os as os_std;
 use gossamer_std::path as path_std;
@@ -244,15 +245,19 @@ pub(crate) fn builtin_time_duration_as_micros(args: &[Value]) -> RuntimeResult<V
 // out by value and `close` can drop it, modelling close idempotently.
 pub(crate) static NEXT_NET_ID: GlobalReg<i64> =
     GlobalReg::new(|| parking_lot::ReentrantMutex::new(RefCell::new(1)));
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) static TCP_STREAM_REGISTRY: GlobalReg<
     StdHashMap<i64, Arc<parking_lot::Mutex<Option<net_std::TcpStream>>>>,
 > = GlobalReg::new(|| parking_lot::ReentrantMutex::new(RefCell::new(StdHashMap::new())));
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) static TLS_STREAM_REGISTRY: GlobalReg<
     StdHashMap<i64, Arc<parking_lot::Mutex<net_std::TlsStream>>>,
 > = GlobalReg::new(|| parking_lot::ReentrantMutex::new(RefCell::new(StdHashMap::new())));
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) static TCP_LISTENER_REGISTRY: GlobalReg<
     StdHashMap<i64, Arc<parking_lot::Mutex<net_std::TcpListener>>>,
 > = GlobalReg::new(|| parking_lot::ReentrantMutex::new(RefCell::new(StdHashMap::new())));
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) static UDP_REGISTRY: GlobalReg<
     StdHashMap<i64, Arc<parking_lot::Mutex<net_std::UdpSocket>>>,
 > = GlobalReg::new(|| parking_lot::ReentrantMutex::new(RefCell::new(StdHashMap::new())));

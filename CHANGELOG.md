@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.19.0 - VM to WASM: In-browser WebAssembly playground support
+
+The bytecode VM now compiles to WebAssembly and runs Gossamer in the browser.
+
+- **In-browser playground.** The bytecode VM compiles to `wasm32-unknown-unknown`
+  and runs Gossamer entirely client-side, powering the runnable home-page
+  examples, a guided Tour, and a standalone Try Gossamer editor. The whole
+  language and the pure standard library - including hashing
+  (`sha256`/`sha512`/`blake3`/`hmac`) - run bit-identical to native;
+  browser-sandbox I/O (sockets, filesystem, processes, HTTP server and client,
+  SQL, signing/AEAD crypto, `zstd`/`bzip2`) is unavailable, and goroutines run
+  cooperatively to completion (`spawn`/`join` and channel drains work, preemptive
+  interleaving does not). Standalone `gos build --target wasm32` stays
+  unsupported. See the WebAssembly docs.
+- An execution budget caps runaway loops in the playground: an unbounded loop
+  aborts with `error[GX0009]` instead of hanging the tab. Feature-gated, so
+  native `gos run` carries no overhead.
+
 ## 0.18.3 - Compiled-tier hot-path performance, parity, correctness
 
 Compiled- and interpreter-tier hot-path speedups and tier-parity fixes.

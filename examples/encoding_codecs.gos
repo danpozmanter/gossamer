@@ -19,7 +19,7 @@ fn main() {
     let b64_dec = encoding::base64::decode(b64)
     match b64_dec {
         Ok(bytes) => println!("base64 decode: {} bytes ok", bytes.len()),
-        Err(e)    => println!("base64 err: {}", e),
+        Err(e) => println!("base64 err: {}", e),
     }
 
     // Hex
@@ -28,7 +28,7 @@ fn main() {
     let h_dec = encoding::hex::decode(h)
     match h_dec {
         Ok(bytes) => println!("hex decode:    {} bytes ok", bytes.len()),
-        Err(e)    => println!("hex err: {}", e),
+        Err(e) => println!("hex err: {}", e),
     }
 
     // Base32
@@ -36,7 +36,7 @@ fn main() {
     println!("base32 encode: {}", b32)
     let b32_dec = encoding::base32::decode_string(b32)
     match b32_dec {
-        Ok(s)  => println!("base32 decode: {}", s),
+        Ok(s) => println!("base32 decode: {}", s),
         Err(e) => println!("base32 err: {}", e),
     }
 

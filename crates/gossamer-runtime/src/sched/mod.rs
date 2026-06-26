@@ -15,6 +15,15 @@
 #![forbid(unsafe_code)]
 
 pub mod channel;
+// The work-stealing M:N scheduler needs OS threads, crossbeam deques,
+// and a mio netpoller - none available on wasm32. The wasm playground
+// runs goroutines cooperatively to completion (the eager coro shim),
+// so it links a single-threaded `MultiScheduler` that re-exports the
+// same public types. Native is unaffected.
+#[cfg(not(target_arch = "wasm32"))]
+pub mod multi;
+#[cfg(target_arch = "wasm32")]
+#[path = "multi_wasm.rs"]
 pub mod multi;
 pub mod poller;
 pub mod queue;

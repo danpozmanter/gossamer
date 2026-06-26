@@ -18,7 +18,7 @@ fn main() {
     let mut primes: [i64] = [2, 3, 5, 7]
     primes.push(11)
     println!("primes: {} entries, first={}, last={}",
-             primes.len(), primes[0], primes[primes.len() - 1])
+        primes.len(), primes[0], primes[primes.len() - 1])
 
     // --- map (hash) - `if let` reads the natural way ---
     let mut scores: HashMap<String, i64> = HashMap::new()
@@ -36,7 +36,7 @@ fn main() {
     tally.inc("apple", 4)
     tally.inc("banana")
     println!("apple = {}, banana = {}",
-             tally.get_or("apple", 0), tally.get_or("banana", 0))
+        tally.get_or("apple", 0), tally.get_or("banana", 0))
 
     // --- map (sorted) - destructured iteration ---
     let mut ranked: BTreeMap<String, i64> = BTreeMap::new()

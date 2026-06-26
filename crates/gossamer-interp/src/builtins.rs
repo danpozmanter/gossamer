@@ -186,6 +186,7 @@ pub(crate) fn install(globals: &mut Vec<(&'static str, Value)>) {
     install_concurrency_builtins(globals);
     install_regex_builtins(globals);
     crate::stdlib_builtins::install(globals);
+    #[cfg(not(target_arch = "wasm32"))]
     globals.push(("serve", native("serve", native_http_serve)));
 }
 
@@ -337,11 +338,17 @@ fn install_io_builtins(globals: &mut Vec<(&'static str, Value)>) {
     reason = "flat registration list - splitting hides the per-arm intent"
 )]
 fn install_http_builtins(globals: &mut Vec<(&'static str, Value)>) {
-    globals.push(("http::serve", native("http::serve", native_http_serve)));
-    globals.push((
-        "http::serve_tls",
-        native("http::serve_tls", native_http_serve_tls),
-    ));
+    // HTTP server / client surface depends on host sockets, TLS, and
+    // C-library codecs that the wasm browser sandbox cannot provide;
+    // only the pure response-building builtins below stay available.
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        globals.push(("http::serve", native("http::serve", native_http_serve)));
+        globals.push((
+            "http::serve_tls",
+            native("http::serve_tls", native_http_serve_tls),
+        ));
+    }
     globals.push((
         "websocket::serve",
         native(
@@ -356,40 +363,43 @@ fn install_http_builtins(globals: &mut Vec<(&'static str, Value)>) {
             crate::stdlib_builtins::http_ws::native_websocket_serve,
         ),
     ));
-    globals.push((
-        "Router::serve",
-        native("Router::serve", crate::stdlib_builtins::native_router_serve),
-    ));
-    globals.push((
-        "FileServer::serve",
-        native(
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        globals.push((
+            "Router::serve",
+            native("Router::serve", crate::stdlib_builtins::native_router_serve),
+        ));
+        globals.push((
             "FileServer::serve",
-            crate::stdlib_builtins::native_file_server_serve,
-        ),
-    ));
-    globals.push((
-        "Middleware::serve",
-        native(
+            native(
+                "FileServer::serve",
+                crate::stdlib_builtins::native_file_server_serve,
+            ),
+        ));
+        globals.push((
             "Middleware::serve",
-            crate::stdlib_builtins::native_middleware_serve,
-        ),
-    ));
-    // HTTP/2 folded into std::http per the Go model. Canonical
-    // names live under http::*; nothing exposes the old http2::
-    // module path any more (the interp dispatch did, briefly,
-    // during 0.4.0 dev - it's gone now).
-    globals.push((
-        "http::serve_h2c",
-        native("http::serve_h2c", native_http2_bind_and_run_h2c),
-    ));
-    globals.push((
-        "http_h3::serve",
-        native("http_h3::serve", native_http3_serve),
-    ));
-    globals.push((
-        "http::Http2Config::default",
-        builtin("http::Http2Config::default", builtin_http2_config_default),
-    ));
+            native(
+                "Middleware::serve",
+                crate::stdlib_builtins::native_middleware_serve,
+            ),
+        ));
+        // HTTP/2 folded into std::http per the Go model. Canonical
+        // names live under http::*; nothing exposes the old http2::
+        // module path any more (the interp dispatch did, briefly,
+        // during 0.4.0 dev - it's gone now).
+        globals.push((
+            "http::serve_h2c",
+            native("http::serve_h2c", native_http2_bind_and_run_h2c),
+        ));
+        globals.push((
+            "http_h3::serve",
+            native("http_h3::serve", native_http3_serve),
+        ));
+        globals.push((
+            "http::Http2Config::default",
+            builtin("http::Http2Config::default", builtin_http2_config_default),
+        ));
+    }
     globals.push((
         "http::Response::text",
         builtin("http::Response::text", builtin_http_response_text),
@@ -406,14 +416,17 @@ fn install_http_builtins(globals: &mut Vec<(&'static str, Value)>) {
         "Response::json",
         builtin("Response::json", builtin_http_response_json),
     ));
-    globals.push((
-        "http::Response::stream",
-        builtin("http::Response::stream", builtin_http_response_stream),
-    ));
-    globals.push((
-        "Response::stream",
-        builtin("Response::stream", builtin_http_response_stream),
-    ));
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        globals.push((
+            "http::Response::stream",
+            builtin("http::Response::stream", builtin_http_response_stream),
+        ));
+        globals.push((
+            "Response::stream",
+            builtin("Response::stream", builtin_http_response_stream),
+        ));
+    }
     globals.push((
         "http::Response::with_header",
         builtin(
@@ -425,206 +438,209 @@ fn install_http_builtins(globals: &mut Vec<(&'static str, Value)>) {
         "Response::with_header",
         builtin("Response::with_header", builtin_http_response_with_header),
     ));
-    globals.push((
-        "http::Client::new",
-        builtin(
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        globals.push((
             "http::Client::new",
-            crate::http_client_builtins::builtin_http_client_new,
-        ),
-    ));
-    globals.push((
-        "http::Client::builder",
-        builtin(
+            builtin(
+                "http::Client::new",
+                crate::http_client_builtins::builtin_http_client_new,
+            ),
+        ));
+        globals.push((
             "http::Client::builder",
-            crate::http_client_builtins::builtin_http_client_builder,
-        ),
-    ));
-    globals.push((
-        "ClientBuilder::max_redirects",
-        builtin(
+            builtin(
+                "http::Client::builder",
+                crate::http_client_builtins::builtin_http_client_builder,
+            ),
+        ));
+        globals.push((
             "ClientBuilder::max_redirects",
-            crate::http_client_builtins::builtin_http_client_builder_max_redirects,
-        ),
-    ));
-    globals.push((
-        "ClientBuilder::timeout_ms",
-        builtin(
+            builtin(
+                "ClientBuilder::max_redirects",
+                crate::http_client_builtins::builtin_http_client_builder_max_redirects,
+            ),
+        ));
+        globals.push((
             "ClientBuilder::timeout_ms",
-            crate::http_client_builtins::builtin_http_client_builder_timeout_ms,
-        ),
-    ));
-    globals.push((
-        "ClientBuilder::cookie_jar",
-        builtin(
+            builtin(
+                "ClientBuilder::timeout_ms",
+                crate::http_client_builtins::builtin_http_client_builder_timeout_ms,
+            ),
+        ));
+        globals.push((
             "ClientBuilder::cookie_jar",
-            crate::http_client_builtins::builtin_http_client_builder_cookie_jar,
-        ),
-    ));
-    globals.push((
-        "ClientBuilder::proxy",
-        builtin(
+            builtin(
+                "ClientBuilder::cookie_jar",
+                crate::http_client_builtins::builtin_http_client_builder_cookie_jar,
+            ),
+        ));
+        globals.push((
             "ClientBuilder::proxy",
-            crate::http_client_builtins::builtin_http_client_builder_proxy,
-        ),
-    ));
-    globals.push((
-        "ClientBuilder::build",
-        builtin(
+            builtin(
+                "ClientBuilder::proxy",
+                crate::http_client_builtins::builtin_http_client_builder_proxy,
+            ),
+        ));
+        globals.push((
             "ClientBuilder::build",
-            crate::http_client_builtins::builtin_http_client_builder_build,
-        ),
-    ));
-    globals.push((
-        "Client::request",
-        builtin(
+            builtin(
+                "ClientBuilder::build",
+                crate::http_client_builtins::builtin_http_client_builder_build,
+            ),
+        ));
+        globals.push((
             "Client::request",
-            crate::http_client_builtins::builtin_http_client_request,
-        ),
-    ));
-    globals.push((
-        "Client::request_bytes",
-        builtin(
+            builtin(
+                "Client::request",
+                crate::http_client_builtins::builtin_http_client_request,
+            ),
+        ));
+        globals.push((
             "Client::request_bytes",
-            crate::http_client_builtins::builtin_http_client_request_bytes,
-        ),
-    ));
-    globals.push((
-        "Client::get",
-        builtin(
+            builtin(
+                "Client::request_bytes",
+                crate::http_client_builtins::builtin_http_client_request_bytes,
+            ),
+        ));
+        globals.push((
             "Client::get",
-            crate::http_client_builtins::builtin_http_client_get,
-        ),
-    ));
-    globals.push((
-        "Client::post",
-        builtin(
+            builtin(
+                "Client::get",
+                crate::http_client_builtins::builtin_http_client_get,
+            ),
+        ));
+        globals.push((
             "Client::post",
-            crate::http_client_builtins::builtin_http_client_post,
-        ),
-    ));
-    globals.push((
-        "Client::put",
-        builtin(
+            builtin(
+                "Client::post",
+                crate::http_client_builtins::builtin_http_client_post,
+            ),
+        ));
+        globals.push((
             "Client::put",
-            crate::http_client_builtins::builtin_http_client_put,
-        ),
-    ));
-    globals.push((
-        "Client::options",
-        builtin(
+            builtin(
+                "Client::put",
+                crate::http_client_builtins::builtin_http_client_put,
+            ),
+        ));
+        globals.push((
             "Client::options",
-            crate::http_client_builtins::builtin_http_client_options,
-        ),
-    ));
-    globals.push((
-        "Client::delete",
-        builtin(
+            builtin(
+                "Client::options",
+                crate::http_client_builtins::builtin_http_client_options,
+            ),
+        ));
+        globals.push((
             "Client::delete",
-            crate::http_client_builtins::builtin_http_client_delete,
-        ),
-    ));
-    globals.push((
-        "Client::head",
-        builtin(
+            builtin(
+                "Client::delete",
+                crate::http_client_builtins::builtin_http_client_delete,
+            ),
+        ));
+        globals.push((
             "Client::head",
-            crate::http_client_builtins::builtin_http_client_head,
-        ),
-    ));
-    globals.push((
-        "Request::header",
-        builtin(
+            builtin(
+                "Client::head",
+                crate::http_client_builtins::builtin_http_client_head,
+            ),
+        ));
+        globals.push((
             "Request::header",
-            crate::http_client_builtins::builtin_http_request_header,
-        ),
-    ));
-    globals.push((
-        "Request::body",
-        builtin(
+            builtin(
+                "Request::header",
+                crate::http_client_builtins::builtin_http_request_header,
+            ),
+        ));
+        globals.push((
             "Request::body",
-            crate::http_client_builtins::builtin_http_request_body,
-        ),
-    ));
-    globals.push((
-        "Request::send",
-        builtin(
+            builtin(
+                "Request::body",
+                crate::http_client_builtins::builtin_http_request_body,
+            ),
+        ));
+        globals.push((
             "Request::send",
-            crate::http_client_builtins::builtin_http_request_send,
-        ),
-    ));
-    globals.push((
-        "Response::bytes",
-        builtin(
+            builtin(
+                "Request::send",
+                crate::http_client_builtins::builtin_http_request_send,
+            ),
+        ));
+        globals.push((
             "Response::bytes",
-            crate::http_client_builtins::builtin_http_response_bytes,
-        ),
-    ));
-    // Free-function client surface: http::request, http::stream, plus
-    // method-specific convenience wrappers.
-    globals.push((
-        "http::request",
-        builtin(
+            builtin(
+                "Response::bytes",
+                crate::http_client_builtins::builtin_http_response_bytes,
+            ),
+        ));
+        // Free-function client surface: http::request, http::stream, plus
+        // method-specific convenience wrappers.
+        globals.push((
             "http::request",
-            crate::http_client_builtins::builtin_http_request,
-        ),
-    ));
-    globals.push((
-        "http::request_bytes",
-        builtin(
+            builtin(
+                "http::request",
+                crate::http_client_builtins::builtin_http_request,
+            ),
+        ));
+        globals.push((
             "http::request_bytes",
-            crate::http_client_builtins::builtin_http_request_bytes,
-        ),
-    ));
-    globals.push((
-        "http::get",
-        builtin("http::get", crate::http_client_builtins::builtin_http_get),
-    ));
-    globals.push((
-        "http::post",
-        builtin("http::post", crate::http_client_builtins::builtin_http_post),
-    ));
-    globals.push((
-        "http::put",
-        builtin("http::put", crate::http_client_builtins::builtin_http_put),
-    ));
-    globals.push((
-        "http::options",
-        builtin(
+            builtin(
+                "http::request_bytes",
+                crate::http_client_builtins::builtin_http_request_bytes,
+            ),
+        ));
+        globals.push((
+            "http::get",
+            builtin("http::get", crate::http_client_builtins::builtin_http_get),
+        ));
+        globals.push((
+            "http::post",
+            builtin("http::post", crate::http_client_builtins::builtin_http_post),
+        ));
+        globals.push((
+            "http::put",
+            builtin("http::put", crate::http_client_builtins::builtin_http_put),
+        ));
+        globals.push((
             "http::options",
-            crate::http_client_builtins::builtin_http_options,
-        ),
-    ));
-    globals.push((
-        "http::delete",
-        builtin(
+            builtin(
+                "http::options",
+                crate::http_client_builtins::builtin_http_options,
+            ),
+        ));
+        globals.push((
             "http::delete",
-            crate::http_client_builtins::builtin_http_delete,
-        ),
-    ));
-    globals.push((
-        "http::head",
-        builtin("http::head", crate::http_client_builtins::builtin_http_head),
-    ));
-    globals.push((
-        "http::stream",
-        builtin(
+            builtin(
+                "http::delete",
+                crate::http_client_builtins::builtin_http_delete,
+            ),
+        ));
+        globals.push((
+            "http::head",
+            builtin("http::head", crate::http_client_builtins::builtin_http_head),
+        ));
+        globals.push((
             "http::stream",
-            crate::http_client_builtins::builtin_http_stream,
-        ),
-    ));
-    globals.push((
-        "ResponseStream::next_line",
-        builtin(
+            builtin(
+                "http::stream",
+                crate::http_client_builtins::builtin_http_stream,
+            ),
+        ));
+        globals.push((
             "ResponseStream::next_line",
-            crate::http_client_builtins::builtin_response_stream_next_line,
-        ),
-    ));
-    globals.push((
-        "ResponseStream::next_chunk",
-        builtin(
+            builtin(
+                "ResponseStream::next_line",
+                crate::http_client_builtins::builtin_response_stream_next_line,
+            ),
+        ));
+        globals.push((
             "ResponseStream::next_chunk",
-            crate::http_client_builtins::builtin_response_stream_next_chunk,
-        ),
-    ));
+            builtin(
+                "ResponseStream::next_chunk",
+                crate::http_client_builtins::builtin_response_stream_next_chunk,
+            ),
+        ));
+    }
     globals.push(("path", builtin("path", builtin_field::<'p'>)));
     globals.push(("method", builtin("method", builtin_field::<'m'>)));
 }
@@ -2595,6 +2611,7 @@ fn builtin_http_response_json(args: &[Value]) -> RuntimeResult<Value> {
 /// `None`, and a second `Response::stream` over the same value serves
 /// an empty chunked body. Mirrors the compiled tier's
 /// `gos_rt_http_response_stream_new` exactly.
+#[cfg(not(target_arch = "wasm32"))]
 fn builtin_http_response_stream(args: &[Value]) -> RuntimeResult<Value> {
     let status = args.first().and_then(value_to_int).unwrap_or(200);
     let content_type = args.get(1).map(render_one).unwrap_or_default();
@@ -2652,6 +2669,7 @@ fn builtin_http_response_with_header(args: &[Value]) -> RuntimeResult<Value> {
     Ok(Value::struct_(inner.name, fields))
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn builtin_http2_config_default(_args: &[Value]) -> RuntimeResult<Value> {
     let c = gossamer_std::http_h2::Config::default();
     let fields = vec![
@@ -2727,6 +2745,7 @@ fn render_args(args: &[Value]) -> String {
 /// Graceful shutdown is driven by the `GOSSAMER_HTTP_MAX_REQUESTS`
 /// environment variable (stop after N requests) or by the process
 /// receiving SIGINT.
+#[cfg(not(target_arch = "wasm32"))]
 fn native_http_serve(dispatch: &mut dyn NativeDispatch, args: &[Value]) -> RuntimeResult<Value> {
     if args.len() < 2 {
         return Err(RuntimeError::Arity {
@@ -2817,6 +2836,7 @@ fn native_http_serve(dispatch: &mut dyn NativeDispatch, args: &[Value]) -> Runti
 /// key, then dispatches each request through the same handler contract
 /// after TLS termination - so HTTPS handlers behave identically to the
 /// plaintext path on every tier.
+#[cfg(not(target_arch = "wasm32"))]
 fn native_http_serve_tls(
     dispatch: &mut dyn NativeDispatch,
     args: &[Value],
@@ -2924,6 +2944,7 @@ fn native_http_serve_tls(
     clippy::items_after_statements,
     clippy::needless_continue
 )]
+#[cfg(not(target_arch = "wasm32"))]
 fn native_http2_bind_and_run_h2c(
     dispatch: &mut dyn NativeDispatch,
     args: &[Value],
@@ -3061,6 +3082,7 @@ fn native_http2_bind_and_run_h2c(
     clippy::items_after_statements,
     clippy::needless_continue
 )]
+#[cfg(not(target_arch = "wasm32"))]
 fn native_http3_serve(dispatch: &mut dyn NativeDispatch, args: &[Value]) -> RuntimeResult<Value> {
     if args.len() < 4 {
         return Err(RuntimeError::Arity {
@@ -3264,6 +3286,7 @@ fn request_to_value(request: &http_std::Request) -> Value {
     Value::struct_("Request", Arc::unwrap_or_clone(Arc::new(fields)))
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn value_to_response(value: &Value) -> Option<http_std::Response> {
     let unwrapped = unwrap_result(value);
     let Value::Struct(struct_inner) = unwrapped else {

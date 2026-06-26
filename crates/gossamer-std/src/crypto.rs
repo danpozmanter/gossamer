@@ -15,6 +15,11 @@
 
 #![forbid(unsafe_code)]
 
+// The pure hash families (sha256/sha512/blake3/hmac/subtle) are
+// computation-only and compile to wasm32; the rest pull an OS RNG
+// (`getrandom`) or heavier crates and are gated to native so the
+// in-browser playground still has hashing.
+#[cfg(not(target_arch = "wasm32"))]
 pub mod rand {
     //! OS-backed secure random bytes.
     //!
@@ -269,6 +274,7 @@ pub mod subtle {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub mod aead {
     //! Authenticated encryption with associated data.
     //!
@@ -415,6 +421,7 @@ pub mod aead {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub mod ed25519 {
     //! Ed25519 signatures.
 
@@ -455,6 +462,7 @@ pub mod ed25519 {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub mod ecdsa {
     //! ECDSA over the NIST P-256 curve.
 
@@ -501,6 +509,7 @@ pub mod ecdsa {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub mod x509 {
     //! Minimal X.509 v3 certificate inspection.
 
@@ -564,6 +573,7 @@ pub mod x509 {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub mod kdf {
     //! Password-based key derivation: PBKDF2, scrypt, Argon2id.
 
@@ -640,6 +650,7 @@ pub mod insecure;
 ///     }
 /// }
 /// ```
+#[cfg(not(target_arch = "wasm32"))]
 pub mod password {
     use argon2::password_hash::PasswordHash;
     use argon2::{Algorithm, Params, Version};
@@ -771,6 +782,7 @@ fn nibble_char(n: u8) -> char {
 /// `crypto/cipher` surface - `Stream` / `Block` primitives so
 /// downstream code can compose modes that Gossamer doesn't
 /// ship directly (e.g. AES-OFB layered on the same Block).
+#[cfg(not(target_arch = "wasm32"))]
 pub mod cipher {
     use crate::errors::Error;
     use cipher::{

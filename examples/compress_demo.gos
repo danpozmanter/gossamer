@@ -25,9 +25,9 @@ fn show_roundtrip(name: &str, compressed: Result<[u8], compress::Error>, origina
 
 fn main() {
     let data = "The quick brown fox jumps over the lazy dog. " +
-               "Pack my box with five dozen liquor jugs. " +
-               "How vexingly quick daft zebras jump! " +
-               "The five boxing wizards jump quickly."
+        "Pack my box with five dozen liquor jugs. " +
+        "How vexingly quick daft zebras jump! " +
+        "The five boxing wizards jump quickly."
 
     let n = data.len()
 

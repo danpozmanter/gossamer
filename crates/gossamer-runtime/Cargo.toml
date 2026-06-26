@@ -40,89 +40,30 @@ unreadable_literal = "allow"
 format_push_string = "allow"
 collapsible_if = "allow"
 
+# Pure-Rust dependencies that build for wasm32-unknown-unknown
+# unchanged. The wasm playground links only the bytecode VM, but these
+# crates compile cleanly there even when their consuming compiled-tier
+# shim is gated out, so they stay in the unconditional table.
 [dependencies]
 itoa = "1"
-mimalloc = "0.1"
-# Direct handle on the same native lib `mimalloc` links, with the
-# `extended` bindings so the runtime can set `mi_option_purge_delay`
-# (return freed pages to the OS promptly - see `configure_allocator`).
-libmimalloc-sys = { version = "0.1", features = ["extended"] }
 num-bigint = "0.4"
 num-integer = "0.1"
 num-traits = "0.2"
 parking_lot = { workspace = true }
-# Real machine-stack unwinding for compiled-tier panic / SIGQUIT
-# backtraces. `std::backtrace` reports "unsupported" on the
-# static-musl release target, so the standalone crate - which builds
-# its unwinder into the binary against the linked `libunwind.a` - is
-# the only mechanism that works on the default release link path.
-backtrace = "0.3"
 thiserror = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 regex = { version = "1", default-features = false, features = ["std", "unicode"] }
 flate2 = "1"
-zstd = "0.13"
-# `static` bundles the libbz2 C source into the archive rather than
-# dynamically linking the system `-lbz2`. macOS otherwise resolves bzip2 to
-# the SDK's libbz2 via pkg-config, and a `gos build` link (no `-lbz2` on the
-# line) fails with undefined `_BZ2_*` symbols. Bundling keeps
-# `libgossamer_runtime.a` self-contained on every platform.
-bzip2 = { version = "0.5", features = ["static"] }
-argon2 = { version = "0.5", default-features = false, features = ["std", "alloc", "password-hash"] }
-pbkdf2 = { version = "0.12", default-features = false, features = ["std", "hmac"] }
-scrypt = { version = "0.11", default-features = false, features = ["std"] }
-md-5 = { version = "0.10", default-features = false, features = ["std"] }
 sha1 = { version = "0.10", default-features = false, features = ["std"] }
-aes-gcm = "0.10"
-chacha20poly1305 = "0.10"
-ed25519-dalek = { version = "2", default-features = false, features = ["std", "fast", "pkcs8", "pem"] }
-p256 = { version = "0.13", default-features = false, features = ["ecdsa", "std", "pem"] }
 rustc-hash = "2"
-signal-hook = { workspace = true }
-libloading = "0.8"
-crossbeam-deque = { workspace = true }
-mio = { workspace = true }
 gossamer-coro = { workspace = true }
 gossamer-pkg = { workspace = true }
 gossamer-abi = { workspace = true }
 gossamer-template = { workspace = true }
 gossamer-ws = { workspace = true }
-# `gos_rt_http_stream` uses ureq for the wire request so the
-# compiled tier matches the interp's `http::stream` semantics.
-# Same feature set as gossamer-std (TLS via rustls, gzip, cookies)
-# for parity with `gos run`.
-ureq = { version = "3", features = ["cookies"] }
-
-# Raw TLS-over-socket (`net::TcpStream::start_tls`) for the compiled
-# tier. Same rustls feature set + roots as gossamer-std's HTTP client
-# so the upgraded stream verifies certificates identically on every
-# tier (ring provider, webpki roots).
-rustls = { version = "0.23", default-features = false, features = ["std", "tls12", "ring"] }
-webpki-roots = "1"
-
-# HTTP/2 server compiled into libgossamer_runtime.a so
-# `http2::bind_and_run_h2c` works under `gos build`. Tokio is
-# pulled in for its `io-util` trait surface only (AsyncRead /
-# AsyncWrite) - no runtime, no reactor; the goroutine scheduler
-# drives futures via [`crate::http2_server::drive`].
-h2 = "0.4"
 http = "1"
 bytes = "1"
-tokio = { version = "1", default-features = false, features = ["io-util"] }
-
-# HTTP/3 server + client (`std::http_h3` compiled-tier shim). The
-# QUIC + h3 engine is shared with the interpreter via the standalone
-# `gossamer-http3` crate; the C-ABI shim in `c_abi::http3` marshals
-# the engine's wire types into the same `GosHttpRequest` /
-# `GosHttpResponse` path the h1 / h2 servers use.
-gossamer-http3 = { workspace = true }
-
-# UUID generation (`std::uuid` compiled-tier helpers).
-uuid = { version = "1", features = ["v4", "v7"] }
-
-# OS RNG for `gos_rt_crypto_rand_bytes`.
-getrandom = "0.3"
 
 # Unicode tables (`std::unicode` compiled-tier helpers). Same
 # crates as gossamer-std so the property data is single-sourced
@@ -146,14 +87,93 @@ quick-xml = "0.40"
 
 # Crypto digest helpers consumed by `c_abi::crypto` so the
 # compiled tier can call `std::crypto::sha256` / `sha512` /
-# `blake3` / `hmac` natively instead of paying a VM round-trip.
+# `hmac` natively instead of paying a VM round-trip. (`blake3` moved
+# to the native table - the wasm crypto shims are gated out.)
 sha2 = { version = "0.10", default-features = false, features = ["std"] }
-blake3 = { version = "1", default-features = false, features = ["std"] }
 # Same versions as gossamer-std so the compiled-tier x509 / tar / zip
 # leaf intrinsics produce byte-identical results to the VM tier.
 x509-parser = "0.18"
 tar = "0.4"
 zip = { version = "8", default-features = false, features = ["deflate"] }
+
+# Native-only dependencies. These either link C (mimalloc, zstd,
+# bzip2, ring via rustls), require an OS RNG/signals/sockets/dynamic
+# loader (getrandom, uuid, signal-hook, mio, libloading), or drive the
+# native HTTP/QUIC stack (ureq, h2, tokio, gossamer-http3) - none of
+# which build for wasm32-unknown-unknown. The compiled-tier shims that
+# use them are gated out of the wasm VM build (see lib.rs / c_abi.rs);
+# native (cfg-not-wasm is always true there) keeps the identical set.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+# AEAD + password-hashing crypto, used only by the compiled-tier
+# `crypto_aead` / `crypto_extra` / `crypto` shims (all gated out of the
+# wasm VM). aes-gcm/chacha20poly1305 default-enable `getrandom` (via
+# `aead`) for nonce generation, which pulls getrandom 0.2 - unbuildable
+# for wasm32 without the js backend - so they live here. Native keeps
+# the identical set.
+argon2 = { version = "0.5", default-features = false, features = ["std", "alloc", "password-hash"] }
+pbkdf2 = { version = "0.12", default-features = false, features = ["std", "hmac"] }
+scrypt = { version = "0.11", default-features = false, features = ["std"] }
+md-5 = { version = "0.10", default-features = false, features = ["std"] }
+aes-gcm = "0.10"
+chacha20poly1305 = "0.10"
+blake3 = { version = "1", default-features = false, features = ["std"] }
+mimalloc = "0.1"
+# Direct handle on the same native lib `mimalloc` links, with the
+# `extended` bindings so the runtime can set `mi_option_purge_delay`
+# (return freed pages to the OS promptly - see `configure_allocator`).
+libmimalloc-sys = { version = "0.1", features = ["extended"] }
+# Real machine-stack unwinding for compiled-tier panic / SIGQUIT
+# backtraces. `std::backtrace` reports "unsupported" on the
+# static-musl release target, so the standalone crate - which builds
+# its unwinder into the binary against the linked `libunwind.a` - is
+# the only mechanism that works on the default release link path.
+backtrace = "0.3"
+zstd = "0.13"
+# `static` bundles the libbz2 C source into the archive rather than
+# dynamically linking the system `-lbz2`. macOS otherwise resolves bzip2 to
+# the SDK's libbz2 via pkg-config, and a `gos build` link (no `-lbz2` on the
+# line) fails with undefined `_BZ2_*` symbols. Bundling keeps
+# `libgossamer_runtime.a` self-contained on every platform.
+bzip2 = { version = "0.5", features = ["static"] }
+ed25519-dalek = { version = "2", default-features = false, features = ["std", "fast", "pkcs8", "pem"] }
+p256 = { version = "0.13", default-features = false, features = ["ecdsa", "std", "pem"] }
+signal-hook = { workspace = true }
+libloading = "0.8"
+crossbeam-deque = { workspace = true }
+mio = { workspace = true }
+# `gos_rt_http_stream` uses ureq for the wire request so the
+# compiled tier matches the interp's `http::stream` semantics.
+# Same feature set as gossamer-std (TLS via rustls, gzip, cookies)
+# for parity with `gos run`.
+ureq = { version = "3", features = ["cookies"] }
+
+# Raw TLS-over-socket (`net::TcpStream::start_tls`) for the compiled
+# tier. Same rustls feature set + roots as gossamer-std's HTTP client
+# so the upgraded stream verifies certificates identically on every
+# tier (ring provider, webpki roots).
+rustls = { version = "0.23", default-features = false, features = ["std", "tls12", "ring"] }
+webpki-roots = "1"
+
+# HTTP/2 server compiled into libgossamer_runtime.a so
+# `http2::bind_and_run_h2c` works under `gos build`. Tokio is
+# pulled in for its `io-util` trait surface only (AsyncRead /
+# AsyncWrite) - no runtime, no reactor; the goroutine scheduler
+# drives futures via [`crate::http2_server::drive`].
+h2 = "0.4"
+tokio = { version = "1", default-features = false, features = ["io-util"] }
+
+# HTTP/3 server + client (`std::http_h3` compiled-tier shim). The
+# QUIC + h3 engine is shared with the interpreter via the standalone
+# `gossamer-http3` crate; the C-ABI shim in `c_abi::http3` marshals
+# the engine's wire types into the same `GosHttpRequest` /
+# `GosHttpResponse` path the h1 / h2 servers use.
+gossamer-http3 = { workspace = true }
+
+# UUID generation (`std::uuid` compiled-tier helpers).
+uuid = { version = "1", features = ["v4", "v7"] }
+
+# OS RNG for `gos_rt_crypto_rand_bytes`.
+getrandom = "0.3"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

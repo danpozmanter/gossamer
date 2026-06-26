@@ -1,0 +1,29 @@
+[package]
+name = "gossamer-playground"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "wasm32 backend for the in-browser Gossamer playground (bytecode VM + front-end gate)."
+
+[lints]
+workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+gossamer-ast = { workspace = true }
+gossamer-diagnostics = { workspace = true }
+gossamer-hir = { workspace = true }
+gossamer-interp = { workspace = true, features = ["fuel"] }
+gossamer-lex = { workspace = true }
+gossamer-parse = { workspace = true }
+gossamer-resolve = { workspace = true }
+gossamer-types = { workspace = true }
+serde = { workspace = true }
+wasm-bindgen = "0.2"
+serde-wasm-bindgen = "0.6"
+console_error_panic_hook = "0.1"

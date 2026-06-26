@@ -20,9 +20,13 @@
 
 #![forbid(unsafe_code)]
 
-use std::collections::{BinaryHeap, HashMap};
+#[cfg(not(target_arch = "wasm32"))]
+use std::collections::BinaryHeap;
+use std::collections::HashMap;
 use std::io;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::Instant;
 
 use super::task::Gid;
 
@@ -125,26 +129,31 @@ impl Poller for MockPoller {
 /// Min-heap entry for the timer wheel. Sorted by expiry; the entry
 /// with the soonest deadline pops first.
 #[derive(Debug, Clone, Copy)]
+#[cfg(not(target_arch = "wasm32"))]
 struct TimerEntry {
     deadline: Instant,
     source: PollSource,
     gid: Gid,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl PartialEq for TimerEntry {
     fn eq(&self, other: &Self) -> bool {
         self.deadline == other.deadline && self.source == other.source
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl Eq for TimerEntry {}
 
+#[cfg(not(target_arch = "wasm32"))]
 impl PartialOrd for TimerEntry {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl Ord for TimerEntry {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         // Reverse: BinaryHeap is max-heap by default and we want the
@@ -169,12 +178,14 @@ impl Ord for TimerEntry {
 /// when a goroutine registers a new I/O source while the poller
 /// thread is mid-syscall). Numerically distinct from the
 /// `next_token` allocator, which starts at 1.
+#[cfg(not(target_arch = "wasm32"))]
 const INTERRUPT_TOKEN: mio::Token = mio::Token(0);
 
 /// `mio`-backed OS poller. Holds the `mio::Poll` handle plus
 /// bookkeeping for outstanding registrations (one entry per
 /// `(PollSource, Interest)` pair), the timer wheel, and the
 /// pending readiness buffer drained between polls.
+#[cfg(not(target_arch = "wasm32"))]
 pub struct OsPoller {
     poll: mio::Poll,
     events: mio::Events,
@@ -198,6 +209,7 @@ pub struct OsPoller {
     by_token: HashMap<mio::Token, (PollSource, Interest, Gid)>,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl std::fmt::Debug for OsPoller {
     fn fmt(&self, out: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         out.debug_struct("OsPoller")
@@ -208,6 +220,7 @@ impl std::fmt::Debug for OsPoller {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl OsPoller {
     /// Builds a fresh OS-backed poller. Returns an error if the
     /// kernel rejects the underlying `epoll_create1` / `kqueue` /
@@ -352,6 +365,7 @@ impl OsPoller {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl Poller for OsPoller {
     fn register(&mut self, source: PollSource, interest: Interest, gid: Gid) {
         // Type-erased entry point; the OsPoller's authoritative entry
@@ -431,7 +445,7 @@ impl Poller for OsPoller {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
     use std::time::Duration;
@@ -466,5 +480,33 @@ mod tests {
         let dt = poller.next_timeout(Some(Duration::from_millis(10)));
         // Caller's 10 ms is the earlier deadline.
         assert!(dt.unwrap() <= Duration::from_millis(10));
+    }
+}
+
+/// Stub OS poller for wasm32-unknown-unknown, where there is no mio
+/// netpoller. The single-threaded playground never performs real
+/// blocking I/O (the network std modules are gated out), so this
+/// poller registers nothing and delivers no readiness events. It
+/// exists so `gossamer_sched` can re-export `OsPoller` unchanged.
+#[cfg(target_arch = "wasm32")]
+#[derive(Debug, Default)]
+pub struct OsPoller;
+
+#[cfg(target_arch = "wasm32")]
+impl OsPoller {
+    /// Constructs the stub poller. Never fails.
+    pub fn new() -> std::io::Result<Self> {
+        Ok(Self)
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+impl Poller for OsPoller {
+    fn register(&mut self, _source: PollSource, _interest: Interest, _gid: Gid) {}
+
+    fn deregister(&mut self, _source: PollSource, _interest: Interest) {}
+
+    fn drain(&mut self) -> Vec<Readiness> {
+        Vec::new()
     }
 }

@@ -84,6 +84,7 @@ use crate::value::SmolStr;
 
 use gossamer_std::bufio as bufio_std;
 use gossamer_std::math as math_std;
+#[cfg(not(target_arch = "wasm32"))]
 use gossamer_std::net as net_std;
 use gossamer_std::os as os_std;
 use gossamer_std::path as path_std;
@@ -387,6 +388,15 @@ pub(crate) static ATOMIC_I64_REGISTRY: GlobalReg<StdHashMap<i64, Arc<StdAtomicI6
 pub(crate) static ATOMIC_BOOL_REGISTRY: GlobalReg<StdHashMap<i64, Arc<StdAtomicBool>>> =
     GlobalReg::new(|| parking_lot::ReentrantMutex::new(RefCell::new(StdHashMap::new())));
 pub(crate) static MUTEX_REGISTRY: GlobalReg<StdHashMap<i64, Arc<MutexCell>>> =
+    GlobalReg::new(|| parking_lot::ReentrantMutex::new(RefCell::new(StdHashMap::new())));
+
+// Process-global (not `thread_local!`): goroutines run on an OS
+// worker-thread pool, so a set handle minted on one thread must
+// resolve on another after the goroutine migrates between workers.
+// Mirrors the `sync::*` registries above.
+pub(crate) static NEXT_SET_HANDLE: GlobalReg<i64> =
+    GlobalReg::new(|| parking_lot::ReentrantMutex::new(RefCell::new(1)));
+pub(crate) static SET_REGISTRY: GlobalReg<StdHashMap<i64, std::collections::HashSet<MapKey>>> =
     GlobalReg::new(|| parking_lot::ReentrantMutex::new(RefCell::new(StdHashMap::new())));
 
 /// Backing state for an interpreter `sync::Mutex`. The lock is held

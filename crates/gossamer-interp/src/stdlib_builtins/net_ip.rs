@@ -85,6 +85,7 @@ use crate::value::SmolStr;
 
 use gossamer_std::bufio as bufio_std;
 use gossamer_std::math as math_std;
+#[cfg(not(target_arch = "wasm32"))]
 use gossamer_std::net as net_std;
 use gossamer_std::os as os_std;
 use gossamer_std::path as path_std;
@@ -104,6 +105,15 @@ use crate::value::{MapKey, NativeCall, NativeDispatch, RuntimeResult, Value};
 
 /// Entry point invoked from `builtins::install`.
 use super::*;
+
+/// Renders a byte slice as a Gossamer `[i64]` value array. A private
+/// copy local to this module so the pure IP builtins do not depend on
+/// the crypto module (gated off the wasm sandbox).
+fn bytes_to_value_array(b: &[u8]) -> Value {
+    Value::Array(Arc::new(
+        b.iter().map(|&x| Value::Int(i64::from(x))).collect(),
+    ))
+}
 
 pub(crate) fn install_net_ip(globals: &mut Vec<(&'static str, Value)>) {
     for (short, call) in [

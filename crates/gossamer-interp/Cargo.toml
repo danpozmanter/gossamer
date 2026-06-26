@@ -13,7 +13,6 @@ workspace = true
 
 [dependencies]
 gossamer-ast = { workspace = true }
-gossamer-codegen-cranelift = { workspace = true }
 gossamer-coro = { workspace = true }
 gossamer-hir = { workspace = true }
 gossamer-lex = { workspace = true }
@@ -28,9 +27,19 @@ rustc-hash = "2"
 smallvec = "1"
 thiserror = { workspace = true }
 
+# The in-process Cranelift JIT is an optimisation only and Cranelift
+# does not target wasm32-unknown-unknown. On wasm the interpreter links
+# a no-op JIT stub (`src/jit_stub.rs`) that always declines to compile,
+# so the bytecode VM runs everything. Native is unaffected.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+gossamer-codegen-cranelift = { workspace = true }
+
 [features]
 default = []
 profile = []
+# Execution budget for the dispatch loop (loop back-edge counting). Off by
+# default so native `gos run` pays nothing; the wasm playground enables it.
+fuel = []
 
 [dev-dependencies]
 gossamer-parse = { workspace = true }

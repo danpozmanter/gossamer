@@ -85,6 +85,7 @@ use crate::value::SmolStr;
 
 use gossamer_std::bufio as bufio_std;
 use gossamer_std::math as math_std;
+#[cfg(not(target_arch = "wasm32"))]
 use gossamer_std::net as net_std;
 use gossamer_std::os as os_std;
 use gossamer_std::path as path_std;
@@ -153,7 +154,9 @@ pub(crate) fn install_crypto(globals: &mut Vec<(&'static str, Value)>) {
             crate::builtins::builtin_pub(q, builtin_crypto_subtle_ct_eq),
         ));
     }
-    // crypto::rand
+    // crypto::rand needs an OS RNG, so it is native-only; the hashes above
+    // are pure and stay available in the wasm playground.
+    #[cfg(not(target_arch = "wasm32"))]
     {
         let q = "crypto::rand::bytes";
         globals.push((
@@ -247,6 +250,7 @@ pub(crate) fn builtin_crypto_subtle_ct_eq(args: &[Value]) -> RuntimeResult<Value
     )))
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn builtin_crypto_rand_bytes(args: &[Value]) -> RuntimeResult<Value> {
     let n = args.first().and_then(value_to_int).unwrap_or(0);
     let n = usize::try_from(n.max(0)).unwrap_or(0);

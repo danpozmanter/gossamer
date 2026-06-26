@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Try Gossamer - playground component demo</title>
+  <meta name="description" content="Standalone demo and test harness for the Try Gossamer playground component." />
+  <meta name="theme-color" content="#000000" />
+
+  <!-- Inter (UI) + JetBrains Mono (code), matching the landing palette. -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    rel="stylesheet"
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap"
+  />
+
+  <link rel="stylesheet" href="./playground.css" />
+
+  <style>
+    /* Page chrome only - the component owns everything under .gp. */
+    :root {
+      --bg: #000000;
+      --text: #f3f4f6;
+      --muted: #9ca3af;
+      --accent: #38bdf8;
+      --accent-light: #7dd3fc;
+      --border: #1f2937;
+    }
+    * { box-sizing: border-box; }
+    html { -webkit-text-size-adjust: 100%; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: "Inter", "Helvetica Neue", Arial, sans-serif;
+      line-height: 1.55;
+      -webkit-font-smoothing: antialiased;
+    }
+    .wrap {
+      max-width: 860px;
+      margin: 0 auto;
+      padding: 2.5rem 1.1rem 4rem;
+    }
+    header h1 {
+      margin: 0 0 0.35rem;
+      font-size: 2rem;
+      font-weight: 800;
+      letter-spacing: -0.01em;
+    }
+    header h1 .accent { color: var(--accent); }
+    header p {
+      margin: 0 0 0.5rem;
+      color: var(--muted);
+      max-width: 60ch;
+    }
+    .note {
+      margin: 0.75rem 0 2rem;
+      padding: 0.7rem 0.9rem;
+      border: 1px solid var(--border);
+      border-left: 3px solid var(--accent);
+      border-radius: 8px;
+      background: #0b0d11;
+      color: var(--muted);
+      font-size: 0.9rem;
+    }
+    .note code {
+      font-family: "JetBrains Mono", "Fira Code", Menlo, Consolas, monospace;
+      color: var(--accent-light);
+      font-size: 0.86em;
+    }
+    .example { margin: 2.25rem 0; }
+    .example > h2 {
+      margin: 0 0 0.2rem;
+      font-size: 1.18rem;
+      font-weight: 650;
+    }
+    .example > p {
+      margin: 0 0 0.85rem;
+      color: var(--muted);
+      font-size: 0.92rem;
+    }
+    footer {
+      margin-top: 3rem;
+      padding-top: 1.25rem;
+      border-top: 1px solid var(--border);
+      color: var(--muted);
+      font-size: 0.85rem;
+    }
+    footer a { color: var(--accent-light); }
+    #boot-error {
+      margin: 2rem 0;
+      padding: 0.9rem 1rem;
+      border: 1px solid #7f1d1d;
+      border-radius: 8px;
+      background: #1b0f10;
+      color: #fecaca;
+      font-family: "JetBrains Mono", "Fira Code", Menlo, Consolas, monospace;
+      font-size: 0.85rem;
+      white-space: pre-wrap;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1>Try <span class="accent">Gossamer</span></h1>
+      <p>
+        Standalone demo for the embeddable playground component. Each block
+        below is a separate <code>mountPlayground()</code> instance wired to
+        the bundled stub runtime.
+      </p>
+    </header>
+
+    <div class="note">
+      Running against <code>runtime-stub.js</code>, so every <strong>Run</strong>
+      prints a fixed placeholder rather than executing the program. Swap in the
+      real WebAssembly VM by passing
+      <code>runtimeUrl: "./gossamer_playground.js"</code> - no other change.
+    </div>
+
+    <div id="boot-error" hidden></div>
+
+    <section class="example">
+      <h2>1. Forward-pipe dataflow</h2>
+      <p>Autoruns on load - verifies mount + lazy runtime load + render.</p>
+      <div id="pg-pipe"></div>
+    </section>
+
+    <section class="example">
+      <h2>2. Goroutines and channels</h2>
+      <p>Editable - press Run (or Ctrl/Cmd+Enter), then Reset.</p>
+      <div id="pg-chan"></div>
+    </section>
+
+    <section class="example">
+      <h2>3. Enums and exhaustive match</h2>
+      <p>Exercises types, format specs, and comment highlighting.</p>
+      <div id="pg-match"></div>
+    </section>
+
+    <footer>
+      Component: <code>playground.js</code> &middot; tokenizer:
+      <code>gossamer-lang.js</code> &middot; styles: <code>playground.css</code>.
+      Open this file over <strong>http(s)</strong> (an ES-module
+      <code>import</code> and CodeMirror from esm.sh both require it) - a
+      <code>file://</code> open will not load the editor.
+    </footer>
+  </div>
+
+  <script type="module">
+    import { mountPlayground } from "./playground.js";
+
+    const PIPE = `// Values flow left-to-right through |>.
+fn double(x: i64) -> i64 { x * 2 }
+fn add(a: i64, b: i64) -> i64 { a + b }
+
+fn main() {
+    let n = 3 |> double |> add(10)
+    println!("result: {}", n)
+}
+`;
+
+    const CHAN = `use std::sync::channel
+
+fn produce(tx: Sender<i64>) {
+    tx.send(1); tx.send(2); tx.send(3)
+    tx.close()
+}
+
+fn main() {
+    let (tx, rx) = channel()
+    go produce(tx)
+    let mut total = 0
+    while let Some(v) = rx.recv() { total += v }
+    println!("total: {}", total)
+}
+`;
+
+    const MATCH = `enum Shape { Circle(f64), Rect { w: f64, h: f64 } }
+
+fn area(s: &Shape) -> f64 {
+    match s {
+        Shape::Circle(r) => 3.14159 * r * r,
+        Shape::Rect { w, h } => w * h,
+    }
+}
+
+fn main() {
+    let shapes = [Shape::Circle(2.0), Shape::Rect { w: 3.0, h: 4.0 }]
+    for s in shapes {
+        // Two decimal places via a format spec.
+        println!("area = {:.2}", area(&s))
+    }
+}
+`;
+
+    function boot() {
+      const handles = [];
+      handles.push(
+        mountPlayground(document.getElementById("pg-pipe"), {
+          source: PIPE,
+          autorun: true,
+          height: "190px",
+        }),
+      );
+      handles.push(
+        mountPlayground(document.getElementById("pg-chan"), {
+          source: CHAN,
+          height: "300px",
+        }),
+      );
+      handles.push(
+        mountPlayground(document.getElementById("pg-match"), {
+          source: MATCH,
+          height: "320px",
+        }),
+      );
+      // Expose handles for manual poking from the devtools console.
+      window.playgrounds = handles;
+    }
+
+    try {
+      boot();
+    } catch (err) {
+      const box = document.getElementById("boot-error");
+      box.hidden = false;
+      box.textContent =
+        "Failed to start the playground demo:\n" +
+        (err && err.stack ? err.stack : String(err));
+      throw err;
+    }
+  </script>
+</body>
+</html>

@@ -78,7 +78,10 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+#[cfg(target_arch = "wasm32")]
+use crate::jit_stub::{JitArtifact, JitFn};
 use gossamer_ast::Ident;
+#[cfg(not(target_arch = "wasm32"))]
 use gossamer_codegen_cranelift::{JitArtifact, JitFn};
 use gossamer_hir::{HirItem, HirItemKind, HirProgram};
 use gossamer_mir::Body;

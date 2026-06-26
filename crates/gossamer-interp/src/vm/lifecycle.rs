@@ -1,6 +1,14 @@
 #![allow(clippy::too_many_lines, clippy::wildcard_imports)]
 use super::*;
 
+// The JIT backend: real Cranelift on native, a no-op stub on wasm32
+// (Cranelift has no wasm target). The stub's `has_worthy_jit_body`
+// always returns `false`, so the compile path below never runs there.
+#[cfg(target_arch = "wasm32")]
+use crate::jit_stub as jit_backend;
+#[cfg(not(target_arch = "wasm32"))]
+use gossamer_codegen_cranelift as jit_backend;
+
 impl Vm {
     /// Builds a VM pre-populated with the built-in intrinsics.
     #[must_use]
@@ -410,7 +418,7 @@ impl Vm {
             // (~5 MB RSS). Gate the whole compile path on a worthy body.
             // MIR lowering above is cheap and the bodies drop here when
             // unused.
-            if gossamer_codegen_cranelift::has_worthy_jit_body(&bodies, &tcx, &shapes) {
+            if jit_backend::has_worthy_jit_body(&bodies, &tcx, &shapes) {
                 gossamer_mir::inline_trivial_wrappers(&mut bodies);
                 gossamer_mir::inline_small_callees(&mut bodies);
                 gossamer_mir::inline_general(&mut bodies);
@@ -499,7 +507,7 @@ impl Vm {
         let shape_defs_arc = self.enum_shape_defs.borrow().clone();
         let shape_defs: &std::collections::HashMap<u32, u32> =
             shape_defs_arc.as_deref().unwrap_or(&empty);
-        let artifact = match gossamer_codegen_cranelift::compile_to_jit(bodies, tcx, shape_defs) {
+        let artifact = match jit_backend::compile_to_jit(bodies, tcx, shape_defs) {
             Ok(art) => art,
             Err(err) => {
                 if trace {

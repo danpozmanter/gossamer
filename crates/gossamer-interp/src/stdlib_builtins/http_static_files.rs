@@ -85,6 +85,7 @@ use crate::value::SmolStr;
 
 use gossamer_std::bufio as bufio_std;
 use gossamer_std::math as math_std;
+#[cfg(not(target_arch = "wasm32"))]
 use gossamer_std::net as net_std;
 use gossamer_std::os as os_std;
 use gossamer_std::path as path_std;
@@ -104,6 +105,16 @@ use crate::value::{MapKey, NativeCall, NativeDispatch, RuntimeResult, Value};
 
 /// Entry point invoked from `builtins::install`.
 use super::*;
+
+/// Extracts a string argument, defaulting to empty. A private copy
+/// local to this module so the pure static-file builtins do not
+/// depend on the SSE module (gated off the wasm sandbox).
+fn arg_str(v: Option<&Value>) -> String {
+    match v {
+        Some(Value::String(s)) => s.as_str().to_string(),
+        _ => String::new(),
+    }
+}
 
 pub(crate) fn install_http_static_files(globals: &mut Vec<(&'static str, Value)>) {
     for (name, call) in [

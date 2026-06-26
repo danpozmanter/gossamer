@@ -37,6 +37,9 @@ use std::ffi::c_char;
 use std::mem;
 use std::sync::Arc;
 
+#[cfg(target_arch = "wasm32")]
+use crate::jit_stub::{JitFn, JitKind};
+#[cfg(not(target_arch = "wasm32"))]
 use gossamer_codegen_cranelift::{JitFn, JitKind};
 use gossamer_runtime::c_abi as rt;
 

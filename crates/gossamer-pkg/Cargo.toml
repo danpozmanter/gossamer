@@ -20,6 +20,13 @@ synthetic-source = []
 
 [dependencies]
 thiserror = { workspace = true }
+
+# Registry transport + signing crypto. None of these are used by the
+# wasm playground (it links only `sha256`), and `rustls`/`ring` plus
+# `ed25519-dalek`/`rand_core`/`getrandom` do not build for
+# wasm32-unknown-unknown. Gated to native so the wasm build drops them;
+# native (cfg-not-wasm is always true) keeps the exact same set.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 rustls = { version = "0.23", default-features = false, features = ["std", "tls12", "ring"] }
 rustls-pki-types = "1"
 sha2 = { workspace = true }

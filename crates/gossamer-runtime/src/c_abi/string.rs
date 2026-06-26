@@ -1635,7 +1635,11 @@ pub unsafe extern "C" fn gos_rt_result_map_err(result: i128, closure: *const u8)
         if fn_addr == 0 {
             return result;
         }
-        let f: extern "C" fn(i64, i64) -> i64 = unsafe { std::mem::transmute(fn_addr) };
+        // The lifted function address is stored as a 64-bit word but a
+        // function pointer is target-pointer-width (32-bit on wasm32),
+        // so narrow through `usize` before reinterpreting. Identity on
+        // 64-bit native.
+        let f: extern "C" fn(i64, i64) -> i64 = unsafe { std::mem::transmute(fn_addr as usize) };
         let new_payload = f(closure as i64, gos_rt_result_payload(result));
         unsafe { gos_rt_result_new(1, new_payload) }
     })
@@ -1658,7 +1662,11 @@ pub unsafe extern "C" fn gos_rt_result_map(result: i128, closure: *const u8) -> 
         if fn_addr == 0 {
             return result;
         }
-        let f: extern "C" fn(i64, i64) -> i64 = unsafe { std::mem::transmute(fn_addr) };
+        // The lifted function address is stored as a 64-bit word but a
+        // function pointer is target-pointer-width (32-bit on wasm32),
+        // so narrow through `usize` before reinterpreting. Identity on
+        // 64-bit native.
+        let f: extern "C" fn(i64, i64) -> i64 = unsafe { std::mem::transmute(fn_addr as usize) };
         let new_payload = f(closure as i64, gos_rt_result_payload(result));
         unsafe { gos_rt_result_new(0, new_payload) }
     })
@@ -1682,7 +1690,11 @@ pub unsafe extern "C" fn gos_rt_result_default_with(result: i128, closure: *cons
         if fn_addr == 0 {
             return 0;
         }
-        let f: extern "C" fn(i64, i64) -> i64 = unsafe { std::mem::transmute(fn_addr) };
+        // The lifted function address is stored as a 64-bit word but a
+        // function pointer is target-pointer-width (32-bit on wasm32),
+        // so narrow through `usize` before reinterpreting. Identity on
+        // 64-bit native.
+        let f: extern "C" fn(i64, i64) -> i64 = unsafe { std::mem::transmute(fn_addr as usize) };
         f(closure as i64, gos_rt_result_payload(result))
     })
 }

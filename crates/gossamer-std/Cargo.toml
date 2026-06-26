@@ -17,6 +17,9 @@ workspace = true
 # selection - so that a script using `std::tls` or `std::crypto`
 # always works regardless of the host build.
 
+# Pure-Rust dependencies that build for wasm32-unknown-unknown. The
+# wasm playground links these unchanged; the I/O / crypto / network
+# stdlib modules that need native crates are gated out (see lib.rs).
 [dependencies]
 gossamer-pkg = { workspace = true }
 gossamer-runtime = { workspace = true }
@@ -26,83 +29,32 @@ gossamer-template = { workspace = true }
 gossamer-ws = { workspace = true }
 thiserror = { workspace = true }
 parking_lot = { workspace = true }
-mio = { workspace = true }
-signal-hook = { workspace = true }
 crossbeam-channel = { workspace = true }
-# socket2 provides SO_KEEPALIVE access not exposed by std::net.
-socket2 = "0.5"
-# backtrace powers `std::runtime::caller` / `std::runtime::stack`
-# resolving function names + file/line via DWARF when available.
-backtrace = "0.3"
 
 # Regular expressions (`std::regex`).
 regex = { version = "1", default-features = false, features = ["std", "unicode"] }
 
-# TLS surface (`std::tls`). Rustls + bundled Mozilla roots.
-# `tokio-rustls` provides the AsyncRead/AsyncWrite bridge used by
-# the ALPN-dispatching HTTP/2 server path; only its trait wrapping
-# is consumed (no tokio runtime).
-rustls = { version = "0.23", default-features = false, features = ["std", "tls12", "ring"] }
-webpki-roots = "1"
-tokio-rustls = { version = "0.26", default-features = false, features = ["ring"] }
-
-# Compression (`std::compress::{gzip,flate,zlib,zstd}` + `std::compress::bzip2`).
+# Compression (`std::compress::{gzip,flate,zlib}`). The pure-Rust
+# `flate2` rust_backend covers gzip/flate/zlib on every target; the C
+# `bzip2`/`zstd` codecs are native-only (gated below).
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
-# `static` compiles the bundled libbz2 C source into the archive instead of
-# dynamically linking the system `-lbz2`. Without it, macOS resolves bzip2
-# via pkg-config to the SDK's libbz2 and a `gos build` link (which does not
-# pass `-lbz2`) fails with undefined `_BZ2_*` symbols; bundling keeps the
-# runtime self-contained on every platform.
-bzip2 = { version = "0.5", features = ["static"] }
-zstd = "0.13"
 
-# File-system watching (`std::fs::watch`), memory mapping
-# (`std::fs::mmap`), and advisory file locks (`std::fs::lock`).
-notify = "8"
-memmap2 = "0.9"
-fs4 = { version = "1.1", features = ["sync"] }
-
-# RSA verify / sign for `std::jwt` (RS256 / RS384 / RS512). `ring`
-# is the audited constant-time choice; the `rsa` crate is excluded
-# because of RUSTSEC-2023-0071 (Marvin Attack).
-ring = "0.17"
-
-# HTTP/2 stack (h2 crate). Tokio is included ONLY for the io-util
-# feature (AsyncRead/AsyncWrite trait definitions). No runtime,
-# no reactor, no net, no time. Gossamer's scheduler drives futures
-# via `crate::runtime_future::drive`.
-h2 = "0.4"
+# HTTP message types (`std::http`) - pure wire types, no I/O.
 http = "1"
 bytes = "1"
-tokio = { version = "1", default-features = false, features = ["io-util"] }
 
-# HTTP/3 stack (`std::http_h3`). The QUIC + h3 engine lives in the
-# standalone `gossamer-http3` crate so the interpreter (here) and the
-# compiled-tier runtime share one implementation; this crate only
-# adapts the engine's wire types to `std::http` types.
-gossamer-http3 = { workspace = true }
-
-# Crypto primitives (`std::crypto`). RSA is intentionally excluded -
-# the `rsa 0.9.x` crate is the only pure-Rust option and carries
-# RUSTSEC-2023-0071 (Marvin Attack timing sidechannel, no upstream
-# fix). Re-enable once a constant-time replacement lands.
-getrandom = "0.3"
+# Pure-Rust hash / cipher primitives used by `std::crypto`. They build
+# for wasm even though the `crypto` module that calls them is gated out
+# (none enables an OS-RNG feature, so none pulls getrandom). The
+# password-hash KDFs (argon2/pbkdf2/scrypt) DO pull a salt RNG via
+# `password-hash`, so they live in the native-only table below.
+x509-parser = "0.18"
+sha2 = { version = "0.10", default-features = false, features = ["std"] }
+blake3 = { version = "1", default-features = false, features = ["std"] }
 aes = "0.8"
-aes-gcm = "0.10"
 cbc = "0.1"
 cipher = "0.4"
 ctr = "0.9"
-chacha20poly1305 = "0.10"
-p256 = { version = "0.13", default-features = false, features = ["ecdsa", "std", "pem"] }
-ed25519-dalek = { version = "2", default-features = false, features = ["std", "fast", "pkcs8", "pem", "rand_core"] }
-x509-parser = "0.18"
-pbkdf2 = { version = "0.12", default-features = false, features = ["std", "hmac"] }
-scrypt = { version = "0.11", default-features = false, features = ["std"] }
-argon2 = { version = "0.5", default-features = false, features = ["std", "alloc", "password-hash"] }
-sha2 = { version = "0.10", default-features = false, features = ["std"] }
-blake3 = { version = "1", default-features = false, features = ["std"] }
-rand_core = "0.6"
-
 # Legacy / insecure crypto (`std::crypto::insecure`): MD5, SHA1.
 md-5 = { version = "0.10", default-features = false, features = ["std"] }
 sha1 = { version = "0.10", default-features = false, features = ["std"] }
@@ -114,13 +66,6 @@ serde_json = { workspace = true }
 serde_norway = "0.9"
 quick-xml = "0.40"
 
-# Time-zone surface (`std::time::tz`).
-chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
-chrono-tz = { version = "0.10", default-features = false }
-
-# HTTP client surface (`std::http::Client`). HTTPS, redirects, pool.
-ureq = { version = "3", features = ["cookies", "json"] }
-
 # Archive readers/writers (`std::archive::{zip,tar}`).
 zip = { version = "8", default-features = false, features = ["deflate"] }
 tar = "0.4"
@@ -130,9 +75,6 @@ num-bigint = "0.4"
 num-integer = "0.1"
 num-traits = "0.2"
 
-# UUID generation (`std::uuid`). v4 (random) + v7 (timestamp-ordered).
-uuid = { version = "1", features = ["v4", "v7"] }
-
 # User-facing TOML (`std::encoding::toml`). Used internally for
 # project.toml by gossamer-pkg; now exposed to user code.
 toml = "0.9"
@@ -141,9 +83,6 @@ toml = "0.9"
 mime = "0.3"
 mime_guess = "2"
 
-# POSIX user / group lookup (`std::os::user`).
-nix = { version = "0.31", default-features = false, features = ["user", "fs", "process", "signal"] }
-
 # Unicode property tables (`std::unicode`). Real general-category
 # tests, normalization forms, and grapheme/word/sentence
 # segmentation - replaces the hand-rolled ASCII-only stubs that
@@ -151,6 +90,71 @@ nix = { version = "0.31", default-features = false, features = ["user", "fs", "p
 unicode-properties = { workspace = true }
 unicode-normalization = { workspace = true }
 unicode-segmentation = { workspace = true }
+
+# Native-only dependencies. These link C (ring, bzip2, zstd), require
+# OS sockets/signals/poll/fs primitives (mio, socket2, signal-hook,
+# notify, memmap2, fs4, nix), pull an OS RNG (getrandom, uuid,
+# ed25519-dalek, p256, aes-gcm, chacha20poly1305, rand_core), or drive
+# the native HTTP/TLS/QUIC stack (rustls, ureq, h2, tokio, tokio-rustls,
+# gossamer-http3) - none of which build for wasm32-unknown-unknown. The
+# stdlib modules that use them are gated out of the wasm build; native
+# (cfg-not-wasm always true) keeps the identical set.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+mio = { workspace = true }
+signal-hook = { workspace = true }
+# socket2 provides SO_KEEPALIVE access not exposed by std::net.
+socket2 = "0.5"
+# backtrace powers `std::runtime::caller` / `std::runtime::stack`
+# resolving function names + file/line via DWARF when available.
+backtrace = "0.3"
+
+# TLS surface (`std::tls`). Rustls + bundled Mozilla roots.
+rustls = { version = "0.23", default-features = false, features = ["std", "tls12", "ring"] }
+webpki-roots = "1"
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring"] }
+
+# C-backed compression codecs (`std::compress::{bzip2,zstd}`).
+bzip2 = { version = "0.5", features = ["static"] }
+zstd = "0.13"
+
+# File-system watching (`std::fs::watch`), memory mapping
+# (`std::fs::mmap`), and advisory file locks (`std::fs::lock`).
+notify = "8"
+memmap2 = "0.9"
+fs4 = { version = "1.1", features = ["sync"] }
+
+# RSA verify / sign for `std::jwt` and constant-time crypto primitives.
+ring = "0.17"
+
+# HTTP/2 stack (h2 crate, io-util traits only).
+h2 = "0.4"
+tokio = { version = "1", default-features = false, features = ["io-util"] }
+
+# HTTP/3 stack (`std::http_h3`) - QUIC + h3 engine.
+gossamer-http3 = { workspace = true }
+
+# OS-RNG-backed crypto (`std::crypto`) and UUID v4/v7 generation.
+# argon2/pbkdf2/scrypt pull a salt RNG (getrandom) via `password-hash`.
+getrandom = "0.3"
+pbkdf2 = { version = "0.12", default-features = false, features = ["std", "hmac"] }
+scrypt = { version = "0.11", default-features = false, features = ["std"] }
+argon2 = { version = "0.5", default-features = false, features = ["std", "alloc", "password-hash"] }
+aes-gcm = "0.10"
+chacha20poly1305 = "0.10"
+p256 = { version = "0.13", default-features = false, features = ["ecdsa", "std", "pem"] }
+ed25519-dalek = { version = "2", default-features = false, features = ["std", "fast", "pkcs8", "pem", "rand_core"] }
+rand_core = "0.6"
+uuid = { version = "1", features = ["v4", "v7"] }
+
+# Time-zone surface (`std::time::tz`).
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
+chrono-tz = { version = "0.10", default-features = false }
+
+# HTTP client surface (`std::http::Client`). HTTPS, redirects, pool.
+ureq = { version = "3", features = ["cookies", "json"] }
+
+# POSIX user / group lookup (`std::os::user`).
+nix = { version = "0.31", default-features = false, features = ["user", "fs", "process", "signal"] }
 
 [dev-dependencies]
 # Self-signed PEM keypair generation for native-client TLS tests.
