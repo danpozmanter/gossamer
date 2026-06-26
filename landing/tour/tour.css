@@ -30,6 +30,20 @@ code, pre, kbd {
     font-family: "JetBrains Mono", "Fira Code", Menlo, Consolas, monospace;
 }
 
+/* Operators such as the forward pipe `|>` must read as two separate
+   glyphs. JetBrains Mono / Fira Code ligate `|>` into a single arrow,
+   which is ambiguous in code. Disable ligatures on every code surface,
+   including the embedded CodeMirror editor. */
+code,
+pre,
+kbd,
+.cm-editor,
+.cm-content,
+.cm-line {
+    font-variant-ligatures: none;
+    font-feature-settings: "liga" 0, "calt" 0;
+}
+
 /* ------------------------------------------------------------------ *
  * Header
  * ------------------------------------------------------------------ */

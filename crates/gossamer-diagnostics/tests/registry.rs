@@ -17,7 +17,8 @@ const EMITTED_CODES: &[&str] = &[
     // Type checker (gossamer-types/src/error.rs).
     "GT0001", "GT0002", "GT0003", "GT0004", "GT0005", "GT0006", "GT0007", "GT0008", "GT0009",
     "GT0010", // Match exhaustiveness (gossamer-types/src/exhaustiveness.rs).
-    "GM0001", "GM0002", // Runtime (gossamer-interp/src/value.rs).
+    "GM0001", "GM0002", // Arena-escape safety (gossamer-types/src/arena_escape.rs).
+    "GM0003", // Runtime (gossamer-interp/src/value.rs).
     "GX0001", "GX0002", "GX0003", "GX0004", "GX0005", "GX0006", "GX0007", "GX0008",
     // Lint registry (gossamer-lint/src/lib.rs::lint_code).
     "GL0001", "GL0002", "GL0003", "GL0004", "GL0005", "GL0006", "GL0007", "GL0008", "GL0009",

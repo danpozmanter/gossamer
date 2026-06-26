@@ -352,6 +352,12 @@ pub struct Block {
     /// Lints must not attribute these to the user.
     #[serde(default)]
     pub synthetic: bool,
+    /// True for the block desugared from an `arena { }` statement. The
+    /// front-end runs the arena-escape check (GM0003) only on these, so
+    /// the checked surface stays distinct from the raw
+    /// `runtime::arena_push()` / `arena_pop()` primitive.
+    #[serde(default)]
+    pub is_arena: bool,
 }
 
 impl Block {
@@ -363,6 +369,7 @@ impl Block {
             stmts: Vec::new(),
             tail: None,
             synthetic: true,
+            is_arena: false,
         }
     }
 }

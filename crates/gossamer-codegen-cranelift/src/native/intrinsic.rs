@@ -229,6 +229,14 @@ impl IntrinsicContext {
         bytes.push(0);
         let mut description = DataDescription::new();
         description.define(bytes.into_boxed_slice());
+        // Align the blob so its base is even: the body pointer the runtime
+        // uses is `base + 5` (after `[len:u32][tag:u8]`), and `untag_rc`
+        // relies on string bodies being ODD addresses to skip them on the
+        // RC accounting path (it masks the low bits of even pointers as a
+        // tagged-enum discriminant). A packed blob can land on an odd base,
+        // making `base + 5` even and corrupting the pointer; an even base
+        // keeps every body odd.
+        description.set_align(8);
         // These local read-only atoms are reached only through
         // section-relative relocations, which do not establish atom
         // liveness for the Mach-O linker's atom-based `-dead_strip`.

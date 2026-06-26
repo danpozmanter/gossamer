@@ -182,6 +182,18 @@ fn diagnostic_explanation(code: &str) -> Option<&'static str> {
                      with a scalar (i64 / bool / f64) or write a non-generic\n\
                      specialisation."
         }
+        "GM0003" => {
+            "A value allocated inside an `arena { }` block is used after the\n\
+                     block exits. The arena frees its memory wholesale at the\n\
+                     closing brace, so the reference would dangle - a use-after-free.\n\
+                     The check rejects storing the value into a binding that outlives\n\
+                     the block, pushing it into an outer container, sending it on a\n\
+                     channel, returning it, breaking out of an enclosing loop,\n\
+                     capturing it in a goroutine/closure, or passing it to a function\n\
+                     that may stash it. Keep only a scalar or already-outside summary,\n\
+                     or allocate the value before the block. The raw\n\
+                     `runtime::arena_push/pop` primitive is left unchecked."
+        }
         "GP0005" => {
             "Range operators (`..`, `..=`) are not associative.\n\
                      Parenthesise the operands: `(a..b)..c`."

@@ -275,6 +275,22 @@ pub unsafe fn write_stdout(bytes: &[u8]) {
     unsafe { write_stdout_locked(bytes) };
 }
 
+/// Drains the process-global stdout buffer to FD 1. Pure: carries no
+/// diagnostics, so it is safe to call before every interpreter-side
+/// write that must observe program order against JIT-buffered output.
+pub fn flush_stdout_buffer() {
+    let _guard = StdoutGuard::acquire();
+    let bytes_ptr = GOS_RT_STDOUT_BYTES.0.get();
+    let len_ptr = GOS_RT_STDOUT_LEN.0.get();
+    let len = unsafe { *len_ptr };
+    if len > 0 {
+        unsafe {
+            raw_write_stdout(std::slice::from_raw_parts((*bytes_ptr).as_ptr(), len));
+            *len_ptr = 0;
+        }
+    }
+}
+
 /// Flushes the process-global stdout buffer. Called on every
 /// `println`-family intrinsic and on process exit via
 /// `gos_rt_flush_stdout`.
@@ -284,16 +300,7 @@ pub unsafe extern "C" fn gos_rt_flush_stdout() {
         if std::env::var_os("GOS_RC_DEBUG").is_some() {
             eprintln!("RC_LIVE_AT_EXIT={}", crate::c_abi::rc::rc_live_count());
         }
-        let _guard = StdoutGuard::acquire();
-        let bytes_ptr = GOS_RT_STDOUT_BYTES.0.get();
-        let len_ptr = GOS_RT_STDOUT_LEN.0.get();
-        let len = unsafe { *len_ptr };
-        if len > 0 {
-            unsafe {
-                raw_write_stdout(std::slice::from_raw_parts((*bytes_ptr).as_ptr(), len));
-                *len_ptr = 0;
-            }
-        }
+        flush_stdout_buffer();
     });
 }
 

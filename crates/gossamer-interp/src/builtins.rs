@@ -2063,10 +2063,20 @@ thread_local! {
 }
 
 fn default_stdout(text: &str) {
+    // JIT-promoted bodies write directly into the runtime's stdout
+    // buffer; the bytecode VM writes here through Rust's `stdout`.
+    // Both funnel into the same `std::io::stdout()` sink, so draining
+    // the runtime buffer before this write keeps hybrid (bytecode +
+    // JIT-native) output in program order. No-op when nothing was
+    // buffered, so pure-bytecode programs pay only an uncontended lock.
+    gossamer_runtime::c_abi::flush_stdout_buffer();
     print!("{text}");
 }
 
 fn default_stderr(text: &str) {
+    // Drain any JIT-buffered stdout first so interleaved stdout/stderr
+    // reaches the terminal in program order (see `default_stdout`).
+    gossamer_runtime::c_abi::flush_stdout_buffer();
     eprint!("{text}");
 }
 
@@ -7332,6 +7342,32 @@ fn struct_handle(v: &Value, expected: &str) -> Option<i64> {
 
 fn make_handle_struct(name: &str, handle: i64) -> Value {
     Value::struct_(name, vec![("__handle", Value::Int(handle))])
+}
+
+/// Snapshots a `U8Vec`'s registry-backed bytes for the JIT trampoline to
+/// marshal into a fresh native buffer. `None` if `v` is not a live `U8Vec`.
+pub(crate) fn u8vec_snapshot_bytes(v: &Value) -> Option<Vec<u8>> {
+    let handle = struct_handle(v, "U8Vec")?;
+    let arc = u8vec_lookup(handle)?;
+    Some(
+        arc.iter()
+            .map(|b| b.load(std::sync::atomic::Ordering::Relaxed))
+            .collect(),
+    )
+}
+
+/// Writes `bytes` back into a `U8Vec`'s registry buffer after a JIT body
+/// mutated the marshalled copy, so the caller observes in-place mutations.
+pub(crate) fn u8vec_write_back(v: &Value, bytes: &[u8]) {
+    let Some(handle) = struct_handle(v, "U8Vec") else {
+        return;
+    };
+    let Some(arc) = u8vec_lookup(handle) else {
+        return;
+    };
+    for (slot, &b) in arc.iter().zip(bytes.iter()) {
+        slot.store(b, std::sync::atomic::Ordering::Relaxed);
+    }
 }
 
 fn arg_int(args: &[Value], idx: usize) -> Option<i64> {

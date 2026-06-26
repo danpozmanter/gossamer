@@ -58,9 +58,118 @@ type NativeArg = (JitKind, i64, Option<Arc<parking_lot::Mutex<Value>>>);
 fn build_native_arg(kind: JitKind, value: &Value) -> Option<i64> {
     match kind {
         JitKind::NativeVecI64 => build_native_vec_i64(value),
+        JitKind::NativeVecF64 => build_native_vec_f64(value),
+        JitKind::NativeVecTupleIF => build_native_vec_tuple_if(value),
         JitKind::NativeStr => build_native_str(value),
+        JitKind::U8VecHandle => build_native_u8vec(value),
         _ => None,
     }
+}
+
+/// Builds an owned `*mut GosVec` of 8-byte `f64` slots from a VM float
+/// vector. Returns the pointer as `i64` (trampoline-owned).
+fn build_native_vec_f64(value: &Value) -> Option<i64> {
+    // SAFETY: `gos_rt_vec_new_typed` returns an owned header or null;
+    // `gos_rt_vec_push` copies 8 bytes from the float's bit pattern.
+    unsafe {
+        let v = rt::gos_rt_vec_new_typed(8, rt::vec::vec_elem_kind::PRIMITIVE);
+        if v.is_null() {
+            return None;
+        }
+        let Value::Array(arc) = value else {
+            rt::gos_rt_vec_free(v);
+            return None;
+        };
+        for elem in arc.iter() {
+            let bits: i64 = match elem {
+                Value::Float(x) => x.to_bits() as i64,
+                Value::Int(n) => (*n as f64).to_bits() as i64,
+                _ => {
+                    rt::gos_rt_vec_free(v);
+                    return None;
+                }
+            };
+            let b = bits.to_ne_bytes();
+            rt::gos_rt_vec_push(v, b.as_ptr());
+        }
+        Some(v as i64)
+    }
+}
+
+/// Builds an owned `*mut GosVec` of 16-byte `(i64, f64)` tuple slots
+/// (`[i64 @ +0][f64 @ +8]`, the compiled-tier layout) from a VM vector of
+/// 2-tuples. Returns the pointer as `i64` (trampoline-owned).
+fn build_native_vec_tuple_if(value: &Value) -> Option<i64> {
+    // SAFETY: 16-byte primitive elements, no heap children; the runtime
+    // copies each 16-byte slot by value and frees the buffer wholesale.
+    unsafe {
+        let vec_ptr = rt::gos_rt_vec_new_typed(16, rt::vec::vec_elem_kind::PRIMITIVE);
+        if vec_ptr.is_null() {
+            return None;
+        }
+        let Value::Array(arc) = value else {
+            rt::gos_rt_vec_free(vec_ptr);
+            return None;
+        };
+        for elem in arc.iter() {
+            let Value::Tuple(tuple) = elem else {
+                rt::gos_rt_vec_free(vec_ptr);
+                return None;
+            };
+            let (Some(Value::Int(ival)), Some(second)) = (tuple.first(), tuple.get(1)) else {
+                rt::gos_rt_vec_free(vec_ptr);
+                return None;
+            };
+            let fbits = match second {
+                Value::Float(fval) => fval.to_bits(),
+                Value::Int(n) => (*n as f64).to_bits(),
+                _ => {
+                    rt::gos_rt_vec_free(vec_ptr);
+                    return None;
+                }
+            };
+            let mut slot = [0u8; 16];
+            slot[0..8].copy_from_slice(&ival.to_ne_bytes());
+            slot[8..16].copy_from_slice(&fbits.to_ne_bytes());
+            rt::gos_rt_vec_push(vec_ptr, slot.as_ptr());
+        }
+        Some(vec_ptr as i64)
+    }
+}
+
+/// Builds a fresh native `*mut GosU8Vec` from a VM `U8Vec`'s registry
+/// bytes. The bytecode VM and native code use different `U8Vec` backings,
+/// so the trampoline copies the bytes in (and copies them back after the
+/// call - see `invoke_prepared_native`). Returns the pointer as `i64`.
+fn build_native_u8vec(value: &Value) -> Option<i64> {
+    let bytes = crate::builtins::u8vec_snapshot_bytes(value)?;
+    // SAFETY: `gos_rt_heap_u8_new` returns an owned `*mut GosU8Vec` of
+    // `len` zeroed bytes or null; `set` writes one in-bounds byte.
+    unsafe {
+        let v = rt::gos_rt_heap_u8_new(bytes.len() as i64);
+        if v.is_null() {
+            return None;
+        }
+        for (i, &b) in bytes.iter().enumerate() {
+            rt::gos_rt_heap_u8_set(v, i as i64, i64::from(b));
+        }
+        Some(v as i64)
+    }
+}
+
+/// Reads a native `*mut GosU8Vec`'s bytes back so they can be written into
+/// the VM `U8Vec`'s registry buffer (the body's in-place mutations).
+fn read_native_u8vec(ptr: i64) -> Vec<u8> {
+    if ptr == 0 {
+        return Vec::new();
+    }
+    let v = ptr as *const rt::GosU8Vec;
+    // SAFETY: `v` is a live `GosU8Vec` the trampoline built; `len`/`get`
+    // read initialised in-bounds bytes.
+    let len = unsafe { rt::gos_rt_heap_u8_len(v) }.max(0);
+    (0..len)
+        .map(|i| unsafe { rt::gos_rt_heap_u8_get(v, i) } as u8)
+        .collect()
 }
 
 /// Builds an owned `*mut GosVec` of 8-byte `i64` slots from a VM integer
@@ -130,6 +239,45 @@ fn native_ptr_to_value(kind: JitKind, ptr: i64) -> Value {
             }
             Value::IntArray(Arc::new(out))
         }
+        JitKind::NativeVecF64 => {
+            if ptr == 0 {
+                return Value::Array(Arc::new(Vec::new()));
+            }
+            let v = ptr as *const rt::vec::GosVec;
+            // SAFETY: live `GosVec` of 8-byte slots; each slot's bits are a
+            // valid `f64`.
+            let len = unsafe { rt::gos_rt_vec_len(v) }.max(0);
+            let mut out = Vec::with_capacity(len as usize);
+            for i in 0..len {
+                let bits = unsafe { rt::gos_rt_vec_get_i64(v, i) } as u64;
+                out.push(Value::Float(f64::from_bits(bits)));
+            }
+            Value::Array(Arc::new(out))
+        }
+        JitKind::NativeVecTupleIF => {
+            if ptr == 0 {
+                return Value::Array(Arc::new(Vec::new()));
+            }
+            let v = ptr as *const rt::vec::GosVec;
+            // SAFETY: live `GosVec` of 16-byte `[i64][f64]` slots; the
+            // element pointer is valid for the 16 bytes read here.
+            let len = unsafe { rt::gos_rt_vec_len(v) }.max(0);
+            let mut out = Vec::with_capacity(len as usize);
+            for i in 0..len {
+                let p = unsafe { rt::gos_rt_vec_get_ptr(v, i) };
+                if p.is_null() {
+                    out.push(Value::Tuple(Arc::new(vec![
+                        Value::Int(0),
+                        Value::Float(0.0),
+                    ])));
+                    continue;
+                }
+                let a = unsafe { p.cast::<i64>().read_unaligned() };
+                let b = unsafe { p.add(8).cast::<f64>().read_unaligned() };
+                out.push(Value::Tuple(Arc::new(vec![Value::Int(a), Value::Float(b)])));
+            }
+            Value::Array(Arc::new(out))
+        }
         JitKind::NativeStr => {
             if ptr == 0 {
                 return Value::String(SmolStr::default());
@@ -154,8 +302,11 @@ fn native_ptr_to_value(kind: JitKind, ptr: i64) -> Value {
 /// by the body for that kind) and not already freed.
 unsafe fn free_native(kind: JitKind, ptr: i64) {
     match kind {
-        JitKind::NativeVecI64 => unsafe { rt::gos_rt_vec_free(ptr as *mut rt::vec::GosVec) },
+        JitKind::NativeVecI64 | JitKind::NativeVecF64 | JitKind::NativeVecTupleIF => unsafe {
+            rt::gos_rt_vec_free(ptr as *mut rt::vec::GosVec);
+        },
         JitKind::NativeStr => unsafe { rt::gos_rt_str_free(ptr as *mut c_char) },
+        JitKind::U8VecHandle => unsafe { rt::gos_rt_heap_u8_free(ptr as *mut rt::GosU8Vec) },
         _ => {}
     }
 }
@@ -265,7 +416,11 @@ macro_rules! call_through {
             // Native aggregate returns are canonicalized to I64 in `prepare`
             // and re-wrapped by `invoke_prepared_native`; the stub only ever
             // sees the I64 shape.
-            JitKind::NativeStr | JitKind::NativeVecI64 => {
+            JitKind::NativeStr
+            | JitKind::NativeVecI64
+            | JitKind::NativeVecF64
+            | JitKind::NativeVecTupleIF
+            | JitKind::U8VecHandle => {
                 unreachable!("native aggregate returns are canonicalized to I64")
             }
         }
@@ -1611,14 +1766,26 @@ pub(crate) fn prepare(jit: std::sync::Arc<JitFn>) -> Option<Prepared> {
     let stub = resolve_stub(jit.params.len(), shape)?;
     let (ret_kind, enum_return, native_return) = match jit.returns {
         JitKind::EnumPtr(idx) => (JitKind::I64, Some(idx), None),
-        k @ (JitKind::NativeStr | JitKind::NativeVecI64) => (JitKind::I64, None, Some(k)),
+        k @ (JitKind::NativeStr
+        | JitKind::NativeVecI64
+        | JitKind::NativeVecF64
+        | JitKind::NativeVecTupleIF) => (JitKind::I64, None, Some(k)),
+        // A `U8Vec` return would need re-registering the native buffer into
+        // the VM registry; not supported, so keep such bodies on bytecode.
+        JitKind::U8VecHandle => return None,
         other => (other, None, None),
     };
     let has_native = native_return.is_some()
-        || jit
-            .params
-            .iter()
-            .any(|k| matches!(k, JitKind::NativeStr | JitKind::NativeVecI64));
+        || jit.params.iter().any(|k| {
+            matches!(
+                k,
+                JitKind::NativeStr
+                    | JitKind::NativeVecI64
+                    | JitKind::NativeVecF64
+                    | JitKind::NativeVecTupleIF
+                    | JitKind::U8VecHandle
+            )
+        });
     Some(Prepared {
         jit,
         stub,
@@ -1665,7 +1832,14 @@ pub(crate) fn invoke_prepared(p: &Prepared, args: &[Value]) -> Dispatch {
             }
             // Native aggregate kinds are dispatched by `invoke_prepared_native`
             // above; the `has_native` guard makes this unreachable here.
-            (JitKind::NativeStr | JitKind::NativeVecI64, _) => return Dispatch::Fallback,
+            (
+                JitKind::NativeStr
+                | JitKind::NativeVecI64
+                | JitKind::NativeVecF64
+                | JitKind::NativeVecTupleIF
+                | JitKind::U8VecHandle,
+                _,
+            ) => return Dispatch::Fallback,
             (_, true) => match value {
                 Value::Int(n) => Slot::I(*n),
                 Value::Bool(b) => Slot::I(i64::from(*b)),
@@ -1738,9 +1912,16 @@ fn invoke_prepared_native(p: &Prepared, args: &[Value]) -> Dispatch {
     let jit = &p.jit;
     let mut slots: [Slot; MAX_ARGS] = [Slot::I(0); MAX_ARGS];
     let mut natives: Vec<NativeArg> = Vec::new();
+    // `U8Vec` is registry-backed in the VM but a native `*mut GosU8Vec`
+    // in the body, so its bytes are copied in here and copied back after
+    // the call: `(native ptr, the original VM U8Vec value)`.
+    let mut u8vec_writebacks: Vec<(i64, Value)> = Vec::new();
     for (i, (kind, value)) in jit.params.iter().zip(args.iter()).enumerate() {
         let slot = match kind {
-            JitKind::NativeStr | JitKind::NativeVecI64 => {
+            JitKind::NativeStr
+            | JitKind::NativeVecI64
+            | JitKind::NativeVecF64
+            | JitKind::NativeVecTupleIF => {
                 // Unwrap a `&mut` write-back cell so we marshal its inner
                 // aggregate; record the cell so mutations flow back.
                 let (inner, cell) = match value {
@@ -1752,6 +1933,15 @@ fn invoke_prepared_native(p: &Prepared, args: &[Value]) -> Dispatch {
                     return Dispatch::Fallback;
                 };
                 natives.push((*kind, ptr, cell));
+                Slot::I(ptr)
+            }
+            JitKind::U8VecHandle => {
+                let Some(ptr) = build_native_u8vec(value) else {
+                    free_natives(&natives, None);
+                    return Dispatch::Fallback;
+                };
+                natives.push((*kind, ptr, None));
+                u8vec_writebacks.push((ptr, value.clone()));
                 Slot::I(ptr)
             }
             JitKind::EnumPtr(idx) => match value {
@@ -1802,6 +1992,13 @@ fn invoke_prepared_native(p: &Prepared, args: &[Value]) -> Dispatch {
             return Dispatch::Fallback;
         }
     };
+    // Copy each marshalled `U8Vec`'s (mutated) bytes back to its registry
+    // buffer so the caller observes the body's in-place writes. Done while
+    // the native buffers are still live, before `free_natives` reclaims them.
+    for (ptr, val) in &u8vec_writebacks {
+        let bytes = read_native_u8vec(*ptr);
+        crate::builtins::u8vec_write_back(val, &bytes);
+    }
     // Re-wrap the return, write back `&mut` params, then free every
     // native object exactly once (the return is deduped against params).
     if let Some(nret) = p.native_return {

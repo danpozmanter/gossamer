@@ -401,6 +401,8 @@ const SPECS: &[Spec] = &[
     spec("feature-testing-examples/struct_map_keys.gos"),
     spec("feature-testing-examples/atomic_bool.gos"),
     spec("feature-testing-examples/cycle_collector.gos"),
+    spec("feature-testing-examples/cycle_reclaim.gos"),
+    spec("feature-testing-examples/jit_native_marshal.gos"),
     spec("feature-testing-examples/arena_regions.gos"),
     spec("feature-testing-examples/auto_regions.gos"),
     spec("feature-testing-examples/auto_regions_for.gos"),
@@ -2184,5 +2186,49 @@ fn lowers_without_fallback_group(group: usize) {
             }
         }
         panic!("{report}");
+    }
+}
+
+/// Forced-JIT correctness gate. `GOSSAMER_JIT_THRESHOLD=1` promotes every
+/// function to native on its first call - the most aggressive promotion
+/// possible, and the policy the eager-promotion path relies on. The JIT
+/// must produce output identical to the bytecode interpreter (`GOS_JIT=0`)
+/// on the shapes it once silently miscompiled or segfaulted on: a closure
+/// passed to a higher-order call, a `&mut` aggregate parameter, and a
+/// `Vec`-parameter slice-pattern match. The eligibility gate
+/// (`body_jit_unsupported`) keeps those bodies on bytecode; a divergence
+/// here means the gate let an un-lowerable body through again.
+#[test]
+fn forced_jit_matches_bytecode_on_unlowerable_shapes() {
+    let root = workspace_root();
+    let fixtures = [
+        "examples/factorial.gos",
+        "feature-testing-examples/string_append_realloc.gos",
+        "feature-testing-examples/slice_patterns.gos",
+    ];
+    for rel in fixtures {
+        let path = root.join(rel);
+        let run = |key: &str, val: &str| {
+            let out = Command::new(gos_bin())
+                .arg("run")
+                .arg(&path)
+                .env(key, val)
+                .output()
+                .unwrap_or_else(|e| panic!("spawn gos run {rel}: {e}"));
+            (
+                out.status.code(),
+                String::from_utf8_lossy(&out.stdout).into_owned(),
+            )
+        };
+        let (bc_code, bc_out) = run("GOS_JIT", "0");
+        let (jit_code, jit_out) = run("GOSSAMER_JIT_THRESHOLD", "1");
+        assert_eq!(
+            bc_out, jit_out,
+            "{rel}: forced-JIT stdout diverged from bytecode - the JIT eligibility gate let an un-lowerable body through"
+        );
+        assert_eq!(
+            bc_code, jit_code,
+            "{rel}: forced-JIT exit code diverged from bytecode"
+        );
     }
 }

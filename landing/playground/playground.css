@@ -25,6 +25,11 @@
   font-size: 0.95rem;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
+  /* The forward pipe `|>` and similar operators must render as separate
+     glyphs, never a single ligature. These properties inherit, so the
+     CodeMirror editor and the output pane pick them up. */
+  font-variant-ligatures: none;
+  font-feature-settings: "liga" 0, "calt" 0;
 }
 
 .gp *,

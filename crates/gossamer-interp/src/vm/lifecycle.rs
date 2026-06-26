@@ -20,6 +20,7 @@ impl Vm {
             mir_bodies: RefCell::new(None),
             tcx_snapshot: RefCell::new(None),
             enum_shape_defs: RefCell::new(None),
+            jit_eager_names: RefCell::new(std::collections::HashSet::new()),
             jit_droppable: Cell::new(false),
             jit: parking_lot::RwLock::new(JitState::default()),
             jit_override_count: AtomicUsize::new(0),
@@ -54,6 +55,17 @@ impl Vm {
         tcx_snapshot: Option<Arc<TyCtxt>>,
         enum_shape_defs: Option<Arc<std::collections::HashMap<u32, u32>>>,
     ) -> Self {
+        // A spawned goroutine inherits the parent's MIR, so it can derive
+        // the same eager-compile set and tier up its own hot loops on the
+        // first call rather than waiting on a per-thread call counter.
+        let jit_eager_names = match (&mir_bodies, &tcx_snapshot, &enum_shape_defs) {
+            (Some(bodies), Some(tcx), Some(shapes)) => {
+                jit_backend::jit_eager_loop_bodies(bodies, tcx, shapes)
+                    .into_iter()
+                    .collect()
+            }
+            _ => std::collections::HashSet::new(),
+        };
         Self {
             globals,
             prelude: builtins::prelude_globals(),
@@ -61,6 +73,7 @@ impl Vm {
             mir_bodies: RefCell::new(mir_bodies),
             tcx_snapshot: RefCell::new(tcx_snapshot),
             enum_shape_defs: RefCell::new(enum_shape_defs),
+            jit_eager_names: RefCell::new(jit_eager_names),
             // Worker VMs run pool tasks back-to-back; `reset_after_task`
             // manages their MIR lifetime, so they never self-drop.
             jit_droppable: Cell::new(false),
@@ -422,6 +435,14 @@ impl Vm {
                 gossamer_mir::inline_trivial_wrappers(&mut bodies);
                 gossamer_mir::inline_small_callees(&mut bodies);
                 gossamer_mir::inline_general(&mut bodies);
+                // Compute the eager-compile set from the post-inlining
+                // bodies now, while they are still in hand: the deferred
+                // compile below releases `mir_bodies` for spawn-free
+                // programs, so this is the last point the set is derivable.
+                *self.jit_eager_names.borrow_mut() =
+                    jit_backend::jit_eager_loop_bodies(&bodies, &tcx, &shapes)
+                        .into_iter()
+                        .collect();
                 *self.enum_shape_defs.borrow_mut() = Some(Arc::new(shapes));
                 *self.mir_bodies.borrow_mut() = Some(Arc::new(bodies));
                 // Move the owned type context into the snapshot - no clone.
@@ -631,12 +652,16 @@ impl Vm {
         // dropped as soon as it returns, so caching its heap address
         // would alias a later real chunk allocated at the same slot.
         let jit_disabled = !jit_call::jit_enabled();
+        // A one-shot initializer chunk is dropped as soon as it returns, so
+        // there is never a second call to amortize a compile - keep it on
+        // the bytecode path regardless of shape.
         let state = ChunkState::new(
             chunk.call_cache_count,
             chunk.arith_cache_count,
             chunk.field_cache_count,
             chunk.instrs.len(),
             jit_disabled,
+            false,
         );
         self.run(&chunk, &state, Vec::new())
     }

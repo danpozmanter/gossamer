@@ -13,6 +13,7 @@
 
 #![forbid(unsafe_code)]
 
+mod arena_escape;
 mod checker;
 mod context;
 mod error;
@@ -26,6 +27,9 @@ mod trait_index;
 mod traits;
 mod ty;
 
+pub use arena_escape::{
+    ArenaEscapeDiagnostic, ArenaEscapeError, ArenaEscapeKind, check_arena_escapes,
+};
 pub use checker::typecheck_source_file;
 pub use context::TyCtxt;
 pub use error::{TypeDiagnostic, TypeError};

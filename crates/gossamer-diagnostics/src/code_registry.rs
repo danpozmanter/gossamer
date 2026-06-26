@@ -283,6 +283,17 @@ pub const REGISTRY: &[(&str, &str)] = &[
                      reachable.",
     ),
     (
+        "GM0003",
+        "A value allocated inside an `arena { }` block is used after the\n\
+                     block exits. The arena frees its memory in one shot at the\n\
+                     closing brace, so the reference would dangle - a use-after-free.\n\
+                     Keep only a scalar or already-outside summary (assigning to an\n\
+                     outer binding, pushing into an outer container, sending on a\n\
+                     channel, returning, or capturing in a goroutine/closure are the\n\
+                     escapes the check rejects), or allocate the value before the\n\
+                     block. The raw `runtime::arena_push/pop` primitive is unchecked.",
+    ),
+    (
         "GP0001",
         "The parser saw a token where it expected a different one.\n\
                      Check for missing punctuation, an unmatched delimiter, or an \n\

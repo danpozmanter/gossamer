@@ -76,6 +76,7 @@ pub fn synthesize_entry_main(sf: &mut SourceFile) -> Vec<ParseDiagnostic> {
             stmts,
             tail,
             synthetic: false,
+            is_arena: false,
         }),
     );
 

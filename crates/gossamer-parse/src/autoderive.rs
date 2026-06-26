@@ -2034,6 +2034,7 @@ fn writeback_block(
         )],
         tail: Some(Box::new(place)),
         synthetic: true,
+        is_arena: false,
     })
 }
 

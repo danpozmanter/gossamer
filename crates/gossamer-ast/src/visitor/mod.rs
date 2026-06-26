@@ -298,6 +298,7 @@ mod tests {
                 stmts: vec![],
                 tail: Some(Box::new(int("0"))),
                 synthetic: false,
+                is_arena: false,
             }),
         );
         let fn_decl = FnDecl {

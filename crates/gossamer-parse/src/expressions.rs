@@ -959,6 +959,7 @@ impl Parser<'_> {
             stmts: vec![let_stmt],
             tail: Some(Box::new(acc)),
             synthetic: true,
+            is_arena: false,
         };
         Expr::new(self.alloc_id(), span, ExprKind::Block(block))
     }
@@ -1000,6 +1001,7 @@ impl Parser<'_> {
             stmts: Vec::new(),
             tail: Some(Box::new(expr)),
             synthetic: true,
+            is_arena: false,
         };
         Expr::new(self.alloc_id(), span, ExprKind::Block(block))
     }
@@ -1111,6 +1113,7 @@ impl Parser<'_> {
             stmts: Vec::new(),
             tail: Some(Box::new(acc)),
             synthetic: true,
+            is_arena: false,
         };
         let loop_body = Expr::new(self.alloc_id(), body_span, ExprKind::Block(loop_body_block));
         ExprKind::Loop {
@@ -1763,6 +1766,7 @@ impl Parser<'_> {
             stmts,
             tail,
             synthetic: false,
+            is_arena: false,
         }
     }
 

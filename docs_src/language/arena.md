@@ -94,10 +94,19 @@ arena per loop iteration is a bump-pointer reset, not a fresh `mmap`.
 
 Nothing allocated inside the block may be referenced after it exits.
 The block is statement-position only and yields unit (a tail
-expression is discarded), which rules out the obvious escape. The
-remaining escapes are yours to avoid: assigning to an outer binding,
-pushing into a container that outlives the block, sending down a
-channel, or capturing in a goroutine/closure that outruns the block.
+expression is discarded), which rules out the obvious escape.
+
+The remaining escapes are checked for you. A conservative front-end
+analysis rejects, with `error[GM0003]`, any value allocated in the
+block that is assigned to a binding outside it, pushed into a
+container that outlives it, sent down a channel, returned, broken out
+of an enclosing loop, captured in a goroutine/closure that outruns
+the block, or passed into a function that might stash it. Reading an
+arena value through a method or a region-safe free function stays
+allowed, so build-and-discard code is unaffected. The check is sound
+by over-approximation: it may ask you to restructure a sound program,
+but it never lets an escaping one compile. Run `gos explain GM0003`
+for the details.
 
 Compute summaries inside, keep survivors outside:
 
@@ -118,4 +127,6 @@ safe to reference anywhere.
 
 `runtime::arena_push()` / `runtime::arena_pop()` are the underlying
 calls for shapes where block structure does not fit. Prefer the block:
-it cannot be left unbalanced.
+it cannot be left unbalanced, and it carries the `GM0003` escape check -
+the raw primitive is the unchecked low-level escape hatch, so the
+no-escape guarantee is yours to uphold when you reach for it.

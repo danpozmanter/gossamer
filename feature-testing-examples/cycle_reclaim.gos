@@ -1,0 +1,37 @@
+// Cyclic reclamation across tiers. `cycle_collector.gos` exercises the
+// collector's call path on acyclic data (where it is a no-op); this fixture
+// builds a real reference cycle each round, lets the external handles die,
+// and reclaims it with `runtime::collect_cycles()` - the trial-deletion path
+// that pure RC alone cannot free. The observable output (a scalar sum) does
+// not depend on when reclamation happens - Gossamer has no user-visible
+// finalizer - so it stays bit-identical across VM, Cranelift, and LLVM while
+// the collector keeps the heap from growing round over round.
+
+use std::runtime
+
+struct Node {
+    id: i64,
+    next: Option<Box<Node>>,
+}
+
+fn main() {
+    let mut total = 0
+    let mut round = 0
+    while round < 300 {
+        // a <-> b: each node owns a strong reference to the other, so the
+        // pair survives the loop body's last use and leaks under plain RC.
+        let mut a = Node { id: round, next: None }
+        let mut b = Node { id: round * 3, next: None }
+        b.next = Some(Box::new(a))
+        a.next = Some(Box::new(b))
+        total += a.id
+        if let Some(n) = a.next {
+            total += n.id
+        }
+        // The cycle is now unreachable from any binding the next iteration
+        // can see; the collector reclaims it instead of letting it leak.
+        runtime::collect_cycles()
+        round += 1
+    }
+    println!("total: {}", total)
+}

@@ -17,7 +17,9 @@ use gossamer_ast::{ItemKind, SourceFile};
 use gossamer_diagnostics::Diagnostic;
 use gossamer_lex::FileId;
 use gossamer_resolve::{ResolveError, resolve_source_file};
-use gossamer_types::{ExhaustivenessError, TyCtxt, check_exhaustiveness, typecheck_source_file};
+use gossamer_types::{
+    ExhaustivenessError, TyCtxt, check_arena_escapes, check_exhaustiveness, typecheck_source_file,
+};
 
 use crate::frontend_cache::{FrontendCacheKey, load_blob, mark_success, store_blob};
 use crate::pipeline::CheckedFrontend;
@@ -53,6 +55,8 @@ impl FrontendOutcome {
 ///   fatal; lower-severity resolve diagnostics are not.
 /// - **Type**: every type diagnostic is fatal.
 /// - **Exhaustiveness**: a non-exhaustive `match` (GM0001) is fatal.
+/// - **Arena escape**: a value allocated in an `arena { }` block that is
+///   used after the block (GM0003) is fatal.
 ///
 /// `source` must already carry the autoderive augmentation (the synthesized
 /// `__gos_serde_*` free functions and the implicit-`main` folding); the CLI
@@ -103,6 +107,13 @@ pub fn check_frontend(source: &str, file_id: FileId) -> FrontendOutcome {
         if matches!(diag.error, ExhaustivenessError::NonExhaustive { .. }) {
             diagnostics.push(diag.to_diagnostic());
         }
+    }
+
+    // Every arena-escape diagnostic is fatal: a value allocated in an
+    // `arena { }` block that outlives it is a use-after-free, so it must
+    // be rejected on every tier, exactly like a type error.
+    for diag in check_arena_escapes(&sf, &resolutions, &table, &tcx) {
+        diagnostics.push(diag.to_diagnostic());
     }
 
     if diagnostics.is_empty() {

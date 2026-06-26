@@ -135,6 +135,14 @@ pub struct Vm {
     /// `Arc` so spawned goroutines reuse the parent's snapshot
     /// rather than re-lowering it.
     pub(crate) tcx_snapshot: RefCell<Option<Arc<TyCtxt>>>,
+    /// Names of JIT-worthy bodies that contain a loop or recursion (and
+    /// that the codegen can actually lower). Their `ChunkState` starts
+    /// with a hot counter of 1 so the first call compiles and dispatches
+    /// native in the same call - a hot loop inside a rarely-called function
+    /// reaches native code without waiting on a call-count threshold it
+    /// would never hit. Computed once at load, before `mir_bodies` may be
+    /// released, so it survives the deferred compile that drops the bodies.
+    pub(crate) jit_eager_names: RefCell<std::collections::HashSet<String>>,
     /// True once `load` proves the program has no goroutine spawn
     /// sites: then [`Self::try_compile_jit_lazy`] can free
     /// `mir_bodies` / `tcx_snapshot` the moment the compile lands,
@@ -275,9 +283,15 @@ impl ChunkState {
         field_cache_count: u16,
         instr_count: usize,
         jit_disabled: bool,
+        eager: bool,
     ) -> Self {
         let initial = if jit_disabled {
             crate::bytecode::HOT_DISABLED
+        } else if eager {
+            // A loop-bearing helper compiles on its first call (and the
+            // same call dispatches native once the override installs), so
+            // it never has to be called a threshold number of times.
+            1
         } else {
             crate::bytecode::hot_threshold_for(instr_count)
         };

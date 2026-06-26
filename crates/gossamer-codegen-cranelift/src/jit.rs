@@ -61,6 +61,20 @@ pub enum JitKind {
     /// builds a fresh owned `GosVec` from the VM vec for a param, and
     /// reads back + frees a returned `GosVec`. Integer register class.
     NativeVecI64,
+    /// A `Vec<f64>` crossing as a native `*mut GosVec` (8-byte float
+    /// slots). Same marshalling as [`Self::NativeVecI64`], f64 elements.
+    NativeVecF64,
+    /// A `Vec<(i64, f64)>` crossing as a native `*mut GosVec` with
+    /// 16-byte primitive slots (`[i64 @ +0][f64 @ +8]`, the compiled-tier
+    /// tuple layout). The trampoline builds the vector from the VM tuples
+    /// and frees it after the call. Integer register class.
+    NativeVecTupleIF,
+    /// A `U8Vec` opaque byte buffer crossing as the runtime's native
+    /// `*mut GosU8Vec` pointer. The bytecode VM backs `U8Vec` with a
+    /// registry handle, so the trampoline copies the bytes into a fresh
+    /// native buffer for the call and copies the (mutated) bytes back
+    /// afterwards. Integer register class.
+    U8VecHandle,
 }
 
 /// Raw handle for a JIT-compiled function: a fn pointer plus the
@@ -250,12 +264,17 @@ fn jit_compile_set<'a>(
             // boundary by the native-pointer bridge (see `ty_to_kind`),
             // so they never force a body onto bytecode.
             TyKind::String | TyKind::Vec(_) | TyKind::Slice(_) => false,
-            // Inline Option/Result sentinels are two-word i128 values.
-            // Non-enum Adts (structs) are also declined: the JIT-side
-            // struct lowering is unexercised - bodies holding struct
-            // locals stay on bytecode until that lands.
-            TyKind::Adt { def, .. } => {
-                def.local == u32::MAX || def.local == u32::MAX - 1 || !tcx.is_rc_managed(l.ty)
+            // An Adt local declines a body only when the marshaller cannot
+            // classify it (`ty_to_kind` is the single source of truth for
+            // what crosses the JIT boundary). RC-managed Adts (user structs
+            // / heap enums) stay representable as native pointers; opaque
+            // single-word handle sentinels that `ty_to_kind` knows how to
+            // marshal (e.g. `U8Vec`) compile too. The shapes that remain
+            // declined are exactly the ones `ty_to_kind` rejects: the
+            // two-word inline Option/Result sentinels, inline by-value
+            // enums, and handles without a marshalling shape.
+            TyKind::Adt { .. } => {
+                !tcx.is_rc_managed(l.ty) && ty_to_kind(tcx, l.ty, enum_shapes).is_none()
             }
             TyKind::Int(it) => {
                 matches!(
@@ -337,6 +356,29 @@ fn jit_compile_set<'a>(
 )]
 #[must_use]
 pub fn has_worthy_jit_body(bodies: &[Body], tcx: &TyCtxt, enum_shapes: &HashMap<u32, u32>) -> bool {
+    !jit_eager_loop_bodies(bodies, tcx, enum_shapes).is_empty()
+}
+
+/// Names of the bodies worth JIT-compiling on their *first* call rather
+/// than after a call-count threshold: a promotable (non-`main`, scalar-ABI,
+/// JIT-lowerable) helper that contains a loop or is part of a recursive
+/// call chain, so native code amortizes the VM<->native boundary. Promoting
+/// these eagerly lets a hot loop inside a rarely-called (even once-called)
+/// function reach native code at all - a once-called function never trips a
+/// call counter, yet its first call still pays for the whole loop.
+///
+/// Bodies rejected by [`body_jit_unsupported`] are excluded: they fall back
+/// to bytecode, so eagerly triggering a compile for them would be wasted.
+#[allow(
+    clippy::implicit_hasher,
+    reason = "single interp caller passes the same HashMap shape compile_to_jit uses"
+)]
+#[must_use]
+pub fn jit_eager_loop_bodies(
+    bodies: &[Body],
+    tcx: &TyCtxt,
+    enum_shapes: &HashMap<u32, u32>,
+) -> Vec<String> {
     let all_names: std::collections::HashSet<&str> =
         bodies.iter().map(|b| b.name.as_str()).collect();
     let def_to_name: HashMap<u32, &str> = bodies
@@ -369,11 +411,16 @@ pub fn has_worthy_jit_body(bodies: &[Body], tcx: &TyCtxt, enum_shapes: &HashMap<
     // stdlib builtin keeps firing), so its own loops do not justify
     // standing up the JIT - only a promotable *helper* that does real
     // work per cross-boundary call does.
-    bodies.iter().any(|b| {
-        b.name != "main"
-            && body_kinds(b, tcx, enum_shapes).is_some()
-            && (body_has_loop(b) || reaches_self(b.name.as_str()))
-    })
+    bodies
+        .iter()
+        .filter(|b| {
+            b.name != "main"
+                && body_kinds(b, tcx, enum_shapes).is_some()
+                && !body_jit_unsupported(b, tcx)
+                && (body_has_loop(b) || reaches_self(b.name.as_str()))
+        })
+        .map(|b| b.name.clone())
+        .collect()
 }
 
 /// Compiles every body in `bodies` through cranelift-jit and returns
@@ -473,6 +520,12 @@ pub fn compile_to_jit(
             // dispatch table.
             continue;
         }
+        if body_jit_unsupported(body, tcx) {
+            // Uses a `&mut` param or passes a closure to a higher-order
+            // call - shapes the trampoline / codegen mishandle. Keep the
+            // body on bytecode so its semantics stay correct.
+            continue;
+        }
         let ptr = module.get_finalized_function(id);
         functions.insert(
             body.name.clone(),
@@ -540,6 +593,72 @@ fn body_calls_jit_unsafe(
     false
 }
 
+/// Returns `true` when `body` uses a construct the JIT lowers incorrectly,
+/// so the VM must keep it on the bytecode interpreter:
+///
+/// - A `&mut` parameter. The dispatch trampoline marshals aggregate
+///   arguments (`String`, `Vec<i64>`, ...) by value - a fresh runtime
+///   object reclaimed after the call - so a write through the reference
+///   never reaches the caller, and the copy-back of an in-place
+///   `String`/`Vec` append corrupts the heap (a segfault).
+/// - A function value (`Operand::FnRef`) passed as a call or intrinsic
+///   *argument*: a higher-order call (`fold` / `map` / `sort_by` / ...)
+///   whose closure the JIT has no way to invoke, so the call lowers to a
+///   default-returning stub (e.g. `iter::fold` yielding its seed).
+fn body_jit_unsupported(body: &Body, tcx: &TyCtxt) -> bool {
+    use gossamer_mir::{Operand, Rvalue, StatementKind, Terminator};
+    use gossamer_types::Mutbl;
+    // A function-value local (a closure or `fn`/`Fn` pointer). The JIT has
+    // no closure-invocation lowering: such a local is materialised as a
+    // null placeholder, so a higher-order call through it (`iter::fold` and
+    // friends) silently returns its seed. Keep the body on bytecode.
+    for idx in 0..body.locals.len() {
+        if matches!(
+            tcx.kind_of(body.local_ty(gossamer_mir::Local(u32::try_from(idx).unwrap_or(u32::MAX)))),
+            TyKind::FnDef { .. } | TyKind::FnPtr(_) | TyKind::Closure { .. }
+        ) {
+            return true;
+        }
+    }
+    // A `&mut` aggregate parameter. The trampoline marshals aggregates by
+    // value (the `String` / `Vec` content pointer), but a `&mut String` /
+    // `&mut Vec` body expects a pointer to the caller's slot to write
+    // through; the value-marshalled pointer is the wrong shape and the
+    // in-place append corrupts the heap. Keep these on bytecode.
+    for pidx in 1..=body.arity {
+        if let TyKind::Ref {
+            mutability: Mutbl::Mut,
+            inner,
+        } = tcx.kind_of(body.local_ty(gossamer_mir::Local(pidx)))
+            && matches!(
+                tcx.kind_of(*inner),
+                TyKind::String | TyKind::Vec(_) | TyKind::Slice(_) | TyKind::HashMap { .. }
+            )
+        {
+            return true;
+        }
+    }
+    let has_fn_arg = |args: &[Operand]| args.iter().any(|a| matches!(a, Operand::FnRef { .. }));
+    for block in &body.blocks {
+        for stmt in &block.stmts {
+            if let StatementKind::Assign {
+                rvalue: Rvalue::CallIntrinsic { args, .. },
+                ..
+            } = &stmt.kind
+                && has_fn_arg(args)
+            {
+                return true;
+            }
+        }
+        if let Terminator::Call { args, .. } = &block.terminator
+            && has_fn_arg(args)
+        {
+            return true;
+        }
+    }
+    false
+}
+
 fn body_kinds(
     body: &Body,
     tcx: &TyCtxt,
@@ -553,6 +672,24 @@ fn body_kinds(
     }
     let returns = ty_to_kind(tcx, body.local_ty(gossamer_mir::Local::RETURN), enum_shapes)?;
     Some((params, returns))
+}
+
+/// True when `ty` is the 2-tuple `(i64, f64)` - the element shape the
+/// trampoline marshals as a 16-byte primitive `GosVec` slot.
+fn is_i64_f64_tuple(tcx: &TyCtxt, ty: Ty) -> bool {
+    if let TyKind::Tuple(elems) = tcx.kind_of(ty) {
+        elems.len() == 2
+            && matches!(
+                tcx.kind_of(elems[0]),
+                TyKind::Int(gossamer_types::IntTy::I64)
+            )
+            && matches!(
+                tcx.kind_of(elems[1]),
+                TyKind::Float(gossamer_types::FloatTy::F64)
+            )
+    } else {
+        false
+    }
 }
 
 fn ty_to_kind(tcx: &TyCtxt, ty: Ty, enum_shapes: &HashMap<u32, u32>) -> Option<JitKind> {
@@ -585,10 +722,25 @@ fn ty_to_kind(tcx: &TyCtxt, ty: Ty, enum_shapes: &HashMap<u32, u32>) -> Option<J
         {
             Some(JitKind::NativeVecI64)
         }
+        TyKind::Vec(elem)
+            if matches!(
+                tcx.kind_of(*elem),
+                TyKind::Float(gossamer_types::FloatTy::F64)
+            ) =>
+        {
+            Some(JitKind::NativeVecF64)
+        }
+        TyKind::Vec(elem) if is_i64_f64_tuple(tcx, *elem) => Some(JitKind::NativeVecTupleIF),
+        // `U8Vec` (prelude sentinel `u32::MAX - 20`): a byte-buffer handle.
+        // The trampoline copies its bytes through a fresh native `GosU8Vec`
+        // and copies the mutations back. Other prelude handles (Mutex,
+        // WaitGroup, I64Vec, Atomic) are cross-goroutine shared state and
+        // stay on bytecode (no `JitKind`), so they fall through below.
+        TyKind::Adt { def, .. } if def.local == u32::MAX - 20 => Some(JitKind::U8VecHandle),
         // Remaining aggregates (`Tuple`, struct `Adt`, `Vec` of
-        // non-`i64`, channels …) stay on bytecode: the trampoline has
-        // no marshalling shape for them yet, and JIT-promoting them
-        // risks segfaults at the boundary.
+        // unsupported element, channels …) stay on bytecode: the
+        // trampoline has no marshalling shape for them yet, and
+        // JIT-promoting them risks segfaults at the boundary.
         _ => None,
     }
 }

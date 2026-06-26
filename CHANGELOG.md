@@ -1,5 +1,82 @@
 # Changelog
 
+## 0.19.1 - Soundness hardening: checked `arena { }`, cycle coverage, JIT correctness
+
+The `arena { }` block's escape contract is now enforced at compile time. A
+value allocated inside an `arena { }` block that is used after the block
+exits - a use-after-free - is rejected by the front-end with `error[GM0003]`
+on every gate (`gos check`, `gos run`, `gos build`, `gos test`) and in the
+editor through the LSP. Previously the contract was the programmer's to uphold;
+it is now statically verified, so the ergonomic `arena { }` surface is
+memory-safe by construction.
+
+- **Static arena-escape analysis.** A conservative front-end pass tracks which
+  values are arena-allocated and reports any that reach a sink able to outlive
+  the block: assigning to a binding declared outside the block, pushing into a
+  container that outlives it, sending on a channel, returning, breaking out of
+  an enclosing loop, capturing in a goroutine/closure, or passing into a
+  function that may stash the value. Reading an arena value through a method or
+  a region-safe free function (`check(&tree)`) stays allowed, so idiomatic
+  build-and-discard code is unaffected.
+- The analysis is sound by over-approximation: when it cannot prove a shape
+  safe it rejects, so it may ask you to restructure a sound program but never
+  accepts an escaping one within the sinks it models. Run `gos explain GM0003`
+  for the catalogue entry.
+- The raw `runtime::arena_push()` / `runtime::arena_pop()` primitive is left
+  unchecked, as the low-level escape hatch for shapes the block does not fit.
+
+Cycle-collection hardening:
+
+- **Cyclic reclamation is now covered by a cross-tier fixture.** A new
+  `cycle_reclaim.gos` builds a real reference cycle each round, lets the
+  external handles die, and reclaims it with `runtime::collect_cycles()` -
+  the trial-deletion path that pure reference counting cannot free. Its
+  output is bit-identical across VM, Cranelift, and LLVM, extending the
+  test coverage that previously lived only in the runtime's Rust unit tests.
+- **Documented the one weak-reference cross-tier caveat.** A `Weak` that
+  observes a member of a *strong* cycle reads as live on the interpreter
+  (whose collector is a no-op) but as `None` on the compiled tiers after
+  collection. The idiomatic weak-to-break-a-cycle pattern is unaffected, as
+  it forms no strong cycle. See the memory-management docs.
+
+Interpreter JIT correctness and promotion:
+
+- **Fixed an interned-string alignment bug that corrupted memory under the
+  JIT.** Static string literals were emitted with no alignment, so a literal
+  whose body fell on an even address defeated the reference-counting
+  accounting - which distinguishes a string body from a tagged pointer by
+  its low bits - and wrote into read-only memory. Aligning the literals
+  keeps every string body at the odd address the runtime expects. This is
+  what lets aggregate-parameter functions (a `Vec` argument, including
+  slice-pattern matches) JIT correctly rather than being held back.
+- **The JIT now refuses bodies it cannot lower, instead of miscompiling
+  them.** A function that passes a closure to a higher-order call or takes a
+  `&mut` aggregate parameter is kept on the bytecode interpreter rather than
+  promoted to native code that returned a wrong result or crashed. These
+  miscompiles were latent - the previous call-count promotion threshold
+  rarely reached them, but any sufficiently hot such function would. A new
+  test promotes every function on its first call and asserts the output
+  matches the bytecode interpreter, locking the eligibility gate in place.
+- **Hot loops in rarely-called functions now reach native code.** A
+  loop-bearing or recursive function the JIT can lower is compiled on its
+  first call rather than only after a call-count threshold, so a hot loop
+  inside a function called once or a handful of times is no longer stranded
+  on the interpreter. Promotion is gated by the eligibility check above, so
+  it never promotes a body the codegen would miscompile.
+- **More value shapes cross the JIT boundary.** Functions taking or
+  returning `Vec<f64>`, `Vec<(i64, f64)>`, or a `U8Vec` byte-buffer handle
+  are now marshalled natively through the JIT trampoline, joining `String`
+  and `Vec<i64>`. The eligibility rule is derived from the marshaller itself
+  rather than a hand-maintained type list, so a body is held back only when
+  the marshaller genuinely cannot classify one of its values - it never
+  strands a function over a local the boundary already understands.
+- **Hybrid interpreter/JIT output keeps program order.** When a JIT-promoted
+  function writes to stdout through the runtime buffer while the surrounding
+  bytecode prints through the interpreter, the two streams are now emitted in
+  source order: the interpreter drains the runtime buffer before each of its
+  own writes. Previously a program that interleaved `print!` with a native
+  helper's direct writes could surface them out of order.
+
 ## 0.19.0 - VM to WASM: In-browser support, automatic arenas extension
 
 The bytecode VM now compiles to WebAssembly and runs Gossamer in the browser.

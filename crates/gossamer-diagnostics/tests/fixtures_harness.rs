@@ -14,7 +14,7 @@ use gossamer_diagnostics::Diagnostic;
 use gossamer_lex::SourceMap;
 use gossamer_parse::parse_source_file;
 use gossamer_resolve::{ResolveError, resolve_source_file};
-use gossamer_types::{TyCtxt, typecheck_source_file};
+use gossamer_types::{TyCtxt, check_arena_escapes, typecheck_source_file};
 
 fn collect_diagnostics(source: &str, file_name: &str) -> Vec<Diagnostic> {
     let mut map = SourceMap::new();
@@ -40,8 +40,12 @@ fn collect_diagnostics(source: &str, file_name: &str) -> Vec<Diagnostic> {
     }
 
     let mut tcx = TyCtxt::new();
-    let (_table, type_diags) = typecheck_source_file(&sf, &resolutions, &mut tcx);
+    let (table, type_diags) = typecheck_source_file(&sf, &resolutions, &mut tcx);
     for diag in &type_diags {
+        out.push(diag.to_diagnostic());
+    }
+
+    for diag in check_arena_escapes(&sf, &resolutions, &table, &tcx) {
         out.push(diag.to_diagnostic());
     }
 
@@ -113,6 +117,7 @@ fixture_test!(gp0001_unexpected_token, "GP0001_unexpected_token.gos");
 fixture_test!(gr0001_unresolved_name, "GR0001_unresolved_name.gos");
 fixture_test!(gr0003_duplicate_item, "GR0003_duplicate_item.gos");
 fixture_test!(gt0001_type_mismatch, "GT0001_type_mismatch.gos");
+fixture_test!(gm0003_arena_escape, "GM0003_arena_escape.gos");
 
 #[test]
 fn all_fixtures_have_error_marker() {

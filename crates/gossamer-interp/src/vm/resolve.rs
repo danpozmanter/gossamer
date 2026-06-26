@@ -65,12 +65,14 @@ impl Vm {
         // is read once per chunk and frozen - the JIT can't be
         // toggled mid-run.
         let jit_disabled = !jit_call::jit_enabled();
+        let eager = self.jit_eager_names.borrow().contains(chunk.name);
         let state_box = Box::new(ChunkState::new(
             chunk.call_cache_count,
             chunk.arith_cache_count,
             chunk.field_cache_count,
             chunk.instrs.len(),
             jit_disabled,
+            eager,
         ));
         let mut arena = self.chunk_state_arena.borrow_mut();
         arena.push(state_box);

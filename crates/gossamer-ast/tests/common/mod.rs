@@ -120,6 +120,7 @@ pub(crate) fn block_expr(stmts: Vec<Stmt>, tail: Option<Expr>) -> Expr {
             stmts,
             tail: tail.map(Box::new),
             synthetic: false,
+            is_arena: false,
         }),
     )
 }

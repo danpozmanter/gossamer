@@ -5204,12 +5204,28 @@ impl<'a> TypeChecker<'a> {
             // calls then route to the `gos_rt_ctx_*` shims. Offset 11:
             // 9 and 10 are taken by `validate::Errors` / `FieldError`.
             "Context" => Some(11),
+            // `U8Vec`: a byte-buffer handle. A concrete sentinel here lets
+            // the JIT marshal a `buf: U8Vec` parameter across the trampoline
+            // (`ty_to_kind` keys on `u32::MAX - 20`) instead of leaving it a
+            // fresh inference var the JIT can't classify. It is NOT
+            // reference-counted (a handle, like the sockets), which
+            // `is_rc_managed` already reports for unregistered sentinels.
+            //
+            // The sibling sync handles (`Mutex` / `WaitGroup` / `Atomic` /
+            // `I64Vec`) are deliberately NOT registered: their methods
+            // dispatch by name on every tier (`gos_rt_wg_done`, etc.), and
+            // forcing a concrete receiver type reroutes that dispatch and
+            // breaks the compiled lowering. A fresh inference var keeps them
+            // on the working name-global path.
+            "U8Vec" => Some(20),
             _ => None,
         };
         if let Some(off) = stdlib_def_offset {
             let def = gossamer_resolve::DefId::local(u32::MAX - off);
-            if tail == "Context" {
-                self.tcx.register_def_name(def, "context::Context");
+            match tail {
+                "Context" => self.tcx.register_def_name(def, "context::Context"),
+                "U8Vec" => self.tcx.register_def_name(def, tail),
+                _ => {}
             }
             return self.tcx.intern(TyKind::Adt {
                 def,

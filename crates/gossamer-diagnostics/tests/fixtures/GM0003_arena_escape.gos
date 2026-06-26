@@ -1,0 +1,22 @@
+// ERROR: GM0003
+enum Tree {
+    Node(Box<Tree>, Box<Tree>),
+    Nil,
+}
+
+fn build(d: i64) -> Tree {
+    if d > 0 {
+        Tree::Node(build(d - 1), build(d - 1))
+    } else {
+        Tree::Node(Tree::Nil, Tree::Nil)
+    }
+}
+
+fn main() {
+    let mut escaped = Tree::Nil
+    arena {
+        let t = build(3)
+        escaped = t
+    }
+    let _ = escaped
+}

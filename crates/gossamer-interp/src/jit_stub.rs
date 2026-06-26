@@ -65,6 +65,16 @@ pub fn has_worthy_jit_body(
     false
 }
 
+/// wasm promotes nothing, so there are no eager-compile candidates.
+#[must_use]
+pub fn jit_eager_loop_bodies(
+    _bodies: &[gossamer_mir::Body],
+    _tcx: &gossamer_types::TyCtxt,
+    _enum_shapes: &HashMap<u32, u32>,
+) -> Vec<String> {
+    Vec::new()
+}
+
 /// wasm yields an empty artifact - the VM installs no native overrides
 /// and runs everything on the bytecode interpreter.
 #[allow(clippy::missing_errors_doc)]
