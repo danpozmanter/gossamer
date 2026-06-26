@@ -62,15 +62,35 @@ jobs:
           GOS=./target/release/gos
           mkdir -p .perf
 
-          # time_ns LABEL ARGS... - runs the program and appends
-          # "LABEL <nanoseconds>" to .perf/current.txt
+          # time_ns LABEL ARGS... - benchmarks the command and appends
+          # "LABEL <minimum-nanoseconds>" to .perf/current.txt.
+          #
+          # One discarded warmup run pages in the binary and primes the OS
+          # cache; the fastest of PERF_RUNS timed runs is then recorded. The
+          # minimum is the run least perturbed by scheduler preemption, CPU
+          # frequency scaling, and cache misses, so it isolates the program's
+          # cost from one-off machine noise. A genuine regression slows every
+          # run including the fastest, so the minimum still trips the gate;
+          # only transient blips are filtered out. These programs finish in a
+          # few milliseconds, dominated by process startup - a single cold
+          # sample of one is mostly noise. The baseline keeps the per-benchmark
+          # minimum across main pushes (see "Update baseline on main"), so
+          # recording the minimum here compares like with like.
+          PERF_RUNS="${PERF_RUNS:-7}"
           time_ns() {
             local label=$1; shift
-            local start end
-            start=$(date +%s%N)
             "$@" >/dev/null 2>&1
-            end=$(date +%s%N)
-            echo "$label $((end - start))" | tee -a .perf/current.txt
+            local i start end ns best=
+            for ((i = 0; i < PERF_RUNS; i++)); do
+              start=$(date +%s%N)
+              "$@" >/dev/null 2>&1
+              end=$(date +%s%N)
+              ns=$((end - start))
+              if [[ -z "$best" || "$ns" -lt "$best" ]]; then
+                best=$ns
+              fi
+            done
+            echo "$label $best" | tee -a .perf/current.txt
           }
 
           rm -f .perf/current.txt
