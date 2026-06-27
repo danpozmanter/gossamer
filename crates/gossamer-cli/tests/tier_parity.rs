@@ -1628,9 +1628,7 @@ fn http_router_typed_params_parity_across_tiers() {
 }
 
 /// Router verb methods (`get`, `post`, etc.) must return the router so that
-/// `|>` chaining composes the route table as an expression. Before the fix
-/// the methods returned `()`, so the second `|>` received unit rather than
-/// the router - causing a dispatch miss on every tier. Confirms identical
+/// `|>` chaining composes the route table as an expression. Confirms identical
 /// 3-route dispatch on the bytecode VM, Cranelift JIT, and LLVM AOT.
 #[test]
 fn http_router_chain_parity_across_tiers() {

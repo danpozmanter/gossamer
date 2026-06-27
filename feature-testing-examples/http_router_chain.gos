@@ -1,9 +1,8 @@
 // Cross-tier regression for Router verb-method chaining via |>.
 // Building the route table as an expression:
 //   Router::new() |> _.get("/a", fa) |> _.post("/b", fb) |> _.get("/c", fc)
-// requires each verb method to return the router so the pipe has a value to
-// thread into the next call. Before Tasks 1-4 the methods returned () so the
-// second |> would receive unit rather than the router - a type error.
+// requires each verb method to return the router so the pipe delivers a typed
+// value to the next call.
 //
 // Self-terminating: the client runs in main and exits explicitly, so the
 // fixture is a plain stdout-parity comparison. Binds a fixed loopback port,
