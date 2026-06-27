@@ -663,6 +663,22 @@ repo examples and write a small test when unsure.
   `middleware` (`accepts_gzip`, `bearer_ok`, `decode_basic_auth`,
   `new_request_id`, `tag`); HTTP/2 push + trailers. `std::http_h3` -
   HTTP/3 server + client (RFC 9114).
+- `std::http::router` - `Router::new()` returns a `Router`; all verb
+  methods (`get`, `post`, `put`, `delete`, `patch`, `head`, `options`
+  and their `_fn` closure variants) return the same `Router`, so they
+  chain naturally with `|>`. Path params are read via
+  `r.path_value("name")` / `r.path_int("id")`.
+
+  ```gossamer
+  use std::http
+  use std::http::router
+
+  let r = router::Router::new()
+      |> _.get("/", handler_fn)
+      |> _.post("/items", create_fn)
+      |> _.get_fn("/ping", |_r| Ok(http::Response::text(200, "ok")))
+  http::serve("0.0.0.0:8080", r)?
+  ```
 - `std::encoding::{json, base64, hex, binary}`. Every user struct
   gets generic serializer free functions called with a turbofish:
   `from_json::<Type>(text) -> Result<Type, _>` and
