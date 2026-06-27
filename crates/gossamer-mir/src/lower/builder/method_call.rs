@@ -2460,6 +2460,21 @@ impl<'a> Builder<'a> {
             | "gos_rt_tcp_start_tls_ca" => Some("net::TcpStream"),
             "gos_rt_trace_tracer_start_span" => Some("trace::Span"),
             "gos_rt_trace_span_end" => Some("trace::EndedSpan"),
+            // Router verb methods return the router pointer so |> chaining works.
+            "gos_rt_router_get"
+            | "gos_rt_router_post"
+            | "gos_rt_router_put"
+            | "gos_rt_router_delete"
+            | "gos_rt_router_patch"
+            | "gos_rt_router_head"
+            | "gos_rt_router_options"
+            | "gos_rt_router_get_fn"
+            | "gos_rt_router_post_fn"
+            | "gos_rt_router_put_fn"
+            | "gos_rt_router_delete_fn"
+            | "gos_rt_router_patch_fn"
+            | "gos_rt_router_head_fn"
+            | "gos_rt_router_options_fn" => Some("http::Router"),
             _ => None,
         }
     }
