@@ -170,7 +170,7 @@ pub(crate) fn router_method_add(verb: &'static str, args: &[Value]) -> RuntimeRe
     ROUTER_HANDLERS.with(|h| {
         h.borrow_mut().entry(id).or_default().push(handler);
     });
-    Ok(ok_variant(args.first().cloned().unwrap_or(Value::Unit)))
+    Ok(args.first().cloned().unwrap_or(Value::Unit))
 }
 
 pub(crate) fn builtin_router_method_get(args: &[Value]) -> RuntimeResult<Value> {
