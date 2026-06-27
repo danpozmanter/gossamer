@@ -1,6 +1,6 @@
 # Gossamer
 
-A goroutine-powered, fast-compiling systems language with
+A goroutine-powered, fast-compiling language with
 Rust-flavoured syntax and a Go-shaped runtime. Memory is automatic
 and deterministic - reference counting plus `arena { }` regions, no
 tracing collector and no GC pauses.
@@ -77,7 +77,7 @@ interpreter and a REPL. Ship an optimized compiled single binary.
 counting plus `arena { }` regions reclaim values the moment the last
 reference dies. No lifetimes, no borrow-checker surface, no tracing
 collector.
-- **Extensible in Rust** - Write libraries in a safe systems language.
+- **Extensible in Rust** - Write libraries in safe Rust.
 
 ## Where to go next
 

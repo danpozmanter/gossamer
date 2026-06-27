@@ -1245,6 +1245,16 @@ impl<'a> Builder<'a> {
             // bytes from the i64 payload, so a bool push correctly
             // stores the low byte (0 or 1) with no overflow.
             TyKind::Bool => 1,
+            // `u8` is byte-packed (stride 1): a `[u8]` / `Vec<u8>` stores one
+            // byte per element like Go's `[]byte`, not an 8-byte word per byte.
+            // u8 is unsigned, so the runtime's byte get path (`load i8` +
+            // zero-extend, shared with `bool`) reconstructs the value exactly.
+            // Signed `i8` and the wider narrow ints stay 8-byte: the get path
+            // only distinguishes byte (1) from word (8) stride, and a signed
+            // byte would need sign-extension. Removes the 8x RAM overhead on
+            // byte buffers (the unbounded-cache leak benchmark + all binary/IO
+            // buffers).
+            TyKind::Int(gossamer_types::IntTy::U8) => 1,
             // Char occupies a full 8-byte slot so it aligns with the
             // word-stride fast paths throughout the codegen.
             TyKind::Char => 8,

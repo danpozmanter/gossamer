@@ -6,7 +6,7 @@
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width,initial-scale=1">
       
-        <meta name="description" content="A goroutine-powered, fast-compiling systems language with Rust-flavoured syntax and automatic, pause-free memory management.">
+        <meta name="description" content="A goroutine-powered, fast-compiling language with Rust-flavoured syntax and automatic, pause-free memory management.">
       
       
         <meta name="author" content="Gossamer contributors">
@@ -2124,7 +2124,7 @@ handling, concurrency, stdlib surface, and how to test. No prior
 context assumed.</p>
 <hr />
 <h2 id="1-what-gossamer-is">1. What Gossamer is<a class="headerlink" href="#1-what-gossamer-is" title="Permanent link">&para;</a></h2>
-<p>A goroutine-powered, fast-compiling systems language with
+<p>A goroutine-powered, fast-compiling language with
 automatic memory management (deterministic reference counting
 plus <code>arena { }</code> regions - no borrow checker, no lifetimes, no
 tracing-GC pauses). Syntax is Rust-flavoured. Runtime is
@@ -2794,7 +2794,22 @@ repo examples and write a small test when unsure.</p>
   <code>middleware</code> (<code>accepts_gzip</code>, <code>bearer_ok</code>, <code>decode_basic_auth</code>,
   <code>new_request_id</code>, <code>tag</code>); HTTP/2 push + trailers. <code>std::http_h3</code> -
   HTTP/3 server + client (RFC 9114).</li>
-<li><code>std::encoding::{json, base64, hex, binary}</code>. Every user struct
+<li><code>std::http::router</code> - <code>Router::new()</code> returns a <code>Router</code>; all verb
+  methods (<code>get</code>, <code>post</code>, <code>put</code>, <code>delete</code>, <code>patch</code>, <code>head</code>, <code>options</code>
+  and their <code>_fn</code> closure variants) return the same <code>Router</code>, so they
+  chain naturally with <code>|&gt;</code>. Path params are read via
+  <code>r.path_value("name")</code> / <code>r.path_int("id")</code>.</li>
+</ul>
+<p><div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="k">use</span><span class="w"> </span><span class="n">std</span>::<span class="n">http</span>
+<a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a><span class="k">use</span><span class="w"> </span><span class="n">std</span>::<span class="n">http</span>::<span class="n">router</span>
+<a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a>
+<a id="__codelineno-16-4" name="__codelineno-16-4" href="#__codelineno-16-4"></a><span class="kd">let</span><span class="w"> </span><span class="n">r</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">router</span>::<span class="n">Router</span>::<span class="n">new</span><span class="p">()</span>
+<a id="__codelineno-16-5" name="__codelineno-16-5" href="#__codelineno-16-5"></a><span class="w">    </span><span class="o">|&gt;</span><span class="w"> </span><span class="n">_</span><span class="p">.</span><span class="n">get</span><span class="p">(</span><span class="s">&quot;/&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">handler_fn</span><span class="p">)</span>
+<a id="__codelineno-16-6" name="__codelineno-16-6" href="#__codelineno-16-6"></a><span class="w">    </span><span class="o">|&gt;</span><span class="w"> </span><span class="n">_</span><span class="p">.</span><span class="n">post</span><span class="p">(</span><span class="s">&quot;/items&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">create_fn</span><span class="p">)</span>
+<a id="__codelineno-16-7" name="__codelineno-16-7" href="#__codelineno-16-7"></a><span class="w">    </span><span class="o">|&gt;</span><span class="w"> </span><span class="n">_</span><span class="p">.</span><span class="n">get_fn</span><span class="p">(</span><span class="s">&quot;/ping&quot;</span><span class="p">,</span><span class="w"> </span><span class="o">|</span><span class="n">_r</span><span class="o">|</span><span class="w"> </span><span class="nb">Ok</span><span class="p">(</span><span class="n">http</span>::<span class="n">Response</span>::<span class="n">text</span><span class="p">(</span><span class="mi">200</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;ok&quot;</span><span class="p">)))</span>
+<a id="__codelineno-16-8" name="__codelineno-16-8" href="#__codelineno-16-8"></a><span class="n">http</span>::<span class="n">serve</span><span class="p">(</span><span class="s">&quot;0.0.0.0:8080&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">r</span><span class="p">)</span><span class="o">?</span>
+</code></pre></div>
+- <code>std::encoding::{json, base64, hex, binary}</code>. Every user struct
   gets generic serializer free functions called with a turbofish:
   <code>from_json::&lt;Type&gt;(text) -&gt; Result&lt;Type, _&gt;</code> and
   <code>to_json::&lt;Type&gt;(value) -&gt; Result&lt;String, _&gt;</code> (the single
@@ -2805,12 +2820,12 @@ repo examples and write a small test when unsure.</p>
   passes through. <code>let user: User = from_json::&lt;User&gt;(&amp;text)?</code> is
   canonical. Dynamic <code>json::parse</code> / <code>decode</code> / <code>render</code> +
   <code>json::as_i64/f64/str -&gt; Option&lt;T&gt;</code> stay available for
-  unknown-shape documents. Narrow int fields round-trip via <code>as</code>.</li>
-<li><code>std::encoding::yaml</code> - YAML 1.2 parse/encode + <code>yaml::to_json</code> /
+  unknown-shape documents. Narrow int fields round-trip via <code>as</code>.
+- <code>std::encoding::yaml</code> - YAML 1.2 parse/encode + <code>yaml::to_json</code> /
   <code>from_json</code> text converters; auto-derived <code>from_yaml::&lt;T&gt;</code> /
   <code>to_yaml::&lt;T&gt;</code> on every struct compose these with the JSON pair.
-  Also <code>encoding::toml</code> (<code>toml::to_json</code> / <code>from_json</code>).</li>
-<li><code>std::database::sql</code> - driver-pluggable SQL (no driver bundled;
+  Also <code>encoding::toml</code> (<code>toml::to_json</code> / <code>from_json</code>).
+- <code>std::database::sql</code> - driver-pluggable SQL (no driver bundled;
   implement <code>Driver</code> via <code>[rust-bindings]</code>). <code>open(driver, url) -&gt;
   Result&lt;Conn, _&gt;</code>; <code>Conn</code>: <code>execute/query/query_each/prepare</code>,
   <code>begin/begin_with(IsolationLevel)</code>, <code>copy_in/copy_out</code>,
@@ -2819,65 +2834,64 @@ repo examples and write a small test when unsure.</p>
   (cursor; <code>defer rows.close()</code>), <code>columns()</code>; <code>Row</code>:
   <code>get_i64/f64/bool/text/blob</code>, <code>get_opt_*</code>, <code>is_null</code>, <code>width</code>;
   <code>Value</code> (Null/Bool/Int/Float/Text/Blob), positional <code>$N</code>; <code>Pool</code>;
-  <code>migrate::up(&amp;mut conn, dir) -&gt; i64</code>; <code>Select</code> fluent builder.</li>
-<li><code>std::sync</code> - <code>Mutex</code>, <code>RwLock</code>, atomics, <code>channel</code>, <code>Once</code>,
+  <code>migrate::up(&amp;mut conn, dir) -&gt; i64</code>; <code>Select</code> fluent builder.
+- <code>std::sync</code> - <code>Mutex</code>, <code>RwLock</code>, atomics, <code>channel</code>, <code>Once</code>,
   <code>WaitGroup</code> (<code>new</code>/<code>add</code>/<code>done</code>/<code>wait</code>), <code>Map</code> (concurrent
   string→string: <code>set</code>/<code>get</code>/<code>delete</code>/<code>len</code>/<code>contains</code>/<code>keys</code>). For
-  non-string payloads wrap a <code>HashMap</code> in <code>Mutex</code>.</li>
-<li><code>std::time</code> - <code>Instant::{now, elapsed_ms}</code>, <code>Duration::{from_millis/secs/micros,
+  non-string payloads wrap a <code>HashMap</code> in <code>Mutex</code>.
+- <code>std::time</code> - <code>Instant::{now, elapsed_ms}</code>, <code>Duration::{from_millis/secs/micros,
   as_millis/secs/micros}</code>, <code>sleep</code>, <code>now</code>, <code>now_nanos</code>,
   <code>monotonic_ms/nanos</code>, <code>since_ms</code>, <code>format_rfc3339</code>, <code>parse_rfc3339</code>.
   Channel timer: <code>after(d) -&gt; Receiver</code> (one-shot) - drain with
-  <code>while let</code> or use as a <code>select</code> timeout arm.</li>
-<li><code>std::context</code> - cancellation, deadlines, <code>Context::background()</code>.</li>
-<li><code>std::bytes</code> / <code>std::bufio</code> - binary buffers and buffered IO.</li>
-<li><code>std::flag</code> - CLI flag parser; <code>flag::Cell&lt;T&gt;</code> auto-derefs at
+  <code>while let</code> or use as a <code>select</code> timeout arm.
+- <code>std::context</code> - cancellation, deadlines, <code>Context::background()</code>.
+- <code>std::bytes</code> / <code>std::bufio</code> - binary buffers and buffered IO.
+- <code>std::flag</code> - CLI flag parser; <code>flag::Cell&lt;T&gt;</code> auto-derefs at
   every value-context (comparisons, call args, <code>if</code>), explicit
-  <code>*cell</code> still works.</li>
-<li><strong>Scalar <code>min</code> / <code>max</code> / <code>clamp</code></strong> - bare prelude functions, no
+  <code>*cell</code> still works.
+- <strong>Scalar <code>min</code> / <code>max</code> / <code>clamp</code></strong> - bare prelude functions, no
   import. <code>min(3, 7) == 3</code>, <code>clamp(15, 0, 10) == 10</code>. Vec-shaped
-  <code>min(xs)</code> / <code>max(xs)</code> return <code>Option&lt;T&gt;</code>.</li>
-<li><code>std::sort</code>, <code>std::math::rand</code> (deterministic RNG).</li>
-<li><code>std::crypto::{rand, sha256, hmac, subtle}</code> - narrow, audited;
+  <code>min(xs)</code> / <code>max(xs)</code> return <code>Option&lt;T&gt;</code>.
+- <code>std::sort</code>, <code>std::math::rand</code> (deterministic RNG).
+- <code>std::crypto::{rand, sha256, hmac, subtle}</code> - narrow, audited;
   <code>crypto::password</code> - Argon2id (<code>hash</code>, <code>verify</code>, <code>needs_rehash</code>,
-  PHC strings).</li>
-<li><code>std::jwt</code> - RFC 7519 sign/verify HS256/384/512, ES256, EdDSA,
+  PHC strings).
+- <code>std::jwt</code> - RFC 7519 sign/verify HS256/384/512, ES256, EdDSA,
   RS256/384/512 (verify): <code>sign_hs</code>/<code>verify_hs</code>,
-  <code>sign_es256</code>/<code>verify_es256</code>, <code>sign_eddsa</code>/<code>verify_eddsa</code>.</li>
-<li><code>std::metrics</code> - Prometheus <code>Counter</code>/<code>Gauge</code>/<code>Histogram</code> +
-  <code>Registry</code>. <code>std::trace</code> - W3C trace-context + OTLP JSON exporter.</li>
-<li><code>std::compress::{gzip, flate, zlib, zstd}</code> - byte-in/byte-out
-  (zstd 1-22, default 3).</li>
-<li><code>std::lifecycle</code> - graceful shutdown, signals, sd_notify.
+  <code>sign_es256</code>/<code>verify_es256</code>, <code>sign_eddsa</code>/<code>verify_eddsa</code>.
+- <code>std::metrics</code> - Prometheus <code>Counter</code>/<code>Gauge</code>/<code>Histogram</code> +
+  <code>Registry</code>. <code>std::trace</code> - W3C trace-context + OTLP JSON exporter.
+- <code>std::compress::{gzip, flate, zlib, zstd}</code> - byte-in/byte-out
+  (zstd 1-22, default 3).
+- <code>std::lifecycle</code> - graceful shutdown, signals, sd_notify.
   <code>std::validate</code> - <code>Validate</code> trait + <code>FieldError</code> / <code>Errors</code>.
-  <code>std::slog</code> - structured logging.</li>
-<li><code>std::runtime</code> - <code>collect_cycles()</code>, <code>arena_push/pop</code> (prefer the
+  <code>std::slog</code> - structured logging.
+- <code>std::runtime</code> - <code>collect_cycles()</code>, <code>arena_push/pop</code> (prefer the
   <code>arena {}</code> block), <code>set_panic_hook(f: fn(String))</code>. Main-goroutine
   panic exits 101; an unobserved <code>go</code> panic prints one <code>error[GX0005]</code>
-  line and ends only that goroutine.</li>
-<li><code>std::testing</code> - <code>check</code>, <code>check_eq</code>, <code>Runner</code>, <code>check_ok</code>.</li>
-<li><code>std::regex</code> - wraps the Rust <code>regex</code> crate; named groups via
+  line and ends only that goroutine.
+- <code>std::testing</code> - <code>check</code>, <code>check_eq</code>, <code>Runner</code>, <code>check_ok</code>.
+- <code>std::regex</code> - wraps the Rust <code>regex</code> crate; named groups via
   <code>capture_names(pat)</code>, <code>captures_named(pat, hay)</code> /
-  <code>captures_named_all</code> → <code>HashMap&lt;String, String&gt;</code>.</li>
-</ul>
+  <code>captures_named_all</code> → <code>HashMap&lt;String, String&gt;</code>.</p>
 <h2 id="13-project-layout">13. Project layout<a class="headerlink" href="#13-project-layout" title="Permanent link">&para;</a></h2>
-<div class="language-text highlight"><pre><span></span><code><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a>project.toml       # manifest: [project], [dependencies], [registries]
-<a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a>src/
-<a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a>├── main.gos       # binary entry
-<a id="__codelineno-16-4" name="__codelineno-16-4" href="#__codelineno-16-4"></a>├── lib.gos        # library root (optional)
-<a id="__codelineno-16-5" name="__codelineno-16-5" href="#__codelineno-16-5"></a>└── subdir/
-<a id="__codelineno-16-6" name="__codelineno-16-6" href="#__codelineno-16-6"></a>    └── mod.gos    # module `subdir`
-<a id="__codelineno-16-7" name="__codelineno-16-7" href="#__codelineno-16-7"></a>tests/             # integration tests
+<div class="language-text highlight"><pre><span></span><code><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a>project.toml       # manifest: [project], [dependencies], [registries]
+<a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a>src/
+<a id="__codelineno-17-3" name="__codelineno-17-3" href="#__codelineno-17-3"></a>├── main.gos       # binary entry
+<a id="__codelineno-17-4" name="__codelineno-17-4" href="#__codelineno-17-4"></a>├── lib.gos        # library root (optional)
+<a id="__codelineno-17-5" name="__codelineno-17-5" href="#__codelineno-17-5"></a>└── subdir/
+<a id="__codelineno-17-6" name="__codelineno-17-6" href="#__codelineno-17-6"></a>    └── mod.gos    # module `subdir`
+<a id="__codelineno-17-7" name="__codelineno-17-7" href="#__codelineno-17-7"></a>tests/             # integration tests
 </code></pre></div>
-<div class="language-toml highlight"><pre><span></span><code><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a><span class="k">[project]</span>
-<a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a><span class="n">id</span><span class="w">      </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;example.com/widget&quot;</span>
-<a id="__codelineno-17-3" name="__codelineno-17-3" href="#__codelineno-17-3"></a><span class="n">version</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;0.1.0&quot;</span>
-<a id="__codelineno-17-4" name="__codelineno-17-4" href="#__codelineno-17-4"></a><span class="n">authors</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;Jane Roe &lt;jane@example.com&gt;&quot;</span><span class="p">]</span>
-<a id="__codelineno-17-5" name="__codelineno-17-5" href="#__codelineno-17-5"></a><span class="n">license</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;Apache-2.0&quot;</span>
-<a id="__codelineno-17-6" name="__codelineno-17-6" href="#__codelineno-17-6"></a><span class="c1"># entry  = &quot;src/app.gos&quot;   # optional: override convention-based entry resolution</span>
-<a id="__codelineno-17-7" name="__codelineno-17-7" href="#__codelineno-17-7"></a>
-<a id="__codelineno-17-8" name="__codelineno-17-8" href="#__codelineno-17-8"></a><span class="k">[dependencies]</span>
-<a id="__codelineno-17-9" name="__codelineno-17-9" href="#__codelineno-17-9"></a><span class="s2">&quot;example.org/lib&quot;</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;1.2.3&quot;</span>
+<div class="language-toml highlight"><pre><span></span><code><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a><span class="k">[project]</span>
+<a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a><span class="n">id</span><span class="w">      </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;example.com/widget&quot;</span>
+<a id="__codelineno-18-3" name="__codelineno-18-3" href="#__codelineno-18-3"></a><span class="n">version</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;0.1.0&quot;</span>
+<a id="__codelineno-18-4" name="__codelineno-18-4" href="#__codelineno-18-4"></a><span class="n">authors</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;Jane Roe &lt;jane@example.com&gt;&quot;</span><span class="p">]</span>
+<a id="__codelineno-18-5" name="__codelineno-18-5" href="#__codelineno-18-5"></a><span class="n">license</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;Apache-2.0&quot;</span>
+<a id="__codelineno-18-6" name="__codelineno-18-6" href="#__codelineno-18-6"></a><span class="c1"># entry  = &quot;src/app.gos&quot;   # optional: override convention-based entry resolution</span>
+<a id="__codelineno-18-7" name="__codelineno-18-7" href="#__codelineno-18-7"></a>
+<a id="__codelineno-18-8" name="__codelineno-18-8" href="#__codelineno-18-8"></a><span class="k">[dependencies]</span>
+<a id="__codelineno-18-9" name="__codelineno-18-9" href="#__codelineno-18-9"></a><span class="s2">&quot;example.org/lib&quot;</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;1.2.3&quot;</span>
 </code></pre></div>
 <p>The optional <code>[project] entry</code> key names the entry source directly,
 overriding the convention search; the resolved entry is the only file

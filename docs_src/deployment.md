@@ -222,8 +222,9 @@ constant memory.
 ### Memory
 
 Gossamer reclaims memory deterministically: reference counting frees
-each value the moment its last reference dies, an on-demand cycle
-collector (`runtime::collect_cycles()`) handles reference cycles, and
+each value the moment its last reference dies, a cycle collector that
+runs automatically under allocation pressure (and on demand via
+`runtime::collect_cycles()`) handles reference cycles, and
 `arena { }` regions free short-lived graphs wholesale. There is no
 tracing collector, so there are no mark/sweep pauses and no GC tuning
 knobs to set - RAM tracks the live working set and stays predictable.

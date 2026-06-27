@@ -1,5 +1,77 @@
 # Changelog
 
+## 0.20.0 - Router pipe-chaining, Memory and GC Improvements, Documentation
+
+HTTP route registration now composes as a `|>` pipeline. The router verb
+methods (`get`, `post`, `put`, `delete`, `patch`, `head`, `options`, and their
+bare-function `_fn` variants) return the router they were called on, so a route
+table reads as one left-to-right expression instead of a sequence of mutations:
+
+```gos
+let r = router::Router::new()
+    |> _.get("/", home)
+    |> _.post("/items", create_item)
+http::serve("0.0.0.0:8080", r)?
+```
+
+- **Chainable verb methods on every tier.** The router pointer is threaded back
+  through the C ABI shims, the ABI registry, the Cranelift and LLVM dispatch
+  paths, MIR return-type and destination-kind inference, and the bytecode-VM
+  builtins, so chaining is bit-identical across `gos run`, the in-process JIT,
+  and `gos build`. A new `http_router_chain.gos` tier-parity fixture pins the
+  behaviour. The mutating form (`r.get(...)` as a statement) still works.
+- Path parameters are unchanged: read them from the request with
+  `r.path_value("name")` / `r.path_int("id")`.
+- Examples, the standard-library router reference, and the skill card now show
+  the pipe-chained style.
+
+Memory and GC:
+
+- **Perceus-style in-place reuse.** When an owned local is released and a
+  same-type enum is constructed nearby, the compiled tiers recycle the dropped
+  block in place (`gos_rt_rc_drop_reuse` + `gos_rt_rc_alloc_reuse`) instead of a
+  free + fresh allocation - so a loop that reassigns a heap value
+  (`node = Variant(..)` each iteration) does no allocation churn. A runtime
+  refcount check keeps it safe: reuse happens only when the block is the unique,
+  thread-local, weak-free owner, otherwise it falls back to a normal release +
+  allocation, so it can never corrupt - only forgo the optimization. Reuse is
+  observationally transparent and bit-identical across tiers (the bytecode VM
+  does not reuse); `GOS_RC_NO_REUSE` disables it.
+- **`[u8]` / `Vec<u8>` are byte-packed (stride 1).** A byte buffer now costs one
+  byte per element like Go's `[]byte`, not an 8-byte word per byte. A
+  never-evicted `HashMap<i64, [u8]>` cache dropped from ~328 to ~114 bytes per
+  entry (2.85x), matching Go and best among the compared languages. Reads
+  zero-extend, so values above 127 round-trip exactly; bit-identical across the
+  bytecode VM, JIT, and native tiers (new `byte_vec_packed` fixture). Helps all
+  binary / IO / network buffers.
+- **Cyclic garbage collection is incremental.** The automatic cycle collector
+  processes a bounded slice of candidate roots per run (with buffer
+  reconciliation) and adapts its trigger threshold to how much it reclaims, so a
+  churn of live shared graphs no longer pays a full scan and one collection can
+  never stall the goroutine on an unbounded sweep. Explicit
+  `runtime::collect_cycles()` still fully drains.
+- **Faster region allocation.** The arena-region bump path takes a single
+  thread-local probe instead of two; allocation-heavy region code (e.g.
+  binary-trees) is ~1.5x faster.
+- **Deep structures tear down without overflowing the stack** on the
+  interpreter tier: dropping a million-deep list / tree / graph is iterative
+  past a depth threshold, matching the native tier's robustness.
+- **`GOS_RC_DEBUG` reports cross-goroutine leaks.** The exit line now includes a
+  live shared-object count and points at `Weak<T>` when a shared reference cycle
+  (the one class the per-goroutine collector cannot reclaim) is leaked.
+- Internal: the guarded-aggregate provenance set is sharded to remove a global
+  lock from the struct-copy alloc/free path.
+
+Documentation and tooling:
+
+- Dropped the "systems language" positioning from the docs, landing page, and
+  skill card; Gossamer is described as a goroutine-powered, fast-compiling
+  language.
+- Corrected the Python migration guide's set-comprehension example to
+  deduplicate with `HashSet` and sort alphabetically.
+- Fuzz CI forces HTTP/1.1 for crate fetches (`CARGO_HTTP_MULTIPLEXING=false`),
+  avoiding a transient curl HTTP/2 framing error on some runners.
+
 ## 0.19.1 - Soundness hardening: checked `arena { }`, cycle coverage, JIT correctness
 
 The `arena { }` block's escape contract is now enforced at compile time. A

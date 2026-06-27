@@ -33,8 +33,8 @@ What if one language could combine all of those ideas?
 What if I could iterate quickly in a REPL or script, then compile the exact
  same program into an optimized standalone binary with no code changes?
 
-What if that language could be productive and lightweight while interpreted, 
-but deliver performance closer to Go or Rust when compiled?
+What if that language could perform Python like while interpreted, 
+but closer to Go when compiled?
 
 I built Gossamer because I wanted that language for myself.
 
@@ -63,8 +63,10 @@ My goal is for Gossamer to replace Rust, Go, F#, Kotlin, and Python for most of
 
 Gossamer's automatic memory management is **deterministic**: reference
 counting reclaims a value the moment its last reference dies, an
-on-demand cycle collector handles reference cycles, and there is no
-tracing collector and no stop-the-world pause.
+automatic cycle collector handles reference cycles, and there is no
+tracing collector and no stop-the-world pause. It is closely modeled
+on Swift's ARC, with the addition that reference cycles are reclaimed
+for you instead of having to be broken by hand.
 
 Plus `arena { }` blocks, inspired by Zig: everything allocated inside
 the block is bump-allocated and freed wholesale when the block exits -

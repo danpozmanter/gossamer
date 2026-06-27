@@ -500,6 +500,7 @@ impl<'a> Lowerer<'a> {
                 | "gos_store"
                 | "gos_alloc"
                 | "gos_rc_alloc"
+                | "gos_rc_alloc_reuse"
                 | "gos_fn_addr"
                 | "gos_enum_disc"
                 | "gos_enum_set_disc"
@@ -1312,6 +1313,42 @@ impl<'a> Lowerer<'a> {
                 };
                 let tmp = self.fresh();
                 writeln!(self.out, "  {tmp} = call ptr @malloc(i64 {size_v})").unwrap();
+                let coerced = self.coerce_llvm_value(&tmp, "ptr", &dest_ty);
+                let slot = local_slot(destination.local);
+                writeln!(self.out, "  store {dest_ty} {coerced}, ptr {slot}").unwrap();
+            }
+            "gos_rc_alloc_reuse" => {
+                // gos_rc_alloc_reuse(token_ptr, size_i64, meta_symbol) -> ptr.
+                // Perceus reuse: re-home `token` (a block from
+                // gos_rt_rc_drop_reuse) into a fresh strong-1 object, or
+                // allocate fresh when the token is null. Same meta-symbol
+                // handling as `gos_rc_alloc`, with the recycled block as the
+                // leading argument.
+                let token = self.lower_operand(&args[0])?;
+                let size_v = {
+                    let v = self.lower_operand(&args[1])?;
+                    let t = self.operand_llvm_ty(&args[1]);
+                    if t == "i64" {
+                        v
+                    } else {
+                        let tmp = self.fresh();
+                        writeln!(self.out, "  {tmp} = sext {t} {v} to i64").unwrap();
+                        tmp
+                    }
+                };
+                let meta_ptr = match args.get(2) {
+                    Some(Operand::Const(ConstValue::Str(sym))) if !sym.is_empty() => {
+                        format!("@\"{sym}\"")
+                    }
+                    _ => "null".to_string(),
+                };
+                declare_rt(&mut self.runtime_refs, "gos_rt_rc_alloc_reuse");
+                let tmp = self.fresh();
+                writeln!(
+                    self.out,
+                    "  {tmp} = call ptr @gos_rt_rc_alloc_reuse(ptr {token}, i64 {size_v}, ptr {meta_ptr})"
+                )
+                .unwrap();
                 let coerced = self.coerce_llvm_value(&tmp, "ptr", &dest_ty);
                 let slot = local_slot(destination.local);
                 writeln!(self.out, "  store {dest_ty} {coerced}, ptr {slot}").unwrap();

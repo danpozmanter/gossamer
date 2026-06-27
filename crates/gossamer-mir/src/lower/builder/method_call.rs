@@ -1400,6 +1400,10 @@ impl<'a> Builder<'a> {
                 };
                 if matches!(elem_kind, TyKind::Float(_)) {
                     Some("gos_rt_floatarr_slice_result")
+                } else if matches!(elem_kind, TyKind::Int(gossamer_types::IntTy::U8)) {
+                    // Byte-packed result (stride 1) - keeps a `[u8]` slice at
+                    // one byte per element instead of 8x.
+                    Some("gos_rt_bytearr_slice_result")
                 } else {
                     Some("gos_rt_intarr_slice_result")
                 }
@@ -3041,7 +3045,11 @@ impl<'a> Builder<'a> {
         // inline `[T; N]` storage carries no length prefix.
         if matches!(
             runtime_symbol,
-            Some("gos_rt_intarr_slice_result" | "gos_rt_floatarr_slice_result")
+            Some(
+                "gos_rt_intarr_slice_result"
+                    | "gos_rt_floatarr_slice_result"
+                    | "gos_rt_bytearr_slice_result"
+            )
         ) {
             let recv_ty_kind = self.tcx.kind_of(receiver.ty);
             let recv_ty_kind = if let TyKind::Ref { inner, .. } = recv_ty_kind {
@@ -3377,6 +3385,8 @@ impl<'a> Builder<'a> {
                 };
                 Some(if matches!(elem_kind, TyKind::Float(_)) {
                     "gos_rt_floatarr_slice_result"
+                } else if matches!(elem_kind, TyKind::Int(gossamer_types::IntTy::U8)) {
+                    "gos_rt_bytearr_slice_result"
                 } else {
                     "gos_rt_intarr_slice_result"
                 })

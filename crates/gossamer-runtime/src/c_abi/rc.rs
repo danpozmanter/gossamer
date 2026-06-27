@@ -165,6 +165,52 @@ fn rc_live_dec() {
     }
 }
 
+/// Live count of RC objects that have escaped to another goroutine
+/// (`SHARED_BIT` set). Shared objects are excluded from the per-thread cycle
+/// collector, so a shared object that is part of a reference cycle leaks for
+/// the process lifetime. A non-zero value alongside a non-zero
+/// `RC_LIVE_AT_EXIT` is the signature of a cross-goroutine cycle leak - the one
+/// leak class `Weak` (not the collector) must break. Counted only when
+/// diagnostics are enabled (tests / `GOS_RC_DEBUG`).
+static RC_SHARED_LIVE: AtomicUsize = AtomicUsize::new(0);
+
+/// Number of live cross-goroutine (shared) RC objects. Diagnostic hook;
+/// meaningful only when counting is enabled.
+pub fn rc_shared_live_count() -> usize {
+    RC_SHARED_LIVE.load(Ordering::Relaxed)
+}
+
+#[inline]
+fn rc_shared_inc() {
+    if rc_live_enabled() {
+        RC_SHARED_LIVE.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+#[inline]
+fn rc_shared_dec() {
+    if rc_live_enabled() {
+        RC_SHARED_LIVE.fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
+/// Count of Perceus reuse hits: a constructor that recycled a dropped block in
+/// place instead of allocating. Diagnostic / test hook; counted only when
+/// diagnostics are enabled (tests / `GOS_RC_DEBUG`).
+static RC_REUSE_HITS: AtomicUsize = AtomicUsize::new(0);
+
+/// Number of in-place block reuses performed. Test/diagnostic hook.
+pub fn rc_reuse_count() -> usize {
+    RC_REUSE_HITS.load(Ordering::Relaxed)
+}
+
+#[inline]
+fn rc_reuse_inc() {
+    if rc_live_enabled() {
+        RC_REUSE_HITS.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
 // ---------------------------------------------------------------
 // Cycle-collector header bits (synchronous trial deletion).
 // ---------------------------------------------------------------
@@ -429,7 +475,11 @@ unsafe fn mark_shared(payload: *mut u8) {
             continue;
         }
         let a = unsafe { AtomicU32::from_ptr(std::ptr::addr_of_mut!((*h).strong)) };
-        a.fetch_or(SHARED_BIT, Ordering::Relaxed);
+        let prev = a.fetch_or(SHARED_BIT, Ordering::Relaxed);
+        if prev & SHARED_BIT == 0 {
+            // This object just transitioned thread-local -> shared.
+            rc_shared_inc();
+        }
         unsafe {
             visit_children_raw(p, |c| work.push(c));
         }
@@ -483,10 +533,28 @@ unsafe fn has_rc_children(payload: *mut u8) -> bool {
     found
 }
 
-/// Default candidate-buffer size that auto-triggers a collection. Tuned so
+/// Base candidate-buffer size that arms an automatic collection. Tuned so
 /// the collector runs rarely and only when cyclic garbage is plausibly
-/// accumulating; acyclic workloads never fill it (nothing is buffered).
-const DEFAULT_COLLECT_THRESHOLD: usize = 10_000;
+/// accumulating; acyclic workloads never fill it (nothing is buffered). The
+/// effective threshold is adaptive (see `COLLECT_THRESHOLD`): it grows when
+/// collections keep finding little garbage so a churn of live DAGs is not
+/// rescanned on every few-thousand decrements.
+const COLLECT_THRESHOLD_BASE: usize = 10_000;
+
+/// Cap the adaptive threshold can grow to. A workload that buffers many
+/// surviving-decrement objects which are nearly all live (DAGs, shared
+/// subtrees) backs off to this before scanning again.
+const COLLECT_THRESHOLD_MAX: usize = 160_000;
+
+/// Maximum candidate roots an *automatic* collection processes in one slice,
+/// so a single auto-collect never traverses an unbounded number of
+/// independent candidate subgraphs inline on the mutator. Leftover candidates
+/// stay buffered and are handled by the next slice. (A single candidate whose
+/// own cyclic subgraph is large is still traced in full within its slice -
+/// bounding one trial-deletion trace mid-flight would require a concurrent
+/// collector, which the zero-pause policy rules out.) Explicit
+/// `runtime::collect_cycles()` ignores this and fully drains.
+const COLLECT_SLICE_ROOTS: usize = 2_048;
 
 thread_local! {
     /// Candidate roots: objects whose strong count was decremented to a
@@ -494,6 +562,13 @@ thread_local! {
     /// buffering needs no lock on the release hot path; the collector runs
     /// on the same thread over its own candidates.
     static ROOTS: std::cell::RefCell<Vec<*mut u8>> = const { std::cell::RefCell::new(Vec::new()) };
+    /// Adaptive arming threshold for automatic collection on this thread.
+    /// Doubles (capped at `COLLECT_THRESHOLD_MAX`) after a slice that
+    /// reclaimed little, and snaps back to `COLLECT_THRESHOLD_BASE` after a
+    /// productive slice. This is what stops a live-DAG workload from paying a
+    /// scan every `COLLECT_THRESHOLD_BASE` surviving decrements.
+    static COLLECT_THRESHOLD: std::cell::Cell<usize> =
+        const { std::cell::Cell::new(COLLECT_THRESHOLD_BASE) };
 }
 
 /// Total cyclic objects reclaimed by the collector. Diagnostic / test hook.
@@ -532,10 +607,12 @@ unsafe fn possible_root(payload: *mut u8) {
     let over = ROOTS.with(|r| {
         let mut roots = r.borrow_mut();
         roots.push(payload);
-        roots.len() >= DEFAULT_COLLECT_THRESHOLD
+        roots.len() >= COLLECT_THRESHOLD.with(std::cell::Cell::get)
     });
     if over {
-        unsafe { collect_cycles() };
+        // Automatic collection processes a bounded slice and adapts the
+        // threshold; it never drains the whole buffer in one inline pass.
+        unsafe { collect_cycles_budgeted(Some(COLLECT_SLICE_ROOTS)) };
     }
 }
 
@@ -1260,6 +1337,32 @@ pub extern "C" fn gos_rt_arena_pop() {
 /// carries counts; the disc bits still live in the pointer).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_rc_alloc_tagged(size: u64, meta: *const i64) -> *mut u8 {
+    // Hot path: bump within the innermost region's current slab touching only
+    // the BUMP thread-local. `BUMP.base` is null whenever no region holds a
+    // slab (every `arena_pop` restores it), so a hit unambiguously means
+    // "a region is active and has room" - no separate `REGION_DEPTH` probe is
+    // needed on the allocation-heavy path. Tagged region nodes are headerless,
+    // unzeroed (the constructor stores every slot), and not `RC_LIVE`-counted,
+    // matching the prior `region_alloc_inner_unzeroed(.., false)`.
+    let need = (size as usize + RC_ALIGN - 1) & !(RC_ALIGN - 1);
+    let hit = BUMP.with(|b| {
+        let st = b.get();
+        if !st.base.is_null() && st.cur + need <= st.end {
+            let p = unsafe { st.base.add(st.cur) };
+            b.set(BumpState {
+                cur: st.cur + need,
+                ..st
+            });
+            Some(p)
+        } else {
+            None
+        }
+    });
+    if let Some(p) = hit {
+        return p;
+    }
+    // Miss: a region is active but its current slab is full / not yet acquired,
+    // or no region is active at all. Disambiguate with the depth probe only now.
     if region_active() {
         let p = region_alloc_inner_unzeroed(size as usize, false);
         if !p.is_null() {
@@ -1580,6 +1683,132 @@ unsafe fn try_reclaim(payload: *mut u8) {
     }
 }
 
+/// Usable byte capacity of an RC block (header + payload), recovered from the
+/// allocator. Used by the reuse path to confirm a recycled block is large
+/// enough before re-homing a constructor into it.
+#[inline]
+unsafe fn rc_block_usable_size(base: *mut u8) -> usize {
+    #[cfg(not(any(tsan, miri, fuzzing, target_arch = "wasm32")))]
+    {
+        unsafe { libmimalloc_sys::mi_usable_size(base.cast()) }
+    }
+    #[cfg(any(tsan, miri, fuzzing, target_arch = "wasm32"))]
+    {
+        tsan_sizes()
+            .lock()
+            .get(&(base as usize))
+            .copied()
+            .unwrap_or(0)
+    }
+}
+
+/// Release the RC-pointer children named by `payload`'s header meta (string
+/// children freed through the string path, RC-node children released, each
+/// cascading through its own iterative release). Used by the reuse path, which
+/// keeps the parent block alive for recycling but must still drop its children
+/// exactly as a normal release would.
+unsafe fn release_rc_children(payload: *mut u8) {
+    let meta = unsafe { meta_of(header_ptr(payload)) };
+    if meta.is_null() {
+        return;
+    }
+    unsafe {
+        visit_children_raw(payload, |c| {
+            if crate::c_abi::string::is_gos_string(c.cast()) {
+                crate::c_abi::string::gos_rt_str_free(c.cast());
+            } else {
+                gos_rt_rc_release(c);
+            }
+        });
+    }
+}
+
+/// Perceus reuse (the `drop` half): like [`gos_rt_rc_release`], but when
+/// `payload` is the unique last owner of a thread-local, non-region, weak-free,
+/// unbuffered block, its RC children are released and the bare block base is
+/// RETURNED for in-place reuse by a same-size constructor
+/// ([`gos_rt_rc_alloc_reuse`]) instead of being freed. Returns null in every
+/// other case (survived a decrement, escaped to a goroutine, region-allocated,
+/// weak-pinned, buffered as a cycle candidate, or a string), having performed
+/// the normal release.
+///
+/// A returned block is neither freed nor `RC_LIVE`-decremented: the paired
+/// `alloc_reuse` re-homes the same live slot. The caller MUST pass a non-null
+/// token to `gos_rt_rc_alloc_reuse` on every path or the block leaks - the MIR
+/// reuse pass only emits the pair when the constructor unconditionally follows.
+/// Null-safe.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_rc_drop_reuse(payload: *mut u8) -> *mut u8 {
+    let payload = untag_rc(payload);
+    if payload.is_null() || unsafe { in_region_arena(payload) } {
+        return std::ptr::null_mut();
+    }
+    if unsafe { crate::c_abi::string::is_gos_string(payload.cast()) } {
+        unsafe { crate::c_abi::string::gos_rt_str_free(payload.cast()) };
+        return std::ptr::null_mut();
+    }
+    let h = unsafe { header_ptr(payload) };
+    let d = unsafe { dec_strong(h) };
+    if d.skip {
+        return std::ptr::null_mut();
+    }
+    if d.next != 0 {
+        if !d.shared {
+            unsafe { possible_root(payload) };
+        }
+        return std::ptr::null_mut();
+    }
+    if d.shared {
+        fence(Ordering::Acquire);
+    }
+    unsafe { set_color(h, COLOR_BLACK) };
+    unsafe { release_rc_children(payload) };
+    // Reuse only a thread-local, weak-free, unbuffered block; anything else is
+    // reclaimed normally (try_reclaim frees iff unpinned).
+    if !d.shared && unsafe { (*h).weak.load(Ordering::Relaxed) } == 0 && !unsafe { is_buffered(h) }
+    {
+        return h as *mut u8;
+    }
+    unsafe { try_reclaim(payload) };
+    std::ptr::null_mut()
+}
+
+/// Perceus reuse (the `alloc` half): allocate by reusing a block returned from
+/// [`gos_rt_rc_drop_reuse`], or fall back to a fresh allocation when the token
+/// is null or unsuitable. On reuse the header is reset (strong 1, no weak, disc
+/// 0, the given `meta`) and the payload zeroed, leaving the block identical to
+/// a fresh [`gos_rt_rc_alloc`]. An active region (the new object must be
+/// bump-allocated and bulk-freed), or a token too small for `size`, frees the
+/// token and allocates fresh.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_rc_alloc_reuse(
+    token: *mut u8,
+    size: u64,
+    meta: *const i64,
+) -> *mut u8 {
+    if token.is_null() {
+        return unsafe { gos_rt_rc_alloc(size, meta) };
+    }
+    let total = (size as usize).saturating_add(RC_HEADER_SIZE);
+    if region_active() || unsafe { rc_block_usable_size(token) } < total {
+        // Free the recycled block (its children are already released) and make
+        // a fresh allocation. `free_block` takes a payload pointer.
+        unsafe { free_block(token.add(RC_HEADER_SIZE)) };
+        return unsafe { gos_rt_rc_alloc(size, meta) };
+    }
+    let h = token as *mut RcHeader;
+    unsafe {
+        (*h).strong = 1;
+        (*h).weak = AtomicU8::new(0);
+        (*h).disc = 0;
+        (*h).meta_id = meta_intern(meta);
+    }
+    let payload = unsafe { token.add(RC_HEADER_SIZE) };
+    unsafe { std::ptr::write_bytes(payload, 0, size as usize) };
+    rc_reuse_inc();
+    payload
+}
+
 /// Iterative release: maintain an explicit worklist of payloads whose
 /// strong count must be decremented. When a count reaches zero, release its
 /// RC-pointer children and reclaim the block. A non-zero result may be a
@@ -1779,6 +2008,12 @@ unsafe fn free_block(payload: *mut u8) {
     if !meta.is_null() && unsafe { *meta } == RC_KIND_STRUCT_GUARDED {
         copy_blob_remove(payload);
     }
+    if unsafe { load_strong(h) } & SHARED_BIT != 0 {
+        // A shared object is being reclaimed: keep the live-shared diagnostic
+        // count in step. (A shared cycle never reaches here, which is exactly
+        // what the non-zero exit count surfaces.)
+        rc_shared_dec();
+    }
     let base = h as *mut u8;
     rc_live_dec();
     // Straight back to mimalloc - see `gos_rt_rc_alloc` for why a custom
@@ -1805,19 +2040,45 @@ unsafe fn free_block(payload: *mut u8) {
 // leaves foreign pointers untouched - an unknown pointer can be leaked,
 // never corrupted. Entries are removed exactly at `free_block`, so a
 // reused address can never inherit stale membership.
-static COPY_BLOBS: std::sync::LazyLock<parking_lot::Mutex<std::collections::HashSet<usize>>> =
-    std::sync::LazyLock::new(|| parking_lot::Mutex::new(std::collections::HashSet::new()));
+/// Number of `COPY_BLOBS` shards. The provenance set is touched on every
+/// guarded-struct alloc / free / retain / release; a single global lock
+/// serialised all of those across every goroutine. Sharding by address spreads
+/// the traffic so unrelated guarded objects on different goroutines do not
+/// contend. Power of two for a mask instead of a modulo.
+const COPY_BLOB_SHARDS: usize = 64;
+
+/// Provenance set of guarded copy-blob addresses, sharded by address. A
+/// guarded payload word can hold a pointer this system did not allocate (a
+/// map-get result, an interior borrow, a construction-allocated aggregate),
+/// and such a pointer may have no `RcHeader` to inspect, so membership cannot
+/// be recovered from the object itself - the side table is the soundness
+/// backstop. Entries are removed exactly at `free_block`, so a reused address
+/// never inherits stale membership.
+static COPY_BLOBS: std::sync::LazyLock<
+    [parking_lot::Mutex<std::collections::HashSet<usize>>; COPY_BLOB_SHARDS],
+> = std::sync::LazyLock::new(|| {
+    std::array::from_fn(|_| parking_lot::Mutex::new(std::collections::HashSet::new()))
+});
+
+/// Shard index for an address. Pointers are at least 16-byte aligned, so the
+/// low bits carry no entropy; bits 4.. spread allocations across shards.
+#[inline]
+fn copy_blob_shard(p: *mut u8) -> usize {
+    ((p as usize) >> 4) & (COPY_BLOB_SHARDS - 1)
+}
 
 fn copy_blob_register(p: *mut u8) {
-    COPY_BLOBS.lock().insert(p as usize);
+    COPY_BLOBS[copy_blob_shard(p)].lock().insert(p as usize);
 }
 
 fn copy_blob_contains(p: *mut u8) -> bool {
-    COPY_BLOBS.lock().contains(&(p as usize))
+    COPY_BLOBS[copy_blob_shard(p)]
+        .lock()
+        .contains(&(p as usize))
 }
 
 fn copy_blob_remove(p: *mut u8) {
-    COPY_BLOBS.lock().remove(&(p as usize));
+    COPY_BLOBS[copy_blob_shard(p)].lock().remove(&(p as usize));
 }
 
 /// Walk the `(disc_word, payload_word)` pairs of an `RC_KIND_STRUCT_GUARDED`
@@ -2115,13 +2376,22 @@ unsafe fn scan_black(root: *mut u8) {
 /// CollectWhite: free the confirmed garbage cycle. White nodes are gathered
 /// (repainting black to dedupe), then their allocations reclaimed - unless a
 /// weak reference still pins one, in which case the payload is already dead
-/// and the block lingers for the last weak release.
-unsafe fn collect_white(root: *mut u8) {
+/// and the block lingers for the last weak release. Each reclaimed payload is
+/// appended to `freed` so a bounded (sliced) collection can drop it from the
+/// still-buffered candidate set before any later slice dereferences it.
+///
+/// White is a definitive verdict (scan proved zero external references), so a
+/// white node is freed regardless of its buffered bit. In a full drain no
+/// white node is ever still buffered (every candidate's bit is cleared before
+/// CollectWhite runs), so the buffered case only arises when a garbage
+/// component straddles the slice boundary - its leftover member is freed here
+/// and removed from the buffer by the caller's reconciliation.
+unsafe fn collect_white(root: *mut u8, freed: &mut Vec<*mut u8>) {
     let mut stack = vec![root];
     let mut to_free: Vec<*mut u8> = Vec::new();
     while let Some(s) = stack.pop() {
         let h = unsafe { header_ptr(s) };
-        if unsafe { color_of(h) } != COLOR_WHITE || unsafe { is_buffered(h) } {
+        if unsafe { color_of(h) } != COLOR_WHITE {
             continue;
         }
         unsafe { set_color(h, COLOR_BLACK) };
@@ -2140,25 +2410,48 @@ unsafe fn collect_white(root: *mut u8) {
     }
     for s in to_free {
         let h = unsafe { header_ptr(s) };
-        if unsafe { strong_count(h) } == 0
-            && unsafe { (*h).weak.load(Ordering::Relaxed) } == 0
-            && !unsafe { is_buffered(h) }
-        {
+        if unsafe { strong_count(h) } == 0 && unsafe { (*h).weak.load(Ordering::Relaxed) } == 0 {
             CYCLES_FREED.fetch_add(1, Ordering::Relaxed);
+            freed.push(s);
             unsafe { free_block(s) };
         }
     }
 }
 
-/// Run one synchronous trial-deletion collection over the current candidate
-/// buffer. Reclaims unreachable cyclic RC garbage; live data and acyclic
-/// garbage are untouched. Cost is proportional to the subgraph reachable
-/// from the candidates, not the whole heap.
+/// Run a synchronous trial-deletion collection over the candidate buffer.
+/// Reclaims unreachable cyclic RC garbage; live data and acyclic garbage are
+/// untouched. Cost is proportional to the subgraph reachable from the
+/// processed candidates, not the whole heap. Full drain (`budget = None`),
+/// used by the explicit `runtime::collect_cycles()`.
 unsafe fn collect_cycles() {
-    let roots: Vec<*mut u8> = ROOTS.with(|r| std::mem::take(&mut *r.borrow_mut()));
+    unsafe { collect_cycles_budgeted(None) };
+}
+
+/// Trial-deletion collection bounded to at most `budget` candidate roots per
+/// call (`None` = drain everything). Bounding keeps an automatic collection
+/// from traversing an unbounded number of independent candidate subgraphs
+/// inline; leftover candidates remain buffered for the next slice. When a
+/// budget is given, the adaptive `COLLECT_THRESHOLD` is updated from how much
+/// this slice reclaimed - little garbage backs the threshold off, productive
+/// slices snap it back to the base.
+unsafe fn collect_cycles_budgeted(budget: Option<usize>) {
+    let roots: Vec<*mut u8> = ROOTS.with(|r| {
+        let mut buf = r.borrow_mut();
+        let len = buf.len();
+        match budget {
+            // Take a tail slice, leaving earlier candidates buffered. The
+            // front is exactly the state the buffer would hold had those
+            // releases not yet crossed the threshold, so slicing is
+            // equivalent to a not-yet-fired smaller buffer - sound.
+            Some(n) if n < len => buf.split_off(len - n),
+            _ => std::mem::take(&mut *buf),
+        }
+    });
     if roots.is_empty() {
         return;
     }
+    let candidates = roots.len();
+    let freed_before = CYCLES_FREED.load(Ordering::Relaxed);
     // MarkRoots: trace gray from each still-purple candidate; drop stale
     // candidates (revived to black, or already dead awaiting free).
     let mut scan_roots: Vec<*mut u8> = Vec::new();
@@ -2190,17 +2483,48 @@ unsafe fn collect_cycles() {
     for &s in &scan_roots {
         unsafe { scan(s) };
     }
+    let mut freed_nodes: Vec<*mut u8> = Vec::new();
     for s in scan_roots {
         let h = unsafe { header_ptr(s) };
         unsafe { set_buffered(h, false) };
         if unsafe { color_of(h) } == COLOR_WHITE {
-            unsafe { collect_white(s) };
+            unsafe { collect_white(s, &mut freed_nodes) };
         }
     }
     // Reclaim the dead leftovers last: count 0 means nothing references them,
     // so no MarkGray traversal touched them.
     for s in dead {
         unsafe { try_reclaim(s) };
+    }
+    // Reconciliation: a garbage component reachable from this slice may include
+    // members still sitting in the leftover candidate buffer (collected here as
+    // part of the component). Drop their now-dangling pointers from the buffer
+    // so a later slice never dereferences freed memory. Only a bounded slice
+    // can leave a non-empty buffer; a full drain emptied it up front, so the
+    // retain is a cheap no-op there.
+    if !freed_nodes.is_empty() {
+        let dropped: std::collections::HashSet<usize> =
+            freed_nodes.iter().map(|p| *p as usize).collect();
+        ROOTS.with(|r| {
+            r.borrow_mut().retain(|p| !dropped.contains(&(*p as usize)));
+        });
+    }
+    // Adapt the automatic arming threshold by this slice's yield. An explicit
+    // full drain (budget None) does not perturb it.
+    if budget.is_some() {
+        let freed = CYCLES_FREED
+            .load(Ordering::Relaxed)
+            .wrapping_sub(freed_before);
+        COLLECT_THRESHOLD.with(|t| {
+            // Reclaimed under 1/8 of the candidates scanned: a mostly-live
+            // candidate graph, so double the threshold (capped) to stop
+            // rescanning it. Otherwise reset to the eager base.
+            if freed.saturating_mul(8) < candidates {
+                t.set(t.get().saturating_mul(2).min(COLLECT_THRESHOLD_MAX));
+            } else {
+                t.set(COLLECT_THRESHOLD_BASE);
+            }
+        });
     }
 }
 
@@ -2379,6 +2703,185 @@ mod tests {
             gos_rt_rc_release(a);
             let buffered = ROOTS.with(|r| r.borrow().len());
             assert_eq!(buffered, 0, "unique-ownership drop must not buffer");
+        }
+    }
+
+    #[test]
+    fn budgeted_collection_processes_a_slice_and_leaves_the_rest() {
+        let _g = count_guard();
+        fresh_cycle_state();
+        let base = rc_live_count();
+        let freed_base = rc_cycles_freed();
+        let meta = node_meta();
+        unsafe {
+            // Five independent two-node cycles -> ten buffered candidates.
+            for _ in 0..5 {
+                let a = gos_rt_rc_alloc(16, meta.as_ptr());
+                let b = gos_rt_rc_alloc(16, meta.as_ptr());
+                link(a, b);
+                link(b, a);
+                gos_rt_rc_release(a);
+                gos_rt_rc_release(b);
+            }
+            assert_eq!(
+                rc_live_count(),
+                base + 10,
+                "five cycles leak under plain RC"
+            );
+            assert_eq!(
+                ROOTS.with(|r| r.borrow().len()),
+                10,
+                "ten candidates buffered"
+            );
+
+            // A bounded slice of four candidates reclaims exactly the two
+            // cycles it covers and leaves the other six buffered.
+            collect_cycles_budgeted(Some(4));
+            assert_eq!(rc_cycles_freed(), freed_base + 4, "slice frees its 4 nodes");
+            assert_eq!(rc_live_count(), base + 6, "six nodes still live");
+            assert_eq!(ROOTS.with(|r| r.borrow().len()), 6, "six candidates remain");
+
+            // An explicit full collection drains everything that is left.
+            gos_rt_collect_cycles();
+            assert_eq!(rc_live_count(), base, "remaining cycles reclaimed");
+            assert_eq!(ROOTS.with(|r| r.borrow().len()), 0, "buffer drained");
+        }
+    }
+
+    #[test]
+    fn budgeted_slices_eventually_collect_all_cycles() {
+        let _g = count_guard();
+        fresh_cycle_state();
+        let base = rc_live_count();
+        let meta = node_meta();
+        unsafe {
+            for _ in 0..8 {
+                let a = gos_rt_rc_alloc(16, meta.as_ptr());
+                let b = gos_rt_rc_alloc(16, meta.as_ptr());
+                link(a, b);
+                link(b, a);
+                gos_rt_rc_release(a);
+                gos_rt_rc_release(b);
+            }
+            // Repeated small slices reclaim the whole backlog with no leftover.
+            let mut guard = 0;
+            while ROOTS.with(|r| !r.borrow().is_empty()) {
+                collect_cycles_budgeted(Some(3));
+                guard += 1;
+                assert!(
+                    guard < 100,
+                    "slices must drain the buffer, not loop forever"
+                );
+            }
+            assert_eq!(rc_live_count(), base, "all 8 cycles reclaimed via slices");
+        }
+    }
+
+    #[test]
+    fn drop_reuse_recycles_unique_block_in_place() {
+        let _g = count_guard();
+        fresh_cycle_state();
+        let base = rc_live_count();
+        let meta = node_meta();
+        unsafe {
+            // A uniquely-owned leaf: drop_reuse hands back its block.
+            let a = gos_rt_rc_alloc(16, meta.as_ptr());
+            let block = gos_rt_rc_drop_reuse(a);
+            assert!(!block.is_null(), "unique block is offered for reuse");
+            assert_eq!(
+                rc_live_count(),
+                base + 1,
+                "reuse keeps the slot live (no free)"
+            );
+            // alloc_reuse re-homes the SAME block (same address, reset header).
+            let b = gos_rt_rc_alloc_reuse(block, 16, meta.as_ptr());
+            assert_eq!(b, a, "reuse returns the recycled block, no new allocation");
+            assert_eq!(strong_of(b), 1, "reused block starts at strong 1");
+            assert_eq!(rc_live_count(), base + 1, "still exactly one live object");
+            gos_rt_rc_release(b);
+            assert_eq!(rc_live_count(), base, "released after reuse");
+        }
+    }
+
+    #[test]
+    fn drop_reuse_declines_shared_object() {
+        let _g = count_guard();
+        fresh_cycle_state();
+        let base = rc_live_count();
+        let meta = node_meta();
+        unsafe {
+            let a = gos_rt_rc_alloc(16, meta.as_ptr());
+            // Mark shared (escaped to a goroutine): must NOT be reused.
+            gos_rt_rc_mark_shared(a);
+            let block = gos_rt_rc_drop_reuse(a);
+            assert!(
+                block.is_null(),
+                "shared object is freed normally, never reused"
+            );
+            assert_eq!(rc_live_count(), base, "shared drop frees the block");
+        }
+    }
+
+    #[test]
+    fn drop_reuse_releases_children_then_recycles_parent() {
+        let _g = count_guard();
+        fresh_cycle_state();
+        let base = rc_live_count();
+        let meta = node_meta();
+        unsafe {
+            // parent uniquely owns child via word 1.
+            let child = gos_rt_rc_alloc(16, meta.as_ptr());
+            let parent = gos_rt_rc_alloc(16, meta.as_ptr());
+            move_child(parent, child);
+            assert_eq!(rc_live_count(), base + 2);
+            // Reusing parent must free the child (cascade) but keep parent's block.
+            let block = gos_rt_rc_drop_reuse(parent);
+            assert_eq!(
+                block,
+                header_ptr(parent) as *mut u8,
+                "parent block returned"
+            );
+            assert_eq!(rc_live_count(), base + 1, "child freed, parent slot kept");
+            let fresh = gos_rt_rc_alloc_reuse(block, 16, meta.as_ptr());
+            assert_eq!(fresh, parent, "parent block reused");
+            gos_rt_rc_release(fresh);
+            assert_eq!(rc_live_count(), base, "all reclaimed");
+        }
+    }
+
+    #[test]
+    fn alloc_reuse_null_token_allocates_fresh() {
+        let _g = count_guard();
+        fresh_cycle_state();
+        let base = rc_live_count();
+        let meta = node_meta();
+        unsafe {
+            let p = gos_rt_rc_alloc_reuse(std::ptr::null_mut(), 16, meta.as_ptr());
+            assert!(!p.is_null());
+            assert_eq!(rc_live_count(), base + 1, "null token allocates fresh");
+            gos_rt_rc_release(p);
+            assert_eq!(rc_live_count(), base);
+        }
+    }
+
+    #[test]
+    fn drop_reuse_declines_aliased_object() {
+        let _g = count_guard();
+        fresh_cycle_state();
+        let base = rc_live_count();
+        let meta = node_meta();
+        unsafe {
+            let a = gos_rt_rc_alloc(16, meta.as_ptr());
+            gos_rt_rc_retain(a); // a second owner: not unique
+            let block = gos_rt_rc_drop_reuse(a);
+            assert!(block.is_null(), "still-referenced object is not reused");
+            assert_eq!(
+                rc_live_count(),
+                base + 1,
+                "object survives (one owner left)"
+            );
+            gos_rt_rc_release(a);
+            assert_eq!(rc_live_count(), base);
         }
     }
 

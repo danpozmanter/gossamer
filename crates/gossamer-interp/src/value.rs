@@ -135,6 +135,127 @@ pub enum Value {
     Void,
 }
 
+/// Iteratively reclaim a tree of owned child `Value`s with an explicit
+/// worklist, so a depth-N recursive aggregate (linked list, tree, graph) tears
+/// down in O(N) heap and O(1) native stack instead of overflowing the host
+/// stack through nested `Arc` drop glue. Seeded by the `Drop` impls of the
+/// recursive aggregate payloads ([`VariantInner`] / [`StructInner`]); once
+/// teardown enters through one of those, the whole reachable owned-`Value`
+/// subgraph is dismantled here.
+///
+/// For each popped value that uniquely owns children, the children are moved
+/// onto the worklist and the now-childless shell drops shallowly. A
+/// still-shared payload (`try_unwrap` returns `Err`) is just dereferenced. The
+/// `Drop`-implementing payloads (`Variant`/`Struct`) are emptied with
+/// `mem::take` rather than a field move, which a `Drop` type forbids; the
+/// nested drop of the emptied shell re-enters this routine with nothing to do,
+/// so the native recursion stays at most one frame deep.
+///
+/// Aggregate map *keys* (`MapKey::Agg`) keep their own drop glue: a deeply
+/// nested aggregate used as a map key is neither a `Value` chain nor an
+/// idiomatic shape, so it is out of scope here.
+fn dismantle_children(mut stack: Vec<Value>) {
+    while let Some(v) = stack.pop() {
+        match v {
+            Value::Variant(a) => {
+                if let Ok(mut inner) = Arc::try_unwrap(a) {
+                    stack.extend(std::mem::take(&mut inner.fields));
+                }
+            }
+            Value::Struct(a) => {
+                if let Ok(mut inner) = Arc::try_unwrap(a) {
+                    let fields = std::mem::take(&mut inner.fields);
+                    stack.extend(fields.into_vec().into_iter().map(|(_, val)| val));
+                }
+            }
+            Value::Tuple(a) | Value::Array(a) => {
+                if let Ok(vec) = Arc::try_unwrap(a) {
+                    stack.extend(vec);
+                }
+            }
+            Value::Closure(a) => {
+                if let Ok(inner) = Arc::try_unwrap(a) {
+                    stack.extend(inner.capture_values);
+                }
+            }
+            Value::Map(a) => {
+                if let Ok(m) = Arc::try_unwrap(a) {
+                    stack.extend(m.into_inner().into_values());
+                }
+            }
+            Value::MutCell(a) => {
+                if let Ok(m) = Arc::try_unwrap(a) {
+                    stack.push(m.into_inner());
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Native-stack recursion depth below which recursive aggregate teardown is
+/// left to drop directly (cheap, allocation-free). At or above it a payload
+/// switches to the iterative [`dismantle_children`] worklist, bounding the host
+/// stack so a deep chain cannot overflow it. Comfortably below any thread's
+/// stack budget while keeping the common shallow case off the worklist.
+const DROP_RECURSION_LIMIT: u32 = 512;
+
+thread_local! {
+    /// Current recursive-drop nesting depth for the aggregate payloads on this
+    /// thread. Read once per `VariantInner` / `StructInner` drop to decide
+    /// recurse-vs-iterate; never observed by user code.
+    static DROP_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+/// RAII restore of [`DROP_DEPTH`], so the depth is correct even if a nested
+/// drop unwinds.
+struct DropDepthGuard(u32);
+
+impl Drop for DropDepthGuard {
+    fn drop(&mut self) {
+        DROP_DEPTH.with(|d| d.set(self.0));
+    }
+}
+
+impl Drop for VariantInner {
+    fn drop(&mut self) {
+        if self.fields.is_empty() {
+            return;
+        }
+        let depth = DROP_DEPTH.with(std::cell::Cell::get);
+        if depth >= DROP_RECURSION_LIMIT {
+            // Deep: flatten the remaining subgraph iteratively. `mem::take`
+            // leaves the shell empty so its post-return field drop is a no-op,
+            // and the worklist's own emptied shells re-enter as no-ops.
+            dismantle_children(std::mem::take(&mut self.fields).into_vec());
+            return;
+        }
+        // Shallow: take the fields (alloc-free for the inline arity) and drop
+        // them ourselves with the depth raised, so a long chain trips the
+        // iterative path before it can overflow the host stack.
+        DROP_DEPTH.with(|d| d.set(depth + 1));
+        let _guard = DropDepthGuard(depth);
+        drop(std::mem::take(&mut self.fields));
+    }
+}
+
+impl Drop for StructInner {
+    fn drop(&mut self) {
+        if self.fields.is_empty() {
+            return;
+        }
+        let depth = DROP_DEPTH.with(std::cell::Cell::get);
+        if depth >= DROP_RECURSION_LIMIT {
+            let fields = std::mem::take(&mut self.fields);
+            dismantle_children(fields.into_vec().into_iter().map(|(_, v)| v).collect());
+            return;
+        }
+        DROP_DEPTH.with(|d| d.set(depth + 1));
+        let _guard = DropDepthGuard(depth);
+        drop(std::mem::take(&mut self.fields));
+    }
+}
+
 /// Type-erased weak handle backing [`Value::Weak`]. Each arm holds a
 /// `std::sync::Weak` to the corresponding heap variant's `Arc`, so
 /// upgrading reconstructs the original `Value` shape when the referent
@@ -1813,5 +1934,67 @@ mod mapkey_size_tests {
     #[test]
     fn mapkey_is_two_words() {
         assert_eq!(std::mem::size_of::<MapKey>(), 16);
+    }
+}
+
+#[cfg(test)]
+mod deep_drop_tests {
+    use super::{StructInner, Value, VariantInner};
+    use smallvec::SmallVec;
+    use std::sync::Arc;
+
+    // A chain far deeper than the native stack could hold recursive drop
+    // frames. The structures are built iteratively (construction was never the
+    // problem) and dropped at the end of each test; before the iterative
+    // teardown these drops overflowed the default test-thread stack.
+    const DEPTH: usize = 1_000_000;
+
+    #[test]
+    fn deep_variant_chain_drops_without_stack_overflow() {
+        let mut v = Value::Variant(Arc::new(VariantInner {
+            name: "Nil",
+            fields: SmallVec::new(),
+        }));
+        for _ in 0..DEPTH {
+            let mut fields: SmallVec<[Value; 2]> = SmallVec::new();
+            fields.push(Value::Int(0));
+            fields.push(v);
+            v = Value::Variant(Arc::new(VariantInner {
+                name: "Cons",
+                fields,
+            }));
+        }
+        drop(v);
+    }
+
+    #[test]
+    fn deep_struct_chain_drops_without_stack_overflow() {
+        let mut v = Value::Unit;
+        for _ in 0..DEPTH {
+            let fields: Box<[(&'static str, Value)]> = Box::new([("next", v)]);
+            v = Value::Struct(Arc::new(StructInner {
+                name: "Link",
+                fields,
+            }));
+        }
+        drop(v);
+    }
+
+    #[test]
+    fn deep_array_nested_in_variant_drops_iteratively() {
+        // A Variant whose child is an Array whose child is a Variant ...: the
+        // mixed chain must flatten through the worklist once teardown enters
+        // via the Variant payload.
+        let mut v = Value::Unit;
+        for _ in 0..DEPTH {
+            let arr = Value::Array(Arc::new(vec![v]));
+            let mut fields: SmallVec<[Value; 2]> = SmallVec::new();
+            fields.push(arr);
+            v = Value::Variant(Arc::new(VariantInner {
+                name: "Wrap",
+                fields,
+            }));
+        }
+        drop(v);
     }
 }

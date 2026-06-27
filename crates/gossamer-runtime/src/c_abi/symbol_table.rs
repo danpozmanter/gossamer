@@ -1549,6 +1549,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             "gos_rt_intarr_slice_result",
             crate::c_abi::gos_rt_intarr_slice_result as *const u8,
         ),
+        (
+            "gos_rt_bytearr_slice_result",
+            crate::c_abi::gos_rt_bytearr_slice_result as *const u8,
+        ),
         ("gos_rt_io_copy", crate::c_abi::gos_rt_io_copy as *const u8),
         (
             "gos_rt_io_read_all",
@@ -2825,6 +2829,14 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
         (
             "gos_rt_rc_alloc_copy",
             crate::c_abi::rc::gos_rt_rc_alloc_copy as *const u8,
+        ),
+        (
+            "gos_rt_rc_alloc_reuse",
+            crate::c_abi::rc::gos_rt_rc_alloc_reuse as *const u8,
+        ),
+        (
+            "gos_rt_rc_drop_reuse",
+            crate::c_abi::rc::gos_rt_rc_drop_reuse as *const u8,
         ),
         (
             "gos_rt_aggr_release_children",

@@ -9,9 +9,11 @@ use std::collections::HashMap;
 
 use gossamer_types::{TyCtxt, TyKind};
 
+use gossamer_types::Ty;
+
 use crate::ir::{
-    BasicBlock, BinOp, BlockId, Body, ConstValue, Local, Operand, Place, Projection, Rvalue,
-    Statement, StatementKind, Terminator,
+    BasicBlock, BinOp, BlockId, Body, ConstValue, Local, LocalDecl, Operand, Place, Projection,
+    Rvalue, Statement, StatementKind, Terminator,
 };
 
 /// Returns `false` when `GOSSAMER_INLINE=0` (or `false`) is set. Lets
@@ -788,6 +790,220 @@ fn remap_rvalue_full(rv: &Rvalue, remap: &impl Fn(Local) -> Local) -> Rvalue {
         },
         // No local operands to remap; the static is referenced by symbol.
         Rvalue::StaticLoad(_) => rv.clone(),
+    }
+}
+
+/// If `stmt` is a whole-local `gos_rt_rc_release(S)` call, return `S`.
+fn whole_release_local(stmt: &Statement) -> Option<Local> {
+    let StatementKind::Assign {
+        rvalue: Rvalue::CallIntrinsic { name, args },
+        ..
+    } = &stmt.kind
+    else {
+        return None;
+    };
+    if *name != "gos_rt_rc_release" || args.len() != 1 {
+        return None;
+    }
+    match &args[0] {
+        Operand::Copy(p) if p.projection.is_empty() => Some(p.local),
+        _ => None,
+    }
+}
+
+/// If `stmt` is `D = gos_rc_alloc(size, meta)` / `gos_rc_alloc_tagged(...)` to a
+/// plain local, return `D`. Both lower to a header-ed payload whose
+/// discriminant is applied by a later `gos_enum_set_disc` / `gos_enum_tag`
+/// statement (untouched by the rewrite), so one reuse intrinsic serves both: a
+/// reused or freshly-allocated block is filled and tagged identically.
+fn rc_alloc_dest(stmt: &Statement) -> Option<Local> {
+    let StatementKind::Assign {
+        place,
+        rvalue: Rvalue::CallIntrinsic { name, args },
+    } = &stmt.kind
+    else {
+        return None;
+    };
+    if !matches!(*name, "gos_rc_alloc" | "gos_rc_alloc_tagged")
+        || args.len() != 2
+        || !place.projection.is_empty()
+    {
+        return None;
+    }
+    Some(place.local)
+}
+
+/// Perceus reuse pairing (`GOS_RC_NO_REUSE` disables it). Within a block, pair a
+/// whole-local `gos_rt_rc_release(S)` with a later same-type
+/// `D = gos_rc_alloc(size, meta)` constructor and rewrite the pair so S's block
+/// is recycled in place:
+///
+/// ```text
+///   gos_rt_rc_release(S)            token = gos_rt_rc_drop_reuse(S)
+///   ...                       =>    ...
+///   D = gos_rc_alloc(sz, m)         D = gos_rc_alloc_reuse(token, sz, m)
+/// ```
+///
+/// Sound by construction: `gos_rt_rc_drop_reuse` does exactly what
+/// `gos_rt_rc_release` does to S and its children (releasing them, cascading),
+/// and only RETURNS S's block instead of freeing it - and only when S is the
+/// unique thread-local, weak-free, unbuffered owner; otherwise it frees
+/// normally and returns null, so `gos_rc_alloc_reuse` falls back to a fresh
+/// allocation. A mis-pairing can therefore never corrupt, only forgo the reuse.
+/// The pairing requires S unreferenced between the release and the constructor
+/// (so the release simply moves to a drop-reuse at the constructor) and S dead
+/// afterwards (guaranteed: the drop pass releases at last use). Covers both the
+/// header-discriminant (`gos_rc_alloc`) and tagged (`gos_rc_alloc_tagged`)
+/// enum constructors - the discriminant is applied by a separate later
+/// statement, so one reuse intrinsic serves both. Region objects are skipped at
+/// runtime (`drop_reuse` returns null for them). Compiled-tier only - the
+/// bytecode VM never consumes this MIR.
+// `ri` indexes both `used_release` and the block's statements and feeds
+// `pairs`, so an index loop is the clear form here, not an iterator.
+#[allow(clippy::needless_range_loop)]
+// A cohesive three-phase pass (find pairs / mint tokens / rebuild block); it
+// reads most clearly as one function.
+#[allow(clippy::too_many_lines)]
+pub(crate) fn insert_rc_reuse(body: &mut Body, tcx: &TyCtxt) {
+    for bi in 0..body.blocks.len() {
+        let n = body.blocks[bi].stmts.len();
+        if n < 2 {
+            continue;
+        }
+        // Phase A (read-only): find (release_idx, ctor_idx, S, type) pairs.
+        let mut used_release = vec![false; n];
+        let mut pairs: Vec<(usize, usize, Local, Ty)> = Vec::new();
+        for ci in 0..n {
+            let Some(d_local) = rc_alloc_dest(&body.blocks[bi].stmts[ci]) else {
+                continue;
+            };
+            if (d_local.0 as usize) >= body.locals.len() {
+                continue;
+            }
+            let dty = body.locals[d_local.0 as usize].ty;
+            if !tcx.is_rc_managed(dty) {
+                continue;
+            }
+            // The constructor must not itself reference a reuse candidate (it
+            // names only the dest, size, and meta), so a stale candidate value
+            // is never read by the construction.
+            // Closest unused whole-release of the same type (not D), on EITHER
+            // side of the constructor, with the candidate unreferenced in the
+            // span between - so the release simply moves to a drop-reuse right
+            // before the constructor. Releases land after the construct in the
+            // common reassignment shape (`x = T::new(..)` releases the old `x`
+            // after building the new value), so both directions matter.
+            let mut best: Option<usize> = None;
+            let mut best_dist = usize::MAX;
+            for ri in 0..body.blocks[bi].stmts.len() {
+                if ri == ci || used_release[ri] {
+                    continue;
+                }
+                let Some(s_local) = whole_release_local(&body.blocks[bi].stmts[ri]) else {
+                    continue;
+                };
+                if s_local == d_local || (s_local.0 as usize) >= body.locals.len() {
+                    continue;
+                }
+                let sdecl = &body.locals[s_local.0 as usize];
+                if sdecl.ty != dty || sdecl.region {
+                    continue;
+                }
+                // Where the drop-reuse lands (just before the constructor)
+                // versus where the release was determines what must be clear:
+                //
+                // * release BEFORE the constructor: the release only moves
+                //   LATER, which can only extend a child's life, so just the
+                //   span between is checked.
+                // * release AFTER the constructor: the release moves EARLIER,
+                //   which could free a child a constructor argument borrows
+                //   (e.g. `x = T::new(x.child, ..)`), so S must be untouched
+                //   from the block start through the whole window - excluding
+                //   exactly that aliasing shape.
+                let clash = if ri < ci {
+                    (ri + 1..ci).any(|k| stmt_mentions_local(&body.blocks[bi].stmts[k], s_local))
+                        || stmt_mentions_local(&body.blocks[bi].stmts[ci], s_local)
+                } else {
+                    (0..ri).any(|k| stmt_mentions_local(&body.blocks[bi].stmts[k], s_local))
+                };
+                if clash {
+                    continue;
+                }
+                let dist = ci.abs_diff(ri);
+                if dist < best_dist {
+                    best_dist = dist;
+                    best = Some(ri);
+                }
+            }
+            if let Some(ri) = best {
+                let s_local = whole_release_local(&body.blocks[bi].stmts[ri]).unwrap();
+                used_release[ri] = true;
+                pairs.push((ri, ci, s_local, dty));
+            }
+        }
+        if pairs.is_empty() {
+            continue;
+        }
+        // Phase B (mint token locals; typed as the constructor's RC type so they
+        // lower to pointers, and minted after the drop passes so nothing
+        // releases them).
+        let mut ctor_to_token: HashMap<usize, (Local, Local)> = HashMap::new();
+        let mut release_remove: std::collections::HashSet<usize> = std::collections::HashSet::new();
+        for &(ri, ci, s_local, dty) in &pairs {
+            let token = Local(u32::try_from(body.locals.len()).expect("local overflow"));
+            body.locals.push(LocalDecl {
+                ty: dty,
+                debug_name: None,
+                mutable: false,
+                region: false,
+            });
+            ctor_to_token.insert(ci, (token, s_local));
+            release_remove.insert(ri);
+        }
+        // Phase C (rebuild the block).
+        let orig = std::mem::take(&mut body.blocks[bi].stmts);
+        let mut out: Vec<Statement> = Vec::with_capacity(orig.len() + pairs.len());
+        for (idx, stmt) in orig.into_iter().enumerate() {
+            if release_remove.contains(&idx) {
+                continue;
+            }
+            if let Some(&(token, s_local)) = ctor_to_token.get(&idx) {
+                let span = stmt.span;
+                out.push(Statement {
+                    kind: StatementKind::Assign {
+                        place: Place::local(token),
+                        rvalue: Rvalue::CallIntrinsic {
+                            name: "gos_rt_rc_drop_reuse",
+                            args: vec![Operand::Copy(Place::local(s_local))],
+                        },
+                    },
+                    span,
+                });
+                let StatementKind::Assign {
+                    place,
+                    rvalue: Rvalue::CallIntrinsic { args, .. },
+                } = stmt.kind
+                else {
+                    unreachable!("ctor_to_token only indexes gos_rc_alloc statements");
+                };
+                let mut new_args = Vec::with_capacity(3);
+                new_args.push(Operand::Copy(Place::local(token)));
+                new_args.extend(args); // original [size, meta]
+                out.push(Statement {
+                    kind: StatementKind::Assign {
+                        place,
+                        rvalue: Rvalue::CallIntrinsic {
+                            name: "gos_rc_alloc_reuse",
+                            args: new_args,
+                        },
+                    },
+                    span,
+                });
+                continue;
+            }
+            out.push(stmt);
+        }
+        body.blocks[bi].stmts = out;
     }
 }
 

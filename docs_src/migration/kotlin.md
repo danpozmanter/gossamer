@@ -4,7 +4,7 @@ Kotlin and Gossamer share several ideas: null safety maps to
 `Option<T>`, `val`/`var` maps to `let`/`let mut`, `when`
 expressions map to `match`, data classes map to structs, and
 coroutines map to goroutines. The main shift is from JVM-hosted
-OO with nullable types to a memory-managed systems language where
+OO with nullable types to a memory-managed compiled language where
 every absent value is explicit and every blocking call is safe.
 
 ## TL;DR

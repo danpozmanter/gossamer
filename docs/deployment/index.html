@@ -6,7 +6,7 @@
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width,initial-scale=1">
       
-        <meta name="description" content="A goroutine-powered, fast-compiling systems language with Rust-flavoured syntax and automatic, pause-free memory management.">
+        <meta name="description" content="A goroutine-powered, fast-compiling language with Rust-flavoured syntax and automatic, pause-free memory management.">
       
       
         <meta name="author" content="Gossamer contributors">
@@ -2291,8 +2291,9 @@ goroutines are parked on the netpoller and consume
 constant memory.</p>
 <h3 id="memory">Memory<a class="headerlink" href="#memory" title="Permanent link">&para;</a></h3>
 <p>Gossamer reclaims memory deterministically: reference counting frees
-each value the moment its last reference dies, an on-demand cycle
-collector (<code>runtime::collect_cycles()</code>) handles reference cycles, and
+each value the moment its last reference dies, a cycle collector that
+runs automatically under allocation pressure (and on demand via
+<code>runtime::collect_cycles()</code>) handles reference cycles, and
 <code>arena { }</code> regions free short-lived graphs wholesale. There is no
 tracing collector, so there are no mark/sweep pauses and no GC tuning
 knobs to set - RAM tracks the live working set and stays predictable.</p>

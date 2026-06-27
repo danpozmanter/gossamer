@@ -1,0 +1,52 @@
+// Byte-packed `[u8]` storage (stride 1) must round-trip identically across all
+// tiers: a `Vec<u8>` / `[u8]` slice stores one byte per element, and reads
+// zero-extend the byte (u8 is unsigned), so values above 127 come back whole.
+
+fn main() {
+    // Array index set/get, then byte-packed slice of a [u8; N] array.
+    let mut a = [0u8; 8]
+    let mut i = 0
+    while i < 8 {
+        a[i] = (i * 30 + 5) as u8
+        i += 1
+    }
+    print!("idx:")
+    for x in a {
+        print!(" {}", x)
+    }
+    println!("")
+
+    let s = a.slice(2, 6).unwrap()
+    print!("slice:")
+    for x in s {
+        print!(" {}", x)
+    }
+    println!(" len {}", s.len())
+
+    // High-bit values must zero-extend, not sign-extend.
+    let mut hi = [0u8; 3]
+    hi[0] = 200 as u8
+    hi[1] = 255 as u8
+    hi[2] = 128 as u8
+    println!("high: {} {} {}", hi[0], hi[1], hi[2])
+
+    // Vec<u8> built by push.
+    let mut v: [u8] = []
+    let mut j = 0
+    while j < 6 {
+        v.push((j * 40 + 3) as u8)
+        j += 1
+    }
+    print!("push:")
+    for x in v {
+        print!(" {}", x)
+    }
+    println!(" len {}", v.len())
+
+    // Sum to fold the bytes into one checksum (exercises reads in arithmetic).
+    let mut sum = 0
+    for x in v {
+        sum += x as i64
+    }
+    println!("sum {}", sum)
+}

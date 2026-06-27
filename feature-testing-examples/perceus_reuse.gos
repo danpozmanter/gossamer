@@ -1,0 +1,35 @@
+// Perceus reuse: an owned local reassigned in a loop recycles the dropped
+// block in place (`gos_rt_rc_drop_reuse` + `gos_rc_alloc_reuse`) instead of a
+// free + fresh allocation. Reuse is observationally transparent - the result
+// must be bit-identical across the bytecode VM (which does not reuse), the JIT,
+// and the native tier. Covers a variant with an RC child (the String must be
+// released before the block is recycled) and a scalar leaf variant.
+
+enum Rec { V(String, i64, i64, i64, i64), Nil }
+enum Scalar { S(i64, i64, i64, i64, i64, i64), Z }
+
+fn main() {
+    let mut r = Rec::Nil
+    let mut acc = 0
+    let mut i = 0
+    while i < 200 {
+        r = Rec::V(format!("n{}", i), i, i * 2, i * 3, i * 4)
+        acc += match r {
+            Rec::V(s, a, b, _, _) => s.len() as i64 + a + b,
+            Rec::Nil => 0,
+        }
+        i += 1
+    }
+
+    let mut s = Scalar::Z
+    let mut j = 0
+    while j < 200 {
+        s = Scalar::S(j, j, j, j, j, j)
+        acc += match s {
+            Scalar::S(a, _, _, _, _, _) => a,
+            Scalar::Z => 0,
+        }
+        j += 1
+    }
+    println!("{}", acc)
+}

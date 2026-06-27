@@ -6,7 +6,7 @@
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width,initial-scale=1">
       
-        <meta name="description" content="A goroutine-powered, fast-compiling systems language with Rust-flavoured syntax and automatic, pause-free memory management.">
+        <meta name="description" content="A goroutine-powered, fast-compiling language with Rust-flavoured syntax and automatic, pause-free memory management.">
       
       
         <meta name="author" content="Gossamer contributors">
@@ -1872,9 +1872,13 @@ tracing collector and no pause:</p>
   retain/release pairs; a strong count hitting zero releases the
   value's reference-counted children iteratively and frees the
   payload. Weak references follow the Swift-ARC model.</li>
-<li><strong>Cycle collection.</strong> <code>runtime::collect_cycles()</code> runs an
-  on-demand Bacon-Rajan trial-deletion pass over suspected cycle
-  roots, on every tier.</li>
+<li><strong>Cycle collection.</strong> The compiled tiers run a Bacon-Rajan
+  trial-deletion pass over suspected cycle roots, both on demand
+  (<code>runtime::collect_cycles()</code>) and automatically under allocation
+  pressure. The bytecode VM backs values with <code>Arc</code> and does not
+  collect cycles, so <code>collect_cycles()</code> is a no-op there: a strong
+  reference cycle leaks under <code>gos run</code> but is reclaimed under
+  <code>gos build</code>.</li>
 <li><strong>Aggregate reclamation.</strong> Structs / tuples / arrays are
   heap-allocated via <code>gos_rt_aggr_alloc</code> (plain zeroed malloc) and
   freed by the MIR drop pass via <code>gos_rt_aggr_free</code> at scope exit.</li>

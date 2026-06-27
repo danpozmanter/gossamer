@@ -18,7 +18,7 @@ const LESSONS = [
     slug: "hello",
     title: "Hello + values",
     prose: `
-      <p>Gossamer is a fast-compiling systems language with a Rust-flavoured
+      <p>Gossamer is a fast-compiling language with a Rust-flavoured
       surface and a Go-shaped runtime. Bindings are <strong>immutable by
       default</strong> - reach for <code>let mut</code> only when a value
       genuinely changes after construction.</p>

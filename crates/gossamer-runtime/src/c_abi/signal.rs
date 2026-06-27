@@ -914,6 +914,44 @@ pub unsafe extern "C" fn gos_rt_intarr_slice_result(
     })
 }
 
+/// `xs.slice(start, end) -> Result<Vec<u8>, errors::Error>` for fixed-size
+/// `[u8; N]` array receivers. Identical to [`gos_rt_intarr_slice_result`]
+/// except the result is byte-packed (stride 1) instead of one 8-byte word per
+/// element: a kept `[u8]` slice costs one byte per byte like Go's `[]byte`,
+/// not 8x. The inline `[u8; N]` source still stores each element in an 8-byte
+/// slot, so each push copies the low byte (`src_ptr` points at the element's
+/// first byte; little-endian targets). The result's header carries
+/// `elem_bytes == 1`, and every `Vec<u8>` reader takes the header-driven byte
+/// path, so the narrower result round-trips identically.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_bytearr_slice_result(
+    p: *const i64,
+    len: i64,
+    start: i64,
+    end: i64,
+) -> i128 {
+    ffi_entry!(0i128, {
+        if p.is_null() || start < 0 || end < 0 || start > end || end > len {
+            let msg = format!("slice: range [{start}, {end}) out of bounds for length {len}");
+            let cs = std::ffi::CString::new(msg).unwrap_or_default();
+            let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+            return unsafe { gos_rt_result_new(1, err as i64) };
+        }
+        let count = end - start;
+        let out = unsafe { gos_rt_vec_with_capacity(1, count) };
+        if !out.is_null() && count > 0 {
+            for i in 0..count {
+                let element_index = (start + i) as usize;
+                unsafe {
+                    let src_ptr = p.add(element_index) as *const u8;
+                    gos_rt_vec_push(out, src_ptr);
+                }
+            }
+        }
+        unsafe { gos_rt_result_new(0, out as i64) }
+    })
+}
+
 /// `xs.slice(start, end) -> Result<Vec<f64>, errors::Error>` for
 /// fixed-size f64 array receivers. Same layout contract as
 /// [`gos_rt_intarr_slice_result`] - raw inline buffer plus a

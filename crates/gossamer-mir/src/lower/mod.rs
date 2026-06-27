@@ -240,6 +240,17 @@ pub fn lower_program(program: &HirProgram, tcx: &mut TyCtxt) -> Vec<Body> {
             crate::opt::elide_redundant_rc_pairs(body, tcx);
         }
     }
+    // Perceus reuse: recycle a uniquely-owned block being released into a
+    // same-type constructor in place. Runs last so it sees the final release
+    // set; `GOS_RC_NO_REUSE` disables it for differential measurement and as a
+    // safety escape hatch. Compiled-tier only (the bytecode VM does not consume
+    // this MIR), and a runtime refcount check makes any mis-pairing fall back to
+    // a fresh allocation rather than corrupt.
+    if std::env::var_os("GOS_RC_NO_REUSE").is_none() {
+        for body in &mut bodies {
+            crate::opt::insert_rc_reuse(body, tcx);
+        }
+    }
     #[cfg(debug_assertions)]
     crate::verify::debug_verify_program(&bodies, tcx);
     bodies

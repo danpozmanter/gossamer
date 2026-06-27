@@ -13,8 +13,11 @@ the hardening roadmap. Reporting details are in
 - No manual memory management in the language: there is no
   `free`, no raw pointers, and no `unsafe` keyword in Gossamer
   source. Memory is reclaimed automatically (reference counting
-  plus an on-demand cycle collector), so use-after-free and
-  double-free are not expressible in safe Gossamer code.
+  plus an automatic cycle collector), so use-after-free and
+  double-free are not expressible in ordinary Gossamer code. The
+  one escape hatch is the low-level `runtime::arena_push()` /
+  `arena_pop()` primitive; its `arena { }` block form is statically
+  escape-checked (`error[GM0003]`), but the raw calls are not.
 - Minimal external dependencies: `anyhow`, `clap`,
   `codespan-reporting`, `parking_lot`, `thiserror` - plus
   `insta` as a dev-only snapshot tool.

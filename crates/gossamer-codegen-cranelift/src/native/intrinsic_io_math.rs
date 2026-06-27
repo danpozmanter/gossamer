@@ -1090,6 +1090,74 @@ pub(super) fn lower_intrinsic_call_io_math(
                 .istore8(cranelift_codegen::ir::MemFlags::trusted(), d, p, -3);
             Ok(true)
         }
+        "gos_rc_alloc_reuse" => {
+            // Perceus reuse (alloc half): `gos_rc_alloc_reuse(token, size, meta)`
+            // re-homes a block from `gos_rt_rc_drop_reuse` into a fresh strong-1
+            // object, or allocates fresh when the token is null. Same meta-symbol
+            // handling as `gos_rc_alloc`, with the recycled block leading.
+            let token_val = match args.first() {
+                Some(arg) => {
+                    lower_operand(module, builder, locals, body, tcx, arg, None, intrinsics)?
+                }
+                None => builder.ins().iconst(ptr_ty, 0),
+            };
+            let token_ptr = if builder.func.dfg.value_type(token_val) == ptr_ty {
+                token_val
+            } else if ptr_ty == types::I64 {
+                builder.ins().uextend(types::I64, token_val)
+            } else {
+                builder.ins().ireduce(ptr_ty, token_val)
+            };
+            let size_val = match args.get(1) {
+                Some(arg) => {
+                    lower_operand(module, builder, locals, body, tcx, arg, None, intrinsics)?
+                }
+                None => builder.ins().iconst(types::I64, 0),
+            };
+            let size_i64 = if builder.func.dfg.value_type(size_val) == types::I64 {
+                size_val
+            } else {
+                builder.ins().sextend(types::I64, size_val)
+            };
+            let meta_val = match args.get(2) {
+                Some(Operand::Const(ConstValue::Str(sym))) if !sym.is_empty() => {
+                    let Some(blob) = tcx.rc_meta(sym) else {
+                        bail!("native codegen: gos_rc_alloc_reuse references unknown meta `{sym}`");
+                    };
+                    let data_id = intrinsics.intern_rc_meta(module, sym, blob)?;
+                    let gv = module.declare_data_in_func(data_id, builder.func);
+                    builder.ins().symbol_value(ptr_ty, gv)
+                }
+                _ => builder.ins().iconst(ptr_ty, 0),
+            };
+            let rc_reuse = intrinsics.extern_fn(
+                module,
+                "gos_rt_rc_alloc_reuse",
+                &[ptr_ty, types::I64, ptr_ty],
+                &[ptr_ty],
+            )?;
+            let rc_reuse_ref = module.declare_func_in_func(rc_reuse, builder.func);
+            let call_inst = builder
+                .ins()
+                .call(rc_reuse_ref, &[token_ptr, size_i64, meta_val]);
+            let raw_ptr = builder.inst_results(call_inst)[0];
+            let as_i64 = if ptr_ty == types::I64 {
+                raw_ptr
+            } else {
+                builder.ins().uextend(types::I64, raw_ptr)
+            };
+            if !destination.projection.is_empty() {
+                bail!("native codegen: gos_rc_alloc_reuse destination cannot have projections");
+            }
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                as_i64,
+            );
+            Ok(true)
+        }
         "gos_rc_alloc" | "gos_rc_alloc_tagged" => {
             // Reference-counted allocator: `gos_rc_alloc(size, meta)`
             // -> ptr with strong count 1. `size` is the payload byte

@@ -6,7 +6,7 @@
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width,initial-scale=1">
       
-        <meta name="description" content="A goroutine-powered, fast-compiling systems language with Rust-flavoured syntax and automatic, pause-free memory management.">
+        <meta name="description" content="A goroutine-powered, fast-compiling language with Rust-flavoured syntax and automatic, pause-free memory management.">
       
       
         <meta name="author" content="Gossamer contributors">
@@ -1707,8 +1707,11 @@ the hardening roadmap. Reporting details are in
 <li>No manual memory management in the language: there is no
   <code>free</code>, no raw pointers, and no <code>unsafe</code> keyword in Gossamer
   source. Memory is reclaimed automatically (reference counting
-  plus an on-demand cycle collector), so use-after-free and
-  double-free are not expressible in safe Gossamer code.</li>
+  plus an automatic cycle collector), so use-after-free and
+  double-free are not expressible in ordinary Gossamer code. The
+  one escape hatch is the low-level <code>runtime::arena_push()</code> /
+  <code>arena_pop()</code> primitive; its <code>arena { }</code> block form is statically
+  escape-checked (<code>error[GM0003]</code>), but the raw calls are not.</li>
 <li>Minimal external dependencies: <code>anyhow</code>, <code>clap</code>,
   <code>codespan-reporting</code>, <code>parking_lot</code>, <code>thiserror</code> - plus
   <code>insta</code> as a dev-only snapshot tool.</li>

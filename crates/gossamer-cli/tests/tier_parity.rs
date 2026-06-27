@@ -229,6 +229,15 @@ const SPECS: &[Spec] = &[
     // move-elided. Covers the sequential and goroutine-shared (captured) paths
     // that double-freed the enum's nodes and corrupted the heap at exit.
     spec("feature-testing-examples/rc_loop_carried_clone.gos"),
+    // Byte-packed `[u8]` storage (stride 1): array index, byte-array slice,
+    // Vec<u8> push, iteration, and high-bit zero-extension must be
+    // bit-identical across tiers (the unbounded-cache memory fix).
+    spec("feature-testing-examples/byte_vec_packed.gos"),
+    // Perceus reuse: an owned local reassigned in a loop recycles its dropped
+    // block in place on the compiled tiers (the VM does not). Reuse is
+    // observationally transparent, so the result must match across tiers; the
+    // RC-child variant exercises child release before recycle.
+    spec("feature-testing-examples/perceus_reuse.gos"),
     // A HashMap that crosses the `go` boundary is marked shared at the spawn,
     // so its biased lock synchronizes the two goroutines' concurrent inserts:
     // the per-key totals are deterministic and identical on every tier (a

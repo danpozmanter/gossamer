@@ -72,9 +72,13 @@ tracing collector and no pause:
   retain/release pairs; a strong count hitting zero releases the
   value's reference-counted children iteratively and frees the
   payload. Weak references follow the Swift-ARC model.
-- **Cycle collection.** `runtime::collect_cycles()` runs an
-  on-demand Bacon-Rajan trial-deletion pass over suspected cycle
-  roots, on every tier.
+- **Cycle collection.** The compiled tiers run a Bacon-Rajan
+  trial-deletion pass over suspected cycle roots, both on demand
+  (`runtime::collect_cycles()`) and automatically under allocation
+  pressure. The bytecode VM backs values with `Arc` and does not
+  collect cycles, so `collect_cycles()` is a no-op there: a strong
+  reference cycle leaks under `gos run` but is reclaimed under
+  `gos build`.
 - **Aggregate reclamation.** Structs / tuples / arrays are
   heap-allocated via `gos_rt_aggr_alloc` (plain zeroed malloc) and
   freed by the MIR drop pass via `gos_rt_aggr_free` at scope exit.

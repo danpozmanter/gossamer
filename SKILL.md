@@ -10,7 +10,7 @@ context assumed.
 
 ## 1. What Gossamer is
 
-A goroutine-powered, fast-compiling systems language with
+A goroutine-powered, fast-compiling language with
 automatic memory management (deterministic reference counting
 plus `arena { }` regions - no borrow checker, no lifetimes, no
 tracing-GC pauses). Syntax is Rust-flavoured. Runtime is

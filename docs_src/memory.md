@@ -8,9 +8,51 @@ ownership.
 Under the hood the compiled tiers use **deterministic reference
 counting** with a cycle collector, not a tracing collector: most
 values are reclaimed at the moment their last reference dies, RAM
-stays flat and predictable, and there are no pause times. The
-`arena { }` block (below) layers bulk allocation on top for
-short-lived object graphs.
+stays flat and predictable, and there are no stop-the-world tracing
+pauses. The `arena { }` block (below) layers bulk allocation on top
+for short-lived object graphs.
+
+## Relationship to Swift's ARC
+
+Gossamer's compiled-tier reference counting is closely modeled on
+Swift's Automatic Reference Counting (ARC), with one significant
+addition.
+
+What is the same as Swift ARC:
+
+- **Compiler-inserted retain/release.** The compiler emits balanced
+  retain/release pairs at compile time; there is no background thread
+  and no tracing pass scanning the heap for liveness.
+- **Deterministic, immediate reclamation.** A strong count reaching
+  zero destroys the value right then and releases its children. A
+  liveness pass releases at a value's *last use*, the same kind of
+  last-use shortening Swift's ARC performs.
+- **Weak references.** `Weak<T>` mirrors Swift's `weak`: it does not
+  raise the strong count, and `upgrade()` returns `None` once the
+  referent is gone. Gossamer does not provide Swift's `unowned`.
+
+Where Gossamer diverges from Swift ARC:
+
+- **Reference cycles are reclaimed automatically.** This is the key
+  difference. Swift's ARC never collects cycles: a retain cycle leaks
+  unless you break it by hand with `weak`/`unowned`. Gossamer's
+  compiled tiers add a Bacon-Rajan trial-deletion cycle collector (see
+  below) that reclaims cycles with no annotation, so ownership cycles
+  are not a leak you have to design around. The one exception is the
+  bytecode interpreter (`gos run`), which backs values with Rust's
+  `Arc` and does *not* collect cycles - there a strong cycle leaks,
+  matching Swift's behavior. This is the same cross-tier caveat noted
+  under weak references.
+- **Reference counts are non-atomic by default.** Swift uses atomic
+  reference counts. Gossamer counts goroutine-local objects
+  non-atomically and promotes an object to atomic counting only when it
+  escapes to another goroutine, so single-goroutine code does not pay
+  for the synchronization.
+- **`arena { }` regions** layer bulk bump-allocation on top, which ARC
+  has no equivalent for.
+
+In short: ARC's compile-time discipline and determinism, plus the
+automatic cycle reclamation that ARC leaves to the programmer.
 
 ## Values vs references
 
@@ -108,13 +150,24 @@ Semantics:
 Nothing allocated inside an `arena { }` may be referenced after the
 block exits. The block is statement-position only and yields unit, so
 the obvious escape (the block's value) cannot happen, and a tail
-expression inside it is deliberately discarded. The remaining ways to
-leak a pointer out are yours to avoid:
+expression inside it is deliberately discarded. The remaining escapes
+are **checked for you**: a conservative front-end analysis rejects,
+with `error[GM0003]`, any value allocated in the block that
 
-- assigning an arena value to a binding declared **outside** the block,
-- pushing arena values into a container that outlives the block,
-- sending arena values down a channel,
-- capturing them in a closure or goroutine that outruns the block.
+- is assigned to a binding declared **outside** the block,
+- is pushed into a container that outlives the block,
+- is sent down a channel,
+- is returned or broken out of an enclosing loop, or
+- is captured in a closure or goroutine that outruns the block, or
+  passed into a function that might stash it.
+
+Reading an arena value through a method or a region-safe free function
+stays allowed, so build-and-discard code is unaffected. The check is
+sound by over-approximation: it may ask you to restructure a sound
+program, but it never lets an escaping one compile. Run
+`gos explain GM0003` for the details. (The raw
+`runtime::arena_push()` / `arena_pop()` primitive below is the
+unchecked escape hatch; there the contract is yours to uphold.)
 
 Use an arena when the block is *pure computation over data that dies
 together* - build, traverse, summarize, exit. If a value must survive,

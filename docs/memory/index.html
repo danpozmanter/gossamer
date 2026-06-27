@@ -6,7 +6,7 @@
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width,initial-scale=1">
       
-        <meta name="description" content="A goroutine-powered, fast-compiling systems language with Rust-flavoured syntax and automatic, pause-free memory management.">
+        <meta name="description" content="A goroutine-powered, fast-compiling language with Rust-flavoured syntax and automatic, pause-free memory management.">
       
       
         <meta name="author" content="Gossamer contributors">
@@ -591,6 +591,17 @@
       Table of contents
     </label>
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#relationship-to-swifts-arc" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Relationship to Swift's ARC
+      
+    </span>
+  </a>
+  
+</li>
       
         <li class="md-nav__item">
   <a href="#values-vs-references" class="md-nav__link">
@@ -1684,6 +1695,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#relationship-to-swifts-arc" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Relationship to Swift's ARC
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#values-vs-references" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1802,9 +1824,48 @@ ownership.</p>
 <p>Under the hood the compiled tiers use <strong>deterministic reference
 counting</strong> with a cycle collector, not a tracing collector: most
 values are reclaimed at the moment their last reference dies, RAM
-stays flat and predictable, and there are no pause times. The
-<code>arena { }</code> block (below) layers bulk allocation on top for
-short-lived object graphs.</p>
+stays flat and predictable, and there are no stop-the-world tracing
+pauses. The <code>arena { }</code> block (below) layers bulk allocation on top
+for short-lived object graphs.</p>
+<h2 id="relationship-to-swifts-arc">Relationship to Swift's ARC<a class="headerlink" href="#relationship-to-swifts-arc" title="Permanent link">&para;</a></h2>
+<p>Gossamer's compiled-tier reference counting is closely modeled on
+Swift's Automatic Reference Counting (ARC), with one significant
+addition.</p>
+<p>What is the same as Swift ARC:</p>
+<ul>
+<li><strong>Compiler-inserted retain/release.</strong> The compiler emits balanced
+  retain/release pairs at compile time; there is no background thread
+  and no tracing pass scanning the heap for liveness.</li>
+<li><strong>Deterministic, immediate reclamation.</strong> A strong count reaching
+  zero destroys the value right then and releases its children. A
+  liveness pass releases at a value's <em>last use</em>, the same kind of
+  last-use shortening Swift's ARC performs.</li>
+<li><strong>Weak references.</strong> <code>Weak&lt;T&gt;</code> mirrors Swift's <code>weak</code>: it does not
+  raise the strong count, and <code>upgrade()</code> returns <code>None</code> once the
+  referent is gone. Gossamer does not provide Swift's <code>unowned</code>.</li>
+</ul>
+<p>Where Gossamer diverges from Swift ARC:</p>
+<ul>
+<li><strong>Reference cycles are reclaimed automatically.</strong> This is the key
+  difference. Swift's ARC never collects cycles: a retain cycle leaks
+  unless you break it by hand with <code>weak</code>/<code>unowned</code>. Gossamer's
+  compiled tiers add a Bacon-Rajan trial-deletion cycle collector (see
+  below) that reclaims cycles with no annotation, so ownership cycles
+  are not a leak you have to design around. The one exception is the
+  bytecode interpreter (<code>gos run</code>), which backs values with Rust's
+  <code>Arc</code> and does <em>not</em> collect cycles - there a strong cycle leaks,
+  matching Swift's behavior. This is the same cross-tier caveat noted
+  under weak references.</li>
+<li><strong>Reference counts are non-atomic by default.</strong> Swift uses atomic
+  reference counts. Gossamer counts goroutine-local objects
+  non-atomically and promotes an object to atomic counting only when it
+  escapes to another goroutine, so single-goroutine code does not pay
+  for the synchronization.</li>
+<li><strong><code>arena { }</code> regions</strong> layer bulk bump-allocation on top, which ARC
+  has no equivalent for.</li>
+</ul>
+<p>In short: ARC's compile-time discipline and determinism, plus the
+automatic cycle reclamation that ARC leaves to the programmer.</p>
 <h2 id="values-vs-references">Values vs references<a class="headerlink" href="#values-vs-references" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>Value-semantic types</strong> are copied on assignment and passed
@@ -1894,14 +1955,24 @@ frees the whole lot at once when the block exits:</p>
 <p>Nothing allocated inside an <code>arena { }</code> may be referenced after the
 block exits. The block is statement-position only and yields unit, so
 the obvious escape (the block's value) cannot happen, and a tail
-expression inside it is deliberately discarded. The remaining ways to
-leak a pointer out are yours to avoid:</p>
+expression inside it is deliberately discarded. The remaining escapes
+are <strong>checked for you</strong>: a conservative front-end analysis rejects,
+with <code>error[GM0003]</code>, any value allocated in the block that</p>
 <ul>
-<li>assigning an arena value to a binding declared <strong>outside</strong> the block,</li>
-<li>pushing arena values into a container that outlives the block,</li>
-<li>sending arena values down a channel,</li>
-<li>capturing them in a closure or goroutine that outruns the block.</li>
+<li>is assigned to a binding declared <strong>outside</strong> the block,</li>
+<li>is pushed into a container that outlives the block,</li>
+<li>is sent down a channel,</li>
+<li>is returned or broken out of an enclosing loop, or</li>
+<li>is captured in a closure or goroutine that outruns the block, or
+  passed into a function that might stash it.</li>
 </ul>
+<p>Reading an arena value through a method or a region-safe free function
+stays allowed, so build-and-discard code is unaffected. The check is
+sound by over-approximation: it may ask you to restructure a sound
+program, but it never lets an escaping one compile. Run
+<code>gos explain GM0003</code> for the details. (The raw
+<code>runtime::arena_push()</code> / <code>arena_pop()</code> primitive below is the
+unchecked escape hatch; there the contract is yours to uphold.)</p>
 <p>Use an arena when the block is <em>pure computation over data that dies
 together</em> - build, traverse, summarize, exit. If a value must survive,
 let the block compute a scalar/string summary, or build the surviving
