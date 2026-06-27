@@ -104,7 +104,7 @@
           </p>
         </article>
         <article class="card">
-          <h3>Automatic memory, no GC pauses</h3>
+          <h3>Garbage Collected</h3>
           <p>
             Deterministic reference counting plus <code>arena { }</code>
             regions reclaim memory the moment it's done. No borrow
@@ -149,7 +149,7 @@
     </section>
 
     <section class="code" aria-labelledby="code-h">
-      <h2 id="code-h">See it in a few lines</h2>
+      <h2 id="code-h">Examples</h2>
       <p class="code-note">Hit <strong>Run</strong> on any sample - it executes right in your browser, no install. Gossamer's VM is compiled to <a href="docs/wasm/">WebAssembly</a>.</p>
       <div class="tabs" data-tabs>
         <div class="tablist" role="tablist" aria-label="Code examples">
@@ -173,17 +173,22 @@ fn main() {
         </div>
 
         <div class="tabpanel" role="tabpanel" id="panel-web" aria-labelledby="tab-web" hidden>
-<pre><code class="language-gossamer">// A request router - the heart of a web service, runnable right here.
-fn route(method: &amp;String, path: &amp;String) -&gt; String {
-    if method == &amp;"GET" &amp;&amp; path == &amp;"/" { "200 Gossamer" }
-    else if method == &amp;"GET" &amp;&amp; path == &amp;"/health" { "200 ok" }
-    else if method == &amp;"POST" &amp;&amp; path == &amp;"/users" { "201 created" }
-    else { "404 not found" }
-}
+<pre><code class="language-gossamer">use std::http::router
 
-let requests = [("GET", "/"), ("GET", "/health"), ("POST", "/users"), ("GET", "/x")]
-for (m, p) in requests {
-    println!("{} {} -&gt; {}", m, p, route(&amp;m, &amp;p))
+// A request router - the heart of a web service. Register the route
+// table once (note the {id} path parameter), then match each request.
+let routes = router::new()
+router::add(routes, "GET", "/")
+router::add(routes, "GET", "/users/{id}")
+router::add(routes, "POST", "/users")
+
+let requests = [("GET", "/"), ("GET", "/users/42"), ("POST", "/users"), ("DELETE", "/users/42")]
+for (method, path) in requests {
+    let status = match router::lookup(routes, method, path) {
+        Some(_) =&gt; "200 ok",
+        None    =&gt; "404 not found",
+    }
+    println!("{} {} -&gt; {}", method, path, status)
 }</code></pre>
         </div>
 
