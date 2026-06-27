@@ -20,6 +20,11 @@ env:
   # reproducible. Must match `toolchain:` on the dtolnay step and
   # the `+<toolchain>` flag on every cargo invocation below.
   RUSTUP_TOOLCHAIN: nightly-2026-04-14
+  # Disable HTTP/2 multiplexing. Some GitHub Actions runners have a
+  # curl build where the HTTP/2 framing layer fails transiently
+  # (curl error 16), causing registry fetches to error out. Forcing
+  # HTTP/1.1 avoids the framing layer entirely at negligible cost.
+  CARGO_HTTP_MULTIPLEXING: "false"
 
 permissions:
   contents: write

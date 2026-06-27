@@ -290,11 +290,12 @@ pub unsafe extern "C" fn gos_rt_router_get(
     pattern: *const c_char,
     env: *mut u8,
     fn_addr: i64,
-) {
-    ffi_entry!((), {
+) -> *mut GosRouter {
+    ffi_entry!(std::ptr::null_mut(), {
         let verb_c = std::ffi::CString::new("GET").expect("static verb");
-        unsafe { gos_rt_router_add(router, verb_c.as_ptr(), pattern, env, fn_addr) }
-    });
+        unsafe { gos_rt_router_add(router, verb_c.as_ptr(), pattern, env, fn_addr) };
+        router
+    })
 }
 
 #[unsafe(no_mangle)]
@@ -303,11 +304,12 @@ pub unsafe extern "C" fn gos_rt_router_post(
     pattern: *const c_char,
     env: *mut u8,
     fn_addr: i64,
-) {
-    ffi_entry!((), {
+) -> *mut GosRouter {
+    ffi_entry!(std::ptr::null_mut(), {
         let verb_c = std::ffi::CString::new("POST").expect("static verb");
-        unsafe { gos_rt_router_add(router, verb_c.as_ptr(), pattern, env, fn_addr) }
-    });
+        unsafe { gos_rt_router_add(router, verb_c.as_ptr(), pattern, env, fn_addr) };
+        router
+    })
 }
 
 #[unsafe(no_mangle)]
@@ -316,11 +318,12 @@ pub unsafe extern "C" fn gos_rt_router_put(
     pattern: *const c_char,
     env: *mut u8,
     fn_addr: i64,
-) {
-    ffi_entry!((), {
+) -> *mut GosRouter {
+    ffi_entry!(std::ptr::null_mut(), {
         let verb_c = std::ffi::CString::new("PUT").expect("static verb");
-        unsafe { gos_rt_router_add(router, verb_c.as_ptr(), pattern, env, fn_addr) }
-    });
+        unsafe { gos_rt_router_add(router, verb_c.as_ptr(), pattern, env, fn_addr) };
+        router
+    })
 }
 
 #[unsafe(no_mangle)]
@@ -329,11 +332,12 @@ pub unsafe extern "C" fn gos_rt_router_delete(
     pattern: *const c_char,
     env: *mut u8,
     fn_addr: i64,
-) {
-    ffi_entry!((), {
+) -> *mut GosRouter {
+    ffi_entry!(std::ptr::null_mut(), {
         let verb_c = std::ffi::CString::new("DELETE").expect("static verb");
-        unsafe { gos_rt_router_add(router, verb_c.as_ptr(), pattern, env, fn_addr) }
-    });
+        unsafe { gos_rt_router_add(router, verb_c.as_ptr(), pattern, env, fn_addr) };
+        router
+    })
 }
 
 #[unsafe(no_mangle)]
@@ -342,11 +346,12 @@ pub unsafe extern "C" fn gos_rt_router_patch(
     pattern: *const c_char,
     env: *mut u8,
     fn_addr: i64,
-) {
-    ffi_entry!((), {
+) -> *mut GosRouter {
+    ffi_entry!(std::ptr::null_mut(), {
         let verb_c = std::ffi::CString::new("PATCH").expect("static verb");
-        unsafe { gos_rt_router_add(router, verb_c.as_ptr(), pattern, env, fn_addr) }
-    });
+        unsafe { gos_rt_router_add(router, verb_c.as_ptr(), pattern, env, fn_addr) };
+        router
+    })
 }
 
 #[unsafe(no_mangle)]
@@ -355,11 +360,12 @@ pub unsafe extern "C" fn gos_rt_router_head(
     pattern: *const c_char,
     env: *mut u8,
     fn_addr: i64,
-) {
-    ffi_entry!((), {
+) -> *mut GosRouter {
+    ffi_entry!(std::ptr::null_mut(), {
         let verb_c = std::ffi::CString::new("HEAD").expect("static verb");
-        unsafe { gos_rt_router_add(router, verb_c.as_ptr(), pattern, env, fn_addr) }
-    });
+        unsafe { gos_rt_router_add(router, verb_c.as_ptr(), pattern, env, fn_addr) };
+        router
+    })
 }
 
 #[unsafe(no_mangle)]
@@ -368,11 +374,12 @@ pub unsafe extern "C" fn gos_rt_router_options(
     pattern: *const c_char,
     env: *mut u8,
     fn_addr: i64,
-) {
-    ffi_entry!((), {
+) -> *mut GosRouter {
+    ffi_entry!(std::ptr::null_mut(), {
         let verb_c = std::ffi::CString::new("OPTIONS").expect("static verb");
-        unsafe { gos_rt_router_add(router, verb_c.as_ptr(), pattern, env, fn_addr) }
-    });
+        unsafe { gos_rt_router_add(router, verb_c.as_ptr(), pattern, env, fn_addr) };
+        router
+    })
 }
 
 /// Bare-fn variants: register a top-level Gossamer `fn(http::Request)
@@ -384,11 +391,12 @@ pub unsafe extern "C" fn gos_rt_router_get_fn(
     router: *mut GosRouter,
     pattern: *const c_char,
     fn_addr: i64,
-) {
-    ffi_entry!((), {
+) -> *mut GosRouter {
+    ffi_entry!(std::ptr::null_mut(), {
         let verb_c = std::ffi::CString::new("GET").expect("static verb");
-        unsafe { router_add_bare(router, verb_c.as_ptr(), pattern, fn_addr) }
-    });
+        unsafe { router_add_bare(router, verb_c.as_ptr(), pattern, fn_addr) };
+        router
+    })
 }
 
 #[unsafe(no_mangle)]
@@ -396,11 +404,12 @@ pub unsafe extern "C" fn gos_rt_router_post_fn(
     router: *mut GosRouter,
     pattern: *const c_char,
     fn_addr: i64,
-) {
-    ffi_entry!((), {
+) -> *mut GosRouter {
+    ffi_entry!(std::ptr::null_mut(), {
         let verb_c = std::ffi::CString::new("POST").expect("static verb");
-        unsafe { router_add_bare(router, verb_c.as_ptr(), pattern, fn_addr) }
-    });
+        unsafe { router_add_bare(router, verb_c.as_ptr(), pattern, fn_addr) };
+        router
+    })
 }
 
 #[unsafe(no_mangle)]
@@ -408,11 +417,12 @@ pub unsafe extern "C" fn gos_rt_router_put_fn(
     router: *mut GosRouter,
     pattern: *const c_char,
     fn_addr: i64,
-) {
-    ffi_entry!((), {
+) -> *mut GosRouter {
+    ffi_entry!(std::ptr::null_mut(), {
         let verb_c = std::ffi::CString::new("PUT").expect("static verb");
-        unsafe { router_add_bare(router, verb_c.as_ptr(), pattern, fn_addr) }
-    });
+        unsafe { router_add_bare(router, verb_c.as_ptr(), pattern, fn_addr) };
+        router
+    })
 }
 
 #[unsafe(no_mangle)]
@@ -420,11 +430,12 @@ pub unsafe extern "C" fn gos_rt_router_delete_fn(
     router: *mut GosRouter,
     pattern: *const c_char,
     fn_addr: i64,
-) {
-    ffi_entry!((), {
+) -> *mut GosRouter {
+    ffi_entry!(std::ptr::null_mut(), {
         let verb_c = std::ffi::CString::new("DELETE").expect("static verb");
-        unsafe { router_add_bare(router, verb_c.as_ptr(), pattern, fn_addr) }
-    });
+        unsafe { router_add_bare(router, verb_c.as_ptr(), pattern, fn_addr) };
+        router
+    })
 }
 
 #[unsafe(no_mangle)]
@@ -432,11 +443,12 @@ pub unsafe extern "C" fn gos_rt_router_patch_fn(
     router: *mut GosRouter,
     pattern: *const c_char,
     fn_addr: i64,
-) {
-    ffi_entry!((), {
+) -> *mut GosRouter {
+    ffi_entry!(std::ptr::null_mut(), {
         let verb_c = std::ffi::CString::new("PATCH").expect("static verb");
-        unsafe { router_add_bare(router, verb_c.as_ptr(), pattern, fn_addr) }
-    });
+        unsafe { router_add_bare(router, verb_c.as_ptr(), pattern, fn_addr) };
+        router
+    })
 }
 
 #[unsafe(no_mangle)]
@@ -444,11 +456,12 @@ pub unsafe extern "C" fn gos_rt_router_head_fn(
     router: *mut GosRouter,
     pattern: *const c_char,
     fn_addr: i64,
-) {
-    ffi_entry!((), {
+) -> *mut GosRouter {
+    ffi_entry!(std::ptr::null_mut(), {
         let verb_c = std::ffi::CString::new("HEAD").expect("static verb");
-        unsafe { router_add_bare(router, verb_c.as_ptr(), pattern, fn_addr) }
-    });
+        unsafe { router_add_bare(router, verb_c.as_ptr(), pattern, fn_addr) };
+        router
+    })
 }
 
 #[unsafe(no_mangle)]
@@ -456,11 +469,12 @@ pub unsafe extern "C" fn gos_rt_router_options_fn(
     router: *mut GosRouter,
     pattern: *const c_char,
     fn_addr: i64,
-) {
-    ffi_entry!((), {
+) -> *mut GosRouter {
+    ffi_entry!(std::ptr::null_mut(), {
         let verb_c = std::ffi::CString::new("OPTIONS").expect("static verb");
-        unsafe { router_add_bare(router, verb_c.as_ptr(), pattern, fn_addr) }
-    });
+        unsafe { router_add_bare(router, verb_c.as_ptr(), pattern, fn_addr) };
+        router
+    })
 }
 
 #[unsafe(no_mangle)]

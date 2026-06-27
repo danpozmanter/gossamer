@@ -161,7 +161,7 @@ impl<'a> Lowerer<'a> {
         writeln!(self.out, "  {len} = load i64, ptr @GOS_RT_STDOUT_LEN").unwrap();
         let full = self.fresh();
         writeln!(self.out, "  {full} = icmp uge i64 {len}, 8192").unwrap();
-        // On overflow we still hold the lock â release before
+        // On overflow we still hold the lock - release before
         // routing to the slow call path so the slow path can
         // re-acquire through the safe Rust guard.
         let full_release = format!("wb_full_rel_{suffix}");
@@ -972,7 +972,7 @@ impl<'a> Lowerer<'a> {
     }
 
     /// Inline fast path for `gos_rt_str_len(s) -> i64`. Strings
-    /// are null-terminated, so the length is `strlen(s)` â
+    /// are null-terminated, so the length is `strlen(s)` -
     /// LLVM has a builtin `@strlen` that constant-folds against
     /// rodata literals. Folding is critical because user code
     /// like `let alu_len = alu.len()` becomes a compile-time
@@ -1121,7 +1121,7 @@ impl<'a> Lowerer<'a> {
         )
         .unwrap();
 
-        // Pack body â read arr[i], pack into buf[cur_len + i].
+        // Pack body - read arr[i], pack into buf[cur_len + i].
         writeln!(self.out, "{pack_body}:").unwrap();
         let src = self.fresh();
         writeln!(
@@ -1142,7 +1142,7 @@ impl<'a> Lowerer<'a> {
         )
         .unwrap();
         writeln!(self.out, "  store i8 {byte}, ptr {dst}").unwrap();
-        // increment counter â must use the exact name we
+        // increment counter - must use the exact name we
         // forward-referenced in the PHI above.
         writeln!(self.out, "  %t_inext_{suffix} = add i64 {i_phi}, 1").unwrap();
         writeln!(self.out, "  br label %{pack_header}").unwrap();
@@ -1163,7 +1163,7 @@ impl<'a> Lowerer<'a> {
         .unwrap();
         writeln!(self.out, "  br label %{end}").unwrap();
 
-        // End â destination is `()`; nothing to store.
+        // End - destination is `()`; nothing to store.
         writeln!(self.out, "{end}:").unwrap();
         let _ = destination;
         match target {
