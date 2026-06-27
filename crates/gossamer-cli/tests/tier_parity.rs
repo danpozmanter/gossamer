@@ -508,6 +508,13 @@ const SPECS: &[Spec] = &[
     Spec {
         skip_all: Some(
             "binds a fixed loopback port - covered serially by \
+             http_router_chain_parity_across_tiers",
+        ),
+        ..spec("feature-testing-examples/http_router_chain.gos")
+    },
+    Spec {
+        skip_all: Some(
+            "binds a fixed loopback port - covered serially by \
              http_next_chunk_parity_across_tiers",
         ),
         ..spec("feature-testing-examples/http_next_chunk.gos")
@@ -1617,6 +1624,23 @@ fn http_router_typed_params_parity_across_tiers() {
     self_terminating_server_parity(
         "feature-testing-examples/http_router_typed_params.gos",
         &["A id=42 amt=3.5 raw=42", "B id=-1 amt=-1 raw=notnum"],
+    );
+}
+
+/// Router verb methods (`get`, `post`, etc.) must return the router so that
+/// `|>` chaining composes the route table as an expression. Before the fix
+/// the methods returned `()`, so the second `|>` received unit rather than
+/// the router - causing a dispatch miss on every tier. Confirms identical
+/// 3-route dispatch on the bytecode VM, Cranelift JIT, and LLVM AOT.
+#[test]
+fn http_router_chain_parity_across_tiers() {
+    self_terminating_server_parity(
+        "feature-testing-examples/http_router_chain.gos",
+        &[
+            "get_a status=200 body=a-ok",
+            "post_b status=201 body=b-created",
+            "get_c status=200 body=c-ok",
+        ],
     );
 }
 
