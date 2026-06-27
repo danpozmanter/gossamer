@@ -549,7 +549,7 @@ pub(super) fn lower_generic_rt_call(
         | "gos_rt_router_delete"
         | "gos_rt_router_patch"
         | "gos_rt_router_head"
-        | "gos_rt_router_options" => (&[ptr_ty, ptr_ty, ptr_ty, types::I64], None),
+        | "gos_rt_router_options" => (&[ptr_ty, ptr_ty, ptr_ty, types::I64], Some(ptr_ty)),
         "gos_rt_router_add_fn" => (&[ptr_ty, ptr_ty, ptr_ty, types::I64], None),
         "gos_rt_router_get_fn"
         | "gos_rt_router_post_fn"
@@ -557,7 +557,7 @@ pub(super) fn lower_generic_rt_call(
         | "gos_rt_router_delete_fn"
         | "gos_rt_router_patch_fn"
         | "gos_rt_router_head_fn"
-        | "gos_rt_router_options_fn" => (&[ptr_ty, ptr_ty, types::I64], None),
+        | "gos_rt_router_options_fn" => (&[ptr_ty, ptr_ty, types::I64], Some(ptr_ty)),
         "gos_rt_router_serve" => (&[ptr_ty, ptr_ty], Some(ptr_ty)),
         "gos_rt_file_server_new" => (&[ptr_ty, ptr_ty], Some(ptr_ty)),
         "gos_rt_file_server_serve" => (&[ptr_ty, ptr_ty], Some(ptr_ty)),
