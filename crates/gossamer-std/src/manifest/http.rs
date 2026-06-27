@@ -310,32 +310,32 @@ pub const HTTP_ROUTER: StdModule = StdModule {
         StdItem {
             name: "Router",
             kind: StdItemKind::Type,
-            doc: "Routing table. `Router::new()` + verb method-chain (`r.get(pattern, handler)`) and `http::serve(addr, router)` dispatch work on every tier.",
+            doc: "Routing table. Build with `Router::new()`, register routes via the verb methods, then pass to `http::serve`. Verb methods return the router so they chain with `|>`.",
         },
         StdItem {
             name: "Params",
             kind: StdItemKind::Type,
-            doc: "Captured path parameters. Read inside a handler with `r.path_value(name) -> String` (Go's `r.PathValue`); returns \"\" for an undeclared name. All tiers.",
+            doc: "Captured path parameters. Read inside a handler with `r.path_value(name) -> String`; returns `\"\"` for an undeclared name. All tiers.",
         },
         StdItem {
             name: "Handler",
             kind: StdItemKind::Trait,
-            doc: "Anything callable as Fn(&Request, &Params) -> Response.",
+            doc: "Anything callable as `Fn(&Request, &Params) -> Response`.",
         },
         StdItem {
             name: "new",
             kind: StdItemKind::Function,
-            doc: "Allocate a fresh Router handle. Interp tier.",
+            doc: "Allocate a fresh Router handle.",
         },
         StdItem {
             name: "add",
             kind: StdItemKind::Function,
-            doc: "Register a route: `(router, method, pattern)`. Interp tier.",
+            doc: "Register a pattern-only route: `(router, method, pattern)`. Used with `lookup` for low-level dispatch.",
         },
         StdItem {
             name: "lookup",
             kind: StdItemKind::Function,
-            doc: "Find the index of the first route matching `(method, path)`. Interp tier.",
+            doc: "Find the index of the first route matching `(method, path)`. Returns `Option<i64>`.",
         },
     ],
 };

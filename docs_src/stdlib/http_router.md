@@ -2,8 +2,7 @@
 
 Status: shipped
 
-Go 1.22-class ServeMux: method-aware path patterns with parameter
-captures + prefix routes.
+Go 1.22-class ServeMux: method-aware path patterns with parameter captures + prefix routes.
 
 ## Public items
 
@@ -15,6 +14,8 @@ captures + prefix routes.
 | `new` | fn | Allocate a fresh Router handle. |
 | `add` | fn | Register a pattern-only route: `(router, method, pattern)`. Used with `lookup` for low-level dispatch. |
 | `lookup` | fn | Find the index of the first route matching `(method, path)`. Returns `Option<i64>`. |
+
+<!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
 
 ## Routing syntax
 

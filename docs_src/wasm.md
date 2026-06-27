@@ -3,7 +3,8 @@
 Gossamer runs **in the browser**. The bytecode VM is compiled to
 `wasm32-unknown-unknown` and executes your code entirely client-side - no
 server round-trip, no install. It powers the runnable examples on the
-[home page](../../), the [Tour of Gossamer](../../tour/), and the standalone
+[home page](https://danpozmanter.github.io/gossamer/), the
+[Tour of Gossamer](https://danpozmanter.github.io/gossamer/tour/), and the standalone
 Try Gossamer editor.
 
 Output is bit-identical to native `gos run` / `gos build`.
