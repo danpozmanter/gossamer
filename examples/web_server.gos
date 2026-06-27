@@ -51,11 +51,11 @@ fn echo(request: http::Request) -> Result<http::Response, http::Error> {
 
 fn main() -> Result<(), http::Error> {
     println!("listening on 0.0.0.0:8080")
-    let r = router::Router::new()
-    r.get("/", index)
-    r.get("/health", health)
-    r.get("/users", list_users)
-    r.post("/users", create_user)
-    r.get("/echo", echo)
-    http::serve("0.0.0.0:8080", r)
+    router::Router::new()
+        |> _.get("/", index)
+        |> _.get("/health", health)
+        |> _.get("/users", list_users)
+        |> _.post("/users", create_user)
+        |> _.get("/echo", echo)
+        |> http::serve("0.0.0.0:8080")
 }

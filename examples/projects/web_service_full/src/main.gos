@@ -219,14 +219,14 @@ fn main() -> Result<(), http::Error> {
 
     go shutdown_watcher()
 
-    let r = router::Router::new()
-    r.get("/health", health)
-    r.get("/notes", list_notes)
-    r.post("/notes", create_note)
-    r.get("/notes.html", notes_html)
-    r.get("/notes/{id}", show_note)
-    r.delete("/notes/{id}", delete_note)
-    http::serve("0.0.0.0:8080", r)
+    router::Router::new()
+        |> _.get("/health", health)
+        |> _.get("/notes", list_notes)
+        |> _.post("/notes", create_note)
+        |> _.get("/notes.html", notes_html)
+        |> _.get("/notes/{id}", show_note)
+        |> _.delete("/notes/{id}", delete_note)
+        |> http::serve("0.0.0.0:8080")
 }
 
 #[cfg(test)]

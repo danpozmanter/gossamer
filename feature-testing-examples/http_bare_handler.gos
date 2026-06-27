@@ -39,7 +39,7 @@ fn serve_struct() {
 
 fn serve_router() {
     let r = router::Router::new()
-    r.get("/hello", bare_route)
+        |> _.get("/hello", bare_route)
     if let Err(e) = http::serve("127.0.0.1:23873", r) {
         eprintln!("serve failed: {e}")
     }
