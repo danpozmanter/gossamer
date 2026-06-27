@@ -2282,22 +2282,21 @@ impl<'a> Builder<'a> {
                 })
             }
             "gos_rt_deque_is_empty" => self.tcx.bool_ty(),
-            "gos_rt_router_add"
-            | "gos_rt_router_get"
+            "gos_rt_router_add" | "gos_rt_router_add_fn" => self.tcx.unit(),
+            "gos_rt_router_get"
             | "gos_rt_router_post"
             | "gos_rt_router_put"
             | "gos_rt_router_delete"
             | "gos_rt_router_patch"
             | "gos_rt_router_head"
             | "gos_rt_router_options"
-            | "gos_rt_router_add_fn"
             | "gos_rt_router_get_fn"
             | "gos_rt_router_post_fn"
             | "gos_rt_router_put_fn"
             | "gos_rt_router_delete_fn"
             | "gos_rt_router_patch_fn"
             | "gos_rt_router_head_fn"
-            | "gos_rt_router_options_fn" => self.tcx.unit(),
+            | "gos_rt_router_options_fn" => self.locals[receiver_local.0 as usize].ty,
             "gos_rt_regex_find_all" | "gos_rt_regex_split" | "gos_rt_flag_set_parse" => {
                 let s = self.tcx.string_ty();
                 self.tcx.intern(gossamer_types::TyKind::Vec(s))
