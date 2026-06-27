@@ -928,7 +928,7 @@ Go 1.22-class ServeMux: method-aware path patterns with parameter captures + pre
 | Item | Kind | Doc |
 |------|------|-----|
 | `Params` | type | Captured path parameters. Read inside a handler with `r.path_value(name) -> String` (Go's `r.PathValue`); returns "" for an undeclared name. All tiers. |
-| `Router` | type | Routing table. `Router::new()` + verb method-chain (`r.get(pattern, handler)`) and `http::serve(addr, router)` dispatch work on every tier. |
+| `Router` | type | Routing table. Build with `Router::new()`, chain verb methods via `\|>` (`Router::new() \|> _.get(p, f) \|> _.post(p, g)`), then pass to `http::serve`. All tiers. |
 | `Handler` | trait | Anything callable as Fn(&Request, &Params) -> Response. |
 | `add` | fn | Register a route: `(router, method, pattern)`. Interp tier. |
 | `lookup` | fn | Find the index of the first route matching `(method, path)`. Interp tier. |
