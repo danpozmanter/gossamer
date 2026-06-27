@@ -64,9 +64,9 @@ My goal is for Gossamer to replace Rust, Go, F#, Kotlin, and Python for most of
 Gossamer's automatic memory management is **deterministic**: reference
 counting reclaims a value the moment its last reference dies, an
 automatic cycle collector handles reference cycles, and there is no
-tracing collector and no stop-the-world pause. It is closely modeled
-on Swift's ARC, with the addition that reference cycles are reclaimed
-for you instead of having to be broken by hand.
+tracing collector. It is closely modeled on Swift's ARC, with the
+addition that reference cycles are reclaimed for you instead of having
+to be broken by hand.
 
 Plus `arena { }` blocks, inspired by Zig: everything allocated inside
 the block is bump-allocated and freed wholesale when the block exits -

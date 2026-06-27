@@ -391,8 +391,12 @@ impl Vm {
                     registers[dst as usize] = result;
                 }
                 Op::Return { value } => {
+                    // Capture the return value before publishing: a function
+                    // may return one of its own `&mut` params, and publishing
+                    // moves that register's value into the cell.
+                    let ret = registers[value as usize].clone();
                     publish_ref_cells(&ref_cells, registers);
-                    return Ok(registers[value as usize].clone());
+                    return Ok(ret);
                 }
                 Op::ReturnUnit => {
                     publish_ref_cells(&ref_cells, registers);
@@ -1215,6 +1219,21 @@ impl Vm {
                             _ => {}
                         },
                         _ => {}
+                    }
+                }
+                Op::StrAppend { receiver, value } => {
+                    // Read the RHS first (a cheap SmolStr clone: an Arc
+                    // bump or inline copy), so the receiver can then be
+                    // borrowed mutably without aliasing the value register
+                    // (and `s += s` stays correct).
+                    let rhs = match &registers[value as usize] {
+                        Value::String(s) => Some(s.clone()),
+                        _ => None,
+                    };
+                    if let Some(rhs) = rhs {
+                        if let Value::String(dst) = &mut registers[receiver as usize] {
+                            dst.push_str(rhs.as_str());
+                        }
                     }
                 }
                 Op::VecPop { dst, receiver } => {
@@ -2986,9 +3005,16 @@ impl Vm {
 /// on every successful return path of [`Vm::run`]; error unwinds skip
 /// it (the caller's aggregate keeps its pre-call value, matching the
 /// compiled tiers' no-partial-publish behaviour for panics).
-fn publish_ref_cells(cells: &[(usize, Arc<parking_lot::Mutex<Value>>)], registers: &[Value]) {
+fn publish_ref_cells(cells: &[(usize, Arc<parking_lot::Mutex<Value>>)], registers: &mut [Value]) {
+    // Move (not clone) each `&mut` param's final value back into its cell.
+    // Cloning would leave the value referenced by both the cell and the
+    // returning frame's register, so the caller's `CellTake` would receive
+    // a shared value - and a subsequent in-place mutation (`v.push` /
+    // `*s += …`) would copy-on-write the whole collection on every call,
+    // turning a build loop into O(n^2). The frame is exiting, so emptying
+    // the register is safe.
     for (slot, cell) in cells {
-        *cell.lock() = registers[*slot].clone();
+        *cell.lock() = std::mem::replace(&mut registers[*slot], Value::Unit);
     }
 }
 

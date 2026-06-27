@@ -3,13 +3,13 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Gossamer - a Rust-flavoured language with real goroutines and pause-free memory</title>
-  <meta name="description" content="A goroutine-powered, fast-compiling language with Rust-flavoured syntax and a Go-shaped runtime. Automatic memory management, no GC pauses. Run it like a script or ship it as one binary." />
+  <title>Gossamer - a Rust-flavoured language with real goroutines and a Swift-like memory model</title>
+  <meta name="description" content="A goroutine-powered, fast-compiling language with Rust-flavoured syntax and a Go-shaped runtime. Automatic memory management with a Swift-like memory model. Run it like a script or ship it as one binary." />
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
   <meta http-equiv="Pragma" content="no-cache" />
   <meta http-equiv="Expires" content="0" />
   <meta property="og:title" content="Gossamer" />
-  <meta property="og:description" content="A Rust-flavoured language with real goroutines and automatic, pause-free memory. Run it like a script, or ship it as a single binary." />
+  <meta property="og:description" content="A Rust-flavoured language with real goroutines and a Swift-like automatic memory model. Run it like a script, or ship it as a single binary." />
   <meta property="og:type" content="website" />
   <meta name="theme-color" content="#000000" />
   <link rel="stylesheet" href="style.css?v=20260614-1" />
@@ -76,7 +76,7 @@
       <p class="slogan">
         A <strong>Rust-flavoured</strong> language with
         <strong>real goroutines</strong> and
-        <strong>automatic, pause-free memory</strong> - run it
+        <strong>a Swift-like memory model</strong> - run it
         like a script, or ship it as a single binary.
       </p>
       <p class="cta-row">
@@ -104,11 +104,12 @@
           </p>
         </article>
         <article class="card">
-          <h3>Garbage Collected</h3>
+          <h3>A Swift-like memory model</h3>
           <p>
-            Deterministic reference counting plus <code>arena { }</code>
-            regions reclaim memory the moment it's done. No borrow
-            checker, no lifetimes, no stop-the-world collector.
+            Deterministic reference counting - closely modeled on
+            Swift's ARC, with automatic cycle collection added - plus
+            <code>arena { }</code> regions reclaim memory as it goes out
+            of scope. No borrow checker, no lifetimes, no tracing collector.
           </p>
         </article>
         <article class="card">

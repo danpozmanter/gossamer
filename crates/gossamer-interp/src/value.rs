@@ -613,6 +613,47 @@ impl SmolStr {
         }
     }
 
+    /// Appends `s` in place. The heap variant grows its `Arc<String>`
+    /// with amortized spare capacity when uniquely owned (via
+    /// `Arc::make_mut`), so repeated appends to a `mut String` cost
+    /// O(total length) instead of O(n^2). A shared heap string is
+    /// copied once on the next append (copy-on-write). Inline storage
+    /// appends in place until it exceeds the 7-byte window, then
+    /// promotes to a heap string sized for both halves.
+    pub fn push_str(&mut self, s: &str) {
+        if s.is_empty() {
+            return;
+        }
+        if self.raw & SMOL_HEAP_TAG == 0 {
+            let len = self.raw.to_le_bytes()[7] as usize;
+            if len + s.len() <= SMOL_INLINE_MAX {
+                let mut buf = self.raw.to_le_bytes();
+                buf[len..len + s.len()].copy_from_slice(s.as_bytes());
+                buf[7] = (len + s.len()) as u8;
+                self.raw = u64::from_le_bytes(buf);
+            } else {
+                let mut owned = String::with_capacity(len + s.len());
+                owned.push_str(self.as_str());
+                owned.push_str(s);
+                *self = Self::new_heap(Arc::new(owned));
+            }
+        } else {
+            // Heap: recover the `Arc<String>` this `SmolStr` owns, grow
+            // it in place when uniquely held, then re-store.
+            // SAFETY: `self.raw` was produced by `Arc::into_raw` in
+            // `new_heap` and we hold exactly that one strong reference.
+            // `from_raw` recovers it once; the grown Arc is handed back
+            // to `new_heap` (which re-`into_raw`s it), conserving the
+            // strong count. The stale `self` returned by `replace` is
+            // `forget`-ten so its `Drop` cannot free the consumed
+            // pointer a second time.
+            let ptr = (self.raw & SMOL_PTR_MASK) as *const String;
+            let mut arc = unsafe { Arc::from_raw(ptr) };
+            Arc::make_mut(&mut arc).push_str(s);
+            std::mem::forget(std::mem::replace(self, Self::new_heap(arc)));
+        }
+    }
+
     /// Returns the length in bytes (UTF-8 code units).
     #[must_use]
     pub fn len(&self) -> usize {

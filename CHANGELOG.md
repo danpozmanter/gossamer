@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.20.1 - Interpreter in-place growth
+
+The bytecode VM now grows collections in place across the cases where it
+previously rebuilt them, so a `String` / `Vec` assembled element-by-element in a
+loop costs time proportional to the data, not its square.
+
+- **Tail-position in-place mutation.** A discardable `v.push(x)` (and `insert` /
+  `remove`) lowers to its dedicated in-place op even when it is the tail of an
+  `if`, `match` arm, or block - not only a top-level statement. The
+  value-discarded context now propagates into those control-flow tails, so the
+  push grows the backing buffer with amortized capacity instead of routing
+  through the value-returning builtin that copies the whole collection per call.
+
+- **In-place `String` append.** `s += rhs` (and `*out += rhs` through a
+  `&mut String`) appends onto the string's existing buffer via a new
+  `Op::StrAppend`, keeping spare capacity for amortized O(1) growth. The previous
+  lowering concatenated into a fresh string and stored it back, copying every
+  byte on each append.
+
+- **`&mut` arguments move into their write-back cell.** A `&mut <local>`
+  argument is moved (rather than cloned) into its write-back cell when no sibling
+  argument reads the same local, and the cell's post-call value is published back
+  by moving it into the caller's home register. The callee therefore holds the
+  collection uniquely and mutates it in place; a sibling read of the same local
+  falls back to a clone so it still observes the pre-call value, matching the
+  compiled tiers. This makes a recursive `&mut String` / `&mut Vec` accumulator
+  (a serializer, a graph walk) grow linearly under `gos run`.
+
+These are interpreter-tier performance changes only; output is bit-identical
+across the bytecode VM, the Cranelift JIT, and the LLVM AOT tier (new
+`feature-testing-examples/inplace_mut_append_parity.gos` parity fixture).
+
 ## 0.20.0 - Router pipe-chaining, Memory and GC Improvements, Documentation
 
 HTTP route registration now composes as a `|>` pipeline. The router verb

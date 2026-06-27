@@ -40,6 +40,39 @@ impl<'tcx> FnBuilder<'tcx> {
         Ok(result)
     }
 
+    /// Compiles `if cond { … } else { … }` whose value is discarded
+    /// (statement position). Each branch is compiled in statement
+    /// context via `compile_expr_discarded`, so a tail-position
+    /// in-place mutation (`v.push(x)`) lowers to its dedicated op
+    /// rather than the value-returning builtin path that deep-copies
+    /// the whole collection per call. No result register is allocated
+    /// and no per-branch `Move` is emitted.
+    pub(crate) fn compile_if_discarded(
+        &mut self,
+        condition: &HirExpr,
+        then_branch: &HirExpr,
+        else_branch: Option<&HirExpr>,
+    ) -> RuntimeResult<()> {
+        let cond_reg = self.compile_expr(condition)?;
+        let branch_idx = self.emit(Op::BranchIfNot {
+            cond: cond_reg,
+            target: 0,
+        });
+        self.compile_expr_discarded(then_branch)?;
+        if let Some(else_branch) = else_branch {
+            let jump_end = self.emit(Op::Jump { target: 0 });
+            let else_start = self.cur_idx();
+            self.patch_jump(branch_idx, else_start);
+            self.compile_expr_discarded(else_branch)?;
+            let after = self.cur_idx();
+            self.patch_jump(jump_end, after);
+        } else {
+            let after = self.cur_idx();
+            self.patch_jump(branch_idx, after);
+        }
+        Ok(())
+    }
+
     pub(crate) fn compile_while(
         &mut self,
         condition: &HirExpr,

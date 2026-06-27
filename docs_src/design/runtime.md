@@ -63,8 +63,8 @@ bindings never observe each other's mutations.
 
 ## Memory management
 
-Compiled programs manage memory deterministically - there is no
-tracing collector and no pause:
+Compiled programs manage memory deterministically with a Swift-like
+model - reference counting plus arenas, and no tracing collector:
 
 - **Reference counting** (`gossamer-runtime::c_abi::rc`). Recursive
   heap enums and runtime containers carry an intrusive

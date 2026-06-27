@@ -2,8 +2,9 @@
 
 A goroutine-powered, fast-compiling language with
 Rust-flavoured syntax and a Go-shaped runtime. Memory is automatic
-and deterministic - reference counting plus `arena { }` regions, no
-tracing collector and no GC pauses.
+and deterministic - a Swift-like model of reference counting (with
+automatic cycle collection) plus `arena { }` regions, and no tracing
+collector.
 
 - Source on GitHub: [danpozmanter/gossamer](https://github.com/danpozmanter/gossamer)
 - Language spec: [`SPEC.md`](https://github.com/danpozmanter/gossamer/blob/main/SPEC.md)
@@ -73,10 +74,10 @@ interpreter and a REPL. Ship an optimized compiled single binary.
 - **Go-style async** - Colorless functions and stackful coroutines.
 - **Rust-style type system** - statically-typed, generics with
   trait bounds, pattern-matching, `Option<T>` / `Result<T, E>`.
-- **Automatic memory, no GC pauses** - deterministic reference
-counting plus `arena { }` regions reclaim values the moment the last
-reference dies. No lifetimes, no borrow-checker surface, no tracing
-collector.
+- **Swift-like memory model** - deterministic reference counting
+(closely modeled on Swift's ARC, with automatic cycle collection
+added) plus `arena { }` regions reclaim values as the last reference
+dies. No lifetimes, no borrow-checker surface, no tracing collector.
 - **Extensible in Rust** - Write libraries in safe Rust.
 
 ## Where to go next

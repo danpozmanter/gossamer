@@ -663,6 +663,10 @@ pub(crate) fn validate_chunk(chunk: &FnChunk) -> Result<(), ValidationError> {
                 check_v(op_idx, receiver)?;
                 check_v(op_idx, value)?;
             }
+            Op::StrAppend { receiver, value } => {
+                check_v(op_idx, receiver)?;
+                check_v(op_idx, value)?;
+            }
             Op::VecPop { dst, receiver } => {
                 check_v(op_idx, dst)?;
                 check_v(op_idx, receiver)?;

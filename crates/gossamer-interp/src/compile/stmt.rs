@@ -174,19 +174,47 @@ impl<'tcx> FnBuilder<'tcx> {
     /// one register nothing reads in a tight loop body. Every other shape
     /// compiles normally and leaves its result register unread.
     pub(crate) fn compile_expr_discarded(&mut self, expr: &HirExpr) -> RuntimeResult<()> {
-        if let HirExprKind::Assign { place, value } = &expr.kind {
-            self.compile_assign_store(place, value)?;
-        } else if let HirExprKind::MethodCall {
-            receiver,
-            name,
-            args,
-        } = &expr.kind
-            && self.try_compile_inplace_vec_stmt(receiver, name, args)?
-        {
-            // Handled by a dedicated in-place Vec op; result discarded.
-        } else {
-            let _ = self.compile_expr(expr)?;
+        match &expr.kind {
+            HirExprKind::Assign { place, value } => {
+                self.compile_assign_store(place, value)?;
+                return Ok(());
+            }
+            // Propagate the discarded context into the tails of
+            // control-flow expressions so a tail-position in-place
+            // mutation (`v.push(x)`) still lowers to its dedicated op.
+            // Without this, `if c { v.push(x) }` compiles its then-tail
+            // as a value through the builtin path, which deep-copies the
+            // whole collection on every call - O(n) per push, O(n^2) over
+            // a growth loop.
+            HirExprKind::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                self.compile_if_discarded(condition, then_branch, else_branch.as_deref())?;
+                return Ok(());
+            }
+            HirExprKind::Block(block) => {
+                self.compile_block_inner(block, true)?;
+                return Ok(());
+            }
+            HirExprKind::Match { scrutinee, arms } => {
+                self.compile_match_discarded(scrutinee, arms, expr)?;
+                return Ok(());
+            }
+            // Handled by a dedicated in-place Vec op; result discarded. A
+            // `false` from the guard leaves nothing emitted, so the call
+            // falls through to the generic `compile_expr` below.
+            HirExprKind::MethodCall {
+                receiver,
+                name,
+                args,
+            } if self.try_compile_inplace_vec_stmt(receiver, name, args)? => {
+                return Ok(());
+            }
+            _ => {}
         }
+        let _ = self.compile_expr(expr)?;
         Ok(())
     }
 
@@ -212,6 +240,9 @@ impl<'tcx> FnBuilder<'tcx> {
         place: &HirExpr,
         value: &HirExpr,
     ) -> RuntimeResult<()> {
+        if self.try_compile_inplace_str_append(place, value)? {
+            return Ok(());
+        }
         if let HirExprKind::Path { segments, .. } = &place.kind {
             if let Some(first) = segments.first() {
                 if let Some(target) = self.lookup_local(&first.name) {
@@ -431,6 +462,84 @@ impl<'tcx> FnBuilder<'tcx> {
         Err(RuntimeError::Unsupported(
             "assignment to a place that is neither a local nor a mutable static",
         ))
+    }
+
+    /// Lowers `place += rhs` for a `String` place to the in-place
+    /// [`Op::StrAppend`] when `place` resolves to a local Value
+    /// register (`s += x`, or `*out += x` for a `&mut String` local).
+    /// Returns `true` when handled. A compound `+=` (and an explicit
+    /// `s = s + rhs`) lowers to `place = place + rhs`; appending in
+    /// place avoids the whole-string copy the concat-then-store path
+    /// makes on every call, so a build loop grows in amortized O(1).
+    fn try_compile_inplace_str_append(
+        &mut self,
+        place: &HirExpr,
+        value: &HirExpr,
+    ) -> RuntimeResult<bool> {
+        if !matches!(self.tcx.kind(place.ty), Some(TyKind::String)) {
+            return Ok(false);
+        }
+        let HirExprKind::Binary {
+            op: HirBinaryOp::Add,
+            lhs,
+            rhs,
+        } = &value.kind
+        else {
+            return Ok(false);
+        };
+        if !Self::str_place_eq(place, lhs) {
+            return Ok(false);
+        }
+        let Some(reg) = self.str_place_local_reg(place) else {
+            return Ok(false);
+        };
+        let rhs_reg = self.compile_expr(rhs)?;
+        self.emit(Op::StrAppend {
+            receiver: reg,
+            value: rhs_reg,
+        });
+        Ok(true)
+    }
+
+    /// Structural equality for the place shapes the in-place String
+    /// append supports - a bare local path or a deref chain bottoming
+    /// out at one. Confirms the binary's LHS is the assignment's place
+    /// (the lowered LHS of `+=` is a clone of that place).
+    fn str_place_eq(a: &HirExpr, b: &HirExpr) -> bool {
+        match (&a.kind, &b.kind) {
+            (HirExprKind::Path { segments: sa, .. }, HirExprKind::Path { segments: sb, .. }) => {
+                sa.len() == sb.len() && sa.iter().zip(sb).all(|(x, y)| x.name == y.name)
+            }
+            (
+                HirExprKind::Unary {
+                    op: HirUnaryOp::Deref,
+                    operand: oa,
+                },
+                HirExprKind::Unary {
+                    op: HirUnaryOp::Deref,
+                    operand: ob,
+                },
+            ) => Self::str_place_eq(oa, ob),
+            _ => false,
+        }
+    }
+
+    /// Resolves a String place to the local Value register that owns
+    /// it, peeling deref projections. `None` for any non-local or
+    /// non-`Value`-kind root, which keeps the generic store path.
+    fn str_place_local_reg(&self, place: &HirExpr) -> Option<Reg> {
+        match &place.kind {
+            HirExprKind::Path { segments, .. } => {
+                let first = segments.first()?;
+                let target = self.lookup_local(&first.name)?;
+                (target.kind == RegKind::Value).then_some(target.reg)
+            }
+            HirExprKind::Unary {
+                op: HirUnaryOp::Deref,
+                operand,
+            } => self.str_place_local_reg(operand),
+            _ => None,
+        }
     }
 
     /// `true` when the lvalue `place` is rooted at a bound local - a

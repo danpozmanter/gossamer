@@ -19,7 +19,7 @@ impl<'tcx> FnBuilder<'tcx> {
         Ok(())
     }
 
-    fn compile_block_inner(
+    pub(crate) fn compile_block_inner(
         &mut self,
         block: &HirBlock,
         tail_discarded: bool,

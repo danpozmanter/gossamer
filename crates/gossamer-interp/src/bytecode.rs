@@ -691,6 +691,19 @@ pub enum Op {
         /// Register holding the value to append.
         value: Reg,
     },
+    /// `place += rhs` for a `String` place - in-place append. Grows
+    /// the receiver register's `String` via `Arc::make_mut` +
+    /// `push_str`, retaining spare capacity for amortized O(1)
+    /// growth. Emitted only when the place resolves to a local Value
+    /// register (`s += x`, or `*out += x` for a `&mut String` local),
+    /// where the lowered RHS is `place + rhs`. Replaces the
+    /// concat-then-store path that copies the whole string per append.
+    StrAppend {
+        /// Register holding the String, mutated in place.
+        receiver: Reg,
+        /// Register holding the value to append.
+        value: Reg,
+    },
     /// `dst = receiver.pop()` - in-place removal of the last element.
     /// `dst` receives `Some(last)` / `None`; the receiver register's
     /// backing storage shrinks in place, retaining capacity.

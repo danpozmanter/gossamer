@@ -1,0 +1,95 @@
+// Cross-tier guard for the in-place append fast paths and the `&mut`
+// write-back cell move optimization. None of these change observable
+// output - they only avoid the per-call copy that turned build loops
+// into O(n^2) on the bytecode VM - so the three tiers must agree
+// byte-for-byte.
+//
+// Covers:
+//   - a tail-position `v.push(x)` inside an `if` and a `match` arm
+//     (the value-discarded control-flow tails that fall through to the
+//     in-place op),
+//   - `s += x` on a local and `*out += x` through a `&mut String`,
+//   - the aliasing case `f(&mut s, <reads s>)`, which must observe the
+//     pre-call value (the move optimization falls back to a clone).
+
+fn classify(xs: &[i64]) -> Vec<i64> {
+    let mut evens: Vec<i64> = []
+    let mut odds: Vec<i64> = []
+    for x in xs {
+        // Tail-position push inside an `if` block.
+        if x % 2 == 0 {
+            evens.push(x)
+        }
+        // Tail-position push inside a `match` arm.
+        match x % 2 {
+            0 => odds.push(x * 0),
+            _ => odds.push(x),
+        }
+    }
+    let mut out: Vec<i64> = []
+    for e in evens {
+        out.push(e)
+    }
+    for o in odds {
+        out.push(o)
+    }
+    out
+}
+
+// Recursive `&mut String` accumulator with appends in `if` / `match`
+// tails - the serialize-style shape.
+fn render(depth: i64, label: i64, out: &mut String) {
+    match label {
+        0 => *out += "(",
+        _ => *out += "[",
+    }
+    if depth > 0 {
+        render(depth - 1, 1 - label, out)
+    }
+    *out += "."
+    if label == 0 {
+        *out += ")"
+    } else {
+        *out += "]"
+    }
+}
+
+// Sibling argument reads the same local that is passed `&mut`: the
+// callee must see the pre-call string, so the append lands after it.
+fn combine(out: &mut String, extra: String) {
+    *out += extra
+}
+
+fn main() {
+    let classified = classify(&[1, 2, 3, 4, 5, 6])
+    println!("{:?}", classified)
+
+    let mut local = String::new()
+    let mut i: i64 = 0
+    while i < 5 {
+        local += "ab"
+        i += 1
+    }
+    println!("{} {}", local, local.len())
+
+    let mut tree = String::new()
+    render(4, 0, &mut tree)
+    println!("{} {}", tree, tree.len())
+
+    // Aliasing: `combine(&mut b, b)` appends b's pre-call value to itself.
+    let mut b = "xy"
+    combine(&mut b, b)
+    combine(&mut b, b)
+    println!("{} {}", b, b.len())
+
+    // &mut Vec local with a sibling read of the same local.
+    let mut v: Vec<i64> = [10, 20]
+    push_first(&mut v)
+    println!("{:?}", v)
+}
+
+// Reads `v[0]` while `v` is borrowed `&mut`.
+fn push_first(v: &mut [i64]) {
+    let head = v[0]
+    v.push(head)
+}

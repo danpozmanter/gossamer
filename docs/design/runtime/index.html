@@ -1863,8 +1863,8 @@ owns the stage so a new contributor can find the real source.</p>
 through a copy-on-write helper that allocates a fresh <code>Rc</code> so alias
 bindings never observe each other's mutations.</p>
 <h2 id="memory-management">Memory management<a class="headerlink" href="#memory-management" title="Permanent link">&para;</a></h2>
-<p>Compiled programs manage memory deterministically - there is no
-tracing collector and no pause:</p>
+<p>Compiled programs manage memory deterministically with a Swift-like
+model - reference counting plus arenas, and no tracing collector:</p>
 <ul>
 <li><strong>Reference counting</strong> (<code>gossamer-runtime::c_abi::rc</code>). Recursive
   heap enums and runtime containers carry an intrusive

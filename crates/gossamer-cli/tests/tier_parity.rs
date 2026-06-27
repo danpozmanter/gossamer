@@ -233,6 +233,12 @@ const SPECS: &[Spec] = &[
     // Vec<u8> push, iteration, and high-bit zero-extension must be
     // bit-identical across tiers (the unbounded-cache memory fix).
     spec("feature-testing-examples/byte_vec_packed.gos"),
+    // In-place append fast paths: a tail-position `v.push(x)` inside an `if` /
+    // `match` arm, `s += x` / `*out += x`, and the `&mut`-arg write-back cell
+    // move (with its clone fallback when a sibling argument reads the same
+    // local). These avoid the per-call copy that made build loops O(n^2) on
+    // the VM; output must stay bit-identical across tiers.
+    spec("feature-testing-examples/inplace_mut_append_parity.gos"),
     // Perceus reuse: an owned local reassigned in a loop recycles its dropped
     // block in place on the compiled tiers (the VM does not). Reuse is
     // observationally transparent, so the result must match across tiers; the

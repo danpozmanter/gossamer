@@ -779,6 +779,57 @@ impl<'tcx> FnBuilder<'tcx> {
         Ok(result)
     }
 
+    /// Compiles a `match` whose value is discarded (statement position).
+    /// Each arm body is compiled in statement context via
+    /// `compile_expr_discarded`, so a tail-position in-place mutation
+    /// (`v.push(x)`) lowers to its dedicated op rather than the
+    /// value-returning builtin path that deep-copies the whole
+    /// collection per call. Mirrors `compile_match` minus the result
+    /// register and per-arm `Move`.
+    pub(crate) fn compile_match_discarded(
+        &mut self,
+        scrutinee: &HirExpr,
+        arms: &[gossamer_hir::HirMatchArm],
+        _whole: &HirExpr,
+    ) -> RuntimeResult<()> {
+        let scrut = self.compile_expr(scrutinee)?;
+        let mut end_jumps: Vec<InstrIdx> = Vec::new();
+        let scrut_ty = scrutinee.ty;
+        for arm in arms {
+            self.push_scope();
+            let mut fails: Vec<InstrIdx> = Vec::new();
+            self.emit_pattern_test(scrut, &arm.pattern, &mut fails)?;
+            let mut coll_names: Vec<String> = Vec::new();
+            self.collect_collection_binding_names(&arm.pattern, Some(scrut_ty), &mut coll_names);
+            for name in coll_names {
+                if let Some(tr) = self.lookup_local(&name) {
+                    self.collection_locals.insert(tr.reg);
+                }
+            }
+            if let Some(guard) = &arm.guard {
+                let g = self.compile_expr(guard)?;
+                fails.push(self.emit(Op::BranchIfNot { cond: g, target: 0 }));
+            }
+            self.compile_expr_discarded(&arm.body)?;
+            end_jumps.push(self.emit(Op::Jump { target: 0 }));
+            self.pop_scope();
+            let next = self.cur_idx();
+            for f in fails {
+                self.patch_jump(f, next);
+            }
+        }
+        let msg = self.const_idx(
+            ConstKey::String(NON_EXHAUSTIVE_MATCH_MESSAGE.to_string()),
+            Value::String(SmolStr::from(NON_EXHAUSTIVE_MATCH_MESSAGE)),
+        );
+        self.emit(Op::Panic { msg });
+        let end = self.cur_idx();
+        for j in end_jumps {
+            self.patch_jump(j, end);
+        }
+        Ok(())
+    }
+
     /// Native `select { … }` compilation. Evaluates each arm's
     /// channel (and value, for sends) into registers up front, emits a
     /// single [`Op::Select`] referencing a contiguous range of
@@ -2471,23 +2522,66 @@ impl<'tcx> FnBuilder<'tcx> {
         // `u64` above 2^63 prints as a large positive decimal). Mirrors the
         // LLVM tier choosing the unsigned printer by declared type.
         let concat_call = Self::callee_is_concat(callee);
-        for arg in args {
+        for (i, arg) in args.iter().enumerate() {
             if let Some(home) = self.mut_ref_arg_home(arg) {
+                // `&mut <local Vec>`: move the local into the cell when no
+                // sibling argument reads it, giving the callee unique
+                // ownership so its first mutation grows in place instead of
+                // copy-on-writing the whole buffer. A read elsewhere keeps
+                // the clone, matching the compiled tiers' by-pointer
+                // snapshot semantics (see the `&mut self` precedent).
                 let cell = self.alloc_reg();
-                self.emit(Op::CellNew {
-                    dst: cell,
-                    src: home,
-                });
+                if Self::mut_ref_place_name(arg)
+                    .is_some_and(|name| Self::mut_arg_move_safe(args, i, name))
+                {
+                    self.emit(Op::CellNewMove {
+                        dst: cell,
+                        src: home,
+                    });
+                } else {
+                    self.emit(Op::CellNew {
+                        dst: cell,
+                        src: home,
+                    });
+                }
                 cell_takes.push((home, cell));
                 arg_regs.push(cell);
             } else if let Some(place) = Self::mut_ref_writeback_place(self.tcx, arg) {
                 let place_reg = self.compile_expr(place)?;
                 let cell = self.alloc_reg();
-                self.emit(Op::CellNew {
-                    dst: cell,
-                    src: place_reg,
+                // A bare-local place (`&mut s` for a `String` / scalar /
+                // struct local) is the local's own home register: it can be
+                // moved into the cell (no-sibling-reads) and written back
+                // with a direct `CellTake` into that register. A field /
+                // index place keeps the clone (its value was copied out of
+                // an aggregate that still holds a share) and re-stores
+                // through the place expression.
+                let local_home = Self::path_single_seg_name(place).and_then(|name| {
+                    self.lookup_local(name)
+                        .filter(|tr| tr.kind == RegKind::Value)
+                        .map(|_| name)
                 });
-                place_takes.push((place, cell));
+                if local_home.is_some_and(|name| Self::mut_arg_move_safe(args, i, name)) {
+                    self.emit(Op::CellNewMove {
+                        dst: cell,
+                        src: place_reg,
+                    });
+                } else {
+                    self.emit(Op::CellNew {
+                        dst: cell,
+                        src: place_reg,
+                    });
+                }
+                if local_home.is_some() {
+                    // `place_reg` is the local's home register; publish the
+                    // post-call value straight back into it. The temp +
+                    // place-store form would leave a lingering clone in the
+                    // temp register, forcing copy-on-write on every later
+                    // mutation through a repeatedly-called `&mut <local>`.
+                    cell_takes.push((place_reg, cell));
+                } else {
+                    place_takes.push((place, cell));
+                }
                 arg_regs.push(cell);
             } else if concat_call && self.is_unsigned64_ty(arg.ty) {
                 let tr = self.compile_expr_ex(arg)?;
@@ -2555,6 +2649,47 @@ impl<'tcx> FnBuilder<'tcx> {
     /// `&mut` parameter. Non-local places (fields, indexes) and
     /// non-`&mut`-vec types return `None` and take the ordinary
     /// pass-by-value path.
+    /// The single-segment local name of a bare-local place expression
+    /// (`s`), or `None` for any other shape.
+    fn path_single_seg_name(place: &HirExpr) -> Option<&str> {
+        if let HirExprKind::Path { segments, .. } = &place.kind {
+            if let [seg] = segments.as_slice() {
+                return Some(seg.name.as_str());
+            }
+        }
+        None
+    }
+
+    /// The single-segment local name a `&mut <local>` argument refers
+    /// to - the `RefMut` operand (`&mut s`) or a bare path forwarding a
+    /// `&mut` parameter (`s`).
+    fn mut_ref_place_name(arg: &HirExpr) -> Option<&str> {
+        let place = match &arg.kind {
+            HirExprKind::Unary {
+                op: HirUnaryOp::RefMut,
+                operand,
+            } => operand.as_ref(),
+            _ => arg,
+        };
+        Self::path_single_seg_name(place)
+    }
+
+    /// `true` when moving (rather than cloning) the `&mut <local>`
+    /// argument at `self_idx` into its write-back cell is safe: no other
+    /// argument in the call reads the same local. A sibling read forces
+    /// the clone so it observes the local's pre-call value, matching the
+    /// compiled tiers, which pass `&mut` by pointer and evaluate the
+    /// reading argument against the live binding.
+    fn mut_arg_move_safe(args: &[HirExpr], self_idx: usize, name: &str) -> bool {
+        let bound: std::collections::HashSet<String> = std::collections::HashSet::new();
+        args.iter().enumerate().all(|(j, other)| {
+            j == self_idx
+                || !gossamer_hir::collect_free_vars(other, &bound)
+                    .iter()
+                    .any(|v| v == name)
+        })
+    }
+
     fn mut_ref_arg_home(&self, arg: &HirExpr) -> Option<Reg> {
         if !crate::compile::is_mut_ref_vec(self.tcx, arg.ty) {
             return None;
