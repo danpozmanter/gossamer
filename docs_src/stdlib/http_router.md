@@ -65,12 +65,3 @@ fn show_user(r: http::Request) -> http::Response {
 }
 ```
 
-## Custom 404 and 405
-
-```gos
-router::Router::new()
-    |> _.get("/a", handler_a)
-    |> _.not_found(|_r, _p| http::Response::text(404, "custom 404"))
-    |> _.method_not_allowed(|_r, _p| http::Response::text(405, "wrong method"))
-    |> http::serve("0.0.0.0:8080")
-```
