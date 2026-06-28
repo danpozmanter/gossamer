@@ -74,15 +74,15 @@ pointer-bump allocation, O(slabs) reclamation, and headerless 16-byte
 nodes for small enums. See the
 [memory model](https://danpozmanter.github.io/gossamer/memory/) chapter.
 
-** Not Transpiled **
+**Not Transpiled**
 
 Gossamer compiles directly to native, it does not transpile to Rust or Go.
 
-** No Macros **
+**No Macros**
 
 Metaprogramming (new in 0.21.0) is inspired by Zig's comptime.
 
-** Gossamer is Extensible in Rust. **
+**Gossamer is Extensible in Rust.**
 
 Gossamer is built to extend simply via (synchronous) Rust.
 

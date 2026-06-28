@@ -27,14 +27,32 @@ pub(crate) fn fold_comptime(augmented: &str, file_label: &str) -> Result<String>
         return Ok(augmented.to_string());
     }
 
+    // Comptime evaluation runs the bytecode VM during compilation, whose
+    // native dispatch and in-process JIT grow the real machine stack just
+    // as `gos run` does. Run it on a VM-sized stack so the host
+    // main-thread stack (roughly 1 MiB on Windows) never bounds comptime
+    // recursion: the `build` and `check` paths reach here on the main
+    // thread, unlike `run` / `test`, which already execute inside
+    // `with_vm_stack`.
+    let augmented = augmented.to_string();
+    let file_label = file_label.to_string();
+    crate::cmd::with_vm_stack(move || fold_comptime_on_vm(augmented, file_label))
+}
+
+/// Evaluates the comptime regions of `augmented` on the current thread,
+/// returning the spliced source. Always invoked through
+/// [`crate::cmd::with_vm_stack`] so the bytecode VM has a generous native
+/// stack regardless of which command (`build` / `check` / `run` / `test`)
+/// reached the fold.
+fn fold_comptime_on_vm(augmented: String, file_label: String) -> Result<String> {
     let mut map = gossamer_lex::SourceMap::new();
-    let file_id = map.add_file(file_label.to_string(), augmented.to_string());
-    let outcome = gossamer_driver::check_frontend(augmented, file_id);
+    let file_id = map.add_file(file_label.clone(), augmented.clone());
+    let outcome = gossamer_driver::check_frontend(&augmented, file_id);
     if !outcome.is_ok() {
         // Other front-end errors exist; let the caller's authoritative
         // gate render them rather than masking them behind a comptime
         // failure.
-        return Ok(augmented.to_string());
+        return Ok(augmented);
     }
 
     let gossamer_driver::CheckedFrontend {
@@ -63,13 +81,13 @@ pub(crate) fn fold_comptime(augmented: &str, file_label: &str) -> Result<String>
             Ok(value) => render_literal(&value).ok_or_else(|| {
                 anyhow!(
                     "{}: comptime result must be a scalar or string",
-                    locate(augmented, file_label, start)
+                    locate(&augmented, &file_label, start)
                 )
             })?,
             Err(message) => {
                 return Err(anyhow!(
                     "{}: {message}",
-                    locate(augmented, file_label, start)
+                    locate(&augmented, &file_label, start)
                 ));
             }
         };
@@ -77,7 +95,7 @@ pub(crate) fn fold_comptime(augmented: &str, file_label: &str) -> Result<String>
     }
     repls.sort_by_key(|(start, _, _)| std::cmp::Reverse(*start));
 
-    let mut folded = augmented.to_string();
+    let mut folded = augmented;
     for (start, end, literal) in repls {
         folded.replace_range(start..end, &literal);
     }

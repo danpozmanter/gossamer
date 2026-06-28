@@ -44,7 +44,8 @@ const VM_STACK_BYTES: usize = gossamer_interp::VM_THREAD_STACK_BYTES;
 /// main-thread stack never bounds a Gossamer program's recursion
 /// depth. A panic inside `f` is propagated to the caller unchanged.
 /// Used by every VM-execution entry point (`gos run` / `test` /
-/// `bench` / the REPL).
+/// `bench` / the REPL) and by the comptime fold, whose bytecode-VM
+/// evaluation runs on the `build` / `check` main thread.
 pub(crate) fn with_vm_stack<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {
     std::thread::Builder::new()
         .name("gos-vm".to_string())
