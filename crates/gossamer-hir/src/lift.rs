@@ -551,6 +551,7 @@ impl Lifter {
                     },
                 },
                 ty,
+                is_comptime: false,
             });
             args.push(HirExpr {
                 id: self.ids.next(),
@@ -600,6 +601,7 @@ impl Lifter {
                 stmts: Vec::new(),
                 tail: Some(Box::new(body.clone())),
                 ty: body.ty,
+                is_comptime: false,
             },
         };
         // When the closure has no explicit return annotation, fall
@@ -617,6 +619,7 @@ impl Lifter {
             ret,
             body: Some(hir_body),
             is_unsafe: false,
+            is_comptime: false,
             has_self: false,
         };
         self.lifted.push(HirItem {
@@ -683,6 +686,7 @@ impl Lifter {
             stmts,
             tail: Some(Box::new(body.clone())),
             ty: body.ty,
+            is_comptime: false,
         };
         let env_param = HirParam {
             pattern: HirPat {
@@ -695,6 +699,7 @@ impl Lifter {
                 },
             },
             ty: self.env_ty,
+            is_comptime: false,
         };
         let mut new_params = vec![env_param];
         new_params.extend(params.iter().cloned());
@@ -710,6 +715,7 @@ impl Lifter {
                 block: wrapper_block,
             }),
             is_unsafe: false,
+            is_comptime: false,
             has_self: false,
         };
         self.lifted.push(HirItem {

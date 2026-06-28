@@ -3279,6 +3279,17 @@ impl<'a> Builder<'a> {
                     .unwrap_or_else(|| self.tcx.int_ty(gossamer_types::IntTy::I64)),
                 _ => ty,
             };
+            // A generic method's return type is the impl's `Param`; the call
+            // expression often carries it un-instantiated. Substitute the
+            // receiver's concrete generic arguments (`Wrapper<i64>` -> `i64`)
+            // so the destination is the real type, not an opaque `Param` slot
+            // codegen would render as a pointer.
+            let dest_ty = if self.ty_mentions_param(dest_ty) {
+                let recv_substs = self.adt_substs_vec(receiver_ty);
+                self.subst_params_with(dest_ty, &recv_substs)
+            } else {
+                dest_ty
+            };
             let dest = self.fresh(dest_ty);
             if let Some(out_struct) = self.struct_name_of(dest_ty) {
                 self.local_struct.insert(dest, out_struct);

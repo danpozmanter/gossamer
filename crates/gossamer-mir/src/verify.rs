@@ -718,8 +718,8 @@ fn place_leaf_ty(
                     let i = *idx as usize;
                     ty = *elems.get(i)?;
                 }
-                TyKind::Adt { def, .. } => {
-                    let fields = tcx.struct_field_tys(*def)?;
+                TyKind::Adt { def, substs } => {
+                    let fields = tcx.adt_field_tys(*def, substs)?;
                     ty = *fields.get(*idx as usize)?;
                 }
                 _ => return None,

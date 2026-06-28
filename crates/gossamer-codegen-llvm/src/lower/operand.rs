@@ -235,9 +235,9 @@ impl<'a> Lowerer<'a> {
                     // stride and field-offset computation reflects
                     // the projected field, not the parent.
                     current_ty = match self.tcx.kind(current_ty) {
-                        Some(TyKind::Adt { def, .. }) => self
+                        Some(TyKind::Adt { def, substs }) => self
                             .tcx
-                            .struct_field_tys(*def)
+                            .adt_field_tys(*def, substs)
                             .and_then(|tys| tys.get(*idx as usize).copied())
                             .unwrap_or(current_ty),
                         Some(TyKind::Tuple(elems)) => {

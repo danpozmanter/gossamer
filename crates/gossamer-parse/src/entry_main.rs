@@ -77,11 +77,13 @@ pub fn synthesize_entry_main(sf: &mut SourceFile) -> Vec<ParseDiagnostic> {
             tail,
             synthetic: false,
             is_arena: false,
+            is_comptime: false,
         }),
     );
 
     let decl = FnDecl {
         is_unsafe: false,
+        is_comptime: false,
         name: Ident::new("main"),
         generics: Generics::default(),
         params: Vec::new(),

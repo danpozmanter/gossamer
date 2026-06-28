@@ -654,6 +654,8 @@
       
         
       
+        
+      
     
     
     
@@ -751,6 +753,34 @@
     
   
     Arena blocks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../language/comptime/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Comptime
   
 
     
@@ -2192,6 +2222,15 @@ M:N scheduler. Blocking primitives (channel ops, mutex contention,
 <code>time::sleep</code>, network reads, filesystem syscalls) park the
 goroutine, freeing the worker thread to run other goroutines.
 Channels are typed and bounded; <code>select</code> multiplexes receives.</p>
+<p>Scheduling is cooperative with watchdog-assisted preemption: a
+goroutine yields at safepoints (every park point above, plus
+function-call / scheduler-step boundaries), and a watchdog forces a
+yield - and interrupts blocking syscalls via <code>SIGURG</code> / a Windows APC -
+when a worker runs too long. A goroutine in a tight, call-free compute
+loop is not asynchronously preempted yet, so it yields only at its next
+call or park point; on the M:N pool, other goroutines keep running on
+the other worker threads meanwhile. See
+<a href="../design/runtime/#preemption">runtime design - Preemption</a>.</p>
 <h2 id="closures-and-higher-order-fns">Closures and higher-order fns<a class="headerlink" href="#closures-and-higher-order-fns" title="Permanent link">&para;</a></h2>
 <p>Lambdas use <code>|param: T| body</code>; captures from the enclosing scope
 work transparently (runtime-managed, no <code>move</code>).</p>
@@ -2312,16 +2351,18 @@ placeholders, plus named captures <code>{ident}</code> for bindings in scope:</p
 </tr>
 </tbody>
 </table>
-<p>Every other <code>name!(…)</code> is a parse error - there is no user macro
-system. Format specs follow Rust's <code>{:spec}</code> grammar - width,
-alignment, fill, zero-pad, radix, and precision (<code>{:&gt;8}</code>,
-<code>{:08x}</code>, <code>{:^6}</code>, <code>{:.2}</code>).</p>
+<p>Every other <code>name!(…)</code> is a parse error (<code>GP0001</code>). There is no
+user-defined macro system. Compile-time metaprogramming instead goes
+through <code>comptime</code> - a <code>comptime { ... }</code> block or <code>comptime fn</code> call
+is evaluated at compile time and folded to a constant on every tier;
+see <a href="../language/comptime/">Comptime</a>.</p>
+<p>Format specs follow Rust's <code>{:spec}</code> grammar - width, alignment,
+fill, zero-pad, radix, and precision (<code>{:&gt;8}</code>, <code>{:08x}</code>, <code>{:^6}</code>,
+<code>{:.2}</code>).</p>
 <p>For the single-<code>String</code> output shape, <code>+</code> concatenates without
 adding a separator:</p>
 <div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="kd">let</span><span class="w"> </span><span class="n">greeting</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">&quot;hello, &quot;</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="o">&amp;</span><span class="n">name</span>
 </code></pre></div>
-<p>Writing <code>name!(…)</code> is a hard parse error - the <code>!</code> suffix is
-reserved for no purpose today.</p>
 
 
 

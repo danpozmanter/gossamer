@@ -40,6 +40,13 @@ pub(crate) fn is_item_start(parser: &Parser<'_>) -> bool {
     let token = parser.peek();
     match token.kind {
         TokenKind::Punct(Punct::Hash) => true,
+        // `comptime` is ambiguous: `comptime fn` starts an item, but
+        // `comptime { ... }` is an expression. Only treat it as an item
+        // start when a function keyword follows.
+        TokenKind::Keyword(Keyword::Comptime) => matches!(
+            parser.peek_nth(1).kind,
+            TokenKind::Keyword(Keyword::Fn | Keyword::Unsafe)
+        ),
         TokenKind::Keyword(keyword) => matches!(
             keyword,
             Keyword::Pub

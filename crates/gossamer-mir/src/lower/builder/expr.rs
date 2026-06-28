@@ -1293,6 +1293,70 @@ impl<'a> Builder<'a> {
                 }
             }
         }
+        // Arithmetic operator overloading: route `a + b` (and `- * /`) on a
+        // user struct/enum to its `add`/`sub`/`mul`/`div` impl method. The
+        // checker has already typed the result as that method's return type
+        // (`ty`) and rejected ADT operands with no such impl, so a present
+        // `impl_methods` entry is the method the call must reach.
+        if let Some(method) = arith_overload_method(op) {
+            let sname = self
+                .adt_dispatch_name(lhs.ty)
+                .or_else(|| self.adt_dispatch_name(self.locals[lhs_local.0 as usize].ty))
+                .or_else(|| self.adt_dispatch_name(rhs.ty))
+                .or_else(|| self.adt_dispatch_name(self.locals[rhs_local.0 as usize].ty))
+                .or_else(|| self.local_struct.get(&lhs_local).cloned())
+                .or_else(|| self.local_struct.get(&rhs_local).cloned())
+                .or_else(|| self.struct_name_from_expr(lhs))
+                .or_else(|| self.struct_name_from_expr(rhs));
+            if let Some(sname) = sname {
+                let mangled = format!("{sname}::{method}");
+                if self.impl_methods.contains_key(&mangled) {
+                    let dest = self.fresh(ty);
+                    let next = self.new_block(span);
+                    self.terminate(Terminator::Call {
+                        callee: Operand::Const(ConstValue::Str(mangled)),
+                        args: vec![
+                            Operand::Copy(Place::local(lhs_local)),
+                            Operand::Copy(Place::local(rhs_local)),
+                        ],
+                        destination: Place::local(dest),
+                        target: Some(next),
+                    });
+                    self.set_current(next);
+                    return Some(dest);
+                }
+            }
+        }
+        // Tuple comparison: route `==`/`!=`/`<`/`<=`/`>`/`>=` to a runtime
+        // structural compare over the flat slot buffer (the VM compares
+        // tuples element-wise at runtime). Only tuples of scalar/string
+        // elements are routed; others fall through.
+        if matches!(
+            op,
+            HirBinaryOp::Eq
+                | HirBinaryOp::Ne
+                | HirBinaryOp::Lt
+                | HirBinaryOp::Le
+                | HirBinaryOp::Gt
+                | HirBinaryOp::Ge
+        ) {
+            if let Some(tags) = self
+                .tuple_cmp_tags(lhs.ty)
+                .or_else(|| self.tuple_cmp_tags(self.locals[lhs_local.0 as usize].ty))
+            {
+                return Some(self.lower_tuple_cmp(op, lhs_local, rhs_local, &tags, span));
+            }
+        }
+        // Vec/array equality: route `[..] == [..]` / `!=` to a runtime
+        // element-wise compare (ordering on vecs is left to the scalar path).
+        if matches!(op, HirBinaryOp::Eq | HirBinaryOp::Ne) {
+            if let Some(tag) = self
+                .vec_elem_cmp_tag(lhs.ty)
+                .or_else(|| self.vec_elem_cmp_tag(self.locals[lhs_local.0 as usize].ty))
+            {
+                return Some(self.lower_vec_eq(op, lhs_local, rhs_local, tag, span));
+            }
+        }
         // When the HIR type is still an inference variable, ground the
         // result type from the operands so the LLVM backend uses the
         // correct alloca type (double vs ptr). Without this, f64
@@ -1630,6 +1694,144 @@ impl<'a> Builder<'a> {
             Rvalue::Use(Operand::Copy(Place::local(value_local))),
             span,
         );
+    }
+
+    /// Runtime structural-compare tag for a scalar/string type (matching the
+    /// `gos_rt_tuple_format` encoding: 0 Int, 2 Float, 3 Bool, 4 Char, 5 Str),
+    /// or `None` for an aggregate / unsupported element.
+    fn scalar_cmp_tag(&self, ty: Ty) -> Option<u8> {
+        use gossamer_types::TyKind;
+        let mut t = ty;
+        loop {
+            match self.tcx.kind_of(t) {
+                TyKind::Ref { inner, .. } => t = *inner,
+                TyKind::Int(_) => return Some(0),
+                TyKind::Float(_) => return Some(2),
+                TyKind::Bool => return Some(3),
+                TyKind::Char => return Some(4),
+                TyKind::String => return Some(5),
+                _ => return None,
+            }
+        }
+    }
+
+    /// Per-element tags for a flat-buffer aggregate of scalar/string elements:
+    /// a tuple (`(A, B)`) or a fixed-size array (`[T; N]`, a flat `[N x i64]`
+    /// buffer like a tuple). `None` for a non-flat or aggregate-element type.
+    fn tuple_cmp_tags(&self, ty: Ty) -> Option<Vec<u8>> {
+        use gossamer_types::{ArrayLen, TyKind};
+        let mut t = ty;
+        while let TyKind::Ref { inner, .. } = self.tcx.kind_of(t) {
+            t = *inner;
+        }
+        match self.tcx.kind_of(t) {
+            TyKind::Tuple(elems) => elems
+                .clone()
+                .iter()
+                .map(|e| self.scalar_cmp_tag(*e))
+                .collect(),
+            TyKind::Array {
+                elem,
+                len: ArrayLen::Concrete(n),
+            } => {
+                let n = *n;
+                self.scalar_cmp_tag(*elem).map(|tag| vec![tag; n])
+            }
+            _ => None,
+        }
+    }
+
+    /// Element tag for a growable `Vec<T>` / slice `[T]` (a `GosVec` pointer)
+    /// whose element is scalar/string, or `None` otherwise. Fixed arrays are
+    /// flat buffers handled by [`Self::tuple_cmp_tags`], not here.
+    fn vec_elem_cmp_tag(&self, ty: Ty) -> Option<u8> {
+        use gossamer_types::TyKind;
+        let mut t = ty;
+        while let TyKind::Ref { inner, .. } = self.tcx.kind_of(t) {
+            t = *inner;
+        }
+        match self.tcx.kind_of(t) {
+            TyKind::Vec(e) | TyKind::Slice(e) => self.scalar_cmp_tag(*e),
+            _ => None,
+        }
+    }
+
+    /// Emits `gos_rt_tuple_cmp(lhs, rhs, n, tags)` then maps its `-1/0/1`
+    /// result to a bool for the comparison operator (`cmp <op> 0`).
+    fn lower_tuple_cmp(
+        &mut self,
+        op: HirBinaryOp,
+        lhs_local: Local,
+        rhs_local: Local,
+        tags: &[u8],
+        span: Span,
+    ) -> Local {
+        let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+        let cmp = self.fresh(i64_ty);
+        let tag_str: String = tags.iter().map(|&b| b as char).collect();
+        let next = self.new_block(span);
+        self.terminate(Terminator::Call {
+            callee: Operand::Const(ConstValue::Str("gos_rt_tuple_cmp".to_string())),
+            args: vec![
+                Operand::Copy(Place::local(lhs_local)),
+                Operand::Copy(Place::local(rhs_local)),
+                Operand::Const(ConstValue::Int(tags.len() as i128)),
+                Operand::Const(ConstValue::Str(tag_str)),
+            ],
+            destination: Place::local(cmp),
+            target: Some(next),
+        });
+        self.set_current(next);
+        let bool_ty = self.tcx.bool_ty();
+        let dest = self.fresh(bool_ty);
+        self.emit_assign(
+            Place::local(dest),
+            Rvalue::BinaryOp {
+                op: lower_binop(op),
+                lhs: Operand::Copy(Place::local(cmp)),
+                rhs: Operand::Const(ConstValue::Int(0)),
+            },
+            span,
+        );
+        dest
+    }
+
+    /// Emits `gos_rt_vec_eq(lhs, rhs, elem_tag)`, negating the result for `!=`.
+    fn lower_vec_eq(
+        &mut self,
+        op: HirBinaryOp,
+        lhs_local: Local,
+        rhs_local: Local,
+        elem_tag: u8,
+        span: Span,
+    ) -> Local {
+        let bool_ty = self.tcx.bool_ty();
+        let eq = self.fresh(bool_ty);
+        let next = self.new_block(span);
+        self.terminate(Terminator::Call {
+            callee: Operand::Const(ConstValue::Str("gos_rt_vec_eq".to_string())),
+            args: vec![
+                Operand::Copy(Place::local(lhs_local)),
+                Operand::Copy(Place::local(rhs_local)),
+                Operand::Const(ConstValue::Int(i128::from(elem_tag))),
+            ],
+            destination: Place::local(eq),
+            target: Some(next),
+        });
+        self.set_current(next);
+        if matches!(op, HirBinaryOp::Ne) {
+            let dest = self.fresh(bool_ty);
+            self.emit_assign(
+                Place::local(dest),
+                Rvalue::UnaryOp {
+                    op: UnOp::Not,
+                    operand: Operand::Copy(Place::local(eq)),
+                },
+                span,
+            );
+            return dest;
+        }
+        eq
     }
 
     /// Lowers `acc += __concat(pieces...)` to one in-place append per piece
@@ -2490,4 +2692,17 @@ fn math_const_bits(name: &str) -> Option<u64> {
         _ => return None,
     };
     Some(v.to_bits())
+}
+
+/// Operator-overload impl-method name for an arithmetic binary operator
+/// (`+` -> `add`, `-` -> `sub`, `*` -> `mul`, `/` -> `div`), or `None` for
+/// operators that do not dispatch to a user method.
+fn arith_overload_method(op: HirBinaryOp) -> Option<&'static str> {
+    match op {
+        HirBinaryOp::Add => Some("add"),
+        HirBinaryOp::Sub => Some("sub"),
+        HirBinaryOp::Mul => Some("mul"),
+        HirBinaryOp::Div => Some("div"),
+        _ => None,
+    }
 }

@@ -25,7 +25,7 @@ without waiting for a compile step.
 Go, meanwhile, is an incredible tool for building and shipping software. 
 It feels fast, minimal, and frictionless: a garbage-collected language with
  built-in concurrency and an extensive standard library.
-
+ 
 ### A Single Language?
 
 What if one language could combine all of those ideas?
@@ -74,10 +74,17 @@ pointer-bump allocation, O(slabs) reclamation, and headerless 16-byte
 nodes for small enums. See the
 [memory model](https://danpozmanter.github.io/gossamer/memory/) chapter.
 
-**Gossamer is Extensible in Rust.**
+** Not Transpiled **
 
-Standard library and some syntax inspirations come from Rust, Go, C#/F#, Kotlin,
-and Python.
+Gossamer compiles directly to native, it does not transpile to Rust or Go.
+
+** No Macros **
+
+Metaprogramming (new in 0.21.0) is inspired by Zig's comptime.
+
+** Gossamer is Extensible in Rust. **
+
+Gossamer is built to extend simply via (synchronous) Rust.
 
 ## Details
 
@@ -194,6 +201,36 @@ gos test src/main.gos
 # Drop into the REPL.
 gos
 ```
+
+## Foreign Function Interface (FFI)
+
+Gossamer can call native (Rust) code through the `[rust-bindings]`
+section of `project.toml`. A Rust crate that depends on
+`gossamer-binding` registers its entry points with `register_module!`,
+and the toolchain compiles and links it into the produced binary (or
+the interpreter) - the bound functions are then `use`-able from `.gos`
+source like any other module:
+
+```toml
+# project.toml
+[rust-bindings]
+echo-binding = { path = "echo-binding" }
+```
+
+```gossamer
+use echo::shout
+fn main() { println!("{}", shout("hello")) }
+```
+
+The boundary uses the typed `gossamer-binding` ABI (integers, floats,
+strings, tuples, vectors, `Option` / `Result`, opaque handles, byte
+buffers, callbacks); a panic inside a binding is caught and surfaced as
+a `Result::Err`. There is no source-level `extern "C"` item form - the
+`extern` keyword is reserved (`GP0016`) and `[rust-bindings]` is the
+single FFI surface. See [`SPEC.md` section 12](SPEC.md) and
+[`example-external-libraries/`](example-external-libraries/) for two
+end-to-end examples (a Gossamer-aware crate, and a plain published
+crate wrapped thinly).
 
 ## Supported Platforms
 

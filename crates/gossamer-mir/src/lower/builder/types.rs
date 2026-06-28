@@ -416,11 +416,11 @@ impl<'a> Builder<'a> {
                 let elems = elems.clone();
                 !elems.is_empty() && elems.iter().all(|e| self.append_key_descriptor(*e, out))
             }
-            TyKind::Adt { def, .. } => {
+            TyKind::Adt { def, substs } => {
                 if self.struct_name_of(ty).is_none() {
                     return false;
                 }
-                let fields = self.tcx.struct_field_tys(*def).map(<[Ty]>::to_vec);
+                let fields = self.tcx.adt_field_tys(*def, substs).map(<[Ty]>::to_vec);
                 match fields {
                     Some(fields) if !fields.is_empty() => {
                         fields.iter().all(|f| self.append_key_descriptor(*f, out))

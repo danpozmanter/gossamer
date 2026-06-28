@@ -239,6 +239,9 @@ fn validate_source(
 )> {
     // Compile-time codegen pass for from_json/to_json (and friends).
     let augmented = gossamer_parse::autoderive::augment_source(source);
+    // Comptime fold: evaluate `comptime` regions and splice in their
+    // result literals so the native backend compiles a constant.
+    let augmented = crate::comptime_fold::fold_comptime(&augmented, &file.to_string_lossy())?;
     let mut map = gossamer_lex::SourceMap::new();
     let file_id = map.add_file(file.to_string_lossy().into_owned(), augmented.clone());
     let render_opts = gossamer_diagnostics::RenderOptions {

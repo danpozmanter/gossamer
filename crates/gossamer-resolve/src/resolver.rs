@@ -382,7 +382,7 @@ impl Resolver {
         self.bind_generics(&decl.generics);
         for param in &decl.params {
             match param {
-                FnParam::Typed { pattern, ty } => {
+                FnParam::Typed { pattern, ty, .. } => {
                     self.resolve_type(ty);
                     self.bind_pattern(pattern);
                 }

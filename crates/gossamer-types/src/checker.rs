@@ -140,6 +140,13 @@ struct TypeChecker<'a> {
     /// `for x in self.items` loop binds `x` at the i64 default -
     /// printing a `[String]` field's element pointers as integers.
     current_self_ty: Option<Ty>,
+    /// Generics of the `impl` block currently being checked, if any. An
+    /// `impl<T> Wrapper<T>` brings `T` into scope for every method, so a
+    /// method signature `(&self) -> T` records a rigid `Param(T)` (matching
+    /// the struct's generic) rather than a fresh inference variable that
+    /// never binds. Merged ahead of each method's own generics in
+    /// [`Self::check_fn`].
+    current_impl_generics: Option<gossamer_ast::Generics>,
     /// Running depth of recursive entries into expression / block /
     /// pattern type checks. Reaching [`RECURSION_LIMIT`] short-circuits
     /// the offending subtree to `tcx.error_ty()` after emitting one
@@ -333,6 +340,7 @@ impl<'a> TypeChecker<'a> {
             scopes: vec![HashMap::new()],
             binding_types: HashMap::new(),
             current_self_ty: None,
+            current_impl_generics: None,
             recursion_depth: 0,
             recursion_limit_reported: false,
             struct_fields: checker_struct_fields,
@@ -439,6 +447,42 @@ impl<'a> TypeChecker<'a> {
                 gossamer_ast::GenericParam::Const { name, .. } => {
                     self.current_const_generic_scope
                         .insert(name.name.clone(), crate::ParamIdx(i as u32));
+                }
+                gossamer_ast::GenericParam::Lifetime { .. } => {}
+            }
+        }
+        GenericScope {
+            types: prior_types,
+            consts: prior_consts,
+        }
+    }
+
+    /// Enters a generic scope combining an `impl` block's generics (first,
+    /// so they keep the `Param` indices the struct's fields use) with a
+    /// method's own generics (offset after them). Used when checking a
+    /// method of `impl<T> Wrapper<T>`, so `-> T` records `Param(0)`
+    /// matching `Wrapper`'s first generic, while the method's own `<U>`
+    /// gets the next index.
+    fn enter_generic_scope_combined(
+        &mut self,
+        outer: &gossamer_ast::Generics,
+        inner: &gossamer_ast::Generics,
+    ) -> GenericScope {
+        let prior_types = std::mem::take(&mut self.current_generic_scope);
+        let prior_consts = std::mem::take(&mut self.current_const_generic_scope);
+        let mut idx = 0u32;
+        for param in outer.params.iter().chain(inner.params.iter()) {
+            match param {
+                gossamer_ast::GenericParam::Type { name, .. } => {
+                    let owned: Box<str> = name.name.clone().into_boxed_str();
+                    self.current_generic_scope
+                        .insert(name.name.clone(), (crate::ParamIdx(idx), owned));
+                    idx += 1;
+                }
+                gossamer_ast::GenericParam::Const { name, .. } => {
+                    self.current_const_generic_scope
+                        .insert(name.name.clone(), crate::ParamIdx(idx));
+                    idx += 1;
                 }
                 gossamer_ast::GenericParam::Lifetime { .. } => {}
             }
@@ -559,6 +603,10 @@ impl<'a> TypeChecker<'a> {
     /// parameter) to a concrete `ArrayLen` when `const_substs[idx]`
     /// supplies a value. Used at generic call sites where the const
     /// argument is inferred from the array argument's length.
+    #[allow(
+        clippy::too_many_lines,
+        reason = "type-constructor dispatch - arms map 1:1 to TyKind variants; splitting hides the type walk"
+    )]
     fn subst_generics_in_ty(&mut self, ty: Ty, substs: &[Ty], const_substs: &[Option<i128>]) -> Ty {
         if substs.is_empty() && const_substs.iter().all(Option::is_none) {
             return ty;
@@ -652,14 +700,66 @@ impl<'a> TypeChecker<'a> {
                     self.tcx.intern(TyKind::JoinHandle(new))
                 }
             }
-            // Adt / Alias / Closure carry their own substs lists;
-            // substituting inside them is the monomorph layer's
-            // responsibility. For the struct-literal use case
-            // those sub-Adts already have concrete (or fresh-var)
-            // substs from their own typeck, so we leave them
-            // alone.
+            // Adt / Alias carry their own generic-argument lists; a
+            // function signature naming a generic struct (`w: Wrapper<T>`)
+            // holds the function's rigid `Param` inside those args, so
+            // substitute into them too. Without this, instantiating the
+            // signature leaves `Wrapper<Param>` and unifying it against a
+            // concrete `Wrapper<i64>` argument fails (rigid `Param` vs
+            // `i64`).
+            TyKind::Adt {
+                def,
+                substs: adt_substs,
+            } => {
+                let new_substs = self.subst_generics_in_substs(&adt_substs, substs, const_substs);
+                if new_substs == adt_substs {
+                    ty
+                } else {
+                    self.tcx.intern(TyKind::Adt {
+                        def,
+                        substs: new_substs,
+                    })
+                }
+            }
+            TyKind::Alias {
+                def,
+                substs: alias_substs,
+            } => {
+                let new_substs = self.subst_generics_in_substs(&alias_substs, substs, const_substs);
+                if new_substs == alias_substs {
+                    ty
+                } else {
+                    self.tcx.intern(TyKind::Alias {
+                        def,
+                        substs: new_substs,
+                    })
+                }
+            }
             _ => ty,
         }
+    }
+
+    /// Substitutes the generic-parameter slots inside a `Substs`' type
+    /// arguments, leaving const arguments untouched. Used by
+    /// [`Self::subst_generics_in_ty`] to instantiate a generic struct named
+    /// in a function signature (`Wrapper<T>`).
+    fn subst_generics_in_substs(
+        &mut self,
+        args: &crate::Substs,
+        substs: &[Ty],
+        const_substs: &[Option<i128>],
+    ) -> crate::Substs {
+        let new_args: Vec<crate::GenericArg> = args
+            .as_slice()
+            .iter()
+            .map(|a| match a {
+                crate::GenericArg::Type(t) => {
+                    crate::GenericArg::Type(self.subst_generics_in_ty(*t, substs, const_substs))
+                }
+                crate::GenericArg::Const(c) => crate::GenericArg::Const(*c),
+            })
+            .collect();
+        crate::Substs::from_args(new_args)
     }
 
     fn emit(&mut self, error: TypeError, span: Span) {
@@ -1362,6 +1462,7 @@ impl<'a> TypeChecker<'a> {
                 // the unsupported placeholder.
                 let self_ty = self.type_from_ast(&decl.self_ty);
                 let prev_self = self.current_self_ty.replace(self_ty);
+                let prev_impl_generics = self.current_impl_generics.replace(decl.generics.clone());
                 for impl_item in &decl.items {
                     if let ImplItem::Fn(fn_decl) = impl_item {
                         self.check_fn(fn_decl);
@@ -1369,6 +1470,7 @@ impl<'a> TypeChecker<'a> {
                         self.check_expr(value);
                     }
                 }
+                self.current_impl_generics = prev_impl_generics;
                 self.current_self_ty = prev_self;
             }
             ItemKind::Trait(decl) => {
@@ -1429,7 +1531,12 @@ impl<'a> TypeChecker<'a> {
         // type that names a type parameter (`&T`) records a rigid
         // `TyKind::Param`. Monomorphisation substitutes those `Param` slots,
         // and trait-method dispatch on a `T` receiver keys off them.
-        let prior_scope = self.enter_generic_scope(&decl.generics);
+        let prior_scope = match self.current_impl_generics.clone() {
+            Some(impl_g) if !impl_g.params.is_empty() => {
+                self.enter_generic_scope_combined(&impl_g, &decl.generics)
+            }
+            _ => self.enter_generic_scope(&decl.generics),
+        };
         let prior_bounds = std::mem::replace(
             &mut self.current_param_bounds,
             Self::type_param_bounds(&decl.generics),
@@ -1599,7 +1706,7 @@ impl<'a> TypeChecker<'a> {
 
     fn bind_fn_param(&mut self, param: &FnParam) {
         match param {
-            FnParam::Typed { pattern, ty } => {
+            FnParam::Typed { pattern, ty, .. } => {
                 let param_ty = self.type_from_ast(ty);
                 self.bind_pattern(pattern, param_ty);
             }
@@ -2761,6 +2868,39 @@ impl<'a> TypeChecker<'a> {
     /// from) are re-shaped afterwards. This is the synthesis-side
     /// complement of [`Expectation`], which handles every site where
     /// the expected type is known *before* checking.
+    /// Bare nominal name of a struct/enum type, seeing through `&`/`&mut`.
+    /// Returns `None` for non-ADT types. Used to look up operator-overload
+    /// impl methods (`V2::add`).
+    fn adt_name_of(&mut self, ty: Ty) -> Option<String> {
+        let mut r = self.infer.resolve(self.tcx, ty);
+        while let Some(TyKind::Ref { inner, .. }) = self.tcx.kind(r) {
+            r = self.infer.resolve(self.tcx, *inner);
+        }
+        if let Some(TyKind::Adt { def, .. }) = self.tcx.kind(r) {
+            self.tcx.def_name(*def).map(str::to_string)
+        } else {
+            None
+        }
+    }
+
+    /// Coerces a byte literal compared against an integer operand to that
+    /// operand's integer type, so `s[i] == b'>'` type-checks without a cast.
+    /// Returns true when it applied (caller then skips the same-type unify).
+    fn coerce_byte_literal_cmp(&mut self, lhs: &Expr, lhs_ty: Ty, rhs: &Expr, rhs_ty: Ty) -> bool {
+        let is_byte_lit = |e: &Expr| matches!(&e.kind, ExprKind::Literal(Literal::Byte(_)));
+        let lr = self.infer.resolve(self.tcx, lhs_ty);
+        let rr = self.infer.resolve(self.tcx, rhs_ty);
+        if is_byte_lit(lhs) && self.is_integer(rr) {
+            self.record(lhs.id, rr);
+            true
+        } else if is_byte_lit(rhs) && self.is_integer(lr) {
+            self.record(rhs.id, lr);
+            true
+        } else {
+            false
+        }
+    }
+
     fn adjust_literal_to_join(&mut self, expr: &Expr, expected: Ty) {
         let expected = self.infer.resolve(self.tcx, expected);
         let expected = match self.tcx.kind(expected) {
@@ -4004,7 +4144,13 @@ impl<'a> TypeChecker<'a> {
             | BinaryOp::Le
             | BinaryOp::Gt
             | BinaryOp::Ge => {
-                self.unify(lhs_ty, rhs_ty, span);
+                // A byte literal compares against any integer operand without
+                // an explicit `as i64`: `s[i] == b'>'`. A byte literal is an
+                // `Int` value on every tier, so re-typing its node to the
+                // integer operand's type lets the comparison flow unchanged.
+                if !self.coerce_byte_literal_cmp(lhs, lhs_ty, rhs, rhs_ty) {
+                    self.unify(lhs_ty, rhs_ty, span);
+                }
                 self.tcx.bool_ty()
             }
             BinaryOp::And | BinaryOp::Or => {
@@ -4029,6 +4175,32 @@ impl<'a> TypeChecker<'a> {
                             return lhs_ty;
                         }
                     }
+                }
+                // Arithmetic on a user struct/enum routes to its operator
+                // impl (`+` -> `add`, `-` -> `sub`, `*` -> `mul`, `/` ->
+                // `div`); the result is that method's return type. An ADT
+                // operand with no such impl is rejected here rather than
+                // miscompiling to a runtime "unsupported value kinds" error.
+                if let Some(method) = arith_op_method(op)
+                    && let Some(adt) = self
+                        .adt_name_of(lhs_ty)
+                        .or_else(|| self.adt_name_of(rhs_ty))
+                {
+                    if let Some(&ret) =
+                        self.method_ret_types
+                            .get(&(adt.clone(), method.to_string(), 1))
+                    {
+                        return ret;
+                    }
+                    self.emit(
+                        TypeError::UnresolvedOp {
+                            op: op.as_str().to_string(),
+                            lhs: render_ty(self.tcx, self.infer.resolve(self.tcx, lhs_ty)),
+                            rhs: render_ty(self.tcx, self.infer.resolve(self.tcx, rhs_ty)),
+                        },
+                        span,
+                    );
+                    return self.tcx.error_ty();
                 }
                 self.unify(lhs_ty, rhs_ty, span);
                 lhs_ty
@@ -5757,6 +5929,18 @@ fn seed_checker_stdlib_struct_fields(
 /// Resolves a symbolic array length against a const-substitution list:
 /// a `Param(idx)` length becomes `Concrete` when `const_substs[idx]`
 /// holds a non-negative value; every other length is unchanged.
+/// Operator-overload impl-method name for an arithmetic binary operator,
+/// or `None` for operators that are not overloadable on user types.
+fn arith_op_method(op: BinaryOp) -> Option<&'static str> {
+    match op {
+        BinaryOp::Add => Some("add"),
+        BinaryOp::Sub => Some("sub"),
+        BinaryOp::Mul => Some("mul"),
+        BinaryOp::Div => Some("div"),
+        _ => None,
+    }
+}
+
 fn subst_array_len(len: crate::ArrayLen, const_substs: &[Option<i128>]) -> crate::ArrayLen {
     let crate::ArrayLen::Param(idx) = len else {
         return len;

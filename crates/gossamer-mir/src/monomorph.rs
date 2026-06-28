@@ -90,20 +90,42 @@ pub fn monomorphise(bodies: &mut Vec<Body>, tcx: &mut TyCtxt) {
                 let mut copy = bodies[*src_idx].clone();
                 copy.name = name;
                 copy.def = None;
-                for local in &mut copy.locals {
-                    local.ty = resolve(tcx, local.ty);
-                }
+                let subst_tys: Vec<Option<Ty>> = substs
+                    .as_slice()
+                    .iter()
+                    .map(|a| match a {
+                        GenericArg::Type(t) => Some(*t),
+                        GenericArg::Const(_) => None,
+                    })
+                    .collect();
+                // Rewrite trait-method calls first, while the receiver locals
+                // still carry the template's `Param` types: the rewrite keys on
+                // a `Param` receiver to recognise a static-dispatch call and map
+                // it to the concrete impl symbol. Substituting the locals first
+                // would erase the `Param` and the call would stay an unresolved
+                // bare method name.
                 if rewrite_trait_method_calls(&mut copy, substs, tcx) {
                     trait_specialised_defs.insert(def.local);
                 }
+                // Then substitute the instantiation's concrete types for the
+                // template's type parameters throughout the copy - local types
+                // (so codegen sees the real struct/string/tuple/float layout
+                // instead of a `Param` opaque slot) and internal call-site
+                // generic args (so a recursive self-call resolves to this copy).
+                for local in &mut copy.locals {
+                    local.ty = subst_param_ty(tcx, local.ty, &subst_tys);
+                }
+                specialise_call_substs(&mut copy, &subst_tys, tcx);
                 specialised.push(copy);
             }
         }
-        if specialised.is_empty() {
+        let fn_progress = !specialised.is_empty();
+        bodies.extend(specialised);
+        let method_progress = specialise_methods_step(bodies, &mut emitted, tcx);
+        if !fn_progress && !method_progress {
             // No new copies - fixed point reached.
             break;
         }
-        bodies.extend(specialised);
         assert!(
             iteration + 1 != MAX_MONOMORPHISE_ITERATIONS,
             "monomorphise: did not reach a fixed point in {MAX_MONOMORPHISE_ITERATIONS} iterations \
@@ -111,22 +133,30 @@ pub fn monomorphise(bodies: &mut Vec<Body>, tcx: &mut TyCtxt) {
             or the cap needs to be raised after auditing the offending bodies"
         );
     }
-    // Route every call to a trait-specialised generic to its mangled copy
-    // by name (the copy carries the concrete impl dispatch), then drop the
-    // now-dead template - emitting it would leave an unresolved trait-method
-    // call. Scalar generics are untouched and keep calling their template.
-    if !trait_specialised_defs.is_empty() {
-        for body in bodies.iter_mut() {
-            for block in &mut body.blocks {
-                if let Terminator::Call { callee, .. } = &mut block.terminator
-                    && let Operand::FnRef { def, substs } = callee
-                    && trait_specialised_defs.contains(&def.local)
-                    && !substs.is_empty()
-                {
-                    *callee = Operand::Const(ConstValue::Str(mangled_name(*def, substs)));
+    // Route every generic call whose argument is not an i64-slot scalar to its
+    // specialised concrete copy. The template's flat-i64 ABI carries an
+    // `i64`/`bool`/`char`/`()` argument correctly through the pointer-width
+    // slot, so those keep calling the template; everything else (structs,
+    // tuples, strings, `f64` - a float register class the i64 slot cannot hold)
+    // is mishandled by the template and routes to its concrete copy, which uses
+    // the real per-type ABI. Const-only instantiations have no copy.
+    for body in bodies.iter_mut() {
+        for block in &mut body.blocks {
+            if let Terminator::Call { callee, .. } = &mut block.terminator
+                && let Operand::FnRef { def, substs } = callee
+                && !substs.is_empty()
+                && substs_need_concrete_copy(substs, tcx)
+            {
+                let name = mangled_name(*def, substs);
+                if emitted.contains(&name) {
+                    *callee = Operand::Const(ConstValue::Str(name));
                 }
             }
         }
+    }
+    // Trait-specialised templates carry an unresolved trait-method call in
+    // their body; every caller now routes to a copy, so drop them.
+    if !trait_specialised_defs.is_empty() {
         bodies.retain(|b| {
             b.def
                 .is_none_or(|d| !trait_specialised_defs.contains(&d.local))
@@ -139,6 +169,222 @@ pub fn monomorphise(bodies: &mut Vec<Body>, tcx: &mut TyCtxt) {
             local.ty = resolve(tcx, local.ty);
         }
     }
+    // Register per-instantiation field-type tables for every generic
+    // struct instantiation reachable from a (resolved) local type, so the
+    // compiled tiers lay out `Wrapper<Point>` by its concrete field
+    // (`Point`) instead of the declared `Param` slot.
+    register_struct_instantiations(bodies, tcx);
+}
+
+/// One fixed-point round of generic-method specialisation. Methods are
+/// dispatched by name (`Const(Str("Wrapper::get"))`, no `DefId`), so they
+/// never enter the `FnRef`-keyed function path and their `self: &Wrapper<T>`
+/// / `-> T` stay `Param` - which codegen renders as an opaque `ptr` slot,
+/// mismatching the caller for non-pointer / aggregate `T`. For each call to a
+/// generic method whose receiver (the `self` argument's local type) is a
+/// concrete struct instantiation, materialise a per-instantiation copy with
+/// the concrete types substituted in and route the call to it - the same
+/// shape as free-function monomorphisation, keyed by name. Returns `true`
+/// when at least one new copy was created.
+fn specialise_methods_step(
+    bodies: &mut Vec<Body>,
+    emitted: &mut HashSet<String>,
+    tcx: &mut TyCtxt,
+) -> bool {
+    let method_bases: HashMap<String, usize> = bodies
+        .iter()
+        .enumerate()
+        .filter(|(_, b)| b.def.is_none() && b.name.contains("::") && body_has_param(b, tcx))
+        .map(|(i, b)| (b.name.clone(), i))
+        .collect();
+    if method_bases.is_empty() {
+        return false;
+    }
+    let mut rewrites: Vec<(usize, usize, String)> = Vec::new();
+    let mut to_create: Vec<(usize, Substs, String)> = Vec::new();
+    for (bi, body) in bodies.iter().enumerate() {
+        for (blk, block) in body.blocks.iter().enumerate() {
+            let Terminator::Call {
+                callee: Operand::Const(ConstValue::Str(name)),
+                args,
+                ..
+            } = &block.terminator
+            else {
+                continue;
+            };
+            let Some(&base_idx) = method_bases.get(name) else {
+                continue;
+            };
+            let Some(Operand::Copy(p)) = args.first() else {
+                continue;
+            };
+            let Some(recv_decl) = body.locals.get(p.local.0 as usize) else {
+                continue;
+            };
+            let recv_ty = peel_ref(tcx, recv_decl.ty);
+            let TyKind::Adt { substs, .. } = tcx.kind_of(recv_ty).clone() else {
+                continue;
+            };
+            if substs.is_empty() || substs.types().iter().any(|t| ty_contains_param(tcx, *t)) {
+                continue;
+            }
+            let spec_name = method_mangled_name(name, &substs);
+            rewrites.push((bi, blk, spec_name.clone()));
+            if emitted.insert(spec_name.clone()) {
+                to_create.push((base_idx, substs, spec_name));
+            }
+        }
+    }
+    let made = !to_create.is_empty();
+    for (base_idx, substs, spec_name) in to_create {
+        let mut copy = bodies[base_idx].clone();
+        copy.name = spec_name;
+        copy.def = None;
+        let subst_tys: Vec<Option<Ty>> = substs
+            .as_slice()
+            .iter()
+            .map(|a| match a {
+                GenericArg::Type(t) => Some(*t),
+                GenericArg::Const(_) => None,
+            })
+            .collect();
+        for local in &mut copy.locals {
+            local.ty = subst_param_ty(tcx, local.ty, &subst_tys);
+        }
+        specialise_call_substs(&mut copy, &subst_tys, tcx);
+        bodies.push(copy);
+    }
+    for (bi, blk, spec_name) in rewrites {
+        if let Terminator::Call { callee, .. } = &mut bodies[bi].blocks[blk].terminator {
+            *callee = Operand::Const(ConstValue::Str(spec_name));
+        }
+    }
+    made
+}
+
+/// Walks every body's local types and registers a per-instantiation field
+/// table for each generic struct instantiation `Adt { def, substs }` whose
+/// `substs` are concrete (no rigid `Param`). Recurses through the
+/// substituted field types so a nested instantiation (`Outer<Inner<T>>`)
+/// is registered too.
+fn register_struct_instantiations(bodies: &[Body], tcx: &mut TyCtxt) {
+    let mut done: HashSet<(DefId, Substs)> = HashSet::new();
+    let mut stack: Vec<Ty> = Vec::new();
+    for body in bodies {
+        for local in &body.locals {
+            stack.push(local.ty);
+        }
+    }
+    while let Some(ty) = stack.pop() {
+        match tcx.kind_of(ty).clone() {
+            TyKind::Adt { def, substs } if !substs.is_empty() => {
+                for t in substs.types() {
+                    stack.push(t);
+                }
+                if substs.types().iter().any(|t| ty_contains_param(tcx, *t)) {
+                    continue;
+                }
+                if !done.insert((def, substs.clone())) {
+                    continue;
+                }
+                let Some(decl) = tcx.struct_field_tys(def).map(<[Ty]>::to_vec) else {
+                    continue;
+                };
+                let subst_tys: Vec<Option<Ty>> = substs
+                    .as_slice()
+                    .iter()
+                    .map(|a| match a {
+                        GenericArg::Type(t) => Some(*t),
+                        GenericArg::Const(_) => None,
+                    })
+                    .collect();
+                let inst: Vec<Ty> = decl
+                    .iter()
+                    .map(|&f| subst_param_ty(tcx, f, &subst_tys))
+                    .collect();
+                for f in &inst {
+                    stack.push(*f);
+                }
+                tcx.register_struct_fields_inst(def, substs, inst);
+            }
+            TyKind::Ref { inner, .. }
+            | TyKind::Vec(inner)
+            | TyKind::Slice(inner)
+            | TyKind::Sender(inner)
+            | TyKind::Receiver(inner)
+            | TyKind::JoinHandle(inner) => stack.push(inner),
+            TyKind::Array { elem, .. } => stack.push(elem),
+            TyKind::Tuple(elems) => stack.extend(elems),
+            TyKind::HashMap { key, value } => {
+                stack.push(key);
+                stack.push(value);
+            }
+            _ => {}
+        }
+    }
+}
+
+/// `true` if `ty` mentions a generic `Param` anywhere in its structure.
+fn ty_contains_param(tcx: &TyCtxt, ty: Ty) -> bool {
+    match tcx.kind_of(ty) {
+        TyKind::Param { .. } => true,
+        TyKind::Ref { inner, .. }
+        | TyKind::Vec(inner)
+        | TyKind::Slice(inner)
+        | TyKind::Sender(inner)
+        | TyKind::Receiver(inner)
+        | TyKind::JoinHandle(inner) => ty_contains_param(tcx, *inner),
+        TyKind::Array { elem, .. } => ty_contains_param(tcx, *elem),
+        TyKind::Tuple(elems) => elems.iter().any(|t| ty_contains_param(tcx, *t)),
+        TyKind::HashMap { key, value } => {
+            ty_contains_param(tcx, *key) || ty_contains_param(tcx, *value)
+        }
+        TyKind::Adt { substs, .. } | TyKind::Alias { substs, .. } => {
+            substs.types().iter().any(|t| ty_contains_param(tcx, *t))
+        }
+        _ => false,
+    }
+}
+
+/// `true` if any of `body`'s locals carry a generic `Param`, marking it a
+/// generic template (a method on a generic struct, or a generic function)
+/// that needs a per-instantiation copy before codegen.
+fn body_has_param(body: &Body, tcx: &TyCtxt) -> bool {
+    body.locals.iter().any(|l| ty_contains_param(tcx, l.ty))
+}
+
+/// Peels a single layer of `&T` / `&mut T`, returning the pointee. A method
+/// receiver is `&self`, so the receiver's struct type sits one reference
+/// deep; values passed by value (a small aggregate) are returned unchanged.
+fn peel_ref(tcx: &TyCtxt, ty: Ty) -> Ty {
+    match tcx.kind_of(ty) {
+        TyKind::Ref { inner, .. } => *inner,
+        _ => ty,
+    }
+}
+
+/// Mangled name of a generic method instantiation. Methods carry no `DefId`,
+/// so the name keys the specialisation: the base `Type::method` name plus the
+/// interned id of each concrete type argument (equal types share an id, so a
+/// call site and the materialised copy agree).
+fn method_mangled_name(base: &str, substs: &Substs) -> String {
+    let mut out = format!("{base}$mono$");
+    for (i, arg) in substs.as_slice().iter().enumerate() {
+        if i > 0 {
+            out.push('_');
+        }
+        match arg {
+            GenericArg::Type(ty) => {
+                out.push('t');
+                out.push_str(&ty.as_u32().to_string());
+            }
+            GenericArg::Const(c) => {
+                out.push('c');
+                out.push_str(&c.to_string());
+            }
+        }
+    }
+    out
 }
 
 /// Static trait dispatch for a monomorphised generic body: a method
@@ -241,6 +487,126 @@ fn collect_from_operand(operand: &Operand, out: &mut HashMap<DefId, Vec<Substs>>
 fn resolve(tcx: &mut TyCtxt, ty: Ty) -> Ty {
     let _ = tcx.kind(ty);
     ty
+}
+
+/// Whether any of `substs`' type arguments is a pointer-represented aggregate
+/// that needs a concrete specialised copy. These types all pass through the
+/// flat-i64 slot as a single pointer, so a routed call's pointer-width ABI
+/// matches the concrete copy's ABI exactly - the copy then sees the real
+/// layout (struct fields, tuple/string/vec contents) instead of an opaque
+/// `Param`. Scalars (`Int`/`Bool`/`Char`/`()`) stay on the template (the slot
+/// carries them as-is). `Float` also stays on the template: it is a float
+/// register class the i64 slot cannot carry, and routing it would need
+/// register-class marshalling at the call boundary (a separate codegen change).
+fn substs_need_concrete_copy(substs: &Substs, tcx: &TyCtxt) -> bool {
+    substs.as_slice().iter().any(|a| match a {
+        GenericArg::Type(t) => matches!(
+            tcx.kind_of(*t),
+            TyKind::Adt { .. }
+                | TyKind::Tuple(_)
+                | TyKind::String
+                | TyKind::Vec(_)
+                | TyKind::Slice(_)
+                | TyKind::Array { .. }
+                | TyKind::HashMap { .. }
+        ),
+        GenericArg::Const(_) => false,
+    })
+}
+
+/// Substitutes a specialisation's concrete types for the template's type
+/// parameters within `ty`, recursing through composite types. A `Param` whose
+/// position holds a const argument (`subst_tys[i] == None`) is left unchanged.
+fn subst_param_ty(tcx: &mut TyCtxt, ty: Ty, subst_tys: &[Option<Ty>]) -> Ty {
+    let kind = tcx.kind_of(ty).clone();
+    match kind {
+        TyKind::Param { idx, .. } => subst_tys
+            .get(idx.0 as usize)
+            .copied()
+            .flatten()
+            .unwrap_or(ty),
+        TyKind::Ref { inner, mutability } => {
+            let inner = subst_param_ty(tcx, inner, subst_tys);
+            tcx.intern(TyKind::Ref { inner, mutability })
+        }
+        TyKind::Vec(elem) => {
+            let elem = subst_param_ty(tcx, elem, subst_tys);
+            tcx.intern(TyKind::Vec(elem))
+        }
+        TyKind::Slice(elem) => {
+            let elem = subst_param_ty(tcx, elem, subst_tys);
+            tcx.intern(TyKind::Slice(elem))
+        }
+        TyKind::Array { elem, len } => {
+            let elem = subst_param_ty(tcx, elem, subst_tys);
+            tcx.intern(TyKind::Array { elem, len })
+        }
+        TyKind::Tuple(elems) => {
+            let elems = elems
+                .iter()
+                .map(|&e| subst_param_ty(tcx, e, subst_tys))
+                .collect();
+            tcx.intern(TyKind::Tuple(elems))
+        }
+        TyKind::HashMap { key, value } => {
+            let key = subst_param_ty(tcx, key, subst_tys);
+            let value = subst_param_ty(tcx, value, subst_tys);
+            tcx.intern(TyKind::HashMap { key, value })
+        }
+        TyKind::Adt { def, substs } => {
+            let new_args = substs
+                .as_slice()
+                .iter()
+                .map(|a| match a {
+                    GenericArg::Type(t) => GenericArg::Type(subst_param_ty(tcx, *t, subst_tys)),
+                    GenericArg::Const(c) => GenericArg::Const(*c),
+                })
+                .collect();
+            tcx.intern(TyKind::Adt {
+                def,
+                substs: Substs::from_args(new_args),
+            })
+        }
+        _ => ty,
+    }
+}
+
+/// Rewrites every internal call site's `FnRef` generic args in `copy`,
+/// substituting the specialisation's concrete types for the template's type
+/// parameters. Mirrors the operand set `collect_from_*` inspects.
+fn specialise_call_substs(copy: &mut Body, subst_tys: &[Option<Ty>], tcx: &mut TyCtxt) {
+    fn subst_operand(op: &mut Operand, subst_tys: &[Option<Ty>], tcx: &mut TyCtxt) {
+        if let Operand::FnRef { substs, .. } = op
+            && !substs.is_empty()
+        {
+            let new_args = substs
+                .as_slice()
+                .iter()
+                .map(|a| match a {
+                    GenericArg::Type(t) => GenericArg::Type(subst_param_ty(tcx, *t, subst_tys)),
+                    GenericArg::Const(c) => GenericArg::Const(*c),
+                })
+                .collect();
+            *substs = Substs::from_args(new_args);
+        }
+    }
+    for block in &mut copy.blocks {
+        for stmt in &mut block.stmts {
+            if let StatementKind::Assign {
+                rvalue: Rvalue::Use(op),
+                ..
+            } = &mut stmt.kind
+            {
+                subst_operand(op, subst_tys, tcx);
+            }
+        }
+        if let Terminator::Call { callee, args, .. } = &mut block.terminator {
+            subst_operand(callee, subst_tys, tcx);
+            for arg in args.iter_mut() {
+                subst_operand(arg, subst_tys, tcx);
+            }
+        }
+    }
 }
 
 /// Walks every call site that supplies generic arguments and
@@ -357,6 +723,13 @@ fn fits_flat_i64_abi(tcx: &TyCtxt, ty: Ty) -> bool {
         | TyKind::Tuple(_)
         | TyKind::Array { .. }
         | TyKind::Slice(_) => true,
+        // A `Param`-typed generic argument is a template-internal call site -
+        // a recursive generic's self-call (`fn rec<T>(..) { rec(..) }`) carries
+        // `substs = [T]`, or a scalar generic keeps calling its template. It is
+        // not a concrete instantiation; the real instantiations are checked
+        // when their own (concrete) substs are observed. Rejecting it was a
+        // false positive that blocked recursive generics from compiling.
+        TyKind::Param { .. } => true,
         TyKind::Closure { .. } | TyKind::Alias { .. } => false,
         _ => false,
     }

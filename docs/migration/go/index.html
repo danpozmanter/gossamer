@@ -409,6 +409,8 @@
       
         
       
+        
+      
     
     
     
@@ -506,6 +508,34 @@
     
   
     Arena blocks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/comptime/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Comptime
   
 
     
@@ -2414,6 +2444,12 @@ write the conversion table out by hand:</p>
 <ul>
 <li>The M:N work-stealing scheduler is live; goroutines are parked by the
   netpoller when blocked on I/O.</li>
+<li>Scheduling is cooperative with watchdog-assisted preemption (Go's
+  pre-1.14 model plus signal-based interruption of blocking syscalls).
+  Unlike Go 1.14+, a tight, call-free compute loop is not yet
+  asynchronously preempted at loop back-edges - it yields at its next
+  call or park point. See
+  <a href="../../design/runtime/#preemption">runtime design - Preemption</a>.</li>
 <li>Channels are unbounded by default (like Go's <code>make(chan T)</code>
   without a buffer size - wait, actually Go's <em>unbuffered</em>
   channels block on send until a receiver is ready;

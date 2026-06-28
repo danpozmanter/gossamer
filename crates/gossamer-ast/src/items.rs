@@ -184,6 +184,11 @@ pub struct TraitBound {
 pub struct FnDecl {
     /// `true` when the function is declared `unsafe`.
     pub is_unsafe: bool,
+    /// `true` when the function is declared `comptime`. Every call to a
+    /// comptime function is evaluated at compile time by the comptime
+    /// fold pass and replaced with its result literal.
+    #[serde(default)]
+    pub is_comptime: bool,
     /// Function name.
     pub name: Ident,
     /// Generic parameters.
@@ -209,6 +214,11 @@ pub enum FnParam {
         pattern: Pattern,
         /// Parameter type.
         ty: Type,
+        /// `true` when declared `comptime pattern: type`. The matching
+        /// argument at each call site is evaluated at compile time and
+        /// replaced with its result literal by the comptime fold.
+        #[serde(default)]
+        is_comptime: bool,
     },
 }
 

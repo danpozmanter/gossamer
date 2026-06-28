@@ -14,9 +14,6 @@
 #![allow(static_mut_refs)]
 #![allow(unused_unsafe)]
 #![allow(clippy::wildcard_imports)]
-// `_reserved` is the GosVec padding field repurposed as a region flag;
-// reading it is intentional.
-#![allow(clippy::used_underscore_binding)]
 
 use super::*;
 
@@ -87,17 +84,21 @@ pub struct GosVec {
     /// padding before `ptr` so the struct layout (size, ptr offset,
     /// len offset) is unchanged from prior 0.5 releases.
     pub elem_kind: u8,
-    /// Padding bytes that preserve the historical 0.5 layout (`ptr`
-    /// at the same offset as before the `elem_kind` tag was added).
-    /// `pub` so sibling submodules can construct via the
-    /// `GosVec { … }` literal; the `_` prefix marks it as inert
-    /// filler that callers should ignore.
-    #[allow(clippy::pub_underscore_fields)]
-    pub _reserved: [u8; 3],
+    /// Region-allocation marker (was `_reserved[0]`, struct offset 21):
+    /// `VEC_REGION_FLAG` when this header and its buffer live in an arena
+    /// slab, so `gos_rt_vec_free` skips them.
+    pub region_flag: u8,
+    /// Strong refcount of a non-region Vec - an actual `AtomicU16` so its
+    /// atomic loads/stores are sound. (A prior `[u8; 3]` reinterpret-cast to
+    /// `AtomicU16` tripped Miri's Stacked-Borrows model: a read-only,
+    /// single-byte-provenance pointer cannot be retagged for atomic
+    /// read-write access.) Same offset (22) and size as the bytes it
+    /// replaces, so `ptr` stays at offset 24 and the layout is unchanged.
+    pub rc: std::sync::atomic::AtomicU16,
     pub ptr: SyncRawPtr<u8>,
 }
 
-/// `_reserved[0]` value marking a GosVec (and its backing buffer) as
+/// `region_flag` value marking a GosVec (and its backing buffer) as
 /// arena-region-allocated: both live in region slabs, so `gos_rt_vec_free`
 /// must skip them (they are freed wholesale at `arena_pop`).
 const VEC_REGION_FLAG: u8 = 1;
@@ -112,7 +113,7 @@ unsafe fn alloc_vec_header(mut v: GosVec) -> *mut GosVec {
         vec_set_rc(&v, 1);
         Box::into_raw(Box::new(v))
     } else {
-        v._reserved[0] = VEC_REGION_FLAG;
+        v.region_flag = VEC_REGION_FLAG;
         let hp = p.cast::<GosVec>();
         unsafe { std::ptr::write(hp, v) };
         hp
@@ -445,7 +446,7 @@ pub(crate) unsafe fn vec_release_guarded_elements(v: &GosVec) {
 /// True when this GosVec was allocated inside an arena region.
 #[inline]
 pub fn vec_is_region(v: &GosVec) -> bool {
-    v._reserved[0] == VEC_REGION_FLAG
+    v.region_flag == VEC_REGION_FLAG
 }
 
 /// Reads element `idx` of `v` as an i64, honoring the header's
@@ -504,19 +505,14 @@ pub(crate) unsafe fn vec_elem_store_i64(v: &GosVec, idx: i64, value: i64) {
     }
 }
 
-/// Shared reference to the atomic refcount in `_reserved[1..3]`.
-///
-/// `_reserved[1]` sits at struct offset 22 (always 2-byte aligned: `GosVec`
-/// has 8-byte alignment, so any instance address is `8k`, giving `8k+22 =
-/// 2(4k+11)`). `AtomicU16` has the same size and alignment as `u16`, so the
-/// reinterpretation is valid and the `GosVec` layout is unchanged.
+/// The atomic refcount field. Interior-mutable, so a shared `&GosVec` can
+/// update it without any pointer reinterpretation.
 #[inline]
 pub fn vec_rc_atomic(v: &GosVec) -> &std::sync::atomic::AtomicU16 {
-    // SAFETY: see the doc comment above for alignment proof and layout guarantee.
-    unsafe { &*((&raw const v._reserved[1]) as *const std::sync::atomic::AtomicU16) }
+    &v.rc
 }
 
-/// Strong refcount of a non-region Vec, stored atomically in `_reserved[1..3]`.
+/// Strong refcount of a non-region Vec, stored in the `rc` atomic field.
 /// A Vec aliased > 65535 times is unreachable; the count saturates rather than
 /// wrapping. Region Vecs ignore this (they are freed wholesale at region pop).
 #[inline]
@@ -538,7 +534,8 @@ pub unsafe extern "C" fn gos_rt_vec_new(elem_bytes: u32) -> *mut GosVec {
                 cap: 0,
                 elem_bytes,
                 elem_kind: vec_elem_kind::PRIMITIVE,
-                _reserved: [0; 3],
+                region_flag: 0,
+                rc: std::sync::atomic::AtomicU16::new(0),
                 ptr: SyncRawPtr::NULL,
             })
         }
@@ -567,7 +564,8 @@ pub unsafe extern "C" fn gos_rt_vec_new_typed(elem_bytes: u32, elem_kind: u8) ->
                 cap: 0,
                 elem_bytes,
                 elem_kind: kind,
-                _reserved: [0; 3],
+                region_flag: 0,
+                rc: std::sync::atomic::AtomicU16::new(0),
                 ptr: SyncRawPtr::NULL,
             })
         }
@@ -618,7 +616,8 @@ pub unsafe extern "C" fn gos_rt_vec_with_capacity(elem_bytes: u32, cap: i64) -> 
             cap,
             elem_bytes,
             elem_kind: vec_elem_kind::PRIMITIVE,
-            _reserved: [0; 3],
+            region_flag: 0,
+            rc: std::sync::atomic::AtomicU16::new(0),
             ptr: SyncRawPtr::new(ptr),
         };
         vec_set_rc(&v, 1);
@@ -658,7 +657,8 @@ pub unsafe extern "C" fn gos_rt_vec_with_capacity_typed(
             cap,
             elem_bytes,
             elem_kind: kind,
-            _reserved: [0; 3],
+            region_flag: 0,
+            rc: std::sync::atomic::AtomicU16::new(0),
             ptr: SyncRawPtr::new(ptr),
         };
         vec_set_rc(&v, 1);
@@ -699,7 +699,8 @@ pub unsafe extern "C" fn gos_rt_vec_from_arr(
             cap: len,
             elem_bytes,
             elem_kind: vec_elem_kind::PRIMITIVE,
-            _reserved: [0; 3],
+            region_flag: 0,
+            rc: std::sync::atomic::AtomicU16::new(0),
             ptr: SyncRawPtr::new(buf_ptr),
         };
         vec_set_rc(&v, 1);

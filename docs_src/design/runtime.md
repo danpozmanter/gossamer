@@ -147,6 +147,45 @@ yet parked, it records the gid; the worker about to park the
 task observes the pre-unpark and immediately re-ejects the task
 to the injector instead of leaving it parked.
 
+## Preemption
+
+Scheduling is **cooperative with watchdog-assisted preemption** - the
+Go pre-1.14 model plus the first half of Go's async-preemption work.
+
+A goroutine yields the worker M at *safepoints*:
+
+- every park point - channel send/recv, `select`, mutex contention,
+  `time::sleep`, network reads, filesystem syscalls (see *Goroutines*
+  above),
+- function-call / scheduler-step boundaries, where the worker can
+  reclaim the coroutine between `step()` invocations.
+
+The watchdog thread (`sched::multi::watchdog_loop`, 5 ms tick) escalates
+against a worker that has not reached a safepoint:
+
+- after ~10 ms it bumps the global *preempt phase*
+  (`preempt::request_yield_all`); the next `preempt::should_yield`
+  poll at any safepoint returns `true` and the goroutine yields,
+- after ~100 ms it sends a real OS signal to that worker's thread -
+  `SIGURG` on Unix, a `QueueUserAPC` on Windows. The signal does not
+  itself context-switch; it flips the yield flag promptly and, more
+  importantly, interrupts a blocking syscall the worker is stuck
+  inside (the kernel returns `EINTR`).
+
+**Current limitation.** The safepoint poll at *loop back-edges* is
+deliberately not emitted by the LLVM and Cranelift backends:
+`emit_preempt_check` is a no-op stub because an opaque runtime call on
+every back-edge blocks `opt -O3` from vectorising tight numeric inner
+loops (the difference between sub-second and multi-second runs on
+spectral-norm / n-body). The interpreter likewise does not poll at
+back-edges. So a goroutine spinning in a tight, call-free, pure-compute
+loop is **not** asynchronously preempted today - it yields only when it
+makes a call or reaches a park point. Because the pool is M:N, such a
+goroutine starves at most one worker thread; the other workers keep
+running every other goroutine. Emitting real back-edge safepoints
+(behind a flag that preserves the vectoriser fast path) is the planned
+completion of async preemption.
+
 ## Netpoller
 
 `gossamer-runtime::sched::poller::OsPoller` wraps `mio` (epoll on

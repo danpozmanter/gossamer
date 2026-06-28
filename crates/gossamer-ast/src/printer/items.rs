@@ -147,7 +147,7 @@ impl Printer {
             FnParam::Receiver(Receiver::Owned) => self.write("self"),
             FnParam::Receiver(Receiver::RefShared) => self.write("&self"),
             FnParam::Receiver(Receiver::RefMut) => self.write("&mut self"),
-            FnParam::Typed { pattern, ty } => {
+            FnParam::Typed { pattern, ty, .. } => {
                 self.print_pattern(pattern);
                 self.write(": ");
                 self.print_type(ty);

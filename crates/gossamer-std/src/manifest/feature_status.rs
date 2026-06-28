@@ -155,7 +155,12 @@ pub const FEATURE_STATUS: &[FeatureStatus] = &[
         "lang::unicode_identifiers",
         "Identifiers follow UAX #31 (matches Rust 2024).",
     ),
-    // Experimental / partial language surface.
+    // Compile-time evaluation. Folds to a literal before the tiers split.
+    lang(
+        "lang::comptime",
+        "Zig-style compile-time evaluation: `comptime { ... }` blocks, `comptime fn` calls, and `comptime` parameters run on the bytecode VM during compilation and fold to a literal, so every tier compiles the identical constant. Includes `typeInfo::<T>()` struct-field reflection and the `regex!` / `sql!` build-time validation macros.",
+    ),
+    // Planned / partial language surface.
     FeatureStatus {
         path: "lang::move_keyword",
         status: Status::Planned,

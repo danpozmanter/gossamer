@@ -189,6 +189,159 @@ fn extract_vec_strict(value_expr: &str, inner: &FieldKind, path: &str) -> String
     )
 }
 
+/// Mangled name of the synthesized field-reflection function for a
+/// struct, reached via `typeInfo::<Type>()`.
+#[must_use]
+pub(crate) fn type_info_fn(ty: &str) -> String {
+    format!("__gos_typeinfo_{ty}")
+}
+
+/// Synthesizes the `comptime fn` validators backing the compile-time
+/// validation macros `regex!("…")` / `sql!("…")`. Emitted only when the
+/// source uses the matching macro, so non-validating programs carry no
+/// extra items. Each validator returns its input on success and
+/// `panic!`s on malformed input - a comptime panic fails the build.
+fn synthesize_validators(source: &str) -> String {
+    let mut out = String::new();
+    if source.contains("regex!") {
+        out.push_str(
+            "comptime fn __gos_regex_validate(p: String) -> String {\n\
+             \tmatch regex::compile(&p) {\n\
+             \t\tOk(_) => p,\n\
+             \t\tErr(__e) => panic!(\"invalid regex `{}`: {}\", p, __e),\n\
+             \t}\n\
+             }\n",
+        );
+    }
+    if source.contains("sql!") {
+        out.push_str(
+            "comptime fn __gos_sql_validate(q: String) -> String {\n\
+             \tif q.len() == 0 { panic!(\"empty SQL statement\") }\n\
+             \tlet mut depth = 0\n\
+             \tlet mut i = 0\n\
+             \twhile i < q.len() {\n\
+             \t\tlet b = q.byte_at(i)\n\
+             \t\tif b == 40 { depth += 1 }\n\
+             \t\tif b == 41 { depth -= 1 }\n\
+             \t\tif depth < 0 { panic!(\"unbalanced parentheses in SQL: {}\", q) }\n\
+             \t\ti += 1\n\
+             \t}\n\
+             \tif depth != 0 { panic!(\"unbalanced parentheses in SQL: {}\", q) }\n\
+             \tq\n\
+             }\n",
+        );
+    }
+    out
+}
+
+/// Renders an AST type as a compact source-like string for reflection
+/// (`typeInfo`). Falls back to the leaf path segment for shapes the
+/// renderer does not special-case.
+fn ty_to_string(ty: &gossamer_ast::ty::Type) -> String {
+    use gossamer_ast::ty::TypeKind;
+    match &ty.kind {
+        TypeKind::Unit => "()".to_string(),
+        TypeKind::Slice(inner) => format!("[{}]", ty_to_string(inner)),
+        TypeKind::Array { elem, .. } => format!("[{}]", ty_to_string(elem)),
+        TypeKind::Ref { inner, .. } => ty_to_string(inner),
+        TypeKind::Tuple(elems) => format!(
+            "({})",
+            elems
+                .iter()
+                .map(ty_to_string)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        TypeKind::Path(tp) => match tp.segments.last() {
+            Some(seg) if !seg.generics.is_empty() => {
+                let args: Vec<String> = seg
+                    .generics
+                    .iter()
+                    .map(|g| match g {
+                        GenericArg::Type(t) => ty_to_string(t),
+                        GenericArg::Const(_) => "_".to_string(),
+                    })
+                    .collect();
+                format!("{}<{}>", seg.name.name, args.join(", "))
+            }
+            Some(seg) => seg.name.name.clone(),
+            None => "_".to_string(),
+        },
+        _ => "_".to_string(),
+    }
+}
+
+/// Synthesizes a `fn __gos_typeinfo_<Name>() -> [(String, String)]`
+/// returning each field's `(name, type)` for every named-field struct,
+/// so `typeInfo::<Name>()` reflects the type's fields at compile time
+/// (the comptime reflection surface). Only emitted when the source
+/// mentions `typeInfo` so non-reflecting programs carry no extra items.
+#[must_use]
+pub fn synthesize_type_info(parsed: &SourceFile) -> String {
+    let mut out = String::new();
+    for item in &parsed.items {
+        let ItemKind::Struct(decl) = &item.kind else {
+            continue;
+        };
+        let StructBody::Named(fields) = &decl.body else {
+            continue;
+        };
+        if !decl.generics.params.is_empty() {
+            continue;
+        }
+        let entries: Vec<String> = fields
+            .iter()
+            .map(|f| format!("(\"{}\", \"{}\")", f.name.name, ty_to_string(&f.ty)))
+            .collect();
+        out.push_str(&format!(
+            "fn {}() -> [(String, String)] {{ [{}] }}\n",
+            type_info_fn(&decl.name.name),
+            entries.join(", "),
+        ));
+    }
+    out
+}
+
+/// Rewrites `typeInfo::<Type>()` into a call to the synthesized
+/// `__gos_typeinfo_<Type>()` reflection function.
+pub fn rewrite_type_info_calls(sf: &mut SourceFile) {
+    use gossamer_ast::VisitorMut;
+    use gossamer_ast::expr::{Expr, ExprKind};
+    use gossamer_ast::visitor::walk_expr_mut;
+
+    struct Rewriter;
+    impl VisitorMut for Rewriter {
+        fn visit_expr(&mut self, expr: &mut Expr) {
+            walk_expr_mut(self, expr);
+            let ExprKind::Call { callee, .. } = &mut expr.kind else {
+                return;
+            };
+            let ExprKind::Path(path) = &mut callee.kind else {
+                return;
+            };
+            if path.segments.len() != 1 {
+                return;
+            }
+            let seg = &mut path.segments[0];
+            if seg.name.name != "typeInfo" || seg.generics.len() != 1 {
+                return;
+            }
+            let GenericArg::Type(ty) = &seg.generics[0] else {
+                return;
+            };
+            let TypeKind::Path(tp) = &ty.kind else {
+                return;
+            };
+            let Some(type_seg) = tp.segments.last() else {
+                return;
+            };
+            seg.name.name = type_info_fn(&type_seg.name.name);
+            seg.generics.clear();
+        }
+    }
+    Rewriter.visit_source_file(sf);
+}
+
 /// Walks `parsed` for struct definitions and synthesizes
 /// serialization-method source for each eligible struct. Returns the
 /// generated source text, ready to be parsed and merged.
@@ -825,6 +978,15 @@ pub fn augment_source(source: &str) -> String {
     let (parsed, _) = crate::parse_source_file(source, probe_file);
     let serde = synthesize_serde_impls(&parsed);
     let derives = synthesize_derive_impls(&parsed);
+    // Field-reflection functions for `typeInfo::<T>()`, emitted only
+    // when the source reflects (keeps non-reflecting programs lean).
+    let type_info = if source.contains("typeInfo") {
+        synthesize_type_info(&parsed)
+    } else {
+        String::new()
+    };
+    // Compile-time validation macro backers (`regex!` / `sql!`).
+    let validators = synthesize_validators(source);
     // Stdlib structs (pem::Block, …) are real Gossamer structs +
     // wrapper functions injected here; the wrappers call leaf
     // `gos_rt_*` intrinsics that return tuples/bytes, so the same
@@ -856,7 +1018,12 @@ pub fn augment_source(source: &str) -> String {
     if source.contains("time::after") {
         stdlib_wrappers.push_str(TIME_TIMER_WRAPPERS);
     }
-    if synth_is_empty(&serde) && stdlib_wrappers.is_empty() && derives.is_empty() {
+    if synth_is_empty(&serde)
+        && stdlib_wrappers.is_empty()
+        && derives.is_empty()
+        && type_info.is_empty()
+        && validators.is_empty()
+    {
         return source.to_string();
     }
     if std::env::var_os("GOS_AUTODERIVE_DEBUG").is_some() {
@@ -875,6 +1042,8 @@ pub fn augment_source(source: &str) -> String {
     }
     combined.push_str(&derives);
     combined.push_str(&stdlib_wrappers);
+    combined.push_str(&type_info);
+    combined.push_str(&validators);
     combined
 }
 
@@ -1815,7 +1984,10 @@ pub fn parse_with_autoderive(source: &str, file: FileId) -> (SourceFile, Vec<Par
     // LSP reach the implicit main through here. The REPL and `gos fmt`/`doc`/
     // `lint` use the raw `parse_source_file` and are unaffected.
     diags.extend(crate::entry_main::synthesize_entry_main(&mut sf));
+    infer_serde_turbofish(&mut sf);
+    desugar_sort_by_key(&mut sf);
     rewrite_serde_generic_calls(&mut sf);
+    rewrite_type_info_calls(&mut sf);
     rewrite_json_set_mutators(&mut sf);
     rewrite_stdlib_struct_surface(&mut sf);
     inject_synthetic_uses(&mut sf, file);
@@ -2035,6 +2207,7 @@ fn writeback_block(
         tail: Some(Box::new(place)),
         synthetic: true,
         is_arena: false,
+        is_comptime: false,
     })
 }
 
@@ -2242,6 +2415,500 @@ pub fn rewrite_stdlib_struct_surface(sf: &mut SourceFile) {
     Rewriter.visit_source_file(sf);
 }
 
+/// Desugars `xs.sort_by_key(f)` / `xs.sort_by_key_desc(f)` method calls into
+/// `xs.sort_by(|a, b| { let ka = f(a); let kb = f(b); cmp })`, where `cmp`
+/// orders by the key with `<`. Because the key is compared with the `<`
+/// operator (which works on scalars, strings, and tuples on every tier),
+/// multi-key sorting via a tuple key - `xs.sort_by_key(|e| (e.a, e.b))` -
+/// works without pinning the key to `i64`. Source-to-source, so it compiles
+/// bit-identically on all tiers.
+use gossamer_ast::VisitorMut as _;
+use gossamer_ast::expr::Expr as SbkExpr;
+use gossamer_ast::expr::ExprKind as SbkExprKind;
+use gossamer_ast::pattern::Pattern as SbkPattern;
+use gossamer_ast::stmt::Stmt as SbkStmt;
+use gossamer_lex::Span as SbkSpan;
+
+const SBK_KEY: &str = "__gos_sbk_key";
+const SBK_A: &str = "__gos_sbk_a";
+const SBK_B: &str = "__gos_sbk_b";
+const SBK_KA: &str = "__gos_sbk_ka";
+const SBK_KB: &str = "__gos_sbk_kb";
+
+/// AST builder for the `sort_by_key` desugar. Holds a fresh-id counter -
+/// the checker records inferred types per `NodeId`, so every synthesized
+/// node needs a unique id rather than `DUMMY`.
+struct SbkBuilder {
+    next: u32,
+}
+
+impl SbkBuilder {
+    fn id(&mut self) -> NodeId {
+        let id = NodeId::from_raw(self.next);
+        self.next += 1;
+        id
+    }
+    fn expr(&mut self, span: SbkSpan, kind: SbkExprKind) -> SbkExpr {
+        SbkExpr {
+            id: self.id(),
+            span,
+            kind,
+        }
+    }
+    fn path(&mut self, name: &str, span: SbkSpan) -> SbkExpr {
+        self.expr(
+            span,
+            SbkExprKind::Path(gossamer_ast::expr::PathExpr {
+                segments: vec![gossamer_ast::expr::PathSegment::new(name)],
+            }),
+        )
+    }
+    fn int_lit(&mut self, n: i64, span: SbkSpan) -> SbkExpr {
+        self.expr(
+            span,
+            SbkExprKind::Literal(gossamer_ast::expr::Literal::Int(n.to_string())),
+        )
+    }
+    fn ident_pat(&mut self, name: &str, span: SbkSpan) -> SbkPattern {
+        SbkPattern {
+            id: self.id(),
+            span,
+            kind: gossamer_ast::pattern::PatternKind::Ident {
+                mutability: gossamer_ast::common::Mutability::Immutable,
+                name: gossamer_ast::Ident::new(name),
+                subpattern: None,
+            },
+        }
+    }
+    fn let_stmt(&mut self, name: &str, init: SbkExpr, span: SbkSpan) -> SbkStmt {
+        let pattern = self.ident_pat(name, span);
+        SbkStmt::new(
+            self.id(),
+            span,
+            gossamer_ast::stmt::StmtKind::Let {
+                pattern,
+                ty: None,
+                init: Some(Box::new(init)),
+            },
+        )
+    }
+    fn block(&mut self, stmts: Vec<SbkStmt>, tail: SbkExpr, span: SbkSpan) -> SbkExpr {
+        self.expr(
+            span,
+            SbkExprKind::Block(gossamer_ast::expr::Block {
+                stmts,
+                tail: Some(Box::new(tail)),
+                synthetic: true,
+                is_arena: false,
+                is_comptime: false,
+            }),
+        )
+    }
+    /// `path(left) < path(right)`.
+    fn cmp_paths(&mut self, left: &str, right: &str, span: SbkSpan) -> SbkExpr {
+        let left_e = self.path(left, span);
+        let right_e = self.path(right, span);
+        self.expr(
+            span,
+            SbkExprKind::Binary {
+                op: gossamer_ast::common::BinaryOp::Lt,
+                lhs: Box::new(left_e),
+                rhs: Box::new(right_e),
+            },
+        )
+    }
+    fn key_call(&mut self, arg_name: &str, span: SbkSpan) -> SbkExpr {
+        let callee = self.path(SBK_KEY, span);
+        let arg = self.path(arg_name, span);
+        self.expr(
+            span,
+            SbkExprKind::Call {
+                callee: Box::new(callee),
+                args: vec![arg],
+            },
+        )
+    }
+    /// Deep-clones `body` with fresh node ids, renaming references to the key
+    /// closure's parameter `param` to `to`. Inlining the key body (rather than
+    /// capturing the key closure and calling it) sidesteps a native-tier
+    /// quirk where a comparator that captures another closure and returns an
+    /// aggregate key misbehaves when invoked through the sort callback ABI.
+    fn clone_inline(&mut self, body: &SbkExpr, param: &str, to: &str) -> SbkExpr {
+        let mut cloned = body.clone();
+        SbkRenum { d: self, param, to }.visit_expr(&mut cloned);
+        cloned
+    }
+    /// Builds the `|a, b| { let ka = ...; let kb = ...; cmp }` comparator that
+    /// orders elements by their key with `<` (flipped for `desc`).
+    fn comparator(
+        &mut self,
+        first_key: SbkStmt,
+        second_key: SbkStmt,
+        desc: bool,
+        span: SbkSpan,
+    ) -> SbkExpr {
+        use gossamer_ast::expr::ClosureParam;
+        let lt_forward = self.cmp_paths(SBK_KA, SBK_KB, span);
+        let lt_backward = self.cmp_paths(SBK_KB, SBK_KA, span);
+        let (first, second) = if desc {
+            (lt_backward, lt_forward)
+        } else {
+            (lt_forward, lt_backward)
+        };
+        let one = self.int_lit(1, span);
+        let zero = self.int_lit(0, span);
+        let neg = self.int_lit(-1, span);
+        let then_one = self.block(vec![], one, span);
+        let then_zero = self.block(vec![], zero, span);
+        let then_neg = self.block(vec![], neg, span);
+        let inner_if = self.expr(
+            span,
+            SbkExprKind::If {
+                condition: Box::new(second),
+                then_branch: Box::new(then_one),
+                else_branch: Some(Box::new(then_zero)),
+            },
+        );
+        let if_chain = self.expr(
+            span,
+            SbkExprKind::If {
+                condition: Box::new(first),
+                then_branch: Box::new(then_neg),
+                else_branch: Some(Box::new(inner_if)),
+            },
+        );
+        let cmp_body = self.block(vec![first_key, second_key], if_chain, span);
+        let pat_a = self.ident_pat(SBK_A, span);
+        let pat_b = self.ident_pat(SBK_B, span);
+        self.expr(
+            span,
+            SbkExprKind::Closure {
+                params: vec![
+                    ClosureParam {
+                        pattern: pat_a,
+                        ty: None,
+                    },
+                    ClosureParam {
+                        pattern: pat_b,
+                        ty: None,
+                    },
+                ],
+                ret: None,
+                body: Box::new(cmp_body),
+            },
+        )
+    }
+    /// Builds the `|a, b| { ... }` comparator from an inline-able key `body`,
+    /// comparing element-wise so a tuple key with `Reverse(x)` members can mix
+    /// ascending and descending. For each element (or the whole key when it is
+    /// not a tuple literal): if it is `Reverse(inner)` the element is ordered
+    /// descending; `desc` flips every element. Each element value is inlined
+    /// (the key param substituted for `a` / `b`) and ordered with `<`, which
+    /// works on scalars, strings, and tuples on every tier.
+    fn element_wise_comparator(
+        &mut self,
+        body: &SbkExpr,
+        param: &str,
+        desc: bool,
+        span: SbkSpan,
+    ) -> SbkExpr {
+        use gossamer_ast::expr::ClosureParam;
+        // Decompose a tuple-literal key into its elements; any other key is a
+        // single element.
+        let elems: Vec<SbkExpr> = match &body.kind {
+            SbkExprKind::Tuple(es) => es.clone(),
+            _ => vec![body.clone()],
+        };
+        let zero = self.int_lit(0, span);
+        let mut chain = self.block(vec![], zero, span);
+        for (i, elem) in elems.iter().enumerate().rev() {
+            let (inner, reversed) = sbk_strip_reverse(elem);
+            let flip = reversed ^ desc;
+            let a_name = format!("__gos_sbk_a{i}");
+            let b_name = format!("__gos_sbk_b{i}");
+            let a_val = self.clone_inline(inner, param, SBK_A);
+            let b_val = self.clone_inline(inner, param, SBK_B);
+            let let_a = self.let_stmt(&a_name, a_val, span);
+            let let_b = self.let_stmt(&b_name, b_val, span);
+            // The "this element is less" direction: `a < b` ascending, or
+            // `b < a` when this element is reversed.
+            let (less, greater) = if flip {
+                (
+                    self.cmp_paths(&b_name, &a_name, span),
+                    self.cmp_paths(&a_name, &b_name, span),
+                )
+            } else {
+                (
+                    self.cmp_paths(&a_name, &b_name, span),
+                    self.cmp_paths(&b_name, &a_name, span),
+                )
+            };
+            let neg = self.int_lit(-1, span);
+            let one = self.int_lit(1, span);
+            let then_neg = self.block(vec![], neg, span);
+            let then_one = self.block(vec![], one, span);
+            let greater_if = self.expr(
+                span,
+                SbkExprKind::If {
+                    condition: Box::new(greater),
+                    then_branch: Box::new(then_one),
+                    else_branch: Some(Box::new(chain)),
+                },
+            );
+            let less_if = self.expr(
+                span,
+                SbkExprKind::If {
+                    condition: Box::new(less),
+                    then_branch: Box::new(then_neg),
+                    else_branch: Some(Box::new(greater_if)),
+                },
+            );
+            chain = self.block(vec![let_a, let_b], less_if, span);
+        }
+        let pat_a = self.ident_pat(SBK_A, span);
+        let pat_b = self.ident_pat(SBK_B, span);
+        self.expr(
+            span,
+            SbkExprKind::Closure {
+                params: vec![
+                    ClosureParam {
+                        pattern: pat_a,
+                        ty: None,
+                    },
+                    ClosureParam {
+                        pattern: pat_b,
+                        ty: None,
+                    },
+                ],
+                ret: None,
+                body: Box::new(chain),
+            },
+        )
+    }
+    fn rewrite(&mut self, e: &mut SbkExpr, desc: bool) {
+        let span = e.span;
+        let SbkExprKind::MethodCall {
+            receiver, mut args, ..
+        } = std::mem::replace(&mut e.kind, SbkExprKind::Tuple(Vec::new()))
+        else {
+            return;
+        };
+        let key_fn = args.pop().expect("checked len == 1");
+        // Inline a closure-literal key (`|e| body`) by substituting its single
+        // ident param; non-closure keys (a fn name / variable) bind and call.
+        let inline_param = sbk_inline_param(&key_fn);
+        let (outer_stmts, comparator) = if let Some(param) = inline_param {
+            let body = match &key_fn.kind {
+                SbkExprKind::Closure { body, .. } => body.clone(),
+                _ => unreachable!("inline_param implies a closure"),
+            };
+            // Build a Reverse-aware element-wise comparator straight from the
+            // key body: a tuple key compares lexicographically, with each
+            // `Reverse(x)` element ordered descending (and the whole key
+            // reversed for `sort_by_key_desc`).
+            (
+                Vec::new(),
+                self.element_wise_comparator(&body, &param, desc, span),
+            )
+        } else {
+            let let_key = self.let_stmt(SBK_KEY, key_fn, span);
+            let call_a = self.key_call(SBK_A, span);
+            let call_b = self.key_call(SBK_B, span);
+            let first_key = self.let_stmt(SBK_KA, call_a, span);
+            let second_key = self.let_stmt(SBK_KB, call_b, span);
+            (
+                vec![let_key],
+                self.comparator(first_key, second_key, desc, span),
+            )
+        };
+        let sort_call = self.expr(
+            span,
+            SbkExprKind::MethodCall {
+                receiver,
+                name: gossamer_ast::Ident::new("sort_by"),
+                generics: Vec::new(),
+                args: vec![comparator],
+            },
+        );
+        e.kind = SbkExprKind::Block(gossamer_ast::expr::Block {
+            stmts: outer_stmts,
+            tail: Some(Box::new(sort_call)),
+            synthetic: true,
+            is_arena: false,
+            is_comptime: false,
+        });
+    }
+}
+
+impl gossamer_ast::VisitorMut for SbkBuilder {
+    fn visit_expr(&mut self, e: &mut SbkExpr) {
+        gossamer_ast::visitor::walk_expr_mut(self, e);
+        let SbkExprKind::MethodCall { name, args, .. } = &e.kind else {
+            return;
+        };
+        let desc = match name.name.as_str() {
+            "sort_by_key" => false,
+            "sort_by_key_desc" => true,
+            _ => return,
+        };
+        if args.len() == 1 {
+            self.rewrite(e, desc);
+        }
+    }
+}
+
+/// Renumbers a cloned key body's node ids and renames its parameter.
+struct SbkRenum<'a> {
+    d: &'a mut SbkBuilder,
+    param: &'a str,
+    to: &'a str,
+}
+
+impl gossamer_ast::VisitorMut for SbkRenum<'_> {
+    fn visit_expr(&mut self, e: &mut SbkExpr) {
+        e.id = self.d.id();
+        if let SbkExprKind::Path(p) = &mut e.kind
+            && p.segments.len() == 1
+            && p.segments[0].name.name == self.param
+        {
+            p.segments[0].name = gossamer_ast::Ident::new(self.to);
+        }
+        gossamer_ast::visitor::walk_expr_mut(self, e);
+    }
+    fn visit_pattern(&mut self, p: &mut SbkPattern) {
+        p.id = self.d.id();
+        gossamer_ast::visitor::walk_pattern_mut(self, p);
+    }
+    fn visit_stmt(&mut self, s: &mut SbkStmt) {
+        s.id = self.d.id();
+        gossamer_ast::visitor::walk_stmt_mut(self, s);
+    }
+}
+
+/// If `e` is a `Reverse(inner)` call (the sort-key descending marker), returns
+/// `(inner, true)`; otherwise `(e, false)`. `Reverse` is recognized only here,
+/// inside a `sort_by_key` key, where it is stripped before the body is inlined -
+/// so it never needs to be a real constructible type.
+fn sbk_strip_reverse(e: &SbkExpr) -> (&SbkExpr, bool) {
+    if let SbkExprKind::Call { callee, args } = &e.kind
+        && args.len() == 1
+        && let SbkExprKind::Path(p) = &callee.kind
+        && p.segments.len() == 1
+        && p.segments[0].name.name == "Reverse"
+    {
+        return (&args[0], true);
+    }
+    (e, false)
+}
+
+/// The single ident parameter name of a closure-literal key, or `None`.
+fn sbk_inline_param(key_fn: &SbkExpr) -> Option<String> {
+    let SbkExprKind::Closure { params, .. } = &key_fn.kind else {
+        return None;
+    };
+    if params.len() != 1 {
+        return None;
+    }
+    match &params[0].pattern.kind {
+        gossamer_ast::pattern::PatternKind::Ident {
+            name,
+            subpattern: None,
+            ..
+        } => Some(name.name.as_str().to_owned()),
+        _ => None,
+    }
+}
+
+/// Desugars `xs.sort_by_key(f)` / `xs.sort_by_key_desc(f)` into
+/// `xs.sort_by(|a, b| { let ka = f(a); let kb = f(b); cmp })`, ordering by the
+/// key with `<`. Because keys are compared with the `<` operator (which works
+/// on scalars, strings, and tuples on every tier), multi-key sorting via a
+/// tuple key works without pinning the key to `i64`. A closure-literal key is
+/// inlined (its param substituted); other keys are bound and called.
+/// Source-to-source, so it compiles bit-identically on all tiers.
+pub fn desugar_sort_by_key(sf: &mut SourceFile) {
+    use gossamer_ast::VisitorMut;
+    let mut builder = SbkBuilder {
+        next: sf.next_node_id,
+    };
+    builder.visit_source_file(sf);
+    sf.next_node_id = builder.next;
+}
+
+/// Fills in the type argument for a bare `from_json(...)` call when the
+/// surrounding `let` annotation makes it unambiguous, so the turbofish is
+/// optional: `let u: User = from_json(&t)?` is rewritten to carry
+/// `from_json::<User>`, and `let u: Result<User, E> = from_json(&t)` to the
+/// same. Runs before `rewrite_serde_generic_calls`, which then mangles the
+/// now-explicit turbofish like any other. Only `from_json` is inferred (its
+/// type is the binding's; `to_json`'s type lives in its argument).
+pub fn infer_serde_turbofish(sf: &mut SourceFile) {
+    use gossamer_ast::expr::ExprKind;
+    use gossamer_ast::stmt::{Stmt, StmtKind};
+    use gossamer_ast::visitor::walk_stmt_mut;
+    use gossamer_ast::{Type, VisitorMut};
+
+    fn result_ok_type(ty: &Type) -> Option<&Type> {
+        let TypeKind::Path(tp) = &ty.kind else {
+            return None;
+        };
+        let seg = tp.segments.last()?;
+        if seg.name.name != "Result" {
+            return None;
+        }
+        match seg.generics.first()? {
+            GenericArg::Type(t) => Some(t),
+            GenericArg::Const(_) => None,
+        }
+    }
+
+    struct Inferrer;
+    impl VisitorMut for Inferrer {
+        fn visit_stmt(&mut self, stmt: &mut Stmt) {
+            walk_stmt_mut(self, stmt);
+            let StmtKind::Let {
+                ty: Some(ty),
+                init: Some(init),
+                ..
+            } = &mut stmt.kind
+            else {
+                return;
+            };
+            // `from_json(..)?` exposes the binding type directly; bare
+            // `from_json(..)` exposes it through the `Result` ok-arm.
+            let (call, target): (&mut gossamer_ast::expr::Expr, Type) = match &mut init.kind {
+                ExprKind::Try(inner) => (inner.as_mut(), ty.clone()),
+                ExprKind::Call { .. } => match result_ok_type(ty) {
+                    Some(t) => {
+                        let t = t.clone();
+                        (init.as_mut(), t)
+                    }
+                    None => return,
+                },
+                _ => return,
+            };
+            let ExprKind::Call { callee, .. } = &mut call.kind else {
+                return;
+            };
+            let ExprKind::Path(path) = &mut callee.kind else {
+                return;
+            };
+            if path.segments.len() != 1 {
+                return;
+            }
+            let seg = &mut path.segments[0];
+            if seg.name.name != "from_json" || !seg.generics.is_empty() {
+                return;
+            }
+            if !matches!(target.kind, TypeKind::Path(_)) {
+                return;
+            }
+            seg.generics.push(GenericArg::Type(target));
+        }
+    }
+    Inferrer.visit_source_file(sf);
+}
+
 /// Rewrites the generic serde call surface - `to_json::<T>(v)`,
 /// `from_json::<T>(s)`, and the toml/yaml variants - into calls to the
 /// per-type free functions synthesized by [`synthesize_serde_impls`]
@@ -2352,6 +3019,18 @@ pub fn inject_synthetic_uses(sf: &mut SourceFile, file: FileId) {
                 UseTarget::Module(ModulePath::from_names(segs.iter().copied())),
             ));
         }
+    }
+    // The `regex!` validation macro's synthesized `comptime fn` backer
+    // calls `regex::compile`, so the regex module must be in scope.
+    let has_regex_validator = sf.items.iter().any(
+        |item| matches!(&item.kind, ItemKind::Fn(decl) if decl.name.name == "__gos_regex_validate"),
+    );
+    if has_regex_validator && !already_imports(&sf.uses, &["std", "regex"]) {
+        sf.uses.push(UseDecl::simple(
+            NodeId::DUMMY,
+            dummy_span,
+            UseTarget::Module(ModulePath::from_names(["std", "regex"])),
+        ));
     }
     // The `__gos_http_*` request/response-security wrappers compose http,
     // crypto, encoding, bytes, strings, and net::url primitives by their

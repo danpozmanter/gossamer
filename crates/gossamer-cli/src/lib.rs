@@ -11,6 +11,7 @@
 pub mod binding_dispatch;
 pub mod cli;
 pub mod cmd;
+pub mod comptime_fold;
 pub mod doc;
 pub mod loaders;
 pub mod paths;

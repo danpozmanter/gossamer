@@ -409,6 +409,8 @@
       
         
       
+        
+      
     
     
     
@@ -506,6 +508,34 @@
     
   
     Arena blocks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/comptime/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Comptime
   
 
     
@@ -1496,6 +1526,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#preemption" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Preemption
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#netpoller" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1746,6 +1787,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#preemption" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Preemption
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#netpoller" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1940,6 +1992,42 @@ closed by a <code>pre_unpark</code> set: if <code>unpark(gid)</code> finds the g
 yet parked, it records the gid; the worker about to park the
 task observes the pre-unpark and immediately re-ejects the task
 to the injector instead of leaving it parked.</p>
+<h2 id="preemption">Preemption<a class="headerlink" href="#preemption" title="Permanent link">&para;</a></h2>
+<p>Scheduling is <strong>cooperative with watchdog-assisted preemption</strong> - the
+Go pre-1.14 model plus the first half of Go's async-preemption work.</p>
+<p>A goroutine yields the worker M at <em>safepoints</em>:</p>
+<ul>
+<li>every park point - channel send/recv, <code>select</code>, mutex contention,
+  <code>time::sleep</code>, network reads, filesystem syscalls (see <em>Goroutines</em>
+  above),</li>
+<li>function-call / scheduler-step boundaries, where the worker can
+  reclaim the coroutine between <code>step()</code> invocations.</li>
+</ul>
+<p>The watchdog thread (<code>sched::multi::watchdog_loop</code>, 5 ms tick) escalates
+against a worker that has not reached a safepoint:</p>
+<ul>
+<li>after ~10 ms it bumps the global <em>preempt phase</em>
+  (<code>preempt::request_yield_all</code>); the next <code>preempt::should_yield</code>
+  poll at any safepoint returns <code>true</code> and the goroutine yields,</li>
+<li>after ~100 ms it sends a real OS signal to that worker's thread -
+  <code>SIGURG</code> on Unix, a <code>QueueUserAPC</code> on Windows. The signal does not
+  itself context-switch; it flips the yield flag promptly and, more
+  importantly, interrupts a blocking syscall the worker is stuck
+  inside (the kernel returns <code>EINTR</code>).</li>
+</ul>
+<p><strong>Current limitation.</strong> The safepoint poll at <em>loop back-edges</em> is
+deliberately not emitted by the LLVM and Cranelift backends:
+<code>emit_preempt_check</code> is a no-op stub because an opaque runtime call on
+every back-edge blocks <code>opt -O3</code> from vectorising tight numeric inner
+loops (the difference between sub-second and multi-second runs on
+spectral-norm / n-body). The interpreter likewise does not poll at
+back-edges. So a goroutine spinning in a tight, call-free, pure-compute
+loop is <strong>not</strong> asynchronously preempted today - it yields only when it
+makes a call or reaches a park point. Because the pool is M:N, such a
+goroutine starves at most one worker thread; the other workers keep
+running every other goroutine. Emitting real back-edge safepoints
+(behind a flag that preserves the vectoriser fast path) is the planned
+completion of async preemption.</p>
 <h2 id="netpoller">Netpoller<a class="headerlink" href="#netpoller" title="Permanent link">&para;</a></h2>
 <p><code>gossamer-runtime::sched::poller::OsPoller</code> wraps <code>mio</code> (epoll on
 Linux, kqueue on macOS / BSD, IOCP on Windows). One dedicated

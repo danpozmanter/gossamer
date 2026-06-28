@@ -238,7 +238,7 @@ fn visit_impl(decl: &ImplDecl, out: &mut Vec<RawToken>) {
 
 fn visit_fn(decl: &FnDecl, out: &mut Vec<RawToken>) {
     for param in &decl.params {
-        if let FnParam::Typed { pattern, ty } = param {
+        if let FnParam::Typed { pattern, ty, .. } = param {
             visit_pattern(pattern, TokenKind::Parameter, out);
             visit_type(ty, out);
         }

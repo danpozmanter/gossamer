@@ -49,6 +49,107 @@ use super::*;
 use super::Builder;
 
 impl<'a> Builder<'a> {
+    /// `true` if `ty` mentions a generic `Param` anywhere in its
+    /// structure. A generic function's declared return type carries rigid
+    /// `Param` slots; grounding a call's result from such a return would
+    /// leak the un-instantiated parameter into codegen instead of the
+    /// call's already-instantiated concrete type.
+    pub(crate) fn ty_mentions_param(&self, ty: Ty) -> bool {
+        use gossamer_types::TyKind;
+        match self.tcx.kind_of(ty) {
+            TyKind::Param { .. } => true,
+            TyKind::Ref { inner, .. }
+            | TyKind::Slice(inner)
+            | TyKind::Vec(inner)
+            | TyKind::Sender(inner)
+            | TyKind::Receiver(inner)
+            | TyKind::JoinHandle(inner) => self.ty_mentions_param(*inner),
+            TyKind::Array { elem, .. } => self.ty_mentions_param(*elem),
+            TyKind::Tuple(elems) => elems.iter().any(|e| self.ty_mentions_param(*e)),
+            TyKind::HashMap { key, value } => {
+                self.ty_mentions_param(*key) || self.ty_mentions_param(*value)
+            }
+            TyKind::Adt { substs, .. } | TyKind::Alias { substs, .. } => {
+                substs.types().iter().any(|t| self.ty_mentions_param(*t))
+            }
+            TyKind::FnPtr(sig) | TyKind::FnTrait(sig) => {
+                let sig = sig.clone();
+                sig.inputs.iter().any(|t| self.ty_mentions_param(*t))
+                    || self.ty_mentions_param(sig.output)
+            }
+            _ => false,
+        }
+    }
+
+    /// Substitutes `subst[i]` for each `Param(i)` in `ty`, recursing through
+    /// composite types and interning new ones. Used to instantiate a generic
+    /// method's `Param` return / field type from the receiver's concrete
+    /// generic arguments, so a method call's destination carries the real
+    /// type (`Wrapper<i64>::get -> i64`) instead of an opaque `Param` slot.
+    pub(crate) fn subst_params_with(&mut self, ty: Ty, subst: &[Ty]) -> Ty {
+        use gossamer_types::{GenericArg, Substs, TyKind};
+        match self.tcx.kind_of(ty).clone() {
+            TyKind::Param { idx, .. } => subst.get(idx.0 as usize).copied().unwrap_or(ty),
+            TyKind::Ref { inner, mutability } => {
+                let inner = self.subst_params_with(inner, subst);
+                self.tcx.intern(TyKind::Ref { inner, mutability })
+            }
+            TyKind::Vec(elem) => {
+                let elem = self.subst_params_with(elem, subst);
+                self.tcx.intern(TyKind::Vec(elem))
+            }
+            TyKind::Slice(elem) => {
+                let elem = self.subst_params_with(elem, subst);
+                self.tcx.intern(TyKind::Slice(elem))
+            }
+            TyKind::Array { elem, len } => {
+                let elem = self.subst_params_with(elem, subst);
+                self.tcx.intern(TyKind::Array { elem, len })
+            }
+            TyKind::Tuple(elems) => {
+                let elems = elems
+                    .iter()
+                    .map(|&e| self.subst_params_with(e, subst))
+                    .collect();
+                self.tcx.intern(TyKind::Tuple(elems))
+            }
+            TyKind::HashMap { key, value } => {
+                let key = self.subst_params_with(key, subst);
+                let value = self.subst_params_with(value, subst);
+                self.tcx.intern(TyKind::HashMap { key, value })
+            }
+            TyKind::Adt { def, substs } => {
+                let new_args = substs
+                    .as_slice()
+                    .iter()
+                    .map(|a| match a {
+                        GenericArg::Type(t) => GenericArg::Type(self.subst_params_with(*t, subst)),
+                        GenericArg::Const(c) => GenericArg::Const(*c),
+                    })
+                    .collect();
+                self.tcx.intern(TyKind::Adt {
+                    def,
+                    substs: Substs::from_args(new_args),
+                })
+            }
+            _ => ty,
+        }
+    }
+
+    /// The concrete type arguments of an ADT receiver (`Wrapper<i64>` ->
+    /// `[i64]`), seeing through a single `&`/`&mut`. Empty for a non-ADT or
+    /// non-generic receiver.
+    pub(crate) fn adt_substs_vec(&self, mut ty: Ty) -> Vec<Ty> {
+        use gossamer_types::TyKind;
+        if let TyKind::Ref { inner, .. } = self.tcx.kind_of(ty) {
+            ty = *inner;
+        }
+        match self.tcx.kind_of(ty) {
+            TyKind::Adt { substs, .. } => substs.types(),
+            _ => Vec::new(),
+        }
+    }
+
     pub(crate) fn lower_call(
         &mut self,
         callee: &HirExpr,
@@ -238,16 +339,26 @@ impl<'a> Builder<'a> {
         // type over the call-expression's HIR type - the latter
         // may still be an inference variable.
         let ty = if let HirExprKind::Path { def: Some(def), .. } = &callee.kind {
-            // Prefer the callee's declared return type over the
-            // call-expression's HIR type when available; the
-            // checker often leaves the latter as an inference
-            // variable.
+            // Ground an unresolved call-expression type from the callee's
+            // declared return type; the checker often leaves the former an
+            // inference variable for cross-function calls. A concrete call
+            // type is already the instantiated result - a generic call's
+            // `id(s): String` is authoritative - so it is kept. A generic
+            // declared return carries rigid `Param` slots that never ground
+            // anything, so such a return is skipped in favor of the call's
+            // own type.
             use gossamer_types::TyKind;
-            if let Some(registered) = self.fn_returns.get(def).copied() {
-                if matches!(self.tcx.kind_of(registered), TyKind::Error) {
-                    ty
+            if matches!(self.tcx.kind_of(ty), TyKind::Error | TyKind::Var(_)) {
+                if let Some(registered) = self.fn_returns.get(def).copied() {
+                    if matches!(self.tcx.kind_of(registered), TyKind::Error)
+                        || self.ty_mentions_param(registered)
+                    {
+                        ty
+                    } else {
+                        registered
+                    }
                 } else {
-                    registered
+                    ty
                 }
             } else {
                 ty

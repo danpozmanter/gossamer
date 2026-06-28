@@ -1,5 +1,140 @@
 # Changelog
 
+## 0.21.0 - Comptime, operator overloading, structural comparison, generic structs
+
+### Comptime - compile-time evaluation
+
+Zig-style `comptime`: ordinary Gossamer evaluated on the bytecode VM during
+compilation and folded to a literal, so the bytecode VM, the Cranelift JIT,
+and the LLVM AOT backend all compile the identical constant - comptime never
+reaches a backend, and tier parity is automatic. No macro grammar, no hygiene
+model, no token-tree DSL.
+
+- **`comptime { ... }` blocks and `comptime fn` calls.** A `comptime` block
+  evaluates its body at compile time; every call to a `comptime fn` folds at
+  the call site. A region may use the full language (`let`, loops, `if` /
+  `match`, calls, string building) as long as every value it reads is
+  compile-time-known; referencing a runtime binding is a compile error. Results
+  fold to a scalar or `String`. This also makes `const T: i64 = comptime {
+  recursive_fn() }` compile natively, where the bare non-inlinable
+  `const T = recursive_fn()` form does not.
+
+- **`comptime` parameters.** A parameter declared `comptime` has its argument
+  evaluated at compile time and replaced with the result literal, while the
+  function runs normally: `fn scale(comptime factor: i64, x: i64)` folds
+  `scale(BASE * 2 + 5, x)` to `scale(205, x)`. A non-comptime-known argument to
+  a `comptime` parameter is a compile error.
+
+- **Reflection: `typeInfo::<T>()`.** Reflects a struct's fields at compile time
+  as `[(name, type)]`, so a `comptime fn` can generate per-type code - e.g. a
+  SQL `CREATE TABLE` string built from the reflected columns, embedded in the
+  binary as a constant.
+
+- **Build-time validation: `regex!` / `sql!`.** Validate their argument at
+  compile time and fold to the validated string; a malformed pattern or
+  statement fails the build with a diagnostic rather than reaching runtime.
+  These are the only compile-time-validation macros - every other `name!(...)`
+  outside the six format macros remains a parse error (`GP0001`).
+
+  Wired across the bytecode VM, Cranelift JIT, and LLVM AOT (new
+  `feature-testing-examples/comptime_fold.gos`, `comptime_reflection.gos`, and
+  `comptime_params_validate.gos` tier-parity fixtures).
+
+### Expressiveness and footgun fixes
+
+- **Arithmetic operator overloading.** A user struct or enum that implements
+  `Add` / `Sub` / `Mul` / `Div` may be combined with `+` / `-` / `*` / `/`;
+  the operator routes to the impl method and the result is the method's return
+  type, so a dot product (`impl Mul for V2 { fn mul(self, o: V2) -> f64 }`)
+  types correctly. Applying an arithmetic operator to an ADT with no matching
+  impl is now a compile error (`GT0003`) instead of a runtime
+  `unsupported value kinds` panic. Routed on the bytecode VM, Cranelift, and
+  LLVM (new `feature-testing-examples/operator_overload_arith.gos` parity
+  fixture).
+
+- **Byte literals compare against the byte index without a cast.** `s[i] ==
+  b'>'` type-checks: a byte literal compared with an integer operand coerces to
+  that operand's type, so byte-level parsing reads `b'A'..=b'Z'` instead of
+  magic ASCII integers. A byte literal is an `Int` value on every tier, so the
+  comparison is unchanged downstream (new `byte_literal_compare.gos` fixture).
+
+- **`from_json` infers its type from the binding annotation.** The turbofish is
+  now optional when the target type is known: `let u: User = from_json(&t)?`
+  and `let r: Result<User, E> = from_json(&t)` both resolve without
+  `::<User>`. Explicit turbofish still works (new `from_json_infer.gos`
+  fixture).
+
+- **Malformed format placeholders are rejected.** A format macro placeholder
+  whose name is an expression rather than a binding - `println!("{age + 1}")` -
+  is now a parse error (`GP0021`) instead of being emitted silently as the
+  literal text `{age + 1}`. Binding names, positional `{}`, and `{:spec}` /
+  `{name:spec}` are unaffected.
+
+- **Structural comparison of aggregates.** `==` / `!=` on fixed arrays and
+  `Vec<T>`, and the full set of ordering operators (`< <= > >=`) on tuples,
+  now compare element-wise instead of by identity. `[1, 2, 3] == [1, 2, 3]` is
+  `true` (was `false`); `(1, 2) < (1, 3)` is `true` (previously a runtime
+  panic). The VM walks the values; the compiled tiers route to new
+  `gos_rt_tuple_cmp` / `gos_rt_vec_eq` runtime helpers. Tuple ordering is
+  lexicographic over scalar and string elements (new
+  `feature-testing-examples/aggregate_compare.gos`).
+
+- **`sort_by_key` / `sort_by_key_desc` Vec methods.** Sort a `Vec` by an
+  extracted key, ascending or descending. The key may be a tuple, so multi-key
+  sorting is `xs.sort_by_key(|e| (e.count, e.name))` with no `Ordering` trait.
+  Wrapping a key element in `Reverse(...)` flips just that element's direction,
+  so `xs.sort_by_key(|e| (Reverse(e.count), e.name))` sorts by count descending
+  then name ascending in a single pass. The desugar inlines the key into a
+  `sort_by` comparator that orders with `<` (flipping `Reverse` elements),
+  identical on every tier (new `feature-testing-examples/sort_by_key.gos`).
+
+- **Fix: closures returning an aggregate by value.** A closure / `Fn` value
+  returning a tuple / struct / array produced garbage on the LLVM AOT tier -
+  the indirect-call site stored the result's box pointer instead of copying
+  the aggregate's slots. It now materializes the aggregate like a direct call
+  (the VM was already correct), so `let g = |n| (n, n * 10); g(1)` round-trips
+  on `gos run` and `gos build`.
+
+- **Recursive generic functions over user structs compile.** A self-recursive
+  generic instantiated with a struct (`fn rec<T>(v: T, n: i64) -> T { if n <= 0
+  { v } else { rec(v, n - 1) } }` with `T = MyStruct`) was rejected by the
+  flat-i64 ABI check (`GM0001`): the template's self-call carried the type
+  parameter `T` as its generic argument, which the check mistook for a concrete
+  oversized instantiation. A `Param`-typed generic argument is now recognized as
+  a template-internal reference, not a concrete instantiation, so recursive
+  generics over structs compile and run on every tier.
+
+- **Fix: a generic call result used inline keeps its instantiated type.** A
+  generic function's result used directly in a format macro
+  (`println!("{}", id(s))`) printed garbage on the compiled tiers - a `String`
+  or `f64` result rendered as a raw integer - while the VM stayed correct.
+  MIR lowering was overriding the call expression's already-instantiated type
+  with the callee's raw declared return type, which for a generic function is
+  the un-instantiated type parameter (`Param(T)`); the codegen then chose the
+  formatter for `i64`. The declared return type is now used only to ground an
+  unresolved call type and never when it carries a `Param`, so the instantiated
+  result type (`String` / `f64` / a struct) reaches codegen unchanged. Scalar,
+  string, float, struct, multi-parameter, and recursive generic results all
+  format identically across `gos run` and `gos build` (new
+  `feature-testing-examples/generic_call_result.gos`).
+
+- **Generic struct types and their methods.** A struct that holds its type
+  parameter by value - `struct Wrapper<T> { value: T }` - and `impl<T>
+  Wrapper<T> { ... }` methods on it now compile and run identically on the
+  bytecode VM, Cranelift, and LLVM tiers. Each instantiation lays the field out
+  by its concrete type (`Wrapper<Point>` stores a whole `Point` inline; before,
+  the field stayed an opaque `Param` slot and the compiled tiers crashed), and a
+  generic method (`fn get(&self) -> T`) is specialised per receiver type so its
+  return is the real type rather than a raw pointer. Covers scalar / string /
+  float / struct payloads, multiple type parameters (`Pair<A, B>`), nested
+  generic structs, and arrays of generic structs. The type checker now brings an
+  `impl<T>`'s generics into scope for each method (so `-> T` records a rigid
+  `Param` matching the struct's generic), the monomorphiser registers a
+  per-instantiation field-type table and specialises each generic method by
+  receiver type, and every layout / field-projection site reads the substituted
+  fields (new `feature-testing-examples/generic_struct_types.gos`). Methods on a
+  generic struct still require the explicit `impl<T> Wrapper<T>` form, as in Rust.
+
 ## 0.20.1 - Interpreter in-place growth
 
 The bytecode VM now grows collections in place across the cases where it

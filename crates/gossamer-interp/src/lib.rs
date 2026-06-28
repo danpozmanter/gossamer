@@ -19,6 +19,7 @@ mod builtins;
 mod bytecode;
 mod cast;
 mod compile;
+mod comptime;
 pub mod external_natives;
 mod flag_set_builtins;
 #[cfg(feature = "fuel")]

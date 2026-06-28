@@ -193,7 +193,7 @@ pub(crate) fn slot_count(tcx: &TyCtxt, ty: Ty) -> Option<u32> {
             let elem_slots = slot_count(tcx, *elem).unwrap_or(1).max(1);
             Some(elem_slots * (len.to_usize() as u32))
         }
-        TyKind::Adt { def, .. } => {
+        TyKind::Adt { def, substs } => {
             // `Result<T,E>` (sentinel `u32::MAX`) and `Option<T>`
             // (`u32::MAX - 1`) are the 2-word by-value `i128` (16-byte)
             // representation: 2 flat slots. Inside an aggregate (array/Vec/
@@ -230,7 +230,7 @@ pub(crate) fn slot_count(tcx: &TyCtxt, ty: Ty) -> Option<u32> {
             // exists but a single field has a `Var` type, mirror
             // the `Tuple` fallback above so the alloca still gets
             // sized for the known fields.
-            let field_tys = tcx.struct_field_tys(*def)?;
+            let field_tys = tcx.adt_field_tys(*def, substs)?;
             let mut total = 0u32;
             for t in field_tys {
                 total += slot_count(tcx, *t).unwrap_or(1).max(1);
@@ -267,11 +267,11 @@ pub(crate) fn field_slot_offset(tcx: &TyCtxt, ty: Ty, idx: u32) -> u32 {
             .take(target)
             .map(|t| slot_count(tcx, *t).unwrap_or(1).max(1))
             .sum(),
-        Some(TyKind::Adt { def, .. }) => {
+        Some(TyKind::Adt { def, substs }) => {
             if def.local == u32::MAX || def.local == u32::MAX - 1 || tcx.is_inline_enum_ty(ty) {
                 return idx;
             }
-            tcx.struct_field_tys(*def).map_or(idx, |tys| {
+            tcx.adt_field_tys(*def, substs).map_or(idx, |tys| {
                 tys.iter()
                     .take(target)
                     .map(|t| slot_count(tcx, *t).unwrap_or(1).max(1))
@@ -293,13 +293,13 @@ pub(crate) fn is_pure_primitive_aggregate(tcx: &TyCtxt, ty: Ty) -> bool {
         }
         Some(TyKind::Array { elem, .. }) => is_pure_primitive_aggregate(tcx, *elem),
         Some(TyKind::Tuple(elems)) => elems.iter().all(|t| is_pure_primitive_aggregate(tcx, *t)),
-        Some(TyKind::Adt { def, .. }) => {
+        Some(TyKind::Adt { def, substs }) => {
             // Reject the Result/Option sentinel Adts up front -
             // they are pointer-shaped and not really aggregates.
             if def.local == u32::MAX || def.local == u32::MAX - 1 || tcx.is_inline_enum_ty(ty) {
                 return false;
             }
-            match tcx.struct_field_tys(*def) {
+            match tcx.adt_field_tys(*def, substs) {
                 Some(fields) => fields.iter().all(|t| is_pure_primitive_aggregate(tcx, *t)),
                 None => false,
             }

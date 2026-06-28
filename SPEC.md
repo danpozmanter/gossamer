@@ -2146,8 +2146,23 @@ the Rust macros a newcomer reaches for: there is no `vec!`, `map!`,
   *functions* called without a `!`; `std::testing` provides the
   non-panicking `check*` variants.
 
-User-defined macros (declarative `macro_rules!` or procedural) do not
-exist.
+User-defined macros do not exist. Compile-time metaprogramming is
+instead **Zig-style `comptime`** - ordinary Gossamer functions and
+blocks evaluated at compile time, rather than a `macro_rules!`-style
+macro language, with no separate macro grammar, no hygiene model, and no
+token-tree DSL.
+
+A `comptime { ... }` block, every call to a `comptime fn`, and every
+argument to a `comptime` parameter are evaluated on the bytecode VM
+during compilation and folded to a literal, so the bytecode VM, the
+Cranelift JIT, and the LLVM AOT backend all compile the identical
+constant. A region must read only compile-time-known values (literals,
+consts, other `comptime fn` results) and evaluate to a scalar or string;
+otherwise it is a compile error. `typeInfo::<T>()` reflects a struct's
+fields (`[(name, type)]`) at compile time so a `comptime fn` can
+generate per-type code, and the `regex!` / `sql!` macros validate their
+argument at build time, failing the build on malformed input. See the
+[`comptime` language page](docs_src/language/comptime.md).
 
 > **Conformance (0.5.0)** `status: partial`. The 0.5.0 toolchain
 > implements exactly six format-shaped macros - `println!`, `print!`,

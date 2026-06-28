@@ -1410,6 +1410,18 @@ impl<'tcx> FnBuilder<'tcx> {
                 return self.compile_struct_eq(&sname, op, lhs, rhs);
             }
         }
+        // Arithmetic operator overloading: `a + b` (and `- * /`) on a user
+        // struct routes to its `add`/`sub`/`mul`/`div` impl method. The
+        // checker rejects ADT operands with no such impl, so the method
+        // global is present (mirrors the struct-`==` route above).
+        if let Some(method) = arith_overload_method(op) {
+            if let Some(sname) = self
+                .struct_eq_dispatch_name(lhs.ty)
+                .or_else(|| self.struct_eq_dispatch_name(rhs.ty))
+            {
+                return self.compile_struct_binop(&sname, method, lhs, rhs);
+            }
+        }
         // Fallback: generic path on Value regs.
         let lhs_reg = self.compile_expr(lhs)?;
         let rhs_reg = self.compile_expr(rhs)?;
@@ -1418,6 +1430,54 @@ impl<'tcx> FnBuilder<'tcx> {
             .binary_op(op, dst, lhs_reg, rhs_reg)
             .ok_or(RuntimeError::Unsupported("binary op kind"))?;
         self.emit(instr);
+        Ok(TypedReg {
+            reg: dst,
+            kind: RegKind::Value,
+        })
+    }
+
+    /// Lowers an arithmetic operator overload `a <op> b` to a call of the
+    /// user `<sname>::<method>(lhs, rhs)` impl method. Mirrors
+    /// [`Self::compile_struct_eq`] without the `!=` negation.
+    fn compile_struct_binop(
+        &mut self,
+        sname: &str,
+        method: &str,
+        lhs: &HirExpr,
+        rhs: &HirExpr,
+    ) -> RuntimeResult<TypedReg> {
+        let key = format!("{sname}::{method}");
+        let idx = self.global_idx(&key);
+        let callee_reg = self.alloc_reg();
+        self.emit(Op::LoadGlobal {
+            dst: callee_reg,
+            idx,
+        });
+        let args_start = self.next_reg;
+        self.next_reg = self
+            .next_reg
+            .checked_add(2)
+            .expect("register overflow reserving operator-overload args");
+        let lhs_reg = self.compile_expr(lhs)?;
+        self.emit(Op::Move {
+            dst: args_start,
+            src: lhs_reg,
+        });
+        let rhs_reg = self.compile_expr(rhs)?;
+        self.emit(Op::Move {
+            dst: args_start + 1,
+            src: rhs_reg,
+        });
+        let dst = self.alloc_reg();
+        let cache_idx = self.alloc_cache_idx();
+        self.emit(Op::Call {
+            dst,
+            callee: callee_reg,
+            args: args_start,
+            argc: 2,
+            cache_idx,
+            may_have_cells: false,
+        });
         Ok(TypedReg {
             reg: dst,
             kind: RegKind::Value,
@@ -2736,5 +2796,18 @@ impl<'tcx> FnBuilder<'tcx> {
             HirExprKind::Path { .. } | HirExprKind::Field { .. } | HirExprKind::Index { .. }
         )
         .then_some(place)
+    }
+}
+
+/// Operator-overload impl-method name for an arithmetic binary operator
+/// (`+` -> `add`, `-` -> `sub`, `*` -> `mul`, `/` -> `div`), or `None` when
+/// the operator does not dispatch to a user method.
+fn arith_overload_method(op: HirBinaryOp) -> Option<&'static str> {
+    match op {
+        HirBinaryOp::Add => Some("add"),
+        HirBinaryOp::Sub => Some("sub"),
+        HirBinaryOp::Mul => Some("mul"),
+        HirBinaryOp::Div => Some("div"),
+        _ => None,
     }
 }

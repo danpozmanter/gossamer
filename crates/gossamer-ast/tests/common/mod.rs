@@ -121,6 +121,7 @@ pub(crate) fn block_expr(stmts: Vec<Stmt>, tail: Option<Expr>) -> Expr {
             tail: tail.map(Box::new),
             synthetic: false,
             is_arena: false,
+            is_comptime: false,
         }),
     )
 }
@@ -164,6 +165,7 @@ pub(crate) fn fn_item(name: &str, body: Expr) -> Item {
 pub(crate) fn fn_item_with_ret(name: &str, body: Expr, ret: Option<Type>) -> Item {
     let decl = FnDecl {
         is_unsafe: false,
+        is_comptime: false,
         name: Ident::new(name),
         generics: Generics::default(),
         params: Vec::<FnParam>::new(),

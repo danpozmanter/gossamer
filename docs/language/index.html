@@ -411,6 +411,8 @@
       
         
       
+        
+      
     
     
     
@@ -508,6 +510,34 @@
     
   
     Arena blocks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="comptime/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Comptime
   
 
     
@@ -1723,6 +1753,11 @@
 <td><a href="unicode_identifiers/"><code>lang::unicode_identifiers</code></a></td>
 <td>shipped</td>
 <td>Identifiers follow UAX #31 (matches Rust 2024).</td>
+</tr>
+<tr>
+<td><a href="comptime/"><code>lang::comptime</code></a></td>
+<td>shipped</td>
+<td>Zig-style compile-time evaluation: <code>comptime { ... }</code> blocks, <code>comptime fn</code> calls, and <code>comptime</code> parameters run on the bytecode VM during compilation and fold to a literal, so every tier compiles the identical constant. Includes <code>typeInfo::&lt;T&gt;()</code> struct-field reflection and the <code>regex!</code> / <code>sql!</code> build-time validation macros.</td>
 </tr>
 <tr>
 <td><a href="move_keyword/"><code>lang::move_keyword</code></a></td>

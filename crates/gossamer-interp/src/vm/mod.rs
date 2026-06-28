@@ -228,6 +228,17 @@ pub struct Vm {
     /// global table the LLVM AOT tier instruments. `None` for every
     /// non-coverage path (`gos run`, plain `gos test`).
     pub(crate) source_map: Option<Arc<gossamer_lex::SourceMap>>,
+    /// When set before [`Vm::load`], the loader evaluates every
+    /// `comptime { ... }` block and `comptime fn` call after compiling
+    /// the program and records the results in [`Self::comptime_folds`].
+    /// Off by default so normal runs pay nothing.
+    pub(crate) collect_comptime: Cell<bool>,
+    /// Comptime evaluation results, keyed by source span: `Ok(value)`
+    /// on success, `Err(message)` when the region was not
+    /// compile-time-known. Populated by `load` when
+    /// [`Self::collect_comptime`] is set; drained by the CLI to splice
+    /// result literals back into the source.
+    pub(crate) comptime_folds: RefCell<Vec<(gossamer_lex::Span, Result<Value, String>)>>,
 }
 
 /// Per-`Vm` per-chunk dispatch caches. Pinned inside
@@ -1253,24 +1264,9 @@ fn compare(
     order: std::cmp::Ordering,
     or_equal: bool,
 ) -> RuntimeResult<Value> {
-    // Auto-deref `__Cell` so `flags.count < 10` works without `*`.
-    let a_deref = auto_deref_cell(a);
-    let b_deref = auto_deref_cell(b);
-    let a_ref = a_deref.as_ref().unwrap_or(a);
-    let b_ref = b_deref.as_ref().unwrap_or(b);
-    let result = match (a_ref, b_ref) {
-        (Value::Int(x), Value::Int(y)) => x.cmp(y),
-        (Value::Float(x), Value::Float(y)) => x
-            .partial_cmp(y)
-            .ok_or(RuntimeError::Arithmetic("NaN comparison".to_string()))?,
-        (Value::Char(x), Value::Char(y)) => x.cmp(y),
-        (Value::String(x), Value::String(y)) => x.cmp(y),
-        _ => {
-            return Err(RuntimeError::Type(
-                "comparison on unsupported kinds".to_string(),
-            ));
-        }
-    };
+    // Scalars compare by natural order; tuples and vec/array values compare
+    // lexicographically (`value_ordering` recurses and auto-derefs cells).
+    let result = value_ordering(a, b)?;
     let matches = if or_equal {
         result == order || result == std::cmp::Ordering::Equal
     } else {
@@ -1370,13 +1366,79 @@ fn values_equal(a: &Value, b: &Value) -> bool {
                     .zip(sb.fields.iter())
                     .all(|((na, x), (nb, y))| na == nb && values_equal(x, y))
         }
+        // Tuples and vec/array values compare structurally, element-wise.
+        // The compiled tiers route these to a field-wise desugar / runtime
+        // helper; without this `(1, 2) == (1, 2)` and `[1, 2] == [1, 2]`
+        // were identity-`false` on the VM.
+        (Value::Tuple(xa), Value::Tuple(xb)) => {
+            xa.len() == xb.len() && xa.iter().zip(xb.iter()).all(|(x, y)| values_equal(x, y))
+        }
+        (Value::FloatArray(xa), Value::FloatArray(xb)) => {
+            xa.stride == xb.stride && xa.data == xb.data
+        }
         // Native enum handles compare structurally through the boxed
         // representation (rare fallback; derived `==` routes through
         // match dispatch instead).
         (Value::NativeEnum(a), _) => values_equal(&crate::value::native_enum_to_variant(a), b_ref),
         (_, Value::NativeEnum(b)) => values_equal(a_ref, &crate::value::native_enum_to_variant(b)),
-        _ => false,
+        _ => match (seq_elements(a_ref), seq_elements(b_ref)) {
+            (Some(xa), Some(xb)) => {
+                xa.len() == xb.len() && xa.iter().zip(xb.iter()).all(|(x, y)| values_equal(x, y))
+            }
+            _ => false,
+        },
     }
+}
+
+/// Materializes the elements of a Vec/array-like value (normalizing the
+/// specialized `IntArray` / `FloatVec` representations) for structural
+/// comparison. Returns `None` for non-sequence values; tuples are handled
+/// by their own match arm so a tuple never compares equal to a vec.
+fn seq_elements(v: &Value) -> Option<Vec<Value>> {
+    match v {
+        Value::Array(xs) => Some(xs.as_ref().clone()),
+        Value::IntArray(xs) => Some(xs.iter().map(|&i| Value::Int(i)).collect()),
+        Value::FloatVec(xs) => Some(xs.iter().map(|&f| Value::Float(f)).collect()),
+        _ => None,
+    }
+}
+
+/// Total-ish structural ordering over comparable values: scalars by their
+/// natural order, tuples and vec/array values lexicographically (recursing
+/// element-wise). Errors on NaN and on genuinely incomparable kinds.
+fn value_ordering(a: &Value, b: &Value) -> RuntimeResult<std::cmp::Ordering> {
+    use std::cmp::Ordering;
+    let a_deref = auto_deref_cell(a);
+    let b_deref = auto_deref_cell(b);
+    let a_ref = a_deref.as_ref().unwrap_or(a);
+    let b_ref = b_deref.as_ref().unwrap_or(b);
+    match (a_ref, b_ref) {
+        (Value::Int(x), Value::Int(y)) => Ok(x.cmp(y)),
+        (Value::Float(x), Value::Float(y)) => x
+            .partial_cmp(y)
+            .ok_or_else(|| RuntimeError::Arithmetic("NaN comparison".to_string())),
+        (Value::Char(x), Value::Char(y)) => Ok(x.cmp(y)),
+        (Value::String(x), Value::String(y)) => Ok(x.cmp(y)),
+        (Value::Tuple(xa), Value::Tuple(xb)) => seq_ordering(xa, xb),
+        _ => match (seq_elements(a_ref), seq_elements(b_ref)) {
+            (Some(xa), Some(xb)) => seq_ordering(&xa, &xb),
+            _ => Err(RuntimeError::Type(
+                "comparison on unsupported kinds".to_string(),
+            )),
+        },
+    }
+}
+
+/// Lexicographic ordering of two element slices: the first non-equal pair
+/// decides; on a shared prefix the shorter sequence is less.
+fn seq_ordering(xa: &[Value], xb: &[Value]) -> RuntimeResult<std::cmp::Ordering> {
+    for (x, y) in xa.iter().zip(xb.iter()) {
+        let o = value_ordering(x, y)?;
+        if o != std::cmp::Ordering::Equal {
+            return Ok(o);
+        }
+    }
+    Ok(xa.len().cmp(&xb.len()))
 }
 
 /// Unwraps a `__Cell` flag handle to its current backing value.

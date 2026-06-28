@@ -1,0 +1,108 @@
+// Generic struct TYPES holding their type parameter by value, plus methods
+// on them via `impl<T>`. The struct's field types and the method's `Param`
+// return are specialised per instantiation, so `Wrapper<Point>` lays out a
+// whole `Point` inline and `Wrapper<i64>::get -> i64` returns an integer -
+// bit-identical across the VM, Cranelift, and LLVM tiers. Before the fix a
+// struct-holding instantiation crashed the compiled tiers (the field stayed
+// an opaque `Param` slot) and a generic method returned a raw pointer.
+
+struct Point {
+    x: i64,
+    y: i64,
+}
+
+struct Wrapper<T> {
+    value: T,
+}
+
+impl<T> Wrapper<T> {
+    fn get(&self) -> T {
+        self.value
+    }
+}
+
+struct Cell<T> {
+    value: T,
+}
+
+impl<T> Cell<T> {
+    fn set(&mut self, v: T) {
+        self.value = v
+    }
+    fn get(&self) -> T {
+        self.value
+    }
+}
+
+struct Pair<A, B> {
+    fst: A,
+    snd: B,
+}
+
+// A generic struct flows through a generic function by value, as both a
+// parameter and a return type.
+fn unwrap<T>(w: Wrapper<T>) -> T {
+    w.value
+}
+
+fn rewrap<T>(v: T) -> Wrapper<T> {
+    Wrapper { value: v }
+}
+
+impl<A, B> Pair<A, B> {
+    fn first(&self) -> A {
+        self.fst
+    }
+    fn second(&self) -> B {
+        self.snd
+    }
+}
+
+fn main() {
+    // Field access, scalar / struct / nested payloads.
+    let ws = Wrapper { value: 42 }
+    println!("{}", ws.value)
+
+    let wp = Wrapper { value: Point { x: 1, y: 2 } }
+    println!("{} {}", wp.value.x, wp.value.y)
+
+    let wn = Wrapper { value: Wrapper { value: 7 } }
+    println!("{}", wn.value.value)
+
+    // Methods on a generic struct, scalar / struct payload.
+    let mi = Wrapper { value: 5 }
+    println!("{}", mi.get())
+
+    let mp = Wrapper { value: Point { x: 8, y: 9 } }
+    let p = mp.get()
+    println!("{} {}", p.x, p.y)
+
+    // Two type parameters, methods returning each, mixed scalar / string / float.
+    let a = Pair { fst: 10, snd: "hi" }
+    println!("{} {}", a.first(), a.second())
+    let b = Pair { fst: "x", snd: 3.5 }
+    println!("{} {}", b.first(), b.second())
+
+    // A generic struct holding a struct, stored in an array and read in a loop.
+    let xs = [
+        Wrapper { value: Point { x: 1, y: 2 } },
+        Wrapper { value: Point { x: 3, y: 4 } },
+    ]
+    let mut sum = 0
+    for w in xs {
+        sum += w.value.x + w.value.y
+    }
+    println!("{}", sum)
+
+    // A generic struct passed through a generic function, and returned from
+    // one, with scalar and string instantiations.
+    println!("{}", unwrap(Wrapper { value: 100 }))
+    println!("{}", unwrap(Wrapper { value: "thru" }))
+    println!("{}", rewrap(11).value)
+    println!("{}", rewrap("ret").value)
+
+    // `&mut self` mutation of a generic struct's field.
+    let mut cell = Cell { value: 1 }
+    cell.set(99)
+    println!("{}", cell.get())
+}

@@ -17,6 +17,16 @@ pub struct TyCtxt {
     index: HashMap<TyKind, Ty>,
     primitives: Primitives,
     struct_fields: HashMap<gossamer_resolve::DefId, Vec<Ty>>,
+    /// Per-instantiation field types of a generic struct, keyed by
+    /// `(def, substs)`. A generic struct's `struct_fields` entry holds
+    /// the declared field types with rigid `Param` slots; this table
+    /// holds the same fields with the instantiation's concrete types
+    /// substituted in (`Wrapper<Point>` -> `[Point]`). Populated by the
+    /// monomorphizer, which has the `&mut TyCtxt` needed to intern any
+    /// composite substituted field types. Consulted through
+    /// `adt_field_tys` so every layout / field-projection site sees the
+    /// concrete field shape instead of an opaque `Param`.
+    struct_fields_inst: HashMap<(gossamer_resolve::DefId, crate::Substs), Vec<Ty>>,
     /// Human-readable names for ADT / alias / fn `DefId`s, indexed by
     /// the local component. Populated by the type checker for user
     /// structs and by sentinel registrations for `Result`/`Option`.
@@ -264,6 +274,41 @@ impl TyCtxt {
         self.struct_fields.get(&def).map(Vec::as_slice)
     }
 
+    /// Records the concrete field types of a generic struct instantiation
+    /// `(def, substs)`. Called by the monomorphizer once per distinct
+    /// instantiation so the compiled tiers can read the substituted layout.
+    pub fn register_struct_fields_inst(
+        &mut self,
+        def: gossamer_resolve::DefId,
+        substs: crate::Substs,
+        fields: Vec<Ty>,
+    ) {
+        self.struct_fields_inst.insert((def, substs), fields);
+    }
+
+    /// Returns the field types of the ADT `(def, substs)` with the
+    /// instantiation's generic arguments applied. For a non-generic
+    /// struct (or an empty `substs`) this is the declared field list. For
+    /// a generic instantiation it is the per-instantiation list the
+    /// monomorphizer registered; if none was registered (the substs are
+    /// all rigid `Param`s, e.g. inside an un-specialised template) it
+    /// falls back to the declared field list. Every layout / field-type
+    /// site routes through here so a generic struct lays out by its
+    /// concrete fields rather than an opaque `Param` slot.
+    #[must_use]
+    pub fn adt_field_tys(
+        &self,
+        def: gossamer_resolve::DefId,
+        substs: &crate::Substs,
+    ) -> Option<&[Ty]> {
+        if !substs.is_empty()
+            && let Some(fields) = self.struct_fields_inst.get(&(def, substs.clone()))
+        {
+            return Some(fields.as_slice());
+        }
+        self.struct_fields.get(&def).map(Vec::as_slice)
+    }
+
     /// Inline slot size in bytes of a value of type `ty` on the compiled
     /// tiers, where every slot is 8-byte-aligned. Aggregates sum their
     /// fields' rounded-up slot widths; `Option`/`Result` are the 2-word
@@ -283,14 +328,14 @@ impl TyCtxt {
                     .unwrap_or(1)
                     .saturating_mul(elem_bytes)
             }
-            TyKind::Adt { def, .. } => {
+            TyKind::Adt { def, substs } => {
                 if def.local == u32::MAX || def.local == u32::MAX - 1 {
                     return 16;
                 }
                 if def.local >= u32::MAX - 6 {
                     return 8;
                 }
-                if let Some(field_tys) = self.struct_field_tys(*def) {
+                if let Some(field_tys) = self.adt_field_tys(*def, substs) {
                     let total_slots: u32 = field_tys
                         .iter()
                         .map(|t| self.slot_bytes(*t).max(8) / 8)

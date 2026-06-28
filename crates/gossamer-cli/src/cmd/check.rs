@@ -91,6 +91,10 @@ pub(crate) fn run(
     // so `to_json::<T>(..)` / `from_json::<T>(..)` resolve, exactly as
     // `gos run` / `gos build` do before reaching the source map.
     let source = gossamer_parse::autoderive::augment_source(&user_source);
+    // Comptime fold makes `gos check` authoritative for comptime: a
+    // region that is not compile-time-known is reported here, not
+    // deferred to `run` / `build`.
+    let source = crate::comptime_fold::fold_comptime(&source, &file.to_string_lossy())?;
     let mut map = gossamer_lex::SourceMap::new();
     let file_id = map.add_file(file.to_string_lossy().into_owned(), source.clone());
     let render_opts = gossamer_diagnostics::RenderOptions {

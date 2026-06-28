@@ -1,0 +1,53 @@
+// Comptime reflection (P1) + codegen from reflection (P2).
+// `typeInfo::<T>()` yields each field's (name, type) at compile time;
+// a `comptime fn` consumes that to generate code, folded to a literal
+// identical on every tier.
+
+struct User { id: i64, name: String, active: bool }
+struct Point { x: f64, y: f64 }
+
+// P2: generate a SQL DDL string from the reflected fields.
+comptime fn create_table(table: String, fields: [(String, String)]) -> String {
+    let mut cols = ""
+    let mut first = true
+    for (name, ty) in fields {
+        if !first {
+            cols += ", "
+        }
+        first = false
+        let sql_ty = match ty {
+            "i64" => "INTEGER",
+            "f64" => "REAL",
+            "String" => "TEXT",
+            "bool" => "BOOLEAN",
+            _ => "BLOB",
+        }
+        cols += name + " " + sql_ty
+    }
+    "CREATE TABLE " + &table + " (" + &cols + ")"
+}
+
+// Comptime: build a comma-separated field-name list from reflection.
+comptime fn field_list(fields: [(String, String)]) -> String {
+    let mut out = ""
+    let mut first = true
+    for (name, _) in fields {
+        if !first {
+            out += ","
+        }
+        first = false
+        out += name
+    }
+    out
+}
+
+const USER_DDL: String = comptime { create_table("users", typeInfo::<User>()) }
+const POINT_DDL: String = comptime { create_table("points", typeInfo::<Point>()) }
+
+fn main() {
+    println!("{}", USER_DDL)
+    println!("{}", POINT_DDL)
+    println!("{}", comptime { field_list(typeInfo::<User>()) })
+    // Reflected field count, folded to an integer literal.
+    println!("{}", comptime { typeInfo::<Point>().len() })
+}

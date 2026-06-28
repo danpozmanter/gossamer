@@ -256,15 +256,21 @@ impl Lowerer<'_> {
                             },
                         },
                         ty,
+                        is_comptime: false,
                     });
                 }
                 AstFnParam::Typed {
                     pattern,
                     ty: ast_ty,
+                    is_comptime,
                 } => {
                     let ty = self.ty_of(ast_ty.id);
                     let pattern = self.lower_pat_with_ty(pattern, ty);
-                    params.push(HirParam { pattern, ty });
+                    params.push(HirParam {
+                        pattern,
+                        ty,
+                        is_comptime: *is_comptime,
+                    });
                 }
             }
         }
@@ -282,6 +288,7 @@ impl Lowerer<'_> {
             ret,
             body,
             is_unsafe: decl.is_unsafe,
+            is_comptime: decl.is_comptime,
             has_self,
         }
     }
@@ -739,6 +746,7 @@ impl Lowerer<'_> {
             stmts: vec![iter_let],
             tail: Some(Box::new(loop_expr)),
             ty: self.unit(),
+            is_comptime: false,
         };
         HirExprKind::Block(outer_block)
     }
@@ -837,6 +845,7 @@ impl Lowerer<'_> {
             stmts: Vec::new(),
             tail: Some(Box::new(match_expr)),
             ty: unit_ty,
+            is_comptime: false,
         };
         let body_block = HirExpr {
             id: self.fresh(),
@@ -1412,7 +1421,11 @@ impl Lowerer<'_> {
                     None => self.ty_of(param.pattern.id),
                 };
                 let pattern = self.lower_pat_with_ty(&param.pattern, ty);
-                HirParam { pattern, ty }
+                HirParam {
+                    pattern,
+                    ty,
+                    is_comptime: false,
+                }
             })
             .collect()
     }
@@ -1479,6 +1492,7 @@ impl Lowerer<'_> {
             stmts,
             tail,
             ty,
+            is_comptime: block.is_comptime,
         }
     }
 
@@ -1494,6 +1508,7 @@ impl Lowerer<'_> {
             stmts: Vec::new(),
             tail: Some(Box::new(lowered)),
             ty,
+            is_comptime: false,
         }
     }
 

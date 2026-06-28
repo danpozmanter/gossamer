@@ -239,6 +239,48 @@ const SPECS: &[Spec] = &[
     // local). These avoid the per-call copy that made build loops O(n^2) on
     // the VM; output must stay bit-identical across tiers.
     spec("feature-testing-examples/inplace_mut_append_parity.gos"),
+    // Arithmetic operator overloading: `+ - * /` on a user struct route to its
+    // `add`/`sub`/`mul`/`div` impl method; the result is the method's return
+    // type (incl. a heterogeneous `Mul -> f64`). Bit-identical across tiers.
+    spec("feature-testing-examples/operator_overload_arith.gos"),
+    // Byte literals compare against the integer byte index without a cast
+    // (`s[i] == b'>'`); a byte literal is an `Int` value on every tier.
+    spec("feature-testing-examples/byte_literal_compare.gos"),
+    // `from_json` infers its type argument from the binding annotation, so the
+    // turbofish is optional; the decode is identical on every tier.
+    spec("feature-testing-examples/from_json_infer.gos"),
+    // Structural aggregate comparison: fixed-array / Vec `==`/`!=` and tuple
+    // ordering (all six operators) are bit-identical across tiers (the VM
+    // walks them at runtime; compiled routes to gos_rt_tuple_cmp / vec_eq).
+    spec("feature-testing-examples/aggregate_compare.gos"),
+    // `sort_by_key` / `sort_by_key_desc` Vec methods with scalar and tuple
+    // (multi-key) keys; the key body is inlined into a `sort_by` comparator
+    // that orders with `<`, identical on every tier.
+    spec("feature-testing-examples/sort_by_key.gos"),
+    // Comptime: `comptime { ... }` blocks and `comptime fn` calls are
+    // evaluated on the VM during compilation and spliced into the source as
+    // literals, so every tier compiles the identical constant (scalar /
+    // string / float / bool / char results, const initializers, nesting).
+    spec("feature-testing-examples/comptime_fold.gos"),
+    // Comptime reflection (`typeInfo::<T>()`) + codegen: a comptime fn
+    // consumes the reflected fields to generate a string (SQL DDL, field
+    // lists), folded to a literal identical on every tier.
+    spec("feature-testing-examples/comptime_reflection.gos"),
+    // Comptime parameters (`fn f(comptime n, ...)`) fold their argument at
+    // the call site, and the `regex!` / `sql!` validation macros validate at
+    // build time and fold to the validated string on every tier.
+    spec("feature-testing-examples/comptime_params_validate.gos"),
+    // A generic function's call result keeps its instantiated concrete type
+    // when used inline (`println!("{}", id(s))`), selecting the right
+    // formatter; the compiled tiers must match the VM across scalar / string
+    // / float / struct results, multi-parameter generics, and recursion.
+    spec("feature-testing-examples/generic_call_result.gos"),
+    // Generic struct TYPES holding `T` by value and `impl<T>` methods on
+    // them: per-instantiation field layout and method specialisation make
+    // `Wrapper<Point>` / `Wrapper<i64>::get` bit-identical across tiers
+    // (scalar / string / float / struct payloads, two type parameters,
+    // nesting, and an array of generic structs).
+    spec("feature-testing-examples/generic_struct_types.gos"),
     // Perceus reuse: an owned local reassigned in a loop recycles its dropped
     // block in place on the compiled tiers (the VM does not). Reuse is
     // observationally transparent, so the result must match across tiers; the

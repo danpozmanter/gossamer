@@ -74,6 +74,9 @@ pub struct HirFn {
     pub body: Option<HirBody>,
     /// `true` when the declaration is `unsafe`.
     pub is_unsafe: bool,
+    /// `true` when the declaration is `comptime`. Calls to such a
+    /// function are evaluated at compile time by the comptime fold pass.
+    pub is_comptime: bool,
     /// `true` when the first parameter is a `self` receiver.
     pub has_self: bool,
 }
@@ -85,6 +88,9 @@ pub struct HirParam {
     pub pattern: HirPat,
     /// Resolved type of the parameter.
     pub ty: Ty,
+    /// `true` when the parameter was declared `comptime`; the matching
+    /// call argument is folded at compile time.
+    pub is_comptime: bool,
 }
 
 /// Lowered constant item.
@@ -204,6 +210,10 @@ pub struct HirBlock {
     pub tail: Option<Box<HirExpr>>,
     /// Type of the block (unit when no tail).
     pub ty: Ty,
+    /// `true` when this block was spelled `comptime { ... }`. The
+    /// comptime fold pass evaluates it on the bytecode VM during
+    /// compilation and replaces it in source with its result literal.
+    pub is_comptime: bool,
 }
 
 /// Single statement inside a block.

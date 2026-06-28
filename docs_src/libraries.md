@@ -160,6 +160,46 @@ run at the top of a file is the module's. `gos doc
 src/lib.gos` prints every item plus that summary block. HTML
 output lands with Stream H polish.
 
+## Foreign code (`[rust-bindings]`)
+
+To call native (Rust) code, declare a binding crate under
+`[rust-bindings]` in `project.toml`. The crate depends on
+`gossamer-binding` and registers its entry points with
+`register_module!`; the toolchain builds it into a per-project runner
+and links it into the binary (or interpreter), after which the bound
+functions are `use`-able from `.gos` source like any other module.
+
+```toml
+# project.toml
+[rust-bindings]
+echo-binding = { path = "echo-binding" }
+```
+
+```rust
+// echo-binding/src/lib.rs
+use gossamer_binding::register_module;
+register_module!("echo", {
+    fn shout(s: String) -> String { s.to_uppercase() }
+});
+```
+
+```gossamer
+use echo::shout
+fn main() { println!("{}", shout("hello")) }
+```
+
+Values cross the boundary through the typed `gossamer-binding` ABI
+(integers, floats, strings, tuples, vectors, `Option` / `Result`,
+opaque handles, byte buffers, callbacks); a panic in a binding is
+caught and returned as `Result::Err`. This is the **only** FFI surface
+- a source-level `extern "C"` item form is rejected (`GP0016`) and the
+`extern` keyword stays reserved. Calls run end-to-end under `gos run`
+and link into `gos build` binaries; direct compiled-tier dispatch into
+binding thunks lands incrementally as more binding shapes are wired.
+See the SPEC (section 12 in the repository root),
+`crates/gossamer-binding/ABI_0_4.md`, and the
+`example-external-libraries/` projects for full detail.
+
 ## Publishing
 
 *(planned)* - `gos publish` pushes to the default registry once

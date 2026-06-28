@@ -32,7 +32,10 @@ impl Parser<'_> {
     }
 
     fn parse_item_kind(&mut self) -> ItemKind {
-        if self.at_keyword(Keyword::Fn) || self.at_keyword(Keyword::Unsafe) {
+        if self.at_keyword(Keyword::Fn)
+            || self.at_keyword(Keyword::Unsafe)
+            || self.at_keyword(Keyword::Comptime)
+        {
             return ItemKind::Fn(self.parse_fn_decl());
         }
         if self.at_keyword(Keyword::Struct) {
@@ -205,6 +208,7 @@ impl Parser<'_> {
     }
 
     fn parse_fn_decl(&mut self) -> FnDecl {
+        let is_comptime = self.eat_keyword(Keyword::Comptime);
         let is_unsafe = self.eat_keyword(Keyword::Unsafe);
         self.expect_keyword(Keyword::Fn, "to start function declaration");
         let name = self.parse_ident_required("function name");
@@ -230,6 +234,7 @@ impl Parser<'_> {
         };
         FnDecl {
             is_unsafe,
+            is_comptime,
             name,
             generics,
             params,
@@ -250,10 +255,15 @@ impl Parser<'_> {
             }
         }
         while !self.at_punct(Punct::RParen) && !self.at_eof() {
+            let is_comptime = self.eat_keyword(Keyword::Comptime);
             let pattern = self.parse_pattern_no_or();
             self.expect_punct(Punct::Colon, "after parameter pattern");
             let ty = self.parse_type();
-            params.push(FnParam::Typed { pattern, ty });
+            params.push(FnParam::Typed {
+                pattern,
+                ty,
+                is_comptime,
+            });
             if !self.eat_punct(Punct::Comma) {
                 break;
             }

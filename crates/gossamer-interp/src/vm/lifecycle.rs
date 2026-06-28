@@ -31,6 +31,8 @@ impl Vm {
             call_stack: RefCell::new(Vec::new()),
             call_depth: Cell::new(0),
             source_map: None,
+            collect_comptime: Cell::new(false),
+            comptime_folds: RefCell::new(Vec::new()),
         };
         // Late-registered binding natives go into the per-Vm overlay
         // because they can be added between Vm constructions; the
@@ -89,6 +91,9 @@ impl Vm {
             // a compile-time input only, and `Op::CovHit` bumps the
             // global table regardless of which Vm executes the chunk.
             source_map: None,
+            // Comptime folding is a main-VM compile-time concern only.
+            collect_comptime: Cell::new(false),
+            comptime_folds: RefCell::new(Vec::new()),
         }
     }
 
@@ -211,6 +216,20 @@ impl Vm {
         // steady-state floor while goroutines drain.
         self.chunk_state_arena.borrow_mut().shrink_to_fit();
         self.chunk_state_map.borrow_mut().shrink_to_fit();
+    }
+
+    /// Enables comptime folding: the next [`Self::load`] evaluates every
+    /// `comptime { ... }` block and `comptime fn` call and records the
+    /// results, drainable with [`Self::take_comptime_folds`].
+    pub fn set_collect_comptime(&self, on: bool) {
+        self.collect_comptime.set(on);
+    }
+
+    /// Drains the comptime evaluation results gathered by the last
+    /// [`Self::load`] (empty unless [`Self::set_collect_comptime`] was
+    /// set). Each entry is `(span, Ok(value) | Err(message))`.
+    pub fn take_comptime_folds(&self) -> Vec<(gossamer_lex::Span, Result<Value, String>)> {
+        std::mem::take(&mut self.comptime_folds.borrow_mut())
     }
 
     /// Compiles and registers every `fn`/`const`/`static`/impl item in
@@ -343,7 +362,7 @@ impl Vm {
             };
             match &item.kind {
                 HirItemKind::Const(decl) => {
-                    let value = self.eval_initializer(
+                    let value = match self.eval_initializer(
                         &decl.value,
                         &tcx,
                         &def_layouts,
@@ -352,7 +371,16 @@ impl Vm {
                         &module_consts,
                         &method_muts,
                         &mut_statics,
-                    )?;
+                    ) {
+                        Ok(value) => value,
+                        // While collecting comptime folds, functions are
+                        // not yet loaded (pass C), so an initializer that
+                        // calls a non-inlinable function cannot evaluate
+                        // here. Its comptime regions are evaluated in
+                        // pass D regardless, so skip rather than abort.
+                        Err(_) if self.collect_comptime.get() => continue,
+                        Err(err) => return Err(err),
+                    };
                     self.register_item_value(
                         module_prefix.as_deref(),
                         &decl.name.name,
@@ -361,7 +389,7 @@ impl Vm {
                     module_consts.insert(decl.name.name.clone(), value);
                 }
                 HirItemKind::Static(decl) => {
-                    let value = self.eval_initializer(
+                    let value = match self.eval_initializer(
                         &decl.value,
                         &tcx,
                         &def_layouts,
@@ -370,7 +398,11 @@ impl Vm {
                         &module_consts,
                         &method_muts,
                         &mut_statics,
-                    )?;
+                    ) {
+                        Ok(value) => value,
+                        Err(_) if self.collect_comptime.get() => continue,
+                        Err(err) => return Err(err),
+                    };
                     let global = if decl.mutable {
                         Global::MutStatic(Arc::new(parking_lot::Mutex::new(value.clone())))
                     } else {
@@ -404,6 +436,33 @@ impl Vm {
                 )?;
             }
         }
+        // Pass D: comptime folding. When enabled, evaluate every
+        // `comptime { ... }` block and `comptime fn` call now that
+        // every function and const is compiled, recording each result
+        // span -> value so the CLI can splice the literal back into the
+        // source. Gated so normal runs never pay the walk.
+        if self.collect_comptime.get() {
+            let comptime_info = crate::comptime::ComptimeInfo::collect(program);
+            let regions = crate::comptime::collect_regions(program, &comptime_info);
+            let mut folds = Vec::with_capacity(regions.len());
+            for region in regions {
+                let outcome = self
+                    .eval_initializer(
+                        region.expr,
+                        &tcx,
+                        &def_layouts,
+                        &wrappers,
+                        &inline_fns,
+                        &module_consts,
+                        &method_muts,
+                        &mut_statics,
+                    )
+                    .map_err(|err| err.to_string());
+                folds.push((region.span, outcome));
+            }
+            *self.comptime_folds.borrow_mut() = folds;
+        }
+
         // Tier D2 - deferred JIT. Lower MIR up front so the
         // tier-up trigger (in `apply`) can dispatch a compile via
         // `&self`, but don't compile yet: short-running programs

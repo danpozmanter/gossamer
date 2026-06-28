@@ -256,12 +256,12 @@ impl<'tcx> FnBuilder<'tcx> {
         field_name: &str,
     ) -> Option<gossamer_types::Ty> {
         let ty = self.unwrap_ref(scrut_ty?);
-        let TyKind::Adt { def, .. } = self.tcx.kind(ty)? else {
+        let TyKind::Adt { def, substs } = self.tcx.kind(ty)? else {
             return None;
         };
         let names = self.layouts.get(def)?;
         let idx = names.iter().position(|f| f == field_name)?;
-        self.tcx.struct_field_tys(*def)?.get(idx).copied()
+        self.tcx.adt_field_tys(*def, substs)?.get(idx).copied()
     }
 
     /// `true` when the `for`-loop receiver `expr` is an indexable

@@ -454,7 +454,8 @@ pub unsafe extern "C" fn gos_rt_vec_clone(src: *const GosVec) -> *mut GosVec {
             cap: s.len,
             elem_bytes: s.elem_bytes,
             elem_kind: s.elem_kind,
-            _reserved: [0; 3],
+            region_flag: 0,
+            rc: std::sync::atomic::AtomicU16::new(0),
             ptr: SyncRawPtr::new(data),
         };
         crate::c_abi::vec::vec_set_rc(&cloned, 1);

@@ -660,6 +660,13 @@ impl Parser<'_> {
             self.expect_punct(Punct::LBrace, "to open `unsafe` block");
             return ExprKind::Unsafe(self.parse_block_body());
         }
+        if self.at_keyword(Keyword::Comptime) {
+            self.bump();
+            self.expect_punct(Punct::LBrace, "to open `comptime` block");
+            let mut block = self.parse_block_body();
+            block.is_comptime = true;
+            return ExprKind::Block(block);
+        }
         if self.at_keyword(Keyword::Return) {
             self.bump();
             if !is_expression_start(self) || at_block_end(self) {
@@ -960,6 +967,7 @@ impl Parser<'_> {
             tail: Some(Box::new(acc)),
             synthetic: true,
             is_arena: false,
+            is_comptime: false,
         };
         Expr::new(self.alloc_id(), span, ExprKind::Block(block))
     }
@@ -1002,6 +1010,7 @@ impl Parser<'_> {
             tail: Some(Box::new(expr)),
             synthetic: true,
             is_arena: false,
+            is_comptime: false,
         };
         Expr::new(self.alloc_id(), span, ExprKind::Block(block))
     }
@@ -1114,6 +1123,7 @@ impl Parser<'_> {
             tail: Some(Box::new(acc)),
             synthetic: true,
             is_arena: false,
+            is_comptime: false,
         };
         let loop_body = Expr::new(self.alloc_id(), body_span, ExprKind::Block(loop_body_block));
         ExprKind::Loop {
@@ -1480,6 +1490,19 @@ impl Parser<'_> {
             return self.expand_format_macro(&macro_name, args);
         }
 
+        // Compile-time validation macros. `regex!("…")` / `sql!("…")`
+        // expand to a call to a synthesized `comptime fn` validator
+        // (injected by autoderive), so a malformed pattern / statement
+        // fails the build rather than reaching runtime. The validator
+        // returns the original string on success, folded in place by the
+        // comptime pass.
+        if matches!(macro_name.as_str(), "regex" | "sql") && delim == MacroDelim::Paren {
+            self.expect_punct(Punct::LParen, "to open macro invocation");
+            let args = self.parse_call_args();
+            let validator = format!("__gos_{macro_name}_validate");
+            return self.alloc_function_call(&validator, args);
+        }
+
         // Gossamer has no `vec!`: collection literals use the array
         // form `[...]` / `[v; n]`, which coerces to `Vec<T>` at every
         // expected-type site (SPEC §3.3). Steer the common Rust habit
@@ -1548,6 +1571,14 @@ impl Parser<'_> {
         let mut positional_iter = rest.into_iter();
         for segment in segments {
             match segment {
+                FormatSegment::Invalid(text) => {
+                    self.record(
+                        ParseError::MalformedFormatPlaceholder { text: text.clone() },
+                        first.span,
+                    );
+                    concat_args
+                        .push(self.alloc_literal_expr(Literal::String(format!("{{{text}}}"))));
+                }
                 FormatSegment::Literal(text) => {
                     if text.is_empty() {
                         continue;
@@ -1767,6 +1798,7 @@ impl Parser<'_> {
             tail,
             synthetic: false,
             is_arena: false,
+            is_comptime: false,
         }
     }
 
@@ -1948,6 +1980,7 @@ pub(crate) fn is_expression_start(parser: &Parser<'_>) -> bool {
                 | Keyword::While
                 | Keyword::For
                 | Keyword::Unsafe
+                | Keyword::Comptime
                 | Keyword::Return
                 | Keyword::Break
                 | Keyword::Continue
@@ -2061,6 +2094,20 @@ enum FormatSegment {
     PositionalSpec(FormatSpec),
     /// `{ident:spec}` - same as `PositionalSpec` but a named binding.
     NamedSpec(String, FormatSpec),
+    /// `{age + 1}` - a placeholder whose name part is an expression, not a
+    /// binding. Carries the inner text for the diagnostic; the caller
+    /// records a `MalformedFormatPlaceholder` error.
+    Invalid(String),
+}
+
+/// Whether a placeholder's name part (the text before any `:`) looks like an
+/// expression rather than a binding name or numeric index. Used to reject
+/// `{age + 1}`-style placeholders that the macros silently passed through as
+/// literal text. Empty name parts (`{:spec}`) and bare identifiers/numbers are
+/// not flagged.
+fn format_name_looks_like_expr(inner: &str) -> bool {
+    let name = inner.split(':').next().unwrap_or("").trim();
+    !name.is_empty() && !name.chars().all(|c| c.is_alphanumeric() || c == '_')
 }
 
 /// Splits a template into `FormatSegment`s. `{{` / `}}` escape
@@ -2117,6 +2164,8 @@ fn parse_format_template(template: &str) -> Vec<FormatSegment> {
                     segments.push(FormatSegment::Positional);
                 } else if is_identifier(inner) {
                     segments.push(FormatSegment::Named(inner.to_string()));
+                } else if format_name_looks_like_expr(inner) {
+                    segments.push(FormatSegment::Invalid(inner.to_string()));
                 } else if let Some(seg) = parse_precision_spec(inner) {
                     segments.push(seg);
                 } else if inner == ":?" {

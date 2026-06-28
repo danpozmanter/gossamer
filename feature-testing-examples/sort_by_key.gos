@@ -1,0 +1,28 @@
+// `sort_by_key` / `sort_by_key_desc` Vec methods, bit-identical on every
+// tier. The key fn may return a scalar or a tuple (multi-key sorting with no
+// Ordering trait), and `Reverse(x)` in a key sorts that component descending -
+// so `(Reverse(count), name)` is count-descending, name-ascending. The desugar
+// inlines the key into a `sort_by` comparator that orders element-wise with
+// `<`, which works on scalars, strings, and tuples across the VM and the
+// compiled tiers.
+struct Row { count: i64, name: String }
+fn main() {
+    let mut v: Vec<i64> = []
+    v.push(3)
+    v.push(1)
+    v.push(2)
+    v.sort_by_key(|n| n)
+    println!("{:?}", v)
+    v.sort_by_key_desc(|n| n)
+    println!("{:?}", v)
+
+    let mut rows: Vec<Row> = []
+    rows.push(Row { count: 2, name: "b" })
+    rows.push(Row { count: 1, name: "z" })
+    rows.push(Row { count: 2, name: "a" })
+    rows.push(Row { count: 1, name: "y" })
+    rows.sort_by_key(|r| (Reverse(r.count), r.name))
+    for r in rows {
+        println!("{} {}", r.count, r.name)
+    }
+}

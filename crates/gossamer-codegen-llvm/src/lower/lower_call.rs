@@ -146,6 +146,31 @@ impl<'a> Lowerer<'a> {
         }
         if dest_llvm == "void" || is_unit(self.tcx, dest_ty_mir) {
             writeln!(self.out, "  call void {fn_ptr}({arg_text})").unwrap();
+        } else if is_aggregate(self.tcx, dest_ty_mir) {
+            // A closure / fn-value returning a multi-slot aggregate heap-copies
+            // it (like any user fn - see the Return lowering) and returns the
+            // box pointer. Copy its slots into the destination's inline alloca,
+            // then free the box; storing the bare pointer (the old behavior)
+            // left every field past the first reading uninitialised memory.
+            let tmp = self.fresh();
+            writeln!(self.out, "  {tmp} = call ptr {fn_ptr}({arg_text})").unwrap();
+            let slot = local_slot(destination.local);
+            if let Some(slots) = slot_count(self.tcx, dest_ty_mir) {
+                let bytes = u64::from(slots.max(1)) * 8;
+                writeln!(
+                    self.out,
+                    "  call void @llvm.memcpy.p0.p0.i64(ptr {slot}, ptr {tmp}, i64 {bytes}, i1 false)"
+                )
+                .unwrap();
+                declare_rt(&mut self.runtime_refs, "gos_rt_aggr_free");
+                writeln!(
+                    self.out,
+                    "  call void @\"gos_rt_aggr_free\"(ptr {tmp}, i64 {bytes})"
+                )
+                .unwrap();
+            } else {
+                writeln!(self.out, "  store ptr {tmp}, ptr {slot}").unwrap();
+            }
         } else {
             let tmp = self.fresh();
             writeln!(self.out, "  {tmp} = call {dest_llvm} {fn_ptr}({arg_text})").unwrap();

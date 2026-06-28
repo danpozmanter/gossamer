@@ -449,6 +449,14 @@ fn run_tests_filtered_inner(
         return Vec::new();
     };
     let augmented = gossamer_parse::autoderive::augment_source(&source);
+    // Comptime fold so a `#[test]` compiles the same constant the
+    // run / build tiers do. On a comptime failure, fall back to the
+    // unfolded source - the VM still evaluates the region at runtime,
+    // and `gos check` / `gos build` surface the error authoritatively.
+    let augmented = match crate::comptime_fold::fold_comptime(&augmented, &file.to_string_lossy()) {
+        Ok(folded) => folded,
+        Err(_) => augmented,
+    };
     let mut map = gossamer_lex::SourceMap::new();
     let file_id = map.add_file(file.to_string_lossy().into_owned(), augmented.clone());
     let Ok((program, _sf, tcx)) = load_and_check_with_sf(&augmented, file_id, &map) else {

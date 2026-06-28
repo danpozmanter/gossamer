@@ -2510,7 +2510,7 @@ fn render_user_signature(decl: &gossamer_ast::FnDecl) -> String {
         first = false;
         match param {
             FnParam::Receiver(receiver) => out.push_str(receiver.as_str()),
-            FnParam::Typed { pattern, ty } => {
+            FnParam::Typed { pattern, ty, .. } => {
                 let mut printer = gossamer_ast::Printer::new();
                 printer.print_type(ty);
                 out.push_str(&pattern_label(pattern));

@@ -159,7 +159,7 @@ pub(super) fn type_slot_count(tcx: &TyCtxt, ty: Ty) -> u32 {
         TyKind::Array { elem, len } => u32::try_from(len.to_usize())
             .unwrap_or(1)
             .saturating_mul(type_slot_count(tcx, elem)),
-        TyKind::Adt { def, .. } => {
+        TyKind::Adt { def, substs } => {
             // Result<T, E> and Option<T> use sentinel DefIds
             // (u32::MAX, u32::MAX-1) that don't appear in
             // `struct_field_tys`. Both have a 2-slot heap layout:
@@ -170,7 +170,7 @@ pub(super) fn type_slot_count(tcx: &TyCtxt, ty: Ty) -> u32 {
             if def.local == u32::MAX || def.local == u32::MAX - 1 || tcx.is_inline_enum_ty(ty) {
                 return 2;
             }
-            tcx.struct_field_tys(def).map_or(1, |tys| {
+            tcx.adt_field_tys(def, &substs).map_or(1, |tys| {
                 tys.iter()
                     .map(|t| type_slot_count(tcx, *t))
                     .sum::<u32>()
@@ -190,13 +190,13 @@ pub(super) fn field_byte_offset(tcx: &TyCtxt, ty: Ty, idx: u32) -> u32 {
             .map(|t| type_slot_count(tcx, *t))
             .sum::<u32>()
             .saturating_mul(8),
-        TyKind::Adt { def, .. } => {
+        TyKind::Adt { def, substs } => {
             // Sentinels for Result/Option use a flat 2-slot
             // [disc, payload] layout where each field is one slot.
             if def.local == u32::MAX || def.local == u32::MAX - 1 || tcx.is_inline_enum_ty(ty) {
                 return idx * 8;
             }
-            tcx.struct_field_tys(def).map_or(idx * 8, |tys| {
+            tcx.adt_field_tys(def, &substs).map_or(idx * 8, |tys| {
                 tys.iter()
                     .take(target)
                     .map(|t| type_slot_count(tcx, *t))
@@ -213,11 +213,11 @@ pub(super) fn field_ty_at(tcx: &TyCtxt, ty: Ty, idx: u32) -> Option<Ty> {
     let target = idx as usize;
     match tcx.kind_of(ty).clone() {
         TyKind::Tuple(elems) => elems.get(target).copied(),
-        TyKind::Adt { def, .. } => {
+        TyKind::Adt { def, substs } => {
             if def.local == u32::MAX || def.local == u32::MAX - 1 || tcx.is_inline_enum_ty(ty) {
                 return None;
             }
-            tcx.struct_field_tys(def)
+            tcx.adt_field_tys(def, &substs)
                 .and_then(|tys| tys.get(target).copied())
         }
         TyKind::Ref { inner, .. } => field_ty_at(tcx, inner, idx),

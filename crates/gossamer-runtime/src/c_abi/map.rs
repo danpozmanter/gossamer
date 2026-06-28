@@ -1126,6 +1126,86 @@ pub unsafe extern "C" fn gos_rt_tuple_format(
     })
 }
 
+/// Lexicographically compares two tuples' flat slot buffers, returning
+/// `-1` / `0` / `1`. `a` and `b` point at `n` contiguous 8-byte slots;
+/// `tags[i]` selects each slot's kind (same encoding as
+/// [`gos_rt_tuple_format`]: `0` Int, `2` Float, `3` Bool, `4` Char, `5`
+/// Str). The first non-equal element decides; equal prefixes continue.
+/// Routed to by the compiled tiers for tuple `== != < <= > >=`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_tuple_cmp(
+    a: *const i64,
+    b: *const i64,
+    n: i64,
+    tags: *const u8,
+) -> i64 {
+    ffi_entry!(0, {
+        use std::cmp::Ordering;
+        if a.is_null() || b.is_null() || tags.is_null() || n <= 0 {
+            return 0;
+        }
+        let n = n as usize;
+        for i in 0..n {
+            let wa = unsafe { a.add(i).read_unaligned() };
+            let wb = unsafe { b.add(i).read_unaligned() };
+            let ord = match unsafe { *tags.add(i) } {
+                2 => f64::from_bits(wa as u64)
+                    .partial_cmp(&f64::from_bits(wb as u64))
+                    .unwrap_or(Ordering::Equal),
+                3 => (wa & 1).cmp(&(wb & 1)),
+                4 => (wa as u32).cmp(&(wb as u32)),
+                5 => {
+                    let sa: *const c_char = std::ptr::with_exposed_provenance(wa as usize);
+                    let sb: *const c_char = std::ptr::with_exposed_provenance(wb as usize);
+                    unsafe { gos_rt_str_compare(sa, sb) }.cmp(&0)
+                }
+                _ => wa.cmp(&wb),
+            };
+            match ord {
+                Ordering::Less => return -1,
+                Ordering::Greater => return 1,
+                Ordering::Equal => {}
+            }
+        }
+        0
+    })
+}
+
+/// Structural equality of two Vec/array values. `elem_tag` (same encoding
+/// as [`gos_rt_tuple_cmp`]) selects how each element slot is interpreted:
+/// `2` Float (bit-equal would mishandle NaN), `5` Str (per-element
+/// `gos_rt_str_eq`), anything else a plain word compare. Routed to by the
+/// compiled tiers for `[T] == [T]` / `!=`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_vec_eq(a: *const GosVec, b: *const GosVec, elem_tag: u8) -> bool {
+    ffi_entry!(false, {
+        if a.is_null() || b.is_null() {
+            return std::ptr::eq(a, b);
+        }
+        let la = unsafe { (*a).len };
+        if la != unsafe { (*b).len } {
+            return false;
+        }
+        for i in 0..la {
+            let wa = unsafe { gos_rt_vec_get_i64(a, i) };
+            let wb = unsafe { gos_rt_vec_get_i64(b, i) };
+            let eq = match elem_tag {
+                2 => f64::from_bits(wa as u64) == f64::from_bits(wb as u64),
+                5 => {
+                    let sa: *const c_char = std::ptr::with_exposed_provenance(wa as usize);
+                    let sb: *const c_char = std::ptr::with_exposed_provenance(wb as usize);
+                    unsafe { gos_rt_str_eq(sa, sb) }
+                }
+                _ => wa == wb,
+            };
+            if !eq {
+                return false;
+            }
+        }
+        true
+    })
+}
+
 /// Renders a `HashMap` to `{k: v, k2: v2}`, sorting entries by key so
 /// the output is deterministic and byte-identical across tiers (an
 /// `FxHashMap`'s bucket order is neither stable nor the same as the

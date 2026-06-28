@@ -299,10 +299,12 @@ mod tests {
                 tail: Some(Box::new(int("0"))),
                 synthetic: false,
                 is_arena: false,
+                is_comptime: false,
             }),
         );
         let fn_decl = FnDecl {
             is_unsafe: false,
+            is_comptime: false,
             name: Ident::new("main"),
             generics: Generics::default(),
             params: Vec::<FnParam>::new(),

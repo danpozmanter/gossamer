@@ -358,6 +358,12 @@ pub struct Block {
     /// `runtime::arena_push()` / `arena_pop()` primitive.
     #[serde(default)]
     pub is_arena: bool,
+    /// True for the block spelled `comptime { ... }`. The comptime fold
+    /// pass evaluates these on the bytecode VM during compilation and
+    /// splices the resulting literal back into the source, so every tier
+    /// sees a constant rather than the original computation.
+    #[serde(default)]
+    pub is_comptime: bool,
 }
 
 impl Block {
@@ -370,6 +376,7 @@ impl Block {
             tail: None,
             synthetic: true,
             is_arena: false,
+            is_comptime: false,
         }
     }
 }

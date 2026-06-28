@@ -409,6 +409,8 @@
       
         
       
+        
+      
     
     
     
@@ -506,6 +508,34 @@
     
   
     Arena blocks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../language/comptime/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Comptime
   
 
     
@@ -679,6 +709,17 @@
     <span class="md-ellipsis">
       
         Documentation
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#foreign-code-rust-bindings" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Foreign code ([rust-bindings])
       
     </span>
   </a>
@@ -1733,6 +1774,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#foreign-code-rust-bindings" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Foreign code ([rust-bindings])
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#publishing" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1886,6 +1938,37 @@ an item (no blank line between) is its documentation, and a
 run at the top of a file is the module's. <code>gos doc
 src/lib.gos</code> prints every item plus that summary block. HTML
 output lands with Stream H polish.</p>
+<h2 id="foreign-code-rust-bindings">Foreign code (<code>[rust-bindings]</code>)<a class="headerlink" href="#foreign-code-rust-bindings" title="Permanent link">&para;</a></h2>
+<p>To call native (Rust) code, declare a binding crate under
+<code>[rust-bindings]</code> in <code>project.toml</code>. The crate depends on
+<code>gossamer-binding</code> and registers its entry points with
+<code>register_module!</code>; the toolchain builds it into a per-project runner
+and links it into the binary (or interpreter), after which the bound
+functions are <code>use</code>-able from <code>.gos</code> source like any other module.</p>
+<div class="language-toml highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="c1"># project.toml</span>
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="k">[rust-bindings]</span>
+<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="n">echo-binding</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">path</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;echo-binding&quot;</span><span class="w"> </span><span class="p">}</span>
+</code></pre></div>
+<div class="language-rust highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="c1">// echo-binding/src/lib.rs</span>
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="k">use</span><span class="w"> </span><span class="n">gossamer_binding</span>::<span class="n">register_module</span><span class="p">;</span>
+<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="n">register_module</span><span class="o">!</span><span class="p">(</span><span class="s">&quot;echo&quot;</span><span class="p">,</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a><span class="w">    </span><span class="k">fn</span> <span class="nf">shout</span><span class="p">(</span><span class="n">s</span>: <span class="nb">String</span><span class="p">)</span><span class="w"> </span>-&gt; <span class="nb">String</span> <span class="p">{</span><span class="w"> </span><span class="n">s</span><span class="p">.</span><span class="n">to_uppercase</span><span class="p">()</span><span class="w"> </span><span class="p">}</span>
+<a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a><span class="p">});</span>
+</code></pre></div>
+<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="k">use</span><span class="w"> </span><span class="n">echo</span>::<span class="n">shout</span>
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="k">fn</span> <span class="nf">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;{}&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">shout</span><span class="p">(</span><span class="s">&quot;hello&quot;</span><span class="p">))</span><span class="w"> </span><span class="p">}</span>
+</code></pre></div>
+<p>Values cross the boundary through the typed <code>gossamer-binding</code> ABI
+(integers, floats, strings, tuples, vectors, <code>Option</code> / <code>Result</code>,
+opaque handles, byte buffers, callbacks); a panic in a binding is
+caught and returned as <code>Result::Err</code>. This is the <strong>only</strong> FFI surface
+- a source-level <code>extern "C"</code> item form is rejected (<code>GP0016</code>) and the
+<code>extern</code> keyword stays reserved. Calls run end-to-end under <code>gos run</code>
+and link into <code>gos build</code> binaries; direct compiled-tier dispatch into
+binding thunks lands incrementally as more binding shapes are wired.
+See the SPEC (section 12 in the repository root),
+<code>crates/gossamer-binding/ABI_0_4.md</code>, and the
+<code>example-external-libraries/</code> projects for full detail.</p>
 <h2 id="publishing">Publishing<a class="headerlink" href="#publishing" title="Permanent link">&para;</a></h2>
 <p><em>(planned)</em> - <code>gos publish</code> pushes to the default registry once
 the backend lands. Until then, path-based + git-based

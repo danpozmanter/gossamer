@@ -73,7 +73,7 @@ fn walk_fn_decl<V: Visitor + ?Sized>(visitor: &mut V, decl: &FnDecl) {
 fn walk_fn_param<V: Visitor + ?Sized>(visitor: &mut V, param: &FnParam) {
     match param {
         FnParam::Receiver(_) => {}
-        FnParam::Typed { pattern, ty } => {
+        FnParam::Typed { pattern, ty, .. } => {
             visitor.visit_pattern(pattern);
             visitor.visit_type(ty);
         }

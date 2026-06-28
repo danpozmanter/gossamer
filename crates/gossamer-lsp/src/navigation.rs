@@ -160,7 +160,7 @@ impl Walker {
 
     fn visit_fn(&mut self, decl: &FnDecl) {
         for param in &decl.params {
-            if let FnParam::Typed { pattern, ty } = param {
+            if let FnParam::Typed { pattern, ty, .. } = param {
                 self.visit_pattern(pattern);
                 self.visit_type(ty);
             }
@@ -1147,7 +1147,7 @@ fn render_fn_signature(decl: &FnDecl) -> String {
         first = false;
         match param {
             FnParam::Receiver(receiver) => out.push_str(receiver.as_str()),
-            FnParam::Typed { pattern, ty } => {
+            FnParam::Typed { pattern, ty, .. } => {
                 out.push_str(&pattern_signature_name(pattern));
                 out.push_str(": ");
                 out.push_str(&render_type(ty));

@@ -177,8 +177,8 @@ impl<'a> Builder<'a> {
         // struct alloca overflows and a later `q.bytes.len()` reads
         // element[0] as the Vec pointer (misaligned-deref crash).
         let field_tys: Option<Vec<Ty>> = match self.tcx.kind_of(ty) {
-            gossamer_types::TyKind::Adt { def, .. } => {
-                self.tcx.struct_field_tys(*def).map(<[Ty]>::to_vec)
+            gossamer_types::TyKind::Adt { def, substs } => {
+                self.tcx.adt_field_tys(*def, substs).map(<[Ty]>::to_vec)
             }
             _ => None,
         };

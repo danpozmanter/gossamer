@@ -237,6 +237,16 @@ M:N scheduler. Blocking primitives (channel ops, mutex contention,
 goroutine, freeing the worker thread to run other goroutines.
 Channels are typed and bounded; `select` multiplexes receives.
 
+Scheduling is cooperative with watchdog-assisted preemption: a
+goroutine yields at safepoints (every park point above, plus
+function-call / scheduler-step boundaries), and a watchdog forces a
+yield - and interrupts blocking syscalls via `SIGURG` / a Windows APC -
+when a worker runs too long. A goroutine in a tight, call-free compute
+loop is not asynchronously preempted yet, so it yields only at its next
+call or park point; on the M:N pool, other goroutines keep running on
+the other worker threads meanwhile. See
+[runtime design - Preemption](design/runtime.md#preemption).
+
 ## Closures and higher-order fns
 
 Lambdas use `|param: T| body`; captures from the enclosing scope
@@ -334,10 +344,15 @@ let greeting = format!("welcome, {}", name)
 | `eprint!("…", a, b)` | Writes to stderr, no newline. |
 | `panic!("…", a, b)` | Unwinds with the rendered message. |
 
-Every other `name!(…)` is a parse error - there is no user macro
-system. Format specs follow Rust's `{:spec}` grammar - width,
-alignment, fill, zero-pad, radix, and precision (`{:>8}`,
-`{:08x}`, `{:^6}`, `{:.2}`).
+Every other `name!(…)` is a parse error (`GP0001`). There is no
+user-defined macro system. Compile-time metaprogramming instead goes
+through `comptime` - a `comptime { ... }` block or `comptime fn` call
+is evaluated at compile time and folded to a constant on every tier;
+see [Comptime](language/comptime.md).
+
+Format specs follow Rust's `{:spec}` grammar - width, alignment,
+fill, zero-pad, radix, and precision (`{:>8}`, `{:08x}`, `{:^6}`,
+`{:.2}`).
 
 For the single-`String` output shape, `+` concatenates without
 adding a separator:
@@ -345,6 +360,3 @@ adding a separator:
 ```gossamer
 let greeting = "hello, " + &name
 ```
-
-Writing `name!(…)` is a hard parse error - the `!` suffix is
-reserved for no purpose today.

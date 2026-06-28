@@ -203,7 +203,10 @@ fn runtime_init() {
         // SIGPIPE → SIG_IGN. Mirrors what `std::rt::lang_start`'s
         // `sys::unix::init` does. Without this, a write to a
         // closed peer (very common under heavy keep-alive load)
-        // terminates the process.
+        // terminates the process. Skipped under Miri, which cannot call the
+        // `signal` foreign function; SIGPIPE delivery is moot in the
+        // interpreter anyway.
+        #[cfg(all(unix, not(miri)))]
         unsafe {
             libc::signal(libc::SIGPIPE, libc::SIG_IGN);
         }

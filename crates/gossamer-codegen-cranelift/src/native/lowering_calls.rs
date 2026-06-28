@@ -460,6 +460,8 @@ pub(super) fn lower_generic_rt_call(
         "gos_rt_vec_set_i64" => (&[ptr_ty, types::I64, types::I64], None),
         "gos_rt_vec_format_i64" => (&[ptr_ty], Some(ptr_ty)),
         "gos_rt_tuple_format" => (&[ptr_ty, types::I64, ptr_ty], Some(ptr_ty)),
+        "gos_rt_tuple_cmp" => (&[ptr_ty, ptr_ty, types::I64, ptr_ty], Some(types::I64)),
+        "gos_rt_vec_eq" => (&[ptr_ty, ptr_ty, types::I8], Some(types::I8)),
         "gos_rt_map_format" => (&[ptr_ty], Some(ptr_ty)),
         "gos_rt_chan_recv_option" => (&[ptr_ty], Some(types::I128)),
         "gos_rt_chan_try_recv_option" => (&[ptr_ty], Some(types::I128)),

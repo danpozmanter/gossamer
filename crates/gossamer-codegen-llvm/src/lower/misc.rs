@@ -99,9 +99,9 @@ impl<'a> Lowerer<'a> {
             ty = self.unwrap_ref(ty);
             ty = match proj {
                 Projection::Field(i) => match self.tcx.kind(ty) {
-                    Some(TyKind::Adt { def, .. }) => self
+                    Some(TyKind::Adt { def, substs }) => self
                         .tcx
-                        .struct_field_tys(*def)
+                        .adt_field_tys(*def, substs)
                         .and_then(|tys| tys.get(*i as usize).copied())
                         .unwrap_or(ty),
                     Some(TyKind::Tuple(elems)) => elems.get(*i as usize).copied().unwrap_or(ty),
@@ -177,9 +177,9 @@ impl<'a> Lowerer<'a> {
             ty = self.unwrap_ref(ty);
             ty = match proj {
                 Projection::Field(idx) => match self.tcx.kind(ty) {
-                    Some(TyKind::Adt { def, .. }) => self
+                    Some(TyKind::Adt { def, substs }) => self
                         .tcx
-                        .struct_field_tys(*def)
+                        .adt_field_tys(*def, substs)
                         .and_then(|tys| tys.get(*idx as usize).copied())
                         .unwrap_or(ty),
                     Some(TyKind::Tuple(elems)) => elems.get(*idx as usize).copied().unwrap_or(ty),
@@ -1016,9 +1016,9 @@ impl<'a> Lowerer<'a> {
             ty = self.unwrap_ref(ty);
             ty = match proj {
                 Projection::Field(i) => match self.tcx.kind(ty) {
-                    Some(TyKind::Adt { def, .. }) => self
+                    Some(TyKind::Adt { def, substs }) => self
                         .tcx
-                        .struct_field_tys(*def)
+                        .adt_field_tys(*def, substs)
                         .and_then(|tys| tys.get(*i as usize).copied())
                         .unwrap_or(ty),
                     Some(TyKind::Tuple(elems)) => elems.get(*i as usize).copied().unwrap_or(ty),

@@ -43,6 +43,10 @@ fn run_on_vm(file: &PathBuf, forwarded: &[String]) -> Result<()> {
     // for every user struct so the resulting program has real
     // methods (no VM-only intercept).
     let source = gossamer_parse::autoderive::augment_source(&user_source);
+    // Comptime fold: evaluate `comptime { ... }` / `comptime fn` calls
+    // now and splice their result literals in, so the VM compiles a
+    // constant identical to what the compiled tiers see.
+    let source = crate::comptime_fold::fold_comptime(&source, &file.to_string_lossy())?;
     let mut map = gossamer_lex::SourceMap::new();
     let file_id = map.add_file(file.to_string_lossy().into_owned(), source.clone());
     // Static checks always run first. A program with parse / resolve /

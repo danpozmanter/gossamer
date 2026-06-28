@@ -48,7 +48,7 @@ pub fn walk_item_mut<V: VisitorMut + ?Sized>(visitor: &mut V, item: &mut Item) {
 
 fn walk_fn_decl_mut<V: VisitorMut + ?Sized>(visitor: &mut V, decl: &mut FnDecl) {
     for param in &mut decl.params {
-        if let FnParam::Typed { pattern, ty } = param {
+        if let FnParam::Typed { pattern, ty, .. } = param {
             visitor.visit_pattern(pattern);
             visitor.visit_type(ty);
         }

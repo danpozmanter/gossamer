@@ -179,6 +179,12 @@ Goroutine and channel syntax is the same. Behavioural notes:
 
 - The M:N work-stealing scheduler is live; goroutines are parked by the
   netpoller when blocked on I/O.
+- Scheduling is cooperative with watchdog-assisted preemption (Go's
+  pre-1.14 model plus signal-based interruption of blocking syscalls).
+  Unlike Go 1.14+, a tight, call-free compute loop is not yet
+  asynchronously preempted at loop back-edges - it yields at its next
+  call or park point. See
+  [runtime design - Preemption](../design/runtime.md#preemption).
 - Channels are unbounded by default (like Go's `make(chan T)`
   without a buffer size - wait, actually Go's *unbuffered*
   channels block on send until a receiver is ready;

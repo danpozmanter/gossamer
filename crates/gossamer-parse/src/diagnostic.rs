@@ -109,6 +109,14 @@ pub enum ParseError {
     /// `fn main`; an entry file uses exactly one entry form.
     #[error("cannot mix top-level statements with an explicit `fn main`")]
     MixedEntryForms,
+    /// A format-macro placeholder `{...}` whose contents are neither a
+    /// binding name nor a format spec - typically an expression like
+    /// `{age + 1}`, which the macros do not interpolate.
+    #[error("malformed format placeholder `{{{text}}}`")]
+    MalformedFormatPlaceholder {
+        /// The placeholder's inner text (without the braces).
+        text: String,
+    },
 }
 
 /// A diagnostic with its source location.
@@ -240,6 +248,14 @@ impl ParseError {
                 Some("split the expression into smaller helpers".to_string()),
             ),
             ParseError::Lex { message } => ("GP0018", message.clone(), None),
+            other => other.code_title_help_entry(),
+        }
+    }
+
+    /// Code/title/help for the entry-form and format-placeholder errors.
+    /// Split out of [`Self::code_title_help`] to keep each match small.
+    fn code_title_help_entry(&self) -> (&'static str, String, Option<String>) {
+        match self {
             ParseError::StatementOutsideEntry => (
                 "GP0019",
                 "statements are only allowed at the top level of the entry file".to_string(),
@@ -259,6 +275,18 @@ impl ParseError {
                         .to_string(),
                 ),
             ),
+            ParseError::MalformedFormatPlaceholder { text } => (
+                "GP0021",
+                format!("malformed format placeholder `{{{text}}}`"),
+                Some(
+                    "format macros interpolate a binding name or a `{:spec}`, not an expression; \
+                     bind it first or pass it as a positional argument with `{}`"
+                        .to_string(),
+                ),
+            ),
+            // Every other variant is handled by `code_title_help`; this split
+            // exists only to keep that match under the line cap.
+            _ => unreachable!("code_title_help dispatches non-entry variants"),
         }
     }
 }
