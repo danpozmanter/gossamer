@@ -1543,7 +1543,9 @@ pub unsafe extern "C" fn gos_rt_vec_free(v: *mut GosVec) {
         // still occupies; removal must run AFTER the deep-free walks
         // above (which look the metas up by that address) and before
         // the header drops, so a reused address cannot inherit them.
-        crate::c_abi::vec::vec_elem_meta_remove(v);
+        // Pass the `Box`'s own borrow, not the raw `v`, so the read of
+        // `elem_kind` stays under the Box's exclusive ownership.
+        crate::c_abi::vec::vec_elem_meta_remove(&boxed);
         drop(boxed);
     });
 }

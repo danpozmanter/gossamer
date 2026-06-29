@@ -133,13 +133,17 @@ pub(crate) fn vec_elem_meta(v: *const GosVec) -> *const i64 {
     *VEC_ELEM_METAS.lock().get(&(v as usize)).unwrap_or(&0) as *const i64
 }
 
-pub(crate) fn vec_elem_meta_remove(v: *const GosVec) {
+pub(crate) fn vec_elem_meta_remove(v: &GosVec) {
     // PRIMITIVE vecs never have side-table entries, so skip both locks entirely.
-    if unsafe { (*v).elem_kind } == vec_elem_kind::PRIMITIVE {
+    if v.elem_kind == vec_elem_kind::PRIMITIVE {
         return;
     }
-    VEC_ELEM_METAS.lock().remove(&(v as usize));
-    VEC_SLOT_CHILDREN.lock().remove(&(v as usize));
+    // Side tables are keyed by the header's integer address; take it from
+    // the borrow we were handed so the reclaiming `Box<GosVec>` keeps sole
+    // access to the allocation (no aliasing raw deref).
+    let key = std::ptr::from_ref(v) as usize;
+    VEC_ELEM_METAS.lock().remove(&key);
+    VEC_SLOT_CHILDREN.lock().remove(&key);
 }
 
 /// One owned heap child inside each element slot of an
