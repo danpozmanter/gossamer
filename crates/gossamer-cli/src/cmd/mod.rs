@@ -50,7 +50,18 @@ pub(crate) fn with_vm_stack<T: Send + 'static>(f: impl FnOnce() -> T + Send + 's
     std::thread::Builder::new()
         .name("gos-vm".to_string())
         .stack_size(VM_STACK_BYTES)
-        .spawn(f)
+        .spawn(move || {
+            // Install the native fault handler on the VM thread itself.
+            // Only the goroutine scheduler's worker threads install it
+            // otherwise, so a program that spawns no goroutines runs the
+            // bytecode VM and in-process JIT with no handler at all - a hard
+            // fault inside JIT-compiled code (or a native stack overflow) then
+            // exits opaquely. Installing here gives every `gos run` / `test`
+            // / `bench` / REPL execution the stack-overflow backstop and the
+            // JIT fault breadcrumb. Idempotent and process-wide-safe.
+            gossamer_runtime::stack_guard::install_stack_guard();
+            f()
+        })
         .expect("spawn VM execution thread")
         .join()
         .unwrap_or_else(|payload| std::panic::resume_unwind(payload))

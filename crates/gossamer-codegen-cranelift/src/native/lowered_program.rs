@@ -374,14 +374,25 @@ pub(crate) fn emit_carrier_outptr_thunk(
         let body_ref = module.declare_func_in_func(body_id, builder.func);
         let call = builder.ins().call(body_ref, &args);
         let carrier = builder.inst_results(call)[0];
-        // Storing the `i128` writes 16 bytes little-endian: the low word
-        // (disc) at +0 and the high word (payload) at +8 - the layout the
-        // trampoline reads back as `out[0]` / `out[1]`.
+        // Split the carrier into its two 64-bit words and store each
+        // separately, rather than a single `i128` store: the disc word at
+        // +0, the payload word at +8 - the layout the trampoline reads back
+        // as `out[0]` / `out[1]`. Two plain `i64` stores avoid relying on the
+        // backend's 128-bit memory-access lowering.
+        let disc = builder.ins().ireduce(types::I64, carrier);
+        let high = builder.ins().ushr_imm(carrier, 64);
+        let payload = builder.ins().ireduce(types::I64, high);
         builder.ins().store(
-            MemFlags::trusted(),
-            carrier,
+            MemFlags::new(),
+            disc,
             out_ptr,
             ir::immediates::Offset32::new(0),
+        );
+        builder.ins().store(
+            MemFlags::new(),
+            payload,
+            out_ptr,
+            ir::immediates::Offset32::new(8),
         );
         builder.ins().return_(&[]);
         builder.seal_all_blocks();

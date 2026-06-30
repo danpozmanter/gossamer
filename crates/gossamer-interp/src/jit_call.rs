@@ -3011,64 +3011,83 @@ fn invoke_prepared_native(p: &Prepared, args: &[Value], graph_cache: &GraphCache
     // against the params, if any). A malformed return bails after freeing the
     // native temporaries; the `&mut String` cells are still un-written here,
     // so the caller's binding is left untouched for a clean bytecode re-run.
-    let (result, native_ret): (Value, Option<(JitKind, i64)>) =
-        if let Some(shape_idx) = p.result_enum {
-            // `Result<Enum, _>`: the stub handed back the `[disc, payload]` carrier
-            // tuple. Decode the `Ok` enum (deep-copy out, then free the native DOM)
-            // or the `Err` error, wrap in the VM's `Ok` / `Err` variant.
-            let Value::Tuple(t) = &raw else {
-                free_in_flight(&natives, &built_enums, &str_cells);
-                return Dispatch::Fallback;
-            };
-            let (Some(Value::Int(disc)), Some(Value::Int(payload))) = (t.first(), t.get(1)) else {
-                free_in_flight(&natives, &built_enums, &str_cells);
-                return Dispatch::Fallback;
-            };
-            let (disc, payload) = (*disc, *payload);
-            let v = if disc == 0 {
-                let Some(shape) = crate::value::native_shape(shape_idx) else {
-                    free_in_flight(&natives, &built_enums, &str_cells);
-                    return Dispatch::Fallback;
-                };
-                let v = read_native_enum(payload, shape);
-                free_native_enum(payload, shape);
-                Value::variant("Ok", vec![v])
-            } else {
-                Value::variant("Err", vec![read_native_error(payload)])
-            };
-            (v, None)
-        } else if let Some(nret) = p.native_return {
-            let Value::Int(ret_ptr) = raw else {
-                free_in_flight(&natives, &built_enums, &str_cells);
-                return Dispatch::Fallback;
-            };
-            (native_ptr_to_value(nret, ret_ptr), Some((nret, ret_ptr)))
-        } else if let Some(shape_idx) = p.enum_return {
-            let Value::Int(ret_ptr) = raw else {
-                free_in_flight(&natives, &built_enums, &str_cells);
-                return Dispatch::Fallback;
-            };
+    let (result, native_ret): (Value, Option<(JitKind, i64)>) = if let Some(shape_idx) =
+        p.result_enum
+    {
+        // `Result<Enum, _>`: the stub handed back the `[disc, payload]` carrier
+        // tuple. Decode the `Ok` enum (deep-copy out, then free the native DOM)
+        // or the `Err` error, wrap in the VM's `Ok` / `Err` variant.
+        let Value::Tuple(t) = &raw else {
+            free_in_flight(&natives, &built_enums, &str_cells);
+            return Dispatch::Fallback;
+        };
+        let (Some(Value::Int(disc)), Some(Value::Int(payload))) = (t.first(), t.get(1)) else {
+            free_in_flight(&natives, &built_enums, &str_cells);
+            return Dispatch::Fallback;
+        };
+        let (disc, payload) = (*disc, *payload);
+        // A well-formed `Result<Enum, _>` carrier always decodes to a disc
+        // of 0 (`Ok`) or 1 (`Err`) and a payload that is either null or an
+        // 8-aligned heap pointer. Anything else means the two-word carrier
+        // was recovered wrong at the JIT boundary (the Windows x64 i128
+        // path). Report the raw words so the corruption is visible before
+        // the misformed pointer is read; debug builds only.
+        if cfg!(debug_assertions)
+            && (!(0..=1).contains(&disc) || (payload != 0 && payload & 0x7 != 0))
+        {
+            use std::io::Write as _;
+            let mut err = std::io::stderr().lock();
+            let _ = writeln!(
+                err,
+                "gossamer[jit-carrier]: body '{}' returned a corrupt Result carrier: disc={disc} payload={:#018x}",
+                p.jit.name, payload as u64
+            );
+            let _ = err.flush();
+        }
+        let v = if disc == 0 {
             let Some(shape) = crate::value::native_shape(shape_idx) else {
                 free_in_flight(&natives, &built_enums, &str_cells);
                 return Dispatch::Fallback;
             };
-            // A `Vec`-bearing enum result is deep-read into a VM tree and the
-            // native DOM freed; a flat handle's `Drop` would leak its `Vec`
-            // children. A scalar/string-only enum keeps the cheaper handle.
-            let v = if p.enum_return_deep {
-                let v = read_native_enum(ret_ptr, shape);
-                free_native_enum(ret_ptr, shape);
-                v
-            } else {
-                Value::NativeEnum(Arc::new(crate::value::NativeEnumOwner {
-                    ptr: ret_ptr as usize,
-                    shape,
-                }))
-            };
-            (v, None)
+            let v = read_native_enum(payload, shape);
+            free_native_enum(payload, shape);
+            Value::variant("Ok", vec![v])
         } else {
-            (raw, None)
+            Value::variant("Err", vec![read_native_error(payload)])
         };
+        (v, None)
+    } else if let Some(nret) = p.native_return {
+        let Value::Int(ret_ptr) = raw else {
+            free_in_flight(&natives, &built_enums, &str_cells);
+            return Dispatch::Fallback;
+        };
+        (native_ptr_to_value(nret, ret_ptr), Some((nret, ret_ptr)))
+    } else if let Some(shape_idx) = p.enum_return {
+        let Value::Int(ret_ptr) = raw else {
+            free_in_flight(&natives, &built_enums, &str_cells);
+            return Dispatch::Fallback;
+        };
+        let Some(shape) = crate::value::native_shape(shape_idx) else {
+            free_in_flight(&natives, &built_enums, &str_cells);
+            return Dispatch::Fallback;
+        };
+        // A `Vec`-bearing enum result is deep-read into a VM tree and the
+        // native DOM freed; a flat handle's `Drop` would leak its `Vec`
+        // children. A scalar/string-only enum keeps the cheaper handle.
+        let v = if p.enum_return_deep {
+            let v = read_native_enum(ret_ptr, shape);
+            free_native_enum(ret_ptr, shape);
+            v
+        } else {
+            Value::NativeEnum(Arc::new(crate::value::NativeEnumOwner {
+                ptr: ret_ptr as usize,
+                shape,
+            }))
+        };
+        (v, None)
+    } else {
+        (raw, None)
+    };
     // `&mut String` write-through: read each cell's final native string back
     // into the caller's binding, then free it.
     for (cell, mutcell) in &str_cells {

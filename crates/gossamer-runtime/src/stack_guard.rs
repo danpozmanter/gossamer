@@ -90,13 +90,19 @@ pub fn clear_jit_breadcrumb() {
     JIT_BODY_PTR.store(std::ptr::null_mut(), Ordering::Release);
 }
 
-/// Composes the fault breadcrumb into `scratch`, returning its byte
-/// length (0 when no JIT body is active). Signal-safe: two atomic loads
+/// Composes the fault note into `scratch`, returning its byte length.
+/// Always produces a line on a non-stack-overflow fault: it names the
+/// JIT-compiled body that was running, or states the fault was outside
+/// any JIT body (so an empty stderr means the handler never fired, not
+/// that the breadcrumb was simply unset). Signal-safe: two atomic loads
 /// and bounded `copy_from_slice`s, no allocation or locks.
 fn compose_jit_breadcrumb(scratch: &mut [u8]) -> usize {
     let ptr = JIT_BODY_PTR.load(Ordering::Acquire);
     if ptr.is_null() {
-        return 0;
+        return guard_copy(
+            scratch,
+            b"gossamer: hard fault (not a stack overflow) outside any JIT-compiled body\n",
+        );
     }
     let name_len = JIT_BODY_LEN.load(Ordering::Relaxed).min(160);
     let prefix = b"gossamer: fault inside JIT-compiled body '";
