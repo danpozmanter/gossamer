@@ -206,6 +206,13 @@ pub(crate) fn build_native_isa(
     flag_builder
         .set("unwind_info", "false")
         .map_err(|e| anyhow!("flag unwind_info: {e}"))?;
+    // Permit `i128` arguments / returns in the x64 ABI: the by-value two-word
+    // `Result` / `Option` representation (and the `gos_rt_result_*` runtime
+    // helpers) cross function boundaries as `i128`, which the bare x64 backend
+    // rejects without this extension.
+    flag_builder
+        .set("enable_llvm_abi_extensions", "true")
+        .map_err(|e| anyhow!("flag enable_llvm_abi_extensions: {e}"))?;
     let flags = settings::Flags::new(flag_builder);
     let isa_builder = cranelift_native::builder().map_err(|e| anyhow!("native isa: {e}"))?;
     let isa = isa_builder
@@ -343,6 +350,20 @@ pub fn compile_to_object_at_path_with_options(
     Ok(triple)
 }
 
+/// True when `ty` is the by-value two-word (`i128`) inline enum
+/// representation: a `Result<T, E>` / `Option<T>` sentinel ADT or a
+/// user enum classified inline by the typechecker. Such values cross
+/// a function boundary as a packed `i128` (`[disc, payload]`), the
+/// shape `gos_rt_result_new` / `gos_rt_result_disc` already use, so
+/// the cranelift signature must declare the slot `I128` rather than a
+/// pointer. (The same condition drives `type_slot_count`'s "= 2".)
+pub(super) fn is_inline_two_word_ty(tcx: &TyCtxt, ty: gossamer_types::Ty) -> bool {
+    matches!(
+        tcx.kind_of(ty),
+        TyKind::Adt { def, .. } if def.local == u32::MAX || def.local == u32::MAX - 1
+    ) || tcx.is_inline_enum_ty(ty)
+}
+
 pub(super) fn build_signature_from_types(
     module: &dyn Module,
     body: &Body,
@@ -352,18 +373,26 @@ pub(super) fn build_signature_from_types(
     let mut sig = module.make_signature();
     for pidx in 1..=body.arity {
         let local = Local(pidx);
-        let cl = bct
-            .get(local.0 as usize)
-            .copied()
-            .flatten()
-            .unwrap_or_else(|| cl_type_of(tcx, body.local_ty(local), module));
+        let ty = body.local_ty(local);
+        let cl = if is_inline_two_word_ty(tcx, ty) {
+            types::I128
+        } else {
+            bct.get(local.0 as usize)
+                .copied()
+                .flatten()
+                .unwrap_or_else(|| cl_type_of(tcx, ty, module))
+        };
         sig.params.push(AbiParam::new(cl));
     }
-    let ret_cl = bct
-        .get(Local::RETURN.0 as usize)
-        .copied()
-        .flatten()
-        .unwrap_or_else(|| cl_type_of(tcx, body.local_ty(Local::RETURN), module));
+    let ret_ty = body.local_ty(Local::RETURN);
+    let ret_cl = if is_inline_two_word_ty(tcx, ret_ty) {
+        types::I128
+    } else {
+        bct.get(Local::RETURN.0 as usize)
+            .copied()
+            .flatten()
+            .unwrap_or_else(|| cl_type_of(tcx, ret_ty, module))
+    };
     sig.returns.push(AbiParam::new(ret_cl));
     sig
 }

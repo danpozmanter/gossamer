@@ -1,0 +1,61 @@
+use std::errors
+
+// Recursive enum with a Vec<Self> variant (List) and a Vec<(String, Self)>
+// variant (Map), plus scalar leaves. Five variants force the header-disc
+// representation, matching json-serde's JsonVal.
+enum Node {
+    Nil,
+    Num(i64),
+    Txt(String),
+    List(Vec<Node>),
+    Map(Vec<(String, Node)>),
+}
+
+fn leaf(x: i64) -> Result<Node, errors::Error> {
+    if x % 4 == 0 { Ok(Node::Nil) } else { Ok(Node::Num(x)) }
+}
+
+fn make_list(x: i64) -> Result<Node, errors::Error> {
+    let mut xs: Vec<Node> = []
+    let mut i = 0
+    while i < 3 {
+        xs.push(leaf(x + i)?)
+        i += 1
+    }
+    xs.push(Node::Txt(format!("e{}", x)))
+    Ok(Node::List(xs))
+}
+
+fn make_map(x: i64) -> Result<Node, errors::Error> {
+    let mut ps: Vec<(String, Node)> = []
+    let mut i = 0
+    while i < 2 {
+        ps.push((format!("k{}", i), leaf(x + i)?))
+        i += 1
+    }
+    ps.push((format!("lst"), make_list(x)?))
+    Ok(Node::Map(ps))
+}
+
+fn weigh(n: &Node) -> i64 {
+    match n {
+        Node::Nil => 1,
+        Node::Num(v) => *v,
+        Node::Txt(s) => s.len(),
+        Node::List(xs) => { let mut s = 0; for x in xs { s += weigh(x) }; s }
+        Node::Map(ps) => { let mut s = 0; for (k, v) in ps { s += k.len() + weigh(v) }; s }
+    }
+}
+
+fn main() {
+    let mut total = 0
+    let mut k = 0
+    while k < 3000 {
+        match make_map(k) {
+            Ok(node) => total += weigh(&node),
+            Err(_) => {}
+        }
+        k += 1
+    }
+    println!("{}", total)
+}

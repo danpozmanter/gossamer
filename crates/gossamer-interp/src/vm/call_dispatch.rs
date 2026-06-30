@@ -147,7 +147,7 @@ impl Vm {
                     }
                 };
                 if let Some(prepared) = jit_opt {
-                    match jit_call::invoke_prepared(&prepared, &args) {
+                    match jit_call::invoke_prepared(&prepared, &args, &self.jit_graph_cache) {
                         jit_call::Dispatch::Ok(value) => {
                             prepared.record_hit();
                             if jit_call::jit_trace() {
@@ -241,6 +241,7 @@ impl Vm {
         let mir_bodies = self.mir_bodies.borrow().clone();
         let tcx_snapshot = self.tcx_snapshot.borrow().clone();
         let enum_shape_defs = self.enum_shape_defs.borrow().clone();
+        let struct_shape_defs = self.struct_shape_defs.borrow().clone();
         crate::vm::goroutine::pool().spawn(Box::new(move || {
             thread_local! {
                 static THREAD_VM: std::cell::OnceCell<std::cell::RefCell<Option<Vm>>> =
@@ -259,6 +260,7 @@ impl Vm {
                         mir_bodies,
                         tcx_snapshot,
                         enum_shape_defs,
+                        struct_shape_defs,
                     ));
                 }
                 let vm = slot.as_mut().expect("THREAD_VM init");

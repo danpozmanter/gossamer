@@ -3384,14 +3384,26 @@ pub(crate) fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyC
                 }
             }
             // `gos_rt_vec_push(container, elem)`: the element's heap
-            // ownership moves into the container, which deep-frees its
-            // elements on drop or carries them to the caller when
-            // returned - either way an independent drop here would
-            // double-free / dangle. Mark unconditionally. Done inside the
-            // fixpoint (not a separate pass) so a pushed enum's own
-            // escaped children - `inner` in `outer.push(J::Arr(inner))`,
+            // ownership moves into the container, which deep-frees its direct
+            // elements on drop or carries them to the caller when returned -
+            // either way an independent drop of the element here would
+            // double-free / dangle. Mark the direct element unconditionally.
+            // Done inside the fixpoint (not a separate pass) so a pushed enum's
+            // own escaped children - `inner` in `outer.push(J::Arr(inner))`,
             // reached via the `gos_store` rule above - propagate through
             // arbitrarily deep nesting.
+            //
+            // The element's TRANSITIVE children only escape when the container
+            // itself does. When the pushed element is a tuple aggregate
+            // `(k, J::Map(inner))`, the nested enum box and the `inner` Vec it
+            // owns reach the caller only if the container is returned; then
+            // walking the copy-edge graph back from the element suppresses
+            // their drops so they survive the escape. When the container is
+            // freed locally its deep-free reclaims the direct tuple element but
+            // does not recurse into the nested Vec's own elements, so those keep
+            // their independent drops - suppressing them unconditionally would
+            // leak. Gate the copy-edge walk on the container being
+            // moved-into-return.
             if let Terminator::Call { callee, args, .. } = &block.terminator
                 && let Operand::Const(ConstValue::Str(name)) = callee
                 && name == "gos_rt_vec_push"
@@ -3402,6 +3414,35 @@ pub(crate) fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyC
                 if idx < moved_into_return.len() && !moved_into_return[idx] {
                     moved_into_return[idx] = true;
                     changed = true;
+                }
+                if let Some(Operand::Copy(container)) = args.first()
+                    && container.projection.is_empty()
+                    && (container.local.0 as usize) < moved_into_return.len()
+                    && moved_into_return[container.local.0 as usize]
+                {
+                    // Walk the copy-edge graph back from the element's children
+                    // (a tuple aggregate's `Copy(enum_box)` operand), marking
+                    // each transitively. Starting from `p.local` rather than
+                    // calling `propagate_call_args` avoids its short-circuit on
+                    // the already-marked element, which would stop before the
+                    // enum box. Marking the enum box lets the fixpoint's
+                    // `gos_enum_tag` / `gos_store` rules carry moved-ness on to
+                    // the nested `inner` Vec.
+                    let mut stack = vec![p.local];
+                    while let Some(cur) = stack.pop() {
+                        let cur_idx = cur.0 as usize;
+                        if cur_idx >= copy_edges_to.len() {
+                            continue;
+                        }
+                        for src in copy_edges_to[cur_idx].clone() {
+                            let src_idx = src.0 as usize;
+                            if src_idx < moved_into_return.len() && !moved_into_return[src_idx] {
+                                moved_into_return[src_idx] = true;
+                                changed = true;
+                                stack.push(src);
+                            }
+                        }
+                    }
                 }
             }
             if let Terminator::Call {

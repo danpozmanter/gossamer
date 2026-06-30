@@ -1,0 +1,68 @@
+// Struct-`self` method JIT (Lever 1a): an all-scalar user struct whose
+// `&mut self` mutator and `&self` reader run as JIT-compiled native code in
+// the interpreter's in-process tier. The struct crosses the VM<->native
+// boundary as a flat field-slot block (no RC header); a `&mut self` call's
+// in-place field mutations are written back into the caller's binding. The
+// loop drives the methods past the hot-call threshold so they promote, and
+// the result must stay bit-identical across the bytecode VM, Cranelift JIT,
+// and LLVM AOT tiers.
+
+struct Cursor {
+    pos: i64,
+    acc: i64,
+    scale: f64,
+    flip: bool,
+    mark: char,
+}
+
+impl Cursor {
+    // `&mut self` mutator with an inner loop (so native code amortizes the
+    // marshal): mutates three scalar fields in place. The write-back must
+    // carry every mutation back to the caller's `Cursor` binding.
+    fn advance(&mut self, n: i64) {
+        let mut i = 0
+        while i < n {
+            self.pos += 1
+            self.acc += self.pos
+            self.scale = self.scale * 1.0000001
+            self.flip = !self.flip
+            i += 1
+        }
+    }
+
+    // `&self` reader: pure field reads, returns a scalar.
+    fn snapshot(&self) -> i64 {
+        self.acc + self.pos
+    }
+
+    // `&self` recursion: the receiver pointer threads through a native
+    // self-recursive call chain without re-crossing the boundary.
+    fn sum_down(&self, k: i64) -> i64 {
+        if k <= 0 {
+            return self.pos
+        }
+        self.pos + self.sum_down(k - 1)
+    }
+}
+
+fn main() {
+    let mut c = Cursor { pos: 0, acc: 0, scale: 1.0, flip: false, mark: 'q' }
+    let mut round = 0
+    while round < 200000 {
+        c.advance(5)
+        round += 1
+    }
+    // Field state after 1,000,000 advances: pos counts up, acc is the
+    // triangular sum, flip toggled an even number of times (back to false),
+    // mark is untouched, scale grew but stays read as a coarse bucket.
+    let big_scale = c.scale > 1.0e40
+    println!(
+        "{} {} {} {} {} {}",
+        c.pos,
+        c.snapshot(),
+        c.flip,
+        c.mark,
+        big_scale,
+        c.sum_down(8)
+    )
+}

@@ -29,6 +29,12 @@ pub enum JitKind {
     /// Heap enum as its native tagged pointer; payload is the VM
     /// shape-table index.
     EnumPtr(u32),
+    /// `Result<Enum, _>` return as the by-value two-word `i128`; payload is
+    /// the `Ok` enum's VM shape-table index.
+    ResultEnumPtr(u32),
+    /// All-scalar user struct as a pointer to its flat field-slot block;
+    /// payload is the VM struct-shape-table index.
+    StructPtr(u32),
     /// `String` as a native cstring pointer.
     NativeStr,
     /// `Vec<i64>` as a native `GosVec` pointer.
@@ -37,6 +43,8 @@ pub enum JitKind {
     NativeVecF64,
     /// `Vec<(i64, f64)>` as a native `GosVec` of 16-byte primitive slots.
     NativeVecTupleIF,
+    /// `Vec<Vec<i64>>` as a native outer `GosVec` of inner `GosVec` pointers.
+    NativeVecVecI64,
     /// `U8Vec` byte-buffer handle, marshalled by copy-in / copy-back.
     U8VecHandle,
 }
@@ -52,6 +60,10 @@ pub struct JitFn {
     pub params: Vec<JitKind>,
     /// Return slot kind.
     pub returns: JitKind,
+    /// Mirrors `gossamer_codegen_cranelift::JitFn::returns_fresh` so the
+    /// shared dispatch code in `jit_call` compiles against either handle.
+    /// The wasm stub never promotes a body, so the value is irrelevant.
+    pub returns_fresh: bool,
 }
 
 /// A set of compiled functions. Always empty on wasm.
@@ -67,6 +79,7 @@ pub fn has_worthy_jit_body(
     _bodies: &[gossamer_mir::Body],
     _tcx: &gossamer_types::TyCtxt,
     _enum_shapes: &HashMap<u32, u32>,
+    _struct_shapes: &HashMap<u32, u32>,
 ) -> bool {
     false
 }
@@ -77,6 +90,7 @@ pub fn jit_eager_loop_bodies(
     _bodies: &[gossamer_mir::Body],
     _tcx: &gossamer_types::TyCtxt,
     _enum_shapes: &HashMap<u32, u32>,
+    _struct_shapes: &HashMap<u32, u32>,
 ) -> Vec<String> {
     Vec::new()
 }
@@ -88,6 +102,7 @@ pub fn compile_to_jit(
     _bodies: &[gossamer_mir::Body],
     _tcx: &gossamer_types::TyCtxt,
     _enum_shapes: &HashMap<u32, u32>,
+    _struct_shapes: &HashMap<u32, u32>,
 ) -> Result<JitArtifact, String> {
     Ok(JitArtifact::default())
 }

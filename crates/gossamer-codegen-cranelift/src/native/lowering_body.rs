@@ -221,6 +221,66 @@ pub(super) fn lower_body(
                 param_value,
             );
         }
+
+        // Pre-allocate backing storage for multi-slot aggregate locals that
+        // are written through a field projection before any whole-value
+        // assignment gives them an address. The MIR zero-inits a tuple /
+        // struct scratch (`L.field = 0`, for drop safety) before its
+        // `Aggregate` lands; without a stack slot that field store writes
+        // through a null base and faults. A later whole-value assignment
+        // rebinds the variable to its own (heap) storage, leaving this slot
+        // dead. Parameters (already bound to a pointer) and the return local
+        // are skipped.
+        let ptr_ty = module.target_config().pointer_type();
+        let mut field_store_targets: std::collections::HashSet<u32> =
+            std::collections::HashSet::new();
+        for block in &body.blocks {
+            for stmt in &block.stmts {
+                if let StatementKind::Assign { place, .. } = &stmt.kind
+                    && !place.projection.is_empty()
+                {
+                    field_store_targets.insert(place.local.0);
+                }
+            }
+        }
+        let mut targets: Vec<u32> = field_store_targets.into_iter().collect();
+        targets.sort_unstable();
+        for local_u32 in targets {
+            if local_u32 <= body.arity {
+                continue;
+            }
+            let local = Local(local_u32);
+            if locals.contains_key(&local) {
+                continue;
+            }
+            let ty = body.local_ty(local);
+            if !matches!(
+                tcx.kind_of(ty),
+                TyKind::Tuple(_) | TyKind::Array { .. } | TyKind::Adt { .. }
+            ) {
+                continue;
+            }
+            // A by-value two-word inline enum (`Result` / `Option` / inline
+            // user enum) is an `i128` value held in a register, NOT a
+            // field-store aggregate that needs a backing slot. Stack-slotting
+            // it would bind the variable to a pointer where the body expects
+            // the packed value, zeroing every read through it.
+            if is_inline_two_word_ty(tcx, ty) {
+                continue;
+            }
+            let slots = type_slot_count(tcx, ty);
+            if slots <= 1 {
+                continue;
+            }
+            let bytes = slots * 8;
+            let slot = builder.create_sized_stack_slot(StackSlotData::new(
+                StackSlotKind::ExplicitSlot,
+                bytes,
+                3,
+            ));
+            let addr = builder.ins().stack_addr(ptr_ty, slot, 0);
+            define_var_to_with(&mut builder, &mut locals, local, addr, Some(ptr_ty));
+        }
     }
 
     // Declare a Cranelift-side reference for every callable function.
@@ -330,6 +390,15 @@ pub(super) fn infer_body_cl_types(
     let mut table: HashMap<Local, ir::Type> = HashMap::with_capacity(n);
     // Seed: MIR types that directly map to a concrete cranelift type.
     for (idx, decl) in body.locals.iter().enumerate() {
+        // A by-value two-word inline enum (`Result` / `Option` / inline user
+        // enum) is the packed `i128` the runtime's result helpers produce and
+        // consume; pin every such local to `I128` so construction, the
+        // `gos_rt_result_*` calls, and the function's `I128` return signature
+        // all agree (a stray `I64` would truncate the payload half).
+        if is_inline_two_word_ty(tcx, decl.ty) {
+            table.insert(Local(idx as u32), types::I128);
+            continue;
+        }
         if let Some(cl) = cl_type_of_if_concrete(tcx, decl.ty, module) {
             table.insert(Local(idx as u32), cl);
         }

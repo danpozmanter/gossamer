@@ -136,6 +136,10 @@ pub struct Vm {
     /// DefId.local -> native shape index for heap enums whose values
     /// may cross the JIT boundary as raw pointers.
     pub(crate) enum_shape_defs: RefCell<Option<Arc<std::collections::HashMap<u32, u32>>>>,
+    /// DefId.local -> native struct-shape index for all-scalar user
+    /// structs whose values may cross the JIT boundary as a flat
+    /// field-slot block pointer.
+    pub(crate) struct_shape_defs: RefCell<Option<Arc<std::collections::HashMap<u32, u32>>>>,
     /// Snapshot of the type context as it stood when MIR was
     /// lowered. Cranelift's `compile_to_jit` only needs `&TyCtxt`.
     /// `Arc` so spawned goroutines reuse the parent's snapshot
@@ -174,6 +178,12 @@ pub struct Vm {
     /// `try_compile_jit_lazy` once the deferred compile installs
     /// entries; only ever monotonically increases.
     pub(crate) jit_override_count: AtomicUsize,
+    /// Per-`Vm` cache of marshalled `Vec<Vec<i64>>` graphs crossing the JIT
+    /// boundary, keyed by source `Arc` identity so a graph reused across many
+    /// native calls is marshalled once. Owned native graphs are freed when
+    /// this field drops at Vm teardown (and cleared between pooled worker
+    /// tasks). See [`crate::jit_call::GraphCache`].
+    pub(crate) jit_graph_cache: crate::jit_call::GraphCache,
     /// Per-`Vm` cache state pinned in a never-shrinking arena. The
     /// hot dispatch loop reaches into `chunk_state_for(chunk)` once
     /// per call entry and threads `&ChunkState` through the

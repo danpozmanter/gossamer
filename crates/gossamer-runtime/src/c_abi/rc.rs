@@ -1535,6 +1535,29 @@ pub unsafe extern "C" fn gos_rt_rc_release(payload: *mut u8) {
     unsafe { rc_release_impl(payload) };
 }
 
+/// Strong reference count of an RC-managed node, or `0` for a node the
+/// release path leaves untouched (null, region-arena, immortal unit
+/// singleton, or a gos string). Diagnostic / teardown helper for the
+/// in-process JIT, which owns a freshly-built tree of nodes and must reclaim
+/// each one fully even when the compiled tier's `?` accounting left it
+/// over-retained; never emitted by codegen.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_rc_strong_count(payload: *mut u8) -> i64 {
+    let payload = untag_rc(payload);
+    if payload.is_null() || in_region_arena(payload) {
+        return 0;
+    }
+    if unsafe { crate::c_abi::string::is_gos_string(payload.cast()) } {
+        return 0;
+    }
+    let h = unsafe { header_ptr(payload) };
+    let count = unsafe { strong_count(h) };
+    if count == STRONG_IMMORTAL {
+        return 0;
+    }
+    i64::from(count)
+}
+
 /// Create a weak reference from a strong-held payload: increment the weak
 /// count and return the same pointer (now carrying weak ownership). Does not
 /// touch the strong count. Null-safe (returns null).

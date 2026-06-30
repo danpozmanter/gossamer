@@ -620,10 +620,18 @@ pub(super) fn lower_terminator(
             // the heap pointer instead. Mirrors the LLVM tier so both
             // backends agree on the by-value-aggregate ABI.
             let ret_ty_mir = body.local_ty(Local(0));
-            let ret_is_aggregate = matches!(
-                tcx.kind_of(ret_ty_mir),
-                TyKind::Tuple(_) | TyKind::Array { .. } | TyKind::Adt { .. }
-            );
+            // A by-value two-word inline enum (`Result` / `Option` / inline
+            // user enum) is returned as a packed `i128` value, NOT a pointer
+            // to a heap block: the function signature declares the slot `I128`
+            // (see `build_signature_from_types`) and the local already holds
+            // the `gos_rt_result_new`-shaped `[disc, payload]` value, so it
+            // flows straight through the scalar-coerce path below.
+            let ret_is_inline_two_word = is_inline_two_word_ty(tcx, ret_ty_mir);
+            let ret_is_aggregate = !ret_is_inline_two_word
+                && matches!(
+                    tcx.kind_of(ret_ty_mir),
+                    TyKind::Tuple(_) | TyKind::Array { .. } | TyKind::Adt { .. }
+                );
             let ret_slots = type_slot_count(tcx, ret_ty_mir).max(1);
             // 1-slot values are themselves the value (an i64
             // / pointer / scalar). Copying through them by

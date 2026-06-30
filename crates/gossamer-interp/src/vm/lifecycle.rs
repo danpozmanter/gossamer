@@ -20,10 +20,12 @@ impl Vm {
             mir_bodies: RefCell::new(None),
             tcx_snapshot: RefCell::new(None),
             enum_shape_defs: RefCell::new(None),
+            struct_shape_defs: RefCell::new(None),
             jit_eager_names: RefCell::new(std::collections::HashSet::new()),
             jit_droppable: Cell::new(false),
             jit: parking_lot::RwLock::new(JitState::default()),
             jit_override_count: AtomicUsize::new(0),
+            jit_graph_cache: crate::jit_call::GraphCache::default(),
             chunk_state_arena: RefCell::new(Vec::new()),
             chunk_state_map: RefCell::new(HashMap::new()),
             chunk_state_last: Cell::new(None),
@@ -56,16 +58,21 @@ impl Vm {
         mir_bodies: Option<Arc<Vec<Body>>>,
         tcx_snapshot: Option<Arc<TyCtxt>>,
         enum_shape_defs: Option<Arc<std::collections::HashMap<u32, u32>>>,
+        struct_shape_defs: Option<Arc<std::collections::HashMap<u32, u32>>>,
     ) -> Self {
         // A spawned goroutine inherits the parent's MIR, so it can derive
         // the same eager-compile set and tier up its own hot loops on the
         // first call rather than waiting on a per-thread call counter.
+        let empty_shapes = std::collections::HashMap::new();
         let jit_eager_names = match (&mir_bodies, &tcx_snapshot, &enum_shape_defs) {
-            (Some(bodies), Some(tcx), Some(shapes)) => {
-                jit_backend::jit_eager_loop_bodies(bodies, tcx, shapes)
-                    .into_iter()
-                    .collect()
-            }
+            (Some(bodies), Some(tcx), Some(shapes)) => jit_backend::jit_eager_loop_bodies(
+                bodies,
+                tcx,
+                shapes,
+                struct_shape_defs.as_deref().unwrap_or(&empty_shapes),
+            )
+            .into_iter()
+            .collect(),
             _ => std::collections::HashSet::new(),
         };
         Self {
@@ -75,12 +82,14 @@ impl Vm {
             mir_bodies: RefCell::new(mir_bodies),
             tcx_snapshot: RefCell::new(tcx_snapshot),
             enum_shape_defs: RefCell::new(enum_shape_defs),
+            struct_shape_defs: RefCell::new(struct_shape_defs),
             jit_eager_names: RefCell::new(jit_eager_names),
             // Worker VMs run pool tasks back-to-back; `reset_after_task`
             // manages their MIR lifetime, so they never self-drop.
             jit_droppable: Cell::new(false),
             jit: parking_lot::RwLock::new(JitState::default()),
             jit_override_count: AtomicUsize::new(0),
+            jit_graph_cache: crate::jit_call::GraphCache::default(),
             chunk_state_arena: RefCell::new(Vec::new()),
             chunk_state_map: RefCell::new(HashMap::new()),
             chunk_state_last: Cell::new(None),
@@ -195,6 +204,10 @@ impl Vm {
     /// `shrink_to_fit` calls.
     pub(crate) fn reset_after_task(&mut self) {
         self.pool.borrow_mut().shrink_to(4);
+        // Free any marshalled graphs cached for the task that just finished:
+        // a worker VM is reused across tasks, so the next task's graph Arcs
+        // must not alias a prior task's native marshalling.
+        self.jit_graph_cache.clear();
         // Clear this goroutine-worker's traceback frames so the next
         // task starts with an empty call stack rather than inheriting
         // stale frames from the one that just finished.
@@ -482,6 +495,7 @@ impl Vm {
         // promoted function would silently stop recording line hits.
         if jit_call::jit_enabled() && has_jit_eligible_fn(program) && !self.coverage_active() {
             let shapes = build_native_enum_shapes(program, &tcx);
+            let struct_shapes = build_native_struct_shapes(program, &tcx);
             let mut bodies = gossamer_mir::lower_program(program, &mut tcx);
             // The in-process JIT's only win is eliding per-call bytecode
             // dispatch; the VM<->native boundary cancels that for a tiny
@@ -491,7 +505,7 @@ impl Vm {
             // (~5 MB RSS). Gate the whole compile path on a worthy body.
             // MIR lowering above is cheap and the bodies drop here when
             // unused.
-            if jit_backend::has_worthy_jit_body(&bodies, &tcx, &shapes) {
+            if jit_backend::has_worthy_jit_body(&bodies, &tcx, &shapes, &struct_shapes) {
                 gossamer_mir::inline_trivial_wrappers(&mut bodies);
                 gossamer_mir::inline_small_callees(&mut bodies);
                 gossamer_mir::inline_general(&mut bodies);
@@ -500,10 +514,11 @@ impl Vm {
                 // compile below releases `mir_bodies` for spawn-free
                 // programs, so this is the last point the set is derivable.
                 *self.jit_eager_names.borrow_mut() =
-                    jit_backend::jit_eager_loop_bodies(&bodies, &tcx, &shapes)
+                    jit_backend::jit_eager_loop_bodies(&bodies, &tcx, &shapes, &struct_shapes)
                         .into_iter()
                         .collect();
                 *self.enum_shape_defs.borrow_mut() = Some(Arc::new(shapes));
+                *self.struct_shape_defs.borrow_mut() = Some(Arc::new(struct_shapes));
                 *self.mir_bodies.borrow_mut() = Some(Arc::new(bodies));
                 // Move the owned type context into the snapshot - no clone.
                 // `load` takes `tcx` by value precisely so this hand-off is
@@ -588,7 +603,11 @@ impl Vm {
         let shape_defs_arc = self.enum_shape_defs.borrow().clone();
         let shape_defs: &std::collections::HashMap<u32, u32> =
             shape_defs_arc.as_deref().unwrap_or(&empty);
-        let artifact = match jit_backend::compile_to_jit(bodies, tcx, shape_defs) {
+        let struct_shape_defs_arc = self.struct_shape_defs.borrow().clone();
+        let struct_shape_defs: &std::collections::HashMap<u32, u32> =
+            struct_shape_defs_arc.as_deref().unwrap_or(&empty);
+        let artifact = match jit_backend::compile_to_jit(bodies, tcx, shape_defs, struct_shape_defs)
+        {
             Ok(art) => art,
             Err(err) => {
                 if trace {
@@ -677,6 +696,7 @@ impl Vm {
             *self.mir_bodies.borrow_mut() = None;
             *self.tcx_snapshot.borrow_mut() = None;
             *self.enum_shape_defs.borrow_mut() = None;
+            *self.struct_shape_defs.borrow_mut() = None;
         }
     }
 
@@ -927,6 +947,33 @@ fn build_native_enum_shapes(
         });
     }
     let in_set: std::collections::HashSet<u32> = cands.iter().map(|c| c.def_local).collect();
+    // A variant field is JIT-marshallable when it is a scalar / string, a
+    // supported heap enum, a `Vec<Enum>` of a supported enum, or a
+    // `Vec<(String, Enum)>` of a supported enum (the recursive `Arr` / `Obj`
+    // shapes). The inner-enum support is consulted through the running
+    // fixpoint set so a Vec of a still-supported enum keeps the parent alive.
+    let field_supported = |t: gossamer_types::Ty,
+                           supported: &std::collections::HashSet<u32>|
+     -> bool {
+        match tcx.kind_of(t) {
+            TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Char | TyKind::String => {
+                true
+            }
+            TyKind::Adt { def, .. } => supported.contains(&def.local),
+            TyKind::Vec(inner) | TyKind::Slice(inner) => match tcx.kind_of(*inner) {
+                TyKind::Adt { def, .. } => supported.contains(&def.local),
+                TyKind::Tuple(elems) if elems.len() == 2 => {
+                    matches!(tcx.kind_of(elems[0]), TyKind::String)
+                        && matches!(
+                            tcx.kind_of(elems[1]),
+                            TyKind::Adt { def, .. } if supported.contains(&def.local)
+                        )
+                }
+                _ => false,
+            },
+            _ => false,
+        }
+    };
     // Fixpoint: drop enums with unsupported fields (or fields of
     // dropped enums) until stable.
     let mut supported: std::collections::HashSet<u32> = in_set.clone();
@@ -936,17 +983,10 @@ fn build_native_enum_shapes(
             if !supported.contains(&c.def_local) {
                 continue;
             }
-            let ok = c.variants.iter().all(|(_, tys)| {
-                tys.iter().all(|t| match tcx.kind_of(*t) {
-                    TyKind::Int(_)
-                    | TyKind::Float(_)
-                    | TyKind::Bool
-                    | TyKind::Char
-                    | TyKind::String => true,
-                    TyKind::Adt { def, .. } => supported.contains(&def.local),
-                    _ => false,
-                })
-            });
+            let ok = c
+                .variants
+                .iter()
+                .all(|(_, tys)| tys.iter().all(|t| field_supported(*t, &supported)));
             if !ok {
                 supported.remove(&c.def_local);
                 changed = true;
@@ -994,6 +1034,21 @@ fn build_native_enum_shapes(
                                 TyKind::Adt { def, .. } => {
                                     NativeFieldKind::Enum(idx_of[&def.local])
                                 }
+                                TyKind::Vec(inner) | TyKind::Slice(inner) => {
+                                    match tcx.kind_of(*inner) {
+                                        TyKind::Adt { def, .. } => {
+                                            NativeFieldKind::VecEnum(idx_of[&def.local])
+                                        }
+                                        TyKind::Tuple(elems) if elems.len() == 2 => {
+                                            let TyKind::Adt { def, .. } = tcx.kind_of(elems[1])
+                                            else {
+                                                unreachable!("filtered by the supported fixpoint")
+                                            };
+                                            NativeFieldKind::VecStrEnumTuple(idx_of[&def.local])
+                                        }
+                                        _ => unreachable!("filtered by the supported fixpoint"),
+                                    }
+                                }
                                 _ => unreachable!("filtered by the supported fixpoint"),
                             })
                             .collect(),
@@ -1004,6 +1059,103 @@ fn build_native_enum_shapes(
                     index: idx_of[&c.def_local],
                     tagged,
                     variants,
+                }));
+                shape
+            })
+            .collect();
+        (shapes, idx_of)
+    })
+}
+
+/// Builds native shape descriptors for every user struct whose fields are
+/// all scalars (`i64` / `f64` / `bool` / `char`), registers them in the
+/// process-global struct-shape table, and returns `DefId.local -> shape
+/// index` for the cranelift eligibility check. An all-scalar struct is a
+/// flat field-slot block at the JIT boundary - one 8-byte slot per field,
+/// no heap children - so the trampoline marshals it (and writes back a
+/// `&mut self` mutation) with no reference counting.
+fn build_native_struct_shapes(
+    program: &HirProgram,
+    tcx: &TyCtxt,
+) -> std::collections::HashMap<u32, u32> {
+    use crate::value::{
+        NativeFieldKind, NativeStructShape, intern_type_name, register_native_struct_shapes,
+    };
+    use gossamer_types::TyKind;
+    struct Cand<'a> {
+        def_local: u32,
+        name: &'a str,
+        fields: Vec<(&'a str, NativeFieldKind)>,
+    }
+    let mut cands: Vec<Cand> = Vec::new();
+    for item in &program.items {
+        let HirItemKind::Adt(adt) = &item.kind else {
+            continue;
+        };
+        let gossamer_hir::HirAdtKind::Struct(field_names) = &adt.kind else {
+            continue;
+        };
+        let Some(def) = item.def else { continue };
+        // Tuple / unit structs carry no field names here; only named-field
+        // structs have the positional name list the marshaller needs. A
+        // single-field struct is excluded: the compiled tier treats a
+        // 1-slot aggregate as a by-pointer scalar, so a `&self` field read
+        // dereferences the slot rather than indexing the block - the
+        // marshalled flat block is only the right shape at >= 2 fields.
+        if field_names.len() < 2 {
+            continue;
+        }
+        let Some(field_tys) = tcx.struct_field_tys(def) else {
+            continue;
+        };
+        if field_tys.len() != field_names.len() {
+            continue;
+        }
+        let mut fields = Vec::with_capacity(field_names.len());
+        let mut all_scalar = true;
+        for (n, t) in field_names.iter().zip(field_tys.iter()) {
+            let kind = match tcx.kind_of(*t) {
+                TyKind::Int(_) => NativeFieldKind::I64,
+                TyKind::Float(_) => NativeFieldKind::F64,
+                TyKind::Bool => NativeFieldKind::Bool,
+                TyKind::Char => NativeFieldKind::Char,
+                _ => {
+                    all_scalar = false;
+                    break;
+                }
+            };
+            fields.push((n.name.as_str(), kind));
+        }
+        if !all_scalar {
+            continue;
+        }
+        cands.push(Cand {
+            def_local: def.local,
+            name: adt.name.name.as_str(),
+            fields,
+        });
+    }
+    if cands.is_empty() {
+        return std::collections::HashMap::new();
+    }
+    register_native_struct_shapes(|base| {
+        let idx_of: std::collections::HashMap<u32, u32> = cands
+            .iter()
+            .enumerate()
+            .map(|(i, c)| (c.def_local, base + u32::try_from(i).unwrap_or(0)))
+            .collect();
+        let shapes: Vec<&'static NativeStructShape> = cands
+            .iter()
+            .map(|c| {
+                let fields = c
+                    .fields
+                    .iter()
+                    .map(|(n, k)| (intern_type_name(n), *k))
+                    .collect();
+                let shape: &'static NativeStructShape = Box::leak(Box::new(NativeStructShape {
+                    struct_name: intern_type_name(c.name),
+                    index: idx_of[&c.def_local],
+                    fields,
                 }));
                 shape
             })

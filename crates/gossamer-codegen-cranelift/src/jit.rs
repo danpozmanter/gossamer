@@ -50,6 +50,22 @@ pub enum JitKind {
     /// shape-table index used to re-wrap returned pointers. Integer
     /// register class.
     EnumPtr(u32),
+    /// A `Result<E, errors::Error>` RETURN whose `Ok` payload is a heap enum
+    /// of the carried shape-table index. The body returns the by-value
+    /// two-word `i128` `[disc, payload]` (the `gos_rt_result_new` shape): on
+    /// `Ok` the payload is the native enum pointer, on `Err` a native
+    /// `*mut GosError`. The trampoline decodes the `i128` and marshals each
+    /// side back to a VM `Value`. Return-only.
+    ResultEnumPtr(u32),
+    /// An all-scalar user struct (`&self` / `&mut self` / by-value)
+    /// crossing the boundary as a pointer to a flat field-slot block
+    /// (one 8-byte slot per field, field `i` at byte offset `i * 8`, NO
+    /// RC header - the compiled tier's struct layout). The payload is
+    /// the VM-side struct-shape-table index. The trampoline builds a
+    /// fresh block from the VM `Value::Struct`, passes its pointer, and
+    /// for a `&mut` parameter writes the mutated block back into the
+    /// caller's binding. Integer register class.
+    StructPtr(u32),
     /// A `String` crossing the boundary as the runtime's native
     /// `*mut c_char` cstring pointer (the flat-ABI shape the codegen
     /// uses). The trampoline builds a fresh owned cstring from the VM
@@ -69,6 +85,14 @@ pub enum JitKind {
     /// tuple layout). The trampoline builds the vector from the VM tuples
     /// and frees it after the call. Integer register class.
     NativeVecTupleIF,
+    /// A `Vec<Vec<i64>>` (`[[i64]]`) crossing as a native outer `*mut GosVec`
+    /// tagged `vec_elem_kind::VEC` (8-byte pointer slots), each slot a pointer
+    /// to an inner `*mut GosVec` of i64 - the AOT-tier `[[i64]]` layout the
+    /// JIT body reads directly when it indexes `graph[node]` and iterates the
+    /// inner vec. The trampoline marshals through an Arc-identity cache (a
+    /// graph reused across calls is built once) and frees the nested structure
+    /// at Vm teardown rather than per call. Param only. Integer register class.
+    NativeVecVecI64,
     /// A `U8Vec` opaque byte buffer crossing as the runtime's native
     /// `*mut GosU8Vec` pointer. The bytecode VM backs `U8Vec` with a
     /// registry handle, so the trampoline copies the bytes into a fresh
@@ -252,6 +276,7 @@ fn jit_compile_set<'a>(
     bodies: &'a [Body],
     tcx: &TyCtxt,
     enum_shapes: &HashMap<u32, u32>,
+    struct_shapes: &HashMap<u32, u32>,
 ) -> std::collections::HashSet<&'a str> {
     let all_names: std::collections::HashSet<&str> =
         bodies.iter().map(|b| b.name.as_str()).collect();
@@ -261,50 +286,48 @@ fn jit_compile_set<'a>(
         .filter_map(|b| b.def.map(|d| (d.local, b.name.as_str())))
         .collect();
 
-    // Bodies whose LOCALS include the two-word inline Option/Result
-    // representation (sentinel Adt) or raw i128 integers are declined:
-    // the JIT lowering's i64 register model fails cranelift's verifier
-    // on them. They stay on bytecode; callees they invoke can still
-    // compile (the trampoline marshals at the boundary).
+    // A body is declined from the compile set when it holds a local the
+    // cranelift JIT cannot lower faithfully:
+    //   - a genuine 128-bit integer (the one shape `lower_program_full`
+    //     hard-bails on; one such body fails the whole module);
+    //   - an `Option` sentinel or an inline-by-value user enum: the JIT
+    //     miscompiles reads through them (notably an `Option` struct field
+    //     accessed by projection), so they stay on bytecode. `Result`
+    //     (sentinel `u32::MAX`) is the function-return shape the parse stack
+    //     consumes through `gos_rt_result_disc` / `_payload`, which the JIT
+    //     does lower correctly, so it is admitted;
+    //   - a non-RC Adt the marshaller cannot classify (an opaque stdlib
+    //     handle without a `ty_to_kind` shape).
+    // Everything else - RC-managed structs / heap enums, registered all-scalar
+    // structs, tuples carrying RC children, `String` / `Vec` - lives only
+    // inside the JIT'd region (no boundary crossing) and compiles natively as
+    // the AOT tier compiles it, so it must not gate compilation.
     let uses_i128_repr = |b: &Body| -> bool {
         b.locals.iter().any(|l| match tcx.kind_of(l.ty) {
-            // `String` and `Vec<_>` locals are marshalled across the JIT
-            // boundary by the native-pointer bridge (see `ty_to_kind`),
-            // so they never force a body onto bytecode.
-            TyKind::String | TyKind::Vec(_) | TyKind::Slice(_) => false,
-            // An Adt local declines a body only when the marshaller cannot
-            // classify it (`ty_to_kind` is the single source of truth for
-            // what crosses the JIT boundary). RC-managed Adts (user structs
-            // / heap enums) stay representable as native pointers; opaque
-            // single-word handle sentinels that `ty_to_kind` knows how to
-            // marshal (e.g. `U8Vec`) compile too. The shapes that remain
-            // declined are exactly the ones `ty_to_kind` rejects: the
-            // two-word inline Option/Result sentinels, inline by-value
-            // enums, and handles without a marshalling shape.
-            TyKind::Adt { .. } => {
-                !tcx.is_rc_managed(l.ty) && ty_to_kind(tcx, l.ty, enum_shapes).is_none()
+            TyKind::Int(gossamer_types::IntTy::I128 | gossamer_types::IntTy::U128) => true,
+            TyKind::Adt { def, .. } => {
+                if def.local == u32::MAX {
+                    return false;
+                }
+                if def.local == u32::MAX - 1 || tcx.is_inline_enum_ty(l.ty) {
+                    return true;
+                }
+                // Opaque stdlib-handle sentinels (the high def-id band) that
+                // carry no marshalling shape stay on bytecode; ordinary user
+                // structs / enums (small def-ids) are lowerable even when they
+                // are not all-scalar (e.g. the `Parser` struct), so they are
+                // admitted as internal JIT'd locals.
+                let is_sentinel = def.local >= u32::MAX - 64;
+                is_sentinel
+                    && !tcx.is_rc_managed(l.ty)
+                    && ty_to_kind(tcx, l.ty, enum_shapes, struct_shapes).is_none()
             }
-            TyKind::Int(it) => {
-                matches!(
-                    it,
-                    gossamer_types::IntTy::I128 | gossamer_types::IntTy::U128
-                )
-            }
-            // A by-value tuple carrying an RC-managed element needs per-field
-            // retain/release teardown at the JIT boundary, where the aggregate
-            // is a marshalled handle rather than a native stack layout. Like
-            // struct locals, such bodies stay on bytecode; LLVM AOT lowers the
-            // per-field accounting natively.
-            TyKind::Tuple(elems) => elems.iter().any(|t| {
-                tcx.is_rc_managed(*t)
-                    && !matches!(tcx.kind_of(*t), TyKind::Vec(_) | TyKind::Slice(_))
-            }),
             _ => false,
         })
     };
     let mut included: std::collections::HashSet<&str> = bodies
         .iter()
-        .filter(|b| body_kinds(b, tcx, enum_shapes).is_some() && !uses_i128_repr(b))
+        .filter(|b| body_kinds(b, tcx, enum_shapes, struct_shapes).is_some() && !uses_i128_repr(b))
         .map(|b| b.name.as_str())
         .collect();
 
@@ -363,7 +386,12 @@ fn jit_compile_set<'a>(
     reason = "single interp caller passes the same HashMap shape compile_to_jit uses"
 )]
 #[must_use]
-pub fn has_worthy_jit_body(bodies: &[Body], tcx: &TyCtxt, enum_shapes: &HashMap<u32, u32>) -> bool {
+pub fn has_worthy_jit_body(
+    bodies: &[Body],
+    tcx: &TyCtxt,
+    enum_shapes: &HashMap<u32, u32>,
+    struct_shapes: &HashMap<u32, u32>,
+) -> bool {
     let all_names: std::collections::HashSet<&str> =
         bodies.iter().map(|b| b.name.as_str()).collect();
     let def_to_name: HashMap<u32, &str> = bodies
@@ -392,7 +420,7 @@ pub fn has_worthy_jit_body(bodies: &[Body], tcx: &TyCtxt, enum_shapes: &HashMap<
     };
     bodies.iter().any(|b| {
         b.name != "main"
-            && body_kinds(b, tcx, enum_shapes).is_some()
+            && body_kinds(b, tcx, enum_shapes, struct_shapes).is_some()
             && (body_has_loop(b) || reaches_self(b.name.as_str()))
     })
 }
@@ -416,6 +444,7 @@ pub fn jit_eager_loop_bodies(
     bodies: &[Body],
     tcx: &TyCtxt,
     enum_shapes: &HashMap<u32, u32>,
+    struct_shapes: &HashMap<u32, u32>,
 ) -> Vec<String> {
     // Promote helpers that contain a loop and can be fully lowered by the
     // JIT. Purely recursive functions (no inner loop) are intentionally
@@ -428,7 +457,7 @@ pub fn jit_eager_loop_bodies(
         .iter()
         .filter(|b| {
             b.name != "main"
-                && body_kinds(b, tcx, enum_shapes).is_some()
+                && body_kinds(b, tcx, enum_shapes, struct_shapes).is_some()
                 && !body_jit_unsupported(b, tcx)
                 && body_has_loop(b)
         })
@@ -449,6 +478,7 @@ pub fn compile_to_jit(
     bodies: &[Body],
     tcx: &TyCtxt,
     enum_shapes: &HashMap<u32, u32>,
+    struct_shapes: &HashMap<u32, u32>,
 ) -> Result<JitArtifact> {
     // Decide the compile set BEFORE touching Cranelift. When no body is
     // worth promoting (no loop, no recursion - a program of tiny
@@ -456,7 +486,7 @@ pub fn compile_to_jit(
     // empty artifact without instantiating the JIT module: building it
     // faults in the Cranelift compiler (~5 MB resident) that this
     // program would never benefit from.
-    let compile_set = jit_compile_set(bodies, tcx, enum_shapes);
+    let compile_set = jit_compile_set(bodies, tcx, enum_shapes, struct_shapes);
     if compile_set.is_empty() {
         return Ok(JitArtifact {
             module: None,
@@ -514,7 +544,7 @@ pub fn compile_to_jit(
         let Some(id) = lowered.function_ids_by_name.get(&body.name).copied() else {
             continue;
         };
-        let Some((params, returns)) = body_kinds(body, tcx, enum_shapes) else {
+        let Some((params, returns)) = body_kinds(body, tcx, enum_shapes, struct_shapes) else {
             // Some param/return type isn't a primitive scalar - the
             // dispatch trampoline can't marshal it, so the VM will
             // fall back to bytecode for this fn.
@@ -597,10 +627,15 @@ fn body_calls_jit_unsafe(
         // anything qualified or capitalised falls through to a sound
         // zero-default semantics - uncommon but well-formed).
         let starts_uppercase = n.chars().next().is_some_and(char::is_uppercase);
-        // Compiler-internal intrinsics (double-underscore prefix, e.g.
-        // `__concat` for `format!`) always have a dedicated cranelift
-        // lowering arm, so a body calling one is JIT-safe.
-        if n.starts_with("__") || n.contains("::") || starts_uppercase {
+        // Compiler-internal intrinsics always have a dedicated cranelift
+        // lowering arm, so a body calling one is JIT-safe: the
+        // double-underscore family (`__concat` for `format!`) and the
+        // `gos_`-namespaced aggregate / enum / alloc intrinsics
+        // (`gos_load`, `gos_store`, `gos_enum_*`, `gos_rc_alloc*`,
+        // `gos_alloc`, `gos_fn_addr`) - emitted as terminator calls when an
+        // aggregate load/store feeds a successor block. (`gos_rt_*` runtime
+        // shims are already covered by `runtime_symbols` above.)
+        if n.starts_with("__") || n.starts_with("gos_") || n.contains("::") || starts_uppercase {
             continue;
         }
         return true;
@@ -635,11 +670,14 @@ fn body_jit_unsupported(body: &Body, tcx: &TyCtxt) -> bool {
             return true;
         }
     }
-    // A `&mut` aggregate parameter. The trampoline marshals aggregates by
-    // value (the `String` / `Vec` content pointer), but a `&mut String` /
-    // `&mut Vec` body expects a pointer to the caller's slot to write
-    // through; the value-marshalled pointer is the wrong shape and the
-    // in-place append corrupts the heap. Keep these on bytecode.
+    // A `&mut Vec` / `&mut Slice` / `&mut HashMap` parameter. The trampoline
+    // marshals aggregates by value (the content pointer), but such a body
+    // expects a pointer to the caller's slot to write through; the
+    // value-marshalled pointer is the wrong shape and the in-place append
+    // corrupts the heap. Keep these on bytecode. `&mut String` is the one
+    // write-through shape the trampoline does handle (a pointer-to-slot cell
+    // read back after the call - see `invoke_prepared_native`), so it is
+    // admitted.
     for pidx in 1..=body.arity {
         if let TyKind::Ref {
             mutability: Mutbl::Mut,
@@ -647,7 +685,7 @@ fn body_jit_unsupported(body: &Body, tcx: &TyCtxt) -> bool {
         } = tcx.kind_of(body.local_ty(gossamer_mir::Local(pidx)))
             && matches!(
                 tcx.kind_of(*inner),
-                TyKind::String | TyKind::Vec(_) | TyKind::Slice(_) | TyKind::HashMap { .. }
+                TyKind::Vec(_) | TyKind::Slice(_) | TyKind::HashMap { .. }
             )
         {
             return true;
@@ -807,14 +845,32 @@ fn body_kinds(
     body: &Body,
     tcx: &TyCtxt,
     enum_shapes: &HashMap<u32, u32>,
+    struct_shapes: &HashMap<u32, u32>,
 ) -> Option<(Vec<JitKind>, JitKind)> {
     let mut params = Vec::with_capacity(body.arity as usize);
     for pidx in 1..=body.arity {
         let local = gossamer_mir::Local(pidx);
-        let kind = ty_to_kind(tcx, body.local_ty(local), enum_shapes)?;
+        let kind = ty_to_kind(tcx, body.local_ty(local), enum_shapes, struct_shapes)?;
+        // `ResultEnumPtr` is a return-only marshalling shape; the trampoline
+        // has no inbound `Result<Enum, _>` parameter path, so a body taking
+        // one stays on bytecode.
+        if matches!(kind, JitKind::ResultEnumPtr(_)) {
+            return None;
+        }
         params.push(kind);
     }
-    let returns = ty_to_kind(tcx, body.local_ty(gossamer_mir::Local::RETURN), enum_shapes)?;
+    let returns = ty_to_kind(
+        tcx,
+        body.local_ty(gossamer_mir::Local::RETURN),
+        enum_shapes,
+        struct_shapes,
+    )?;
+    // A struct RETURN is not marshalled back yet (the native body returns
+    // a pointer to a stack-local block that would dangle past the call).
+    // Keep struct-returning bodies on bytecode; struct PARAMS are fine.
+    if matches!(returns, JitKind::StructPtr(_)) {
+        return None;
+    }
     Some((params, returns))
 }
 
@@ -836,12 +892,42 @@ fn is_i64_f64_tuple(tcx: &TyCtxt, ty: Ty) -> bool {
     }
 }
 
-fn ty_to_kind(tcx: &TyCtxt, ty: Ty, enum_shapes: &HashMap<u32, u32>) -> Option<JitKind> {
-    // References to heap enums are the same native pointer at the ABI
-    // (compiled convention) - peel before classifying.
+/// True when `ty` is `Vec<i64>` / `[i64]` - the inner element shape of a
+/// `Vec<Vec<i64>>` the trampoline marshals as a nested `GosVec`.
+fn is_i64_vec(tcx: &TyCtxt, ty: Ty) -> bool {
+    matches!(
+        tcx.kind_of(ty),
+        TyKind::Vec(inner) | TyKind::Slice(inner)
+            if matches!(tcx.kind_of(*inner), TyKind::Int(gossamer_types::IntTy::I64))
+    )
+}
+
+fn ty_to_kind(
+    tcx: &TyCtxt,
+    ty: Ty,
+    enum_shapes: &HashMap<u32, u32>,
+    struct_shapes: &HashMap<u32, u32>,
+) -> Option<JitKind> {
+    // References to heap enums / structs are the same native pointer at
+    // the ABI (compiled convention) - peel before classifying.
     let mut ty = ty;
     while let TyKind::Ref { inner, .. } = tcx.kind_of(ty) {
         ty = *inner;
+    }
+    if std::env::var("GOS_TYDUMP").is_ok() {
+        let inner = match tcx.kind_of(ty) {
+            TyKind::Vec(e) | TyKind::Slice(e) => Some(tcx.kind_of(*e).clone()),
+            _ => None,
+        };
+        eprintln!(
+            "TYDUMP ty_to_kind peeled kind = {:?} inner = {:?} is_i64_vec_of_elem = {:?}",
+            tcx.kind_of(ty),
+            inner,
+            match tcx.kind_of(ty) {
+                TyKind::Vec(e) | TyKind::Slice(e) => is_i64_vec(tcx, *e),
+                _ => false,
+            }
+        );
     }
     match tcx.kind_of(ty) {
         TyKind::Bool => Some(JitKind::Bool),
@@ -854,6 +940,33 @@ fn ty_to_kind(tcx: &TyCtxt, ty: Ty, enum_shapes: &HashMap<u32, u32>) -> Option<J
         TyKind::Adt { def, .. } if tcx.is_rc_managed(ty) => enum_shapes
             .get(&def.local)
             .map(|idx| JitKind::EnumPtr(*idx)),
+        // `Result<Enum, errors::Error>`: the by-value two-word `i128` return
+        // whose `Ok` payload is a registered heap enum. Only the `Ok`-enum
+        // shape needs marshalling (the `Err` side is read back generically),
+        // so classify by the `Ok` type's shape. Return-only; a `Result`
+        // parameter keeps a body on bytecode (no `ty_to_kind` for it as a
+        // param is wired in the trampoline).
+        TyKind::Adt { def, substs } if def.local == u32::MAX => {
+            let ok_ty = *substs.types().first()?;
+            let mut ok_ty = ok_ty;
+            while let TyKind::Ref { inner, .. } = tcx.kind_of(ok_ty) {
+                ok_ty = *inner;
+            }
+            match tcx.kind_of(ok_ty) {
+                TyKind::Adt { def: ok_def, .. } if tcx.is_rc_managed(ok_ty) => enum_shapes
+                    .get(&ok_def.local)
+                    .map(|idx| JitKind::ResultEnumPtr(*idx)),
+                _ => None,
+            }
+        }
+        // An all-scalar user struct with a registered VM-side shape
+        // crosses as a pointer to its flat field-slot block (the
+        // compiled tier's struct layout - no RC header). Only structs
+        // the interpreter registered (all-scalar fields) appear here, so
+        // the marshal is always O(field count) with no heap children.
+        TyKind::Adt { def, .. } if struct_shapes.contains_key(&def.local) => struct_shapes
+            .get(&def.local)
+            .map(|idx| JitKind::StructPtr(*idx)),
         // `String` and `Vec<i64>` cross as the runtime's native pointer
         // (the flat-ABI shape `mir_ty_to_cabi` emits: a single pointer
         // slot). The trampoline builds a fresh runtime object from the
@@ -875,6 +988,14 @@ fn ty_to_kind(tcx: &TyCtxt, ty: Ty, enum_shapes: &HashMap<u32, u32>) -> Option<J
             Some(JitKind::NativeVecF64)
         }
         TyKind::Vec(elem) if is_i64_f64_tuple(tcx, *elem) => Some(JitKind::NativeVecTupleIF),
+        // `Vec<Vec<i64>>` / `[[i64]]`: an outer vec / slice whose elements are
+        // themselves `Vec<i64>` / `[i64]`. Crosses as the AOT nested layout
+        // (outer `VEC`-kind slots holding inner `GosVec` pointers); the
+        // trampoline builds it once per source Arc. A `&[[i64]]` parameter
+        // peels to `Slice(Slice(i64))`, so both outer shapes are accepted.
+        TyKind::Vec(elem) | TyKind::Slice(elem) if is_i64_vec(tcx, *elem) => {
+            Some(JitKind::NativeVecVecI64)
+        }
         // `U8Vec` (prelude sentinel `u32::MAX - 20`): a byte-buffer handle.
         // The trampoline copies its bytes through a fresh native `GosU8Vec`
         // and copies the mutations back. Other prelude handles (Mutex,
@@ -1261,8 +1382,13 @@ fn register_runtime_symbols(builder: &mut JITBuilder) -> std::collections::HashS
         "gos_rt_concat_finish"       => rt::gos_rt_concat_finish,
         "gos_rt_main_exit_code"      => rt::gos_rt_main_exit_code,
         "gos_rt_result_new"          => rt::gos_rt_result_new,
+        "gos_rt_result_new_f64"      => rt::gos_rt_result_new_f64,
         "gos_rt_result_disc"         => rt::gos_rt_result_disc,
         "gos_rt_result_payload"      => rt::gos_rt_result_payload,
+        "gos_rt_result_payload_f64"  => rt::gos_rt_result_payload_f64,
+        "gos_rt_enum_unit"           => rt::gos_rt_enum_unit,
+        "gos_rt_strconv_parse_i64"   => rt::gos_rt_strconv_parse_i64,
+        "gos_rt_strconv_parse_f64"   => rt::gos_rt_strconv_parse_f64,
         "gos_rt_result_unwrap"       => rt::gos_rt_result_unwrap,
         "gos_rt_result_unwrap_or"    => rt::gos_rt_result_unwrap_or,
         "gos_rt_result_ok"           => rt::gos_rt_result_ok,
@@ -1290,6 +1416,7 @@ fn register_runtime_symbols(builder: &mut JITBuilder) -> std::collections::HashS
         "gos_rt_str_as_bytes"        => rt::gos_rt_str_as_bytes,
         "gos_rt_regex_captures_all"  => rt::gos_rt_regex_captures_all,
         "gos_rt_vec_clone"           => rt::gos_rt_vec_clone,
+        "gos_rt_vec_set_slot_children" => rt::gos_rt_vec_set_slot_children,
         "gos_rt_map_inc_str_i64"        => rt::gos_rt_map_inc_str_i64,
         "gos_rt_map_or_insert_str_i64"  => rt::gos_rt_map_or_insert_str_i64,
         "gos_rt_map_or_insert_i64_i64"  => rt::gos_rt_map_or_insert_i64_i64,

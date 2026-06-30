@@ -762,12 +762,18 @@ impl<'tcx> FnBuilder<'tcx> {
         // }`) - both leave a register nothing reads after the match.
         // Guards are excluded because a failed guard would fall through
         // and re-extract the drained scrutinee.
-        let consume_scrut =
+        let consume_eligible =
             self.value_consumable_here(scrutinee) && arms.iter().all(|arm| arm.guard.is_none());
         for arm in arms {
             self.push_scope();
             let mut fails: Vec<InstrIdx> = Vec::new();
-            self.emit_pattern_test_ex(scrut, &arm.pattern, &mut fails, consume_scrut)?;
+            // Draining the scrutinee is only safe when this arm cannot fail
+            // a refutable sub-test *after* extracting (and emptying) a field
+            // and then fall through to a later arm that re-reads it. See
+            // `pattern_consume_safe`.
+            let arm_consume =
+                consume_eligible && crate::compile::consume::pattern_consume_safe(&arm.pattern);
+            self.emit_pattern_test_ex(scrut, &arm.pattern, &mut fails, arm_consume)?;
             // Tag collection-typed pattern bindings (`Some(arr)`, …) so a
             // `for x in <binding>` in the arm body iterates by index. The
             // binding's own `Path` carries an unresolved var when inferred,

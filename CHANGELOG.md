@@ -180,6 +180,41 @@ the interpreter. The fast path applies only when the receiver's type is known
 to be `String`, so a user type with its own `byte_at` keeps its method; the
 result is identical on every tier.
 
+### Interpreter speed: more value shapes reach the JIT
+
+The in-process JIT marshals more value shapes across the call boundary, so
+code that was previously pinned to the bytecode interpreter now runs as native
+machine code:
+
+- **Struct-receiver methods.** A method whose receiver is a struct of scalar
+  fields runs natively whether it takes `&self`, `&mut self`, or `self` by
+  value; a `&mut self` method's in-place field changes are written back into
+  the caller's binding.
+- **Nested integer vectors.** A function taking a vector of integer vectors
+  crosses the boundary in the runtime's native layout, built once per source
+  value and reused across repeated calls on the same value.
+- **Recursive enum parsers.** A function returning a `Result` of a recursive
+  enum - including variants that carry vectors and string-keyed pairs - now
+  promotes to native code, so a hand-written recursive-descent parser runs
+  natively through its whole recursion.
+- **Recursive enum transforms and serializers.** A function that consumes a
+  recursive enum by value and returns a freshly rebuilt one, and a function
+  that reads a recursive enum by reference while writing through a
+  `&mut String`, both run natively.
+
+This is acceleration only: results stay bit-identical across the bytecode VM,
+the in-process JIT, and the AOT compiler.
+
+### Fixes
+
+`Vec::is_empty` and `String::is_empty` now correctly report whether the
+collection is empty; they previously always answered `false`.
+
+A collection built in a local and then moved into an enclosing value is now
+kept alive through the move on the compiled tiers - previously a vector of
+key-value pairs moved into a parent could be released before the parent
+escaped, yielding wrong results or a crash.
+
 ### Docs
 
 Refreshed docs to more accurately reflect idiomatic Gossamer.

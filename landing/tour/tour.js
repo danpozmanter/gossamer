@@ -75,6 +75,42 @@ println!("sum of odds in 1..=5 = {total}")
 `,
   },
   {
+    slug: "closures",
+    title: "Closures + higher-order fns",
+    prose: `
+      <p>A closure is <code>|param: T| body</code> and captures its
+      environment automatically - there is no <code>move</code>. Two
+      callable types name a function value: <code>fn(args) -> ret</code>
+      for a bare code pointer, and <code>Fn(args) -> ret</code> - the
+      callable trait - which also accepts capturing closures.</p>
+      <p>A higher-order function takes an <code>Fn(...)</code> parameter,
+      and a bare <code>fn</code> coerces into it at the call site. The
+      data-last <code>iter</code> helpers are higher-order all the way
+      down, so a pipeline of <code>filter</code> / <code>map</code> /
+      <code>sum_by</code> threads cleanly through <code>|></code>.</p>`,
+    code: `use std::iter
+
+// \`Fn(i64) -> i64\` accepts both capturing closures and bare functions.
+fn apply(f: Fn(i64) -> i64, x: i64) -> i64 { f(x) }
+
+fn inc(y: i64) -> i64 { y + 1 }
+
+fn main() {
+    let scale = 10
+    let scaled = |y: i64| scale * y       // captures \`scale\`
+    println!("scaled(5) = {}", apply(scaled, 5))
+    println!("inc(41)   = {}", apply(inc, 41))   // bare fn coerces
+
+    // Closures power the data-last iterator helpers, chained with |>.
+    let total = iter::range_inclusive(1, 6)
+        |> iter::filter(|n: i64| n % 2 == 0)
+        |> iter::map(|n: i64| n * n)
+        |> iter::sum_by(|n: i64| n)
+    println!("sum of squares of evens in 1..=6 = {total}")
+}
+`,
+  },
+  {
     slug: "match",
     title: "Pattern matching + enums",
     prose: `
@@ -104,6 +140,82 @@ fn area(shape: &Shape) -> f64 {
 let shapes = [Shape::Circle(2.0), Shape::Rect { w: 3.0, h: 4.0 }, Shape::Line]
 for s in shapes {
     println!("area = {}", area(s))
+}
+`,
+  },
+  {
+    slug: "recursive-enum",
+    title: "Recursive enums + Box",
+    prose: `
+      <p>An enum variant can refer to the enum itself, so a tree or an
+      expression type needs nothing special. <code>Box</code>,
+      <code>Arc</code>, and <code>Rc</code> are transparent - every
+      variant payload is heap-shared - and a <code>match</code> reaches
+      straight through them with no dereference.</p>
+      <p>This is a tiny arithmetic evaluator: an <code>Expr</code> is a
+      number or a binary node, and <code>eval</code> recurses with one
+      exhaustive <code>match</code>. That is the whole shape of a real
+      tree-walking interpreter.</p>`,
+    code: `// Recursive enums work directly; \`Box\` payloads are heap-shared and
+// transparent, so a variant can hold another \`Expr\`.
+enum Expr {
+    Num(i64),
+    Add(Box<Expr>, Box<Expr>),
+    Mul(Box<Expr>, Box<Expr>),
+}
+
+fn eval(e: &Expr) -> i64 {
+    match e {
+        Expr::Num(n) => *n,
+        Expr::Add(a, b) => eval(a) + eval(b),
+        Expr::Mul(a, b) => eval(a) * eval(b),
+    }
+}
+
+fn main() {
+    // (2 + 3) * 4
+    let tree = Expr::Mul(
+        Box::new(Expr::Add(Box::new(Expr::Num(2)), Box::new(Expr::Num(3)))),
+        Box::new(Expr::Num(4)),
+    )
+    println!("(2 + 3) * 4 = {}", eval(&tree))
+}
+`,
+  },
+  {
+    slug: "options",
+    title: "Option + the ? operator",
+    prose: `
+      <p><code>Option&lt;T&gt;</code> is <code>Some(v)</code> or
+      <code>None</code> - the type-level "maybe absent", with no null in
+      sight. Read it with <code>if let Some(v) = ...</code>, and inside
+      an <code>Option</code>-returning function <code>?</code>
+      short-circuits the moment a value is <code>None</code>.</p>
+      <p>It is the same <code>?</code> that propagates <code>Err</code>
+      in a <code>Result</code> function: the present path stays flat
+      while the absent path needs no nesting at all.</p>`,
+    code: `// \`?\` propagates \`None\` inside an Option-returning function.
+fn first_even(xs: &[i64]) -> Option<i64> {
+    for x in xs {
+        if x % 2 == 0 { return Some(x) }
+    }
+    None
+}
+
+// \`?\` chains Option-returning calls: if \`first_even\` yields \`None\`,
+// this returns \`None\` immediately - no nesting on the absent path.
+fn half_of_first_even(xs: &[i64]) -> Option<i64> {
+    let n = first_even(xs)?
+    Some(n / 2)
+}
+
+fn main() {
+    if let Some(n) = first_even(&[3, 5, 8, 9]) {
+        println!("first even = {n}")
+    }
+
+    println!("half = {:?}", half_of_first_even(&[3, 5, 8, 9]))
+    println!("half = {:?}", half_of_first_even(&[1, 3, 5]))
 }
 `,
   },
@@ -215,6 +327,75 @@ fn main() {
 `,
   },
   {
+    slug: "json",
+    title: "JSON round-trip",
+    prose: `
+      <p>Every user <code>struct</code> automatically gains two generic
+      free functions: <code>to_json::&lt;T&gt;(&amp;value)</code> encodes
+      it to text and <code>from_json::&lt;T&gt;(&amp;text)</code> decodes
+      text back into a typed value, validating each field against its
+      declared type with path-qualified errors.</p>
+      <p>There is one spelling - the turbofish form - and it works on
+      every tier. Here a <code>Server</code> config makes the full round
+      trip; for unknown-shape documents the dynamic
+      <code>json::parse</code> API stays available.</p>`,
+    code: `// Every user struct gets \`to_json::<T>\` / \`from_json::<T>\` for free.
+// \`?\` makes this entry file's implicit \`main\` return a Result.
+#[derive(Debug)]
+struct Server { host: String, port: i64, tls: bool }
+
+let cfg = Server { host: "localhost", port: 8080, tls: true }
+
+// Encode the struct to JSON text...
+let text = to_json::<Server>(&cfg)?
+println!("encoded = {text}")
+
+// ...then decode it straight back into a typed struct, validating
+// each field against its declared type.
+let back: Server = from_json::<Server>(&text)?
+println!("decoded = {:?}", back)
+println!("address = {}:{}", back.host, back.port)
+`,
+  },
+  {
+    slug: "regex",
+    title: "Regular expressions",
+    prose: `
+      <p><code>std::regex</code> wraps Rust's <code>regex</code> crate.
+      <code>compile</code> once into a <code>Pattern</code> - it carries
+      its source for diagnostics - then reuse it across
+      <code>is_match</code>, <code>find</code> / <code>find_all</code>,
+      <code>captures</code>, <code>replace_all</code>, and
+      <code>split</code>.</p>
+      <p><code>captures</code> returns <code>[full, group1, ...]</code>,
+      each an <code>Option&lt;String&gt;</code>. A
+      <strong>let-chain</strong> binds every group and tests them in one
+      condition, so a structured parse collapses to a single
+      <code>if</code>.</p>`,
+    code: `use std::regex
+
+fn main() {
+    // Compile once; the pattern carries its source for diagnostics.
+    let re = match regex::compile("([0-9]{4}-[0-9]{2}-[0-9]{2}) ([A-Z]+) (.+)") {
+        Ok(r) => r,
+        Err(e) => { eprintln!("bad pattern: {e}"); return }
+    }
+
+    let lines = ["2026-06-29 ERROR disk full", "2026-06-30 INFO restarted"]
+    for line in lines {
+        // \`captures\` yields [full, group1, group2, ...]; a let-chain
+        // binds all three groups and tests them in one condition.
+        if let Some(c) = regex::captures(&re, &line)
+            && let Some(date) = c[1]
+            && let Some(level) = c[2]
+            && let Some(msg) = c[3] {
+            println!("{date}  [{level}]  {msg}")
+        }
+    }
+}
+`,
+  },
+  {
     slug: "goroutines",
     title: "Goroutines + channels",
     prose: `
@@ -244,6 +425,82 @@ fn main() {
     let mut total = 0
     while let Some(v) = rx.recv() { total += v }
     println!("sum of squares 1..=5 = {total}")
+}
+`,
+  },
+  {
+    slug: "select",
+    title: "select over channels",
+    prose: `
+      <p><code>select</code> multiplexes several channel operations at
+      once: each arm is a receive or a send, the arms are polled in
+      source order, and the goroutine takes the first one that is ready.
+      An optional <code>default</code> arm fires when none is.</p>
+      <p>Here two producers feed two channels and <code>select</code>
+      merges their values as they arrive - the standard fan-in pattern.
+      Full mid-run hand-off between goroutines that block and resume runs
+      natively with <code>gos run</code>.</p>`,
+    code: `use std::sync::channel
+
+fn produce(tx: Sender<i64>, xs: [i64]) {
+    for x in xs { tx.send(x) }
+}
+
+fn main() {
+    let (tx_hi, rx_hi) = channel()
+    let (tx_lo, rx_lo) = channel()
+
+    go produce(tx_hi, [1, 2, 3])
+    go produce(tx_lo, [10, 20])
+
+    // Five values arrive across two channels; \`select\` takes whichever
+    // arm is ready, polling them in source order.
+    let mut total = 0
+    for _ in 0..5 {
+        select {
+            v = rx_hi.recv() => total += v,
+            v = rx_lo.recv() => total += v,
+        }
+    }
+    println!("merged total = {total}")
+}
+`,
+  },
+  {
+    slug: "shared-state",
+    title: "Shared state + WaitGroup",
+    prose: `
+      <p>When sharing memory is simpler than passing messages, reach for
+      the <code>std::sync</code> primitives. A <code>WaitGroup</code>
+      tracks outstanding work: <code>add</code> before spawning,
+      <code>done</code> as each worker finishes, and <code>wait</code>
+      blocks until the count reaches zero - no sleeps.</p>
+      <p>The shared counter here is an <code>AtomicI64</code>, so
+      concurrent <code>fetch_add</code>s compose without an explicit
+      lock. Sync handles are shared by value: a copy refers to the same
+      underlying state.</p>`,
+    code: `use std::sync
+use std::sync::WaitGroup
+
+// Each worker runs to completion: it folds its share into the shared
+// atomic counter, then signals the WaitGroup. Sync handles are shared
+// by value - a copy refers to the same underlying state.
+fn worker(total: sync::AtomicI64, wg: WaitGroup, i: i64) {
+    sync::AtomicI64::fetch_add(total, i * i)
+    wg.done()
+}
+
+fn main() {
+    let total = sync::AtomicI64::new(0)
+    let wg = WaitGroup::new()
+
+    for i in 1..=4 {
+        wg.add(1)
+        go worker(total, wg, i)
+    }
+    wg.wait()      // block until every worker has called \`done\`
+
+    println!("sum of squares 1..=4 = {}", sync::AtomicI64::load(total))
 }
 `,
   },
@@ -284,6 +541,134 @@ fn main() {
     println!("a = {:?}", a)
     println!("a == a.clone(): {}", a == a.clone())
     println!("a farther than b: {}", farther(&a, &b))
+}
+`,
+  },
+  {
+    slug: "operators",
+    title: "Operator overloading",
+    prose: `
+      <p>Arithmetic operators are trait methods, so a type opts into them
+      by implementing the trait: <code>impl Add for Vec2</code> gives
+      <code>Vec2 + Vec2</code> its meaning, and the same shape covers
+      <code>Sub</code>, <code>Mul</code>, and the rest.</p>
+      <p>These are written by hand, not derived. The compiler already
+      synthesizes <code>==</code>, ordering, and <code>.clone()</code>
+      for you - a custom <code>+</code> is the part that is genuinely
+      yours to define.</p>`,
+    code: `// Operator overloading: \`impl Add for T\` makes \`+\` work on your type.
+struct Vec2 { x: f64, y: f64 }
+
+impl Add for Vec2 {
+    fn add(self, other: Vec2) -> Vec2 {
+        Vec2 { x: self.x + other.x, y: self.y + other.y }
+    }
+}
+
+fn main() {
+    let a = Vec2 { x: 1.0, y: 2.0 }
+    let b = Vec2 { x: 3.0, y: 4.0 }
+    let c = a + b
+    println!("sum = ({}, {})", c.x, c.y)
+}
+`,
+  },
+  {
+    slug: "comptime",
+    title: "Compile-time evaluation",
+    prose: `
+      <p>A <code>comptime fn</code> runs during compilation. Inside a
+      <code>comptime { }</code> block its result is folded to a literal
+      before the program runs, so the work happens once, at build time,
+      and every tier embeds the same constant.</p>
+      <p>Use it for lookup tables and derived constants - anything better
+      computed at build time than on every run.
+      <code>const FACT_10: i64 = comptime { factorial(10) }</code> ships
+      the answer, not the loop that produced it.</p>`,
+    code: `// A \`comptime fn\` runs at compile time; calling it inside a
+// \`comptime { }\` block folds the result into a literal, so the runtime
+// never repeats the work - every tier compiles the same constant.
+comptime fn factorial(n: i64) -> i64 {
+    let mut acc = 1
+    for i in 2..=n { acc *= i }
+    acc
+}
+
+const FACT_10: i64 = comptime { factorial(10) }
+
+fn main() {
+    println!("10! folded at compile time = {FACT_10}")
+
+    // A \`comptime\` block can fold an inline computation to a literal too.
+    let triangular = comptime {
+        let mut acc = 0
+        for i in 1..=100 { acc += i }
+        acc
+    }
+    println!("sum 1..=100 = {triangular}")
+}
+`,
+  },
+  {
+    slug: "arena",
+    title: "arena { } regions",
+    prose: `
+      <p>Memory is automatic: deterministic reference counting, no borrow
+      checker, no GC pauses. For an object graph that all dies together,
+      an <code>arena { }</code> block bump-allocates everything inside it
+      and frees the whole region at every exit path.</p>
+      <p>The contract is simple: nothing allocated inside may escape, so
+      you compute a scalar or string summary inside and keep that. Here
+      each round fills a throwaway buffer and only the running total
+      survives the block.</p>`,
+    code: `fn main() {
+    // Everything allocated inside an \`arena { }\` is bump-allocated and
+    // freed wholesale at every exit. The contract: nothing allocated
+    // inside may escape, so compute a scalar summary and keep that.
+    let mut grand_total = 0
+    for round in 1..=3 {
+        arena {
+            let mut scratch: [i64] = []
+            for i in 0..1000 { scratch.push(i * round) }
+
+            let mut sum = 0
+            for x in scratch { sum += x }
+            grand_total += sum      // a scalar survives; the Vec does not
+        }
+    }
+    println!("grand total = {grand_total}")
+}
+`,
+  },
+  {
+    slug: "defer",
+    title: "defer for cleanup",
+    prose: `
+      <p><code>defer expr</code> schedules work to run when control
+      leaves the enclosing block by <strong>any</strong> path -
+      fall-through, <code>return</code>, <code>break</code>, or
+      <code>continue</code> - in <strong>LIFO</strong> order. It keeps a
+      resource's release next to its acquisition instead of scattered
+      across every exit.</p>
+      <p>In a loop body it runs once per iteration. It is the same
+      pattern Go uses: open, <code>defer</code> the close, then use - and
+      the close is guaranteed to happen.</p>`,
+    code: `fn use_resource(name: &String) {
+    println!("  open {name}")
+    defer println!("  close {name}")     // runs on every exit path
+    println!("  use {name}")
+}
+
+fn main() {
+    // \`defer\` runs when control leaves the block, in LIFO order.
+    {
+        defer println!("third")
+        defer println!("second")
+        defer println!("first")
+        println!("body runs")
+    }
+    println!("---")
+    use_resource(&"file")
 }
 `,
   },

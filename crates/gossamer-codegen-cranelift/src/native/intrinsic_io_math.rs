@@ -855,6 +855,44 @@ pub(super) fn lower_intrinsic_call_io_math(
             );
             Ok(true)
         }
+        "gos_rt_vec_set_slot_children" => {
+            // Tags an `AGGR_OWNED` vec with its element slot-children layout so
+            // the runtime retains each pushed slot's children and deep-frees
+            // them when the vec dies: `gos_rt_vec_set_slot_children(v, meta)`
+            // where `v` is a vec pointer and `meta` names the module-global
+            // slot-children blob (empty / absent => null => no-op). Lowered (not
+            // no-op'd) because the JIT compiles the body for real and the
+            // push-retain it sets up is load-bearing for RC accounting.
+            let v = match args.first() {
+                Some(arg) => {
+                    lower_operand(module, builder, locals, body, tcx, arg, None, intrinsics)?
+                }
+                None => builder.ins().iconst(ptr_ty, 0),
+            };
+            let v = coerce_arg_to(builder, v, ptr_ty).unwrap_or(v);
+            let meta_val = match args.get(1) {
+                Some(Operand::Const(ConstValue::Str(sym))) if !sym.is_empty() => {
+                    let Some(blob) = tcx.rc_meta(sym) else {
+                        bail!(
+                            "native codegen: gos_rt_vec_set_slot_children references unknown meta `{sym}`"
+                        );
+                    };
+                    let data_id = intrinsics.intern_rc_meta(module, sym, blob)?;
+                    let gv = module.declare_data_in_func(data_id, builder.func);
+                    builder.ins().symbol_value(ptr_ty, gv)
+                }
+                _ => builder.ins().iconst(ptr_ty, 0),
+            };
+            let f = intrinsics.extern_fn(
+                module,
+                "gos_rt_vec_set_slot_children",
+                &[ptr_ty, ptr_ty],
+                &[],
+            )?;
+            let fref = module.declare_func_in_func(f, builder.func);
+            builder.ins().call(fref, &[v, meta_val]);
+            Ok(true)
+        }
         "gos_rt_aggr_release_children"
         | "gos_rt_aggr_retain_children"
         | "gos_rt_aggr_zero_guarded"

@@ -58,8 +58,13 @@ fn jit_compiles_const_int_returning_main() {
         }],
         span: dummy_span(),
     };
-    let artifact =
-        compile_to_jit(&[body], &tcx, &std::collections::HashMap::new()).expect("compile");
+    let artifact = compile_to_jit(
+        &[body],
+        &tcx,
+        &std::collections::HashMap::new(),
+        &std::collections::HashMap::new(),
+    )
+    .expect("compile");
     let main_fn = artifact.functions.get("main").expect("main present");
     // SAFETY: the test only invokes `main_fn` while `artifact` is
     // live, matching the trampoline's lifetime contract.
@@ -117,8 +122,13 @@ fn jit_compiles_simple_arithmetic_function() {
         }],
         span: dummy_span(),
     };
-    let artifact =
-        compile_to_jit(&[body], &tcx, &std::collections::HashMap::new()).expect("compile");
+    let artifact = compile_to_jit(
+        &[body],
+        &tcx,
+        &std::collections::HashMap::new(),
+        &std::collections::HashMap::new(),
+    )
+    .expect("compile");
     let add_fn = artifact.functions.get("add").expect("add present");
     let result: i64 = unsafe {
         let f: extern "C" fn(i64, i64) -> i64 = mem::transmute(add_fn.ptr);
@@ -179,7 +189,12 @@ fn jit_unresolved_qualified_call_aborts_compile_not_zero_stub() {
         ],
         span: dummy_span(),
     };
-    let result = compile_to_jit(&[body], &tcx, &std::collections::HashMap::new());
+    let result = compile_to_jit(
+        &[body],
+        &tcx,
+        &std::collections::HashMap::new(),
+        &std::collections::HashMap::new(),
+    );
     assert!(
         result.is_err(),
         "compile_to_jit must refuse an unresolved qualified call instead of \
@@ -227,8 +242,13 @@ fn jit_some_constructor_still_compiles_as_identity() {
         ],
         span: dummy_span(),
     };
-    let artifact = compile_to_jit(&[body], &tcx, &std::collections::HashMap::new())
-        .expect("Some(x) lowers to identity and must still compile");
+    let artifact = compile_to_jit(
+        &[body],
+        &tcx,
+        &std::collections::HashMap::new(),
+        &std::collections::HashMap::new(),
+    )
+    .expect("Some(x) lowers to identity and must still compile");
     let f = artifact.functions.get("f").expect("f present");
     // SAFETY: `f` is live for the duration of `artifact`.
     let result: i64 = unsafe {
@@ -266,7 +286,12 @@ fn jit_artifact_drops_without_panic() {
         }],
         span: dummy_span(),
     };
-    let artifact =
-        compile_to_jit(&[body], &tcx, &std::collections::HashMap::new()).expect("compile");
+    let artifact = compile_to_jit(
+        &[body],
+        &tcx,
+        &std::collections::HashMap::new(),
+        &std::collections::HashMap::new(),
+    )
+    .expect("compile");
     drop(artifact);
 }

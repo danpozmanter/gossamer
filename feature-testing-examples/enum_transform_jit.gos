@@ -1,0 +1,108 @@
+use std::strings
+
+// Recursive heap enum whose variants cover the four JIT-marshalled field
+// shapes: scalar, string, `Vec<Node>` (the `Arr` layout) and
+// `Vec<(String, Node)>` (the `Obj` layout).
+enum Node {
+    Leaf(i64),
+    Text(String),
+    List(Vec<Node>),
+    Map(Vec<(String, Node)>),
+}
+
+// By-value enum in, a freshly built enum out. The `for` loops make it
+// eager-JIT-promotable; called from bytecode `main`, so the in/out enum
+// trees (including their `Vec` fields) cross the VM<->native boundary.
+fn transform(v: Node) -> Node {
+    match v {
+        Node::Leaf(n) => Node::Leaf(n + 1),
+        Node::Text(s) => Node::Text(strings::to_upper(&s)),
+        Node::List(xs) => {
+            let mut out: Vec<Node> = []
+            for x in xs { out.push(transform(x)) }
+            Node::List(out)
+        }
+        Node::Map(pairs) => {
+            let mut out: Vec<(String, Node)> = []
+            for (k, v) in pairs { out.push((k, transform(v))) }
+            Node::Map(out)
+        }
+    }
+}
+
+// `&Node` read-only plus a `&mut String` written through: the canonical
+// recursive serialize. Exercises the `&mut String` pointer-to-slot ABI.
+fn serialize_into(v: &Node, out: &mut String) {
+    match v {
+        Node::Leaf(n) => *out += format!("{}", n),
+        Node::Text(s) => {
+            *out += "\""
+            *out += s
+            *out += "\""
+        }
+        Node::List(xs) => {
+            *out += "["
+            let mut first = true
+            for x in xs {
+                if !first { *out += "," }
+                serialize_into(x, out)
+                first = false
+            }
+            *out += "]"
+        }
+        Node::Map(pairs) => {
+            *out += "{"
+            let mut first = true
+            for (k, v) in pairs {
+                if !first { *out += "," }
+                *out += k
+                *out += ":"
+                serialize_into(v, out)
+                first = false
+            }
+            *out += "}"
+        }
+    }
+}
+
+fn build(seed: i64) -> Node {
+    let mut tags: Vec<Node> = []
+    tags.push(Node::Text("alpha"))
+    tags.push(Node::Text("beta"))
+    tags.push(Node::Leaf(seed))
+    let mut meta: Vec<(String, Node)> = []
+    meta.push(("level", Node::Leaf(seed % 7)))
+    meta.push(("group", Node::Text(format!("grp-{}", seed % 3))))
+    let mut rec: Vec<(String, Node)> = []
+    rec.push(("id", Node::Leaf(seed)))
+    rec.push(("tags", Node::List(tags)))
+    rec.push(("meta", Node::Map(meta)))
+    Node::Map(rec)
+}
+
+fn checksum(s: &String) -> i64 {
+    let mut sum: i64 = 0
+    let mut i: i64 = 0
+    let n = s.len()
+    while i < n {
+        sum += s.byte_at(i)
+        i += 1
+    }
+    sum
+}
+
+fn main() {
+    let mut total_len: i64 = 0
+    let mut total_sum: i64 = 0
+    let mut i: i64 = 0
+    while i < 2000 {
+        let v = build(i)
+        let t = transform(v)
+        let mut out = String::new()
+        serialize_into(&t, &mut out)
+        total_len += out.len()
+        total_sum += checksum(&out)
+        i += 1
+    }
+    println!("{} {}", total_len, total_sum)
+}

@@ -177,7 +177,8 @@ pub(super) fn lower_place_address(
         .copied()
         .or_else(|| stride_slots_from_ty(tcx, body.local_ty(place.local)))
         .unwrap_or(1);
-    for projection in &place.projection {
+    let last_proj = place.projection.len().saturating_sub(1);
+    for (proj_idx, projection) in place.projection.iter().enumerate() {
         match projection {
             Projection::Field(idx) => {
                 let off_bytes = field_byte_offset(tcx, current_ty, *idx);
@@ -265,7 +266,23 @@ pub(super) fn lower_place_address(
                     matches!(tcx.kind_of(peeled), TyKind::Tuple(_) | TyKind::Array { .. })
                         || (matches!(tcx.kind_of(peeled), TyKind::Adt { .. })
                             && type_slot_count(tcx, peeled) > 1);
-                if !inline_aggregate {
+                // A TERMINAL `Deref` whose pointee is a one-word value (scalar
+                // or `String`, the `&mut x`-on-place shapes the MIR lowers to a
+                // slot-address `Rvalue::Ref`) keeps `current` as the slot
+                // ADDRESS: `lower_place_read` issues the single load and a store
+                // writes through it. Loading here would yield the value, which
+                // the consumer's own load then dereferences a second time -
+                // `*out += s` for `out: &mut String` faulting on `**out`.
+                let terminal_value = proj_idx == last_proj
+                    && matches!(
+                        tcx.kind_of(peeled),
+                        TyKind::Int(_)
+                            | TyKind::Float(_)
+                            | TyKind::Bool
+                            | TyKind::Char
+                            | TyKind::String
+                    );
+                if !inline_aggregate && !terminal_value {
                     let loaded = builder.ins().load(ptr_ty, MemFlags::trusted(), current, 0);
                     current = loaded;
                 }

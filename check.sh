@@ -154,6 +154,7 @@ if [[ $run_cross -eq 1 ]]; then
     if rustup target list --installed 2>/dev/null | grep -q '^wasm32-unknown-unknown$'; then
         run_step "cargo check --target wasm32-unknown-unknown (wasm-portable crates)" \
             cargo check -p gossamer-abi -p gossamer-binding-macros \
+            -p gossamer-interp -p gossamer-playground \
             --target wasm32-unknown-unknown
     else
         echo "cross-target check skipped (run \`rustup target add wasm32-unknown-unknown\` to enable)"

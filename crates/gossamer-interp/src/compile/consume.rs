@@ -351,6 +351,29 @@ impl Analyzer {
     }
 }
 
+/// `true` when draining the scrutinee during this arm's pattern test is
+/// safe: once the arm's top constructor tag matches (a `VariantIs` that
+/// runs *before* any field is extracted), no further refutable test can
+/// fail and fall through to a later arm that would re-read the emptied
+/// scrutinee. Only a bare binding / wildcard, or a single-variant
+/// pattern whose fields are all bindings / wildcards, qualifies. Any
+/// nested refutable test - a literal, range, nested variant, struct, or
+/// slice sub-pattern - extracts a field and can then fall through, so
+/// such an arm is cloned (consume `false`) instead.
+pub(crate) fn pattern_consume_safe(pat: &HirPat) -> bool {
+    use gossamer_hir::HirPatKind;
+    match &pat.kind {
+        HirPatKind::Wildcard | HirPatKind::Rest | HirPatKind::Binding { .. } => true,
+        HirPatKind::Variant { fields, .. } => fields.iter().all(|f| {
+            matches!(
+                f.kind,
+                HirPatKind::Wildcard | HirPatKind::Rest | HirPatKind::Binding { .. }
+            )
+        }),
+        _ => false,
+    }
+}
+
 /// A matched inline for-loop desugar (`loop { match <coll>.next() {
 /// Some(pat) => body, None => break } }`).
 struct ForDesugar<'a> {

@@ -1,27 +1,20 @@
-//! 0.5.0 SPEC.md conformance tests.
+//! SPEC.md behavioural conformance tests.
 //!
-//! Every test in this file pins a behaviour that a `> **Conformance
-//! (0.5.0)**` banner in SPEC.md asserts. The xtask `audit-spec-banners`
-//! validates that every banner uses a closed-vocabulary status keyword;
-//! this file is the *behavioural* half: each banner's claim must be
-//! demonstrably true (or, for `not-in-0.5.0` items, demonstrably
-//! enforced as rejection).
+//! Each test pins a behaviour the language specification describes, so
+//! the spec and the toolchain stay in lockstep: a claim SPEC.md makes
+//! must be demonstrably true (or, for a rejection, demonstrably
+//! enforced).
 //!
-//! Banners covered:
-//!   §3.1   integer overflow - `status: not-in-0.5.0` for debug panic,
-//!          `status: not-in-0.5.0` for `i128`/`u128` on the compiled
-//!          tier.
-//!   §3.10  generics - `status: scaffolded` for non-scalar generic
-//!          arguments.
-//!   §7.2   GC concurrent path - `status: scaffolded` (default
-//!          collector is STW).
-//!   §7.4   atomics / race detector - `status: scaffolded`.
-//!   §7.5   borrow check - `status: not-in-0.5.0`.
-//!   §8.6   `unsafe` powers - `status: implemented` (no `extern "C"`).
-//!   §11.1  targets - `status: partial` (post-0.5.0 targets refused).
-//!   §11.2  linking - `status: not-in-0.5.0` for musl-static default.
-//!   §12    FFI - `status: rust-bindings-only` (GP0016 fires).
-//!   §14    macros - `status: partial` (six-macro subset accepted).
+//! Behaviours covered:
+//!   §3.1   integer overflow wraps at 64-bit width with no panic;
+//!          `i128`/`u128` are rejected on every tier.
+//!   §7.5   no borrow check - aliasing `&mut` compiles.
+//!   §8.6   `extern "C"` is not an `unsafe` power; it is rejected.
+//!   §11.2  linking - musl-static is the Linux default, `--dynamic`
+//!          opts out.
+//!   §12    FFI is rust-bindings-only (GP0016 fires for `extern`).
+//!   §14    the implemented macro set is accepted; the rest are
+//!          rejected at parse time.
 
 #![allow(missing_docs)]
 
@@ -176,11 +169,10 @@ extern "C" fn exported(x: i32) -> i32 { x + 1 }
 
 #[test]
 fn spec_8_6_extern_inside_unsafe_block_is_still_rejected() {
-    // §8.6 used to list "Calling extern \"C\" functions" as an
-    // unsafe power; the 0.5.0 banner says that line is gone. A
-    // bare `extern "C"` block (with or without `unsafe`) must be
-    // rejected; this test pins both. The bare form fires the
-    // specific GP0016. The `unsafe`-wrapped form fires whichever
+    // §8.6: `extern "C"` is not an unsafe power. A bare `extern "C"`
+    // block (with or without `unsafe`) must be rejected; this test
+    // pins both. The bare form fires the specific GP0016. The
+    // `unsafe`-wrapped form fires whichever
     // diagnostic the parser surfaces first (today: GP0001 from the
     // `unsafe`-fn parser, after which GP0016 is reached if recovery
     // continues). The invariant we pin is "rejected" - the specific
@@ -210,11 +202,10 @@ unsafe extern "C" {
 // ---------- §14: macro subset ----------
 
 #[test]
-fn spec_14_implemented_macro_subset_accepted() {
-    // The 0.5.0 banner names exactly six format-shaped macros:
-    // println, print, eprintln, eprint, format, and panic. Each
-    // must parse and check cleanly. `vec!` is not a macro - the
-    // array literal `[...]` coerces to `Vec<T>` instead.
+fn spec_14_format_macro_subset_accepted() {
+    // The six format-shaped macros - println, print, eprintln, eprint,
+    // format, and panic - must parse and check cleanly. `vec!` is not a
+    // macro: the array literal `[...]` coerces to `Vec<T>` instead.
     let src = r#"
 fn main() {
     println!("p");
@@ -228,16 +219,41 @@ fn main() {
     }
 }
 "#;
-    let (ok, _stdout, _stderr) = run_check("spec_14_impl_macros", src);
+    let (ok, _stdout, _stderr) = run_check("spec_14_format_macros", src);
     assert!(ok);
 }
 
 #[test]
+fn spec_14_desugar_macros_accepted() {
+    // `matches!`, `todo!`, `unimplemented!`, `unreachable!`, and `dbg!`
+    // are implemented desugar macros and must parse and check cleanly.
+    let src = r#"
+fn maybe() -> i64 {
+    if false { todo!() } else if false { unimplemented!() } else { 1 }
+}
+fn main() {
+    let m = matches!(Some(1), Some(_));
+    let n = maybe();
+    let d = dbg!(n + 1);
+    let label = match d {
+        2 => "two",
+        _ => unreachable!(),
+    };
+    if m && label.len() == 0 {
+        println!("x")
+    }
+}
+"#;
+    let (ok, _stdout, stderr) = run_check("spec_14_desugar_macros", src);
+    assert!(ok, "desugar macros must check clean; stderr: {stderr}");
+}
+
+#[test]
 fn spec_14_unimplemented_macro_rejected() {
-    // The macros that remain unimplemented must still be rejected at
-    // parse time. `todo!`, `unimplemented!`, and `unreachable!` became
-    // supported desugar macros in 0.22.0, so they are no longer in this
-    // list; the rest have no desugaring and stay rejected.
+    // Macros with no implementation are rejected at parse time.
+    // `todo!`, `unimplemented!`, and `unreachable!` are supported
+    // desugar macros (covered above), so they are not in this list;
+    // the rest have no desugaring and stay rejected.
     for macro_call in [
         "assert!(true)",
         "assert_eq!(1, 1)",
@@ -247,10 +263,7 @@ fn spec_14_unimplemented_macro_rejected() {
     ] {
         let src = format!("fn main() {{ let _ = {macro_call}; }}\n");
         let (ok, _stdout, _stderr) = run_check("spec_14_rejected", &src);
-        assert!(
-            !ok,
-            "0.5.0 conformance: {macro_call} must be rejected, but `gos check` passed",
-        );
+        assert!(!ok, "{macro_call} must be rejected, but `gos check` passed");
     }
 }
 
@@ -258,12 +271,12 @@ fn spec_14_unimplemented_macro_rejected() {
 
 #[test]
 fn spec_3_1_overflow_does_not_panic() {
-    // The 0.5.0 banner says debug-mode overflow panic is
-    // `not-in-0.5.0`; release wrap is the contract. The invariant
-    // we pin here is "no panic" - the program completes. We use
-    // i64::MAX so the host-Rust arithmetic (which `gos run` uses
-    // under the bytecode VM) actually wraps rather than silently
-    // widening to a wider integer.
+    // Integer overflow wraps at 64-bit width on every tier; no build
+    // mode emits an overflow panic. The invariant we pin here is
+    // "no panic" - the program completes. We use i64::MAX so the
+    // host-Rust arithmetic (which `gos run` uses under the bytecode
+    // VM) actually wraps rather than silently widening to a wider
+    // integer.
     let src = r#"
 fn main() {
     let mut x: i64 = 9223372036854775807
@@ -276,9 +289,8 @@ fn main() {
         ok,
         "i64 overflow must not panic in `gos run`; stderr: {stderr}",
     );
-    // Wrap result must be a definite negative number; the
-    // banner does not require a specific value, just that the
-    // program completes without a debug panic.
+    // The spec does not require a specific value, only that the
+    // program completes without an overflow panic.
     assert!(
         stdout.contains('-') || !stdout.is_empty(),
         "expected wrap result, got {stdout:?}",
@@ -295,7 +307,7 @@ fn main() {
 // `--dynamic` is the opt-out.
 
 #[test]
-fn spec_11_2_banner_states_static_musl_default() {
+fn spec_11_2_states_static_musl_default() {
     let spec = std::fs::read_to_string(
         std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .ancestors()
@@ -304,21 +316,22 @@ fn spec_11_2_banner_states_static_musl_default() {
             .join("SPEC.md"),
     )
     .expect("read SPEC.md");
+    // Collapse line-wrapping so the assertion tracks the prose, not the
+    // markdown column at which it happens to break.
+    let prose: String = spec.split_whitespace().collect::<Vec<_>>().join(" ");
     assert!(
-        spec.contains("status: implemented")
-            && spec.contains("fully-static musl binary by default")
-            && spec.contains("`--dynamic`"),
-        "§11.2 banner must state the static-musl default and the --dynamic opt-out",
+        prose.contains("fully-static musl binary by default") && prose.contains("`--dynamic`"),
+        "§11.2 must state the static-musl default and the --dynamic opt-out",
     );
 }
 
-// ---------- §7.5: borrow check is not enforced in 0.5.0 ----------
+// ---------- §7.5: borrow check is not enforced ----------
 
 #[test]
 fn spec_7_5_aliased_mut_borrow_does_not_error() {
-    // §7.5 documents the scope-local exclusivity rule but the
-    // banner declares enforcement `not-in-0.5.0`. A program that
-    // would violate the rule must currently compile and run.
+    // §7.5: `&mut` is an aliasing-intent marker only; there is no
+    // exclusivity-enforcement pass. A program that would violate a
+    // Rust-style exclusivity rule must compile and run.
     let src = r#"
 fn main() {
     let mut x = 1
@@ -332,6 +345,6 @@ fn main() {
     let (ok, _stdout, _stderr) = run_check("spec_7_5_borrow", src);
     assert!(
         ok,
-        "0.5.0 does not enforce §7.5; the borrow violation must `gos check` clean",
+        "§7.5 is not enforced; the aliasing violation must `gos check` clean",
     );
 }

@@ -306,18 +306,17 @@ Consequences of the model:
 - Float → int casts saturate at i64 width with no narrow mask
   (`300.7 as u8 == 300`, `1e20 as i64 == i64::MAX`, NaN → 0).
 
-> **Conformance (0.5.0)** `status: not-in-0.5.0` for debug-mode overflow
-> panic. No tier emits overflow traps; arithmetic wraps at 64-bit width
-> in every build mode.
-> The method forms `checked_add`, `wrapping_add`, `saturating_add`,
-> `overflowing_add` and friends are available for explicit control and
-> are the portable form today.
->
-> **Conformance** `i128` and `u128` are not yet supported on any
-> tier. The checker rejects every spelling of these types at the
-> declaration site with a compile-time error (`GT0014`), so `gos
-> run`, the JIT, and `gos build` all fail identically - there is no
-> interpreter-only acceptance and no silent 64-bit narrowing.
+No tier emits overflow traps: integer arithmetic wraps at 64-bit width
+in every build mode, and there is no debug-mode overflow panic. The
+method forms `checked_add`, `wrapping_add`, `saturating_add`,
+`overflowing_add` and friends are the portable way to request explicit
+overflow behaviour.
+
+`i128` and `u128` are not supported on any tier. The checker rejects
+every spelling of these types at the declaration site with a
+compile-time error (`GT0014`), so `gos run`, the JIT, and `gos build`
+all fail identically - there is no interpreter-only acceptance and no
+silent 64-bit narrowing.
 
 Silent surprise is never part of the contract - the behaviour is
 explicit two's-complement arithmetic at 64-bit width, not
@@ -633,13 +632,17 @@ parameter and read `xs.len()`, the const may appear in the return type
 `[T; N]` argument; it is not yet usable as a bare value expression in
 the body or as a repeat count (`[0; N]`).
 
-> **Conformance (0.5.0)** `status: scaffolded` for non-scalar generic
-> arguments. Monomorphisation specialises each `(def, substs)`
-> pair through a flat-i64-per-slot ABI; aggregates (struct, tuple,
-> array) are passed as heap-allocated pointers under this ABI. Generic
-> parameters instantiated with closures or unresolved type aliases are
-> rejected at MIR time (`GM0001`). Layout-driven specialisation that
-> would lift this restriction is not yet implemented.
+Monomorphisation specialises each `(def, substs)` pair independently
+and runs identically on the bytecode VM, the Cranelift JIT, and the
+LLVM AOT tiers. A generic parameter may be instantiated with a scalar
+or with an aggregate - a struct, tuple, fixed-size array, `Vec<T>`,
+`String`, or `f64` - and the aggregate is threaded by value through the
+specialisation, including across recursive calls. Generic struct types
+(`struct Wrapper<T> { value: T }`) and their `impl<T>` methods
+specialise per instantiation on every tier. Bounds are single-bound
+static dispatch: there is no `dyn Trait`, no operator-trait or
+associated-type bound, and no supertrait method inheritance through the
+bound.
 
 ### 3.11 Dynamic dispatch
 
@@ -1413,13 +1416,12 @@ stack-allocated (escape analysis). The escape rules are:
 
 ### 7.2 Automatic memory management
 
-> **Conformance (0.5.0)** `status: implemented`. Shipped in 0.12.0:
-> deterministic reference counting for heap enums and runtime
-> containers, drop-pass reclamation for value aggregates, weak
-> references, an on-demand cycle collector
-> (`runtime::collect_cycles()`), and `arena { }` regions - on every
-> tier. The earlier tri-colour tracing collector is removed; there
-> is no pacer, no write barrier, and no GC pause.
+Memory management is deterministic reference counting for heap enums
+and runtime containers, drop-pass reclamation for value aggregates,
+weak references, an on-demand cycle collector
+(`runtime::collect_cycles()`), and `arena { }` regions - on every tier.
+There is no tracing collector: no pacer, no write barrier, and no GC
+pause.
 
 Memory is reclaimed deterministically, without a tracing collector:
 
@@ -1477,14 +1479,16 @@ The memory model is the Go 1.19 memory model verbatim:
 - Atomics via `std::sync::atomic` (sequentially consistent by default;
   relaxed/acquire/release available).
 
-> **Conformance (0.5.0)** `status: scaffolded`. The runtime race
-> detector (`gossamer-runtime::race`) records synchronisation events
-> at channel handoff, mutex unlock, and WaitGroup done. The
-> `Once::call_once` happens-before edge and the atomic-load/store
-> happens-before propagation are not yet plumbed; the codegen does
-> not yet emit `gos_rt_race_access` around heap loads/stores. The
-> `--race` flag and a full happens-before instrumentation are tracked
-> as a follow-up to the codegen-shared lowering work.
+A runtime data-race detector ships behind `gos test --race`. When it
+is enabled, the LLVM AOT codegen instruments heap loads and stores with
+`gos_rt_race_access` calls and the runtime (`gossamer-runtime::race`)
+maintains a per-goroutine vector-clock happens-before model, recording
+synchronisation edges at channel handoff, mutex unlock, and WaitGroup
+done. Any access pair left unordered by a happens-before edge is
+reported and fails the test run. It is a testing instrument rather than
+an always-on runtime guard, and it sees the compiled-tier accesses the
+codegen instruments; the `Once::call_once` and atomic-load/store
+happens-before edges are not yet folded into the model.
 
 ### 7.5 References and aliasing (no borrow checker)
 
@@ -1510,12 +1514,12 @@ collection while iterating it, self-aliasing, and the other patterns a
 borrow checker would reject are the programmer's responsibility today;
 they are not diagnosed.
 
-> **Conformance (0.5.0)** `status: not-in-0.5.0`. The scope-local
-> borrow check described in §7.5.1-7.5.4 is the v1 target. `&mut T`
-> is parsed and type-checked today, but the exclusivity enforcement
-> pass has not been implemented. Programs that would violate the
-> rule compile and run; the check is deferred to a release that
-> ships the canonical codegen pipeline.
+There is no exclusivity-enforcement pass. `&mut T` is parsed and
+type-checked, but no compiler pass rejects aliasing: a program that
+would violate a Rust-style exclusivity rule compiles and runs on every
+tier. A scope-local exclusivity check (many `&T`, or one `&mut T`,
+never both) remains a candidate for a future release (§7.5.2), and
+nothing in this specification depends on it.
 
 #### 7.5.1 What this means in practice
 
@@ -1578,9 +1582,9 @@ silently weaken the local check. Pass the underlying value (managed
 reference, or `Copy`) instead.
 
 Cross-goroutine data races on shared mutable state are possible - the
-same trade-off Go makes. Detect them at runtime with `gos build
---race` (post-v1 tooling, tracked in the plan) and prevent them by
-communicating through channels rather than sharing state.
+same trade-off Go makes. Detect them at runtime with `gos test --race`
+(§7.4) and prevent them by communicating through channels rather than
+sharing state.
 
 The scheduler is an M:N work-stealing scheduler:
 
@@ -1672,10 +1676,9 @@ Rust source compatibility and as a forward-compatible marker.
 `unsafe` never disables automatic memory management or affects memory
 reclamation.
 
-> **Conformance (0.5.0)** `status: implemented`. Source-level
-> `extern "C"` items are **not** an `unsafe` power - they are rejected
-> at parse time (`GP0016`). The sole FFI surface is the
-> `gossamer-binding` ABI. See §12.
+Source-level `extern "C"` items are **not** an `unsafe` power - they
+are rejected at parse time (`GP0016`). The sole FFI surface is the
+`gossamer-binding` ABI. See §12.
 
 ---
 
@@ -1984,14 +1987,11 @@ transformation when the chain doesn't return from the enclosing fn.
 
 ### 11.1 Targets
 
-> **Conformance (0.5.0)** `status: partial`. The table below is the
-> v1 target. CI exercises `linux-x86_64`, `linux-aarch64`,
-> `darwin-x86_64`, `darwin-aarch64`, and `windows-x86_64`.
-> `linux-riscv64`, `freebsd-x86_64`, and `wasm32-wasi` are listed
-> aspirationally; the toolchain does not yet produce binaries for these
-> targets. The `SmolStr` pointer-tag machinery in
-> `gossamer-interp` is gated to `x86_64` and `aarch64` and falls back
-> to plain `String` elsewhere.
+The table below is the supported OS x Arch matrix. CI exercises
+`linux-x86_64`, `linux-aarch64`, `darwin-x86_64`, `darwin-aarch64`, and
+`windows-x86_64`. The `linux-riscv64`, `freebsd-x86_64`, and
+`wasm32-wasi` rows are registered in the target table as groundwork but
+do not yet produce shippable native binaries.
 
 | OS × Arch | Backend |
 |---|---|
@@ -2013,11 +2013,10 @@ deployment experience to `CGO_ENABLED=0` Go.
 Dynamic linking for FFI is **not** available through a source-level
 syntax. See §12 for the supported FFI mechanism (`[rust-bindings]`).
 
-> **Conformance (0.5.0)** `status: implemented`. On Linux, `gos build
-> --release` produces a fully-static musl binary by default when the
-> `x86_64-unknown-linux-musl` rustup target is installed; pass
-> `--dynamic` to force the legacy dynamic-glibc link path. The
-> `--target` flag selects a cross-compilation triple.
+On Linux, `gos build --release` produces a fully-static musl binary by
+default when the `x86_64-unknown-linux-musl` rustup target is
+installed; pass `--dynamic` to force the dynamic-glibc link path. The
+`--target` flag selects a cross-compilation triple.
 
 ### 11.3 Compile modes
 
@@ -2027,16 +2026,14 @@ syntax. See §12 for the supported FFI mechanism (`[rust-bindings]`).
 | Debug build | `gos build` | LLVM | `llc -O0` (no `opt` pre-pass) | Sub-second for small programs | ~2x slower than release |
 | Release build | `gos build --release` | LLVM | `opt -O3 \| llc -O3 -mcpu=native -mattr=+prefer-256-bit` | Seconds for thousands of LoC | Vectorised, inlined |
 
-> **Conformance (0.5.0)** `status: implemented`. LLVM is the
-> canonical native backend; the Cranelift code path is reserved
-> for the in-process JIT inside `gossamer-interp` and is not
-> reachable from `gos build`. Any MIR shape the LLVM lowerer
-> cannot handle is a hard `gos build` failure rather than a
-> silent per-function Cranelift fallback. The register-based
-> bytecode VM is the sole `gos run` / `gos test` engine and lowers
-> every construct natively; the tree-walker interpreter and its
-> `--tree-walker` flag have been removed. VM correctness is pinned by
-> the tier-parity suite and the VM-vs-LLVM-AOT differential.
+LLVM is the canonical native backend; the Cranelift code path is
+reserved for the in-process JIT inside `gossamer-interp` and is not
+reachable from `gos build`. Any MIR shape the LLVM lowerer cannot
+handle is a hard `gos build` failure rather than a silent per-function
+Cranelift fallback. The register-based bytecode VM is the sole `gos
+run` / `gos test` engine and lowers every construct natively; there is
+no tree-walker interpreter. VM correctness is pinned by the tier-parity
+suite and the VM-vs-LLVM-AOT differential.
 
 ### 11.4 Cross-compilation
 
@@ -2052,12 +2049,11 @@ the toolchain.
 
 ## 12. FFI
 
-> **Conformance (0.5.0)** `status: rust-bindings-only`. The
-> source-level `extern "C" { ... }` and `#[no_mangle] extern "C" fn`
-> item forms are **rejected at parse time** with diagnostic code
-> `GP0016`. Gossamer has exactly one FFI surface: the
-> `[rust-bindings]` section of `project.toml`, consumed by the
-> `gossamer-binding` crate. The `extern` keyword remains reserved.
+The source-level `extern "C" { ... }` and `#[no_mangle] extern "C" fn`
+item forms are **rejected at parse time** with diagnostic code
+`GP0016`. Gossamer has exactly one FFI surface: the `[rust-bindings]`
+section of `project.toml`, consumed by the `gossamer-binding` crate.
+The `extern` keyword remains reserved.
 
 Foreign code is brought into a Gossamer project by declaring a Rust
 crate under `[rust-bindings]` in `project.toml`. The crate registers
@@ -2143,12 +2139,12 @@ build-time `regex!` / `sql!` / `codegen!`.
 | `eprint!("…", …)` | `()` | stderr, no newline |
 | `panic!("…", …)` | `!` | unwinds with the rendered message |
 
-**Every other `name!(...)` is a parse error** (`GP0001`), with a
-diagnostic steering the user to the plain-function form. This includes
-the Rust macros a newcomer reaches for: there is no `vec!`, `map!`,
-`set!`, `write!`, `writeln!`, `assert!`, `assert_eq!`, `debug_assert!`,
-`unreachable!`, `todo!`, `unimplemented!`, `include_str!`,
-`include_bytes!`, or `env!`.
+Beyond the six format macros and the desugar / build-time macros
+listed above, **every other `name!(...)` is a parse error** (`GP0001`),
+with a diagnostic steering the user to the plain-function form. This
+includes the Rust macros a newcomer reaches for: there is no `vec!`,
+`map!`, `set!`, `write!`, `writeln!`, `assert!`, `assert_eq!`,
+`debug_assert!`, `include_str!`, `include_bytes!`, or `env!`.
 
 - Collection literals use the array form `[...]` / `[v; n]`, which
   coerces to `Vec<T>` (§3.3) - there is no `vec!`.
@@ -2174,15 +2170,14 @@ generate per-type code, and the `regex!` / `sql!` macros validate their
 argument at build time, failing the build on malformed input. See the
 [`comptime` language page](docs_src/language/comptime.md).
 
-> **Conformance (0.22.0)** `status: partial`. The toolchain implements
-> the six format-shaped macros (`println!`, `print!`, `eprintln!`,
-> `eprint!`, `format!`, `panic!`), the desugar macros (`matches!`,
-> `todo!`, `unimplemented!`, `unreachable!`, `dbg!`), and the
-> build-time `regex!` / `sql!` / `codegen!`. Every other `name!(...)`
-> form - including `vec!`, `write!`, `writeln!`, `map!`, `set!`,
-> `assert!`, `assert_eq!`, `debug_assert!`, `include_str!`,
-> `include_bytes!`, and `env!` - is rejected at parse time (`GP0001`).
-> User-defined macros remain out of scope.
+The toolchain implements the six format-shaped macros (`println!`,
+`print!`, `eprintln!`, `eprint!`, `format!`, `panic!`), the desugar
+macros (`matches!`, `todo!`, `unimplemented!`, `unreachable!`, `dbg!`),
+and the build-time `regex!` / `sql!` / `codegen!`. Every other
+`name!(...)` form - including `vec!`, `write!`, `writeln!`, `map!`,
+`set!`, `assert!`, `assert_eq!`, `debug_assert!`, `include_str!`,
+`include_bytes!`, and `env!` - is rejected at parse time (`GP0001`).
+User-defined macros are out of scope.
 
 ---
 

@@ -1309,6 +1309,7 @@ fn builtin_flag_define(args: &[Value]) -> RuntimeResult<Value> {
 )]
 fn install_method_helpers(globals: &mut Vec<(&'static str, Value)>) {
     globals.push(("len", builtin("len", builtin_len)));
+    globals.push(("is_empty", builtin("is_empty", builtin_is_empty)));
     globals.push(("to_string", builtin("to_string", builtin_to_string)));
     globals.push(("split", builtin("split", builtin_split)));
     globals.push(("trim", builtin("trim", builtin_trim)));
@@ -4978,6 +4979,25 @@ fn builtin_len(args: &[Value]) -> RuntimeResult<Value> {
         _ => return Ok(Value::Int(0)),
     };
     Ok(Value::Int(i64::try_from(count).unwrap_or(i64::MAX)))
+}
+
+/// `x.is_empty()` for a `String` / `Vec` / `[T]` / tuple receiver - the
+/// bare-name method that mirrors the compiled tier's `gos_rt_len_is_zero`.
+/// Maps dispatch through their qualified `HashMap::is_empty`, but this also
+/// handles them so a bare-name fallthrough stays correct.
+fn builtin_is_empty(args: &[Value]) -> RuntimeResult<Value> {
+    let empty = match args.first() {
+        Some(Value::String(s)) => s.is_empty(),
+        Some(Value::Array(parts)) => parts.is_empty(),
+        Some(Value::Tuple(parts)) => parts.is_empty(),
+        Some(Value::IntArray(data)) => data.is_empty(),
+        Some(Value::FloatVec(data)) => data.is_empty(),
+        Some(Value::Map(m)) => m.lock().is_empty(),
+        Some(Value::IntMap(m)) => m.lock().is_empty(),
+        Some(Value::StrIntMap(m)) => m.lock().is_empty(),
+        _ => true,
+    };
+    Ok(Value::Bool(empty))
 }
 
 fn builtin_to_string(args: &[Value]) -> RuntimeResult<Value> {

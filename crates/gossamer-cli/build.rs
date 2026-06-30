@@ -41,6 +41,10 @@ const KNOWN_UNUSED_RUNTIME_SYMBOLS: &[&str] = &[
     // Intentionally never called from generated code: a debug-only
     // helper used by manual `gdb`/`lldb` sessions.
     "gos_rt_result_dbg",
+    // Strong-count probe used by the in-process JIT trampoline
+    // (`gossamer-interp`'s `free_native_enum`) to reclaim a uniquely-owned
+    // returned enum DOM fully; called from Rust, never emitted by codegen.
+    "gos_rt_rc_strong_count",
     // Setup function called directly from Rust (gossamer-interp's
     // `set_runtime_program_name`), not from generated Gossamer code.
     "gos_rt_set_program_name",

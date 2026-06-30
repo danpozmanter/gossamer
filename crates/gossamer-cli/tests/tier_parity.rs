@@ -171,7 +171,17 @@ const SPECS: &[Spec] = &[
     },
     spec("examples/line_count.gos"),
     spec("examples/linked_list.gos"),
-    spec("examples/list_dir.gos"),
+    // Lists the live working directory and prints each entry's mtime, so the
+    // output depends on filesystem state that differs between the sequential
+    // per-tier runs (running `gos` writes a `.gos-cache`, mtimes advance) -
+    // it cannot be a stable cross-tier stdout comparison. Still runs on the VM
+    // for the crash check; only the parity diff is skipped.
+    Spec {
+        skip_parity: Some(
+            "lists the live cwd with per-entry mtimes; output varies run-to-run and between tiers",
+        ),
+        ..spec("examples/list_dir.gos")
+    },
     spec("examples/mime_demo.gos"),
     spec("examples/netip_demo.gos"),
     spec("examples/os_user_demo.gos"),
@@ -246,6 +256,13 @@ const SPECS: &[Spec] = &[
     // Byte literals compare against the integer byte index without a cast
     // (`s[i] == b'>'`); a byte literal is an `Int` value on every tier.
     spec("feature-testing-examples/byte_literal_compare.gos"),
+    // Move-on-last-use: draining a uniquely-owned consumable scrutinee in a
+    // guard-free `match` must be suppressed for an arm whose refutable
+    // sub-pattern (a literal) can fail after a field is emptied and fall
+    // through to a later arm that re-reads the same variant. Also covers the
+    // all-binding drain shape and the for-loop element drain over a rebuilt
+    // recursive enum. Bit-identical across tiers.
+    spec("feature-testing-examples/move_on_last_use_match.gos"),
     // `from_json` infers its type argument from the binding annotation, so the
     // turbofish is optional; the decode is identical on every tier.
     spec("feature-testing-examples/from_json_infer.gos"),
@@ -944,6 +961,37 @@ const SPECS: &[Spec] = &[
     // field access lowers to a real Field projection instead of falling
     // through to the json accessor.
     spec("feature-testing-examples/cross_module_struct_fields.gos"),
+    // Struct-`self` method JIT (Lever 1a): an all-scalar user struct whose
+    // `&mut self` mutator and `&self` reader run as in-process Cranelift JIT
+    // code. The struct crosses the VM<->native boundary as a flat field-slot
+    // block; a `&mut self` call's in-place field mutations are written back
+    // into the caller's binding. Mixed i64/f64/bool/char fields, a hot loop
+    // (so the methods promote), and `&self` recursion - bit-identical across
+    // the bytecode VM, Cranelift JIT, and LLVM AOT tiers.
+    spec("feature-testing-examples/struct_self_jit.gos"),
+    // `Vec<Vec<i64>>` / `[[i64]]` crosses the VM<->native boundary as the AOT
+    // nested layout (outer vec of inner `GosVec<i64>` pointers), marshalled
+    // once per source `Arc` and reused via the identity cache across repeated
+    // calls. A `&[[i64]]` function called in a hot loop promotes to Cranelift
+    // JIT and reads `g[i]` + iterates inner vecs - the graph-bfs shape.
+    // Bit-identical across the bytecode VM, Cranelift JIT, and LLVM AOT tiers.
+    spec("feature-testing-examples/vec_vec_i64_jit.gos"),
+    // A recursive enum (`Node`) with a `Vec<Node>` (`List`) and a
+    // `Vec<(String, Node)>` (`Map`) variant: a `parse`-like
+    // `Result<Node, _>`-returning builder called in a hot loop promotes to the
+    // Cranelift JIT, where its String-in / Result<enum>-out boundary marshals
+    // once each. The native body builds nested `List` / `Map` DOMs (heap enum
+    // nodes, `GosVec` fields, AGGR_OWNED tuple vecs) which the trampoline reads
+    // back into a `Value::Variant` tree and frees - the json-serde parse shape.
+    // Bit-identical across the bytecode VM, Cranelift JIT, and LLVM AOT tiers.
+    spec("feature-testing-examples/json_parse_jit.gos"),
+    // Recursive heap enum crossing the JIT boundary in BOTH directions: a
+    // by-value `transform(Node) -> Node` (enum in, freshly built enum out,
+    // with `Vec<Node>` and `Vec<(String, Node)>` variant fields marshalled
+    // each way) and a `serialize_into(&Node, &mut String)` that writes the
+    // string back through the `&mut` cell. The recursive builders promote to
+    // the Cranelift JIT; output is bit-identical across the VM, JIT, and AOT.
+    spec("feature-testing-examples/enum_transform_jit.gos"),
 ];
 
 #[derive(Debug)]

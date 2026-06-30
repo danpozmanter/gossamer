@@ -1901,6 +1901,17 @@ pub enum NativeFieldKind {
     /// Another supported heap enum; index into the program's shape
     /// table.
     Enum(u32),
+    /// A `Vec<E>` field where `E` is a supported heap enum: the payload
+    /// slot holds a `*mut GosVec` of 8-byte PRIMITIVE slots, each a native
+    /// enum pointer of the shape-table index carried here (the AOT layout a
+    /// `JsonVal::Arr(Vec<JsonVal>)` variant uses).
+    VecEnum(u32),
+    /// A `Vec<(String, E)>` field where `E` is a supported heap enum: the
+    /// payload slot holds a `*mut GosVec` of 16-byte PRIMITIVE slots laid out
+    /// `[*c_char @ +0][native-enum ptr @ +8]` (the AOT layout a
+    /// `JsonVal::Obj(Vec<(String, JsonVal)>)` variant uses). The index is the
+    /// element enum's shape-table index.
+    VecStrEnumTuple(u32),
 }
 
 /// One variant of a native enum shape.
@@ -2053,7 +2064,96 @@ pub fn native_enum_field(owner: &NativeEnumOwner, idx: usize) -> Value {
                 shape,
             }))
         }
+        NativeFieldKind::VecEnum(eidx) => native_vec_enum_to_array(word, *eidx),
+        NativeFieldKind::VecStrEnumTuple(eidx) => native_vec_str_enum_to_array(word, *eidx),
     }
+}
+
+/// Reads a native `Vec<E>` payload word (a `*mut GosVec` of 8-byte native
+/// enum pointer slots) into a `Value::Array` of `Value::NativeEnum` children,
+/// each retained so the array owns its own reference. An empty / null vec
+/// yields an empty array.
+#[must_use]
+fn native_vec_enum_to_array(word: i64, eidx: u32) -> Value {
+    if word == 0 {
+        return Value::Array(Arc::new(Vec::new()));
+    }
+    let Some(eshape) = native_shape(eidx) else {
+        return Value::Array(Arc::new(Vec::new()));
+    };
+    let v = word as *const gossamer_runtime::c_abi::vec::GosVec;
+    // SAFETY: `v` is a live `GosVec` of 8-byte pointer slots (the AOT
+    // `Vec<Enum>` layout); `len`/`get_i64` read initialised in-bounds slots.
+    let len = unsafe { gossamer_runtime::c_abi::gos_rt_vec_len(v) }.max(0);
+    let mut out = Vec::with_capacity(len as usize);
+    for i in 0..len {
+        let elem = unsafe { gossamer_runtime::c_abi::gos_rt_vec_get_i64(v, i) };
+        if (elem as usize) & !7 == 0 {
+            out.push(Value::Unit);
+            continue;
+        }
+        // SAFETY: co-own the child (the parent vec keeps its own share); the
+        // returned `NativeEnumOwner` releases it on drop.
+        unsafe { gossamer_runtime::c_abi::gos_rt_rc_retain(elem as usize as *mut u8) };
+        out.push(Value::NativeEnum(Arc::new(NativeEnumOwner {
+            ptr: elem as usize,
+            shape: eshape,
+        })));
+    }
+    Value::Array(Arc::new(out))
+}
+
+/// Reads a native `Vec<(String, E)>` payload word (a `*mut GosVec` of 16-byte
+/// `[*c_char][native-enum ptr]` slots) into a `Value::Array` of 2-tuples
+/// `(Value::String, Value::NativeEnum)`. Strings are copied; enum children are
+/// retained so the array owns its own reference.
+#[must_use]
+fn native_vec_str_enum_to_array(word: i64, eidx: u32) -> Value {
+    if word == 0 {
+        return Value::Array(Arc::new(Vec::new()));
+    }
+    let Some(eshape) = native_shape(eidx) else {
+        return Value::Array(Arc::new(Vec::new()));
+    };
+    let v = word as *const gossamer_runtime::c_abi::vec::GosVec;
+    // SAFETY: `v` is a live `GosVec` of 16-byte slots (the AOT
+    // `Vec<(String, Enum)>` layout); `len`/`get_ptr` read in-bounds slots.
+    let len = unsafe { gossamer_runtime::c_abi::gos_rt_vec_len(v) }.max(0);
+    let mut out = Vec::with_capacity(len as usize);
+    for i in 0..len {
+        let p = unsafe { gossamer_runtime::c_abi::gos_rt_vec_get_ptr(v, i) };
+        if p.is_null() {
+            out.push(Value::Tuple(Arc::from(vec![
+                Value::String(SmolStr::default()),
+                Value::Unit,
+            ])));
+            continue;
+        }
+        // SAFETY: each 16-byte slot holds a cstring word at +0 and a native
+        // enum pointer word at +8.
+        let key_word = unsafe { p.cast::<i64>().read_unaligned() };
+        let val_word = unsafe { p.add(8).cast::<i64>().read_unaligned() };
+        let key = if key_word == 0 {
+            Value::String(SmolStr::default())
+        } else {
+            // SAFETY: cstring words point at NUL-terminated tagged bodies.
+            let c = unsafe { std::ffi::CStr::from_ptr(key_word as *const std::os::raw::c_char) };
+            Value::String(SmolStr::from(c.to_string_lossy().as_ref()))
+        };
+        let val = if (val_word as usize) & !7 == 0 {
+            Value::Unit
+        } else {
+            // SAFETY: co-own the child enum; the tuple's `NativeEnumOwner`
+            // releases it on drop.
+            unsafe { gossamer_runtime::c_abi::gos_rt_rc_retain(val_word as usize as *mut u8) };
+            Value::NativeEnum(Arc::new(NativeEnumOwner {
+                ptr: val_word as usize,
+                shape: eshape,
+            }))
+        };
+        out.push(Value::Tuple(Arc::from(vec![key, val])));
+    }
+    Value::Array(Arc::new(out))
 }
 
 /// Deep-converts a native enum value into the boxed
@@ -2066,16 +2166,85 @@ pub fn native_enum_to_variant(owner: &NativeEnumOwner) -> Value {
         return Value::Unit;
     };
     let fields: Vec<Value> = (0..variant.fields.len())
-        .map(|i| {
-            let v = native_enum_field(owner, i);
-            if let Value::NativeEnum(child) = &v {
-                native_enum_to_variant(child)
-            } else {
-                v
-            }
-        })
+        .map(|i| deep_native_value(native_enum_field(owner, i)))
         .collect();
     Value::variant(variant.name, fields)
+}
+
+/// Deep-converts any `Value::NativeEnum` reachable through a value (directly,
+/// or inside an `Array` / `Tuple` produced by a `Vec<Enum>` / `Vec<(String,
+/// Enum)>` field) into the boxed `Value::Variant` representation.
+fn deep_native_value(v: Value) -> Value {
+    match v {
+        Value::NativeEnum(child) => native_enum_to_variant(&child),
+        Value::Array(arc) => Value::Array(Arc::new(
+            arc.iter().cloned().map(deep_native_value).collect(),
+        )),
+        Value::Tuple(arc) => Value::Tuple(Arc::from(
+            arc.iter()
+                .cloned()
+                .map(deep_native_value)
+                .collect::<Vec<_>>(),
+        )),
+        other => other,
+    }
+}
+
+// ---------------------------------------------------------------
+// Native struct shapes (JIT interop).
+// ---------------------------------------------------------------
+
+/// Layout description of a user struct whose values may cross the JIT
+/// boundary. Built once per program load from the HIR and leaked
+/// (`&'static`). Unlike a heap enum, a struct in the compiled tier is a
+/// flat field-slot block with NO RC header: field `i` lives at byte
+/// offset `i * 8` and `&self` / `&mut self` point at field 0.
+///
+/// Only all-scalar structs (every field `I64` / `F64` / `Bool` / `Char`,
+/// one 8-byte slot each) are registered: those marshal in O(field count)
+/// with no heap children, so the trampoline can build / write back / free
+/// the block with no reference-counting and no aliasing surface.
+#[derive(Debug)]
+pub struct NativeStructShape {
+    /// Struct name (interned, matches `StructInner::name`).
+    pub struct_name: &'static str,
+    /// Index of this shape in the program's struct-shape table.
+    pub index: u32,
+    /// Field name + scalar kind, in declaration order. Field `i` is at
+    /// byte offset `i * 8` in the native flat block.
+    pub fields: Vec<(&'static str, NativeFieldKind)>,
+}
+
+/// Process-global table of registered native struct shapes. Append-only
+/// across program loads, mirroring [`NATIVE_SHAPES`].
+static NATIVE_STRUCT_SHAPES: std::sync::LazyLock<
+    parking_lot::RwLock<Vec<&'static NativeStructShape>>,
+> = std::sync::LazyLock::new(|| parking_lot::RwLock::new(Vec::new()));
+
+/// Atomically reserves a contiguous block of struct-shape indices and
+/// registers the shapes `build` produces under them. Same contract as
+/// [`register_native_shapes`].
+pub fn register_native_struct_shapes<R>(
+    build: impl FnOnce(u32) -> (Vec<&'static NativeStructShape>, R),
+) -> R {
+    let mut t = NATIVE_STRUCT_SHAPES.write();
+    let base = u32::try_from(t.len()).unwrap_or(0);
+    let (shapes, result) = build(base);
+    for (offset, shape) in shapes.into_iter().enumerate() {
+        debug_assert_eq!(
+            shape.index,
+            base + u32::try_from(offset).unwrap_or(0),
+            "struct shape table index drift",
+        );
+        t.push(shape);
+    }
+    result
+}
+
+/// Looks up a registered struct shape by global index.
+#[must_use]
+pub fn native_struct_shape(idx: u32) -> Option<&'static NativeStructShape> {
+    NATIVE_STRUCT_SHAPES.read().get(idx as usize).copied()
 }
 
 #[cfg(test)]

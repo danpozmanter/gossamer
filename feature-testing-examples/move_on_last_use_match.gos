@@ -1,0 +1,81 @@
+// Move-on-last-use draining must stay correct when a guard-free `match`
+// on a uniquely-owned, consumable scrutinee has an EARLIER arm whose
+// refutable sub-pattern (a literal) fails AFTER a field would be drained,
+// falling through to a LATER arm that re-reads the same variant. The
+// drain must be suppressed for the refutable arm so the later arm sees
+// the intact payload. Output is bit-identical across tiers.
+
+enum E {
+    Wrap(i64),
+    Pair(i64, i64),
+}
+
+// Single refutable field, fresh unique scrutinee bound to a local.
+fn single(e: E) -> i64 {
+    match e {
+        E::Wrap(0) => 100,
+        E::Wrap(n) => n + 1,
+        E::Pair(a, b) => a + b,
+    }
+}
+
+// Two fields, first-field literal refutable in the earlier arm.
+fn two(e: E) -> i64 {
+    match e {
+        E::Pair(1, b) => b,
+        E::Pair(a, b) => a * 100 + b,
+        E::Wrap(n) => n,
+    }
+}
+
+// A guard-free all-binding match (the shape that DOES drain) over a
+// recursively rebuilt enum, exercising the for-loop drain path too.
+enum Tree {
+    Leaf(i64),
+    Node(Vec<Tree>),
+}
+
+fn bump(t: Tree) -> Tree {
+    match t {
+        Tree::Leaf(n) => Tree::Leaf(n + 1),
+        Tree::Node(kids) => {
+            let mut out: Vec<Tree> = []
+            for k in kids {
+                out.push(bump(k))
+            }
+            Tree::Node(out)
+        }
+    }
+}
+
+fn total(t: &Tree) -> i64 {
+    match t {
+        Tree::Leaf(n) => *n,
+        Tree::Node(kids) => {
+            let mut sum: i64 = 0
+            for k in kids {
+                sum += total(k)
+            }
+            sum
+        }
+    }
+}
+
+fn main() {
+    let a = single(E::Wrap(5))
+    let b = single(E::Wrap(0))
+    let c = single(E::Pair(3, 4))
+    let d = two(E::Pair(9, 7))
+    let e = two(E::Pair(1, 42))
+    let f = two(E::Wrap(11))
+
+    let tree = Tree::Node([
+        Tree::Leaf(1),
+        Tree::Node([Tree::Leaf(2), Tree::Leaf(3)]),
+        Tree::Leaf(4),
+    ])
+    let bumped = bump(tree)
+    let s = total(&bumped)
+
+    println!("{} {} {} {} {} {} {}", a, b, c, d, e, f, s)
+}
