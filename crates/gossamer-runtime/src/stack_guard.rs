@@ -21,6 +21,12 @@
 //! `SetUnhandledExceptionFilter`, which fires on
 //! `EXCEPTION_STACK_OVERFLOW` from within a 64 KiB reserved tail
 //! that the kernel keeps available for the filter to execute on.
+//! Hard CPU faults (access violations) inside JIT-compiled code are
+//! named by a first-chance vectored exception handler instead: JIT
+//! code carries no Windows unwind metadata, so the SEH stack walk
+//! fails before the unhandled filter is reached, but a vectored
+//! handler runs before any dispatch and reports the faulting body,
+//! fault address, and instruction pointer.
 //!
 //! Every entry point in this module is async-signal-safe: the
 //! Unix handler touches only the `libc::write` syscall, `itoa` on
@@ -481,10 +487,15 @@ mod unix {
 #[cfg(windows)]
 mod windows {
     use std::sync::Once;
+    use std::sync::atomic::{AtomicBool, Ordering};
 
-    use windows_sys::Win32::Foundation::EXCEPTION_STACK_OVERFLOW;
+    use windows_sys::Win32::Foundation::{
+        EXCEPTION_ACCESS_VIOLATION, EXCEPTION_ILLEGAL_INSTRUCTION, EXCEPTION_IN_PAGE_ERROR,
+        EXCEPTION_INT_DIVIDE_BY_ZERO, EXCEPTION_STACK_OVERFLOW,
+    };
     use windows_sys::Win32::System::Diagnostics::Debug::{
-        EXCEPTION_CONTINUE_SEARCH, EXCEPTION_POINTERS, SetUnhandledExceptionFilter,
+        AddVectoredExceptionHandler, EXCEPTION_CONTINUE_SEARCH, EXCEPTION_POINTERS,
+        SetUnhandledExceptionFilter,
     };
     use windows_sys::Win32::System::Threading::SetThreadStackGuarantee;
 
@@ -494,6 +505,11 @@ mod windows {
     const STACK_GUARANTEE_BYTES: u32 = 64 * 1024;
 
     static FILTER_ONCE: Once = Once::new();
+    static VEH_ONCE: Once = Once::new();
+    /// Set once any handler has rendered the fault report, so the
+    /// first-chance vectored handler and the last-resort unhandled
+    /// filter never double-print the same crash.
+    static FAULT_REPORTED: AtomicBool = AtomicBool::new(false);
 
     pub(super) fn install() {
         let mut guarantee = STACK_GUARANTEE_BYTES;
@@ -509,6 +525,83 @@ mod windows {
                 SetUnhandledExceptionFilter(Some(handler));
             }
         });
+        VEH_ONCE.call_once(|| {
+            // A vectored handler is invoked first-chance, before any
+            // frame-based SEH dispatch and stack unwind. JIT-compiled
+            // code carries no Windows unwind metadata (no
+            // `RUNTIME_FUNCTION` registration), so a fault inside it
+            // makes `RtlDispatchException`'s stack walk fail before the
+            // unhandled-exception filter is ever reached - which is why
+            // a hard fault in a JIT body otherwise terminates with an
+            // opaque exit code and no diagnostic. The vectored handler
+            // runs regardless of unwind data and cannot be displaced by
+            // a later `SetUnhandledExceptionFilter` caller, so it is the
+            // reliable place to name the faulting body.
+            // SAFETY: registering a process-wide vectored handler is
+            // documented safe from any thread; `first = 1` runs it
+            // ahead of any previously registered vectored handler.
+            unsafe {
+                AddVectoredExceptionHandler(1, Some(vectored_handler));
+            }
+        });
+    }
+
+    /// First-chance vectored handler. Names the JIT body (and the fault
+    /// code / address / instruction pointer) for a hard CPU fault, then
+    /// lets the exception continue so the process still terminates with
+    /// its original code. Stack overflow is deferred to the unhandled
+    /// filter, which runs in the reserved tail; a vectored handler would
+    /// execute on the already-exhausted stack.
+    unsafe extern "system" fn vectored_handler(info: *mut EXCEPTION_POINTERS) -> i32 {
+        if info.is_null() {
+            return EXCEPTION_CONTINUE_SEARCH;
+        }
+        // SAFETY: the kernel populates `ExceptionRecord` for a delivered
+        // exception; null is guarded above.
+        let record = unsafe { (*info).ExceptionRecord };
+        if record.is_null() {
+            return EXCEPTION_CONTINUE_SEARCH;
+        }
+        let code = unsafe { (*record).ExceptionCode };
+        // Only hard CPU faults are reported. Rust panics, C++ exceptions
+        // and breakpoints are also first-chance exceptions but are
+        // handled by the runtime, so naming them would be noise. Stack
+        // overflow is left to the reserved-tail unhandled filter.
+        let report = code == EXCEPTION_ACCESS_VIOLATION
+            || code == EXCEPTION_ILLEGAL_INSTRUCTION
+            || code == EXCEPTION_IN_PAGE_ERROR
+            || code == EXCEPTION_INT_DIVIDE_BY_ZERO;
+        if !report || code == EXCEPTION_STACK_OVERFLOW {
+            return EXCEPTION_CONTINUE_SEARCH;
+        }
+        // SAFETY: `record` is non-null (guarded); its fields are valid
+        // for the lifetime of the exception. `ExceptionInformation[0]`
+        // is the access kind and `[1]` the faulting address for an
+        // access violation / in-page error (`NumberParameters >= 2`).
+        let (acc, addr) = unsafe {
+            if (*record).NumberParameters >= 2
+                && (code == EXCEPTION_ACCESS_VIOLATION || code == EXCEPTION_IN_PAGE_ERROR)
+            {
+                (
+                    Some((*record).ExceptionInformation[0]),
+                    (*record).ExceptionInformation[1],
+                )
+            } else {
+                (None, (*record).ExceptionAddress as usize)
+            }
+        };
+        // SAFETY: `ContextRecord` is populated alongside `ExceptionRecord`;
+        // `Rip` is the faulting instruction pointer on x86-64.
+        let rip = unsafe {
+            let ctx = (*info).ContextRecord;
+            if ctx.is_null() {
+                0
+            } else {
+                (*ctx).Rip as usize
+            }
+        };
+        report_fault(code as u32, acc, addr, rip);
+        EXCEPTION_CONTINUE_SEARCH
     }
 
     unsafe extern "system" fn handler(info: *const EXCEPTION_POINTERS) -> i32 {
@@ -524,12 +617,15 @@ mod windows {
         let code = unsafe { (*record).ExceptionCode };
         if code != EXCEPTION_STACK_OVERFLOW {
             // A non-stack-overflow fault (most often an access violation).
-            // If it happened inside a JIT-compiled body, name it before the
-            // default handler turns the crash into an opaque exit code.
-            let mut scratch = [0_u8; 256];
-            let n = super::compose_jit_breadcrumb(&mut scratch);
-            if n > 0 {
-                write_bytes(&scratch[..n]);
+            // The first-chance vectored handler normally names it already;
+            // this is a fallback for the rare case the filter is reached
+            // first. `FAULT_REPORTED` keeps the report single.
+            if !FAULT_REPORTED.swap(true, Ordering::SeqCst) {
+                let mut scratch = [0_u8; 256];
+                let n = super::compose_jit_breadcrumb(&mut scratch);
+                if n > 0 {
+                    write_bytes(&scratch[..n]);
+                }
             }
             return EXCEPTION_CONTINUE_SEARCH;
         }
@@ -539,6 +635,78 @@ mod windows {
         // length is fixed so a raw WriteFile call is enough.
         write_message();
         std::process::abort();
+    }
+
+    /// Renders the fault report into a stack scratch buffer and writes
+    /// it to stderr once. SEH-safe: no allocation or locks, just atomic
+    /// loads, bounded copies, and a raw `WriteFile`.
+    fn report_fault(code: u32, acc: Option<usize>, addr: usize, rip: usize) {
+        if FAULT_REPORTED.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        let mut scratch = [0_u8; 448];
+        let mut n = 0;
+        n += super::guard_copy(&mut scratch[n..], b"gossamer: hard fault code=0x");
+        n += hex_into(&mut scratch[n..], code as usize);
+        if let Some(a) = acc {
+            let kind: &[u8] = match a {
+                0 => b" read",
+                1 => b" write",
+                8 => b" exec",
+                _ => b" access",
+            };
+            n += super::guard_copy(&mut scratch[n..], kind);
+            n += super::guard_copy(&mut scratch[n..], b" addr=0x");
+        } else {
+            n += super::guard_copy(&mut scratch[n..], b" addr=0x");
+        }
+        n += hex_into(&mut scratch[n..], addr);
+        n += super::guard_copy(&mut scratch[n..], b" rip=0x");
+        n += hex_into(&mut scratch[n..], rip);
+        let ptr = super::JIT_BODY_PTR.load(Ordering::Acquire);
+        if ptr.is_null() {
+            n += super::guard_copy(
+                &mut scratch[n..],
+                b"; fault outside any JIT-compiled body\n",
+            );
+        } else {
+            n += super::guard_copy(&mut scratch[n..], b"; fault inside JIT-compiled body '");
+            let name_len = super::JIT_BODY_LEN.load(Ordering::Relaxed).min(160);
+            // SAFETY: `ptr`/`name_len` describe a live `&str` owned by the
+            // JIT artifact (alive for the process); at most 160 bytes read.
+            let name = unsafe { std::slice::from_raw_parts(ptr, name_len) };
+            n += super::guard_copy(&mut scratch[n..], name);
+            n += super::guard_copy(
+                &mut scratch[n..],
+                b"'; isolate with GOS_JIT_ONLY=<fn> / GOS_JIT_SKIP=<fn>, or GOS_JIT=0 to disable\n",
+            );
+        }
+        write_bytes(&scratch[..n]);
+    }
+
+    /// Renders `value` as lowercase hex (no `0x`, no leading zeros) into
+    /// `dst`, returning the bytes written. SEH-safe scratch-only formatter.
+    fn hex_into(dst: &mut [u8], mut value: usize) -> usize {
+        if value == 0 {
+            if !dst.is_empty() {
+                dst[0] = b'0';
+                return 1;
+            }
+            return 0;
+        }
+        let mut tmp = [0_u8; 16];
+        let mut idx = tmp.len();
+        while value != 0 {
+            idx -= 1;
+            let nibble = (value & 0xF) as u8;
+            tmp[idx] = if nibble < 10 {
+                b'0' + nibble
+            } else {
+                b'a' + (nibble - 10)
+            };
+            value >>= 4;
+        }
+        super::guard_copy(dst, &tmp[idx..])
     }
 
     fn write_message() {

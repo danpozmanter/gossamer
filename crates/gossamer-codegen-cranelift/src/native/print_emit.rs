@@ -387,16 +387,17 @@ pub(super) fn emit_debug_option_value(
     intrinsics: &mut IntrinsicContext,
 ) -> Result<ir::Value> {
     let ptr_ty = module.target_config().pointer_type();
-    let f = intrinsics.extern_fn(
+    let kind_v = builder.ins().iconst(types::I64, i64::from(payload_kind));
+    let result = emit_win64_rt_call(
         module,
+        builder,
+        intrinsics,
         "gos_rt_debug_option",
         &[types::I128, types::I64],
-        &[ptr_ty],
+        Some(ptr_ty),
+        &[value, kind_v],
     )?;
-    let fref = module.declare_func_in_func(f, builder.func);
-    let kind_v = builder.ins().iconst(types::I64, i64::from(payload_kind));
-    let call = builder.ins().call(fref, &[value, kind_v]);
-    Ok(builder.inst_results(call)[0])
+    Ok(result.expect("gos_rt_debug_option returns a pointer"))
 }
 
 /// Emits `gos_rt_debug_result(res_i128, ok_kind, err_kind)` and returns the
@@ -410,17 +411,18 @@ pub(super) fn emit_debug_result_value(
     intrinsics: &mut IntrinsicContext,
 ) -> Result<ir::Value> {
     let ptr_ty = module.target_config().pointer_type();
-    let f = intrinsics.extern_fn(
-        module,
-        "gos_rt_debug_result",
-        &[types::I128, types::I64, types::I64],
-        &[ptr_ty],
-    )?;
-    let fref = module.declare_func_in_func(f, builder.func);
     let ok_v = builder.ins().iconst(types::I64, i64::from(ok_kind));
     let err_v = builder.ins().iconst(types::I64, i64::from(err_kind));
-    let call = builder.ins().call(fref, &[value, ok_v, err_v]);
-    Ok(builder.inst_results(call)[0])
+    let result = emit_win64_rt_call(
+        module,
+        builder,
+        intrinsics,
+        "gos_rt_debug_result",
+        &[types::I128, types::I64, types::I64],
+        Some(ptr_ty),
+        &[value, ok_v, err_v],
+    )?;
+    Ok(result.expect("gos_rt_debug_result returns a pointer"))
 }
 
 pub(super) fn emit_arr_print(

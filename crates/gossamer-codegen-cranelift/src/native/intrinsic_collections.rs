@@ -460,13 +460,6 @@ pub(super) fn lower_intrinsic_call_collections(
         // handler fn-ptr. Returns the packed `Result<(), Error>`:
         // `Err` on bind failure, `Ok(())` if the accept loop exits.
         "http::serve" | "gos_rt_http_serve" => {
-            let rt_fn = intrinsics.extern_fn(
-                module,
-                "gos_rt_http_serve",
-                &[ptr_ty, ptr_ty, types::I64],
-                &[types::I128],
-            )?;
-            let fref = module.declare_func_in_func(rt_fn, builder.func);
             let addr = match args.first() {
                 Some(a) => lower_operand(
                     module,
@@ -508,8 +501,16 @@ pub(super) fn lower_intrinsic_call_collections(
                 None => builder.ins().iconst(types::I64, 0),
             };
             let fn_ptr64 = coerce_arg_to(builder, fn_ptr, types::I64)?;
-            let call = builder.ins().call(fref, &[addr, env_ptr, fn_ptr64]);
-            let result = builder.inst_results(call)[0];
+            let result = emit_win64_rt_call(
+                module,
+                builder,
+                intrinsics,
+                "gos_rt_http_serve",
+                &[ptr_ty, ptr_ty, types::I64],
+                Some(types::I128),
+                &[addr, env_ptr, fn_ptr64],
+            )?
+            .expect("gos_rt_http_serve returns a Result carrier");
             define_var_to(
                 builder,
                 locals,
@@ -521,13 +522,6 @@ pub(super) fn lower_intrinsic_call_collections(
         }
         // Same shape as http::serve but routes to the h2 server.
         "http2::bind_and_run_h2c" | "gos_rt_http2_bind_and_run_h2c" => {
-            let rt_fn = intrinsics.extern_fn(
-                module,
-                "gos_rt_http2_bind_and_run_h2c",
-                &[ptr_ty, ptr_ty, types::I64],
-                &[types::I128],
-            )?;
-            let fref = module.declare_func_in_func(rt_fn, builder.func);
             let addr = match args.first() {
                 Some(a) => lower_operand(
                     module,
@@ -569,8 +563,16 @@ pub(super) fn lower_intrinsic_call_collections(
                 None => builder.ins().iconst(types::I64, 0),
             };
             let fn_ptr64 = coerce_arg_to(builder, fn_ptr, types::I64)?;
-            let call = builder.ins().call(fref, &[addr, env_ptr, fn_ptr64]);
-            let result = builder.inst_results(call)[0];
+            let result = emit_win64_rt_call(
+                module,
+                builder,
+                intrinsics,
+                "gos_rt_http2_bind_and_run_h2c",
+                &[ptr_ty, ptr_ty, types::I64],
+                Some(types::I128),
+                &[addr, env_ptr, fn_ptr64],
+            )?
+            .expect("gos_rt_http2_bind_and_run_h2c returns a Result carrier");
             define_var_to(
                 builder,
                 locals,

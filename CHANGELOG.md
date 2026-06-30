@@ -212,12 +212,29 @@ return value: a pointer argument has the same ABI on every target, where an
 shim disagree on. The carrier marshalling now matches across the bytecode VM,
 the in-process JIT, and the AOT compiler on every platform.
 
+The in-process JIT's calls *into* the runtime now use the same Windows x64
+`i128` convention as the runtime itself. The Result / Option carrier helpers
+(`gos_rt_result_new` / `_disc` / `_payload`, the `option_*` / `result_*` /
+`iter_*` combinators, `gos_rt_debug_option` / `_result`, `http::serve`) take and
+return the two-word `[disc, payload]` carrier as an `i128`; on
+`x86_64-pc-windows-msvc` a Rust `extern "C"` function passes such an `i128`
+argument by pointer and returns one in a vector register, where Cranelift's bare
+`i128` uses integer register pairs. The JIT previously emitted the bare `i128`
+call, so the carrier decoded to a wild pointer and faulted; it now spills the
+argument to a 16-byte slot and passes its address, and reads the return through
+the vector register, exactly as the AOT compiler already did. (Affected
+`gos run` on Windows only; the bytecode VM and AOT tiers were always correct.)
+
 When the in-process JIT is implicated in a crash, two knobs aid diagnosis:
 `GOS_JIT_ONLY=<fn,fn>` promotes only the named bodies and `GOS_JIT_SKIP=<fn,fn>`
 promotes all but the named ones (others run on bytecode), so a single run can
 isolate which body's native code is responsible; and a hard fault inside a
-JIT-compiled body now prints the body's name (the fault handler reads a
-breadcrumb the dispatch trampoline maintains) instead of an opaque exit code.
+JIT-compiled body now prints the body's name, the fault address, and the
+faulting instruction pointer instead of an opaque exit code. On Windows this
+runs from a first-chance vectored exception handler: JIT-compiled code carries
+no unwind metadata, so the stack walk an unhandled-exception filter relies on
+aborts before the filter is reached, but a vectored handler runs before any
+dispatch.
 
 ### Fixes
 

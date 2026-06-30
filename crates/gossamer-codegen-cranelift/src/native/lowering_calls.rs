@@ -134,6 +134,78 @@ use rayon::prelude::*;
 
 use super::*;
 
+/// Emits a call to runtime function `name` whose logical Cranelift param /
+/// return slots are `params` / `ret`, marshalling every `i128` slot across
+/// the Win64 `extern "C"` boundary the way the rustc-compiled runtime
+/// expects it. On `x86_64-pc-windows-msvc` rustc passes an `extern "C"`
+/// `i128` argument by pointer and returns one in a 16-byte vector register
+/// (`I8X16`), whereas Cranelift's native `i128` ABI uses integer register
+/// pairs - so a bare `i128` call instruction disagrees with the runtime and
+/// reads/writes garbage (the `[disc, payload]` Result/Option carrier then
+/// decodes to a wild pointer and faults). Spill `i128` args to a 16-byte
+/// slot and pass the address; declare + read an `i128` return as `I8X16`
+/// and bit-cast it back. On the SysV ABI an `i128` is passed and returned
+/// by value, unchanged. The LLVM tier already performs the identical
+/// adjustment (`fat_i128_call_arg` / `<16 x i8>` return). `arg_values` hold
+/// the logical values in `params` order; the result is returned in its
+/// logical `ret` type.
+pub(super) fn emit_win64_rt_call(
+    module: &mut dyn Module,
+    builder: &mut FunctionBuilder<'_>,
+    intrinsics: &mut IntrinsicContext,
+    name: &'static str,
+    params: &[ir::Type],
+    ret: Option<ir::Type>,
+    arg_values: &[ir::Value],
+) -> Result<Option<ir::Value>> {
+    // `target_config()` (not `isa()`) - the parallel IR phase uses an
+    // `OfflineModule` that panics on `isa()`.
+    let cfg = module.target_config();
+    let ptr_ty = cfg.pointer_type();
+    let win64 = cfg.default_call_conv == CallConv::WindowsFastcall;
+    let fat = |t: ir::Type| win64 && t == types::I128;
+
+    let wire_params: Vec<ir::Type> = params
+        .iter()
+        .map(|&t| if fat(t) { ptr_ty } else { t })
+        .collect();
+    let wire_returns: Vec<ir::Type> = match ret {
+        Some(t) if fat(t) => vec![types::I8X16],
+        Some(t) => vec![t],
+        None => Vec::new(),
+    };
+    let func_id = intrinsics.extern_fn(module, name, &wire_params, &wire_returns)?;
+    let fref = module.declare_func_in_func(func_id, builder.func);
+
+    let mut wire_args: Vec<ir::Value> = Vec::with_capacity(arg_values.len());
+    for (&val, &logical_ty) in arg_values.iter().zip(params.iter()) {
+        if fat(logical_ty) {
+            let slot = builder.create_sized_stack_slot(StackSlotData::new(
+                StackSlotKind::ExplicitSlot,
+                16,
+                4,
+            ));
+            builder.ins().stack_store(val, slot, 0);
+            wire_args.push(builder.ins().stack_addr(ptr_ty, slot, 0));
+        } else {
+            wire_args.push(val);
+        }
+    }
+    let call = builder.ins().call(fref, &wire_args);
+    Ok(match ret {
+        Some(t) => {
+            let raw = builder.inst_results(call)[0];
+            let v = if fat(t) {
+                builder.ins().bitcast(types::I128, MemFlags::new(), raw)
+            } else {
+                raw
+            };
+            Some(v)
+        }
+        None => None,
+    })
+}
+
 pub(super) fn lower_generic_rt_call(
     module: &mut dyn Module,
     builder: &mut FunctionBuilder<'_>,
@@ -644,9 +716,6 @@ pub(super) fn lower_generic_rt_call(
         "gos_rt_arr_iter_next" => (&[ptr_ty], Some(ptr_ty)),
         _ => unreachable!("unhandled rt name {name}"),
     };
-    let returns = ret.map(|t| vec![t]).unwrap_or_default();
-    let func_id = intrinsics.extern_fn(module, name, params, &returns)?;
-    let fref = module.declare_func_in_func(func_id, builder.func);
     let mut arg_values = Vec::with_capacity(params.len());
     for (i, param_ty) in params.iter().enumerate() {
         let v = match args.get(i) {
@@ -669,26 +738,18 @@ pub(super) fn lower_generic_rt_call(
         let coerced = coerce_arg_to(builder, v, *param_ty)?;
         arg_values.push(coerced);
     }
-    let call = builder.ins().call(fref, &arg_values);
-    if let Some(_ret_ty) = ret {
-        let v = builder.inst_results(call)[0];
-        define_var_to(
-            builder,
-            locals,
-            &intrinsics.body_cl_types,
-            destination.local,
-            v,
-        );
-    } else {
-        let zero = builder.ins().iconst(types::I64, 0);
-        define_var_to(
-            builder,
-            locals,
-            &intrinsics.body_cl_types,
-            destination.local,
-            zero,
-        );
-    }
+    let result = emit_win64_rt_call(module, builder, intrinsics, name, params, ret, &arg_values)?;
+    let stored = match result {
+        Some(v) => v,
+        None => builder.ins().iconst(types::I64, 0),
+    };
+    define_var_to(
+        builder,
+        locals,
+        &intrinsics.body_cl_types,
+        destination.local,
+        stored,
+    );
     Ok(())
 }
 
