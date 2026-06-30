@@ -325,6 +325,75 @@ pub(super) fn define_shape_thunk(
     Ok(thunk_id)
 }
 
+/// Emits an out-pointer wrapper for a `Result<Enum, _>`-returning body.
+///
+/// The body returns its two-word `[disc, payload]` carrier by value as an
+/// `i128`. Within Cranelift-compiled code the `i128` return register
+/// convention is self-consistent on every target, but a Rust
+/// `extern "C" fn(..) -> i128` trampoline reads that return from a
+/// different register than the body writes on Windows x64, so the
+/// in-process JIT cannot read the carrier by value there. This thunk calls
+/// the body (a Cranelift-to-Cranelift call, so both sides agree) and stores
+/// the carrier through `out`, a plain pointer argument whose ABI is
+/// identical on every target. The trampoline calls the thunk with a stack
+/// buffer and reads `out[0]` (disc) / `out[1]` (payload) back from memory.
+pub(crate) fn emit_carrier_outptr_thunk(
+    module: &mut dyn Module,
+    body_id: FuncId,
+    body_name: &str,
+) -> Result<FuncId> {
+    let ptr_ty = module.target_config().pointer_type();
+    let body_sig = module
+        .declarations()
+        .get_function_decl(body_id)
+        .signature
+        .clone();
+    let param_tys: Vec<ir::Type> = body_sig.params.iter().map(|p| p.value_type).collect();
+    // Thunk signature: (out: *mut i128, <body params>) -> ()
+    let mut sig = module.make_signature();
+    sig.params.push(AbiParam::new(ptr_ty));
+    for t in &param_tys {
+        sig.params.push(AbiParam::new(*t));
+    }
+    let static_name: &'static str =
+        Box::leak(format!("__gos_jit_carrier_{body_name}").into_boxed_str());
+    let thunk_id = module
+        .declare_function(static_name, Linkage::Local, &sig)
+        .map_err(|e| anyhow!("declare {static_name}: {e}"))?;
+    let mut func = Function::with_name_signature(UserFuncName::user(0, thunk_id.as_u32()), sig);
+    let mut fb_ctx = FunctionBuilderContext::new();
+    {
+        let mut builder = FunctionBuilder::new(&mut func, &mut fb_ctx);
+        let entry = builder.create_block();
+        builder.append_block_params_for_function_params(entry);
+        builder.switch_to_block(entry);
+        let out_ptr = builder.block_params(entry)[0];
+        let args: Vec<ir::Value> = (0..param_tys.len())
+            .map(|i| builder.block_params(entry)[i + 1])
+            .collect();
+        let body_ref = module.declare_func_in_func(body_id, builder.func);
+        let call = builder.ins().call(body_ref, &args);
+        let carrier = builder.inst_results(call)[0];
+        // Storing the `i128` writes 16 bytes little-endian: the low word
+        // (disc) at +0 and the high word (payload) at +8 - the layout the
+        // trampoline reads back as `out[0]` / `out[1]`.
+        builder.ins().store(
+            MemFlags::trusted(),
+            carrier,
+            out_ptr,
+            ir::immediates::Offset32::new(0),
+        );
+        builder.ins().return_(&[]);
+        builder.seal_all_blocks();
+        builder.finalize();
+    }
+    let mut ctx = Context::for_function(func);
+    module
+        .define_function(thunk_id, &mut ctx)
+        .map_err(|e| anyhow!("define {static_name}: {e}"))?;
+    Ok(thunk_id)
+}
+
 pub(super) fn emit_c_main_shim(module: &mut dyn Module, gos_main: FuncId) -> Result<()> {
     let ptr_ty = module.target_config().pointer_type();
     let mut sig = module.make_signature();

@@ -205,6 +205,20 @@ machine code:
 This is acceleration only: results stay bit-identical across the bytecode VM,
 the in-process JIT, and the AOT compiler.
 
+A `Result<Enum, _>`-returning body hands its two-word `[disc, payload]` carrier
+back to the trampoline through an out-pointer wrapper rather than an `i128`
+return value: a pointer argument has the same ABI on every target, where an
+`i128` return lands in a register the Windows x64 ABI and a Rust `extern "C"`
+shim disagree on. The carrier marshalling now matches across the bytecode VM,
+the in-process JIT, and the AOT compiler on every platform.
+
+When the in-process JIT is implicated in a crash, two knobs aid diagnosis:
+`GOS_JIT_ONLY=<fn,fn>` promotes only the named bodies and `GOS_JIT_SKIP=<fn,fn>`
+promotes all but the named ones (others run on bytecode), so a single run can
+isolate which body's native code is responsible; and a hard fault inside a
+JIT-compiled body now prints the body's name (the fault handler reads a
+breadcrumb the dispatch trampoline maintains) instead of an opaque exit code.
+
 ### Fixes
 
 `Vec::is_empty` and `String::is_empty` now correctly report whether the

@@ -532,6 +532,27 @@ pub fn compile_to_jit(
     // the key, so dispatch is unaffected.
     let lowered = lower_program(&mut module, &filtered, tcx, Some("gos_main"))?;
 
+    // A `Result<Enum, _>`-returning body hands its `[disc, payload]` carrier
+    // back as an `i128` by value. The Rust trampoline reads that return from
+    // a register the Windows x64 ABI disagrees with, so wrap each such body
+    // in an out-pointer thunk (Cranelift-to-Cranelift call, then a pointer
+    // store) and dispatch through the thunk instead. `carrier_thunks` maps
+    // the body name to its thunk's `FuncId`.
+    let mut carrier_thunks: HashMap<String, cranelift_module::FuncId> = HashMap::new();
+    for body in &filtered {
+        if !matches!(
+            body_kinds(body, tcx, enum_shapes, struct_shapes),
+            Some((_, JitKind::ResultEnumPtr(_)))
+        ) {
+            continue;
+        }
+        let Some(&body_id) = lowered.function_ids_by_name.get(&body.name) else {
+            continue;
+        };
+        let thunk_id = crate::native::emit_carrier_outptr_thunk(&mut module, body_id, &body.name)?;
+        carrier_thunks.insert(body.name.clone(), thunk_id);
+    }
+
     module
         .finalize_definitions()
         .map_err(|e| anyhow!("jit finalize: {e}"))?;
@@ -570,7 +591,13 @@ pub fn compile_to_jit(
             // body on bytecode so its semantics stay correct.
             continue;
         }
-        let ptr = module.get_finalized_function(id);
+        // A `ResultEnumPtr` body dispatches through its out-pointer carrier
+        // thunk (the trampoline passes a stack buffer and reads the carrier
+        // back from memory); every other body is called directly.
+        let ptr = match carrier_thunks.get(&body.name) {
+            Some(&thunk_id) => module.get_finalized_function(thunk_id),
+            None => module.get_finalized_function(id),
+        };
         functions.insert(
             body.name.clone(),
             JitFn {
@@ -583,10 +610,35 @@ pub fn compile_to_jit(
         );
     }
 
+    // Diagnostic per-body promotion gating. `GOS_JIT_ONLY=<fn,fn>` keeps
+    // only the named bodies in the dispatch table; `GOS_JIT_SKIP=<fn,fn>`
+    // drops the named ones. Filtered bodies stay compiled and linked (so
+    // native inter-body calls still resolve), but the VM no longer promotes
+    // them - they run on bytecode. This lets a single run isolate which
+    // body's native code is responsible for a fault (e.g. on Windows CI).
+    if let Ok(only) = std::env::var("GOS_JIT_ONLY") {
+        let allow = parse_fn_set(&only);
+        functions.retain(|name, _| allow.contains(name.as_str()));
+    }
+    if let Ok(skip) = std::env::var("GOS_JIT_SKIP") {
+        let deny = parse_fn_set(&skip);
+        functions.retain(|name, _| !deny.contains(name.as_str()));
+    }
+
     Ok(JitArtifact {
         module: Some(module),
         functions,
     })
+}
+
+/// Splits a comma-separated `GOS_JIT_ONLY` / `GOS_JIT_SKIP` value into a
+/// set of trimmed, non-empty function names.
+fn parse_fn_set(value: &str) -> std::collections::HashSet<&str> {
+    value
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .collect()
 }
 
 /// Returns `true` when `body` contains a `Call(Const(Str(name)))`

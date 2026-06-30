@@ -62,6 +62,62 @@ pub fn install_stack_guard() {
     }
 }
 
+use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
+
+/// Name pointer + length of the in-process-JIT-compiled body currently
+/// executing on this thread's call stack, or null when control is not
+/// inside one. A hard fault (Windows access violation / a non-stack-
+/// overflow `SIGSEGV`) inside JIT-emitted machine code carries no Rust
+/// frame, so the OS reports only an opaque exit code; the fault handlers
+/// below read this breadcrumb to name the body that was running. Set and
+/// cleared by the JIT dispatch trampoline ([`set_jit_breadcrumb`] /
+/// [`clear_jit_breadcrumb`]).
+static JIT_BODY_PTR: AtomicPtr<u8> = AtomicPtr::new(std::ptr::null_mut());
+static JIT_BODY_LEN: AtomicUsize = AtomicUsize::new(0);
+
+/// Records the JIT-compiled body whose native code (and result
+/// marshalling) is about to run. `name` must stay live for the dispatch
+/// window - the JIT artifact owns it for the process. Pair every call
+/// with [`clear_jit_breadcrumb`] on the return path.
+pub fn set_jit_breadcrumb(name: &str) {
+    JIT_BODY_LEN.store(name.len(), Ordering::Relaxed);
+    JIT_BODY_PTR.store(name.as_ptr().cast_mut(), Ordering::Release);
+}
+
+/// Clears the breadcrumb set by [`set_jit_breadcrumb`] once control
+/// returns from the JIT body to interpreter code.
+pub fn clear_jit_breadcrumb() {
+    JIT_BODY_PTR.store(std::ptr::null_mut(), Ordering::Release);
+}
+
+/// Composes the fault breadcrumb into `scratch`, returning its byte
+/// length (0 when no JIT body is active). Signal-safe: two atomic loads
+/// and bounded `copy_from_slice`s, no allocation or locks.
+fn compose_jit_breadcrumb(scratch: &mut [u8]) -> usize {
+    let ptr = JIT_BODY_PTR.load(Ordering::Acquire);
+    if ptr.is_null() {
+        return 0;
+    }
+    let name_len = JIT_BODY_LEN.load(Ordering::Relaxed).min(160);
+    let prefix = b"gossamer: fault inside JIT-compiled body '";
+    let suffix =
+        b"'; isolate with GOS_JIT_ONLY=<fn> / GOS_JIT_SKIP=<fn>, or GOS_JIT=0 to disable\n";
+    let mut len = 0;
+    len += guard_copy(&mut scratch[len..], prefix);
+    // SAFETY: `ptr`/`name_len` describe a live `&str` owned by the JIT
+    // artifact (alive for the process); at most 160 bytes are read.
+    let name = unsafe { std::slice::from_raw_parts(ptr, name_len) };
+    len += guard_copy(&mut scratch[len..], name);
+    len += guard_copy(&mut scratch[len..], suffix);
+    len
+}
+
+fn guard_copy(dst: &mut [u8], src: &[u8]) -> usize {
+    let n = src.len().min(dst.len());
+    dst[..n].copy_from_slice(&src[..n]);
+    n
+}
+
 #[cfg(unix)]
 mod unix {
     use std::cell::Cell;
@@ -238,8 +294,24 @@ mod unix {
         if is_stack_overflow(fault_addr) {
             report_overflow_and_abort(fault_addr);
         }
-        // Not a stack overflow: restore the default disposition
-        // and re-raise so the original SIGSEGV is observed.
+        // Not a stack overflow. If the fault landed inside a JIT-compiled
+        // body, name it on stderr before the default handler turns the
+        // crash into an opaque exit code.
+        let mut scratch = [0_u8; 256];
+        let n = super::compose_jit_breadcrumb(&mut scratch);
+        if n > 0 {
+            // SAFETY: `write(2)` is async-signal-safe; `scratch` outlives
+            // the call and `n` is within its bounds.
+            let _ = unsafe {
+                libc::write(
+                    libc::STDERR_FILENO,
+                    scratch.as_ptr().cast::<libc::c_void>(),
+                    n,
+                )
+            };
+        }
+        // Restore the default disposition and re-raise so the original
+        // SIGSEGV is observed.
         propagate_signal(sig);
     }
 
@@ -445,6 +517,14 @@ mod windows {
         }
         let code = unsafe { (*record).ExceptionCode };
         if code != EXCEPTION_STACK_OVERFLOW {
+            // A non-stack-overflow fault (most often an access violation).
+            // If it happened inside a JIT-compiled body, name it before the
+            // default handler turns the crash into an opaque exit code.
+            let mut scratch = [0_u8; 256];
+            let n = super::compose_jit_breadcrumb(&mut scratch);
+            if n > 0 {
+                write_bytes(&scratch[..n]);
+            }
             return EXCEPTION_CONTINUE_SEARCH;
         }
         // Write a single short line via the C runtime's stderr
@@ -456,9 +536,13 @@ mod windows {
     }
 
     fn write_message() {
+        const MSG: &[u8] = b"gossamer: stack overflow; aborting\n";
+        write_bytes(MSG);
+    }
+
+    fn write_bytes(bytes: &[u8]) {
         use windows_sys::Win32::Storage::FileSystem::WriteFile;
         use windows_sys::Win32::System::Console::{GetStdHandle, STD_ERROR_HANDLE};
-        const MSG: &[u8] = b"gossamer: stack overflow; aborting\n";
         // SAFETY: GetStdHandle returns a process-owned handle.
         // WriteFile against an inheritable stderr handle is safe
         // from any thread, including SEH context.
@@ -468,8 +552,8 @@ mod windows {
                 let mut written: u32 = 0;
                 let _ = WriteFile(
                     h,
-                    MSG.as_ptr(),
-                    MSG.len() as u32,
+                    bytes.as_ptr(),
+                    bytes.len() as u32,
                     &raw mut written,
                     std::ptr::null_mut(),
                 );

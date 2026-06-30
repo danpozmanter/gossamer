@@ -1144,15 +1144,22 @@ macro_rules! call_through {
             }
             // Canonicalized to I64 before dispatch; never reaches a stub.
             JitKind::EnumPtr(_) => unreachable!("EnumPtr returns are canonicalized to I64"),
-            // `Result<Enum, _>`: the body returns the by-value two-word `i128`
-            // `[disc, payload]`. Call through an `i128`-returning signature and
-            // hand the two words back as a carrier tuple; `invoke_prepared_native`
-            // decodes the `Ok` enum / `Err` error and frees the native value.
+            // `Result<Enum, _>`: the body's two-word `[disc, payload]` carrier
+            // crosses through an out-pointer thunk (`emit_carrier_outptr_thunk`),
+            // so `$ptr` here is the thunk - it takes a buffer pointer first,
+            // calls the real body, and stores the carrier there. A pointer
+            // argument has an identical ABI on every target, unlike an `i128`
+            // return (which Windows x64 places in a register Rust reads
+            // differently). `invoke_prepared_native` decodes the carrier tuple.
             JitKind::ResultEnumPtr(_) => {
-                let f: extern "C" fn($($t),*) -> i128 = unsafe { mem::transmute($ptr) };
-                let r = f($($a),*) as u128;
-                let disc = (r as u64) as i64;
-                let payload = ((r >> 64) as u64) as i64;
+                // A `u128` slot is 16-byte aligned, matching the thunk's
+                // aligned `i128` store; `disc` is the low word, `payload`
+                // the high word.
+                let mut carrier: u128 = 0;
+                let f: extern "C" fn(*mut u128, $($t),*) = unsafe { mem::transmute($ptr) };
+                f(&raw mut carrier, $($a),*);
+                let disc = (carrier as u64) as i64;
+                let payload = ((carrier >> 64) as u64) as i64;
                 Some(Value::Tuple(Arc::from(vec![
                     Value::Int(disc),
                     Value::Int(payload),
@@ -2650,6 +2657,15 @@ fn shape_needs_deep_free(idx: u32) -> bool {
     walk(idx, &mut Vec::new())
 }
 
+/// Clears the JIT fault breadcrumb when a dispatch returns, by any path.
+struct BreadcrumbGuard;
+
+impl Drop for BreadcrumbGuard {
+    fn drop(&mut self) {
+        gossamer_runtime::stack_guard::clear_jit_breadcrumb();
+    }
+}
+
 /// Hot-path dispatch through a [`Prepared`]. Marshals args, calls the
 /// cached stub under `catch_unwind`, then re-wraps an `EnumPtr` return.
 pub(crate) fn invoke_prepared(p: &Prepared, args: &[Value], graph_cache: &GraphCache) -> Dispatch {
@@ -2657,6 +2673,11 @@ pub(crate) fn invoke_prepared(p: &Prepared, args: &[Value], graph_cache: &GraphC
     if jit.params.len() != args.len() {
         return Dispatch::Fallback;
     }
+    // Name the body for the fault handler: a hard crash inside this native
+    // code (or its result marshalling) carries no Rust frame, so the guard
+    // attributes the fault to `jit.name` and the guard clears it on return.
+    gossamer_runtime::stack_guard::set_jit_breadcrumb(jit.name.as_str());
+    let _crumb = BreadcrumbGuard;
     // Bodies with a native aggregate param or return marshal through a
     // separate path that owns the runtime objects it builds; the scalar
     // fast path below stays allocation-free.
