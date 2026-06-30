@@ -843,6 +843,28 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#btreemap" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        BTreeMap
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#vecdeque" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        VecDeque
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#channels" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1754,6 +1776,28 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#btreemap" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        BTreeMap
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#vecdeque" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        VecDeque
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#channels" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1972,22 +2016,146 @@ gaps are one-line additions to the dispatch table.</p>
 <tbody>
 <tr>
 <td><code>m.insert(k, v)</code></td>
-<td><code>Option&lt;V&gt;</code></td>
-<td>Returns previous value if present.</td>
+<td><code>()</code></td>
+<td>Inserts or overwrites in place; does not return the previous value.</td>
 </tr>
 <tr>
 <td><code>m.get(k)</code></td>
-<td><code>Option&lt;&amp;V&gt;</code></td>
-<td></td>
+<td><code>Option&lt;V&gt;</code></td>
+<td><code>None</code> when the key is absent.</td>
+</tr>
+<tr>
+<td><code>m.get_or(k, default)</code></td>
+<td><code>V</code></td>
+<td>Value for <code>k</code>, or <code>default</code> when absent.</td>
+</tr>
+<tr>
+<td><code>m.contains_key(k)</code></td>
+<td><code>bool</code></td>
+<td>Key-membership test (<code>m.contains(k)</code> is an alias).</td>
 </tr>
 <tr>
 <td><code>m.remove(k)</code></td>
-<td><code>bool</code></td>
-<td>True if the key was present.</td>
+<td><code>()</code></td>
+<td>Deletes the key in place. Use <code>HashMap::pop(m, k) -&gt; Option&lt;V&gt;</code> to recover the removed value.</td>
+</tr>
+<tr>
+<td><code>m.inc(k)</code> / <code>m.inc(k, by)</code></td>
+<td><code>()</code></td>
+<td>Increment an <code>i64</code> counter, inserting <code>0</code> first if absent.</td>
 </tr>
 <tr>
 <td><code>m.len()</code></td>
 <td><code>i64</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>m.iter()</code></td>
+<td><code>[(K, V)]</code></td>
+<td><code>keys()</code> / <code>values()</code> return the halves.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="btreemap">BTreeMap<a class="headerlink" href="#btreemap" title="Permanent link">&para;</a></h2>
+<p><code>BTreeMap&lt;i64, i64&gt;</code> and <code>BTreeMap&lt;i64, String&gt;</code> are backed by the
+key-sorted <code>IntMap</code> machinery (same as <code>HashMap&lt;i64, _&gt;</code>), so <code>iter()</code>
+yields pairs in ascending key order.</p>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Returns</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>m.insert(k, v)</code></td>
+<td><code>()</code></td>
+<td>Inserts or overwrites in place.</td>
+</tr>
+<tr>
+<td><code>m.get(k)</code></td>
+<td><code>Option&lt;V&gt;</code></td>
+<td><code>None</code> when the key is absent.</td>
+</tr>
+<tr>
+<td><code>m.get_or(k, default)</code></td>
+<td><code>V</code></td>
+<td>Value for <code>k</code>, or <code>default</code> when absent.</td>
+</tr>
+<tr>
+<td><code>m.contains(k)</code> / <code>m.contains_key(k)</code></td>
+<td><code>bool</code></td>
+<td>Key-membership test.</td>
+</tr>
+<tr>
+<td><code>m.remove(k)</code></td>
+<td><code>()</code></td>
+<td>Deletes the key in place.</td>
+</tr>
+<tr>
+<td><code>m.len()</code></td>
+<td><code>i64</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>m.iter()</code></td>
+<td><code>[(K, V)]</code></td>
+<td>Yields pairs in ascending key order.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="vecdeque">VecDeque<a class="headerlink" href="#vecdeque" title="Permanent link">&para;</a></h2>
+<p><code>VecDeque&lt;i64&gt;</code> is a double-ended ring buffer; both ends are
+constant-time. The pop / peek methods return <code>Option</code>.</p>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Returns</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>d.push_back(v)</code></td>
+<td><code>()</code></td>
+<td>Append to the back.</td>
+</tr>
+<tr>
+<td><code>d.push_front(v)</code></td>
+<td><code>()</code></td>
+<td>Prepend to the front.</td>
+</tr>
+<tr>
+<td><code>d.pop_back()</code></td>
+<td><code>Option&lt;T&gt;</code></td>
+<td>Remove and return the back element.</td>
+</tr>
+<tr>
+<td><code>d.pop_front()</code></td>
+<td><code>Option&lt;T&gt;</code></td>
+<td>Remove and return the front element.</td>
+</tr>
+<tr>
+<td><code>d.peek_back()</code></td>
+<td><code>Option&lt;T&gt;</code></td>
+<td>Back element without removing it.</td>
+</tr>
+<tr>
+<td><code>d.peek_front()</code></td>
+<td><code>Option&lt;T&gt;</code></td>
+<td>Front element without removing it.</td>
+</tr>
+<tr>
+<td><code>d.len()</code></td>
+<td><code>i64</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>d.is_empty()</code></td>
+<td><code>bool</code></td>
 <td></td>
 </tr>
 </tbody>

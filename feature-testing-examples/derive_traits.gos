@@ -8,16 +8,16 @@
 // a GENERIC type parameter, plus tuple / unit-variant ENUMS. (Struct-payload
 // enum variants and `Hash` are not derived yet.)
 
-#[derive(Clone, PartialEq, Eq, Default, Debug)]
+#[derive(PartialEq, Eq, Default, Debug)]
 struct Point { x: i64, y: i64 }
 
-#[derive(Clone, PartialEq, Default, Debug)]
+#[derive(PartialEq, Default, Debug)]
 struct Line { from: Point, to: Point, label: String }
 
-#[derive(Clone, PartialEq, Debug)]
+#[derive(PartialEq, Debug)]
 struct Wrap<T> { value: T, tag: i64 }
 
-#[derive(Clone, PartialEq, Eq, Debug, Default)]
+#[derive(PartialEq, Eq, Debug, Default)]
 enum Token { Num(i64), Pair(i64, i64), #[default] End }
 
 fn unit_x() -> Point { Point { x: 1, y: 0 } }

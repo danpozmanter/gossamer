@@ -166,7 +166,7 @@ pub(crate) fn builtin_path_clean(args: &[Value]) -> RuntimeResult<Value> {
 pub(crate) fn builtin_path_split(args: &[Value]) -> RuntimeResult<Value> {
     let path = args.first().and_then(as_str).unwrap_or("");
     let (dir, file) = path_std::split(path);
-    Ok(Value::Tuple(Arc::new(vec![
+    Ok(Value::Tuple(Arc::from(vec![
         Value::String(dir.into()),
         Value::String(file.into()),
     ])))
@@ -343,7 +343,7 @@ pub(crate) fn bytes_from_utf8_arg(v: Option<&Value>) -> Vec<u8> {
 }
 
 pub(crate) fn decode_rune_result(ch: char, n: usize) -> Value {
-    Value::Tuple(Arc::new(vec![Value::Char(ch), Value::Int(n as i64)]))
+    Value::Tuple(Arc::from(vec![Value::Char(ch), Value::Int(n as i64)]))
 }
 
 pub(crate) fn builtin_utf8_decode_rune(args: &[Value]) -> RuntimeResult<Value> {

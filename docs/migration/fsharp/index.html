@@ -2135,7 +2135,9 @@ a distinct heap strategy.</p>
 <a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="kd">let</span><span class="w"> </span><span class="n">cfg</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">Config</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">host</span>: <span class="s">&quot;localhost&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">port</span>: <span class="mi">8080</span><span class="p">,</span><span class="w"> </span><span class="n">verbose</span>: <span class="nc">false</span><span class="w"> </span><span class="p">}</span>
 <a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a><span class="kd">let</span><span class="w"> </span><span class="n">updated</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">Config</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">port</span>: <span class="mi">9090</span><span class="p">,</span><span class="w"> </span><span class="o">..</span><span class="n">cfg</span><span class="w"> </span><span class="p">}</span>
 </code></pre></div>
-<p>Struct update syntax (<code>..base</code>) is supported.</p>
+<p>Struct update syntax (<code>..base</code>) is supported. Like F# records,
+structs compare by value (<code>==</code>, <code>&lt;</code> lexicographically) and copy on
+<code>let</code> with no derive needed.</p>
 <h2 id="option-and-result">Option and Result<a class="headerlink" href="#option-and-result" title="Permanent link">&para;</a></h2>
 <p>Both languages share <code>Option&lt;T&gt;</code> (Some / None) and <code>Result&lt;T, E&gt;</code>
 (Ok / Err). Two surface differences:</p>
@@ -2272,8 +2274,9 @@ lazy sequences. Use <code>Vec&lt;T&gt;</code> built with <code>iter::*</code> co
 <li><strong>Active patterns.</strong> Use <code>fn</code>-based extractors + <code>match</code> guards.</li>
 <li><strong>Units of measure.</strong> No type-level unit tracking; enforce
   units through distinct newtype wrappers.</li>
-<li><strong>Higher-kinded types.</strong> Generic parameters are flat 64-bit
-  slots in v1. See <a href="../../codegen_abi/"><code>codegen_abi.md</code></a>.</li>
+<li><strong>Higher-kinded types.</strong> No <code>M&lt;_&gt;</code> abstraction; generic parameters
+  range over concrete types only (including structs by value). See
+  <a href="../../codegen_abi/"><code>codegen_abi.md</code></a>.</li>
 </ul>
 <h2 id="standard-library-mapping-f-net-gossamer">Standard library mapping (F# / .NET → Gossamer)<a class="headerlink" href="#standard-library-mapping-f-net-gossamer" title="Permanent link">&para;</a></h2>
 <table>

@@ -234,16 +234,14 @@ fn main() {
 
 #[test]
 fn spec_14_unimplemented_macro_rejected() {
-    // The banner says these macros are post-0.5.0; the parser must
-    // reject them at parse time with the "no user-defined macros"
-    // diagnostic.
+    // The macros that remain unimplemented must still be rejected at
+    // parse time. `todo!`, `unimplemented!`, and `unreachable!` became
+    // supported desugar macros in 0.22.0, so they are no longer in this
+    // list; the rest have no desugaring and stay rejected.
     for macro_call in [
         "assert!(true)",
         "assert_eq!(1, 1)",
         "debug_assert!(true)",
-        "unreachable!()",
-        "todo!()",
-        "unimplemented!()",
         "write!(buf, \"x\")",
         "writeln!(buf, \"x\")",
     ] {

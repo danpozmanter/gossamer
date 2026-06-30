@@ -20,11 +20,11 @@ Glyphs: ✓ supported · ◑ partial · ✗ missing.
 | `std::os` | ✓ | ✓ | ✓ | args, env, exit, read_file, write_file, mkdir, mkdir_all, read_dir. |
 | `std::os::exec` | ✓ | ✓ | ✓ | Command builder + output / status / spawn / kill / wait. Wired through interp builtins, MIR lower, and C ABI. |
 | `std::os::signal` | ✓ | ✓ | ✓ | on(SIGTERM/SIGINT/SIGHUP/SIGUSR1/SIGUSR2/SIGQUIT) + Notifier::wait/try_wait. Wired through interp builtins, MIR lower, and C ABI. |
-| `std::strings` | ✓ | ✓ | ✓ | split, trim, contains, find, replace, to_lowercase, to_uppercase, starts_with, ends_with. |
+| `std::strings` | ✓ | ✓ | ✓ | split, trim, contains, find, replace, to_lower, to_upper, starts_with, ends_with. |
 | `std::strconv` | ✓ | ✓ | ✓ | parse_i64, parse_u64, parse_f64, parse_bool, format_i64, format_f64. |
-| `std::collections` | ✓ | ✓ | ✓ | Vec, HashMap. VecDeque/BTreeMap/HashSet/BTreeSet declared. |
+| `std::collections` | ✓ | ✓ | ✓ | Vec, HashMap, HashSet, VecDeque (both ends), BTreeMap (String/i64 keys). BTreeSet declared. |
 | `std::net` | ✓ | ✓ | ✓ | TcpListener, TcpStream. UdpSocket partial. |
-| `std::http` | ✓ | ✓ | ✓ | HTTP/1.1 server + client. HTTP/2 deferred to v1.x. |
+| `std::http` | ✓ | ✓ | ✓ | HTTP/1.1 + HTTP/2 server + client (push + trailers); HTTP/3 via std::http_h3. |
 | `std::encoding::json` | ✓ | ✓ | ✓ | encode + decode + Value. |
 | `std::encoding::base64` | ✓ | ✓ | ✓ | encode + decode. |
 | `std::encoding::hex` | ✓ | ✓ | ✓ | encode + decode. |
@@ -32,7 +32,7 @@ Glyphs: ✓ supported · ◑ partial · ✗ missing.
 | `std::sync` | ✓ | ✓ | ✓ | Mutex, WaitGroup, AtomicI64. RwLock, Once partial. |
 | `std::time` | ✓ | ✓ | ✓ | now, sleep, format_rfc3339, parse_rfc3339. |
 | `std::panic` | ✓ | ✓ | ✓ | panic + catch_unwind. |
-| `std::errors` | ✓ | ✓ | ✓ | new, wrap, is, chain, join. |
+| `std::errors` | ✓ | ✓ | ✓ | new, newf, wrap, is, join. |
 | `std::flag` | ✓ | ✓ | ✓ | Set with string/int/uint/float/bool/duration/string_list, --help, equals form. Subcommands deferred to v1.x. |
 | `std::path` | ✓ | ✓ | ✓ | join, split, base, dir, ext, clean. |
 | `std::fs` | ✓ | ✓ | ✓ | read_dir, walk_dir, mkdir_all, remove_all, copy, rename. |

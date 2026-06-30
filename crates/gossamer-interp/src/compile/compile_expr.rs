@@ -457,9 +457,33 @@ impl<'tcx> FnBuilder<'tcx> {
                 name,
                 args,
                 ..
-            } => self.compile_method_call(receiver, name, args),
+            } => {
+                // `x.into()` converts to the inferred target `B` (the call's
+                // result type) via `B::from(x)`.
+                if name.name == "into"
+                    && args.is_empty()
+                    && let Some(bname) = self.adt_type_name(expr.ty)
+                {
+                    return Ok(self.compile_struct_unary(&bname, "from", receiver)?.reg);
+                }
+                // `x.try_into()` -> `B::try_from(x)`, where `B` is the `Ok`
+                // payload of the `Result<B, E>` result type.
+                if name.name == "try_into"
+                    && args.is_empty()
+                    && let Some(bname) = self.result_ok_adt_name(expr.ty)
+                {
+                    return Ok(self.compile_struct_unary(&bname, "try_from", receiver)?.reg);
+                }
+                self.compile_method_call(receiver, name, args)
+            }
             // Native indexed read.
             HirExprKind::Index { base, index } => {
+                // `a[i]` on a user struct / enum routes to its `index` impl
+                // method. The checker accepts ADT indexing only when that
+                // method exists, so the route is always present here.
+                if let Some(sname) = self.adt_type_name(base.ty) {
+                    return Ok(self.compile_struct_binop(&sname, "index", base, index)?.reg);
+                }
                 let base_reg = self.compile_expr(base)?;
                 let idx_reg = self.compile_expr(index)?;
                 let dst = self.alloc_reg();
@@ -529,7 +553,7 @@ impl<'tcx> FnBuilder<'tcx> {
                 let n = elems.len();
                 if n == 0 {
                     // Empty tuple is unit-shaped; just emit
-                    // `Value::Tuple(Arc::new(vec![]))` via
+                    // `Value::Tuple(Arc::from(vec![]))` via
                     // BuildTuple with count 0 to keep semantics
                     // honest.
                     let dst = self.alloc_reg();
@@ -731,10 +755,19 @@ impl<'tcx> FnBuilder<'tcx> {
         let result = self.alloc_reg();
         let mut end_jumps: Vec<InstrIdx> = Vec::new();
         let scrut_ty = scrutinee.ty;
+        // Move-on-last-use: a guard-free `match` may drain the matched
+        // payload out of a uniquely-owned scrutinee instead of cloning
+        // it. Eligible when the scrutinee is a consumable local or a
+        // fresh temporary (e.g. the `?` desugar's `match parse(x) { ...
+        // }`) - both leave a register nothing reads after the match.
+        // Guards are excluded because a failed guard would fall through
+        // and re-extract the drained scrutinee.
+        let consume_scrut =
+            self.value_consumable_here(scrutinee) && arms.iter().all(|arm| arm.guard.is_none());
         for arm in arms {
             self.push_scope();
             let mut fails: Vec<InstrIdx> = Vec::new();
-            self.emit_pattern_test(scrut, &arm.pattern, &mut fails)?;
+            self.emit_pattern_test_ex(scrut, &arm.pattern, &mut fails, consume_scrut)?;
             // Tag collection-typed pattern bindings (`Some(arr)`, …) so a
             // `for x in <binding>` in the arm body iterates by index. The
             // binding's own `Path` carries an unresolved var when inferred,
@@ -750,11 +783,23 @@ impl<'tcx> FnBuilder<'tcx> {
                 let g = self.compile_expr(guard)?;
                 fails.push(self.emit(Op::BranchIfNot { cond: g, target: 0 }));
             }
+            // Hand the arm's result to the match register instead of
+            // cloning when its last use is here (the `?` desugar's
+            // `Ok(__try_value) => __try_value` keeps the unwrapped value
+            // uniquely owned this way).
+            let consume_body = self.value_consumable_here(&arm.body);
             let body_reg = self.compile_expr(&arm.body)?;
-            self.emit(Op::Move {
-                dst: result,
-                src: body_reg,
-            });
+            if consume_body {
+                self.emit(Op::MoveConsume {
+                    dst: result,
+                    src: body_reg,
+                });
+            } else {
+                self.emit(Op::Move {
+                    dst: result,
+                    src: body_reg,
+                });
+            }
             end_jumps.push(self.emit(Op::Jump { target: 0 }));
             self.pop_scope();
             let next = self.cur_idx();
@@ -935,13 +980,35 @@ impl<'tcx> FnBuilder<'tcx> {
         pat: &HirPat,
         fails: &mut Vec<InstrIdx>,
     ) -> RuntimeResult<()> {
+        self.emit_pattern_test_ex(scrut, pat, fails, false)
+    }
+
+    /// Like [`Self::emit_pattern_test`] but with a `consume` flag: when
+    /// set, the scrutinee is a uniquely-owned value the arm may drain
+    /// (guard-free `match` on a consumable local), so variant-field and
+    /// binding extraction move instead of clone. The runtime
+    /// `Arc::get_mut` guard on `VariantFieldConsume` degrades a
+    /// still-shared scrutinee to a safe clone.
+    pub(crate) fn emit_pattern_test_ex(
+        &mut self,
+        scrut: Reg,
+        pat: &HirPat,
+        fails: &mut Vec<InstrIdx>,
+        consume: bool,
+    ) -> RuntimeResult<()> {
         match &pat.kind {
             HirPatKind::Wildcard | HirPatKind::Rest => {}
             HirPatKind::Binding { name, .. } => {
                 // Copy into a fresh reg so a `let mut`-style rebind in
                 // the arm body can't clobber the scrutinee register.
+                // Under `consume` the scrutinee is a read-once uniquely
+                // owned value, so hand it over instead of cloning.
                 let r = self.alloc_reg();
-                self.emit(Op::Move { dst: r, src: scrut });
+                if consume {
+                    self.emit(Op::MoveConsume { dst: r, src: scrut });
+                } else {
+                    self.emit(Op::Move { dst: r, src: scrut });
+                }
                 self.bind_local(
                     &name.name,
                     TypedReg {
@@ -980,12 +1047,23 @@ impl<'tcx> FnBuilder<'tcx> {
                 }));
                 for (i, fp) in fields.iter().enumerate() {
                     let fr = self.alloc_reg();
-                    self.emit(Op::VariantField {
-                        dst: fr,
-                        src: scrut,
-                        idx: u16::try_from(i).expect("field index overflow"),
-                    });
-                    self.emit_pattern_test(fr, fp, fails)?;
+                    let idx = u16::try_from(i).expect("field index overflow");
+                    if consume {
+                        self.emit(Op::VariantFieldConsume {
+                            dst: fr,
+                            src: scrut,
+                            idx,
+                        });
+                    } else {
+                        self.emit(Op::VariantField {
+                            dst: fr,
+                            src: scrut,
+                            idx,
+                        });
+                    }
+                    // A drained field is uniquely owned, so propagate
+                    // `consume` into its sub-pattern.
+                    self.emit_pattern_test_ex(fr, fp, fails, consume)?;
                 }
             }
             HirPatKind::Struct { name, fields, .. } => {
@@ -1027,7 +1105,9 @@ impl<'tcx> FnBuilder<'tcx> {
                     }
                 }
             }
-            HirPatKind::Ref { inner, .. } => self.emit_pattern_test(scrut, inner, fails)?,
+            HirPatKind::Ref { inner, .. } => {
+                self.emit_pattern_test_ex(scrut, inner, fails, consume)?;
+            }
             HirPatKind::At { name, sub, .. } => {
                 self.emit_pattern_test(scrut, sub, fails)?;
                 let r = self.alloc_reg();
@@ -1410,6 +1490,21 @@ impl<'tcx> FnBuilder<'tcx> {
                 return self.compile_struct_eq(&sname, op, lhs, rhs);
             }
         }
+        // Struct / enum ordering routes `<` `<=` `>` `>=` to a `Type::cmp`
+        // method (synthesized for a by-value-comparable type or hand-written),
+        // testing its -1/0/1 result against 0. `adt_type_name` covers structs
+        // and enums; the checker has confirmed the method exists.
+        if matches!(
+            op,
+            HirBinaryOp::Lt | HirBinaryOp::Le | HirBinaryOp::Gt | HirBinaryOp::Ge
+        ) {
+            if let Some(sname) = self
+                .adt_type_name(lhs.ty)
+                .or_else(|| self.adt_type_name(rhs.ty))
+            {
+                return self.compile_struct_cmp(&sname, op, lhs, rhs);
+            }
+        }
         // Arithmetic operator overloading: `a + b` (and `- * /`) on a user
         // struct routes to its `add`/`sub`/`mul`/`div` impl method. The
         // checker rejects ADT operands with no such impl, so the method
@@ -1430,6 +1525,103 @@ impl<'tcx> FnBuilder<'tcx> {
             .binary_op(op, dst, lhs_reg, rhs_reg)
             .ok_or(RuntimeError::Unsupported("binary op kind"))?;
         self.emit(instr);
+        Ok(TypedReg {
+            reg: dst,
+            kind: RegKind::Value,
+        })
+    }
+
+    /// Lowers a struct / enum ordering `a <op> b` to `<sname>::cmp(a, b) <op>
+    /// 0` - the synthesized / user `cmp` returns -1 / 0 / 1, tested against a
+    /// zero literal with the original operator. Mirrors [`Self::compile_struct_eq`].
+    fn compile_struct_cmp(
+        &mut self,
+        sname: &str,
+        op: HirBinaryOp,
+        lhs: &HirExpr,
+        rhs: &HirExpr,
+    ) -> RuntimeResult<TypedReg> {
+        let key = format!("{sname}::cmp");
+        let idx = self.global_idx(&key);
+        let callee_reg = self.alloc_reg();
+        self.emit(Op::LoadGlobal {
+            dst: callee_reg,
+            idx,
+        });
+        // Compile both operands into temporaries first, then lay them into a
+        // fresh contiguous argument span above them. An aggregate operand
+        // (enum / struct) whose construction allocates its own registers must
+        // not overlap the span, so the span is allocated only after both
+        // operands are built - the canonical call lowering's shape.
+        let lhs_reg = self.compile_expr(lhs)?;
+        let rhs_reg = self.compile_expr(rhs)?;
+        let args_start = self.next_reg;
+        self.ensure_reg_slot(args_start);
+        self.emit(Op::Move {
+            dst: args_start,
+            src: lhs_reg,
+        });
+        self.ensure_reg_slot(args_start + 1);
+        self.emit(Op::Move {
+            dst: args_start + 1,
+            src: rhs_reg,
+        });
+        let cmpres = self.alloc_reg();
+        let cache_idx = self.alloc_cache_idx();
+        // Aggregate operands are non-scalar, so the callee must auto-deref any
+        // `flag::Cell` arguments - mirrors the free-call path's `may_have_cells`.
+        self.emit(Op::Call {
+            dst: cmpres,
+            callee: callee_reg,
+            args: args_start,
+            argc: 2,
+            cache_idx,
+            may_have_cells: true,
+        });
+        let zero = self.load_int_value(0);
+        let dst = self.alloc_reg();
+        let instr = self
+            .binary_op(op, dst, cmpres, zero)
+            .ok_or(RuntimeError::Unsupported("cmp-to-zero op kind"))?;
+        self.emit(instr);
+        Ok(TypedReg {
+            reg: dst,
+            kind: RegKind::Value,
+        })
+    }
+
+    /// Lowers a unary operator overload `<op> a` (currently `-a` -> `neg`) to
+    /// a call of the user `<sname>::<method>(a)` impl method.
+    pub(crate) fn compile_struct_unary(
+        &mut self,
+        sname: &str,
+        method: &str,
+        operand: &HirExpr,
+    ) -> RuntimeResult<TypedReg> {
+        let key = format!("{sname}::{method}");
+        let idx = self.global_idx(&key);
+        let callee_reg = self.alloc_reg();
+        self.emit(Op::LoadGlobal {
+            dst: callee_reg,
+            idx,
+        });
+        let operand_reg = self.compile_expr(operand)?;
+        let args_start = self.next_reg;
+        self.ensure_reg_slot(args_start);
+        self.emit(Op::Move {
+            dst: args_start,
+            src: operand_reg,
+        });
+        let dst = self.alloc_reg();
+        let cache_idx = self.alloc_cache_idx();
+        self.emit(Op::Call {
+            dst,
+            callee: callee_reg,
+            args: args_start,
+            argc: 1,
+            cache_idx,
+            may_have_cells: true,
+        });
         Ok(TypedReg {
             reg: dst,
             kind: RegKind::Value,
@@ -1898,6 +2090,28 @@ impl<'tcx> FnBuilder<'tcx> {
         // `swap`, `insert`) routes to the user method.
         if let Some(reg) = self.try_compile_mut_self_method(receiver, name, args)? {
             return Ok(reg);
+        }
+        // `s.byte_at(i)` on a statically-`String` receiver: emit the
+        // dedicated `Op::StrByteAt` rather than routing through the
+        // generic `MethodCall` machinery. The static-type guard means a
+        // non-string receiver (e.g. a user type with its own `byte_at`)
+        // never reaches this op and keeps the name-global dispatch.
+        if name.name.as_str() == "byte_at" && args.len() == 1 {
+            let mut k = self.tcx.kind(receiver.ty).cloned();
+            while let Some(TyKind::Ref { inner, .. }) = k {
+                k = self.tcx.kind(inner).cloned();
+            }
+            if matches!(k, Some(TyKind::String)) {
+                let recv_reg = self.compile_expr(receiver)?;
+                let idx_reg = self.compile_expr(&args[0])?;
+                let dst = self.alloc_reg();
+                self.emit(Op::StrByteAt {
+                    dst,
+                    recv: recv_reg,
+                    idx: idx_reg,
+                });
+                return Ok(dst);
+            }
         }
         // `d.as_millis()` / `d.as_secs()` / `d.as_micros()` - method form
         // of the `time::Duration` accessors. A Duration value is a bare
@@ -2495,14 +2709,21 @@ impl<'tcx> FnBuilder<'tcx> {
         if args.is_empty() {
             if let HirExprKind::Path { segments, .. } = &callee.kind {
                 let segs: Vec<&str> = segments.iter().map(|s| s.name.as_str()).collect();
-                if matches!(segs.as_slice(), ["HashMap", "new"]) && self.is_int_map_ty(result_ty) {
+                // `BTreeMap` resolves to `TyKind::HashMap` and shares the map
+                // runtime, so an i64-keyed `BTreeMap::new` lands as a typed
+                // `IntMap` / `StrIntMap` exactly like `HashMap::new`. IntMap
+                // iteration is key-sorted, matching BTreeMap's ordering.
+                let is_map_new = matches!(
+                    segs.as_slice(),
+                    ["HashMap" | "BTreeMap", "new"]
+                        | ["collections", "HashMap" | "BTreeMap", "new"]
+                );
+                if is_map_new && self.is_int_map_ty(result_ty) {
                     let dst = self.alloc_reg();
                     self.emit(Op::BuildIntMap { dst_v: dst });
                     return Ok(dst);
                 }
-                if matches!(segs.as_slice(), ["HashMap", "new"])
-                    && self.is_str_int_map_ty(result_ty)
-                {
+                if is_map_new && self.is_str_int_map_ty(result_ty) {
                     let dst = self.alloc_reg();
                     self.emit(Op::BuildStrIntMap { dst_v: dst });
                     return Ok(dst);
@@ -2657,10 +2878,25 @@ impl<'tcx> FnBuilder<'tcx> {
             let slot = args_start
                 .checked_add(u16::try_from(i).unwrap())
                 .expect("register overflow");
-            self.emit(Op::Move {
-                dst: slot,
-                src: *arg_reg,
-            });
+            // Move-on-last-use: when the argument is a consumable local
+            // whose home register we are reading directly, hand the value
+            // over instead of cloning so the callee receives unique
+            // ownership and the caller's input frees as it is consumed.
+            let consume = self
+                .consumable_path(&args[i])
+                .and_then(|name| self.lookup_local(name))
+                .is_some_and(|tr| tr.kind == RegKind::Value && tr.reg == *arg_reg);
+            if consume {
+                self.emit(Op::MoveConsume {
+                    dst: slot,
+                    src: *arg_reg,
+                });
+            } else {
+                self.emit(Op::Move {
+                    dst: slot,
+                    src: *arg_reg,
+                });
+            }
         }
         let dst = self.alloc_reg();
         let cache_idx = self.alloc_cache_idx();
@@ -2808,6 +3044,12 @@ fn arith_overload_method(op: HirBinaryOp) -> Option<&'static str> {
         HirBinaryOp::Sub => Some("sub"),
         HirBinaryOp::Mul => Some("mul"),
         HirBinaryOp::Div => Some("div"),
+        HirBinaryOp::Rem => Some("rem"),
+        HirBinaryOp::BitAnd => Some("bitand"),
+        HirBinaryOp::BitOr => Some("bitor"),
+        HirBinaryOp::BitXor => Some("bitxor"),
+        HirBinaryOp::Shl => Some("shl"),
+        HirBinaryOp::Shr => Some("shr"),
         _ => None,
     }
 }

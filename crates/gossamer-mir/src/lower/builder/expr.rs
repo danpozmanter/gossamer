@@ -794,6 +794,27 @@ impl<'a> Builder<'a> {
     ) -> Option<Local> {
         use gossamer_types::TyKind;
         let inner = self.lower_expr(operand)?;
+        // `-x` on a user struct / enum routes to its `neg` impl method.
+        if matches!(op, HirUnaryOp::Neg) {
+            let sname = self
+                .adt_dispatch_name(operand.ty)
+                .or_else(|| self.adt_dispatch_name(self.locals[inner.0 as usize].ty));
+            if let Some(sname) = sname {
+                let mangled = format!("{sname}::neg");
+                if self.impl_methods.contains_key(&mangled) {
+                    let dest = self.fresh(ty);
+                    let next = self.new_block(span);
+                    self.terminate(Terminator::Call {
+                        callee: Operand::Const(ConstValue::Str(mangled)),
+                        args: vec![Operand::Copy(Place::local(inner))],
+                        destination: Place::local(dest),
+                        target: Some(next),
+                    });
+                    self.set_current(next);
+                    return Some(dest);
+                }
+            }
+        }
         let mir_op = match op {
             HirUnaryOp::Neg => UnOp::Neg,
             HirUnaryOp::Not => UnOp::Not,
@@ -1290,6 +1311,53 @@ impl<'a> Builder<'a> {
                         return Some(dest);
                     }
                     return Some(cmp);
+                }
+            }
+        }
+        // Struct / enum ordering: route `<` `<=` `>` `>=` to a `Type::cmp`
+        // method (synthesized for a by-value-comparable type or hand-written),
+        // testing its -1 / 0 / 1 result against 0. Mirrors the `==` route.
+        if matches!(
+            op,
+            HirBinaryOp::Lt | HirBinaryOp::Le | HirBinaryOp::Gt | HirBinaryOp::Ge
+        ) {
+            let sname = self
+                .adt_dispatch_name(lhs.ty)
+                .or_else(|| self.adt_dispatch_name(self.locals[lhs_local.0 as usize].ty))
+                .or_else(|| self.adt_dispatch_name(rhs.ty))
+                .or_else(|| self.adt_dispatch_name(self.locals[rhs_local.0 as usize].ty))
+                .or_else(|| self.local_struct.get(&lhs_local).cloned())
+                .or_else(|| self.local_struct.get(&rhs_local).cloned())
+                .or_else(|| self.struct_name_from_expr(lhs))
+                .or_else(|| self.struct_name_from_expr(rhs));
+            if let Some(sname) = sname {
+                let mangled = format!("{sname}::cmp");
+                if self.impl_methods.contains_key(&mangled) {
+                    let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+                    let cmpres = self.fresh(i64_ty);
+                    let next = self.new_block(span);
+                    self.terminate(Terminator::Call {
+                        callee: Operand::Const(ConstValue::Str(mangled)),
+                        args: vec![
+                            Operand::Copy(Place::local(lhs_local)),
+                            Operand::Copy(Place::local(rhs_local)),
+                        ],
+                        destination: Place::local(cmpres),
+                        target: Some(next),
+                    });
+                    self.set_current(next);
+                    let bool_ty = self.tcx.bool_ty();
+                    let dest = self.fresh(bool_ty);
+                    self.emit_assign(
+                        Place::local(dest),
+                        Rvalue::BinaryOp {
+                            op: lower_binop(op),
+                            lhs: Operand::Copy(Place::local(cmpres)),
+                            rhs: Operand::Const(ConstValue::Int(0)),
+                        },
+                        span,
+                    );
+                    return Some(dest);
                 }
             }
         }
@@ -2368,6 +2436,30 @@ impl<'a> Builder<'a> {
         span: Span,
     ) -> Option<Local> {
         use gossamer_types::TyKind;
+        // `a[i]` on a user struct / enum routes to its `index` impl method.
+        // (A range index `a[lo..hi]` keeps the slice path below.)
+        if !matches!(index.kind, HirExprKind::Range { .. })
+            && let Some(sname) = self.adt_dispatch_name(base.ty)
+        {
+            let mangled = format!("{sname}::index");
+            if self.impl_methods.contains_key(&mangled) {
+                let base_local = self.lower_expr(base)?;
+                let index_local = self.lower_expr(index)?;
+                let dest = self.fresh(ty);
+                let next = self.new_block(span);
+                self.terminate(Terminator::Call {
+                    callee: Operand::Const(ConstValue::Str(mangled)),
+                    args: vec![
+                        Operand::Copy(Place::local(base_local)),
+                        Operand::Copy(Place::local(index_local)),
+                    ],
+                    destination: Place::local(dest),
+                    target: Some(next),
+                });
+                self.set_current(next);
+                return Some(dest);
+            }
+        }
         // Slice expression `arr[lo..hi]`: the index is a Range
         // value rather than a single integer. Route through a
         // runtime slice helper. Returns a `*mut GosVec` so the
@@ -2703,6 +2795,12 @@ fn arith_overload_method(op: HirBinaryOp) -> Option<&'static str> {
         HirBinaryOp::Sub => Some("sub"),
         HirBinaryOp::Mul => Some("mul"),
         HirBinaryOp::Div => Some("div"),
+        HirBinaryOp::Rem => Some("rem"),
+        HirBinaryOp::BitAnd => Some("bitand"),
+        HirBinaryOp::BitOr => Some("bitor"),
+        HirBinaryOp::BitXor => Some("bitxor"),
+        HirBinaryOp::Shl => Some("shl"),
+        HirBinaryOp::Shr => Some("shr"),
         _ => None,
     }
 }

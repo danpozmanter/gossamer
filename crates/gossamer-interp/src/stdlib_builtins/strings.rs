@@ -241,7 +241,7 @@ pub(crate) fn builtin_strings_split_once(args: &[Value]) -> RuntimeResult<Value>
     let text = args.first().and_then(as_str).unwrap_or("");
     let sep = pattern_arg(args.get(1));
     match text.split_once(&*sep) {
-        Some((head, tail)) => Ok(some_variant(Value::Tuple(std::sync::Arc::new(vec![
+        Some((head, tail)) => Ok(some_variant(Value::Tuple(std::sync::Arc::from(vec![
             Value::String(head.into()),
             Value::String(tail.into()),
         ])))),
@@ -253,7 +253,7 @@ pub(crate) fn builtin_strings_rsplit_once(args: &[Value]) -> RuntimeResult<Value
     let text = args.first().and_then(as_str).unwrap_or("");
     let sep = pattern_arg(args.get(1));
     match text.rsplit_once(&*sep) {
-        Some((head, tail)) => Ok(some_variant(Value::Tuple(std::sync::Arc::new(vec![
+        Some((head, tail)) => Ok(some_variant(Value::Tuple(std::sync::Arc::from(vec![
             Value::String(head.into()),
             Value::String(tail.into()),
         ])))),

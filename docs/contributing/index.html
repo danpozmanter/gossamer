@@ -1747,7 +1747,12 @@
 <h1 id="contributing">Contributing<a class="headerlink" href="#contributing" title="Permanent link">&para;</a></h1>
 <h2 id="house-rules">House rules<a class="headerlink" href="#house-rules" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Safe Rust only. Every crate forbids <code>unsafe_code</code>.</li>
+<li>Safe Rust in the front-end: the parser, resolver, type checker,
+  MIR, LLVM codegen, lints, and scheduler crates forbid
+  <code>unsafe_code</code>. The runtime, the Cranelift JIT, the stackful-coroutine
+  layer, and the FFI binding surface contain contained, reviewed
+  <code>unsafe</code> (C ABIs, executing generated code, context switching) -
+  keep it in the smallest possible scope.</li>
 <li><code>cargo clippy --workspace --all-targets -- -D warnings</code> is the
   gate.</li>
 <li><code>cargo fmt --all --check</code> must pass.</li>

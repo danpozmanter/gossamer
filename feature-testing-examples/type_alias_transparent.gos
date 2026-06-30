@@ -1,0 +1,24 @@
+// Transparent type aliases: `type X = T` makes `X` interchangeable with
+// `T` everywhere - let bindings, parameters, return types, struct fields,
+// composites, and alias chains - lowering to the underlying type on every
+// tier (no opaque nominal `adt#N`). Generic aliases `type Pair<A> = (A, A)`
+// substitute the use-site arguments. Cyclic aliases are rejected at check
+// (GT0024), so only well-formed ones reach here.
+
+type Id = i64
+type Bytes = Vec<u8>
+type Count = Id
+type Pair<A> = (A, A)
+type Boxed<T> = Vec<T>
+
+struct Acct { id: Id, tags: Bytes, hits: Count, span: Pair<i64>, codes: Boxed<i64> }
+
+fn bump(n: Count) -> Id {
+    n + 1
+}
+
+fn main() {
+    let a = Acct { id: 7, tags: [1, 2, 3], hits: 41, span: (10, 20), codes: [4, 5] }
+    let next: Id = bump(a.hits)
+    println!("{} {} {} {} {} {}", a.id, a.tags.len(), next, a.span.0, a.span.1, a.codes.len())
+}

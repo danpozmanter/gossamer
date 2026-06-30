@@ -1,3 +1,13 @@
+/*
+ * Directory listing - reads entries and prints an aligned table.
+ *
+ * Column alignment uses format-spec width + fill (`{:<4}` left,
+ * `{:>14}` right) rather than hand-rolled padding helpers.
+ *
+ * Run:
+ *     gos run examples/list_dir.gos -- examples
+ */
+
 use std::env
 use std::errors
 use std::fs
@@ -15,6 +25,7 @@ fn kind_tag(entry: &fs::DirInfo) -> String {
     }
 }
 
+// Renders a non-negative integer with thousands separators.
 fn comma_size(n: i64) -> String {
     if n == 0 {
         return "0"
@@ -23,85 +34,44 @@ fn comma_size(n: i64) -> String {
     let mut value = n
     let mut digits_since_comma = 0
     while value > 0 {
-        let digit = value % 10
         if digits_since_comma == 3 {
             out = "," + &out
             digits_since_comma = 0
         }
-        out = __concat(digit) + &out
+        out = format!("{}", value % 10) + &out
         value /= 10
         digits_since_comma += 1
     }
     out
 }
 
-fn pad_right(s: &String, width: i64) -> String {
-    let mut out = s.clone()
-    while out.len() as i64 < width {
-        out += " "
-    }
-    out
-}
-
-fn pad_left(s: &String, width: i64) -> String {
-    let mut out = s.clone()
-    while out.len() as i64 < width {
-        out = " " + &out
-    }
-    out
-}
-
 fn render_modified(unix_ms: i64) -> String {
     if unix_ms <= 0 {
-        return "                     "
+        return ""
     }
     match time::format_rfc3339(unix_ms) {
         Ok(s) => s,
-        Err(_) => "                     ",
+        Err(_) => "",
     }
 }
 
 fn main() -> Result<(), errors::Error> {
     let args = env::args()
-    let target = if args.len() >= 1 {
-        args[0].clone()
-    } else {
-        "."
-    }
-    let entries = fs::list_dir(&target).map_err(
-        |e| errors::new(__concat("list_dir ", target, ": ", e)),
-    )?
-    println(__concat("listing of ", target))
-    println(
-        __concat(
-            pad_right(&"kind", 4),
-            " ",
-            pad_left(&"size", 14),
-            " ",
-            pad_right(&"modified", 22),
-            " ",
-            "name",
-        ),
-    )
+    let target = if args.is_empty() { "." } else { args[0].clone() }
+
+    let entries = fs::list_dir(&target)
+        .map_err(|e| errors::newf("list_dir {}: {}", target, e))?
+
+    println!("listing of {}", target)
+    println!("{:<4} {:>14} {:<22} name", "kind", "size", "modified")
+
     let mut files = 0
     let mut dirs = 0
     let mut total_bytes = 0
     for i in 0..entries.len() {
         let entry = &entries[i]
-        let tag = kind_tag(entry)
-        let size_str = comma_size(entry.size)
-        let modified = render_modified(entry.modified_ms)
-        println(
-            __concat(
-                pad_right(&tag, 4),
-                " ",
-                pad_left(&size_str, 14),
-                " ",
-                pad_right(&modified, 22),
-                " ",
-                entry.name,
-            ),
-        )
+        println!("{:<4} {:>14} {:<22} {}",
+            kind_tag(entry), comma_size(entry.size), render_modified(entry.modified_ms), entry.name)
         if entry.is_dir {
             dirs += 1
         } else if entry.is_file {
@@ -109,16 +79,9 @@ fn main() -> Result<(), errors::Error> {
             total_bytes += entry.size
         }
     }
-    println(__concat("---"))
-    println(
-        __concat(
-            files,
-            " file(s), ",
-            dirs,
-            " dir(s), ",
-            comma_size(total_bytes),
-            " bytes total in regular files",
-        ),
-    )
+
+    println!("---")
+    println!("{} file(s), {} dir(s), {} bytes total in regular files",
+        files, dirs, comma_size(total_bytes))
     Ok(())
 }

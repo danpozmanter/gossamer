@@ -11,7 +11,7 @@
 fn count_newlines(text: String) -> i64 {
     let mut count = 0
     for i in 0..text.len() {
-        if text[i] == 10 { count += 1 }
+        if text[i] == b'\n' { count += 1 }
     }
     count
 }
@@ -19,5 +19,5 @@ fn count_newlines(text: String) -> i64 {
 fn main() {
     let sample = "alpha\nbeta\ngamma\ndelta\n"
     let n = count_newlines(sample)
-    println("lines:", n)
+    println!("lines: {}", n)
 }

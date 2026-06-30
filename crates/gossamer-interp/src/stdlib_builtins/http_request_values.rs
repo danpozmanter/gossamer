@@ -192,7 +192,7 @@ pub(crate) fn builtin_request_basic_auth(args: &[Value]) -> RuntimeResult<Value>
     let Some((user, pass)) = decoded.split_once(':') else {
         return Ok(none_variant());
     };
-    let pair = Value::Tuple(Arc::new(vec![
+    let pair = Value::Tuple(Arc::from(vec![
         Value::String(SmolStr::from(user)),
         Value::String(SmolStr::from(pass)),
     ]));
@@ -266,7 +266,7 @@ pub(crate) fn builtin_request_set_value(args: &[Value]) -> RuntimeResult<Value> 
             }
         }
     }
-    pairs.push(Value::Tuple(Arc::new(vec![
+    pairs.push(Value::Tuple(Arc::from(vec![
         Value::String(SmolStr::from(name.as_str())),
         Value::String(SmolStr::from(value.as_str())),
     ])));

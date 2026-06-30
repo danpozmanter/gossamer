@@ -104,6 +104,24 @@ pub enum TypeError {
         /// Recursion limit at which the error was raised.
         limit: u32,
     },
+    /// A `type` alias expands to itself through a cycle (`type A = B;
+    /// type B = A`), so it has no underlying type. Treated as
+    /// `TyKind::Error` so downstream typing does not cascade.
+    #[error("type alias `{name}` is cyclic - it expands to itself")]
+    CyclicTypeAlias {
+        /// Name of the alias at the point the cycle was detected.
+        name: String,
+    },
+    /// A `#[derive(...)]` names a trait that synthesizes nothing: it is
+    /// either automatic for value types (comparison / hashing / serde) or
+    /// is implemented with `impl Trait for T`, not derived.
+    #[error("`#[derive({name})]` is not supported")]
+    UnsupportedDerive {
+        /// The rejected derive name.
+        name: String,
+        /// Why it is unsupported and what to do instead.
+        hint: String,
+    },
     /// An integer literal overflows the value range of its declared
     /// type-suffix (e.g. `300i8`, `99999999999999999999i64`). Treated
     /// as `TyKind::Error` so downstream typing does not cascade.
@@ -292,6 +310,8 @@ impl TypeError {
             Self::UnknownField { .. } => "unknown-field",
             Self::DiscardedResult => "discarded-result",
             Self::RecursionLimit { .. } => "recursion-limit",
+            Self::CyclicTypeAlias { .. } => "cyclic-type-alias",
+            Self::UnsupportedDerive { .. } => "unsupported-derive",
             Self::IntLiteralOverflow { .. } => "int-literal-overflow",
             Self::InvalidEscape { .. } => "invalid-escape",
             Self::UnknownTraitBound { .. } => "unknown-trait-bound",
@@ -322,6 +342,8 @@ impl TypeError {
             Self::UnknownField { .. } => "GT0006",
             Self::DiscardedResult => "GT0007",
             Self::RecursionLimit { .. } => "GT0008",
+            Self::CyclicTypeAlias { .. } => "GT0024",
+            Self::UnsupportedDerive { .. } => "GT0025",
             Self::IntLiteralOverflow { .. } => "GT0009",
             Self::InvalidEscape { .. } => "GT0010",
             Self::UnknownTraitBound { .. } => "GT0011",
@@ -412,6 +434,10 @@ impl TypeDiagnostic {
     /// Renders this diagnostic as a structured
     /// [`gossamer_diagnostics::Diagnostic`] for the new error frame.
     #[must_use]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one arm per diagnostic variant; splitting scatters the help text"
+    )]
     pub fn to_diagnostic(&self) -> gossamer_diagnostics::Diagnostic {
         use gossamer_diagnostics::{Code, Diagnostic, Location};
         let location = Location::new(self.span.file, self.span);
@@ -467,6 +493,16 @@ impl TypeDiagnostic {
                     .with_note(
                         "the typechecker bails out at a fixed depth to avoid a C-stack overflow",
                     );
+            }
+            TypeError::CyclicTypeAlias { name } => {
+                out = out
+                    .with_help(format!(
+                        "`{name}` must eventually expand to a concrete type, not back to itself"
+                    ))
+                    .with_note("a cyclic alias has no underlying type, so every use is ill-typed");
+            }
+            TypeError::UnsupportedDerive { hint, .. } => {
+                out = out.with_help(hint.clone());
             }
             TypeError::IntLiteralOverflow { literal, ty } => {
                 out = out.with_help(format!("`{literal}` exceeds the range of `{ty}`"));

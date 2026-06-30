@@ -175,21 +175,21 @@ pub(crate) fn builtin_bits_len(args: &[Value]) -> RuntimeResult<Value> {
 }
 pub(crate) fn builtin_bits_add(args: &[Value]) -> RuntimeResult<Value> {
     let (sum, carry) = math_std::bits::add(arg_u64(args, 0), arg_u64(args, 1), arg_u64(args, 2));
-    Ok(Value::Tuple(Arc::new(vec![
+    Ok(Value::Tuple(Arc::from(vec![
         Value::Int(sum as i64),
         Value::Int(carry as i64),
     ])))
 }
 pub(crate) fn builtin_bits_sub(args: &[Value]) -> RuntimeResult<Value> {
     let (diff, borrow) = math_std::bits::sub(arg_u64(args, 0), arg_u64(args, 1), arg_u64(args, 2));
-    Ok(Value::Tuple(Arc::new(vec![
+    Ok(Value::Tuple(Arc::from(vec![
         Value::Int(diff as i64),
         Value::Int(borrow as i64),
     ])))
 }
 pub(crate) fn builtin_bits_mul(args: &[Value]) -> RuntimeResult<Value> {
     let (hi, lo) = math_std::bits::mul(arg_u64(args, 0), arg_u64(args, 1));
-    Ok(Value::Tuple(Arc::new(vec![
+    Ok(Value::Tuple(Arc::from(vec![
         Value::Int(hi as i64),
         Value::Int(lo as i64),
     ])))
@@ -200,7 +200,7 @@ pub(crate) fn builtin_bits_div(args: &[Value]) -> RuntimeResult<Value> {
         return Ok(err_variant("math::bits::div: division by zero".to_string()));
     }
     let (q, r) = math_std::bits::div(arg_u64(args, 0), arg_u64(args, 1), y);
-    Ok(Value::Tuple(Arc::new(vec![
+    Ok(Value::Tuple(Arc::from(vec![
         Value::Int(q as i64),
         Value::Int(r as i64),
     ])))

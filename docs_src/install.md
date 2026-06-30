@@ -60,10 +60,15 @@ because corosensei has no context-switch backend for them.
 
 ## Target toolchains
 
-`gos build --target <triple>` enables cross-compilation. The
-default registered set covers the supported platforms above plus
-the `riscv64gc-unknown-linux-gnu`, `wasm32-unknown-unknown`, and
-`wasm32-wasi` targets - which build but do not run goroutines.
+`gos build --target <triple>` validates the triple against the
+registered set - the supported platforms above plus
+`riscv64gc-unknown-linux-gnu`, `wasm32-unknown-unknown`, and
+`wasm32-wasi`. Only the host triple currently links to a runnable
+binary, though: a non-host `--target` emits a placeholder artifact and
+reports `cross-link pending`. Build each target on a native runner of
+that architecture for now. (A fully-static single-file binary comes
+from `gos build --release` on a Linux host with the musl rustup target
+installed - no `--target` needed.)
 
 Musl targets (`x86_64-unknown-linux-musl`,
 `aarch64-unknown-linux-musl`) are gated behind the `musl` Cargo

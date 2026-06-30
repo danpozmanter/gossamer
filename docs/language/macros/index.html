@@ -1562,6 +1562,47 @@
     
   
   
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#format-macros" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Format macros
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#desugar-macros" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Desugar macros
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#build-time-macros" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Build-time macros
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
 </nav>
                   </div>
                 </div>
@@ -1579,7 +1620,39 @@
 
 <h1 id="langmacros"><code>lang::macros</code><a class="headerlink" href="#langmacros" title="Permanent link">&para;</a></h1>
 <p>Status: shipped</p>
-<p>Six built-in format macros (print/println/eprint/eprintln/format/panic).</p>
+<p>Built-in macros only - no user-defined macros: the format family (print/println/eprint/eprintln/format/panic), the desugar macros (matches!/todo!/unimplemented!/unreachable!/dbg!), and the build-time regex!/sql!/codegen!.</p>
+<!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
+
+<p>The macro set is fixed. Every <code>name!(...)</code> outside this list is a parse
+error (<code>GP0001</code>) - there are no user-defined macros.</p>
+<h2 id="format-macros">Format macros<a class="headerlink" href="#format-macros" title="Permanent link">&para;</a></h2>
+<p><code>format!</code>, <code>println!</code>, <code>print!</code>, <code>eprintln!</code>, <code>eprint!</code>, and <code>panic!</code>
+take a literal template plus arguments. Placeholders are positional <code>{}</code>,
+named <code>{ident}</code> (a binding in scope), and <code>{:spec}</code> / <code>{name:spec}</code> with
+Rust's width / fill / align / radix / precision grammar:</p>
+<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kd">let</span><span class="w"> </span><span class="n">name</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">&quot;jane&quot;</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;hello, {name}&quot;</span><span class="p">)</span><span class="w">          </span><span class="c1">// named capture</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;[{:&gt;8.2}]&quot;</span><span class="p">,</span><span class="w"> </span><span class="mf">3.14159</span><span class="p">)</span><span class="w">     </span><span class="c1">// [    3.14]</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="kd">let</span><span class="w"> </span><span class="n">msg</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="fm">format!</span><span class="p">(</span><span class="s">&quot;{} / {}&quot;</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">2</span><span class="p">)</span><span class="w"> </span><span class="c1">// returns a String</span>
+</code></pre></div>
+<p>A placeholder whose name is an expression (<code>{age + 1}</code>) is a parse error
+(<code>GP0021</code>).</p>
+<h2 id="desugar-macros">Desugar macros<a class="headerlink" href="#desugar-macros" title="Permanent link">&para;</a></h2>
+<p>These expand at parse time into ordinary constructs, so they lower
+uniformly on every tier:</p>
+<ul>
+<li><code>matches!(expr, pat)</code> - boolean: does <code>expr</code> match the pattern.</li>
+<li><code>todo!</code> / <code>unimplemented!</code> / <code>unreachable!</code> - <code>panic!</code> with a fixed (or
+  supplied) message.</li>
+<li><code>dbg!(expr)</code> - prints <code>expr</code> with <code>{:?}</code> to stderr and yields its value.</li>
+</ul>
+<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="k">if</span><span class="w"> </span><span class="fm">matches!</span><span class="p">(</span><span class="n">n</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="o">..=</span><span class="mi">9</span><span class="p">)</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="cm">/* single digit */</span><span class="w"> </span><span class="p">}</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="kd">let</span><span class="w"> </span><span class="n">x</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="fm">dbg!</span><span class="p">(</span><span class="n">compute</span><span class="p">())</span><span class="w">   </span><span class="c1">// logs the value, returns it</span>
+</code></pre></div>
+<h2 id="build-time-macros">Build-time macros<a class="headerlink" href="#build-time-macros" title="Permanent link">&para;</a></h2>
+<p><code>regex!("…")</code> and <code>sql!("…")</code> validate their literal argument at compile
+time and fold to the validated string; <code>codegen!(...)</code> splices a <code>comptime
+fn</code>'s <code>String</code> result back as source. See <a href="../comptime/">comptime</a>.</p>
 
 
 

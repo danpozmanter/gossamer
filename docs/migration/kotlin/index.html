@@ -2082,12 +2082,16 @@ Gossamer uses <code>Option&lt;T&gt;</code> with explicit unwrapping:</p>
 <a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="kd">let</span><span class="w"> </span><span class="n">u</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">User</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">name</span>: <span class="s">&quot;Ada&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">age</span>: <span class="mi">36</span><span class="w"> </span><span class="p">}</span>
 <a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="kd">let</span><span class="w"> </span><span class="n">older</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">User</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">age</span>: <span class="mi">37</span><span class="p">,</span><span class="w"> </span><span class="o">..</span><span class="n">u</span><span class="w"> </span><span class="p">}</span>
 </code></pre></div>
-<p>Deriving <code>Debug</code>, <code>Clone</code>, and <code>PartialEq</code> is the Gossamer
-equivalent of data class's auto-generated <code>toString</code> /
-<code>equals</code> / <code>hashCode</code>:</p>
-<div class="language-gos highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="cp">#[derive(Debug, Clone, PartialEq)]</span>
+<p>A data class's auto-generated <code>equals</code> / <code>hashCode</code> / <code>copy</code> come
+for free in Gossamer: structs are value types, so <code>==</code>, <code>a.clone()</code>,
+<code>let b = a</code> (copy), and hashing all work with <strong>no derive</strong>. Only
+<code>Debug</code> (the <code>{:?}</code> formatter, the <code>toString</code> analogue) is opted into:</p>
+<div class="language-gos highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="cp">#[derive(Debug)]</span>
 <a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="k">struct</span> <span class="nc">User</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">name</span>: <span class="nb">String</span><span class="p">,</span><span class="w"> </span><span class="n">age</span>: <span class="kt">i64</span> <span class="p">}</span>
 </code></pre></div>
+<p>The derivable set is exactly <code>Debug, Default, PartialEq, Eq,
+PartialOrd, Ord</code>; deriving <code>Clone</code> / <code>Hash</code> / <code>Copy</code> is rejected
+(<code>GT0025</code>) because each is already automatic.</p>
 <h2 id="sealed-classes-enums">Sealed classes → enums<a class="headerlink" href="#sealed-classes-enums" title="Permanent link">&para;</a></h2>
 <p>Kotlin:</p>
 <div class="language-kotlin highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="kd">sealed</span><span class="w"> </span><span class="kd">class</span><span class="w"> </span><span class="nc">Result</span><span class="o">&lt;</span><span class="k">out</span><span class="w"> </span><span class="n">T</span><span class="o">&gt;</span>

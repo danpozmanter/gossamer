@@ -1044,21 +1044,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#parse-only-today-run-once-the-stdlib-wiring-lands" class="md-nav__link">
+  <a href="#more-in-the-tree" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Parse-only today (run once the stdlib wiring lands)
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#self-host-ports" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Self-host ports
+        More in the tree
       
     </span>
   </a>
@@ -1697,21 +1686,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#parse-only-today-run-once-the-stdlib-wiring-lands" class="md-nav__link">
+  <a href="#more-in-the-tree" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Parse-only today (run once the stdlib wiring lands)
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#self-host-ports" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Self-host ports
+        More in the tree
       
     </span>
   </a>
@@ -1748,7 +1726,7 @@
 
 <h1 id="examples">Examples<a class="headerlink" href="#examples" title="Permanent link">&para;</a></h1>
 <p>The <a href="https://github.com/danpozmanter/gossamer/tree/main/examples"><code>examples/</code></a>
-directory ships a handful of worked programs.</p>
+directory ships a broad set of worked programs.</p>
 <h2 id="a-friendly-taste">A friendly taste<a class="headerlink" href="#a-friendly-taste" title="Permanent link">&para;</a></h2>
 <p><code>examples/function_piping.gos</code> walks through the <code>|&gt;</code> forward-pipe
 operator and the F#-style combinator surface in <code>std::iter</code> /
@@ -1788,9 +1766,9 @@ threads naturally:</p>
 <li><strong><code>function_piping.gos</code></strong> - tour of the <code>|&gt;</code> forward-pipe
   operator plus the <code>std::iter</code> / <code>std::option</code> combinator
   surface (<code>filter</code>, <code>sum_by</code>, <code>find</code>, <code>option::default</code>, …).
-  Runs under <code>gos run</code>, <code>gos build</code> (cranelift), and
-  <code>gos build --release</code> (LLVM); the tier_parity test confirms
-  identical output across all three.</li>
+  Runs under <code>gos run</code> (bytecode VM + Cranelift JIT), <code>gos build</code>
+  (LLVM <code>-O0</code>), and <code>gos build --release</code> (LLVM <code>-O3</code>); the
+  tier_parity test confirms identical output across all three.</li>
 <li><strong><code>generic_struct.gos</code></strong> - three generic struct shapes: <code>Pair&lt;A, B&gt;</code>
   (two independent parameters), <code>SameType&lt;T&gt;</code> (one parameter shared by
   both fields, enabling field arithmetic), and <code>Triple&lt;A, B, C&gt;</code> (three
@@ -1821,22 +1799,14 @@ threads naturally:</p>
   query / body as JSON. Runs under <code>gos run</code>; <code>curl
   http://localhost:8080/echo?name=jane</code> exercises it.</li>
 </ul>
-<h2 id="parse-only-today-run-once-the-stdlib-wiring-lands">Parse-only today (run once the stdlib wiring lands)<a class="headerlink" href="#parse-only-today-run-once-the-stdlib-wiring-lands" title="Permanent link">&para;</a></h2>
-<ul>
-<li><strong><code>kv_cache.gos</code></strong> - in-memory TTL cache with a background
-  expiry sweeper. Exercises goroutines, <code>Mutex&lt;T&gt;</code>, channels,
-  graceful shutdown via <code>std::context</code>.</li>
-<li><strong><code>json_pipeline.gos</code></strong> - streaming JSONL transformer. Reads
-  line-delimited JSON from stdin, applies a transform, writes
-  JSONL to stdout. Exercises <code>std::io</code>, <code>std::encoding::json</code>,
-  <code>std::errors::wrap</code>.</li>
-</ul>
-<h2 id="self-host-ports">Self-host ports<a class="headerlink" href="#self-host-ports" title="Permanent link">&para;</a></h2>
-<p><code>examples/selfhost/</code> holds parse-only ports of Gossamer's own
-lexer and parser, as described in
-<a href="../design/selfhosting/"><code>docs/selfhosting.md</code></a>. These are a
-feasibility study - they will <em>build</em> once the stdlib covers
-growable collections, hashmaps, and generics through codegen.</p>
+<h2 id="more-in-the-tree">More in the tree<a class="headerlink" href="#more-in-the-tree" title="Permanent link">&para;</a></h2>
+<p>The <a href="https://github.com/danpozmanter/gossamer/tree/main/examples"><code>examples/</code></a>
+directory ships many more worked programs - collections and data
+structures, error handling, file and directory I/O, encoding
+(JSON / YAML / TOML / base64 / hex), crypto hashing, regular
+expressions, an HTTP client and server, compression, CLI argument
+parsing, and a full multi-file project under <code>examples/projects/</code>.
+Each one passes <code>gos check</code>; see <code>examples/README.md</code> for the index.</p>
 <h2 id="try-it">Try it<a class="headerlink" href="#try-it" title="Permanent link">&para;</a></h2>
 <div class="language-sh highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>gos<span class="w"> </span>run<span class="w"> </span>examples/hello_world.gos
 <a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>gos<span class="w"> </span>run<span class="w"> </span>examples/function_piping.gos

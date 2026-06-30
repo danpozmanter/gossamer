@@ -8,7 +8,7 @@
 
 fn binary_search(xs: &[i64], needle: i64) -> Result<i64, i64> {
     let mut lo: i64 = 0
-    let mut hi: i64 = xs.len() as i64
+    let mut hi: i64 = xs.len()
     while lo < hi {
         let mid = lo + (hi - lo) / 2
         let mid_val = xs[mid]

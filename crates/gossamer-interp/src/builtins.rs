@@ -2656,7 +2656,7 @@ fn builtin_http_response_with_header(args: &[Value]) -> RuntimeResult<Value> {
     };
     let name = args.get(1).map(render_one).unwrap_or_default();
     let value = args.get(2).map(render_one).unwrap_or_default();
-    let pair = Value::Tuple(Arc::new(vec![
+    let pair = Value::Tuple(Arc::from(vec![
         Value::String(SmolStr::from(name.clone())),
         Value::String(SmolStr::from(value)),
     ]));
@@ -3252,7 +3252,7 @@ fn request_to_value(request: &http_std::Request) -> Value {
         .headers
         .iter()
         .map(|(name, value)| {
-            Value::Tuple(Arc::new(vec![
+            Value::Tuple(Arc::from(vec![
                 Value::String(SmolStr::from(name.to_string())),
                 Value::String(SmolStr::from(value.to_string())),
             ]))
@@ -3266,7 +3266,7 @@ fn request_to_value(request: &http_std::Request) -> Value {
                 Some((k, v)) => (k, v),
                 None => (seg, ""),
             };
-            Value::Tuple(Arc::new(vec![
+            Value::Tuple(Arc::from(vec![
                 Value::String(SmolStr::from(k.to_string())),
                 Value::String(SmolStr::from(v.to_string())),
             ]))
@@ -3760,8 +3760,10 @@ fn builtin_runtime_collect_cycles(_args: &[Value]) -> RuntimeResult<Value> {
 /// `runtime::arena_push()` / `runtime::arena_pop()`. Arena regions are a
 /// compiled-tier allocation optimization (bump-allocate, free wholesale).
 /// The interpreter models heap values with `Arc` and reclaims them by
-/// refcount, so a region is a semantic no-op here - the block runs
-/// identically and produces the same output, preserving tier parity.
+/// refcount as the region's values leave scope; with the process
+/// allocator's prompt purge (`purge_delay = 0`) those pages return to the
+/// OS at block exit, so an explicit region needs no extra reclamation
+/// here and stays a semantic no-op, preserving tier parity.
 fn builtin_runtime_region_noop(_args: &[Value]) -> RuntimeResult<Value> {
     Ok(Value::Unit)
 }
@@ -4799,7 +4801,7 @@ fn coerce_json_to_kind(value: &json_std::Value, kind: &JsonSchemaKind) -> Result
             for (i, (item, elem_kind)) in items.iter().zip(elems.iter()).enumerate() {
                 out.push(coerce_json_to_kind(item, elem_kind).map_err(|m| format!(".{i}: {m}"))?);
             }
-            Ok(Value::Tuple(Arc::new(out)))
+            Ok(Value::Tuple(Arc::from(out)))
         }
         (json_std::Value::Object(_), K::Struct(name)) => coerce_json_to_named_struct(value, name),
         (json_std::Value::Object(map), K::Map(value_kind)) => {
@@ -4887,7 +4889,10 @@ fn gossamer_to_json_value(value: &Value) -> json_std::Value {
         Value::Float(f) => json_std::Value::Number(*f),
         Value::Char(c) => json_std::Value::String(c.to_string()),
         Value::String(s) => json_std::Value::String(s.as_str().to_string()),
-        Value::Tuple(parts) | Value::Array(parts) => {
+        Value::Tuple(parts) => {
+            json_std::Value::Array(parts.iter().map(gossamer_to_json_value).collect())
+        }
+        Value::Array(parts) => {
             json_std::Value::Array(parts.iter().map(gossamer_to_json_value).collect())
         }
         Value::Struct(inner) => {
@@ -4963,7 +4968,8 @@ fn builtin_len(args: &[Value]) -> RuntimeResult<Value> {
         // Rust/Go `len(string)`. Codepoint counts live in
         // `utf8::count_runes` / `unicode::grapheme_count`.
         Some(Value::String(s)) => s.len(),
-        Some(Value::Array(parts) | Value::Tuple(parts)) => parts.len(),
+        Some(Value::Array(parts)) => parts.len(),
+        Some(Value::Tuple(parts)) => parts.len(),
         Some(Value::IntArray(data)) => data.len(),
         Some(Value::FloatVec(data)) => data.len(),
         Some(Value::Map(m)) => m.lock().len(),
@@ -6049,7 +6055,7 @@ fn builtin_map_iter(args: &[Value]) -> RuntimeResult<Value> {
             entries.sort_by(|a, b| a.0.cmp(&b.0));
             let out: Vec<Value> = entries
                 .into_iter()
-                .map(|(k, v)| Value::Tuple(Arc::new(vec![k.to_value(), v])))
+                .map(|(k, v)| Value::Tuple(Arc::from(vec![k.to_value(), v])))
                 .collect();
             Ok(Value::Array(Arc::new(out)))
         }
@@ -6058,7 +6064,7 @@ fn builtin_map_iter(args: &[Value]) -> RuntimeResult<Value> {
             entries.sort_by_key(|(k, _)| *k);
             let out: Vec<Value> = entries
                 .into_iter()
-                .map(|(k, v)| Value::Tuple(Arc::new(vec![Value::Int(k), Value::Int(v)])))
+                .map(|(k, v)| Value::Tuple(Arc::from(vec![Value::Int(k), Value::Int(v)])))
                 .collect();
             Ok(Value::Array(Arc::new(out)))
         }
@@ -6068,7 +6074,7 @@ fn builtin_map_iter(args: &[Value]) -> RuntimeResult<Value> {
             entries.sort_by(|a, b| a.0.as_str().cmp(b.0.as_str()));
             let out: Vec<Value> = entries
                 .into_iter()
-                .map(|(k, v)| Value::Tuple(Arc::new(vec![Value::String(k), Value::Int(v)])))
+                .map(|(k, v)| Value::Tuple(Arc::from(vec![Value::String(k), Value::Int(v)])))
                 .collect();
             Ok(Value::Array(Arc::new(out)))
         }
@@ -6883,7 +6889,13 @@ fn values_equal_for_assertion(a: &Value, b: &Value) -> bool {
         (Value::Float(x), Value::Float(y)) => x == y,
         (Value::Char(x), Value::Char(y)) => x == y,
         (Value::String(x), Value::String(y)) => x == y,
-        (Value::Tuple(x), Value::Tuple(y)) | (Value::Array(x), Value::Array(y)) => {
+        (Value::Tuple(x), Value::Tuple(y)) => {
+            x.len() == y.len()
+                && x.iter()
+                    .zip(y.iter())
+                    .all(|(a, b)| values_equal_for_assertion(a, b))
+        }
+        (Value::Array(x), Value::Array(y)) => {
             x.len() == y.len()
                 && x.iter()
                     .zip(y.iter())
@@ -7003,7 +7015,7 @@ fn builtin_channel_new(args: &[Value]) -> RuntimeResult<Value> {
     let channel = crate::value::Channel::with_capacity(capacity);
     let sender = Value::Channel(channel.clone());
     let receiver = Value::Channel(channel);
-    Ok(Value::Tuple(Arc::new(vec![sender, receiver])))
+    Ok(Value::Tuple(Arc::from(vec![sender, receiver])))
 }
 
 fn builtin_channel_send(args: &[Value]) -> RuntimeResult<Value> {
@@ -8033,7 +8045,7 @@ mod tests {
     }
 
     fn header_pair(name: &str, value: &str) -> Value {
-        Value::Tuple(Arc::new(vec![
+        Value::Tuple(Arc::from(vec![
             Value::String(SmolStr::from(name.to_string())),
             Value::String(SmolStr::from(value.to_string())),
         ]))

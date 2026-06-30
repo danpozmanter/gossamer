@@ -496,7 +496,7 @@ pub const ENCODING_ASCII85: StdModule = StdModule {
 
 pub const ENCODING_TOML: StdModule = StdModule {
     path: "std::encoding::toml",
-    summary: "TOML 1.0 parsing + emission. Pair with `<Type>::from_toml` for typed decoding (struct auto-derive).",
+    summary: "TOML 1.0 parsing + emission. Pair with the turbofish `from_toml::<Type>` for typed decoding (struct auto-derive).",
     items: &[
         StdItem {
             name: "to_json",

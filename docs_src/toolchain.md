@@ -11,7 +11,7 @@ the implementation by a rev.
 | `gos parse FILE` | Print the AST. |
 | `gos check [--timings] FILE` | Parse + resolve + typecheck + exhaustiveness. With `--timings`, prints per-stage wall-clock times. Parse output is cached by source hash - re-invocations on an unchanged file reuse the parsed AST. Set `GOSSAMER_CACHE_TRACE=1` to log cache hits. |
 | `gos run FILE` | Execute via the register-based bytecode VM (with in-process Cranelift JIT). |
-| `gos build [--target TRIPLE] FILE` | Produce a native binary (ELF/Mach-O/PE) by lowering through MIR + Cranelift and linking the user's `.o` against `libgossamer_runtime.a`. Every legal program compiles; a build error means a compiler bug. |
+| `gos build [--release] [--target TRIPLE] FILE` | Produce a native binary (ELF/Mach-O/PE) by lowering through MIR + LLVM (`llc -O0`; `--release` runs the full `opt -O3 \| llc -O3` pipeline) and linking the user's `.o` against `libgossamer_runtime.a`. The Cranelift code path is reserved for the in-process JIT (`gos run`), not this command. Only the host triple links to a runnable binary today; a non-host `--target` emits a `cross-link pending` placeholder. |
 
 ## Formatting + linting + docs
 
@@ -52,6 +52,15 @@ the implementation by a rev.
 | `gos tidy` | Canonicalise the manifest. |
 | `gos fetch` | Populate the local cache. |
 | `gos vendor` | Copy fetched deps into `./vendor/`. |
+
+## Registry workflow
+
+| Command | Purpose |
+|---------|---------|
+| `gos publish [--dry-run]` | Pack, Ed25519-sign, and upload the project to a registry. `--dry-run` packs + signs and prints metadata without uploading. |
+| `gos yank` | Yank a previously-published version. |
+| `gos login` / `gos logout` | Save / drop a registry bearer token in `~/.gossamer/credentials.toml`. |
+| `gos owner` | Manage the publisher ACL of a published project. |
 
 ## REPL
 

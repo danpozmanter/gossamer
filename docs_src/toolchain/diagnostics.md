@@ -133,7 +133,7 @@ Two consecutive tokens formed something the parser does not recognise.
 
 **Parser** - reserved `extern` keyword
 
-The `extern` keyword is reserved in 0.5.0 but has no source-level item form. Gossamer's FFI surface is the `[rust-bindings]` section of `project.toml` plus the `gossamer-binding` crate.
+The `extern` keyword is reserved but has no source-level item form. Gossamer's FFI surface is the `[rust-bindings]` section of `project.toml` plus the `gossamer-binding` crate.
 
 ## `GR0001` <a id="gr0001"></a>
 

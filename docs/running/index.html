@@ -1747,11 +1747,11 @@
 </tr>
 <tr>
 <td><code>gos run src/main.gos</code></td>
-<td>Tree-walk interpreter</td>
+<td>Register-based bytecode VM with in-process Cranelift JIT</td>
 </tr>
 <tr>
-<td><code>gos run --vm src/main.gos</code></td>
-<td>Register-based bytecode VM</td>
+<td><code>gos run --no-jit src/main.gos</code></td>
+<td>Same VM, pure bytecode dispatch (JIT off)</td>
 </tr>
 <tr>
 <td><code>gos check src/main.gos</code></td>
@@ -1759,11 +1759,15 @@
 </tr>
 <tr>
 <td><code>gos build src/main.gos</code></td>
-<td>Native build - links user code against the <code>gossamer-runtime</code> staticlib and lets <code>cc</code> produce an ELF/Mach-O/PE. Every legal program compiles; a codegen bail is a compiler bug.</td>
+<td>Native build via LLVM AOT - lowers through MIR + LLVM (<code>llc -O0</code>), then links the user's object against the <code>gossamer-runtime</code> staticlib into an ELF/Mach-O/PE.</td>
+</tr>
+<tr>
+<td><code>gos build --release src/main.gos</code></td>
+<td>Optimised native build - full LLVM <code>opt -O3 \| llc -O3</code> pipeline, static musl on Linux.</td>
 </tr>
 <tr>
 <td><code>gos build --target aarch64-apple-darwin src/main.gos</code></td>
-<td>Cross-compile. Reserved for a future milestone - currently rejected because the native path only targets the host ISA.</td>
+<td>Select a target triple. Only the host ISA links to a runnable binary today; a non-host <code>--target</code> emits a <code>cross-link pending</code> placeholder, so build each architecture on a native runner.</td>
 </tr>
 <tr>
 <td><code>gos fmt src/main.gos</code></td>

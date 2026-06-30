@@ -1,0 +1,17 @@
+// BTreeMap with i64 keys (and i64 / String values): backed by the same
+// key-sorted IntMap machinery as HashMap, so insert / get / contains / len
+// and key-sorted iteration work identically on every tier.
+
+use std::collections::BTreeMap
+
+fn main() {
+    let mut m: BTreeMap<i64, i64> = BTreeMap::new()
+    m.insert(30, 3)
+    m.insert(10, 1)
+    m.insert(20, 2)
+    let mut out = ""
+    for (k, v) in m.iter() {
+        out += format!("{}={} ", k, v)
+    }
+    println!("{}len={} get={} has={}", out, m.len(), m.get_or(20, 0), m.contains(10))
+}

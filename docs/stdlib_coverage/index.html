@@ -1767,7 +1767,7 @@ module.</p>
 <td style="text-align: center;">✓</td>
 <td style="text-align: center;">✓</td>
 <td style="text-align: center;">✓</td>
-<td>split, trim, contains, find, replace, to_lowercase, to_uppercase, starts_with, ends_with.</td>
+<td>split, trim, contains, find, replace, to_lower, to_upper, starts_with, ends_with.</td>
 </tr>
 <tr>
 <td><code>std::strconv</code></td>
@@ -1781,7 +1781,7 @@ module.</p>
 <td style="text-align: center;">✓</td>
 <td style="text-align: center;">✓</td>
 <td style="text-align: center;">✓</td>
-<td>Vec, HashMap. VecDeque/BTreeMap/HashSet/BTreeSet declared.</td>
+<td>Vec, HashMap, HashSet, VecDeque (both ends), BTreeMap (String/i64 keys). BTreeSet declared.</td>
 </tr>
 <tr>
 <td><code>std::net</code></td>
@@ -1795,7 +1795,7 @@ module.</p>
 <td style="text-align: center;">✓</td>
 <td style="text-align: center;">✓</td>
 <td style="text-align: center;">✓</td>
-<td>HTTP/1.1 server + client. HTTP/2 deferred to v1.x.</td>
+<td>HTTP/1.1 + HTTP/2 server + client (push + trailers); HTTP/3 via std::http_h3.</td>
 </tr>
 <tr>
 <td><code>std::encoding::json</code></td>
@@ -1851,7 +1851,7 @@ module.</p>
 <td style="text-align: center;">✓</td>
 <td style="text-align: center;">✓</td>
 <td style="text-align: center;">✓</td>
-<td>new, wrap, is, chain, join.</td>
+<td>new, newf, wrap, is, join.</td>
 </tr>
 <tr>
 <td><code>std::flag</code></td>

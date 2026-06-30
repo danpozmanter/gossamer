@@ -9,7 +9,7 @@ use std::option
 use std::result
 use std::errors
 
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(PartialEq, Eq, Debug)]
 struct Point { x: i64, y: i64 }
 
 fn main() {

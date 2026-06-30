@@ -215,6 +215,16 @@ impl<'a> Builder<'a> {
     /// through `&`. Unlike `struct_name_of` this also names user enums (which
     /// aren't in `struct_defs`); the caller gates on the mangled method
     /// actually existing in `impl_methods`, so naming a stdlib Adt is harmless.
+    /// The `Ok` payload type `B` of a `Result<B, E>` (the result type of
+    /// `x.try_into()`), so the call can route to `B::try_from(x)`.
+    pub(crate) fn result_ok_ty(&self, ty: Ty) -> Option<Ty> {
+        use gossamer_types::TyKind;
+        if let TyKind::Adt { substs, .. } = self.tcx.kind_of(ty) {
+            return substs.types().first().copied();
+        }
+        None
+    }
+
     pub(crate) fn adt_dispatch_name(&self, ty: Ty) -> Option<String> {
         use gossamer_types::TyKind;
         if let Some(name) = self.struct_name_of(ty) {

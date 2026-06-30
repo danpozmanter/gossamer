@@ -177,7 +177,7 @@ pub(crate) fn response_value_from_native(
         .headers
         .iter()
         .map(|(name, value)| {
-            Value::Tuple(Arc::new(vec![
+            Value::Tuple(Arc::from(vec![
                 Value::String(SmolStr::from(name.to_string())),
                 Value::String(SmolStr::from(value.to_string())),
             ]))

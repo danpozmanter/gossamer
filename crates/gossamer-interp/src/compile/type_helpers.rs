@@ -111,6 +111,17 @@ impl<'tcx> FnBuilder<'tcx> {
         Some(bare.to_string())
     }
 
+    /// Bare name of the `Ok` payload type `B` of a `Result<B, E>` (the result
+    /// type of `x.try_into()`), so the call can route to `B::try_from(x)`.
+    pub(crate) fn result_ok_adt_name(&self, ty: gossamer_types::Ty) -> Option<String> {
+        let ty = self.unwrap_ref(ty);
+        let TyKind::Adt { substs, .. } = self.tcx.kind(ty)? else {
+            return None;
+        };
+        let b_ty = substs.types().first().copied()?;
+        self.adt_type_name(b_ty)
+    }
+
     /// `true` when `ty` (through `&` / `&mut` layers) is an array, vec,
     /// or slice - a collection the for-loop fast path can drive by index
     /// via `len()` + `IndexGet`. User `impl Iterator` types (`Adt`) are

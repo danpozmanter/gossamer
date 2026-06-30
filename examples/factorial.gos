@@ -3,7 +3,8 @@
  *
  * Both implementations are pure: each call returns a fresh
  * value, the caller binds the result with a plain `let`.
- * `i64` overflows past 20! - pick `i128` if you need more.
+ * `i64` overflows past 20! - reach for `std::math::big` (see
+ * `big_numbers.gos`) when you need exact larger values.
  */
 
 use std::iter

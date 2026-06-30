@@ -59,7 +59,7 @@
         .then(function (rel) {
           if (rel && rel.tag_name) {
             var tag = document.querySelector(".ver-tag");
-            if (tag) tag.textContent = rel.tag_name;
+            if (tag) tag.textContent = rel.tag_name + " (pre-1.0)";
           }
         })
         .catch(function () {});
@@ -87,7 +87,7 @@
           GitHub
         </a>
       </p>
-      <p class="version">Open source &middot; Apache-2.0 &middot; <span class="ver-tag">v0.21.0</span> (pre-1.0)</p>
+      <p class="version">Open source &middot; Apache-2.0 &middot; <span class="ver-tag">pre-1.0</span></p>
     </div>
   </header>
 

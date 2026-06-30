@@ -111,7 +111,9 @@ impl<'tcx> FnBuilder<'tcx> {
             defer_depth: self.defer_stack.len(),
             label,
         });
+        let body_value_regs_start = self.next_reg;
         self.compile_loop_body(body)?;
+        self.emit_iteration_value_release(body_value_regs_start);
         self.emit(Op::Jump { target: loop_start });
         let after = self.cur_idx();
         self.patch_jump(exit_patch, after);
@@ -142,7 +144,9 @@ impl<'tcx> FnBuilder<'tcx> {
             defer_depth: self.defer_stack.len(),
             label,
         });
+        let body_value_regs_start = self.next_reg;
         self.compile_loop_body(body)?;
+        self.emit_iteration_value_release(body_value_regs_start);
         self.emit(Op::Jump { target: loop_start });
         let after = self.cur_idx();
         let ctx = self.loop_stack.pop().expect("loop stack underflow on loop");
@@ -155,6 +159,34 @@ impl<'tcx> FnBuilder<'tcx> {
             self.patch_jump(patch, loop_start);
         }
         Ok(result)
+    }
+
+    /// Releases the loop body's per-iteration `Value` registers at the
+    /// fall-through back-edge, so an aggregate built this iteration (a tree,
+    /// a scratch `Vec`, the temporary tuple a `let (a, b) = f()` destructure
+    /// leaves behind) is dropped before the next iteration allocates,
+    /// instead of staying live in its register until the next write. Without
+    /// this, an iteration's freshly built structure overlaps the next
+    /// iteration's, doubling the peak working set of a build-then-rebuild
+    /// loop. The interpreter analog of the compiled tier's region bulk-free.
+    ///
+    /// Clears the whole `[start, next_reg)` `Value`-register span the body
+    /// allocated - named locals and anonymous temporaries alike - because a
+    /// temporary (the destructure tuple) can outlive the named binding it
+    /// fed. `i64`/`f64` registers live in separate spans and are `Copy`, so
+    /// they are untouched. Output-invariant, preserving tier parity:
+    /// Gossamer values have no observable finalizer; loop-carried state and
+    /// the loop's own result register were allocated before `start`; and any
+    /// value that escaped the iteration (a closure capture, a push into an
+    /// outer collection) already holds its own clone. `break`/`continue`
+    /// leave by their own jump and skip this, which only forgoes the early
+    /// drop - never correctness.
+    pub(crate) fn emit_iteration_value_release(&mut self, start: Reg) {
+        let count = self.next_reg.saturating_sub(start);
+        if count == 0 {
+            return;
+        }
+        self.emit(Op::ClearRegs { start, count });
     }
 
     pub(crate) fn compile_return(&mut self, value: Option<&HirExpr>) -> RuntimeResult<Reg> {

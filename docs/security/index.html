@@ -1732,8 +1732,13 @@ the hardening roadmap. Reporting details are in
 <a href="https://github.com/danpozmanter/gossamer/blob/main/SECURITY.md"><code>SECURITY.md</code></a>.</p>
 <h2 id="what-is-done">What is done<a class="headerlink" href="#what-is-done" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Zero <code>unsafe</code> in first-party code. Every crate carries
-  <code>#![forbid(unsafe_code)]</code>.</li>
+<li>The compiler front-end forbids <code>unsafe</code>. The parser, resolver,
+  type checker, MIR, LLVM codegen, lints, diagnostics, LSP, and
+  scheduler crates all carry <code>#![forbid(unsafe_code)]</code>. The runtime,
+  the Cranelift JIT, the stackful-coroutine layer, and the FFI
+  binding surface contain contained, reviewed <code>unsafe</code> - unavoidable
+  for C ABIs, executing generated machine code, and context
+  switching - kept in the smallest possible scope.</li>
 <li>No manual memory management in the language: there is no
   <code>free</code>, no raw pointers, and no <code>unsafe</code> keyword in Gossamer
   source. Memory is reclaimed automatically (reference counting
@@ -1742,8 +1747,11 @@ the hardening roadmap. Reporting details are in
   one escape hatch is the low-level <code>runtime::arena_push()</code> /
   <code>arena_pop()</code> primitive; its <code>arena { }</code> block form is statically
   escape-checked (<code>error[GM0003]</code>), but the raw calls are not.</li>
-<li>Minimal external dependencies: <code>anyhow</code>, <code>clap</code>,
-  <code>codespan-reporting</code>, <code>parking_lot</code>, <code>thiserror</code> - plus
+<li>A curated set of well-known external crates, each reviewed before
+  adoption: <code>clap</code>, <code>serde</code> / <code>serde_json</code>, <code>toml</code>, <code>parking_lot</code>,
+  the <code>crossbeam</code> channels / deques, <code>rayon</code>, <code>mio</code>, the <code>unicode-*</code>
+  family, <code>sha2</code>, <code>ring</code> / <code>rustls</code> for TLS, <code>regex</code>, Cranelift and
+  LLVM for codegen, and <code>corosensei</code> for stackful coroutines - with
   <code>insta</code> as a dev-only snapshot tool.</li>
 </ul>
 <h2 id="known-gaps">Known gaps<a class="headerlink" href="#known-gaps" title="Permanent link">&para;</a></h2>

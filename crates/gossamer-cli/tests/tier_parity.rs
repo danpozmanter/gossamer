@@ -270,6 +270,38 @@ const SPECS: &[Spec] = &[
     // the call site, and the `regex!` / `sql!` validation macros validate at
     // build time and fold to the validated string on every tier.
     spec("feature-testing-examples/comptime_params_validate.gos"),
+    // Code-emitting comptime (`codegen!(...)`): a comptime fn reflects a
+    // type's fields and emits a native serializer body, spliced as raw
+    // source. The emitted field code is identical on every tier and carries
+    // no runtime reflection.
+    spec("feature-testing-examples/comptime_codegen.gos"),
+    // Phase 2 staged reflection: a `for` over `typeInfo::<T>()` is unrolled
+    // per field in the single compile (no fold pass), `field_of` projects
+    // the concrete field, and a `match` over the comptime field type folds
+    // to the taken arm. Native field code, identical on every tier.
+    spec("feature-testing-examples/comptime_inline_for.gos"),
+    // Transparent `type X = T` aliases: interchangeable with the underlying
+    // type in lets, params, returns, struct fields, composites, and chains,
+    // lowering identically on every tier (no opaque nominal alias).
+    spec("feature-testing-examples/type_alias_transparent.gos"),
+    // Tuple structs: construction, positional `.N` access, and destructuring
+    // (let / match / fn params), modelled as named fields "0".."N-1".
+    spec("feature-testing-examples/tuple_structs.gos"),
+    // Structs / enums compare and order by value with no `#[derive(...)]`:
+    // auto-synthesized `eq` / `cmp`, plus `..` rest in multi-field variants.
+    spec("feature-testing-examples/structural_comparison.gos"),
+    // Operator overloading (`% - | & ^ << >> []`), the desugar macros
+    // (`matches!` / `dbg!`), and `x.into()` routing to `B::from(x)`.
+    spec("feature-testing-examples/operator_overloads.gos"),
+    // Pattern destructuring in function parameters (tuple / struct /
+    // tuple-struct), bound via a fresh local + injected destructuring let.
+    spec("feature-testing-examples/param_destructure.gos"),
+    // Tuple-struct serde: position-keyed JSON object round-trip.
+    spec("feature-testing-examples/tuple_struct_serde.gos"),
+    // BTreeMap with i64 keys: typed IntMap backing, key-sorted iteration.
+    spec("feature-testing-examples/btreemap_i64_keys.gos"),
+    // VecDeque both-ends ops: push/pop/peek front and back.
+    spec("feature-testing-examples/vecdeque_full.gos"),
     // A generic function's call result keeps its instantiated concrete type
     // when used inline (`println!("{}", id(s))`), selecting the right
     // formatter; the compiled tiers must match the VM across scalar / string

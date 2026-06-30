@@ -329,6 +329,7 @@ pub fn compile_fn(
         mut_statics,
         cov,
     );
+    builder.consumable = consume::consumable_locals(decl);
     for (idx, param) in decl.params.iter().enumerate() {
         let reg = builder.alloc_reg();
         builder.bind_param(&param.pattern, reg);
@@ -545,6 +546,13 @@ pub(crate) struct FnBuilder<'tcx> {
     /// counter slot, and emits [`Op::CovHit`]. `None` everywhere else,
     /// so non-coverage compiles pay nothing.
     pub(crate) cov: Option<&'tcx gossamer_lex::SourceMap>,
+    /// Local names this function may consume (move) at their single
+    /// use - see [`consume::consumable_locals`]. Read at the
+    /// consuming sites to emit `*Consume` ops in place of the cloning
+    /// `Move` / `VariantField` / `IndexGet` / `TupleIndex`. Empty for
+    /// closure-body sub-builders and during call inlining, so those
+    /// contexts never consume.
+    pub(crate) consumable: std::collections::HashSet<String>,
 }
 
 #[derive(Debug, Default)]
@@ -590,6 +598,7 @@ mod block;
 mod call_expr;
 mod closure;
 mod compile_expr;
+mod consume;
 mod control_flow;
 mod emit_const;
 mod fast_paths;

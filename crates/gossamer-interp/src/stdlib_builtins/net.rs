@@ -223,7 +223,7 @@ pub(crate) fn builtin_tcp_listener_accept(args: &[Value]) -> RuntimeResult<Value
                 r.borrow_mut()
                     .insert(sid, Arc::new(parking_lot::Mutex::new(Some(stream))));
             });
-            let pair = Value::Tuple(Arc::new(vec![
+            let pair = Value::Tuple(Arc::from(vec![
                 handle_struct("net::TcpStream", sid),
                 Value::String(addr.to_string().into()),
             ]));
@@ -457,7 +457,7 @@ pub(crate) fn builtin_unix_listener_accept(args: &[Value]) -> RuntimeResult<Valu
                 .as_pathname()
                 .map(|p| p.to_string_lossy().into_owned())
                 .unwrap_or_default();
-            let pair = Value::Tuple(Arc::new(vec![
+            let pair = Value::Tuple(Arc::from(vec![
                 handle_struct("net::UnixStream", sid),
                 Value::String(addr_str.into()),
             ]));
@@ -818,7 +818,7 @@ pub(crate) fn builtin_udp_recv_from(args: &[Value]) -> RuntimeResult<Value> {
                     .map(|b| Value::Int(i64::from(b)))
                     .collect(),
             ));
-            Ok(ok_variant(Value::Tuple(Arc::new(vec![
+            Ok(ok_variant(Value::Tuple(Arc::from(vec![
                 bytes_v,
                 Value::String(addr.to_string().into()),
             ]))))

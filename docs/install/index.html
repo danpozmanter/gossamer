@@ -1868,10 +1868,15 @@ implementation, so the supported platform matrix is narrower than
 <p>Other targets compile but the goroutine scheduler refuses to start
 because corosensei has no context-switch backend for them.</p>
 <h2 id="target-toolchains">Target toolchains<a class="headerlink" href="#target-toolchains" title="Permanent link">&para;</a></h2>
-<p><code>gos build --target &lt;triple&gt;</code> enables cross-compilation. The
-default registered set covers the supported platforms above plus
-the <code>riscv64gc-unknown-linux-gnu</code>, <code>wasm32-unknown-unknown</code>, and
-<code>wasm32-wasi</code> targets - which build but do not run goroutines.</p>
+<p><code>gos build --target &lt;triple&gt;</code> validates the triple against the
+registered set - the supported platforms above plus
+<code>riscv64gc-unknown-linux-gnu</code>, <code>wasm32-unknown-unknown</code>, and
+<code>wasm32-wasi</code>. Only the host triple currently links to a runnable
+binary, though: a non-host <code>--target</code> emits a placeholder artifact and
+reports <code>cross-link pending</code>. Build each target on a native runner of
+that architecture for now. (A fully-static single-file binary comes
+from <code>gos build --release</code> on a Linux host with the musl rustup target
+installed - no <code>--target</code> needed.)</p>
 <p>Musl targets (<code>x86_64-unknown-linux-musl</code>,
 <code>aarch64-unknown-linux-musl</code>) are gated behind the <code>musl</code> Cargo
 feature. Rebuild with:</p>

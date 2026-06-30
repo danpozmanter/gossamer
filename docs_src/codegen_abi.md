@@ -1,119 +1,90 @@
-# Codegen ABI: the flat-i64 monomorphisation contract
+# Codegen ABI: generic monomorphisation
 
-Gossamer's compiled tier (`gos build` and `gos build --release`)
-monomorphises every generic instantiation to a concrete function
-in MIR. Today that monomorphisation **packs every value into a
-64-bit slot** at the ABI boundary. The runtime reads / writes
-those slots; codegen ferries them through Cranelift or LLVM.
+Gossamer's compiled tiers (`gos build` and `gos build --release`)
+monomorphise every generic instantiation to a concrete function in
+MIR, then lower it through LLVM; the in-process Cranelift JIT behind
+`gos run` does the same. Monomorphisation specialises each
+instantiation on its concrete type, so inner-loop ops are typed - an
+`i64` add is a single machine instruction, not a polymorphic dispatch.
 
-This page documents the contract precisely, so you know which
-generics work end-to-end in v1 and which deliberately fail
-compilation with a diagnostic.
+This page documents what the ABI represents and the one type it
+deliberately rejects.
 
 ## What works
 
-A generic instantiation `Foo<T>` compiles end-to-end when **every
-type parameter `T` is representable in 64 bits**:
+A generic instantiation compiles end-to-end - and runs with identical
+output across the bytecode VM, the Cranelift JIT, and the LLVM AOT
+backend - for:
 
 - All integer types up to 64 bits (`i8` … `i64`, `u8` … `u64`,
-  `isize`, `usize`).
-- `f32`, `f64`.
-- `bool`, `char`.
-- `&T` and `&mut T` references - references are pointers, which
-  are 64 bits on the platforms we ship.
-- Heap-managed aggregate **handles**: `String`, `Vec<T>`,
-  `HashMap<K, V>`, channel halves, `I64Vec`, `Mutex<T>`,
-  `WaitGroup`, `Atomic<i64>`. Each is a 64-bit pointer or handle
-  to runtime-managed storage.
+  `isize`, `usize`), `f32` / `f64`, `bool`, `char`.
+- `&T` and `&mut T` references - pointers, 64 bits on every shipped
+  platform - for any `T`.
+- Heap-managed aggregate handles: `String`, `Vec<T>`,
+  `HashMap<K, V>`, `BTreeMap<K, V>`, channel halves, `Mutex<T>`,
+  `WaitGroup`, atomics. Each is a 64-bit handle to runtime-managed
+  storage.
+- **User structs, tuples, enums, and strings passed by value.** A
+  generic function over a by-value struct compiles and runs:
 
-`i128` / `u128` are **rejected at type-check time** (`GT0014`): no
-tier has a 128-bit runtime representation. Use `i64` / `u64`, or
-split the value into two 64-bit halves.
+  ```gossamer
+  struct Point { x: i64, y: i64 }
+  fn id<T>(v: T) -> T { v }
+
+  fn main() {
+      let p = id(Point { x: 1, y: 2 })
+      println!("{} {}", p.x, p.y)
+  }
+  ```
+
+  So does a generic struct type that stores its parameter inline, with
+  methods on it:
+
+  ```gossamer
+  struct Point { x: i64, y: i64 }
+  struct Wrapper<T> { value: T }
+  impl<T> Wrapper<T> { fn get(&self) -> T { self.value } }
+
+  fn main() {
+      let w = Wrapper { value: Point { x: 7, y: 9 } }
+      let p = w.get()
+      println!("{} {}", p.x, p.y)
+  }
+  ```
+
+  Each instantiation lays its fields out by the concrete type and
+  specialises each method by receiver type, including recursive
+  generics, multiple type parameters (`Pair<A, B>`), nested generic
+  structs, and arrays of generic structs.
 
 ## What fails to compile
 
-If you instantiate a generic with a `T` that does not fit in 64
-bits, the compiler refuses with diagnostic `GT0042`:
+`i128` / `u128` are **rejected at type-check time** (`GT0014`): no tier
+has a 128-bit runtime representation, and the bytecode VM would
+otherwise run them at silent 64-bit width. Use `i64` / `u64`, or split
+the value into two 64-bit halves.
 
-```
-error[GT0042]: this generic instantiation is not yet supported
-   = note: T = MyStruct (24-byte by-value), but v1 codegen passes
-           every type parameter in a single 64-bit slot. See
-           docs/codegen_abi.md for the full constraint.
-   = help: until layout-driven specialisation lands in v1.x, work
-           around this by boxing the value: `&MyStruct` or
-           `Vec<MyStruct>`. Generic functions over `&T` work for
-           any `T` because references fit in 64 bits.
-```
+This is the contract: if the program type-checks, it compiles and runs
+with identical output on every tier. There is no codegen path that
+accepts a 128-bit type and silently produces a wrong binary - you get a
+hard compile error, never garbage output.
 
-The diagnostic is the contract. If you don't see this diagnostic,
-the program compiles correctly. **There is no codegen path that
-accepts an oversized `T` and produces a working binary.** You
-will not get garbage output; you will get a hard compile error.
+## How a struct parameter is laid out
 
-## Why this constraint exists
+For a by-value struct `T`, the monomorphiser records a
+per-instantiation field-type table and propagates each field's layout
+(size, alignment, offsets) from MIR through to the Cranelift / LLVM
+lowering, so a `Wrapper<Point>` stores a whole `Point` inline and a
+generic method's `-> T` return is the real concrete type rather than an
+opaque pointer. The type checker brings an `impl<T>`'s generics into
+scope for each method, so `-> T` records a rigid parameter that the
+monomorphiser then specialises by receiver type.
 
-A v1 implementation goal was: ship a real native compiler that
-beats Rust's reference fasta program at N=25M. We hit it (0.45 s
-vs 0.82 s on a Ryzen 9 9900X). To get there, the MIR → Cranelift
-/ LLVM lowerer specialised on a **fixed slot kind** so the
-inner-loop ops are typed: an i64 add is a single Cranelift
-instruction, not a polymorphic dispatch.
-
-A by-value `MyStruct` argument needs the codegen to know its
-layout (offsets, alignment, padding) at every monomorphic call
-site. We have that information at MIR - but we don't yet
-**propagate** it into the codegen call ABI. That work is parity
-plan §P4 ("layout-driven specialisation"), tracked separately.
-
-## How user code lives within the constraint
-
-In practice, idiomatic Gossamer code rarely needs `T = struct`
-because:
-
-- `Vec<T>`, `HashMap<K, V>`, channels are runtime-provided and
-  are *not* monomorphised by the user - they are a single
-  generic implementation in the runtime that takes a `T` slot.
-  The runtime handles arbitrarily-sized elements internally
-  by allocating each `T` on the managed heap and the slot it stores
-  is a pointer.
-- User generics over `&T` work for any `T` (since `&T` is a
-  pointer = 64 bits).
-- Code that is generic over numeric type (`min<T: Ord>`,
-  `sum<T: Add>`) works for every primitive numeric type up to
-  64 bits.
-
-The remaining gap is **user-defined generic functions over
-user-defined `T`-by-value**. For example:
-
-```gos
-fn id<T>(x: T) -> T { x }   // T = i64: works
-                             // T = MyStruct: GT0042
-
-fn id_ref<T>(x: &T) -> &T { x }   // works for any T
-```
-
-Generic *types* with internal layout sensitivity (a hypothetical
-user `MyVec<T>` storing `T` inline) hit the same constraint. The
-v1 workaround is "store `&T`, let the runtime own the body."
-
-## What changes in v1.x
-
-Layout-driven specialisation will:
-
-1. Propagate layout (size, align, field offsets) for each `T`
-   from MIR through to Cranelift / LLVM.
-2. Switch the codegen call ABI to "by-value where the layout
-   fits in registers; by-reference where it doesn't" - matching
-   what `rustc` does.
-3. Drop the `GT0042` diagnostic; turn the constraint off.
-
-Until then, the diagnostic is the safety net that prevents
-"compiles, segfaults at runtime" - a class of bug Gossamer is
-deliberately willing to accept compile-time pain to avoid.
+Methods on a generic struct still require the explicit
+`impl<T> Wrapper<T>` form, as in Rust.
 
 ## See also
 
-- `gos explain GT0042` - full long-form diagnostic text.
-- Internal notes: `parity.md` §P4 and
-  `compiler_tier_plan.md`.
+- `gos explain GT0014` - the 128-bit rejection in full.
+- The language spec (`SPEC.md` in the repository root) - generics and
+  monomorphisation semantics.

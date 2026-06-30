@@ -316,8 +316,24 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::deque::gos_rt_deque_pop_front as *const u8,
         ),
         (
+            "gos_rt_deque_pop_back",
+            crate::c_abi::deque::gos_rt_deque_pop_back as *const u8,
+        ),
+        (
+            "gos_rt_deque_peek_front",
+            crate::c_abi::deque::gos_rt_deque_peek_front as *const u8,
+        ),
+        (
+            "gos_rt_deque_peek_back",
+            crate::c_abi::deque::gos_rt_deque_peek_back as *const u8,
+        ),
+        (
             "gos_rt_deque_push_back",
             crate::c_abi::deque::gos_rt_deque_push_back as *const u8,
+        ),
+        (
+            "gos_rt_deque_push_front",
+            crate::c_abi::deque::gos_rt_deque_push_front as *const u8,
         ),
         (
             "gos_rt_btmap_free",

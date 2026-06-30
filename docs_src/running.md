@@ -10,11 +10,12 @@ Once `gos` is on your `PATH`, every subcommand takes either a
 |---------|--------------|
 | `gos new example.com/app --path ./app` | Scaffold a project |
 | `gos init example.com/app` | Scaffold just `project.toml` in the CWD |
-| `gos run src/main.gos` | Tree-walk interpreter |
-| `gos run --vm src/main.gos` | Register-based bytecode VM |
+| `gos run src/main.gos` | Register-based bytecode VM with in-process Cranelift JIT |
+| `gos run --no-jit src/main.gos` | Same VM, pure bytecode dispatch (JIT off) |
 | `gos check src/main.gos` | Type-check + exhaustiveness |
-| `gos build src/main.gos` | Native build - links user code against the `gossamer-runtime` staticlib and lets `cc` produce an ELF/Mach-O/PE. Every legal program compiles; a codegen bail is a compiler bug. |
-| `gos build --target aarch64-apple-darwin src/main.gos` | Cross-compile. Reserved for a future milestone - currently rejected because the native path only targets the host ISA. |
+| `gos build src/main.gos` | Native build via LLVM AOT - lowers through MIR + LLVM (`llc -O0`), then links the user's object against the `gossamer-runtime` staticlib into an ELF/Mach-O/PE. |
+| `gos build --release src/main.gos` | Optimised native build - full LLVM `opt -O3 \| llc -O3` pipeline, static musl on Linux. |
+| `gos build --target aarch64-apple-darwin src/main.gos` | Select a target triple. Only the host ISA links to a runnable binary today; a non-host `--target` emits a `cross-link pending` placeholder, so build each architecture on a native runner. |
 | `gos fmt src/main.gos` | Rewrite canonically; `--check` refuses to edit |
 | `gos doc src/main.gos` | List items + docstrings |
 | `gos test src/main.gos` | Discover and run `#[test]` functions |

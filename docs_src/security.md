@@ -8,8 +8,13 @@ the hardening roadmap. Reporting details are in
 
 ## What is done
 
-- Zero `unsafe` in first-party code. Every crate carries
-  `#![forbid(unsafe_code)]`.
+- The compiler front-end forbids `unsafe`. The parser, resolver,
+  type checker, MIR, LLVM codegen, lints, diagnostics, LSP, and
+  scheduler crates all carry `#![forbid(unsafe_code)]`. The runtime,
+  the Cranelift JIT, the stackful-coroutine layer, and the FFI
+  binding surface contain contained, reviewed `unsafe` - unavoidable
+  for C ABIs, executing generated machine code, and context
+  switching - kept in the smallest possible scope.
 - No manual memory management in the language: there is no
   `free`, no raw pointers, and no `unsafe` keyword in Gossamer
   source. Memory is reclaimed automatically (reference counting
@@ -18,8 +23,11 @@ the hardening roadmap. Reporting details are in
   one escape hatch is the low-level `runtime::arena_push()` /
   `arena_pop()` primitive; its `arena { }` block form is statically
   escape-checked (`error[GM0003]`), but the raw calls are not.
-- Minimal external dependencies: `anyhow`, `clap`,
-  `codespan-reporting`, `parking_lot`, `thiserror` - plus
+- A curated set of well-known external crates, each reviewed before
+  adoption: `clap`, `serde` / `serde_json`, `toml`, `parking_lot`,
+  the `crossbeam` channels / deques, `rayon`, `mio`, the `unicode-*`
+  family, `sha2`, `ring` / `rustls` for TLS, `regex`, Cranelift and
+  LLVM for codegen, and `corosensei` for stackful coroutines - with
   `insta` as a dev-only snapshot tool.
 
 ## Known gaps

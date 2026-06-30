@@ -99,7 +99,7 @@ fn arg_string<'a>(args: &'a [Value], idx: usize, context: &'static str) -> Runti
 }
 
 fn match_triple(start: usize, end: usize, text: String) -> Value {
-    Value::Tuple(Arc::new(vec![
+    Value::Tuple(Arc::from(vec![
         Value::Int(start as i64),
         Value::Int(end as i64),
         Value::String(text.into()),

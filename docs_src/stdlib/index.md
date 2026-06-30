@@ -45,7 +45,7 @@ One page per module. Source is `crates/gossamer-std/src/`; this index is regener
 | [`std::encoding::hex`](encoding_hex.md) | Lowercase hex encode/decode. |
 | [`std::encoding::json`](encoding_json.md) | JSON parser, emitter, and derive support. |
 | [`std::encoding::pem`](encoding_pem.md) | PEM block encoder and decoder. |
-| [`std::encoding::toml`](encoding_toml.md) | TOML 1.0 parsing + emission. Pair with `<Type>::from_toml` for typed decoding (struct auto-derive). |
+| [`std::encoding::toml`](encoding_toml.md) | TOML 1.0 parsing + emission. Pair with the turbofish `from_toml::<Type>` for typed decoding (struct auto-derive). |
 | [`std::encoding::xml`](encoding_xml.md) | Streaming XML decoder + builder (quick-xml). |
 | [`std::encoding::yaml`](encoding_yaml.md) | YAML 1.2 parser/emitter (serde_norway-backed). |
 | [`std::env`](env.md) | Process environment, command-line arguments, working directory. |

@@ -135,6 +135,19 @@ pub enum Value {
     Void,
 }
 
+impl Value {
+    /// Borrows the elements of an `Array` or `Tuple` as a slice - both back
+    /// onto `[Value]`, so read-only element access shares one path.
+    #[must_use]
+    pub(crate) fn as_value_slice(&self) -> Option<&[Value]> {
+        match self {
+            Value::Array(a) => Some(a),
+            Value::Tuple(a) => Some(a),
+            _ => None,
+        }
+    }
+}
+
 /// Iteratively reclaim a tree of owned child `Value`s with an explicit
 /// worklist, so a depth-N recursive aggregate (linked list, tree, graph) tears
 /// down in O(N) heap and O(1) native stack instead of overflowing the host
@@ -817,6 +830,77 @@ pub(crate) fn intern_type_name(name: &str) -> &'static str {
     leaked
 }
 
+/// Closed integer range eligible for the small-variant cache, mirroring
+/// the `CPython` small-int cache. Bounds the cache to
+/// `names x (SMALL_INT_MAX - SMALL_INT_MIN + 1)` entries per thread.
+const SMALL_VARIANT_INT_MIN: i64 = -128;
+const SMALL_VARIANT_INT_MAX: i64 = 1024;
+
+/// Cache key for an interned single-small-scalar (or nullary) variant
+/// node. `name` is an interned `&'static str`, unique per distinct
+/// content, so it identifies the variant exactly.
+#[derive(PartialEq, Eq, Hash)]
+enum SmallVariantKey {
+    Unit(&'static str),
+    Int(&'static str, i64),
+    Bool(&'static str, bool),
+}
+
+thread_local! {
+    /// Per-thread interning table for small immutable variant nodes
+    /// (lever 3). Thread-local to avoid the cross-thread lock contention
+    /// a shared global table would impose on per-connection VM threads.
+    ///
+    /// Holds a `Weak` rather than a strong reference so the cache never
+    /// keeps a node alive on its own: identical small variants that are
+    /// concurrently live share one allocation (every leaf of a tree), but
+    /// once the last user reference drops, the node is freed and its
+    /// liveness is observable through `downgrade()`/`upgrade()` exactly as
+    /// for a non-interned node - preserving weak-reference tier parity.
+    static SMALL_VARIANT_CACHE: std::cell::RefCell<
+        rustc_hash::FxHashMap<SmallVariantKey, std::sync::Weak<VariantInner>>,
+    > = std::cell::RefCell::new(rustc_hash::FxHashMap::default());
+}
+
+/// Returns the cache key if this `(name, fields)` pair is eligible for
+/// small-variant interning: nullary, or a single `Int` in the cached
+/// range, or a single `Bool`. Everything else (multi-field nodes,
+/// large ints, aggregate payloads) returns `None` and allocates fresh.
+fn small_variant_key(name: &'static str, fields: &[Value]) -> Option<SmallVariantKey> {
+    match fields {
+        [] => Some(SmallVariantKey::Unit(name)),
+        [Value::Int(n)] if (SMALL_VARIANT_INT_MIN..=SMALL_VARIANT_INT_MAX).contains(n) => {
+            Some(SmallVariantKey::Int(name, *n))
+        }
+        [Value::Bool(b)] => Some(SmallVariantKey::Bool(name, *b)),
+        _ => None,
+    }
+}
+
+/// Returns a shared `Arc<VariantInner>` for an interning-eligible node:
+/// reuses the cached node when a live one exists, otherwise allocates a
+/// fresh one and records a `Weak` to it. The node is immutable, so all
+/// aliases observe identical structure; the cache holding only a `Weak`
+/// keeps liveness (and thus `Weak::upgrade`) faithful to the user's
+/// references.
+fn intern_small_variant(
+    name: &'static str,
+    fields: Vec<Value>,
+    key: SmallVariantKey,
+) -> Arc<VariantInner> {
+    SMALL_VARIANT_CACHE.with(|cache| {
+        if let Some(existing) = cache.borrow().get(&key).and_then(std::sync::Weak::upgrade) {
+            return existing;
+        }
+        let node = Arc::new(VariantInner {
+            name,
+            fields: SmallVec::from_vec(fields),
+        });
+        cache.borrow_mut().insert(key, Arc::downgrade(&node));
+        node
+    })
+}
+
 /// Interns a struct field name to a `&'static str` with a leak
 /// bounded by the program's fixed set of field names. Exposed for
 /// `gossamer-binding`'s `#[derive(GosStruct)]` glue, which builds a
@@ -853,7 +937,7 @@ impl Value {
         Self::Array(empty_value_arc())
     }
 
-    /// Empty `Value::Tuple(Arc::new(Vec::new()))` shared across
+    /// Empty `Value::Tuple(Arc::from(Vec::new()))` shared across
     /// callers.
     #[must_use]
     pub fn empty_tuple() -> Self {
@@ -862,14 +946,24 @@ impl Value {
 
     /// Constructs a [`Value::Variant`] from owned name + shared
     /// field list. Hides the `Arc::new(VariantInner { … })`
-    /// boilerplate at every constructor site. (Unit variants are NOT
-    /// interned through a global table here: chunk constant pools
-    /// already share them per chunk, and a global map's lock is
-    /// measurable contention across per-connection VM threads.)
+    /// boilerplate at every constructor site.
+    ///
+    /// A node whose payload is a single small immutable scalar
+    /// (`None`/`Nil`, `Some(0)`, an enum leaf like `Num(7)`) is shared
+    /// from a thread-local cache instead of allocated fresh - the
+    /// interpreter analog of the `CPython` small-int cache. Variant fields
+    /// are never mutated in place (no `Arc::make_mut` site touches a
+    /// `VariantInner`), so the shared node is immutable and safe to
+    /// alias. The cache is thread-local rather than a global table, so
+    /// there is no lock contention across per-connection VM threads.
     #[must_use]
     pub fn variant(name: impl AsRef<str>, fields: Vec<Value>) -> Self {
+        let name = intern_type_name(name.as_ref());
+        if let Some(key) = small_variant_key(name, &fields) {
+            return Self::Variant(intern_small_variant(name, fields, key));
+        }
         Self::Variant(Arc::new(VariantInner {
-            name: intern_type_name(name.as_ref()),
+            name,
             fields: SmallVec::from_vec(fields),
         }))
     }
@@ -1541,6 +1635,23 @@ fn write_struct(
     fields: &[(&'static str, Value)],
 ) -> fmt::Result {
     out.write_str(name)?;
+    // A tuple struct's fields are named "0".."N-1"; render it as
+    // `Name(v0, v1)` to match the derived `fmt` on the compiled tiers.
+    let is_tuple_struct = !fields.is_empty()
+        && fields
+            .iter()
+            .enumerate()
+            .all(|(i, (n, _))| n.parse::<usize>() == Ok(i));
+    if is_tuple_struct {
+        out.write_str("(")?;
+        for (i, (_, value)) in fields.iter().enumerate() {
+            if i > 0 {
+                out.write_str(", ")?;
+            }
+            write!(out, "{value}")?;
+        }
+        return out.write_str(")");
+    }
     out.write_str(" { ")?;
     for (i, (ident, value)) in fields.iter().enumerate() {
         if i > 0 {

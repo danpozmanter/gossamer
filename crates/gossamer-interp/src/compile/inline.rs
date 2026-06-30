@@ -174,6 +174,11 @@ impl<'tcx> FnBuilder<'tcx> {
         // Swap in a fresh scope stack holding only the parameters; the
         // caller's locals are invisible to the callee body.
         let saved_scopes = std::mem::replace(&mut self.scopes, vec![Scope::default()]);
+        // The consumability set was computed for the caller, not this
+        // callee body, so suppress consuming ops while the callee
+        // compiles - a callee local sharing a caller name must not be
+        // moved on the caller's read-once proof.
+        let saved_consumable = std::mem::take(&mut self.consumable);
         for (pattern, arg) in info.params.iter().zip(arg_regs.iter()) {
             if let HirPatKind::Binding {
                 name: param_name, ..
@@ -186,6 +191,7 @@ impl<'tcx> FnBuilder<'tcx> {
         // Restore the caller's scopes and pop the recursion stack on every
         // exit path, including the error path, before surfacing the result.
         self.scopes = saved_scopes;
+        self.consumable = saved_consumable;
         self.inlining.pop();
         Ok(Some(result?))
     }

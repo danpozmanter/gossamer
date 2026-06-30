@@ -6,7 +6,7 @@
 
 use std::collections::Vec
 
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(PartialEq, Eq, Debug)]
 struct Item { id: i64, tag: String }
 
 fn show_opt_i64(label: String, o: Option<i64>) {

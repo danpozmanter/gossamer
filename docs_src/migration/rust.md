@@ -10,7 +10,8 @@ into a handful of rules.
 |------|----------|
 | Manual lifetimes (`'a`, `'static`) on references. | No explicit lifetimes. The runtime owns every heap aggregate (reference-counted); `&T` is a plain shared reference whose validity the runtime guarantees, not a tracked borrow. |
 | Ownership-by-move, `Copy` marker trait. | No move semantics. Non-trivial values are heap-allocated, reference-counted, and shared by reference; primitives are copied the same as Rust. |
-| Procedural and declarative macros. | **No user macros at all.** Six fixed `format!` / `println!`-family macros expand at parse time. |
+| `#[derive(Clone, PartialEq, Hash, Serialize, ...)]` on most types. | A small derivable set - `Debug, Default, PartialEq, Eq, PartialOrd, Ord` only. Values copy by value (`let b = a`), so `a.clone()`, `==` / ordering, hashing, and serde all work with **no derive**; structs and enums compare by value lexicographically (a user `impl eq` / `cmp` overrides). Deriving `Clone` / `Hash` / `Copy` / `Serialize` is rejected (`GT0025`). |
+| Procedural and declarative macros. | **No user macros at all.** A fixed set expands at parse time: the `format!` / `println!` family, the desugar macros `matches!` / `todo!` / `unimplemented!` / `unreachable!` / `dbg!`, and the build-time `regex!` / `sql!` / `codegen!`. |
 | `async fn`, `Future`, `await`. | `go expr` spawns a goroutine. No futures, no awaits - blocking IO is fine. |
 | Multiple separate compilation units, workspace member graph. | Same workspace idea (`gos new --template workspace`). Individual crates are called *packages* and resolve through `project.toml`. |
 | `unsafe` blocks. | **Forbidden at the language level.** No `unsafe` keyword in Gossamer source. `std` is safe-Rust too. |
@@ -59,8 +60,9 @@ Gossamer:
 struct Server { handler: fn(http::Request) -> http::Response }
 ```
 
-(Trait objects stay available but rarely needed - concrete closure
-types are preferred and the runtime keeps their captures alive.)
+(Gossamer has no `dyn Trait` / trait objects - a concrete closure
+type is the idiom, and the runtime keeps its captures alive. For
+dynamic dispatch over a closed set of user types, match on an `enum`.)
 
 ## Collection combinators (one obvious way)
 

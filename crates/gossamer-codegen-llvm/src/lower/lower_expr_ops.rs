@@ -126,18 +126,13 @@ impl<'a> Lowerer<'a> {
     ) -> Result<String, BuildError> {
         // String comparisons must use `gos_rt_str_compare` - pointer
         // equality on C strings is address comparison, not content.
-        let operand_ty_raw = self.operand_ty(lhs);
+        // Detect the operand kind directly (a copy-propagated literal
+        // arrives as `Const(Str)`, whose `operand_ty` is the unrelated
+        // return type); checking both sides covers `a < "lit"`.
         let is_str_cmp = matches!(
             op,
             BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge
-        ) && {
-            // For Ref types, check that the inner type is String.
-            if let Some(TyKind::Ref { inner, .. }) = self.tcx.kind(operand_ty_raw) {
-                matches!(self.tcx.kind(*inner), Some(TyKind::String))
-            } else {
-                matches!(self.tcx.kind(operand_ty_raw), Some(TyKind::String))
-            }
-        };
+        ) && (self.operand_is_string(lhs) || self.operand_is_string(rhs));
         if is_str_cmp {
             let lhs_v = self.lower_operand(lhs)?;
             let rhs_v = self.lower_operand(rhs)?;

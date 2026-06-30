@@ -1770,8 +1770,12 @@ into a handful of rules.</p>
 <td>No move semantics. Non-trivial values are heap-allocated, reference-counted, and shared by reference; primitives are copied the same as Rust.</td>
 </tr>
 <tr>
+<td><code>#[derive(Clone, PartialEq, Hash, Serialize, ...)]</code> on most types.</td>
+<td>A small derivable set - <code>Debug, Default, PartialEq, Eq, PartialOrd, Ord</code> only. Values copy by value (<code>let b = a</code>), so <code>a.clone()</code>, <code>==</code> / ordering, hashing, and serde all work with <strong>no derive</strong>; structs and enums compare by value lexicographically (a user <code>impl eq</code> / <code>cmp</code> overrides). Deriving <code>Clone</code> / <code>Hash</code> / <code>Copy</code> / <code>Serialize</code> is rejected (<code>GT0025</code>).</td>
+</tr>
+<tr>
 <td>Procedural and declarative macros.</td>
-<td><strong>No user macros at all.</strong> Six fixed <code>format!</code> / <code>println!</code>-family macros expand at parse time.</td>
+<td><strong>No user macros at all.</strong> A fixed set expands at parse time: the <code>format!</code> / <code>println!</code> family, the desugar macros <code>matches!</code> / <code>todo!</code> / <code>unimplemented!</code> / <code>unreachable!</code> / <code>dbg!</code>, and the build-time <code>regex!</code> / <code>sql!</code> / <code>codegen!</code>.</td>
 </tr>
 <tr>
 <td><code>async fn</code>, <code>Future</code>, <code>await</code>.</td>
@@ -1827,8 +1831,9 @@ into a handful of rules.</p>
 <p>Gossamer:</p>
 <div class="language-gos highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="k">struct</span> <span class="nc">Server</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">handler</span>: <span class="nc">fn</span><span class="p">(</span><span class="n">http</span>::<span class="n">Request</span><span class="p">)</span><span class="w"> </span>-&gt; <span class="nc">http</span>::<span class="n">Response</span><span class="w"> </span><span class="p">}</span>
 </code></pre></div>
-<p>(Trait objects stay available but rarely needed - concrete closure
-types are preferred and the runtime keeps their captures alive.)</p>
+<p>(Gossamer has no <code>dyn Trait</code> / trait objects - a concrete closure
+type is the idiom, and the runtime keeps its captures alive. For
+dynamic dispatch over a closed set of user types, match on an <code>enum</code>.)</p>
 <h2 id="collection-combinators-one-obvious-way">Collection combinators (one obvious way)<a class="headerlink" href="#collection-combinators-one-obvious-way" title="Permanent link">&para;</a></h2>
 <p>Rust:</p>
 <div class="language-rust highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="kd">let</span><span class="w"> </span><span class="n">total</span>: <span class="kt">i64</span> <span class="o">=</span><span class="w"> </span><span class="n">xs</span><span class="p">.</span><span class="n">iter</span><span class="p">()</span>

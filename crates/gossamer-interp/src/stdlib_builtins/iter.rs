@@ -206,7 +206,7 @@ pub(crate) fn builtin_iter_zip(args: &[Value]) -> RuntimeResult<Value> {
     let zipped: Vec<Value> = a
         .into_iter()
         .zip(b)
-        .map(|(x, y)| Value::Tuple(Arc::new(vec![x, y])))
+        .map(|(x, y)| Value::Tuple(Arc::from(vec![x, y])))
         .collect();
     Ok(Value::Array(Arc::new(zipped)))
 }
@@ -216,7 +216,7 @@ pub(crate) fn builtin_iter_enumerate(args: &[Value]) -> RuntimeResult<Value> {
     let enumerated: Vec<Value> = xs
         .into_iter()
         .enumerate()
-        .map(|(i, x)| Value::Tuple(Arc::new(vec![Value::Int(i as i64), x])))
+        .map(|(i, x)| Value::Tuple(Arc::from(vec![Value::Int(i as i64), x])))
         .collect();
     Ok(Value::Array(Arc::new(enumerated)))
 }
@@ -580,7 +580,7 @@ pub(crate) fn native_iter_partition(
             no.push(x);
         }
     }
-    Ok(Value::Tuple(Arc::new(vec![
+    Ok(Value::Tuple(Arc::from(vec![
         Value::Array(Arc::new(yes)),
         Value::Array(Arc::new(no)),
     ])))
@@ -892,7 +892,7 @@ pub(crate) fn builtin_iter_unzip(args: &[Value]) -> RuntimeResult<Value> {
             b.push(t[1].clone());
         }
     }
-    Ok(Value::Tuple(Arc::new(vec![
+    Ok(Value::Tuple(Arc::from(vec![
         Value::Array(Arc::new(a)),
         Value::Array(Arc::new(b)),
     ])))
@@ -916,7 +916,7 @@ pub(crate) fn builtin_iter_pairwise(args: &[Value]) -> RuntimeResult<Value> {
     let xs = collect_array(args.first().unwrap_or(&Value::Unit));
     let out: Vec<Value> = xs
         .windows(2)
-        .map(|w| Value::Tuple(Arc::new(vec![w[0].clone(), w[1].clone()])))
+        .map(|w| Value::Tuple(Arc::from(vec![w[0].clone(), w[1].clone()])))
         .collect();
     Ok(Value::Array(Arc::new(out)))
 }

@@ -2,7 +2,7 @@
 
 Status: shipped
 
-Zig-style compile-time evaluation: `comptime { ... }` blocks, `comptime fn` calls, and `comptime` parameters run on the bytecode VM during compilation and fold to a literal, so every tier compiles the identical constant. Includes `typeInfo::<T>()` struct-field reflection and the `regex!` / `sql!` build-time validation macros.
+Zig-style compile-time evaluation: `comptime { ... }` blocks, `comptime fn` calls, and `comptime` parameters run on the bytecode VM during compilation and fold to a literal, so every tier compiles the identical constant. `typeInfo::<T>()` reflects a type's fields, a `for (name, ty) in typeInfo::<T>()` loop unrolls into native per-field code, and `codegen!(...)` splices a `comptime fn`'s `String` back as source. Includes the `regex!` / `sql!` build-time validation macros.
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
 
 Zig-style compile-time evaluation. `comptime` runs ordinary Gossamer on
@@ -102,6 +102,62 @@ The reflection is resolved at compile time and nothing about it survives
 into the running binary - the emitted code is exactly the hand-written
 string.
 
+## Code generation from reflection
+
+Folding to a constant *value* is the floor; reflection also generates
+native *code*. Both shapes resolve entirely at compile time - the emitted
+body is ordinary native field code, identical on every tier with no
+runtime reflection.
+
+A plain `for (name, ty) in typeInfo::<T>()` loop is unrolled once per
+field in the single compile (no fold pass). `name` / `ty` are comptime,
+`field_of(v, name)` projects the concrete field, and a `match` over the
+comptime `ty` folds to the taken arm. Written once as a generic
+`fn rec<T>` and specialised per turbofish call site, one reflection-driven
+serializer covers every struct - the `autoderive` shape, in user space:
+
+```gossamer
+struct User { id: i64, name: String, active: bool }
+
+fn record<T>(v: T) -> String {
+    let mut out = ""
+    for (name, ty) in typeInfo::<T>() {
+        let label = match ty {
+            "String" => "str",
+            "bool" => "bool",
+            _ => "int",
+        }
+        out += name + ":" + label + "=" + format!("{}", field_of(v, name)) + ";"
+    }
+    out
+}
+
+// id:int=7;name:str=jane;active:bool=true;
+println!("{}", record::<User>(User { id: 7, name: "jane", active: true }))
+```
+
+A concrete-type loop (`for (name, ty) in typeInfo::<Point>()`) needs no
+turbofish and is unrolled directly.
+
+`codegen!(...)` - splices a `comptime fn`'s `String` result back as raw
+source, for generation beyond the field-loop shape. The spliced
+expression is type-checked in place, so it must produce the type the call
+site expects:
+
+```gossamer
+comptime fn gen_show(fields: [(String, String)], v: String) -> String {
+    let mut out = "\"\""
+    for (name, _) in fields {
+        out += " + \"" + name + "=\" + format!(\"{}\", " + v + "." + name + ") + \" \""
+    }
+    out
+}
+
+fn show(p: Point) -> String {
+    codegen!(gen_show(typeInfo::<Point>(), "p"))   // emits: "" + "x=" + ... + " "
+}
+```
+
 ## Compile-time validation - `regex!` / `sql!`
 
 `regex!("…")` and `sql!("…")` validate their argument at build time and
@@ -125,16 +181,19 @@ After parsing, resolving, and typechecking, the compiler loads the
 program onto the bytecode VM and evaluates every comptime region - a
 `comptime { ... }` block, a `comptime fn` call, or a `comptime`
 parameter's argument. Each result is spliced back into the source as a
-literal, and the program is recompiled normally. Because the
-substitution happens before the tiers diverge, all three tiers compile
-the same constant: tier parity is automatic.
+literal, and the program is recompiled normally. A `for` over
+`typeInfo::<T>()` skips the fold pass entirely: it is unrolled per field
+in the single compile. Either way the substitution happens before the
+tiers diverge, so all three tiers compile the same code: tier parity is
+automatic.
 
 ## Scope
 
 The shipped surface is compile-time *evaluation*, *reflection over
-named structs*, *comptime parameters*, and *build-time validation*.
-Comptime regions fold to scalar or string results. Re-expressing the
-built-in `autoderive` serializers as comptime library code is not part
-of the current surface; the derived `to_json` / `from_json` continue to
-back serialization, and `comptime { to_json(value) }` runs them at build
-time. See `SPEC.md` section 14.
+named structs*, *comptime parameters*, *build-time validation*, and
+*code generation* (a `for` over `typeInfo::<T>()` and `codegen!`).
+Comptime regions fold to scalar or string results. You can now write the
+reflection-driven `autoderive` shape yourself, but the built-in
+`to_json` / `from_json` serializers remain built in (not yet re-expressed
+as comptime library code); `comptime { to_json(value) }` runs them at
+build time. See `SPEC.md` section 14.

@@ -27,13 +27,13 @@ fn is_prime(n: i64) -> bool {
 }
 
 fn main() {
-    print("primes ≤ 50:")
+    print!("primes ≤ 50:")
     for n in 0..=50 {
         if is_prime(n) {
             print!(" {}", n)
         }
     }
-    println("")
+    println!()
 
     // A few targeted spot-checks.
     for (n, expected) in [(2, true), (3, true), (4, false), (97, true),

@@ -1,5 +1,189 @@
 # Changelog
 
+## 0.22.0 - Comptime code generation, optimizations, core fixes, docs refresh
+
+### Comptime code generation
+
+Where 0.21.0's comptime folded to constant values (and `typeInfo::<T>()` could
+build a constant *string*), 0.22.0 generates native *code* from reflection -
+the reflection-driven codegen the Zig-style model is for.
+
+- **`inline for` over `typeInfo::<T>()`.** A `for (name, ty) in
+  typeInfo::<T>()` loop is unrolled per field at compile time, in the single
+  compile (no fold pass): `name` / `ty` are comptime, `field_of(v, name)`
+  projects the concrete field, and a `match` / `if` over the comptime field
+  type folds to the taken arm. The emitted body is ordinary native field code -
+  identical on every tier, no runtime reflection, no build-time tax.
+
+- **Generic specialization.** A reflection-driven serializer is written once as
+  `fn rec<T>(v: T) { ... typeInfo::<T>() ... }` and specialized per turbofish
+  call site (`rec::<User>(x)`); concrete-type loops (`typeInfo::<Point>()`)
+  need no turbofish.
+
+- **`codegen!(...)`.** Splices a `comptime fn`'s `String` result back as raw
+  source, for code generation beyond the `inline for` shape.
+
+  Wired across the bytecode VM, Cranelift JIT, and LLVM AOT (new
+  `comptime_inline_for.gos` and `comptime_codegen.gos` parity fixtures; LLVM
+  lowers the emitted field code natively with no fallback).
+
+### Transparent type aliases
+
+`type X = T` is now transparent: `X` is interchangeable with `T` in let
+bindings, parameters, returns, struct fields, composites, and alias chains, and
+a generic alias `type Pair<A> = (A, A)` substitutes its use-site arguments.
+(0.21.0 shipped aliases that parsed but failed every use with an opaque `adt#N`
+type error.) A cyclic alias is rejected at check (`GT0024`). New
+`type_alias_transparent.gos` parity fixture.
+
+### Tuple structs
+
+`struct Pt(i64, i64)` is now fully usable: construction (`Pt(3, 4)`), positional
+access (`p.0`), destructuring (`let Pt(a, b) = p`, `match`, and function
+parameters), `#[derive(Clone, PartialEq, Default, Debug)]` (Debug renders the
+tuple form `Pt(3, 4)`), serde (`to_json`/`from_json`, a position-keyed JSON
+object), and use in collections / as generic arguments. (Construction and
+access were broken from 0.17.) Tuple fields are modelled as named fields
+"0".."N-1", so everything lowers through the named-field path identically on
+every tier. New `tuple_structs.gos` and `tuple_struct_serde.gos` fixtures.
+
+### Structs and enums compare by value - no derive
+
+Structs and enums are value types, so `==`, `!=`, `<`, `<=`, `>`, and `>=` now
+work on them by value with **no `#[derive(...)]`** - exactly as they already did
+on tuples. `eq` / `cmp` are synthesized automatically for every type whose
+fields are all comparable (scalars, `String`, or nested comparable types);
+ordering is lexicographic by declaration order for structs and by variant rank
+then payload for enums. A user `impl` of `eq` / `cmp` overrides the synthesized
+one (custom ordering). `#[derive(PartialEq/Eq/PartialOrd/Ord)]` still works to
+force synthesis for generic or container-field types the automatic gate is
+conservative about. Previously `struct == struct` without a derive faulted at
+runtime and `struct < struct` never worked. New `structural_comparison.gos`
+parity fixture.
+
+Fixes a related lowering gap: `String <` / `<=` / `>` / `>=` now lower on the
+LLVM backend (they fell back to Cranelift and were rejected under strict
+lowering); and a `..` rest in a multi-field tuple variant (`E::C(..)`) now
+matches (it only matched single-field variants before).
+
+### Operator overloading: `%`, unary `-`, `[]`, bitwise, shifts
+
+Operator overloading is extended from `+ - * /` to also cover `Rem` (`%`),
+`Neg` (unary `-`), `Index` (`a[i]`), the bitwise operators (`| & ^`), and the
+shifts (`<< >>`); each routes to the matching trait method (`rem`, `neg`,
+`index`, `bitor`, ...) on a user struct / enum. Compound assignment continues to
+route through the binary operator. New `operator_overloads.gos` parity fixture.
+
+### Conversions: `x.into()` and `x.try_into()`
+
+`x.into()` converts to the inferred target type `B` via its `B::from(x)` impl,
+and `x.try_into()` to `Result<B, E>` via `B::try_from(x)` - the method forms of
+the already-working `B::from(x)` / `B::try_from(x)`. The target is taken from
+the use-site type (`let B`, a `B` parameter / return).
+
+### Desugar macros: `matches!`, `todo!`, `unimplemented!`, `unreachable!`, `dbg!`
+
+Five new macros expand at parse time into ordinary constructs (so they lower
+uniformly on every tier): `matches!(expr, pat)` is a boolean `match`; `todo!` /
+`unimplemented!` / `unreachable!` are `panic!` with a fixed (or supplied)
+message; `dbg!(expr)` prints `expr` (Debug) to stderr and yields its value.
+
+### Derives are limited to the ones that mean something (`GT0025`)
+
+`#[derive(...)]` now rejects names that synthesize nothing - `Clone`, `Hash`,
+`Copy`, `Display`, `Serialize`/`Deserialize`, and the conversion / operator
+traits - with a hint pointing at the automatic behavior or at `impl Trait for
+T`. The derivable set is `Debug`, `Default`, `PartialEq`, `Eq`, `PartialOrd`,
+and `Ord`. `Clone` is rejected because structs are value types - `let b = a`
+copies, and `a.clone()` is a universal builtin that works with no derive (as
+are hashing, comparison, and serialization).
+
+Also fixed: an inline same-variant comparison (`E::B(1) < E::B(2)`) now anchors
+its operands to the enum so it dispatches; `value.downgrade()` / `weak.upgrade()`
+resolve on a concretely-typed receiver; and an irrefutable enum let-destructure
+(`let E::P(m, n) = e`) now reads its payload discriminant-aware on the native
+tiers (it previously read the discriminant slot as the first field, yielding
+garbage - `match` was already correct).
+
+### Pattern destructuring in function parameters
+
+A non-trivial parameter pattern - tuple `((a, b): (i64, i64))`, struct
+`(P { x, y }: P)`, or tuple-struct `(Pt(a, b): Pt)` - now binds its components.
+Previously only a single name per parameter was bound, so any destructuring
+parameter faulted at runtime. New `param_destructure.gos` fixture.
+
+### Collections
+
+- **`BTreeMap` with i64 keys.** `BTreeMap<i64, i64>` (and `<i64, String>`) now
+  works - backed by the same key-sorted `IntMap` machinery as `HashMap<i64, _>`,
+  so insert / get / contains / len and key-sorted iteration behave correctly.
+  (Previously only `<String, i64>` was supported; an i64-keyed insert faulted.)
+  New `btreemap_i64_keys.gos` fixture.
+- **`VecDeque` both ends.** Added `push_front`, `pop_back`, `peek_front`, and
+  `peek_back` (only `push_back` / `pop_front` existed before), wired across the
+  VM, Cranelift, and LLVM tiers. New `vecdeque_full.gos` fixture.
+
+### Interpreter memory
+
+Two interpreter-only optimizations cut peak memory on allocation-heavy tree
+and record workloads; output and compiled-tier behavior are unchanged (tier
+parity holds across all three tiers).
+
+- **Small-variant interning.** A variant whose payload is a single small
+  immutable scalar (`None`, `Some(0)`, an enum leaf like `Num(7)`) is shared
+  from a per-thread cache instead of allocated fresh. The cache holds a weak
+  reference, so every concurrently-live identical leaf of a tree shares one
+  allocation while `downgrade()` / `upgrade()` liveness stays faithful.
+- **Per-iteration loop release.** A loop body's own `Value` registers - the
+  tree it just built, the temporary tuple a `let (a, b) = f()` destructure
+  leaves behind - are released at the back-edge (new `ClearRegs` op) rather
+  than lingering until the next iteration overwrites them, so consecutive
+  build-then-rebuild iterations no longer overlap working sets.
+
+Together they sharply reduce interpreted peak memory on tree-shaped
+workloads, with no regression elsewhere.
+
+### Interpreter speed: enum-heavy code now runs on the JIT
+
+The in-process JIT marshals an enum value across the call boundary only in
+the compiled `NativeEnum` representation, so an enum a bytecode function
+built (a `Value::Variant`) used to fall back to the bytecode interpreter on
+*every* call - leaving enum-recursive programs (tree walks, recursive
+rewriters, structured-data transforms) entirely on the slow tier, and even
+paying a wasted marshal attempt per call. Three changes fix this; output
+stays bit-identical across the VM, JIT, and AOT tiers.
+
+- **`Value::Variant` enums marshal into the native representation** at the
+  call boundary (mirroring how strings / vecs already cross), so an
+  enum-argument function runs as native code instead of falling back. The
+  temporary is reclaimed after the call.
+- **Enum-*returning* functions too**, gated by a sound interprocedural
+  "returns-fresh" analysis: a body whose result provably originates from a
+  fresh allocation (a constructor, or a call to another fresh body) rather
+  than a passthrough of its input is safe to marshal-and-free. A
+  tree-rebuilding transform qualifies; an `unwrap`-style passthrough does not.
+- **Demote-on-repeated-fallback**: a body whose arguments never marshal is
+  returned to bytecode-only after a short streak of misses, so the JIT stops
+  taxing it.
+
+Net: enum-recursive interpreted code that previously ran entirely on the
+bytecode tier now executes as native code.
+
+### Interpreter speed: `byte_at` on a string is a direct op
+
+`s.byte_at(i)` on a statically-`String` receiver now lowers to a dedicated
+bytecode instruction instead of a general method call, skipping the
+argument-materialisation, inline-cache probe, and builtin dispatch that a
+method call carries. Byte-scanning loops - hand-written lexers, parsers, and
+UTF-8 walks that index a string a byte at a time - run noticeably faster in
+the interpreter. The fast path applies only when the receiver's type is known
+to be `String`, so a user type with its own `byte_at` keeps its method; the
+result is identical on every tier.
+
+### Docs
+
+Refreshed docs to more accurately reflect idiomatic Gossamer.
+
 ## 0.21.0 - Comptime, operator overloading, structural comparison, generic structs
 
 ### Comptime - compile-time evaluation

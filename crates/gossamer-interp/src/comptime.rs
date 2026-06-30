@@ -23,6 +23,10 @@ pub(crate) struct Region<'a> {
     pub span: Span,
     /// Expression handed to the VM evaluator.
     pub expr: &'a HirExpr,
+    /// When set, the region's `String` result is spliced as raw source
+    /// (code emission via `codegen!`) rather than rendered as a quoted
+    /// literal. A non-`String` result for a raw region is an error.
+    pub raw: bool,
 }
 
 /// Comptime metadata gathered from the program: which free functions
@@ -132,9 +136,11 @@ fn is_region_root(expr: &HirExpr, info: &ComptimeInfo) -> bool {
 )]
 fn walk<'a>(expr: &'a HirExpr, info: &ComptimeInfo, out: &mut Vec<Region<'a>>) {
     if is_region_root(expr, info) {
+        let raw = call_callee_name(expr) == Some("__gos_codegen");
         out.push(Region {
             span: expr.span,
             expr,
+            raw,
         });
         return;
     }
@@ -150,6 +156,7 @@ fn walk<'a>(expr: &'a HirExpr, info: &ComptimeInfo, out: &mut Vec<Region<'a>>) {
                     out.push(Region {
                         span: arg.span,
                         expr: arg,
+                        raw: false,
                     });
                 } else {
                     walk(arg, info, out);

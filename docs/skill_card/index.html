@@ -1626,10 +1626,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#6-formatted-output-the-only-macros" class="md-nav__link">
+  <a href="#6-the-built-in-macros" class="md-nav__link">
     <span class="md-ellipsis">
       
-        6. Formatted output (the only macros)
+        6. The built-in macros
       
     </span>
   </a>
@@ -1968,10 +1968,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#6-formatted-output-the-only-macros" class="md-nav__link">
+  <a href="#6-the-built-in-macros" class="md-nav__link">
     <span class="md-ellipsis">
       
-        6. Formatted output (the only macros)
+        6. The built-in macros
       
     </span>
   </a>
@@ -2161,9 +2161,9 @@ tracing-GC pauses). Syntax is Rust-flavoured. Runtime is
 Go-shaped: goroutines, channels. Source files end in <code>.gos</code>. The
 toolchain binary is <code>gos</code>. Every project ships a <code>project.toml</code>
 manifest.</p>
-<p>Status: pre-1.0.0 (currently 0.19.0). The surface is stable to
-write against, and features ship across all three tiers (bytecode
-VM, in-process JIT, LLVM AOT) - see "current gaps" at the bottom.</p>
+<p>Status: pre-1.0.0. The surface is stable to write against, and
+features ship across all three tiers (bytecode VM, in-process JIT,
+LLVM AOT) - see "current gaps" at the bottom.</p>
 <h2 id="2-idioms-at-a-glance">2. Idioms at a glance<a class="headerlink" href="#2-idioms-at-a-glance" title="Permanent link">&para;</a></h2>
 <p>Write <strong>clear, low-complexity, concise code.</strong> Names earn their
 length; helpers earn their existence. If a line reads cleanly the
@@ -2196,12 +2196,26 @@ first time through, leave it alone.</p>
   Box&lt;List&gt;), Nil }</code>. <code>Box</code> / <code>Arc</code> / <code>Rc</code> are transparent - every
   variant payload is heap-shared; the bare <code>Cons(i64, List)</code> form
   works too.</li>
-<li><strong><code>#[derive(Clone, PartialEq, Eq, Default, Debug, Hash)]</code></strong> on
-  structs and enums - synthesized as real source, so <code>==</code>,
-  <code>.clone()</code>, <code>Type::default()</code>, <code>{:?}</code> work on every tier. Enums
+<li><strong>Structs and enums compare by value - no derive.</strong> <code>==</code>, <code>!=</code>,
+  <code>&lt;</code>, <code>&lt;=</code>, <code>&gt;</code>, <code>&gt;=</code> work on any struct / enum whose fields are all
+  comparable (scalars, <code>String</code>, nested comparable types), exactly as
+  they do on tuples. Ordering is lexicographic by declaration order
+  (structs) or variant rank then payload (enums); a user <code>impl</code> of
+  <code>eq</code> / <code>cmp</code> overrides the synthesized one for custom ordering.</li>
+<li><strong><code>#[derive(Debug, Default, PartialEq, Eq, PartialOrd, Ord)]</code></strong> are the
+  derivable traits, synthesized as real source so <code>{:?}</code>,
+  <code>Type::default()</code>, and the comparisons work on every tier. Enums
   derive for tuple, unit, and struct-payload (<code>Rect { w, h }</code>)
-  variants; <code>#[default]</code> picks the <code>Default</code> variant. Don't hand-roll
-  field-wise eq/clone.</li>
+  variants; <code>#[default]</code> picks the <code>Default</code> variant. <code>Clone</code>, <code>Hash</code>,
+  <code>Copy</code>, <code>Display</code>, <code>Serialize</code>, and the operator / conversion traits
+  are <strong>not</strong> derivable (<code>GT0025</code>): copy (<code>let b = a</code>, <code>a.clone()</code>),
+  hashing, comparison, and serde are automatic, and conversions /
+  operators are written <code>impl Trait for T</code>: <code>From</code> / <code>TryFrom</code>, and the
+  overloadable operators <code>Add</code> <code>Sub</code> <code>Mul</code> <code>Div</code> <code>Rem</code> (<code>%</code>) <code>Neg</code>
+  (unary <code>-</code>) <code>Index</code> (<code>a[i]</code>) <code>BitOr</code> <code>BitAnd</code> <code>BitXor</code> <code>Shl</code> <code>Shr</code>.</li>
+<li><strong><code>x.into()</code> / <code>x.try_into()</code></strong> convert to the inferred target type
+  <code>B</code> via its <code>B::from(x)</code> / <code>B::try_from(x)</code> impl (target taken from a
+  <code>let B</code> / <code>B</code> parameter / return).</li>
 <li><strong><code>defer expr</code> for cleanup.</strong> Runs when control leaves the
   enclosing <code>{ }</code> block by any path (fall-through, <code>return</code>,
   <code>break</code>, <code>continue</code>), LIFO order. In a loop body it runs each
@@ -2229,8 +2243,11 @@ first time through, leave it alone.</p>
 <li><strong>String literals are already <code>String</code>.</strong> Don't write
   <code>"foo".to_string()</code>. <code>&amp;"foo"</code> borrows where <code>&amp;String</code> / <code>&amp;str</code>
   is expected.</li>
-<li><strong>Macros only for formatted output.</strong> <code>println!</code>, <code>format!</code>,
-  <code>print!</code>, <code>eprintln!</code>, <code>eprint!</code>, <code>panic!</code> - no others exist.</li>
+<li><strong>Small fixed macro set.</strong> Formatted output (<code>println!</code>, <code>format!</code>,
+  <code>print!</code>, <code>eprintln!</code>, <code>eprint!</code>, <code>panic!</code>); <code>matches!(e, pat)</code>,
+  <code>todo!</code>, <code>unimplemented!</code>, <code>unreachable!</code>, <code>dbg!</code>; and the build-time
+  <code>regex!</code> / <code>sql!</code> / <code>codegen!</code>. Every other <code>name!(...)</code> is a parse
+  error - there are no user-defined macros.</li>
 </ul>
 <h3 id="immutability-default-concrete-examples">Immutability default - concrete examples<a class="headerlink" href="#immutability-default-concrete-examples" title="Permanent link">&para;</a></h3>
 <div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="c1">// `if` / `match` are expressions - bind their result.</span>
@@ -2397,6 +2414,11 @@ parentheses (a <code>let</code> clause chain is <code>&amp;&amp;</code>-only).</
   <code>Result&lt;T, E&gt;</code>, <code>&amp;T</code>, <code>&amp;mut T</code>, user types. <code>i128</code> / <code>u128</code> are
   rejected (<code>GT0014</code>) - no tier has a 128-bit representation. Nested
   generics parse (<code>Vec&lt;Vec&lt;T&gt;&gt;</code>, <code>HashMap&lt;String, Vec&lt;i64&gt;&gt;</code>).</li>
+<li><strong>Transparent type aliases.</strong> <code>type Id = i64</code> / <code>type Pair&lt;A&gt; = (A,
+  A)</code> - the alias is interchangeable with its target everywhere (let
+  bindings, params, returns, fields, composites, alias chains), and a
+  generic alias substitutes its use-site arguments. A cyclic alias is
+  rejected at check (<code>GT0024</code>).</li>
 <li><strong><code>defer expr</code></strong> - runs on block exit by any path, LIFO, every tier.</li>
 <li><strong>Integer literals</strong> are bare; inference picks the type, default
   <code>i64</code>. Suffix only with no contextual hint.</li>
@@ -2423,9 +2445,10 @@ parentheses (a <code>let</code> clause chain is <code>&amp;&amp;</code>-only).</
 <li><strong><code>let PAT = expr else { … }</code></strong> - the else block must diverge
   (<code>return</code> / <code>break</code> / <code>continue</code> / <code>panic!</code>).</li>
 </ul>
-<h2 id="6-formatted-output-the-only-macros">6. Formatted output (the only macros)<a class="headerlink" href="#6-formatted-output-the-only-macros" title="Permanent link">&para;</a></h2>
-<p>Exactly six macros, all format-shaped. Every other <code>name!(…)</code> is a
-parse error.</p>
+<h2 id="6-the-built-in-macros">6. The built-in macros<a class="headerlink" href="#6-the-built-in-macros" title="Permanent link">&para;</a></h2>
+<p>Six format-shaped macros, plus a few fixed desugar / build-time
+macros. Every other <code>name!(…)</code> is a parse error - no user-defined
+macros.</p>
 <table>
 <thead>
 <tr>
@@ -2467,6 +2490,20 @@ parse error.</p>
 </tr>
 </tbody>
 </table>
+<p>Plus the desugar macros: <code>matches!(e, pat)</code> (boolean pattern test),
+<code>todo!</code> / <code>unimplemented!</code> / <code>unreachable!</code> (panic with a fixed or
+given message), and <code>dbg!(e)</code> (prints <code>e</code> with <code>{:?}</code> to stderr,
+yields its value). Build-time: <code>regex!</code> / <code>sql!</code> (validate the literal
+at compile time) and <code>codegen!</code> (splice a <code>comptime fn</code>'s <code>String</code>).</p>
+<p>Metaprogramming is Zig-style <code>comptime</code>, not macros: <code>comptime { … }</code>
+blocks, <code>comptime fn</code> calls, and <code>comptime</code> params run on the bytecode
+VM during compilation and fold to a literal, so every tier compiles the
+identical constant. <code>typeInfo::&lt;T&gt;()</code> reflects a type's fields, and a plain
+<code>for (name, ty) in typeInfo::&lt;T&gt;() { … }</code> loop is unrolled
+per field at compile time into ordinary native code (<code>field_of(v,
+name)</code> projects each field) - the basis for reflection-driven
+serializers written once as <code>fn rec&lt;T&gt;(v: T) { … }</code> and specialized
+per turbofish call site.</p>
 <p>Rust-style <code>{}</code> placeholders plus named-capture <code>{ident}</code> for
 bindings in scope:</p>
 <div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="kd">let</span><span class="w"> </span><span class="n">name</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">&quot;jane&quot;</span>
@@ -2625,16 +2662,20 @@ terminals - allocation-free until the terminal.</p>
   Stack-allocatable; pick when the size is a compile-time constant.</li>
 <li><code>(A, B, …)</code> - tuple. <code>.0</code>, <code>.1</code>, … or destructure inline.</li>
 <li><code>struct Foo { x, y }</code> / <code>struct Pair(A, B)</code> - runtime-managed
-  value types.</li>
+  value types. Tuple structs are fully usable: construct <code>Pair(1, 2)</code>,
+  read <code>p.0</code>, destructure <code>let Pair(a, b) = p</code>, derive, and serde.</li>
 <li><code>enum E { A, B(Payload) }</code> - sum types, matched exhaustively.
   Recursive payloads work directly; <code>Box</code>/<code>Arc</code>/<code>Rc</code> transparent.</li>
 <li><code>Option&lt;T&gt;</code> - <code>Some</code> / <code>None</code>, read with <code>if let</code>. <code>Result&lt;T, E&gt;</code></li>
 <li><code>Ok</code> / <code>Err</code>, propagate with <code>?</code>.</li>
-<li><code>std::collections::{Vec, HashMap, HashSet, BTreeMap}</code> - the richer
-  containers. <code>HashMap</code>: <code>m.inc(k)</code> / <code>m.inc(k, by)</code>, <code>m.or_insert(k,
-  default)</code>, <code>m.iter()</code> (yields <code>[(K, V)]</code>), <code>keys()</code> / <code>values()</code>,
-  <code>HashMap::pop(m, k) -&gt; Option&lt;V&gt;</code>. Structs and tuples work as
-  keys, keyed by value on every tier.</li>
+<li><code>std::collections::{Vec, HashMap, HashSet, BTreeMap, VecDeque}</code> - the
+  richer containers. <code>HashMap</code>: <code>m.inc(k)</code> / <code>m.inc(k, by)</code>,
+  <code>m.or_insert(k, default)</code>, <code>m.iter()</code> (yields <code>[(K, V)]</code>), <code>keys()</code> /
+  <code>values()</code>, <code>HashMap::pop(m, k) -&gt; Option&lt;V&gt;</code>. Structs and tuples work
+  as keys, keyed by value on every tier. <code>BTreeMap</code> keeps keys sorted
+  and takes <code>String</code> or <code>i64</code> keys. <code>VecDeque</code> is a double-ended queue:
+  <code>push_back</code> / <code>push_front</code> / <code>pop_back</code> / <code>pop_front</code> / <code>peek_front</code> /
+  <code>peek_back</code> / <code>len</code>.</li>
 <li><code>Vec</code> methods: <code>contains(&amp;v)</code>, <code>index_of(&amp;v) -&gt; Option&lt;i64&gt;</code>,
   <code>count_of(&amp;v)</code>, <code>first()</code> / <code>last() -&gt; Option&lt;T&gt;</code>, <code>reversed()</code>
   (non-mutating; <code>reverse()</code> is in-place), <code>xs.slice(start, end) -&gt;
@@ -2803,7 +2844,9 @@ repo examples and write a small test when unsure.</p>
   <code>insert</code>, <code>remove</code>, <code>contains</code>, <code>len</code>, <code>is_empty</code>, <code>clear</code>,
   <code>to_vec</code>, <code>iter</code>; algebra: <code>union</code>, <code>intersection</code>, <code>difference</code>,
   <code>symmetric_difference</code>, <code>is_subset</code>, <code>is_superset</code>, <code>is_disjoint</code>),
-  <code>BTreeMap</code>. (Vec/HashMap method extras under §9.)</li>
+  <code>BTreeMap</code> (sorted, <code>String</code> or <code>i64</code> keys), <code>VecDeque</code> (double-ended:
+  <code>push_back/front</code>, <code>pop_back/front</code>, <code>peek_front/back</code>). (Vec/HashMap
+  method extras under §9.)</li>
 <li><code>std::net</code> - <code>TcpListener::{bind, accept, local_addr, close}</code>,
   <code>TcpStream::{connect, read, read_to_string, write, close}</code>,
   <code>UdpSocket::{bind, send_to, recv_from, local_addr, close}</code>,
@@ -2962,7 +3005,7 @@ bug - reduce it and check against <code>gos test</code> (interpreter) <strong>an
 <h2 id="15-where-to-read-more">15. Where to read more<a class="headerlink" href="#15-where-to-read-more" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Language spec: <code>SPEC.md</code>. Style guide: <code>GUIDELINES.md</code>.</li>
-<li>Rendered docs: <code>docs_src/</code> → <code>site/</code>.</li>
+<li>Rendered docs: <code>docs_src/</code> → <code>docs/</code> (via <code>mkdocs build</code>).</li>
 <li>Examples: <code>examples/</code> - start with <code>hello_world.gos</code>,
   <code>function_piping.gos</code>, <code>go_spawn.gos</code>, <code>concurrency.gos</code>.</li>
 </ul>

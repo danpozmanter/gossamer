@@ -12,13 +12,13 @@ struct Config {
 }
 
 fn main() {
-    let base = Config { host: format!("localhost"), port: 8080, verbose: false }
+    let base = Config { host: "localhost", port: 8080, verbose: false }
 
     // Override one scalar field; host is copied from base.
     let prod = Config { ..base, port: 443 }
 
     // The spread may also come last, and may override a String field.
-    let remote = Config { host: format!("example.com"), ..base }
+    let remote = Config { host: "example.com", ..base }
 
     println!("base:   {} {} {}", base.host, base.port, base.verbose)
     println!("prod:   {} {} {}", prod.host, prod.port, prod.verbose)

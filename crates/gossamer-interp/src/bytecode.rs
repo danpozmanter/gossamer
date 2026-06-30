@@ -140,6 +140,14 @@ pub enum Op {
     Return { value: Reg },
     /// `ret ()`.
     ReturnUnit,
+    /// Drops the live values in `count` consecutive `Value` registers from
+    /// `start`, setting each to `Value::Void`. Emitted at a loop back-edge
+    /// to release the iteration's per-iteration aggregates (the freshly
+    /// built tree, the destructure tuple temporary) in a single dispatch,
+    /// so the next iteration allocates against a reclaimed working set
+    /// rather than overlapping its predecessor. Output-invariant: the
+    /// cleared registers are the loop body's own dead temporaries.
+    ClearRegs { start: Reg, count: Reg },
     /// Diverges with `RuntimeError::Panic`, reading the message from the
     /// `Value::String` at `consts[msg]`. Emitted on a `match`'s
     /// fall-through path so a value that escapes every arm (a guard gap
@@ -628,6 +636,21 @@ pub enum Op {
         base: Reg,
         /// Register holding the index value.
         index: Reg,
+    },
+    /// `s.byte_at(i)` specialised for a statically-`String` receiver:
+    /// the UTF-8 byte at index `i` as an `i64`, or `0` when the receiver
+    /// is not a string, the index is not an integer, or the index is
+    /// out of `[0, len)`. Emitted only when the receiver's static type
+    /// is `String`, bypassing the `MethodCall` arg-materialisation,
+    /// inline-cache probe, and builtin dispatch that dominate
+    /// byte-scanning loops in bytecode.
+    StrByteAt {
+        /// Destination register.
+        dst: Reg,
+        /// Register holding the string receiver.
+        recv: Reg,
+        /// Register holding the index value.
+        idx: Reg,
     },
     /// `base[index]` where the element is an aggregate (struct / tuple /
     /// array). An out-of-range index panics with `index out of bounds`
@@ -1247,6 +1270,63 @@ pub enum Op {
         src: Reg,
         /// `ConstIdx` of the expected struct name (a `Value::String`).
         name_idx: ConstIdx,
+    },
+    /// `dst = take(src)` - moves `src`'s value into `dst`, leaving
+    /// `Value::Void` behind. Emitted in place of [`Op::Move`] when the
+    /// source is a single-segment path to a local the consumability
+    /// analysis proved is read exactly once at this point (see
+    /// `compile::consume`), so handing the aggregate over instead of
+    /// cloning frees the input as it is consumed. The emptied slot is
+    /// never read again, so the move is unobservable.
+    MoveConsume {
+        /// Destination register.
+        dst: Reg,
+        /// Source register, emptied to `Value::Void`.
+        src: Reg,
+    },
+    /// Like [`Op::VariantField`] but drains the payload out of a
+    /// uniquely-owned scrutinee. When `Arc::get_mut` on the `src`
+    /// `Value::Variant` succeeds the field is moved into `dst`
+    /// (leaving `Value::Void`); a shared variant (refcount > 1) clones
+    /// exactly like `VariantField`. Emitted only for a guard-free
+    /// `match` whose scrutinee is a consumable local, so the drained
+    /// scrutinee is never matched against again.
+    VariantFieldConsume {
+        /// Destination value register.
+        dst: Reg,
+        /// Register holding the `Value::Variant`.
+        src: Reg,
+        /// Positional field index.
+        idx: u16,
+    },
+    /// Like [`Op::IndexGet`] but drains a uniquely-owned `Array` /
+    /// `Tuple` element. When `Arc::get_mut` on the base succeeds the
+    /// element at `index` is moved into `dst` (leaving `Value::Void`);
+    /// a shared aggregate, a non-`Array`/`Tuple` base, or an
+    /// out-of-range index behaves exactly like `IndexGet` (clone /
+    /// lenient zero). Emitted for a for-loop whose source collection is
+    /// a consumable local, draining the input as the loop advances.
+    IndexGetConsume {
+        /// Destination register.
+        dst: Reg,
+        /// Register holding the base (`Array` / `Tuple`).
+        base: Reg,
+        /// Register holding the index value.
+        index: Reg,
+    },
+    /// Like [`Op::TupleIndex`] but drains a uniquely-owned tuple field.
+    /// When `Arc::get_mut` on the `receiver` `Value::Tuple` succeeds the
+    /// field is moved into `dst` (leaving `Value::Void`); a shared tuple
+    /// clones exactly like `TupleIndex`. Emitted when destructuring a
+    /// for-loop element that was itself drained from a consumable
+    /// source, so the emptied tuple is never read again.
+    TupleIndexConsume {
+        /// Destination register.
+        dst: Reg,
+        /// Register holding the tuple.
+        receiver: Reg,
+        /// Zero-based index.
+        index: u32,
     },
 }
 

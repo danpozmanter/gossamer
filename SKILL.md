@@ -18,9 +18,9 @@ Go-shaped: goroutines, channels. Source files end in `.gos`. The
 toolchain binary is `gos`. Every project ships a `project.toml`
 manifest.
 
-Status: pre-1.0.0 (currently 0.19.0). The surface is stable to
-write against, and features ship across all three tiers (bytecode
-VM, in-process JIT, LLVM AOT) - see "current gaps" at the bottom.
+Status: pre-1.0.0. The surface is stable to write against, and
+features ship across all three tiers (bytecode VM, in-process JIT,
+LLVM AOT) - see "current gaps" at the bottom.
 
 ## 2. Idioms at a glance
 
@@ -55,12 +55,26 @@ first time through, leave it alone.
   Box<List>), Nil }`. `Box` / `Arc` / `Rc` are transparent - every
   variant payload is heap-shared; the bare `Cons(i64, List)` form
   works too.
-- **`#[derive(Clone, PartialEq, Eq, Default, Debug, Hash)]`** on
-  structs and enums - synthesized as real source, so `==`,
-  `.clone()`, `Type::default()`, `{:?}` work on every tier. Enums
+- **Structs and enums compare by value - no derive.** `==`, `!=`,
+  `<`, `<=`, `>`, `>=` work on any struct / enum whose fields are all
+  comparable (scalars, `String`, nested comparable types), exactly as
+  they do on tuples. Ordering is lexicographic by declaration order
+  (structs) or variant rank then payload (enums); a user `impl` of
+  `eq` / `cmp` overrides the synthesized one for custom ordering.
+- **`#[derive(Debug, Default, PartialEq, Eq, PartialOrd, Ord)]`** are the
+  derivable traits, synthesized as real source so `{:?}`,
+  `Type::default()`, and the comparisons work on every tier. Enums
   derive for tuple, unit, and struct-payload (`Rect { w, h }`)
-  variants; `#[default]` picks the `Default` variant. Don't hand-roll
-  field-wise eq/clone.
+  variants; `#[default]` picks the `Default` variant. `Clone`, `Hash`,
+  `Copy`, `Display`, `Serialize`, and the operator / conversion traits
+  are **not** derivable (`GT0025`): copy (`let b = a`, `a.clone()`),
+  hashing, comparison, and serde are automatic, and conversions /
+  operators are written `impl Trait for T`: `From` / `TryFrom`, and the
+  overloadable operators `Add` `Sub` `Mul` `Div` `Rem` (`%`) `Neg`
+  (unary `-`) `Index` (`a[i]`) `BitOr` `BitAnd` `BitXor` `Shl` `Shr`.
+- **`x.into()` / `x.try_into()`** convert to the inferred target type
+  `B` via its `B::from(x)` / `B::try_from(x)` impl (target taken from a
+  `let B` / `B` parameter / return).
 - **`defer expr` for cleanup.** Runs when control leaves the
   enclosing `{ }` block by any path (fall-through, `return`,
   `break`, `continue`), LIFO order. In a loop body it runs each
@@ -88,8 +102,11 @@ first time through, leave it alone.
 - **String literals are already `String`.** Don't write
   `"foo".to_string()`. `&"foo"` borrows where `&String` / `&str`
   is expected.
-- **Macros only for formatted output.** `println!`, `format!`,
-  `print!`, `eprintln!`, `eprint!`, `panic!` - no others exist.
+- **Small fixed macro set.** Formatted output (`println!`, `format!`,
+  `print!`, `eprintln!`, `eprint!`, `panic!`); `matches!(e, pat)`,
+  `todo!`, `unimplemented!`, `unreachable!`, `dbg!`; and the build-time
+  `regex!` / `sql!` / `codegen!`. Every other `name!(...)` is a parse
+  error - there are no user-defined macros.
 
 ### Immutability default - concrete examples
 
@@ -277,6 +294,11 @@ fn main() {
   `Result<T, E>`, `&T`, `&mut T`, user types. `i128` / `u128` are
   rejected (`GT0014`) - no tier has a 128-bit representation. Nested
   generics parse (`Vec<Vec<T>>`, `HashMap<String, Vec<i64>>`).
+- **Transparent type aliases.** `type Id = i64` / `type Pair<A> = (A,
+  A)` - the alias is interchangeable with its target everywhere (let
+  bindings, params, returns, fields, composites, alias chains), and a
+  generic alias substitutes its use-site arguments. A cyclic alias is
+  rejected at check (`GT0024`).
 - **`defer expr`** - runs on block exit by any path, LIFO, every tier.
 - **Integer literals** are bare; inference picks the type, default
   `i64`. Suffix only with no contextual hint.
@@ -303,10 +325,11 @@ fn main() {
 - **`let PAT = expr else { … }`** - the else block must diverge
   (`return` / `break` / `continue` / `panic!`).
 
-## 6. Formatted output (the only macros)
+## 6. The built-in macros
 
-Exactly six macros, all format-shaped. Every other `name!(…)` is a
-parse error.
+Six format-shaped macros, plus a few fixed desugar / build-time
+macros. Every other `name!(…)` is a parse error - no user-defined
+macros.
 
 | Macro | Returns | Destination |
 |-------|---------|-------------|
@@ -316,6 +339,22 @@ parse error.
 | `eprintln!("…", a, b)` | `()` | stderr + newline |
 | `eprint!("…", a, b)` | `()` | stderr, no newline |
 | `panic!("…", a, b)` | `!` | unwinds with the rendered message |
+
+Plus the desugar macros: `matches!(e, pat)` (boolean pattern test),
+`todo!` / `unimplemented!` / `unreachable!` (panic with a fixed or
+given message), and `dbg!(e)` (prints `e` with `{:?}` to stderr,
+yields its value). Build-time: `regex!` / `sql!` (validate the literal
+at compile time) and `codegen!` (splice a `comptime fn`'s `String`).
+
+Metaprogramming is Zig-style `comptime`, not macros: `comptime { … }`
+blocks, `comptime fn` calls, and `comptime` params run on the bytecode
+VM during compilation and fold to a literal, so every tier compiles the
+identical constant. `typeInfo::<T>()` reflects a type's fields, and a plain
+`for (name, ty) in typeInfo::<T>() { … }` loop is unrolled
+per field at compile time into ordinary native code (`field_of(v,
+name)` projects each field) - the basis for reflection-driven
+serializers written once as `fn rec<T>(v: T) { … }` and specialized
+per turbofish call site.
 
 Rust-style `{}` placeholders plus named-capture `{ident}` for
 bindings in scope:
@@ -511,16 +550,20 @@ terminals - allocation-free until the terminal.
   Stack-allocatable; pick when the size is a compile-time constant.
 - `(A, B, …)` - tuple. `.0`, `.1`, … or destructure inline.
 - `struct Foo { x, y }` / `struct Pair(A, B)` - runtime-managed
-  value types.
+  value types. Tuple structs are fully usable: construct `Pair(1, 2)`,
+  read `p.0`, destructure `let Pair(a, b) = p`, derive, and serde.
 - `enum E { A, B(Payload) }` - sum types, matched exhaustively.
   Recursive payloads work directly; `Box`/`Arc`/`Rc` transparent.
 - `Option<T>` - `Some` / `None`, read with `if let`. `Result<T, E>`
   - `Ok` / `Err`, propagate with `?`.
-- `std::collections::{Vec, HashMap, HashSet, BTreeMap}` - the richer
-  containers. `HashMap`: `m.inc(k)` / `m.inc(k, by)`, `m.or_insert(k,
-  default)`, `m.iter()` (yields `[(K, V)]`), `keys()` / `values()`,
-  `HashMap::pop(m, k) -> Option<V>`. Structs and tuples work as
-  keys, keyed by value on every tier.
+- `std::collections::{Vec, HashMap, HashSet, BTreeMap, VecDeque}` - the
+  richer containers. `HashMap`: `m.inc(k)` / `m.inc(k, by)`,
+  `m.or_insert(k, default)`, `m.iter()` (yields `[(K, V)]`), `keys()` /
+  `values()`, `HashMap::pop(m, k) -> Option<V>`. Structs and tuples work
+  as keys, keyed by value on every tier. `BTreeMap` keeps keys sorted
+  and takes `String` or `i64` keys. `VecDeque` is a double-ended queue:
+  `push_back` / `push_front` / `pop_back` / `pop_front` / `peek_front` /
+  `peek_back` / `len`.
 - `Vec` methods: `contains(&v)`, `index_of(&v) -> Option<i64>`,
   `count_of(&v)`, `first()` / `last() -> Option<T>`, `reversed()`
   (non-mutating; `reverse()` is in-place), `xs.slice(start, end) ->
@@ -642,7 +685,9 @@ repo examples and write a small test when unsure.
   `insert`, `remove`, `contains`, `len`, `is_empty`, `clear`,
   `to_vec`, `iter`; algebra: `union`, `intersection`, `difference`,
   `symmetric_difference`, `is_subset`, `is_superset`, `is_disjoint`),
-  `BTreeMap`. (Vec/HashMap method extras under §9.)
+  `BTreeMap` (sorted, `String` or `i64` keys), `VecDeque` (double-ended:
+  `push_back/front`, `pop_back/front`, `peek_front/back`). (Vec/HashMap
+  method extras under §9.)
 - `std::net` - `TcpListener::{bind, accept, local_addr, close}`,
   `TcpStream::{connect, read, read_to_string, write, close}`,
   `UdpSocket::{bind, send_to, recv_from, local_addr, close}`,
@@ -811,7 +856,7 @@ bug - reduce it and check against `gos test` (interpreter) **and**
 ## 15. Where to read more
 
 - Language spec: `SPEC.md`. Style guide: `GUIDELINES.md`.
-- Rendered docs: `docs_src/` → `site/`.
+- Rendered docs: `docs_src/` → `docs/` (via `mkdocs build`).
 - Examples: `examples/` - start with `hello_world.gos`,
   `function_piping.gos`, `go_spawn.gos`, `concurrency.gos`.
 

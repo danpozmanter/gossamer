@@ -1,0 +1,13 @@
+---
+source: crates/gossamer-diagnostics/tests/snapshots.rs
+assertion_line: 86
+expression: rendered
+---
+--- plain ---
+error[GT0024]: A `type` alias expands to itself through a cycle (`type A = B; - here
+--- framed ---
+error[GT0024]: A `type` alias expands to itself through a cycle (`type A = B;
+  --> snap.gos:2:5
+     2 |     let x = 1
+       |     ^^^^^
+     error: here

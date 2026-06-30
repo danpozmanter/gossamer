@@ -33,6 +33,31 @@ inherent static dispatch. Not yet part of static dispatch: `dyn Trait`,
 operator traits, associated-type projection in bounds, blanket impls, and
 supertrait method inheritance through a bound.
 
+## Generic struct types
+
+A struct may hold its type parameter by value, and methods on it use the
+`impl<T>` form (each receiver type specialises the method, so `-> T`
+returns the real instantiated type):
+
+```gossamer
+struct Wrapper<T> { value: T }
+
+impl<T> Wrapper<T> {
+    fn get(&self) -> T { self.value }
+}
+
+fn main() {
+    let n = Wrapper { value: 42 }
+    let s = Wrapper { value: "hi" }
+    println!("{} {}", n.get(), s.get())   // 42 hi
+}
+```
+
+Each instantiation lays the field out by its concrete type (a
+`Wrapper<Point>` stores a whole `Point` inline) and runs bit-identically
+on every tier. Multiple type parameters (`Pair<A, B>`), nested generic
+structs, and arrays of generic structs all work.
+
 ## Const-generic array length
 
 A function may take a fixed-size array of generic length:

@@ -1120,41 +1120,13 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#cross-compiling" class="md-nav__link">
+  <a href="#building-per-target" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Cross-compiling
+        Building per target
       
     </span>
   </a>
-  
-    <nav class="md-nav" aria-label="Cross-compiling">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#from-linux-x86_64-linux-aarch64" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        From Linux x86_64 → Linux aarch64
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#from-macos-aarch64-linux-x86_64" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        From macOS aarch64 → Linux x86_64
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
   
 </li>
       
@@ -1877,41 +1849,13 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#cross-compiling" class="md-nav__link">
+  <a href="#building-per-target" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Cross-compiling
+        Building per target
       
     </span>
   </a>
-  
-    <nav class="md-nav" aria-label="Cross-compiling">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#from-linux-x86_64-linux-aarch64" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        From Linux x86_64 → Linux aarch64
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#from-macos-aarch64-linux-x86_64" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        From macOS aarch64 → Linux x86_64
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
   
 </li>
       
@@ -2127,9 +2071,8 @@
 
 
 <h1 id="deployment-guide">Deployment guide<a class="headerlink" href="#deployment-guide" title="Permanent link">&para;</a></h1>
-<p>This page walks through cross-compiling a Gossamer service,
-shipping the binary to a Linux server, and supervising it under
-<code>systemd</code>.</p>
+<p>This page walks through building a Gossamer service, shipping the
+binary to a Linux server, and supervising it under <code>systemd</code>.</p>
 <p>The story is intentionally boring: Gossamer compiles to a single
 static (or near-static) ELF / Mach-O / PE binary. There is no
 JVM, no interpreter shim, no separate runtime to install on the
@@ -2167,103 +2110,97 @@ x86_64 runner, you can <code>scp</code> it and run it.</p>
 </tr>
 </tbody>
 </table>
-<p>Compiled Gossamer programs target whatever triple was passed to
-<code>gos build --target &lt;triple&gt;</code>. The release matrix in
+<p>Compiled programs are built for the host triple. Cross-ISA
+compilation - <code>gos build --target &lt;triple&gt;</code> to a different
+architecture - is not yet wired to a runnable binary: a non-host
+<code>--target</code> validates the triple but emits a placeholder artifact and
+prints <code>cross-link pending</code>. The release matrix in
 <a href="https://github.com/danpozmanter/gossamer/blob/main/.github/workflows/release.yml"><code>.github/workflows/release.yml</code></a>
 is the source of truth for what we test on.</p>
-<h2 id="cross-compiling">Cross-compiling<a class="headerlink" href="#cross-compiling" title="Permanent link">&para;</a></h2>
-<h3 id="from-linux-x86_64-linux-aarch64">From Linux x86_64 → Linux aarch64<a class="headerlink" href="#from-linux-x86_64-linux-aarch64" title="Permanent link">&para;</a></h3>
-<div class="language-sh highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>gos<span class="w"> </span>build<span class="w"> </span>--release<span class="w"> </span>--target<span class="w"> </span>aarch64-unknown-linux-gnu<span class="w"> </span>src/main.gos
+<h2 id="building-per-target">Building per target<a class="headerlink" href="#building-per-target" title="Permanent link">&para;</a></h2>
+<p>The supported path is to build each target on a native runner of that
+architecture - a Linux aarch64 binary on a Linux aarch64 runner, a
+macOS binary on macOS, and so on. This is exactly what the release
+workflow does (one build job per target), and it side-steps the
+cross-toolchain fragility that bit other ecosystems.</p>
+<p>On a Linux x86_64 host the deployable artifact is simply:</p>
+<div class="language-sh highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>gos<span class="w"> </span>build<span class="w"> </span>--release<span class="w"> </span>src/main.gos
 </code></pre></div>
-<p>You need:</p>
-<ul>
-<li>The cross linker <code>aarch64-linux-gnu-gcc</code> on <code>$PATH</code>.</li>
-<li>The cross C runtime, typically via <code>apt install gcc-aarch64-linux-gnu</code>.</li>
-</ul>
-<p>The toolchain shells out to <code>clang</code> / <code>lld</code> if available;
-otherwise falls back to GCC + system ld. <code>gos build --release</code>
-will print the exact link command on <code>--verbose</code>.</p>
-<h3 id="from-macos-aarch64-linux-x86_64">From macOS aarch64 → Linux x86_64<a class="headerlink" href="#from-macos-aarch64-linux-x86_64" title="Permanent link">&para;</a></h3>
-<p>The pragmatic approach is to ssh into a Linux build runner and
-build there. Cross-compiling from macOS to Linux requires the
-musl toolchain plus the libgcc stubs that match the target's
-glibc; pinning that combination across CI matrices has been
-fragile in our testing.</p>
-<p>If you do want native cross from macOS, install the <a href="https://github.com/FiloSottile/homebrew-musl-cross">musl
-cross toolchain</a>
-and target <code>x86_64-unknown-linux-musl</code>:</p>
-<div class="language-sh highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>brew<span class="w"> </span>install<span class="w"> </span>filosottile/musl-cross/musl-cross
-<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>gos<span class="w"> </span>build<span class="w"> </span>--release<span class="w"> </span>--target<span class="w"> </span>x86_64-unknown-linux-musl<span class="w"> </span>src/main.gos
-</code></pre></div>
-<p>A musl build is statically linked against libc and ships a
-single self-contained binary. This is the recommended target for
-container images.</p>
+<p>With the <code>x86_64-unknown-linux-musl</code> rustup target installed this is a
+fully-static single file - ideal for <code>scratch</code> / <code>distroless/static</code>
+images. Without it, the build falls back to a dynamically-linked glibc
+binary, which still ships fine on a glibc base image (<code>--dynamic</code>
+forces that path explicitly).</p>
 <h2 id="container-images">Container images<a class="headerlink" href="#container-images" title="Permanent link">&para;</a></h2>
-<p>For services we recommend a <code>scratch</code>-based or <code>distroless</code>-based
-image. The compiled musl binary needs nothing else. Sample
-<code>Dockerfile</code>:</p>
-<div class="language-dockerfile highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="c"># Build stage</span>
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="k">FROM</span><span class="w"> </span><span class="s">debian:bookworm-slim</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="s">build</span>
-<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="k">RUN</span><span class="w"> </span>apt-get<span class="w"> </span>update<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span>apt-get<span class="w"> </span>install<span class="w"> </span>-y<span class="w"> </span>curl<span class="w"> </span>ca-certificates<span class="w"> </span>build-essential
-<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="k">RUN</span><span class="w"> </span>curl<span class="w"> </span>-fsSL<span class="w"> </span>https://github.com/danpozmanter/gossamer/releases/latest/download/gos-x86_64-unknown-linux-musl<span class="w"> </span>-o<span class="w"> </span>/usr/local/bin/gos<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span>chmod<span class="w"> </span>+x<span class="w"> </span>/usr/local/bin/gos
-<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="k">WORKDIR</span><span class="w"> </span><span class="s">/src</span>
-<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="k">COPY</span><span class="w"> </span>.<span class="w"> </span>.
-<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="k">RUN</span><span class="w"> </span>gos<span class="w"> </span>build<span class="w"> </span>--release<span class="w"> </span>--target<span class="w"> </span>x86_64-unknown-linux-musl<span class="w"> </span>src/main.gos<span class="w"> </span>-o<span class="w"> </span>/out/server
-<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>
-<a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="c"># Runtime stage</span>
-<a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a><span class="k">FROM</span><span class="w"> </span><span class="s">gcr.io/distroless/static-debian12:nonroot</span>
-<a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a><span class="k">COPY</span><span class="w"> </span>--from<span class="o">=</span>build<span class="w"> </span>/out/server<span class="w"> </span>/server
-<a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a><span class="k">USER</span><span class="w"> </span><span class="s">nonroot:nonroot</span>
-<a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a><span class="k">EXPOSE</span><span class="w"> </span><span class="s">8080</span>
-<a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a><span class="k">ENTRYPOINT</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;/server&quot;</span><span class="p">]</span>
+<p>For services we recommend a <code>distroless</code>-based image. A glibc
+<code>gos build --release</code> binary needs only its libc - use a
+<code>distroless/base</code> runtime. A fully-static musl binary (built with the
+musl rustup target in the build stage) needs nothing and can run on
+<code>scratch</code> or <code>distroless/static</code>. Sample <code>Dockerfile</code> for the glibc
+path:</p>
+<div class="language-dockerfile highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="c"># Build stage</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="k">FROM</span><span class="w"> </span><span class="s">debian:bookworm-slim</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="s">build</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="k">RUN</span><span class="w"> </span>apt-get<span class="w"> </span>update<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span>apt-get<span class="w"> </span>install<span class="w"> </span>-y<span class="w"> </span>curl<span class="w"> </span>ca-certificates<span class="w"> </span>build-essential
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="k">RUN</span><span class="w"> </span>curl<span class="w"> </span>-fsSL<span class="w"> </span>https://github.com/danpozmanter/gossamer/releases/latest/download/gos-x86_64-unknown-linux-musl<span class="w"> </span>-o<span class="w"> </span>/usr/local/bin/gos<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span>chmod<span class="w"> </span>+x<span class="w"> </span>/usr/local/bin/gos
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="k">WORKDIR</span><span class="w"> </span><span class="s">/src</span>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="k">COPY</span><span class="w"> </span>.<span class="w"> </span>.
+<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="k">RUN</span><span class="w"> </span>gos<span class="w"> </span>build<span class="w"> </span>--release<span class="w"> </span>src/main.gos<span class="w"> </span>--out-dir<span class="w"> </span>/out
+<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>
+<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="c"># Runtime stage</span>
+<a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="k">FROM</span><span class="w"> </span><span class="s">gcr.io/distroless/base-debian12:nonroot</span>
+<a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a><span class="k">COPY</span><span class="w"> </span>--from<span class="o">=</span>build<span class="w"> </span>/out/main<span class="w"> </span>/server
+<a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a><span class="k">USER</span><span class="w"> </span><span class="s">nonroot:nonroot</span>
+<a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a><span class="k">EXPOSE</span><span class="w"> </span><span class="s">8080</span>
+<a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a><span class="k">ENTRYPOINT</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;/server&quot;</span><span class="p">]</span>
 </code></pre></div>
-<p>Image sizes settle around 10-15 MiB for a typical HTTP service.</p>
+<p>Image sizes settle around 20-30 MiB for a typical HTTP service (smaller
+on <code>scratch</code> with a static musl binary).</p>
 <h2 id="process-supervision-systemd">Process supervision: systemd<a class="headerlink" href="#process-supervision-systemd" title="Permanent link">&para;</a></h2>
 <p>Drop a unit file at <code>/etc/systemd/system/myservice.service</code>:</p>
-<div class="language-ini highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="k">[Unit]</span>
-<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="na">Description</span><span class="o">=</span><span class="s">My Gossamer service</span>
-<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="na">After</span><span class="o">=</span><span class="s">network.target</span>
-<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="na">Documentation</span><span class="o">=</span><span class="s">https://example.com/myservice</span>
-<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>
-<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="k">[Service]</span>
-<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="na">Type</span><span class="o">=</span><span class="s">simple</span>
-<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="na">User</span><span class="o">=</span><span class="s">myservice</span>
-<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="na">Group</span><span class="o">=</span><span class="s">myservice</span>
-<a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a><span class="na">ExecStart</span><span class="o">=</span><span class="s">/usr/local/bin/myservice</span>
-<a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a><span class="na">Restart</span><span class="o">=</span><span class="s">on-failure</span>
-<a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a><span class="na">RestartSec</span><span class="o">=</span><span class="s">5s</span>
-<a id="__codelineno-3-13" name="__codelineno-3-13" href="#__codelineno-3-13"></a>
-<a id="__codelineno-3-14" name="__codelineno-3-14" href="#__codelineno-3-14"></a><span class="c1"># Environment</span>
-<a id="__codelineno-3-15" name="__codelineno-3-15" href="#__codelineno-3-15"></a><span class="na">Environment</span><span class="o">=</span><span class="s">&quot;GOSSAMER_LOG=info&quot;</span>
-<a id="__codelineno-3-16" name="__codelineno-3-16" href="#__codelineno-3-16"></a><span class="na">Environment</span><span class="o">=</span><span class="s">&quot;LISTEN_ADDR=0.0.0.0:8080&quot;</span>
-<a id="__codelineno-3-17" name="__codelineno-3-17" href="#__codelineno-3-17"></a>
-<a id="__codelineno-3-18" name="__codelineno-3-18" href="#__codelineno-3-18"></a><span class="c1"># Hardening</span>
-<a id="__codelineno-3-19" name="__codelineno-3-19" href="#__codelineno-3-19"></a><span class="na">NoNewPrivileges</span><span class="o">=</span><span class="s">yes</span>
-<a id="__codelineno-3-20" name="__codelineno-3-20" href="#__codelineno-3-20"></a><span class="na">ProtectSystem</span><span class="o">=</span><span class="s">strict</span>
-<a id="__codelineno-3-21" name="__codelineno-3-21" href="#__codelineno-3-21"></a><span class="na">ProtectHome</span><span class="o">=</span><span class="s">yes</span>
-<a id="__codelineno-3-22" name="__codelineno-3-22" href="#__codelineno-3-22"></a><span class="na">PrivateTmp</span><span class="o">=</span><span class="s">yes</span>
-<a id="__codelineno-3-23" name="__codelineno-3-23" href="#__codelineno-3-23"></a><span class="na">PrivateDevices</span><span class="o">=</span><span class="s">yes</span>
-<a id="__codelineno-3-24" name="__codelineno-3-24" href="#__codelineno-3-24"></a><span class="na">ProtectKernelTunables</span><span class="o">=</span><span class="s">yes</span>
-<a id="__codelineno-3-25" name="__codelineno-3-25" href="#__codelineno-3-25"></a><span class="na">ProtectKernelModules</span><span class="o">=</span><span class="s">yes</span>
-<a id="__codelineno-3-26" name="__codelineno-3-26" href="#__codelineno-3-26"></a><span class="na">ProtectControlGroups</span><span class="o">=</span><span class="s">yes</span>
-<a id="__codelineno-3-27" name="__codelineno-3-27" href="#__codelineno-3-27"></a><span class="na">RestrictNamespaces</span><span class="o">=</span><span class="s">yes</span>
-<a id="__codelineno-3-28" name="__codelineno-3-28" href="#__codelineno-3-28"></a><span class="na">RestrictRealtime</span><span class="o">=</span><span class="s">yes</span>
-<a id="__codelineno-3-29" name="__codelineno-3-29" href="#__codelineno-3-29"></a><span class="na">LockPersonality</span><span class="o">=</span><span class="s">yes</span>
-<a id="__codelineno-3-30" name="__codelineno-3-30" href="#__codelineno-3-30"></a><span class="na">MemoryDenyWriteExecute</span><span class="o">=</span><span class="s">yes</span>
-<a id="__codelineno-3-31" name="__codelineno-3-31" href="#__codelineno-3-31"></a><span class="na">SystemCallArchitectures</span><span class="o">=</span><span class="s">native</span>
-<a id="__codelineno-3-32" name="__codelineno-3-32" href="#__codelineno-3-32"></a><span class="na">SystemCallFilter</span><span class="o">=</span><span class="s">@system-service</span>
-<a id="__codelineno-3-33" name="__codelineno-3-33" href="#__codelineno-3-33"></a>
-<a id="__codelineno-3-34" name="__codelineno-3-34" href="#__codelineno-3-34"></a><span class="c1"># Tuning</span>
-<a id="__codelineno-3-35" name="__codelineno-3-35" href="#__codelineno-3-35"></a><span class="na">LimitNOFILE</span><span class="o">=</span><span class="s">65536</span>
-<a id="__codelineno-3-36" name="__codelineno-3-36" href="#__codelineno-3-36"></a><span class="na">TasksMax</span><span class="o">=</span><span class="s">4096</span>
-<a id="__codelineno-3-37" name="__codelineno-3-37" href="#__codelineno-3-37"></a>
-<a id="__codelineno-3-38" name="__codelineno-3-38" href="#__codelineno-3-38"></a><span class="k">[Install]</span>
-<a id="__codelineno-3-39" name="__codelineno-3-39" href="#__codelineno-3-39"></a><span class="na">WantedBy</span><span class="o">=</span><span class="s">multi-user.target</span>
+<div class="language-ini highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="k">[Unit]</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="na">Description</span><span class="o">=</span><span class="s">My Gossamer service</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="na">After</span><span class="o">=</span><span class="s">network.target</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="na">Documentation</span><span class="o">=</span><span class="s">https://example.com/myservice</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="k">[Service]</span>
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="na">Type</span><span class="o">=</span><span class="s">simple</span>
+<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="na">User</span><span class="o">=</span><span class="s">myservice</span>
+<a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="na">Group</span><span class="o">=</span><span class="s">myservice</span>
+<a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a><span class="na">ExecStart</span><span class="o">=</span><span class="s">/usr/local/bin/myservice</span>
+<a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a><span class="na">Restart</span><span class="o">=</span><span class="s">on-failure</span>
+<a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a><span class="na">RestartSec</span><span class="o">=</span><span class="s">5s</span>
+<a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a>
+<a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a><span class="c1"># Environment</span>
+<a id="__codelineno-2-15" name="__codelineno-2-15" href="#__codelineno-2-15"></a><span class="na">Environment</span><span class="o">=</span><span class="s">&quot;GOSSAMER_LOG=info&quot;</span>
+<a id="__codelineno-2-16" name="__codelineno-2-16" href="#__codelineno-2-16"></a><span class="na">Environment</span><span class="o">=</span><span class="s">&quot;LISTEN_ADDR=0.0.0.0:8080&quot;</span>
+<a id="__codelineno-2-17" name="__codelineno-2-17" href="#__codelineno-2-17"></a>
+<a id="__codelineno-2-18" name="__codelineno-2-18" href="#__codelineno-2-18"></a><span class="c1"># Hardening</span>
+<a id="__codelineno-2-19" name="__codelineno-2-19" href="#__codelineno-2-19"></a><span class="na">NoNewPrivileges</span><span class="o">=</span><span class="s">yes</span>
+<a id="__codelineno-2-20" name="__codelineno-2-20" href="#__codelineno-2-20"></a><span class="na">ProtectSystem</span><span class="o">=</span><span class="s">strict</span>
+<a id="__codelineno-2-21" name="__codelineno-2-21" href="#__codelineno-2-21"></a><span class="na">ProtectHome</span><span class="o">=</span><span class="s">yes</span>
+<a id="__codelineno-2-22" name="__codelineno-2-22" href="#__codelineno-2-22"></a><span class="na">PrivateTmp</span><span class="o">=</span><span class="s">yes</span>
+<a id="__codelineno-2-23" name="__codelineno-2-23" href="#__codelineno-2-23"></a><span class="na">PrivateDevices</span><span class="o">=</span><span class="s">yes</span>
+<a id="__codelineno-2-24" name="__codelineno-2-24" href="#__codelineno-2-24"></a><span class="na">ProtectKernelTunables</span><span class="o">=</span><span class="s">yes</span>
+<a id="__codelineno-2-25" name="__codelineno-2-25" href="#__codelineno-2-25"></a><span class="na">ProtectKernelModules</span><span class="o">=</span><span class="s">yes</span>
+<a id="__codelineno-2-26" name="__codelineno-2-26" href="#__codelineno-2-26"></a><span class="na">ProtectControlGroups</span><span class="o">=</span><span class="s">yes</span>
+<a id="__codelineno-2-27" name="__codelineno-2-27" href="#__codelineno-2-27"></a><span class="na">RestrictNamespaces</span><span class="o">=</span><span class="s">yes</span>
+<a id="__codelineno-2-28" name="__codelineno-2-28" href="#__codelineno-2-28"></a><span class="na">RestrictRealtime</span><span class="o">=</span><span class="s">yes</span>
+<a id="__codelineno-2-29" name="__codelineno-2-29" href="#__codelineno-2-29"></a><span class="na">LockPersonality</span><span class="o">=</span><span class="s">yes</span>
+<a id="__codelineno-2-30" name="__codelineno-2-30" href="#__codelineno-2-30"></a><span class="na">MemoryDenyWriteExecute</span><span class="o">=</span><span class="s">yes</span>
+<a id="__codelineno-2-31" name="__codelineno-2-31" href="#__codelineno-2-31"></a><span class="na">SystemCallArchitectures</span><span class="o">=</span><span class="s">native</span>
+<a id="__codelineno-2-32" name="__codelineno-2-32" href="#__codelineno-2-32"></a><span class="na">SystemCallFilter</span><span class="o">=</span><span class="s">@system-service</span>
+<a id="__codelineno-2-33" name="__codelineno-2-33" href="#__codelineno-2-33"></a>
+<a id="__codelineno-2-34" name="__codelineno-2-34" href="#__codelineno-2-34"></a><span class="c1"># Tuning</span>
+<a id="__codelineno-2-35" name="__codelineno-2-35" href="#__codelineno-2-35"></a><span class="na">LimitNOFILE</span><span class="o">=</span><span class="s">65536</span>
+<a id="__codelineno-2-36" name="__codelineno-2-36" href="#__codelineno-2-36"></a><span class="na">TasksMax</span><span class="o">=</span><span class="s">4096</span>
+<a id="__codelineno-2-37" name="__codelineno-2-37" href="#__codelineno-2-37"></a>
+<a id="__codelineno-2-38" name="__codelineno-2-38" href="#__codelineno-2-38"></a><span class="k">[Install]</span>
+<a id="__codelineno-2-39" name="__codelineno-2-39" href="#__codelineno-2-39"></a><span class="na">WantedBy</span><span class="o">=</span><span class="s">multi-user.target</span>
 </code></pre></div>
 <p>Reload + start:</p>
-<div class="language-sh highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>systemctl<span class="w"> </span>daemon-reload
-<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>systemctl<span class="w"> </span><span class="nb">enable</span><span class="w"> </span>--now<span class="w"> </span>myservice
-<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>journalctl<span class="w"> </span>-u<span class="w"> </span>myservice<span class="w"> </span>-f
+<div class="language-sh highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>systemctl<span class="w"> </span>daemon-reload
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>systemctl<span class="w"> </span><span class="nb">enable</span><span class="w"> </span>--now<span class="w"> </span>myservice
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>journalctl<span class="w"> </span>-u<span class="w"> </span>myservice<span class="w"> </span>-f
 </code></pre></div>
 <h3 id="graceful-shutdown">Graceful shutdown<a class="headerlink" href="#graceful-shutdown" title="Permanent link">&para;</a></h3>
 <p>Gossamer services should handle SIGTERM (sent by <code>systemctl
@@ -2272,9 +2209,9 @@ An in-process signal API is planned (v1.x). Today, drive graceful
 shutdown from the supervisor: with systemd, set <code>KillSignal=SIGTERM</code>
 and <code>TimeoutStopSec=30s</code> in the unit file so in-flight requests have
 time to finish before the process is forced down.</p>
-<div class="language-ini highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="k">[Service]</span>
-<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="na">KillSignal</span><span class="o">=</span><span class="s">SIGTERM</span>
-<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="na">TimeoutStopSec</span><span class="o">=</span><span class="s">30s</span>
+<div class="language-ini highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="k">[Service]</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="na">KillSignal</span><span class="o">=</span><span class="s">SIGTERM</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="na">TimeoutStopSec</span><span class="o">=</span><span class="s">30s</span>
 </code></pre></div>
 <p>systemd escalates to <code>SIGKILL</code> only after the timeout.</p>
 <h2 id="log-shipping">Log shipping<a class="headerlink" href="#log-shipping" title="Permanent link">&para;</a></h2>
@@ -2282,12 +2219,12 @@ time to finish before the process is forced down.</p>
 captures both into the journal; ship the journal to your
 log aggregator. For structured logs, use <code>std::slog::JsonHandler</code>
 so the lines are JSON-line-formatted:</p>
-<div class="language-gos highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="k">use</span><span class="w"> </span><span class="n">std</span>::<span class="n">slog</span>
-<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>
-<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="k">fn</span> <span class="nf">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="w">    </span><span class="n">slog</span>::<span class="n">info</span><span class="p">(</span><span class="s">&quot;listening&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;addr&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;0.0.0.0:8080&quot;</span><span class="p">)</span>
-<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="w">    </span><span class="c1">// ...</span>
-<a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a><span class="p">}</span>
+<div class="language-gos highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="k">use</span><span class="w"> </span><span class="n">std</span>::<span class="n">slog</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="k">fn</span> <span class="nf">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="w">    </span><span class="n">slog</span>::<span class="n">info</span><span class="p">(</span><span class="s">&quot;listening&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;addr&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;0.0.0.0:8080&quot;</span><span class="p">)</span>
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="w">    </span><span class="c1">// ...</span>
+<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="p">}</span>
 </code></pre></div>
 <p>For shipping to a log aggregator that doesn't read the journal:</p>
 <ul>
@@ -2301,24 +2238,20 @@ so the lines are JSON-line-formatted:</p>
 <h2 id="tuning">Tuning<a class="headerlink" href="#tuning" title="Permanent link">&para;</a></h2>
 <h3 id="gomaxprocs-equivalent">GOMAXPROCS-equivalent<a class="headerlink" href="#gomaxprocs-equivalent" title="Permanent link">&para;</a></h3>
 <p>Gossamer reads the OS CPU count at startup and runs that many
-scheduler threads. Override with <code>GOSSAMER_PROCS</code>:</p>
-<div class="language-sh highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="nv">GOSSAMER_PROCS</span><span class="o">=</span><span class="m">4</span><span class="w"> </span>./myservice
+scheduler threads. Override with <code>GOSSAMER_MAX_PROCS</code>:</p>
+<div class="language-sh highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="nv">GOSSAMER_MAX_PROCS</span><span class="o">=</span><span class="m">4</span><span class="w"> </span>./myservice
 </code></pre></div>
 <p>Set this in the systemd unit's <code>Environment=</code> line.</p>
 <h3 id="stack-size-per-goroutine">Stack size per goroutine<a class="headerlink" href="#stack-size-per-goroutine" title="Permanent link">&para;</a></h3>
-<p>Gossamer goroutines today run on real OS threads. Each thread
-gets the host's default stack (8 MiB on Linux). For services
-that spawn thousands of goroutines, drop the stack with
-<code>ulimit</code>:</p>
-<div class="language-sh highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="nb">ulimit</span><span class="w"> </span>-s<span class="w"> </span><span class="m">1024</span><span class="w">  </span><span class="c1"># 1 MiB stacks</span>
-<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>./myservice
+<p>Goroutines are stackful coroutines multiplexed M:N onto the worker
+thread pool, not OS threads - a blocked goroutine costs its stack of
+mmap'd address space, not a thread. Each goroutine starts with a
+16 KiB stack; tune the default with <code>GOSSAMER_GOROUTINE_STACK</code>:</p>
+<div class="language-sh highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="nv">GOSSAMER_GOROUTINE_STACK</span><span class="o">=</span><span class="m">32768</span><span class="w"> </span>./myservice<span class="w">  </span><span class="c1"># 32 KiB stacks</span>
 </code></pre></div>
-<p>Or in systemd: <code>LimitSTACK=1048576</code>.</p>
-<p>As of 0.1.0 the M:N scheduler is live, so goroutines no
-longer correspond 1:1 to OS threads - the <code>ulimit</code> is only
-relevant if you spawn unbounded <em>threads</em> directly. Idle
-goroutines are parked on the netpoller and consume
-constant memory.</p>
+<p>Idle goroutines are parked on the netpoller and consume constant
+memory. The worker-thread count (not the goroutine count) follows
+<code>GOSSAMER_MAX_PROCS</code>.</p>
 <h3 id="memory">Memory<a class="headerlink" href="#memory" title="Permanent link">&para;</a></h3>
 <p>Gossamer reclaims memory deterministically: reference counting frees
 each value the moment its last reference dies, a cycle collector that
@@ -2333,12 +2266,12 @@ limits, size to the service's peak working set plus headroom for
 transient spikes, rather than a multiple to absorb collector slack.</p>
 <h2 id="health-check-readiness">Health check / readiness<a class="headerlink" href="#health-check-readiness" title="Permanent link">&para;</a></h2>
 <p>A typical HTTP service exposes <code>/healthz</code>:</p>
-<div class="language-gos highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="k">fn</span> <span class="nf">handler</span><span class="p">(</span><span class="n">req</span>: <span class="nc">http</span>::<span class="n">Request</span><span class="p">)</span><span class="w"> </span>-&gt; <span class="nc">http</span>::<span class="n">Response</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="w">    </span><span class="k">match</span><span class="w"> </span><span class="n">req</span><span class="p">.</span><span class="n">path</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="w">        </span><span class="s">&quot;/healthz&quot;</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="n">http</span>::<span class="n">Response</span>::<span class="n">text</span><span class="p">(</span><span class="mi">200</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;ok&quot;</span><span class="p">),</span>
-<a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="w">        </span><span class="n">_</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="n">app_handler</span><span class="p">(</span><span class="n">req</span><span class="p">),</span>
-<a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a><span class="w">    </span><span class="p">}</span>
-<a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a><span class="p">}</span>
+<div class="language-gos highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="k">fn</span> <span class="nf">handler</span><span class="p">(</span><span class="n">req</span>: <span class="nc">http</span>::<span class="n">Request</span><span class="p">)</span><span class="w"> </span>-&gt; <span class="nc">http</span>::<span class="n">Response</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="w">    </span><span class="k">match</span><span class="w"> </span><span class="n">req</span><span class="p">.</span><span class="n">path</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="w">        </span><span class="s">&quot;/healthz&quot;</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="n">http</span>::<span class="n">Response</span>::<span class="n">text</span><span class="p">(</span><span class="mi">200</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;ok&quot;</span><span class="p">),</span>
+<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="w">        </span><span class="n">_</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="n">app_handler</span><span class="p">(</span><span class="n">req</span><span class="p">),</span>
+<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a><span class="p">}</span>
 </code></pre></div>
 <p>Wire this into the load balancer's readiness probe. systemd has
 no native HTTP probe; use <code>Type=notify</code> and a small <code>sd_notify</code>
@@ -2364,28 +2297,28 @@ prints every live goroutine's last-known frame to stderr, then
 exits. The handler is installed automatically on first scheduler
 start. Output format mirrors Go's so existing tools
 (<code>stackparse</code>, log-shipping rules) read it unchanged.</p>
-<div class="language-text highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>SIGQUIT: dumping 1342 goroutine(s)
-<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>
-<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a>goroutine 17 [chan receive]:
-<a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a>  main::handle_request()
-<a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a>        src/main.gos:128
-<a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a>  ...
+<div class="language-text highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>SIGQUIT: dumping 1342 goroutine(s)
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>
+<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a>goroutine 17 [chan receive]:
+<a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a>  main::handle_request()
+<a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a>        src/main.gos:128
+<a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a>  ...
 </code></pre></div>
 <h3 id="pprof-endpoint-planned">pprof endpoint (planned)<a class="headerlink" href="#pprof-endpoint-planned" title="Permanent link">&para;</a></h3>
 <p>A <code>std::pprof</code> module to mount <code>/debug/pprof/*</code> is planned for v1.x.
 The intended shape routes the request path and query through
 <code>pprof::route</code> and returns the profile bytes:</p>
-<div class="language-text highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>fn pprof_handler(req: &amp;http::Request) -&gt; http::Response {
-<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>    match pprof::route(req.path(), req.query()) {
-<a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>        Some(bytes) =&gt; http::Response::json(200, bytes),
-<a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a>        None        =&gt; http::Response::text(404, &quot;not found&quot;),
-<a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a>    }
-<a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a>}
+<div class="language-text highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>fn pprof_handler(req: &amp;http::Request) -&gt; http::Response {
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>    match pprof::route(req.path(), req.query()) {
+<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a>        Some(bytes) =&gt; http::Response::json(200, bytes),
+<a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a>        None        =&gt; http::Response::text(404, &quot;not found&quot;),
+<a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a>    }
+<a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a>}
 </code></pre></div>
 <p>Then:</p>
-<div class="language-sh highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a>go<span class="w"> </span>tool<span class="w"> </span>pprof<span class="w"> </span>-text<span class="w"> </span>http://localhost:8080/debug/pprof/profile
-<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>go<span class="w"> </span>tool<span class="w"> </span>pprof<span class="w"> </span>-web<span class="w">  </span>http://localhost:8080/debug/pprof/heap
-<a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a>go<span class="w"> </span>tool<span class="w"> </span>pprof<span class="w">       </span>http://localhost:8080/debug/pprof/goroutine
+<div class="language-sh highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>go<span class="w"> </span>tool<span class="w"> </span>pprof<span class="w"> </span>-text<span class="w"> </span>http://localhost:8080/debug/pprof/profile
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>go<span class="w"> </span>tool<span class="w"> </span>pprof<span class="w"> </span>-web<span class="w">  </span>http://localhost:8080/debug/pprof/heap
+<a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>go<span class="w"> </span>tool<span class="w"> </span>pprof<span class="w">       </span>http://localhost:8080/debug/pprof/goroutine
 </code></pre></div>
 <p>The legacy text profile format is what Gossamer emits today;
 the protobuf-encoded variant lands in Phase 2.</p>
@@ -2394,12 +2327,12 @@ the protobuf-encoded variant lands in Phase 2.</p>
 unsynchronised concurrent writes via vector-clock happens-before
 analysis seeded from the scheduler's park/unpark events. CI
 gate:</p>
-<div class="language-sh highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a>gos<span class="w"> </span><span class="nb">test</span><span class="w"> </span>--race<span class="w">                  </span><span class="c1"># exits non-zero on first race</span>
-<a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a>gos<span class="w"> </span><span class="nb">test</span><span class="w"> </span>--race<span class="w"> </span>--coverage<span class="w"> </span>cov.lcov
+<div class="language-sh highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a>gos<span class="w"> </span><span class="nb">test</span><span class="w"> </span>--race<span class="w">                  </span><span class="c1"># exits non-zero on first race</span>
+<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>gos<span class="w"> </span><span class="nb">test</span><span class="w"> </span>--race<span class="w"> </span>--coverage<span class="w"> </span>cov.lcov
 </code></pre></div>
 <h3 id="reproducible-builds-supply-chain">Reproducible builds + supply-chain<a class="headerlink" href="#reproducible-builds-supply-chain" title="Permanent link">&para;</a></h3>
 <p>Production builds:</p>
-<div class="language-sh highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a>gos<span class="w"> </span>build<span class="w"> </span>--release<span class="w"> </span>-g<span class="w"> </span>--reproducible
+<div class="language-sh highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a>gos<span class="w"> </span>build<span class="w"> </span>--release<span class="w"> </span>-g<span class="w"> </span>--reproducible
 </code></pre></div>
 <p>The <code>--reproducible</code> flag pins <code>SOURCE_DATE_EPOCH</code> and the
 LLVM tmp-dir layout so two builds of the same source on the

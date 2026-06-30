@@ -1,0 +1,18 @@
+// Pattern destructuring in function parameters: tuple, struct, and
+// tuple-struct patterns bind their components at the call boundary,
+// lowering to a fresh local plus a destructuring `let` on every tier.
+
+struct Point { x: i64, y: i64 }
+struct Pair(i64, i64)
+
+fn tup((a, b): (i64, i64)) -> i64 { a * b }
+fn named(Point { x, y }: Point) -> i64 { x + y }
+fn tuple_struct(Pair(a, b): Pair) -> i64 { a - b }
+fn nested((Point { x, y }, k): (Point, i64)) -> i64 { x + y + k }
+
+fn main() {
+    println!("{}", tup((6, 7)))
+    println!("{}", named(Point { x: 3, y: 4 }))
+    println!("{}", tuple_struct(Pair(20, 5)))
+    println!("{}", nested((Point { x: 1, y: 2 }, 10)))
+}

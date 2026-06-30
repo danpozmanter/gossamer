@@ -1669,8 +1669,8 @@ outermost wrap down to the root cause:</p>
 <li><code>errors::join([a, b]) -&gt; Option&lt;Error&gt;</code> combines several errors into
   one whose message is the individual messages joined with <code>"; "</code>
   (<code>"a; b"</code>); an empty list joins to <code>None</code>.</li>
-<li><code>errors::is(err, needle)</code> and <code>errors::chain(err)</code> traverse the same
-  cause chain that Display renders.</li>
+<li><code>errors::is(err, needle)</code> walks the same cause chain that Display
+  renders; step through it yourself with <code>err.cause()</code>.</li>
 </ul>
 
 

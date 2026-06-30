@@ -965,6 +965,28 @@ impl<'a> Lowerer<'a> {
     /// For constants we scan the body's locals for an
     /// existing handle of the same kind, so a float constant
     /// in a float context classifies as `f64`.
+    /// `true` when `op` is a `String` / `&String` value: a copy of a
+    /// string-typed place, or an inlined string literal (`Const(Str)`,
+    /// the shape copy-propagation leaves a single-use string binding).
+    /// Mirrors Cranelift's `operand_is_string` so the string-comparison
+    /// route fires identically on both compiled tiers.
+    pub(crate) fn operand_is_string(&self, op: &Operand) -> bool {
+        match op {
+            Operand::Const(ConstValue::Str(_)) => true,
+            Operand::Copy(p) => {
+                let ty = self.place_leaf_ty(p);
+                match self.tcx.kind(ty) {
+                    Some(TyKind::String) => true,
+                    Some(TyKind::Ref { inner, .. }) => {
+                        matches!(self.tcx.kind(*inner), Some(TyKind::String))
+                    }
+                    _ => false,
+                }
+            }
+            _ => false,
+        }
+    }
+
     pub(crate) fn operand_ty(&self, op: &Operand) -> Ty {
         match op {
             Operand::Copy(p) => {

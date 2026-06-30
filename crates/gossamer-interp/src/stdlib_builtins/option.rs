@@ -178,7 +178,7 @@ pub(crate) fn builtin_option_zip(args: &[Value]) -> RuntimeResult<Value> {
     let a = args.first().cloned().unwrap_or_else(none_variant);
     let b = args.get(1).cloned().unwrap_or_else(none_variant);
     match (some_payload(&a), some_payload(&b)) {
-        (Some(x), Some(y)) => Ok(some_variant(Value::Tuple(Arc::new(vec![x, y])))),
+        (Some(x), Some(y)) => Ok(some_variant(Value::Tuple(Arc::from(vec![x, y])))),
         _ => Ok(none_variant()),
     }
 }

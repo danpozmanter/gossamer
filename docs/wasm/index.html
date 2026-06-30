@@ -1801,10 +1801,10 @@ playground intentionally does not wire up.</p>
 <h2 id="compiling-a-program-to-a-standalone-wasm">Compiling a program to a standalone <code>.wasm</code><a class="headerlink" href="#compiling-a-program-to-a-standalone-wasm" title="Permanent link">&para;</a></h2>
 <p>The playground compiles the <strong>interpreter</strong> to WebAssembly and runs your source
 inside it. Compiling a Gossamer <strong>program</strong> to a standalone <code>.wasm</code> artifact -
-<code>gos build --target wasm32-...</code> - is <strong>not supported yet</strong>; like the other
-cross-compilation targets, the native AOT backend currently targets the host
-ISA only. For now, "WebAssembly" means <em>run Gossamer in the browser</em>, not <em>ship
-a <code>.wasm</code> binary</em>.</p>
+<code>gos build --target wasm32-...</code> - is <strong>not supported yet</strong>: like every non-host
+<code>--target</code>, it emits a placeholder artifact and reports <code>cross-link pending</code>
+rather than a runnable binary. For now, "WebAssembly" means <em>run Gossamer in the
+browser</em>, not <em>ship a <code>.wasm</code> binary</em>.</p>
 
 
 

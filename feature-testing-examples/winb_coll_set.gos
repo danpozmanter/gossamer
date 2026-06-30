@@ -16,7 +16,7 @@
 
 use std::collections::HashSet
 
-#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+#[derive(PartialEq, Eq, Debug)]
 struct Tag { id: i64 }
 
 fn main() {

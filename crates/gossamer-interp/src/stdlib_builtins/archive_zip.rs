@@ -134,7 +134,7 @@ pub(crate) fn builtin_zip_read_raw(args: &[Value]) -> RuntimeResult<Value> {
                                 .map(|b| Value::Int(i64::from(b)))
                                 .collect(),
                         ));
-                        Value::Tuple(Arc::new(vec![
+                        Value::Tuple(Arc::from(vec![
                             Value::String(e.name.into()),
                             data,
                             Value::Bool(e.is_dir),

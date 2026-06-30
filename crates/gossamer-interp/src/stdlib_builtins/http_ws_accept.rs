@@ -74,7 +74,7 @@ fn upgrade_response(token: &str) -> Value {
     ]
     .iter()
     .map(|(k, v)| {
-        Value::Tuple(Arc::new(vec![
+        Value::Tuple(Arc::from(vec![
             Value::String(SmolStr::from(*k)),
             Value::String(SmolStr::from(*v)),
         ]))

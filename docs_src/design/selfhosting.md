@@ -1,5 +1,14 @@
 # Self-hosting feasibility study (Phase 30)
 
+> **Status note.** This is the original Phase 30 feasibility write-up,
+> kept for its gap analysis. Most prerequisites it lists below have
+> since shipped on all three tiers - growable `Vec`, `HashMap` /
+> `HashSet` / `BTreeMap`, generic functions and types with full
+> monomorphisation, traits with static dispatch, byte literals, and
+> the `matches!` / `format!` desugar macros - and the `examples/selfhost/`
+> ports it references are no longer in the tree. Read it as a record of
+> where self-hosting stood then, not as the current surface.
+
 ## Scope
 
 Phase 30 of the implementation plan asks whether the Gossamer compiler

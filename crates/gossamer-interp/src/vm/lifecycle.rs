@@ -227,8 +227,9 @@ impl Vm {
 
     /// Drains the comptime evaluation results gathered by the last
     /// [`Self::load`] (empty unless [`Self::set_collect_comptime`] was
-    /// set). Each entry is `(span, Ok(value) | Err(message))`.
-    pub fn take_comptime_folds(&self) -> Vec<(gossamer_lex::Span, Result<Value, String>)> {
+    /// set). Each entry is `(span, raw, Ok(value) | Err(message))`, where
+    /// `raw` marks a `codegen!` region spliced as source.
+    pub fn take_comptime_folds(&self) -> Vec<crate::vm::ComptimeFold> {
         std::mem::take(&mut self.comptime_folds.borrow_mut())
     }
 
@@ -458,7 +459,7 @@ impl Vm {
                         &mut_statics,
                     )
                     .map_err(|err| err.to_string());
-                folds.push((region.span, outcome));
+                folds.push((region.span, region.raw, outcome));
             }
             *self.comptime_folds.borrow_mut() = folds;
         }

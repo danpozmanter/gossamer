@@ -6,9 +6,8 @@ Gossamer's surface is Rust with two simplifications:
   the runtime owns the memory.
 - Semicolons are optional at statement boundaries.
 
-See the full grammar in
-[`grammar/`](https://github.com/danpozmanter/gossamer/tree/main/grammar)
-once it is committed.
+See [`SPEC.md`](https://github.com/danpozmanter/gossamer/blob/main/SPEC.md)
+for the full grammar and semantics.
 
 ## Comments
 
@@ -27,6 +26,8 @@ the module's. Tooling reads these by position.
 ```gossamer
 const PI: f64 = 3.14159
 static MAX: u32 = 1024
+
+type Id = i64            // transparent type alias
 
 struct Point { x: f64, y: f64 }
 struct Pair(i64, i64)
@@ -94,9 +95,9 @@ Field reads carry the per-instance concrete type. When two fields
 share the same parameter (`Pair<i64, i64>`), arithmetic across
 them typechecks directly - no extra annotation required.
 
-Up to three type parameters are supported in 0.5.0. Generic
-methods (`impl Pair<A, B> { ... }`) are tracked for a later
-release; field access works across all tiers today.
+Generic structs take multiple type parameters, and generic methods
+work too: an `impl<T> Cell<T> { ... }` block specializes per
+instantiation. Field access and methods run on all three tiers.
 
 ## Expressions
 
@@ -288,7 +289,18 @@ fn bench_hot_path() { ... }
 
 #[lint(allow(unused_variable))]
 fn scratch() { let x = 1 }
+
+#[cfg(test)]
+mod point_tests { ... }
+
+#[derive(Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+struct Point { x: i64, y: i64 }
 ```
+
+`#[derive(...)]` accepts exactly `Debug`, `Default`, `PartialEq`, `Eq`,
+`PartialOrd`, and `Ord`. Any other name (`Clone`, `Hash`, `Copy`,
+`Display`, `Serialize`, ...) is rejected with `GT0025`: copying,
+comparison, hashing, and serialization are automatic and need no derive.
 
 ## Modules
 
@@ -324,9 +336,9 @@ for the rare standalone case with no contextual hint.
 
 ## Formatted output
 
-Formatted output goes through six format macros - the only macros
-in the language. Each takes a Rust-style format string with `{}`
-placeholders, plus named captures `{ident}` for bindings in scope:
+Formatted output goes through six format macros. Each takes a
+Rust-style format string with `{}` placeholders, plus named captures
+`{ident}` for bindings in scope:
 
 ```gossamer
 let name = "jane"
@@ -344,11 +356,14 @@ let greeting = format!("welcome, {}", name)
 | `eprint!("…", a, b)` | Writes to stderr, no newline. |
 | `panic!("…", a, b)` | Unwinds with the rendered message. |
 
-Every other `name!(…)` is a parse error (`GP0001`). There is no
-user-defined macro system. Compile-time metaprogramming instead goes
-through `comptime` - a `comptime { ... }` block or `comptime fn` call
-is evaluated at compile time and folded to a constant on every tier;
-see [Comptime](language/comptime.md).
+Alongside the format macros, a fixed set of desugar macros -
+`matches!`, `todo!`, `unimplemented!`, `unreachable!`, `dbg!` - and the
+build-time `regex!` / `sql!` / `codegen!` are built in. Any other
+`name!(…)` is a parse error (`GP0001`): there is no user-defined macro
+system. Compile-time metaprogramming instead goes through `comptime` - a
+`comptime { ... }` block or `comptime fn` call is evaluated at compile
+time and folded to a constant on every tier; see
+[Comptime](language/comptime.md).
 
 Format specs follow Rust's `{:spec}` grammar - width, alignment,
 fill, zero-pad, radix, and precision (`{:>8}`, `{:08x}`, `{:^6}`,

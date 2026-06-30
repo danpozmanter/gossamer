@@ -96,9 +96,10 @@ This means:
 - A type can opt into multiple traits (same as Go).
 - Two unrelated traits with identical method sets are *different*
   traits. Go has no concept of trait identity.
-- Generic bounds use `T: Trait` syntax: `fn handle<T: Reader>(r: T)`.
-- Trait objects use `Box<dyn Trait>` or `&dyn Trait`. They have
-  the same dynamic-dispatch cost as Go's interface values.
+- Generic bounds use `T: Trait` syntax: `fn handle<T: Reader>(r: T)`,
+  multi-bound `T: A + B`; each call site monomorphises statically.
+- There are no trait objects (`dyn Trait`). For runtime polymorphism
+  over a closed set, use an `enum` + exhaustive `match`.
 
 ### No implicit numeric coercion
 
@@ -250,7 +251,7 @@ otherwise spawn a `let mut acc = 0; for x in xs { acc += … }`.
 | `os.Exit` | `process::exit(code)` | ✓ |
 | `os.ReadFile` | `os::read_file(path)` | ✓ |
 | `os.WriteFile` | `os::write_file(path, data)` | ✓ |
-| `os/exec.Command` | `os::exec::Command::new(prog).arg(a).output()` | v1.x |
+| `os/exec.Command` | `process::Command::new(prog).arg(a).output()` | ✓ |
 | `os/signal.Notify` | `os::signal::on(SIGTERM)` | v1.x |
 | `path/filepath.Walk` | `fs::walk_dir(root)` | v1.x |
 | `bufio.NewScanner` | `bufio::Scanner::new(reader)` | v1.x |
@@ -390,12 +391,12 @@ fn main() {
 
 Honest list:
 
-- **Generics with structs `T = MyStruct` are not yet supported by
-  value.** v1 monomorphisation packs every generic param into a
-  64-bit slot; user structs don't fit. See
-  [`codegen_abi.md`](../codegen_abi.md). Workaround: use `&T`,
-  or use the runtime's `Vec<T>` / `HashMap<K, V>` which handle
-  arbitrarily-sized elements internally.
+- **Generic bounds are still narrow.** `fn f<T: Trait>(x: T)` does
+  static, monomorphised dispatch - including generic structs that hold
+  `T` by value (`struct Wrapper<T> { value: T }`, specialised per
+  instantiation). What's missing is `dyn Trait`, operator-trait or
+  associated-type bounds, and supertrait method inheritance through a
+  bound. See [`codegen_abi.md`](../codegen_abi.md).
 - **Tooling diagnostics are sometimes terser than Go's.** `gos
   explain CODE` exists but the corpus is younger.
 - **No `go vet`-equivalent.** Lints exist (`gos lint`) but their

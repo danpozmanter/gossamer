@@ -34,9 +34,9 @@ fn main() {
     let h1 = fnv1a(&"hello".as_bytes())
     let h2 = fnv1a(&"hello".as_bytes())
     if h1 == h2 {
-        println("\ndeterministic across calls: ok")
+        println!("\ndeterministic across calls: ok")
     } else {
-        println("\nnon-deterministic: implementation bug")
+        println!("\nnon-deterministic: implementation bug")
     }
 
     // Sensitivity: a one-bit input change produces a completely
@@ -44,6 +44,6 @@ fn main() {
     let h_a = fnv1a(&"hello".as_bytes())
     let h_b = fnv1a(&"hellp".as_bytes())
     if h_a != h_b {
-        println("avalanche on single-byte change: ok")
+        println!("avalanche on single-byte change: ok")
     }
 }

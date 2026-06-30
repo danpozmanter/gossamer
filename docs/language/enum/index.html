@@ -1562,6 +1562,36 @@
     
   
   
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#compare-by-value-no-derive" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Compare by value, no derive
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#derivable-traits" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Derivable traits
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
 </nav>
                   </div>
                 </div>
@@ -1580,6 +1610,41 @@
 <h1 id="langenum"><code>lang::enum</code><a class="headerlink" href="#langenum" title="Permanent link">&para;</a></h1>
 <p>Status: shipped</p>
 <p>Sum type declaration with payload-carrying variants.</p>
+<!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
+
+<p>Variants carry tuple payloads (<code>Line(i64)</code>, <code>Box(i64, i64)</code>), struct
+payloads (<code>Named { id: i64 }</code>), or nothing (<code>Dot</code>). Recursive payloads
+work directly (<code>enum List { Cons(i64, Box&lt;List&gt;), Nil }</code>); <code>Box</code> / <code>Arc</code>
+/ <code>Rc</code> are transparent. Match exhaustively.</p>
+<h2 id="compare-by-value-no-derive">Compare by value, no derive<a class="headerlink" href="#compare-by-value-no-derive" title="Permanent link">&para;</a></h2>
+<p>Enums are value types, so <code>==</code> / <code>!=</code> / <code>&lt;</code> / <code>&lt;=</code> / <code>&gt;</code> / <code>&gt;=</code> are
+synthesized automatically - no <code>#[derive]</code> needed - whenever every
+payload is comparable. Ordering is by <strong>variant rank first</strong> (declaration
+order), then payload lexicographically:</p>
+<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="k">enum</span> <span class="nc">Shape</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">Dot</span><span class="p">,</span><span class="w"> </span><span class="n">Line</span><span class="p">(</span><span class="kt">i64</span><span class="p">),</span><span class="w"> </span><span class="nb">Box</span><span class="p">(</span><span class="kt">i64</span><span class="p">,</span><span class="w"> </span><span class="kt">i64</span><span class="p">)</span><span class="w"> </span><span class="p">}</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;{}&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">Shape</span>::<span class="n">Dot</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">Shape</span>::<span class="n">Line</span><span class="p">(</span><span class="mi">0</span><span class="p">))</span><span class="w">     </span><span class="c1">// true: Dot ranks before Line</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;{}&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">Shape</span>::<span class="n">Line</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">Shape</span>::<span class="n">Line</span><span class="p">(</span><span class="mi">2</span><span class="p">))</span><span class="w"> </span><span class="c1">// true: same rank, payload compared</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;{}&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">Shape</span>::<span class="nb">Box</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">2</span><span class="p">)</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="n">Shape</span>::<span class="nb">Box</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">2</span><span class="p">))</span>
+</code></pre></div>
+<p>A user <code>impl</code> of <code>eq</code> / <code>cmp</code> overrides the synthesized one for custom
+ordering.</p>
+<h2 id="derivable-traits">Derivable traits<a class="headerlink" href="#derivable-traits" title="Permanent link">&para;</a></h2>
+<p><code>#[derive(...)]</code> covers <code>Debug</code>, <code>Default</code>, <code>PartialEq</code>, <code>Eq</code>,
+<code>PartialOrd</code>, and <code>Ord</code> for tuple, unit, and struct-payload variants;
+<code>#[default]</code> marks the <code>Default</code> variant. The derive only <em>forces</em>
+synthesis where the automatic gate is conservative (generic or
+container-typed payloads).</p>
+<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="cp">#[derive(Debug, Default, PartialEq)]</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="k">enum</span> <span class="nc">Move</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">    </span><span class="cp">#[default]</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">    </span><span class="n">Stay</span><span class="p">,</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">    </span><span class="n">Step</span><span class="p">(</span><span class="kt">i64</span><span class="p">),</span>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="p">}</span>
+</code></pre></div>
+<p><code>Clone</code>, <code>Copy</code>, <code>Hash</code>, <code>Display</code>, <code>Serialize</code>, and <code>Deserialize</code> are
+<strong>not</strong> derivable (<code>GT0025</code>) - copying, hashing, and serialization are
+automatic. The enum cap is 256 variants (<code>GT0012</code>).</p>
 
 
 

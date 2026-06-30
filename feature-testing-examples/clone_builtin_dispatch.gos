@@ -1,16 +1,11 @@
-// When a user struct or enum derives `Clone`, the synthesized `clone`
-// impl method must not hijack `.clone()` on `String` / `Vec` / enum
-// receivers. A `String` / `Vec` receiver resolves to the universal
-// builtin clone (by type key, or by bare-name fallback to the prelude);
-// a struct receiver resolves to its derived `Type::clone`; an enum
-// receiver round-trips through the universal clone. The presence of any
-// derived `clone` must not change those outcomes. Bit-identical on the
-// bytecode VM, Cranelift JIT, and LLVM AOT (incl. `--release`).
+// `.clone()` is a universal builtin - no derive needed (`#[derive(Clone)]`
+// is rejected, GT0025). A `String` / `Vec` receiver resolves to the builtin
+// clone by type key (or by bare-name fallback to the prelude); a struct or
+// enum receiver round-trips through the same builtin by value. Bit-identical
+// on the bytecode VM, Cranelift JIT, and LLVM AOT (incl. `--release`).
 
-#[derive(Clone)]
 struct Point { x: i64, y: i64 }
 
-#[derive(Clone)]
 enum Val { I(i64), T(String), N }
 
 fn main() {

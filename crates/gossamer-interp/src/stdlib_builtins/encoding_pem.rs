@@ -143,7 +143,7 @@ pub(crate) fn builtin_pem_decode_raw(args: &[Value]) -> RuntimeResult<Value> {
                     .map(|b| Value::Int(i64::from(b)))
                     .collect(),
             ));
-            Ok(ok_variant(Value::Tuple(Arc::new(vec![
+            Ok(ok_variant(Value::Tuple(Arc::from(vec![
                 Value::String(block.block_type.into()),
                 bytes_val,
             ]))))
@@ -166,7 +166,7 @@ pub(crate) fn builtin_pem_decode_all_raw(args: &[Value]) -> RuntimeResult<Value>
                             .map(|b| Value::Int(i64::from(b)))
                             .collect(),
                     ));
-                    Value::Tuple(Arc::new(vec![
+                    Value::Tuple(Arc::from(vec![
                         Value::String(block.block_type.into()),
                         bytes_val,
                     ]))

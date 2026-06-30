@@ -72,6 +72,37 @@ impl<'a> Builder<'a> {
         ty: Ty,
         span: Span,
     ) -> Option<Local> {
+        // `x.into()` converts to the inferred target type `B` via its `B::from`
+        // impl; the call's result type is `B`, so route to `B::from(x)` (the
+        // tiers resolve free functions by mangled name). `x.try_into()` is the
+        // same but the result is `Result<B, E>`, so `B` is its first type
+        // argument and the method is `B::try_from`.
+        let conversion = match method.name.as_str() {
+            "into" => self.adt_dispatch_name(ty).map(|b| (b, "from")),
+            "try_into" => self
+                .result_ok_ty(ty)
+                .and_then(|b_ty| self.adt_dispatch_name(b_ty))
+                .map(|b| (b, "try_from")),
+            _ => None,
+        };
+        if args.is_empty()
+            && let Some((bname, from_method)) = conversion
+        {
+            let mangled = format!("{bname}::{from_method}");
+            if self.impl_methods.contains_key(&mangled) {
+                let recv_local = self.lower_expr(receiver)?;
+                let dest = self.fresh(ty);
+                let next = self.new_block(span);
+                self.terminate(Terminator::Call {
+                    callee: Operand::Const(ConstValue::Str(mangled)),
+                    args: vec![Operand::Copy(Place::local(recv_local))],
+                    destination: Place::local(dest),
+                    target: Some(next),
+                });
+                self.set_current(next);
+                return Some(dest);
+            }
+        }
         // Stage 1 - early method-name guards, grouped by receiver category.
         // Each returns `Handled(result)` to claim the call, `Pass` to fall through.
         if let MethodLowering::Handled(r) =
@@ -1954,7 +1985,11 @@ impl<'a> Builder<'a> {
             (Some("collections::HashSet"), "to_vec" | "iter") => Some("gos_rt_set_to_vec"),
             (Some("collections::HashSet"), "clear") => Some("gos_rt_set_clear"),
             (Some("collections::VecDeque"), "push_back") => Some("gos_rt_deque_push_back"),
+            (Some("collections::VecDeque"), "push_front") => Some("gos_rt_deque_push_front"),
             (Some("collections::VecDeque"), "pop_front") => Some("gos_rt_deque_pop_front"),
+            (Some("collections::VecDeque"), "pop_back") => Some("gos_rt_deque_pop_back"),
+            (Some("collections::VecDeque"), "peek_front") => Some("gos_rt_deque_peek_front"),
+            (Some("collections::VecDeque"), "peek_back") => Some("gos_rt_deque_peek_back"),
             (Some("collections::VecDeque"), "len") => Some("gos_rt_deque_len"),
             (Some("collections::VecDeque"), "is_empty") => Some("gos_rt_deque_is_empty"),
             (Some("collections::BTreeMap"), "insert") => Some("gos_rt_btmap_insert"),
@@ -2267,12 +2302,16 @@ impl<'a> Builder<'a> {
                 })
             }
             "gos_rt_btmap_insert" | "gos_rt_flag_set_short" => self.tcx.unit(),
-            "gos_rt_deque_push_back" => self.tcx.unit(),
-            // `VecDeque<T>::pop_front` returns `Option<T>`. Recover the
-            // element from the deque's sole generic so a `VecDeque<String>`
-            // binds its Some-payload as a String rather than the pointer
-            // bits an i64 payload would render.
-            "gos_rt_deque_pop_front" => {
+            "gos_rt_deque_push_back" | "gos_rt_deque_push_front" => self.tcx.unit(),
+            // `VecDeque<T>::pop_front` / `pop_back` / `peek_front` /
+            // `peek_back` return `Option<T>`. Recover the element from the
+            // deque's sole generic so a `VecDeque<String>` binds its
+            // Some-payload as a String rather than the pointer bits an i64
+            // payload would render.
+            "gos_rt_deque_pop_front"
+            | "gos_rt_deque_pop_back"
+            | "gos_rt_deque_peek_front"
+            | "gos_rt_deque_peek_back" => {
                 let recv_mir_ty = self.locals[receiver_local.0 as usize].ty;
                 let elem = self
                     .first_generic_of(receiver.ty)
@@ -2632,7 +2671,11 @@ impl<'a> Builder<'a> {
             (Some("collections::HashSet"), "is_superset") => Some("gos_rt_set_is_superset"),
             (Some("collections::HashSet"), "is_disjoint") => Some("gos_rt_set_is_disjoint"),
             (Some("collections::VecDeque"), "push_back") => Some("gos_rt_deque_push_back"),
+            (Some("collections::VecDeque"), "push_front") => Some("gos_rt_deque_push_front"),
             (Some("collections::VecDeque"), "pop_front") => Some("gos_rt_deque_pop_front"),
+            (Some("collections::VecDeque"), "pop_back") => Some("gos_rt_deque_pop_back"),
+            (Some("collections::VecDeque"), "peek_front") => Some("gos_rt_deque_peek_front"),
+            (Some("collections::VecDeque"), "peek_back") => Some("gos_rt_deque_peek_back"),
             (Some("collections::VecDeque"), "len") => Some("gos_rt_deque_len"),
             (Some("collections::VecDeque"), "is_empty") => Some("gos_rt_deque_is_empty"),
             (Some("collections::BTreeMap"), "insert") => Some("gos_rt_btmap_insert"),

@@ -35,5 +35,5 @@ println!("{}", top)
 - `errors::join([a, b]) -> Option<Error>` combines several errors into
   one whose message is the individual messages joined with `"; "`
   (`"a; b"`); an empty list joins to `None`.
-- `errors::is(err, needle)` and `errors::chain(err)` traverse the same
-  cause chain that Display renders.
+- `errors::is(err, needle)` walks the same cause chain that Display
+  renders; step through it yourself with `err.cause()`.

@@ -149,6 +149,7 @@ impl Vm {
                 if let Some(prepared) = jit_opt {
                     match jit_call::invoke_prepared(&prepared, &args) {
                         jit_call::Dispatch::Ok(value) => {
+                            prepared.record_hit();
                             if jit_call::jit_trace() {
                                 eprintln!("jit: native hit {}", prepared.jit.name);
                             }
@@ -161,6 +162,18 @@ impl Vm {
                         jit_call::Dispatch::Fallback => {
                             if jit_call::jit_trace() {
                                 eprintln!("jit: fallback to bytecode for {}", prepared.jit.name);
+                            }
+                            // A body whose args never marshal (enum values
+                            // arriving as bytecode `Value::Variant`) wastes a
+                            // marshal attempt on every call. After enough
+                            // consecutive misses with no native hit, demote
+                            // the ChunkState slot to bytecode-only so the
+                            // attempt stops.
+                            if prepared.record_fallback_should_demote() {
+                                *state.jit_resolve.borrow_mut() = crate::vm::JitResolve::None;
+                                if jit_call::jit_trace() {
+                                    eprintln!("jit: demote {} (bytecode-only)", prepared.jit.name);
+                                }
                             }
                         }
                     }

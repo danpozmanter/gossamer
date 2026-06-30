@@ -60,6 +60,10 @@ pub struct TyCtxt {
     /// body lowered before the enum's first constructor skipped
     /// every retain/release for it).
     rc_managed_enum_defs: std::collections::HashSet<u32>,
+    /// `DefId.local` of tuple structs (`struct Pt(i64, i64)`), whose fields
+    /// are modelled as named "0".."N-1". Lets HIR lowering route positional
+    /// access `p.0` on a tuple struct through the named-field path.
+    tuple_struct_defs: std::collections::HashSet<u32>,
     /// `DefId.local` of user enums whose every variant has at most one
     /// field that fits in a single 8-byte slot. Such enums use the 2-word
     /// by-value `i128` [disc, payload] representation (no heap node);
@@ -411,6 +415,18 @@ impl TyCtxt {
     /// integer as a pointer.
     pub fn register_rc_managed_enum_def(&mut self, def_local: u32) {
         self.rc_managed_enum_defs.insert(def_local);
+    }
+
+    /// Registers a tuple struct (by `DefId.local`) so positional access
+    /// `p.0` lowers through the named-field path.
+    pub fn register_tuple_struct(&mut self, def_local: u32) {
+        self.tuple_struct_defs.insert(def_local);
+    }
+
+    /// `true` when `def_local` names a tuple struct.
+    #[must_use]
+    pub fn is_tuple_struct(&self, def_local: u32) -> bool {
+        self.tuple_struct_defs.contains(&def_local)
     }
 
     /// Registers a user enum (by `DefId.local`) as inline-able - its values

@@ -296,7 +296,7 @@ fn inject_path_params(request: Value, captures: &[(String, String)]) -> Value {
     let params: Vec<Value> = captures
         .iter()
         .map(|(k, v)| {
-            Value::Tuple(Arc::new(vec![
+            Value::Tuple(Arc::from(vec![
                 Value::String(SmolStr::from(k.as_str())),
                 Value::String(SmolStr::from(v.as_str())),
             ]))

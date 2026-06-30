@@ -148,7 +148,7 @@ pub(crate) fn builtin_mw_decode_basic_auth(args: &[Value]) -> RuntimeResult<Valu
     let Some((user, pass)) = decoded.split_once(':') else {
         return Ok(none_variant());
     };
-    let pair = Value::Tuple(Arc::new(vec![
+    let pair = Value::Tuple(Arc::from(vec![
         Value::String(user.to_string().into()),
         Value::String(pass.to_string().into()),
     ]));

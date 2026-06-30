@@ -1,0 +1,17 @@
+// VecDeque: both ends. push_back / push_front / pop_back / pop_front /
+// peek_front / peek_back / len, lowering to the same i64 ring-buffer on
+// every tier.
+
+use std::collections::VecDeque
+
+fn main() {
+    let mut d: VecDeque<i64> = VecDeque::new()
+    d.push_back(2)
+    d.push_front(1)
+    d.push_back(3)
+    let f = d.peek_front().unwrap_or(0)
+    let b = d.peek_back().unwrap_or(0)
+    let pf = d.pop_front().unwrap_or(0)
+    let pb = d.pop_back().unwrap_or(0)
+    println!("{} {} {} {} len={}", f, b, pf, pb, d.len())
+}

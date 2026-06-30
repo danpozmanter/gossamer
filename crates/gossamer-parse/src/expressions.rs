@@ -8,8 +8,8 @@ use gossamer_ast::visitor::{
 };
 use gossamer_ast::{
     ArrayExpr, AssignOp, BinaryOp, Block, ClosureParam, Expr, ExprKind, FieldSelector, Ident, Item,
-    Label, Literal, MacroCall, MacroDelim, MatchArm, NodeIdGenerator, PathExpr, PathSegment,
-    Pattern, PatternKind, RangeKind, Stmt, StmtKind, StructExprField, Type, UnaryOp,
+    Label, Literal, MacroCall, MacroDelim, MatchArm, Mutability, NodeIdGenerator, PathExpr,
+    PathSegment, Pattern, PatternKind, RangeKind, Stmt, StmtKind, StructExprField, Type, UnaryOp,
 };
 use gossamer_lex::{Keyword, Punct, Span, TokenKind};
 
@@ -1503,6 +1503,31 @@ impl Parser<'_> {
             return self.alloc_function_call(&validator, args);
         }
 
+        // Code-emitting comptime. `codegen!(EXPR)` evaluates `EXPR` (a
+        // `comptime fn` call over reflected fields) during compilation and
+        // splices its `String` result back as raw source - the same
+        // zero-cost stratum autoderive uses, but driven by user code. The
+        // call lowers to the synthesized identity `comptime fn`
+        // `__gos_codegen`, which the comptime pass recognizes and renders
+        // unquoted (as source) rather than as a string literal.
+        if macro_name == "codegen" && delim == MacroDelim::Paren {
+            self.expect_punct(Punct::LParen, "to open macro invocation");
+            let args = self.parse_call_args();
+            return self.alloc_function_call("__gos_codegen", args);
+        }
+
+        // Control-flow / inspection desugars (`matches!`, `todo!`,
+        // `unimplemented!`, `unreachable!`, `dbg!`) expand to plain
+        // constructs every tier already handles. See `expand_builtin_macro`.
+        if delim == MacroDelim::Paren
+            && matches!(
+                macro_name.as_str(),
+                "matches" | "todo" | "unimplemented" | "unreachable" | "dbg"
+            )
+        {
+            return self.expand_builtin_macro(&macro_name);
+        }
+
         // Gossamer has no `vec!`: collection literals use the array
         // form `[...]` / `[v; n]`, which coerces to `Vec<T>` at every
         // expected-type site (SPEC §3.3). Steer the common Rust habit
@@ -1540,6 +1565,94 @@ impl Parser<'_> {
             delim,
             tokens: String::new(),
         })
+    }
+
+    /// Expands the parser-level desugar macros into ordinary AST. None of
+    /// these introduce a new node kind, so they lower uniformly on every
+    /// tier: `matches!(expr, pat)` -> a two-arm boolean `match`; `todo!` /
+    /// `unimplemented!` / `unreachable!` -> `panic!` with a fixed (or
+    /// supplied) message; `dbg!(expr)` -> see `expand_dbg_macro`. The caller
+    /// has matched the name and the `(` delimiter; the paren is unconsumed.
+    fn expand_builtin_macro(&mut self, macro_name: &str) -> ExprKind {
+        if macro_name == "matches" {
+            self.expect_punct(Punct::LParen, "to open macro invocation");
+            let scrutinee = self.with_struct_literals_allowed(Self::parse_expr_no_assign);
+            self.expect_punct(Punct::Comma, "after `matches!` scrutinee");
+            let pattern = self.parse_pattern();
+            self.expect_punct(Punct::RParen, "to close macro invocation");
+            let yes = self.alloc_literal_expr(Literal::Bool(true));
+            let no = self.alloc_literal_expr(Literal::Bool(false));
+            return self.make_match_clause(pattern, scrutinee, yes, no).kind;
+        }
+        if macro_name == "dbg" {
+            return self.expand_dbg_macro();
+        }
+        self.expect_punct(Punct::LParen, "to open macro invocation");
+        let args = self.parse_call_args();
+        let args = if args.is_empty() {
+            let message = match macro_name {
+                "todo" => "not yet implemented",
+                "unimplemented" => "not implemented",
+                _ => "internal error: entered unreachable code",
+            };
+            vec![self.alloc_literal_expr(Literal::String(message.to_string()))]
+        } else {
+            args
+        };
+        self.expand_format_macro("panic", args)
+    }
+
+    /// Expands `dbg!(expr)` to `{ let __dbg = expr; eprintln!("{:?}", __dbg);
+    /// __dbg }`, so the value is printed for inspection yet flows on
+    /// unchanged. Any non-one arity degrades to a bare `eprintln!("")`.
+    fn expand_dbg_macro(&mut self) -> ExprKind {
+        self.expect_punct(Punct::LParen, "to open macro invocation");
+        let mut args = self.parse_call_args();
+        if args.len() != 1 {
+            let empty = self.alloc_literal_expr(Literal::String(String::new()));
+            return self.expand_format_macro("eprintln", vec![empty]);
+        }
+        let value = args.pop().expect("dbg! has exactly one argument here");
+        let value_span = value.span;
+        let binding = Pattern::new(
+            self.alloc_id(),
+            value_span,
+            PatternKind::Ident {
+                mutability: Mutability::Immutable,
+                name: Ident::new("__dbg"),
+                subpattern: None,
+            },
+        );
+        let let_stmt = Stmt::new(
+            self.alloc_id(),
+            value_span,
+            StmtKind::Let {
+                pattern: binding,
+                ty: None,
+                init: Some(Box::new(value)),
+            },
+        );
+        let fmt = self.alloc_literal_expr(Literal::String("{:?}".to_string()));
+        let printed = self.alloc_path_expr("__dbg");
+        let eprintln_kind = self.expand_format_macro("eprintln", vec![fmt, printed]);
+        let eprintln_expr = Expr::new(self.alloc_id(), value_span, eprintln_kind);
+        let print_stmt = Stmt::new(
+            self.alloc_id(),
+            value_span,
+            StmtKind::Expr {
+                expr: Box::new(eprintln_expr),
+                has_semi: true,
+            },
+        );
+        let tail = self.alloc_path_expr("__dbg");
+        let block = Block {
+            stmts: vec![let_stmt, print_stmt],
+            tail: Some(Box::new(tail)),
+            synthetic: true,
+            is_arena: false,
+            is_comptime: false,
+        };
+        ExprKind::Block(block)
     }
 
     /// Compile-time expansion for the six recognised format-shaped

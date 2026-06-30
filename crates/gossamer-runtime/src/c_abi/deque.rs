@@ -53,6 +53,60 @@ pub unsafe extern "C" fn gos_rt_deque_pop_front(d: *mut GosDeque) -> i128 {
     })
 }
 
+/// Prepend `value` to the front of the deque.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_deque_push_front(d: *mut GosDeque, value: i64) {
+    ffi_entry!((), {
+        if d.is_null() {
+            return;
+        }
+        unsafe { &mut *d }.inner.push_front(value);
+    });
+}
+
+/// Remove and return the back element as `Option<i64>` packed into i128
+/// (disc=0 `Some`, disc=1 `None`).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_deque_pop_back(d: *mut GosDeque) -> i128 {
+    ffi_entry!(0i128, {
+        if d.is_null() {
+            return unsafe { gos_rt_result_new(1, 0) };
+        }
+        match unsafe { &mut *d }.inner.pop_back() {
+            Some(v) => unsafe { gos_rt_result_new(0, v) },
+            None => unsafe { gos_rt_result_new(1, 0) },
+        }
+    })
+}
+
+/// Return the front element as `Option<i64>` without removing it.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_deque_peek_front(d: *const GosDeque) -> i128 {
+    ffi_entry!(0i128, {
+        if d.is_null() {
+            return unsafe { gos_rt_result_new(1, 0) };
+        }
+        match unsafe { &*d }.inner.front() {
+            Some(v) => unsafe { gos_rt_result_new(0, *v) },
+            None => unsafe { gos_rt_result_new(1, 0) },
+        }
+    })
+}
+
+/// Return the back element as `Option<i64>` without removing it.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_deque_peek_back(d: *const GosDeque) -> i128 {
+    ffi_entry!(0i128, {
+        if d.is_null() {
+            return unsafe { gos_rt_result_new(1, 0) };
+        }
+        match unsafe { &*d }.inner.back() {
+            Some(v) => unsafe { gos_rt_result_new(0, *v) },
+            None => unsafe { gos_rt_result_new(1, 0) },
+        }
+    })
+}
+
 /// Return the number of elements in the deque.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_deque_len(d: *const GosDeque) -> i64 {

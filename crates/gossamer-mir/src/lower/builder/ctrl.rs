@@ -1980,10 +1980,19 @@ impl<'a> Builder<'a> {
                     self.bind_let_field(aggregate, idx, sub, span);
                 }
             }
-            HirPatKind::Variant { fields, .. } => {
-                // Tuple-struct payload: positional fields in declaration order.
-                for (idx, sub) in fields.iter().enumerate() {
-                    self.bind_let_field(aggregate, idx, sub, span);
+            HirPatKind::Variant { name, fields } => {
+                if self.enums.lookup(std::slice::from_ref(name)).is_some() {
+                    // Enum tuple variant: the payload sits after the
+                    // discriminant header, so read it discriminant-aware
+                    // (the bare `Projection::Field(i)` path reads the wrong
+                    // slot on the native tiers).
+                    self.bind_variant_let_payload(aggregate, name, fields, span);
+                } else {
+                    // Tuple struct (the autoderive rewrite usually turns these
+                    // into struct patterns): positional fields in order.
+                    for (idx, sub) in fields.iter().enumerate() {
+                        self.bind_let_field(aggregate, idx, sub, span);
+                    }
                 }
             }
             HirPatKind::Struct { name, fields, .. } => {
@@ -2021,6 +2030,93 @@ impl<'a> Builder<'a> {
             | HirPatKind::Literal(_)
             | HirPatKind::Range { .. }
             | HirPatKind::Slice { .. } => {}
+        }
+    }
+
+    /// Binds an enum tuple-variant's payload in an irrefutable `let`
+    /// (`let E::P(m, n) = e`), discriminant-aware. A payload-bearing enum is
+    /// a pointer to `[disc, p0, p1, ...]`, so field `i` is read with
+    /// `gos_enum_load(scrutinee, i*8)` (the helper skips the discriminant
+    /// header); a 2-word inline enum reads its single payload with
+    /// `gos_rt_result_payload`. Mirrors the match lowering's extraction - the
+    /// previous bare `Projection::Field(i)` read the discriminant as the
+    /// first field on the native tiers.
+    fn bind_variant_let_payload(
+        &mut self,
+        aggregate: Local,
+        name: &Ident,
+        fields: &[HirPat],
+        span: Span,
+    ) {
+        use gossamer_types::TyKind;
+        let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+        let scrut_ty = self.locals[aggregate.0 as usize].ty;
+        let mut peeled = scrut_ty;
+        while let TyKind::Ref { inner, .. } = self.tcx.kind_of(peeled) {
+            peeled = *inner;
+        }
+        let scrut_is_inline = self.tcx.is_inline_enum_ty(peeled);
+        let any_payload = self.enums.has_any_payload(std::slice::from_ref(name));
+        let declared_tys = self.enums.variant_field_tys.get(&name.name).cloned();
+        for (i, field) in fields.iter().enumerate() {
+            if matches!(field.kind, HirPatKind::Wildcard | HirPatKind::Rest) {
+                continue;
+            }
+            let binding_ty = self
+                .variant_payload_ty(scrut_ty, name.name.as_str())
+                .or_else(|| {
+                    declared_tys
+                        .as_ref()
+                        .and_then(|tys| tys.get(i).copied())
+                        .filter(|&ty| {
+                            !matches!(self.tcx.kind_of(ty), TyKind::Var(_) | TyKind::Error)
+                        })
+                })
+                .unwrap_or(i64_ty);
+            let payload_local = self.fresh(binding_ty);
+            if scrut_is_inline {
+                let getter = if matches!(self.tcx.kind_of(binding_ty), TyKind::Float(_)) {
+                    "gos_rt_result_payload_f64"
+                } else if self.is_by_value_enum_ty(binding_ty) {
+                    "gos_rt_result_payload_i128"
+                } else {
+                    "gos_rt_result_payload"
+                };
+                self.emit_assign(
+                    Place::local(payload_local),
+                    Rvalue::CallIntrinsic {
+                        name: getter,
+                        args: vec![Operand::Copy(Place::local(aggregate))],
+                    },
+                    span,
+                );
+            } else if any_payload || !fields.is_empty() {
+                let off_local = self.fresh(i64_ty);
+                self.emit_assign(
+                    Place::local(off_local),
+                    Rvalue::Use(Operand::Const(ConstValue::Int((i * 8) as i128))),
+                    span,
+                );
+                self.emit_assign(
+                    Place::local(payload_local),
+                    Rvalue::CallIntrinsic {
+                        name: "gos_enum_load",
+                        args: vec![
+                            Operand::Copy(Place::local(aggregate)),
+                            Operand::Copy(Place::local(off_local)),
+                        ],
+                    },
+                    span,
+                );
+            } else {
+                continue;
+            }
+            match &field.kind {
+                HirPatKind::Binding { name: bname, .. } => {
+                    self.bind_local(&bname.name, payload_local);
+                }
+                _ => self.bind_aggregate_let_pattern(payload_local, field, span),
+            }
         }
     }
 

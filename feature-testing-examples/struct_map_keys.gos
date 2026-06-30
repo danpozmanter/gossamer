@@ -7,13 +7,13 @@
 use std::collections::HashMap
 use std::collections::HashSet
 
-#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+#[derive(PartialEq, Eq, Debug)]
 struct Point { x: i64, y: i64 }
 
-#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+#[derive(PartialEq, Eq, Debug)]
 struct User { name: String, id: i64 }
 
-#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+#[derive(PartialEq, Eq, Debug)]
 struct Cell { at: Point, label: String }
 
 fn get_or(m: &HashMap<Point, i64>, k: &Point) -> i64 {

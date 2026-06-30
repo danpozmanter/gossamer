@@ -206,12 +206,28 @@ struct TypeChecker<'a> {
     /// `[u8]`, not a fixed `[i64; 3]` whose first slot would pose as
     /// the payload word on the compiled tier.
     enum_variant_payloads: HashMap<(String, String), Vec<Ty>>,
+    /// `Adt` type of every non-generic user enum, keyed by name. A
+    /// tuple-variant constructor call (`E::B(1)`) resolves its result
+    /// to this so the value carries the concrete enum type instead of a
+    /// fresh inference variable - without it `E::B(1) < E::B(2)` leaves
+    /// both operands unresolved and the comparison can't dispatch.
+    enum_tys: HashMap<String, Ty>,
     /// Declared types for `const NAME: T = ...` items, keyed by
     /// `DefId`. Without this, a path expression that resolves to a
     /// const falls back to a fresh inference variable, leaving the
     /// use site unconstrained and the codegen reading the slot at
     /// the wrong layout.
     const_tys: HashMap<gossamer_resolve::DefId, Ty>,
+    /// Type-parameter names and right-hand-side AST of every `type X<..> =
+    /// T` alias, keyed by the alias's `DefId`. Built up front so a use of
+    /// `X` expands to `T` lazily during type lowering (transparent
+    /// aliases) - with the params substituted by the use-site arguments
+    /// for a generic alias - rather than surfacing `X` as an opaque
+    /// `adt#N`.
+    alias_targets: HashMap<gossamer_resolve::DefId, (Vec<String>, gossamer_ast::Type)>,
+    /// Alias `DefId`s currently being expanded, guarding against cyclic
+    /// aliases (`type A = B; type B = A`).
+    alias_expanding: std::collections::HashSet<gossamer_resolve::DefId>,
     /// Generic-parameter arity for every named struct, keyed by
     /// the struct's `DefId`. Built during `register_struct`. Used
     /// at struct-literal sites to allocate one fresh inference
@@ -352,7 +368,10 @@ impl<'a> TypeChecker<'a> {
             method_arities: HashMap::new(),
             deferred_structural: Vec::new(),
             enum_variant_payloads: HashMap::new(),
+            enum_tys: HashMap::new(),
             const_tys: HashMap::new(),
+            alias_targets: HashMap::new(),
+            alias_expanding: std::collections::HashSet::new(),
             struct_generic_arity: HashMap::new(),
             fn_generic_arity: HashMap::new(),
             fn_param_bounds: HashMap::new(),
@@ -1011,15 +1030,23 @@ impl<'a> TypeChecker<'a> {
         // mis-dispatch, and detect supertrait-through-bound calls
         // regardless of declaration order relative to impl blocks.
         self.collect_trait_names(items);
+        // Register alias targets before any type lowering so a struct
+        // field / let / param naming `X` (where `type X = T`) expands to
+        // `T` regardless of declaration order.
+        self.collect_type_aliases(items);
         for item in items {
             match &item.kind {
                 ItemKind::Fn(decl) => self.register_fn_sig(item.id, decl, item.span),
                 ItemKind::Impl(decl) => self.collect_impl_signatures(decl),
                 ItemKind::Trait(decl) => self.collect_trait_signatures(decl),
                 ItemKind::Struct(decl) => {
+                    self.validate_derives(&item.attrs, item.span);
                     self.register_struct(item.id, decl);
                 }
-                ItemKind::Enum(decl) => self.register_enum(item.id, decl, item.span),
+                ItemKind::Enum(decl) => {
+                    self.validate_derives(&item.attrs, item.span);
+                    self.register_enum(item.id, decl, item.span);
+                }
                 ItemKind::Const(decl) => self.register_const(item.id, &decl.ty),
                 ItemKind::Mod(decl) => {
                     if let gossamer_ast::ModBody::Inline(inner) = &decl.body {
@@ -1088,6 +1115,39 @@ impl<'a> TypeChecker<'a> {
         self.const_tys.insert(def, resolved);
     }
 
+    /// Records each `type X<..> = T` alias's type-parameter names and
+    /// right-hand side by `DefId`, recursing into inline modules. A use of
+    /// the alias expands to `T` (with the params substituted by the
+    /// use-site arguments for a generic alias) during type lowering.
+    fn collect_type_aliases(&mut self, items: &[Item]) {
+        for item in items {
+            match &item.kind {
+                ItemKind::TypeAlias(decl) => {
+                    if let Some(def) = self.resolutions.definition_of(item.id) {
+                        let params: Vec<String> = decl
+                            .generics
+                            .params
+                            .iter()
+                            .filter_map(|p| match p {
+                                gossamer_ast::GenericParam::Type { name, .. } => {
+                                    Some(name.name.clone())
+                                }
+                                _ => None,
+                            })
+                            .collect();
+                        self.alias_targets.insert(def, (params, decl.ty.clone()));
+                    }
+                }
+                ItemKind::Mod(decl) => {
+                    if let gossamer_ast::ModBody::Inline(inner) = &decl.body {
+                        self.collect_type_aliases(inner);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
     /// Registers an enum's `DefId -> name` so `render_ty` / `adt_dispatch_name`
     /// recover "Shape" instead of the "adt#N" placeholder - needed for `==` /
     /// `{:?}` dispatch on enum values whose type resolves to the Adt.
@@ -1107,6 +1167,16 @@ impl<'a> TypeChecker<'a> {
             });
             if has_payload {
                 self.tcx.register_rc_managed_enum_def(def.local);
+            }
+            // Cache the enum's `Adt` type so a tuple-variant constructor call
+            // resolves to it. Generic enums need per-call-site substs, so they
+            // keep the fresh-variable path.
+            if decl.generics.params.is_empty() {
+                let adt = self.tcx.intern(TyKind::Adt {
+                    def,
+                    substs: crate::Substs::from_types(std::iter::empty()),
+                });
+                self.enum_tys.insert(decl.name.name.clone(), adt);
             }
         }
         let variant_names = self
@@ -1136,6 +1206,43 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
+    /// Rejects `#[derive(...)]` names that synthesize nothing. Gossamer's
+    /// value-type structs / enums compare, order, hash, and copy by value
+    /// automatically, so the meaningful derives are exactly `Debug`, `Default`,
+    /// `PartialEq`, `Eq`, `PartialOrd`, and `Ord`. Every other name is either
+    /// automatic (`Clone` - `let b = a` copies, `Hash`, `Copy`, `Display`,
+    /// serde) or implemented with `impl Trait for T` (`From`, operators).
+    fn validate_derives(&mut self, attrs: &gossamer_ast::Attrs, span: Span) {
+        for attr in &attrs.outer {
+            let is_derive =
+                attr.path.segments.len() == 1 && attr.path.segments[0].name.name == "derive";
+            if !is_derive {
+                continue;
+            }
+            let Some(tokens) = &attr.tokens else {
+                continue;
+            };
+            for tok in tokens.split(',') {
+                let name = tok.trim();
+                if name.is_empty()
+                    || matches!(
+                        name,
+                        "Debug" | "Default" | "PartialEq" | "Eq" | "PartialOrd" | "Ord"
+                    )
+                {
+                    continue;
+                }
+                self.emit(
+                    TypeError::UnsupportedDerive {
+                        name: name.to_string(),
+                        hint: derive_rejection_hint(name),
+                    },
+                    span,
+                );
+            }
+        }
+    }
+
     fn register_struct(&mut self, item_id: NodeId, decl: &gossamer_ast::StructDecl) {
         let Some(def) = self.resolutions.definition_of(item_id) else {
             return;
@@ -1158,14 +1265,28 @@ impl<'a> TypeChecker<'a> {
         if arity > 0 {
             self.struct_generic_arity.insert(def, arity);
         }
-        if let StructBody::Named(fields) = &decl.body {
-            let list: Vec<(String, Ty)> = fields
+        // Tuple-struct fields are modelled as named fields "0".."N-1", so a
+        // `Pt(a, b)` constructor (rewritten to a `Pt { 0: a, 1: b }` literal)
+        // and positional access `p.0` reuse the named-field machinery.
+        let list: Vec<(String, Ty)> = match &decl.body {
+            StructBody::Named(fields) => fields
                 .iter()
                 .map(|f| (f.name.name.clone(), self.type_from_ast(&f.ty)))
-                .collect();
+                .collect(),
+            StructBody::Tuple(fields) => fields
+                .iter()
+                .enumerate()
+                .map(|(i, f)| (i.to_string(), self.type_from_ast(&f.ty)))
+                .collect(),
+            StructBody::Unit => Vec::new(),
+        };
+        if !matches!(decl.body, StructBody::Unit) {
             let tys: Vec<Ty> = list.iter().map(|(_, t)| *t).collect();
             self.tcx.register_struct_fields(def, tys);
             self.struct_fields.insert(def, list);
+        }
+        if matches!(decl.body, StructBody::Tuple(_)) {
+            self.tcx.register_tuple_struct(def.local);
         }
         self.leave_generic_scope(prior_scope);
     }
@@ -2038,6 +2159,27 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
+    /// Returns the type of field `idx` when `ty` is a tuple struct (an
+    /// `Adt` whose `idx`-th field is the positional name "idx"), else
+    /// `None`. Tuple-struct fields are modelled as named fields "0".."N-1",
+    /// so `p.0` positional access reads field "0".
+    fn tuple_struct_field_ty(&self, ty: Ty, idx: u32) -> Option<Ty> {
+        let TyKind::Adt { def, substs } = self.tcx.kind_of(ty).clone() else {
+            return None;
+        };
+        let is_positional = self
+            .struct_fields
+            .get(&def)
+            .and_then(|list| list.get(idx as usize))
+            .is_some_and(|(name, _)| *name == idx.to_string());
+        if !is_positional {
+            return None;
+        }
+        self.tcx
+            .adt_field_tys(def, &substs)
+            .and_then(|tys| tys.get(idx as usize).copied())
+    }
+
     /// Type of `value.N` positional access. Rejects access on a concrete
     /// non-tuple receiver and out-of-range indices (GT0023); a still-
     /// unresolved receiver is deferred for re-check after defaulting.
@@ -2045,6 +2187,9 @@ impl<'a> TypeChecker<'a> {
         let mut resolved = self.infer.resolve(self.tcx, receiver_ty);
         while let TyKind::Ref { inner, .. } = self.tcx.kind_of(resolved).clone() {
             resolved = self.infer.resolve(self.tcx, inner);
+        }
+        if let Some(fty) = self.tuple_struct_field_ty(resolved, idx) {
+            return fty;
         }
         match self.tcx.kind_of(resolved).clone() {
             TyKind::Tuple(elems) => elems.get(idx as usize).copied().unwrap_or_else(|| {
@@ -2105,6 +2250,16 @@ impl<'a> TypeChecker<'a> {
                     return self.fresh();
                 }
                 other => {
+                    // `a[i]` on a user struct / enum routes to its `index` impl
+                    // method (one argument); the element type is that method's
+                    // return type.
+                    if matches!(other, TyKind::Adt { .. })
+                        && let Some(adt) = self.adt_name_of(cur)
+                        && let Some(&ret) =
+                            self.method_ret_types.get(&(adt, "index".to_string(), 1))
+                    {
+                        return ret;
+                    }
                     if !is_soft_for_structural_use(&other) {
                         let ty = render_ty(self.tcx, cur);
                         self.emit(TypeError::NotIndexable { ty }, span);
@@ -2337,6 +2492,10 @@ impl<'a> TypeChecker<'a> {
         new_sig
     }
 
+    #[allow(
+        clippy::too_many_lines,
+        reason = "sequential callee-shape dispatch: signature, variant constructor, then stdlib fallbacks"
+    )]
     fn check_call_inner(
         &mut self,
         callee: &Expr,
@@ -2987,6 +3146,36 @@ impl<'a> TypeChecker<'a> {
         self.tcx.intern(TyKind::Adt { def, substs })
     }
 
+    /// `value.downgrade()` produces a `Weak<T>` for any RC-managed aggregate;
+    /// `weak.upgrade()` produces `Option<T>` from a `Weak<T>`. Name-global
+    /// dispatch resolved these while the receiver type was an unresolved
+    /// variable; a concretely-typed receiver (e.g. an enum bound from a
+    /// variant constructor) needs the explicit rule. Returns `None` for any
+    /// other method / receiver so normal dispatch continues.
+    fn check_weak_method(&mut self, method: &str, receiver_ty: Ty, args: &[Expr]) -> Option<Ty> {
+        if !args.is_empty() {
+            return None;
+        }
+        let mut resolved = self.infer.resolve(self.tcx, receiver_ty);
+        while let Some(TyKind::Ref { inner, .. }) = self.tcx.kind(resolved) {
+            resolved = self.infer.resolve(self.tcx, *inner);
+        }
+        match self.tcx.kind(resolved) {
+            Some(TyKind::Adt { def, substs })
+                if def.local == u32::MAX - 6 && method == "upgrade" =>
+            {
+                let payload = substs
+                    .types()
+                    .first()
+                    .copied()
+                    .unwrap_or_else(|| self.fresh());
+                Some(self.option_adt_ty(payload))
+            }
+            Some(TyKind::Adt { .. }) if method == "downgrade" => Some(self.weak_adt_ty(resolved)),
+            _ => None,
+        }
+    }
+
     /// `recv` / `try_recv` on a `Receiver<T>` yields `Option<T>`, and `send`
     /// / `try_send` on a `Sender<T>` consumes a `T`. Pinning the element type
     /// here sizes a `while let Some(p) = rx.recv()` binding by `T`'s real slot
@@ -3099,6 +3288,17 @@ impl<'a> TypeChecker<'a> {
         }
         if let Some(ty) = self.check_channel_method(method, receiver_ty, args) {
             return ty;
+        }
+        if let Some(ty) = self.check_weak_method(method, receiver_ty, args) {
+            return ty;
+        }
+        // `x.into()` converts to an inferred target `B` via `B::from`, and
+        // `x.try_into()` to `Result<B, E>` via `B::try_from`. The target is
+        // fixed by the use site (a `let B` / `let Result<B, E>`, a parameter,
+        // a return), so type it as a fresh variable here and let unification
+        // bind it; lowering reads the resolved type and routes accordingly.
+        if matches!(method, "into" | "try_into") && args.is_empty() {
+            return self.fresh();
         }
         if let Some(ty) = self.check_deque_push_back(method, receiver_ty, receiver.span, args) {
             return ty;
@@ -3474,7 +3674,10 @@ impl<'a> TypeChecker<'a> {
                         }
                     }
                     other => {
-                        if !is_soft_for_structural_use(other) {
+                        let is_tuple_struct = u32::try_from(idx)
+                            .ok()
+                            .is_some_and(|i| self.tuple_struct_field_ty(resolved, i).is_some());
+                        if !is_tuple_struct && !is_soft_for_structural_use(other) {
                             let ty = render_ty(self.tcx, resolved);
                             self.emit(TypeError::NoTupleField { ty, index: idx }, d.span);
                         }
@@ -4084,7 +4287,18 @@ impl<'a> TypeChecker<'a> {
                     operand_ty
                 }
             }
-            UnaryOp::Neg => operand_ty,
+            UnaryOp::Neg => {
+                // `-x` on a user struct / enum routes to its `neg` impl
+                // (a zero-arg method on the receiver); the result is that
+                // method's return type. Scalars keep the operand type.
+                if let Some(adt) = self.adt_name_of(resolved)
+                    && let Some(&ret) = self.method_ret_types.get(&(adt, "neg".to_string(), 0))
+                {
+                    ret
+                } else {
+                    operand_ty
+                }
+            }
             UnaryOp::RefShared => self.tcx.intern(TyKind::Ref {
                 mutability: Mutbl::Not,
                 inner: operand_ty,
@@ -4108,6 +4322,36 @@ impl<'a> TypeChecker<'a> {
                     _ => operand_ty,
                 }
             }
+        }
+    }
+
+    /// If `expr` is a tuple-variant constructor call (`E::B(1)`), the `Adt`
+    /// type of its enum. Used to anchor comparison operands - the constructor's
+    /// result is otherwise a fresh variable unless used at a typed site, which
+    /// leaves an inline `E::B(1) < E::B(2)` undispatchable. Scoped to the
+    /// comparison arm so it does not retype constructors feeding a `let`
+    /// destructure (whose compiled-tier payload extraction wants the bare form).
+    fn variant_ctor_enum_ty(&self, expr: &Expr) -> Option<Ty> {
+        let ExprKind::Call { callee, .. } = &expr.kind else {
+            return None;
+        };
+        let ExprKind::Path(path) = &callee.kind else {
+            return None;
+        };
+        let n = path.segments.len();
+        if n < 2 {
+            return None;
+        }
+        let enum_name = path.segments[n - 2].name.name.as_str();
+        let var_name = path.segments[n - 1].name.name.as_str();
+        if self
+            .enum_variants
+            .get(enum_name)
+            .is_some_and(|vs| vs.contains(var_name))
+        {
+            self.enum_tys.get(enum_name).copied()
+        } else {
+            None
         }
     }
 
@@ -4144,6 +4388,21 @@ impl<'a> TypeChecker<'a> {
             | BinaryOp::Le
             | BinaryOp::Gt
             | BinaryOp::Ge => {
+                // Anchor a variant-constructor operand to its enum so an inline
+                // same-variant comparison (`E::B(1) < E::B(2)`) can dispatch -
+                // both sides are otherwise fresh variables.
+                let lhs_ty = if let Some(e) = self.variant_ctor_enum_ty(lhs) {
+                    self.record(lhs.id, e);
+                    e
+                } else {
+                    lhs_ty
+                };
+                let rhs_ty = if let Some(e) = self.variant_ctor_enum_ty(rhs) {
+                    self.record(rhs.id, e);
+                    e
+                } else {
+                    rhs_ty
+                };
                 // A byte literal compares against any integer operand without
                 // an explicit `as i64`: `s[i] == b'>'`. A byte literal is an
                 // `Int` value on every tier, so re-typing its node to the
@@ -5058,7 +5317,7 @@ impl<'a> TypeChecker<'a> {
             AstTypeKind::Unit => self.tcx.unit(),
             AstTypeKind::Never => self.tcx.never(),
             AstTypeKind::Infer => self.fresh(),
-            AstTypeKind::Path(path) => self.type_from_ast_path(ast_ty.id, path),
+            AstTypeKind::Path(path) => self.type_from_ast_path(ast_ty.id, ast_ty.span, path),
             AstTypeKind::Tuple(elems) => {
                 let tys: Vec<Ty> = elems.iter().map(|e| self.type_from_ast(e)).collect();
                 self.tcx.intern(TyKind::Tuple(tys))
@@ -5130,11 +5389,45 @@ impl<'a> TypeChecker<'a> {
         self.record(ast_ty.id, ty)
     }
 
+    /// Expands a `type X<..> = T` alias `def` to its underlying type `T`,
+    /// substituting the alias's type parameters with the use-site arguments
+    /// in `path` for a generic alias. Returns `None` when `def` is not a
+    /// registered alias or the argument count does not match the alias's
+    /// parameters (the caller then falls back to the nominal form). Emits
+    /// GT0024 and yields the error type on a cyclic alias.
+    fn expand_type_alias(
+        &mut self,
+        def: gossamer_resolve::DefId,
+        name: &str,
+        span: Span,
+        path: &TypePath,
+    ) -> Option<Ty> {
+        let (params, rhs) = self.alias_targets.get(&def).cloned()?;
+        if !self.alias_expanding.insert(def) {
+            self.emit(
+                TypeError::CyclicTypeAlias {
+                    name: name.to_string(),
+                },
+                span,
+            );
+            return Some(self.tcx.error_ty());
+        }
+        let body = if params.is_empty() {
+            Some(rhs)
+        } else {
+            let args = alias_type_args(path);
+            (args.len() == params.len()).then(|| subst_alias_params(&rhs, &params, &args))
+        };
+        let expanded = body.map(|b| self.type_from_ast(&b));
+        self.alias_expanding.remove(&def);
+        expanded
+    }
+
     #[allow(
         clippy::too_many_lines,
         reason = "one arm per built-in type constructor; splitting hides the dispatch table"
     )]
-    fn type_from_ast_path(&mut self, node: NodeId, path: &TypePath) -> Ty {
+    fn type_from_ast_path(&mut self, node: NodeId, span: Span, path: &TypePath) -> Ty {
         let head_name = path
             .segments
             .first()
@@ -5183,6 +5476,13 @@ impl<'a> TypeChecker<'a> {
                             return self.tcx.intern(TyKind::Param { idx, name });
                         }
                         return self.fresh();
+                    }
+                    // A non-generic `type X = T` alias is transparent: a use
+                    // of `X` lowers to `T`, not to an opaque `adt#N`.
+                    if kind == gossamer_resolve::DefKind::TypeAlias
+                        && let Some(ty) = self.expand_type_alias(def, head_name, span, path)
+                    {
+                        return ty;
                     }
                     let substs = self.substs_from_ast(path);
                     return self.tcx.intern(TyKind::Adt { def, substs });
@@ -5931,12 +6231,42 @@ fn seed_checker_stdlib_struct_fields(
 /// holds a non-negative value; every other length is unchanged.
 /// Operator-overload impl-method name for an arithmetic binary operator,
 /// or `None` for operators that are not overloadable on user types.
+/// Why a rejected `#[derive(name)]` is unsupported, and what to do instead.
+fn derive_rejection_hint(name: &str) -> String {
+    match name {
+        "Clone" => "values copy by value - `let b = a` is the copy, and `a.clone()` \
+                    already works without a derive"
+            .to_string(),
+        "Hash" | "Hashable" => {
+            "structs and enums hash by value automatically; remove it".to_string()
+        }
+        "Copy" => {
+            "values are managed automatically; there is no Copy / move distinction".to_string()
+        }
+        "Display" => "use `Debug`; `{}` and `{:?}` share one synthesized `fmt`".to_string(),
+        "Serialize" | "Deserialize" => {
+            "serialization is automatic - call `to_json::<T>` / `from_json::<T>`".to_string()
+        }
+        "From" | "Into" | "TryFrom" | "TryInto" | "Add" | "Sub" | "Mul" | "Div" | "Rem" | "Neg"
+        | "Not" | "BitAnd" | "BitOr" | "BitXor" | "Shl" | "Shr" | "Index" | "IndexMut" => {
+            format!("implement it with `impl {name} for T`, not `#[derive]`")
+        }
+        _ => "Gossamer derives only Debug, Default, PartialEq, Eq, PartialOrd, Ord".to_string(),
+    }
+}
+
 fn arith_op_method(op: BinaryOp) -> Option<&'static str> {
     match op {
         BinaryOp::Add => Some("add"),
         BinaryOp::Sub => Some("sub"),
         BinaryOp::Mul => Some("mul"),
         BinaryOp::Div => Some("div"),
+        BinaryOp::Rem => Some("rem"),
+        BinaryOp::BitAnd => Some("bitand"),
+        BinaryOp::BitOr => Some("bitor"),
+        BinaryOp::BitXor => Some("bitxor"),
+        BinaryOp::Shl => Some("shl"),
+        BinaryOp::Shr => Some("shr"),
         _ => None,
     }
 }
@@ -6128,6 +6458,54 @@ fn path_matches_dyn_error(path: &TypePath) -> bool {
         names.as_slice(),
         ["errors" | "error", "Error"] | ["std", "errors" | "error", "Error"]
     )
+}
+
+/// Returns the use-site type arguments of `path` (`Foo<i64, String>` ->
+/// `[i64, String]`), used to instantiate a generic alias.
+fn alias_type_args(path: &TypePath) -> Vec<AstType> {
+    path.segments
+        .last()
+        .map(|seg| {
+            seg.generics
+                .iter()
+                .filter_map(|g| match g {
+                    AstGenericArg::Type(t) => Some(t.clone()),
+                    AstGenericArg::Const(_) => None,
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Substitutes each alias type parameter in `rhs` with the matching
+/// argument: `subst_alias_params((A, A), [A], [i64])` yields `(i64, i64)`.
+fn subst_alias_params(rhs: &AstType, params: &[String], args: &[AstType]) -> AstType {
+    use gossamer_ast::VisitorMut;
+    let mut out = rhs.clone();
+    AliasParamSubst { params, args }.visit_type(&mut out);
+    out
+}
+
+struct AliasParamSubst<'a> {
+    params: &'a [String],
+    args: &'a [AstType],
+}
+
+impl gossamer_ast::VisitorMut for AliasParamSubst<'_> {
+    fn visit_type(&mut self, ty: &mut AstType) {
+        if let AstTypeKind::Path(p) = &ty.kind
+            && p.segments.len() == 1
+            && p.segments[0].generics.is_empty()
+            && let Some(i) = self
+                .params
+                .iter()
+                .position(|n| n.as_str() == p.segments[0].name.name.as_str())
+        {
+            *ty = self.args[i].clone();
+            return;
+        }
+        gossamer_ast::visitor::walk_type_mut(self, ty);
+    }
 }
 
 fn primitive_from_name(name: &str) -> Option<PrimitiveTy> {

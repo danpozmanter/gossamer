@@ -51,8 +51,8 @@ fn main() {
         encrypted[0], encrypted[1], encrypted[2], encrypted[3], encrypted[4])
 
     if equal(&plain, &decrypted) {
-        println("round-trip: ok")
+        println!("round-trip: ok")
     } else {
-        println("round-trip: mismatch")
+        println!("round-trip: mismatch")
     }
 }

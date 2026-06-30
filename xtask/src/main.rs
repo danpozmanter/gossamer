@@ -677,7 +677,7 @@ const DIAGNOSTIC_CATALOGUE: &[(&str, &str, &str, &str)] = &[
         "GP0016",
         "Parser",
         "reserved `extern` keyword",
-        "The `extern` keyword is reserved in 0.5.0 but has no source-level item form. Gossamer's FFI surface is the `[rust-bindings]` section of `project.toml` plus the `gossamer-binding` crate.",
+        "The `extern` keyword is reserved but has no source-level item form. Gossamer's FFI surface is the `[rust-bindings]` section of `project.toml` plus the `gossamer-binding` crate.",
     ),
     (
         "GR0001",
@@ -852,7 +852,7 @@ const STDLIB_SUPPORT: &[StdlibSupport] = &[
         Coverage::Full,
         Coverage::Full,
         Coverage::Full,
-        "split, trim, contains, find, replace, to_lowercase, to_uppercase, starts_with, ends_with.",
+        "split, trim, contains, find, replace, to_lower, to_upper, starts_with, ends_with.",
     ),
     item(
         "std::strconv",
@@ -866,7 +866,7 @@ const STDLIB_SUPPORT: &[StdlibSupport] = &[
         Coverage::Full,
         Coverage::Full,
         Coverage::Full,
-        "Vec, HashMap. VecDeque/BTreeMap/HashSet/BTreeSet declared.",
+        "Vec, HashMap, HashSet, VecDeque (both ends), BTreeMap (String/i64 keys). BTreeSet declared.",
     ),
     item(
         "std::net",
@@ -880,7 +880,7 @@ const STDLIB_SUPPORT: &[StdlibSupport] = &[
         Coverage::Full,
         Coverage::Full,
         Coverage::Full,
-        "HTTP/1.1 server + client. HTTP/2 deferred to v1.x.",
+        "HTTP/1.1 + HTTP/2 server + client (push + trailers); HTTP/3 via std::http_h3.",
     ),
     item(
         "std::encoding::json",
@@ -936,7 +936,7 @@ const STDLIB_SUPPORT: &[StdlibSupport] = &[
         Coverage::Full,
         Coverage::Full,
         Coverage::Full,
-        "new, wrap, is, chain, join.",
+        "new, newf, wrap, is, join.",
     ),
     item(
         "std::flag",

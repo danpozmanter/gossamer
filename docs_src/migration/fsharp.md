@@ -133,7 +133,9 @@ let cfg = Config { host: "localhost", port: 8080, verbose: false }
 let updated = Config { port: 9090, ..cfg }
 ```
 
-Struct update syntax (`..base`) is supported.
+Struct update syntax (`..base`) is supported. Like F# records,
+structs compare by value (`==`, `<` lexicographically) and copy on
+`let` with no derive needed.
 
 ## Option and Result
 
@@ -327,8 +329,9 @@ let evens = iter::range_inclusive(0, 100)
 - **Active patterns.** Use `fn`-based extractors + `match` guards.
 - **Units of measure.** No type-level unit tracking; enforce
   units through distinct newtype wrappers.
-- **Higher-kinded types.** Generic parameters are flat 64-bit
-  slots in v1. See [`codegen_abi.md`](../codegen_abi.md).
+- **Higher-kinded types.** No `M<_>` abstraction; generic parameters
+  range over concrete types only (including structs by value). See
+  [`codegen_abi.md`](../codegen_abi.md).
 
 ## Standard library mapping (F# / .NET → Gossamer)
 

@@ -18,19 +18,19 @@ fn sorted_ascending(xs: &[i64]) -> [i64] {
 }
 
 fn print_array(xs: &[i64]) {
-    print("[")
+    print!("[")
     for i in 0..xs.len() {
-        if i > 0 { print(", ") }
+        if i > 0 { print!(", ") }
         print!("{}", xs[i])
     }
-    println("]")
+    println!("]")
 }
 
 fn main() {
     let inputs: [i64] = [7, 2, 9, 1, 5, 3, 8, 4, 6]
     let sorted = sorted_ascending(&inputs)
-    print("input:  ")
+    print!("input:  ")
     print_array(&inputs)
-    print("sorted: ")
+    print!("sorted: ")
     print_array(&sorted)
 }

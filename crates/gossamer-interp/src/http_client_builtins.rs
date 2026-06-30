@@ -345,7 +345,7 @@ pub(crate) fn builtin_http_request_header(args: &[Value]) -> RuntimeResult<Value
     let inner = expect_request(args, "Request::header")?;
     let name = args.get(1).and_then(as_str).unwrap_or("");
     let value = args.get(2).and_then(as_str).unwrap_or("");
-    let pair = Value::Tuple(Arc::new(vec![
+    let pair = Value::Tuple(Arc::from(vec![
         Value::String(SmolStr::from(name.to_string())),
         Value::String(SmolStr::from(value.to_string())),
     ]));
@@ -592,7 +592,7 @@ fn lift_response(resp: gossamer_std::http::Response) -> Value {
 
 /// `(name, value)` header tuple in the lifted `Response.headers` shape.
 fn header_pair_value(name: &str, value: &str) -> Value {
-    Value::Tuple(Arc::new(vec![
+    Value::Tuple(Arc::from(vec![
         Value::String(SmolStr::from(name)),
         Value::String(SmolStr::from(value)),
     ]))

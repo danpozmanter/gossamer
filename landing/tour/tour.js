@@ -24,21 +24,21 @@ const LESSONS = [
       genuinely changes after construction.</p>
       <p>String literals are already <code>String</code>, so there is no
       <code>.to_string()</code> noise. <code>println!</code> pulls bindings
-      straight from scope by name - <code>{name}</code> - and the six
-      format macros are the only macros in the language.</p>
+      straight from scope by name - <code>{name}</code> - and the
+      format macros are built in: there are no user-defined macros.</p>
       <p>Press <strong>Run</strong> (or Ctrl / Cmd + Enter) to execute the
       program on the right. Edit it freely and run it again.</p>`,
     code: `// Bindings are immutable by default; reach for \`let mut\` only when
 // a value really changes. String literals are already \`String\`.
 let name = "Gossamer"
-let version = 0.18
+let pi = 3.14159
 
 let greeting = "hello, " + &name
 println!("{greeting}!")
 
 // Named interpolation reads bindings straight from scope.
 println!("{name} is {} bytes long", name.len())
-println!("you are running version {version}")
+println!("pi is about {pi}")
 `,
   },
   {
@@ -252,15 +252,17 @@ fn main() {
     title: "Structs / traits / generics / derive",
     prose: `
       <p>Structs are runtime-managed value types; traits define a shared
-      interface that each type implements. <code>#[derive(...)]</code>
-      synthesizes <code>Debug</code>, equality, <code>clone</code>, and
-      <code>Default</code> as real code, so <code>==</code>,
-      <code>{:?}</code>, and <code>.clone()</code> just work on every tier.</p>
+      interface that each type implements. They compare by value and
+      <code>.clone()</code> with no derive, so <code>==</code> and
+      <code>.clone()</code> just work on every tier;
+      <code>#[derive(Debug)]</code> adds the <code>{:?}</code>
+      representation (<code>Default</code>, <code>PartialOrd</code>, and
+      <code>Ord</code> are derivable too).</p>
       <p>Generic functions take trait bounds -
       <code>fn farther&lt;T: Distance&gt;(...)</code> - and each call site
       monomorphises to a direct call, with no dynamic dispatch.</p>`,
-    code: `// \`#[derive(...)]\` synthesizes Debug / equality / clone as real code.
-#[derive(Clone, PartialEq, Debug)]
+    code: `// Structs compare by value and \`.clone()\` with no derive; derive Debug for {:?}.
+#[derive(Debug)]
 struct Point { x: i64, y: i64 }
 
 trait Distance {
@@ -314,7 +316,7 @@ fn main() {
     // Move the entries into structs and sort by count, descending.
     let mut rows: [Tally] = []
     for (word, count) in counts.iter() {
-        rows.push(Tally { word: word, count: count })
+        rows.push(Tally { word, count })
     }
     rows.sort_by(|a, b| b.count - a.count)
 

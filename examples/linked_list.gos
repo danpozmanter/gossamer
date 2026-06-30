@@ -30,22 +30,22 @@ fn sum(list: &List) -> i64 {
 }
 
 fn print_list(list: &List) {
-    print("[")
+    print!("[")
     let mut cursor = list
     let mut first = true
     while let List::Cons(v, rest) = cursor {
-        if !first { print(", ") }
+        if !first { print!(", ") }
         print!("{}", v)
         first = false
         cursor = rest
     }
-    println("]")
+    println!("]")
 }
 
 fn main() {
     let xs = cons(1, cons(2, cons(3, cons(4, cons(5, List::Nil)))))
     println!("length = {}", length(&xs))
     println!("sum    = {}", sum(&xs))
-    print("xs     = ")
+    print!("xs     = ")
     print_list(&xs)
 }

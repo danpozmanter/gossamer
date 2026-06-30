@@ -46,13 +46,12 @@ My goal is for Gossamer to replace Rust, Go, F#, Kotlin, and Python for most of
 | Feature | Rust | Go | F# | Python | Elixir |
 |---|---|---|---|---|---|
 | Strong static type system | ✓ | ✓ | ✓ |  |  |
-| Type inference | ✓ | ✓ | ✓ |  |  |
-| Error handling via `?` with `Result` & `Option` | ✓ |  | ✓ |  |  |
-| Exhaustive pattern matching | ✓ |  | ✓ |  | ✓ |
 | Algebraic data types / discriminated unions | ✓ |  | ✓ |  | ✓ |
-| (Local) Borrow checking | ✓ |  |  |  |  |
+| Exhaustive pattern matching | ✓ |  | ✓ |  | ✓ |
+| Error handling via `?` with `Result` & `Option` | ✓ |  | ✓ |  |  |
 | No `null` by default | ✓ |  | ✓ |  | ✓ |
 | Immutable by default | ✓ |  | ✓ |  | ✓ |
+| (Local) Borrow checking | ✓ |  |  |  |  |
 | Automatic memory management |  | ✓ | ✓ | ✓ | ✓ |
 | Lightweight concurrency primitives |  | ✓ | ✓ |  | ✓ |
 | Fast compilation |  | ✓ |  |  |  |
@@ -80,7 +79,9 @@ Gossamer compiles directly to native, it does not transpile to Rust or Go.
 
 **No Macros**
 
-Metaprogramming (new in 0.21.0) is inspired by Zig's comptime.
+No user-defined macros. Metaprogramming is Zig-style `comptime`: code
+runs during compilation and folds into the program, and a `for` loop
+over `typeInfo::<T>()` reflection generates native per-field code.
 
 **Gossamer is Extensible in Rust.**
 
@@ -100,11 +101,8 @@ The CLI is `gos`.
 
 Manifests live in `project.toml`.
 
-Pre-stable. The compatibility policy the
-project will adopt at its first stable tag is drafted at
-[`docs_src/stability.md`](docs_src/stability.md) as a work in progress.
-
-Until then, treat the public API as may-change-with-notice.
+Pre-stable. A formal compatibility policy will land with the first
+stable tag; until then, treat the public API as may-change-with-notice.
 
 ## Gossamer's Syntax
 
@@ -262,7 +260,7 @@ Examples all run via interpretation, compile in debug or release mode.
 
 There are gaps to fill in the standard library, bugs and optimizations to find via real world usage.
 
-This project is still early but starting to find it's sea legs. Right now performance, resource usage, functionality, and productivity
+This project is still early but starting to find its sea legs. Right now performance, resource usage, functionality, and productivity
 all feel very promising. But do not trust this yet.
 
 My main goals are:

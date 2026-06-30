@@ -56,7 +56,7 @@ pub(crate) fn builtin_cookie_parse_header(args: &[Value]) -> RuntimeResult<Value
     let items: Vec<Value> = pairs
         .into_iter()
         .map(|(name, value)| {
-            Value::Tuple(Arc::new(vec![
+            Value::Tuple(Arc::from(vec![
                 Value::String(name.into()),
                 Value::String(value.into()),
             ]))

@@ -214,7 +214,7 @@ pub(crate) fn builtin_x509_parse_pem_raw(args: &[Value]) -> RuntimeResult<Value>
                     .map(|b| Value::Int(i64::from(*b)))
                     .collect(),
             ));
-            Ok(ok_variant(Value::Tuple(Arc::new(vec![
+            Ok(ok_variant(Value::Tuple(Arc::from(vec![
                 Value::String(info.subject.into()),
                 Value::String(info.issuer.into()),
                 serial,
@@ -300,7 +300,7 @@ pub(crate) fn builtin_crypto_chacha_open(args: &[Value]) -> RuntimeResult<Value>
 
 pub(crate) fn builtin_crypto_ed25519_keypair(_args: &[Value]) -> RuntimeResult<Value> {
     match gossamer_std::crypto::ed25519::keypair() {
-        Ok((secret, public)) => Ok(ok_variant(Value::Tuple(Arc::new(vec![
+        Ok((secret, public)) => Ok(ok_variant(Value::Tuple(Arc::from(vec![
             bytes_to_value_array(&secret),
             bytes_to_value_array(&public),
         ])))),
@@ -329,7 +329,7 @@ pub(crate) fn builtin_crypto_ed25519_verify(args: &[Value]) -> RuntimeResult<Val
 
 pub(crate) fn builtin_crypto_ecdsa_keypair_pem(_args: &[Value]) -> RuntimeResult<Value> {
     match gossamer_std::crypto::ecdsa::keypair_pem() {
-        Ok((secret, public)) => Ok(ok_variant(Value::Tuple(Arc::new(vec![
+        Ok((secret, public)) => Ok(ok_variant(Value::Tuple(Arc::from(vec![
             Value::String(secret.into()),
             Value::String(public.into()),
         ])))),

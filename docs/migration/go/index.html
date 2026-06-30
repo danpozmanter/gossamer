@@ -2383,9 +2383,10 @@ set satisfies the interface implicitly.</p>
 <li>A type can opt into multiple traits (same as Go).</li>
 <li>Two unrelated traits with identical method sets are <em>different</em>
   traits. Go has no concept of trait identity.</li>
-<li>Generic bounds use <code>T: Trait</code> syntax: <code>fn handle&lt;T: Reader&gt;(r: T)</code>.</li>
-<li>Trait objects use <code>Box&lt;dyn Trait&gt;</code> or <code>&amp;dyn Trait</code>. They have
-  the same dynamic-dispatch cost as Go's interface values.</li>
+<li>Generic bounds use <code>T: Trait</code> syntax: <code>fn handle&lt;T: Reader&gt;(r: T)</code>,
+  multi-bound <code>T: A + B</code>; each call site monomorphises statically.</li>
+<li>There are no trait objects (<code>dyn Trait</code>). For runtime polymorphism
+  over a closed set, use an <code>enum</code> + exhaustive <code>match</code>.</li>
 </ul>
 <h3 id="no-implicit-numeric-coercion">No implicit numeric coercion<a class="headerlink" href="#no-implicit-numeric-coercion" title="Permanent link">&para;</a></h3>
 <p>Go silently widens <code>int32</code> to <code>int64</code>, etc. Gossamer requires
@@ -2544,8 +2545,8 @@ otherwise spawn a <code>let mut acc = 0; for x in xs { acc += … }</code>.</p>
 </tr>
 <tr>
 <td><code>os/exec.Command</code></td>
-<td><code>os::exec::Command::new(prog).arg(a).output()</code></td>
-<td>v1.x</td>
+<td><code>process::Command::new(prog).arg(a).output()</code></td>
+<td>✓</td>
 </tr>
 <tr>
 <td><code>os/signal.Notify</code></td>
@@ -2800,12 +2801,12 @@ authoritative table.</p>
 <h2 id="where-gossamer-is-harder-than-go">Where Gossamer is harder than Go<a class="headerlink" href="#where-gossamer-is-harder-than-go" title="Permanent link">&para;</a></h2>
 <p>Honest list:</p>
 <ul>
-<li><strong>Generics with structs <code>T = MyStruct</code> are not yet supported by
-  value.</strong> v1 monomorphisation packs every generic param into a
-  64-bit slot; user structs don't fit. See
-  <a href="../../codegen_abi/"><code>codegen_abi.md</code></a>. Workaround: use <code>&amp;T</code>,
-  or use the runtime's <code>Vec&lt;T&gt;</code> / <code>HashMap&lt;K, V&gt;</code> which handle
-  arbitrarily-sized elements internally.</li>
+<li><strong>Generic bounds are still narrow.</strong> <code>fn f&lt;T: Trait&gt;(x: T)</code> does
+  static, monomorphised dispatch - including generic structs that hold
+  <code>T</code> by value (<code>struct Wrapper&lt;T&gt; { value: T }</code>, specialised per
+  instantiation). What's missing is <code>dyn Trait</code>, operator-trait or
+  associated-type bounds, and supertrait method inheritance through a
+  bound. See <a href="../../codegen_abi/"><code>codegen_abi.md</code></a>.</li>
 <li><strong>Tooling diagnostics are sometimes terser than Go's.</strong> <code>gos
   explain CODE</code> exists but the corpus is younger.</li>
 <li><strong>No <code>go vet</code>-equivalent.</strong> Lints exist (<code>gos lint</code>) but their

@@ -308,8 +308,11 @@ pub(super) fn lower_generic_rt_call(
         "gos_rt_str_push_char" => (&[ptr_ty, types::I32], Some(ptr_ty)),
         "gos_rt_str_push_byte" => (&[ptr_ty, types::I32], Some(ptr_ty)),
         "gos_rt_deque_new" => (&[], Some(ptr_ty)),
-        "gos_rt_deque_push_back" => (&[ptr_ty, types::I64], None),
-        "gos_rt_deque_pop_front" => (&[ptr_ty], Some(types::I128)),
+        "gos_rt_deque_push_back" | "gos_rt_deque_push_front" => (&[ptr_ty, types::I64], None),
+        "gos_rt_deque_pop_front"
+        | "gos_rt_deque_pop_back"
+        | "gos_rt_deque_peek_front"
+        | "gos_rt_deque_peek_back" => (&[ptr_ty], Some(types::I128)),
         "gos_rt_deque_len" => (&[ptr_ty], Some(types::I64)),
         "gos_rt_deque_is_empty" => (&[ptr_ty], Some(types::I32)),
         "gos_rt_deque_free" => (&[ptr_ty], None),

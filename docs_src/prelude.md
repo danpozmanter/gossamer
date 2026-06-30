@@ -5,8 +5,8 @@ needed.
 
 ## Output and failure
 
-The six macros (the only macros in the language), all
-`format!`-style with `{}` / `{name}` placeholders:
+The six format macros, all `format!`-style with `{}` / `{name}`
+placeholders:
 
 | Macro | Effect |
 |-------|--------|
@@ -23,11 +23,19 @@ println!("hello, {who}")
 println!("{} + {} = {}", 1, 2, 1 + 2)
 ```
 
+A few desugar macros round out the fixed set: `matches!(e, pat)`
+(boolean pattern test), `todo!` / `unimplemented!` / `unreachable!`
+(panic with a fixed or supplied message), and `dbg!(e)` (prints `e`
+with `{:?}` to stderr, yields its value). There are no user-defined
+macros - every other `name!(…)` is a parse error.
+
 ## Assertions
 
 - `assert(cond)` - panics when `cond` is false.
 - `assert_eq(a, b)` - panics when `a != b`, printing both values.
-- `todo()` - panics with a "not yet implemented" marker.
+
+For a "not yet implemented" marker use the `todo!` macro (above), not a
+`todo()` call.
 
 ## Scalars
 

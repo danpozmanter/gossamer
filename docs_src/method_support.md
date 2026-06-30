@@ -43,10 +43,46 @@ gaps are one-line additions to the dispatch table.
 
 | Method | Returns | Notes |
 |---|---|---|
-| `m.insert(k, v)` | `Option<V>` | Returns previous value if present. |
-| `m.get(k)` | `Option<&V>` | |
-| `m.remove(k)` | `bool` | True if the key was present. |
+| `m.insert(k, v)` | `()` | Inserts or overwrites in place; does not return the previous value. |
+| `m.get(k)` | `Option<V>` | `None` when the key is absent. |
+| `m.get_or(k, default)` | `V` | Value for `k`, or `default` when absent. |
+| `m.contains_key(k)` | `bool` | Key-membership test (`m.contains(k)` is an alias). |
+| `m.remove(k)` | `()` | Deletes the key in place. Use `HashMap::pop(m, k) -> Option<V>` to recover the removed value. |
+| `m.inc(k)` / `m.inc(k, by)` | `()` | Increment an `i64` counter, inserting `0` first if absent. |
 | `m.len()` | `i64` | |
+| `m.iter()` | `[(K, V)]` | `keys()` / `values()` return the halves. |
+
+## BTreeMap
+
+`BTreeMap<i64, i64>` and `BTreeMap<i64, String>` are backed by the
+key-sorted `IntMap` machinery (same as `HashMap<i64, _>`), so `iter()`
+yields pairs in ascending key order.
+
+| Method | Returns | Notes |
+|---|---|---|
+| `m.insert(k, v)` | `()` | Inserts or overwrites in place. |
+| `m.get(k)` | `Option<V>` | `None` when the key is absent. |
+| `m.get_or(k, default)` | `V` | Value for `k`, or `default` when absent. |
+| `m.contains(k)` / `m.contains_key(k)` | `bool` | Key-membership test. |
+| `m.remove(k)` | `()` | Deletes the key in place. |
+| `m.len()` | `i64` | |
+| `m.iter()` | `[(K, V)]` | Yields pairs in ascending key order. |
+
+## VecDeque
+
+`VecDeque<i64>` is a double-ended ring buffer; both ends are
+constant-time. The pop / peek methods return `Option`.
+
+| Method | Returns | Notes |
+|---|---|---|
+| `d.push_back(v)` | `()` | Append to the back. |
+| `d.push_front(v)` | `()` | Prepend to the front. |
+| `d.pop_back()` | `Option<T>` | Remove and return the back element. |
+| `d.pop_front()` | `Option<T>` | Remove and return the front element. |
+| `d.peek_back()` | `Option<T>` | Back element without removing it. |
+| `d.peek_front()` | `Option<T>` | Front element without removing it. |
+| `d.len()` | `i64` | |
+| `d.is_empty()` | `bool` | |
 
 ## Channels
 

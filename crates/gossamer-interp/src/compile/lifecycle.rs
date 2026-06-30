@@ -55,6 +55,7 @@ impl<'tcx> FnBuilder<'tcx> {
             next_arith_cache_idx: 0,
             next_field_cache_idx: 0,
             mut_ref_params: Vec::new(),
+            consumable: std::collections::HashSet::new(),
         }
     }
 

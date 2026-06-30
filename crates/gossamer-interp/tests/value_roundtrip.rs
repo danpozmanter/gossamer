@@ -105,7 +105,7 @@ fn string_roundtrips() {
 
 #[test]
 fn tuple_roundtrips() {
-    let v = Value::Tuple(Arc::new(vec![
+    let v = Value::Tuple(Arc::from(vec![
         Value::Int(1),
         Value::Bool(false),
         Value::String(SmolStr::from("x".to_string())),
@@ -155,7 +155,7 @@ fn closure_roundtrips() {
 
 #[test]
 fn nested_aggregate_roundtrips() {
-    let v = Value::Tuple(Arc::new(vec![
+    let v = Value::Tuple(Arc::from(vec![
         Value::Array(Arc::new(vec![Value::struct_(
             "Pair",
             vec![("a", Value::Int(1)), ("b", Value::Int(2))],
@@ -189,7 +189,7 @@ fn heap_registry_stays_bounded_under_repeated_roundtrip() {
 
     let (baseline_slots, _) = registry_stats_for_test();
     for _ in 0..10_000 {
-        let v = Value::Tuple(Arc::new(vec![
+        let v = Value::Tuple(Arc::from(vec![
             Value::Int(1),
             Value::String(SmolStr::from("hello".to_string())),
             Value::Bool(true),

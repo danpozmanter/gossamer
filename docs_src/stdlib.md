@@ -56,7 +56,7 @@ Names available without any import - the print macros, `min`/`max`/`clamp`, `spa
 | [`std::encoding::hex`](#stdencodinghex) | 2 | Lowercase hex encode/decode. |
 | [`std::encoding::json`](#stdencodingjson) | 21 | JSON parser, emitter, and derive support. |
 | [`std::encoding::pem`](#stdencodingpem) | 4 | PEM block encoder and decoder. |
-| [`std::encoding::toml`](#stdencodingtoml) | 4 | TOML 1.0 parsing + emission. Pair with `<Type>::from_toml` for typed decoding (struct auto-derive). |
+| [`std::encoding::toml`](#stdencodingtoml) | 4 | TOML 1.0 parsing + emission. Pair with the turbofish `from_toml::<Type>` for typed decoding (struct auto-derive). |
 | [`std::encoding::xml`](#stdencodingxml) | 6 | Streaming XML decoder + builder (quick-xml). |
 | [`std::encoding::yaml`](#stdencodingyaml) | 7 | YAML 1.2 parser/emitter (serde_norway-backed). |
 | [`std::env`](#stdenv) | 9 | Process environment, command-line arguments, working directory. |
@@ -599,7 +599,7 @@ PEM block encoder and decoder.
 
 ## `std::encoding::toml`
 
-TOML 1.0 parsing + emission. Pair with `<Type>::from_toml` for typed decoding (struct auto-derive).
+TOML 1.0 parsing + emission. Pair with the turbofish `from_toml::<Type>` for typed decoding (struct auto-derive).
 
 | Item | Kind | Doc |
 |------|------|-----|
@@ -927,12 +927,12 @@ Go 1.22-class ServeMux: method-aware path patterns with parameter captures + pre
 
 | Item | Kind | Doc |
 |------|------|-----|
-| `Params` | type | Captured path parameters. Read inside a handler with `r.path_value(name) -> String` (Go's `r.PathValue`); returns "" for an undeclared name. All tiers. |
-| `Router` | type | Routing table. Build with `Router::new()`, chain verb methods via `\|>` (`Router::new() \|> _.get(p, f) \|> _.post(p, g)`), then pass to `http::serve`. All tiers. |
-| `Handler` | trait | Anything callable as Fn(&Request, &Params) -> Response. |
-| `add` | fn | Register a route: `(router, method, pattern)`. Interp tier. |
-| `lookup` | fn | Find the index of the first route matching `(method, path)`. Interp tier. |
-| `new` | fn | Allocate a fresh Router handle. Interp tier. |
+| `Params` | type | Captured path parameters. Read inside a handler with `r.path_value(name) -> String`; returns `""` for an undeclared name. All tiers. |
+| `Router` | type | Routing table. Build with `Router::new()`, register routes via the verb methods, then pass to `http::serve`. Verb methods return the router so they chain with `|>`. |
+| `Handler` | trait | Anything callable as `Fn(&Request, &Params) -> Response`. |
+| `add` | fn | Register a pattern-only route: `(router, method, pattern)`. Used with `lookup` for low-level dispatch. |
+| `lookup` | fn | Find the index of the first route matching `(method, path)`. Returns `Option<i64>`. |
+| `new` | fn | Allocate a fresh Router handle. |
 
 ## `std::http::session`
 

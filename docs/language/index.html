@@ -1717,7 +1717,7 @@
 <tr>
 <td><a href="macros/"><code>lang::macros</code></a></td>
 <td>shipped</td>
-<td>Six built-in format macros (print/println/eprint/eprintln/format/panic).</td>
+<td>Built-in macros only - no user-defined macros: the format family (print/println/eprint/eprintln/format/panic), the desugar macros (matches!/todo!/unimplemented!/unreachable!/dbg!), and the build-time regex!/sql!/codegen!.</td>
 </tr>
 <tr>
 <td><a href="doctest/"><code>lang::doctest</code></a></td>
@@ -1745,6 +1745,11 @@
 <td>Module-level mutable or immutable static slot.</td>
 </tr>
 <tr>
+<td><a href="type_alias/"><code>lang::type_alias</code></a></td>
+<td>shipped</td>
+<td>Transparent type alias: <code>type X = T</code> (and generic <code>type Pair&lt;A&gt; = (A, A)</code>) is interchangeable with its target everywhere; a cyclic alias is rejected (<code>GT0024</code>).</td>
+</tr>
+<tr>
 <td><a href="mut_ref_params/"><code>lang::mut_ref_params</code></a></td>
 <td>shipped</td>
 <td><code>&amp;mut Vec&lt;T&gt;</code> / <code>&amp;mut [T]</code> parameters write through to the caller's storage on every tier.</td>
@@ -1757,7 +1762,7 @@
 <tr>
 <td><a href="comptime/"><code>lang::comptime</code></a></td>
 <td>shipped</td>
-<td>Zig-style compile-time evaluation: <code>comptime { ... }</code> blocks, <code>comptime fn</code> calls, and <code>comptime</code> parameters run on the bytecode VM during compilation and fold to a literal, so every tier compiles the identical constant. Includes <code>typeInfo::&lt;T&gt;()</code> struct-field reflection and the <code>regex!</code> / <code>sql!</code> build-time validation macros.</td>
+<td>Zig-style compile-time evaluation: <code>comptime { ... }</code> blocks, <code>comptime fn</code> calls, and <code>comptime</code> parameters run on the bytecode VM during compilation and fold to a literal, so every tier compiles the identical constant. <code>typeInfo::&lt;T&gt;()</code> reflects a type's fields, a <code>for (name, ty) in typeInfo::&lt;T&gt;()</code> loop unrolls into native per-field code, and <code>codegen!(...)</code> splices a <code>comptime fn</code>'s <code>String</code> back as source. Includes the <code>regex!</code> / <code>sql!</code> build-time validation macros.</td>
 </tr>
 <tr>
 <td><a href="move_keyword/"><code>lang::move_keyword</code></a></td>

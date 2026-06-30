@@ -1,19 +1,26 @@
 /*
- * #[derive(...)] - auto-generated trait methods.
+ * #[derive(...)] - the derivable traits.
  *
- * Annotating a struct with `#[derive(Clone, PartialEq, Eq, Default, Debug)]`
- * synthesizes the matching methods so the natural syntax just works:
- * `==` / `!=` compare field-by-field, `.clone()` makes a copy,
- * `Type::default()` builds a zero-valued instance, and `{:?}` prints
- * `Name { field: value }`. Nested-struct fields derive recursively. The
- * methods are generated as ordinary Gossamer code, so they run identically on
- * every tier.
+ * The derivable set is `Debug`, `Default`, `PartialEq`, `Eq`,
+ * `PartialOrd`, and `Ord`. Annotating a struct with
+ * `#[derive(PartialEq, Eq, Default, Debug)]` synthesizes the matching
+ * methods: `==` / `!=` compare field-by-field, `Type::default()` builds
+ * a zero-valued instance, and `{:?}` prints `Name { field: value }`.
+ * Nested-struct fields derive recursively, and the methods are
+ * generated as ordinary Gossamer code so they run identically on every
+ * tier.
+ *
+ * Copying (`let b = a`, `a.clone()`) is automatic for every value type
+ * - there is no `Clone` derive. Structural `==` and ordering are also
+ * available with no derive at all; deriving forces synthesis for the
+ * generic / container-field cases the automatic gate is conservative
+ * about.
  */
 
-#[derive(Clone, PartialEq, Eq, Default, Debug)]
+#[derive(PartialEq, Eq, Default, Debug)]
 struct Color { r: i64, g: i64, b: i64 }
 
-#[derive(Clone, PartialEq, Default, Debug)]
+#[derive(PartialEq, Default, Debug)]
 struct Pixel { at: i64, color: Color }
 
 fn rgb(r: i64, g: i64, b: i64) -> Color { Color { r: r, g: g, b: b } }

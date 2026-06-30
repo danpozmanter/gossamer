@@ -38,8 +38,8 @@ fn main() {
         let rev = reverse_bytes(&s)
         let label = if is_palindrome(&s) { "palindrome" } else { "not palindrome" }
         println!("{} reversed-bytes={} ({})", s, rev.len(), label)
-        print("  codes:")
+        print!("  codes:")
         rev |> iter::for_each(|code: i64| print!(" {}", code))
-        println("")
+        println!()
     }
 }

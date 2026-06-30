@@ -1562,6 +1562,25 @@
     
   
   
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#derive" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        #[derive(...)]
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
 </nav>
                   </div>
                 </div>
@@ -1580,6 +1599,64 @@
 <h1 id="langattribute"><code>lang::attribute</code><a class="headerlink" href="#langattribute" title="Permanent link">&para;</a></h1>
 <p>Status: shipped</p>
 <p>Built-in attributes (<code>#[cfg]</code>, <code>#[test]</code>, <code>#[bench]</code>, <code>#[derive]</code>).</p>
+<!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
+
+<p>The attribute set is fixed - there are no user-defined attributes.</p>
+<table>
+<thead>
+<tr>
+<th>Attribute</th>
+<th>Applies to</th>
+<th>Effect</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>#[test]</code></td>
+<td><code>fn</code></td>
+<td>Run by <code>gos test</code>.</td>
+</tr>
+<tr>
+<td><code>#[bench]</code></td>
+<td><code>fn</code></td>
+<td>Timed by <code>gos bench</code>.</td>
+</tr>
+<tr>
+<td><code>#[cfg(...)]</code></td>
+<td>item</td>
+<td>Conditional compilation (see <a href="../cfg/">cfg</a>).</td>
+</tr>
+<tr>
+<td><code>#[cfg(test)]</code></td>
+<td><code>mod</code></td>
+<td>Test-only module (give each a unique name in a project).</td>
+</tr>
+<tr>
+<td><code>#[derive(...)]</code></td>
+<td><code>struct</code> / <code>enum</code></td>
+<td>Synthesize the listed traits.</td>
+</tr>
+<tr>
+<td><code>#[default]</code></td>
+<td>enum variant</td>
+<td>Marks the <code>Default</code> variant.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="derive"><code>#[derive(...)]</code><a class="headerlink" href="#derive" title="Permanent link">&para;</a></h2>
+<p>The derivable set is exactly <code>Debug</code>, <code>Default</code>, <code>PartialEq</code>, <code>Eq</code>,
+<code>PartialOrd</code>, and <code>Ord</code>, synthesized as real source so <code>{:?}</code>,
+<code>Type::default()</code>, and the comparison operators work on every tier:</p>
+<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="cp">#[derive(Debug, Default, PartialEq, Eq, PartialOrd, Ord)]</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="k">struct</span> <span class="nc">Version</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">major</span>: <span class="kt">i64</span><span class="p">,</span><span class="w"> </span><span class="n">minor</span>: <span class="kt">i64</span> <span class="p">}</span>
+</code></pre></div>
+<p>Comparison and <code>Default</code> are <em>automatic</em> for ordinary value types; the
+derive only forces synthesis where the automatic gate is conservative
+(generic or container-typed fields). <code>Clone</code>, <code>Copy</code>, <code>Hash</code>, <code>Display</code>,
+<code>Serialize</code>, and <code>Deserialize</code> are <strong>rejected</strong> (<code>GT0025</code>) - copying
+(<code>let b = a</code>, <code>a.clone()</code>), hashing, comparison, and serialization are
+already automatic, and conversion / operator traits are written
+<code>impl Trait for T</code>.</p>
 
 
 

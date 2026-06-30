@@ -220,6 +220,160 @@ fn build_native_str(value: &Value) -> Option<i64> {
     }
 }
 
+/// RC child-layout kind for an enum node (mirrors `gossamer_abi::rc::RC_KIND_ENUM`).
+const RC_KIND_ENUM: i64 = 0;
+
+thread_local! {
+    /// Per-shape RC child-layout descriptor, built once and leaked so the
+    /// pointer stays stable across calls (`gos_rt_rc_alloc_tagged` interns
+    /// the meta by pointer).
+    static ENUM_META_CACHE: std::cell::RefCell<rustc_hash::FxHashMap<u32, &'static [i64]>> =
+        std::cell::RefCell::new(rustc_hash::FxHashMap::default());
+}
+
+/// Builds (and caches) the child-layout descriptor a native enum node of
+/// `shape` needs - `[RC_KIND_ENUM, n_variants, (disc, n_children,
+/// child_slot...)...]` - so the runtime retains / releases the `Str` and
+/// `Enum` children of each variant.
+fn enum_shape_meta(shape: &crate::value::NativeEnumShape) -> &'static [i64] {
+    ENUM_META_CACHE.with(|cache| {
+        if let Some(m) = cache.borrow().get(&shape.index) {
+            return *m;
+        }
+        let mut meta: Vec<i64> = vec![RC_KIND_ENUM, shape.variants.len() as i64];
+        for (disc, v) in shape.variants.iter().enumerate() {
+            let children: Vec<i64> = v
+                .fields
+                .iter()
+                .enumerate()
+                .filter(|(_, k)| {
+                    matches!(
+                        k,
+                        crate::value::NativeFieldKind::Str | crate::value::NativeFieldKind::Enum(_)
+                    )
+                })
+                .map(|(i, _)| i as i64)
+                .collect();
+            meta.push(disc as i64);
+            meta.push(children.len() as i64);
+            meta.extend(children);
+        }
+        let leaked: &'static [i64] = Box::leak(meta.into_boxed_slice());
+        cache.borrow_mut().insert(shape.index, leaked);
+        leaked
+    })
+}
+
+/// Marshals a bytecode `Value::Variant` into a freshly allocated native
+/// (compiled-representation) enum node so it can cross the JIT boundary,
+/// returning the tagged native pointer (strong count 1, caller-owned), or
+/// `None` if any field isn't marshallable (caller then falls back to
+/// bytecode). One `gos_rt_rc_release` of the returned pointer reclaims the
+/// node and every child it recursively built.
+fn build_variant_to_native_enum(
+    inner: &crate::value::VariantInner,
+    shape: &crate::value::NativeEnumShape,
+) -> Option<i64> {
+    use crate::value::NativeFieldKind;
+    let disc = shape
+        .variants
+        .iter()
+        .position(|v| std::ptr::eq(v.name, inner.name) || v.name == inner.name)?;
+    let vshape = &shape.variants[disc];
+    if vshape.fields.len() != inner.fields.len() {
+        return None;
+    }
+    let nfields = vshape.fields.len();
+    if nfields == 0 {
+        // Unit variant: tagged repr is disc-in-pointer over a null base;
+        // header repr is a shared immortal singleton. Neither needs freeing.
+        return if shape.tagged {
+            Some((disc as i64) << 1)
+        } else {
+            let p = rt::gos_rt_enum_unit(disc as i64);
+            (!p.is_null()).then_some(p as i64)
+        };
+    }
+    let meta = enum_shape_meta(shape);
+    let size = (nfields * 8) as u64;
+    // SAFETY: `meta` describes the layout and `size` matches the slot count.
+    // The interpreter never holds an arena region active, so this takes the
+    // headered global path the disc-byte and child writes below assume.
+    let payload = unsafe { rt::gos_rt_rc_alloc_tagged(size, meta.as_ptr()) };
+    if payload.is_null() {
+        return None;
+    }
+    let base = payload as usize;
+    // The tagged alloc is unzeroed; zero the slots so a mid-build bail
+    // releases only real children, never stack garbage.
+    // SAFETY: `nfields * 8` bytes were just allocated at `base`.
+    unsafe { std::ptr::write_bytes(base as *mut u8, 0, nfields * 8) };
+    // Header disc byte: read by `visit_children_raw` to pick the variant's
+    // child slots (and by `native_enum_disc` for header-repr reads).
+    // SAFETY: headered global node; the disc byte lives at payload-3.
+    unsafe { *((base - 3) as *mut u8) = disc as u8 };
+    for (i, kind) in vshape.fields.iter().enumerate() {
+        let word: i64 = match (kind, &inner.fields[i]) {
+            (NativeFieldKind::I64, Value::Int(n)) => *n,
+            (NativeFieldKind::I64, Value::Uint(u)) => *u as i64,
+            (NativeFieldKind::F64, Value::Float(f)) => f.to_bits() as i64,
+            (NativeFieldKind::Bool, Value::Bool(b)) => i64::from(*b),
+            (NativeFieldKind::Char, Value::Char(c)) => *c as i64,
+            (NativeFieldKind::Str, Value::String(s)) => {
+                rt::alloc_cstring(s.as_str().as_bytes()) as i64
+            }
+            (NativeFieldKind::Enum(sidx), Value::Variant(child)) => {
+                let Some(p) = crate::value::native_shape(*sidx)
+                    .and_then(|cs| build_variant_to_native_enum(child, cs))
+                else {
+                    // SAFETY: live node; written children are real,
+                    // unwritten slots are null.
+                    unsafe { rt::gos_rt_rc_release(payload) };
+                    return None;
+                };
+                p
+            }
+            (NativeFieldKind::Enum(_), Value::NativeEnum(h)) => {
+                // SAFETY: co-owning an already-native child; retain so the
+                // parent's release balances it.
+                unsafe { rt::gos_rt_rc_retain(h.ptr as *mut u8) };
+                h.ptr as i64
+            }
+            _ => {
+                // SAFETY: as above - release the partial node and fall back.
+                unsafe { rt::gos_rt_rc_release(payload) };
+                return None;
+            }
+        };
+        // SAFETY: slot `i` is within the just-allocated payload.
+        unsafe { *((base + i * 8) as *mut i64) = word };
+    }
+    Some(if shape.tagged {
+        (base as i64) | ((disc as i64) << 1)
+    } else {
+        base as i64
+    })
+}
+
+/// Releases the native enum temporaries built to cross the JIT boundary,
+/// on every exit path of a dispatch (successful call or mid-marshal
+/// fallback). The JIT body never frees its enum args (its `Drop` terminator
+/// is a no-op), so the trampoline owns each temporary end to end.
+struct BuiltEnums(Vec<i64>);
+
+impl Drop for BuiltEnums {
+    fn drop(&mut self) {
+        for &p in &self.0 {
+            let payload = (p as usize) & !7;
+            if payload != 0 {
+                // SAFETY: each `p` is a node allocated with strong count 1
+                // and not yet freed; release reclaims it and its children.
+                unsafe { rt::gos_rt_rc_release(payload as *mut u8) };
+            }
+        }
+    }
+}
+
 /// Reads a native return pointer back into an owned VM value WITHOUT
 /// freeing the native object (the caller frees it, deduped against the
 /// params, so a body returning its own param frees exactly once).
@@ -266,7 +420,7 @@ fn native_ptr_to_value(kind: JitKind, ptr: i64) -> Value {
             for i in 0..len {
                 let p = unsafe { rt::gos_rt_vec_get_ptr(v, i) };
                 if p.is_null() {
-                    out.push(Value::Tuple(Arc::new(vec![
+                    out.push(Value::Tuple(Arc::from(vec![
                         Value::Int(0),
                         Value::Float(0.0),
                     ])));
@@ -274,7 +428,10 @@ fn native_ptr_to_value(kind: JitKind, ptr: i64) -> Value {
                 }
                 let a = unsafe { p.cast::<i64>().read_unaligned() };
                 let b = unsafe { p.add(8).cast::<f64>().read_unaligned() };
-                out.push(Value::Tuple(Arc::new(vec![Value::Int(a), Value::Float(b)])));
+                out.push(Value::Tuple(Arc::from(vec![
+                    Value::Int(a),
+                    Value::Float(b),
+                ])));
             }
             Value::Array(Arc::new(out))
         }
@@ -1749,6 +1906,41 @@ pub(crate) struct Prepared {
     /// call site) and skip the per-kind `match`, still re-checking
     /// `EnumPtr` shape indices and falling back on any surprise.
     verified: std::cell::Cell<bool>,
+    /// `true` once any call marshalled successfully (native hit). A body
+    /// that has ever run native is never demoted - it pays its way.
+    ever_hit: std::cell::Cell<bool>,
+    /// Consecutive marshal failures for a body that has *never* hit
+    /// native. Used to demote a permanently-unmarshallable body (e.g. one
+    /// whose enum args arrive as bytecode `Value::Variant`, which the
+    /// scalar/enum ABI cannot accept) so the per-call marshal attempt
+    /// stops taxing every call. Reset is unnecessary: once `ever_hit` is
+    /// set the count is ignored.
+    miss_streak: std::cell::Cell<u32>,
+}
+
+/// Consecutive marshal failures, on a body that has never run native,
+/// after which it is demoted back to bytecode-only. Small enough that the
+/// wasted-attempt tax is negligible, large enough to ride out a brief
+/// warm-up where a constructor has not yet produced native values.
+pub(crate) const JIT_DEMOTE_MISS_STREAK: u32 = 8;
+
+impl Prepared {
+    /// Records a successful native call; the body is now never demoted.
+    pub(crate) fn record_hit(&self) {
+        self.ever_hit.set(true);
+    }
+
+    /// Records a marshal fallback and returns `true` when the body should
+    /// be demoted (never hit native, and the miss streak crossed the
+    /// threshold). A body that has ever hit native never demotes.
+    pub(crate) fn record_fallback_should_demote(&self) -> bool {
+        if self.ever_hit.get() {
+            return false;
+        }
+        let streak = self.miss_streak.get() + 1;
+        self.miss_streak.set(streak);
+        streak >= JIT_DEMOTE_MISS_STREAK
+    }
 }
 
 /// Resolves dispatch data for `jit`, or `None` if the trampoline can't
@@ -1794,6 +1986,8 @@ pub(crate) fn prepare(jit: std::sync::Arc<JitFn>) -> Option<Prepared> {
         native_return,
         has_native,
         verified: std::cell::Cell::new(false),
+        ever_hit: std::cell::Cell::new(false),
+        miss_streak: std::cell::Cell::new(0),
     })
 }
 
@@ -1816,10 +2010,37 @@ pub(crate) fn invoke_prepared(p: &Prepared, args: &[Value]) -> Dispatch {
     // mismatch); other scalar kinds trust the prior verification, with
     // a debug assertion catching any divergence in debug builds.
     let fast = p.verified.get();
+    // A bytecode `Value::Variant` enum arg is marshalled into a native node
+    // (`build_variant_to_native_enum`) so an enum-recursive body can run
+    // native instead of falling back. The JIT never frees its enum args (its
+    // `Drop` is a no-op), so the trampoline frees each temporary after the
+    // call - safe only when no native enum *result* can alias (and be left
+    // dangling by) the freed input. That holds when the return is a scalar,
+    // or when the body's return provably originates from a fresh allocation
+    // (`returns_fresh`, e.g. a tree-rebuilding `simplify` / `transform`)
+    // rather than a passthrough of the input. `built` frees them on every
+    // exit path.
+    let marshal_variant = jit.returns_fresh
+        || matches!(
+            jit.returns,
+            JitKind::I64 | JitKind::F64 | JitKind::Bool | JitKind::Unit
+        );
+    let mut built = BuiltEnums(Vec::new());
     for (i, (kind, value)) in jit.params.iter().zip(args.iter()).enumerate() {
         let slot = match (kind, fast) {
             (JitKind::EnumPtr(idx), _) => match value {
                 Value::NativeEnum(h) if h.shape.index == *idx => Slot::I(h.ptr as i64),
+                Value::Variant(vinner) if marshal_variant => {
+                    match crate::value::native_shape(*idx)
+                        .and_then(|s| build_variant_to_native_enum(vinner, s))
+                    {
+                        Some(ptr) => {
+                            built.0.push(ptr);
+                            Slot::I(ptr)
+                        }
+                        None => return Dispatch::Fallback,
+                    }
+                }
                 _ => return Dispatch::Fallback,
             },
             (JitKind::Value, _) => Slot::I(value.to_raw() as i64),

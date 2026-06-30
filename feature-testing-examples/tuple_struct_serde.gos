@@ -1,0 +1,13 @@
+// Serde for tuple structs: serialized as a position-keyed JSON object
+// (`{"0":v0,"1":v1}`), round-tripping through to_json / from_json on every
+// tier. Reuses the same FieldKind machinery as named-struct serde.
+
+struct Rec(i64, String, bool)
+struct Id(i64)
+
+fn main() {
+    let s = to_json::<Rec>(Rec(7, "hi", true)) |> _.unwrap_or("")
+    let r: Rec = from_json::<Rec>(&s) |> _.unwrap_or(Rec(0, "", false))
+    let id_s = to_json::<Id>(Id(42)) |> _.unwrap_or("")
+    println!("{} {} {} {} {}", s, r.0, r.1, r.2, id_s)
+}

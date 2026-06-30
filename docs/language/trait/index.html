@@ -1562,6 +1562,36 @@
     
   
   
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#operator-overloading" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Operator overloading
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#conversions-from-tryfrom" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Conversions: From / TryFrom
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
 </nav>
                   </div>
                 </div>
@@ -1580,6 +1610,93 @@
 <h1 id="langtrait"><code>lang::trait</code><a class="headerlink" href="#langtrait" title="Permanent link">&para;</a></h1>
 <p>Status: shipped</p>
 <p>Behaviour interface declaration.</p>
+<!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
+
+<p>A trait declares method signatures; a type provides them with <code>impl Trait
+for Type</code>. A generic function bounds a parameter by a trait and calls its
+methods (<code>fn report&lt;T: Shape&gt;(s: &amp;T)</code>) - see <a href="../generics/">generics</a>.</p>
+<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="k">trait</span><span class="w"> </span><span class="n">Area</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="k">fn</span> <span class="nf">area</span><span class="p">(</span><span class="o">&amp;</span><span class="bp">self</span><span class="p">)</span><span class="w"> </span>-&gt; <span class="kt">f64</span><span class="p">;</span><span class="w"> </span><span class="p">}</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="k">impl</span><span class="w"> </span><span class="n">Area</span><span class="w"> </span><span class="k">for</span><span class="w"> </span><span class="n">Shape</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">    </span><span class="k">fn</span> <span class="nf">area</span><span class="p">(</span><span class="o">&amp;</span><span class="bp">self</span><span class="p">)</span><span class="w"> </span>-&gt; <span class="kt">f64</span> <span class="p">{</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="w">        </span><span class="k">match</span><span class="w"> </span><span class="bp">self</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="w">            </span><span class="n">Shape</span>::<span class="n">Circle</span><span class="p">(</span><span class="n">r</span><span class="p">)</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="mf">3.14159</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">r</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">r</span><span class="p">,</span>
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="w">            </span><span class="n">Shape</span>::<span class="n">Rect</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">w</span><span class="p">,</span><span class="w"> </span><span class="n">h</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="n">w</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">h</span><span class="p">,</span>
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="w">        </span><span class="p">}</span>
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="p">}</span>
+</code></pre></div>
+<h2 id="operator-overloading">Operator overloading<a class="headerlink" href="#operator-overloading" title="Permanent link">&para;</a></h2>
+<p>Implementing the matching trait makes an operator dispatch to its method
+on a user struct / enum. The result type is the method's return type, so a
+dot product (<code>Mul -&gt; f64</code>) types correctly. Compound assignment routes
+through the same binary method.</p>
+<table>
+<thead>
+<tr>
+<th>Operator</th>
+<th>Trait</th>
+<th>Method</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>a + b</code> / <code>a - b</code> / <code>a * b</code> / <code>a / b</code></td>
+<td><code>Add</code> / <code>Sub</code> / <code>Mul</code> / <code>Div</code></td>
+<td><code>add</code> / <code>sub</code> / <code>mul</code> / <code>div</code></td>
+</tr>
+<tr>
+<td><code>a % b</code></td>
+<td><code>Rem</code></td>
+<td><code>rem</code></td>
+</tr>
+<tr>
+<td><code>-a</code> (unary)</td>
+<td><code>Neg</code></td>
+<td><code>neg</code></td>
+</tr>
+<tr>
+<td><code>a[i]</code></td>
+<td><code>Index</code></td>
+<td><code>index</code></td>
+</tr>
+<tr>
+<td><code>a \| b</code> / <code>a &amp; b</code> / <code>a ^ b</code></td>
+<td><code>BitOr</code> / <code>BitAnd</code> / <code>BitXor</code></td>
+<td><code>bitor</code> / <code>bitand</code> / <code>bitxor</code></td>
+</tr>
+<tr>
+<td><code>a &lt;&lt; b</code> / <code>a &gt;&gt; b</code></td>
+<td><code>Shl</code> / <code>Shr</code></td>
+<td><code>shl</code> / <code>shr</code></td>
+</tr>
+</tbody>
+</table>
+<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="k">struct</span> <span class="nc">V2</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">x</span>: <span class="kt">f64</span><span class="p">,</span><span class="w"> </span><span class="n">y</span>: <span class="kt">f64</span> <span class="p">}</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="k">impl</span><span class="w"> </span><span class="n">Add</span><span class="w"> </span><span class="k">for</span><span class="w"> </span><span class="n">V2</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="k">fn</span> <span class="nf">add</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span><span class="w"> </span><span class="n">o</span>: <span class="nc">V2</span><span class="p">)</span><span class="w"> </span>-&gt; <span class="nc">V2</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">V2</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">x</span>: <span class="nc">self</span><span class="p">.</span><span class="n">x</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">o</span><span class="p">.</span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="n">y</span>: <span class="nc">self</span><span class="p">.</span><span class="n">y</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">o</span><span class="p">.</span><span class="n">y</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="p">}</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="k">impl</span><span class="w"> </span><span class="n">Mul</span><span class="w"> </span><span class="k">for</span><span class="w"> </span><span class="n">V2</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="k">fn</span> <span class="nf">mul</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span><span class="w"> </span><span class="n">o</span>: <span class="nc">V2</span><span class="p">)</span><span class="w"> </span>-&gt; <span class="kt">f64</span> <span class="p">{</span><span class="w"> </span><span class="bp">self</span><span class="p">.</span><span class="n">x</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">o</span><span class="p">.</span><span class="n">x</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="bp">self</span><span class="p">.</span><span class="n">y</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">o</span><span class="p">.</span><span class="n">y</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="p">}</span>
+</code></pre></div>
+<p>Applying an arithmetic operator to an ADT with no matching impl is a
+compile error (<code>GT0003</code>). These are real impls, not derives - the operator
+traits are <strong>not</strong> <code>#[derive]</code>-able.</p>
+<h2 id="conversions-from-tryfrom">Conversions: <code>From</code> / <code>TryFrom</code><a class="headerlink" href="#conversions-from-tryfrom" title="Permanent link">&para;</a></h2>
+<p>A <code>from</code> impl powers both <code>B::from(x)</code> and <code>x.into()</code>; a <code>try_from</code> impl
+powers <code>B::try_from(x)</code> and <code>x.try_into() -&gt; Result&lt;B, E&gt;</code>. The <code>into</code> /
+<code>try_into</code> target is inferred from the use site (<code>let B</code>, a <code>B</code> parameter
+or return):</p>
+<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="k">struct</span> <span class="nc">Celsius</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">t</span>: <span class="kt">i64</span> <span class="p">}</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="k">struct</span> <span class="nc">Fahrenheit</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">t</span>: <span class="kt">i64</span> <span class="p">}</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="k">impl</span><span class="w"> </span><span class="n">Fahrenheit</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="w">    </span><span class="k">fn</span> <span class="nf">from</span><span class="p">(</span><span class="n">c</span>: <span class="nc">Celsius</span><span class="p">)</span><span class="w"> </span>-&gt; <span class="nc">Fahrenheit</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">Fahrenheit</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">t</span>: <span class="nc">c</span><span class="p">.</span><span class="n">t</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">9</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="mi">5</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mi">32</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="p">}</span>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="p">}</span>
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>
+<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="kd">let</span><span class="w"> </span><span class="n">f</span>: <span class="nc">Fahrenheit</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">Celsius</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">t</span>: <span class="mi">100</span><span class="w"> </span><span class="p">}.</span><span class="n">into</span><span class="p">()</span><span class="w">   </span><span class="c1">// 212, via Fahrenheit::from</span>
+</code></pre></div>
+<p><code>?</code> also auto-converts a propagated <code>Err</code> through <code>errors::Error::from</code>,
+so a <code>Result&lt;_, String&gt;</code> flows into a <code>Result&lt;_, errors::Error&gt;</code> function
+with no explicit <code>map_err</code>.</p>
 
 
 

@@ -2,10 +2,44 @@
 use super::*;
 
 impl<'tcx> FnBuilder<'tcx> {
+    /// Emits a positional tuple-field read - draining
+    /// (`TupleIndexConsume`) when `consume` is set, cloning
+    /// (`TupleIndex`) otherwise.
+    fn emit_tuple_index(&mut self, dst: Reg, receiver: Reg, index: u32, consume: bool) {
+        if consume {
+            self.emit(Op::TupleIndexConsume {
+                dst,
+                receiver,
+                index,
+            });
+        } else {
+            self.emit(Op::TupleIndex {
+                dst,
+                receiver,
+                index,
+            });
+        }
+    }
+
     pub(crate) fn bind_pattern_locals(
         &mut self,
         pattern: &HirPat,
         init_reg: Reg,
+    ) -> RuntimeResult<()> {
+        self.bind_pattern_locals_ex(pattern, init_reg, false)
+    }
+
+    /// Like [`Self::bind_pattern_locals`] but with a `consume` flag:
+    /// when set, `init_reg` holds a uniquely-owned aggregate the
+    /// destructure may drain (a for-loop element moved out of a
+    /// consumable source), so tuple-field extraction moves instead of
+    /// cloning. The `Arc::get_mut` guard on `TupleIndexConsume` keeps a
+    /// still-shared aggregate correct.
+    pub(crate) fn bind_pattern_locals_ex(
+        &mut self,
+        pattern: &HirPat,
+        init_reg: Reg,
+        consume: bool,
     ) -> RuntimeResult<()> {
         match &pattern.kind {
             HirPatKind::Binding { name, .. } => {
@@ -30,18 +64,10 @@ impl<'tcx> FnBuilder<'tcx> {
                     let dst = self.alloc_reg();
                     match rest_pos {
                         None => {
-                            self.emit(Op::TupleIndex {
-                                dst,
-                                receiver: init_reg,
-                                index: i as u32,
-                            });
+                            self.emit_tuple_index(dst, init_reg, i as u32, consume);
                         }
                         Some(rest_idx) if i < rest_idx => {
-                            self.emit(Op::TupleIndex {
-                                dst,
-                                receiver: init_reg,
-                                index: i as u32,
-                            });
+                            self.emit_tuple_index(dst, init_reg, i as u32, consume);
                         }
                         Some(_) => {
                             // Tail-anchored: offset_from_end = n_after - (i - rest_idx - 1) - 1
@@ -53,7 +79,9 @@ impl<'tcx> FnBuilder<'tcx> {
                             });
                         }
                     }
-                    self.bind_pattern_locals(sub, dst)?;
+                    // A drained element is uniquely owned, so propagate
+                    // `consume` into nested tuple sub-patterns.
+                    self.bind_pattern_locals_ex(sub, dst, consume)?;
                 }
                 Ok(())
             }
@@ -2052,6 +2080,14 @@ impl<'tcx> FnBuilder<'tcx> {
             next_recv
         };
 
+        // Move-on-last-use: when the iterated collection is a consumable
+        // local (read exactly once here), drain each element out of it as
+        // the loop advances instead of cloning, so the input frees as it
+        // is consumed. Disabled for a `HashSet` source, whose elements
+        // are read from a fresh sorted snapshot rather than the local.
+        let consume_source =
+            self.consumable_path(source_expr).is_some() && !self.expr_is_hashset(source_expr);
+
         // Compile the iterable and capture it once.
         let mut vec_reg = self.compile_expr(source_expr)?;
 
@@ -2146,15 +2182,25 @@ impl<'tcx> FnBuilder<'tcx> {
             dst_v: idx_v,
             src_i: counter_i,
         });
-        self.emit(Op::IndexGet {
-            dst: elem_reg,
-            base: vec_reg,
-            index: idx_v,
-        });
+        if consume_source {
+            self.emit(Op::IndexGetConsume {
+                dst: elem_reg,
+                base: vec_reg,
+                index: idx_v,
+            });
+        } else {
+            self.emit(Op::IndexGet {
+                dst: elem_reg,
+                base: vec_reg,
+                index: idx_v,
+            });
+        }
         // Destructure the loaded element (`for (a, b) in xs`) each
         // iteration; a simple binding was already aliased to `elem_reg`.
+        // A drained element is uniquely owned, so destructure it by
+        // moving its fields out rather than cloning.
         if let Some(pat) = elem_destructure {
-            self.bind_pattern_locals(pat, elem_reg)?;
+            self.bind_pattern_locals_ex(pat, elem_reg, consume_source)?;
         }
 
         self.loop_stack.push(LoopCtx {

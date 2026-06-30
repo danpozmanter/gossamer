@@ -832,11 +832,9 @@ fn bench_subcommand_reports_no_benches_when_none_present() {
 ///
 /// Every `.gos` file directly under `examples/` must parse cleanly
 /// through `gos parse`. The runnable subset (`hello_world`,
-/// `line_count`, `web_server`) is already covered by
-/// `run_executes_every_example_in_examples_dir`; the remaining
-/// parse-only files (`kv_cache`, `json_pipeline`, `selfhost/*`) are
-/// gated here so a regression that breaks the shape of any example
-/// fails CI.
+/// `line_count`, `web_server`) is also executed by
+/// `run_executes_every_example_in_examples_dir`; this gate covers the
+/// rest, so a regression that breaks the shape of any example fails CI.
 #[test]
 fn every_top_level_example_parses() {
     let dir = examples_dir();

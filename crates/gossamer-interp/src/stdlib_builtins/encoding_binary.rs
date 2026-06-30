@@ -294,7 +294,7 @@ pub(crate) fn builtin_bin_get_u64_le(args: &[Value]) -> RuntimeResult<Value> {
 pub(crate) fn builtin_bin_uvarint(args: &[Value]) -> RuntimeResult<Value> {
     let bytes = bytes_from_value(args.first().unwrap_or(&Value::Unit));
     match gossamer_std::encoding::binary::uvarint(&bytes) {
-        Ok((v, n)) => Ok(ok_variant(Value::Tuple(Arc::new(vec![
+        Ok((v, n)) => Ok(ok_variant(Value::Tuple(Arc::from(vec![
             Value::Int(v as i64),
             Value::Int(n as i64),
         ])))),
@@ -304,7 +304,7 @@ pub(crate) fn builtin_bin_uvarint(args: &[Value]) -> RuntimeResult<Value> {
 pub(crate) fn builtin_bin_varint(args: &[Value]) -> RuntimeResult<Value> {
     let bytes = bytes_from_value(args.first().unwrap_or(&Value::Unit));
     match gossamer_std::encoding::binary::varint(&bytes) {
-        Ok((v, n)) => Ok(ok_variant(Value::Tuple(Arc::new(vec![
+        Ok((v, n)) => Ok(ok_variant(Value::Tuple(Arc::from(vec![
             Value::Int(v),
             Value::Int(n as i64),
         ])))),

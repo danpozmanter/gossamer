@@ -299,6 +299,9 @@ pub(crate) fn validate_chunk(chunk: &FnChunk) -> Result<(), ValidationError> {
                 check_v(op_idx, dst)?;
                 check_v(op_idx, src)?;
             }
+            Op::ClearRegs { start, count } => {
+                check_v_span(op_idx, start, count)?;
+            }
 
             // Adaptive arith - boxed value lhs/rhs/dst.
             Op::AddInt { dst, lhs, rhs, .. }
@@ -634,6 +637,11 @@ pub(crate) fn validate_chunk(chunk: &FnChunk) -> Result<(), ValidationError> {
                 check_v(op_idx, dst)?;
                 check_v(op_idx, base)?;
                 check_v(op_idx, index)?;
+            }
+            Op::StrByteAt { dst, recv, idx } => {
+                check_v(op_idx, dst)?;
+                check_v(op_idx, recv)?;
+                check_v(op_idx, idx)?;
             }
             Op::IndexSet { base, index, value } => {
                 check_v(op_idx, base)?;
@@ -1124,6 +1132,23 @@ pub(crate) fn validate_chunk(chunk: &FnChunk) -> Result<(), ValidationError> {
                     shape_names_len,
                     PoolKind::Consts,
                 )?;
+            }
+            Op::MoveConsume { dst, src } => {
+                check_v(op_idx, dst)?;
+                check_v(op_idx, src)?;
+            }
+            Op::VariantFieldConsume { dst, src, .. } => {
+                check_v(op_idx, dst)?;
+                check_v(op_idx, src)?;
+            }
+            Op::IndexGetConsume { dst, base, index } => {
+                check_v(op_idx, dst)?;
+                check_v(op_idx, base)?;
+                check_v(op_idx, index)?;
+            }
+            Op::TupleIndexConsume { dst, receiver, .. } => {
+                check_v(op_idx, dst)?;
+                check_v(op_idx, receiver)?;
             }
         }
     }

@@ -1,0 +1,39 @@
+// Code-emitting comptime (P2): `codegen!(...)` splices a `comptime fn`'s
+// String result back as raw source, so reflection over a type's fields
+// generates a native serializer - the autoderive shape, written in user
+// space. `typeInfo::<T>()` and the generator run only at compile time;
+// the emitted body is ordinary field code, identical on every tier and
+// carrying no runtime reflection.
+
+struct Point { x: i64, y: i64 }
+struct User { id: i64, name: String, active: bool }
+
+// One generic generator serializes any struct, branching on each field's
+// reflected type (type-directed codegen). `v` is the runtime binding name
+// the emitted code reads.
+comptime fn gen_record(fields: [(String, String)], v: String) -> String {
+    let mut out = "\"\""
+    for (name, ty) in fields {
+        let label = match ty {
+            "String" => "str",
+            "bool" => "bool",
+            "f64" => "real",
+            _ => "int",
+        }
+        out += " + \"" + name + ":" + label + "=\" + format!(\"{}\", " + v + "." + name + ") + \";\""
+    }
+    out
+}
+
+fn point_record(p: Point) -> String {
+    codegen!(gen_record(typeInfo::<Point>(), "p"))
+}
+
+fn user_record(u: User) -> String {
+    codegen!(gen_record(typeInfo::<User>(), "u"))
+}
+
+fn main() {
+    println!("{}", point_record(Point { x: 1, y: 2 }))
+    println!("{}", user_record(User { id: 7, name: "jane", active: true }))
+}

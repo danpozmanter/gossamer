@@ -32,7 +32,11 @@ pub(crate) fn install_deque(globals: &mut Vec<(&'static str, Value)>) {
         ("VecDeque::new", builtin_deque_new),
         ("collections::VecDeque::new", builtin_deque_new),
         ("VecDeque::push_back", builtin_deque_push_back),
+        ("VecDeque::push_front", builtin_deque_push_front),
         ("VecDeque::pop_front", builtin_deque_pop_front),
+        ("VecDeque::pop_back", builtin_deque_pop_back),
+        ("VecDeque::peek_front", builtin_deque_peek_front),
+        ("VecDeque::peek_back", builtin_deque_peek_back),
         ("VecDeque::len", builtin_deque_len),
         ("VecDeque::is_empty", builtin_deque_is_empty),
     ];
@@ -94,11 +98,58 @@ fn builtin_deque_push_back(args: &[Value]) -> RuntimeResult<Value> {
     Ok(handle)
 }
 
+fn builtin_deque_push_front(args: &[Value]) -> RuntimeResult<Value> {
+    let handle = args.first().cloned().unwrap_or(Value::Unit);
+    let Some(id) = deque_id_of(&handle) else {
+        return Ok(handle);
+    };
+    let value = args.get(1).cloned().unwrap_or(Value::Unit);
+    DEQUE_REGISTRY.with(|r| {
+        if let Some(d) = r.borrow_mut().get_mut(&id) {
+            d.push_front(value);
+        }
+    });
+    Ok(handle)
+}
+
 fn builtin_deque_pop_front(args: &[Value]) -> RuntimeResult<Value> {
     let Some(id) = args.first().and_then(deque_id_of) else {
         return Ok(none_variant());
     };
     let result = DEQUE_REGISTRY.with(|r| r.borrow_mut().get_mut(&id).and_then(|d| d.pop_front()));
+    match result {
+        Some(v) => Ok(some_variant(v)),
+        None => Ok(none_variant()),
+    }
+}
+
+fn builtin_deque_pop_back(args: &[Value]) -> RuntimeResult<Value> {
+    let Some(id) = args.first().and_then(deque_id_of) else {
+        return Ok(none_variant());
+    };
+    let result = DEQUE_REGISTRY.with(|r| r.borrow_mut().get_mut(&id).and_then(|d| d.pop_back()));
+    match result {
+        Some(v) => Ok(some_variant(v)),
+        None => Ok(none_variant()),
+    }
+}
+
+fn builtin_deque_peek_front(args: &[Value]) -> RuntimeResult<Value> {
+    let Some(id) = args.first().and_then(deque_id_of) else {
+        return Ok(none_variant());
+    };
+    let result = DEQUE_REGISTRY.with(|r| r.borrow().get(&id).and_then(|d| d.front().cloned()));
+    match result {
+        Some(v) => Ok(some_variant(v)),
+        None => Ok(none_variant()),
+    }
+}
+
+fn builtin_deque_peek_back(args: &[Value]) -> RuntimeResult<Value> {
+    let Some(id) = args.first().and_then(deque_id_of) else {
+        return Ok(none_variant());
+    };
+    let result = DEQUE_REGISTRY.with(|r| r.borrow().get(&id).and_then(|d| d.back().cloned()));
     match result {
         Some(v) => Ok(some_variant(v)),
         None => Ok(none_variant()),

@@ -102,7 +102,22 @@ impl<'tcx> FnBuilder<'tcx> {
                         // existing reg, so in that case copy
                         // into a fresh slot.
                         let tr = self.compile_expr_ex(init)?;
-                        let typed = if is_path_expr(init) {
+                        // Move-on-last-use: a `let y = x` aliasing a
+                        // consumable local hands the aggregate over
+                        // instead of cloning it into the fresh slot.
+                        let consume_init = tr.kind == RegKind::Value
+                            && self
+                                .consumable_path(init)
+                                .and_then(|name| self.lookup_local(name))
+                                .is_some_and(|home| home.reg == tr.reg);
+                        let typed = if consume_init {
+                            let dst = self.alloc_reg();
+                            self.emit(Op::MoveConsume { dst, src: tr.reg });
+                            TypedReg {
+                                reg: dst,
+                                kind: RegKind::Value,
+                            }
+                        } else if is_path_expr(init) {
                             self.bind_to_fresh(tr)
                         } else {
                             tr

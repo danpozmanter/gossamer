@@ -50,6 +50,6 @@ fn main() {
     let g_rec = gcd_recursive(a, b)
     let g_it = gcd_iterative(a, b)
     if g_rec == g_it {
-        println("recursive and iterative agree: ok")
+        println!("recursive and iterative agree: ok")
     }
 }

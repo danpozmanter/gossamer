@@ -365,7 +365,7 @@ pub const REGISTRY: &[(&str, &str)] = &[
     ),
     (
         "GP0016",
-        "The `extern` keyword is reserved in 0.5.0 but has no\n\
+        "The `extern` keyword is reserved but has no\n\
                      source-level item form. Gossamer's FFI surface is the\n\
                      `[rust-bindings]` section of `project.toml` plus the\n\
                      `gossamer-binding` crate (see `docs_src/libraries.md`).\n\
@@ -567,6 +567,20 @@ pub const REGISTRY: &[(&str, &str)] = &[
         "`value.N` positional access was used on a non-tuple, or `N` is\n\
                      past the tuple's arity. The VM faults (GX0004) and the compiled\n\
                      tier reads out-of-object memory, so it is rejected at check.",
+    ),
+    (
+        "GT0024",
+        "A `type` alias expands to itself through a cycle (`type A = B;\n\
+                     type B = A`), so it has no underlying type. Every use is\n\
+                     ill-typed, so it is rejected at check.",
+    ),
+    (
+        "GT0025",
+        "A `#[derive(...)]` named a trait that synthesizes nothing.\n\
+                     Gossamer value types compare, order, hash, and copy by value\n\
+                     automatically, so only Debug, Default, PartialEq, Eq,\n\
+                     PartialOrd, and Ord are derivable; everything else is either\n\
+                     automatic or implemented with `impl Trait for T`.",
     ),
     (
         "GX0001",

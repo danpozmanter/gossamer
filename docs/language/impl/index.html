@@ -1562,6 +1562,36 @@
     
   
   
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#generic-impls" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Generic impls
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#operator-and-conversion-impls" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Operator and conversion impls
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
 </nav>
                   </div>
                 </div>
@@ -1580,6 +1610,41 @@
 <h1 id="langimpl"><code>lang::impl</code><a class="headerlink" href="#langimpl" title="Permanent link">&para;</a></h1>
 <p>Status: shipped</p>
 <p>Inherent and trait implementation blocks.</p>
+<!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
+
+<p>An inherent <code>impl Type</code> block adds methods and associated functions; an
+<code>impl Trait for Type</code> block supplies a trait's methods.</p>
+<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="k">struct</span> <span class="nc">Point</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">x</span>: <span class="kt">i64</span><span class="p">,</span><span class="w"> </span><span class="n">y</span>: <span class="kt">i64</span> <span class="p">}</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="k">impl</span><span class="w"> </span><span class="n">Point</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">    </span><span class="k">fn</span> <span class="nf">origin</span><span class="p">()</span><span class="w"> </span>-&gt; <span class="nc">Point</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">Point</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">x</span>: <span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="n">y</span>: <span class="mi">0</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="p">}</span><span class="w">   </span><span class="c1">// associated fn</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="w">    </span><span class="k">fn</span> <span class="nf">norm</span><span class="p">(</span><span class="o">&amp;</span><span class="bp">self</span><span class="p">)</span><span class="w"> </span>-&gt; <span class="kt">i64</span> <span class="p">{</span><span class="w"> </span><span class="bp">self</span><span class="p">.</span><span class="n">x</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="bp">self</span><span class="p">.</span><span class="n">x</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="bp">self</span><span class="p">.</span><span class="n">y</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="bp">self</span><span class="p">.</span><span class="n">y</span><span class="w"> </span><span class="p">}</span>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="p">}</span>
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="kd">let</span><span class="w"> </span><span class="n">p</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">Point</span>::<span class="n">origin</span><span class="p">()</span><span class="w">   </span><span class="c1">// qualified path always resolves</span>
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;{}&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">p</span><span class="p">.</span><span class="n">norm</span><span class="p">())</span>
+</code></pre></div>
+<p>A method takes <code>self</code>, <code>&amp;self</code>, or <code>&amp;mut self</code>; <code>&amp;self</code> reads, <code>&amp;mut self</code>
+writes through to the caller's storage. Qualified-path calls
+(<code>Point::origin()</code>) always resolve; bare-name method dispatch is
+name-global in places, so prefer the qualified form when a name could
+collide.</p>
+<h2 id="generic-impls">Generic impls<a class="headerlink" href="#generic-impls" title="Permanent link">&para;</a></h2>
+<p>Methods on a generic struct use the <code>impl&lt;T&gt;</code> form, and each receiver type
+specialises the method (so <code>-&gt; T</code> returns the real instantiated type):</p>
+<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="k">struct</span> <span class="nc">Wrapper</span><span class="o">&lt;</span><span class="n">T</span><span class="o">&gt;</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">value</span>: <span class="nc">T</span><span class="w"> </span><span class="p">}</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="k">impl</span><span class="o">&lt;</span><span class="n">T</span><span class="o">&gt;</span><span class="w"> </span><span class="n">Wrapper</span><span class="o">&lt;</span><span class="n">T</span><span class="o">&gt;</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">    </span><span class="k">fn</span> <span class="nf">get</span><span class="p">(</span><span class="o">&amp;</span><span class="bp">self</span><span class="p">)</span><span class="w"> </span>-&gt; <span class="nc">T</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="bp">self</span><span class="p">.</span><span class="n">value</span><span class="w"> </span><span class="p">}</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="p">}</span>
+</code></pre></div>
+<h2 id="operator-and-conversion-impls">Operator and conversion impls<a class="headerlink" href="#operator-and-conversion-impls" title="Permanent link">&para;</a></h2>
+<p>Operator overloading (<code>impl Add for T</code>, <code>impl Index for T</code>, ...) and
+conversions (<code>impl T { fn from(...) }</code>, <code>fn try_from(...)</code>) are ordinary
+impls - see <a href="../trait/">trait</a> for the operator/method table and the
+<code>into</code> / <code>try_into</code> inference rules. The comparison (<code>eq</code> / <code>cmp</code>) and
+<code>clone</code> behaviour is synthesized with no impl; write an <code>eq</code> / <code>cmp</code> impl
+only to override the default ordering.</p>
 
 
 

@@ -174,6 +174,22 @@ fn diagnostic_explanation(code: &str) -> Option<&'static str> {
                      bound the parameter on the supertrait directly\n\
                      (`<T: Animal>`)."
         }
+        "GT0024" => {
+            "A `type` alias expands to itself through a cycle\n\
+                     (`type A = B; type B = A`), so it has no underlying type.\n\
+                     Every use of the alias is ill-typed. Break the cycle so the\n\
+                     alias eventually names a concrete type."
+        }
+        "GT0025" => {
+            "A `#[derive(...)]` named a trait that synthesizes nothing.\n\
+                     Gossamer structs and enums are value types: they compare,\n\
+                     order, hash, and copy by value automatically, so `==`, `<`,\n\
+                     HashMap keys, `let b = a`, and `a.clone()` work with no\n\
+                     derive. Only Debug, Default, PartialEq, Eq, PartialOrd, and\n\
+                     Ord are derivable. Clone, Hash, Copy, Display, and Serialize\n\
+                     are automatic; From / Into / the operator traits are written\n\
+                     with `impl Trait for T`."
+        }
         "GM0001" => {
             "Generic monomorphization received a type substitution that the\n\
                      compiler does not yet support - typically a generic parameter\n\
@@ -233,7 +249,7 @@ fn diagnostic_explanation(code: &str) -> Option<&'static str> {
                      recognise. Most often a missing operator or comma."
         }
         "GP0016" => {
-            "The `extern` keyword is reserved in 0.5.0 but has no\n\
+            "The `extern` keyword is reserved but has no\n\
                      source-level item form. Gossamer's FFI surface is the\n\
                      `[rust-bindings]` section of `project.toml` plus the\n\
                      `gossamer-binding` crate (see `docs_src/libraries.md`).\n\

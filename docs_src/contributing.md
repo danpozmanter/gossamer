@@ -2,7 +2,12 @@
 
 ## House rules
 
-- Safe Rust only. Every crate forbids `unsafe_code`.
+- Safe Rust in the front-end: the parser, resolver, type checker,
+  MIR, LLVM codegen, lints, and scheduler crates forbid
+  `unsafe_code`. The runtime, the Cranelift JIT, the stackful-coroutine
+  layer, and the FFI binding surface contain contained, reviewed
+  `unsafe` (C ABIs, executing generated code, context switching) -
+  keep it in the smallest possible scope.
 - `cargo clippy --workspace --all-targets -- -D warnings` is the
   gate.
 - `cargo fmt --all --check` must pass.

@@ -96,6 +96,12 @@ use crate::value::{MapKey, RuntimeError, RuntimeResult, SmolStr, Value};
 
 /// Linked program: every global the VM needs to execute a call.
 ///
+/// One comptime fold result: the source span, a raw-splice flag (set for
+/// `codegen!` regions whose `String` result splices as source rather than
+/// a quoted literal), and the evaluated value (`Err` when the region was
+/// not compile-time-known).
+pub type ComptimeFold = (gossamer_lex::Span, bool, Result<Value, String>);
+
 /// The VM compiles HIR directly to bytecode and lowers every
 /// construct natively; there is no fallback evaluator. The global
 /// table holds the built-in intrinsics plus every compiled function,
@@ -235,10 +241,11 @@ pub struct Vm {
     pub(crate) collect_comptime: Cell<bool>,
     /// Comptime evaluation results, keyed by source span: `Ok(value)`
     /// on success, `Err(message)` when the region was not
-    /// compile-time-known. Populated by `load` when
-    /// [`Self::collect_comptime`] is set; drained by the CLI to splice
-    /// result literals back into the source.
-    pub(crate) comptime_folds: RefCell<Vec<(gossamer_lex::Span, Result<Value, String>)>>,
+    /// compile-time-known. The `bool` marks a raw (`codegen!`) region
+    /// whose `String` result splices as source rather than as a literal.
+    /// Populated by `load` when [`Self::collect_comptime`] is set; drained
+    /// by the CLI to splice results back into the source.
+    pub(crate) comptime_folds: RefCell<Vec<ComptimeFold>>,
 }
 
 /// Per-`Vm` per-chunk dispatch caches. Pinned inside
@@ -804,7 +811,8 @@ fn index_get_checked(base: &Value, idx: &Value) -> RuntimeResult<Value> {
         _ => return Err(RuntimeError::Type("index must be integer".to_string())),
     };
     let len = match base {
-        Value::Array(items) | Value::Tuple(items) => items.len() as i64,
+        Value::Array(items) => items.len() as i64,
+        Value::Tuple(items) => items.len() as i64,
         Value::FloatArray(fa) if fa.stride > 0 => (fa.data.len() / fa.stride as usize) as i64,
         // Non-aggregate bases keep the lenient contract (a checked op is only
         // emitted for aggregate element types, but be conservative).
@@ -827,7 +835,8 @@ fn index_get(base: &Value, idx: &Value) -> RuntimeResult<Value> {
     // runtime `gos_rt_vec_get_*` helpers do. This keeps `gos run`
     // bit-identical to `gos build` on out-of-bounds access.
     let len = match base {
-        Value::Array(items) | Value::Tuple(items) => items.len(),
+        Value::Array(items) => items.len(),
+        Value::Tuple(items) => items.len(),
         Value::IntArray(d) => d.len(),
         Value::FloatVec(d) => d.len(),
         Value::String(s) => s.len(),
@@ -847,7 +856,8 @@ fn index_get(base: &Value, idx: &Value) -> RuntimeResult<Value> {
     }
     let i = raw as usize;
     match base {
-        Value::Array(items) | Value::Tuple(items) => Ok(items[i].clone()),
+        Value::Array(items) => Ok(items[i].clone()),
+        Value::Tuple(items) => Ok(items[i].clone()),
         // Rehydrate a single element into `Value::Struct` so generic
         // indexed-access code keeps working when the array was compiled to
         // flat f64 storage.
@@ -871,6 +881,33 @@ fn index_get(base: &Value, idx: &Value) -> RuntimeResult<Value> {
         Value::IntArray(data) => Ok(Value::Int(data[i])),
         Value::FloatVec(data) => Ok(Value::Float(data[i])),
         _ => unreachable!("len computed above for this variant"),
+    }
+}
+
+/// Element read that drains a uniquely-owned `Array` / `Tuple` slot,
+/// leaving `Value::Void` behind, and otherwise mirrors [`index_get`]
+/// exactly. A shared aggregate (refcount > 1), a non-`Array`/`Tuple`
+/// base, or an out-of-range index falls back to the cloning /
+/// lenient-zero read so `Op::IndexGetConsume` stays bit-identical to
+/// `Op::IndexGet` on every path except the unique-owner fast move.
+fn index_get_consume(base: &mut Value, raw: i64) -> RuntimeResult<Value> {
+    match base {
+        Value::Array(arc) | Value::Tuple(arc) => {
+            let len = arc.len();
+            if raw < 0 || raw as usize >= len {
+                // Lenient out-of-range: `index_get` yields `Int(0)` for
+                // these aggregates.
+                return Ok(Value::Int(0));
+            }
+            let i = raw as usize;
+            match std::sync::Arc::get_mut(arc) {
+                Some(items) => Ok(std::mem::replace(&mut items[i], Value::Void)),
+                None => Ok(arc[i].clone()),
+            }
+        }
+        // Flat / string / unindexable bases are never drained: defer to
+        // the shared cloning reader for identical results.
+        other => index_get(other, &Value::Int(raw)),
     }
 }
 

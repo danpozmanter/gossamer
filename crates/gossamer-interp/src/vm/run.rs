@@ -130,6 +130,13 @@ impl Vm {
                 Op::Move { dst, src } => {
                     registers[dst as usize] = registers[src as usize].clone();
                 }
+                Op::MoveConsume { dst, src } => {
+                    // Hand the value over instead of cloning: the source
+                    // local is read exactly once at this point (proven by
+                    // `compile::consume`), so the emptied slot is never read.
+                    let v = std::mem::replace(&mut registers[src as usize], Value::Void);
+                    registers[dst as usize] = v;
+                }
                 Op::Deref { dst, src } => {
                     let v = registers[src as usize].clone();
                     let resolved = if let Value::Struct(inner) = &v {
@@ -304,13 +311,23 @@ impl Vm {
                     let argc_usz = argc as usize;
                     let mut arg_values = self.pool.borrow_mut().take_args(argc_usz);
                     for i in 0..argc_usz {
-                        // 0.7.0 flag::Cell auto-deref at the call
-                        // boundary: `f(flags.output)` passes the
-                        // current backing value instead of the
-                        // `__Cell` handle. Matches Rust's `Deref`
-                        // coercion on fn-arg sites. Skipped when the
-                        // compiler proved every argument is scalar.
-                        let raw = registers[args as usize + i].clone();
+                        // Move the argument out of its scratch slot rather
+                        // than cloning: the contiguous `args` region is
+                        // written once by the call's arg setup and read
+                        // only here, so handing the value to the callee
+                        // gives it unique ownership (the basis for
+                        // move-on-last-use draining the input) and saves a
+                        // refcount bump per argument. A `&mut` write-back
+                        // cell lives in a separate register that `CellTake`
+                        // reads after the call, so emptying the slot is
+                        // safe.
+                        //
+                        // 0.7.0 flag::Cell auto-deref at the call boundary:
+                        // `f(flags.output)` passes the current backing
+                        // value instead of the `__Cell` handle. Matches
+                        // Rust's `Deref` coercion on fn-arg sites. Skipped
+                        // when the compiler proved every argument is scalar.
+                        let raw = std::mem::replace(&mut registers[args as usize + i], Value::Void);
                         let v = if may_have_cells {
                             auto_deref_cell(&raw).unwrap_or(raw)
                         } else {
@@ -401,6 +418,13 @@ impl Vm {
                 Op::ReturnUnit => {
                     publish_ref_cells(&ref_cells, registers);
                     return Ok(Value::Unit);
+                }
+                Op::ClearRegs { start, count } => {
+                    let from = start as usize;
+                    let to = from + count as usize;
+                    for slot in &mut registers[from..to] {
+                        *slot = Value::Void;
+                    }
                 }
                 Op::Panic { msg } => {
                     let message = match &chunk.consts[msg as usize] {
@@ -1052,6 +1076,28 @@ impl Vm {
                     let i = &registers[index as usize];
                     registers[dst as usize] = index_get(b, i)?;
                 }
+                Op::StrByteAt { dst, recv, idx } => {
+                    // Matches `builtin_str_byte_at`: non-string receiver,
+                    // non-integer index, or out-of-range index all yield 0.
+                    let byte = if let Value::String(s) = &registers[recv as usize] {
+                        let i = match &registers[idx as usize] {
+                            Value::Int(n) => *n,
+                            other => match auto_deref_cell(other) {
+                                Some(Value::Int(n)) => n,
+                                _ => -1,
+                            },
+                        };
+                        let bytes = s.as_str().as_bytes();
+                        if i < 0 || (i as usize) >= bytes.len() {
+                            0
+                        } else {
+                            i64::from(bytes[i as usize])
+                        }
+                    } else {
+                        0
+                    };
+                    registers[dst as usize] = Value::Int(byte);
+                }
                 Op::IndexGetChecked { dst, base, index } => {
                     let b = &registers[base as usize];
                     let i = &registers[index as usize];
@@ -1364,11 +1410,22 @@ impl Vm {
                     let recv = &registers[receiver as usize];
                     let idx = index as usize;
                     registers[dst as usize] = match recv {
-                        Value::Tuple(items) | Value::Array(items) => {
-                            items.get(idx).cloned().ok_or_else(|| {
+                        Value::Tuple(items) => items.get(idx).cloned().ok_or_else(|| {
+                            RuntimeError::Arithmetic("tuple index out of bounds".to_string())
+                        })?,
+                        Value::Array(items) => items.get(idx).cloned().ok_or_else(|| {
+                            RuntimeError::Arithmetic("tuple index out of bounds".to_string())
+                        })?,
+                        // A tuple struct stores its positional fields as named
+                        // "0".."N-1"; `.N` projects field N, matching the
+                        // compiled tiers' offset load.
+                        Value::Struct(inner) => inner
+                            .fields
+                            .get(idx)
+                            .map(|(_, v)| v.clone())
+                            .ok_or_else(|| {
                                 RuntimeError::Arithmetic("tuple index out of bounds".to_string())
-                            })?
-                        }
+                            })?,
                         _ => {
                             return Err(RuntimeError::Type(format!(
                                 "value of kind `{recv}` has no tuple fields"
@@ -1382,8 +1439,8 @@ impl Vm {
                     offset_from_end,
                 } => {
                     let recv = &registers[receiver as usize];
-                    registers[dst as usize] = match recv {
-                        Value::Tuple(items) | Value::Array(items) => {
+                    registers[dst as usize] = match recv.as_value_slice() {
+                        Some(items) => {
                             let len = items.len();
                             let idx = len.saturating_sub(offset_from_end as usize + 1);
                             items.get(idx).cloned().ok_or_else(|| {
@@ -1392,7 +1449,7 @@ impl Vm {
                                 )
                             })?
                         }
-                        _ => {
+                        None => {
                             return Err(RuntimeError::Type(format!(
                                 "value of kind `{recv}` has no tuple fields"
                             )));
@@ -1973,7 +2030,7 @@ impl Vm {
                         ));
                     };
                     let b = &registers[base as usize];
-                    let (Value::Array(items) | Value::Tuple(items)) = b else {
+                    let Some(items) = b.as_value_slice() else {
                         return Err(RuntimeError::Type(format!(
                             "value of kind `{b}` is not indexable"
                         )));
@@ -2032,7 +2089,7 @@ impl Vm {
                         floats[dst_f as usize] = *fa_inner.data.get(pos).unwrap_or(&0.0);
                         continue;
                     }
-                    let (Value::Array(items) | Value::Tuple(items)) = b else {
+                    let Some(items) = b.as_value_slice() else {
                         return Err(RuntimeError::Type(format!(
                             "value of kind `{b}` is not indexable"
                         )));
@@ -2162,7 +2219,7 @@ impl Vm {
                             *floats.get_unchecked_mut(dst_f as usize) = f;
                         }
                     } else {
-                        let (Value::Array(items) | Value::Tuple(items)) = b else {
+                        let Some(items) = b.as_value_slice() else {
                             return Err(RuntimeError::Type(format!(
                                 "value of kind `{b}` is not indexable"
                             )));
@@ -2550,7 +2607,7 @@ impl Vm {
                     for i in 0..n {
                         items.push(registers[start + i].clone());
                     }
-                    registers[dst as usize] = Value::Tuple(Arc::new(items));
+                    registers[dst as usize] = Value::Tuple(Arc::from(items));
                 }
                 Op::BuildArray { dst, first, count } => {
                     let n = count as usize;
@@ -2654,6 +2711,73 @@ impl Vm {
                         Value::Struct(inner) if std::ptr::eq(inner.name, expected)
                     );
                     registers[dst as usize] = Value::Bool(matches);
+                }
+                Op::VariantFieldConsume { dst, src, idx } => {
+                    // Drain the payload when the scrutinee is uniquely
+                    // owned; clone (matching `VariantField`) when shared
+                    // or when the value is not a `Variant`.
+                    let result = match &mut registers[src as usize] {
+                        Value::Variant(arc) => match Arc::get_mut(arc) {
+                            Some(inner) => inner
+                                .fields
+                                .get_mut(idx as usize)
+                                .map(|slot| std::mem::replace(slot, Value::Void))
+                                .unwrap_or(Value::Unit),
+                            None => arc.fields.get(idx as usize).cloned().unwrap_or(Value::Unit),
+                        },
+                        Value::NativeEnum(owner) => {
+                            crate::value::native_enum_field(owner, idx as usize)
+                        }
+                        _ => Value::Unit,
+                    };
+                    registers[dst as usize] = result;
+                }
+                Op::IndexGetConsume { dst, base, index } => {
+                    // Read the integer index before the mutable base
+                    // borrow so the two register accesses don't overlap.
+                    let idx_int = match &registers[index as usize] {
+                        Value::Int(n) => Some(*n),
+                        _ => None,
+                    };
+                    let result = match idx_int {
+                        Some(raw) => index_get_consume(&mut registers[base as usize], raw)?,
+                        None => {
+                            let idx_val = registers[index as usize].clone();
+                            index_get(&registers[base as usize], &idx_val)?
+                        }
+                    };
+                    registers[dst as usize] = result;
+                }
+                Op::TupleIndexConsume {
+                    dst,
+                    receiver,
+                    index,
+                } => {
+                    // Drain a uniquely-owned tuple / array field; clone
+                    // (matching `TupleIndex`) when the aggregate is shared,
+                    // and keep `TupleIndex`'s error semantics otherwise.
+                    let idx = index as usize;
+                    let oob = || RuntimeError::Arithmetic("tuple index out of bounds".to_string());
+                    let result = match &mut registers[receiver as usize] {
+                        Value::Tuple(arc) | Value::Array(arc) => match Arc::get_mut(arc) {
+                            Some(items) => items
+                                .get_mut(idx)
+                                .map(|slot| std::mem::replace(slot, Value::Void))
+                                .ok_or_else(oob)?,
+                            None => arc.get(idx).cloned().ok_or_else(oob)?,
+                        },
+                        Value::Struct(inner) => inner
+                            .fields
+                            .get(idx)
+                            .map(|(_, v)| v.clone())
+                            .ok_or_else(oob)?,
+                        other => {
+                            return Err(RuntimeError::Type(format!(
+                                "value of kind `{other}` has no tuple fields"
+                            )));
+                        }
+                    };
+                    registers[dst as usize] = result;
                 }
                 Op::IntArrayGetI64 {
                     dst_i,

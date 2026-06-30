@@ -98,7 +98,7 @@ fn header_array(pairs: &[(&str, String)]) -> Value {
     let items: Vec<Value> = pairs
         .iter()
         .map(|(k, v)| {
-            Value::Tuple(Arc::new(vec![
+            Value::Tuple(Arc::from(vec![
                 Value::String(SmolStr::from((*k).to_string())),
                 Value::String(SmolStr::from(v.clone())),
             ]))

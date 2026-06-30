@@ -22,12 +22,12 @@ struct Rect {
 }
 
 impl Shape for Square {
-    fn name(&self) -> String { format!("square") }
+    fn name(&self) -> String { "square" }
     fn area(&self) -> i64 { self.side * self.side }
 }
 
 impl Shape for Rect {
-    fn name(&self) -> String { format!("rect") }
+    fn name(&self) -> String { "rect" }
     fn area(&self) -> i64 { self.width * self.height }
 }
 

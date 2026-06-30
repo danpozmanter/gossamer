@@ -2,37 +2,28 @@
  * Goroutines + channels - the canonical producer / consumer shape.
  *
  * `go expr` spawns a goroutine. `channel()` returns a
- * (Sender, Receiver) pair, destructurable inline. `tx.send(v)`
- * hands a value to a receiver; `rx.recv()` yields the next
- * value waiting on the channel as `Option<T>` - drain with
- * `while let Some(v) = rx.recv()`.
- *
- * Runs under `gos run` on both the tree-walker and the VM.
+ * (Sender, Receiver) pair, destructurable inline. The producer
+ * sends each value with `tx.send(v)` and `close()`s the channel
+ * when the stream ends; the consumer drains it with the canonical
+ * `while let Some(v) = rx.recv()` - no sleeps, no manual counting.
  */
 
 use std::sync::channel
-use std::time
+
+fn produce(tx: Sender<i64>) {
+    tx.send(10)
+    tx.send(20)
+    tx.send(30)
+    tx.close()
+}
 
 fn main() {
     let (tx, rx) = channel()
+    go produce(tx)
 
-    // Three producers push one value each. `tx` is shared via
-    // the channel's internal Arc, so every goroutine talks to
-    // the same endpoint.
-    go tx.send(10)
-    go tx.send(20)
-    go tx.send(30)
-
-    // Give the scheduler a beat so every producer lands a value
-    // before the consumer drains the channel.
-    time::sleep(50)
-
-    // Drain three values. We don't pattern-match the Option
-    // shape so the same code lowers cleanly both interpreted
-    // and natively.
-    let _ = rx.recv()
-    let _ = rx.recv()
-    let _ = rx.recv()
-
-    println("ok: drained three values from the channel")
+    let mut total = 0
+    while let Some(v) = rx.recv() {
+        total += v
+    }
+    println!("drained three values, total = {}", total)
 }

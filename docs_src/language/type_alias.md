@@ -1,0 +1,50 @@
+# `lang::type_alias`
+
+Status: shipped
+
+Transparent type alias: `type X = T` (and generic `type Pair<A> = (A, A)`) is interchangeable with its target everywhere; a cyclic alias is rejected (`GT0024`).
+<!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
+
+A `type` declaration names an existing type. It is **transparent** - an
+alias is not a new nominal type, just another spelling of its target, so
+the two are interchangeable wherever a type is written: `let` bindings,
+parameters, returns, struct fields, and nested composites.
+
+```gossamer
+type Id = i64
+type Names = [String]
+
+fn next(id: Id) -> Id { id + 1 }   // Id and i64 are the same type
+
+let a: Id = 41
+println!("{}", next(a))            // 42
+let ns: Names = ["go", "rust"]
+```
+
+## Generic aliases
+
+An alias may take type parameters; they are substituted with the
+use-site arguments.
+
+```gossamer
+type Pair<A> = (A, A)
+
+let p: Pair<i64> = (3, 4)
+let (x, y) = p
+```
+
+## Alias chains
+
+Aliases may refer to other aliases; the chain is expanded to the
+underlying type. A chain that expands to itself is a cyclic alias and is
+rejected at check time with `GT0024`:
+
+```gossamer
+type A = B
+type B = A      // error[GT0024]: type alias `B` is cyclic - it expands to itself
+```
+
+Because aliases are transparent there is no newtype distinction: two
+aliases of the same target compare and convert exactly as the target
+does. Reach for a single-field `struct` when you want a genuinely
+distinct type.

@@ -74,10 +74,20 @@ fn fold_comptime_on_vm(augmented: String, file_label: String) -> Result<String> 
     // valid as later regions are spliced. Outermost regions never
     // overlap, so a stable descending sort by start is sufficient.
     let mut repls: Vec<(usize, usize, String)> = Vec::with_capacity(folds.len());
-    for (span, outcome) in folds {
+    for (span, raw, outcome) in folds {
         let start = span.start as usize;
         let end = span.end as usize;
         let literal = match outcome {
+            // A raw (`codegen!`) region splices its `String` result
+            // verbatim as source, so reflection-driven `comptime fn`s
+            // emit ordinary code compiled natively on every tier.
+            Ok(Value::String(s)) if raw => s.as_str().to_string(),
+            Ok(_) if raw => {
+                return Err(anyhow!(
+                    "{}: codegen! result must be a string of source",
+                    locate(&augmented, &file_label, start)
+                ));
+            }
             Ok(value) => render_literal(&value).ok_or_else(|| {
                 anyhow!(
                     "{}: comptime result must be a scalar or string",

@@ -60,7 +60,7 @@ playground intentionally does not wire up.
 
 The playground compiles the **interpreter** to WebAssembly and runs your source
 inside it. Compiling a Gossamer **program** to a standalone `.wasm` artifact -
-`gos build --target wasm32-...` - is **not supported yet**; like the other
-cross-compilation targets, the native AOT backend currently targets the host
-ISA only. For now, "WebAssembly" means *run Gossamer in the browser*, not *ship
-a `.wasm` binary*.
+`gos build --target wasm32-...` - is **not supported yet**: like every non-host
+`--target`, it emits a placeholder artifact and reports `cross-link pending`
+rather than a runnable binary. For now, "WebAssembly" means *run Gossamer in the
+browser*, not *ship a `.wasm` binary*.

@@ -40,6 +40,7 @@ pub fn lower_source_file(
         recursion_depth: 0,
         current_fn_ret_ty: None,
         import_targets: collect_import_targets(&source.uses),
+        ctor_arity: collect_ctor_arities(&source.items),
     };
     let mut items = Vec::new();
     let mut module_path: Vec<String> = Vec::new();
@@ -74,6 +75,42 @@ fn lower_items(
         }
         if let Some(lowered) = lowerer.lower_item(item, module_path) {
             out.push(lowered);
+        }
+    }
+}
+
+/// Collects the field count of every tuple struct and tuple-variant
+/// constructor (by bare name), descending into inline modules. Drives
+/// `..`-rest expansion in tuple-variant patterns.
+fn collect_ctor_arities(items: &[AstItem]) -> std::collections::HashMap<String, usize> {
+    let mut map = std::collections::HashMap::new();
+    collect_ctor_arities_into(items, &mut map);
+    map
+}
+
+fn collect_ctor_arities_into(
+    items: &[AstItem],
+    map: &mut std::collections::HashMap<String, usize>,
+) {
+    for item in items {
+        match &item.kind {
+            // Tuple structs are modelled as named fields ("0".."N-1") and their
+            // patterns are rewritten to struct form, so `..` rest expansion for
+            // them belongs to that rewrite, not here - only enum tuple variants
+            // reach the positional `Variant` matcher this drives.
+            AstItemKind::Enum(decl) => {
+                for v in &decl.variants {
+                    if let gossamer_ast::StructBody::Tuple(fields) = &v.body {
+                        map.insert(v.name.name.clone(), fields.len());
+                    }
+                }
+            }
+            AstItemKind::Mod(decl) => {
+                if let gossamer_ast::ModBody::Inline(inner) = &decl.body {
+                    collect_ctor_arities_into(inner, map);
+                }
+            }
+            _ => {}
         }
     }
 }
@@ -151,6 +188,11 @@ struct Lowerer<'a> {
     /// to expand a single-segment imported name to its qualified
     /// path when it targets a `[rust-bindings]` item.
     import_targets: std::collections::HashMap<NodeId, Vec<(String, Vec<Ident>)>>,
+    /// Field count of every tuple struct and tuple-variant constructor,
+    /// keyed by its bare name. Lets a `..` rest in a tuple-variant pattern
+    /// (`E::C(..)`) expand to the right number of wildcards, so it matches a
+    /// multi-field variant rather than only a single-field one.
+    ctor_arity: std::collections::HashMap<String, usize>,
 }
 
 impl Lowerer<'_> {
@@ -218,6 +260,11 @@ impl Lowerer<'_> {
     ) -> HirFn {
         let mut params = Vec::new();
         let mut has_self = false;
+        // Destructuring `let`s injected at body entry for non-trivial param
+        // patterns (`(a, b)`, `Pt(a, b)`, `P { x, y }`): MIR binds only one
+        // name per parameter, so the param takes a fresh binding and the
+        // pattern is bound by a `let` reusing the let-destructuring path.
+        let mut param_destructures: Vec<HirStmt> = Vec::new();
         for param in &decl.params {
             match param {
                 AstFnParam::Receiver(kind) => {
@@ -265,12 +312,15 @@ impl Lowerer<'_> {
                     is_comptime,
                 } => {
                     let ty = self.ty_of(ast_ty.id);
-                    let pattern = self.lower_pat_with_ty(pattern, ty);
-                    params.push(HirParam {
+                    let p = self.lower_typed_param(
                         pattern,
                         ty,
-                        is_comptime: *is_comptime,
-                    });
+                        *is_comptime,
+                        params.len(),
+                        span,
+                        &mut param_destructures,
+                    );
+                    params.push(p);
                 }
             }
         }
@@ -278,8 +328,14 @@ impl Lowerer<'_> {
         let saved_ret = self
             .current_fn_ret_ty
             .replace(ret.unwrap_or_else(|| self.tcx.unit()));
-        let body = decl.body.as_ref().map(|body| HirBody {
-            block: self.lower_expr_as_block(body),
+        let body = decl.body.as_ref().map(|body| {
+            let mut block = self.lower_expr_as_block(body);
+            if !param_destructures.is_empty() {
+                let mut stmts = std::mem::take(&mut param_destructures);
+                stmts.append(&mut block.stmts);
+                block.stmts = stmts;
+            }
+            HirBody { block }
         });
         self.current_fn_ret_ty = saved_ret;
         HirFn {
@@ -293,13 +349,73 @@ impl Lowerer<'_> {
         }
     }
 
+    /// Lowers one typed parameter. A non-trivial pattern (`(a, b)`,
+    /// `Pt(a, b)`, `P { x, y }`) is bound to a fresh `__paramN` local and
+    /// destructured by a `let` appended to `destructures` for injection at
+    /// body entry, since MIR binds only a single name per parameter.
+    fn lower_typed_param(
+        &mut self,
+        pattern: &AstPat,
+        ty: gossamer_types::Ty,
+        is_comptime: bool,
+        index: usize,
+        span: Span,
+        destructures: &mut Vec<HirStmt>,
+    ) -> HirParam {
+        let lowered = self.lower_pat_with_ty(pattern, ty);
+        let pattern = if matches!(
+            lowered.kind,
+            HirPatKind::Binding { .. } | HirPatKind::Wildcard
+        ) {
+            lowered
+        } else {
+            let name = format!("__param{index}");
+            destructures.push(HirStmt {
+                id: self.fresh(),
+                span,
+                kind: HirStmtKind::Let {
+                    pattern: lowered,
+                    ty,
+                    init: Some(HirExpr {
+                        id: self.fresh(),
+                        span,
+                        ty,
+                        kind: HirExprKind::Path {
+                            segments: vec![Ident::new(name.clone())],
+                            def: None,
+                        },
+                    }),
+                },
+            });
+            HirPat {
+                id: self.fresh(),
+                span,
+                ty,
+                kind: HirPatKind::Binding {
+                    name: Ident::new(name),
+                    mutable: false,
+                },
+            }
+        };
+        HirParam {
+            pattern,
+            ty,
+            is_comptime,
+        }
+    }
+
     fn lower_struct(&mut self, decl: &StructDecl) -> HirAdt {
         let ty = self.error_ty();
         let fields = match &decl.body {
             gossamer_ast::StructBody::Named(named) => {
                 named.iter().map(|f| f.name.clone()).collect()
             }
-            gossamer_ast::StructBody::Tuple(_) | gossamer_ast::StructBody::Unit => Vec::new(),
+            // Tuple-struct fields are modelled as positional names "0".."N-1"
+            // so construction and `.N` access reuse the named-field path.
+            gossamer_ast::StructBody::Tuple(tup) => (0..tup.len())
+                .map(|i| gossamer_ast::Ident::new(i.to_string()))
+                .collect(),
+            gossamer_ast::StructBody::Unit => Vec::new(),
         };
         HirAdt {
             name: decl.name.clone(),
@@ -629,16 +745,41 @@ impl Lowerer<'_> {
         receiver: &AstExpr,
         field: &gossamer_ast::FieldSelector,
     ) -> HirExprKind {
+        // A tuple struct models its fields as named "0".."N-1", so positional
+        // access `p.0` on one routes through the named-field path (the value
+        // is a struct aggregate, not a tuple).
+        let tuple_struct = matches!(field, gossamer_ast::FieldSelector::Index(_))
+            && self.receiver_is_tuple_struct(receiver);
         let lowered = self.lower_expr(receiver);
         match field {
             gossamer_ast::FieldSelector::Named(name) => HirExprKind::Field {
                 receiver: Box::new(lowered),
                 name: name.clone(),
             },
+            gossamer_ast::FieldSelector::Index(idx) if tuple_struct => HirExprKind::Field {
+                receiver: Box::new(lowered),
+                name: gossamer_ast::Ident::new(idx.to_string()),
+            },
             gossamer_ast::FieldSelector::Index(idx) => HirExprKind::TupleIndex {
                 receiver: Box::new(lowered),
                 index: *idx,
             },
+        }
+    }
+
+    /// `true` when `receiver`'s checked type is a tuple struct (peeling
+    /// references), so positional access on it is a struct field projection.
+    fn receiver_is_tuple_struct(&mut self, receiver: &AstExpr) -> bool {
+        let mut ty = self.ty_of(receiver.id);
+        loop {
+            match self.tcx.kind(ty) {
+                Some(gossamer_types::TyKind::Ref { inner, .. }) => ty = *inner,
+                Some(gossamer_types::TyKind::Adt { def, .. }) => {
+                    let local = def.local;
+                    return self.tcx.is_tuple_struct(local);
+                }
+                _ => return false,
+            }
         }
     }
 
@@ -1601,6 +1742,47 @@ impl Lowerer<'_> {
         }
     }
 
+    /// Lowers a tuple-variant / tuple-struct pattern's elements, expanding a
+    /// `..` rest into the wildcards it stands for (`E::C(..)` -> two wildcards
+    /// for a two-field variant). The matchers compare element-for-element, so
+    /// without this a `[Rest]` pattern only matches a single-field variant.
+    fn lower_variant_pat_fields(
+        &mut self,
+        elems: &[AstPat],
+        arity: Option<usize>,
+        span: Span,
+        ty: gossamer_types::Ty,
+    ) -> Vec<HirPat> {
+        let rest_pos = elems
+            .iter()
+            .position(|p| matches!(p.kind, AstPatKind::Rest));
+        match (rest_pos, arity) {
+            (Some(pos), Some(n)) => {
+                let explicit = elems.len() - 1;
+                let fill = n.saturating_sub(explicit);
+                let mut out = Vec::with_capacity(n.max(elems.len()));
+                for (i, p) in elems.iter().enumerate() {
+                    if i == pos {
+                        for _ in 0..fill {
+                            out.push(HirPat {
+                                id: self.fresh(),
+                                span,
+                                ty,
+                                kind: HirPatKind::Wildcard,
+                            });
+                        }
+                    } else {
+                        out.push(self.lower_pat(p));
+                    }
+                }
+                out
+            }
+            // Unknown arity or no rest: lower element-for-element (a lone
+            // `(..)` still matches a single-field variant, as before).
+            _ => elems.iter().map(|p| self.lower_pat(p)).collect(),
+        }
+    }
+
     fn lower_pat_kind(&mut self, pattern: &AstPat, ty: gossamer_types::Ty) -> HirPatKind {
         match &pattern.kind {
             AstPatKind::Wildcard => HirPatKind::Wildcard,
@@ -1632,13 +1814,15 @@ impl Lowerer<'_> {
                     .map_or_else(|| Ident::new("<error>"), |seg| seg.name.clone()),
                 fields: Vec::new(),
             },
-            AstPatKind::TupleStruct { path, elems } => HirPatKind::Variant {
-                name: path
+            AstPatKind::TupleStruct { path, elems } => {
+                let name = path
                     .segments
                     .last()
-                    .map_or_else(|| Ident::new("<error>"), |seg| seg.name.clone()),
-                fields: elems.iter().map(|p| self.lower_pat(p)).collect(),
-            },
+                    .map_or_else(|| Ident::new("<error>"), |seg| seg.name.clone());
+                let arity = self.ctor_arity.get(name.name.as_str()).copied();
+                let fields = self.lower_variant_pat_fields(elems, arity, pattern.span, ty);
+                HirPatKind::Variant { name, fields }
+            }
             AstPatKind::Struct { path, fields, rest } => HirPatKind::Struct {
                 name: path
                     .segments

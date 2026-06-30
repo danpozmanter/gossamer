@@ -1562,6 +1562,25 @@
     
   
   
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#patterns" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Patterns
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
 </nav>
                   </div>
                 </div>
@@ -1580,6 +1599,46 @@
 <h1 id="langmatch"><code>lang::match</code><a class="headerlink" href="#langmatch" title="Permanent link">&para;</a></h1>
 <p>Status: shipped</p>
 <p>Exhaustive pattern match expression.</p>
+<!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
+
+<p><code>match</code> is an expression: every arm yields a value and the whole <code>match</code>
+binds to it. Arms must be exhaustive - a non-exhaustive <code>match</code> is a
+compile error (<code>GM0001</code>), so add a <code>_</code> arm only when every remaining case
+genuinely means the same thing.</p>
+<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kd">let</span><span class="w"> </span><span class="n">label</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">match</span><span class="w"> </span><span class="n">shape</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">    </span><span class="n">Shape</span>::<span class="n">Circle</span><span class="p">(</span><span class="n">r</span><span class="p">)</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="s">&quot;round&quot;</span><span class="p">,</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">    </span><span class="n">Shape</span>::<span class="n">Rect</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">w</span><span class="p">,</span><span class="w"> </span><span class="n">h</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="k">if</span><span class="w"> </span><span class="n">w</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="n">h</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="s">&quot;square&quot;</span><span class="p">,</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">    </span><span class="n">Shape</span>::<span class="n">Rect</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="o">..</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="s">&quot;boxy&quot;</span><span class="p">,</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="p">}</span>
+</code></pre></div>
+<h2 id="patterns">Patterns<a class="headerlink" href="#patterns" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Literals, <code>_</code> wildcard, and bindings (<code>name</code>, <code>mut name</code>).</li>
+<li>Enum variants: tuple <code>Shape::Line(n)</code>, struct <code>Shape::Named { id }</code>,
+  unit <code>Shape::Dot</code>.</li>
+<li>Tuple-struct patterns: <code>Pt(a, b)</code> (a tuple struct destructures
+  positionally, like a tuple).</li>
+<li>Struct patterns <code>Point { x, y }</code>, renamed <code>Point { x: a, y: b }</code>.</li>
+<li>Tuples <code>(a, b)</code>; rest <code>..</code> for the unmatched fields (<code>Shape::Box(..)</code>,
+  <code>Point { x, .. }</code>).</li>
+<li>Ranges: closed <code>1..=5</code>, exclusive <code>1..5</code>, open-ended (<code>..=hi</code>, <code>lo..</code>);
+  a range pattern is opaque to exhaustiveness, so a <code>_</code> arm is still
+  required.</li>
+<li>Or-patterns <code>a | b</code>, <code>@</code>-bindings <code>n @ 1..=3</code>, and guards `Some(n) if n<blockquote>
+<p>0`.</p>
+</blockquote>
+</li>
+</ul>
+<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="kd">let</span><span class="w"> </span><span class="n">kind</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">match</span><span class="w"> </span><span class="n">s</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">    </span><span class="n">Shape</span>::<span class="n">Dot</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">    </span><span class="n">Shape</span>::<span class="n">Line</span><span class="p">(</span><span class="o">..</span><span class="p">)</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">    </span><span class="n">Shape</span>::<span class="nb">Box</span><span class="p">(</span><span class="n">w</span><span class="p">,</span><span class="w"> </span><span class="n">h</span><span class="p">)</span><span class="w"> </span><span class="k">if</span><span class="w"> </span><span class="n">w</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="n">h</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">    </span><span class="n">Shape</span>::<span class="nb">Box</span><span class="p">(</span><span class="o">..</span><span class="p">)</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="mi">3</span><span class="p">,</span>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="p">}</span>
+</code></pre></div>
+<p>Patterns also drive <code>let</code>, <code>if let</code> / <code>while let</code>, <code>for</code>, and function
+parameters - see <a href="../fn/">fn</a> for parameter destructuring. The
+<code>matches!(expr, pat)</code> macro is a boolean one-arm match.</p>
 
 
 

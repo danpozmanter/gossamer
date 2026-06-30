@@ -1,0 +1,43 @@
+// Phase 2 staged reflection. A `for` over `typeInfo::<T>()` is a
+// compile-time field loop: unrolled once per field in the single compile
+// (no `comptime` fold pass, no whole-program re-compile), with `name`/`ty`
+// comptime, `field_of(v, name)` projecting the concrete field, and a
+// `match` over the comptime `ty` folding to the taken arm. The emitted body
+// is ordinary native field code - identical on every tier, no runtime
+// reflection.
+//
+// Written once as a generic `fn rec<T>` and specialized per turbofish call
+// site (`rec::<User>(x)`), so one reflection-driven serializer covers every
+// struct - the autoderive shape, now in user space.
+
+struct Point { x: i64, y: i64 }
+struct User { id: i64, name: String, active: bool }
+
+fn rec<T>(v: T) -> String {
+    let mut out = ""
+    for (name, ty) in typeInfo::<T>() {
+        let label = match ty {
+            "String" => "str",
+            "bool" => "bool",
+            "f64" => "real",
+            _ => "int",
+        }
+        out += name + ":" + label + "=" + format!("{}", field_of(v, name)) + ";"
+    }
+    out
+}
+
+// A concrete-type field loop needs no turbofish and is unrolled directly.
+fn point_xy(p: Point) -> String {
+    let mut out = ""
+    for (name, _) in typeInfo::<Point>() {
+        out += name + "=" + format!("{}", field_of(p, name)) + " "
+    }
+    out
+}
+
+fn main() {
+    println!("{}", rec::<Point>(Point { x: 1, y: 2 }))
+    println!("{}", rec::<User>(User { id: 7, name: "jane", active: true }))
+    println!("{}", point_xy(Point { x: 3, y: 4 }))
+}

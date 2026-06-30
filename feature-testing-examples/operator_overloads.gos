@@ -1,0 +1,74 @@
+// Operator overloading and the parser-level desugar macros. `impl`-provided
+// operators (`%`, unary `-`, `|`, `&`, `^`, `<<`, `>>`, `[]`) route to their
+// trait methods; `matches!` / `todo!` / `unimplemented!` / `unreachable!` /
+// `dbg!` desugar before the tier split, and `x.into()` routes to `B::from(x)`.
+// Output must be bit-identical across the VM, Cranelift, and LLVM.
+
+use std::errors
+
+struct N { v: i64 }
+
+impl N {
+    fn rem(self, o: N) -> N { N { v: self.v % o.v } }
+    fn neg(self) -> N { N { v: 0 - self.v } }
+    fn bitor(self, o: N) -> N { N { v: self.v | o.v } }
+    fn bitand(self, o: N) -> N { N { v: self.v & o.v } }
+    fn bitxor(self, o: N) -> N { N { v: self.v ^ o.v } }
+    fn shl(self, o: N) -> N { N { v: self.v << o.v } }
+    fn shr(self, o: N) -> N { N { v: self.v >> o.v } }
+}
+
+struct Row { data: Vec<i64> }
+
+impl Row {
+    fn index(&self, i: i64) -> i64 { self.data[i] + 100 }
+}
+
+struct Inches { n: i64 }
+struct Centimetres { n: i64 }
+
+impl Centimetres {
+    fn from(i: Inches) -> Centimetres { Centimetres { n: i.n * 254 / 100 } }
+    fn try_from(i: Inches) -> Result<Centimetres, errors::Error> {
+        if i.n < 0 { return Err(errors::new("negative")) }
+        Ok(Centimetres { n: i.n * 254 / 100 })
+    }
+}
+
+fn classify(x: i64) -> i64 {
+    if matches!(x, 0) {
+        return 0
+    }
+    if matches!(x, 1..=9) {
+        return 1
+    }
+    2
+}
+
+fn main() {
+    println!("{}", (N { v: 17 } % N { v: 5 }).v)
+    let a = N { v: 6 }
+    println!("{}", (-a).v)
+    println!("{}", (N { v: 5 } | N { v: 2 }).v)
+    println!("{}", (N { v: 6 } & N { v: 3 }).v)
+    println!("{}", (N { v: 5 } ^ N { v: 1 }).v)
+    println!("{}", (N { v: 1 } << N { v: 4 }).v)
+    println!("{}", (N { v: 32 } >> N { v: 2 }).v)
+
+    let r = Row { data: [7, 8, 9] }
+    println!("{}", r[1])
+
+    println!("{} {} {}", classify(0), classify(5), classify(50))
+
+    let y = dbg!(20 + 22)
+    println!("dbg yielded {}", y)
+
+    let cm: Centimetres = Inches { n: 10 }.into()
+    println!("{}", cm.n)
+
+    let tc: Result<Centimetres, errors::Error> = Inches { n: 20 }.try_into()
+    match tc {
+        Ok(c) => println!("try {}", c.n),
+        Err(e) => println!("err {}", e),
+    }
+}

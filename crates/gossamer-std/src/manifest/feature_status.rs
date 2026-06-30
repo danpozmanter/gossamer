@@ -130,7 +130,7 @@ pub const FEATURE_STATUS: &[FeatureStatus] = &[
     ),
     lang(
         "lang::macros",
-        "Six built-in format macros (print/println/eprint/eprintln/format/panic).",
+        "Built-in macros only - no user-defined macros: the format family (print/println/eprint/eprintln/format/panic), the desugar macros (matches!/todo!/unimplemented!/unreachable!/dbg!), and the build-time regex!/sql!/codegen!.",
     ),
     lang(
         "lang::doctest",
@@ -147,6 +147,10 @@ pub const FEATURE_STATUS: &[FeatureStatus] = &[
         "Module-level mutable or immutable static slot.",
     ),
     lang(
+        "lang::type_alias",
+        "Transparent type alias: `type X = T` (and generic `type Pair<A> = (A, A)`) is interchangeable with its target everywhere; a cyclic alias is rejected (`GT0024`).",
+    ),
+    lang(
         "lang::mut_ref_params",
         "`&mut Vec<T>` / `&mut [T]` parameters write through to the caller's storage on every tier.",
     ),
@@ -158,7 +162,7 @@ pub const FEATURE_STATUS: &[FeatureStatus] = &[
     // Compile-time evaluation. Folds to a literal before the tiers split.
     lang(
         "lang::comptime",
-        "Zig-style compile-time evaluation: `comptime { ... }` blocks, `comptime fn` calls, and `comptime` parameters run on the bytecode VM during compilation and fold to a literal, so every tier compiles the identical constant. Includes `typeInfo::<T>()` struct-field reflection and the `regex!` / `sql!` build-time validation macros.",
+        "Zig-style compile-time evaluation: `comptime { ... }` blocks, `comptime fn` calls, and `comptime` parameters run on the bytecode VM during compilation and fold to a literal, so every tier compiles the identical constant. `typeInfo::<T>()` reflects a type's fields, a `for (name, ty) in typeInfo::<T>()` loop unrolls into native per-field code, and `codegen!(...)` splices a `comptime fn`'s `String` back as source. Includes the `regex!` / `sql!` build-time validation macros.",
     ),
     // Planned / partial language surface.
     FeatureStatus {

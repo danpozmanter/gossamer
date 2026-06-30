@@ -1936,8 +1936,8 @@ runs them on the register-based bytecode VM.</p>
 <code>//!</code> doc-comment syntax - a run of <code>//</code> lines directly above
 an item (no blank line between) is its documentation, and a
 run at the top of a file is the module's. <code>gos doc
-src/lib.gos</code> prints every item plus that summary block. HTML
-output lands with Stream H polish.</p>
+src/lib.gos</code> prints every item plus that summary block;
+<code>gos doc --html &lt;path&gt; src/lib.gos</code> writes an HTML page instead.</p>
 <h2 id="foreign-code-rust-bindings">Foreign code (<code>[rust-bindings]</code>)<a class="headerlink" href="#foreign-code-rust-bindings" title="Permanent link">&para;</a></h2>
 <p>To call native (Rust) code, declare a binding crate under
 <code>[rust-bindings]</code> in <code>project.toml</code>. The crate depends on
@@ -1970,9 +1970,12 @@ See the SPEC (section 12 in the repository root),
 <code>crates/gossamer-binding/ABI_0_4.md</code>, and the
 <code>example-external-libraries/</code> projects for full detail.</p>
 <h2 id="publishing">Publishing<a class="headerlink" href="#publishing" title="Permanent link">&para;</a></h2>
-<p><em>(planned)</em> - <code>gos publish</code> pushes to the default registry once
-the backend lands. Until then, path-based + git-based
-dependencies in <code>project.toml</code> work end-to-end.</p>
+<p><code>gos publish</code> packs the project, signs the tarball (Ed25519), and
+uploads it to the registry; <code>--dry-run</code> packs and signs without
+uploading. <code>gos yank</code>, <code>gos login</code> / <code>gos logout</code>, and <code>gos owner</code>
+round out the registry workflow, with dependency tarballs sha256-pinned
+in <code>project.lock</code>. Path-based and git-based dependencies in
+<code>project.toml</code> also work end-to-end.</p>
 
 
 

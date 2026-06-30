@@ -157,8 +157,8 @@ Gossamer uses one comment form: `//` for line comments and
 `//!` doc-comment syntax - a run of `//` lines directly above
 an item (no blank line between) is its documentation, and a
 run at the top of a file is the module's. `gos doc
-src/lib.gos` prints every item plus that summary block. HTML
-output lands with Stream H polish.
+src/lib.gos` prints every item plus that summary block;
+`gos doc --html <path> src/lib.gos` writes an HTML page instead.
 
 ## Foreign code (`[rust-bindings]`)
 
@@ -202,6 +202,9 @@ See the SPEC (section 12 in the repository root),
 
 ## Publishing
 
-*(planned)* - `gos publish` pushes to the default registry once
-the backend lands. Until then, path-based + git-based
-dependencies in `project.toml` work end-to-end.
+`gos publish` packs the project, signs the tarball (Ed25519), and
+uploads it to the registry; `--dry-run` packs and signs without
+uploading. `gos yank`, `gos login` / `gos logout`, and `gos owner`
+round out the registry workflow, with dependency tarballs sha256-pinned
+in `project.lock`. Path-based and git-based dependencies in
+`project.toml` also work end-to-end.

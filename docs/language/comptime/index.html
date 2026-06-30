@@ -623,6 +623,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#code-generation-from-reflection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Code generation from reflection
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#compile-time-validation-regex-sql" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1721,6 +1732,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#code-generation-from-reflection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Code generation from reflection
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#compile-time-validation-regex-sql" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1772,7 +1794,7 @@
 
 <h1 id="langcomptime"><code>lang::comptime</code><a class="headerlink" href="#langcomptime" title="Permanent link">&para;</a></h1>
 <p>Status: shipped</p>
-<p>Zig-style compile-time evaluation: <code>comptime { ... }</code> blocks, <code>comptime fn</code> calls, and <code>comptime</code> parameters run on the bytecode VM during compilation and fold to a literal, so every tier compiles the identical constant. Includes <code>typeInfo::&lt;T&gt;()</code> struct-field reflection and the <code>regex!</code> / <code>sql!</code> build-time validation macros.</p>
+<p>Zig-style compile-time evaluation: <code>comptime { ... }</code> blocks, <code>comptime fn</code> calls, and <code>comptime</code> parameters run on the bytecode VM during compilation and fold to a literal, so every tier compiles the identical constant. <code>typeInfo::&lt;T&gt;()</code> reflects a type's fields, a <code>for (name, ty) in typeInfo::&lt;T&gt;()</code> loop unrolls into native per-field code, and <code>codegen!(...)</code> splices a <code>comptime fn</code>'s <code>String</code> back as source. Includes the <code>regex!</code> / <code>sql!</code> build-time validation macros.</p>
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
 
 <p>Zig-style compile-time evaluation. <code>comptime</code> runs ordinary Gossamer on
@@ -1855,13 +1877,60 @@ consumes that to generate per-type code:</p>
 <p>The reflection is resolved at compile time and nothing about it survives
 into the running binary - the emitted code is exactly the hand-written
 string.</p>
+<h2 id="code-generation-from-reflection">Code generation from reflection<a class="headerlink" href="#code-generation-from-reflection" title="Permanent link">&para;</a></h2>
+<p>Folding to a constant <em>value</em> is the floor; reflection also generates
+native <em>code</em>. Both shapes resolve entirely at compile time - the emitted
+body is ordinary native field code, identical on every tier with no
+runtime reflection.</p>
+<p>A plain <code>for (name, ty) in typeInfo::&lt;T&gt;()</code> loop is unrolled once per
+field in the single compile (no fold pass). <code>name</code> / <code>ty</code> are comptime,
+<code>field_of(v, name)</code> projects the concrete field, and a <code>match</code> over the
+comptime <code>ty</code> folds to the taken arm. Written once as a generic
+<code>fn rec&lt;T&gt;</code> and specialised per turbofish call site, one reflection-driven
+serializer covers every struct - the <code>autoderive</code> shape, in user space:</p>
+<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="k">struct</span> <span class="nc">User</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">id</span>: <span class="kt">i64</span><span class="p">,</span><span class="w"> </span><span class="n">name</span>: <span class="nb">String</span><span class="p">,</span><span class="w"> </span><span class="n">active</span>: <span class="kt">bool</span> <span class="p">}</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="k">fn</span> <span class="nf">record</span><span class="o">&lt;</span><span class="n">T</span><span class="o">&gt;</span><span class="p">(</span><span class="n">v</span>: <span class="nc">T</span><span class="p">)</span><span class="w"> </span>-&gt; <span class="nb">String</span> <span class="p">{</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="k">mut</span><span class="w"> </span><span class="n">out</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">&quot;&quot;</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="n">name</span><span class="p">,</span><span class="w"> </span><span class="n">ty</span><span class="p">)</span><span class="w"> </span><span class="k">in</span><span class="w"> </span><span class="n">typeInfo</span>::<span class="o">&lt;</span><span class="n">T</span><span class="o">&gt;</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="w">        </span><span class="kd">let</span><span class="w"> </span><span class="n">label</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">match</span><span class="w"> </span><span class="n">ty</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="w">            </span><span class="s">&quot;String&quot;</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="s">&quot;str&quot;</span><span class="p">,</span>
+<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="w">            </span><span class="s">&quot;bool&quot;</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="s">&quot;bool&quot;</span><span class="p">,</span>
+<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="w">            </span><span class="n">_</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="s">&quot;int&quot;</span><span class="p">,</span>
+<a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a><span class="w">        </span><span class="p">}</span>
+<a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a><span class="w">        </span><span class="n">out</span><span class="w"> </span><span class="o">+=</span><span class="w"> </span><span class="n">name</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="s">&quot;:&quot;</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">label</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="s">&quot;=&quot;</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="fm">format!</span><span class="p">(</span><span class="s">&quot;{}&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">field_of</span><span class="p">(</span><span class="n">v</span><span class="p">,</span><span class="w"> </span><span class="n">name</span><span class="p">))</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="s">&quot;;&quot;</span>
+<a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-3-13" name="__codelineno-3-13" href="#__codelineno-3-13"></a><span class="w">    </span><span class="n">out</span>
+<a id="__codelineno-3-14" name="__codelineno-3-14" href="#__codelineno-3-14"></a><span class="p">}</span>
+<a id="__codelineno-3-15" name="__codelineno-3-15" href="#__codelineno-3-15"></a>
+<a id="__codelineno-3-16" name="__codelineno-3-16" href="#__codelineno-3-16"></a><span class="c1">// id:int=7;name:str=jane;active:bool=true;</span>
+<a id="__codelineno-3-17" name="__codelineno-3-17" href="#__codelineno-3-17"></a><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;{}&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">record</span>::<span class="o">&lt;</span><span class="n">User</span><span class="o">&gt;</span><span class="p">(</span><span class="n">User</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">id</span>: <span class="mi">7</span><span class="p">,</span><span class="w"> </span><span class="n">name</span>: <span class="s">&quot;jane&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">active</span>: <span class="nc">true</span><span class="w"> </span><span class="p">}))</span>
+</code></pre></div>
+<p>A concrete-type loop (<code>for (name, ty) in typeInfo::&lt;Point&gt;()</code>) needs no
+turbofish and is unrolled directly.</p>
+<p><code>codegen!(...)</code> - splices a <code>comptime fn</code>'s <code>String</code> result back as raw
+source, for generation beyond the field-loop shape. The spliced
+expression is type-checked in place, so it must produce the type the call
+site expects:</p>
+<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="n">comptime</span><span class="w"> </span><span class="k">fn</span> <span class="nf">gen_show</span><span class="p">(</span><span class="n">fields</span>: <span class="p">[(</span><span class="nb">String</span><span class="p">,</span><span class="w"> </span><span class="nb">String</span><span class="p">)],</span><span class="w"> </span><span class="n">v</span>: <span class="nb">String</span><span class="p">)</span><span class="w"> </span>-&gt; <span class="nb">String</span> <span class="p">{</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="k">mut</span><span class="w"> </span><span class="n">out</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">&quot;</span><span class="se">\&quot;\&quot;</span><span class="s">&quot;</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="n">name</span><span class="p">,</span><span class="w"> </span><span class="n">_</span><span class="p">)</span><span class="w"> </span><span class="k">in</span><span class="w"> </span><span class="n">fields</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="w">        </span><span class="n">out</span><span class="w"> </span><span class="o">+=</span><span class="w"> </span><span class="s">&quot; + </span><span class="se">\&quot;</span><span class="s">&quot;</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">name</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="s">&quot;=</span><span class="se">\&quot;</span><span class="s"> + format!(</span><span class="se">\&quot;</span><span class="s">{}</span><span class="se">\&quot;</span><span class="s">, &quot;</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">v</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="s">&quot;.&quot;</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">name</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="s">&quot;) + </span><span class="se">\&quot;</span><span class="s"> </span><span class="se">\&quot;</span><span class="s">&quot;</span>
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="w">    </span><span class="n">out</span>
+<a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="p">}</span>
+<a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a>
+<a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a><span class="k">fn</span> <span class="nf">show</span><span class="p">(</span><span class="n">p</span>: <span class="nc">Point</span><span class="p">)</span><span class="w"> </span>-&gt; <span class="nb">String</span> <span class="p">{</span>
+<a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a><span class="w">    </span><span class="n">codegen</span><span class="o">!</span><span class="p">(</span><span class="n">gen_show</span><span class="p">(</span><span class="n">typeInfo</span>::<span class="o">&lt;</span><span class="n">Point</span><span class="o">&gt;</span><span class="p">(),</span><span class="w"> </span><span class="s">&quot;p&quot;</span><span class="p">))</span><span class="w">   </span><span class="c1">// emits: &quot;&quot; + &quot;x=&quot; + ... + &quot; &quot;</span>
+<a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a><span class="p">}</span>
+</code></pre></div>
 <h2 id="compile-time-validation-regex-sql">Compile-time validation - <code>regex!</code> / <code>sql!</code><a class="headerlink" href="#compile-time-validation-regex-sql" title="Permanent link">&para;</a></h2>
 <p><code>regex!("…")</code> and <code>sql!("…")</code> validate their argument at build time and
 fold to the validated string. A malformed pattern or statement fails the
 build with a diagnostic rather than reaching runtime - the project's
 "if it compiles, it works" goal:</p>
-<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="kd">let</span><span class="w"> </span><span class="n">pattern</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">regex</span><span class="o">!</span><span class="p">(</span><span class="s">&quot;^</span><span class="se">\\</span><span class="s">d{4}-</span><span class="se">\\</span><span class="s">d{2}-</span><span class="se">\\</span><span class="s">d{2}$&quot;</span><span class="p">)</span><span class="w">   </span><span class="c1">// compiled + checked at build time</span>
-<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="kd">let</span><span class="w"> </span><span class="n">query</span><span class="w">   </span><span class="o">=</span><span class="w"> </span><span class="n">sql</span><span class="o">!</span><span class="p">(</span><span class="s">&quot;SELECT id, name FROM users WHERE id = 1&quot;</span><span class="p">)</span>
+<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="kd">let</span><span class="w"> </span><span class="n">pattern</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">regex</span><span class="o">!</span><span class="p">(</span><span class="s">&quot;^</span><span class="se">\\</span><span class="s">d{4}-</span><span class="se">\\</span><span class="s">d{2}-</span><span class="se">\\</span><span class="s">d{2}$&quot;</span><span class="p">)</span><span class="w">   </span><span class="c1">// compiled + checked at build time</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="kd">let</span><span class="w"> </span><span class="n">query</span><span class="w">   </span><span class="o">=</span><span class="w"> </span><span class="n">sql</span><span class="o">!</span><span class="p">(</span><span class="s">&quot;SELECT id, name FROM users WHERE id = 1&quot;</span><span class="p">)</span>
 </code></pre></div>
 <p><code>regex!("(unclosed")</code> fails the build with <code>unclosed group</code>; an
 unbalanced <code>sql!</code> fails with a parenthesis error. These are the only
@@ -1872,17 +1941,20 @@ format macros remains a parse error (<code>GP0001</code>).</p>
 program onto the bytecode VM and evaluates every comptime region - a
 <code>comptime { ... }</code> block, a <code>comptime fn</code> call, or a <code>comptime</code>
 parameter's argument. Each result is spliced back into the source as a
-literal, and the program is recompiled normally. Because the
-substitution happens before the tiers diverge, all three tiers compile
-the same constant: tier parity is automatic.</p>
+literal, and the program is recompiled normally. A <code>for</code> over
+<code>typeInfo::&lt;T&gt;()</code> skips the fold pass entirely: it is unrolled per field
+in the single compile. Either way the substitution happens before the
+tiers diverge, so all three tiers compile the same code: tier parity is
+automatic.</p>
 <h2 id="scope">Scope<a class="headerlink" href="#scope" title="Permanent link">&para;</a></h2>
 <p>The shipped surface is compile-time <em>evaluation</em>, <em>reflection over
-named structs</em>, <em>comptime parameters</em>, and <em>build-time validation</em>.
-Comptime regions fold to scalar or string results. Re-expressing the
-built-in <code>autoderive</code> serializers as comptime library code is not part
-of the current surface; the derived <code>to_json</code> / <code>from_json</code> continue to
-back serialization, and <code>comptime { to_json(value) }</code> runs them at build
-time. See <code>SPEC.md</code> section 14.</p>
+named structs</em>, <em>comptime parameters</em>, <em>build-time validation</em>, and
+<em>code generation</em> (a <code>for</code> over <code>typeInfo::&lt;T&gt;()</code> and <code>codegen!</code>).
+Comptime regions fold to scalar or string results. You can now write the
+reflection-driven <code>autoderive</code> shape yourself, but the built-in
+<code>to_json</code> / <code>from_json</code> serializers remain built in (not yet re-expressed
+as comptime library code); <code>comptime { to_json(value) }</code> runs them at
+build time. See <code>SPEC.md</code> section 14.</p>
 
 
 

@@ -7,10 +7,10 @@
 
 use std::collections::HashMap
 
-#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+#[derive(PartialEq, Eq, Debug)]
 struct Pos { x: i64, y: i64 }
 
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(PartialEq, Eq, Debug)]
 struct Score { wins: i64, name: String }
 
 fn show_opt_i64(label: String, o: Option<i64>) {

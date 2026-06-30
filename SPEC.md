@@ -666,19 +666,26 @@ A struct may be annotated with `#[derive(...)]` to have standard trait methods
 generated automatically:
 
 ```
-#[derive(Clone, PartialEq, Eq, Default, Debug)]
+#[derive(PartialEq, Eq, Default, Debug)]
 struct Point { x: i64, y: i64 }
 ```
 
-The supported traits are:
+The supported traits are `Debug`, `Default`, `PartialEq`, `Eq`, `PartialOrd`,
+and `Ord`:
 
-- `Clone` - `.clone()` returns a field-by-field copy.
 - `PartialEq` / `Eq` - `==` and `!=` compare field-by-field. (`Eq` is a marker
-  requiring `PartialEq`.)
+  requiring `PartialEq`.) Note structs / enums already compare by value with no
+  derive (§3.12); the derive forces it for generic / container-field types.
+- `PartialOrd` / `Ord` - `<` `<=` `>` `>=` order field-by-field (structs) or by
+  variant rank then payload (enums); likewise automatic for plain types.
 - `Default` - `Type::default()` builds a zero-valued instance (`0` / `false` /
   `""` / `[]` / each field type's own default; skipped when a field type has no
   derivable default).
 - `Debug` - `{:?}` / `{}` render `Name { field: value, … }`.
+
+`Clone` is **not** derivable (`GT0025`): structs copy by value, so `let b = a`
+copies and `a.clone()` is a universal builtin. `Hash`, `Copy`, `Display`, and
+serde are likewise automatic; `From` / operators are written `impl Trait for T`.
 
 The methods are synthesized as ordinary Gossamer `impl` source at parse time,
 so they compile and run identically on every tier. Fields may be primitives,
@@ -692,9 +699,10 @@ struct-payload (`Rect { w, h }`) variants may be mixed freely:
 `Default` (which selects the `#[default]` unit variant) all derive and
 run identically on every tier.
 
-`#[derive(Hash)]` is accepted on a struct / tuple used as a `HashMap` /
-`HashSet` key: such keys are hashed and compared by value on every tier, so two
-equal-valued keys at distinct allocations resolve to the same entry.
+A struct / tuple used as a `HashMap` / `HashSet` key is hashed and compared by
+value on every tier - so two equal-valued keys at distinct allocations resolve
+to the same entry - with no `#[derive(Hash)]`; hashing is automatic, and
+`#[derive(Hash)]` is rejected (`GT0025`).
 
 ---
 
@@ -1956,9 +1964,9 @@ transformation when the chain doesn't return from the enclosing fn.
   through, `json::Value` fields pass through). Missing required
   fields and type mismatches surface as
   `Result::Err(errors::Error)` with a path-qualified message.
-- `#[derive(Serialize, Deserialize)]` is reserved for future
-  customization (rename, omit-empty, default); the current
-  auto-derive uses the source field names verbatim.
+- Serialization is automatic (every struct gets `to_json::<T>` /
+  `from_json::<T>` using the source field names verbatim);
+  `#[derive(Serialize, Deserialize)]` is rejected (`GT0025`).
 
 ### 10.12 `std::thread`, `std::channel`
 
@@ -2105,7 +2113,7 @@ form is not implemented and remains out of scope.
 ## 13. Attributes
 
 ```
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Default, PartialEq)]
 #[inline]
 #[no_mangle]
 #[repr(C)]
@@ -2120,9 +2128,11 @@ error for forward-compatibility).
 
 ## 14. Macros
 
-Gossamer has **exactly six** built-in macros, all format-shaped. They
-are expanded at parse time to a call on the matching variadic builtin;
-there is no runtime macro engine.
+Gossamer has a small fixed macro set, expanded at parse time; there is
+no runtime macro engine and no user-defined macros. Six are
+format-shaped (below); plus the desugar macros `matches!(e, pat)`,
+`todo!` / `unimplemented!` / `unreachable!`, and `dbg!(e)`, and the
+build-time `regex!` / `sql!` / `codegen!`.
 
 | Macro | Returns | Destination |
 |---|---|---|
@@ -2164,14 +2174,15 @@ generate per-type code, and the `regex!` / `sql!` macros validate their
 argument at build time, failing the build on malformed input. See the
 [`comptime` language page](docs_src/language/comptime.md).
 
-> **Conformance (0.5.0)** `status: partial`. The 0.5.0 toolchain
-> implements exactly six format-shaped macros - `println!`, `print!`,
-> `eprintln!`, `eprint!`, `format!`, and `panic!`. Every other
-> `name!(...)` form - including `vec!`, `write!`, `writeln!`,
-> `unreachable!`, `todo!`, `unimplemented!`, `map!`, `set!`, `assert!`,
-> `assert_eq!`, `debug_assert!`, `include_str!`, `include_bytes!`, and
-> `env!` - is rejected at parse time (`GP0001`). User-defined macros are
-> post-0.5.0 work.
+> **Conformance (0.22.0)** `status: partial`. The toolchain implements
+> the six format-shaped macros (`println!`, `print!`, `eprintln!`,
+> `eprint!`, `format!`, `panic!`), the desugar macros (`matches!`,
+> `todo!`, `unimplemented!`, `unreachable!`, `dbg!`), and the
+> build-time `regex!` / `sql!` / `codegen!`. Every other `name!(...)`
+> form - including `vec!`, `write!`, `writeln!`, `map!`, `set!`,
+> `assert!`, `assert_eq!`, `debug_assert!`, `include_str!`,
+> `include_bytes!`, and `env!` - is rejected at parse time (`GP0001`).
+> User-defined macros remain out of scope.
 
 ---
 

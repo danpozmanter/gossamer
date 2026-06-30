@@ -93,14 +93,19 @@ let u = User { name: "Ada", age: 36 }
 let older = User { age: 37, ..u }
 ```
 
-Deriving `Debug`, `Clone`, and `PartialEq` is the Gossamer
-equivalent of data class's auto-generated `toString` /
-`equals` / `hashCode`:
+A data class's auto-generated `equals` / `hashCode` / `copy` come
+for free in Gossamer: structs are value types, so `==`, `a.clone()`,
+`let b = a` (copy), and hashing all work with **no derive**. Only
+`Debug` (the `{:?}` formatter, the `toString` analogue) is opted into:
 
 ```gos
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug)]
 struct User { name: String, age: i64 }
 ```
+
+The derivable set is exactly `Debug, Default, PartialEq, Eq,
+PartialOrd, Ord`; deriving `Clone` / `Hash` / `Copy` is rejected
+(`GT0025`) because each is already automatic.
 
 ## Sealed classes → enums
 

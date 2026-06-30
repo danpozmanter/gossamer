@@ -82,7 +82,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#codegen-abi-the-flat-i64-monomorphisation-contract" class="md-skip">
+        <a href="#codegen-abi-generic-monomorphisation" class="md-skip">
           Skip to content
         </a>
       
@@ -1159,32 +1159,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#why-this-constraint-exists" class="md-nav__link">
+  <a href="#how-a-struct-parameter-is-laid-out" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Why this constraint exists
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#how-user-code-lives-within-the-constraint" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        How user code lives within the constraint
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#what-changes-in-v1x" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        What changes in v1.x
+        How a struct parameter is laid out
       
     </span>
   </a>
@@ -1710,32 +1688,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#why-this-constraint-exists" class="md-nav__link">
+  <a href="#how-a-struct-parameter-is-laid-out" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Why this constraint exists
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#how-user-code-lives-within-the-constraint" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        How user code lives within the constraint
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#what-changes-in-v1x" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        What changes in v1.x
+        How a struct parameter is laid out
       
     </span>
   </a>
@@ -1770,105 +1726,80 @@
 
 
 
-<h1 id="codegen-abi-the-flat-i64-monomorphisation-contract">Codegen ABI: the flat-i64 monomorphisation contract<a class="headerlink" href="#codegen-abi-the-flat-i64-monomorphisation-contract" title="Permanent link">&para;</a></h1>
-<p>Gossamer's compiled tier (<code>gos build</code> and <code>gos build --release</code>)
-monomorphises every generic instantiation to a concrete function
-in MIR. Today that monomorphisation <strong>packs every value into a
-64-bit slot</strong> at the ABI boundary. The runtime reads / writes
-those slots; codegen ferries them through Cranelift or LLVM.</p>
-<p>This page documents the contract precisely, so you know which
-generics work end-to-end in v1 and which deliberately fail
-compilation with a diagnostic.</p>
+<h1 id="codegen-abi-generic-monomorphisation">Codegen ABI: generic monomorphisation<a class="headerlink" href="#codegen-abi-generic-monomorphisation" title="Permanent link">&para;</a></h1>
+<p>Gossamer's compiled tiers (<code>gos build</code> and <code>gos build --release</code>)
+monomorphise every generic instantiation to a concrete function in
+MIR, then lower it through LLVM; the in-process Cranelift JIT behind
+<code>gos run</code> does the same. Monomorphisation specialises each
+instantiation on its concrete type, so inner-loop ops are typed - an
+<code>i64</code> add is a single machine instruction, not a polymorphic dispatch.</p>
+<p>This page documents what the ABI represents and the one type it
+deliberately rejects.</p>
 <h2 id="what-works">What works<a class="headerlink" href="#what-works" title="Permanent link">&para;</a></h2>
-<p>A generic instantiation <code>Foo&lt;T&gt;</code> compiles end-to-end when <strong>every
-type parameter <code>T</code> is representable in 64 bits</strong>:</p>
+<p>A generic instantiation compiles end-to-end - and runs with identical
+output across the bytecode VM, the Cranelift JIT, and the LLVM AOT
+backend - for:</p>
 <ul>
 <li>All integer types up to 64 bits (<code>i8</code> … <code>i64</code>, <code>u8</code> … <code>u64</code>,
-  <code>isize</code>, <code>usize</code>).</li>
-<li><code>f32</code>, <code>f64</code>.</li>
-<li><code>bool</code>, <code>char</code>.</li>
-<li><code>&amp;T</code> and <code>&amp;mut T</code> references - references are pointers, which
-  are 64 bits on the platforms we ship.</li>
-<li>Heap-managed aggregate <strong>handles</strong>: <code>String</code>, <code>Vec&lt;T&gt;</code>,
-  <code>HashMap&lt;K, V&gt;</code>, channel halves, <code>I64Vec</code>, <code>Mutex&lt;T&gt;</code>,
-  <code>WaitGroup</code>, <code>Atomic&lt;i64&gt;</code>. Each is a 64-bit pointer or handle
-  to runtime-managed storage.</li>
+  <code>isize</code>, <code>usize</code>), <code>f32</code> / <code>f64</code>, <code>bool</code>, <code>char</code>.</li>
+<li><code>&amp;T</code> and <code>&amp;mut T</code> references - pointers, 64 bits on every shipped
+  platform - for any <code>T</code>.</li>
+<li>Heap-managed aggregate handles: <code>String</code>, <code>Vec&lt;T&gt;</code>,
+  <code>HashMap&lt;K, V&gt;</code>, <code>BTreeMap&lt;K, V&gt;</code>, channel halves, <code>Mutex&lt;T&gt;</code>,
+  <code>WaitGroup</code>, atomics. Each is a 64-bit handle to runtime-managed
+  storage.</li>
+<li><strong>User structs, tuples, enums, and strings passed by value.</strong> A
+  generic function over a by-value struct compiles and runs:</li>
 </ul>
-<p><code>i128</code> / <code>u128</code> are <strong>rejected at type-check time</strong> (<code>GT0014</code>): no
-tier has a 128-bit runtime representation. Use <code>i64</code> / <code>u64</code>, or
-split the value into two 64-bit halves.</p>
+<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="k">struct</span> <span class="nc">Point</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">x</span>: <span class="kt">i64</span><span class="p">,</span><span class="w"> </span><span class="n">y</span>: <span class="kt">i64</span> <span class="p">}</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="k">fn</span> <span class="nf">id</span><span class="o">&lt;</span><span class="n">T</span><span class="o">&gt;</span><span class="p">(</span><span class="n">v</span>: <span class="nc">T</span><span class="p">)</span><span class="w"> </span>-&gt; <span class="nc">T</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">v</span><span class="w"> </span><span class="p">}</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="k">fn</span> <span class="nf">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="n">p</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">id</span><span class="p">(</span><span class="n">Point</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">x</span>: <span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="n">y</span>: <span class="mi">2</span><span class="w"> </span><span class="p">})</span>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="w">    </span><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;{} {}&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">p</span><span class="p">.</span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="n">p</span><span class="p">.</span><span class="n">y</span><span class="p">)</span>
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="p">}</span>
+</code></pre></div>
+<p>So does a generic struct type that stores its parameter inline, with
+  methods on it:</p>
+<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="k">struct</span> <span class="nc">Point</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">x</span>: <span class="kt">i64</span><span class="p">,</span><span class="w"> </span><span class="n">y</span>: <span class="kt">i64</span> <span class="p">}</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="k">struct</span> <span class="nc">Wrapper</span><span class="o">&lt;</span><span class="n">T</span><span class="o">&gt;</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">value</span>: <span class="nc">T</span><span class="w"> </span><span class="p">}</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="k">impl</span><span class="o">&lt;</span><span class="n">T</span><span class="o">&gt;</span><span class="w"> </span><span class="n">Wrapper</span><span class="o">&lt;</span><span class="n">T</span><span class="o">&gt;</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="k">fn</span> <span class="nf">get</span><span class="p">(</span><span class="o">&amp;</span><span class="bp">self</span><span class="p">)</span><span class="w"> </span>-&gt; <span class="nc">T</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="bp">self</span><span class="p">.</span><span class="n">value</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="p">}</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="k">fn</span> <span class="nf">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="n">w</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">Wrapper</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">value</span>: <span class="nc">Point</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">x</span>: <span class="mi">7</span><span class="p">,</span><span class="w"> </span><span class="n">y</span>: <span class="mi">9</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="p">}</span>
+<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="n">p</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">w</span><span class="p">.</span><span class="n">get</span><span class="p">()</span>
+<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="w">    </span><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;{} {}&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">p</span><span class="p">.</span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="n">p</span><span class="p">.</span><span class="n">y</span><span class="p">)</span>
+<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="p">}</span>
+</code></pre></div>
+<p>Each instantiation lays its fields out by the concrete type and
+  specialises each method by receiver type, including recursive
+  generics, multiple type parameters (<code>Pair&lt;A, B&gt;</code>), nested generic
+  structs, and arrays of generic structs.</p>
 <h2 id="what-fails-to-compile">What fails to compile<a class="headerlink" href="#what-fails-to-compile" title="Permanent link">&para;</a></h2>
-<p>If you instantiate a generic with a <code>T</code> that does not fit in 64
-bits, the compiler refuses with diagnostic <code>GT0042</code>:</p>
-<div class="language-text highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>error[GT0042]: this generic instantiation is not yet supported
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>   = note: T = MyStruct (24-byte by-value), but v1 codegen passes
-<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>           every type parameter in a single 64-bit slot. See
-<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>           docs/codegen_abi.md for the full constraint.
-<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>   = help: until layout-driven specialisation lands in v1.x, work
-<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>           around this by boxing the value: `&amp;MyStruct` or
-<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>           `Vec&lt;MyStruct&gt;`. Generic functions over `&amp;T` work for
-<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>           any `T` because references fit in 64 bits.
-</code></pre></div>
-<p>The diagnostic is the contract. If you don't see this diagnostic,
-the program compiles correctly. <strong>There is no codegen path that
-accepts an oversized <code>T</code> and produces a working binary.</strong> You
-will not get garbage output; you will get a hard compile error.</p>
-<h2 id="why-this-constraint-exists">Why this constraint exists<a class="headerlink" href="#why-this-constraint-exists" title="Permanent link">&para;</a></h2>
-<p>A v1 implementation goal was: ship a real native compiler that
-beats Rust's reference fasta program at N=25M. We hit it (0.45 s
-vs 0.82 s on a Ryzen 9 9900X). To get there, the MIR → Cranelift
-/ LLVM lowerer specialised on a <strong>fixed slot kind</strong> so the
-inner-loop ops are typed: an i64 add is a single Cranelift
-instruction, not a polymorphic dispatch.</p>
-<p>A by-value <code>MyStruct</code> argument needs the codegen to know its
-layout (offsets, alignment, padding) at every monomorphic call
-site. We have that information at MIR - but we don't yet
-<strong>propagate</strong> it into the codegen call ABI. That work is parity
-plan §P4 ("layout-driven specialisation"), tracked separately.</p>
-<h2 id="how-user-code-lives-within-the-constraint">How user code lives within the constraint<a class="headerlink" href="#how-user-code-lives-within-the-constraint" title="Permanent link">&para;</a></h2>
-<p>In practice, idiomatic Gossamer code rarely needs <code>T = struct</code>
-because:</p>
-<ul>
-<li><code>Vec&lt;T&gt;</code>, <code>HashMap&lt;K, V&gt;</code>, channels are runtime-provided and
-  are <em>not</em> monomorphised by the user - they are a single
-  generic implementation in the runtime that takes a <code>T</code> slot.
-  The runtime handles arbitrarily-sized elements internally
-  by allocating each <code>T</code> on the managed heap and the slot it stores
-  is a pointer.</li>
-<li>User generics over <code>&amp;T</code> work for any <code>T</code> (since <code>&amp;T</code> is a
-  pointer = 64 bits).</li>
-<li>Code that is generic over numeric type (<code>min&lt;T: Ord&gt;</code>,
-  <code>sum&lt;T: Add&gt;</code>) works for every primitive numeric type up to
-  64 bits.</li>
-</ul>
-<p>The remaining gap is <strong>user-defined generic functions over
-user-defined <code>T</code>-by-value</strong>. For example:</p>
-<div class="language-gos highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="k">fn</span> <span class="nf">id</span><span class="o">&lt;</span><span class="n">T</span><span class="o">&gt;</span><span class="p">(</span><span class="n">x</span>: <span class="nc">T</span><span class="p">)</span><span class="w"> </span>-&gt; <span class="nc">T</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">x</span><span class="w"> </span><span class="p">}</span><span class="w">   </span><span class="c1">// T = i64: works</span>
-<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">                             </span><span class="c1">// T = MyStruct: GT0042</span>
-<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>
-<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="k">fn</span> <span class="nf">id_ref</span><span class="o">&lt;</span><span class="n">T</span><span class="o">&gt;</span><span class="p">(</span><span class="n">x</span>: <span class="kp">&amp;</span><span class="nc">T</span><span class="p">)</span><span class="w"> </span>-&gt; <span class="kp">&amp;</span><span class="nc">T</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">x</span><span class="w"> </span><span class="p">}</span><span class="w">   </span><span class="c1">// works for any T</span>
-</code></pre></div>
-<p>Generic <em>types</em> with internal layout sensitivity (a hypothetical
-user <code>MyVec&lt;T&gt;</code> storing <code>T</code> inline) hit the same constraint. The
-v1 workaround is "store <code>&amp;T</code>, let the runtime own the body."</p>
-<h2 id="what-changes-in-v1x">What changes in v1.x<a class="headerlink" href="#what-changes-in-v1x" title="Permanent link">&para;</a></h2>
-<p>Layout-driven specialisation will:</p>
-<ol>
-<li>Propagate layout (size, align, field offsets) for each <code>T</code>
-   from MIR through to Cranelift / LLVM.</li>
-<li>Switch the codegen call ABI to "by-value where the layout
-   fits in registers; by-reference where it doesn't" - matching
-   what <code>rustc</code> does.</li>
-<li>Drop the <code>GT0042</code> diagnostic; turn the constraint off.</li>
-</ol>
-<p>Until then, the diagnostic is the safety net that prevents
-"compiles, segfaults at runtime" - a class of bug Gossamer is
-deliberately willing to accept compile-time pain to avoid.</p>
+<p><code>i128</code> / <code>u128</code> are <strong>rejected at type-check time</strong> (<code>GT0014</code>): no tier
+has a 128-bit runtime representation, and the bytecode VM would
+otherwise run them at silent 64-bit width. Use <code>i64</code> / <code>u64</code>, or split
+the value into two 64-bit halves.</p>
+<p>This is the contract: if the program type-checks, it compiles and runs
+with identical output on every tier. There is no codegen path that
+accepts a 128-bit type and silently produces a wrong binary - you get a
+hard compile error, never garbage output.</p>
+<h2 id="how-a-struct-parameter-is-laid-out">How a struct parameter is laid out<a class="headerlink" href="#how-a-struct-parameter-is-laid-out" title="Permanent link">&para;</a></h2>
+<p>For a by-value struct <code>T</code>, the monomorphiser records a
+per-instantiation field-type table and propagates each field's layout
+(size, alignment, offsets) from MIR through to the Cranelift / LLVM
+lowering, so a <code>Wrapper&lt;Point&gt;</code> stores a whole <code>Point</code> inline and a
+generic method's <code>-&gt; T</code> return is the real concrete type rather than an
+opaque pointer. The type checker brings an <code>impl&lt;T&gt;</code>'s generics into
+scope for each method, so <code>-&gt; T</code> records a rigid parameter that the
+monomorphiser then specialises by receiver type.</p>
+<p>Methods on a generic struct still require the explicit
+<code>impl&lt;T&gt; Wrapper&lt;T&gt;</code> form, as in Rust.</p>
 <h2 id="see-also">See also<a class="headerlink" href="#see-also" title="Permanent link">&para;</a></h2>
 <ul>
-<li><code>gos explain GT0042</code> - full long-form diagnostic text.</li>
-<li>Internal notes: <code>parity.md</code> §P4 and
-  <code>compiler_tier_plan.md</code>.</li>
+<li><code>gos explain GT0014</code> - the 128-bit rejection in full.</li>
+<li>The language spec (<code>SPEC.md</code> in the repository root) - generics and
+  monomorphisation semantics.</li>
 </ul>
 
 

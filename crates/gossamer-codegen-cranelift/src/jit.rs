@@ -92,6 +92,14 @@ pub struct JitFn {
     pub params: Vec<JitKind>,
     /// The return slot's kind.
     pub returns: JitKind,
+    /// `true` when the body's return value provably originates from a
+    /// fresh allocation (a constructor, or a call to another fresh body)
+    /// rather than a projection / passthrough of an enum parameter. The
+    /// interpreter uses this to decide whether it may marshal a bytecode
+    /// `Value::Variant` enum argument and free the temporary after the
+    /// call: safe only when the native result can't alias the freed input.
+    /// See `compute_returns_fresh`.
+    pub returns_fresh: bool,
 }
 
 // SAFETY: `ptr` is read-only from any thread, but the VM is
@@ -397,7 +405,7 @@ pub fn has_worthy_jit_body(bodies: &[Body], tcx: &TyCtxt, enum_shapes: &HashMap<
 /// function reach native code at all - a once-called function never trips a
 /// call counter, yet its first call still pays for the whole loop.
 ///
-/// Bodies rejected by [`body_jit_unsupported`] are excluded: they fall back
+/// Bodies rejected by `body_jit_unsupported` are excluded: they fall back
 /// to bytecode, so eagerly triggering a compile for them would be wasted.
 #[allow(
     clippy::implicit_hasher,
@@ -500,6 +508,7 @@ pub fn compile_to_jit(
 
     let body_name_set: std::collections::HashSet<&str> =
         filtered.iter().map(|b| b.name.as_str()).collect();
+    let returns_fresh = compute_returns_fresh(&filtered, tcx);
     let mut functions = HashMap::new();
     for body in &filtered {
         let Some(id) = lowered.function_ids_by_name.get(&body.name).copied() else {
@@ -539,6 +548,7 @@ pub fn compile_to_jit(
                 ptr,
                 params,
                 returns,
+                returns_fresh: returns_fresh.get(&body.name).copied().unwrap_or(false),
             },
         );
     }
@@ -662,6 +672,135 @@ fn body_jit_unsupported(body: &Body, tcx: &TyCtxt) -> bool {
         }
     }
     false
+}
+
+/// Interprocedural fixpoint computing, per JIT-compiled body, whether its
+/// return value provably originates from a fresh allocation (a constructor
+/// or a call to another fresh body) rather than a passthrough / projection
+/// of an enum parameter. Sound and conservative: any value that might alias
+/// an enum input is "tainted", and a body is fresh only when its return
+/// local is never tainted. See [`JitFn::returns_fresh`].
+// One cohesive interprocedural dataflow fixpoint; the taint helpers and the
+// inner/outer iteration read together, so splitting it would obscure the
+// analysis rather than clarify it.
+#[allow(clippy::too_many_lines)]
+fn compute_returns_fresh(bodies: &[Body], tcx: &TyCtxt) -> HashMap<String, bool> {
+    use gossamer_mir::{Local, Operand, Rvalue, StatementKind, Terminator};
+    use gossamer_types::TyKind;
+    use std::collections::HashSet;
+
+    let is_enum_ref = |body: &Body, l: Local| -> bool {
+        let mut ty = body.local_ty(l);
+        while let TyKind::Ref { inner, .. } = tcx.kind_of(ty) {
+            ty = *inner;
+        }
+        tcx.is_rc_managed(ty)
+    };
+    // An operand may alias an enum input: a tainted local, or any place
+    // reached through a projection (an enum-child read).
+    let op_alias = |op: &Operand, tainted: &HashSet<u32>| -> bool {
+        matches!(op, Operand::Copy(p) if !p.projection.is_empty() || tainted.contains(&p.local.0))
+    };
+    // Whether an rvalue produces (or stores) a value that may alias an enum
+    // input. Enum construction lowers to intrinsics, not `Aggregate`:
+    // `gos_rc_alloc*` is a FRESH node; `gos_enum_load` reads a child of its
+    // base and `gos_enum_tag` / `gos_enum_set_disc` return the node, so both
+    // carry their base operand's taint; other intrinsics / rvalues are
+    // conservatively treated as aliasing.
+    let rvalue_alias = |rvalue: &Rvalue, tainted: &HashSet<u32>| -> bool {
+        match rvalue {
+            Rvalue::Use(op) => op_alias(op, tainted),
+            Rvalue::Aggregate { operands, .. } => operands.iter().any(|op| op_alias(op, tainted)),
+            Rvalue::CallIntrinsic { name, args } => {
+                if name.starts_with("gos_rc_alloc") {
+                    false
+                } else if *name == "gos_enum_load"
+                    || name.starts_with("gos_enum_tag")
+                    || name.starts_with("gos_enum_set_disc")
+                    || name.starts_with("gos_enum_disc_tag")
+                {
+                    args.first().is_some_and(|op| op_alias(op, tainted))
+                } else {
+                    true
+                }
+            }
+            _ => true,
+        }
+    };
+
+    let def_to_name: HashMap<_, &str> = bodies
+        .iter()
+        .filter_map(|b| b.def.map(|d| (d, b.name.as_str())))
+        .collect();
+    let mut fresh: HashMap<String, bool> = bodies.iter().map(|b| (b.name.clone(), true)).collect();
+    loop {
+        let mut outer_changed = false;
+        for body in bodies {
+            let mut tainted: HashSet<u32> = HashSet::new();
+            for p in 1..=body.arity {
+                if is_enum_ref(body, Local(p)) {
+                    tainted.insert(p);
+                }
+            }
+            loop {
+                let mut changed = false;
+                for block in &body.blocks {
+                    for stmt in &block.stmts {
+                        let StatementKind::Assign { place, rvalue } = &stmt.kind else {
+                            continue;
+                        };
+                        // Taint the assignment's root local: for a bare target
+                        // that is the produced value; for a field-projection
+                        // target (`node.field = child`) the node co-owns a
+                        // stored aliasing child, so it is tainted too.
+                        let root = place.local;
+                        if !is_enum_ref(body, root)
+                            || tainted.contains(&root.0)
+                            || !rvalue_alias(rvalue, &tainted)
+                        {
+                            continue;
+                        }
+                        tainted.insert(root.0);
+                        changed = true;
+                    }
+                    if let Terminator::Call {
+                        callee,
+                        destination,
+                        ..
+                    } = &block.terminator
+                        && destination.is_simple()
+                        && is_enum_ref(body, destination.local)
+                        && !tainted.contains(&destination.local.0)
+                    {
+                        let callee_fresh = match callee {
+                            Operand::FnRef { def, substs } if substs.is_empty() => def_to_name
+                                .get(def)
+                                .and_then(|n| fresh.get(*n))
+                                .copied()
+                                .unwrap_or(false),
+                            _ => false,
+                        };
+                        if !callee_fresh {
+                            tainted.insert(destination.local.0);
+                            changed = true;
+                        }
+                    }
+                }
+                if !changed {
+                    break;
+                }
+            }
+            let ret_fresh = !is_enum_ref(body, Local(0)) || !tainted.contains(&0);
+            if fresh[&body.name] && !ret_fresh {
+                fresh.insert(body.name.clone(), false);
+                outer_changed = true;
+            }
+        }
+        if !outer_changed {
+            break;
+        }
+    }
+    fresh
 }
 
 fn body_kinds(
@@ -814,7 +953,11 @@ fn register_runtime_symbols(builder: &mut JITBuilder) -> std::collections::HashS
         "gos_rt_str_push_byte"       => rt::gos_rt_str_push_byte,
         "gos_rt_deque_new"           => rt::gos_rt_deque_new,
         "gos_rt_deque_push_back"     => rt::gos_rt_deque_push_back,
+        "gos_rt_deque_push_front"    => rt::gos_rt_deque_push_front,
         "gos_rt_deque_pop_front"     => rt::gos_rt_deque_pop_front,
+        "gos_rt_deque_pop_back"      => rt::gos_rt_deque_pop_back,
+        "gos_rt_deque_peek_front"    => rt::gos_rt_deque_peek_front,
+        "gos_rt_deque_peek_back"     => rt::gos_rt_deque_peek_back,
         "gos_rt_deque_len"           => rt::gos_rt_deque_len,
         "gos_rt_deque_is_empty"      => rt::gos_rt_deque_is_empty,
         "gos_rt_deque_free"          => rt::gos_rt_deque_free,

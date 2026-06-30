@@ -2,7 +2,7 @@
 
 Status: shipped
 
-TOML 1.0 parsing + emission. Pair with `<Type>::from_toml` for typed decoding (struct auto-derive).
+TOML 1.0 parsing + emission. Pair with the turbofish `from_toml::<Type>` for typed decoding (struct auto-derive).
 
 ## Public items
 

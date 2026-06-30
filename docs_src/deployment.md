@@ -1,8 +1,7 @@
 # Deployment guide
 
-This page walks through cross-compiling a Gossamer service,
-shipping the binary to a Linux server, and supervising it under
-`systemd`.
+This page walks through building a Gossamer service, shipping the
+binary to a Linux server, and supervising it under `systemd`.
 
 The story is intentionally boring: Gossamer compiles to a single
 static (or near-static) ELF / Mach-O / PE binary. There is no
@@ -22,54 +21,42 @@ Pre-built `gos` toolchain binaries ship for:
 | `aarch64-apple-darwin` | Apple Silicon macOS (development). |
 | `x86_64-pc-windows-msvc` | Windows servers (best-effort). |
 
-Compiled Gossamer programs target whatever triple was passed to
-`gos build --target <triple>`. The release matrix in
+Compiled programs are built for the host triple. Cross-ISA
+compilation - `gos build --target <triple>` to a different
+architecture - is not yet wired to a runnable binary: a non-host
+`--target` validates the triple but emits a placeholder artifact and
+prints `cross-link pending`. The release matrix in
 [`.github/workflows/release.yml`](https://github.com/danpozmanter/gossamer/blob/main/.github/workflows/release.yml)
 is the source of truth for what we test on.
 
-## Cross-compiling
+## Building per target
 
-### From Linux x86_64 → Linux aarch64
+The supported path is to build each target on a native runner of that
+architecture - a Linux aarch64 binary on a Linux aarch64 runner, a
+macOS binary on macOS, and so on. This is exactly what the release
+workflow does (one build job per target), and it side-steps the
+cross-toolchain fragility that bit other ecosystems.
 
-```sh
-gos build --release --target aarch64-unknown-linux-gnu src/main.gos
-```
-
-You need:
-
-- The cross linker `aarch64-linux-gnu-gcc` on `$PATH`.
-- The cross C runtime, typically via `apt install gcc-aarch64-linux-gnu`.
-
-The toolchain shells out to `clang` / `lld` if available;
-otherwise falls back to GCC + system ld. `gos build --release`
-will print the exact link command on `--verbose`.
-
-### From macOS aarch64 → Linux x86_64
-
-The pragmatic approach is to ssh into a Linux build runner and
-build there. Cross-compiling from macOS to Linux requires the
-musl toolchain plus the libgcc stubs that match the target's
-glibc; pinning that combination across CI matrices has been
-fragile in our testing.
-
-If you do want native cross from macOS, install the [musl
-cross toolchain](https://github.com/FiloSottile/homebrew-musl-cross)
-and target `x86_64-unknown-linux-musl`:
+On a Linux x86_64 host the deployable artifact is simply:
 
 ```sh
-brew install filosottile/musl-cross/musl-cross
-gos build --release --target x86_64-unknown-linux-musl src/main.gos
+gos build --release src/main.gos
 ```
 
-A musl build is statically linked against libc and ships a
-single self-contained binary. This is the recommended target for
-container images.
+With the `x86_64-unknown-linux-musl` rustup target installed this is a
+fully-static single file - ideal for `scratch` / `distroless/static`
+images. Without it, the build falls back to a dynamically-linked glibc
+binary, which still ships fine on a glibc base image (`--dynamic`
+forces that path explicitly).
 
 ## Container images
 
-For services we recommend a `scratch`-based or `distroless`-based
-image. The compiled musl binary needs nothing else. Sample
-`Dockerfile`:
+For services we recommend a `distroless`-based image. A glibc
+`gos build --release` binary needs only its libc - use a
+`distroless/base` runtime. A fully-static musl binary (built with the
+musl rustup target in the build stage) needs nothing and can run on
+`scratch` or `distroless/static`. Sample `Dockerfile` for the glibc
+path:
 
 ```dockerfile
 # Build stage
@@ -78,17 +65,18 @@ RUN apt-get update && apt-get install -y curl ca-certificates build-essential
 RUN curl -fsSL https://github.com/danpozmanter/gossamer/releases/latest/download/gos-x86_64-unknown-linux-musl -o /usr/local/bin/gos && chmod +x /usr/local/bin/gos
 WORKDIR /src
 COPY . .
-RUN gos build --release --target x86_64-unknown-linux-musl src/main.gos -o /out/server
+RUN gos build --release src/main.gos --out-dir /out
 
 # Runtime stage
-FROM gcr.io/distroless/static-debian12:nonroot
-COPY --from=build /out/server /server
+FROM gcr.io/distroless/base-debian12:nonroot
+COPY --from=build /out/main /server
 USER nonroot:nonroot
 EXPOSE 8080
 ENTRYPOINT ["/server"]
 ```
 
-Image sizes settle around 10-15 MiB for a typical HTTP service.
+Image sizes settle around 20-30 MiB for a typical HTTP service (smaller
+on `scratch` with a static musl binary).
 
 ## Process supervision: systemd
 
@@ -191,33 +179,28 @@ For shipping to a log aggregator that doesn't read the journal:
 ### GOMAXPROCS-equivalent
 
 Gossamer reads the OS CPU count at startup and runs that many
-scheduler threads. Override with `GOSSAMER_PROCS`:
+scheduler threads. Override with `GOSSAMER_MAX_PROCS`:
 
 ```sh
-GOSSAMER_PROCS=4 ./myservice
+GOSSAMER_MAX_PROCS=4 ./myservice
 ```
 
 Set this in the systemd unit's `Environment=` line.
 
 ### Stack size per goroutine
 
-Gossamer goroutines today run on real OS threads. Each thread
-gets the host's default stack (8 MiB on Linux). For services
-that spawn thousands of goroutines, drop the stack with
-`ulimit`:
+Goroutines are stackful coroutines multiplexed M:N onto the worker
+thread pool, not OS threads - a blocked goroutine costs its stack of
+mmap'd address space, not a thread. Each goroutine starts with a
+16 KiB stack; tune the default with `GOSSAMER_GOROUTINE_STACK`:
 
 ```sh
-ulimit -s 1024  # 1 MiB stacks
-./myservice
+GOSSAMER_GOROUTINE_STACK=32768 ./myservice  # 32 KiB stacks
 ```
 
-Or in systemd: `LimitSTACK=1048576`.
-
-As of 0.1.0 the M:N scheduler is live, so goroutines no
-longer correspond 1:1 to OS threads - the `ulimit` is only
-relevant if you spawn unbounded *threads* directly. Idle
-goroutines are parked on the netpoller and consume
-constant memory.
+Idle goroutines are parked on the netpoller and consume constant
+memory. The worker-thread count (not the goroutine count) follows
+`GOSSAMER_MAX_PROCS`.
 
 ### Memory
 

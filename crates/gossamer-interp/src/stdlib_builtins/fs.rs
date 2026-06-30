@@ -138,7 +138,7 @@ pub(crate) fn builtin_fs_metadata_raw(args: &[Value]) -> RuntimeResult<Value> {
                 .ok()
                 .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
                 .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX));
-            Ok(ok_variant(Value::Tuple(Arc::new(vec![
+            Ok(ok_variant(Value::Tuple(Arc::from(vec![
                 Value::Int(i64::try_from(meta.len()).unwrap_or(i64::MAX)),
                 Value::Bool(meta.is_file()),
                 Value::Bool(meta.is_dir()),
