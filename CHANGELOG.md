@@ -142,10 +142,21 @@ landed. Open; not yet fixed.
   rejects outright - it wins over (and breaks) whatever `-target` reaches zig
   through `CC`. All three jobs now install zig + `cargo-zigbuild` and build
   the musl legs with `cargo zigbuild`, which reconciles the triple mismatch
-  and bundles the musl sysroot for every host. `check.sh` gained a matching
-  local gate (skips cleanly without zig `>=0.9.0` + `cargo-zigbuild`
+  and bundles the musl sysroot for every host. Zig itself is installed by a
+  plain `curl`/`tar` (Linux, macOS) or `Invoke-WebRequest`/`Expand-Archive`
+  (Windows) step straight from `ziglang.org/download`, not a marketplace
+  action: `mlugg/setup-zig@v1` still declares a Node 20 runtime (a
+  recurring deprecation warning), and separately, that major's tarball-name
+  construction predates Zig's `>=0.14.1` naming convention
+  (`zig-<arch>-<os>-<version>`), so it 404s on every mirror and the
+  official fallback for any current release - confirmed against
+  `ziglang.org/download/index.json`, which is the source of truth used
+  here instead. `check.sh` gained a matching local gate (skips cleanly
+  without zig `>=0.9.0` + `cargo-zigbuild`
   installed, so a stray old system `zig` never turns into a spurious local
-  failure).
+  failure). `release.yml`'s `build-linux-aarch64` job had the identical
+  bare-`clang` musl leg (latent - it only runs on a tag push, so it never
+  surfaced in regular CI); fixed the same way.
 - **Fixed a broken rustdoc intra-doc link.** Two doc comments in
   `gossamer-interp/src/jit_call.rs` linked to a `read_native_enum_field` that
   never existed; the actual readers (`native_vec_enum_to_array` /

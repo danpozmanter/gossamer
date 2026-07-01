@@ -19,8 +19,8 @@
 use std::collections::{HashMap, HashSet};
 
 use gossamer_ast::{
-    EnumDecl, EnumVariant, GenericArg, ItemKind, ModulePath, NodeId, SourceFile, StructBody,
-    StructDecl, TypeKind, UseDecl, UseTarget,
+    EnumDecl, EnumVariant, GenericArg, Item, ItemKind, ModBody, ModulePath, NodeId, SourceFile,
+    StructBody, StructDecl, TypeKind, UseDecl, UseTarget,
 };
 use gossamer_lex::{FileId, SourceMap, Span};
 
@@ -422,6 +422,31 @@ fn ty_to_string(ty: &gossamer_ast::ty::Type) -> String {
     }
 }
 
+/// Every item in `items`, descending into inline module bodies so a
+/// declaration nested in a `mod name { ... }` is visible to the
+/// whole-program synthesis passes. A multi-file package is auto-bundled
+/// into one source by wrapping each sibling file in `mod <stem> { ... }`
+/// (see `gossamer-cli`'s sibling auto-bundle), so a struct declared in
+/// another file lives one module level deep; the synthesizers must reach
+/// it exactly as the resolver does when it flattens the inline module
+/// tree for name resolution.
+fn flatten_items(items: &[Item]) -> Vec<&Item> {
+    let mut out = Vec::new();
+    collect_flat_items(items, &mut out);
+    out
+}
+
+fn collect_flat_items<'a>(items: &'a [Item], out: &mut Vec<&'a Item>) {
+    for item in items {
+        out.push(item);
+        if let ItemKind::Mod(decl) = &item.kind
+            && let ModBody::Inline(inner) = &decl.body
+        {
+            collect_flat_items(inner, out);
+        }
+    }
+}
+
 /// Synthesizes a `fn __gos_typeinfo_<Name>() -> [(String, String)]`
 /// returning each field's `(name, type)` for every named-field struct,
 /// so `typeInfo::<Name>()` reflects the type's fields at compile time
@@ -430,7 +455,7 @@ fn ty_to_string(ty: &gossamer_ast::ty::Type) -> String {
 #[must_use]
 pub fn synthesize_type_info(parsed: &SourceFile) -> String {
     let mut out = String::new();
-    for item in &parsed.items {
+    for item in flatten_items(&parsed.items) {
         let ItemKind::Struct(decl) = &item.kind else {
             continue;
         };
@@ -537,7 +562,7 @@ impl gossamer_ast::VisitorMut for InlineForRenum<'_> {
 /// the `inline for` unroller.
 fn collect_struct_fields(sf: &SourceFile) -> HashMap<String, Vec<(String, String)>> {
     let mut map = HashMap::new();
-    for item in &sf.items {
+    for item in flatten_items(&sf.items) {
         let ItemKind::Struct(decl) = &item.kind else {
             continue;
         };
@@ -1111,9 +1136,8 @@ pub fn synthesize_serde_impls(parsed: &SourceFile) -> String {
     out.push_str("// Synthesized by `gossamer-parse::autoderive`.\n");
     out.push('\n');
 
-    let struct_names: HashSet<String> = parsed
-        .items
-        .iter()
+    let struct_names: HashSet<String> = flatten_items(&parsed.items)
+        .into_iter()
         .filter_map(|item| match &item.kind {
             ItemKind::Struct(decl)
                 if matches!(&decl.body, StructBody::Named(_) | StructBody::Tuple(_)) =>
@@ -1124,7 +1148,7 @@ pub fn synthesize_serde_impls(parsed: &SourceFile) -> String {
         })
         .collect();
 
-    for item in &parsed.items {
+    for item in flatten_items(&parsed.items) {
         let ItemKind::Struct(decl) = &item.kind else {
             continue;
         };
@@ -1367,7 +1391,7 @@ fn type_head_name(ty: &gossamer_ast::Type) -> Option<&str> {
 /// so the synthesizer must not emit a conflicting structural `fmt`.
 fn types_with_user_fmt(parsed: &SourceFile) -> HashSet<String> {
     let mut out = HashSet::new();
-    for item in &parsed.items {
+    for item in flatten_items(&parsed.items) {
         if let ItemKind::Impl(decl) = &item.kind
             && decl.trait_ref.is_none()
             && let Some(name) = type_head_name(&decl.self_ty)
@@ -1505,7 +1529,7 @@ fn ty_is_orderable(ty: &gossamer_ast::Type, orderable: &HashSet<String>) -> bool
 /// structural one. Mirrors [`types_with_user_fmt`] for `eq` / `cmp`.
 fn types_with_user_method(parsed: &SourceFile, method: &str) -> HashSet<String> {
     let mut out = HashSet::new();
-    for item in &parsed.items {
+    for item in flatten_items(&parsed.items) {
         if let ItemKind::Impl(decl) = &item.kind
             && let Some(name) = type_head_name(&decl.self_ty)
             && decl
@@ -1529,9 +1553,8 @@ fn types_with_user_method(parsed: &SourceFile, method: &str) -> HashSet<String> 
     reason = "linear orchestration: collect names, fields, formattable + comparable sets, then emit"
 )]
 pub fn synthesize_derive_impls(parsed: &SourceFile) -> String {
-    let struct_names: HashSet<String> = parsed
-        .items
-        .iter()
+    let struct_names: HashSet<String> = flatten_items(&parsed.items)
+        .into_iter()
         .filter_map(|item| match &item.kind {
             ItemKind::Struct(decl)
                 if matches!(&decl.body, StructBody::Named(_) | StructBody::Tuple(_)) =>
@@ -1547,7 +1570,7 @@ pub fn synthesize_derive_impls(parsed: &SourceFile) -> String {
 
     // Field types per struct / enum, used to grow the `formattable` set.
     let mut field_tys: HashMap<String, Vec<&gossamer_ast::Type>> = HashMap::new();
-    for item in &parsed.items {
+    for item in flatten_items(&parsed.items) {
         match &item.kind {
             ItemKind::Struct(decl) => {
                 let tys: Vec<&gossamer_ast::Type> = match &decl.body {
@@ -1573,7 +1596,7 @@ pub fn synthesize_derive_impls(parsed: &SourceFile) -> String {
     // render - so a field referencing a non-formattable type (or a container)
     // never produces a `format!("{}", field)` the compiled tiers cannot lower.
     let mut formattable: HashSet<String> = HashSet::new();
-    for item in &parsed.items {
+    for item in flatten_items(&parsed.items) {
         let derives = derive_list(&item.attrs);
         let name = match &item.kind {
             ItemKind::Struct(d)
@@ -1649,7 +1672,7 @@ pub fn synthesize_derive_impls(parsed: &SourceFile) -> String {
     }
 
     let mut out = String::new();
-    for item in &parsed.items {
+    for item in flatten_items(&parsed.items) {
         let mut derives = derive_list(&item.attrs);
         // Synthesize a structural `fmt` for every formattable struct / enum that
         // lacks one, so `{}` / `{:?}` lowers on the compiled tiers exactly as it
@@ -3150,7 +3173,7 @@ fn tuple_ctor_arity(e: &gossamer_ast::expr::Expr, arity: &HashMap<String, usize>
 pub fn rewrite_tuple_struct_ctors(sf: &mut SourceFile) {
     use gossamer_ast::VisitorMut;
     let mut arity: HashMap<String, usize> = HashMap::new();
-    for item in &sf.items {
+    for item in flatten_items(&sf.items) {
         if let ItemKind::Struct(decl) = &item.kind
             && let StructBody::Tuple(fields) = &decl.body
         {
@@ -3270,9 +3293,8 @@ pub fn parse_with_autoderive(source: &str, file: FileId) -> (SourceFile, Vec<Par
 /// flows through a serde call - and deduplicated to one diagnostic per struct,
 /// pointing at the first offending field.
 fn serde_unsupported_field_diags(sf: &SourceFile) -> Vec<ParseDiagnostic> {
-    let struct_names: HashSet<String> = sf
-        .items
-        .iter()
+    let struct_names: HashSet<String> = flatten_items(&sf.items)
+        .into_iter()
         .filter_map(|item| match &item.kind {
             ItemKind::Struct(decl)
                 if matches!(&decl.body, StructBody::Named(_) | StructBody::Tuple(_)) =>
@@ -3282,9 +3304,8 @@ fn serde_unsupported_field_diags(sf: &SourceFile) -> Vec<ParseDiagnostic> {
             _ => None,
         })
         .collect();
-    let decls: HashMap<&str, &StructDecl> = sf
-        .items
-        .iter()
+    let decls: HashMap<&str, &StructDecl> = flatten_items(&sf.items)
+        .into_iter()
         .filter_map(|item| match &item.kind {
             ItemKind::Struct(decl) if decl.generics.params.is_empty() => {
                 Some((decl.name.name.as_str(), decl))

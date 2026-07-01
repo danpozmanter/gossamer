@@ -19,7 +19,7 @@ jobs:
       # invocation, eliminating the rust-src download race.
       RUSTUP_TOOLCHAIN: 1.95.0
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: dtolnay/rust-toolchain@1.95.0
 
@@ -32,7 +32,7 @@ jobs:
           echo "GOS_LLVM_OPT=/usr/bin/opt-18" >> "$GITHUB_ENV"
 
       - name: Cache cargo
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry
@@ -42,7 +42,7 @@ jobs:
 
       - name: Restore perf baseline
         id: restore-baseline
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: .perf/baseline.txt
           # Baseline is keyed to the main branch head. PRs restore the
@@ -197,7 +197,7 @@ jobs:
 
       - name: Save updated baseline
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: .perf/baseline.txt
           key: perf-baseline-${{ runner.os }}-${{ github.sha }}
@@ -226,7 +226,7 @@ jobs:
       CARGO_TERM_COLOR: always
       RUSTUP_TOOLCHAIN: 1.95.0
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install LLVM (Linux)
         if: runner.os == 'Linux'

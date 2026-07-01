@@ -112,6 +112,25 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y gcc-aarch64-linux-gnu clang llvm
 
+      - name: Install zig
+        # Bare `clang --target=aarch64-unknown-linux-musl` (the previous
+        # approach here) has no musl sysroot and fails to find `string.h`
+        # - see the cross-from-linux job in ci.yml for the full story,
+        # including why a hand-rolled `CC=zig cc` doesn't work either and
+        # `cargo zigbuild` is used instead. Installed via direct download,
+        # not `mlugg/setup-zig`: that action both runs on a deprecated
+        # Node 20 and 404s fetching any current Zig release.
+        run: |
+          set -euo pipefail
+          zig_ver=0.16.0
+          curl -fsSL -o /tmp/zig.tar.xz "https://ziglang.org/download/${zig_ver}/zig-x86_64-linux-${zig_ver}.tar.xz"
+          mkdir -p /tmp/zig-install
+          tar -xf /tmp/zig.tar.xz -C /tmp/zig-install --strip-components=1
+          echo "/tmp/zig-install" >> "$GITHUB_PATH"
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-zigbuild
+
       - name: Build
         env:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
@@ -123,11 +142,9 @@ jobs:
           # the target explicitly into target/<triple>/release/.
           cargo build --release --target aarch64-unknown-linux-gnu -p gossamer-runtime
           # Static-musl runtime for `gos build --release` static binaries on a
-          # Pi. mimalloc's C is cross-compiled with clang targeting aarch64-musl
-          # (the gnu cross gcc only knows the glibc sysroot).
-          CC_aarch64_unknown_linux_musl=clang \
-          CFLAGS_aarch64_unknown_linux_musl="--target=aarch64-unknown-linux-musl" \
-          cargo build --release --target aarch64-unknown-linux-musl -p gossamer-runtime
+          # Pi (the gnu cross gcc only knows the glibc sysroot, so this leg
+          # needs zig's bundled musl sysroot instead).
+          cargo zigbuild --release --target aarch64-unknown-linux-musl -p gossamer-runtime
 
       # Install packaging tools as prebuilt binaries (cargo-deb from
       # GitHub Releases, cargo-generate-rpm via cargo-binstall) - avoids
@@ -339,7 +356,7 @@ jobs:
       # through `actions/github-script` skips the ambient probe.
       - name: Mint OIDC token for cosign
         id: oidc
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const token = await core.getIDToken('sigstore');
@@ -371,7 +388,7 @@ jobs:
             release/*.rpm
             release/*.exe
 
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           generate_release_notes: true
