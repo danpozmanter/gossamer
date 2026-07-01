@@ -60,12 +60,28 @@ fn run_on_vm(file: &PathBuf, forwarded: &[String]) -> Result<()> {
     vm.load(&program, tcx, true)
         .map_err(|err| anyhow!("vm load failed: {err}"))?;
     drop(program);
-    let r = vm.call("main", Vec::new()).map(|_| ());
+    let r = vm.call("main", Vec::new());
     vm.release_jit_prelude();
     gossamer_interp::join_outstanding_goroutines();
     gossamer_interp::flush_runtime_stdout();
     match r {
-        Ok(()) => Ok(()),
+        Ok(val) => {
+            // An entry point returning `Err(e)` - an explicit `fn main() ->
+            // Result<..>`, or the implicit `?`-desugared top-level main -
+            // reports the error's Display (the colon-joined cause chain) to
+            // stderr and exits nonzero, matching the native tier's
+            // `gos_rt_main_exit_code_err`. Previously the return value was
+            // discarded, so the error was silent and the exit code was 0.
+            if let gossamer_interp::Value::Variant(inner) = &val
+                && inner.name == "Err"
+            {
+                if let Some(payload) = inner.fields.first() {
+                    eprintln!("{payload}");
+                }
+                std::process::exit(1);
+            }
+            Ok(())
+        }
         Err(err) => {
             let trace = crate::cmd::traceback::render_call_stack(&vm.call_stack_snapshot());
             if gossamer_interp::is_panic_error(&err) {

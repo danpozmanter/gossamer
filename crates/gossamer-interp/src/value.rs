@@ -275,7 +275,7 @@ impl Drop for StructInner {
 /// is still alive. A downgrade of a non-heap (Copy) value records
 /// [`WeakValue::Dead`] - there is no allocation to observe, so it never
 /// upgrades.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum WeakValue {
     /// Weak reference to a [`Value::Variant`] payload.
     Variant(std::sync::Weak<VariantInner>),
@@ -285,13 +285,68 @@ pub enum WeakValue {
     Array(std::sync::Weak<Vec<Value>>),
     /// Weak reference to a [`Value::Tuple`] payload.
     Tuple(std::sync::Weak<Vec<Value>>),
+    /// Weak reference to a [`Value::NativeEnum`] node, observed through the
+    /// runtime's intrusive weak count. Boxed so this variant is a single
+    /// niche-bearing pointer like the others, keeping `WeakValue` (and thus the
+    /// inline `Value::Weak`) within the 16-byte hot-`Value` budget. Kept inline
+    /// in `Value` (not `Arc`-wrapped) so each `Value` clone/drop maps 1:1 to the
+    /// intrusive weak retain/release below.
+    NativeEnum(Box<NativeEnumWeakRef>),
     /// Downgrade of a value with no observable allocation; never upgrades.
     Dead,
 }
 
+/// The referent identity of a [`WeakValue::NativeEnum`]: the tagged native
+/// pointer (disc bits intact) and the layout needed to rebuild a strong handle.
+#[derive(Debug)]
+pub struct NativeEnumWeakRef {
+    /// Tagged native pointer of the referent.
+    pub ptr: usize,
+    /// Layout for the rebuilt handle.
+    pub shape: &'static NativeEnumShape,
+}
+
+impl Clone for WeakValue {
+    fn clone(&self) -> Self {
+        match self {
+            WeakValue::Variant(w) => WeakValue::Variant(w.clone()),
+            WeakValue::Struct(w) => WeakValue::Struct(w.clone()),
+            WeakValue::Array(w) => WeakValue::Array(w.clone()),
+            WeakValue::Tuple(w) => WeakValue::Tuple(w.clone()),
+            WeakValue::NativeEnum(r) => {
+                let base = r.ptr & !7;
+                if base != 0 {
+                    // SAFETY: a copied weak handle observes the same node; bump
+                    // the intrusive weak count so its drop is balanced.
+                    unsafe { gossamer_runtime::c_abi::gos_rt_rc_weak_retain(base as *mut u8) };
+                }
+                WeakValue::NativeEnum(Box::new(NativeEnumWeakRef {
+                    ptr: r.ptr,
+                    shape: r.shape,
+                }))
+            }
+            WeakValue::Dead => WeakValue::Dead,
+        }
+    }
+}
+
+impl Drop for WeakValue {
+    fn drop(&mut self) {
+        if let WeakValue::NativeEnum(r) = self {
+            let base = r.ptr & !7;
+            if base != 0 {
+                // SAFETY: releasing the weak count this handle took at downgrade
+                // / clone; frees the block once strong and weak both reach zero.
+                unsafe { gossamer_runtime::c_abi::gos_rt_rc_weak_release(base as *mut u8) };
+            }
+        }
+    }
+}
+
 impl WeakValue {
     /// Builds a weak handle from a strong value. Heap variants record a
-    /// `std::sync::Weak` to their `Arc`; everything else is `Dead`.
+    /// `std::sync::Weak` to their `Arc`; a native enum takes an intrusive weak
+    /// count; everything else is `Dead`.
     #[must_use]
     pub fn downgrade(value: &Value) -> Self {
         match value {
@@ -299,6 +354,19 @@ impl WeakValue {
             Value::Struct(a) => WeakValue::Struct(Arc::downgrade(a)),
             Value::Array(a) => WeakValue::Array(Arc::downgrade(a)),
             Value::Tuple(a) => WeakValue::Tuple(Arc::downgrade(a)),
+            Value::NativeEnum(h) => {
+                let base = h.ptr & !7;
+                if base == 0 {
+                    return WeakValue::Dead;
+                }
+                // SAFETY: bumps the referent's intrusive weak count; the block
+                // outlives every strong reference until this weak is released.
+                unsafe { gossamer_runtime::c_abi::gos_rt_rc_downgrade(base as *mut u8) };
+                WeakValue::NativeEnum(Box::new(NativeEnumWeakRef {
+                    ptr: h.ptr,
+                    shape: h.shape,
+                }))
+            }
             _ => WeakValue::Dead,
         }
     }
@@ -311,6 +379,26 @@ impl WeakValue {
             WeakValue::Struct(w) => w.upgrade().map(Value::Struct),
             WeakValue::Array(w) => w.upgrade().map(Value::Array),
             WeakValue::Tuple(w) => w.upgrade().map(Value::Tuple),
+            WeakValue::NativeEnum(r) => {
+                let base = r.ptr & !7;
+                // SAFETY: reading the strong count of a weak-pinned (still
+                // allocated) node; > 0 means a strong owner survives.
+                if base != 0
+                    && unsafe { gossamer_runtime::c_abi::gos_rt_rc_strong_count(base as *mut u8) }
+                        > 0
+                {
+                    // SAFETY: co-owning a live node; the returned borrowed handle
+                    // releases this retain once on drop.
+                    unsafe { gossamer_runtime::c_abi::gos_rt_rc_retain(base as *mut u8) };
+                    Some(Value::NativeEnum(Arc::new(NativeEnumOwner {
+                        ptr: r.ptr,
+                        shape: r.shape,
+                        owned: false,
+                    })))
+                } else {
+                    None
+                }
+            }
             WeakValue::Dead => None,
         }
     }
@@ -397,6 +485,10 @@ impl MapKey {
                 name: inner.name,
                 fields: inner.fields.iter().map(Self::from_value).collect(),
             })),
+            // A native enum hashes through its boxed shape so a user enum used
+            // as a map key keeps working after Step 8 (VM-built enums are
+            // native) and hashes identically to a boxed one of the same value.
+            Value::NativeEnum(owner) => Self::from_value(&native_enum_to_variant(owner)),
             _ => Self::NonHashable,
         }
     }
@@ -835,6 +927,13 @@ pub(crate) fn intern_type_name(name: &str) -> &'static str {
 /// `names x (SMALL_INT_MAX - SMALL_INT_MIN + 1)` entries per thread.
 const SMALL_VARIANT_INT_MIN: i64 = -128;
 const SMALL_VARIANT_INT_MAX: i64 = 1024;
+/// Max byte length of a single `String`-payload variant eligible for
+/// interning. Bounded to the inline `SmolStr` range so the cache key never
+/// holds a heap allocation, and so an unbounded space of distinct long
+/// strings cannot grow the table. Covers the common case of a small set of
+/// repeated string-payload variants (e.g. enum-like tags such as
+/// `Str("alpha")` duplicated across many records).
+const SMALL_VARIANT_STR_MAX: usize = 16;
 
 /// Cache key for an interned single-small-scalar (or nullary) variant
 /// node. `name` is an interned `&'static str`, unique per distinct
@@ -844,6 +943,9 @@ enum SmallVariantKey {
     Unit(&'static str),
     Int(&'static str, i64),
     Bool(&'static str, bool),
+    /// A single short `String` payload. The `SmolStr` is inline (≤ the
+    /// `SMALL_VARIANT_STR_MAX` bound) so the key holds no heap allocation.
+    Str(&'static str, SmolStr),
 }
 
 thread_local! {
@@ -873,6 +975,11 @@ fn small_variant_key(name: &'static str, fields: &[Value]) -> Option<SmallVarian
             Some(SmallVariantKey::Int(name, *n))
         }
         [Value::Bool(b)] => Some(SmallVariantKey::Bool(name, *b)),
+        // A single short string payload: immutable, so sharing one node
+        // across all identical occurrences is sound exactly as for scalars.
+        [Value::String(s)] if s.len() <= SMALL_VARIANT_STR_MAX => {
+            Some(SmallVariantKey::Str(name, s.clone()))
+        }
         _ => None,
     }
 }
@@ -959,6 +1066,64 @@ impl Value {
     #[must_use]
     pub fn variant(name: impl AsRef<str>, fields: Vec<Value>) -> Self {
         let name = intern_type_name(name.as_ref());
+        // Step 8: a variant of a registered native enum shape (scalar / string /
+        // nested-enum fields) is built directly in the compiled-tier
+        // representation, so it flows through the JIT with zero marshalling and
+        // the VM and JIT share one shape end to end. `Vec`-bearing variants keep
+        // the boxed form (their marshalling ownership is handled at the boundary
+        // as before). Ambiguous variant names fall through to `Variant`.
+        if let Some(shape) = native_shape_for_variant(name) {
+            let mut inner = VariantInner {
+                name,
+                fields: SmallVec::from_vec(fields),
+            };
+            let has_aggregate = inner
+                .fields
+                .iter()
+                .any(|f| matches!(f, Value::Array(_) | Value::Tuple(_)));
+            if !has_aggregate
+                && let Some(ptr) = crate::jit_call::build_variant_to_native_enum(&inner, shape)
+            {
+                // The native node co-owns each nested-enum child (a retain);
+                // neutralise those fields so `inner`'s drop does not also free
+                // the subtree now owned by the node. Scalar / string fields keep
+                // their normal drop (the node copied their value out).
+                for f in &mut inner.fields {
+                    if matches!(f, Value::NativeEnum(_)) {
+                        std::mem::forget(std::mem::replace(f, Value::Unit));
+                    }
+                }
+                // A VM-constructed node is cleanly reference-counted (one strong
+                // count, children retained once), unlike a JIT-returned tree that
+                // carries caller-cleans over-retention. It uses the standard
+                // release-one / free-when-last teardown so that a value later
+                // shared through `Weak::upgrade` (root strong > 1) is not drained
+                // out from under the borrowed handle. `owned` (drain-all) is
+                // reserved for the JIT-return path that needs it.
+                return Self::NativeEnum(Arc::new(NativeEnumOwner {
+                    ptr: ptr as usize,
+                    shape,
+                    owned: false,
+                }));
+            }
+            return Self::Variant(Arc::new(inner));
+        }
+        if let Some(key) = small_variant_key(name, &fields) {
+            return Self::Variant(intern_small_variant(name, fields, key));
+        }
+        Self::Variant(Arc::new(VariantInner {
+            name,
+            fields: SmallVec::from_vec(fields),
+        }))
+    }
+
+    /// Constructs the boxed `Variant` representation unconditionally, never the
+    /// native form. Required where a genuine `Variant` is the contract - most
+    /// importantly `native_enum_to_variant`, which converts a native handle to
+    /// the boxed form for equality / display / serde; routing it back through
+    /// [`Value::variant`] would rebuild a native handle and loop forever.
+    #[must_use]
+    pub(crate) fn variant_boxed(name: &'static str, fields: Vec<Value>) -> Self {
         if let Some(key) = small_variant_key(name, &fields) {
             return Self::Variant(intern_small_variant(name, fields, key));
         }
@@ -1949,15 +2114,249 @@ pub struct NativeEnumOwner {
     pub ptr: usize,
     /// Layout for VM-side structural access.
     pub shape: &'static NativeEnumShape,
+    /// `true` when this handle exclusively owns the whole tree it roots (a
+    /// value returned from a JIT body to the VM). Its drop frees the tree via
+    /// the shape walk, tolerating the caller-cleans over-retention the native
+    /// code leaves. `false` for a borrowed handle read out of a parent's field
+    /// (`native_enum_field`), whose drop balances a single retain and must not
+    /// touch the parent-owned subtree.
+    pub owned: bool,
+}
+
+/// Releases one reference to a native enum value, also reclaiming the `Vec`
+/// and string payloads the node-meta release does not reach (a `Vec<Enum>` /
+/// `Vec<(String, Enum)>` field is a separate `GosVec` the node's child-layout
+/// meta does not list). Native nodes are refcounted - the VM retains a child
+/// when it reads a field - so this releases each owned reference exactly once:
+/// only when a node is the *last* owner (strong count <= 1) are its `Vec` /
+/// string children reclaimed. Enum-pointer children are left to the runtime's
+/// own meta cascade, which is iterative and so safe for deep recursive trees
+/// (an explicit walk here would overflow the native stack on a depth-20 tree).
+fn release_native_enum_tree(ptr: usize, shape: &NativeEnumShape) {
+    use gossamer_runtime::c_abi as rt;
+    let base = ptr & !7;
+    if base == 0 {
+        return;
+    }
+    // SAFETY: `base` is a live runtime-managed node; reading its strong count
+    // is valid. Single-threaded per VM, so the count is stable across the
+    // check-then-reclaim below.
+    let last = unsafe { rt::gos_rt_rc_strong_count(base as *mut u8) } <= 1;
+    if last {
+        let disc = native_enum_disc(ptr, shape);
+        if let Some(variant) = shape.variants.get(disc) {
+            for (i, kind) in variant.fields.iter().enumerate() {
+                let slot = (base + i * 8) as *mut i64;
+                // SAFETY: payload slot inside the node's allocation.
+                let word = unsafe { *slot };
+                match kind {
+                    NativeFieldKind::Str => {
+                        if word != 0 {
+                            // SAFETY: a live owned cstring body.
+                            unsafe { rt::gos_rt_str_free(word as *mut std::os::raw::c_char) };
+                            // SAFETY: writing a slot we own.
+                            unsafe { *slot = 0 };
+                        }
+                    }
+                    NativeFieldKind::VecEnum(eidx) => {
+                        release_native_vec_enum(word, *eidx);
+                        // SAFETY: writing a slot we own.
+                        unsafe { *slot = 0 };
+                    }
+                    NativeFieldKind::VecStrEnumTuple(eidx) => {
+                        release_native_vec_str_enum(word, *eidx);
+                        // SAFETY: writing a slot we own.
+                        unsafe { *slot = 0 };
+                    }
+                    // Enum-pointer children are reclaimed by the runtime's meta
+                    // cascade on the release below (deep-safe). Scalars own
+                    // nothing.
+                    NativeFieldKind::Enum(_)
+                    | NativeFieldKind::I64
+                    | NativeFieldKind::F64
+                    | NativeFieldKind::Bool
+                    | NativeFieldKind::Char => {}
+                }
+            }
+        }
+    }
+    // SAFETY: `base` is a live node; releasing balances one owning reference.
+    // When the count reaches zero the runtime frees the node and cascades to
+    // its (still-live) enum-pointer children.
+    unsafe { rt::gos_rt_rc_release(base as *mut u8) };
+}
+
+/// Releases one reference to each element of a native `Vec<Enum>` and frees the
+/// buffer. Called only from the last-owner path of [`release_native_enum_tree`].
+fn release_native_vec_enum(word: i64, eidx: u32) {
+    use gossamer_runtime::c_abi as rt;
+    if word == 0 {
+        return;
+    }
+    let v = word as *mut rt::vec::GosVec;
+    if let Some(eshape) = native_shape(eidx) {
+        // SAFETY: live `GosVec` of 8-byte native-enum pointer slots.
+        let len = unsafe { rt::gos_rt_vec_len(v) }.max(0);
+        for i in 0..len {
+            let elem = unsafe { rt::gos_rt_vec_get_i64(v, i) };
+            release_native_enum_tree(elem as usize, eshape);
+        }
+    }
+    // SAFETY: owns this `PRIMITIVE` vec; its elements were released above.
+    unsafe { rt::gos_rt_vec_free(v) };
+}
+
+/// Releases one reference to each `(String, Enum)` element of a native
+/// `Vec<(String, Enum)>` (freeing key cstrings, releasing enum values) and
+/// frees the buffer.
+fn release_native_vec_str_enum(word: i64, eidx: u32) {
+    use gossamer_runtime::c_abi as rt;
+    if word == 0 {
+        return;
+    }
+    let v = word as *mut rt::vec::GosVec;
+    let eshape = native_shape(eidx);
+    // SAFETY: live `GosVec` of 16-byte `[cstr][enum ptr]` slots.
+    let len = unsafe { rt::gos_rt_vec_len(v) }.max(0);
+    for i in 0..len {
+        let p = unsafe { rt::gos_rt_vec_get_ptr(v, i) };
+        if p.is_null() {
+            continue;
+        }
+        // SAFETY: 16-byte slot: cstring word at +0, enum pointer at +8.
+        let key_word = unsafe { p.cast::<i64>().read_unaligned() };
+        if key_word != 0 {
+            // SAFETY: a live owned key cstring.
+            unsafe { rt::gos_rt_str_free(key_word as *mut std::os::raw::c_char) };
+        }
+        if let Some(s) = eshape {
+            let val_word = unsafe { p.add(8).cast::<i64>().read_unaligned() };
+            release_native_enum_tree(val_word as usize, s);
+        }
+        // SAFETY: writing slots of a vec we own; the vec's own free then
+        // reclaims nothing twice.
+        unsafe {
+            p.cast::<i64>().write_unaligned(0);
+            p.add(8).cast::<i64>().write_unaligned(0);
+        }
+    }
+    // SAFETY: owns this vec; slots nulled above.
+    unsafe { rt::gos_rt_vec_free(v) };
 }
 
 impl Drop for NativeEnumOwner {
     fn drop(&mut self) {
-        // SAFETY: `ptr` is an owned reference to a runtime-managed
-        // enum value (or a tagged-null unit variant, which the release
-        // entry treats as null).
-        unsafe {
-            gossamer_runtime::c_abi::gos_rt_rc_release(self.ptr as *mut u8);
+        let base = self.ptr & !7;
+        if self.owned && base != 0 {
+            free_exclusive_enum_tree(self.ptr, self.shape);
+        } else {
+            release_native_enum_tree(self.ptr, self.shape);
+        }
+    }
+}
+
+/// Completely frees an exclusively-owned native enum tree via its VM-side
+/// shape. Discovers every reachable node once (a shared node in a DAG is
+/// visited a single time), reclaims each node's `String` / `Vec` payloads and
+/// clears its enum-pointer slots so a release cannot re-enter the runtime
+/// cascade, then drains each node's strong count to zero. Iterative worklist,
+/// so a deep tree does not overflow the native stack. Sound only for an
+/// exclusively-owned root (guaranteed by the caller's `strong_count <= 1`
+/// gate): each node's whole reference count belongs to this tree, so draining
+/// it frees exactly once - a shared subtree still held elsewhere is never
+/// routed here.
+fn free_exclusive_enum_tree(root_ptr: usize, root_shape: &'static NativeEnumShape) {
+    use gossamer_runtime::c_abi as rt;
+    let root_base = root_ptr & !7;
+    if root_base == 0 {
+        return;
+    }
+    // (base, full pointer for discriminant reads, shape) for each node.
+    let mut seen: rustc_hash::FxHashSet<usize> = rustc_hash::FxHashSet::default();
+    let mut nodes: Vec<(usize, usize, &'static NativeEnumShape)> = Vec::new();
+    seen.insert(root_base);
+    let mut work = vec![(root_ptr, root_shape)];
+    while let Some((ptr, shape)) = work.pop() {
+        let base = ptr & !7;
+        if base == 0 {
+            continue;
+        }
+        nodes.push((base, ptr, shape));
+        let disc = native_enum_disc(ptr, shape);
+        let Some(variant) = shape.variants.get(disc) else {
+            continue;
+        };
+        for (i, kind) in variant.fields.iter().enumerate() {
+            if let NativeFieldKind::Enum(eidx) = kind
+                && let Some(cshape) = native_shape(*eidx)
+            {
+                // SAFETY: payload slot inside the node's allocation.
+                let cword = unsafe { *((base + i * 8) as *const i64) } as usize;
+                let cbase = cword & !7;
+                if cbase != 0 && seen.insert(cbase) {
+                    work.push((cword, cshape));
+                }
+            }
+        }
+    }
+    // Reclaim `String` / `Vec` payloads and clear every enum-pointer slot so the
+    // strong-count drain below cannot re-enter the runtime cascade.
+    for &(base, ptr, shape) in &nodes {
+        let disc = native_enum_disc(ptr, shape);
+        let Some(variant) = shape.variants.get(disc) else {
+            continue;
+        };
+        for (i, kind) in variant.fields.iter().enumerate() {
+            let slot = (base + i * 8) as *mut i64;
+            // SAFETY: payload slot inside the node's allocation.
+            let payload_word = unsafe { *slot };
+            match kind {
+                NativeFieldKind::Str => {
+                    if payload_word != 0 {
+                        // SAFETY: a live owned cstring body.
+                        unsafe { rt::gos_rt_str_free(payload_word as *mut std::os::raw::c_char) };
+                        // SAFETY: writing a slot we own.
+                        unsafe { *slot = 0 };
+                    }
+                }
+                NativeFieldKind::VecEnum(eidx) => {
+                    release_native_vec_enum(payload_word, *eidx);
+                    // SAFETY: writing a slot we own.
+                    unsafe { *slot = 0 };
+                }
+                NativeFieldKind::VecStrEnumTuple(eidx) => {
+                    release_native_vec_str_enum(payload_word, *eidx);
+                    // SAFETY: writing a slot we own.
+                    unsafe { *slot = 0 };
+                }
+                NativeFieldKind::Enum(_) => {
+                    // SAFETY: writing a slot we own; the child is freed below.
+                    unsafe { *slot = 0 };
+                }
+                NativeFieldKind::I64
+                | NativeFieldKind::F64
+                | NativeFieldKind::Bool
+                | NativeFieldKind::Char => {}
+            }
+        }
+    }
+    // Drain each node's strong count to zero and free it. Slots are cleared, so
+    // no release re-enters the cascade; the no-buffer release reclaims each node
+    // immediately instead of leaving an over-retained interior node parked as a
+    // cycle-collection candidate.
+    for &(base, _, _) in &nodes {
+        // SAFETY: `base` is a live runtime-managed node reached from the root.
+        let rc = unsafe { rt::gos_rt_rc_strong_count(base as *mut u8) };
+        for _ in 0..rc.max(0) {
+            // Re-check before each release so a node already driven to zero by
+            // an earlier iteration (a shared node reached along two paths whose
+            // count this teardown already drained) is never released past zero
+            // into freed memory.
+            if unsafe { rt::gos_rt_rc_strong_count(base as *mut u8) } <= 0 {
+                break;
+            }
+            // SAFETY: exclusively owned and count still positive.
+            unsafe { rt::gos_rt_rc_release_no_buffer(base as *mut u8) };
         }
     }
 }
@@ -1967,6 +2366,24 @@ impl Drop for NativeEnumOwner {
 /// loads stay valid because shapes are leaked).
 static NATIVE_SHAPES: std::sync::LazyLock<parking_lot::RwLock<Vec<&'static NativeEnumShape>>> =
     std::sync::LazyLock::new(|| parking_lot::RwLock::new(Vec::new()));
+
+/// Maps a variant name to the single native enum shape that declares it, so
+/// the bytecode enum constructor ([`Value::variant`]) can build the native
+/// representation directly instead of a boxed `Variant` that later marshals
+/// across the JIT boundary (Step 8: one representation, no marshalling copy).
+/// A name declared by more than one shape maps to `None` (ambiguous - the
+/// constructor cannot pick a shape from the variant name alone and falls back
+/// to the boxed form).
+static VARIANT_NAME_TO_SHAPE: std::sync::LazyLock<
+    parking_lot::RwLock<rustc_hash::FxHashMap<&'static str, Option<&'static NativeEnumShape>>>,
+> = std::sync::LazyLock::new(|| parking_lot::RwLock::new(rustc_hash::FxHashMap::default()));
+
+/// The native enum shape that uniquely declares a variant named `name`, or
+/// `None` if no native shape declares it or more than one does.
+#[must_use]
+pub(crate) fn native_shape_for_variant(name: &str) -> Option<&'static NativeEnumShape> {
+    VARIANT_NAME_TO_SHAPE.read().get(name).copied().flatten()
+}
 
 /// Atomically reserves a contiguous block of shape indices and
 /// registers the shapes that `build` produces under them.
@@ -1986,12 +2403,30 @@ pub fn register_native_shapes<R>(
     let mut t = NATIVE_SHAPES.write();
     let base = u32::try_from(t.len()).unwrap_or(0);
     let (shapes, result) = build(base);
+    let mut names = VARIANT_NAME_TO_SHAPE.write();
     for (offset, shape) in shapes.into_iter().enumerate() {
         debug_assert_eq!(
             shape.index,
             base + u32::try_from(offset).unwrap_or(0),
             "shape table index drift",
         );
+        // Step 8 builds native for every registered shape, including
+        // `Vec`-bearing enums (e.g. a JSON-like `List(Vec<Node>)`). A marshalled
+        // `Vec` element is a fresh, exclusively-owned native copy - never an
+        // alias of a live VM node - so construction and teardown stay uniform
+        // (drain-to-zero) with no mixed-ownership double free.
+        for variant in &shape.variants {
+            names
+                .entry(variant.name)
+                .and_modify(|e| {
+                    // A second shape declaring this variant name makes it
+                    // ambiguous; the constructor must fall back to `Variant`.
+                    if !matches!(e, Some(s) if std::ptr::eq(*s, shape)) {
+                        *e = None;
+                    }
+                })
+                .or_insert(Some(shape));
+        }
         t.push(shape);
     }
     result
@@ -2062,6 +2497,7 @@ pub fn native_enum_field(owner: &NativeEnumOwner, idx: usize) -> Value {
             Value::NativeEnum(Arc::new(NativeEnumOwner {
                 ptr: word as usize,
                 shape,
+                owned: false,
             }))
         }
         NativeFieldKind::VecEnum(eidx) => native_vec_enum_to_array(word, *eidx),
@@ -2098,6 +2534,7 @@ fn native_vec_enum_to_array(word: i64, eidx: u32) -> Value {
         out.push(Value::NativeEnum(Arc::new(NativeEnumOwner {
             ptr: elem as usize,
             shape: eshape,
+            owned: false,
         })));
     }
     Value::Array(Arc::new(out))
@@ -2149,6 +2586,7 @@ fn native_vec_str_enum_to_array(word: i64, eidx: u32) -> Value {
             Value::NativeEnum(Arc::new(NativeEnumOwner {
                 ptr: val_word as usize,
                 shape: eshape,
+                owned: false,
             }))
         };
         out.push(Value::Tuple(Arc::from(vec![key, val])));
@@ -2168,7 +2606,7 @@ pub fn native_enum_to_variant(owner: &NativeEnumOwner) -> Value {
     let fields: Vec<Value> = (0..variant.fields.len())
         .map(|i| deep_native_value(native_enum_field(owner, i)))
         .collect();
-    Value::variant(variant.name, fields)
+    Value::variant_boxed(variant.name, fields)
 }
 
 /// Deep-converts any `Value::NativeEnum` reachable through a value (directly,

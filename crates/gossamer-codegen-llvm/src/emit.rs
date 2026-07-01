@@ -26,6 +26,7 @@ const LLVM_SPECIAL_DECLS: &[&str] = &[
     "declare void @gos_rt_set_args(i32, ptr)",
     "declare void @gos_rt_flush_stdout()",
     "declare i32 @gos_rt_main_exit_code(i64)",
+    "declare i32 @gos_rt_main_exit_code_err(i64, i64)",
 ];
 
 /// Parallel to `gossamer-codegen-cranelift::NativeObject`.
@@ -227,6 +228,28 @@ static CACHE_DIR_OVERRIDE: std::sync::OnceLock<Option<PathBuf>> = std::sync::Onc
 /// var. Has no effect if called after the first cache lookup.
 pub fn set_cache_dir(dir: PathBuf) {
     let _ = CACHE_DIR_OVERRIDE.set(Some(dir));
+}
+
+/// Process-level target-triple override for cross-compilation.
+/// Set by the CLI from `--target`; consulted by [`host_triple`]
+/// ahead of the `TARGET` env var and host detection.
+///
+/// This joins the same set-once compiler-configuration idiom as
+/// [`set_cache_dir`], [`set_opt_profile`], and [`set_strict_lowering`]:
+/// codegen is configured before the first lowering call rather than
+/// threaded through every signature. The target is read by `host_triple`
+/// alone, and `host_triple` is consulted at many internal sites - the
+/// `-mtriple` passed to opt/llc, the Win64-vs-SysV i128 ABI marshalling
+/// in `target_is_windows` (deep in per-operation lowering), the parallel
+/// codegen workers, and the incremental object-cache key. Threading a
+/// target parameter through all of those would be pervasive; this one
+/// override makes them target-aware at the single chokepoint.
+static TARGET_TRIPLE_OVERRIDE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+/// Configures the LLVM target triple for subsequent builds. No effect
+/// once a build has begun reading the triple.
+pub fn set_target_triple(triple: String) {
+    let _ = TARGET_TRIPLE_OVERRIDE.set(triple);
 }
 
 /// Resolves the active incremental cache directory in priority order:
@@ -552,11 +575,15 @@ fn render_chunk_module(
     // declared extern above and resolved at link time by the Cranelift companion.
     if let Some(idx) = main_idx {
         let main_body = &ctx.all_bodies[idx];
-        let ret_is_unit = matches!(
-            ctx.tcx
-                .kind(main_body.local_ty(gossamer_mir::Local::RETURN)),
-            Some(gossamer_types::TyKind::Unit)
-        );
+        let ret_ty = main_body.local_ty(gossamer_mir::Local::RETURN);
+        let ret_is_unit = matches!(ctx.tcx.kind(ret_ty), Some(gossamer_types::TyKind::Unit));
+        // A `Result`-returning main (explicit `-> Result<..>` or the implicit
+        // `?`-desugared top-level main) lowers to a 2-word (i128) value packed
+        // `(payload << 64) | disc`. The i64 path would truncate to the disc,
+        // dropping the error payload; read the full i128 and hand the unpacked
+        // disc + payload to the error-aware exit handler so an `Err` entry-point
+        // result prints its Display chain to stderr and exits nonzero.
+        let ret_is_result = !ret_is_unit && ctx.tcx.slot_bytes(ret_ty) == 16;
         writeln!(out, "define i32 @main(i32 %argc, ptr %argv) {{").unwrap();
         writeln!(out, "entry:").unwrap();
         writeln!(out, "  call void @gos_rt_set_args(i32 %argc, ptr %argv)").unwrap();
@@ -564,6 +591,17 @@ fn render_chunk_module(
             writeln!(out, "  call void @\"gos_main\"()").unwrap();
             writeln!(out, "  call void @gos_rt_flush_stdout()").unwrap();
             writeln!(out, "  ret i32 0").unwrap();
+        } else if ret_is_result {
+            writeln!(out, "  %r = call i128 @\"gos_main\"()").unwrap();
+            writeln!(out, "  %disc = trunc i128 %r to i64").unwrap();
+            writeln!(out, "  %hi = lshr i128 %r, 64").unwrap();
+            writeln!(out, "  %payload = trunc i128 %hi to i64").unwrap();
+            writeln!(
+                out,
+                "  %code = call i32 @gos_rt_main_exit_code_err(i64 %disc, i64 %payload)"
+            )
+            .unwrap();
+            writeln!(out, "  ret i32 %code").unwrap();
         } else {
             writeln!(out, "  %r = call i64 @\"gos_main\"()").unwrap();
             writeln!(out, "  call void @gos_rt_flush_stdout()").unwrap();
@@ -999,10 +1037,14 @@ fn render_module_to_path(
     }
 
     if let Some(user_main) = bodies.iter().find(|b| b.name == "main") {
-        let ret_is_unit = matches!(
-            tcx.kind(user_main.local_ty(gossamer_mir::Local::RETURN)),
-            Some(gossamer_types::TyKind::Unit)
-        );
+        let ret_ty = user_main.local_ty(gossamer_mir::Local::RETURN);
+        let ret_is_unit = matches!(tcx.kind(ret_ty), Some(gossamer_types::TyKind::Unit));
+        // A `Result`-returning main lowers to a 2-word (i128) value packed
+        // `(payload << 64) | disc`; the i64 path truncates to the disc and
+        // drops the error payload. Read the full i128 and hand the unpacked
+        // disc + payload to the error-aware exit handler so an `Err` entry-point
+        // result prints its Display chain to stderr and exits nonzero.
+        let ret_is_result = !ret_is_unit && tcx.slot_bytes(ret_ty) == 16;
         writeln!(body_w, "define i32 @main(i32 %argc, ptr %argv) {{")?;
         writeln!(body_w, "entry:")?;
         writeln!(body_w, "  call void @gos_rt_set_args(i32 %argc, ptr %argv)")?;
@@ -1010,6 +1052,16 @@ fn render_module_to_path(
             writeln!(body_w, "  call void @\"gos_main\"()")?;
             writeln!(body_w, "  call void @gos_rt_flush_stdout()")?;
             writeln!(body_w, "  ret i32 0")?;
+        } else if ret_is_result {
+            writeln!(body_w, "  %r = call i128 @\"gos_main\"()")?;
+            writeln!(body_w, "  %disc = trunc i128 %r to i64")?;
+            writeln!(body_w, "  %hi = lshr i128 %r, 64")?;
+            writeln!(body_w, "  %payload = trunc i128 %hi to i64")?;
+            writeln!(
+                body_w,
+                "  %code = call i32 @gos_rt_main_exit_code_err(i64 %disc, i64 %payload)"
+            )?;
+            writeln!(body_w, "  ret i32 %code")?;
         } else {
             writeln!(body_w, "  %r = call i64 @\"gos_main\"()")?;
             writeln!(body_w, "  call void @gos_rt_flush_stdout()")?;
@@ -1750,7 +1802,7 @@ fn invoke_llc_pipeline(
         eprintln!("llvm backend: IR at {}", ll_path.display());
     }
     let profile = opt_profile();
-    let mcpu = mcpu_target();
+    let mcpu = mcpu_target(triple);
     // Both profiles run `opt` because the lowerer emits some
     // non-canonical shapes (e.g. integer-typed constants in
     // floating-point store positions) that `opt`'s
@@ -1809,11 +1861,11 @@ fn invoke_llc_pipeline(
         // 512-bit ops down-clock or share execution-port budget
         // with scalar work.
         // `+prefer-256-bit` is an x86 AVX-512 feature flag - only
-        // meaningful on x86_64 hosts. Passing it to an aarch64
-        // target produces a warning but otherwise no-ops; we keep
-        // it scoped to x86 so non-x86 hosts (Apple Silicon, etc.)
-        // don't see the spurious "unknown subtarget feature" line.
-        .args(if cfg!(target_arch = "x86_64") {
+        // meaningful for an x86_64 *target*. Keyed off the resolved
+        // target arch (not the host) so a cross build to aarch64 never
+        // emits it - on a non-x86 target it warns "unknown subtarget
+        // feature" at best and perturbs codegen at worst.
+        .args(if target_arch_from_triple(triple) == "x86_64" {
             &["-mattr=+prefer-256-bit"][..]
         } else {
             &[][..]
@@ -1893,17 +1945,16 @@ fn invoke_llc_pipeline(
         } else {
             &["-relocation-model=pic"][..]
         })
-        .arg(format!("-mcpu={mcpu}", mcpu = mcpu_target()))
+        .arg(format!("-mcpu={mcpu}"))
         // See the matching note on the `opt` invocation: cap
         // the late-stage vectoriser at 256-bit too so any
         // remaining post-`opt` codegen (slow-path lowering,
         // memcpy/memset expansion) doesn't reach for ZMM.
         // `+prefer-256-bit` is an x86 AVX-512 feature flag - only
-        // meaningful on x86_64 hosts. Passing it to an aarch64
-        // target produces a warning but otherwise no-ops; we keep
-        // it scoped to x86 so non-x86 hosts (Apple Silicon, etc.)
-        // don't see the spurious "unknown subtarget feature" line.
-        .args(if cfg!(target_arch = "x86_64") {
+        // meaningful for an x86_64 *target*. Keyed off the resolved
+        // target arch (not the host) so a cross build to aarch64
+        // never emits it.
+        .args(if target_arch_from_triple(triple) == "x86_64" {
             &["-mattr=+prefer-256-bit"][..]
         } else {
             &[][..]
@@ -1955,14 +2006,46 @@ fn invoke_llc_pipeline(
 /// `GOS_LLVM_MCPU=native`. On non-x86_64 targets we fall back to
 /// `native` because there's no portable ISA-version tag in the
 /// same shape (`apple-m1`, `neoverse-n1`, etc. vary too much).
-fn mcpu_target() -> String {
+fn mcpu_target(triple: &str) -> String {
     if let Ok(s) = std::env::var("GOS_LLVM_MCPU") {
         return s;
     }
-    if cfg!(target_arch = "x86_64") {
-        "x86-64-v3".to_string()
-    } else {
-        "native".to_string()
+    mcpu_for(triple, TARGET_TRIPLE_OVERRIDE.get().is_some())
+}
+
+/// The architecture component of an LLVM target triple
+/// (`x86_64-unknown-linux-gnu` -> `"x86_64"`).
+fn target_arch_from_triple(triple: &str) -> &'static str {
+    match triple.split('-').next().unwrap_or("") {
+        "x86_64" => "x86_64",
+        "aarch64" | "arm64" => "aarch64",
+        "riscv64" | "riscv64gc" => "riscv64",
+        _ => "unknown",
+    }
+}
+
+/// `-mcpu` for `triple`. `is_cross` is true when an explicit
+/// `--target` override is active. A cross build must never use
+/// `native` (which names the *host* CPU); it picks a portable
+/// baseline per target arch so the artifact runs across that family
+/// (e.g. Raspberry Pi 3/4/5). A native build preserves the prior
+/// behaviour: a reproducible `x86-64-v3` floor on x86-64, host-tuned
+/// `native` elsewhere (e.g. Apple Silicon).
+fn mcpu_for(triple: &str, is_cross: bool) -> String {
+    if !is_cross {
+        return if cfg!(target_arch = "x86_64") {
+            "x86-64-v3".to_string()
+        } else {
+            "native".to_string()
+        };
+    }
+    match target_arch_from_triple(triple) {
+        // Reproducible x86-64 baseline (AVX2 + BMI2 + FMA, ~2013+).
+        "x86_64" => "x86-64-v3".to_string(),
+        // Generic ARMv8-A: portable across every aarch64 device;
+        // `GOS_LLVM_MCPU=cortex-a76` opts into Pi 5 tuning.
+        "aarch64" => "generic".to_string(),
+        _ => "generic".to_string(),
     }
 }
 
@@ -2211,16 +2294,23 @@ fn is_executable(path: &str) -> bool {
 }
 
 fn host_triple() -> String {
-    // Build the LLVM target triple for the current host. `llc`
-    // uses this to pick the object-file format (ELF on Linux,
-    // Mach-O on Darwin, COFF on Windows); getting the OS portion
-    // wrong produces an object the host's `ld` rejects as
-    // "unknown file type" - the exact symptom seen on macOS when
-    // this helper hardcoded `unknown-linux-gnu`.
-    //
-    // `TARGET` (set by cargo build scripts) takes precedence so
-    // cross-compilation still works; otherwise derive arch + OS
-    // from `std::env::consts` (cross-platform, no subprocess).
+    // An explicit `--target` (via `set_target_triple`) wins over
+    // everything so a cross `gos build` drives opt/llc, the i128 ABI
+    // marshalling, and the object-cache key at the requested triple.
+    if let Some(triple) = TARGET_TRIPLE_OVERRIDE.get() {
+        return triple.clone();
+    }
+    detect_host_triple()
+}
+
+/// The host's own LLVM target triple, ignoring any cross-compile
+/// override. `llc` uses this to pick the object-file format (ELF on
+/// Linux, Mach-O on Darwin, COFF on Windows); getting the OS portion
+/// wrong produces an object the host's `ld` rejects as "unknown file
+/// type". `TARGET` (set by cargo build scripts) takes precedence so a
+/// build-script-driven cross still works; otherwise arch + OS come
+/// from `std::env::consts` (cross-platform, no subprocess).
+fn detect_host_triple() -> String {
     if let Ok(triple) = std::env::var("TARGET") {
         return triple;
     }
@@ -2296,7 +2386,7 @@ mod shape_validation_tests {
 
 #[cfg(test)]
 mod host_triple_tests {
-    use super::host_triple;
+    use super::{detect_host_triple, mcpu_for, target_arch_from_triple};
 
     /// `llc` selects the object-file format from the OS portion of
     /// the triple - ELF on a Linux triple, Mach-O on `apple-darwin`,
@@ -2321,7 +2411,10 @@ mod host_triple_tests {
             // mismatch we can't control.
             return;
         }
-        let triple = host_triple();
+        // Call the detection helper directly, not `host_triple`: the
+        // latter consults the process-wide target override, which a
+        // sibling test may have set, and would pollute this assertion.
+        let triple = detect_host_triple();
         let expected_os_part = match std::env::consts::OS {
             "linux" => "unknown-linux-gnu",
             "macos" => "apple-darwin",
@@ -2341,6 +2434,30 @@ mod host_triple_tests {
             triple.starts_with(std::env::consts::ARCH),
             "host_triple {triple:?} does not start with arch {arch:?}",
             arch = std::env::consts::ARCH,
+        );
+    }
+
+    #[test]
+    fn mcpu_cross_target_is_portable_not_host() {
+        // A cross build to aarch64 must not inherit an x86 -mcpu, and
+        // must never use `native` (the host CPU). Tested through the
+        // pure helper so it needs no process-wide override.
+        assert_eq!(mcpu_for("aarch64-unknown-linux-gnu", true), "generic");
+        assert_eq!(mcpu_for("aarch64-unknown-linux-musl", true), "generic");
+        assert_eq!(mcpu_for("x86_64-unknown-linux-gnu", true), "x86-64-v3");
+    }
+
+    #[test]
+    fn prefer_256_bit_only_for_x86_target() {
+        // The AVX-512 width cap is x86-only; an aarch64 target (cross
+        // from any host) must not receive it.
+        assert_eq!(
+            target_arch_from_triple("aarch64-unknown-linux-musl"),
+            "aarch64"
+        );
+        assert_eq!(
+            target_arch_from_triple("x86_64-unknown-linux-gnu"),
+            "x86_64"
         );
     }
 }

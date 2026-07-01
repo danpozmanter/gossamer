@@ -1,0 +1,8 @@
+use std::errors
+
+// The implicit top-level-statement main desugars to `-> Result<(), Error>`;
+// a propagated `?` Err must print to stderr and exit nonzero on every tier,
+// identically to the explicit form. Regression guard for the same bug.
+println!("before err")
+Err(errors::new("boom"))?
+println!("after err")

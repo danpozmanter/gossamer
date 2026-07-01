@@ -1,0 +1,17 @@
+// Structural `==` / `!=` on heap (recursive / Box, and Vec-bearing) enums:
+// two distinct allocations of an equal value must compare true on every tier
+// (matching the VM's `values_equal`), not by pointer identity. Covers scalar,
+// String, nested Box, and `Vec<Self>` fields, plus an unequal case.
+enum Node { Leaf(i64), Text(String), List(Vec<Node>), Pair(Box<Node>, Box<Node>) }
+
+fn main() {
+    let a = Node::List([Node::Leaf(1), Node::Text("hi"), Node::Pair(Node::Leaf(2), Node::Leaf(3))])
+    let b = Node::List([Node::Leaf(1), Node::Text("hi"), Node::Pair(Node::Leaf(2), Node::Leaf(3))])
+    let c = Node::List([Node::Leaf(1), Node::Text("HI"), Node::Pair(Node::Leaf(2), Node::Leaf(3))])
+    println!("{}", a == b)
+    println!("{}", a == c)
+    println!("{}", a != c)
+    println!("{}", Node::Leaf(7) == Node::Leaf(7))
+    println!("{}", Node::Leaf(7) == Node::Leaf(8))
+    println!("{}", Node::Text("x") == Node::Text("x"))
+}

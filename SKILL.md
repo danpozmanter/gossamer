@@ -61,6 +61,11 @@ first time through, leave it alone.
   they do on tuples. Ordering is lexicographic by declaration order
   (structs) or variant rank then payload (enums); a user `impl` of
   `eq` / `cmp` overrides the synthesized one for custom ordering.
+  Arrays, `Vec`, and tuples also compare structurally (element-wise),
+  not by identity: `[1, 2, 3] == [1, 2, 3]` is `true`.
+- **Labeled loops** for breaking/continuing an outer loop from a
+  nested one: `'outer: for i in 0..5 { for j in 0..5 { if j == 2 {
+  continue 'outer } if i == 3 { break 'outer } } }`.
 - **`#[derive(Debug, Default, PartialEq, Eq, PartialOrd, Ord)]`** are the
   derivable traits, synthesized as real source so `{:?}`,
   `Type::default()`, and the comparisons work on every tier. Enums
@@ -95,6 +100,9 @@ first time through, leave it alone.
   at every exit path. Contract: nothing allocated inside may be
   referenced after the block - compute scalar/string summaries
   inside, keep survivors outside. Statement position only; nests.
+  This is statically enforced, not just a convention: assigning an
+  arena-allocated value to a binding outside the block is a compile-time
+  `gos check` error (`GM0003`).
 - **Bare numeric literals - always.** `0`, `200`, `1.5`, not
   `0i64` / `1.5f64`. Inference picks the type from binding, call
   site, or return type. Suffix only when a literal stands alone
@@ -256,6 +264,10 @@ fn main() {
   std::collections::{HashMap as Map}`. Paths validate against the
   canonical std manifest (`GR0005`): always spell the full path
   (`std::encoding::json`, not `std::json`).
+- **Cross-module paths** in a multi-file package: `super::item` (parent
+  module), `crate::path::item` (from the package root), and
+  `self::child::item` (an explicit child) navigate between sibling/nested
+  `mod` files declared per §13's project layout.
 - **Expressions-as-statements.** `if`, `match`, `loop`, and blocks
   all yield values.
 - **Entry file may omit `fn main`.** Bare statements at the top level of
@@ -278,6 +290,10 @@ fn main() {
   all three tiers. Single-bound struct-typed parameters today; no
   `dyn Trait`, operator traits, associated types, or supertrait method
   inheritance through the bound.
+- **Generic structs.** `struct Wrapper<T> { value: T }` with `impl<T>
+  Wrapper<T> { fn get(&self) -> T { self.value } }` - fields and impl
+  methods are generic over `T`, monomorphised per instantiation on all
+  three tiers, same as generic functions.
 - **Const-generic array length.** `fn sum<const N: usize>(xs: [i64; N])
   -> i64` takes a fixed-size array of any length; `N` is inferred from
   the argument's length and the function monomorphises correctly on all
@@ -302,6 +318,8 @@ fn main() {
 - **`defer expr`** - runs on block exit by any path, LIFO, every tier.
 - **Integer literals** are bare; inference picks the type, default
   `i64`. Suffix only with no contextual hint.
+- **Byte literals.** `b'A'` is a `u8` (`65`), for byte-level work
+  (parsing, hashing, binary protocols).
 - **Casts.** `x as i32` - whitelist-checked (numeric ↔ numeric,
   `bool`/`char` → int, `u8` → `char`, same-type no-op). Int → narrow
   int masks at width (`300 as u8 == 44`); float → int truncates
@@ -319,7 +337,8 @@ fn main() {
   patterns (`let Point { x, y } = p`, renamed `let Point { x: a, y: b }
   = p`), nested structs, enum / tuple-struct variants (`let Shape::Pair(m,
   n) = s`), and or-patterns (`let (A(g, _) | B(g)) = v`, alternatives must
-  bind the same names) on every tier.
+  bind the same names) on every tier. Rest patterns commonly slice a `Vec`
+  head/tail: `if let [first, ..rest] = xs { use(first, rest) }`.
 - **`if let` / `while let`** desugar to `match` - shorter reading,
   no new behavior.
 - **`let PAT = expr else { … }`** - the else block must diverge
@@ -576,6 +595,29 @@ terminals - allocation-free until the terminal.
   `if`/`match` branches of differing lengths join to `Vec<T>`.
 - Enums cap at 256 variants (`GT0012`).
 
+## 9a. Weak references (breaking cycles)
+
+Reference counting means a genuine cycle (parent <-> child, doubly-linked
+list) leaks unless one direction holds a non-owning pointer. `Weak<T>`
+is that non-owning pointer: `let w = strong.downgrade()` produces a
+`Weak<T>` from any `Arc`/`Rc`-backed value; `w.upgrade() -> Option<T>`
+gets a strong handle back, or `None` once every strong owner is gone.
+`std::runtime::collect_cycles()` runs the cycle collector on demand
+(the LLVM/native tier also runs it automatically; see the tier-divergence
+note in §14).
+
+```gossamer
+struct Node { name: String, parent: Weak<Node>, children: [Node] }
+```
+
+**Tier-divergence trap:** a `Weak` observing a member of a genuine
+*strong* cycle reads as still-live (`Some`) under `gos run` (the
+interpreter's cycle collector is a no-op there), but as `None` under
+`gos build` / `gos build --release` once the Bacon-Rajan collector
+actually runs. Don't rely on a `Weak` into a strong cycle resolving
+consistently across tiers - break the cycle for real, and cross-check
+with `gos build` whenever `Weak` behavior matters.
+
 ## 10. The `gos` toolchain
 
 Every subcommand takes a `.gos` file or a project dir. Bare `gos`
@@ -586,9 +628,10 @@ manifest-id-named source, then a sole `.gos` candidate).
 | Command | Purpose |
 |---------|---------|
 | `gos check FILE` | Parse + resolve + typecheck + exhaustiveness. |
+| `gos parse FILE` | Dump the AST. |
 | `gos run FILE` | Register-based bytecode VM (with in-process JIT). |
 | `gos build FILE` | Native build via LLVM (`llc -O0`) + system linker. Fast compile, unoptimised. |
-| `gos build --release FILE` | Full LLVM pipeline (`opt -O3 \| llc -O3`), static-musl on Linux. Strict lowering by default (`--allow-llvm-fallback` opts out). `--target TRIPLE` cross-compiles; `-g` embeds DWARF. |
+| `gos build --release FILE` | Full LLVM pipeline (`opt -O3 \| llc -O3`), static-musl on Linux. Strict lowering by default (`--allow-llvm-fallback` opts out). `--target TRIPLE` cross-compiles to `{x86_64,aarch64}-unknown-linux-{gnu,musl}` (QEMU-validated, including Raspberry Pi) from any of Linux/macOS/Windows hosts - macOS/Windows-as-*target* isn't supported yet; `-g` embeds DWARF. |
 | `gos test PATH` | Run `#[test]` functions. `--coverage <path>` (lcov), `--parallel N` / `--serial`, `--format junit`, `--tier-parity`. |
 | `gos bench PATH` | Time `#[bench]` functions. |
 | `gos fmt [--check] FILE` | Token-stream formatter; idempotent, comment/macro/line-structure preserving. |
@@ -597,10 +640,17 @@ manifest-id-named source, then a sole `.gos` candidate).
 | `gos explain CODE` | Long-form rationale for a diagnostic code. |
 | `gos watch --command CMD PATH` | Re-run on file change. |
 | `gos clean [--vendor] [--dry-run]` | Remove `target/`, caches; `--vendor` drops `vendor/`. |
-| `gos new ID --path DIR` | Scaffold a project. |
+| `gos new ID --path DIR [--template T]` | Scaffold a project. `--template` is `bin` (default), `lib`, `service` (binds `0.0.0.0:8080`), `workspace` (`[workspace]`/`members`, no source tree), or `binding` (Rust-binding crate skeleton). |
+| `gos init ID` | Scaffold just `project.toml` in the current directory - lighter than `gos new`. |
+| `gos bindgen INPUT --out DIR` | Scaffold a `#[gos_module]` Rust-binding crate skeleton from a Rust source file. |
 | `gos add SPEC` / `remove` / `tidy` / `fetch` / `vendor` | Package manager. |
 | `gos publish` / `yank` / `login` / `logout` / `owner` | Registry workflow (Ed25519-signed tarballs, sha256 pinned in the lockfile). |
-| `gos feature-status` | List/`--check` the feature-status registry. |
+| `gos feature-status [--check]` | List the feature-status registry (see §14 for current non-Shipped entries). |
+| `gos repl` | Explicit name for bare-`gos`'s REPL. |
+| `gos lsp` | stdio LSP adapter for editors. |
+| `gos env` | Print toolchain diagnostics: version, runtime lib path, host triple, `cc` path. |
+| `gos completion {bash,zsh,fish,...}` | Generate shell completions. |
+| `gos skill-prompt` | Print this skill card verbatim (it's compiled into the CLI via `include_str!`) - e.g. `gos skill-prompt \| claude --append-system-prompt`. Keeping this file accurate has a direct, mechanical payoff. |
 
 ## 11. Writing tests
 
@@ -638,13 +688,21 @@ repo examples and write a small test when unsure.
 
 - `std::fmt` - `Display`, `Debug`.
 - `std::io` - `Read`, `Write`, buffered wrappers, `stdin` / `stdout`.
+  Blocking line input: `os::stdin().read_line() -> Option<String>`
+  (trailing newline stripped, `None` on EOF).
 - `std::env` - `args`, `program_name`, `var`, `set_var`,
   `unset_var`, `current_dir`, `set_current_dir`, `home_dir`,
   `temp_dir`.
-- `std::process` - `Command`, `Output`, `Stdio`, `Child`,
-  `ExitStatus`, `run`, `spawn`, `kill`, `exit`, `id`, `abort`,
-  `Pipeline` (`pipeline_run`), `Signal`, `signal`, `kill_group`,
-  `wait_timeout` (POSIX-only).
+- `std::process` - the callable surface is free functions, **not** a
+  `Command` builder (`Command`/`Output`/`Stdio`/`Child`/`ExitStatus` are
+  Rust-only types for native extension authors, unbound in `.gos`
+  - `process::Command::new(...)` is a `GX0002` error). Use
+  `process::run(prog, args) -> Result<{stdout: String, stderr: String,
+  code: i64}, String>`: no shell involved (real exec, so argv elements
+  need no escaping), `prog`/`args` take bare values or `&`-refs. Also
+  `spawn`, `kill`, `exit`, `id`, `abort`, `pipeline_run`, `signal`,
+  `kill_group`, `wait_timeout` (POSIX-only) - no stdin piping and no
+  builder for those either.
 - `std::fs` - `read`, `read_to_string`, `write`, `read_dir`,
   `walk_dir`, `create_dir(_all)`, `remove_file/dir(_all)`,
   `remove_all`, `copy`, `rename`, `exists`, `is_file/dir/symlink`,
@@ -654,7 +712,8 @@ repo examples and write a small test when unsure.
   `parent`, `file_name`, `stem`, `normalize`.
 - `std::os` - `family()`, `arch()`; `write_file(path, &Vec<u8>)`
   (binary-safe) and `read_file(path) -> Result<Vec<u8>, _>` /
-  `read_file_to_string`.
+  `read_file_to_string`. `std::os::user` - POSIX user/group lookup.
+  `std::os::signal` - OS signal handling.
 - `std::strings` - `split`, `splitn`, `split_whitespace`, `trim(_start/_end)`,
   char-set trims `trim_matches(set)` (both ends) / `trim_start_matches(set)` /
   `trim_end_matches(set)` (there is **no** `strip_chars`/`lstrip_chars`/
@@ -687,12 +746,20 @@ repo examples and write a small test when unsure.
   `symmetric_difference`, `is_subset`, `is_superset`, `is_disjoint`),
   `BTreeMap` (sorted, `String` or `i64` keys), `VecDeque` (double-ended:
   `push_back/front`, `pop_back/front`, `peek_front/back`). (Vec/HashMap
-  method extras under §9.)
+  method extras under §9.) A separate, `i64`-only family -
+  `queue`/`stack`/`deque`/`heap`/`ordered_set`/`ordered_map`/
+  `ordered_vec` - is **functional/re-bind style**, not mutating-in-place:
+  `let q = queue::push(q, v)` returns the updated collection rather than
+  mutating `q`. Reach for these when that immutable-update shape fits;
+  otherwise prefer the mutating `Vec`/`HashMap`/`VecDeque` above.
 - `std::net` - `TcpListener::{bind, accept, local_addr, close}`,
   `TcpStream::{connect, read, read_to_string, write, close}`,
   `UdpSocket::{bind, send_to, recv_from, local_addr, close}`,
-  `resolve` / `lookup` (DNS). `std::net::url` - parse + render +
-  escape.
+  `resolve` / `lookup` (DNS). `UnixListener` / `UnixStream` - Unix-domain
+  sockets (`#[cfg(unix)]`, POSIX-only). `std::net::url` - parse + render +
+  escape. `std::net::netip` - typed IP address/port (Go `net/netip`
+  shape). `std::net::ip` - string-level IPv4/IPv6 parse/classify.
+  `std::mime` - RFC 2045 media-type parsing and extension lookup.
 - `std::http` - `Method`, `StatusCode`, `Headers`, `Request`,
   `Response`, `Handler`, `serve` (returns `Result<(), Error>`). HTTP
   client: `Client::builder().max_redirects(n).timeout_ms(ms).build()`;
@@ -707,7 +774,16 @@ repo examples and write a small test when unsure.
   `query`, `session`, `state` (`AppState`/`State<T>`), `health`,
   `middleware` (`accepts_gzip`, `bearer_ok`, `decode_basic_auth`,
   `new_request_id`, `tag`); HTTP/2 push + trailers. `std::http_h3` -
-  HTTP/3 server + client (RFC 9114).
+  HTTP/3 server + client (RFC 9114). `std::http::websocket` - first-party
+  RFC 6455 WebSocket (`serve`/`connect`/`send_text`/`send_binary`/`recv`/
+  `close`; no `wss://` yet). `std::http::static_files` - caching
+  static-file handler (ETag/Last-Modified/Range/MIME sniff).
+  `std::http::proxy` - reverse proxy built on `http::Client`.
+  `std::html` - HTML escape/unescape. `std::html::template` and
+  `std::text::template` (both Experimental, see §14) - context-aware
+  auto-escaping HTML templates and plain-text templates. `std::tls`
+  (Experimental) - rustls-backed TLS client/server (`start_tls`,
+  `start_tls_ca`, `start_tls_insecure`, `http::serve_tls`).
 - `std::http::router` - `Router::new()` returns a `Router`; all verb
   methods (`get`, `post`, `put`, `delete`, `patch`, `head`, `options`
   and their `_fn` closure variants) return the same `Router`, so they
@@ -730,12 +806,23 @@ repo examples and write a small test when unsure.
   `to_json::<Type>(value) -> Result<String, _>` (the single
   spelling - no `Type::from_json` methods). The decoder validates
   each field against its declared type with path-qualified errors;
-  nested structs, `[T]`/`Vec<T>`/`[T; N]`/tuples/`Option<T>`/
-  `HashMap<String, V>` walk recursively; a `json::Value` field
-  passes through. `let user: User = from_json::<User>(&text)?` is
-  canonical. Dynamic `json::parse` / `decode` / `render` +
-  `json::as_i64/f64/str -> Option<T>` stay available for
-  unknown-shape documents. Narrow int fields round-trip via `as`.
+  nested structs and `[T]`/`Vec<T>` of a supported inner type walk
+  recursively. **`Option<T>`, `HashMap<...>`, tuples, `[T; N]`, and a
+  `json::Value` field are not supported in the struct derive today** -
+  a struct with any such field makes `from_json`/`to_json` fail to
+  exist for it at all (`GR0001: cannot find` the synthesized
+  serializer), not a narrower per-field error. `let user: User =
+  from_json::<User>(&text)?` is canonical for fully-scalar/nested-struct
+  shapes; unknown extra JSON keys are ignored, not rejected. For any
+  document with a dynamic or partially-known shape (which includes the
+  above unsupported field types), decode the whole thing with the
+  dynamic API instead: `json::parse(&text) -> Result<Value, Error>`,
+  `json::get(&value, key) -> Option<&Value>`, `json::at(&value, idx) ->
+  Option<&Value>`, `json::as_i64/f64/str/bool(&value) -> Option<T>`,
+  `json::is_null(&value) -> bool`, `json::len(&value) -> i64`,
+  `json::keys(&value) -> Vec<String>`. Narrow int fields in the typed
+  path round-trip via `as`.
+  Also `std::encoding::{xml, base32, ascii85, csv, pem}` for those formats.
 - `std::encoding::yaml` - YAML 1.2 parse/encode + `yaml::to_json` /
   `from_json` text converters; auto-derived `from_yaml::<T>` /
   `to_yaml::<T>` on every struct compose these with the JSON pair.
@@ -751,33 +838,49 @@ repo examples and write a small test when unsure.
   `Value` (Null/Bool/Int/Float/Text/Blob), positional `$N`; `Pool`;
   `migrate::up(&mut conn, dir) -> i64`; `Select` fluent builder.
 - `std::sync` - `Mutex`, `RwLock`, atomics, `channel`, `Once`,
-  `WaitGroup` (`new`/`add`/`done`/`wait`), `Map` (concurrent
-  string→string: `set`/`get`/`delete`/`len`/`contains`/`keys`). For
-  non-string payloads wrap a `HashMap` in `Mutex`.
+  `WaitGroup` (`new`/`add`/`done`/`wait`), `Barrier` (thread-rendezvous),
+  `Map` (concurrent string→string: `set`/`get`/`delete`/`len`/`contains`/
+  `keys`). For non-string payloads wrap a `HashMap` in `Mutex`.
+  `std::thread` - native OS threads, distinct from `go`/goroutines.
 - `std::time` - `Instant::{now, elapsed_ms}`, `Duration::{from_millis/secs/micros,
-  as_millis/secs/micros}`, `sleep`, `now`, `now_nanos`,
-  `monotonic_ms/nanos`, `since_ms`, `format_rfc3339`, `parse_rfc3339`.
+  as_millis/secs/micros}`, `sleep`, `now`, `now_ms` (unix milliseconds,
+  the stable integer to use for e.g. a timestamped directory name),
+  `now_nanos`, `monotonic_ms/nanos`, `since_ms`, `format_rfc3339`,
+  `parse_rfc3339`.
   Channel timer: `after(d) -> Receiver` (one-shot) - drain with
   `while let` or use as a `select` timeout arm.
 - `std::context` - cancellation, deadlines, `Context::background()`.
 - `std::bytes` / `std::bufio` - binary buffers and buffered IO.
-- `std::flag` - CLI flag parser; `flag::Cell<T>` auto-derefs at
-  every value-context (comparisons, call args, `if`), explicit
-  `*cell` still works.
+- `std::flag` - CLI flag parser. `flag::Set::new(prog_name)` then
+  `fs.string/int/bool(name, default, summary) -> flag::Cell<T>` per
+  flag; `flag::Cell<T>` auto-derefs at every value-context (comparisons,
+  call args, `if`, `println!`), explicit `*cell` still works. `fs.parse(&
+  args) -> Result<Vec<String>, flag::Error>` returns the positional
+  args (skips `args[0]`, honors `--`) and handles `--help`/`-h` itself
+  (prints auto-generated usage, returns `Ok([])`). No built-in
+  "required" flag or mutual-exclusion primitive - check that yourself
+  after `parse()`.
 - **Scalar `min` / `max` / `clamp`** - bare prelude functions, no
   import. `min(3, 7) == 3`, `clamp(15, 0, 10) == 10`. Vec-shaped
   `min(xs)` / `max(xs)` return `Option<T>`.
-- `std::sort`, `std::math::rand` (deterministic RNG).
-- `std::crypto::{rand, sha256, hmac, subtle}` - narrow, audited;
-  `crypto::password` - Argon2id (`hash`, `verify`, `needs_rehash`,
-  PHC strings).
+- `std::sort`, `std::math::rand` (deterministic RNG), `std::math::big`
+  (arbitrary-precision integers).
+- `std::crypto::{rand, sha256, sha512, hmac, subtle, blake3, aead,
+  ed25519, ecdsa, x509, kdf, cipher}` - narrow, audited (`cipher` covers
+  AES/CBC/CTR); `crypto::password` - Argon2id (`hash`, `verify`,
+  `needs_rehash`, PHC strings). `crypto::insecure` - MD5/SHA1,
+  compat-only, not for new code.
+- `std::hash::{fnv, crc32, adler32}` - non-cryptographic hashes and
+  checksums.
+- `std::uuid` - UUID v4/v7 generate, parse, normalize.
 - `std::jwt` - RFC 7519 sign/verify HS256/384/512, ES256, EdDSA,
   RS256/384/512 (verify): `sign_hs`/`verify_hs`,
   `sign_es256`/`verify_es256`, `sign_eddsa`/`verify_eddsa`.
 - `std::metrics` - Prometheus `Counter`/`Gauge`/`Histogram` +
   `Registry`. `std::trace` - W3C trace-context + OTLP JSON exporter.
-- `std::compress::{gzip, flate, zlib, zstd}` - byte-in/byte-out
+- `std::compress::{gzip, flate, zlib, zstd, bzip2}` - byte-in/byte-out
   (zstd 1-22, default 3).
+- `std::archive::{zip, tar}` - archive read/write.
 - `std::lifecycle` - graceful shutdown, signals, sd_notify.
   `std::validate` - `Validate` trait + `FieldError` / `Errors`.
   `std::slog` - structured logging.
@@ -812,11 +915,25 @@ license = "Apache-2.0"
 
 [dependencies]
 "example.org/lib" = "1.2.3"
+
+# [rust-bindings]           # optional: native Rust crates exposing #[gos_module]
+# "example.org/pg-driver" = "0.4.0"
 ```
 
 The optional `[project] entry` key names the entry source directly,
 overriding the convention search; the resolved entry is the only file
-allowed to carry top-level statements.
+allowed to carry top-level statements. `[rust-bindings]` declares native
+Rust crates (scaffolded via `gos bindgen`) that back `std::database::sql`
+drivers and similar FFI - distinct from `[dependencies]`, which are
+Gossamer packages.
+
+A multi-package checkout uses a workspace manifest instead of `[project]`
+at the root (scaffolded via `gos new ID --path DIR --template workspace`):
+
+```toml
+[workspace]
+members = ["packages/*"]
+```
 
 Qualified type-path annotations (`util::Rec` in params, `let` bindings,
 and return types) resolve correctly to the struct's fields across sibling
@@ -839,6 +956,12 @@ modules on all tiers.
   Residual gap: the in-process Cranelift JIT still compares and shifts
   such values as signed, so a hot large-`u64` loop can differ between
   `gos run` and `gos build` - cross-check with `gos build` when it matters.
+- **`gos feature-status` non-Shipped items today:** `std::database::sql`,
+  `std::html::template`, `std::text::template`, `std::tls` are
+  Experimental (usable, surface may still shift); `async`/`await`,
+  explicit lifetimes, and the `move` closure keyword are Planned (not
+  implemented - closures already capture by runtime-managed reference
+  with no `move` needed, and there are no lifetimes to write).
 
 ### Tier-divergence traps
 
@@ -846,12 +969,33 @@ The surface runs bit-identically across the bytecode VM (`gos run` /
 `gos test`), the Cranelift JIT, and the LLVM AOT tier (`gos build`).
 When you hit something that behaves differently across tiers it is a
 bug - reduce it and check against `gos test` (interpreter) **and**
-`gos build` (LLVM). One source-level rule remains:
+`gos build` (LLVM). Two things remain genuinely tier-sensitive:
 
 - **Per-file test modules must have unique names.** Multiple
   `#[cfg(test)] mod tests` across bundled sibling files collide on
   `gos build`/`gos run` with `GR0003: name 'tests' defined multiple
   times` - name them `mod foo_tests`, `mod bar_tests`, etc.
+- **`Weak<T>` into a genuine strong cycle** (§9a) resolves `Some` under
+  `gos run` (no-op cycle collector) but `None` under `gos build` once
+  the real collector runs - this is a behavioral divergence, not just a
+  source-level footgun; don't depend on which side you see without
+  cross-checking `gos build`.
+- **Entry-point `Err` is dropped, and diverges by tier** (open bug,
+  verified against 0.23.0): when the entry point - either the implicit
+  top-level-statement main or an explicit `fn main() -> Result<T, E>` -
+  returns `Err(e)` via `?`, `e` is never printed on either tier, and the
+  exit code diverges: `gos run` exits `0` (the `Result` is discarded
+  outright), `gos build` exits `1`. Until this is fixed, don't rely on
+  a bare `?`-propagating main for user-facing error reporting or exit
+  codes - explicitly `match` at the entry point and call
+  `process::exit(n)` with a printed message in the `Err` arm.
+- **`fs::read_to_string`'s error path is dropped on the native/LLVM
+  tier only** (open bug, verified against 0.23.0): a missing/unreadable
+  path correctly returns `Err(...)` under `gos run`, but returns
+  `Ok("")` under `gos build`. `fs::exists`, `fs::read` (bytes), and
+  `fs::write`'s error paths are unaffected on both tiers. Guard with
+  `fs::exists(&path)` before `fs::read_to_string` if the binary might
+  ever be `gos build`-compiled.
 
 ## 15. Where to read more
 

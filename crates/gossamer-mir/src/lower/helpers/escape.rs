@@ -457,19 +457,26 @@ impl<'a> LoopEligibility<'a> {
 
     /// A call/expression result type that lives on the heap (so wrapping the
     /// body in an arena region can bulk-free it). Scalars / unit / refs do not.
+    ///
+    /// A tuple lives on the heap only if it carries a heap element: a tuple of
+    /// scalars (e.g. an `lcg(s) -> (i64, i64)` result) is returned in registers
+    /// / an sret slot on the compiled tiers and never allocates, so wrapping
+    /// its loop in a region frees nothing and only pays two `arena_push`/
+    /// `arena_pop` calls per iteration - exactly the "purely-scalar body must
+    /// not be wrapped" case this analysis exists to avoid.
     fn is_alloc_ty(&self, ty: Ty) -> bool {
         use gossamer_types::TyKind;
-        matches!(
-            self.tcx.kind_of(ty),
+        match self.tcx.kind_of(ty) {
             TyKind::Adt { .. }
-                | TyKind::Vec(_)
-                | TyKind::Slice(_)
-                | TyKind::HashMap { .. }
-                | TyKind::String
-                | TyKind::DynError
-                | TyKind::JsonValue
-                | TyKind::Tuple(_)
-        )
+            | TyKind::Vec(_)
+            | TyKind::Slice(_)
+            | TyKind::HashMap { .. }
+            | TyKind::String
+            | TyKind::DynError
+            | TyKind::JsonValue => true,
+            TyKind::Tuple(elems) => elems.iter().any(|t| self.is_alloc_ty(*t)),
+            _ => false,
+        }
     }
 
     /// Decides whether `body` (a loop body expression) is region-eligible,

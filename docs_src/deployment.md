@@ -21,21 +21,24 @@ Pre-built `gos` toolchain binaries ship for:
 | `aarch64-apple-darwin` | Apple Silicon macOS (development). |
 | `x86_64-pc-windows-msvc` | Windows servers (best-effort). |
 
-Compiled programs are built for the host triple. Cross-ISA
-compilation - `gos build --target <triple>` to a different
-architecture - is not yet wired to a runnable binary: a non-host
-`--target` validates the triple but emits a placeholder artifact and
-prints `cross-link pending`. The release matrix in
+Compiled programs default to the host triple. Cross-ISA compilation -
+`gos build --target <triple>` - now produces a real, runnable native binary
+for any Linux target: `{x86_64,aarch64}-unknown-linux-{gnu,musl}`, from a
+Linux, macOS, or Windows host. Cross output is validated against the bytecode
+VM under QEMU in CI on all three host OSes. The musl-static path is
+host-agnostic (rustup's self-contained CRT + `ld.lld`); the gnu-dynamic path
+uses the matching `*-linux-gnu-gcc` on a Linux host, or a `GOS_CROSS_SYSROOT`
+on macOS/Windows. Cross-compiling *to* macOS or Windows as a target remains
+out of scope (needs external SDKs). The release matrix in
 [`.github/workflows/release.yml`](https://github.com/danpozmanter/gossamer/blob/main/.github/workflows/release.yml)
 is the source of truth for what we test on.
 
 ## Building per target
 
-The supported path is to build each target on a native runner of that
-architecture - a Linux aarch64 binary on a Linux aarch64 runner, a
-macOS binary on macOS, and so on. This is exactly what the release
-workflow does (one build job per target), and it side-steps the
-cross-toolchain fragility that bit other ecosystems.
+You can either build each target on a native runner of that architecture, or
+cross-compile every Linux target from a single host with `--target`. The
+release workflow builds one job per target; cross-compilation side-steps the
+need for a runner per architecture when a Linux binary is all you need.
 
 On a Linux x86_64 host the deployable artifact is simply:
 

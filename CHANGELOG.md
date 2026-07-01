@@ -1,5 +1,111 @@
 # Changelog
 
+## 0.23.0 - Raspberry Pi target, limited cross-compilation, optimizations and fixes.
+
+### Raspberry Pi (aarch64-linux) as a verified target
+
+The bytecode VM (`gos run`), the in-process Cranelift JIT, and native
+compilation (`gos build`) are now exercised on 64-bit ARM Linux in CI, not just
+cross-built and shipped. `gos run` is fully self-contained on a Pi (in-process
+JIT, no external tools); `gos build` uses the device's system LLVM (`llc`/`opt`)
+and C compiler. The static-musl release link selects the musl sysroot by host
+architecture rather than hard-coding x86-64.
+
+### Limited cross-compilation
+
+`gos build --target <triple>` produces a real, runnable native binary instead
+of the previous "cross-link pending" stub.
+
+- **Target-aware codegen.** A `--target` triple drives the LLVM `-mtriple`, the
+  i128 ABI marshalling, and the incremental object-cache key through the single
+  `host_triple()` chokepoint. `-mcpu`/`-mattr` derive from the resolved target
+  arch (a generic ARMv8-A baseline for aarch64, never the host's `native` or the
+  x86-only `+prefer-256-bit`).
+- **Per-target runtime archives**, resolved by target with no host-archive
+  fallback (a missing target archive is a clear error, never a foreign-arch
+  mislink).
+- **Host-agnostic linking.** Linux, macOS, and Windows hosts all cross-compile
+  to every Linux target - `{x86_64,aarch64}-unknown-linux-{gnu,musl}`. The
+  musl-static path is host-agnostic (rustup's self-contained CRT + `ld.lld` on
+  every host); the gnu-dynamic path uses the matching `*-linux-gnu-gcc` on a
+  Linux host and a `GOS_CROSS_SYSROOT` on macOS/Windows.
+- **Validation.** Cross output is checked against the bytecode VM under QEMU in
+  CI, across all three host OSes.
+
+Cross-compiling *to* macOS or Windows as a target remains out of scope (needs
+external SDKs).
+
+### Compiled-tier optimizations
+
+Narrowing the gap to Go on the stress-test microbenchmarks (`edit-distance` now
+beats Go, `radix-sort` matches it).
+
+- **Inlined scalar `min` / `max`.** `min(a, b)` / `max(a, b)` on `i64` lower to
+  a branchless `icmp`+`select` instead of a `gos_rt_min_i64` call, removing a
+  per-iteration FFI boundary from tight loops (a Levenshtein DP cell does two
+  `min`s per step) and unblocking vectorization. Value-identical to the runtime
+  on every tier.
+
+- **No arena region around scalar-tuple loops.** A loop whose only heap
+  "allocation" is a scalar tuple return (e.g. `let (n, r) = lcg(s)`) is no
+  longer auto-wrapped in an arena region: a tuple of scalars is
+  register/sret-returned and never hits the heap, so the region was two
+  `arena_push`/`arena_pop` calls per iteration for nothing. The region
+  eligibility analysis now counts a tuple as heap-allocating only when it
+  carries a heap element.
+
+- **`noalias` on fresh vec allocators.** `gos_rt_vec_new` /
+  `gos_rt_vec_with_capacity` (and their typed variants) return a freshly
+  `Box`-allocated header, so their returns are marked `noalias` (as `malloc`
+  is), letting the optimizer prove a store through an unrelated pointer cannot
+  clobber a vec header.
+
+### Native enums: `Vec`-bearing variants
+
+Step 8 (one native representation for user enums, shared across the bytecode VM
+and the compiled tiers) now covers enums with `Vec<Enum>` / `Vec<(String,
+Enum)>` variants - JSON-like `List` / `Map` shapes previously kept boxed. A
+`Vec` element crossing the JIT boundary is built as a fresh, exclusively-owned
+native copy rather than an alias of a live VM node, so construction and teardown
+stay uniform (no mixed-ownership double free). Bit-identical across all three
+tiers.
+
+### Error-path fixes (tier parity)
+
+- **Entry-point `Err` is reported, not dropped.** A `main` that returns
+  `Err(e)` - an explicit `fn main() -> Result<..>` or the implicit
+  `?`-desugared top-level main - now prints `e`'s Display (the colon-joined
+  cause chain) to stderr and exits nonzero on every tier. Previously `gos run`
+  discarded the return value (silent, exit 0) while `gos build` exited 1 with no
+  message - a tier divergence.
+
+- **`fs::read_to_string` propagates errors on the native tier.** A missing or
+  unreadable path now returns `Err` under `gos build`, matching `gos run` and
+  `fs::read`; it previously returned a silent `Ok("")` because the compiled-tier
+  shim returned a bare string that could not express failure.
+
+### Structural equality on heap enums
+
+`==` / `!=` on a heap (recursive / `Box`, or `Vec`-bearing) enum with no user
+`eq` impl now compares structurally on the compiled tiers: two distinct
+allocations of an equal value are equal (`Tree::Leaf(1) == Tree::Leaf(1)` is
+`true`), matching the VM's `values_equal` instead of comparing node pointers.
+Driven by a per-enum descriptor and a runtime walk over scalar / `String` /
+nested-enum / `Vec<Self>` fields; bit-identical across all three tiers.
+
+### Derived JSON serde covers more field types
+
+`#[derive]`-free `to_json` / `from_json` (and the `toml` / `yaml` pair) now
+handle `Option<T>` (JSON `null` <-> `None`; a missing object key decodes to
+`None`), tuples `(A, B, ...)` (JSON arrays), `HashMap<String, V>` (JSON objects,
+keys sorted so the text is deterministic across tiers), and `json::Value`
+(dynamic pass-through) - in addition to the previous scalars / `String` /
+`Vec<T>` / nested structs, matching the documented surface. A struct field whose
+type still is not serializable now produces a clear error (`GP0022`) naming the
+field and its type when the struct is used in a serde call, instead of silently
+dropping the whole struct's serde and surfacing only an opaque unknown-name
+error at the call site.
+
 ## 0.22.0 - Comptime code generation, optimizations, core fixes, docs refresh
 
 ### Comptime code generation
@@ -782,6 +888,8 @@ Closes the gap between `gos check` and what runs: a program that type-checks now
 - **A user function whose name collides with a libc symbol no longer recurses into the C runtime.** A Gossamer `fn getenv(...)` emitted a global `getenv` symbol that interposed libc's `getenv`, so the runtime's `gos_rt_os_env` -> `std::env::var` -> `getenv` path recursed into the user function until the stack overflowed. User function symbols are now prefixed (`gosu.<name>`) on the LLVM tier, leaving the entry point and `[rust-bindings]` imports verbatim, so no user name can shadow a libc/runtime symbol.
 - **A struct value moved into a `HashMap` keeps its `String` / `Vec` fields alive.** The stored entry aliases the inserted value's heap children (the map shares the single owning reference), but the inserting scope's drop still released those children, so a later `map.get(k).field` read dangled and `gos build` core-dumped after intervening allocation churn (the VM tolerated it). Insertion into a `HashMap` / `BTreeMap` / `HashSet` is now an ownership move: the source binding's release of the inserted value's children is suppressed, so the container holds the reference until the entry is popped (where the receiving binding releases it). Removing a release can only delay a free, never free early, so this cannot double-free; an entry that is never popped leaks its children rather than corrupting the heap. Fixtures: `map_value_heap_children.gos`, `map_pop_then_drop.gos`.
 - **A struct value read back from a `HashMap` derefs its boxed storage on every access path.** A map stores a struct value as a boxed pointer; reading a field of one back out (`p.field`) has to deref that pointer rather than read the pointer bits inline. The qualified `HashMap::pop(m, k)` free-fn typed its `Option<V>` payload as a bare `i64`, so a popped struct's `p.field` lowered to the dynamic JSON accessor and faulted; `HashMap::get(m, k)` was not lowered at all (an undefined `@HashMap::get` symbol broke the LLVM build); and `for (k, v) in m.iter()` / `for v in m.values()` typed the value as `i64`, reading the pointer bits as inline fields and yielding zero. All four paths now recover the map's value type (typing the `m.values()` element as a reference so its box pointer derefs), so struct, nested-struct, and enum values read identically across the bytecode VM, Cranelift, and LLVM tiers. Fixture: `map_struct_value_access.gos`.
+- **A `HashMap<String, _>` field reached as a method receiver keeps its key/value types.** Accessing a map field inline through a `Result` match-payload binding (`match mk() { Ok(m) => m.tags.get(&"a") }`) - rather than binding the field to a local first - left the receiver's type degraded (its key/value substitution lost), so `.get` dispatched to the `i64`-keyed helper (returning `None` on a string-keyed map) and `.keys` / `.values` typed their result element as `Vec<i64>`, formatting the live string keys as integers on the compiled tiers. The two MIR dispatch sites now recover the field's declared type with the struct instantiation's generic arguments applied, so inline access matches a `let`-bound receiver across the bytecode VM, Cranelift, and LLVM tiers. Fixture: `hashmap_field_through_result.gos`.
+- **`Weak::upgrade` on a native enum no longer frees the node out from under a live handle.** A VM-constructed heap enum was tagged as an exclusively-owned tree, so its drop drained the node's entire strong count - including the extra count a still-live `upgrade` result holds - and a subsequent weak release then freed the node while that borrowed handle was alive (a use-after-free surfacing as intermittent heap corruption at teardown, and reliably once the `Value` enum was restored to its 16-byte budget). VM-constructed nodes now use the standard release-one / free-when-last teardown (a fresh node is cleanly reference-counted, unlike a JIT-returned tree that carries caller-cleans over-retention and still drains). Confirmed use-after-free-free under AddressSanitizer. Fixture: `weak_refs.gos` across all three tiers.
 - **`xs.pop()` / `xs.first()` / `xs.last()` on a `Vec` of structs returns the whole element.** A multi-word struct is stored inline in a Vec, but these three `Option<T>` extractors loaded only the first 8-byte word of the popped element. The compiled tier then treated that single word as a pointer to the struct and dereferenced it for field access - a wild read that core-dumped when a struct carried a `String` field (an `i64`-only struct happened to survive). They now return a pointer to the element for multi-word values, matching the in-place `xs[i]` read, so `match xs.pop() { Some(p) => p.field }` reads correct fields on every tier.
 - **A struct received over a channel held in a local binding reads its fields correctly.** A multi-field struct (carrying a `String`) sent over a channel and received through an inferred `let (tx, rx) = channel()` - whether `rx.recv()` in a `while let` / the same function as the send, or a `select { m = rx.recv() => ... }` arm - mis-read its fields (zero, a pointer value, or a core-dump) on the compiled tiers; it worked only when the `Receiver<T>` was a typed function parameter. Three coordinated fixes: `channel()` now types as `(Sender<?T>, Receiver<?T>)` so an inferred local channel's element unifies from `tx.send(v)`; the channel-creation lowering writes the handle into a typed tuple destination's two slots (rather than storing the pair-buffer address, which left `.0` / `.1` reading the pointer bits); and a single word stored into a multi-slot aggregate is treated as a boxed pointer and copied in full (covering `gos_rt_select_value`'s `i64` payload, with the select arm binding now typed as the channel element). Identical across the bytecode VM, Cranelift, and LLVM tiers. Fixtures: `chan_struct_local_recv.gos`, `chan_select_struct_payload.gos`.
 - **`std::http_h3` is registered as a resolvable module.** `http_h3::serve` was exported without `http_h3` in the module table, failing the stdlib-export consistency check; the module is now listed.

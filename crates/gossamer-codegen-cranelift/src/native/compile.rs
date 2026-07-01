@@ -364,6 +364,21 @@ pub(super) fn is_inline_two_word_ty(tcx: &TyCtxt, ty: gossamer_types::Ty) -> boo
     ) || tcx.is_inline_enum_ty(ty)
 }
 
+/// True when `body` returns a 2-tuple, the shape lowered through the
+/// structural-return-value (sret) ABI: the caller passes a pointer to a
+/// 16-byte result slot as a hidden trailing argument and the callee writes the
+/// two words there instead of heap-allocating a fresh block per call. This is
+/// what keeps a hot tuple-returning body (`build` / `lcg`) from leaking a
+/// 16-byte block on every call - the caller's slot is reused (a stack slot in a
+/// JIT caller, a stack buffer at the VM trampoline). Mirrors the LLVM tier's
+/// aggregate-return ABI.
+pub(super) fn body_returns_sret_tuple(body: &Body, tcx: &TyCtxt) -> bool {
+    matches!(
+        tcx.kind_of(body.local_ty(Local::RETURN)),
+        TyKind::Tuple(elems) if elems.len() == 2
+    )
+}
+
 pub(super) fn build_signature_from_types(
     module: &dyn Module,
     body: &Body,
@@ -394,6 +409,14 @@ pub(super) fn build_signature_from_types(
             .unwrap_or_else(|| cl_type_of(tcx, ret_ty, module))
     };
     sig.returns.push(AbiParam::new(ret_cl));
+    // A 2-tuple return uses the sret ABI: a hidden trailing pointer arg names a
+    // caller-owned 16-byte slot the callee fills, so no per-call heap block is
+    // allocated. The body still returns that pointer (in the return register)
+    // for callers that read the result directly.
+    if body_returns_sret_tuple(body, tcx) {
+        sig.params
+            .push(AbiParam::new(module.target_config().pointer_type()));
+    }
     sig
 }
 

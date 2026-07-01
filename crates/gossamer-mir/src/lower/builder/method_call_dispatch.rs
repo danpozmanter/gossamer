@@ -74,6 +74,13 @@ impl<'a> Builder<'a> {
         let receiver_ty = self
             .receiver_local_from_path(receiver)
             .map_or(receiver.ty, |local| self.locals[local.0 as usize].ty);
+        // A `<parent>.<field>` receiver keeps the parent struct's declared
+        // field type as ground truth: the HIR field-access type can be left
+        // degraded (a match-payload binding loses a `HashMap<String, _>`
+        // field's substitution), which the key/value-typed dest computations
+        // below - the `gos_rt_map_keys_vec` / `_values_vec` element type - read
+        // as `i64`, formatting string keys through the integer formatter.
+        let receiver_ty = self.field_declared_ty(receiver).unwrap_or(receiver_ty);
         let lowered_recv_ty = self.locals[receiver_local.0 as usize].ty;
         if sym.is_empty() {
             // Identity method - just copy the receiver to the

@@ -1244,6 +1244,81 @@ impl<'a> Builder<'a> {
         Some(symbol)
     }
 
+    /// Builds (idempotently) the structural-equality descriptor for a heap
+    /// (recursive / `Box`) user enum `ty` and returns its codegen symbol, or
+    /// `None` when a field is one the walk cannot describe (a nested enum of a
+    /// *different* type, or a non-scalar/non-self aggregate) - the caller then
+    /// keeps pointer identity for that enum. Blob (pure `i64`, consumed by
+    /// `gos_rt_enum_struct_eq`): `[num_variants]` then, per variant in
+    /// declaration order, `[num_fields, kind_0, ..]`.
+    pub(crate) fn ensure_enum_eq_desc(&mut self, ty: gossamer_types::Ty) -> Option<String> {
+        use gossamer_types::TyKind;
+        // `a == b` on heap enums often compares `&Tree`; a reference to a heap
+        // enum is the same node pointer, so peel refs to reach the `Adt`.
+        let mut ty = ty;
+        while let TyKind::Ref { inner, .. } = self.tcx.kind_of(ty) {
+            ty = *inner;
+        }
+        let TyKind::Adt { def, .. } = self.tcx.kind_of(ty) else {
+            return None;
+        };
+        let def = *def;
+        // Only heap (RC-managed, non-inline 2-word) user enums reach the
+        // pointer-identity path this replaces.
+        if self.tcx.is_inline_enum_ty(ty) || !self.tcx.is_rc_managed(ty) {
+            return None;
+        }
+        let symbol = format!("gos_rc_meta_enumeq_{}", ty.as_u32());
+        if self.tcx.rc_meta(&symbol).is_some() {
+            return Some(symbol);
+        }
+        let variants = self.tcx.enum_variant_tys(def)?.to_vec();
+        let mut blob: Vec<i64> = vec![variants.len() as i64];
+        for fields in &variants {
+            blob.push(fields.len() as i64);
+            for &fty in fields {
+                blob.push(self.enum_eq_field_kind(fty, def)?);
+            }
+        }
+        self.tcx.register_rc_meta(symbol.clone(), blob);
+        Some(symbol)
+    }
+
+    /// Classifies one enum-variant field for the structural-eq descriptor:
+    /// `0` word (int/bool/char), `1` `f64`, `2` `String`, `3` a nested field of
+    /// the same enum (recurse), `4` `Vec<Self>`, `5` `Vec<(String, Self)>`.
+    /// `None` for anything else (a *different* nested enum, other aggregate),
+    /// which makes the whole enum fall back to pointer identity.
+    fn enum_eq_field_kind(
+        &self,
+        fty: gossamer_types::Ty,
+        self_def: gossamer_resolve::DefId,
+    ) -> Option<i64> {
+        use gossamer_types::TyKind;
+        let is_self_enum = |this: &Self, t: gossamer_types::Ty| matches!(this.tcx.kind_of(t), TyKind::Adt { def, .. } if *def == self_def);
+        match self.tcx.kind_of(fty) {
+            TyKind::Bool | TyKind::Char | TyKind::Int(_) => Some(0),
+            TyKind::Float(_) => Some(1),
+            TyKind::String => Some(2),
+            TyKind::Adt { def, .. } if *def == self_def => Some(3),
+            TyKind::Vec(elem) | TyKind::Slice(elem) => {
+                let elem = *elem;
+                if is_self_enum(self, elem) {
+                    Some(4)
+                } else if let TyKind::Tuple(ts) = self.tcx.kind_of(elem)
+                    && ts.len() == 2
+                    && matches!(self.tcx.kind_of(ts[0]), TyKind::String)
+                    && is_self_enum(self, ts[1])
+                {
+                    Some(5)
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+
     pub(crate) fn elem_bytes_of(&self, ty: Ty) -> u32 {
         use gossamer_types::TyKind;
         match self.tcx.kind_of(ty) {

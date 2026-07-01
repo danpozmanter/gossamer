@@ -954,9 +954,51 @@ impl<'a> Builder<'a> {
         MethodLowering::Pass
     }
 
+    /// Ground-truth type of a `<parent>.<field>` receiver whose `parent` is a
+    /// bound local of struct type: the field's declared type from the struct
+    /// definition, with the instantiation's generic arguments applied. The HIR
+    /// type of such a field access can be left degraded - a match-payload
+    /// binding (`match r { Ok(m) => m.tags... }`) loses the field's generic
+    /// substitution - which map key/value dispatch then reads as `i64`, sending
+    /// `HashMap<String, _>` accessors to the integer-keyed helpers. The parent
+    /// struct's declared field type is ground truth. `None` for non-field
+    /// receivers, an unresolvable parent, or a non-concrete declared type (a
+    /// generic template's rigid `Param`, where the HIR type is more specific).
+    pub(crate) fn field_declared_ty(&self, receiver: &HirExpr) -> Option<Ty> {
+        let HirExprKind::Field {
+            receiver: parent,
+            name: field,
+        } = &receiver.kind
+        else {
+            return None;
+        };
+        let parent_local = self.receiver_local_from_path(parent)?;
+        let mut pty = self.locals[parent_local.0 as usize].ty;
+        while let TyKind::Ref { inner, .. } = self.tcx.kind_of(pty) {
+            pty = *inner;
+        }
+        let TyKind::Adt { def, substs } = self.tcx.kind_of(pty).clone() else {
+            return None;
+        };
+        let sname = self.struct_defs.get(&def).cloned()?;
+        let order = self.structs.get(&sname).cloned()?;
+        let pos = order.iter().position(|f| f == &field.name)?;
+        let field_ty = self
+            .tcx
+            .adt_field_tys(def, &substs)
+            .and_then(|t| t.get(pos).copied())?;
+        if matches!(
+            self.tcx.kind_of(field_ty),
+            TyKind::Var(_) | TyKind::Error | TyKind::Param { .. }
+        ) {
+            return None;
+        }
+        Some(field_ty)
+    }
+
     /// Recover the receiver's flattened dispatch kind and its ground type.
     fn receiver_dispatch_kinds(&mut self, receiver: &HirExpr) -> (Ty, TyKind) {
-        let receiver_ty = self
+        let mut receiver_ty = self
             .receiver_local_from_path(receiver)
             .map_or(receiver.ty, |local| self.locals[local.0 as usize].ty);
         let receiver_kind = self.tcx.kind_of(receiver_ty).clone();
@@ -1047,38 +1089,21 @@ impl<'a> Builder<'a> {
         // be wrongly resolved to `String` (e.g. a `match Ok(q) =>
         // q.bytes.len()` binding where the field came back as
         // `String` instead of `[u8]`, sending `.len()` to strlen and
-        // reading the i64-per-element Vec as a c-string). The parent
-        // struct's *declared* field type is ground truth - recover it
-        // via the parent local's MIR `Adt` def and override the
-        // receiver kind. Ungated (the HIR type may be a concrete-but-
-        // wrong `String`, not just `Var`).
-        if let HirExprKind::Field {
-            receiver: parent,
-            name: field,
-        } = &receiver.kind
-            && let Some(parent_local) = self.receiver_local_from_path(parent)
-        {
-            let mut pty = self.locals[parent_local.0 as usize].ty;
-            while let TyKind::Ref { inner, .. } = self.tcx.kind_of(pty) {
-                pty = *inner;
+        // reading the i64-per-element Vec as a c-string), or left with
+        // a degraded generic substitution (a `HashMap<String, _>`
+        // field reached through a match binding, whose key/value substs
+        // are lost). The parent struct's *declared* field type is
+        // ground truth - recover the full type so both the receiver
+        // kind AND `receiver_ty` (which map key/value dispatch reads the
+        // substitution from) are correct. Ungated (the HIR type may be
+        // concrete-but-wrong, not just `Var`).
+        if let Some(field_ty) = self.field_declared_ty(receiver) {
+            receiver_ty = field_ty;
+            let mut k = self.tcx.kind_of(field_ty).clone();
+            while let TyKind::Ref { inner, .. } = k {
+                k = self.tcx.kind_of(inner).clone();
             }
-            if let TyKind::Adt { def, .. } = self.tcx.kind_of(pty).clone()
-                && let Some(sname) = self.struct_defs.get(&def).cloned()
-                && let Some(order) = self.structs.get(&sname).cloned()
-                && let Some(pos) = order.iter().position(|f| f == &field.name)
-                && let Some(field_ty) = self
-                    .tcx
-                    .struct_field_tys(def)
-                    .and_then(|t| t.get(pos).copied())
-            {
-                let mut k = self.tcx.kind_of(field_ty).clone();
-                while let TyKind::Ref { inner, .. } = k {
-                    k = self.tcx.kind_of(inner).clone();
-                }
-                if !matches!(k, TyKind::Var(_) | TyKind::Error | TyKind::Param { .. }) {
-                    receiver_kind_flat = k;
-                }
-            }
+            receiver_kind_flat = k;
         }
         (receiver_ty, receiver_kind_flat)
     }

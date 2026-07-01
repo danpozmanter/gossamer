@@ -43,13 +43,42 @@ enum FieldKind {
     Vec(Box<FieldKind>),
     /// Nested user struct, referenced by source-level name.
     Struct(String),
+    /// `Option<T>` - JSON `null` for `None`, else the inner value. A missing
+    /// object key also decodes to `None`.
+    Option(Box<FieldKind>),
+    /// A tuple `(A, B, ...)` - a JSON array of heterogeneous elements.
+    Tuple(Vec<FieldKind>),
+    /// `HashMap<String, V>` - a JSON object. Keys are sorted on encode so the
+    /// text is deterministic across tiers.
+    Map(Box<FieldKind>),
+    /// `json::Value` - a dynamic JSON document, passed through unchanged.
+    Json,
 }
 
 impl FieldKind {
     fn from_type(ty: &gossamer_ast::Type, structs: &HashSet<String>) -> Option<Self> {
+        // A generic argument that must itself be a supported field kind.
+        let arg_kind = |g: &GenericArg, structs: &HashSet<String>| -> Option<Self> {
+            let GenericArg::Type(inner) = g else {
+                return None;
+            };
+            Self::from_type(inner, structs)
+        };
         match &ty.kind {
-            TypeKind::Path(path) if path.segments.len() == 1 => {
-                let seg = &path.segments[0];
+            TypeKind::Path(path) => {
+                // `json::Value` (any path ending in `json::Value`) is a dynamic
+                // JSON document, serialized by pass-through.
+                let segs = &path.segments;
+                if segs.len() >= 2
+                    && segs[segs.len() - 1].name.name == "Value"
+                    && segs[segs.len() - 2].name.name == "json"
+                {
+                    return Some(Self::Json);
+                }
+                if segs.len() != 1 {
+                    return None;
+                }
+                let seg = &segs[0];
                 let name = seg.name.name.as_str();
                 if seg.generics.is_empty() {
                     return match name {
@@ -68,18 +97,38 @@ impl FieldKind {
                         _ => None,
                     };
                 }
-                if name == "Vec" && seg.generics.len() == 1 {
-                    let GenericArg::Type(inner) = &seg.generics[0] else {
-                        return None;
-                    };
-                    let inner_kind = Self::from_type(inner, structs)?;
-                    return Some(Self::Vec(Box::new(inner_kind)));
+                match name {
+                    "Vec" if seg.generics.len() == 1 => {
+                        Some(Self::Vec(Box::new(arg_kind(&seg.generics[0], structs)?)))
+                    }
+                    "Option" if seg.generics.len() == 1 => {
+                        Some(Self::Option(Box::new(arg_kind(&seg.generics[0], structs)?)))
+                    }
+                    "HashMap" if seg.generics.len() == 2 => {
+                        // Only `String`-keyed maps map cleanly to a JSON object.
+                        let GenericArg::Type(key) = &seg.generics[0] else {
+                            return None;
+                        };
+                        let string_key = matches!(
+                            &key.kind,
+                            TypeKind::Path(kp)
+                                if kp.segments.len() == 1 && kp.segments[0].name.name == "String"
+                        );
+                        if !string_key {
+                            return None;
+                        }
+                        Some(Self::Map(Box::new(arg_kind(&seg.generics[1], structs)?)))
+                    }
+                    _ => None,
                 }
-                None
             }
-            TypeKind::Slice(inner) => {
-                let inner_kind = Self::from_type(inner, structs)?;
-                Some(Self::Vec(Box::new(inner_kind)))
+            TypeKind::Slice(inner) => Some(Self::Vec(Box::new(Self::from_type(inner, structs)?))),
+            TypeKind::Tuple(elems) => {
+                let mut kinds = Vec::with_capacity(elems.len());
+                for e in elems {
+                    kinds.push(Self::from_type(e, structs)?);
+                }
+                Some(Self::Tuple(kinds))
             }
             _ => None,
         }
@@ -96,6 +145,17 @@ impl FieldKind {
             // Empty literal; the struct field's declared type pins the element.
             Self::Vec(_) => "[]".to_string(),
             Self::Struct(name) => format!("{name}::default()"),
+            Self::Option(_) => "None".to_string(),
+            Self::Tuple(elems) => format!(
+                "({})",
+                elems
+                    .iter()
+                    .map(Self::default_literal)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+            Self::Map(_) => "HashMap::new()".to_string(),
+            Self::Json => "json::Value::Null".to_string(),
         }
     }
 
@@ -110,6 +170,17 @@ impl FieldKind {
             Self::String => "String".to_string(),
             Self::Vec(inner) => format!("[{}]", inner.type_spelling()),
             Self::Struct(name) => name.clone(),
+            Self::Option(inner) => format!("Option<{}>", inner.type_spelling()),
+            Self::Tuple(elems) => format!(
+                "({})",
+                elems
+                    .iter()
+                    .map(Self::type_spelling)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+            Self::Map(inner) => format!("HashMap<String, {}>", inner.type_spelling()),
+            Self::Json => "json::Value".to_string(),
         }
     }
 
@@ -124,6 +195,15 @@ impl FieldKind {
             Self::String => format!("format!(\"\\\"{{}}\\\"\", &{expr})"),
             Self::Vec(inner) => render_vec_to_json(expr, inner),
             Self::Struct(name) => format!("{}({expr})?", to_json_fn(name)),
+            Self::Option(inner) => {
+                let some_render = inner.render_to_json("__inner");
+                format!(
+                    "match {expr} {{ Some(__inner) => {some_render}, None => \"null\".to_string() }}"
+                )
+            }
+            Self::Tuple(elems) => render_tuple_to_json(expr, elems),
+            Self::Map(inner) => render_map_to_json(expr, inner),
+            Self::Json => format!("json::render({expr})"),
         }
     }
 
@@ -153,7 +233,21 @@ impl FieldKind {
                 "match {}(&json::render({value_expr})) {{ Ok(__v) => __v, Err(__e) => return Err(errors::wrap(__e, \"{path}\")) }}",
                 from_json_fn(name)
             ),
+            Self::Option(inner) => {
+                let some_extract = inner.extract_strict(value_expr, path);
+                format!("if json::is_null({value_expr}) {{ None }} else {{ Some({some_extract}) }}")
+            }
+            Self::Tuple(elems) => extract_tuple_strict(value_expr, elems, path),
+            Self::Map(inner) => extract_map_strict(value_expr, inner, path),
+            // The field already holds a parsed dynamic JSON value.
+            Self::Json => value_expr.to_string(),
         }
+    }
+
+    /// `true` if this kind decodes a missing object key to a value (rather than
+    /// erroring). Only `Option` does - a missing optional field is `None`.
+    fn tolerates_missing_key(&self) -> bool {
+        matches!(self, Self::Option(_))
     }
 }
 
@@ -186,6 +280,57 @@ fn extract_vec_strict(value_expr: &str, inner: &FieldKind, path: &str) -> String
     let elem_ty = inner.type_spelling();
     format!(
         "match json::as_array({value_expr}) {{\n                Some(__arr) => {{\n                    let mut __out: [{elem_ty}] = []\n                    for __elem in __arr {{\n                        let __converted = {inner_extract}\n                        __out.push(__converted)\n                    }}\n                    __out\n                }}\n                None => return Err(errors::new(\"{path}: expected array\")),\n            }}"
+    )
+}
+
+fn render_tuple_to_json(expr: &str, elems: &[FieldKind]) -> String {
+    let mut out = String::from("{ let mut __buf = \"[\".to_string()\n");
+    for (i, k) in elems.iter().enumerate() {
+        if i > 0 {
+            out.push_str("            __buf += \",\"\n");
+        }
+        let er = k.render_to_json(&format!("{expr}.{i}"));
+        out.push_str(&format!("            __buf += {er}\n"));
+    }
+    out.push_str("            __buf += \"]\"\n            __buf }");
+    out
+}
+
+fn extract_tuple_strict(value_expr: &str, elems: &[FieldKind], path: &str) -> String {
+    let n = elems.len();
+    let mut out = format!(
+        "match json::as_array({value_expr}) {{\n                Some(__arr) => {{\n                    if __arr.len() != {n} {{ return Err(errors::new(\"{path}: expected {n}-element array\")) }}\n"
+    );
+    let mut names = Vec::with_capacity(n);
+    for (i, k) in elems.iter().enumerate() {
+        let ex = k.extract_strict(&format!("__arr[{i}]"), &format!("{path}.{i}"));
+        out.push_str(&format!("                    let __e{i} = {ex}\n"));
+        names.push(format!("__e{i}"));
+    }
+    out.push_str(&format!("                    ({})\n", names.join(", ")));
+    out.push_str(&format!(
+        "                }}\n                None => return Err(errors::new(\"{path}: expected array\")),\n            }}"
+    ));
+    out
+}
+
+fn render_map_to_json(expr: &str, inner: &FieldKind) -> String {
+    // Sort keys so the object text is deterministic across tiers (a HashMap's
+    // iteration order is not stable and differs interp-vs-compiled).
+    let vr = inner.render_to_json("__v");
+    format!(
+        "{{ let mut __ks = {expr}.keys()\n            __ks.sort()\n            let mut __buf = \"{{\".to_string()\n            let mut __first = true\n            for __k in __ks {{\n                if !__first {{ __buf += \",\" }}\n                __first = false\n                __buf += format!(\"\\\"{{}}\\\":\", __k)\n                if let Some(__v) = {expr}.get(&__k) {{ __buf += {vr} }}\n            }}\n            __buf += \"}}\"\n            __buf }}"
+    )
+}
+
+fn extract_map_strict(value_expr: &str, inner: &FieldKind, path: &str) -> String {
+    // Unique bind names (`__map*`) so nested maps and the enclosing field's own
+    // `__child` binding never collide - the compiled tier resolves shadows
+    // differently from the VM, so an ambiguous reuse silently miscompiles.
+    let vt = inner.type_spelling();
+    let ve = inner.extract_strict("__mapval", &format!("{path}[key]"));
+    format!(
+        "match json::keys({value_expr}) {{\n                Some(__mapkeys) => {{\n                    let mut __map: HashMap<String, {vt}> = HashMap::new()\n                    for __mapk in __mapkeys {{\n                        let __mapval = match json::get({value_expr}, &__mapk) {{ Some(__mc) => __mc, None => return Err(errors::new(\"{path}: missing key\")) }}\n                        let __mapentry = {ve}\n                        __map.insert(__mapk, __mapentry)\n                    }}\n                    __map\n                }}\n                None => return Err(errors::new(\"{path}: expected object\")),\n            }}"
     )
 }
 
@@ -1055,8 +1200,13 @@ fn emit_tuple_from_json(out: &mut String, name: &str, fields: &[FieldKind]) {
     for (i, kind) in fields.iter().enumerate() {
         let path = format!("element `{i}`");
         let extract = kind.extract_strict("__child", &path);
+        let missing = if kind.tolerates_missing_key() {
+            "None".to_string()
+        } else {
+            format!("return Err(errors::new(\"missing element `{i}`\"))")
+        };
         out.push_str(&format!(
-            "    let __f{i} = match json::get(v, \"{i}\") {{\n        Some(__child) => {extract},\n        None => return Err(errors::new(\"missing element `{i}`\")),\n    }}\n"
+            "    let __f{i} = match json::get(v, \"{i}\") {{\n        Some(__child) => {extract},\n        None => {missing},\n    }}\n"
         ));
     }
     let args: Vec<String> = (0..fields.len()).map(|i| format!("__f{i}")).collect();
@@ -1156,8 +1306,14 @@ fn emit_from_json(out: &mut String, name: &str, fields: &[(String, FieldKind)]) 
     for (fname, kind) in fields {
         let path = format!("field `{fname}`");
         let extract = kind.extract_strict("__child", &path);
+        // A missing `Option` field decodes to `None` rather than erroring.
+        let missing = if kind.tolerates_missing_key() {
+            "None".to_string()
+        } else {
+            format!("return Err(errors::new(\"missing field `{fname}`\"))")
+        };
         out.push_str(&format!(
-            "    let {fname} = match json::get(v, \"{fname}\") {{\n        Some(__child) => {extract},\n        None => return Err(errors::new(\"missing field `{fname}`\")),\n    }}\n"
+            "    let {fname} = match json::get(v, \"{fname}\") {{\n        Some(__child) => {extract},\n        None => {missing},\n    }}\n"
         ));
     }
     out.push_str(&format!("    Ok({name} {{ "));
@@ -3092,6 +3248,10 @@ pub fn parse_with_autoderive(source: &str, file: FileId) -> (SourceFile, Vec<Par
     rewrite_tuple_struct_ctors(&mut sf);
     infer_serde_turbofish(&mut sf);
     desugar_sort_by_key(&mut sf);
+    // Runs on the un-mangled AST: `rewrite_serde_generic_calls` below turns a
+    // serde turbofish into a bare mangled name, erasing the type argument the
+    // check keys on.
+    diags.extend(serde_unsupported_field_diags(&sf));
     rewrite_serde_generic_calls(&mut sf);
     specialize_inline_for_generics(&mut sf);
     expand_typeinfo_loops(&mut sf);
@@ -3100,6 +3260,148 @@ pub fn parse_with_autoderive(source: &str, file: FileId) -> (SourceFile, Vec<Par
     rewrite_stdlib_struct_surface(&mut sf);
     inject_synthetic_uses(&mut sf, file);
     (sf, diags)
+}
+
+/// Reports serde turbofish calls (`to_json::<T>(v)`, `from_json::<T>(s)`, and
+/// the toml/yaml forms) whose struct `T` has a field the synthesizer cannot
+/// classify. Such a struct is silently skipped by `synthesize_serde_impls`, so
+/// without this the call would surface only as an opaque unknown-name error.
+/// Gated on use - a struct with an unsupported field is fine until it actually
+/// flows through a serde call - and deduplicated to one diagnostic per struct,
+/// pointing at the first offending field.
+fn serde_unsupported_field_diags(sf: &SourceFile) -> Vec<ParseDiagnostic> {
+    let struct_names: HashSet<String> = sf
+        .items
+        .iter()
+        .filter_map(|item| match &item.kind {
+            ItemKind::Struct(decl)
+                if matches!(&decl.body, StructBody::Named(_) | StructBody::Tuple(_)) =>
+            {
+                Some(decl.name.name.clone())
+            }
+            _ => None,
+        })
+        .collect();
+    let decls: HashMap<&str, &StructDecl> = sf
+        .items
+        .iter()
+        .filter_map(|item| match &item.kind {
+            ItemKind::Struct(decl) if decl.generics.params.is_empty() => {
+                Some((decl.name.name.as_str(), decl))
+            }
+            _ => None,
+        })
+        .collect();
+    // `augment_source` has already appended a `__gos_serde_to_json_<T>` for every
+    // struct the synthesizer accepted (and the user may hand-provide one), so its
+    // presence means the type is serializable - only its absence is a dropped
+    // struct worth diagnosing.
+    let synthesized: HashSet<&str> = sf
+        .items
+        .iter()
+        .filter_map(|item| match &item.kind {
+            ItemKind::Fn(f) => f.name.name.strip_prefix("__gos_serde_to_json_"),
+            _ => None,
+        })
+        .collect();
+
+    let mut diags = Vec::new();
+    let mut reported: HashSet<String> = HashSet::new();
+    for (op, ty_name) in collect_serde_turbofish_calls(sf) {
+        if reported.contains(&ty_name) || synthesized.contains(ty_name.as_str()) {
+            continue;
+        }
+        let Some(decl) = decls.get(ty_name.as_str()) else {
+            continue;
+        };
+        let offending = match &decl.body {
+            StructBody::Named(fields) => fields.iter().find_map(|f| {
+                FieldKind::from_type(&f.ty, &struct_names)
+                    .is_none()
+                    .then(|| (f.name.name.clone(), ty_to_string(&f.ty), f.ty.span))
+            }),
+            StructBody::Tuple(fields) => fields.iter().enumerate().find_map(|(i, f)| {
+                FieldKind::from_type(&f.ty, &struct_names)
+                    .is_none()
+                    .then(|| (i.to_string(), ty_to_string(&f.ty), f.ty.span))
+            }),
+            StructBody::Unit => None,
+        };
+        if let Some((field, field_ty, span)) = offending {
+            reported.insert(ty_name.clone());
+            diags.push(ParseDiagnostic::new(
+                crate::ParseError::SerdeUnserializableField {
+                    ty: ty_name,
+                    field,
+                    field_ty,
+                    op,
+                },
+                span,
+            ));
+        }
+    }
+    diags
+}
+
+/// Collects `(op, type_name)` for every serde turbofish call in `sf`
+/// (`to_json::<T>` / `from_json::<T>` and the toml/yaml forms, bare or
+/// format-module-qualified), on the un-mangled AST.
+fn collect_serde_turbofish_calls(sf: &SourceFile) -> Vec<(String, String)> {
+    use gossamer_ast::Visitor;
+    use gossamer_ast::expr::{Expr, ExprKind};
+    use gossamer_ast::visitor::walk_expr;
+
+    struct Collector {
+        calls: Vec<(String, String)>,
+    }
+    impl Visitor for Collector {
+        fn visit_expr(&mut self, expr: &Expr) {
+            walk_expr(self, expr);
+            let ExprKind::Call { callee, .. } = &expr.kind else {
+                return;
+            };
+            let ExprKind::Path(path) = &callee.kind else {
+                return;
+            };
+            let seg = match path.segments.len() {
+                1 => &path.segments[0],
+                2 => {
+                    let head = path.segments[0].name.name.as_str();
+                    let tail = path.segments[1].name.name.as_str();
+                    if !matches!(
+                        (head, tail),
+                        ("yaml", "from_yaml" | "to_yaml") | ("toml", "from_toml" | "to_toml")
+                    ) {
+                        return;
+                    }
+                    &path.segments[1]
+                }
+                _ => return,
+            };
+            if !matches!(
+                seg.name.name.as_str(),
+                "to_json" | "from_json" | "to_toml" | "from_toml" | "to_yaml" | "from_yaml"
+            ) || seg.generics.len() != 1
+            {
+                return;
+            }
+            let GenericArg::Type(ty) = &seg.generics[0] else {
+                return;
+            };
+            let TypeKind::Path(tp) = &ty.kind else {
+                return;
+            };
+            let Some(type_seg) = tp.segments.last() else {
+                return;
+            };
+            self.calls
+                .push((seg.name.name.clone(), type_seg.name.name.clone()));
+        }
+    }
+
+    let mut collector = Collector { calls: Vec::new() };
+    collector.visit_source_file(sf);
+    collector.calls
 }
 
 /// Maps a stdlib `module::item` (matched on the last two segment
@@ -4230,4 +4532,51 @@ fn already_imports(uses: &[UseDecl], segs: &[&str]) -> bool {
 
 fn synth_is_empty(synth: &str) -> bool {
     !synth.contains("__gos_serde_")
+}
+
+#[cfg(test)]
+mod autoderive_tests {
+    use gossamer_lex::SourceMap;
+
+    use crate::ParseError;
+
+    fn serde_field_errors(source: &str) -> Vec<(String, String)> {
+        let mut map = SourceMap::new();
+        let file = map.add_file("test.gos", source.to_string());
+        let (_, diags) = super::parse_with_autoderive(source, file);
+        diags
+            .into_iter()
+            .filter_map(|d| match d.error {
+                ParseError::SerdeUnserializableField {
+                    field, field_ty, ..
+                } => Some((field, field_ty)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn unserializable_field_used_in_serde_is_reported() {
+        let src = "enum Color { Red, Green }\n\
+                   struct Paint { name: String, shade: Color }\n\
+                   fn main() { let _ = to_json::<Paint>(Paint { name: \"w\", shade: Color::Red }); }";
+        let errs = serde_field_errors(src);
+        assert_eq!(errs, vec![("shade".to_string(), "Color".to_string())]);
+    }
+
+    #[test]
+    fn unserializable_field_never_serialized_is_silent() {
+        let src = "enum Color { Red, Green }\n\
+                   struct Paint { name: String, shade: Color }\n\
+                   fn main() { let p = Paint { name: \"w\", shade: Color::Red }; let _ = p.name; }";
+        assert!(serde_field_errors(src).is_empty());
+    }
+
+    #[test]
+    fn fully_serializable_struct_is_silent() {
+        let src = "struct Inner { n: i64 }\n\
+                   struct Outer { id: i64, tags: [String], inner: Inner }\n\
+                   fn main() { let _ = to_json::<Outer>(Outer { id: 1, tags: [\"a\"], inner: Inner { n: 2 } }); }";
+        assert!(serde_field_errors(src).is_empty());
+    }
 }

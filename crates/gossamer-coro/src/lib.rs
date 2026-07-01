@@ -37,8 +37,11 @@
 #![forbid(unsafe_op_in_unsafe_fn)]
 
 use std::cell::Cell;
+#[cfg(not(target_arch = "wasm32"))]
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(not(target_arch = "wasm32"))]
+use std::sync::atomic::{AtomicPtr, AtomicUsize};
 
 /// Payload type for Gossamer-originated panics. Raised by the
 /// runtime's `gos_rt_panic` on the goroutine path and recognised by
@@ -184,6 +187,7 @@ pub fn arm_stack_guard(budget: usize) {
 /// Overwrites the guard origin/budget and returns the previous pair,
 /// so [`Goroutine::resume`] can re-arm a migrated goroutine on its
 /// new worker and restore the worker's prior state afterward.
+#[cfg(not(target_arch = "wasm32"))]
 fn set_stack_guard(origin: usize, budget: usize) -> (usize, usize) {
     let prev = (STACK_ORIGIN.with(Cell::get), STACK_BUDGET.with(Cell::get));
     STACK_ORIGIN.with(|o| o.set(origin));

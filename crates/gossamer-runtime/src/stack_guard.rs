@@ -102,6 +102,7 @@ pub fn clear_jit_breadcrumb() {
 /// any JIT body (so an empty stderr means the handler never fired, not
 /// that the breadcrumb was simply unset). Signal-safe: two atomic loads
 /// and bounded `copy_from_slice`s, no allocation or locks.
+#[cfg(not(target_arch = "wasm32"))]
 fn compose_jit_breadcrumb(scratch: &mut [u8]) -> usize {
     let ptr = JIT_BODY_PTR.load(Ordering::Acquire);
     if ptr.is_null() {
@@ -124,6 +125,7 @@ fn compose_jit_breadcrumb(scratch: &mut [u8]) -> usize {
     len
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn guard_copy(dst: &mut [u8], src: &[u8]) -> usize {
     let n = src.len().min(dst.len());
     dst[..n].copy_from_slice(&src[..n]);

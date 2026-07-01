@@ -138,6 +138,7 @@ pub mod net;
 /// sandbox does not provide.
 #[cfg(target_arch = "wasm32")]
 pub mod net {
+    /// String-level IPv4/IPv6 parsing and classification (`std::net::ip`).
     pub mod ip;
 }
 /// Typed IP address parsing / classification (`std::net::netip`).

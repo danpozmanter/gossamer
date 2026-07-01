@@ -1206,6 +1206,148 @@ pub unsafe extern "C" fn gos_rt_vec_eq(a: *const GosVec, b: *const GosVec, elem_
     })
 }
 
+/// Structural equality of two heap (recursive / `Box`) enum nodes, driven by
+/// a per-enum descriptor blob so equal-but-distinct allocations compare true
+/// (matching the VM's `values_equal`) instead of by pointer identity. The
+/// compiled tiers route heap-enum `==` / `!=` here.
+///
+/// `desc` (pure `i64`): `[num_variants]` then, per variant in discriminant
+/// order, `[num_fields, kind_0, .., kind_{n-1}]`. Field kinds: `0` word
+/// (int / bool / char), `1` `f64`, `2` `String`, `3` nested self-enum
+/// (recurse with the same `desc`), `4` `Vec<self-enum>`, `5`
+/// `Vec<(String, self-enum)>`. The codegen emits a descriptor - and routes
+/// here - only when every nested enum field is the same type, so a mismatched
+/// sub-shape never reaches this walk.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_enum_struct_eq(a: *mut u8, b: *mut u8, desc: *const i64) -> i64 {
+    ffi_entry!(0, {
+        let raw_a = a as usize;
+        let raw_b = b as usize;
+        let a = crate::c_abi::rc::untag_rc(a);
+        let b = crate::c_abi::rc::untag_rc(b);
+        if std::ptr::eq(a, b) {
+            return 1; // same node, or both null
+        }
+        if a.is_null() || b.is_null() || desc.is_null() {
+            return 0;
+        }
+        // Discriminant: a small heap enum tags it into the pointer's low bits
+        // (`base | (disc << 1)`); a larger one stores it in the RcHeader byte at
+        // payload-3. A zero tag means disc 0 or the header form - the header
+        // then holds the value (0 for a tagged disc-0 node too, so both agree).
+        let disc_of = |raw: usize, base: *mut u8| -> u8 {
+            let tag = raw & 7;
+            if tag != 0 {
+                (tag >> 1) as u8
+            } else {
+                unsafe { *base.sub(3) }
+            }
+        };
+        let da = disc_of(raw_a, a);
+        let db = disc_of(raw_b, b);
+        if da != db {
+            return 0;
+        }
+        let num_variants = unsafe { *desc };
+        if i64::from(da) >= num_variants {
+            return 0;
+        }
+        let mut idx = 1usize;
+        for _ in 0..da {
+            let nf = unsafe { *desc.add(idx) }.max(0);
+            idx += 1 + nf as usize;
+        }
+        let nf = unsafe { *desc.add(idx) }.max(0);
+        idx += 1;
+        for f in 0..nf {
+            let kind = unsafe { *desc.add(idx + f as usize) };
+            let wa = unsafe { *(a as *const i64).add(f as usize) };
+            let wb = unsafe { *(b as *const i64).add(f as usize) };
+            let eq = match kind {
+                1 => f64::from_bits(wa as u64) == f64::from_bits(wb as u64),
+                2 => {
+                    let sa: *const c_char = std::ptr::with_exposed_provenance(wa as usize);
+                    let sb: *const c_char = std::ptr::with_exposed_provenance(wb as usize);
+                    unsafe { gos_rt_str_eq(sa, sb) }
+                }
+                3 => unsafe { gos_rt_enum_struct_eq(wa as *mut u8, wb as *mut u8, desc) != 0 },
+                4 => unsafe { vec_self_enum_eq(wa, wb, desc) },
+                5 => unsafe { vec_str_self_enum_eq(wa, wb, desc) },
+                _ => wa == wb,
+            };
+            if !eq {
+                return 0;
+            }
+        }
+        1
+    })
+}
+
+/// Element-wise structural equality of two `Vec<self-enum>` field words (each
+/// a `*mut GosVec` of 8-byte enum-pointer slots), recursing per element.
+unsafe fn vec_self_enum_eq(a_word: i64, b_word: i64, desc: *const i64) -> bool {
+    let va = a_word as *const GosVec;
+    let vb = b_word as *const GosVec;
+    if std::ptr::eq(va, vb) {
+        return true;
+    }
+    if va.is_null() || vb.is_null() {
+        return false;
+    }
+    let la = unsafe { (*va).len };
+    if la != unsafe { (*vb).len } {
+        return false;
+    }
+    for i in 0..la {
+        let ea = unsafe { gos_rt_vec_get_i64(va, i) };
+        let eb = unsafe { gos_rt_vec_get_i64(vb, i) };
+        if unsafe { gos_rt_enum_struct_eq(ea as *mut u8, eb as *mut u8, desc) } == 0 {
+            return false;
+        }
+    }
+    true
+}
+
+/// Element-wise structural equality of two `Vec<(String, self-enum)>` field
+/// words (each a `*mut GosVec` of 16-byte `[cstr @ +0][enum ptr @ +8]` slots).
+unsafe fn vec_str_self_enum_eq(a_word: i64, b_word: i64, desc: *const i64) -> bool {
+    let va = a_word as *const GosVec;
+    let vb = b_word as *const GosVec;
+    if std::ptr::eq(va, vb) {
+        return true;
+    }
+    if va.is_null() || vb.is_null() {
+        return false;
+    }
+    let la = unsafe { (*va).len };
+    if la != unsafe { (*vb).len } {
+        return false;
+    }
+    for i in 0..la {
+        let pa = unsafe { gos_rt_vec_get_ptr(va, i) };
+        let pb = unsafe { gos_rt_vec_get_ptr(vb, i) };
+        if pa.is_null() || pb.is_null() {
+            if pa != pb {
+                return false;
+            }
+            continue;
+        }
+        let ka = unsafe { pa.cast::<i64>().read_unaligned() };
+        let kb = unsafe { pb.cast::<i64>().read_unaligned() };
+        let sa: *const c_char = std::ptr::with_exposed_provenance(ka as usize);
+        let sb: *const c_char = std::ptr::with_exposed_provenance(kb as usize);
+        if !unsafe { gos_rt_str_eq(sa, sb) } {
+            return false;
+        }
+        let ea = unsafe { pa.add(8).cast::<i64>().read_unaligned() };
+        let eb = unsafe { pb.add(8).cast::<i64>().read_unaligned() };
+        if unsafe { gos_rt_enum_struct_eq(ea as *mut u8, eb as *mut u8, desc) } == 0 {
+            return false;
+        }
+    }
+    true
+}
+
 /// Renders a `HashMap` to `{k: v, k2: v2}`, sorting entries by key so
 /// the output is deterministic and byte-identical across tiers (an
 /// `FxHashMap`'s bucket order is neither stable nor the same as the

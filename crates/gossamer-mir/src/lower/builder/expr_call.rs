@@ -404,13 +404,8 @@ impl<'a> Builder<'a> {
                         // typechecker leaves these as `Var` because
                         // it doesn't index stdlib free functions;
                         // pin here as the last grounding step.
-                        "fs::read_to_string"
-                        | "std::fs::read_to_string"
-                        | "path::join"
-                        | "std::path::join"
-                        | "io::read_line"
-                        | "std::io::read_line"
-                        | "format" => self.tcx.string_ty(),
+                        "path::join" | "std::path::join" | "io::read_line"
+                        | "std::io::read_line" | "format" => self.tcx.string_ty(),
                         _ => ty,
                     }
                 } else {

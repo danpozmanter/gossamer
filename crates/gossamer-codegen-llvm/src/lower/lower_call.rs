@@ -529,6 +529,7 @@ impl<'a> Lowerer<'a> {
                 | "gos_fn_addr"
                 | "gos_enum_disc"
                 | "gos_enum_set_disc"
+                | "gos_rt_enum_struct_eq"
         ) {
             self.lower_raw_intrinsic(&name, args, destination, target)?;
             return Ok(());
@@ -545,6 +546,19 @@ impl<'a> Lowerer<'a> {
         // stack-slot dance in `lower_intrinsic_call`.
         if name == "gos_rt_vec_push" && args.len() == 2 {
             self.lower_vec_push_inline(args, destination, target)?;
+            return Ok(());
+        }
+        // Inline scalar `min`/`max` on i64 to a branchless `icmp`+`select`
+        // (value-identical to the runtime `a.min(b)`/`a.max(b)`), removing a
+        // per-call FFI boundary from tight numeric loops and unblocking
+        // vectorization. `clamp` and the `f64` variants keep the runtime call.
+        if (name == "gos_rt_min_i64" || name == "gos_rt_max_i64") && args.len() == 2 {
+            self.lower_scalar_minmax_i64_inline(
+                name == "gos_rt_min_i64",
+                args,
+                destination,
+                target,
+            )?;
             return Ok(());
         }
         // Inline primitive Vec index get/set/get_ptr (lenient bounds: null /
@@ -1375,6 +1389,31 @@ impl<'a> Lowerer<'a> {
                 )
                 .unwrap();
                 let coerced = self.coerce_llvm_value(&tmp, "ptr", &dest_ty);
+                let slot = local_slot(destination.local);
+                writeln!(self.out, "  store {dest_ty} {coerced}, ptr {slot}").unwrap();
+            }
+            "gos_rt_enum_struct_eq" => {
+                // gos_rt_enum_struct_eq(a_ptr, b_ptr, desc_symbol) -> i64. The
+                // two enum node pointers lower normally; the third arg is a
+                // const-string naming the module-global structural-eq
+                // descriptor blob (a registered rc_meta), emitted as its
+                // address like the rc_alloc meta symbol.
+                let a = self.lower_raw_ptr_arg(&args[0])?;
+                let b = self.lower_raw_ptr_arg(&args[1])?;
+                let desc_ptr = match args.get(2) {
+                    Some(Operand::Const(ConstValue::Str(sym))) if !sym.is_empty() => {
+                        format!("@\"{sym}\"")
+                    }
+                    _ => "null".to_string(),
+                };
+                declare_rt(&mut self.runtime_refs, "gos_rt_enum_struct_eq");
+                let tmp = self.fresh();
+                writeln!(
+                    self.out,
+                    "  {tmp} = call i64 @gos_rt_enum_struct_eq(ptr {a}, ptr {b}, ptr {desc_ptr})"
+                )
+                .unwrap();
+                let coerced = self.coerce_llvm_value(&tmp, "i64", &dest_ty);
                 let slot = local_slot(destination.local);
                 writeln!(self.out, "  store {dest_ty} {coerced}, ptr {slot}").unwrap();
             }

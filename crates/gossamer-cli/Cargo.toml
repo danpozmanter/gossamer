@@ -60,7 +60,13 @@ gossamer-ast = { workspace = true }
 gossamer-codegen-llvm = { workspace = true }
 gossamer-coro = { workspace = true }
 gossamer-diagnostics = { workspace = true }
-gossamer-driver = { workspace = true }
+# `musl` registers the `*-unknown-linux-musl` triples so `gos build
+# --target <musl-triple>` works out of the box. The driver gates them
+# off by default to avoid confusing link failures, but the CLI resolves
+# a missing musl runtime archive with a clear, actionable error
+# (find_runtime_lib_for_target), so recognising the triple is the better
+# behaviour here.
+gossamer-driver = { workspace = true, features = ["musl"] }
 gossamer-hir = { workspace = true }
 gossamer-interp = { workspace = true }
 gossamer-lex = { workspace = true }

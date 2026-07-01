@@ -62,8 +62,12 @@ jobs:
         # Always use *-latest runners. Pinned major versions
         # (macos-13, ubuntu-20.04, …) get retired by GitHub and
         # the queued job then waits forever for a runner that
-        # no longer exists.
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        # no longer exists. `ubuntu-24.04-arm` is the exception:
+        # GitHub ships Linux arm64 hosted runners only in pinned-major
+        # form (no `*-arm-latest` yet), and this is the native aarch64
+        # runner that executes `gos run`, the Cranelift JIT, and `gos
+        # build` on real ARM Linux - the Raspberry Pi target.
+        os: [ubuntu-latest, macos-latest, windows-latest, ubuntu-24.04-arm]
     steps:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/rust-test-setup
@@ -216,7 +220,9 @@ jobs:
       fail-fast: false
       matrix:
         # Always use *-latest runners (pinned majors get retired by GitHub).
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        # `ubuntu-24.04-arm` is the native aarch64 Linux runner (the Pi
+        # target); GitHub ships Linux arm64 only in pinned-major form.
+        os: [ubuntu-latest, macos-latest, windows-latest, ubuntu-24.04-arm]
     steps:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/rust-test-setup
@@ -434,3 +440,123 @@ jobs:
         run: cargo build --bin gos
       - name: Verify docs_src/stdlib/ matches manifest::ALL_MODULES
         run: ./target/debug/gos doc --emit-stdlib docs_src/stdlib --check
+
+  # Cross-compilation correctness: `gos build --target aarch64-linux-*`
+  # from a Linux host, run under QEMU, must match the bytecode VM. This is
+  # the all-tier gate for the Linux-host cross path (gnu + musl).
+  cross-from-linux:
+    name: Cross Linux -> aarch64-linux + QEMU
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/rust-test-setup
+        with:
+          cache-prefix: v2-cross-from-linux
+      - name: Install cross toolchain + QEMU
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu qemu-user llvm clang
+          rustup target add aarch64-unknown-linux-gnu aarch64-unknown-linux-musl
+      - name: Build the target runtime archives
+        run: |
+          cargo build --release --target aarch64-unknown-linux-gnu -p gossamer-runtime
+          cargo build --release --target aarch64-unknown-linux-musl -p gossamer-runtime
+      - name: Build gos
+        run: cargo build --bin gos
+      - name: Cross build + QEMU diff against the VM
+        run: cargo test -p gossamer-cli --test cross_compile -- --nocapture
+
+  # A macOS host must produce a correct aarch64-linux binary. macOS runners
+  # cannot execute a Linux ELF, so this job builds + uploads; the QEMU diff
+  # runs on Linux below. The musl-static target is the host-agnostic path
+  # (rustup ships the CRT; ld.lld emits ELF on any host).
+  # A macOS host must produce correct aarch64-linux and x86_64-linux
+  # binaries (musl is the host-agnostic path). macOS runners cannot
+  # execute a Linux ELF, so this job builds + uploads; the QEMU/native
+  # diff runs on Linux below. mimalloc's C is cross-compiled with clang.
+  cross-from-macos:
+    name: Cross macOS -> {aarch64,x86_64}-linux-musl
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/rust-test-setup
+        with:
+          cache-prefix: v2-cross-from-macos
+      - name: Install ld.lld + musl targets
+        run: |
+          brew install llvm
+          echo "$(brew --prefix llvm)/bin" >> "$GITHUB_PATH"
+          rustup target add aarch64-unknown-linux-musl x86_64-unknown-linux-musl
+      - name: Build target runtime archives + gos
+        run: |
+          for t in aarch64-unknown-linux-musl x86_64-unknown-linux-musl; do
+            CC="clang" CFLAGS="--target=$t" \
+              cargo build --release --target "$t" -p gossamer-runtime
+          done
+          cargo build --bin gos
+      - name: Cross build the fixtures (both targets)
+        env:
+          GOS_RUNTIME_LIB_AARCH64_UNKNOWN_LINUX_MUSL: target/aarch64-unknown-linux-musl/release/libgossamer_runtime.a
+          GOS_RUNTIME_LIB_X86_64_UNKNOWN_LINUX_MUSL: target/x86_64-unknown-linux-musl/release/libgossamer_runtime.a
+        run: |
+          ./scripts/cross_build_fixtures.sh aarch64-unknown-linux-musl out-macos
+          ./scripts/cross_build_fixtures.sh x86_64-unknown-linux-musl out-macos
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cross-bins-macos
+          path: out-macos
+
+  # A Windows host must produce correct aarch64-linux and x86_64-linux
+  # binaries. rust-lld (shipped with the toolchain) is the ELF linker;
+  # `gos` selects it for the Windows-host -> Linux-target cross.
+  cross-from-windows:
+    name: Cross Windows -> {aarch64,x86_64}-linux-musl
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/rust-test-setup
+        with:
+          cache-prefix: v2-cross-from-windows
+      - name: Install musl targets
+        run: rustup target add aarch64-unknown-linux-musl x86_64-unknown-linux-musl
+      - name: Build target runtime archives + gos
+        shell: bash
+        run: |
+          for t in aarch64-unknown-linux-musl x86_64-unknown-linux-musl; do
+            CC="clang" CFLAGS="--target=$t" \
+              cargo build --release --target "$t" -p gossamer-runtime
+          done
+          cargo build --bin gos
+      - name: Cross build the fixtures (both targets)
+        env:
+          GOS_RUNTIME_LIB_AARCH64_UNKNOWN_LINUX_MUSL: target/aarch64-unknown-linux-musl/release/libgossamer_runtime.a
+          GOS_RUNTIME_LIB_X86_64_UNKNOWN_LINUX_MUSL: target/x86_64-unknown-linux-musl/release/libgossamer_runtime.a
+        run: |
+          pwsh -File scripts/cross_build_fixtures.ps1 aarch64-unknown-linux-musl out-windows
+          pwsh -File scripts/cross_build_fixtures.ps1 x86_64-unknown-linux-musl out-windows
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cross-bins-windows
+          path: out-windows
+
+  # Run the macOS/Windows host cross artifacts under QEMU and diff against
+  # the VM. Closes the loop on the multi-host matrix: the producing host
+  # cannot run the foreign ELF, so a Linux job validates the output.
+  cross-run-under-qemu:
+    name: Run macOS/Windows cross-built bins under QEMU
+    needs: [cross-from-macos, cross-from-windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/rust-test-setup
+        with:
+          cache-prefix: v2-cross-run-qemu
+      - run: sudo apt-get update && sudo apt-get install -y qemu-user
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: cross-bins-*
+          path: bins
+      - name: Build gos
+        run: cargo build --bin gos
+      - name: Each cross binary must match the VM
+        run: ./scripts/qemu_diff_against_vm.sh bins

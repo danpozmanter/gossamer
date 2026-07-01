@@ -1086,6 +1086,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_fs_read_to_string as *const u8,
         ),
         (
+            "gos_rt_fs_read_to_string_result",
+            crate::c_abi::gos_rt_fs_read_to_string_result as *const u8,
+        ),
+        (
             "gos_rt_fs_remove_dir",
             crate::c_abi::gos_rt_fs_remove_dir as *const u8,
         ),
@@ -1876,6 +1880,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
         (
             "gos_rt_main_exit_code",
             crate::c_abi::gos_rt_main_exit_code as *const u8,
+        ),
+        (
+            "gos_rt_main_exit_code_err",
+            crate::c_abi::gos_rt_main_exit_code_err as *const u8,
         ),
         (
             "gos_rt_map_clear",
@@ -4449,6 +4457,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_tuple_cmp as *const u8,
         ),
         ("gos_rt_vec_eq", crate::c_abi::gos_rt_vec_eq as *const u8),
+        (
+            "gos_rt_enum_struct_eq",
+            crate::c_abi::gos_rt_enum_struct_eq as *const u8,
+        ),
         (
             "gos_rt_u64_to_str",
             crate::c_abi::gos_rt_u64_to_str as *const u8,

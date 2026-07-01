@@ -405,15 +405,36 @@ fn build_subcommand_accepts_known_target_triple_and_rejects_unknown() {
     std::fs::create_dir_all(&dir).unwrap();
     let source_path = dir.join("cross.gos");
     std::fs::write(&source_path, "fn main() -> i64 { 0i64 }\n").unwrap();
-    let ok = Command::new(gos_bin())
-        .args(["build", "--target", "aarch64-apple-darwin"])
+    // A registered Linux cross target is routed into the real build
+    // path. Without a target runtime archive (and a cross linker) it
+    // fails at link resolution with a clear message - never the
+    // registration-gate "unknown target" error, and never a stub.
+    let known = Command::new(gos_bin())
+        .args(["build", "--target", "aarch64-unknown-linux-gnu"])
         .arg(&source_path)
         .output()
         .expect("spawn build --target");
+    let known_err = String::from_utf8_lossy(&known.stderr);
     assert!(
-        ok.status.success(),
-        "known target should build; stderr: {}",
-        String::from_utf8_lossy(&ok.stderr)
+        !known_err.contains("unknown target"),
+        "a registered Linux target must pass the registration gate: {known_err}"
+    );
+    // A registered but non-Linux target cannot be cross-produced from
+    // any host (no bundled SDK); it is refused with a specific error,
+    // not silently stubbed.
+    let darwin = Command::new(gos_bin())
+        .args(["build", "--target", "aarch64-apple-darwin"])
+        .arg(&source_path)
+        .output()
+        .expect("spawn build --target darwin");
+    assert!(
+        !darwin.status.success(),
+        "a non-Linux cross target must be refused"
+    );
+    let darwin_err = String::from_utf8_lossy(&darwin.stderr);
+    assert!(
+        darwin_err.contains("only `*-linux-*`"),
+        "non-Linux target should be refused with a specific message: {darwin_err}"
     );
     let bad = Command::new(gos_bin())
         .args(["build", "--target", "wat-is-this"])

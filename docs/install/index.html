@@ -1867,16 +1867,25 @@ implementation, so the supported platform matrix is narrower than
 </table>
 <p>Other targets compile but the goroutine scheduler refuses to start
 because corosensei has no context-switch backend for them.</p>
+<p><code>aarch64</code> Linux - including Raspberry Pi OS 64-bit - is exercised in CI
+across all three tiers (the bytecode VM, the in-process Cranelift JIT,
+and native <code>gos build</code>), not just cross-built. <code>gos run</code> is fully
+self-contained on a Pi; native compilation there uses the device's
+system LLVM (<code>llc</code>/<code>opt</code>) and C compiler (<code>sudo apt-get install -y llvm
+clang</code>).</p>
 <h2 id="target-toolchains">Target toolchains<a class="headerlink" href="#target-toolchains" title="Permanent link">&para;</a></h2>
 <p><code>gos build --target &lt;triple&gt;</code> validates the triple against the
-registered set - the supported platforms above plus
-<code>riscv64gc-unknown-linux-gnu</code>, <code>wasm32-unknown-unknown</code>, and
-<code>wasm32-wasi</code>. Only the host triple currently links to a runnable
-binary, though: a non-host <code>--target</code> emits a placeholder artifact and
-reports <code>cross-link pending</code>. Build each target on a native runner of
-that architecture for now. (A fully-static single-file binary comes
-from <code>gos build --release</code> on a Linux host with the musl rustup target
-installed - no <code>--target</code> needed.)</p>
+registered set. Every Linux target -
+<code>{x86_64,aarch64}-unknown-linux-{gnu,musl}</code> - cross-compiles to a real,
+runnable binary from a Linux, macOS, or Windows host (Cross output is
+validated against the bytecode VM under QEMU in CI, including Raspberry
+Pi). The musl-static path is host-agnostic (rustup's self-contained CRT
++ <code>ld.lld</code>); the gnu-dynamic path uses the matching <code>*-linux-gnu-gcc</code> on
+a Linux host, or a <code>GOS_CROSS_SYSROOT</code> on macOS/Windows. Cross-compiling
+<em>to</em> macOS or Windows as a target remains out of scope (needs external
+SDKs). (A fully-static single-file binary also comes from <code>gos build
+--release</code> on a Linux host with the musl rustup target installed - no
+<code>--target</code> needed.)</p>
 <p>Musl targets (<code>x86_64-unknown-linux-musl</code>,
 <code>aarch64-unknown-linux-musl</code>) are gated behind the <code>musl</code> Cargo
 feature. Rebuild with:</p>

@@ -99,6 +99,34 @@ pub enum JitKind {
     /// native buffer for the call and copies the (mutated) bytes back
     /// afterwards. Integer register class.
     U8VecHandle,
+    /// A 2-element tuple RETURN whose elements are scalars / heap enums (the
+    /// common `(Node, i64)` / `(i64, i64)` "build" shape). The compiled tier
+    /// returns it as a pointer to a `gos_rt_aggr_alloc` block of two 8-byte
+    /// slots; the trampoline reads each slot per its [`TupleElem`] kind (an
+    /// `Enum` slot becomes an owning native handle) into a `Value::Tuple`, then
+    /// shallow-frees the block. Return-only. Letting a tuple-returning
+    /// constructor JIT keeps the values it produces native end to end.
+    TupleReturn([TupleElem; 2]),
+}
+
+/// One element of a JIT-marshalled tuple return ([`JitKind::TupleReturn`]).
+/// Mirrors the runtime's `NativeFieldKind` for the slot decode, but lives in
+/// the codegen crate so `JitKind` stays self-contained.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TupleElem {
+    /// 64-bit integer slot.
+    I64,
+    /// 64-bit float slot (raw bits).
+    F64,
+    /// Boolean slot (non-zero = true).
+    Bool,
+    /// Unicode scalar slot (low 32 bits).
+    Char,
+    /// Heap string slot (tagged c-string pointer).
+    Str,
+    /// Heap enum slot; the payload is the VM shape-table index used to re-wrap
+    /// the returned pointer as a native handle.
+    Enum(u32),
 }
 
 /// Raw handle for a JIT-compiled function: a fn pointer plus the
@@ -325,9 +353,22 @@ fn jit_compile_set<'a>(
             _ => false,
         })
     };
+    // Seed the compile set ONLY from bodies that can actually be promoted.
+    // `main` is never promoted (the VM keeps it on bytecode), so seeding from
+    // it just drags its exclusive callees - e.g. a tuple-returning `build` that
+    // is itself unpromotable - into compilation for no benefit. Worse, one such
+    // dragged-in helper using a construct the codegen can't lower would fail the
+    // whole module and zero out promotion for every other function. Excluding
+    // `main` here matches `has_worthy_jit_body` / `jit_eager_loop_bodies`, which
+    // already gate on `b.name != "main"`, so a body reaches the compile set only
+    // as a promotable root or a genuine callee of one.
     let mut included: std::collections::HashSet<&str> = bodies
         .iter()
-        .filter(|b| body_kinds(b, tcx, enum_shapes, struct_shapes).is_some() && !uses_i128_repr(b))
+        .filter(|b| {
+            b.name != "main"
+                && body_kinds(b, tcx, enum_shapes, struct_shapes).is_some()
+                && !uses_i128_repr(b)
+        })
         .map(|b| b.name.as_str())
         .collect();
 
@@ -903,10 +944,10 @@ fn body_kinds(
     for pidx in 1..=body.arity {
         let local = gossamer_mir::Local(pidx);
         let kind = ty_to_kind(tcx, body.local_ty(local), enum_shapes, struct_shapes)?;
-        // `ResultEnumPtr` is a return-only marshalling shape; the trampoline
-        // has no inbound `Result<Enum, _>` parameter path, so a body taking
-        // one stays on bytecode.
-        if matches!(kind, JitKind::ResultEnumPtr(_)) {
+        // `ResultEnumPtr` / `TupleReturn` are return-only marshalling shapes;
+        // the trampoline has no inbound parameter path for them, so a body
+        // taking one as a parameter stays on bytecode.
+        if matches!(kind, JitKind::ResultEnumPtr(_) | JitKind::TupleReturn(_)) {
             return None;
         }
         params.push(kind);
@@ -1054,10 +1095,45 @@ fn ty_to_kind(
         // WaitGroup, I64Vec, Atomic) are cross-goroutine shared state and
         // stay on bytecode (no `JitKind`), so they fall through below.
         TyKind::Adt { def, .. } if def.local == u32::MAX - 20 => Some(JitKind::U8VecHandle),
-        // Remaining aggregates (`Tuple`, struct `Adt`, `Vec` of
+        // A 2-element tuple of scalars / heap enums is marshalled as a tuple
+        // RETURN (the `(Node, i64)` / `(i64, i64)` constructor shape). Both
+        // elements must classify; otherwise stay on bytecode. `body_kinds`
+        // rejects this as a parameter - it is a return-only marshalling shape.
+        TyKind::Tuple(elems) if elems.len() == 2 => {
+            let e0 = ty_to_tuple_elem(tcx, elems[0], enum_shapes)?;
+            let e1 = ty_to_tuple_elem(tcx, elems[1], enum_shapes)?;
+            Some(JitKind::TupleReturn([e0, e1]))
+        }
+        // Remaining aggregates (larger `Tuple`, struct `Adt`, `Vec` of
         // unsupported element, channels …) stay on bytecode: the
         // trampoline has no marshalling shape for them yet, and
         // JIT-promoting them risks segfaults at the boundary.
+        _ => None,
+    }
+}
+
+/// Classifies one tuple element type into a [`TupleElem`] for tuple-return
+/// marshalling, or `None` when it is not a scalar / heap-enum the trampoline
+/// can decode (a nested tuple, `Vec`, struct, …). References peel first.
+fn ty_to_tuple_elem(
+    tcx: &TyCtxt,
+    ty: Ty,
+    enum_shapes: &HashMap<u32, u32>,
+) -> Option<crate::jit::TupleElem> {
+    use crate::jit::TupleElem;
+    let mut ty = ty;
+    while let TyKind::Ref { inner, .. } = tcx.kind_of(ty) {
+        ty = *inner;
+    }
+    match tcx.kind_of(ty) {
+        TyKind::Int(_) => Some(TupleElem::I64),
+        TyKind::Float(_) => Some(TupleElem::F64),
+        TyKind::Bool => Some(TupleElem::Bool),
+        TyKind::Char => Some(TupleElem::Char),
+        TyKind::String => Some(TupleElem::Str),
+        TyKind::Adt { def, .. } if tcx.is_rc_managed(ty) => {
+            enum_shapes.get(&def.local).copied().map(TupleElem::Enum)
+        }
         _ => None,
     }
 }

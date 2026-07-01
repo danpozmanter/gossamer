@@ -245,8 +245,35 @@ context-switch implementation. The current support matrix:
 | Windows  | x86_64 (MSVC ABI)             | Supported |
 
 Other targets compile but the goroutine scheduler will refuse to
-start. Cross-compiling to the supported targets is wired up in
-`gos build --target <triple>`.
+start.
+
+### Raspberry Pi
+
+Raspberry Pi OS 64-bit (and any `aarch64` Linux) is first-class. Install
+the `linux-aarch64` release, then `gos run` works out of the box (the VM
+and its in-process JIT are self-contained). To compile natively on the
+Pi, also install system LLVM and a C compiler:
+
+```sh
+sudo apt-get install -y llvm clang
+```
+
+### Cross-compiling to a Raspberry Pi
+
+Build a Pi binary from a Linux, macOS, or Windows desktop. The
+musl-static target is the host-agnostic path (no target sysroot needed):
+
+```sh
+rustup target add aarch64-unknown-linux-musl
+cargo build --release --target aarch64-unknown-linux-musl -p gossamer-runtime
+gos build --release --target aarch64-unknown-linux-musl app.gos
+# copy the static binary to the Pi and run it - no runtime deps
+```
+
+For a glibc (dynamic) Pi binary, target `aarch64-unknown-linux-gnu`; on a
+Linux host install `gcc-aarch64-linux-gnu`, and on macOS/Windows supply an
+aarch64 glibc sysroot via `GOS_CROSS_SYSROOT`. See SPEC §11.4 for the full
+contract.
 
 ## Editor Support
 

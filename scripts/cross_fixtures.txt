@@ -1,0 +1,7 @@
+examples/hello_world.gos
+examples/fizz_buzz.gos
+examples/function_piping.gos
+examples/factorial.gos
+examples/gcd.gos
+examples/digit_sum.gos
+feature-testing-examples/i128_enum_payload_arith.gos

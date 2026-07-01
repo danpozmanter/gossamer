@@ -1177,6 +1177,8 @@ impl<'a> TypeChecker<'a> {
                     substs: crate::Substs::from_types(std::iter::empty()),
                 });
                 self.enum_tys.insert(decl.name.name.clone(), adt);
+                self.tcx
+                    .register_enum_ty_by_name(decl.name.name.as_str(), adt);
             }
         }
         let variant_names = self
@@ -1192,6 +1194,24 @@ impl<'a> TypeChecker<'a> {
                 self.enum_variant_payloads
                     .insert((decl.name.name.clone(), variant.name.name.clone()), tys);
             }
+        }
+        // Per-variant field types in declaration (discriminant) order, for the
+        // MIR structural-equality descriptor of heap enums.
+        if let Some(def) = self.resolutions.definition_of(item_id) {
+            let mut variant_tys: Vec<Vec<Ty>> = Vec::with_capacity(decl.variants.len());
+            for variant in &decl.variants {
+                let tys: Vec<Ty> = match &variant.body {
+                    StructBody::Tuple(fields) => {
+                        fields.iter().map(|f| self.type_from_ast(&f.ty)).collect()
+                    }
+                    StructBody::Named(fields) => {
+                        fields.iter().map(|f| self.type_from_ast(&f.ty)).collect()
+                    }
+                    StructBody::Unit => Vec::new(),
+                };
+                variant_tys.push(tys);
+            }
+            self.tcx.register_enum_variant_tys(def, variant_tys);
         }
         // The heap representation stores the discriminant in a one-byte
         // header field.

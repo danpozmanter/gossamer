@@ -9,6 +9,13 @@
 //! so every Gossamer function runs on the bytecode VM. The JIT is purely
 //! a speed optimisation, so this is a clean functional equivalent.
 
+// This stub deliberately mirrors the cranelift backend's public API (types,
+// variants, entry points) so the VM's `jit_call` trampoline type-checks
+// unchanged on wasm, even though nothing here is ever constructed or reached
+// (no body is JIT-compiled). The dead-code / unreachable-pub lints flag exactly
+// that intentional mirroring.
+#![allow(dead_code, unreachable_pub)]
+
 use std::collections::HashMap;
 
 /// ABI classification of a JIT slot. Mirrors the cranelift enum so the
@@ -47,6 +54,27 @@ pub enum JitKind {
     NativeVecVecI64,
     /// `U8Vec` byte-buffer handle, marshalled by copy-in / copy-back.
     U8VecHandle,
+    /// A 2-element tuple RETURN of scalars / heap enums; payload is the
+    /// per-element decode kind. Return-only.
+    TupleReturn([TupleElem; 2]),
+}
+
+/// Mirrors `gossamer_codegen_cranelift::TupleElem` so the shared dispatch
+/// code in `jit_call` type-checks on wasm; no instance is ever constructed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TupleElem {
+    /// 64-bit integer slot.
+    I64,
+    /// 64-bit float slot (raw bits).
+    F64,
+    /// Boolean slot (non-zero = true).
+    Bool,
+    /// Unicode scalar slot (low 32 bits).
+    Char,
+    /// Heap string slot (tagged c-string pointer).
+    Str,
+    /// Heap enum slot; payload is the VM shape-table index.
+    Enum(u32),
 }
 
 /// A compiled function handle. On wasm none is ever produced.

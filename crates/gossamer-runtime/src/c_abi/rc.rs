@@ -1535,6 +1535,46 @@ pub unsafe extern "C" fn gos_rt_rc_release(payload: *mut u8) {
     unsafe { rc_release_impl(payload) };
 }
 
+/// Release for an exclusive tree teardown that must NOT defer to the cycle
+/// collector. Identical to [`gos_rt_rc_release`] except a node that survives
+/// the decrement is never buffered as a cycle candidate, and a node that
+/// reaches zero has its buffered bit cleared before reclamation - so the block
+/// is freed immediately instead of waiting for a collection slice that may
+/// never run before exit. The caller (the VM's native-enum tree teardown) owns
+/// the whole tree exclusively and has already cleared child slots, so there is
+/// no live cycle to observe and no child to double-release. Null-safe.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_rc_release_no_buffer(payload: *mut u8) {
+    let payload = untag_rc(payload);
+    if payload.is_null() || in_region_arena(payload) {
+        return;
+    }
+    if unsafe { crate::c_abi::string::is_gos_string(payload.cast()) } {
+        unsafe { crate::c_abi::string::gos_rt_str_free(payload.cast()) };
+        return;
+    }
+    let h = unsafe { header_ptr(payload) };
+    let d = unsafe { dec_strong(h) };
+    if d.skip {
+        return;
+    }
+    if d.next != 0 {
+        // Survived: deliberately do NOT buffer as a cycle root. A tree being
+        // torn down exclusively has no live cycle for the collector to find.
+        return;
+    }
+    if d.shared {
+        fence(Ordering::Acquire);
+    }
+    unsafe { set_color(h, COLOR_BLACK) };
+    // Clear any buffered bit a prior release may have set so `try_reclaim`
+    // frees the block now rather than leaving it for the collector. Child
+    // slots are already cleared by the caller, so there are no children to
+    // release here.
+    unsafe { set_buffered(h, false) };
+    unsafe { try_reclaim(payload) };
+}
+
 /// Strong reference count of an RC-managed node, or `0` for a node the
 /// release path leaves untouched (null, region-arena, immortal unit
 /// singleton, or a gos string). Diagnostic / teardown helper for the

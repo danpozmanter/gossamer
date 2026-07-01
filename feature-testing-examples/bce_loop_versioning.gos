@@ -1,0 +1,93 @@
+// Loop-versioning bounds-check elision: an affine index `xs[base + counter]`
+// inside a counted loop takes an unchecked clone of the loop when a runtime
+// precondition proves every index lands in `[0, len)`, and the original
+// checked loop (scalar out-of-range reads yield the zero value, writes are a
+// no-op) otherwise. Covers the in-range unchecked path, the out-of-range
+// checked fallback, the loop-invariant-plus-counter and counter-minus-one
+// index forms, `set` as well as `get`, and an `f64` element vec. Output must
+// be bit-identical across the VM, Cranelift, and LLVM tiers.
+
+// Matmul-shape: `c[irow + j]` read+write and `b[krow + j]` read, every index
+// in range, so the unchecked clone runs.
+fn matmul_trace(a: &[i64], b: &[i64], n: i64) -> i64 {
+    let sz = n * n
+    let mut c = [0; sz]
+    for i in 0..n {
+        let irow = i * n
+        for k in 0..n {
+            let aik = a[irow + k]
+            let krow = k * n
+            for j in 0..n {
+                c[irow + j] += aik * b[krow + j]
+            }
+        }
+    }
+    let mut acc = 0
+    for idx in 0..sz {
+        acc += c[idx]
+    }
+    acc
+}
+
+// A positive shift makes the precondition fail: indices past the end read the
+// zero value on the checked fallback, exactly as the VM does.
+fn shifted_sum(xs: &[i64], shift: i64) -> i64 {
+    let mut acc = 0
+    let len = xs.len()
+    for j in 0..len {
+        acc += xs[j + shift]
+    }
+    acc
+}
+
+// edit-distance-shape: `dp[j]` (base 0) and `dp[j - 1]` (base -1) with a
+// loop-carried dependency, both proven in range.
+fn prefix_pass(seed: i64, n: i64) -> i64 {
+    let mut dp = [0; n]
+    for j in 0..n {
+        dp[j] = (j + seed) % 7
+    }
+    for j in 1..n {
+        dp[j] = dp[j] + dp[j - 1]
+    }
+    dp[n - 1]
+}
+
+// f64 affine access (8-byte word element) through the same unchecked path.
+fn scale_sum(xs: &[f64], n: i64) -> f64 {
+    let mut ys = [0.0; n]
+    for i in 0..n {
+        ys[i] = xs[i] * 2.0 + 1.0
+    }
+    let mut acc = 0.0
+    for i in 0..n {
+        acc += ys[i]
+    }
+    acc
+}
+
+fn main() {
+    let n = 5
+    let mut a = [0; 25]
+    let mut b = [0; 25]
+    for i in 0..25 {
+        a[i] = i % 9
+        b[i] = (i * 3) % 11
+    }
+    println!("matmul_trace={}", matmul_trace(&a, &b, n))
+
+    let mut m = [0; 12]
+    for i in 0..12 {
+        m[i] = i + 1
+    }
+    println!("shift0={}", shifted_sum(&m, 0))
+    println!("shift8={}", shifted_sum(&m, 8))
+
+    println!("prefix={}", prefix_pass(3, 8))
+
+    let mut fs = [0.0; 6]
+    for i in 0..6 {
+        fs[i] = (i as f64) + 0.5
+    }
+    println!("scale={}", scale_sum(&fs, 6))
+}

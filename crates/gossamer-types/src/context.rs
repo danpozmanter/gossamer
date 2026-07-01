@@ -17,6 +17,15 @@ pub struct TyCtxt {
     index: HashMap<TyKind, Ty>,
     primitives: Primitives,
     struct_fields: HashMap<gossamer_resolve::DefId, Vec<Ty>>,
+    /// Per-variant field types of a user enum, in declaration (discriminant)
+    /// order - variant `i` at index `i`, unit variants an empty vec. Populated
+    /// by the typechecker; consumed by MIR to build the structural-equality
+    /// descriptor for heap (recursive / `Box`) enum `==` / `!=`.
+    enum_variant_tys: HashMap<gossamer_resolve::DefId, Vec<Vec<Ty>>>,
+    /// Concrete non-generic user-enum `Adt` type by name. Lets MIR recover the
+    /// enum type from the name its `==` dispatch resolves (operand types are
+    /// often still inference vars at lowering time).
+    enum_ty_by_name: HashMap<String, Ty>,
     /// Per-instantiation field types of a generic struct, keyed by
     /// `(def, substs)`. A generic struct's `struct_fields` entry holds
     /// the declared field types with rigid `Param` slots; this table
@@ -276,6 +285,34 @@ impl TyCtxt {
     #[must_use]
     pub fn struct_field_tys(&self, def: gossamer_resolve::DefId) -> Option<&[Ty]> {
         self.struct_fields.get(&def).map(Vec::as_slice)
+    }
+
+    /// Records the per-variant field types of a user enum, in declaration
+    /// (discriminant) order. Called by the typechecker once per enum.
+    pub fn register_enum_variant_tys(
+        &mut self,
+        def: gossamer_resolve::DefId,
+        variants: Vec<Vec<Ty>>,
+    ) {
+        self.enum_variant_tys.insert(def, variants);
+    }
+
+    /// Per-variant field types of the enum identified by `def`, in declaration
+    /// (discriminant) order, or `None` if unregistered.
+    #[must_use]
+    pub fn enum_variant_tys(&self, def: gossamer_resolve::DefId) -> Option<&[Vec<Ty>]> {
+        self.enum_variant_tys.get(&def).map(Vec::as_slice)
+    }
+
+    /// Records the concrete `Adt` type of a non-generic user enum by name.
+    pub fn register_enum_ty_by_name(&mut self, name: impl Into<String>, ty: Ty) {
+        self.enum_ty_by_name.insert(name.into(), ty);
+    }
+
+    /// The concrete `Adt` type of the non-generic user enum named `name`.
+    #[must_use]
+    pub fn enum_ty_by_name(&self, name: &str) -> Option<Ty> {
+        self.enum_ty_by_name.get(name).copied()
     }
 
     /// Records the concrete field types of a generic struct instantiation

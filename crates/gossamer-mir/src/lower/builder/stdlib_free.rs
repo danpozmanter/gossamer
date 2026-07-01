@@ -518,7 +518,21 @@ impl<'a> Builder<'a> {
         args: &[HirExpr],
     ) -> Option<(&'static str, gossamer_types::Ty)> {
         Some(match joined {
-            "fs::read_to_string" => ("gos_rt_fs_read_to_string", self.tcx.string_ty()),
+            // `fs::read_to_string(path) -> Result<String, errors::Error>`.
+            // Routes to the Result-shaped shim (not the bare-string
+            // `gos_rt_fs_read_to_string`, which returns "" on failure) so a
+            // missing / unreadable path propagates `Err` like `fs::read` and
+            // the VM, not a silent `Ok("")`.
+            "fs::read_to_string" => {
+                let s = self.tcx.string_ty();
+                let e = self.tcx.dyn_error_ty();
+                let substs = gossamer_types::Substs::from_types([s, e]);
+                let result_ty = self.tcx.intern(gossamer_types::TyKind::Adt {
+                    def: gossamer_resolve::DefId::local(u32::MAX),
+                    substs,
+                });
+                ("gos_rt_fs_read_to_string_result", result_ty)
+            }
             "fs::write" | "os::write_file" => {
                 // Pick the bytes-shaped variant when the contents
                 // argument is a Vec<u8> / &[u8] - the c-string-shaped

@@ -38,9 +38,9 @@ use std::mem;
 use std::sync::Arc;
 
 #[cfg(target_arch = "wasm32")]
-use crate::jit_stub::{JitFn, JitKind};
+use crate::jit_stub::{JitFn, JitKind, TupleElem};
 #[cfg(not(target_arch = "wasm32"))]
-use gossamer_codegen_cranelift::{JitFn, JitKind};
+use gossamer_codegen_cranelift::{JitFn, JitKind, TupleElem};
 use gossamer_runtime::c_abi as rt;
 
 use crate::value::{
@@ -303,7 +303,7 @@ fn enum_shape_meta(shape: &crate::value::NativeEnumShape) -> &'static [i64] {
 /// `None` if any field isn't marshallable (caller then falls back to
 /// bytecode). One `gos_rt_rc_release` of the returned pointer reclaims the
 /// node and every child it recursively built.
-fn build_variant_to_native_enum(
+pub(crate) fn build_variant_to_native_enum(
     inner: &crate::value::VariantInner,
     shape: &crate::value::NativeEnumShape,
 ) -> Option<i64> {
@@ -418,9 +418,16 @@ fn marshal_vec_enum(elems: &[Value], eidx: u32) -> Option<i64> {
         for elem in elems {
             let child = match elem {
                 Value::Variant(inner) => build_variant_to_native_enum(inner, eshape),
+                // A live VM node is marshalled as a FRESH, exclusively-owned
+                // native copy (round-trip through a Variant), never an alias:
+                // the vec then owns every element outright, so teardown is a
+                // uniform drain-to-zero with no shared-node double free and the
+                // VM keeps its own node untouched.
                 Value::NativeEnum(h) if h.shape.index == eidx => {
-                    rt::gos_rt_rc_retain(h.ptr as *mut u8);
-                    Some(h.ptr as i64)
+                    match crate::value::native_enum_to_variant(h) {
+                        Value::Variant(inner) => build_variant_to_native_enum(&inner, eshape),
+                        _ => None,
+                    }
                 }
                 _ => None,
             };
@@ -464,9 +471,13 @@ fn marshal_vec_str_enum(elems: &[Value], eidx: u32) -> Option<i64> {
             let key_ptr = rt::alloc_cstring(key.as_str().as_bytes()) as i64;
             let child = match vval {
                 Value::Variant(inner) => build_variant_to_native_enum(inner, eshape),
+                // Fresh exclusively-owned native copy of a live VM node (never
+                // an alias) - see `marshal_vec_enum` for the ownership rationale.
                 Value::NativeEnum(h) if h.shape.index == eidx => {
-                    rt::gos_rt_rc_retain(h.ptr as *mut u8);
-                    Some(h.ptr as i64)
+                    match crate::value::native_enum_to_variant(h) {
+                        Value::Variant(inner) => build_variant_to_native_enum(&inner, eshape),
+                        _ => None,
+                    }
                 }
                 _ => None,
             };
@@ -656,112 +667,6 @@ fn read_native_struct(ptr: i64, shape: &NativeStructShape) -> Value {
     }))
 }
 
-/// Deep-converts a native heap-enum value (the compiled-tier representation a
-/// JIT-compiled `parse` returns) into a fully VM-owned `Value::Variant` tree:
-/// native `GosVec` -> `Value::Array`, native `(String, Enum)` tuple slot ->
-/// `Value::Tuple`, native cstring -> copied `Value::String`, scalars inline,
-/// recursing for nested enums. No reference is taken on any native child - the
-/// result is an independent copy, so the source DOM is freed wholesale by
-/// [`free_native_enum`] afterwards with no aliasing.
-fn read_native_enum(ptr: i64, shape: &crate::value::NativeEnumShape) -> Value {
-    use crate::value::native_enum_disc;
-    let base = (ptr as usize) & !7;
-    if base == 0 {
-        return Value::Unit;
-    }
-    let disc = native_enum_disc(ptr as usize, shape);
-    let Some(variant) = shape.variants.get(disc) else {
-        return Value::Unit;
-    };
-    let fields: Vec<Value> = variant
-        .fields
-        .iter()
-        .enumerate()
-        .map(|(i, kind)| {
-            // SAFETY: payload slot `i` lives inside the node's allocation
-            // (compiled-tier layout: field `i` at byte offset `i * 8`).
-            let word = unsafe { *((base + i * 8) as *const i64) };
-            read_native_enum_field(*kind, word)
-        })
-        .collect();
-    Value::variant(variant.name, fields)
-}
-
-/// Deep-reads one native enum payload word per its field kind. Helper for
-/// [`read_native_enum`]; never retains a native child (pure copy-out).
-fn read_native_enum_field(kind: NativeFieldKind, word: i64) -> Value {
-    match kind {
-        NativeFieldKind::I64 => Value::Int(word),
-        NativeFieldKind::F64 => Value::Float(f64::from_bits(word as u64)),
-        NativeFieldKind::Bool => Value::Bool(word != 0),
-        NativeFieldKind::Char => Value::Char(char::from_u32(word as u32).unwrap_or('\u{0}')),
-        NativeFieldKind::Str => read_native_cstring(word),
-        NativeFieldKind::Enum(eidx) => match crate::value::native_shape(eidx) {
-            Some(s) => read_native_enum(word, s),
-            None => Value::Unit,
-        },
-        NativeFieldKind::VecEnum(eidx) => {
-            if word == 0 {
-                return Value::Array(Arc::new(Vec::new()));
-            }
-            let Some(eshape) = crate::value::native_shape(eidx) else {
-                return Value::Array(Arc::new(Vec::new()));
-            };
-            let v = word as *const rt::vec::GosVec;
-            // SAFETY: `v` is a live `GosVec` of 8-byte native-enum pointer slots.
-            let len = unsafe { rt::gos_rt_vec_len(v) }.max(0);
-            let mut out = Vec::with_capacity(len as usize);
-            for i in 0..len {
-                let elem = unsafe { rt::gos_rt_vec_get_i64(v, i) };
-                out.push(read_native_enum(elem, eshape));
-            }
-            Value::Array(Arc::new(out))
-        }
-        NativeFieldKind::VecStrEnumTuple(eidx) => {
-            if word == 0 {
-                return Value::Array(Arc::new(Vec::new()));
-            }
-            let eshape = crate::value::native_shape(eidx);
-            let v = word as *const rt::vec::GosVec;
-            // SAFETY: `v` is a live `GosVec` of 16-byte `[cstr][enum ptr]` slots.
-            let len = unsafe { rt::gos_rt_vec_len(v) }.max(0);
-            let mut out = Vec::with_capacity(len as usize);
-            for i in 0..len {
-                let p = unsafe { rt::gos_rt_vec_get_ptr(v, i) };
-                if p.is_null() {
-                    out.push(Value::Tuple(Arc::from(vec![
-                        Value::String(SmolStr::default()),
-                        Value::Unit,
-                    ])));
-                    continue;
-                }
-                // SAFETY: 16-byte slot: cstring word at +0, enum pointer at +8.
-                let key_word = unsafe { p.cast::<i64>().read_unaligned() };
-                let val_word = unsafe { p.add(8).cast::<i64>().read_unaligned() };
-                let key = read_native_cstring(key_word);
-                let val = match eshape {
-                    Some(s) => read_native_enum(val_word, s),
-                    None => Value::Unit,
-                };
-                out.push(Value::Tuple(Arc::from(vec![key, val])));
-            }
-            Value::Array(Arc::new(out))
-        }
-    }
-}
-
-/// Copies a native cstring word into an owned `Value::String` (empty on null).
-fn read_native_cstring(word: i64) -> Value {
-    if word == 0 {
-        return Value::String(SmolStr::default());
-    }
-    let s = word as *const c_char;
-    // SAFETY: `s` is a live cstring; `gos_rt_str_len` reads its length header.
-    let len = unsafe { rt::gos_rt_str_len(s) }.max(0) as usize;
-    let bytes = unsafe { std::slice::from_raw_parts(s.cast::<u8>(), len) };
-    Value::String(SmolStr::from_str(&String::from_utf8_lossy(bytes)))
-}
-
 /// Recursively frees a uniquely-owned native heap-enum DOM (the value a
 /// JIT-compiled `parse` allocated and returned): each `Vec` field's elements
 /// and buffer, each tuple key cstring, each string field, and nested enum
@@ -933,6 +838,54 @@ fn native_ptr_to_value(kind: JitKind, ptr: i64) -> Value {
         },
         _ => Value::Unit,
     }
+}
+
+/// Decodes one slot of a 2-tuple return into a VM value. An `Enum` element
+/// transfers ownership of the native node (no copy); a `Str` element is
+/// copied out and its native string freed by the caller; scalars are read
+/// directly.
+fn decode_tuple_elem(elem: TupleElem, word: i64) -> Value {
+    match elem {
+        TupleElem::I64 => Value::Int(word),
+        TupleElem::F64 => Value::Float(f64::from_bits(word as u64)),
+        TupleElem::Bool => Value::Bool(word != 0),
+        TupleElem::Char => char::from_u32(word as u32).map_or(Value::Char('\0'), Value::Char),
+        TupleElem::Str => native_ptr_to_value(JitKind::NativeStr, word),
+        TupleElem::Enum(shape_idx) => match crate::value::native_shape(shape_idx) {
+            Some(shape) => Value::NativeEnum(Arc::new(crate::value::NativeEnumOwner {
+                ptr: word as usize,
+                shape,
+                owned: true,
+            })),
+            None => Value::Unit,
+        },
+    }
+}
+
+/// Reads a 2-tuple return `block` (a `gos_rt_gc_alloc` 16-byte aggregate of
+/// two 8-byte slots) into a `Value::Tuple`. Enum slots transfer ownership of
+/// their native node; string slots are copied out and the native string
+/// freed here (the tuple owned it); the 16-byte block itself is freed shallow
+/// by the caller via `gos_rt_aggr_free`.
+///
+/// # Safety
+/// `block` must be a live 16-byte aggregate returned by a `TupleReturn`
+/// body, with slot `i` matching `elems[i]`.
+unsafe fn decode_tuple_return(block: i64, elems: &[TupleElem; 2]) -> Value {
+    let mut out = Vec::with_capacity(2);
+    for (i, elem) in elems.iter().enumerate() {
+        // SAFETY: the block is two 8-byte slots; index `i` (0 or 1) is in range.
+        let word = unsafe { (block as *const i64).add(i).read() };
+        out.push(decode_tuple_elem(*elem, word));
+        // A copied-out string slot's native buffer is freed once here; an enum
+        // slot's node ownership transferred into the value above (no free).
+        if matches!(elem, TupleElem::Str) && word != 0 {
+            // SAFETY: a live native string in this slot, copied out by
+            // `decode_tuple_elem` above and freed exactly once here.
+            unsafe { free_native(JitKind::NativeStr, word) };
+        }
+    }
+    Value::Tuple(Arc::new(out))
 }
 
 /// Frees one trampoline-owned native object through its runtime
@@ -1183,6 +1136,11 @@ macro_rules! call_through {
             // Struct returns are declined in `prepare`, so a `StructPtr`
             // return never reaches a stub.
             JitKind::StructPtr(_) => unreachable!("struct returns are declined in prepare"),
+            // A tuple return is canonicalised to `I64` in `prepare` and decoded
+            // in `invoke_prepared_native`; the stub only ever sees the `I64`.
+            JitKind::TupleReturn(_) => {
+                unreachable!("tuple returns are decoded in invoke_prepared_native")
+            }
         }
     }};
 }
@@ -2495,13 +2453,6 @@ pub(crate) struct Prepared {
     ret_kind: JitKind,
     /// `Some(shape_idx)` when the real return was `EnumPtr`.
     enum_return: Option<u32>,
-    /// `true` when an `EnumPtr` return's shape carries `Vec`-bearing variants
-    /// (transitively): the returned native tree is deep-read back into a VM
-    /// `Value::Variant` and torn down with [`free_native_enum`], since a bare
-    /// `Value::NativeEnum` handle's `Drop` (a flat node-meta release) would
-    /// leak the `Vec` children. A scalar/string-only enum return keeps the
-    /// cheaper handle path.
-    enum_return_deep: bool,
     /// `Some(ok_shape_idx)` when the real return was `ResultEnumPtr`: the
     /// stub yields the `[disc, payload]` carrier tuple and the native path
     /// decodes the `Ok` enum (this shape) / `Err` error and frees it.
@@ -2510,6 +2461,11 @@ pub(crate) struct Prepared {
     /// (`NativeStr` / `NativeVecI64`); the raw pointer is read back and
     /// freed after the call.
     native_return: Option<JitKind>,
+    /// `Some(elems)` when the real return was a 2-tuple: the stub yields a
+    /// pointer to the `gos_rt_aggr_alloc` block (`[elem@i*8]`); the native
+    /// path reads each slot per `TupleElem`, builds a `Value::Tuple`, and
+    /// frees the block (shallow - element ownership transfers to the tuple).
+    tuple_return: Option<[TupleElem; 2]>,
     /// `true` when any param or the return is a native aggregate, routing
     /// dispatch through `invoke_prepared_native`. The scalar/enum fast
     /// path (no native marshalling, no per-call allocation) stays
@@ -2560,7 +2516,11 @@ impl Prepared {
 /// Resolves dispatch data for `jit`, or `None` if the trampoline can't
 /// cover its shape (the caller then keeps the body on bytecode).
 pub(crate) fn prepare(jit: std::sync::Arc<JitFn>) -> Option<Prepared> {
-    if jit.params.len() > MAX_ARGS {
+    // A 2-tuple return adds a hidden sret pointer arg, so the body's native
+    // arity is one more than its user param count.
+    let is_tuple_ret = matches!(jit.returns, JitKind::TupleReturn(_));
+    let native_arity = jit.params.len() + usize::from(is_tuple_ret);
+    if native_arity > MAX_ARGS {
         return None;
     }
     let mut shape: u32 = 0;
@@ -2569,7 +2529,7 @@ pub(crate) fn prepare(jit: std::sync::Arc<JitFn>) -> Option<Prepared> {
             shape |= 1 << i;
         }
     }
-    let stub = resolve_stub(jit.params.len(), shape)?;
+    let stub = resolve_stub(native_arity, shape)?;
     let (ret_kind, enum_return, native_return, result_enum) = match jit.returns {
         JitKind::EnumPtr(idx) => (JitKind::I64, Some(idx), None, None),
         JitKind::ResultEnumPtr(idx) => (JitKind::ResultEnumPtr(idx), None, None, Some(idx)),
@@ -2588,7 +2548,15 @@ pub(crate) fn prepare(jit: std::sync::Arc<JitFn>) -> Option<Prepared> {
         // dangle past the call; body_kinds already declines these, but
         // guard here too rather than mis-marshal a raw pointer.
         JitKind::StructPtr(_) => return None,
+        // A 2-tuple return is a pointer to a heap (`gos_rt_aggr_alloc`)
+        // block; the stub reads it as `I64` and the native path decodes the
+        // slots into a `Value::Tuple`.
+        JitKind::TupleReturn(_) => (JitKind::I64, None, None, None),
         other => (other, None, None, None),
+    };
+    let tuple_return = match jit.returns {
+        JitKind::TupleReturn(elems) => Some(elems),
+        _ => None,
     };
     // An `EnumPtr` param or return whose shape carries `Vec`-bearing variants
     // (a `Vec<Enum>` / `Vec<(String, Enum)>` field, transitively) routes
@@ -2605,6 +2573,7 @@ pub(crate) fn prepare(jit: std::sync::Arc<JitFn>) -> Option<Prepared> {
         matches!(jit.returns, JitKind::EnumPtr(idx) if shape_needs_deep_free(idx));
     let has_native = native_return.is_some()
         || result_enum.is_some()
+        || tuple_return.is_some()
         || enum_param_deep
         || enum_return_deep
         || jit.params.iter().any(|k| {
@@ -2624,9 +2593,9 @@ pub(crate) fn prepare(jit: std::sync::Arc<JitFn>) -> Option<Prepared> {
         stub,
         ret_kind,
         enum_return,
-        enum_return_deep,
         result_enum,
         native_return,
+        tuple_return,
         has_native,
         verified: std::cell::Cell::new(false),
         ever_hit: std::cell::Cell::new(false),
@@ -2742,7 +2711,8 @@ pub(crate) fn invoke_prepared(p: &Prepared, args: &[Value], graph_cache: &GraphC
                 | JitKind::NativeVecVecI64
                 | JitKind::U8VecHandle
                 | JitKind::StructPtr(_)
-                | JitKind::ResultEnumPtr(_),
+                | JitKind::ResultEnumPtr(_)
+                | JitKind::TupleReturn(_),
                 _,
             ) => return Dispatch::Fallback,
             (_, true) => match value {
@@ -2793,6 +2763,7 @@ pub(crate) fn invoke_prepared(p: &Prepared, args: &[Value], graph_cache: &GraphC
                     crate::value::NativeEnumOwner {
                         ptr: raw as usize,
                         shape,
+                        owned: true,
                     },
                 )));
             }
@@ -2971,9 +2942,9 @@ fn invoke_prepared_native(p: &Prepared, args: &[Value], graph_cache: &GraphCache
                     return Dispatch::Fallback;
                 }
             },
-            // `ResultEnumPtr` is a return-only kind (rejected as a param by
-            // `body_kinds`); never appears in the parameter list.
-            JitKind::ResultEnumPtr(_) => {
+            // `ResultEnumPtr` and `TupleReturn` are return-only kinds
+            // (rejected as params by `body_kinds`); never in the param list.
+            JitKind::ResultEnumPtr(_) | JitKind::TupleReturn(_) => {
                 free_in_flight(&natives, &built_enums, &str_cells);
                 return Dispatch::Fallback;
             }
@@ -2981,12 +2952,23 @@ fn invoke_prepared_native(p: &Prepared, args: &[Value], graph_cache: &GraphCache
         slots[i] = slot;
     }
     let n = jit.params.len();
+    // A 2-tuple body uses the sret ABI: pass a caller-owned 16-byte result
+    // buffer as the hidden trailing arg. The body fills it (no per-call heap
+    // block) and returns its pointer, which `raw` then reads directly - the
+    // buffer lives on this stack frame, so there is nothing to free.
+    let mut sret_buf = [0i64; 2];
+    let n_call = if p.tuple_return.is_some() {
+        slots[n] = Slot::I(sret_buf.as_mut_ptr() as i64);
+        n + 1
+    } else {
+        n
+    };
     // SAFETY: `prepare` resolved `stub` for this body's `(arity, shape,
     // ret)` triple; native aggregate slots cross as pointer-sized i64
     // values matching the flat-ABI signature. `catch_unwind` demotes a
     // boundary panic to a `Fallback`.
     let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| unsafe {
-        (p.stub)(jit.ptr, &slots[..n], p.ret_kind)
+        (p.stub)(jit.ptr, &slots[..n_call], p.ret_kind)
     }));
     let raw = match outcome {
         Ok(Some(v)) => v,
@@ -3049,8 +3031,17 @@ fn invoke_prepared_native(p: &Prepared, args: &[Value], graph_cache: &GraphCache
                 free_in_flight(&natives, &built_enums, &str_cells);
                 return Dispatch::Fallback;
             };
-            let v = read_native_enum(payload, shape);
-            free_native_enum(payload, shape);
+            // Keep the `Ok` payload as a native handle (no copy to a VM
+            // `Variant` tree): the next JIT body in a parse->transform->...
+            // pipeline takes it back as a native pointer with zero marshalling,
+            // and `NativeEnumOwner::Drop` reclaims its `Vec` children. The VM
+            // inspects it directly (`VariantIs` / `VariantField` handle the
+            // native shape). This is what removes the marshalling DOM doubling.
+            let v = Value::NativeEnum(Arc::new(crate::value::NativeEnumOwner {
+                ptr: payload as usize,
+                shape,
+                owned: true,
+            }));
             Value::variant("Ok", vec![v])
         } else {
             Value::variant("Err", vec![read_native_error(payload)])
@@ -3071,19 +3062,25 @@ fn invoke_prepared_native(p: &Prepared, args: &[Value], graph_cache: &GraphCache
             free_in_flight(&natives, &built_enums, &str_cells);
             return Dispatch::Fallback;
         };
-        // A `Vec`-bearing enum result is deep-read into a VM tree and the
-        // native DOM freed; a flat handle's `Drop` would leak its `Vec`
-        // children. A scalar/string-only enum keeps the cheaper handle.
-        let v = if p.enum_return_deep {
-            let v = read_native_enum(ret_ptr, shape);
-            free_native_enum(ret_ptr, shape);
-            v
-        } else {
-            Value::NativeEnum(Arc::new(crate::value::NativeEnumOwner {
-                ptr: ret_ptr as usize,
-                shape,
-            }))
-        };
+        // Keep every enum return as a native handle - including a `Vec`-bearing
+        // one, now that `NativeEnumOwner::Drop` reclaims its `Vec` children. The
+        // value flows on to the next JIT body with zero marshalling, and the VM
+        // inspects it through the native-aware `VariantIs` / `VariantField` ops.
+        let v = Value::NativeEnum(Arc::new(crate::value::NativeEnumOwner {
+            ptr: ret_ptr as usize,
+            shape,
+            owned: true,
+        }));
+        (v, None)
+    } else if let Some(elems) = p.tuple_return {
+        // A 2-tuple return via the sret ABI: the body wrote the two result
+        // words into our stack buffer (`sret_buf`). Decode each slot; ownership
+        // of an enum element transferred into the value. Nothing to free - the
+        // buffer is this frame's stack, reclaimed on return.
+        let block = sret_buf.as_ptr() as i64;
+        // SAFETY: `prepare` set `tuple_return` only for a `TupleReturn` body,
+        // which the sret-aware call above filled with two words matching `elems`.
+        let v = unsafe { decode_tuple_return(block, &elems) };
         (v, None)
     } else {
         (raw, None)

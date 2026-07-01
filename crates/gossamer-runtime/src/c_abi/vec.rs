@@ -1146,3 +1146,32 @@ pub unsafe extern "C" fn gos_rt_main_exit_code(raw: i64) -> i32 {
         raw as i32
     })
 }
+
+/// Entry-point exit handler for a `main` that returns a `Result`, given its
+/// unpacked discriminant and payload word (the native `@main` shim truncates
+/// the packed i128 to two i64s to avoid the i128 C-ABI). Drains goroutines and
+/// flushes stdout, then: `Ok` (disc 0) exits 0; `Err` additionally renders the
+/// error's Display (colon-joined cause chain) to stderr before exiting 1 - so a
+/// propagated entry-point error is reported instead of silently dropped,
+/// matching the VM tier.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_main_exit_code_err(disc: i64, payload: i64) -> i32 {
+    ffi_entry!(-1, {
+        crate::sched_global::drain_goroutines_for_exit();
+        unsafe { gos_rt_flush_stdout() };
+        if disc == 0 {
+            return 0;
+        }
+        if payload != 0 {
+            let msg = unsafe { crate::c_abi::gos_rt_error_display(payload as *const _) };
+            if !msg.is_null() {
+                unsafe {
+                    crate::c_abi::gos_rt_eprint_str(msg);
+                    crate::c_abi::gos_rt_eprintln();
+                    crate::c_abi::gos_rt_str_free(msg);
+                }
+            }
+        }
+        1
+    })
+}

@@ -163,7 +163,15 @@ impl RuntimeEntry {
             } else {
                 "nounwind"
             };
-            format!("declare {} @{}({}) {attrs}", ret_ir, self.name, params)
+            let ret_attr = if NOALIAS_RET.contains(&self.name) {
+                "noalias "
+            } else {
+                ""
+            };
+            format!(
+                "declare {ret_attr}{} @{}({}) {attrs}",
+                ret_ir, self.name, params
+            )
         }
     }
 }
@@ -184,4 +192,20 @@ const PURE_ARGMEM_READ: &[&str] = &[
     "gos_rt_str_byte_at",
     "gos_rt_str_eq",
     "gos_rt_heap_i64_get",
+];
+
+/// Runtime allocators that return a FRESH, uniquely-owned heap allocation (a
+/// `Box::into_raw`'d `GosVec` header). Like `malloc`, the returned pointer is
+/// based on a distinct underlying object and cannot alias any pointer the
+/// caller already holds, so the return is marked `noalias`. That lets LLVM
+/// prove a store through an unrelated pointer (e.g. a stack fixed-array such as
+/// radix-sort's `count[256]`) cannot clobber the vec's header, so it hoists the
+/// loop-invariant `len`/data-pointer loads out of a hot element loop instead of
+/// reloading the header on every access. Keep conservative: an entry that could
+/// return a shared / non-fresh pointer would be a miscompile.
+const NOALIAS_RET: &[&str] = &[
+    "gos_rt_vec_new",
+    "gos_rt_vec_new_typed",
+    "gos_rt_vec_with_capacity",
+    "gos_rt_vec_with_capacity_typed",
 ];

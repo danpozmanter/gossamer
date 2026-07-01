@@ -86,6 +86,8 @@ impl GoroutinePool {
         // wasm32 is single-threaded: there are no worker threads. `go` /
         // `spawn` run the goroutine body to completion immediately (see
         // the wasm `spawn` below), matching the eager coro shim.
+        #[cfg(target_arch = "wasm32")]
+        let _ = num_workers;
         #[cfg(not(target_arch = "wasm32"))]
         for _ in 0..num_workers {
             let p = Arc::clone(&pool);

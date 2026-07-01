@@ -1799,6 +1799,11 @@ data-processing script reads top to bottom:</p>
 <li><strong>Efficient</strong> - Gossamer runs with minimal impact on memory, and it runs fast.</li>
 <li><strong>Interpreted and Compiled</strong> - Develop code quickly with a bytecode vm powered
 interpreter and a REPL. Ship an optimized compiled single binary.</li>
+<li><strong>Portable</strong> - First-class on Linux (x86_64 and aarch64, including
+Raspberry Pi OS 64-bit) and Apple Silicon macOS; supported on Intel macOS
+and Windows. Cross-compile a real, runnable binary to any Linux target
+(<code>{x86_64,aarch64}-unknown-linux-{gnu,musl}</code>) from a Linux, macOS, or
+Windows desktop.</li>
 <li><strong>Go-style goroutines</strong> - (<code>go expr</code>) with typed channels.</li>
 <li><strong>Go-style async</strong> - Colorless functions and stackful coroutines.</li>
 <li><strong>Rust-style type system</strong> - statically-typed, generics with

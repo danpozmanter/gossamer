@@ -74,6 +74,15 @@ pub extern "C" fn gos_rt_gc_alloc(size: u64) -> *mut u8 {
         if size == 0 {
             return std::ptr::null_mut();
         }
+        // Route through the active arena region so a loop body's aggregates
+        // (tuples, structs, arrays) are bulk-freed at `arena_pop` and their
+        // individual `gos_rt_aggr_free` becomes a no-op - the same treatment
+        // Vec / String backing storage already gets. Loop-region eligibility
+        // proves nothing allocated inside escapes, so this cannot dangle.
+        let region = crate::c_abi::rc::region_alloc_bytes(size as usize);
+        if !region.is_null() {
+            return region;
+        }
         let Ok(layout) = aggregate_layout(size as usize) else {
             return std::ptr::null_mut();
         };
@@ -106,7 +115,9 @@ pub extern "C" fn gos_rt_aggr_alloc(size: u64) -> *mut u8 {
     std::sync::atomic::compiler_fence(Ordering::SeqCst);
     ffi_entry!(std::ptr::null_mut(), {
         let p = gos_rt_gc_alloc(size);
-        if !p.is_null() {
+        // A region-routed block is reclaimed wholesale at `arena_pop`, so it is
+        // not tracked in the per-block aggregate ledger.
+        if !p.is_null() && !unsafe { crate::c_abi::rc::in_region_arena(p) } {
             crate::c_abi::ledger::aggr_inc();
         }
         p
@@ -160,6 +171,11 @@ static GOS_RT_AGGR_ALLOC_LEAK_KEEP: extern "C" fn(u64) -> *mut u8 = gos_rt_aggr_
 pub extern "C" fn gos_rt_aggr_free(ptr: *mut u8, size: u64) {
     ffi_entry!((), {
         if ptr.is_null() || size == 0 {
+            return;
+        }
+        // Region-allocated aggregates are reclaimed wholesale at `arena_pop`;
+        // an individual free would corrupt the bump arena. No-op for them.
+        if unsafe { crate::c_abi::rc::in_region_arena(ptr) } {
             return;
         }
         let Ok(layout) = aggregate_layout(size as usize) else {

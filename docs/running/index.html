@@ -1766,8 +1766,8 @@
 <td>Optimised native build - full LLVM <code>opt -O3 \| llc -O3</code> pipeline, static musl on Linux.</td>
 </tr>
 <tr>
-<td><code>gos build --target aarch64-apple-darwin src/main.gos</code></td>
-<td>Select a target triple. Only the host ISA links to a runnable binary today; a non-host <code>--target</code> emits a <code>cross-link pending</code> placeholder, so build each architecture on a native runner.</td>
+<td><code>gos build --target aarch64-unknown-linux-musl src/main.gos</code></td>
+<td>Cross-compile to a target triple. Every Linux target - <code>{x86_64,aarch64}-unknown-linux-{gnu,musl}</code> - produces a real, runnable binary from a Linux, macOS, or Windows host (QEMU-validated in CI). macOS/Windows <em>as a target</em> remain out of scope.</td>
 </tr>
 <tr>
 <td><code>gos fmt src/main.gos</code></td>

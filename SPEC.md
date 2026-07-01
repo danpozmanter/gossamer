@@ -2014,9 +2014,16 @@ Dynamic linking for FFI is **not** available through a source-level
 syntax. See §12 for the supported FFI mechanism (`[rust-bindings]`).
 
 On Linux, `gos build --release` produces a fully-static musl binary by
-default when the `x86_64-unknown-linux-musl` rustup target is
+default when the host-architecture musl rustup target
+(`x86_64-unknown-linux-musl` or `aarch64-unknown-linux-musl`) is
 installed; pass `--dynamic` to force the dynamic-glibc link path. The
-`--target` flag selects a cross-compilation triple.
+`--target` flag selects a cross-compilation triple (see §11.4).
+
+On a Raspberry Pi (any `aarch64` Linux), `gos run` is fully
+self-contained - the bytecode VM and its in-process Cranelift JIT need
+no external tools. `gos build` shells out to the device's system LLVM
+(`llc`/`opt`) and a C compiler (`cc`) for codegen and linking, so those
+must be installed to compile natively on the Pi.
 
 ### 11.3 Compile modes
 
@@ -2038,12 +2045,39 @@ suite and the VM-vs-LLVM-AOT differential.
 ### 11.4 Cross-compilation
 
 ```
-gos build --target linux-aarch64 --release
+gos build --target aarch64-unknown-linux-gnu  --release app.gos
+gos build --target aarch64-unknown-linux-musl --release app.gos
 ```
 
-All targets share the same frontend and MIR; only the backend pass
-differs. Runtime libraries are prebuilt per-target and shipped with
-the toolchain.
+All targets share the same frontend and MIR; only the backend pass and
+the link differ. `gos build --target <triple>` produces a real native
+binary when:
+
+1. `<triple>` is a registered target;
+2. a runtime archive for the target resolves - shipped in the
+   toolchain's `lib/<triple>/`, set via
+   `GOS_RUNTIME_LIB_<TRIPLE>`, or built with `cargo build --release
+   --target <triple> -p gossamer-runtime` (no fallback to the host
+   archive - a missing target archive is a hard error, never a
+   foreign-architecture mislink); and
+3. a linker for the target is available - the conventional
+   `aarch64-linux-gnu-gcc` for a same-OS Linux cross, or `ld.lld` /
+   `rust-lld` for an OS-crossing link (overridable via
+   `CARGO_TARGET_<TRIPLE>_LINKER` / `GOS_CROSS_CC`).
+
+The validated matrix is **Linux, macOS, and Windows hosts ->
+`{x86_64,aarch64}-unknown-linux-{gnu,musl}`** - both Linux
+architectures, glibc or musl. The musl-static target is the
+host-agnostic path: rustup ships its self-contained CRT on every host
+and `ld.lld` emits ELF anywhere. The
+gnu-dynamic target links out of the box on a Linux host; on macOS or
+Windows it additionally needs an aarch64 glibc sysroot via
+`GOS_CROSS_SYSROOT`. Cross output is checked bit-identical to the
+bytecode VM under QEMU in CI across all three host OSes.
+
+Cross-compiling *to* macOS or Windows as a target is not yet supported;
+it requires external SDKs (osxcross + the Apple SDK, mingw-w64) whose
+licensing and availability sit outside the toolchain.
 
 ---
 

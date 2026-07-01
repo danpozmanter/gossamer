@@ -221,6 +221,13 @@ pub(super) fn lower_body(
                 param_value,
             );
         }
+        // The sret pointer (a 2-tuple body's hidden trailing param) follows the
+        // user params; the `Return` lowering writes the result words through it.
+        intrinsics.sret_ptr = if body_returns_sret_tuple(body, tcx) {
+            Some(builder.block_params(entry)[body.arity as usize])
+        } else {
+            None
+        };
 
         // Pre-allocate backing storage for multi-slot aggregate locals that
         // are written through a field projection before any whole-value

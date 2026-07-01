@@ -1,0 +1,43 @@
+// Gossamer represents the inline `Option`/`Result` enum payload as a
+// two-word value that crosses function boundaries as `i128`. On x86-64
+// that ABI shape is gated behind a Cranelift/LLVM flag; on aarch64 it
+// rides AAPCS64's consecutive register pair. This fixture stresses the
+// enum-payload paths together with wide shifts and comparisons so the
+// VM, Cranelift JIT, and LLVM AOT stay bit-identical on every target,
+// pinning the aarch64 i128 instruction lowering in particular.
+
+fn classify(n: i64) -> Result<i64, String> {
+    if n < 0 {
+        Err(format!("neg {n}"))
+    } else {
+        Ok(n)
+    }
+}
+
+fn maybe(n: i64) -> Option<i64> {
+    if n % 3 == 0 { Some(n) } else { None }
+}
+
+fn main() {
+    let mut acc = 0
+    for i in 0..40 {
+        let shifted = 1 << (i % 40)
+        match classify(shifted - 1) {
+            Ok(v) => acc += v % 1000,
+            Err(_) => acc -= 1,
+        }
+        if let Some(m) = maybe(i) {
+            acc += m
+        }
+    }
+    let opt = if acc > 0 { Some(acc) } else { None }
+    match opt {
+        Some(v) => println!("acc={v}"),
+        None => println!("none"),
+    }
+    let r = classify(-5)
+    match r {
+        Ok(v) => println!("ok {v}"),
+        Err(e) => println!("err {e}"),
+    }
+}

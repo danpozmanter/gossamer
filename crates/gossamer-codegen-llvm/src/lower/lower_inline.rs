@@ -663,6 +663,35 @@ impl<'a> Lowerer<'a> {
         Ok(())
     }
 
+    /// Inline `gos_rt_min_i64` / `gos_rt_max_i64` as a branchless
+    /// `icmp`+`select`. Value-identical to the runtime `a.min(b)` /
+    /// `a.max(b)` for `i64` (parity holds on every tier), but it drops the
+    /// per-call FFI boundary from hot loops - the Levenshtein DP cell does
+    /// two `min` per iteration - and, being branchless, no longer blocks the
+    /// loop vectorizer the way an opaque call did.
+    pub(crate) fn lower_scalar_minmax_i64_inline(
+        &mut self,
+        is_min: bool,
+        args: &[Operand],
+        destination: &Place,
+        target: Option<&gossamer_mir::BlockId>,
+    ) -> Result<(), BuildError> {
+        let a = self.lower_operand(&args[0])?;
+        let a = self.widen_to_i64(&args[0], &a);
+        let b = self.lower_operand(&args[1])?;
+        let b = self.widen_to_i64(&args[1], &b);
+        let dest_ty = render_ty(self.tcx, self.body.local_ty(destination.local));
+        let dest_slot = local_slot(destination.local);
+        let cmp = self.fresh();
+        let pred = if is_min { "slt" } else { "sgt" };
+        writeln!(self.out, "  {cmp} = icmp {pred} i64 {a}, {b}").unwrap();
+        let r = self.fresh();
+        writeln!(self.out, "  {r} = select i1 {cmp}, i64 {a}, i64 {b}").unwrap();
+        self.store_i64_as(&r, &dest_ty, &dest_slot);
+        emit_terminator_branch(&mut self.out, target);
+        Ok(())
+    }
+
     /// Inline fast path for `gos_rt_vec_set_i64(vec, idx, val)`. Null vec /
     /// out-of-range idx → no-op (matching the runtime), else store.
     pub(crate) fn lower_vec_set_i64_inline(

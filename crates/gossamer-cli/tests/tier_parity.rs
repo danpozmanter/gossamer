@@ -143,6 +143,19 @@ const SPECS: &[Spec] = &[
     spec("examples/digit_sum.gos"),
     spec("examples/environment.gos"),
     spec("examples/errors.gos"),
+    // Entry-point `Err` must print to stderr and exit nonzero identically on
+    // every tier (not silently succeed on `gos run` while `gos build` exits 1).
+    Spec {
+        allow_nonzero: true,
+        ..spec("feature-testing-examples/entry_result_err.gos")
+    },
+    Spec {
+        allow_nonzero: true,
+        ..spec("feature-testing-examples/entry_toplevel_err.gos")
+    },
+    // `fs::read_to_string` on a missing path must return `Err` on every tier,
+    // not a silent `Ok("")` on the native tier.
+    spec("feature-testing-examples/fs_read_to_string_missing.gos"),
     spec("examples/factorial.gos"),
     spec("examples/fibonacci.gos"),
     spec("examples/file_io.gos"),
@@ -266,6 +279,13 @@ const SPECS: &[Spec] = &[
     // `from_json` infers its type argument from the binding annotation, so the
     // turbofish is optional; the decode is identical on every tier.
     spec("feature-testing-examples/from_json_infer.gos"),
+    // Auto-derived serde over Option / tuple / Vec / nested-struct fields.
+    spec("feature-testing-examples/serde_more_field_kinds.gos"),
+    // The inline Option/Result enum payload crosses fn boundaries as i128;
+    // combined with wide shifts and comparisons this pins the i128 ABI and
+    // instruction lowering bit-identically across tiers (the aarch64 backend
+    // in particular, exercised on the native-arm and cross CI jobs).
+    spec("feature-testing-examples/i128_enum_payload_arith.gos"),
     // Structural aggregate comparison: fixed-array / Vec `==`/`!=` and tuple
     // ordering (all six operators) are bit-identical across tiers (the VM
     // walks them at runtime; compiled routes to gos_rt_tuple_cmp / vec_eq).
@@ -343,6 +363,10 @@ const SPECS: &[Spec] = &[
     // Out-of-range whole-element indexed writes are a lenient no-op on every
     // tier (scalar, string, and struct elements); in-bounds access unaffected.
     spec("feature-testing-examples/oob_index_lenient.gos"),
+    // Loop-versioning bounds-check elision for affine `xs[base + counter]`
+    // accesses: the in-range unchecked clone and the out-of-range checked
+    // fallback both stay bit-identical across the three tiers.
+    spec("feature-testing-examples/bce_loop_versioning.gos"),
     // Out-of-range read of an aggregate-element Vec panics identically on
     // every tier (was a compiled segfault / VM field-access error).
     Spec {
@@ -786,6 +810,9 @@ const SPECS: &[Spec] = &[
     spec("feature-testing-examples/rc_release_drops.gos"),
     spec("feature-testing-examples/weak_refs.gos"),
     spec("feature-testing-examples/recursive_enum_walk.gos"),
+    // Structural `==` / `!=` on heap (recursive / Box / Vec-bearing) enums:
+    // equal-but-distinct allocations compare true on every tier.
+    spec("feature-testing-examples/enum_struct_eq.gos"),
     spec("feature-testing-examples/reference_alias_mutation.gos"),
     spec("feature-testing-examples/regex_unicode_categories.gos"),
     Spec {
@@ -902,6 +929,7 @@ const SPECS: &[Spec] = &[
     spec("feature-testing-examples/encoding_xml.gos"),
     spec("feature-testing-examples/misc_class_a.gos"),
     spec("feature-testing-examples/hashmap_get_some_field.gos"),
+    spec("feature-testing-examples/hashmap_field_through_result.gos"),
     Spec {
         skip_all: if cfg!(windows) {
             Some("uses Unix-only commands (printf, tr, sort, head)")

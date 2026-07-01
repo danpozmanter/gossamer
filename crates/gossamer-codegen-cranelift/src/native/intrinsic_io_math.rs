@@ -1128,6 +1128,48 @@ pub(super) fn lower_intrinsic_call_io_math(
                 .istore8(cranelift_codegen::ir::MemFlags::trusted(), d, p, -3);
             Ok(true)
         }
+        "gos_rt_rc_drop_reuse" => {
+            // Perceus reuse (drop half): `token = gos_rt_rc_drop_reuse(S)`
+            // releases S (cascading to its children, exactly as
+            // `gos_rt_rc_release`) and returns S's block base for in-place reuse
+            // when S is the unique thread-local weak-free owner, else null
+            // (having released normally). The token feeds `gos_rc_alloc_reuse`.
+            // Null-safe; a region object releases and returns null.
+            let s_val = match args.first() {
+                Some(arg) => {
+                    lower_operand(module, builder, locals, body, tcx, arg, None, intrinsics)?
+                }
+                None => builder.ins().iconst(ptr_ty, 0),
+            };
+            let s_ptr = if builder.func.dfg.value_type(s_val) == ptr_ty {
+                s_val
+            } else if ptr_ty == types::I64 {
+                builder.ins().uextend(types::I64, s_val)
+            } else {
+                builder.ins().ireduce(ptr_ty, s_val)
+            };
+            let drop_reuse =
+                intrinsics.extern_fn(module, "gos_rt_rc_drop_reuse", &[ptr_ty], &[ptr_ty])?;
+            let dr_ref = module.declare_func_in_func(drop_reuse, builder.func);
+            let call_inst = builder.ins().call(dr_ref, &[s_ptr]);
+            let raw_ptr = builder.inst_results(call_inst)[0];
+            let as_i64 = if ptr_ty == types::I64 {
+                raw_ptr
+            } else {
+                builder.ins().uextend(types::I64, raw_ptr)
+            };
+            if !destination.projection.is_empty() {
+                bail!("native codegen: gos_rt_rc_drop_reuse destination cannot have projections");
+            }
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                as_i64,
+            );
+            Ok(true)
+        }
         "gos_rc_alloc_reuse" => {
             // Perceus reuse (alloc half): `gos_rc_alloc_reuse(token, size, meta)`
             // re-homes a block from `gos_rt_rc_drop_reuse` into a fresh strong-1

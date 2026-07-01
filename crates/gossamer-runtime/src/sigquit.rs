@@ -361,6 +361,7 @@ pub fn render_active_panic_trace() -> String {
 /// backtrace down to the gos call chain. Conservative: anything that
 /// is clearly host scaffolding is dropped; unknown bare names are
 /// kept (they are almost certainly gos functions).
+#[cfg(not(target_arch = "wasm32"))]
 fn is_runtime_frame(symbol: &str) -> bool {
     const PREFIXES: &[&str] = &[
         "gos_rt_",

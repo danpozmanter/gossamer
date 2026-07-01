@@ -13,12 +13,14 @@
 
 #![forbid(unsafe_code)]
 
+#[cfg(not(target_arch = "wasm32"))]
 use std::net::TcpListener;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use parking_lot::Mutex;
 
+#[cfg(not(target_arch = "wasm32"))]
 use crate::errors::Error;
 // The Prometheus exposition types stay available everywhere; only the
 // `/metrics` HTTP serve loop (which needs the gated `http::server`) is

@@ -24,10 +24,14 @@
 //! is the single dispatch point; `GOS_LLVM_PROFILE=debug|release`
 //! routes the LLVM emit's opt-level decision.
 //!
-//! Native (host) builds run the linked artifact through `cc`
-//! (POSIX) or `rust-lld -flavor link` (Windows MSVC). Cross
-//! targets fall through to the platform-agnostic byte-stream
-//! artifact path until cross-codegen ships.
+//! Native builds run the linked artifact through `cc` (POSIX) or
+//! `rust-lld -flavor link` (Windows MSVC). A non-host `--target`
+//! cross-builds through the same pipeline: it selects the target's
+//! runtime archive and a target-appropriate linker - the conventional
+//! GNU cross driver for a same-OS Linux cross, or rustup's `ld.lld`
+//! for the host-agnostic static-musl path and OS-crossing ELF links.
+//! Only `*-linux-*` targets cross-build; producing a foreign Mach-O
+//! or PE needs an external SDK this toolchain does not bundle.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -106,12 +110,24 @@ impl LinkOptions {
 /// at cli build time. Populated by `gossamer-cli/build.rs`.
 const MUSL_RUNTIME_LIB: Option<&str> = option_env!("GOSSAMER_RUNTIME_LIB_PATH_MUSL");
 
-/// rustup's self-contained musl CRT/libc directory under `sysroot`.
-fn musl_self_contained_dir(sysroot: &Path) -> PathBuf {
+/// The `*-unknown-linux-musl` rustup triple for `arch`. Cross builds
+/// select the target's musl CRT and bindings archive from this rather
+/// than the host arch, so a static-musl link follows the produced
+/// binary's architecture.
+fn musl_triple_for_arch(arch: &str) -> &'static str {
+    match arch {
+        "aarch64" => "aarch64-unknown-linux-musl",
+        _ => "x86_64-unknown-linux-musl",
+    }
+}
+
+/// rustup's self-contained musl CRT/libc directory under `sysroot`,
+/// for the given `musl_triple`.
+fn musl_self_contained_dir(sysroot: &Path, musl_triple: &str) -> PathBuf {
     sysroot
         .join("lib")
         .join("rustlib")
-        .join("x86_64-unknown-linux-musl")
+        .join(musl_triple)
         .join("lib")
         .join("self-contained")
 }
@@ -126,8 +142,9 @@ fn musl_self_contained_dir(sysroot: &Path) -> PathBuf {
 fn musl_runtime_available() -> bool {
     static AVAILABLE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *AVAILABLE.get_or_init(|| {
-        let present =
-            rustc_sysroot().is_ok_and(|sysroot| musl_self_contained_dir(&sysroot).exists());
+        let present = rustc_sysroot().is_ok_and(|sysroot| {
+            musl_self_contained_dir(&sysroot, musl_triple_for_arch(std::env::consts::ARCH)).exists()
+        });
         if !present {
             eprintln!(
                 "warning: the static-musl release link is unavailable \
@@ -168,38 +185,37 @@ fn run(
     let source = read_entry_source(file)?;
     let (sf, resolutions, table, tcx) = validate_source(file, &source)?;
 
-    // Validate `--target` if explicitly provided. The Cranelift
-    // happy-path uses the host ISA; non-host targets fall through
-    // to the legacy artifact path (a deterministic byte stream
-    // wrapping the rendered module). Reject unknown triples
-    // early so the error is a clean parse failure, not a linker
-    // blow-up.
-    let target_options = match target {
-        Some(triple) => Some(
+    // Resolve `--target`. `None` or the host triple takes the host
+    // build path. A registered, Linux-target triple cross-builds
+    // through the same `try_native_build` pipeline; the codegen target
+    // override makes the `-mtriple` passed to opt/llc, the i128 ABI
+    // marshalling, and the incremental object-cache key all follow the
+    // requested triple.
+    let host = gossamer_driver::TargetTriple::host();
+    let cross_target = match target {
+        Some(triple) if triple != host.as_str() => {
+            // Reject unknown triples here so the error is a clean parse
+            // failure, not a linker blow-up.
             gossamer_driver::LinkerOptions::for_target(triple)
-                .ok_or_else(|| anyhow!("unknown target `{triple}`"))?,
-        ),
-        None => None,
+                .ok_or_else(|| anyhow!("unknown target `{triple}`"))?;
+            // The cross output is always a Linux ELF; producing a macOS
+            // Mach-O or Windows PE from another host needs an external
+            // SDK this toolchain does not bundle.
+            if resolve_link_target(Some(triple)).os != TargetOs::Linux {
+                return Err(anyhow!(
+                    "cross-compiling to `{triple}` is not supported; only \
+                     `*-linux-*` targets can be cross-built (the produced \
+                     binary is always Linux/ELF)"
+                ));
+            }
+            gossamer_codegen_llvm::set_target_triple(triple.to_string());
+            Some(triple)
+        }
+        _ => None,
     };
+
     let unit_name = default_unit_name(file);
     let out_path = output_path(file, &unit_name, release, out_dir)?;
-
-    if let Some(options) = target_options {
-        let host = gossamer_driver::TargetTriple::host();
-        if options.target.as_str() != host.as_str() {
-            let artifact = gossamer_driver::compile_source(&source, &unit_name, &options);
-            fs::write(&out_path, &artifact.bytes)
-                .map_err(|err| anyhow!("build: writing {}: {err}", out_path.display()))?;
-            set_executable(&out_path)?;
-            println!(
-                "build: {bytes}B artifact at {path} (target {triple}, cross-link pending)",
-                bytes = artifact.bytes.len(),
-                path = out_path.display(),
-                triple = options.target.as_str(),
-            );
-            return Ok(());
-        }
-    }
     let checked = gossamer_driver::CheckedFrontend {
         sf,
         resolutions,
@@ -211,8 +227,16 @@ fn run(
         debug_info,
         dynamic,
     };
-    let outcome = try_native_build(&source, &unit_name, file, &out_path, opts, checked)
-        .map_err(|err| anyhow!("build: {}", err.user_message()))?;
+    let outcome = try_native_build(
+        &source,
+        &unit_name,
+        file,
+        &out_path,
+        opts,
+        cross_target,
+        checked,
+    )
+    .map_err(|err| anyhow!("build: {}", err.user_message()))?;
     println!(
         "build: {bytes}B native executable at {path} ({note})",
         bytes = outcome.size,
@@ -357,21 +381,204 @@ pub(crate) fn find_runtime_lib() -> std::result::Result<PathBuf, NativeBuildErro
     )))
 }
 
+/// The produced binary's OS family, resolved from the target triple
+/// rather than the host `cfg!` so every link decision follows the
+/// target.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TargetOs {
+    Linux,
+    MacOs,
+    Windows,
+    Other,
+}
+
+/// The produced binary's C runtime / environment, resolved from the
+/// target triple.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TargetEnv {
+    Gnu,
+    Musl,
+    Msvc,
+    Other,
+}
+
+/// Resolved link context for a build: the target triple decomposed
+/// into the OS / arch / env that drive linker and runtime-archive
+/// selection, plus whether this is a cross build (target != host).
+struct LinkTarget {
+    triple: String,
+    os: TargetOs,
+    arch: &'static str,
+    env: TargetEnv,
+    is_cross: bool,
+}
+
+/// The host build machine's OS family.
+fn host_os() -> TargetOs {
+    match std::env::consts::OS {
+        "linux" => TargetOs::Linux,
+        "macos" => TargetOs::MacOs,
+        "windows" => TargetOs::Windows,
+        _ => TargetOs::Other,
+    }
+}
+
+/// Resolves the link context for `target` (the host triple when
+/// `None`). The OS / arch / env are parsed from the triple text so they
+/// describe the produced binary, not the host.
+fn resolve_link_target(target: Option<&str>) -> LinkTarget {
+    let host = gossamer_driver::TargetTriple::host().as_str().to_string();
+    let triple = target.map_or_else(|| host.clone(), str::to_string);
+    let is_cross = triple != host;
+    let os = if triple.contains("linux") {
+        TargetOs::Linux
+    } else if triple.contains("darwin") || triple.contains("apple") {
+        TargetOs::MacOs
+    } else if triple.contains("windows") {
+        TargetOs::Windows
+    } else {
+        TargetOs::Other
+    };
+    let env = if triple.contains("musl") {
+        TargetEnv::Musl
+    } else if triple.contains("msvc") {
+        TargetEnv::Msvc
+    } else if triple.contains("gnu") {
+        TargetEnv::Gnu
+    } else {
+        TargetEnv::Other
+    };
+    let arch = match triple.split('-').next().unwrap_or("") {
+        "x86_64" => "x86_64",
+        "aarch64" | "arm64" => "aarch64",
+        "riscv64" | "riscv64gc" => "riscv64",
+        _ => "unknown",
+    };
+    LinkTarget {
+        triple,
+        os,
+        arch,
+        env,
+        is_cross,
+    }
+}
+
+/// Resolves the runtime archive built *for* `triple`, in priority
+/// order, never falling back to the host archive: a cross link must
+/// not pull host-arch objects into a foreign-arch binary.
+///
+/// 1. `GOS_RUNTIME_LIB_<TRIPLE>` env override (path must exist).
+/// 2. The baked host-arch musl archive, only when `triple` is the
+///    host arch's musl triple (the host == target musl case).
+/// 3. `<gos-bin>/../lib/<triple>/libgossamer_runtime.a` (installed
+///    toolchain layout).
+/// 4. `target/<triple>/{release,debug}/libgossamer_runtime.a` (dev
+///    tree).
+fn find_runtime_lib_for_target(triple: &str) -> std::result::Result<PathBuf, NativeBuildError> {
+    let env_key = format!(
+        "GOS_RUNTIME_LIB_{}",
+        triple.replace(['-', '.'], "_").to_uppercase()
+    );
+    if let Ok(p) = std::env::var(&env_key) {
+        let p = PathBuf::from(p);
+        if p.exists() {
+            return Ok(p);
+        }
+    }
+    if let Some(baked) = MUSL_RUNTIME_LIB
+        && triple == musl_triple_for_arch(std::env::consts::ARCH)
+    {
+        let p = PathBuf::from(baked);
+        if p.exists() {
+            return Ok(p);
+        }
+    }
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(libdir) = exe
+            .parent()
+            .and_then(Path::parent)
+            .map(|gp| gp.join("lib").join(triple))
+    {
+        let cand = libdir.join("libgossamer_runtime.a");
+        if cand.exists() {
+            return Ok(cand);
+        }
+    }
+    for profile in ["release", "debug"] {
+        let cand = Path::new("target")
+            .join(triple)
+            .join(profile)
+            .join("libgossamer_runtime.a");
+        if cand.exists() {
+            return Ok(cand);
+        }
+    }
+    Err(NativeBuildError::LinkerMissing(format!(
+        "no runtime archive for target `{triple}`. Build it with \
+         `cargo build --release --target {triple} -p gossamer-runtime`, \
+         or set {env_key}."
+    )))
+}
+
+/// The conventional GNU cross compiler driver for a same-OS Linux
+/// cross. Honours the cargo `CARGO_TARGET_<TRIPLE>_LINKER` convention,
+/// then `GOS_CROSS_CC`, then the Debian `<arch>-linux-gnu-gcc` package
+/// spelling derived from the target arch.
+fn cross_cc(lt: &LinkTarget) -> String {
+    let key = format!(
+        "CARGO_TARGET_{}_LINKER",
+        lt.triple.replace(['-', '.'], "_").to_uppercase()
+    );
+    std::env::var(&key)
+        .or_else(|_| std::env::var("GOS_CROSS_CC"))
+        .unwrap_or_else(|_| format!("{}-linux-gnu-gcc", lt.arch))
+}
+
+/// rustup's bundled `ld.lld`, an ELF-capable linker shipped alongside
+/// every Rust toolchain under the *host* triple's `gcc-ld` dir (it is a
+/// host tool). Used for OS-crossing ELF links, where the host `cc` / `ld`
+/// cannot emit the target's object format.
+fn locate_host_lld() -> std::result::Result<PathBuf, NativeBuildError> {
+    let sysroot = rustc_sysroot()?;
+    let host = gossamer_driver::TargetTriple::host();
+    let linker = sysroot
+        .join("lib")
+        .join("rustlib")
+        .join(host.as_str())
+        .join("bin")
+        .join("gcc-ld")
+        .join("ld.lld");
+    if linker.exists() {
+        return Ok(linker);
+    }
+    Err(NativeBuildError::LinkerMissing(format!(
+        "ld.lld not found at {} (needed for OS-crossing ELF links)",
+        linker.display(),
+    )))
+}
+
 fn try_native_build(
     source: &str,
     unit_name: &str,
     input_path: &PathBuf,
     out_path: &PathBuf,
     opts: LinkOptions,
+    target: Option<&str>,
     checked: gossamer_driver::CheckedFrontend,
 ) -> std::result::Result<NativeBuildOutcome, NativeBuildError> {
+    let lt = resolve_link_target(target);
     let tmp_dir =
         std::env::temp_dir().join(format!("gos-build-{}-{}", std::process::id(), unit_name));
     fs::create_dir_all(&tmp_dir)
         .map_err(|err| NativeBuildError::Io(anyhow!("creating {}: {err}", tmp_dir.display())))?;
     let (object_paths, object_triple) =
         emit_native_objects(source, unit_name, &tmp_dir, opts.release, checked)?;
-    let runtime_lib = if opts.want_static_musl() {
+    // Static-musl is chosen for a cross musl target (musl links
+    // statically by construction) or for a host release that opted in.
+    let static_musl = lt.env == TargetEnv::Musl || opts.want_static_musl();
+    let runtime_lib = if lt.is_cross {
+        find_runtime_lib_for_target(&lt.triple)?
+    } else if opts.want_static_musl() {
         // The musl runtime archive lives at a baked path emitted by
         // `gossamer-cli/build.rs`. If `option_env!` resolved at cli
         // build time but the file has since been deleted, fall back
@@ -382,14 +589,19 @@ fn try_native_build(
     } else {
         find_runtime_lib()?
     };
-    // The bindings staticlib must match the main link's libc: a
-    // static-musl release link cannot take a glibc-built archive
-    // (undefined __res_init / open64 / gnu_get_libc_version).
-    let bindings_target = opts
-        .want_static_musl()
-        .then_some("x86_64-unknown-linux-musl");
-    let bindings_archive =
-        build_static_bindings_lib(opts.release, bindings_target).map_err(|err| {
+    // The bindings staticlib must match the main link's libc and arch:
+    // a static-musl link cannot take a glibc-built archive (undefined
+    // __res_init / open64 / gnu_get_libc_version), and a cross link
+    // cannot take host-arch objects. Build the bindings for the target.
+    let bindings_target: Option<String> = if static_musl {
+        Some(musl_triple_for_arch(lt.arch).to_string())
+    } else if lt.is_cross {
+        Some(lt.triple.clone())
+    } else {
+        None
+    };
+    let bindings_archive = build_static_bindings_lib(opts.release, bindings_target.as_deref())
+        .map_err(|err| {
             NativeBuildError::LinkerMissing(format!("rust-bindings staticlib: {err}"))
         })?;
     let mut extra_archives: Vec<PathBuf> = Vec::new();
@@ -412,10 +624,30 @@ fn try_native_build(
         eprintln!("gos build: objects: {object_paths:?}");
         eprintln!("gos build: extra archives: {extra_archives:?}");
     }
-    let link_result = if cfg!(all(windows, target_env = "msvc")) {
+    // Windows-MSVC is the only PE path and never a cross target (we
+    // refuse non-Linux cross targets earlier). Key it off the host
+    // build env so a Windows-GNU `gos` keeps the mingw `link_posix`
+    // path it uses today.
+    let link_result = if !lt.is_cross && cfg!(all(windows, target_env = "msvc")) {
         link_windows_msvc(&object_paths, &runtime_lib, &extra_archives, out_path)
+    } else if static_musl {
+        link_posix_static_musl(
+            &lt,
+            &object_paths,
+            &runtime_lib,
+            &extra_archives,
+            out_path,
+            opts,
+        )
     } else {
-        link_posix(&object_paths, &runtime_lib, &extra_archives, out_path, opts)
+        link_posix(
+            &lt,
+            &object_paths,
+            &runtime_lib,
+            &extra_archives,
+            out_path,
+            opts,
+        )
     };
     // Keep the per-build temp dir (objects + IR) when dumping IR or when
     // explicitly preserving artifacts for post-mortem inspection on a
@@ -441,11 +673,7 @@ fn try_native_build(
             note: format!(
                 "target {triple}{tag}{pgo}",
                 triple = object_triple.as_deref().unwrap_or("unknown"),
-                tag = if opts.want_static_musl() {
-                    ", static-musl"
-                } else {
-                    ""
-                },
+                tag = if static_musl { ", static-musl" } else { "" },
                 pgo = if pgo_collect.is_some() {
                     ", pgo-collect"
                 } else if std::env::var("GOS_PGO_PROFILE").is_ok() {
@@ -643,30 +871,49 @@ fn trace_link_command(cmd: &std::process::Command) {
 /// link. macOS always takes the dynamic path (libSystem can't be
 /// statically linked, by Apple policy).
 fn link_posix(
+    lt: &LinkTarget,
     object_paths: &[PathBuf],
     runtime_lib: &Path,
     extra_archives: &[PathBuf],
     out_path: &Path,
     opts: LinkOptions,
 ) -> std::result::Result<(), NativeBuildError> {
-    if opts.want_static_musl() {
-        return link_posix_static_musl(object_paths, runtime_lib, extra_archives, out_path, opts);
+    // An OS-crossing link (a macOS / Windows host targeting Linux)
+    // cannot use the host `cc` / `ld` to emit a foreign-OS ELF, so it
+    // drives rustup's `ld.lld` against a target sysroot. musl targets
+    // never reach here - they take the self-contained static path,
+    // which needs no sysroot on any host.
+    if lt.is_cross && host_os() != lt.os {
+        return link_cross_gnu_lld(
+            lt,
+            object_paths,
+            runtime_lib,
+            extra_archives,
+            out_path,
+            opts,
+        );
     }
 
-    let cc = std::env::var("CC").unwrap_or_else(|_| "cc".to_string());
+    let cc = if lt.is_cross {
+        cross_cc(lt)
+    } else {
+        std::env::var("CC").unwrap_or_else(|_| "cc".to_string())
+    };
     let mut cmd = std::process::Command::new(&cc);
-    // Prefer a fast linker when available.
-    // Linux: mold (3-8× faster than GNU ld; 0.018 s vs 0.069 s measured).
-    // macOS: ld.lld from brew llvm (2-4× faster than Apple ld64 on large
-    //   archives; available after `brew install llvm`). `-fuse-ld=lld` tells
-    //   Apple's clang driver to pick up ld.lld from PATH.
-    if cfg!(target_os = "linux") {
-        if which::which("mold").is_ok() {
-            cmd.arg("-fuse-ld=mold");
-        }
-    } else if cfg!(target_os = "macos") {
-        if which::which("ld.lld").is_ok() {
-            cmd.arg("-fuse-ld=lld");
+    // Prefer a fast linker for a native host link only; a cross gcc
+    // driver selects its own target linker, so mold/lld here would
+    // target the host.
+    // Linux: mold (3-8x faster than GNU ld). macOS: ld.lld from brew
+    // llvm; `-fuse-ld=lld` tells Apple's clang driver to pick it up.
+    if !lt.is_cross {
+        match lt.os {
+            TargetOs::Linux if which::which("mold").is_ok() => {
+                cmd.arg("-fuse-ld=mold");
+            }
+            TargetOs::MacOs if which::which("ld.lld").is_ok() => {
+                cmd.arg("-fuse-ld=lld");
+            }
+            _ => {}
         }
     }
     for p in object_paths {
@@ -683,15 +930,15 @@ fn link_posix(
     // / `libm` resolve as real libs (winpthreads on mingw) or stub-
     // forwarders on every target, so we keep those.
     cmd.arg("-lpthread");
-    if cfg!(target_os = "linux") {
+    if lt.os == TargetOs::Linux {
         cmd.arg("-ldl");
     }
     cmd.arg("-lm");
-    if cfg!(windows) {
-        // On Windows-GNU `gos` drives mingw's `cc` directly, so unlike
-        // a rustc-driven link it must name the Win32 import libraries
-        // that the Rust runtime staticlib references but mingw's default
-        // specs don't auto-link: ws2_32 (mio sockets), bcrypt/advapi32
+    if lt.os == TargetOs::Windows {
+        // Windows-GNU `gos` drives mingw's `cc` directly, so unlike a
+        // rustc-driven link it must name the Win32 import libraries the
+        // Rust runtime staticlib references but mingw's default specs
+        // don't auto-link: ws2_32 (mio sockets), bcrypt/advapi32
         // (getrandom / std RNG), userenv (env home dir), ntdll (std
         // internals). All are core mingw-w64 import libs. Listed after
         // the archives so the single-pass GNU linker resolves their
@@ -710,44 +957,32 @@ fn link_posix(
         // definition rather than failing the link. macOS `ld64`
         // doesn't accept the GNU-ld spelling - the equivalent
         // there is `-Wl,-multiply_defined,suppress`.
-        if cfg!(target_os = "macos") {
+        if lt.os == TargetOs::MacOs {
             cmd.arg("-Wl,-multiply_defined,suppress");
         } else {
             cmd.arg("-Wl,--allow-multiple-definition");
         }
     }
     if opts.want_strip() {
-        if opts.release {
-            // Release: drop DWARF debug sections + dead code, but KEEP
-            // the symbol table. Compiled-tier panic traces and SIGQUIT
-            // dumps unwind the real machine stack and symbolicate
-            // through `.symtab`; `--strip-all` would erase the function
-            // names and leave only hex addresses. macOS keeps global
-            // symbols (gos functions are global) via the post-link
-            // `strip -x`. `-dead_strip` is atom-based: it removes
-            // unreachable code AND data atoms, so every local rodata
-            // atom the codegen relies on must carry `N_NO_DEAD_STRIP`
-            // (see `IntrinsicContext::intern_string`).
-            if cfg!(target_os = "macos") {
-                cmd.arg("-Wl,-dead_strip");
-            } else {
-                cmd.arg("-Wl,--strip-debug").arg("-Wl,--gc-sections");
-            }
+        // Drop DWARF debug sections + dead code but KEEP the symbol
+        // table. Compiled-tier panic traces and SIGQUIT dumps unwind
+        // the real machine stack and symbolicate through `.symtab`;
+        // `--strip-all` would erase function names. macOS keeps global
+        // symbols (gos functions are global) via the post-link
+        // `strip -x`. `-dead_strip` is atom-based: it removes
+        // unreachable code AND data atoms, so every local rodata atom
+        // the codegen relies on must carry `N_NO_DEAD_STRIP` (see
+        // `IntrinsicContext::intern_string`).
+        if lt.os == TargetOs::MacOs {
+            cmd.arg("-Wl,-dead_strip");
         } else {
-            // Debug build without -g: remove debug sections only
-            // (symbol names survive for crash reports) and gc dead
-            // sections. Brings the 4 MB Cranelift floor down to ~1 MB.
-            if cfg!(target_os = "macos") {
-                cmd.arg("-Wl,-dead_strip");
-            } else {
-                cmd.arg("-Wl,--strip-debug").arg("-Wl,--gc-sections");
-            }
+            cmd.arg("-Wl,--strip-debug").arg("-Wl,--gc-sections");
         }
     }
     trace_link_command(&cmd);
     match cmd.status() {
         Ok(s) if s.success() => {
-            if opts.want_strip() && cfg!(target_os = "macos") {
+            if opts.want_strip() && lt.os == TargetOs::MacOs {
                 let _ = std::process::Command::new("strip")
                     .arg("-x")
                     .arg(out_path)
@@ -763,15 +998,87 @@ fn link_posix(
     }
 }
 
-/// Linux static-musl link path - invokes the rustup-shipped `ld.lld`
-/// against rustup's self-contained musl CRT/libc/libunwind. Produces
-/// a statically-linked ELF that runs on any `x86_64` Linux host
-/// regardless of glibc/musl install or version. The cli's build
-/// script (`gossamer-cli/build.rs`) builds the runtime against
-/// `x86_64-unknown-linux-musl` and bakes the archive path into
-/// `MUSL_RUNTIME_LIB` at compile time; here we invoke the linker
-/// directly so we don't need `cc` to know about musl.
+/// OS-crossing gnu-dynamic link (a macOS / Windows host targeting
+/// Linux). The host toolchain cannot emit a Linux ELF, so this drives
+/// rustup's `ld.lld` against a user-supplied glibc sysroot
+/// (`GOS_CROSS_SYSROOT`). musl targets do not take this path - they
+/// link statically against rustup's self-contained CRT, which needs no
+/// sysroot on any host, so a clear error steers the user there when no
+/// sysroot is supplied.
+fn link_cross_gnu_lld(
+    lt: &LinkTarget,
+    object_paths: &[PathBuf],
+    runtime_lib: &Path,
+    extra_archives: &[PathBuf],
+    out_path: &Path,
+    opts: LinkOptions,
+) -> std::result::Result<(), NativeBuildError> {
+    let Some(sysroot) = std::env::var_os("GOS_CROSS_SYSROOT") else {
+        return Err(NativeBuildError::LinkerMissing(format!(
+            "cross-linking the gnu-dynamic target `{triple}` from this host \
+             needs a target glibc sysroot. Set GOS_CROSS_SYSROOT to an {arch} \
+             Linux sysroot, or target `{musl}` instead (musl links statically \
+             with no sysroot, on any host).",
+            triple = lt.triple,
+            arch = lt.arch,
+            musl = musl_triple_for_arch(lt.arch),
+        )));
+    };
+    let linker = locate_host_lld()?;
+    let sysroot = PathBuf::from(sysroot);
+    let mut cmd = std::process::Command::new(&linker);
+    cmd.arg("--sysroot")
+        .arg(&sysroot)
+        // Emit `.eh_frame_hdr` so the unwinder can locate FDEs through
+        // `dl_iterate_phdr` for panic / SIGQUIT backtraces.
+        .arg("--eh-frame-hdr")
+        .arg("-o")
+        .arg(out_path);
+    for p in object_paths {
+        cmd.arg(p);
+    }
+    cmd.arg(runtime_lib);
+    for archive in extra_archives {
+        cmd.arg(archive);
+    }
+    cmd.arg("-lc").arg("-lpthread").arg("-ldl").arg("-lm");
+    if !extra_archives.is_empty() {
+        cmd.arg("--allow-multiple-definition");
+    }
+    cmd.arg("--gc-sections");
+    if opts.want_strip() {
+        cmd.arg("--strip-debug");
+    }
+    trace_link_command(&cmd);
+    match cmd.status() {
+        Ok(s) if s.success() => {
+            set_executable(out_path).map_err(NativeBuildError::Io)?;
+            Ok(())
+        }
+        Ok(s) => Err(NativeBuildError::LinkerFailed(format!(
+            "{} exited with {s}",
+            linker.display()
+        ))),
+        Err(err) => Err(NativeBuildError::LinkerMissing(format!(
+            "{}: {err}",
+            linker.display()
+        ))),
+    }
+}
+
+/// Static-musl link path - invokes the rustup-shipped `ld.lld` against
+/// rustup's self-contained musl CRT/libc/libunwind for the *target's*
+/// arch. Produces a statically-linked ELF that runs on any Linux host
+/// of that arch regardless of glibc/musl install or version. `ld.lld`
+/// is a host tool (located under the host triple's `gcc-ld` dir) and
+/// emits ELF for any arch from the input objects, so this path is the
+/// host-agnostic cross route: any host with the target's rustup musl
+/// CRT installed can produce the binary. The runtime archive is
+/// resolved by the caller (baked for the host arch, or per-target for a
+/// cross build); here we invoke the linker directly so we don't need
+/// `cc` to know about musl.
 fn link_posix_static_musl(
+    lt: &LinkTarget,
     object_paths: &[PathBuf],
     runtime_lib: &Path,
     extra_archives: &[PathBuf],
@@ -779,28 +1086,17 @@ fn link_posix_static_musl(
     opts: LinkOptions,
 ) -> std::result::Result<(), NativeBuildError> {
     let sysroot = rustc_sysroot()?;
-    let self_contained = musl_self_contained_dir(&sysroot);
+    let target_musl = musl_triple_for_arch(lt.arch);
+    let self_contained = musl_self_contained_dir(&sysroot, target_musl);
     if !self_contained.exists() {
         return Err(NativeBuildError::LinkerMissing(format!(
             "musl self-contained dir not found: {}; \
-             try `rustup target add x86_64-unknown-linux-musl` \
+             try `rustup target add {target_musl}` \
              or pass `--dynamic` to `gos build --release`",
             self_contained.display(),
         )));
     }
-    let linker = sysroot
-        .join("lib")
-        .join("rustlib")
-        .join("x86_64-unknown-linux-gnu")
-        .join("bin")
-        .join("gcc-ld")
-        .join("ld.lld");
-    if !linker.exists() {
-        return Err(NativeBuildError::LinkerMissing(format!(
-            "ld.lld not found at {}",
-            linker.display(),
-        )));
-    }
+    let linker = locate_host_lld()?;
 
     let mut cmd = std::process::Command::new(&linker);
     cmd.arg("--static")
@@ -1068,5 +1364,54 @@ mod tests {
         let mut cmd = std::process::Command::new("cc");
         cmd.arg("a.o").arg("-o").arg("out").arg("-lpthread");
         assert_eq!(super::render_command(&cmd), "cc a.o -o out -lpthread");
+    }
+
+    #[test]
+    fn musl_triple_for_arch_selects_by_arch() {
+        assert_eq!(
+            super::musl_triple_for_arch("aarch64"),
+            "aarch64-unknown-linux-musl"
+        );
+        assert_eq!(
+            super::musl_triple_for_arch("x86_64"),
+            "x86_64-unknown-linux-musl"
+        );
+    }
+
+    #[test]
+    fn cross_link_target_decodes_aarch64_musl() {
+        let lt = super::resolve_link_target(Some("aarch64-unknown-linux-musl"));
+        assert_eq!(lt.arch, "aarch64");
+        assert!(matches!(lt.os, super::TargetOs::Linux));
+        assert!(matches!(lt.env, super::TargetEnv::Musl));
+        // A non-host triple is always a cross build, on any host.
+        assert!(lt.is_cross);
+    }
+
+    #[test]
+    fn cross_link_target_decodes_x86_64_musl() {
+        let lt = super::resolve_link_target(Some("x86_64-unknown-linux-musl"));
+        assert_eq!(lt.arch, "x86_64");
+        assert!(matches!(lt.os, super::TargetOs::Linux));
+        assert!(matches!(lt.env, super::TargetEnv::Musl));
+    }
+
+    #[test]
+    fn host_link_target_is_not_cross() {
+        let lt = super::resolve_link_target(None);
+        assert!(!lt.is_cross);
+        match std::env::consts::ARCH {
+            "x86_64" => assert_eq!(lt.arch, "x86_64"),
+            "aarch64" => assert_eq!(lt.arch, "aarch64"),
+            _ => {}
+        }
+    }
+
+    #[test]
+    fn cross_runtime_lookup_errors_when_absent() {
+        // A bogus triple with no archive must error, never silently
+        // return the host (x86) archive for a foreign-arch link.
+        let r = super::find_runtime_lib_for_target("aarch64-unknown-linux-gnu-bogus-nonexistent");
+        assert!(r.is_err());
     }
 }

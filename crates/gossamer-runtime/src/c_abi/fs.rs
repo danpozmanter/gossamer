@@ -44,6 +44,36 @@ pub unsafe extern "C" fn gos_rt_fs_read_to_string(path: *const c_char) -> *mut c
     })
 }
 
+/// `fs::read_to_string(path) -> Result<String, errors::Error>`. Result-shaped
+/// counterpart of the bare-string `gos_rt_fs_read_to_string` (which returns ""
+/// on failure and cannot express an error); the compiled tiers route
+/// `fs::read_to_string` here so a missing / unreadable path propagates `Err`
+/// identically to the VM, mirroring how `fs::read` (`gos_rt_fs_read_bytes_result`)
+/// already builds its error.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_fs_read_to_string_result(path: *const c_char) -> i128 {
+    ffi_entry!(0i128, {
+        if path.is_null() {
+            let cs = std::ffi::CString::new("read_to_string: null path").unwrap_or_default();
+            let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+            return unsafe { gos_rt_result_new(1, err as i64) };
+        }
+        let p = unsafe { CStr::from_ptr(path).to_string_lossy().into_owned() };
+        match std::fs::read_to_string(&p) {
+            Ok(text) => {
+                let s = alloc_cstring(text.as_bytes());
+                unsafe { gos_rt_result_new(0, s as i64) }
+            }
+            Err(e) => {
+                let msg = classify_io_error(&e, &p);
+                let cs = std::ffi::CString::new(msg).unwrap_or_default();
+                let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+                unsafe { gos_rt_result_new(1, err as i64) }
+            }
+        }
+    })
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_fs_write(path: *const c_char, contents: *const c_char) -> i64 {
     ffi_entry!(-1, {

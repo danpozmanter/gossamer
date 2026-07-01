@@ -187,6 +187,12 @@ pub(super) struct IntrinsicContext {
     /// `ensure_var` read from here instead of re-running the full
     /// body scan on every assignment. Cleared between bodies.
     pub(crate) body_cl_types: Vec<Option<ir::Type>>,
+    /// Per-function: the hidden structural-return (sret) pointer when this body
+    /// returns a 2-tuple ([`body_returns_sret_tuple`]). Set from the entry
+    /// block's trailing param; the `Return` lowering writes the two result
+    /// words through it instead of heap-allocating a per-call block. `None`
+    /// for every non-sret body. Cleared between bodies.
+    pub(crate) sret_ptr: Option<ir::Value>,
 }
 
 impl IntrinsicContext {
@@ -203,6 +209,7 @@ impl IntrinsicContext {
             local_slots: HashMap::new(),
             local_declared_ty: HashMap::new(),
             body_cl_types: Vec::new(),
+            sret_ptr: None,
         }
     }
 

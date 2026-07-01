@@ -58,17 +58,27 @@ implementation, so the supported platform matrix is narrower than
 Other targets compile but the goroutine scheduler refuses to start
 because corosensei has no context-switch backend for them.
 
+`aarch64` Linux - including Raspberry Pi OS 64-bit - is exercised in CI
+across all three tiers (the bytecode VM, the in-process Cranelift JIT,
+and native `gos build`), not just cross-built. `gos run` is fully
+self-contained on a Pi; native compilation there uses the device's
+system LLVM (`llc`/`opt`) and C compiler (`sudo apt-get install -y llvm
+clang`).
+
 ## Target toolchains
 
 `gos build --target <triple>` validates the triple against the
-registered set - the supported platforms above plus
-`riscv64gc-unknown-linux-gnu`, `wasm32-unknown-unknown`, and
-`wasm32-wasi`. Only the host triple currently links to a runnable
-binary, though: a non-host `--target` emits a placeholder artifact and
-reports `cross-link pending`. Build each target on a native runner of
-that architecture for now. (A fully-static single-file binary comes
-from `gos build --release` on a Linux host with the musl rustup target
-installed - no `--target` needed.)
+registered set. Every Linux target -
+`{x86_64,aarch64}-unknown-linux-{gnu,musl}` - cross-compiles to a real,
+runnable binary from a Linux, macOS, or Windows host (Cross output is
+validated against the bytecode VM under QEMU in CI, including Raspberry
+Pi). The musl-static path is host-agnostic (rustup's self-contained CRT
++ `ld.lld`); the gnu-dynamic path uses the matching `*-linux-gnu-gcc` on
+a Linux host, or a `GOS_CROSS_SYSROOT` on macOS/Windows. Cross-compiling
+*to* macOS or Windows as a target remains out of scope (needs external
+SDKs). (A fully-static single-file binary also comes from `gos build
+--release` on a Linux host with the musl rustup target installed - no
+`--target` needed.)
 
 Musl targets (`x86_64-unknown-linux-musl`,
 `aarch64-unknown-linux-musl`) are gated behind the `musl` Cargo

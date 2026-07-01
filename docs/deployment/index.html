@@ -2110,19 +2110,22 @@ x86_64 runner, you can <code>scp</code> it and run it.</p>
 </tr>
 </tbody>
 </table>
-<p>Compiled programs are built for the host triple. Cross-ISA
-compilation - <code>gos build --target &lt;triple&gt;</code> to a different
-architecture - is not yet wired to a runnable binary: a non-host
-<code>--target</code> validates the triple but emits a placeholder artifact and
-prints <code>cross-link pending</code>. The release matrix in
+<p>Compiled programs default to the host triple. Cross-ISA compilation -
+<code>gos build --target &lt;triple&gt;</code> - now produces a real, runnable native binary
+for any Linux target: <code>{x86_64,aarch64}-unknown-linux-{gnu,musl}</code>, from a
+Linux, macOS, or Windows host. Cross output is validated against the bytecode
+VM under QEMU in CI on all three host OSes. The musl-static path is
+host-agnostic (rustup's self-contained CRT + <code>ld.lld</code>); the gnu-dynamic path
+uses the matching <code>*-linux-gnu-gcc</code> on a Linux host, or a <code>GOS_CROSS_SYSROOT</code>
+on macOS/Windows. Cross-compiling <em>to</em> macOS or Windows as a target remains
+out of scope (needs external SDKs). The release matrix in
 <a href="https://github.com/danpozmanter/gossamer/blob/main/.github/workflows/release.yml"><code>.github/workflows/release.yml</code></a>
 is the source of truth for what we test on.</p>
 <h2 id="building-per-target">Building per target<a class="headerlink" href="#building-per-target" title="Permanent link">&para;</a></h2>
-<p>The supported path is to build each target on a native runner of that
-architecture - a Linux aarch64 binary on a Linux aarch64 runner, a
-macOS binary on macOS, and so on. This is exactly what the release
-workflow does (one build job per target), and it side-steps the
-cross-toolchain fragility that bit other ecosystems.</p>
+<p>You can either build each target on a native runner of that architecture, or
+cross-compile every Linux target from a single host with <code>--target</code>. The
+release workflow builds one job per target; cross-compilation side-steps the
+need for a runner per architecture when a Linux binary is all you need.</p>
 <p>On a Linux x86_64 host the deployable artifact is simply:</p>
 <div class="language-sh highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>gos<span class="w"> </span>build<span class="w"> </span>--release<span class="w"> </span>src/main.gos
 </code></pre></div>

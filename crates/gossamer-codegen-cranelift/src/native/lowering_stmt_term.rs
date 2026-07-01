@@ -134,6 +134,137 @@ use rayon::prelude::*;
 
 use super::*;
 
+/// True when the return local (`Local::RETURN`) provably holds a freshly
+/// constructed standalone heap aggregate this frame exclusively owns, so its
+/// block can be freed once its words are copied into the sret slot instead of
+/// leaking on every call.
+///
+/// A local is *fresh* when every bare assignment to it is an `Aggregate` /
+/// `Repeat` rvalue (its own `gos_rt_aggr_alloc` block) or a move
+/// (`Use(Copy(bare))`) of another fresh local, and it is never written through a
+/// projection, never `Ref`d / `Len`d / `Drop`ped, and never a call destination -
+/// any of which could make it an interior pointer, an aliased value, or a
+/// passthrough of an argument the caller still owns. The return local is
+/// free-safe when it is fresh and its move-closure reaches at least one real
+/// `Aggregate` (so it is genuinely a block, not a passthrough of a param). A
+/// tuple stored elsewhere is copied by value into the destination's inline
+/// slots, never pointer-aliased, so freeing the return block cannot dangle
+/// another owner.
+fn return_local_is_fresh_aggregate(body: &Body) -> bool {
+    use std::collections::{HashMap, HashSet};
+
+    // Per bare local: whether every assignment so far is a fresh rvalue
+    // (`Aggregate`/`Repeat`, or a move of a bare local recorded in `move_srcs`).
+    let mut fresh_ok: HashMap<u32, bool> = HashMap::new();
+    // Whether a local has at least one direct `Aggregate`/`Repeat` assignment.
+    let mut has_agg: HashSet<u32> = HashSet::new();
+    // Bare-local move sources: `L <- Use(Copy(src))` with both bare.
+    let mut move_srcs: HashMap<u32, Vec<u32>> = HashMap::new();
+    // Locals that can never be a clean freeable block: projected write, `Ref`,
+    // `Len`, `Drop`, or a call destination.
+    let mut tainted: HashSet<u32> = HashSet::new();
+
+    let mut mark_assign = |l: u32, fresh: bool| {
+        let e = fresh_ok.entry(l).or_insert(true);
+        *e = *e && fresh;
+    };
+
+    for block in &body.blocks {
+        for stmt in &block.stmts {
+            let StatementKind::Assign { place, rvalue } = &stmt.kind else {
+                continue;
+            };
+            if !place.projection.is_empty() {
+                // A projected write with a *constant* value is the drop-safety
+                // zero-init the MIR emits into a tuple/struct scratch before its
+                // real aggregate lands (`_L.0 = 0`). It cannot store an interior
+                // or aliased pointer, and the scratch is abandoned once `_L` is
+                // rebound to the fresh block, so it does not taint. Any other
+                // projected write may build an interior field, so it does.
+                if !matches!(rvalue, Rvalue::Use(Operand::Const(_))) {
+                    tainted.insert(place.local.0);
+                }
+                continue;
+            }
+            let l = place.local.0;
+            match rvalue {
+                Rvalue::Aggregate { .. } | Rvalue::Repeat { .. } => {
+                    has_agg.insert(l);
+                    mark_assign(l, true);
+                }
+                Rvalue::Use(Operand::Copy(p)) if p.projection.is_empty() => {
+                    move_srcs.entry(l).or_default().push(p.local.0);
+                    mark_assign(l, true);
+                }
+                Rvalue::Ref { place, .. } | Rvalue::Len(place) => {
+                    tainted.insert(place.local.0);
+                    mark_assign(l, false);
+                }
+                // Any other source (a projected read, a constant, an arithmetic
+                // result, an intrinsic) is not a standalone fresh block.
+                _ => mark_assign(l, false),
+            }
+        }
+        match &block.terminator {
+            Terminator::Call { destination, .. } => {
+                tainted.insert(destination.local.0);
+            }
+            Terminator::Drop { place, .. } => {
+                tainted.insert(place.local.0);
+            }
+            _ => {}
+        }
+    }
+
+    // Walk the return local's move-closure: every local reached must be
+    // untainted and fresh, and the closure must reach a real `Aggregate`.
+    let mut visited: HashSet<u32> = HashSet::new();
+    let mut stack = vec![Local::RETURN.0];
+    let mut saw_agg = false;
+    while let Some(l) = stack.pop() {
+        if !visited.insert(l) {
+            continue;
+        }
+        if tainted.contains(&l) || !fresh_ok.get(&l).copied().unwrap_or(false) {
+            return false;
+        }
+        if has_agg.contains(&l) {
+            saw_agg = true;
+        }
+        // A reached local with neither an `Aggregate` nor a move source is a
+        // param or externally-defined value - not a block this frame owns.
+        if !has_agg.contains(&l) && !move_srcs.contains_key(&l) {
+            return false;
+        }
+        for &src in move_srcs.get(&l).into_iter().flatten() {
+            stack.push(src);
+        }
+    }
+    saw_agg
+}
+
+/// When `expected` (the callee's Cranelift signature param types) carries one
+/// more param than the call supplies and that trailing param is a pointer, the
+/// callee uses the structural-return (sret) ABI for a 2-tuple return. Allocate
+/// a 16-byte stack slot and append its address as the hidden result-slot arg;
+/// the callee fills it (no per-call heap block) and returns the same pointer.
+/// The slot lives in this frame, so it is reused across loop iterations and
+/// reclaimed on frame exit - nothing to free.
+fn maybe_push_sret_slot(
+    builder: &mut FunctionBuilder<'_>,
+    ptr_ty: ir::Type,
+    expected: &[ir::Type],
+    n_args: usize,
+    arg_values: &mut Vec<ir::Value>,
+) {
+    let fire = expected.len() == n_args + 1 && expected.last() == Some(&ptr_ty);
+    if fire {
+        let slot =
+            builder.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 16, 3));
+        arg_values.push(builder.ins().stack_addr(ptr_ty, slot, 0));
+    }
+}
+
 pub(super) fn lower_statement(
     module: &mut dyn Module,
     builder: &mut FunctionBuilder<'_>,
@@ -643,14 +774,57 @@ pub(super) fn lower_terminator(
             // (real Tuple, Array, struct Adt) need the heap
             // copy that escapes the stack frame.
             let ret_is_aggregate = ret_is_aggregate && ret_slots > 1;
-            if ret_is_aggregate {
+            if let Some(sret) = intrinsics.sret_ptr {
+                // Structural-return ABI: copy the two result words into the
+                // caller-owned slot (`sret`) instead of allocating a fresh heap
+                // block per call. The source block this frame built is then
+                // freed - so a hot tuple-returning body never leaks - but only
+                // when the return local is a provably standalone allocation; an
+                // interior pointer into another aggregate must not be freed.
+                let ptr_ty = module.target_config().pointer_type();
+                let slots = type_slot_count(tcx, ret_ty_mir).max(1);
+                for slot_idx in 0..slots {
+                    let off = (slot_idx as i32) * 8;
+                    let word = builder.ins().load(
+                        types::I64,
+                        MemFlags::trusted(),
+                        retval,
+                        ir::immediates::Offset32::new(off),
+                    );
+                    builder.ins().store(
+                        MemFlags::trusted(),
+                        word,
+                        sret,
+                        ir::immediates::Offset32::new(off),
+                    );
+                }
+                if return_local_is_fresh_aggregate(body) {
+                    let bytes = u64::from(slots) * 8;
+                    let free_fn = intrinsics.extern_fn(
+                        module,
+                        "gos_rt_aggr_free",
+                        &[ptr_ty, types::I64],
+                        &[],
+                    )?;
+                    let free_ref = module.declare_func_in_func(free_fn, builder.func);
+                    let bytes_v = builder.ins().iconst(types::I64, bytes as i64);
+                    builder.ins().call(free_ref, &[retval, bytes_v]);
+                }
+                builder.ins().return_(&[sret]);
+            } else if ret_is_aggregate {
                 // Arrays are always heap-allocated (calloc'd by Rvalue::Repeat /
                 // Rvalue::Aggregate). The local already holds a dedicated heap
                 // pointer, so returning it directly is safe - no second copy
-                // needed. Tuples and Adts may carry pointers into a containing
-                // aggregate's buffer (field-projection assignments), so those
-                // still need the gc_alloc + memcpy escape path.
-                if matches!(tcx.kind_of(ret_ty_mir), TyKind::Array { .. }) {
+                // needed. A tuple / Adt built only from `Aggregate` / `Repeat`
+                // rvalues is equally standalone, so it can also be returned
+                // directly; copying it would abandon (leak) the original block
+                // on every call. A tuple / Adt that may carry an interior
+                // pointer into a containing aggregate's buffer (a field
+                // projection or call passthrough) still needs the gc_alloc +
+                // memcpy escape path.
+                if matches!(tcx.kind_of(ret_ty_mir), TyKind::Array { .. })
+                    || return_local_is_fresh_aggregate(body)
+                {
                     builder.ins().return_(&[retval]);
                 } else {
                     let bytes = u64::from(ret_slots) * 8;
@@ -935,6 +1109,13 @@ pub(super) fn lower_terminator(
                         }
                         arg_values.push(v);
                     }
+                    maybe_push_sret_slot(
+                        builder,
+                        ptr_ty_local,
+                        &expected,
+                        args.len(),
+                        &mut arg_values,
+                    );
                     let call = builder.ins().call(func_ref, &arg_values);
                     let results = builder.inst_results(call).to_vec();
                     if let Some(&ret) = results.first() {
@@ -1117,6 +1298,8 @@ pub(super) fn lower_terminator(
                 }
                 arg_values.push(v);
             }
+            let ptr_ty = module.target_config().pointer_type();
+            maybe_push_sret_slot(builder, ptr_ty, &expected, args.len(), &mut arg_values);
             let call = builder.ins().call(func_ref, &arg_values);
             let results = builder.inst_results(call).to_vec();
             if let Some(&ret) = results.first() {

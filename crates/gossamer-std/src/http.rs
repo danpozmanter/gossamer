@@ -1962,6 +1962,7 @@ fn move_owned(
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 use std::io::Read;
 
 /// Streaming HTTP response. Holds the wire reader open across calls

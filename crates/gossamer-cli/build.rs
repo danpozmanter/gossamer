@@ -45,6 +45,11 @@ const KNOWN_UNUSED_RUNTIME_SYMBOLS: &[&str] = &[
     // (`gossamer-interp`'s `free_native_enum`) to reclaim a uniquely-owned
     // returned enum DOM fully; called from Rust, never emitted by codegen.
     "gos_rt_rc_strong_count",
+    // Non-buffered strong release used by `gossamer-interp`'s native-enum tree
+    // teardown (`free_exclusive_enum_tree`) to reclaim an exclusively-owned tree
+    // without deferring to the cycle collector; called from Rust, never emitted
+    // by codegen.
+    "gos_rt_rc_release_no_buffer",
     // Setup function called directly from Rust (gossamer-interp's
     // `set_runtime_program_name`), not from generated Gossamer code.
     "gos_rt_set_program_name",

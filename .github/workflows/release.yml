@@ -100,7 +100,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@1.95.0
         with:
-          targets: aarch64-unknown-linux-gnu
+          targets: aarch64-unknown-linux-gnu, aarch64-unknown-linux-musl
 
       - run: rustup set profile minimal
       - uses: Swatinem/rust-cache@v2
@@ -110,7 +110,7 @@ jobs:
       - name: Install cross-compiler
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu
+          sudo apt-get install -y gcc-aarch64-linux-gnu clang llvm
 
       - name: Build
         env:
@@ -122,6 +122,12 @@ jobs:
           # `gos build` on aarch64 needs the aarch64 archive, so build it for
           # the target explicitly into target/<triple>/release/.
           cargo build --release --target aarch64-unknown-linux-gnu -p gossamer-runtime
+          # Static-musl runtime for `gos build --release` static binaries on a
+          # Pi. mimalloc's C is cross-compiled with clang targeting aarch64-musl
+          # (the gnu cross gcc only knows the glibc sysroot).
+          CC_aarch64_unknown_linux_musl=clang \
+          CFLAGS_aarch64_unknown_linux_musl="--target=aarch64-unknown-linux-musl" \
+          cargo build --release --target aarch64-unknown-linux-musl -p gossamer-runtime
 
       # Install packaging tools as prebuilt binaries (cargo-deb from
       # GitHub Releases, cargo-generate-rpm via cargo-binstall) - avoids
@@ -137,6 +143,10 @@ jobs:
           mkdir "$BASE"
           cp target/aarch64-unknown-linux-gnu/release/gos "$BASE/"
           cp target/aarch64-unknown-linux-gnu/release/libgossamer_runtime.a "$BASE/"
+          # Static-musl runtime, shipped alongside the gnu one so a Pi
+          # `gos build --release` can produce a self-contained static binary.
+          cp target/aarch64-unknown-linux-musl/release/libgossamer_runtime.a \
+             "$BASE/libgossamer_runtime-musl.a"
           cp README.md LICENSE "$BASE/"
           cp scripts/install.sh "$BASE/"
           chmod +x "$BASE/install.sh"

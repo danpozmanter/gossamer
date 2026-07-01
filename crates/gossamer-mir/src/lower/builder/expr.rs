@@ -1314,6 +1314,57 @@ impl<'a> Builder<'a> {
                 }
             }
         }
+        // Heap (recursive / `Box`) enum `==` / `!=` with no user `eq` impl:
+        // route to the runtime structural walk so two distinct allocations of
+        // an equal value compare true (matching the VM's `values_equal`)
+        // instead of by pointer identity. `ensure_enum_eq_desc` returns `None`
+        // (keep identity) for an enum with a field the walk cannot describe.
+        if matches!(op, HirBinaryOp::Eq | HirBinaryOp::Ne) {
+            // Operand types are often still inference vars at MIR time; recover
+            // the enum via the same name chain the `eq`-method dispatch uses,
+            // then map the name to the enum's concrete type.
+            let sname = self
+                .adt_dispatch_name(lhs.ty)
+                .or_else(|| self.adt_dispatch_name(self.locals[lhs_local.0 as usize].ty))
+                .or_else(|| self.adt_dispatch_name(rhs.ty))
+                .or_else(|| self.adt_dispatch_name(self.locals[rhs_local.0 as usize].ty))
+                .or_else(|| self.local_struct.get(&lhs_local).cloned())
+                .or_else(|| self.local_struct.get(&rhs_local).cloned())
+                .or_else(|| self.struct_name_from_expr(lhs))
+                .or_else(|| self.struct_name_from_expr(rhs));
+            let desc_sym = sname
+                .and_then(|n| self.tcx.enum_ty_by_name(&n))
+                .and_then(|ety| self.ensure_enum_eq_desc(ety));
+            if let Some(sym) = desc_sym {
+                let bool_ty = self.tcx.bool_ty();
+                let cmp = self.fresh(bool_ty);
+                let next = self.new_block(span);
+                self.terminate(Terminator::Call {
+                    callee: Operand::Const(ConstValue::Str("gos_rt_enum_struct_eq".to_string())),
+                    args: vec![
+                        Operand::Copy(Place::local(lhs_local)),
+                        Operand::Copy(Place::local(rhs_local)),
+                        Operand::Const(ConstValue::Str(sym)),
+                    ],
+                    destination: Place::local(cmp),
+                    target: Some(next),
+                });
+                self.set_current(next);
+                if matches!(op, HirBinaryOp::Ne) {
+                    let dest = self.fresh(bool_ty);
+                    self.emit_assign(
+                        Place::local(dest),
+                        Rvalue::UnaryOp {
+                            op: UnOp::Not,
+                            operand: Operand::Copy(Place::local(cmp)),
+                        },
+                        span,
+                    );
+                    return Some(dest);
+                }
+                return Some(cmp);
+            }
+        }
         // Struct / enum ordering: route `<` `<=` `>` `>=` to a `Type::cmp`
         // method (synthesized for a by-value-comparable type or hand-written),
         // testing its -1 / 0 / 1 result against 0. Mirrors the `==` route.

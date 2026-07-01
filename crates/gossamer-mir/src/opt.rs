@@ -7,6 +7,7 @@
 
 use std::collections::HashMap;
 
+use gossamer_lex::Span;
 use gossamer_types::{TyCtxt, TyKind};
 
 use gossamer_types::Ty;
@@ -70,6 +71,8 @@ pub fn optimise(body: &mut Body, tcx: &TyCtxt) {
     dead_store_elim(body, tcx);
     crate::verify::debug_verify_body(body);
     bounds_check_elim(body, tcx);
+    crate::verify::debug_verify_body(body);
+    bounds_check_versioning(body, tcx);
     crate::verify::debug_verify_body(body);
 }
 
@@ -2446,9 +2449,9 @@ fn index_is_counter(body: &Body, region: &[usize], counter: Local, op: &Operand)
 }
 
 /// Element kind of `xs` is a single-slot scalar safe for the unchecked
-/// i64-shaped path: integer, bool, or char (mirrors the counted-loop
-/// unchecked reader's restriction; excludes RC-managed and float
-/// elements).
+/// i64-shaped path: integer, bool, char, or `f64` (all read/written as an
+/// 8-byte or 1-byte word by the unchecked inline). Excludes RC-managed
+/// elements and `f32` (a 4-byte slot the word/byte inline does not cover).
 fn vec_elem_is_unchecked_scalar(body: &Body, tcx: &TyCtxt, xs: Local) -> bool {
     let mut ty = body.local_ty(xs);
     if let TyKind::Ref { inner, .. } = tcx.kind_of(ty) {
@@ -2460,7 +2463,7 @@ fn vec_elem_is_unchecked_scalar(body: &Body, tcx: &TyCtxt, xs: Local) -> bool {
     };
     matches!(
         tcx.kind_of(elem),
-        TyKind::Int(_) | TyKind::Bool | TyKind::Char
+        TyKind::Int(_) | TyKind::Bool | TyKind::Char | TyKind::Float(gossamer_types::FloatTy::F64)
     )
 }
 
@@ -2542,6 +2545,545 @@ pub(crate) fn bounds_check_elim(body: &mut Body, tcx: &TyCtxt) {
         if let Terminator::Call { callee, .. } = &mut body.blocks[b].terminator {
             *callee = Operand::Const(ConstValue::Str(name.to_string()));
         }
+    }
+}
+
+/// A scalar vec element access `xs[base + counter]` inside a counted loop
+/// whose index is an affine function of the loop counter with coefficient
+/// one. `base` is a loop-invariant operand: `Const(0)` for a bare
+/// `xs[counter]`, `Const(-k)` for `xs[counter - k]`, or a copy of a
+/// loop-invariant local for `xs[inv + counter]`.
+struct AffineAccess {
+    block: usize,
+    xs: Local,
+    base: Operand,
+}
+
+/// Returns the single `Assign` rvalue defining `local` as a bare place,
+/// or `None` when there is not exactly one such definition (a call
+/// destination writing `local` also counts and disqualifies it).
+fn unique_def_rvalue(body: &Body, local: Local) -> Option<&Rvalue> {
+    let mut found: Option<&Rvalue> = None;
+    let mut count = 0usize;
+    for block in &body.blocks {
+        for stmt in &block.stmts {
+            if let StatementKind::Assign { place, rvalue } = &stmt.kind
+                && place.local == local
+                && place.projection.is_empty()
+            {
+                found = Some(rvalue);
+                count += 1;
+            }
+        }
+        if term_writes_bare(&block.terminator, local) {
+            count += 1;
+        }
+    }
+    if count == 1 { found } else { None }
+}
+
+/// `true` when `l` is neither the counter nor written anywhere in the loop
+/// (header + region) - i.e. loop-invariant.
+fn local_is_loop_invariant(
+    body: &Body,
+    header: usize,
+    region: &[usize],
+    counter: Local,
+    l: Local,
+) -> bool {
+    if l == counter {
+        return false;
+    }
+    let in_loop = |b: usize| b == header || region.contains(&b);
+    !body
+        .blocks
+        .iter()
+        .enumerate()
+        .any(|(bi, blk)| in_loop(bi) && block_writes_local(blk, l))
+}
+
+/// If `op` is a loop-invariant base operand (an integer constant or a copy
+/// of a loop-invariant local), returns it cloned; otherwise `None`.
+fn invariant_base(
+    body: &Body,
+    header: usize,
+    region: &[usize],
+    counter: Local,
+    op: &Operand,
+) -> Option<Operand> {
+    match op {
+        Operand::Const(ConstValue::Int(_)) => Some(op.clone()),
+        Operand::Copy(p)
+            if p.projection.is_empty()
+                && local_is_loop_invariant(body, header, region, counter, p.local) =>
+        {
+            Some(op.clone())
+        }
+        _ => None,
+    }
+}
+
+/// Extracts the loop-invariant `base` of an affine index `base + counter`
+/// from the index operand of a vec get/set. Handles `xs[counter]`
+/// (base 0), `xs[inv + counter]` / `xs[counter + inv]`, `xs[counter + k]`,
+/// and `xs[counter - k]` (base `-k`). Returns `None` for anything else.
+fn affine_base(
+    body: &Body,
+    header: usize,
+    region: &[usize],
+    counter: Local,
+    idx: &Operand,
+) -> Option<Operand> {
+    let Operand::Copy(p) = idx else {
+        return None;
+    };
+    if !p.projection.is_empty() {
+        return None;
+    }
+    if p.local == counter {
+        return Some(Operand::Const(ConstValue::Int(0)));
+    }
+    let def = unique_def_rvalue(body, p.local)?;
+    let is_counter = |op: &Operand| index_is_counter(body, region, counter, op);
+    match def {
+        Rvalue::Use(op) if is_counter(op) => Some(Operand::Const(ConstValue::Int(0))),
+        Rvalue::BinaryOp {
+            op: BinOp::Add,
+            lhs,
+            rhs,
+        } => {
+            if is_counter(lhs) {
+                invariant_base(body, header, region, counter, rhs)
+            } else if is_counter(rhs) {
+                invariant_base(body, header, region, counter, lhs)
+            } else {
+                None
+            }
+        }
+        Rvalue::BinaryOp {
+            op: BinOp::Sub,
+            lhs,
+            rhs,
+        } if is_counter(lhs) => {
+            if let Operand::Const(ConstValue::Int(k)) = rhs {
+                Some(Operand::Const(ConstValue::Int(k.checked_neg()?)))
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+/// The `_unchecked` runtime symbol paired with a checked scalar vec
+/// get/set, or `None` for any other callee.
+fn unchecked_variant(name: &str) -> Option<&'static str> {
+    match name {
+        "gos_rt_vec_get_i64" => Some("gos_rt_vec_get_i64_unchecked"),
+        "gos_rt_vec_set_i64" => Some("gos_rt_vec_set_i64_unchecked"),
+        _ => None,
+    }
+}
+
+/// Rewrites every block reference in `term` through `map` (old index ->
+/// new index); references not in `map` are left unchanged.
+fn remap_terminator_blocks(term: &mut Terminator, map: &HashMap<usize, usize>) {
+    let f = |id: &mut BlockId| {
+        if let Some(&n) = map.get(&(id.0 as usize)) {
+            *id = BlockId(n as u32);
+        }
+    };
+    match term {
+        Terminator::Goto { target } => f(target),
+        Terminator::SwitchInt { arms, default, .. } => {
+            for (_, t) in arms.iter_mut() {
+                f(t);
+            }
+            f(default);
+        }
+        Terminator::Call { target, .. } => {
+            if let Some(t) = target {
+                f(t);
+            }
+        }
+        Terminator::Assert { target, .. } => f(target),
+        Terminator::Drop { target, .. } => f(target),
+        Terminator::Return | Terminator::Unreachable | Terminator::Panic { .. } => {}
+    }
+}
+
+/// Redirects every block reference in `term` equal to `from` to `to`.
+fn redirect_terminator_target(term: &mut Terminator, from: usize, to: BlockId) {
+    let f = |id: &mut BlockId| {
+        if id.0 as usize == from {
+            *id = to;
+        }
+    };
+    match term {
+        Terminator::Goto { target } => f(target),
+        Terminator::SwitchInt { arms, default, .. } => {
+            for (_, t) in arms.iter_mut() {
+                f(t);
+            }
+            f(default);
+        }
+        Terminator::Call { target, .. } => {
+            if let Some(t) = target {
+                f(t);
+            }
+        }
+        Terminator::Assert { target, .. } => f(target),
+        Terminator::Drop { target, .. } => f(target),
+        Terminator::Return | Terminator::Unreachable | Terminator::Panic { .. } => {}
+    }
+}
+
+/// Bounds-check elision via loop versioning - the general affine form of
+/// [`bounds_check_elim`]. For each innermost counted loop
+/// `for counter in lo..bound`, collects every scalar vec access
+/// `xs[base + counter]` with a loop-invariant `base` and an unmodified
+/// receiver, then emits a guarded duplicate of the loop. A preheader
+/// computes, per distinct `(xs, base)`, the runtime precondition
+/// `base + lo >= 0 && base + bound <= xs.len()` - rearranged to
+/// `base >= -lo` and `base <= xs.len() - bound` so the sums never overflow
+/// while the loop runs - and branches to an unchecked clone of the loop
+/// when every precondition holds, or the original checked loop otherwise.
+/// Inside the clone the affine accesses use the `_unchecked` runtime
+/// symbols, which both compiled tiers lower to a branch-free load/store the
+/// vectoriser can prove independent. Semantics are preserved: the
+/// unchecked path runs only when every index is proven in `[0, len)`,
+/// matching the checked path's in-bounds behaviour exactly.
+pub(crate) fn bounds_check_versioning(body: &mut Body, tcx: &TyCtxt) {
+    let headers: Vec<usize> = (0..body.blocks.len())
+        .filter(|&h| recognise_counted_header(&body.blocks[h]).is_some())
+        .collect();
+    for h in headers {
+        try_version_loop(body, tcx, h);
+    }
+}
+
+/// Attempts to version the counted loop headed at block `h`. A no-op when
+/// the loop is not a clean innermost counted loop, has no versionable
+/// affine access, or sits at the function entry.
+fn try_version_loop(body: &mut Body, tcx: &TyCtxt, h: usize) {
+    if h == 0 {
+        return;
+    }
+    let succs: Vec<Vec<usize>> = body
+        .blocks
+        .iter()
+        .map(|b| successor_indices(&b.terminator))
+        .collect();
+    let Some(header) = recognise_counted_header(&body.blocks[h]) else {
+        return;
+    };
+    let Some((region, latch)) =
+        counted_loop_region(body, &succs, h, header.body_entry, header.exit)
+    else {
+        return;
+    };
+    if !verify_counter(body, &region, h, latch, header.counter) {
+        return;
+    }
+    let counter = header.counter;
+    let bound = header.bound;
+    if !local_is_loop_invariant(body, h, &region, counter, bound) {
+        return;
+    }
+    // Innermost loops only: versioning nested outer loops would duplicate
+    // an already-versioned inner loop and tangle the region analysis.
+    if region
+        .iter()
+        .any(|&b| recognise_counted_header(&body.blocks[b]).is_some())
+    {
+        return;
+    }
+
+    let loop_blocks: Vec<usize> = std::iter::once(h).chain(region.iter().copied()).collect();
+    let cands = collect_affine_candidates(body, tcx, h, counter, &region, &loop_blocks);
+    if cands.is_empty() {
+        return;
+    }
+    emit_loop_version(body, h, counter, bound, &loop_blocks, &cands);
+}
+
+/// Collects every scalar vec access `xs[base + counter]` in the loop with a
+/// loop-invariant `base` and a receiver that is provably unmodified and of
+/// an unchecked-scalar element type.
+fn collect_affine_candidates(
+    body: &Body,
+    tcx: &TyCtxt,
+    h: usize,
+    counter: Local,
+    region: &[usize],
+    loop_blocks: &[usize],
+) -> Vec<AffineAccess> {
+    let mut cands: Vec<AffineAccess> = Vec::new();
+    let mut verified: HashMap<Local, bool> = HashMap::new();
+    for &b in loop_blocks {
+        let Terminator::Call {
+            callee: Operand::Const(ConstValue::Str(name)),
+            args,
+            ..
+        } = &body.blocks[b].terminator
+        else {
+            continue;
+        };
+        let idx_i = match name.as_str() {
+            "gos_rt_vec_get_i64" if args.len() == 2 => 1,
+            "gos_rt_vec_set_i64" if args.len() == 3 => 1,
+            _ => continue,
+        };
+        let Operand::Copy(recv) = &args[0] else {
+            continue;
+        };
+        if !recv.projection.is_empty() {
+            continue;
+        }
+        let xs = recv.local;
+        let ok = *verified.entry(xs).or_insert_with(|| {
+            verify_vec_unmodified(body, region, h, xs)
+                && vec_elem_is_unchecked_scalar(body, tcx, xs)
+        });
+        if !ok {
+            continue;
+        }
+        let Some(base) = affine_base(body, h, region, counter, &args[idx_i]) else {
+            continue;
+        };
+        cands.push(AffineAccess { block: b, xs, base });
+    }
+    cands
+}
+
+/// Clones the loop blocks `loop_blocks` into fresh appended blocks starting
+/// at index `n0`, remapping in-loop successors and routing every candidate
+/// access through its `_unchecked` runtime symbol.
+fn clone_loop_unchecked(
+    body: &Body,
+    loop_blocks: &[usize],
+    n0: usize,
+    cand_blocks: &std::collections::HashSet<usize>,
+) -> Vec<BasicBlock> {
+    let mut map: HashMap<usize, usize> = HashMap::new();
+    for (i, &ob) in loop_blocks.iter().enumerate() {
+        map.insert(ob, n0 + i);
+    }
+    let mut clones: Vec<BasicBlock> = Vec::with_capacity(loop_blocks.len());
+    for &ob in loop_blocks {
+        let mut blk = body.blocks[ob].clone();
+        blk.id = BlockId(map[&ob] as u32);
+        remap_terminator_blocks(&mut blk.terminator, &map);
+        if cand_blocks.contains(&ob)
+            && let Terminator::Call {
+                callee: Operand::Const(ConstValue::Str(name)),
+                ..
+            } = &mut blk.terminator
+            && let Some(u) = unchecked_variant(name)
+        {
+            *name = u.to_string();
+        }
+        clones.push(blk);
+    }
+    clones
+}
+
+/// Allocates a fresh, immutable, non-region local of type `ty`.
+fn fresh_local(body: &mut Body, ty: Ty) -> Local {
+    let l = Local(u32::try_from(body.locals.len()).expect("local overflow"));
+    body.locals.push(LocalDecl {
+        ty,
+        debug_name: None,
+        mutable: false,
+        region: false,
+    });
+    l
+}
+
+/// Stable context shared by every preheader comparison block.
+struct PreheaderCtx {
+    i64t: Ty,
+    boolt: Ty,
+    sp: Span,
+    checked: BlockId,
+}
+
+/// One precondition comparison `base <cmp> (arith_lhs - arith_rhs)`. A false
+/// result short-circuits to the checked loop.
+struct RangeCheck {
+    arith_lhs: Operand,
+    arith_rhs: Operand,
+    base: Operand,
+    cmp: BinOp,
+}
+
+/// Builds one preheader comparison block at index `idx`: computes
+/// `tmp = arith_lhs - arith_rhs`, then `c = base <cmp> tmp`, and branches to
+/// the checked loop when `c` is false or to `next` otherwise.
+fn range_check_block(
+    body: &mut Body,
+    ctx: &PreheaderCtx,
+    idx: usize,
+    next: BlockId,
+    check: RangeCheck,
+) -> BasicBlock {
+    let tmp = fresh_local(body, ctx.i64t);
+    let c = fresh_local(body, ctx.boolt);
+    BasicBlock {
+        id: BlockId(idx as u32),
+        stmts: vec![
+            Statement {
+                kind: StatementKind::Assign {
+                    place: Place::local(tmp),
+                    rvalue: Rvalue::BinaryOp {
+                        op: BinOp::Sub,
+                        lhs: check.arith_lhs,
+                        rhs: check.arith_rhs,
+                    },
+                },
+                span: ctx.sp,
+            },
+            Statement {
+                kind: StatementKind::Assign {
+                    place: Place::local(c),
+                    rvalue: Rvalue::BinaryOp {
+                        op: check.cmp,
+                        lhs: check.base,
+                        rhs: Operand::Copy(Place::local(tmp)),
+                    },
+                },
+                span: ctx.sp,
+            },
+        ],
+        terminator: Terminator::SwitchInt {
+            discriminant: Operand::Copy(Place::local(c)),
+            arms: vec![(0, ctx.checked)],
+            default: next,
+        },
+        span: ctx.sp,
+    }
+}
+
+/// Emits the versioned form of the loop: an unchecked clone, a preheader
+/// that proves every candidate's affine index in range, and a redirect of
+/// the loop's external entry edges into that preheader.
+fn emit_loop_version(
+    body: &mut Body,
+    h: usize,
+    counter: Local,
+    bound: Local,
+    loop_blocks: &[usize],
+    cands: &[AffineAccess],
+) {
+    // Distinct `(xs, base)` precondition checks and the distinct receivers
+    // whose length the preheader must read.
+    let mut checks: Vec<(Local, Operand)> = Vec::new();
+    for c in cands {
+        if !checks.iter().any(|(x, bs)| *x == c.xs && bs == &c.base) {
+            checks.push((c.xs, c.base.clone()));
+        }
+    }
+    let mut xs_list: Vec<Local> = Vec::new();
+    for (x, _) in &checks {
+        if !xs_list.contains(x) {
+            xs_list.push(*x);
+        }
+    }
+
+    let ctx = PreheaderCtx {
+        i64t: body.local_ty(counter),
+        boolt: match &body.blocks[h].terminator {
+            Terminator::SwitchInt {
+                discriminant: Operand::Copy(d),
+                ..
+            } => body.local_ty(d.local),
+            _ => return,
+        },
+        sp: body.blocks[h].span,
+        checked: BlockId(h as u32),
+    };
+
+    let n0 = body.blocks.len();
+    let cand_blocks: std::collections::HashSet<usize> = cands.iter().map(|c| c.block).collect();
+    let clone_blocks = clone_loop_unchecked(body, loop_blocks, n0, &cand_blocks);
+
+    // Preheader: one length read per distinct receiver, then a short-circuit
+    // chain of comparisons dispatching to the unchecked clone (index `n0`)
+    // when every precondition holds or the original checked loop otherwise.
+    let mut len_of: HashMap<Local, Local> = HashMap::new();
+    for &x in &xs_list {
+        let l = fresh_local(body, ctx.i64t);
+        len_of.insert(x, l);
+    }
+    let pbase = n0 + clone_blocks.len();
+    let total = xs_list.len() + 2 * checks.len();
+    let unchecked_header = BlockId(n0 as u32);
+    let next_of = |p: usize| -> BlockId {
+        if p + 1 < total {
+            BlockId((pbase + p + 1) as u32)
+        } else {
+            unchecked_header
+        }
+    };
+    let mut pre: Vec<BasicBlock> = Vec::with_capacity(total);
+    for (i, &x) in xs_list.iter().enumerate() {
+        pre.push(BasicBlock {
+            id: BlockId((pbase + i) as u32),
+            stmts: Vec::new(),
+            terminator: Terminator::Call {
+                callee: Operand::Const(ConstValue::Str("gos_rt_vec_len".to_string())),
+                args: vec![Operand::Copy(Place::local(x))],
+                destination: Place::local(len_of[&x]),
+                target: Some(next_of(i)),
+            },
+            span: ctx.sp,
+        });
+    }
+    for (j, (x, base)) in checks.iter().enumerate() {
+        let p_hi = xs_list.len() + 2 * j;
+        // Upper bound: base <= len(xs) - bound  <=>  base + bound <= len.
+        let hi = range_check_block(
+            body,
+            &ctx,
+            pbase + p_hi,
+            next_of(p_hi),
+            RangeCheck {
+                arith_lhs: Operand::Copy(Place::local(len_of[x])),
+                arith_rhs: Operand::Copy(Place::local(bound)),
+                base: base.clone(),
+                cmp: BinOp::Le,
+            },
+        );
+        pre.push(hi);
+        // Lower bound: base >= -lo, with lo = counter's value at the
+        // preheader (its non-negative loop-entry init).
+        let lo = range_check_block(
+            body,
+            &ctx,
+            pbase + p_hi + 1,
+            next_of(p_hi + 1),
+            RangeCheck {
+                arith_lhs: Operand::Const(ConstValue::Int(0)),
+                arith_rhs: Operand::Copy(Place::local(counter)),
+                base: base.clone(),
+                cmp: BinOp::Ge,
+            },
+        );
+        pre.push(lo);
+    }
+
+    body.blocks.extend(clone_blocks);
+    body.blocks.extend(pre);
+
+    // External entry edges (original blocks outside the loop) now enter the
+    // preheader; the latch's back edge to the checked header is untouched.
+    let entry_target = BlockId(pbase as u32);
+    let loop_set: std::collections::HashSet<usize> = loop_blocks.iter().copied().collect();
+    for bi in 0..n0 {
+        if loop_set.contains(&bi) {
+            continue;
+        }
+        redirect_terminator_target(&mut body.blocks[bi].terminator, h, entry_target);
     }
 }
 

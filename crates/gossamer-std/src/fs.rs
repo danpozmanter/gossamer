@@ -4,6 +4,7 @@
 use std::fs::{self as stdfs, File, Metadata};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
+#[cfg(not(target_arch = "wasm32"))]
 use std::sync::mpsc::{Receiver, Sender, channel};
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -11,6 +12,7 @@ use notify::{
     Event as NotifyEvent, EventKind as NotifyEventKind, RecommendedWatcher, RecursiveMode,
     Watcher as NotifyWatcherTrait,
 };
+#[cfg(not(target_arch = "wasm32"))]
 use parking_lot::Mutex;
 
 /// Directory entry surfaced by [`read_dir`].

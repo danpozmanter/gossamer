@@ -117,6 +117,23 @@ pub enum ParseError {
         /// The placeholder's inner text (without the braces).
         text: String,
     },
+    /// A struct used in a `to_json` / `from_json` (or toml/yaml) call has a
+    /// field whose type the serde synthesizer cannot handle. Without this the
+    /// whole struct's serde was silently dropped and the call surfaced only as
+    /// an opaque unknown-name error.
+    #[error(
+        "`{ty}` cannot derive `{op}`: field `{field}` has type `{field_ty}`, which is not serializable"
+    )]
+    SerdeUnserializableField {
+        /// The struct being serialized.
+        ty: String,
+        /// The offending field's name.
+        field: String,
+        /// The offending field's type spelling.
+        field_ty: String,
+        /// The serde operation requested (`to_json`, `from_json`, ...).
+        op: String,
+    },
 }
 
 /// A diagnostic with its source location.
@@ -283,6 +300,21 @@ impl ParseError {
                      bind it first or pass it as a positional argument with `{}`"
                         .to_string(),
                 ),
+            ),
+            ParseError::SerdeUnserializableField {
+                ty,
+                field,
+                field_ty,
+                op,
+            } => (
+                "GP0022",
+                format!(
+                    "`{ty}` cannot derive `{op}`: field `{field}` has type `{field_ty}`, which is not serializable"
+                ),
+                Some(format!(
+                    "give `{field}` a serializable type (scalar, String, Vec, Option, tuple, \
+                     HashMap<String, _>, json::Value, or a nested struct), or hand-write `{op}`"
+                )),
             ),
             // Every other variant is handled by `code_title_help`; this split
             // exists only to keep that match under the line cap.
