@@ -202,7 +202,7 @@ jobs:
           exit "$rc"
       - name: Upload native build artifacts
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: native-build-artifacts-${{ matrix.os }}
           path: ${{ github.workspace }}/native-build-artifacts
@@ -452,15 +452,33 @@ jobs:
       - uses: ./.github/actions/rust-test-setup
         with:
           cache-prefix: v2-cross-from-linux
+      - uses: mlugg/setup-zig@v1
+        with:
+          version: 0.16.0
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-zigbuild
       - name: Install cross toolchain + QEMU
         run: |
           sudo apt-get update
           sudo apt-get install -y gcc-aarch64-linux-gnu qemu-user llvm clang
           rustup target add aarch64-unknown-linux-gnu aarch64-unknown-linux-musl
       - name: Build the target runtime archives
+        # The gnu leg's native C deps (ring, mimalloc, zstd) cross-compile
+        # with the apt-installed `aarch64-linux-gnu-gcc` (cc-rs's default
+        # tool-name guess for this target already matches that package's
+        # binary). The musl leg has no matching distro package, and a bare
+        # `CC=zig cc` doesn't work either: cc-rs always appends its own
+        # `--target=<rustc-llvm-triple>` for a clang-family compiler (needed
+        # to select clang's cross toolchain), and that 4-component
+        # `*-unknown-linux-musl` form is one zig's own target parser
+        # rejects outright, so it wins over (and breaks) whatever `-target`
+        # we pass through `CC`. `cargo zigbuild` is the maintained tool that
+        # already reconciles this: it drives zig as the C/archive toolchain
+        # with the target-triple translation cc-rs's own flag needs.
         run: |
           cargo build --release --target aarch64-unknown-linux-gnu -p gossamer-runtime
-          cargo build --release --target aarch64-unknown-linux-musl -p gossamer-runtime
+          cargo zigbuild --release --target aarch64-unknown-linux-musl -p gossamer-runtime
       - name: Build gos
         run: cargo build --bin gos
       - name: Cross build + QEMU diff against the VM
@@ -473,7 +491,8 @@ jobs:
   # A macOS host must produce correct aarch64-linux and x86_64-linux
   # binaries (musl is the host-agnostic path). macOS runners cannot
   # execute a Linux ELF, so this job builds + uploads; the QEMU/native
-  # diff runs on Linux below. mimalloc's C is cross-compiled with clang.
+  # diff runs on Linux below. mimalloc's C is cross-compiled via `cargo
+  # zigbuild` (zig as the C toolchain).
   cross-from-macos:
     name: Cross macOS -> {aarch64,x86_64}-linux-musl
     runs-on: macos-latest
@@ -482,16 +501,31 @@ jobs:
       - uses: ./.github/actions/rust-test-setup
         with:
           cache-prefix: v2-cross-from-macos
+      - uses: mlugg/setup-zig@v1
+        with:
+          version: 0.16.0
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-zigbuild
       - name: Install ld.lld + musl targets
         run: |
+          # The macOS runner image pre-taps `aws/tap`, which Homebrew's tap
+          # trust check now refuses by default; untap it since this job has
+          # no use for it, rather than disabling the trust check globally.
+          brew untap aws/tap || true
           brew install llvm
           echo "$(brew --prefix llvm)/bin" >> "$GITHUB_PATH"
           rustup target add aarch64-unknown-linux-musl x86_64-unknown-linux-musl
       - name: Build target runtime archives + gos
+        # Bare `clang --target=...` has no musl sysroot on macOS, so it
+        # can't find the target's libc headers (`string.h`, ...). `cargo
+        # zigbuild` drives the native C deps (ring, mimalloc, zstd) through
+        # zig instead, which bundles a musl sysroot for every target it
+        # supports (see the cross-from-linux job for why a hand-rolled
+        # `CC=zig cc` doesn't work and `cargo zigbuild` is used instead).
         run: |
           for t in aarch64-unknown-linux-musl x86_64-unknown-linux-musl; do
-            CC="clang" CFLAGS="--target=$t" \
-              cargo build --release --target "$t" -p gossamer-runtime
+            cargo zigbuild --release --target "$t" -p gossamer-runtime
           done
           cargo build --bin gos
       - name: Cross build the fixtures (both targets)
@@ -501,7 +535,7 @@ jobs:
         run: |
           ./scripts/cross_build_fixtures.sh aarch64-unknown-linux-musl out-macos
           ./scripts/cross_build_fixtures.sh x86_64-unknown-linux-musl out-macos
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: cross-bins-macos
           path: out-macos
@@ -517,14 +551,22 @@ jobs:
       - uses: ./.github/actions/rust-test-setup
         with:
           cache-prefix: v2-cross-from-windows
+      - uses: mlugg/setup-zig@v1
+        with:
+          version: 0.16.0
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-zigbuild
       - name: Install musl targets
         run: rustup target add aarch64-unknown-linux-musl x86_64-unknown-linux-musl
       - name: Build target runtime archives + gos
         shell: bash
+        # See the macOS job above for why `cargo zigbuild` replaces plain
+        # `cargo build` here: the native C deps need a musl sysroot the
+        # system compiler doesn't ship, and zig bundles one.
         run: |
           for t in aarch64-unknown-linux-musl x86_64-unknown-linux-musl; do
-            CC="clang" CFLAGS="--target=$t" \
-              cargo build --release --target "$t" -p gossamer-runtime
+            cargo zigbuild --release --target "$t" -p gossamer-runtime
           done
           cargo build --bin gos
       - name: Cross build the fixtures (both targets)
@@ -534,14 +576,18 @@ jobs:
         run: |
           pwsh -File scripts/cross_build_fixtures.ps1 aarch64-unknown-linux-musl out-windows
           pwsh -File scripts/cross_build_fixtures.ps1 x86_64-unknown-linux-musl out-windows
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: cross-bins-windows
           path: out-windows
 
   # Run the macOS/Windows host cross artifacts under QEMU and diff against
   # the VM. Closes the loop on the multi-host matrix: the producing host
-  # cannot run the foreign ELF, so a Linux job validates the output.
+  # cannot run the foreign ELF, so a Linux job validates the output. Needed
+  # for both legs of each producing job - the x86_64 binaries run natively
+  # on this (x86_64) runner, and the aarch64 binaries run under qemu-user -
+  # this is the only job that ever executes what cross-from-macos and
+  # cross-from-windows produce.
   cross-run-under-qemu:
     name: Run macOS/Windows cross-built bins under QEMU
     needs: [cross-from-macos, cross-from-windows]
@@ -552,7 +598,7 @@ jobs:
         with:
           cache-prefix: v2-cross-run-qemu
       - run: sudo apt-get update && sudo apt-get install -y qemu-user
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: cross-bins-*
           path: bins

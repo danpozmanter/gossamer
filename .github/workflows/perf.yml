@@ -204,7 +204,7 @@ jobs:
 
       - name: Upload perf log
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: perf-log
           path: .perf/
@@ -320,7 +320,7 @@ jobs:
 
       - name: Upload native perf log
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: perf-native-log-${{ matrix.os }}
           path: .perf/native-current.txt

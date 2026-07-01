@@ -1,5 +1,5 @@
 //! Immutable tree-walkers. Each `walk_*` function matches the corresponding
-//! [`Visitor`](super::Visitor) callback and is deliberately a thin, branching
+//! [`Visitor`] callback and is deliberately a thin, branching
 //! recursion so implementers can override any callback without losing the
 //! default descent behaviour.
 

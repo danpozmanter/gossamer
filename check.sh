@@ -3,8 +3,8 @@
 # so failures surface locally before they hit a runner:
 #
 #   ci.yml          → fmt, clippy, test, doctests, rustdoc (broken
-#                     intra-doc-links), cross-target check (wasm32),
-#                     audit, deny
+#                     intra-doc-links), cross-target check (wasm32 +
+#                     musl-via-zigbuild), audit, deny
 #   sanitizers.yml  → ASan + TSan on the unsafe-touching crates
 #   fuzz.yml        → 10 s smoke per target
 #
@@ -15,7 +15,7 @@
 # Flags to skip slow gates on dev machines:
 #   --no-sanitizers   skip ASan / TSan (need nightly + rust-src)
 #   --no-fuzz         skip the fuzz smoke
-#   --no-cross        skip the wasm32 cross-target check
+#   --no-cross        skip the wasm32 cross-target check + musl zigbuild check
 #   --no-audit        skip cargo-audit (needs cargo-audit installed)
 #   --no-deny         skip cargo-deny  (needs cargo-deny installed)
 #   --no-doctests     skip `cargo test --doc --workspace --release`
@@ -112,8 +112,13 @@ run_step "gos feature-status --status experimental --check" ./target/debug/gos f
 # (links to renamed or now-private items) fails locally instead of
 # surfacing in CI as a red post-push status.
 if [[ $run_rustdoc -eq 1 ]]; then
+    # `--document-private-items` matches the CI `cargo-doc` job exactly:
+    # without it rustdoc skips private items entirely, so a broken
+    # intra-doc link in a private fn's doc comment (as opposed to a pub
+    # one) would pass locally and only fail once it reached CI.
     RUSTDOCFLAGS="-D rustdoc::broken_intra_doc_links" \
-        run_step "cargo doc --workspace --no-deps" cargo doc --workspace --no-deps
+        run_step "cargo doc --workspace --no-deps --document-private-items" \
+        cargo doc --workspace --no-deps --document-private-items
 fi
 
 # Doctest gate - mirrors `cargo test --doc --workspace --release`
@@ -158,6 +163,37 @@ if [[ $run_cross -eq 1 ]]; then
             --target wasm32-unknown-unknown
     else
         echo "cross-target check skipped (run \`rustup target add wasm32-unknown-unknown\` to enable)"
+    fi
+
+    # Musl cross-compile check (via `cargo zigbuild`) - mirrors the "Build
+    # the target runtime archives" step shared by cross-from-linux/-macos/
+    # -windows in ci.yml. Exercises the native C deps (ring, mimalloc,
+    # zstd) that only fail to cross-compile at actual build time, not at
+    # `cargo check` time: a bare cross C compiler has no musl sysroot, and
+    # even `CC=zig cc` doesn't work standalone (cc-rs's own appended
+    # `--target=<rustc-triple>` flag is a form zig's parser rejects, and it
+    # wins over whatever `-target` we pass through `CC`) - `cargo zigbuild`
+    # is the maintained tool that reconciles the two. Skips cleanly when
+    # zig (>=0.9.0, cargo-zigbuild's own floor - a distro-packaged `zig`
+    # binary is commonly older), `cargo-zigbuild`, or the musl rustup
+    # targets aren't installed, so an unrelated stale system `zig` never
+    # turns into a hard failure here.
+    zig_usable=0
+    if command -v zig >/dev/null 2>&1 && command -v cargo-zigbuild >/dev/null 2>&1; then
+        zig_minor="$(zig version 2>/dev/null | awk -F'[.-]' '{print ($1 > 0) ? 9 : $2}')"
+        [[ "${zig_minor:-0}" =~ ^[0-9]+$ && "$zig_minor" -ge 9 ]] && zig_usable=1
+    fi
+    if [[ $zig_usable -eq 1 ]]; then
+        for t in aarch64-unknown-linux-musl x86_64-unknown-linux-musl; do
+            if rustup target list --installed 2>/dev/null | grep -q "^${t}$"; then
+                run_step "cargo zigbuild --release --target $t -p gossamer-runtime" \
+                    cargo zigbuild --release --target "$t" -p gossamer-runtime
+            else
+                echo "musl cross check for $t skipped (run \`rustup target add $t\` to enable)"
+            fi
+        done
+    else
+        echo "musl cross check skipped (install zig >=0.9.0 + \`cargo install cargo-zigbuild\` to enable)"
     fi
 fi
 

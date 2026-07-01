@@ -2510,7 +2510,7 @@ pub fn native_enum_field(owner: &NativeEnumOwner, idx: usize) -> Value {
 /// each retained so the array owns its own reference. An empty / null vec
 /// yields an empty array.
 #[must_use]
-fn native_vec_enum_to_array(word: i64, eidx: u32) -> Value {
+pub(crate) fn native_vec_enum_to_array(word: i64, eidx: u32) -> Value {
     if word == 0 {
         return Value::Array(Arc::new(Vec::new()));
     }
@@ -2545,7 +2545,7 @@ fn native_vec_enum_to_array(word: i64, eidx: u32) -> Value {
 /// `(Value::String, Value::NativeEnum)`. Strings are copied; enum children are
 /// retained so the array owns its own reference.
 #[must_use]
-fn native_vec_str_enum_to_array(word: i64, eidx: u32) -> Value {
+pub(crate) fn native_vec_str_enum_to_array(word: i64, eidx: u32) -> Value {
     if word == 0 {
         return Value::Array(Arc::new(Vec::new()));
     }

@@ -106,6 +106,71 @@ field and its type when the struct is used in a serde call, instead of silently
 dropping the whole struct's serde and surfacing only an opaque unknown-name
 error at the call site.
 
+### Known issue: multi-file projects miss auto-derive for sibling-file structs
+
+`synthesize_serde_impls` and its siblings (`synthesize_derive_impls`,
+`synthesize_type_info`, `types_with_user_fmt`, `types_with_user_method` in
+`gossamer-parse::autoderive`) only scan a source file's top-level items.
+Multi-file bundling (`bundle_sibling_modules`, shipped in 0.17.0) wraps every
+sibling `src/*.gos` file's content in a synthetic `mod <stem> { ... }` block
+before typecheck, so a struct declared in a non-entry file now lives one level
+deeper than these scans reach - unlike name resolution
+(`gossamer-resolve::resolver`), which already recurses into `ItemKind::Mod`
+bodies correctly. The result: `to_json::<T>` / `from_json::<T>` (and the
+`toml` / `yaml` pair), `#[derive(...)]`, and `typeInfo::<T>()` all fail with an
+opaque "cannot find `__gos_serde_from_json_T` in this scope"-style error for
+any struct not declared in the file passed to the compiler, even though
+ordinary functions and fields resolve across files exactly as documented in
+SPEC.md 6.3. Reproduces identically on `gos check`, `gos run`, and `gos build`
+- a front-end resolution failure, so it cannot diverge by tier. Latent since
+`autoderive.rs` was first written; only exposed once multi-file bundling
+landed. Open; not yet fixed.
+
+### CI
+
+- **musl cross builds use `cargo zigbuild`.** The `cross-from-linux` /
+  `cross-from-macos` / `cross-from-windows` jobs build `gossamer-runtime` for
+  `{aarch64,x86_64}-unknown-linux-musl` before cross-linking a `gos`-compiled
+  fixture against it; its native C deps (`ring`, `mimalloc`, `zstd`) need a
+  matching musl sysroot to compile. Linux had no musl-targeted cross-gcc
+  installed at all (`aarch64-linux-musl-gcc` not found); macOS and Windows
+  pointed bare `clang --target=...` at the musl triple, which has no sysroot
+  on either host and failed to find `string.h`. `CC=zig cc` alone does not
+  work as a substitute either: cc-rs always appends its own
+  `--target=<rustc-llvm-triple>` for a clang-family compiler, and that
+  4-component `*-unknown-linux-musl` form is one zig's own target parser
+  rejects outright - it wins over (and breaks) whatever `-target` reaches zig
+  through `CC`. All three jobs now install zig + `cargo-zigbuild` and build
+  the musl legs with `cargo zigbuild`, which reconciles the triple mismatch
+  and bundles the musl sysroot for every host. `check.sh` gained a matching
+  local gate (skips cleanly without zig `>=0.9.0` + `cargo-zigbuild`
+  installed, so a stray old system `zig` never turns into a spurious local
+  failure).
+- **Fixed a broken rustdoc intra-doc link.** Two doc comments in
+  `gossamer-interp/src/jit_call.rs` linked to a `read_native_enum_field` that
+  never existed; the actual readers (`native_vec_enum_to_array` /
+  `native_vec_str_enum_to_array`) live in `value.rs` and were private, so
+  `check.sh`'s rustdoc gate could not have caught this either: it ran
+  `cargo doc` without `--document-private-items`, so rustdoc silently skipped
+  the private items carrying the broken links. Both functions are now
+  `pub(crate)`, the links point at them, and `check.sh` passes
+  `--document-private-items` to match the CI `cargo-doc` job exactly.
+- **Fixed a macOS-only test that assumed the host is never
+  `aarch64-apple-darwin`.** `build_subcommand_accepts_known_target_triple_and_rejects_unknown`
+  asserted that `gos build --target aarch64-apple-darwin` is refused as a
+  non-Linux cross target - true everywhere except an Apple Silicon macOS
+  runner, where that triple *is* the host, so the build takes the ordinary
+  native path and succeeds instead of being refused. `macos-latest` has been
+  Apple Silicon since 2024, so this always failed there. The test now picks
+  the darwin triple for the architecture that is *not* the host.
+  `gos build --target <host-triple>` behaves correctly and was never the bug.
+- Bumped `actions/upload-artifact` to v7 and `actions/download-artifact` to
+  v8 across every workflow (both now default to Node 24, clearing the
+  "forced to run on Node.js 24" warning under Node 20).
+  `cross-from-macos` now untaps the runner image's pre-tapped `aws/tap`
+  before `brew install`, since Homebrew's tap-trust check otherwise warns on
+  every run for a tap this job never uses.
+
 ## 0.22.0 - Comptime code generation, optimizations, core fixes, docs refresh
 
 ### Comptime code generation

@@ -421,9 +421,17 @@ fn build_subcommand_accepts_known_target_triple_and_rejects_unknown() {
     );
     // A registered but non-Linux target cannot be cross-produced from
     // any host (no bundled SDK); it is refused with a specific error,
-    // not silently stubbed.
+    // not silently stubbed. Pick the darwin triple for the *other*
+    // arch: on an Apple Silicon macOS runner (host `aarch64-apple-darwin`,
+    // what `macos-latest` is today) the same-arch triple equals the host
+    // and takes the native, non-cross build path instead of being refused.
+    let other_arch_darwin = if cfg!(target_arch = "aarch64") {
+        "x86_64-apple-darwin"
+    } else {
+        "aarch64-apple-darwin"
+    };
     let darwin = Command::new(gos_bin())
-        .args(["build", "--target", "aarch64-apple-darwin"])
+        .args(["build", "--target", other_arch_darwin])
         .arg(&source_path)
         .output()
         .expect("spawn build --target darwin");
