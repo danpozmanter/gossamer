@@ -125,6 +125,58 @@ fn write_source(dir: &Path, tag: &str, source: &str) -> PathBuf {
     path
 }
 
+/// Writes a multi-file project: a `project.toml` carrying `id` plus each
+/// `(relative_path, contents)` pair under a fresh scratch dir. Returns
+/// the project root.
+fn write_project(tag: &str, id: &str, files: &[(&str, &str)]) -> PathBuf {
+    let dir = fresh_dir(tag);
+    fs::write(
+        dir.join("project.toml"),
+        format!("[project]\nid = \"{id}\"\nversion = \"0.1.0\"\n"),
+    )
+    .unwrap();
+    for (rel, contents) in files {
+        let path = dir.join(rel);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, contents).unwrap();
+    }
+    dir
+}
+
+/// Runs `gos run` at the project root (VM tier), resolving the entry itself.
+fn project_run_vm(dir: &Path) -> (String, String, Option<i32>) {
+    let child = Command::new(gos_bin())
+        .arg("run")
+        .current_dir(dir)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn gos run");
+    run_with_timeout(child)
+}
+
+/// Builds at the project root (Cranelift native) and runs the produced
+/// `id_tail`-named binary from `target/debug`.
+fn project_build_run(dir: &Path, id_tail: &str) -> (String, String, Option<i32>) {
+    let build = Command::new(gos_bin())
+        .arg("build")
+        .current_dir(dir)
+        .output()
+        .expect("spawn gos build");
+    assert!(
+        build.status.success(),
+        "gos build failed:\nstderr: {}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let mut bin = dir.join("target/debug").join(id_tail);
+    if !std::env::consts::EXE_EXTENSION.is_empty() {
+        bin.set_extension(std::env::consts::EXE_EXTENSION);
+    }
+    assert!(bin.is_file(), "expected binary at {}", bin.display());
+    run_native(&bin)
+}
+
 #[test]
 fn cross_file_project_bundles_sibling_modules() {
     let dir = fresh_dir("cross-file");
@@ -1380,5 +1432,172 @@ fn cross_module_struct_field_access_resolves_on_all_tiers() {
         "ada is 37",
         "native stdout mismatch: {:?}",
         nat.0
+    );
+}
+
+#[test]
+fn cross_file_from_json_on_sibling_struct() {
+    // A struct declared in a non-entry file, decoded via `from_json::<T>`
+    // in a THIRD file, driven from `main`. The sibling auto-bundle nests
+    // the struct inside `mod types { ... }`, so the serde synthesizer must
+    // descend into inline modules to emit its per-type functions.
+    let dir = write_project(
+        "xfile-from-json",
+        "example.com/fromjson",
+        &[
+            (
+                "src/types.gos",
+                "pub struct Point {\n    x: i64,\n    y: i64,\n    label: String,\n}\n",
+            ),
+            (
+                "src/codec.gos",
+                "use std::errors\n\
+                 pub fn describe(text: &String) -> String {\n\
+                 \x20   match from_json::<types::Point>(text) {\n\
+                 \x20       Ok(p) => format!(\"{},{},{}\", p.x, p.y, p.label),\n\
+                 \x20       Err(e) => format!(\"err: {}\", e),\n\
+                 \x20   }\n\
+                 }\n",
+            ),
+            (
+                "src/main.gos",
+                "fn main() { println!(\"{}\", codec::describe(&\"{\\\"x\\\":3,\\\"y\\\":4,\\\"label\\\":\\\"origin\\\"}\")) }\n",
+            ),
+        ],
+    );
+    let vm = project_run_vm(&dir);
+    assert_eq!(vm.2, Some(0), "VM stderr: {}", vm.1);
+    assert_eq!(vm.0.trim(), "3,4,origin", "VM stdout: {:?}", vm.0);
+    let nat = project_build_run(&dir, "fromjson");
+    let _ = fs::remove_dir_all(&dir);
+    assert_eq!(nat.2, Some(0), "native stderr: {}", nat.1);
+    assert_eq!(nat.0.trim(), "3,4,origin", "native stdout: {:?}", nat.0);
+}
+
+#[test]
+fn cross_file_to_json_derive_and_typeinfo_on_sibling_struct() {
+    // `to_json::<T>`, an implicit `#[derive(Debug)]` / structural equality,
+    // and `typeInfo::<T>()` over a struct declared in a non-entry file all
+    // reach it through the module-nesting the sibling auto-bundle introduces.
+    let dir = write_project(
+        "xfile-derive",
+        "example.com/derivemod",
+        &[
+            (
+                "src/model.gos",
+                "#[derive(Debug)]\n\
+                 pub struct Rec {\n    id: i64,\n    name: String,\n}\n\
+                 pub fn roundtrip(r: Rec) -> String {\n\
+                 \x20   match to_json::<Rec>(r) {\n\
+                 \x20       Ok(s) => s,\n\
+                 \x20       Err(e) => format!(\"err: {}\", e),\n\
+                 \x20   }\n\
+                 }\n\
+                 pub fn describe() -> String {\n\
+                 \x20   let a = Rec { id: 1, name: \"x\" }\n\
+                 \x20   let b = Rec { id: 1, name: \"x\" }\n\
+                 \x20   let mut fields = \"\"\n\
+                 \x20   for (n, t) in typeInfo::<Rec>() { fields += n; fields += \":\"; fields += t; fields += \";\" }\n\
+                 \x20   format!(\"{:?} eq={} fields={}\", a, a == b, fields)\n\
+                 }\n",
+            ),
+            (
+                "src/main.gos",
+                "fn main() {\n\
+                 \x20   println!(\"{}\", model::roundtrip(model::Rec { id: 7, name: \"hi\" }))\n\
+                 \x20   println!(\"{}\", model::describe())\n\
+                 }\n",
+            ),
+        ],
+    );
+    let expected =
+        "{\"id\":7,\"name\":\"hi\"}\nRec { id: 1, name: x } eq=true fields=id:i64;name:String;";
+    let vm = project_run_vm(&dir);
+    assert_eq!(vm.2, Some(0), "VM stderr: {}", vm.1);
+    assert_eq!(vm.0.trim(), expected, "VM stdout: {:?}", vm.0);
+    let nat = project_build_run(&dir, "derivemod");
+    let _ = fs::remove_dir_all(&dir);
+    assert_eq!(nat.2, Some(0), "native stderr: {}", nat.1);
+    assert_eq!(nat.0.trim(), expected, "native stdout: {:?}", nat.0);
+}
+
+#[test]
+fn cross_file_from_json_nested_struct_on_vm() {
+    // The decoded struct itself carries a nested-struct field, and both
+    // structs live in a non-entry file. The synthesizer must reach the
+    // nested type through the module-nesting to emit its serde functions.
+    let dir = write_project(
+        "xfile-nested",
+        "example.com/nestedmod",
+        &[
+            (
+                "src/types.gos",
+                "pub struct Inner {\n    status: String,\n}\n\
+                 pub struct Outer {\n    is_error: bool,\n    inner: Inner,\n}\n",
+            ),
+            (
+                "src/main.gos",
+                "fn main() {\n\
+                 \x20   match from_json::<types::Outer>(&\"{\\\"is_error\\\":false,\\\"inner\\\":{\\\"status\\\":\\\"ok\\\"}}\") {\n\
+                 \x20       Ok(v) => println!(\"{} {}\", v.is_error, v.inner.status),\n\
+                 \x20       Err(e) => println!(\"err: {}\", e),\n\
+                 \x20   }\n\
+                 }\n",
+            ),
+        ],
+    );
+    let vm = project_run_vm(&dir);
+    let _ = fs::remove_dir_all(&dir);
+    assert_eq!(vm.2, Some(0), "VM stderr: {}", vm.1);
+    assert_eq!(vm.0.trim(), "false ok", "VM stdout: {:?}", vm.0);
+}
+
+#[test]
+fn gos_test_discovers_tests_in_cross_referencing_files() {
+    // A `#[test]` lives in a file whose top-level code names a sibling
+    // module's item by bare name, so the file does not typecheck in
+    // isolation - only against the bundled whole-package source. Test
+    // discovery must parse for `#[test]` names rather than fully checking
+    // each file alone, and execution bundles siblings the same way
+    // `gos run` / `gos build` do, so the test resolves and runs.
+    let dir = write_project(
+        "gos-test-discovery",
+        "example.com/testdisc",
+        &[
+            ("src/helper.gos", "pub fn base() -> i64 { 40 }\n"),
+            (
+                "src/main.gos",
+                "fn total() -> i64 { base() + 2 }\n\
+                 fn main() { println!(\"{}\", total()) }\n\
+                 #[cfg(test)]\n\
+                 mod main_tests {\n\
+                 \x20   use std::testing\n\
+                 \x20   #[test]\n\
+                 \x20   fn total_uses_sibling() {\n\
+                 \x20       testing::check_eq(&super::total(), &42, \"40 + 2\")\n\
+                 \x20   }\n\
+                 }\n",
+            ),
+        ],
+    );
+    let out = Command::new(gos_bin())
+        .arg("test")
+        .current_dir(&dir)
+        .env("NO_COLOR", "1")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .expect("gos test");
+    let _ = fs::remove_dir_all(&dir);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        out.status.success(),
+        "gos test should pass:\nstdout: {stdout}\nstderr: {}",
+        String::from_utf8_lossy(&out.stderr),
+    );
+    assert!(
+        stdout.contains("PASS total_uses_sibling") && stdout.contains("1 passed"),
+        "expected the sibling-referencing test to be discovered and pass:\n{stdout}",
     );
 }

@@ -406,15 +406,35 @@ fn render_lcov(records: &[TestRecord], files: &[PathBuf]) -> String {
 
 fn collect_test_names(file: &Path) -> Result<Vec<String>> {
     let source = read_source(&file.to_path_buf())?;
-    // Augment with synthesized impls (serde + `#[derive(...)]`) before the
-    // source map, exactly as `gos run` / `gos build` do, so tests exercise
-    // the same code those tiers compile.
-    let augmented = gossamer_parse::autoderive::augment_source(&source);
+    // Discover this file's own `#[test]` names from its syntax alone. A full
+    // resolve + typecheck of the file in isolation would fail on any file that
+    // names a sibling module's item by bare name - valid only against the
+    // bundled whole-package source, not one file alone - so parse for the
+    // names. The synthesized serde / derive impls carry no `#[test]`, so the
+    // raw source suffices for discovery.
     let mut map = gossamer_lex::SourceMap::new();
-    let file_id = map.add_file(file.to_string_lossy().into_owned(), augmented.clone());
-    let (_program, sf, _tcx) = load_and_check_with_sf(&augmented, file_id, &map)?;
+    let file_id = map.add_file(file.to_string_lossy().into_owned(), source.clone());
+    let (sf, _diags) = gossamer_parse::parse_source_file(&source, file_id);
     let mut names = Vec::new();
     collect_selected_fn_names(&sf.items, &|item| item_has_attr(item, "test"), &mut names);
+    if names.is_empty() {
+        return Ok(names);
+    }
+    // The file carries tests: refuse to run any if the program does not
+    // statically resolve and typecheck (a harness over broken code is worse
+    // than useless). Validate the bundled whole-package source - the same
+    // augment + comptime-fold + check the execution path uses - so cross-file
+    // references stay valid and a real static error is surfaced with its
+    // "refusing to execute" trailer rather than swallowed.
+    let entry = read_entry_source(&file.to_path_buf())?;
+    let augmented = gossamer_parse::autoderive::augment_source(&entry);
+    let augmented = match crate::comptime_fold::fold_comptime(&augmented, &file.to_string_lossy()) {
+        Ok(folded) => folded,
+        Err(_) => augmented,
+    };
+    let mut check_map = gossamer_lex::SourceMap::new();
+    let check_id = check_map.add_file(file.to_string_lossy().into_owned(), augmented.clone());
+    let _ = load_and_check_with_sf(&augmented, check_id, &check_map)?;
     Ok(names)
 }
 

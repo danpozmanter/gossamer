@@ -106,25 +106,43 @@ field and its type when the struct is used in a serde call, instead of silently
 dropping the whole struct's serde and surfacing only an opaque unknown-name
 error at the call site.
 
-### Known issue: multi-file projects miss auto-derive for sibling-file structs
+### Auto-derived code sees structs in every bundled file
 
-`synthesize_serde_impls` and its siblings (`synthesize_derive_impls`,
-`synthesize_type_info`, `types_with_user_fmt`, `types_with_user_method` in
-`gossamer-parse::autoderive`) only scan a source file's top-level items.
-Multi-file bundling (`bundle_sibling_modules`, shipped in 0.17.0) wraps every
-sibling `src/*.gos` file's content in a synthetic `mod <stem> { ... }` block
-before typecheck, so a struct declared in a non-entry file now lives one level
-deeper than these scans reach - unlike name resolution
-(`gossamer-resolve::resolver`), which already recurses into `ItemKind::Mod`
-bodies correctly. The result: `to_json::<T>` / `from_json::<T>` (and the
-`toml` / `yaml` pair), `#[derive(...)]`, and `typeInfo::<T>()` all fail with an
-opaque "cannot find `__gos_serde_from_json_T` in this scope"-style error for
-any struct not declared in the file passed to the compiler, even though
-ordinary functions and fields resolve across files exactly as documented in
-SPEC.md 6.3. Reproduces identically on `gos check`, `gos run`, and `gos build`
-- a front-end resolution failure, so it cannot diverge by tier. Latent since
-`autoderive.rs` was first written; only exposed once multi-file bundling
-landed. Open; not yet fixed.
+`to_json` / `from_json` (and the `toml` / `yaml` pair), the `#[derive]` /
+structural `fmt` / `eq` / `cmp` synthesis, and `typeInfo::<T>()` reflection now
+reach struct and `impl` declarations wherever they live in a multi-file
+project, not only in the entry file. A package's sibling files are auto-bundled
+by wrapping each in `mod <stem> { ... }`, so a type declared in `src/other.gos`
+sits one module level deep in the merged source; the synthesis passes now
+descend into inline module bodies - the same flattening the resolver already
+applies for name resolution - so `from_json::<T>(...)`, a `#[derive]`, or
+`typeInfo::<T>()` on a type declared in any bundled file resolves the
+synthesized code on `gos check` / `gos run` / `gos build`.
+
+### `gos test` discovers tests in cross-referencing package files
+
+`gos test` collected each file's `#[test]` names by fully resolving and
+typechecking that file in isolation, which failed for any file whose top-level
+code names a sibling module's item by bare name (the shared-root-module layout
+of a multi-file package) - the file only typechecks against the bundled whole
+package. Discovery now parses for `#[test]` names from the syntax alone, so
+every test-bearing file is found; execution still bundles siblings exactly as
+`gos run` / `gos build` do. Previously a multi-file project would report "no
+`#[test]` functions found" (and stream spurious `cannot find <sibling item>`
+errors) whenever a test-bearing file referenced a sibling.
+
+### Nested struct-field reads resolve against the leaf type (tier parity)
+
+Reading a struct-typed field through a projection (`outer.inner.field`) now
+resolves the leaf field against the inner struct's type by walking the pinned
+MIR projection, rather than the root binding's type, so it lowers to a direct
+slot walk on the Cranelift and LLVM tiers. A projected read whose receiver
+carried only partial type info - an inference variable, or the `json::Value`
+default the checker assigns an opaque nested field - is no longer routed through
+the dynamic `json::get` path, so a struct-typed field of an `Ok(..)` / `Some(..)`
+payload (the shape a derived `from_json` returns) reads back bit-identically
+across the VM, Cranelift, and LLVM tiers. Covered by
+`nested_struct_variant_payload.gos` in the tier-parity suite.
 
 ### CI
 
@@ -157,6 +175,33 @@ landed. Open; not yet fixed.
   failure). `release.yml`'s `build-linux-aarch64` job had the identical
   bare-`clang` musl leg (latent - it only runs on a tag push, so it never
   surfaced in regular CI); fixed the same way.
+- **`gos build --target aarch64-unknown-linux-gnu` produced a binary that
+  ran empty under QEMU in CI - two separate bugs, both latent until the
+  zig fix above let the `cross-from-linux` / `cross-from-windows` jobs run
+  far enough to hit them for the first time.** First: `qemu-aarch64` needs
+  the target's *runtime* shared libraries to execute a dynamically-linked
+  aarch64 binary (the gnu leg's link strategy); `apt-get install
+  gcc-aarch64-linux-gnu` only pulls in `libc6-dev-arm64-cross`, which ships
+  headers, static archives, and dev symlinks for *linking* - `dpkg -c`
+  confirms it contains no actual `libc.so.6` / `ld-linux-aarch64.so.1`
+  bytes, only broken symlinks to files it never ships. `cross-from-linux`
+  now enables the `arm64` architecture via Ubuntu's multiarch ports
+  archive and installs the real `libc6:arm64` / `libgcc-s1:arm64` runtime
+  libs, which land at the same absolute multiarch paths the aarch64
+  dynamic linker already searches, so `qemu-aarch64` needs no extra
+  `-L`/sysroot argument. Second, on Windows: cross-linking a musl target
+  invokes rustup's bundled lld directly (never `cc`), and the lookup
+  assumed every host ships a pre-named `gcc-ld/ld.lld` wrapper next to it
+  - true on Linux and macOS, but Windows's toolchain ships the underlying
+  `rust-lld.exe` binary directly under `bin/` without that pre-named
+  per-flavor copy, so the lookup 404'd. The universal lld driver supports
+  selecting the identical GNU/ELF behavior explicitly via a leading
+  `-flavor gnu` argument - exactly the pattern `gos` already uses
+  successfully for the MSVC link path (`-flavor link`) - so
+  `locate_host_lld` now falls back to the bare `rust-lld[.exe]` binary
+  with that flag when the pre-named wrapper is absent. Verified locally by
+  hiding the pre-named wrapper and confirming the fallback path produces a
+  byte-identical binary to the direct-`ld.lld` build.
 - **Fixed a broken rustdoc intra-doc link.** Two doc comments in
   `gossamer-interp/src/jit_call.rs` linked to a `read_native_enum_field` that
   never existed; the actual readers (`native_vec_enum_to_array` /

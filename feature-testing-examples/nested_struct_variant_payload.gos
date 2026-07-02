@@ -1,0 +1,47 @@
+// An enum-variant payload (`Ok(..)` / `Some(..)`) whose struct carries a
+// nested struct-typed field reads that field back correctly on every tier.
+// The read `v.inner.field` is a nested field projection: it must resolve the
+// leaf field against the projected inner struct's type, not the outer binding's
+// type, so it lowers to a real slot walk rather than a dynamic JSON lookup.
+use std::errors
+
+struct Inner { code: i64 }
+struct Outer { structured_output: Inner }
+
+struct A { n: i64, tag: String }
+struct B { a: A, flag: bool }
+struct C { b: B, label: String }
+
+fn make_scalar() -> Result<Outer, errors::Error> {
+    Ok(Outer { structured_output: Inner { code: 42 } })
+}
+
+fn make_opt(k: i64) -> Option<C> {
+    Some(C {
+        b: B { a: A { n: k, tag: format!("t{}", k) }, flag: k > 0 },
+        label: format!("L{}", k),
+    })
+}
+
+fn main() {
+    match make_scalar() {
+        Ok(v) => println!("code={}", v.structured_output.code),
+        Err(e) => println!("err {}", e),
+    }
+
+    let mut sum = 0
+    for i in 0..100 {
+        if let Some(v) = make_opt(i) {
+            sum += v.b.a.n
+        }
+    }
+    println!("sum={}", sum)
+
+    match make_opt(7) {
+        Some(v) => println!(
+            "n={} tag={} flag={} label={}",
+            v.b.a.n, v.b.a.tag, v.b.flag, v.label
+        ),
+        None => println!("none"),
+    }
+}

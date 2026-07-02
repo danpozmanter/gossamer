@@ -400,11 +400,43 @@ impl<'a> Builder<'a> {
                     return Some(dest);
                 }
             }
+            // The field belongs to the receiver's own type, which for a
+            // projected receiver (`outer.inner.field`) is the leaf struct
+            // reached by walking `place`'s projection from the root local's
+            // type (`Inner`), not the root local's own struct (`Outer`).
+            // Resolve it from the pinned MIR types so a stale HIR receiver
+            // type - an inference variable, or the JsonValue default the
+            // checker assigns an opaque nested field - cannot misroute the
+            // read through `gos_rt_json_get`. The receiver-expression and
+            // root-local tags remain as fallbacks for partial type info.
+            let projected_leaf_ty = {
+                let mut leaf = self.locals[place.local.0 as usize].ty;
+                for proj in &place.projection {
+                    let crate::ir::Projection::Field(fidx) = proj else {
+                        continue;
+                    };
+                    let mut walk = leaf;
+                    while let gossamer_types::TyKind::Ref { inner, .. } = self.tcx.kind_of(walk) {
+                        walk = *inner;
+                    }
+                    leaf = match self.tcx.kind_of(walk).clone() {
+                        gossamer_types::TyKind::Adt { def, .. } => self
+                            .tcx
+                            .struct_field_tys(def)
+                            .and_then(|tys| tys.get(*fidx as usize).copied())
+                            .unwrap_or(leaf),
+                        gossamer_types::TyKind::Tuple(elems) => {
+                            elems.get(*fidx as usize).copied().unwrap_or(leaf)
+                        }
+                        _ => leaf,
+                    };
+                }
+                leaf
+            };
             let struct_name = self
-                .local_struct
-                .get(&place.local)
-                .cloned()
-                .or_else(|| self.struct_name_from_expr(receiver));
+                .struct_name_of(projected_leaf_ty)
+                .or_else(|| self.struct_name_from_expr(receiver))
+                .or_else(|| self.local_struct.get(&place.local).cloned());
             if let Some(sname) = struct_name {
                 if let Some(order) = self.structs.get(&sname).cloned() {
                     if let Some(pos) = order.iter().position(|f| f == &name.name) {

@@ -350,6 +350,12 @@ const SPECS: &[Spec] = &[
     // (scalar / string / float / struct payloads, two type parameters,
     // nesting, and an array of generic structs).
     spec("feature-testing-examples/generic_struct_types.gos"),
+    // An enum-variant payload (`Ok(..)` / `Some(..)`) whose struct has a
+    // nested struct-typed field: reading `v.inner.field` after the match must
+    // resolve the leaf against the inner struct's type on every tier, so the
+    // compiled tiers walk the payload's flat slots instead of misrouting the
+    // read to a dynamic JSON lookup (which the VM tolerated but native did not).
+    spec("feature-testing-examples/nested_struct_variant_payload.gos"),
     // Perceus reuse: an owned local reassigned in a loop recycles its dropped
     // block in place on the compiled tiers (the VM does not). Reuse is
     // observationally transparent, so the result must match across tiers; the

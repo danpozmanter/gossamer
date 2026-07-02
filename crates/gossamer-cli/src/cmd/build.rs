@@ -534,26 +534,44 @@ fn cross_cc(lt: &LinkTarget) -> String {
         .unwrap_or_else(|_| format!("{}-linux-gnu-gcc", lt.arch))
 }
 
-/// rustup's bundled `ld.lld`, an ELF-capable linker shipped alongside
-/// every Rust toolchain under the *host* triple's `gcc-ld` dir (it is a
-/// host tool). Used for OS-crossing ELF links, where the host `cc` / `ld`
+/// An ELF/GNU-flavor lld linker for the *host* triple, alongside any
+/// leading flavor-selection arguments the caller must pass before its own
+/// flags. Used for OS-crossing ELF links, where the host `cc` / `ld`
 /// cannot emit the target's object format.
-fn locate_host_lld() -> std::result::Result<PathBuf, NativeBuildError> {
+///
+/// Prefers rustup's pre-named `gcc-ld/ld.lld[.exe]` wrapper (present on
+/// every host this was verified against - Linux, macOS). Some hosts
+/// (observed: Windows) ship the underlying `rust-lld[.exe]` binary
+/// directly under `bin/` without that pre-named per-flavor copy; the
+/// universal lld driver supports selecting the same GNU/ELF behavior
+/// explicitly via a leading `-flavor gnu` argument, so falling back to
+/// the bare binary is equivalent, not a workaround - it's the exact
+/// pattern `link_windows_msvc` already uses successfully with `-flavor
+/// link` to drive the same binary as the MSVC-flavor linker.
+fn locate_host_lld() -> std::result::Result<(PathBuf, &'static [&'static str]), NativeBuildError> {
     let sysroot = rustc_sysroot()?;
     let host = gossamer_driver::TargetTriple::host();
-    let linker = sysroot
+    let bin_dir = sysroot
         .join("lib")
         .join("rustlib")
         .join(host.as_str())
-        .join("bin")
-        .join("gcc-ld")
-        .join("ld.lld");
-    if linker.exists() {
-        return Ok(linker);
+        .join("bin");
+    for name in ["ld.lld", "ld.lld.exe"] {
+        let candidate = bin_dir.join("gcc-ld").join(name);
+        if candidate.exists() {
+            return Ok((candidate, &[]));
+        }
+    }
+    for name in ["rust-lld", "rust-lld.exe"] {
+        let candidate = bin_dir.join(name);
+        if candidate.exists() {
+            return Ok((candidate, &["-flavor", "gnu"]));
+        }
     }
     Err(NativeBuildError::LinkerMissing(format!(
-        "ld.lld not found at {} (needed for OS-crossing ELF links)",
-        linker.display(),
+        "no ELF-capable lld found under {} \
+         (looked for gcc-ld/ld.lld[.exe] and rust-lld[.exe]; needed for OS-crossing ELF links)",
+        bin_dir.display(),
     )))
 }
 
@@ -1024,10 +1042,11 @@ fn link_cross_gnu_lld(
             musl = musl_triple_for_arch(lt.arch),
         )));
     };
-    let linker = locate_host_lld()?;
+    let (linker, flavor_args) = locate_host_lld()?;
     let sysroot = PathBuf::from(sysroot);
     let mut cmd = std::process::Command::new(&linker);
-    cmd.arg("--sysroot")
+    cmd.args(flavor_args)
+        .arg("--sysroot")
         .arg(&sysroot)
         // Emit `.eh_frame_hdr` so the unwinder can locate FDEs through
         // `dl_iterate_phdr` for panic / SIGQUIT backtraces.
@@ -1066,12 +1085,12 @@ fn link_cross_gnu_lld(
     }
 }
 
-/// Static-musl link path - invokes the rustup-shipped `ld.lld` against
-/// rustup's self-contained musl CRT/libc/libunwind for the *target's*
-/// arch. Produces a statically-linked ELF that runs on any Linux host
-/// of that arch regardless of glibc/musl install or version. `ld.lld`
-/// is a host tool (located under the host triple's `gcc-ld` dir) and
-/// emits ELF for any arch from the input objects, so this path is the
+/// Static-musl link path - invokes the rustup-shipped lld (see
+/// [`locate_host_lld`]) against rustup's self-contained musl
+/// CRT/libc/libunwind for the *target's* arch. Produces a statically-linked
+/// ELF that runs on any Linux host of that arch regardless of glibc/musl
+/// install or version. It is a host tool and emits ELF for any arch from
+/// the input objects, so this path is the
 /// host-agnostic cross route: any host with the target's rustup musl
 /// CRT installed can produce the binary. The runtime archive is
 /// resolved by the caller (baked for the host arch, or per-target for a
@@ -1096,10 +1115,11 @@ fn link_posix_static_musl(
             self_contained.display(),
         )));
     }
-    let linker = locate_host_lld()?;
+    let (linker, flavor_args) = locate_host_lld()?;
 
     let mut cmd = std::process::Command::new(&linker);
-    cmd.arg("--static")
+    cmd.args(flavor_args)
+        .arg("--static")
         // Emit `.eh_frame_hdr` + the `PT_GNU_EH_FRAME` program header.
         // The unwinder (`_Unwind_Backtrace`, used by the `backtrace`
         // crate for panic / SIGQUIT traces) locates FDEs through this
