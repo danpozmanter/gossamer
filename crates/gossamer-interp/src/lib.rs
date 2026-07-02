@@ -154,6 +154,7 @@ pub fn flush_runtime_stdout() {
     }
 }
 pub use bytecode::{FnChunk, Op};
+pub use comptime::fold_into_source;
 pub use external_natives::{
     clear_external_natives_for_test, external_natives_snapshot, register_external_native,
 };

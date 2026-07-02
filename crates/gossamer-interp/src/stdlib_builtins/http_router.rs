@@ -106,6 +106,62 @@ use crate::value::{MapKey, NativeCall, NativeDispatch, RuntimeResult, Value};
 /// Entry point invoked from `builtins::install`.
 use super::*;
 
+// Router: free-fn API over a process-global registry. Route
+// registration and pattern lookup are pure computation (no sockets),
+// so this module builds on every target including wasm32; only the
+// serving dispatch (`http::serve`) is socket-bound and stays gated.
+//
+// Process-global (not `thread_local!`): goroutines run on an OS
+// worker-thread pool, so a router handle minted on one thread must
+// resolve on another - `http::serve` dispatches each request's handler
+// on a goroutine that may run on a different worker than the one that
+// built the router. Mirrors the `sync::*` registries. `GlobalReg` is in
+// scope via the `use super::*;` re-export of `set::*`.
+pub(crate) static ROUTER_REGISTRY: GlobalReg<StdHashMap<i64, RefCell<RouterTable>>> =
+    GlobalReg::new(|| parking_lot::ReentrantMutex::new(RefCell::new(StdHashMap::new())));
+pub(crate) static NEXT_ROUTER_ID: GlobalReg<i64> =
+    GlobalReg::new(|| parking_lot::ReentrantMutex::new(RefCell::new(1)));
+
+#[derive(Default)]
+pub(crate) struct RouterTable {
+    pub(crate) routes: Vec<(String, String)>, // (method, pattern)
+}
+
+// Static router-builtin tables are kept at module scope rather than
+// inside `install_http_router` so clippy's `items-after-statements`
+// doesn't fire - and so we never need `Box::leak(format!(…))` for
+// what is conceptually a static lookup. The previous shape leaked
+// process-lifetime strings on first install, which leaksanitizer
+// flagged on fuzz-target exit.
+pub(crate) const ROUTER_FREE_FNS: &[(&str, &str, BuiltinFnPub)] = &[
+    ("http::router::new", "router::new", builtin_router_new),
+    ("http::router::add", "router::add", builtin_router_add),
+    (
+        "http::router::lookup",
+        "router::lookup",
+        builtin_router_lookup,
+    ),
+];
+
+pub(crate) const ROUTER_METHODS: &[(&str, BuiltinFnPub)] = &[
+    ("Router::get", builtin_router_method_get),
+    ("Router::post", builtin_router_method_post),
+    ("Router::put", builtin_router_method_put),
+    ("Router::delete", builtin_router_method_delete),
+    ("Router::patch", builtin_router_method_patch),
+    ("Router::head", builtin_router_method_head),
+    ("Router::options", builtin_router_method_options),
+];
+
+// Module-local (not the `http_sse` glob export): `http_sse` is gated
+// off wasm32 while this module is not.
+fn arg_str(v: Option<&Value>) -> String {
+    match v {
+        Some(Value::String(s)) => s.as_str().to_string(),
+        _ => String::new(),
+    }
+}
+
 pub(crate) fn install_http_router(globals: &mut Vec<(&'static str, Value)>) {
     for &(qualified, short, call) in ROUTER_FREE_FNS {
         globals.push((qualified, crate::builtins::builtin_pub(qualified, call)));

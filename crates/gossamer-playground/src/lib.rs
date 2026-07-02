@@ -140,6 +140,27 @@ fn run_pipeline(user_source: &str) -> Result<(), String> {
     // source so the program has genuine methods, exactly as `gos run`
     // does before checking.
     let source = gossamer_parse::autoderive::augment_source(user_source);
+
+    gossamer_interp::set_stdout_writer(capture_stdout);
+    gossamer_interp::set_stderr_writer(capture_stderr);
+
+    // Comptime fold: evaluate `comptime { ... }` / `comptime fn` calls
+    // on the VM and splice their result literals in, exactly as the
+    // `gos run` pre-pass does. A front-end rejection skips the fold so
+    // the authoritative gate below reports it.
+    let source = if source.contains("comptime") {
+        let mut fold_map = SourceMap::new();
+        let fold_file = fold_map.add_file(ENTRY_NAME.to_string(), source.clone());
+        match front_end(&source, fold_file) {
+            (_, Some((program, tcx))) => {
+                gossamer_interp::fold_into_source(&program, tcx, &source, ENTRY_NAME)?
+            }
+            _ => source,
+        }
+    } else {
+        source
+    };
+
     let mut map = SourceMap::new();
     let file_id = map.add_file(ENTRY_NAME.to_string(), source.clone());
 
@@ -161,8 +182,6 @@ fn run_pipeline(user_source: &str) -> Result<(), String> {
         ));
     };
 
-    gossamer_interp::set_stdout_writer(capture_stdout);
-    gossamer_interp::set_stderr_writer(capture_stderr);
     gossamer_interp::set_program_name(ENTRY_NAME);
     gossamer_interp::set_program_args(&[]);
 

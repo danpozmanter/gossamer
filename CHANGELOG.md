@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.23.1 - Playground parity: router, comptime, multi-program sessions
+
+### `std::http::router` pattern lookup in the playground
+
+The stateless router surface (`router::new` / `router::add` /
+`router::lookup`, `Router::new` with its verb-method registration, and the
+`Request::path_value` / `path_int` / `path_float` extractors) is pure
+computation, so it is now linked into the wasm playground instead of being
+gated out with the socket-bound HTTP stack. Route registration and lookup run
+in the browser bit-identical to native `gos run`; serving (`http::serve`)
+remains unavailable on wasm. The router registry moved from the wasm-gated
+websocket module into `http_router` itself so the module builds on every
+target. The homepage's request-router example now runs in the playground.
+
+### Comptime folds in the playground
+
+The comptime evaluate-and-splice core moved from the CLI into
+`gossamer-interp` (`fold_into_source`) and the playground runs it ahead of
+its pipeline exactly as `gos run` / `gos build` / `gos check` / `gos test`
+do. `comptime { ... }` blocks, `comptime fn` calls, and `codegen!` splices
+fold to the same literals in the browser as on every native tier.
+
+### Goroutine worker reuse is keyed to the program
+
+A pooled worker's cached VM is reused only for the program whose globals it
+was built from, and rebuilt otherwise. A thread can outlive one program - the
+wasm playground runs every goroutine on the main thread across successive
+`run()` calls, and an embedding can load several programs in one process - so
+goroutines spawned by a later program now always resolve callees against that
+program's own globals instead of the first program's.
+
 ## 0.23.0 - Raspberry Pi target, limited cross-compilation, optimizations and fixes.
 
 ### Raspberry Pi (aarch64-linux) as a verified target

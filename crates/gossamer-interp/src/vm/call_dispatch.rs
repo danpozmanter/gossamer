@@ -250,7 +250,15 @@ impl Vm {
             THREAD_VM.with(|cell| {
                 let vm_cell = cell.get_or_init(|| std::cell::RefCell::new(None));
                 let mut slot = vm_cell.borrow_mut();
-                if slot.is_none() {
+                // The cached `Vm` is only valid for the program whose
+                // globals it was built from. A thread can outlive one
+                // program (wasm runs every task on the main thread; an
+                // embedding may load several programs in one process),
+                // so key reuse on the globals `Arc` identity.
+                let reusable = slot
+                    .as_ref()
+                    .is_some_and(|vm| Arc::ptr_eq(&vm.globals, &globals));
+                if !reusable {
                     // The worker `Vm` shares the parent's loaded globals
                     // (user fns, consts, statics, ADT ctors) via the
                     // `Arc`, so every callable a Native builtin resolves

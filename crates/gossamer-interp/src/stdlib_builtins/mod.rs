@@ -166,7 +166,8 @@ pub(crate) fn install(globals: &mut Vec<(&'static str, Value)>) {
     install_http_proxy(globals);
     #[cfg(not(target_arch = "wasm32"))]
     install_http_websocket(globals);
-    #[cfg(not(target_arch = "wasm32"))]
+    // Route registration + pattern lookup are pure (no sockets), so the
+    // wasm playground gets the router surface; only serving stays gated.
     install_http_router(globals);
     #[cfg(not(target_arch = "wasm32"))]
     install_http_middleware(globals);
@@ -269,7 +270,6 @@ pub mod http_native_client;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod http_proxy;
 pub mod http_request_values;
-#[cfg(not(target_arch = "wasm32"))]
 pub mod http_router;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod http_security;
@@ -391,9 +391,7 @@ pub(crate) use http_proxy::install_http_proxy;
 pub use http_proxy::*;
 pub(crate) use http_request_values::install_http_request_values;
 pub use http_request_values::*;
-#[cfg(not(target_arch = "wasm32"))]
 pub(crate) use http_router::install_http_router;
-#[cfg(not(target_arch = "wasm32"))]
 pub use http_router::*;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use http_security::install_http_security;
