@@ -17,8 +17,7 @@
 /// barrier occupies every worker without deadlocking on a queued task.
 fn pool_workers() -> usize {
     std::thread::available_parallelism()
-        .map(std::num::NonZeroUsize::get)
-        .unwrap_or(4)
+        .map_or(4, std::num::NonZeroUsize::get)
         .min(64)
 }
 
