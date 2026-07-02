@@ -501,7 +501,20 @@ jobs:
           codename="$(. /etc/os-release && echo "$VERSION_CODENAME")"
           echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports ${codename} main universe" \
             | sudo tee /etc/apt/sources.list.d/arm64.list
-          sudo apt-get update
+          # Scope this update to ONLY the new source file. Registering
+          # arm64 with dpkg makes apt query EVERY already-configured
+          # source for it too, and the runner's default sources
+          # (archive.ubuntu.com's mirror, security.ubuntu.com) don't
+          # carry arm64 packages at all - a plain `apt-get update` here
+          # 404s on all of them. `sourceparts=-` disables the
+          # sources.list.d directory scan and `sourcelist` names only the
+          # new file, so nothing else is touched. Verified with
+          # `apt-get update --print-uris` against this exact config: only
+          # ports.ubuntu.com URIs are produced.
+          sudo apt-get update \
+            -o Dir::Etc::sourcelist="/etc/apt/sources.list.d/arm64.list" \
+            -o Dir::Etc::sourceparts="-" \
+            -o APT::Get::List-Cleanup="0"
           sudo apt-get install -y libc6:arm64 libgcc-s1:arm64
       - name: Build the target runtime archives
         # The gnu leg's native C deps (ring, mimalloc, zstd) cross-compile

@@ -42,6 +42,12 @@ for artifact in "$BINS_ROOT"/*/; do
             case "$src" in \#*) continue ;; esac
             stem="$(basename "$src" .gos)"
             bin="$tdir$stem"
+            # actions/upload-artifact and download-artifact do not preserve
+            # Unix file permissions - every downloaded file lands as 644
+            # regardless of what it was uploaded as - so the executable bit
+            # set at cross-build time never survives the round trip and
+            # must be restored before running.
+            [ -f "$bin" ] && chmod +x "$bin"
             [ -x "$bin" ] || { echo "::error::missing binary $bin"; rc=1; continue; }
             vm_out="$("$GOS" run "$ROOT/$src")"
             if [ -z "$runner" ]; then

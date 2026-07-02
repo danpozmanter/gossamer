@@ -189,7 +189,15 @@ across the VM, Cranelift, and LLVM tiers. Covered by
   archive and installs the real `libc6:arm64` / `libgcc-s1:arm64` runtime
   libs, which land at the same absolute multiarch paths the aarch64
   dynamic linker already searches, so `qemu-aarch64` needs no extra
-  `-L`/sysroot argument. Second, on Windows: cross-linking a musl target
+  `-L`/sysroot argument. Registering `arm64` with `dpkg` makes apt query
+  *every* already-configured source for it too, and the runner's default
+  sources (`security.ubuntu.com` among them) don't carry arm64 packages
+  at all, so a plain `apt-get update` afterward 404s across the board;
+  the `apt-get update` that actually installs the runtime libs is scoped
+  to just the new ports.ubuntu.com source (`Dir::Etc::sourcelist` +
+  `sourceparts=-`) so nothing else is queried - verified with `apt-get
+  update --print-uris` against the exact same config. Second, on
+  Windows: cross-linking a musl target
   invokes rustup's bundled lld directly (never `cc`), and the lookup
   assumed every host ships a pre-named `gcc-ld/ld.lld` wrapper next to it
   - true on Linux and macOS, but Windows's toolchain ships the underlying
@@ -202,6 +210,19 @@ across the VM, Cranelift, and LLVM tiers. Covered by
   with that flag when the pre-named wrapper is absent. Verified locally by
   hiding the pre-named wrapper and confirming the fallback path produces a
   byte-identical binary to the direct-`ld.lld` build.
+- **`cross-run-under-qemu` reported every single cross-built fixture as
+  "missing"**, even though `cross-from-macos` / `cross-from-windows` had
+  just built and uploaded all of them successfully. Root cause is a
+  documented GitHub Actions limitation, not a missing file:
+  `actions/upload-artifact` / `download-artifact` do not preserve Unix
+  file permissions - every downloaded file lands as `644` regardless of
+  what it was uploaded as, so the executable bit `gos build` set at
+  cross-build time never survives the round trip, and `[ -x "$bin" ]` in
+  `scripts/qemu_diff_against_vm.sh` failed for all of them before even
+  attempting to run one. The script now restores the executable bit on
+  each binary right before checking/running it. Verified by reproducing
+  the exact failure (copying a real cross-built binary to `644`) and
+  confirming the fixed script runs it and matches the VM.
 - **Fixed a broken rustdoc intra-doc link.** Two doc comments in
   `gossamer-interp/src/jit_call.rs` linked to a `read_native_enum_field` that
   never existed; the actual readers (`native_vec_enum_to_array` /
