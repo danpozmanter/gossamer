@@ -146,107 +146,29 @@ across the VM, Cranelift, and LLVM tiers. Covered by
 
 ### CI
 
-- **musl cross builds use `cargo zigbuild`.** The `cross-from-linux` /
-  `cross-from-macos` / `cross-from-windows` jobs build `gossamer-runtime` for
-  `{aarch64,x86_64}-unknown-linux-musl` before cross-linking a `gos`-compiled
-  fixture against it; its native C deps (`ring`, `mimalloc`, `zstd`) need a
-  matching musl sysroot to compile. Linux had no musl-targeted cross-gcc
-  installed at all (`aarch64-linux-musl-gcc` not found); macOS and Windows
-  pointed bare `clang --target=...` at the musl triple, which has no sysroot
-  on either host and failed to find `string.h`. `CC=zig cc` alone does not
-  work as a substitute either: cc-rs always appends its own
-  `--target=<rustc-llvm-triple>` for a clang-family compiler, and that
-  4-component `*-unknown-linux-musl` form is one zig's own target parser
-  rejects outright - it wins over (and breaks) whatever `-target` reaches zig
-  through `CC`. All three jobs now install zig + `cargo-zigbuild` and build
-  the musl legs with `cargo zigbuild`, which reconciles the triple mismatch
-  and bundles the musl sysroot for every host. Zig itself is installed by a
-  plain `curl`/`tar` (Linux, macOS) or `Invoke-WebRequest`/`Expand-Archive`
-  (Windows) step straight from `ziglang.org/download`, not a marketplace
-  action: `mlugg/setup-zig@v1` still declares a Node 20 runtime (a
-  recurring deprecation warning), and separately, that major's tarball-name
-  construction predates Zig's `>=0.14.1` naming convention
-  (`zig-<arch>-<os>-<version>`), so it 404s on every mirror and the
-  official fallback for any current release - confirmed against
-  `ziglang.org/download/index.json`, which is the source of truth used
-  here instead. `check.sh` gained a matching local gate (skips cleanly
-  without zig `>=0.9.0` + `cargo-zigbuild`
-  installed, so a stray old system `zig` never turns into a spurious local
-  failure). `release.yml`'s `build-linux-aarch64` job had the identical
-  bare-`clang` musl leg (latent - it only runs on a tag push, so it never
-  surfaced in regular CI); fixed the same way.
-- **`gos build --target aarch64-unknown-linux-gnu` produced a binary that
-  ran empty under QEMU in CI - two separate bugs, both latent until the
-  zig fix above let the `cross-from-linux` / `cross-from-windows` jobs run
-  far enough to hit them for the first time.** First: `qemu-aarch64` needs
-  the target's *runtime* shared libraries to execute a dynamically-linked
-  aarch64 binary (the gnu leg's link strategy); `apt-get install
-  gcc-aarch64-linux-gnu` only pulls in `libc6-dev-arm64-cross`, which ships
-  headers, static archives, and dev symlinks for *linking* - `dpkg -c`
-  confirms it contains no actual `libc.so.6` / `ld-linux-aarch64.so.1`
-  bytes, only broken symlinks to files it never ships. `cross-from-linux`
-  now enables the `arm64` architecture via Ubuntu's multiarch ports
-  archive and installs the real `libc6:arm64` / `libgcc-s1:arm64` runtime
-  libs, which land at the same absolute multiarch paths the aarch64
-  dynamic linker already searches, so `qemu-aarch64` needs no extra
-  `-L`/sysroot argument. Registering `arm64` with `dpkg` makes apt query
-  *every* already-configured source for it too, and the runner's default
-  sources (`security.ubuntu.com` among them) don't carry arm64 packages
-  at all, so a plain `apt-get update` afterward 404s across the board;
-  the `apt-get update` that actually installs the runtime libs is scoped
-  to just the new ports.ubuntu.com source (`Dir::Etc::sourcelist` +
-  `sourceparts=-`) so nothing else is queried - verified with `apt-get
-  update --print-uris` against the exact same config. Second, on
-  Windows: cross-linking a musl target
-  invokes rustup's bundled lld directly (never `cc`), and the lookup
-  assumed every host ships a pre-named `gcc-ld/ld.lld` wrapper next to it
-  - true on Linux and macOS, but Windows's toolchain ships the underlying
-  `rust-lld.exe` binary directly under `bin/` without that pre-named
-  per-flavor copy, so the lookup 404'd. The universal lld driver supports
-  selecting the identical GNU/ELF behavior explicitly via a leading
-  `-flavor gnu` argument - exactly the pattern `gos` already uses
-  successfully for the MSVC link path (`-flavor link`) - so
-  `locate_host_lld` now falls back to the bare `rust-lld[.exe]` binary
-  with that flag when the pre-named wrapper is absent. Verified locally by
-  hiding the pre-named wrapper and confirming the fallback path produces a
-  byte-identical binary to the direct-`ld.lld` build.
-- **`cross-run-under-qemu` reported every single cross-built fixture as
-  "missing"**, even though `cross-from-macos` / `cross-from-windows` had
-  just built and uploaded all of them successfully. Root cause is a
-  documented GitHub Actions limitation, not a missing file:
-  `actions/upload-artifact` / `download-artifact` do not preserve Unix
-  file permissions - every downloaded file lands as `644` regardless of
-  what it was uploaded as, so the executable bit `gos build` set at
-  cross-build time never survives the round trip, and `[ -x "$bin" ]` in
-  `scripts/qemu_diff_against_vm.sh` failed for all of them before even
-  attempting to run one. The script now restores the executable bit on
-  each binary right before checking/running it. Verified by reproducing
-  the exact failure (copying a real cross-built binary to `644`) and
-  confirming the fixed script runs it and matches the VM.
-- **Fixed a broken rustdoc intra-doc link.** Two doc comments in
-  `gossamer-interp/src/jit_call.rs` linked to a `read_native_enum_field` that
-  never existed; the actual readers (`native_vec_enum_to_array` /
-  `native_vec_str_enum_to_array`) live in `value.rs` and were private, so
-  `check.sh`'s rustdoc gate could not have caught this either: it ran
-  `cargo doc` without `--document-private-items`, so rustdoc silently skipped
-  the private items carrying the broken links. Both functions are now
-  `pub(crate)`, the links point at them, and `check.sh` passes
-  `--document-private-items` to match the CI `cargo-doc` job exactly.
-- **Fixed a macOS-only test that assumed the host is never
-  `aarch64-apple-darwin`.** `build_subcommand_accepts_known_target_triple_and_rejects_unknown`
-  asserted that `gos build --target aarch64-apple-darwin` is refused as a
-  non-Linux cross target - true everywhere except an Apple Silicon macOS
-  runner, where that triple *is* the host, so the build takes the ordinary
-  native path and succeeds instead of being refused. `macos-latest` has been
-  Apple Silicon since 2024, so this always failed there. The test now picks
-  the darwin triple for the architecture that is *not* the host.
-  `gos build --target <host-triple>` behaves correctly and was never the bug.
-- Bumped `actions/upload-artifact` to v7 and `actions/download-artifact` to
-  v8 across every workflow (both now default to Node 24, clearing the
-  "forced to run on Node.js 24" warning under Node 20).
-  `cross-from-macos` now untaps the runner image's pre-tapped `aws/tap`
-  before `brew install`, since Homebrew's tap-trust check otherwise warns on
-  every run for a tap this job never uses.
+- musl cross builds (`cross-from-{linux,macos,windows}`, and `release.yml`'s
+  aarch64 leg) now go through `cargo zigbuild` instead of a bare cross
+  compiler, which had no musl sysroot on any host. Zig is installed via a
+  plain `curl`/`tar` step rather than `mlugg/setup-zig` (stale tarball-name
+  assumption plus a Node 20 runtime). `check.sh` gained a matching local
+  gate.
+- Fixed the cross-compilation bugs that surfaced once the above let the
+  Linux/Windows QEMU jobs actually run: `qemu-aarch64` needs the real
+  aarch64 runtime libs (installed via Ubuntu's arm64 multiarch archive,
+  version-matched to the host's pockets); the Windows lld lookup now falls
+  back to `rust-lld -flavor gnu` when the pre-named `gcc-ld/ld.lld` wrapper
+  isn't shipped; cross-built Windows binaries no longer get a stray `.exe`
+  (`platform_exe_name` was keying off the host OS instead of the target's);
+  and the QEMU-diff script restores the executable bit that
+  upload/download-artifact strips from every file.
+- Fixed a broken rustdoc intra-doc link in `jit_call.rs`; `check.sh` now
+  passes `--document-private-items` to `cargo doc` so this class of bug
+  fails locally.
+- Fixed a macOS test that assumed the host is never `aarch64-apple-darwin`
+  (false since `macos-latest` went Apple Silicon in 2024).
+- Bumped `actions/upload-artifact`/`download-artifact`/etc. off Node 20;
+  `cross-from-macos` untaps the runner's pre-tapped `aws/tap` to silence a
+  Homebrew warning.
 
 ## 0.22.0 - Comptime code generation, optimizations, core fixes, docs refresh
 

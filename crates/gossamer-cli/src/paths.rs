@@ -483,7 +483,19 @@ pub(crate) fn default_unit_name(file: &Path) -> String {
 /// 2. `<project-root>/target/{debug,release}/<unit>`.
 /// 3. `<source-dir>/target/{debug,release}/<unit>` for loose-file
 ///    builds with no manifest.
-pub(crate) fn resolve_output_path(file: &Path, unit_name: &str, release: bool) -> Result<PathBuf> {
+///
+/// `target_is_windows` names the *produced binary's* OS, which is the
+/// host's only for a native build - a `--target` cross build is always
+/// Linux (the only OS `gos build` can cross-produce), regardless of which
+/// OS the compiler itself runs on. Using `cfg!(windows)` (the host) here
+/// unconditionally would misname a Linux binary cross-built from a
+/// Windows host with a trailing `.exe`.
+pub(crate) fn resolve_output_path(
+    file: &Path,
+    unit_name: &str,
+    release: bool,
+    target_is_windows: bool,
+) -> Result<PathBuf> {
     if let Some(manifest_path) = gossamer_pkg::find_manifest(file) {
         let manifest_text =
             fs::read_to_string(&manifest_path).map_err(|e| friendly_io_error(e, &manifest_path))?;
@@ -495,7 +507,7 @@ pub(crate) fn resolve_output_path(file: &Path, unit_name: &str, release: bool) -
             // platform executable suffix on Windows, or the linker
             // writes a non-runnable extensionless file. An explicit
             // extension (`tool.exe`, `tool.bin`) is left untouched.
-            if cfg!(windows) && raw.extension().is_none() {
+            if target_is_windows && raw.extension().is_none() {
                 raw.set_extension("exe");
             }
             let resolved = if raw.is_absolute() {
@@ -512,7 +524,7 @@ pub(crate) fn resolve_output_path(file: &Path, unit_name: &str, release: bool) -
             let target_dir = root.join("target").join(profile);
             fs::create_dir_all(&target_dir)
                 .map_err(|e| anyhow!("creating {}: {e}", target_dir.display()))?;
-            return Ok(target_dir.join(platform_exe_name(unit_name)));
+            return Ok(target_dir.join(platform_exe_name(unit_name, target_is_windows)));
         }
     }
     let parent = file.parent().filter(|p| !p.as_os_str().is_empty());
@@ -521,13 +533,14 @@ pub(crate) fn resolve_output_path(file: &Path, unit_name: &str, release: bool) -
     let target_dir = base.join("target").join(profile);
     fs::create_dir_all(&target_dir)
         .map_err(|e| anyhow!("creating {}: {e}", target_dir.display()))?;
-    Ok(target_dir.join(platform_exe_name(unit_name)))
+    Ok(target_dir.join(platform_exe_name(unit_name, target_is_windows)))
 }
 
-/// Binary name with the correct platform extension: `stem.exe` on Windows,
-/// bare `stem` on every other platform.
-pub(crate) fn platform_exe_name(stem: &str) -> String {
-    if cfg!(windows) {
+/// Binary name with the correct platform extension: `stem.exe` when the
+/// *produced binary's* target OS is Windows, bare `stem` otherwise. See
+/// [`resolve_output_path`] for why this is not simply `cfg!(windows)`.
+pub(crate) fn platform_exe_name(stem: &str, target_is_windows: bool) -> String {
+    if target_is_windows {
         format!("{stem}.exe")
     } else {
         stem.to_owned()

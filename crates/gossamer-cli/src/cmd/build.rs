@@ -160,18 +160,20 @@ fn musl_runtime_available() -> bool {
 
 /// Resolve where the linked binary should land. `--out-dir` wins
 /// when supplied; otherwise the project-relative `target/` layout
-/// rules.
+/// rules. `target_is_windows` is the *produced binary's* OS (see
+/// [`resolve_output_path`]), not necessarily the host's.
 fn output_path(
     file: &Path,
     unit_name: &str,
     release: bool,
     out_dir: Option<&Path>,
+    target_is_windows: bool,
 ) -> Result<PathBuf> {
     if let Some(dir) = out_dir {
         fs::create_dir_all(dir).map_err(|e| anyhow!("creating {}: {e}", dir.display()))?;
-        return Ok(dir.join(platform_exe_name(unit_name)));
+        return Ok(dir.join(platform_exe_name(unit_name, target_is_windows)));
     }
-    resolve_output_path(file, unit_name, release)
+    resolve_output_path(file, unit_name, release, target_is_windows)
 }
 
 fn run(
@@ -215,7 +217,11 @@ fn run(
     };
 
     let unit_name = default_unit_name(file);
-    let out_path = output_path(file, &unit_name, release, out_dir)?;
+    // `cross_target` is `Some` only for a validated `*-linux-*` triple (see
+    // above), so a cross build's produced binary is never Windows even when
+    // the host compiling it is.
+    let target_is_windows = cross_target.is_none() && cfg!(windows);
+    let out_path = output_path(file, &unit_name, release, out_dir, target_is_windows)?;
     let checked = gossamer_driver::CheckedFrontend {
         sf,
         resolutions,

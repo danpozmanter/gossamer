@@ -499,8 +499,20 @@ jobs:
           # shared unwinder (panic=unwind is load-bearing here).
           sudo dpkg --add-architecture arm64
           codename="$(. /etc/os-release && echo "$VERSION_CODENAME")"
-          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports ${codename} main universe" \
-            | sudo tee /etc/apt/sources.list.d/arm64.list
+          # `libc6` / `libgcc-s1` are `Multi-Arch: same`, which requires the
+          # arm64 build to be the *exact same version* as the amd64 one
+          # already installed. The base `noble` pocket on ports.ubuntu.com
+          # is the GA release; the amd64 packages already on the runner
+          # come from `noble-updates`/`noble-security` point releases, a
+          # newer version - mirror all three pockets so apt can actually
+          # find a matching arm64 version instead of refusing the install
+          # with an unsatisfiable-dependency wall (which cascades into
+          # "remove half the base system").
+          {
+            echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports ${codename} main universe"
+            echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports ${codename}-updates main universe"
+            echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports ${codename}-security main universe"
+          } | sudo tee /etc/apt/sources.list.d/arm64.list
           # Scope this update to ONLY the new source file. Registering
           # arm64 with dpkg makes apt query EVERY already-configured
           # source for it too, and the runner's default sources
