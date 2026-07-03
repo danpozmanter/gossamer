@@ -35,6 +35,10 @@ pub enum JitKind {
     F64,
     /// A 1-bit boolean represented as `i8` in the cranelift ABI.
     Bool,
+    /// A Unicode scalar (`char`) crossing the boundary as its `u32` code
+    /// point in an integer register. The trampoline reads a `Value::Char`
+    /// for a parameter and re-wraps a returned word through `char::from_u32`.
+    Char,
     /// The unit value (no representation; the body has no return).
     Unit,
     /// A runtime [`gossamer_runtime::GossamerValue`] - the u64-packed shape the
@@ -331,43 +335,63 @@ fn jit_compile_set<'a>(
     // inside the JIT'd region (no boundary crossing) and compiles natively as
     // the AOT tier compiles it, so it must not gate compilation.
     let uses_i128_repr = |b: &Body| -> bool {
-        b.locals.iter().any(|l| match tcx.kind_of(l.ty) {
-            TyKind::Int(gossamer_types::IntTy::I128 | gossamer_types::IntTy::U128) => true,
-            TyKind::Adt { def, .. } => {
-                if def.local == u32::MAX {
-                    return false;
+        b.locals.iter().enumerate().any(|(idx, l)| {
+            let hit = match tcx.kind_of(l.ty) {
+                TyKind::Int(gossamer_types::IntTy::I128 | gossamer_types::IntTy::U128) => true,
+                TyKind::Adt { def, .. } => {
+                    if def.local == u32::MAX {
+                        return false;
+                    }
+                    if def.local == u32::MAX - 1 {
+                        return !jit_option_locals_ok();
+                    }
+                    if tcx.is_inline_enum_ty(l.ty) {
+                        return true;
+                    }
+                    // Opaque stdlib-handle sentinels (the high def-id band) that
+                    // carry no marshalling shape stay on bytecode; ordinary user
+                    // structs / enums (small def-ids) are lowerable even when they
+                    // are not all-scalar (e.g. the `Parser` struct), so they are
+                    // admitted as internal JIT'd locals.
+                    let is_sentinel = def.local >= u32::MAX - 64;
+                    is_sentinel
+                        && !tcx.is_rc_managed(l.ty)
+                        && ty_to_kind(tcx, l.ty, enum_shapes, struct_shapes).is_none()
                 }
-                if def.local == u32::MAX - 1 || tcx.is_inline_enum_ty(l.ty) {
-                    return true;
-                }
-                // Opaque stdlib-handle sentinels (the high def-id band) that
-                // carry no marshalling shape stay on bytecode; ordinary user
-                // structs / enums (small def-ids) are lowerable even when they
-                // are not all-scalar (e.g. the `Parser` struct), so they are
-                // admitted as internal JIT'd locals.
-                let is_sentinel = def.local >= u32::MAX - 64;
-                is_sentinel
-                    && !tcx.is_rc_managed(l.ty)
-                    && ty_to_kind(tcx, l.ty, enum_shapes, struct_shapes).is_none()
+                _ => false,
+            };
+            if hit && std::env::var("GOS_JIT_TRACE").is_ok() {
+                eprintln!(
+                    "jit: i128-local {} local#{idx} kind={:?}",
+                    b.name,
+                    tcx.kind_of(l.ty)
+                );
             }
-            _ => false,
+            hit
         })
     };
-    // Seed the compile set ONLY from bodies that can actually be promoted.
-    // `main` is never promoted (the VM keeps it on bytecode), so seeding from
-    // it just drags its exclusive callees - e.g. a tuple-returning `build` that
-    // is itself unpromotable - into compilation for no benefit. Worse, one such
-    // dragged-in helper using a construct the codegen can't lower would fail the
-    // whole module and zero out promotion for every other function. Excluding
-    // `main` here matches `has_worthy_jit_body` / `jit_eager_loop_bodies`, which
-    // already gate on `b.name != "main"`, so a body reaches the compile set only
-    // as a promotable root or a genuine callee of one.
+    // Seed the compile set from every body that can be promoted - including a
+    // top-level `main` whose hot loop lives directly in it (the DP / array
+    // benchmarks). `main` reaches native code the same way any other body does:
+    // it is compiled here, `compile_to_jit` retries without it if its own body
+    // is un-lowerable, and the VM dispatches at its single eager call. A body
+    // that is not itself promotable but is reachable from a promotable root is
+    // pulled in by the BFS below so intra-module calls resolve.
+    let trace = std::env::var("GOS_JIT_TRACE").is_ok();
     let mut included: std::collections::HashSet<&str> = bodies
         .iter()
         .filter(|b| {
-            b.name != "main"
-                && body_kinds(b, tcx, enum_shapes, struct_shapes).is_some()
-                && !uses_i128_repr(b)
+            let kinds_ok = body_kinds(b, tcx, enum_shapes, struct_shapes).is_some();
+            let i128_hit = uses_i128_repr(b);
+            let goroutine_hit = body_has_cross_goroutine_ops(b);
+            if trace && (!kinds_ok || i128_hit || goroutine_hit) {
+                eprintln!(
+                    "jit: seed-reject {} (kinds_ok={kinds_ok} i128={i128_hit} \
+                     goroutine={goroutine_hit})",
+                    b.name
+                );
+            }
+            kinds_ok && !i128_hit && !goroutine_hit
         })
         .map(|b| b.name.as_str())
         .collect();
@@ -379,7 +403,9 @@ fn jit_compile_set<'a>(
         };
         let (calls, _) = body_user_calls(body, &all_names, &def_to_name);
         for callee in calls {
-            let ok = body_map.get(callee).is_some_and(|b| !uses_i128_repr(b));
+            let ok = body_map
+                .get(callee)
+                .is_some_and(|b| !uses_i128_repr(b) && !body_has_cross_goroutine_ops(b));
             if ok && included.insert(callee) {
                 worklist.push(callee);
             }
@@ -399,6 +425,12 @@ fn jit_compile_set<'a>(
             let (calls, unresolved) = body_user_calls(body, &all_names, &def_to_name);
             let calls_excluded = calls.iter().any(|c| !included.contains(c));
             if unresolved || calls_excluded {
+                if trace {
+                    eprintln!(
+                        "jit: propagate-reject {name} (unresolved={unresolved} \
+                         excluded_callee={calls_excluded})"
+                    );
+                }
                 included.remove(name);
                 removed = true;
             }
@@ -460,16 +492,16 @@ pub fn has_worthy_jit_body(
         false
     };
     bodies.iter().any(|b| {
-        b.name != "main"
-            && body_kinds(b, tcx, enum_shapes, struct_shapes).is_some()
+        body_kinds(b, tcx, enum_shapes, struct_shapes).is_some()
             && (body_has_loop(b) || reaches_self(b.name.as_str()))
     })
 }
 
 /// Names of the bodies worth JIT-compiling on their *first* call rather
-/// than after a call-count threshold: a promotable (non-`main`, scalar-ABI,
-/// JIT-lowerable) helper that contains a loop or is part of a recursive
-/// call chain, so native code amortizes the VM<->native boundary. Promoting
+/// than after a call-count threshold: a promotable (scalar-ABI,
+/// JIT-lowerable) body - including `main` itself - that contains a loop
+/// or is part of a recursive call chain, so native code amortizes the
+/// VM<->native boundary. Promoting
 /// these eagerly lets a hot loop inside a rarely-called (even once-called)
 /// function reach native code at all - a once-called function never trips a
 /// call counter, yet its first call still pays for the whole loop.
@@ -497,8 +529,7 @@ pub fn jit_eager_loop_bodies(
     bodies
         .iter()
         .filter(|b| {
-            b.name != "main"
-                && body_kinds(b, tcx, enum_shapes, struct_shapes).is_some()
+            body_kinds(b, tcx, enum_shapes, struct_shapes).is_some()
                 && !body_jit_unsupported(b, tcx)
                 && body_has_loop(b)
         })
@@ -535,6 +566,60 @@ pub fn compile_to_jit(
         });
     }
 
+    // Pre-filter: only compile bodies reachable from JIT-promotable roots.
+    // Bodies whose param/return types can't be marshalled through the
+    // trampoline (aggregates, closures) will never be promoted - compiling
+    // them wastes Cranelift IR capacity and inflates peak RSS.  The BFS in
+    // `jit_compile_set` already found the transitive closure of user-function
+    // calls from the promotable roots so inter-body calls resolve. Clone only
+    // the bodies we'll actually compile.
+    let filtered: Vec<Body> = bodies
+        .iter()
+        .filter(|b| compile_set.contains(b.name.as_str()))
+        .cloned()
+        .collect();
+
+    match compile_bodies(&filtered, tcx, enum_shapes, struct_shapes) {
+        Ok(artifact) => Ok(artifact),
+        Err(err) if filtered.iter().any(|b| b.name == "main") => {
+            // A single un-lowerable body fails the whole cranelift module. The
+            // common case is a top-level `main` that calls an interp-only
+            // builtin the codegen has no lowering for (the qualified stdlib
+            // paths wired only through the VM's `install_module`). Dropping
+            // `main` and retrying keeps native promotion for every other body
+            // instead of switching the JIT off wholesale; the VM runs `main`
+            // on bytecode either way.
+            if std::env::var("GOS_JIT_TRACE").is_ok() {
+                eprintln!("jit: module build failed ({err}); retrying without main");
+            }
+            let without_main: Vec<Body> =
+                filtered.into_iter().filter(|b| b.name != "main").collect();
+            if without_main.is_empty() {
+                return Ok(JitArtifact {
+                    module: None,
+                    functions: HashMap::new(),
+                });
+            }
+            compile_bodies(&without_main, tcx, enum_shapes, struct_shapes)
+        }
+        Err(err) => Err(err),
+    }
+}
+
+/// Builds one finalised cranelift [`JitArtifact`] from an already-filtered
+/// body set. Separated from [`compile_to_jit`] so a whole-module lowering
+/// failure (an un-lowerable `main`) can be retried against a reduced set
+/// rather than switching the JIT off for every body.
+#[allow(
+    clippy::implicit_hasher,
+    reason = "single internal caller; generalizing the hasher adds a type parameter for nothing"
+)]
+fn compile_bodies(
+    filtered: &[Body],
+    tcx: &TyCtxt,
+    enum_shapes: &HashMap<u32, u32>,
+    struct_shapes: &HashMap<u32, u32>,
+) -> Result<JitArtifact> {
     let isa = build_native_isa(false)?;
     let mut builder = JITBuilder::with_isa(isa, cranelift_module::default_libcall_names());
     let mut runtime_symbol_set = register_runtime_symbols(&mut builder);
@@ -548,30 +633,13 @@ pub fn compile_to_jit(
     runtime_symbol_set.extend(leaked_binding_names);
     let mut module = JITModule::new(builder);
 
-    // Pre-filter: only compile bodies reachable from JIT-promotable roots.
-    // Bodies whose param/return types can't be marshalled through the
-    // trampoline (aggregates, closures) will never be promoted - compiling
-    // them wastes Cranelift IR capacity and inflates peak RSS.  The BFS
-    // below finds the transitive closure of user-function calls from the
-    // promotable roots so inter-body calls inside the compiled set resolve.
-    // (`compile_set` was computed above, before the JIT module was built.)
-    // Clone only the bodies we'll actually compile. Skipping bodies
-    // that can never be promoted (aggregate params/returns) saves
-    // tens of megabytes of peak RSS without affecting correctness -
-    // the bytecode VM handles any body the JIT doesn't cover.
-    let filtered: Vec<Body> = bodies
-        .iter()
-        .filter(|b| compile_set.contains(b.name.as_str()))
-        .cloned()
-        .collect();
-
     // Rename the user's `main` to `gos_main` in the JIT's symbol
     // table. The host binary already exports `main` (the Rust
     // runtime's entry point); declaring a second `Linkage::Local`
     // `main` produced flaky SIGILLs on bring-up. The lookup map
     // we hand back to the VM keeps the original Gossamer name as
     // the key, so dispatch is unaffected.
-    let lowered = lower_program(&mut module, &filtered, tcx, Some("gos_main"))?;
+    let lowered = lower_program(&mut module, filtered, tcx, Some("gos_main"))?;
 
     // A `Result<Enum, _>`-returning body hands its `[disc, payload]` carrier
     // back as an `i128` by value. The Rust trampoline reads that return from
@@ -580,7 +648,7 @@ pub fn compile_to_jit(
     // store) and dispatch through the thunk instead. `carrier_thunks` maps
     // the body name to its thunk's `FuncId`.
     let mut carrier_thunks: HashMap<String, cranelift_module::FuncId> = HashMap::new();
-    for body in &filtered {
+    for body in filtered {
         if !matches!(
             body_kinds(body, tcx, enum_shapes, struct_shapes),
             Some((_, JitKind::ResultEnumPtr(_)))
@@ -600,9 +668,9 @@ pub fn compile_to_jit(
 
     let body_name_set: std::collections::HashSet<&str> =
         filtered.iter().map(|b| b.name.as_str()).collect();
-    let returns_fresh = compute_returns_fresh(&filtered, tcx);
+    let returns_fresh = compute_returns_fresh(filtered, tcx);
     let mut functions = HashMap::new();
-    for body in &filtered {
+    for body in filtered {
         let Some(id) = lowered.function_ids_by_name.get(&body.name).copied() else {
             continue;
         };
@@ -672,6 +740,13 @@ pub fn compile_to_jit(
     })
 }
 
+/// Diagnostic escape hatch while the Option-projection lowering is
+/// hardened: `GOS_JIT_OPTION=1` admits bodies holding `Option` sentinel
+/// locals into the compile set.
+fn jit_option_locals_ok() -> bool {
+    std::env::var("GOS_JIT_OPTION").is_ok()
+}
+
 /// Splits a comma-separated `GOS_JIT_ONLY` / `GOS_JIT_SKIP` value into a
 /// set of trimmed, non-empty function names.
 fn parse_fn_set(value: &str) -> std::collections::HashSet<&str> {
@@ -715,6 +790,16 @@ fn body_calls_jit_unsafe(
         if body_names.contains(n) {
             continue;
         }
+        // Bare prelude I/O intrinsics the cranelift backend lowers directly
+        // (`intrinsic_io_math.rs`): the `println!` family and the format-prec
+        // helper `__fmt_prec` (also `__`-prefixed below). They are NOT registered
+        // runtime symbols, so without this a top-level `main` that ends in a
+        // `println!` would be judged unsafe and never promote. `panic` is
+        // deliberately excluded - panicking bodies stay on bytecode so the VM
+        // renders the call-stack trace (the interp gates them separately).
+        if matches!(n, "println" | "print" | "eprintln" | "eprint") {
+            continue;
+        }
         // Variant-constructor / qualified-path shape: the cranelift
         // backend handles these explicitly (Ok/Err/Some pass-through;
         // anything qualified or capitalised falls through to a sound
@@ -748,6 +833,13 @@ fn body_calls_jit_unsafe(
 ///   *argument*: a higher-order call (`fold` / `map` / `sort_by` / ...)
 ///   whose closure the JIT has no way to invoke, so the call lowers to a
 ///   default-returning stub (e.g. `iter::fold` yielding its seed).
+/// - A goroutine-spawn site or a cross-goroutine sync primitive
+///   (channel / `WaitGroup` / Mutex / Atomic / ... - see
+///   [`is_cross_goroutine_rt`]). Under `gos run` the spawned side runs
+///   on the VM scheduler against the interpreter's own handle
+///   registries; a native body would mint and wait on the *runtime*
+///   registries instead, so the two sides never observe each other
+///   (a `wg.wait()` deadlock). Such bodies stay on bytecode.
 fn body_jit_unsupported(body: &Body, tcx: &TyCtxt) -> bool {
     use gossamer_mir::{Operand, Rvalue, StatementKind, Terminator};
     use gossamer_types::Mutbl;
@@ -756,10 +848,23 @@ fn body_jit_unsupported(body: &Body, tcx: &TyCtxt) -> bool {
     // null placeholder, so a higher-order call through it (`iter::fold` and
     // friends) silently returns its seed. Keep the body on bytecode.
     for idx in 0..body.locals.len() {
+        let lty =
+            tcx.kind_of(body.local_ty(gossamer_mir::Local(u32::try_from(idx).unwrap_or(u32::MAX))));
         if matches!(
-            tcx.kind_of(body.local_ty(gossamer_mir::Local(u32::try_from(idx).unwrap_or(u32::MAX)))),
+            lty,
             TyKind::FnDef { .. } | TyKind::FnPtr(_) | TyKind::Closure { .. }
         ) {
+            return true;
+        }
+        // A `Vec`/`[T]` whose element is a payload-bearing (boxed,
+        // individually reference-counted) enum. The trampoline marshals a
+        // vector by its content pointer, but a vector of boxed enums needs
+        // per-element ownership tracking the native path does not model, so
+        // manipulating one in a compiled body corrupts the shared elements.
+        // Keep such bodies on bytecode.
+        if let TyKind::Vec(elem) | TyKind::Slice(elem) = lty
+            && tcx.is_payload_enum(*elem)
+        {
             return true;
         }
     }
@@ -784,6 +889,9 @@ fn body_jit_unsupported(body: &Body, tcx: &TyCtxt) -> bool {
             return true;
         }
     }
+    if body_has_cross_goroutine_ops(body) {
+        return true;
+    }
     let has_fn_arg = |args: &[Operand]| args.iter().any(|a| matches!(a, Operand::FnRef { .. }));
     for block in &body.blocks {
         for stmt in &block.stmts {
@@ -803,6 +911,57 @@ fn body_jit_unsupported(body: &Body, tcx: &TyCtxt) -> bool {
         }
     }
     false
+}
+
+/// `true` when `body` spawns a goroutine or touches a cross-goroutine
+/// sync primitive (see [`is_cross_goroutine_rt`]). Checked per body in
+/// [`body_jit_unsupported`] and transitively in [`jit_compile_set`]:
+/// native callers of such a body would reach the runtime's registries
+/// through the native call, so the whole chain stays on bytecode.
+fn body_has_cross_goroutine_ops(body: &Body) -> bool {
+    use gossamer_mir::{ConstValue, Operand, Rvalue, StatementKind, Terminator};
+    body.blocks.iter().any(|block| {
+        let stmt_hit = block.stmts.iter().any(|stmt| {
+            matches!(
+                &stmt.kind,
+                StatementKind::Assign {
+                    rvalue: Rvalue::CallIntrinsic { name, .. },
+                    ..
+                } if is_cross_goroutine_rt(name)
+            )
+        });
+        stmt_hit
+            || matches!(
+                &block.terminator,
+                Terminator::Call {
+                    callee: Operand::Const(ConstValue::Str(name)),
+                    ..
+                } if is_cross_goroutine_rt(name)
+            )
+    })
+}
+
+/// Runtime shims whose VM twins live in the interpreter's own handle
+/// registries (builtins.rs), not in `gossamer-runtime`'s. A JIT'd body
+/// calling one would operate on native-registry handles that VM-side
+/// goroutines can never resolve, so any body referencing this family -
+/// a `go` spawn, a channel op, or a sync-handle mint / use - must stay
+/// on the bytecode path where every participant shares one registry.
+fn is_cross_goroutine_rt(name: &str) -> bool {
+    const FAMILIES: &[&str] = &[
+        "gos_rt_go_spawn",
+        "gos_rt_spawn",
+        "gos_rt_join",
+        "gos_rt_chan_",
+        "gos_rt_wg_",
+        "gos_rt_mutex_",
+        "gos_rt_atomic_",
+        "gos_rt_rwlock_",
+        "gos_rt_once_",
+        "gos_rt_barrier_",
+        "gos_rt_sync_",
+    ];
+    FAMILIES.iter().any(|prefix| name.starts_with(prefix))
 }
 
 /// Interprocedural fixpoint computing, per JIT-compiled body, whether its
@@ -1026,6 +1185,10 @@ fn ty_to_kind(
         TyKind::Bool => Some(JitKind::Bool),
         TyKind::Int(_) => Some(JitKind::I64),
         TyKind::Float(_) => Some(JitKind::F64),
+        // A Unicode scalar crosses the boundary as its `u32` code point in an
+        // integer register (the compiled-tier `char` ABI); the trampoline
+        // re-wraps a returned word as `Value::Char`.
+        TyKind::Char => Some(JitKind::Char),
         TyKind::Unit => Some(JitKind::Unit),
         // Heap enums with a registered VM-side shape cross as native
         // tagged pointers; the body works on the compiled-tier
@@ -1067,12 +1230,16 @@ fn ty_to_kind(
         // so the body sees the same `*mut c_char` / `*mut GosVec` shape
         // the AOT tier passes (zero in-body conversion).
         TyKind::String => Some(JitKind::NativeStr),
-        TyKind::Vec(elem)
+        // `[i64]` / `[f64]` / `[(i64, f64)]` slices marshal identically to the
+        // `Vec<...>` spelling - the runtime object is the same `*mut GosVec` - so
+        // the idiomatic slice-param helper (`fn f(xs: &[i64])`) promotes just
+        // like its `Vec` twin instead of falling to `_ => None`.
+        TyKind::Vec(elem) | TyKind::Slice(elem)
             if matches!(tcx.kind_of(*elem), TyKind::Int(gossamer_types::IntTy::I64)) =>
         {
             Some(JitKind::NativeVecI64)
         }
-        TyKind::Vec(elem)
+        TyKind::Vec(elem) | TyKind::Slice(elem)
             if matches!(
                 tcx.kind_of(*elem),
                 TyKind::Float(gossamer_types::FloatTy::F64)
@@ -1080,7 +1247,9 @@ fn ty_to_kind(
         {
             Some(JitKind::NativeVecF64)
         }
-        TyKind::Vec(elem) if is_i64_f64_tuple(tcx, *elem) => Some(JitKind::NativeVecTupleIF),
+        TyKind::Vec(elem) | TyKind::Slice(elem) if is_i64_f64_tuple(tcx, *elem) => {
+            Some(JitKind::NativeVecTupleIF)
+        }
         // `Vec<Vec<i64>>` / `[[i64]]`: an outer vec / slice whose elements are
         // themselves `Vec<i64>` / `[i64]`. Crosses as the AOT nested layout
         // (outer `VEC`-kind slots holding inner `GosVec` pointers); the
@@ -1750,6 +1919,7 @@ fn register_runtime_symbols(builder: &mut JITBuilder) -> std::collections::HashS
         "gos_rt_map_inc_at_str_i64"  => rt::gos_rt_map_inc_at_str_i64,
         "gos_rt_map_free"            => rt::gos_rt_map_free,
         "gos_rt_vec_free"            => rt::gos_rt_vec_free,
+        "gos_rt_vec_retain"          => rt::gos_rt_vec_retain,
         "gos_rt_set_free"            => rt::gos_rt_set_free,
         "gos_rt_btmap_free"          => rt::gos_rt_btmap_free,
         "gos_rt_map_keys_i64"        => rt::gos_rt_map_keys_i64,

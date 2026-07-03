@@ -49,6 +49,14 @@ pub const ALT_STACK_BYTES: usize = 64 * 1024;
 /// with larger pages.
 pub const STACK_GUARD_PROXIMITY: usize = 16 * 1024;
 
+/// How far *above* the recorded low bound a fault still counts as an
+/// overflow. The main-thread bound derived from `RLIMIT_STACK` can sit a
+/// few pages below where the kernel actually stops the growable stack, so
+/// the faulting access lands just inside `[lo, hi)` rather than below `lo`.
+/// 64 KiB comfortably covers that slop while staying deep enough that a
+/// genuine wild write elsewhere in the live stack is not misattributed.
+pub const STACK_GUARD_UPPER_SLOP: usize = 64 * 1024;
+
 /// Installs the per-thread stack-overflow guard. Idempotent on a
 /// single thread; the scheduler calls this once at the start of
 /// every worker. The main thread should also call it from program
@@ -139,7 +147,7 @@ mod unix {
     use std::sync::Once;
     use std::sync::atomic::{AtomicBool, Ordering};
 
-    use super::{ALT_STACK_BYTES, STACK_GUARD_PROXIMITY};
+    use super::{ALT_STACK_BYTES, STACK_GUARD_PROXIMITY, STACK_GUARD_UPPER_SLOP};
 
     // Per-thread alternate-signal stack. Kept thread-local so the
     // kernel always has a valid `ss_sp` for the calling thread -
@@ -257,7 +265,51 @@ mod unix {
                 return (0, 0);
             }
             let lo = sp as usize;
-            (lo, lo + size)
+            let hi = lo + size;
+            // The growable main-thread stack is a special case: some C
+            // libraries (musl) report a small fixed window for it rather than
+            // the region the kernel will actually let it grow into, which is
+            // bounded by `RLIMIT_STACK` below the top. Trusting the small
+            // reported size would place the guard-page proximity window far
+            // above the real fault, so a genuine overflow reads as an
+            // unrelated hard fault. When the reported size is implausibly
+            // small for the main thread, derive the low bound from the
+            // rlimit. Spawned threads (the VM / goroutine workers) get their
+            // exact requested size from the same call and are left untouched.
+            if is_main_thread()
+                && let Some(rlimit) = stack_rlimit()
+                && size < rlimit / 2
+            {
+                return (hi.saturating_sub(rlimit), hi);
+            }
+            (lo, hi)
+        }
+    }
+
+    /// Whether the calling thread is the process main thread. On Linux the
+    /// main thread's TID equals the process PID.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn is_main_thread() -> bool {
+        // SAFETY: `gettid` / `getpid` are async-signal-safe syscalls that
+        // take no arguments and only read kernel-maintained ids.
+        unsafe { libc::gettid() == libc::getpid() }
+    }
+
+    /// The soft `RLIMIT_STACK` in bytes, or `None` when it is unlimited or
+    /// unreadable - in which case no rlimit-derived bound can be computed.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn stack_rlimit() -> Option<usize> {
+        // SAFETY: `getrlimit` fills the caller-owned `rlim` with the current
+        // limits; the struct is zero-initialised before the call.
+        unsafe {
+            let mut rlim: libc::rlimit = MaybeUninit::zeroed().assume_init();
+            if libc::getrlimit(libc::RLIMIT_STACK, &raw mut rlim) != 0 {
+                return None;
+            }
+            if rlim.rlim_cur == libc::RLIM_INFINITY || rlim.rlim_cur == 0 {
+                return None;
+            }
+            usize::try_from(rlim.rlim_cur).ok()
         }
     }
 
@@ -338,12 +390,15 @@ mod unix {
         if lo == 0 || hi == 0 || hi <= lo {
             return false;
         }
-        // Faults inside the stack range are an upper-stack write
-        // gone wrong; only faults near (or just below) the bottom
-        // guard page count as overflow.
-        let guard_top = lo;
+        // A fault within a proximity window of the stack's low bound is an
+        // overflow; a fault deeper inside the live stack is an unrelated
+        // wild write. The window is two-sided: below `lo` for the guard page
+        // proper, and a wider band above it for the RLIMIT-derived
+        // main-thread bound, which sits a few pages under the kernel's real
+        // growable limit so the faulting access lands just inside `[lo, hi)`.
         let guard_bottom = lo.saturating_sub(STACK_GUARD_PROXIMITY);
-        addr < guard_top && addr >= guard_bottom
+        let guard_top = lo.saturating_add(STACK_GUARD_UPPER_SLOP);
+        addr >= guard_bottom && addr < guard_top
     }
 
     fn report_overflow_and_abort(addr: usize) -> ! {
@@ -459,6 +514,9 @@ mod unix {
             assert!(!is_stack_overflow(0x1_0005_0000));
             // Address just below the bottom - the overflow case.
             assert!(is_stack_overflow(0x0_FFFF_F000));
+            // Address just above the bottom - the overflow case when the
+            // low bound was derived from RLIMIT_STACK a few pages too low.
+            assert!(is_stack_overflow(0x1_0000_2000));
             // Address far below the bottom - propagate.
             assert!(!is_stack_overflow(0x0_0000_1000));
             // Address above the top - propagate.

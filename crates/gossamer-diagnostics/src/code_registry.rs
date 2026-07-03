@@ -583,6 +583,34 @@ pub const REGISTRY: &[(&str, &str)] = &[
                      automatic or implemented with `impl Trait for T`.",
     ),
     (
+        "GT0026",
+        "A fixed-size array `[value; N]` with a compile-time-constant `N`\n\
+                     was large enough that placing it inline on the stack would\n\
+                     overflow the OS main-thread stack on the compiled tiers (a\n\
+                     silent SIGSEGV), while the VM heap-allocates it. Rejected at\n\
+                     check so the tiers agree; use a heap `Vec` (`[T]`) instead.",
+    ),
+    (
+        "GT0027",
+        "A `match` / `if let` arm patterns a `json::Value` scrutinee with a\n\
+                     `json::Value::Object(..)` / `::Array(..)` / `::Int(..)` (etc.)\n\
+                     constructor. `json::Value` is an opaque dynamic-document handle\n\
+                     with no matchable discriminant, so the pattern silently falls\n\
+                     through on the VM and faults on the compiled tiers. Rejected at\n\
+                     check; read the document with the dynamic accessors instead\n\
+                     (`json::as_i64` / `json::as_str` / `json::get` / `json::keys`).",
+    ),
+    (
+        "GT0028",
+        "`.downgrade()` was called on a by-value type with no runtime RC\n\
+                     header - a scalar (`i64` / `bool` / ...), an `Option` /\n\
+                     `Result`, or another packed value. `Weak<T>` is a non-owning\n\
+                     pointer into a reference-counted allocation, so the compiled\n\
+                     tiers read a header off the value's bits and fault (SIGSEGV),\n\
+                     while the VM returns a bogus handle. Rejected at check;\n\
+                     downgrade a heap aggregate (struct / payload enum) instead.",
+    ),
+    (
         "GX0001",
         "A runtime value had the wrong shape for the operation. The\n\
                      interpreter catches this at execution time; the native\n\

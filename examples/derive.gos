@@ -23,7 +23,7 @@ struct Color { r: i64, g: i64, b: i64 }
 #[derive(PartialEq, Default, Debug)]
 struct Pixel { at: i64, color: Color }
 
-fn rgb(r: i64, g: i64, b: i64) -> Color { Color { r: r, g: g, b: b } }
+fn rgb(r: i64, g: i64, b: i64) -> Color { Color { r, g, b } }
 fn default_color() -> Color { Color::default() }
 
 fn main() {

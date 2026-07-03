@@ -245,24 +245,139 @@ fn return_local_is_fresh_aggregate(body: &Body) -> bool {
 
 /// When `expected` (the callee's Cranelift signature param types) carries one
 /// more param than the call supplies and that trailing param is a pointer, the
-/// callee uses the structural-return (sret) ABI for a 2-tuple return. Allocate
-/// a 16-byte stack slot and append its address as the hidden result-slot arg;
-/// the callee fills it (no per-call heap block) and returns the same pointer.
-/// The slot lives in this frame, so it is reused across loop iterations and
-/// reclaimed on frame exit - nothing to free.
+/// callee uses the structural-return (sret) ABI for a by-value aggregate
+/// return. Allocate a stack slot sized to the callee's return aggregate
+/// (`ret_slots` 8-byte words) and append its address as the hidden result-slot
+/// arg; the callee fills it (no per-call heap block) and returns the same
+/// pointer. The slot lives in this frame, so it is reused across loop
+/// iterations and reclaimed on frame exit - nothing to free.
+///
+/// `ret_slots` is resolved from the callee's own return type ([`callee_sret_slots`]).
+/// A fixed guess would overflow whenever the aggregate exceeds two words (a
+/// struct with three fields, a `[i64; 8]`), so when the sret ABI fires but the
+/// size is unresolved this refuses to emit rather than corrupt the stack -
+/// aborting JIT compilation of the body (the bytecode VM then runs it) instead
+/// of silently miscompiling.
 fn maybe_push_sret_slot(
     builder: &mut FunctionBuilder<'_>,
     ptr_ty: ir::Type,
     expected: &[ir::Type],
     n_args: usize,
+    ret_slots: Option<u32>,
     arg_values: &mut Vec<ir::Value>,
-) {
+) -> Result<()> {
     let fire = expected.len() == n_args + 1 && expected.last() == Some(&ptr_ty);
-    if fire {
-        let slot =
-            builder.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 16, 3));
-        arg_values.push(builder.ins().stack_addr(ptr_ty, slot, 0));
+    if !fire {
+        return Ok(());
     }
+    let slots = ret_slots.ok_or_else(|| {
+        anyhow!(
+            "native codegen: sret callee return size unresolved - refusing to emit a \
+             fixed-size result slot that could overflow the caller's stack"
+        )
+    })?;
+    let bytes = slots.max(1).saturating_mul(8);
+    let slot =
+        builder.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, bytes, 3));
+    arg_values.push(builder.ins().stack_addr(ptr_ty, slot, 0));
+    Ok(())
+}
+
+/// Resolves the callee's sret return-slot count for a `Call` terminator,
+/// mirroring [`resolve_callee`]'s key lookup so the size matches the exact body
+/// the call resolves to. `name_hint` is the literal name for a `Const(Str)`
+/// callee (the registry-name path); an `FnRef` callee resolves by its mangled
+/// monomorphised name, then its def-local id, then the `fn#{def}` fallback.
+/// Returns `None` when the callee is not a body that returns an aggregate via
+/// the sret ABI.
+fn callee_sret_slots(
+    callee: &Operand,
+    name_hint: Option<&str>,
+    intrinsics: &IntrinsicContext,
+) -> Option<u32> {
+    if let Some(name) = name_hint
+        && let Some(&n) = intrinsics.sret_slots_by_name.get(name)
+    {
+        return Some(n);
+    }
+    match callee {
+        Operand::FnRef { def, substs } => {
+            if !substs.is_empty() {
+                let mangled = gossamer_mir::mangled_name(*def, substs);
+                if let Some(&n) = intrinsics.sret_slots_by_name.get(&mangled) {
+                    return Some(n);
+                }
+            }
+            if let Some(&n) = intrinsics.sret_slots_by_def.get(&def.local) {
+                return Some(n);
+            }
+            intrinsics
+                .sret_slots_by_name
+                .get(&format!("fn#{}", def.local))
+                .copied()
+        }
+        _ => None,
+    }
+}
+
+/// True when `rvalue` is a whole-value `Copy` of a place whose leaf type is a
+/// multi-slot aggregate (tuple / array / struct) held in flat slot storage -
+/// the shape that must be memcpy'd word-for-word into the destination's own
+/// slot rather than aliased by rebinding the variable. Inline two-word enums
+/// (`Result` / `Option` / inline user enums) are register-packed `i128`
+/// values, not slot storage, so they are excluded.
+fn is_aggregate_copy_src(body: &Body, tcx: &TyCtxt, rvalue: &Rvalue) -> bool {
+    let Rvalue::Use(Operand::Copy(src)) = rvalue else {
+        return false;
+    };
+    let leaf = resolve_place_ty(tcx, body, src);
+    !is_inline_two_word_ty(tcx, leaf)
+        && (type_slot_count(tcx, leaf) > 1 || single_slot_addr_aggregate(tcx, leaf))
+        && matches!(
+            tcx.kind_of(leaf),
+            TyKind::Tuple(_) | TyKind::Array { .. } | TyKind::Adt { .. }
+        )
+}
+
+/// True when `local`'s value can reach the return slot (`Local::RETURN`)
+/// through a chain of whole-value `Copy` assignments. Such a local's backing
+/// pointer is handed to the caller by the return lowering, so it must stay a
+/// heap allocation that outlives the frame rather than a reused stack slot.
+/// Every other downstream use of an aggregate copies its words (a
+/// whole-aggregate copy memcpies, a call argument is defensively cloned, a
+/// nested-aggregate operand is memcpied into its parent), so excluding only the
+/// return-flow set keeps stack construction sound.
+fn local_flows_to_return(body: &Body, local: Local) -> bool {
+    let n = body.locals.len();
+    let mut in_return = vec![false; n];
+    if (Local::RETURN.0 as usize) < n {
+        in_return[Local::RETURN.0 as usize] = true;
+    }
+    // Least-fixpoint over `dst = Copy(src)` edges: seed the return slot, then
+    // pull every source that flows into an already-marked destination.
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for block in &body.blocks {
+            for stmt in &block.stmts {
+                if let StatementKind::Assign {
+                    place,
+                    rvalue: Rvalue::Use(Operand::Copy(src)),
+                } = &stmt.kind
+                    && place.projection.is_empty()
+                    && src.projection.is_empty()
+                {
+                    let d = place.local.0 as usize;
+                    let s = src.local.0 as usize;
+                    if d < n && s < n && in_return[d] && !in_return[s] {
+                        in_return[s] = true;
+                        changed = true;
+                    }
+                }
+            }
+        }
+    }
+    (local.0 as usize) < n && in_return[local.0 as usize]
 }
 
 pub(super) fn lower_statement(
@@ -326,27 +441,36 @@ pub(super) fn lower_statement(
                             gossamer_mir::AggregateKind::Array => operands
                                 .first()
                                 .and_then(|op| {
-                                    if let Operand::Copy(p) = op {
-                                        intrinsics.local_slots.get(&p.local).copied()
-                                    } else {
-                                        None
-                                    }
+                                    operand_elem_slots(&intrinsics.local_slots, tcx, body, op)
                                 })
                                 .unwrap_or(1),
                             _ => 1,
                         };
                         let total = match kind {
                             gossamer_mir::AggregateKind::Array => (operands.len() as u32) * elem,
-                            _ => operands.len() as u32,
+                            // A tuple / struct's slot span is the SUM of its
+                            // operands' slot widths, not the operand count: a
+                            // field that is itself a multi-slot aggregate
+                            // (`Wrapper { value: Point }`, `Boxed { p: Point }`)
+                            // occupies its full width. Recording the operand
+                            // count here understated the metadata to one slot,
+                            // collapsing the stride of any array whose element
+                            // is such a nested aggregate. This matches the
+                            // `total_slots` the rvalue lowering allocates.
+                            _ => operands
+                                .iter()
+                                .map(|op| {
+                                    operand_elem_slots(&intrinsics.local_slots, tcx, body, op)
+                                        .unwrap_or(1)
+                                })
+                                .sum::<u32>()
+                                .max(1),
                         };
                         (Some(elem), Some(total))
                     }
                     Rvalue::Repeat { value, count } => {
-                        let elem = if let Operand::Copy(p) = value {
-                            intrinsics.local_slots.get(&p.local).copied().unwrap_or(1)
-                        } else {
-                            1
-                        };
+                        let elem = operand_elem_slots(&intrinsics.local_slots, tcx, body, value)
+                            .unwrap_or(1);
                         let total = u32::try_from(*count).unwrap_or(1).saturating_mul(elem);
                         (Some(elem), Some(total))
                     }
@@ -377,7 +501,35 @@ pub(super) fn lower_statement(
                 }
                 _ => None,
             };
-            let value = lower_rvalue(
+            // Construct a non-escaping aggregate directly into its own stack
+            // slot instead of a fresh `gos_rt_aggr_alloc` heap block. The
+            // block is otherwise never reclaimed on the non-region path, so a
+            // hot loop leaks one aggregate per iteration (the LLVM tier keeps
+            // these on the stack; see `lower/mod.rs`). Only slot-backed locals
+            // that do not flow to the return qualify - the return lowering
+            // hands the pointer to the caller, which a stack slot cannot
+            // outlive.
+            let agg_into_slot: Option<ir::Value> = if place.projection.is_empty()
+                && matches!(rvalue, Rvalue::Aggregate { .. } | Rvalue::Repeat { .. })
+                && intrinsics.stack_slotted.contains(&place.local)
+                && !local_flows_to_return(body, place.local)
+            {
+                let dst_var = ensure_var(
+                    builder,
+                    locals,
+                    body,
+                    tcx,
+                    module,
+                    &intrinsics.body_cl_types,
+                    place.local,
+                );
+                let raw = builder.use_var(dst_var);
+                let ptr_ty = module.target_config().pointer_type();
+                Some(coerce_arg_to(builder, raw, ptr_ty).unwrap_or(raw))
+            } else {
+                None
+            };
+            let value = lower_rvalue_into(
                 module,
                 builder,
                 locals,
@@ -385,16 +537,76 @@ pub(super) fn lower_statement(
                 tcx,
                 rvalue,
                 Some(dst_hint),
+                agg_into_slot,
                 intrinsics,
             )?;
             if place.projection.is_empty() {
-                define_var_to(
-                    builder,
-                    locals,
-                    &intrinsics.body_cl_types,
-                    place.local,
-                    value,
-                );
+                // Whole-aggregate copy into a slot-backed local: memcpy the
+                // source words into the destination's own stack slot instead
+                // of rebinding its variable to the source pointer. Rebinding
+                // aliases the two locals, so a later mutation of the copy
+                // writes through to the source (a silent wrong answer) and the
+                // drop pass's per-field retain/release pairs operate on shared
+                // storage, leaking one reference per iteration in a hot loop.
+                // Mirrors the LLVM backend's `llvm.memcpy` of the aggregate
+                // alloca (see `lower/stmt.rs`). Region-allocated payloads copy
+                // their (possibly headerless) pointer words safely: the drop
+                // pass's retain/release calls no-op on region objects, so no
+                // per-node free is introduced and the arena still bulk-frees
+                // at pop.
+                // A copy whose destination flows to the return slot keeps the
+                // source's storage: the return lowering hands the caller that
+                // pointer (and, for a fresh aggregate, frees it with
+                // `gos_rt_aggr_free`), which a reused stack slot can neither
+                // outlive nor be freed as. Such copies stay on the existing
+                // path; only frame-local copies memcpy into their own slot.
+                let whole_agg_copy = matches!(rvalue, Rvalue::Use(Operand::Copy(_)))
+                    && intrinsics.stack_slotted.contains(&place.local)
+                    && is_aggregate_copy_src(body, tcx, rvalue)
+                    && !local_flows_to_return(body, place.local);
+                if whole_agg_copy {
+                    let slots = type_slot_count(tcx, body.local_ty(place.local)).max(1);
+                    let dst_var = ensure_var(
+                        builder,
+                        locals,
+                        body,
+                        tcx,
+                        module,
+                        &intrinsics.body_cl_types,
+                        place.local,
+                    );
+                    let dst_addr = builder.use_var(dst_var);
+                    let ptr_ty = module.target_config().pointer_type();
+                    let dst_ptr = coerce_arg_to(builder, dst_addr, ptr_ty).unwrap_or(dst_addr);
+                    if value_type(value, builder) == types::I128 {
+                        // A two-slot inline carrier (`Option` / `Result`)
+                        // is an i128 value, not a source address - store
+                        // its halves into the slot directly.
+                        store_i128_words(builder, value, dst_ptr, 0);
+                    } else {
+                        let src_ptr = coerce_arg_to(builder, value, ptr_ty).unwrap_or(value);
+                        for slot_idx in 0..slots {
+                            let off = ir::immediates::Offset32::new((slot_idx as i32) * 8);
+                            let word =
+                                builder
+                                    .ins()
+                                    .load(types::I64, MemFlags::trusted(), src_ptr, off);
+                            builder.ins().store(MemFlags::trusted(), word, dst_ptr, off);
+                        }
+                    }
+                } else if agg_into_slot.is_some() {
+                    // The aggregate was filled into `place.local`'s own slot;
+                    // its variable already holds that slot address, so there
+                    // is nothing to rebind.
+                } else {
+                    define_var_to(
+                        builder,
+                        locals,
+                        &intrinsics.body_cl_types,
+                        place.local,
+                        value,
+                    );
+                }
                 if let Some(elem) = aggregate_elem_ty {
                     intrinsics.elem_cl_ty.insert(place.local, elem);
                 }
@@ -1021,6 +1233,36 @@ pub(super) fn lower_terminator(
                 if let Some(t) = typed_ret_ty {
                     sig.returns.push(AbiParam::new(t));
                 }
+                // A callee returning a by-value aggregate was compiled with the
+                // sret ABI (a hidden trailing pointer param it writes the result
+                // through and returns). The indirect call must supply that
+                // pointer or the callee reads an unset param as its result slot.
+                // The size comes from the callable's return type (its `Fn`
+                // signature output) or, for a bare `fn` item value, the target
+                // body's recorded sret slot count.
+                let indirect_sret_slots = match &fn_sig {
+                    Some(s) => {
+                        let out = s.output;
+                        (!is_inline_two_word_ty(tcx, out)
+                            && matches!(
+                                tcx.kind_of(out),
+                                TyKind::Tuple(_) | TyKind::Array { .. } | TyKind::Adt { .. }
+                            )
+                            && (type_slot_count(tcx, out) > 1
+                                || single_slot_addr_aggregate(tcx, out)))
+                        .then(|| type_slot_count(tcx, out).max(1))
+                    }
+                    None => match tcx.kind_of(callee_ty).clone() {
+                        TyKind::FnDef { def, substs } => (!substs.is_empty())
+                            .then(|| gossamer_mir::mangled_name(def, &substs))
+                            .and_then(|m| intrinsics.sret_slots_by_name.get(&m).copied())
+                            .or_else(|| intrinsics.sret_slots_by_def.get(&def.local).copied()),
+                        _ => None,
+                    },
+                };
+                if indirect_sret_slots.is_some() {
+                    sig.params.push(AbiParam::new(ptr_ty));
+                }
                 let sig_ref = builder.import_signature(sig);
                 let mut arg_values = Vec::with_capacity(args.len() + 1);
                 if !is_plain_fn {
@@ -1032,6 +1274,15 @@ pub(super) fn lower_terminator(
                     let want = typed_param_tys.get(i).copied().unwrap_or(types::I64);
                     let coerced = coerce_arg_to(builder, v, want).unwrap_or(v);
                     arg_values.push(coerced);
+                }
+                if let Some(slots) = indirect_sret_slots {
+                    let bytes = slots.max(1).saturating_mul(8);
+                    let slot = builder.create_sized_stack_slot(StackSlotData::new(
+                        StackSlotKind::ExplicitSlot,
+                        bytes,
+                        3,
+                    ));
+                    arg_values.push(builder.ins().stack_addr(ptr_ty, slot, 0));
                 }
                 let call = builder.ins().call_indirect(sig_ref, fn_ptr, &arg_values);
                 let results = builder.inst_results(call).to_vec();
@@ -1109,13 +1360,15 @@ pub(super) fn lower_terminator(
                         }
                         arg_values.push(v);
                     }
+                    let ret_slots = callee_sret_slots(callee, Some(name), intrinsics);
                     maybe_push_sret_slot(
                         builder,
                         ptr_ty_local,
                         &expected,
                         args.len(),
+                        ret_slots,
                         &mut arg_values,
-                    );
+                    )?;
                     let call = builder.ins().call(func_ref, &arg_values);
                     let results = builder.inst_results(call).to_vec();
                     if let Some(&ret) = results.first() {
@@ -1299,7 +1552,15 @@ pub(super) fn lower_terminator(
                 arg_values.push(v);
             }
             let ptr_ty = module.target_config().pointer_type();
-            maybe_push_sret_slot(builder, ptr_ty, &expected, args.len(), &mut arg_values);
+            let ret_slots = callee_sret_slots(callee, None, intrinsics);
+            maybe_push_sret_slot(
+                builder,
+                ptr_ty,
+                &expected,
+                args.len(),
+                ret_slots,
+                &mut arg_values,
+            )?;
             let call = builder.ins().call(func_ref, &arg_values);
             let results = builder.inst_results(call).to_vec();
             if let Some(&ret) = results.first() {

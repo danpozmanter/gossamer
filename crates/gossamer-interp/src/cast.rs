@@ -142,9 +142,10 @@ pub(crate) fn cast_scalar(v: &Value, target: CastTarget) -> Option<Value> {
             int_base(v).map(|n| Value::Float(n as f64))
         }
         CastTarget::Char => {
-            // Whitelist admits only `u8` sources; mask to the
-            // declared u8 width first, matching `as u8` semantics.
-            // The masked value is always a valid code point.
+            // Any int source reads its low byte (the same masking
+            // `u8 as char` applies), matching the compiled tiers, so
+            // `s[i] as char` needs no `as u8` intermediate. The masked
+            // value is always a valid code point.
             int_base(v).and_then(|n| char::from_u32((n & 0xFF) as u32).map(Value::Char))
         }
         CastTarget::Bool => match v {

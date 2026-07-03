@@ -561,6 +561,21 @@ impl<'a> Lowerer<'a> {
                             Some(TyKind::Float(_)) => ConcatKind::ArrF64(n),
                             Some(TyKind::Bool) => ConcatKind::ArrBool(n),
                             Some(TyKind::String) => ConcatKind::ArrString(n),
+                            // Nested fixed array: rows are inline (N * M
+                            // contiguous slots), so both static lengths
+                            // route to the nested formatter.
+                            Some(TyKind::Array {
+                                elem: inner_elem,
+                                len: inner_len,
+                            }) => {
+                                let m = i64::try_from(inner_len.to_usize()).unwrap_or(0);
+                                match self.tcx.kind(*inner_elem) {
+                                    Some(TyKind::Int(_)) => ConcatKind::ArrArrI64(n, m),
+                                    Some(TyKind::Float(_)) => ConcatKind::ArrArrF64(n, m),
+                                    Some(TyKind::Bool) => ConcatKind::ArrArrBool(n, m),
+                                    _ => ConcatKind::Unsupported,
+                                }
+                            }
                             _ => ConcatKind::Unsupported,
                         }
                     }

@@ -209,6 +209,10 @@ pub fn lower_program(program: &HirProgram, tcx: &mut TyCtxt) -> Vec<Body> {
         // pass cannot tell it owns a `String` and never releases it (a leak).
         propagate_copy_types(body, tcx);
         rewrite_str_concat_consuming(body);
+        // Fuse `seq.substring(i, i+k)` + `m.inc(kmer)` into the borrowed-slice
+        // probe before the RC passes, so the eliminated scratch String gets no
+        // retain/release.
+        fuse_substring_map_inc(body);
         insert_drops_at_returns(body, tcx);
         insert_rc_releases(body, tcx);
         insert_aggr_copy_drops(body, tcx);

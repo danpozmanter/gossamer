@@ -83,7 +83,7 @@ fn run(path: &PathBuf, deny_warnings: bool, explain: Option<&str>, fix: bool) ->
             }
             continue;
         }
-        let diagnostics = gossamer_lint::run(&sf, &registry);
+        let diagnostics = gossamer_lint::run(&sf, &source, &registry);
         for diag in &diagnostics {
             eprintln!("{}", gossamer_diagnostics::render(diag, &map, render_opts));
             match diag.severity {

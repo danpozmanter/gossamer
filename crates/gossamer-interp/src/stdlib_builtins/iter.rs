@@ -172,6 +172,113 @@ pub(crate) fn install_iter(globals: &mut Vec<(&'static str, Value)>) {
         let qualified: &'static str = Box::leak(format!("iter::{short}").into_boxed_str());
         globals.push((qualified, Value::native(qualified, *call)));
     }
+
+    // Receiver-first method forms on a `Vec` receiver (`xs.take(n)`,
+    // `xs.step_by(s)`), registered under the `Vec::` key ONLY:
+    // a bare-name registration would shadow the scalar prelude
+    // (`min(3, 7)` / `max(a, b)`) with the sequence reducers.
+    let vec_builtin_entries: &[(&str, BuiltinFnPub)] = &[
+        ("take", builtin_vec_take_method),
+        ("step_by", builtin_vec_step_by_method),
+        // Data-first single-argument reducers: the method call's
+        // (receiver) argument list is already the free form's shape.
+        ("sum", builtin_iter_sum),
+        ("min", builtin_iter_min),
+        ("max", builtin_iter_max),
+    ];
+    for (short, call) in vec_builtin_entries {
+        let qualified: &'static str = Box::leak(format!("Vec::{short}").into_boxed_str());
+        globals.push((qualified, crate::builtins::builtin_pub(qualified, *call)));
+    }
+
+    // Closure-taking combinators in method form: the receiver leads the
+    // argument list, the natives are data-last - each wrapper rotates
+    // the receiver to the back and delegates.
+    let vec_native_entries: &[(&str, NativeCall)] = &[
+        ("map", native_vec_map_method),
+        ("filter", native_vec_filter_method),
+        ("for_each", native_vec_for_each_method),
+        ("any", native_vec_any_method),
+        ("all", native_vec_all_method),
+        ("find", native_vec_find_method),
+        ("position", native_vec_position_method),
+        ("max_by_key", native_vec_max_by_key_method),
+        ("min_by_key", native_vec_min_by_key_method),
+        ("fold", native_vec_fold_method),
+        ("count", native_vec_count_method),
+    ];
+    for (short, call) in vec_native_entries {
+        let qualified: &'static str = Box::leak(format!("Vec::{short}").into_boxed_str());
+        globals.push((qualified, Value::native(qualified, *call)));
+    }
+}
+
+/// Rotates a method call's `(receiver, rest…)` argument list into the
+/// data-last `(rest…, receiver)` shape the iter natives consume.
+fn rotate_receiver_last(args: &[Value]) -> Vec<Value> {
+    let mut v: Vec<Value> = args.get(1..).unwrap_or(&[]).to_vec();
+    v.push(args.first().cloned().unwrap_or(Value::Unit));
+    v
+}
+
+macro_rules! vec_method_form {
+    ($name:ident, $delegate:ident) => {
+        pub(crate) fn $name(
+            dispatch: &mut dyn NativeDispatch,
+            args: &[Value],
+        ) -> RuntimeResult<Value> {
+            $delegate(dispatch, &rotate_receiver_last(args))
+        }
+    };
+}
+
+vec_method_form!(native_vec_map_method, native_iter_map);
+vec_method_form!(native_vec_filter_method, native_iter_filter);
+vec_method_form!(native_vec_for_each_method, native_iter_for_each);
+vec_method_form!(native_vec_any_method, native_iter_any);
+vec_method_form!(native_vec_all_method, native_iter_all);
+vec_method_form!(native_vec_find_method, native_iter_find);
+vec_method_form!(native_vec_position_method, native_iter_position);
+vec_method_form!(native_vec_max_by_key_method, native_iter_max_by_key);
+vec_method_form!(native_vec_min_by_key_method, native_iter_min_by_key);
+vec_method_form!(native_vec_fold_method, native_iter_fold);
+
+/// `xs.count()` is the element count; `xs.count(f)` counts the
+/// elements the predicate accepts.
+pub(crate) fn native_vec_count_method(
+    dispatch: &mut dyn NativeDispatch,
+    args: &[Value],
+) -> RuntimeResult<Value> {
+    if args.len() <= 1 {
+        return builtin_iter_count(args);
+    }
+    let xs = collect_array(args.first().unwrap_or(&Value::Unit));
+    let f = args.get(1).cloned().unwrap_or(Value::Unit);
+    let mut n = 0i64;
+    for x in xs {
+        if matches!(dispatch.call_value(&f, vec![x])?, Value::Bool(true)) {
+            n += 1;
+        }
+    }
+    Ok(Value::Int(n))
+}
+
+/// `xs.take(n)` - method form of `iter::take` (receiver-first).
+pub(crate) fn builtin_vec_take_method(args: &[Value]) -> RuntimeResult<Value> {
+    let xs = collect_array(args.first().unwrap_or(&Value::Unit));
+    let n = args.get(1).and_then(value_to_int).unwrap_or(0);
+    let n = usize::try_from(n.max(0)).unwrap_or(0);
+    Ok(Value::Array(Arc::new(iter_std::take(n, &xs))))
+}
+
+/// `xs.step_by(step)` - every `step`-th element starting at index 0;
+/// a step below 1 is treated as 1 (total, tier-identical).
+pub(crate) fn builtin_vec_step_by_method(args: &[Value]) -> RuntimeResult<Value> {
+    let xs = collect_array(args.first().unwrap_or(&Value::Unit));
+    let step = args.get(1).and_then(value_to_int).unwrap_or(1).max(1);
+    let step = usize::try_from(step).unwrap_or(1);
+    let out: Vec<Value> = xs.iter().step_by(step).cloned().collect();
+    Ok(Value::Array(Arc::new(out)))
 }
 
 pub(crate) fn builtin_iter_count(args: &[Value]) -> RuntimeResult<Value> {

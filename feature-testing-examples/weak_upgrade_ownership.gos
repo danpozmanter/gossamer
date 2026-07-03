@@ -1,0 +1,84 @@
+// `w.upgrade()` hands out an owned strong reference pinned in a
+// frame-owned shadow local (released at scope exit / reassignment), so
+// the Some payload can never dangle even when the last other strong
+// reference dies while the upgraded value is still in use. This fixture
+// pins the accounting: repeated upgrades of the same weak, upgrades in a
+// loop (the shadow is reassigned and the previous pin released each
+// iteration), an upgrade result that is bound and matched twice, an
+// unmatched (discarded) upgrade, and a dead weak - all must agree
+// bit-identically across VM, JIT, and LLVM, with no leak or double-free.
+
+enum Node {
+    Leaf(i64),
+    Pair(i64, i64),
+}
+
+fn leaf_value(w: Weak<Node>) -> i64 {
+    match w.upgrade() {
+        Some(n) => match n {
+            Node::Leaf(v) => v,
+            Node::Pair(a, b) => a + b,
+        },
+        None => -1,
+    }
+}
+
+// The strong Node dies at return; the weak observes a dead referent.
+fn make_dead_weak() -> Weak<Node> {
+    let strong = Node::Leaf(404)
+    strong.downgrade()
+}
+
+fn main() {
+    // Repeated upgrades of one live weak: each retain is balanced by the
+    // shadow release, so liveness never drifts across calls.
+    let strong = Node::Pair(3, 4)
+    let w = strong.downgrade()
+    let mut total = 0
+    for _ in 0..1000 {
+        total += leaf_value(w)
+    }
+    println!("loop_total={}", total)
+
+    // Bound once, matched twice: the two matches read the same pinned
+    // payload; only the single shadow reference is released.
+    let o = w.upgrade()
+    let first = match o {
+        Some(n) => match n {
+            Node::Leaf(v) => v,
+            Node::Pair(a, _) => a,
+        },
+        None => -1,
+    }
+    let second = match o {
+        Some(n) => match n {
+            Node::Leaf(v) => v,
+            Node::Pair(_, b) => b,
+        },
+        None => -1,
+    }
+    println!("rematch={} {}", first, second)
+
+    // Discarded upgrade result: the pin is still released at scope end.
+    let _ = w.upgrade()
+    println!("discard_ok={}", leaf_value(w))
+
+    // Dead referent: no retain happens on the None path.
+    let dead = make_dead_weak()
+    let mut dead_total = 0
+    for _ in 0..100 {
+        dead_total += leaf_value(dead)
+    }
+    println!("dead_total={}", dead_total)
+
+    // if-let over a fresh upgrade inside a loop body.
+    let mut hits = 0
+    for _ in 0..50 {
+        if let Some(n) = w.upgrade() {
+            if let Node::Pair(a, b) = n {
+                hits += a + b
+            }
+        }
+    }
+    println!("iflet_hits={}", hits)
+}

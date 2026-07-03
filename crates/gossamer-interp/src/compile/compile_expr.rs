@@ -1437,6 +1437,52 @@ impl<'tcx> FnBuilder<'tcx> {
         dst
     }
 
+    /// Fuses an i64 arith whose right operand is an integer literal
+    /// fitting `i32` into one `Op::ArithImmI64`, skipping the literal's
+    /// `LoadConstI64`. Declined for a zero `Div`/`Rem` divisor (the
+    /// two-op form owns the divide-by-zero panic) and for unsigned
+    /// operands (handled by the caller's guard).
+    fn try_compile_i64_arith_imm(
+        &mut self,
+        op: HirBinaryOp,
+        lhs: &HirExpr,
+        rhs: &HirExpr,
+    ) -> RuntimeResult<Option<TypedReg>> {
+        let kind = match op {
+            HirBinaryOp::Add => ImmArithKind::Add,
+            HirBinaryOp::Sub => ImmArithKind::Sub,
+            HirBinaryOp::Mul => ImmArithKind::Mul,
+            HirBinaryOp::Div => ImmArithKind::Div,
+            HirBinaryOp::Rem => ImmArithKind::Rem,
+            _ => return Ok(None),
+        };
+        let HirExprKind::Literal(HirLiteral::Int(text)) = &rhs.kind else {
+            return Ok(None);
+        };
+        let Some(n) = parse_int(text) else {
+            return Ok(None);
+        };
+        let Ok(imm) = i32::try_from(n) else {
+            return Ok(None);
+        };
+        if imm == 0 && matches!(kind, ImmArithKind::Div | ImmArithKind::Rem) {
+            return Ok(None);
+        }
+        let lhs_tr = self.compile_expr_ex(lhs)?;
+        let lhs_i = self.as_i64(lhs_tr);
+        let dst = self.alloc_int();
+        self.emit(Op::ArithImmI64 {
+            kind,
+            dst_i: dst,
+            lhs_i,
+            imm,
+        });
+        Ok(Some(TypedReg {
+            reg: dst,
+            kind: RegKind::I64,
+        }))
+    }
+
     /// Typed binary-op compile. Emits `AddF64` / `LtI64` /
     /// etc. when both operands share a concrete numeric kind;
     /// otherwise falls back to the generic `binary_op` path
@@ -1477,6 +1523,12 @@ impl<'tcx> FnBuilder<'tcx> {
         if lk == RegKind::I64 && rk == RegKind::I64 {
             let lhs_unsigned = self.is_unsigned64_ty(lhs.ty);
             let rhs_unsigned = self.is_unsigned64_ty(rhs.ty);
+            if !lhs_unsigned
+                && !rhs_unsigned
+                && let Some(tr) = self.try_compile_i64_arith_imm(op, lhs, rhs)?
+            {
+                return Ok(tr);
+            }
             let lhs_tr = self.compile_expr_ex(lhs)?;
             let rhs_tr = self.compile_expr_ex(rhs)?;
             let lhs_i = self.as_i64(lhs_tr);
@@ -1511,14 +1563,16 @@ impl<'tcx> FnBuilder<'tcx> {
                 return self.compile_struct_cmp(&sname, op, lhs, rhs);
             }
         }
-        // Arithmetic operator overloading: `a + b` (and `- * /`) on a user
-        // struct routes to its `add`/`sub`/`mul`/`div` impl method. The
+        // Arithmetic / bitwise operator overloading: `a + b` on a user
+        // struct or enum routes to its `add`/`sub`/... impl method. The
         // checker rejects ADT operands with no such impl, so the method
-        // global is present (mirrors the struct-`==` route above).
+        // global is present. `adt_type_name` covers enums and generic
+        // instantiations (`Wrap<f64>` -> `Wrap`), unlike the layout-keyed
+        // struct-`==` route above.
         if let Some(method) = arith_overload_method(op) {
             if let Some(sname) = self
-                .struct_eq_dispatch_name(lhs.ty)
-                .or_else(|| self.struct_eq_dispatch_name(rhs.ty))
+                .adt_type_name(lhs.ty)
+                .or_else(|| self.adt_type_name(rhs.ty))
             {
                 return self.compile_struct_binop(&sname, method, lhs, rhs);
             }

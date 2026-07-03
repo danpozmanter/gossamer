@@ -1100,6 +1100,20 @@ pub enum Op {
         target: InstrIdx,
     },
 
+    /// Typed i64 arithmetic with an inline immediate right-hand
+    /// operand, fusing the `LoadConstI64` + arith pair a constant-
+    /// operand expression (`i % 7`, `n + 1`) would otherwise pay as
+    /// two dispatches. Wrapping semantics, identical to the two-op
+    /// form. `Div` / `Rem` immediates are never zero: the compiler
+    /// keeps the two-op form for a zero literal so the runtime's
+    /// divide-by-zero panic path stays shared.
+    ArithImmI64 {
+        kind: ImmArithKind,
+        dst_i: Reg,
+        lhs_i: Reg,
+        imm: i32,
+    },
+
     /// `floats[dst_f] = receiver.<struct field at offset>`.
     FieldGetF64ByOffset {
         /// Destination float register.
@@ -1447,6 +1461,16 @@ pub struct ClosureProto {
     pub capture_regs: Vec<Reg>,
 }
 
+/// Which arithmetic operation an [`Op::ArithImmI64`] performs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImmArithKind {
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Rem,
+}
+
 /// Operation an [`Op::Select`] arm performs, recorded in
 /// [`SelectArmMeta`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1673,5 +1697,21 @@ impl FnChunk {
     )]
     pub fn into_shared(self) -> Arc<Self> {
         Arc::new(self)
+    }
+}
+
+#[cfg(test)]
+mod op_layout_tests {
+    use super::Op;
+
+    #[test]
+    fn op_stays_within_dispatch_budget() {
+        // Every dispatch copies one `Op` out of the instruction stream;
+        // growing the enum grows every chunk and the per-op fetch. The
+        // widest variant (`Call`) sets the 16-byte footprint; new
+        // variants must pack within it (immediate operands are i32 for
+        // this reason).
+        let n = std::mem::size_of::<Op>();
+        assert!(n <= 16, "Op grew to {n} bytes (budget 16)");
     }
 }

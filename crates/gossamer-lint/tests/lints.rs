@@ -17,7 +17,7 @@ fn lint_with(source: &str, registry: Registry) -> Vec<Diagnostic> {
     let file = map.add_file("t.gos", source.to_string());
     let (sf, parse_diags) = parse_source_file(source, file);
     assert!(parse_diags.is_empty(), "parse errors: {parse_diags:?}");
-    run(&sf, &registry)
+    run(&sf, source, &registry)
 }
 
 fn has_code(diags: &[Diagnostic], code: &str) -> bool {
@@ -183,7 +183,7 @@ fn apply_attributes_respects_inline_allow() {
     for item in &sf.items {
         apply_attributes(&item.attrs, &mut registry);
     }
-    let diags = run(&sf, &registry);
+    let diags = run(&sf, source, &registry);
     assert!(!diags.iter().any(|d| d.code.as_str() == "GL0001"));
 }
 
@@ -200,6 +200,78 @@ fn every_day_one_lint_has_an_explanation() {
 #[test]
 fn day_one_set_has_at_least_fifteen_lints() {
     assert!(DAY_ONE_LINTS.len() >= 15);
+}
+
+#[test]
+fn if_same_then_else_fires_on_identical_bodies() {
+    let diags = lint("fn f(c: bool) -> i64 { if c { 1 } else { 1 } }\n");
+    assert!(has_code(&diags, "GL0019"), "got {:?}", diags_codes(&diags));
+}
+
+#[test]
+fn if_same_then_else_ignores_same_length_different_bodies() {
+    let diags = lint("fn f(c: bool) -> i64 { if c { 1 } else { 2 } }\n");
+    assert!(!has_code(&diags, "GL0019"), "got {:?}", diags_codes(&diags));
+}
+
+#[test]
+fn match_same_arms_fires_on_identical_bodies() {
+    let diags = lint("fn f(n: i64) -> i64 { match n { 0 => 7, 1 => 7, _ => 9 } }\n");
+    assert!(has_code(&diags, "GL0037"), "got {:?}", diags_codes(&diags));
+}
+
+#[test]
+fn match_same_arms_ignores_same_length_different_bodies() {
+    let diags = lint("fn f(n: i64) -> i64 { match n { 0 => 7, 1 => 8, _ => 9 } }\n");
+    assert!(!has_code(&diags, "GL0037"), "got {:?}", diags_codes(&diags));
+}
+
+#[test]
+fn match_same_arms_ignores_desugared_matches_bang() {
+    let diags = lint("fn f(b: i64) -> bool { matches!(b, 65 | 97) }\n");
+    assert!(!has_code(&diags, "GL0037"), "got {:?}", diags_codes(&diags));
+}
+
+#[test]
+fn unused_import_sees_type_position_paths() {
+    let diags = lint(
+        "use std::errors\nfn f() -> Result<(), errors::Error> { Ok(()) }\nfn main() { let _ = f() }\n",
+    );
+    assert!(!has_code(&diags, "GL0002"), "got {:?}", diags_codes(&diags));
+}
+
+#[test]
+fn unused_variable_sees_struct_shorthand() {
+    let diags = lint(
+        "struct S { tags: i64 }\nfn main() { let tags = 1i64\n    let s = S { tags }\n    let _x: i64 = s.tags }\n",
+    );
+    assert!(!has_code(&diags, "GL0001"), "got {:?}", diags_codes(&diags));
+}
+
+#[test]
+fn shadowed_binding_ignores_functional_rebind() {
+    let diags = lint("fn f() -> i64 { let q = 1\n    let q = q + 1\n    q }\n");
+    assert!(!has_code(&diags, "GL0008"), "got {:?}", diags_codes(&diags));
+}
+
+#[test]
+fn match_same_arms_ignores_desugared_while_let() {
+    let diags = lint(
+        "fn f(xs: [i64]) -> i64 { let mut i = 0\n    while let Some(x) = xs.pop() { i += x }\n    i }\n",
+    );
+    assert!(!has_code(&diags, "GL0037"), "got {:?}", diags_codes(&diags));
+}
+
+#[test]
+fn consecutive_assignment_fires_on_identical_statements() {
+    let diags = lint("fn f() { let mut x = 0\n    x = 1\n    x = 1\n    println!(\"{x}\") }\n");
+    assert!(has_code(&diags, "GL0039"), "got {:?}", diags_codes(&diags));
+}
+
+#[test]
+fn consecutive_assignment_ignores_same_length_different_values() {
+    let diags = lint("fn f() { let mut x = 0\n    x = 1\n    x = 2\n    println!(\"{x}\") }\n");
+    assert!(!has_code(&diags, "GL0039"), "got {:?}", diags_codes(&diags));
 }
 
 fn diags_codes(diags: &[Diagnostic]) -> Vec<&str> {

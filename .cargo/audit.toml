@@ -18,4 +18,12 @@ ignore = [
     # not reachable. Re-audit when a constant-time decryption fix
     # ships upstream.
     "RUSTSEC-2023-0071",
+    # memmap2 0.2.3 unsound (unchecked pointer offset). Pulled only
+    # transitively by cranelift-jit for JIT code-page mapping; even the
+    # latest cranelift-jit (0.133.1) still pins memmap2 0.2.3, and the
+    # 0.2.x line has no fixed release, so no upgrade removes it. Our own
+    # direct memmap2 (0.9) is unaffected, and the unsound offset API is
+    # not reached with untrusted input through cranelift's mapping. Drop
+    # when cranelift-jit moves to a patched memmap2.
+    "RUSTSEC-2026-0186",
 ]

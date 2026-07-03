@@ -9,11 +9,7 @@
  */
 
 fn count_newlines(text: String) -> i64 {
-    let mut count = 0
-    for i in 0..text.len() {
-        if text[i] == b'\n' { count += 1 }
-    }
-    count
+    text.as_bytes().count(|b| b == b'\n')
 }
 
 fn main() {

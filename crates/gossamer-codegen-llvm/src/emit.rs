@@ -63,6 +63,32 @@ impl std::fmt::Display for BuildError {
 
 impl std::error::Error for BuildError {}
 
+/// Module-level TBAA metadata tree emitted once per LLVM module (both render
+/// paths), right after the empty `!0` node.
+///
+/// Two sibling scalar type nodes - an aggregate *header* node (`!2`) and an
+/// element-*data* node (`!3`) - let the inline vec/string fast paths in
+/// `crate::lower::lower_inline` tag header-field accesses (a `GosVec` /
+/// `GosI64Vec` / `GosU8Vec` len/cap/elem_bytes/data-pointer, or a string's
+/// rc/cap/len/tag prefix) distinctly from element-buffer accesses via the
+/// access tags `!4` (header) and `!5` (data).
+///
+/// This is sound because the two never alias: a vec header and its element
+/// buffer are separate allocations, and a string's header prefix and its
+/// content bytes occupy disjoint byte ranges of one allocation - no single
+/// access spans both. With the distinction in place `-O3` can prove an element
+/// store does not clobber a hoisted `len`/`cap`/`elem_bytes`/`data` load, so
+/// LICM hoists the data pointer and the loop vectorizer fires on element loops.
+///
+/// The IDs (1-5) never collide with the DWARF metadata (`!40`+, and `!100`+
+/// per subprogram) that [`emit_dwarf_metadata`] appends on the `-g` path.
+const TBAA_METADATA: &str = r#"!1 = !{!"gos_tbaa_root"}
+!2 = !{!"gos_agg_header", !1, i64 0}
+!3 = !{!"gos_agg_data", !1, i64 0}
+!4 = !{!2, !2, i64 0}
+!5 = !{!3, !3, i64 0}
+"#;
+
 /// Outcome of a per-function fallback build.
 ///
 /// `object` is the LLVM-emitted object containing every body
@@ -613,6 +639,7 @@ fn render_chunk_module(
 
     writeln!(out).unwrap();
     writeln!(out, "!0 = !{{}}").unwrap();
+    out.push_str(TBAA_METADATA);
 
     Ok(out)
 }
@@ -1072,6 +1099,7 @@ fn render_module_to_path(
     }
     writeln!(body_w)?;
     writeln!(body_w, "!0 = !{{}}")?;
+    body_w.write_all(TBAA_METADATA.as_bytes())?;
 
     body_w
         .flush()

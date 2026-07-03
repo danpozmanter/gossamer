@@ -200,6 +200,13 @@ fn runtime_init() {
     static ONCE: Once = Once::new();
     ONCE.call_once(|| {
         configure_allocator();
+        // Install the main-thread stack-overflow guard. A `gos build`
+        // binary's `@main` is a bare `extern "C" fn` called straight from
+        // libc, so rustc's `lang_start` guard is bypassed; without this a
+        // deeply recursive program faults on the guard page as a raw
+        // SIGSEGV (exit 139) instead of a diagnosed "stack overflow"
+        // message. Idempotent (per-thread + process-wide `Once` inside).
+        crate::stack_guard::install_stack_guard();
         // SIGPIPE → SIG_IGN. Mirrors what `std::rt::lang_start`'s
         // `sys::unix::init` does. Without this, a write to a
         // closed peer (very common under heavy keep-alive load)
@@ -232,6 +239,10 @@ fn runtime_init() {
     static ONCE: Once = Once::new();
     ONCE.call_once(|| {
         configure_allocator();
+        // Install the main-thread stack-overflow guard (Windows: a vectored
+        // exception handler). See the unix arm for why the AOT `@main`
+        // entry needs this that rustc's `lang_start` would otherwise provide.
+        crate::stack_guard::install_stack_guard();
         let handle = std::thread::Builder::new()
             .name("gos-rt-init".to_string())
             .spawn(|| {})

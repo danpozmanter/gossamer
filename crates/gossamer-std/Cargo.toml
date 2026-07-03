@@ -64,7 +64,7 @@ sha1 = { version = "0.10", default-features = false, features = ["std"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 serde_norway = "0.9"
-quick-xml = "0.40"
+quick-xml = "0.41"
 
 # Archive readers/writers (`std::archive::{zip,tar}`).
 zip = { version = "8", default-features = false, features = ["deflate"] }

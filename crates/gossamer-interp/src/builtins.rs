@@ -1822,6 +1822,20 @@ fn install_concurrency_builtins(globals: &mut Vec<(&'static str, Value)>) {
     // which means `let mut v: Vec<i64> = Vec::new(); v.push(1)`
     // silently builds an empty `HashMap` and the push is a no-op.
     globals.push(("Vec::new", builtin("Vec::new", builtin_vec_new)));
+    // `Vec::with_capacity(n)` produces the same empty growable array as
+    // `Vec::new()`; the count is a preallocation hint the VM's dynamically
+    // grown array needs no separate reservation for. Registered so the
+    // surface resolves identically on the VM to the compiled tiers (which
+    // reserve `n` up front via `gos_rt_vec_with_capacity`). Both the bare
+    // and `collections::`-qualified paths are covered, matching `Vec::new`.
+    globals.push((
+        "Vec::with_capacity",
+        builtin("Vec::with_capacity", builtin_vec_with_capacity),
+    ));
+    globals.push((
+        "collections::Vec::with_capacity",
+        builtin("collections::Vec::with_capacity", builtin_vec_with_capacity),
+    ));
 
     // U8Vec: 1-byte-per-element heap vec. Same shape as I64Vec
     // but with byte-aligned storage - fasta-style scratch
@@ -5558,17 +5572,38 @@ fn builtin_str_find(args: &[Value]) -> RuntimeResult<Value> {
 }
 
 fn builtin_push(args: &[Value]) -> RuntimeResult<Value> {
+    let extra = args.get(1);
     match args.first() {
         Some(Value::Array(parts)) => {
+            // First scalar push into an empty generic array switches it to
+            // flat typed storage (`IntArray` / `FloatVec`, 8 bytes per
+            // element instead of a 16-byte boxed `Value`) - the same
+            // routing as `Op::VecPush`.
+            match extra {
+                Some(Value::Int(n)) if parts.is_empty() => {
+                    return Ok(Value::IntArray(Arc::new(vec![*n])));
+                }
+                Some(Value::Float(f)) if parts.is_empty() => {
+                    return Ok(Value::FloatVec(Arc::new(vec![*f])));
+                }
+                _ => {}
+            }
             let mut owned = parts.as_ref().clone();
-            if let Some(extra) = args.get(1) {
+            if let Some(extra) = extra {
                 owned.push(extra.clone());
             }
             Ok(Value::Array(Arc::new(owned)))
         }
         Some(Value::IntArray(parts)) => {
+            // A float push means the receiver is an `[f64]` whose elements
+            // so far were integer-valued: widen to flat float storage.
+            if let Some(Value::Float(f)) = extra {
+                let mut wide: Vec<f64> = parts.iter().map(|n| *n as f64).collect();
+                wide.push(*f);
+                return Ok(Value::FloatVec(Arc::new(wide)));
+            }
             let mut owned = parts.as_ref().clone();
-            if let Some(Value::Int(n)) = args.get(1) {
+            if let Some(Value::Int(n)) = extra {
                 owned.push(*n);
             }
             Ok(Value::IntArray(Arc::new(owned)))
@@ -7802,6 +7837,14 @@ fn builtin_u8vec_byte_len(args: &[Value]) -> RuntimeResult<Value> {
 /// lookup falls through to the bare `new` global, which is the
 /// last-installed module's `new` (currently `HashMap::new`).
 fn builtin_vec_new(_args: &[Value]) -> RuntimeResult<Value> {
+    Ok(Value::empty_array())
+}
+
+/// `Vec::with_capacity(n)` - an empty growable array. The capacity is a
+/// preallocation hint; the VM's array grows on demand, so it maps to the
+/// same empty value as `Vec::new()` (len 0), leaving the compiled tiers to
+/// honour the reservation via `gos_rt_vec_with_capacity`.
+fn builtin_vec_with_capacity(_args: &[Value]) -> RuntimeResult<Value> {
     Ok(Value::empty_array())
 }
 

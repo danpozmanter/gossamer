@@ -221,20 +221,28 @@ fn cast_same_type_is_a_noop_and_passes() {
 }
 
 #[test]
-fn cast_u8_to_char_allowed_other_ints_not() {
-    let src = "fn main() { let b: u8 = 65u8; let _: char = b as char }\n";
-    let ok = run(src);
-    assert!(
-        ok.diagnostics.is_empty(),
-        "u8 -> char should pass: {:?}",
-        ok.diagnostics,
-    );
-    let src = "fn main() { let i: i32 = 65i32; let _: char = i as char }\n";
+fn int_to_char_casts_allowed_float_rejected() {
+    // Every int width casts to char by reading its low byte (the
+    // masking `u8 as char` always applied), so `s[i] as char` works
+    // without an `as u8` intermediate.
+    for src in [
+        "fn main() { let b: u8 = 65u8; let _: char = b as char }\n",
+        "fn main() { let i: i32 = 65i32; let _: char = i as char }\n",
+        "fn main() { let s = \"hi\"; let _: char = s[0] as char }\n",
+    ] {
+        let ok = run(src);
+        assert!(
+            ok.diagnostics.is_empty(),
+            "int -> char should pass for {src:?}: {:?}",
+            ok.diagnostics,
+        );
+    }
+    let src = "fn main() { let f: f64 = 65.0; let _: char = f as char }\n";
     let bad = run(src);
     assert_eq!(bad.diagnostics.len(), 1);
     assert!(
-        matches!(&bad.diagnostics[0].error, TypeError::InvalidCast { from, to } if from == "i32" && to == "char"),
-        "expected i32 -> char rejection: {:?}",
+        matches!(&bad.diagnostics[0].error, TypeError::InvalidCast { from, to } if from == "f64" && to == "char"),
+        "expected f64 -> char rejection: {:?}",
         bad.diagnostics[0].error,
     );
 }
@@ -782,6 +790,29 @@ fn index_on_vec_and_string_is_accepted() {
 }
 
 #[test]
+fn oversized_fixed_array_is_rejected() {
+    // A `[T; N]` this large is placed inline on the stack by the compiled
+    // tiers and silently overflows the OS stack (SIGSEGV); rejected at check.
+    let d = diagnostics_for("fn main() { let a: [i64; 100000000] = [0; 100000000]; let _ = a }\n");
+    assert!(has_code(&d, "GT0026"), "{d:?}");
+}
+
+#[test]
+fn reasonable_fixed_array_is_accepted() {
+    // A small fixed array stays on the stack safely and must not trip GT0026.
+    let d = diagnostics_for("fn main() { let a: [i64; 16] = [0; 16]; println!(\"{}\", a[0]) }\n");
+    assert!(!has_code(&d, "GT0026"), "{d:?}");
+}
+
+#[test]
+fn oversized_repeat_into_vec_is_accepted() {
+    // The same count targeting a heap `Vec` is fine - only inline fixed
+    // arrays are stack-bounded, so this must not trip GT0026.
+    let d = diagnostics_for("fn main() { let v: [i64] = [0; 100000000]; let _ = v.len() }\n");
+    assert!(!has_code(&d, "GT0026"), "{d:?}");
+}
+
+#[test]
 fn call_of_scalar_value_is_rejected() {
     // 0.18.0: compiled tier emitted a call through a non-function symbol.
     let d = diagnostics_for("fn main() { let x = 5; let y = x(3); println!(\"{}\", y) }\n");
@@ -981,4 +1012,185 @@ fn strings_free_fn_accepts_string_and_char_patterns() {
             .any(|x| matches!(&x.error, TypeError::TypeMismatch { .. })),
         "valid string-function calls must type clean, got {d:?}"
     );
+}
+
+#[test]
+fn json_value_variant_pattern_is_rejected() {
+    // `json::Value` is an opaque dynamic-document handle with no matchable
+    // discriminant; matching its variants silently falls through on the VM
+    // and faults on the compiled tiers, so it is rejected at check.
+    let d = diagnostics_for(
+        "use std::encoding::json\n\
+         fn f(v: json::Value) -> i64 {\n\
+         match v {\n\
+         json::Value::Int(n) => n,\n\
+         json::Value::Object(pairs) => 1,\n\
+         _ => 0,\n\
+         }\n\
+         }\n",
+    );
+    let hits = d
+        .iter()
+        .filter(|x| matches!(&x.error, TypeError::JsonValuePatternUnsupported { .. }))
+        .count();
+    assert_eq!(
+        hits, 2,
+        "both json variant patterns must be rejected, got {d:?}"
+    );
+}
+
+#[test]
+fn json_value_if_let_pattern_is_rejected() {
+    let d = diagnostics_for(
+        "use std::encoding::json\n\
+         fn f(v: json::Value) {\n\
+         if let json::Value::Object(pairs) = v { let _ = pairs }\n\
+         }\n",
+    );
+    assert!(
+        d.iter()
+            .any(|x| matches!(&x.error, TypeError::JsonValuePatternUnsupported { .. })),
+        "if-let json variant pattern must be rejected, got {d:?}"
+    );
+}
+
+#[test]
+fn json_value_constructor_expression_is_not_rejected() {
+    // Constructing a `json::Value` (path/call position, not a pattern) is
+    // the supported programmatic-build API and must stay clean.
+    let d = diagnostics_for(
+        "use std::encoding::json\n\
+         fn f() -> json::Value { json::Value::Int(7) }\n",
+    );
+    assert!(
+        !d.iter()
+            .any(|x| matches!(&x.error, TypeError::JsonValuePatternUnsupported { .. })),
+        "json::Value constructor must not be rejected, got {d:?}"
+    );
+}
+
+#[test]
+fn downgrade_on_scalar_is_rejected() {
+    // `.downgrade()` needs a runtime RC pointer; a by-value scalar has no
+    // header, so `Weak` of it faults on the compiled tiers. Rejected at check.
+    let d = diagnostics_for("fn main() { let x: i64 = 5\nlet w = x.downgrade() }\n");
+    assert!(
+        d.iter()
+            .any(|x| matches!(&x.error, TypeError::WeakDowngradeNonRc { .. })),
+        "downgrade on a scalar must be rejected, got {d:?}"
+    );
+}
+
+#[test]
+fn downgrade_on_struct_is_accepted() {
+    // A struct is a reference-counted aggregate with a real header, so
+    // `.downgrade()` on it is valid and must type clean.
+    let d = diagnostics_for(
+        "struct Node { x: i64 }\n\
+         fn main() { let n = Node { x: 1 }\nlet w = n.downgrade()\nlet _ = w }\n",
+    );
+    assert!(
+        !d.iter()
+            .any(|x| matches!(&x.error, TypeError::WeakDowngradeNonRc { .. })),
+        "downgrade on a struct must be accepted, got {d:?}"
+    );
+}
+
+#[test]
+fn unary_neg_without_impl_is_rejected() {
+    // `-a` on a struct with no `impl Neg` previously passed check and
+    // faulted GX0002 at runtime; it must be a clean GT0003 error.
+    let d = diagnostics_for(
+        "struct P { x: i64 }\n\
+         fn main() { let a = P { x: 1 }\nlet n = -a\nlet _ = n }\n",
+    );
+    assert!(has_code(&d, "GT0003"), "{d:?}");
+}
+
+#[test]
+fn unary_neg_with_impl_is_accepted() {
+    let d = diagnostics_for(
+        "struct P { x: i64 }\n\
+         impl Neg for P { fn neg(self) -> P { P { x: 0 - self.x } } }\n\
+         fn main() { let a = P { x: 1 }\nlet n = -a\nprintln!(\"{}\", n.x) }\n",
+    );
+    assert!(!has_code(&d, "GT0003"), "{d:?}");
+}
+
+#[test]
+fn unary_neg_on_enum_with_impl_is_accepted() {
+    let d = diagnostics_for(
+        "enum Sign { Pos(i64), Neg(i64) }\n\
+         impl Neg for Sign { fn neg(self) -> Sign {\n\
+         match self { Sign::Pos(n) => Sign::Neg(n), Sign::Neg(n) => Sign::Pos(n) } } }\n\
+         fn main() { let p = Sign::Pos(7)\nlet s = -p\nlet _ = s }\n",
+    );
+    assert!(!has_code(&d, "GT0003"), "{d:?}");
+}
+
+#[test]
+fn compound_assign_without_impl_is_rejected() {
+    // `a += b` desugars through `Add`; a struct place with no impl
+    // previously passed check and faulted at runtime.
+    let d = diagnostics_for(
+        "struct P { x: i64 }\n\
+         fn main() { let mut a = P { x: 1 }\na += P { x: 2 }\nlet _ = a }\n",
+    );
+    assert!(has_code(&d, "GT0003"), "{d:?}");
+}
+
+#[test]
+fn compound_assign_with_impl_is_accepted() {
+    // Includes the heterogeneous shape `v *= 2.0` (impl Mul takes `f64`).
+    let d = diagnostics_for(
+        "struct V { x: f64 }\n\
+         impl Add for V { fn add(self, o: V) -> V { V { x: self.x + o.x } } }\n\
+         impl Mul for V { fn mul(self, s: f64) -> V { V { x: self.x * s } } }\n\
+         fn main() { let mut v = V { x: 1.0 }\nv += V { x: 2.0 }\nv *= 2.0\nprintln!(\"{}\", v.x) }\n",
+    );
+    assert!(!has_code(&d, "GT0003"), "{d:?}");
+}
+
+#[test]
+fn adt_on_rhs_of_scalar_operator_is_rejected() {
+    // Operator dispatch is receiver-first: `2.0 * v` would call
+    // `V::mul(2.0, v)` with a scalar `self`, so it is rejected rather
+    // than miscompiled with swapped operands.
+    let d = diagnostics_for(
+        "struct V { x: f64 }\n\
+         impl Mul for V { fn mul(self, s: f64) -> V { V { x: self.x * s } } }\n\
+         fn main() { let v = V { x: 1.0 }\nlet w = 2.0 * v\nlet _ = w }\n",
+    );
+    assert!(has_code(&d, "GT0003"), "{d:?}");
+}
+
+#[test]
+fn generic_impl_operator_is_accepted() {
+    // `impl<T> Add for Wrap<T>` types `a + b` per instantiation via the
+    // generic impl's declared return with substituted arguments.
+    let d = diagnostics_for(
+        "struct Wrap<T> { v: T }\n\
+         impl<T> Add for Wrap<T> { fn add(self, o: Wrap<T>) -> Wrap<T> { Wrap { v: self.v + o.v } } }\n\
+         fn main() { let a = Wrap { v: 3 }\nlet b = Wrap { v: 4 }\nprintln!(\"{}\", (a + b).v) }\n",
+    );
+    assert!(!has_code(&d, "GT0003"), "{d:?}");
+}
+
+#[test]
+fn index_on_struct_without_impl_is_rejected() {
+    let d = diagnostics_for(
+        "struct P { x: i64 }\n\
+         fn main() { let a = P { x: 1 }\nprintln!(\"{}\", a[0]) }\n",
+    );
+    assert!(has_code(&d, "GT0021"), "{d:?}");
+}
+
+#[test]
+fn index_on_struct_with_impl_is_accepted() {
+    let d = diagnostics_for(
+        "struct P { x: i64 }\n\
+         impl Index for P { fn index(self, i: i64) -> i64 { self.x + i } }\n\
+         fn main() { let a = P { x: 1 }\nprintln!(\"{}\", a[0]) }\n",
+    );
+    assert!(!has_code(&d, "GT0021"), "{d:?}");
 }

@@ -40,14 +40,26 @@ impl FrontendCacheKey {
     /// toolchain identifier (typically `env!("CARGO_PKG_VERSION")`).
     #[must_use]
     pub fn new(source: &str, toolchain: &str) -> Self {
-        // The build stamp changes on every compiler build, so a
+        // The build stamp changes when the frontend crates recompile, so a
         // development rebuild with an unchanged version string cannot
         // serve ASTs parsed by older frontend code.
         let stamp = env!("GOS_DRIVER_BUILD_STAMP");
-        let mut buf = Vec::with_capacity(source.len() + toolchain.len() + stamp.len() + 8);
+        // The stamp alone rotates only when a frontend crate's sources
+        // change (its build script watches those directories). A rebuild
+        // that touches other compiler crates relinks the executable
+        // without re-running that script, so the running binary's own
+        // identity is mixed in too - any rebuilt `gos` starts from a
+        // cold frontend cache instead of consuming blobs written by a
+        // different build of the compiler. Mirrors the object cache's
+        // `compiler_fingerprint`.
+        let exe = exe_fingerprint();
+        let mut buf =
+            Vec::with_capacity(source.len() + toolchain.len() + stamp.len() + exe.len() + 8);
         buf.extend_from_slice(toolchain.as_bytes());
         buf.push(0);
         buf.extend_from_slice(stamp.as_bytes());
+        buf.push(0);
+        buf.extend_from_slice(exe.as_bytes());
         buf.push(0);
         buf.extend_from_slice(source.as_bytes());
         Self {
@@ -60,6 +72,28 @@ impl FrontendCacheKey {
     pub fn as_hex(&self) -> &str {
         &self.hash
     }
+}
+
+/// Identity of the running compiler binary (size and mtime), computed once.
+/// Folded into every frontend cache key so a rebuilt `gos` - even one whose
+/// frontend crates did not recompile - never reads blobs a different build
+/// of the compiler wrote.
+fn exe_fingerprint() -> &'static str {
+    static FP: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    FP.get_or_init(|| {
+        let mut s = String::new();
+        if let Ok(exe) = std::env::current_exe()
+            && let Ok(meta) = fs::metadata(&exe)
+        {
+            s.push_str(&format!("len={}", meta.len()));
+            if let Ok(mtime) = meta.modified()
+                && let Ok(dur) = mtime.duration_since(std::time::UNIX_EPOCH)
+            {
+                s.push_str(&format!("|mtime={}", dur.as_nanos()));
+            }
+        }
+        s
+    })
 }
 
 /// Resolves the cache root directory, creating it when absent.

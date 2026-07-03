@@ -1,0 +1,36 @@
+// A hot loop that constructs, copies, mutates, and drops an aggregate with a
+// reference-counted (String) field every iteration. Exercises the Cranelift
+// JIT's whole-aggregate copy - a mutation of the copy must not write through to
+// the source - and its per-iteration aggregate construction, which reuses the
+// frame slot rather than leaking a heap block. Output must be bit-identical on
+// the bytecode VM, the Cranelift JIT, and the LLVM AOT tiers.
+
+struct Rec {
+    name: String,
+    count: i64,
+}
+
+fn build(i: i64) -> Rec {
+    Rec {
+        name: format!("item-{}", i),
+        count: i,
+    }
+}
+
+fn run(rounds: i64) -> i64 {
+    let mut total = 0
+    let mut i = 0
+    while i < rounds {
+        let p = build(i)
+        let mut q = p
+        q.count = q.count * 2
+        // `p.count` stays `i`; only the copy `q.count` doubled.
+        total += p.name.len() + p.count + q.count
+        i += 1
+    }
+    total
+}
+
+fn main() {
+    println!("{}", run(2000))
+}

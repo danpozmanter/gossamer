@@ -1,0 +1,35 @@
+// Returning the deref of a reference-to-String param mints the caller's
+// reference (soundness F5). `&mut String` is a pointer-to-slot (double
+// indirection), so `*s` as a value loads the String pointer; `&String`
+// holds it directly. Both must survive, not leak, and not double-free on
+// every tier (the compiled tiers previously read garbage / segfaulted).
+
+fn take_mut(s: &mut String) -> String {
+    *s
+}
+
+fn take_shared(s: &String) -> String {
+    *s
+}
+
+fn main() {
+    let mut a = "hello world"
+    let b = take_mut(&mut a)
+    println!("{}", b)
+
+    let c = "shared value"
+    let d = take_shared(&c)
+    println!("{}", d)
+
+    // In a loop: exercises repeated deref-return without leaking or
+    // double-freeing the shared referent.
+    let mut total = 0
+    let mut i = 0
+    while i < 1000 {
+        let mut s = "abcdef"
+        let r = take_mut(&mut s)
+        total += r.len()
+        i += 1
+    }
+    println!("total: {}", total)
+}

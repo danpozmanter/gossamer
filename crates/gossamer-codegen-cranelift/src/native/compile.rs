@@ -364,19 +364,31 @@ pub(super) fn is_inline_two_word_ty(tcx: &TyCtxt, ty: gossamer_types::Ty) -> boo
     ) || tcx.is_inline_enum_ty(ty)
 }
 
-/// True when `body` returns a 2-tuple, the shape lowered through the
-/// structural-return-value (sret) ABI: the caller passes a pointer to a
-/// 16-byte result slot as a hidden trailing argument and the callee writes the
-/// two words there instead of heap-allocating a fresh block per call. This is
-/// what keeps a hot tuple-returning body (`build` / `lcg`) from leaking a
-/// 16-byte block on every call - the caller's slot is reused (a stack slot in a
-/// JIT caller, a stack buffer at the VM trampoline). Mirrors the LLVM tier's
-/// aggregate-return ABI.
-pub(super) fn body_returns_sret_tuple(body: &Body, tcx: &TyCtxt) -> bool {
+/// True when `body` returns a by-value aggregate occupying more than one flat
+/// slot - a tuple, a fixed-size array, or a struct - the shape lowered through
+/// the structural-return-value (sret) ABI: the caller passes a pointer to a
+/// result slot sized to the aggregate as a hidden trailing argument and the
+/// callee writes the result words there instead of heap-allocating a fresh
+/// block per call. This keeps a hot aggregate-returning body (`build`, a
+/// monomorphised `get() -> Point`) from leaking a block on every call - the
+/// caller's slot is reused (a stack slot in a JIT caller, a stack buffer at the
+/// VM trampoline). Inline two-word enums (`Result` / `Option` / inline user
+/// enums) return as a packed `i128` register value, not through sret, so they
+/// are excluded. Mirrors the LLVM tier's aggregate-return ABI.
+pub(super) fn body_returns_sret_aggregate(body: &Body, tcx: &TyCtxt) -> bool {
+    let ret = body.local_ty(Local::RETURN);
+    if is_inline_two_word_ty(tcx, ret) {
+        return false;
+    }
+    // One-word address-represented aggregates (a single-managed-field struct)
+    // return through sret too: their locals may be stack-slot-backed, so a raw
+    // one-word return could hand the caller a pointer into the dying frame,
+    // and the sret copy (plus the fresh-block free) keeps hot
+    // aggregate-returning loops from leaking a heap block per call.
     matches!(
-        tcx.kind_of(body.local_ty(Local::RETURN)),
-        TyKind::Tuple(elems) if elems.len() == 2
-    )
+        tcx.kind_of(ret),
+        TyKind::Tuple(_) | TyKind::Array { .. } | TyKind::Adt { .. }
+    ) && (type_slot_count(tcx, ret) > 1 || single_slot_addr_aggregate(tcx, ret))
 }
 
 pub(super) fn build_signature_from_types(
@@ -409,11 +421,11 @@ pub(super) fn build_signature_from_types(
             .unwrap_or_else(|| cl_type_of(tcx, ret_ty, module))
     };
     sig.returns.push(AbiParam::new(ret_cl));
-    // A 2-tuple return uses the sret ABI: a hidden trailing pointer arg names a
-    // caller-owned 16-byte slot the callee fills, so no per-call heap block is
-    // allocated. The body still returns that pointer (in the return register)
+    // A by-value aggregate return uses the sret ABI: a hidden trailing pointer
+    // arg names a caller-owned slot the callee fills, so no per-call heap block
+    // is allocated. The body still returns that pointer (in the return register)
     // for callers that read the result directly.
-    if body_returns_sret_tuple(body, tcx) {
+    if body_returns_sret_aggregate(body, tcx) {
         sig.params
             .push(AbiParam::new(module.target_config().pointer_type()));
     }
@@ -560,6 +572,24 @@ pub(crate) fn lower_program_full(
     let mut intrinsics = IntrinsicContext::new();
     intrinsics.functions.clone_from(&function_ids_by_name);
     intrinsics.functions_by_def.clone_from(&function_ids_by_def);
+    // Per-callee sret return-slot count: for every body that returns a
+    // multi-slot aggregate through the sret ABI, record how many 8-byte words
+    // its result slot holds, keyed the same way `resolve_callee` looks a callee
+    // up (mangled/plain name and def-local id). A call site sizes its
+    // caller-owned sret slot from this instead of a fixed guess, so a struct /
+    // array / 3+-tuple return lands in a correctly-sized slot rather than
+    // overflowing a 16-byte one.
+    for body in bodies {
+        if body_returns_sret_aggregate(body, tcx) {
+            let slots = type_slot_count(tcx, body.local_ty(Local::RETURN)).max(1);
+            intrinsics
+                .sret_slots_by_name
+                .insert(body.name.clone(), slots);
+            if let Some(def) = body.def {
+                intrinsics.sret_slots_by_def.insert(def.local, slots);
+            }
+        }
+    }
 
     // N9-B: Pre-declare every runtime symbol the codegen may reference
     // so that all IntrinsicContext cache lookups in the parallel phase

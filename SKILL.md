@@ -50,7 +50,42 @@ first time through, leave it alone.
   tier rather than fabricating a zero aggregate.
 - **`arr.swap(i, j)`** over the manual three-line temp dance.
 - **`m.inc(k)` / `m.inc(k, by)`** for counters; `m.or_insert(k,
-  default)` for get-or-fill.
+  default)` for get-or-fill. The statement
+  `m.or_insert(k, d).method(args)` writes the mutation back into the
+  map's stored value (`accounts.or_insert(name, Account { balance: 0,
+  txns: 0 }).apply(amount)`), so struct-valued counters fold in one
+  line.
+- **Method-form sequence combinators.** `xs.map(f)`, `xs.filter(f)`,
+  `xs.sum()`, `xs.min()` / `xs.max()` (`Option<T>`), `xs.count()` /
+  `xs.count(f)`, `xs.any(f)` / `xs.all(f)`, `xs.find(f)` /
+  `xs.position(f)`, `xs.max_by_key(f)` / `xs.min_by_key(f)`,
+  `xs.fold(init, f)`, `xs.take(n)`, `xs.step_by(s)` - no import, and
+  ranges are sequences too: `(2..n).filter(|k| sieve[k]).take(3)`,
+  `(1..5).map(|i| i * i).sum()`. The data-last `iter::` free forms
+  remain for `|>` pipelines.
+- **`xs.join(sep)` Display-joins any scalar or String sequence.**
+  `[1, 2, 3].join(" ")` is `"1 2 3"`; works for `f64` / `bool` /
+  `String` elements (aggregate elements are a check error).
+- **`s.to_i64()` / `s.to_f64()` / `s.to_bool()`** - strict full-string
+  parses returning `Option<T>`: the canonical CLI-arg idiom is
+  `env::args().first().unwrap_or("8").to_i64().unwrap_or(8)`.
+- **`[v; n]` with a runtime `n` builds a Vec** (`let mut sieve =
+  [true; n]`) - byte-packed for `bool` / `u8` elements; never write a
+  push loop to fill a constant.
+- **Collection constructors infer.** `let mut m = HashMap::new()` /
+  `BTreeMap::new()` / `HashSet::new()` and `let mut xs = []` ground
+  from first use - annotations only when nothing pins them.
+- **Byte reads: `s[i]` is the byte as `i64`.** Compare and do
+  arithmetic with byte literals directly (`s[i] >= b'0'`,
+  `n = n * 10 + s[i] - b'0'`) and render with `s[i] as char` (any int
+  as char reads the low byte). Prefer this over `substring(i, i + 1)`
+  string slicing for per-byte scans.
+- **Format captures walk field paths.** `println!("{name}: {a.balance}
+  ({a.txns} transactions)")`, tuple indices `{t.0}`, nesting
+  `{o.inner.hits}`, and specs `{a.balance:>8}` / `{f.0:.2}` all work.
+- **Range binds looser than arithmetic, tighter than `|>`**
+  (SPEC §4.7): `i * i..n` is `(i * i)..n`, and `0..n |> iter::sum`
+  pipes the whole range.
 - **Recursive enums work directly.** `enum List { Cons(i64,
   Box<List>), Nil }`. `Box` / `Arc` / `Rc` are transparent - every
   variant payload is heap-shared; the bare `Cons(i64, List)` form
@@ -980,22 +1015,6 @@ bug - reduce it and check against `gos test` (interpreter) **and**
   the real collector runs - this is a behavioral divergence, not just a
   source-level footgun; don't depend on which side you see without
   cross-checking `gos build`.
-- **Entry-point `Err` is dropped, and diverges by tier** (open bug,
-  verified against 0.23.0): when the entry point - either the implicit
-  top-level-statement main or an explicit `fn main() -> Result<T, E>` -
-  returns `Err(e)` via `?`, `e` is never printed on either tier, and the
-  exit code diverges: `gos run` exits `0` (the `Result` is discarded
-  outright), `gos build` exits `1`. Until this is fixed, don't rely on
-  a bare `?`-propagating main for user-facing error reporting or exit
-  codes - explicitly `match` at the entry point and call
-  `process::exit(n)` with a printed message in the `Err` arm.
-- **`fs::read_to_string`'s error path is dropped on the native/LLVM
-  tier only** (open bug, verified against 0.23.0): a missing/unreadable
-  path correctly returns `Err(...)` under `gos run`, but returns
-  `Ok("")` under `gos build`. `fs::exists`, `fs::read` (bytes), and
-  `fs::write`'s error paths are unaffected on both tiers. Guard with
-  `fs::exists(&path)` before `fs::read_to_string` if the binary might
-  ever be `gos build`-compiled.
 
 ## 15. Where to read more
 

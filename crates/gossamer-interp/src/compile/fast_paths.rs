@@ -1829,15 +1829,13 @@ impl<'tcx> FnBuilder<'tcx> {
             );
         }
 
-        // Layout (preserves the original `continue → header`
-        // semantics): a header bounds-check + the body + a fused
-        // `IncJumpIfLt(target=header)` at the bottom that combines
-        // the per-iter AddI64 + Jump into one dispatch. The fall-
-        // through case after the fused op (counter has reached
-        // end) lands directly on the post-loop block, so the
-        // header check on the final exit iteration is the only
-        // one paid; intermediate iterations skip the redundant
-        // header re-check that the straight-translation form does.
+        // Layout: a header bounds-check (paid on loop entry only) +
+        // the body + a fused `IncJumpIfLt(target=header+1)` at the
+        // bottom that combines the per-iter AddI64 + bounds re-test +
+        // Jump into one dispatch whose back-edge lands on the first
+        // body instruction. The fall-through case after the fused op
+        // (counter has reached end) lands directly on the post-loop
+        // block.
         let header = self.cur_idx();
         let exit_branch_idx = self.emit(if inclusive {
             Op::BranchIfGtI64 {
@@ -1865,19 +1863,22 @@ impl<'tcx> FnBuilder<'tcx> {
         // the body's bottom fall-through executes. Routing
         // `continue` directly to `header` would re-test the
         // bound without advancing the counter and livelock the
-        // loop.
+        // loop. The back-edge targets the first body instruction
+        // (`header + 1`): the fused op already performed the
+        // equivalent bounds test, so intermediate iterations skip
+        // the header check and only loop entry pays it.
         let continue_target = self.cur_idx();
         self.emit(if inclusive {
             Op::IncJumpIfLeI64 {
                 counter_i,
                 end_i,
-                target: header,
+                target: header + 1,
             }
         } else {
             Op::IncJumpIfLtI64 {
                 counter_i,
                 end_i,
-                target: header,
+                target: header + 1,
             }
         });
         let after = self.cur_idx();
@@ -2136,13 +2137,6 @@ impl<'tcx> FnBuilder<'tcx> {
             dst_i: counter_i,
             idx: zero_idx,
         });
-        let one_idx = self.i64_const_idx(1);
-        let one_i = self.alloc_int();
-        self.emit(Op::LoadConstI64 {
-            dst_i: one_i,
-            idx: one_idx,
-        });
-
         let result = self.alloc_reg();
         self.push_scope();
 
@@ -2211,18 +2205,18 @@ impl<'tcx> FnBuilder<'tcx> {
             label: self.pending_loop_label.take(),
         });
         self.compile_loop_body(&some_arm.body)?;
-        // `continue` jumps here so the counter increment + jump
-        // back to the bounds check still run. A direct jump to
-        // `header` would re-check bounds without advancing the
-        // index and produce an infinite loop on any body that
-        // exercises `continue`.
+        // `continue` jumps here so the counter still advances before
+        // the bound is re-tested (routing it to `header` would re-check
+        // without incrementing and livelock). The fused op's back-edge
+        // targets the element refill just past the header bounds check:
+        // it already performed the equivalent `< len` test, so only the
+        // loop's first entry pays the header check.
         let continue_target = self.cur_idx();
-        self.emit(Op::AddI64 {
-            dst_i: counter_i,
-            lhs_i: counter_i,
-            rhs_i: one_i,
+        self.emit(Op::IncJumpIfLtI64 {
+            counter_i,
+            end_i: len_i,
+            target: header + 1,
         });
-        self.emit(Op::Jump { target: header });
         let after = self.cur_idx();
         self.patch_jump(exit_branch_idx, after);
         let ctx = self

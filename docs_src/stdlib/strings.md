@@ -43,4 +43,7 @@ Polished `String` operations.
 | `equal_fold` | fn | Case-insensitive Unicode string equality. |
 | `trim_matches` | fn | Removes characters in the given set from both ends. |
 | `to_title` | fn | Title-cases the first letter of each word. |
+| `to_i64` | fn | Strict full-string parse to Option<i64>. |
+| `to_f64` | fn | Strict full-string parse to Option<f64>. |
+| `to_bool` | fn | Parses exactly `true` / `false` to Option<bool>. |
 

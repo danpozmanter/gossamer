@@ -2283,7 +2283,7 @@ function. Combine errors with <code>errors::wrap</code>:</p>
 </tr>
 <tr>
 <td><code>ProcessBuilder(cmd).start()</code></td>
-<td><code>process::Command::new(cmd).spawn()</code></td>
+<td><code>process::run(cmd, &amp;args)</code></td>
 </tr>
 <tr>
 <td><code>println(x)</code></td>
@@ -2351,7 +2351,7 @@ function. Combine errors with <code>errors::wrap</code>:</p>
 </tr>
 <tr>
 <td><code>list.sortedBy { }</code></td>
-<td><code>xs.sort_by(\|a, b\| …)</code></td>
+<td><code>xs.sort_by_key(\|x\| …)</code></td>
 </tr>
 <tr>
 <td><code>OkHttp / Ktor HttpClient</code></td>

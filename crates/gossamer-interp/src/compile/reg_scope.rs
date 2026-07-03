@@ -215,4 +215,58 @@ impl<'tcx> FnBuilder<'tcx> {
             }
         }
     }
+
+    /// Folds the `MoveI64` an i64 local reassignment would pay when the
+    /// RHS result was produced by the immediately-preceding typed-i64
+    /// arith op, redirecting that op's destination into the local's slot.
+    /// Sound only for a straight-line RHS: typed arith always writes a
+    /// fresh scratch register (so the elided temp has no other reader),
+    /// and requiring the `[rhs_start, here)` window to be free of
+    /// control-flow ops guarantees nothing can jump to the elided move's
+    /// slot (an in-flight patch to a mid-statement index can only be
+    /// created by the RHS's own branches).
+    pub(crate) fn try_fold_i64_move(
+        &mut self,
+        rhs_start: InstrIdx,
+        src_i: Reg,
+        new_dst: Reg,
+    ) -> bool {
+        let here = self.cur_idx();
+        if here <= rhs_start {
+            return false;
+        }
+        let window = &self.instrs[rhs_start as usize..here as usize];
+        if window.iter().any(|op| {
+            matches!(
+                op,
+                Op::Jump { .. }
+                    | Op::BranchIf { .. }
+                    | Op::BranchIfNot { .. }
+                    | Op::BranchIfLtI64 { .. }
+                    | Op::BranchIfGeI64 { .. }
+                    | Op::BranchIfGtI64 { .. }
+                    | Op::BranchIfLtF64 { .. }
+                    | Op::BranchIfGeF64 { .. }
+                    | Op::IncJumpIfLtI64 { .. }
+                    | Op::IncJumpIfLeI64 { .. }
+                    | Op::Select { .. }
+            )
+        }) {
+            return false;
+        }
+        match self.instrs.last_mut() {
+            Some(
+                Op::AddI64 { dst_i, .. }
+                | Op::SubI64 { dst_i, .. }
+                | Op::MulI64 { dst_i, .. }
+                | Op::DivI64 { dst_i, .. }
+                | Op::RemI64 { dst_i, .. }
+                | Op::ArithImmI64 { dst_i, .. },
+            ) if *dst_i == src_i => {
+                *dst_i = new_dst;
+                true
+            }
+            _ => false,
+        }
+    }
 }

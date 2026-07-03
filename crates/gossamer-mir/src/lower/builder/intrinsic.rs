@@ -830,12 +830,21 @@ impl<'a> Builder<'a> {
             // unified callable infra ships an env pointer with the
             // body address at env[0].
             ("iter::for_each", 2) => {
-                let closure_local = self.lower_iter_closure(&args[0], &[i64_ty], i64_ty, span)?;
+                let f64_ty = self.tcx.float_ty(gossamer_types::FloatTy::F64);
+                let elem_is_f64 =
+                    matches!(self.iter_element_kind(args[1].ty), Some(TyKind::Float(_)));
+                let in_ty = if elem_is_f64 { f64_ty } else { i64_ty };
+                let helper = if elem_is_f64 {
+                    "gos_rt_iter_for_each_f64"
+                } else {
+                    "gos_rt_iter_for_each_i64"
+                };
+                let closure_local = self.lower_iter_closure(&args[0], &[in_ty], i64_ty, span)?;
                 let vec_local = self.lower_iter_vec_arg(&args[1])?;
                 let dest = self.fresh(unit_ty);
                 let next = self.new_block(span);
                 self.terminate(Terminator::Call {
-                    callee: Operand::Const(ConstValue::Str("gos_rt_iter_for_each_i64".to_string())),
+                    callee: Operand::Const(ConstValue::Str(helper.to_string())),
                     args: vec![
                         Operand::Copy(Place::local(closure_local)),
                         Operand::Copy(Place::local(vec_local)),
@@ -847,12 +856,31 @@ impl<'a> Builder<'a> {
                 Some(self.lower_unit(span))
             }
             ("iter::map", 2) => {
-                let closure_local = self.lower_iter_closure(&args[0], &[i64_ty], i64_ty, span)?;
+                // Route an f64-element map through the float-ABI shim + closure
+                // so the element rides an SSE register; a hardcoded i64 sig
+                // would hand the closure integer-register bits it reads as a
+                // garbage double. The output shape stays the closure's own
+                // return type so a `[f64] -> [i64]` map (or the reverse) is
+                // typed correctly.
+                let f64_ty = self.tcx.float_ty(gossamer_types::FloatTy::F64);
+                let elem_is_f64 =
+                    matches!(self.iter_element_kind(args[1].ty), Some(TyKind::Float(_)));
+                let out_ty = self
+                    .iter_element_kind(ty)
+                    .map_or(i64_ty, |k| self.tcx.intern(k));
+                let out_is_f64 = matches!(self.tcx.kind_of(out_ty), TyKind::Float(_));
+                let (in_ty, helper) = match (elem_is_f64, out_is_f64) {
+                    (true, true) => (f64_ty, "gos_rt_iter_map_f64"),
+                    (true, false) => (f64_ty, "gos_rt_iter_map_f64_word"),
+                    (false, true) => (i64_ty, "gos_rt_iter_map_word_f64"),
+                    (false, false) => (i64_ty, "gos_rt_iter_map_i64"),
+                };
+                let closure_local = self.lower_iter_closure(&args[0], &[in_ty], out_ty, span)?;
                 let vec_local = self.lower_iter_vec_arg(&args[1])?;
                 let dest = self.fresh(ty);
                 let next = self.new_block(span);
                 self.terminate(Terminator::Call {
-                    callee: Operand::Const(ConstValue::Str("gos_rt_iter_map_i64".to_string())),
+                    callee: Operand::Const(ConstValue::Str(helper.to_string())),
                     args: vec![
                         Operand::Copy(Place::local(closure_local)),
                         Operand::Copy(Place::local(vec_local)),
@@ -865,12 +893,21 @@ impl<'a> Builder<'a> {
             }
             ("iter::filter", 2) => {
                 let bool_ty = self.tcx.bool_ty();
-                let closure_local = self.lower_iter_closure(&args[0], &[i64_ty], bool_ty, span)?;
+                let f64_ty = self.tcx.float_ty(gossamer_types::FloatTy::F64);
+                let elem_is_f64 =
+                    matches!(self.iter_element_kind(args[1].ty), Some(TyKind::Float(_)));
+                let in_ty = if elem_is_f64 { f64_ty } else { i64_ty };
+                let helper = if elem_is_f64 {
+                    "gos_rt_iter_filter_f64"
+                } else {
+                    "gos_rt_iter_filter_i64"
+                };
+                let closure_local = self.lower_iter_closure(&args[0], &[in_ty], bool_ty, span)?;
                 let vec_local = self.lower_iter_vec_arg(&args[1])?;
                 let dest = self.fresh(ty);
                 let next = self.new_block(span);
                 self.terminate(Terminator::Call {
-                    callee: Operand::Const(ConstValue::Str("gos_rt_iter_filter_i64".to_string())),
+                    callee: Operand::Const(ConstValue::Str(helper.to_string())),
                     args: vec![
                         Operand::Copy(Place::local(closure_local)),
                         Operand::Copy(Place::local(vec_local)),

@@ -184,6 +184,12 @@ pub(super) fn collect_body_str_consts(body: &Body) -> Vec<String> {
     out
 }
 
+/// Upper bound (in 8-byte slots) on an aggregate that may be constructed or
+/// copied into a frame stack slot rather than a heap block. Structs and tuples
+/// stay well under it; a large `[v; N]` array exceeds it and keeps its heap
+/// allocation so a deep call chain cannot overflow the machine stack.
+const MAX_STACK_AGGR_SLOTS: u32 = 256;
+
 pub(super) fn lower_body(
     module: &mut dyn Module,
     func: &mut Function,
@@ -221,9 +227,10 @@ pub(super) fn lower_body(
                 param_value,
             );
         }
-        // The sret pointer (a 2-tuple body's hidden trailing param) follows the
-        // user params; the `Return` lowering writes the result words through it.
-        intrinsics.sret_ptr = if body_returns_sret_tuple(body, tcx) {
+        // The sret pointer (an aggregate-returning body's hidden trailing
+        // param) follows the user params; the `Return` lowering writes the
+        // result words through it.
+        intrinsics.sret_ptr = if body_returns_sret_aggregate(body, tcx) {
             Some(builder.block_params(entry)[body.arity as usize])
         } else {
             None
@@ -243,10 +250,31 @@ pub(super) fn lower_body(
             std::collections::HashSet::new();
         for block in &body.blocks {
             for stmt in &block.stmts {
-                if let StatementKind::Assign { place, .. } = &stmt.kind
-                    && !place.projection.is_empty()
-                {
-                    field_store_targets.insert(place.local.0);
+                if let StatementKind::Assign { place, rvalue } = &stmt.kind {
+                    if !place.projection.is_empty() {
+                        field_store_targets.insert(place.local.0);
+                    } else if matches!(
+                        rvalue,
+                        Rvalue::Use(Operand::Copy(_))
+                            | Rvalue::Aggregate { .. }
+                            | Rvalue::Repeat { .. }
+                    ) && type_slot_count(tcx, body.local_ty(place.local))
+                        <= MAX_STACK_AGGR_SLOTS
+                    {
+                        // A whole-aggregate copy destination (`let q = p`) or
+                        // an aggregate constructor (`let p = Foo { .. }`,
+                        // `[v; n]`) needs its own slot so `lower_statement` can
+                        // memcpy / construct into it rather than aliasing the
+                        // source pointer or leaking a fresh heap block each
+                        // iteration. Aliasing would let a mutation of the copy
+                        // write through to the source and unbalance the drop
+                        // pass's per-field retain/release pairs; a per-iteration
+                        // heap block is never reclaimed on the non-region path.
+                        // Bound the slot size so a large `[v; N]` array keeps
+                        // its heap allocation rather than risking a stack
+                        // overflow from an oversized frame slot.
+                        field_store_targets.insert(place.local.0);
+                    }
                 }
             }
         }
@@ -276,7 +304,13 @@ pub(super) fn lower_body(
                 continue;
             }
             let slots = type_slot_count(tcx, ty);
-            if slots <= 1 {
+            // A one-word aggregate whose sole leaf is heap-managed is
+            // address-represented (see `single_slot_addr_aggregate`): the drop
+            // pass zero-inits and frees its field through `local.Field(0)`
+            // before any whole-value assignment, so it needs the same backing
+            // slot a multi-slot aggregate gets. Plain one-slot structs
+            // (`P { x: i64 }`) keep the heap-block path.
+            if slots <= 1 && !single_slot_addr_aggregate(tcx, ty) {
                 continue;
             }
             let bytes = slots * 8;
@@ -287,6 +321,7 @@ pub(super) fn lower_body(
             ));
             let addr = builder.ins().stack_addr(ptr_ty, slot, 0);
             define_var_to_with(&mut builder, &mut locals, local, addr, Some(ptr_ty));
+            intrinsics.stack_slotted.insert(local);
         }
     }
 

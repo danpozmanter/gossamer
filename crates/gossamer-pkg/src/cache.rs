@@ -290,6 +290,14 @@ pub enum CacheError {
         /// Key the registry index now advertises.
         offered: String,
     },
+    /// A git dependency's URL or ref was rejected before any git
+    /// process ran: a disallowed transport (only `https://`, `ssh://`,
+    /// and `git://` are permitted, so `ext::`/`file://`/remote-helper
+    /// prefixes that can execute arbitrary commands are refused) or a
+    /// leading `-` that git would parse as an option rather than a
+    /// positional argument.
+    #[error("{0}")]
+    RejectedGitSource(String),
 }
 
 /// Resolved source tree fetched into the cache.

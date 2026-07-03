@@ -257,6 +257,12 @@ pub(super) enum ConcatKind {
     ArrF64(i64),
     ArrBool(i64),
     ArrString(i64),
+    /// `[[i64; M]; N]` flat-buffer nested array (`N * M` contiguous
+    /// slots, rows inline); both static lengths are passed to
+    /// `gos_rt_arr_format_arr_i64`.
+    ArrArrI64(i64, i64),
+    ArrArrF64(i64, i64),
+    ArrArrBool(i64, i64),
     /// `json::Value` rendered via `gos_rt_json_display`.
     JsonValue,
     /// `errors::Error` rendered via `gos_rt_error_message`.

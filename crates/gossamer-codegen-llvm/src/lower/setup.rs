@@ -213,6 +213,18 @@ impl<'a> Lowerer<'a> {
     }
 
     pub(crate) fn emit_param_stores(&mut self) {
+        // A lifted closure (`__closure_N`) is invoked through a shape thunk that
+        // forwards each argument BY VALUE (the runtime iter/sort helpers and the
+        // `Fn` fat-pointer call site pass the element word directly). A directly
+        // called function instead receives an inline aggregate BY POINTER (the
+        // caller hands over the address of its flat-slot storage). The two
+        // conventions only diverge for a heap-pointer aggregate (`slot_count`
+        // = `None`: a recursive/heap enum, opaque blob handle) whose sole word
+        // is the handle pointer: a closure gets that pointer as a value (store
+        // it, exactly like a scalar), a direct callee gets its address (copy
+        // the word out). Multi-slot aggregates (`slot_count = Some`) are always
+        // by-pointer, so both memcpy.
+        let is_closure = self.body.name.starts_with("__closure");
         for i in 0..self.body.arity {
             let local = Local(i + 1);
             let local_ty = self.body.local_ty(local);
@@ -220,12 +232,9 @@ impl<'a> Lowerer<'a> {
                 continue;
             }
             let slot = local_slot(local);
-            if is_aggregate(self.tcx, local_ty) {
-                // Aggregates are passed by pointer (the caller hands us
-                // the address of its flat-slot storage). Copy that data
-                // into our own slot so subsequent reads land on the
-                // aggregate's inline data - matching how locally-built
-                // aggregates are populated by `emit_aggregate_store`.
+            let by_pointer = is_aggregate(self.tcx, local_ty)
+                && (slot_count(self.tcx, local_ty).is_some() || !is_closure);
+            if by_pointer {
                 let bytes = u64::from(slot_count(self.tcx, local_ty).unwrap_or(1).max(1)) * 8;
                 writeln!(
                     self.out,

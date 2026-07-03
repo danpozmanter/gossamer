@@ -1,0 +1,27 @@
+// A function that builds a String accumulator and returns it, called in a
+// loop, must not leak one reference per call (RAM A3). The return-copy of a
+// flows-to-return frame-owned local is a MOVE (its reference transfers to
+// the caller), so the return-copy retain is elided rather than minting a
+// second, unbalanced reference. Output is a scalar - bit-identical across
+// tiers while RSS stays bounded.
+
+fn make(n: i64) -> String {
+    let mut s = ""
+    let mut i = 0
+    while i < n {
+        s += "ab"
+        i += 1
+    }
+    s
+}
+
+fn main() {
+    let mut total = 0
+    let mut r = 0
+    while r < 5000 {
+        let s = make(16)
+        total += s.len()
+        r += 1
+    }
+    println!("total: {}", total)
+}

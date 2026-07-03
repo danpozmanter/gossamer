@@ -17,11 +17,7 @@ fn scores(high: bool) -> Vec<i64> {
 
 // A `Vec<T>` parameter accepts a bare literal at the call site.
 fn total(values: Vec<i64>) -> i64 {
-    let mut sum = 0
-    for v in values {
-        sum += v
-    }
-    sum
+    values.sum()
 }
 
 // A `&[T]` slice parameter accepts one too.

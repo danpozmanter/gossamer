@@ -197,9 +197,90 @@ impl<'a> Lowerer<'a> {
                 "Repeat assignment through projection",
             ));
         }
+        let base = local_slot(place.local);
+        let op_ty = self.operand_ty(value);
+        let mut op_slots = slot_count(self.tcx, op_ty).unwrap_or(1);
+        if matches!(value, Operand::Const(_) | Operand::FnRef { .. }) {
+            op_slots = 1;
+        }
+        let op_is_aggregate_copy =
+            matches!(value, Operand::Copy(_)) && is_aggregate(self.tcx, op_ty);
+        if op_slots > 1 || op_is_aggregate_copy {
+            // An aggregate element occupies `op_slots` inline words per
+            // repetition ([[0; 3]; 3] is 9 contiguous words): copy the
+            // element's flat payload into each repetition's slot range,
+            // never a single scalar store of its address.
+            let src_place = match value {
+                Operand::Copy(p) => p,
+                Operand::Const(_) | Operand::FnRef { .. } => {
+                    // Multi-slot constructors are materialised into a temp
+                    // local before Repeat, so a non-place element here is
+                    // malformed input; fail loudly over a silent miscompile.
+                    return Err(BuildError::Unsupported(
+                        "aggregate repeat element must be a Copy(place)",
+                    ));
+                }
+            };
+            let src = self.lower_place_address(src_place);
+            let bytes = u64::from(op_slots) * 8;
+            if count <= 16 {
+                for i in 0..count {
+                    let dst = self.fresh();
+                    let slot = i * u64::from(op_slots);
+                    writeln!(
+                        self.out,
+                        "  {dst} = getelementptr i64, ptr {base}, i64 {slot}"
+                    )
+                    .unwrap();
+                    writeln!(
+                        self.out,
+                        "  call void @llvm.memcpy.p0.p0.i64(ptr {dst}, ptr {src}, i64 {bytes}, i1 false)"
+                    )
+                    .unwrap();
+                }
+            } else {
+                let head = self.fresh_label("repeat_head");
+                let body = self.fresh_label("repeat_body");
+                let done = self.fresh_label("repeat_done");
+                let counter = self.fresh();
+                writeln!(self.out, "  {counter} = alloca i64").unwrap();
+                writeln!(self.out, "  store i64 0, ptr {counter}").unwrap();
+                writeln!(self.out, "  br label %{head}").unwrap();
+                writeln!(self.out, "{head}:").unwrap();
+                let cur = self.fresh();
+                writeln!(self.out, "  {cur} = load i64, ptr {counter}").unwrap();
+                let cond = self.fresh();
+                writeln!(self.out, "  {cond} = icmp ult i64 {cur}, {count}").unwrap();
+                writeln!(self.out, "  br i1 {cond}, label %{body}, label %{done}").unwrap();
+                writeln!(self.out, "{body}:").unwrap();
+                let slot = self.fresh();
+                writeln!(
+                    self.out,
+                    "  {slot} = mul i64 {cur}, {slots}",
+                    slots = u64::from(op_slots)
+                )
+                .unwrap();
+                let dst = self.fresh();
+                writeln!(
+                    self.out,
+                    "  {dst} = getelementptr i64, ptr {base}, i64 {slot}"
+                )
+                .unwrap();
+                writeln!(
+                    self.out,
+                    "  call void @llvm.memcpy.p0.p0.i64(ptr {dst}, ptr {src}, i64 {bytes}, i1 false)"
+                )
+                .unwrap();
+                let next = self.fresh();
+                writeln!(self.out, "  {next} = add i64 {cur}, 1").unwrap();
+                writeln!(self.out, "  store i64 {next}, ptr {counter}").unwrap();
+                writeln!(self.out, "  br label %{head}").unwrap();
+                writeln!(self.out, "{done}:").unwrap();
+            }
+            return Ok(());
+        }
         let v = self.lower_operand(value)?;
         let v_llvm = self.operand_llvm_ty(value);
-        let base = local_slot(place.local);
         if count <= 16 {
             for i in 0..count {
                 let dst = self.fresh();
@@ -323,6 +404,30 @@ impl<'a> Lowerer<'a> {
                 writeln!(
                     self.out,
                     "  {dest} = call ptr @gos_rt_arr_format_string(ptr {value}, i64 {n})"
+                )
+                .unwrap();
+            }
+            ConcatKind::ArrArrI64(n, m) => {
+                declare_rt(&mut self.runtime_refs, "gos_rt_arr_format_arr_i64");
+                writeln!(
+                    self.out,
+                    "  {dest} = call ptr @gos_rt_arr_format_arr_i64(ptr {value}, i64 {n}, i64 {m})"
+                )
+                .unwrap();
+            }
+            ConcatKind::ArrArrF64(n, m) => {
+                declare_rt(&mut self.runtime_refs, "gos_rt_arr_format_arr_f64");
+                writeln!(
+                    self.out,
+                    "  {dest} = call ptr @gos_rt_arr_format_arr_f64(ptr {value}, i64 {n}, i64 {m})"
+                )
+                .unwrap();
+            }
+            ConcatKind::ArrArrBool(n, m) => {
+                declare_rt(&mut self.runtime_refs, "gos_rt_arr_format_arr_bool");
+                writeln!(
+                    self.out,
+                    "  {dest} = call ptr @gos_rt_arr_format_arr_bool(ptr {value}, i64 {n}, i64 {m})"
                 )
                 .unwrap();
             }

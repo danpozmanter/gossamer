@@ -1043,16 +1043,25 @@ pub(crate) fn lower_fn(
                 _ => None,
             };
             // Secondary fallback: parameters named with stdlib-
-            // shape-identifying names get the same tag. Covers
-            // the case where the type renders as a Var (e.g.
-            // when type inference hasn't pinned the parameter to
-            // a concrete shape).
-            let runtime_kind_from_name: Option<&'static str> = match name.name.as_str() {
-                "request" | "req" | "r" | "rq" => Some("http::Request"),
-                "response" | "resp" | "rsp" => Some("http::Response"),
-                "scanner" => Some("bufio::Scanner"),
-                "client" => Some("http::Client"),
-                _ => None,
+            // shape-identifying names get the same tag - but only
+            // when inference left the type unresolved. A parameter
+            // whose type resolved to anything concrete (e.g. a user
+            // struct received through a binding named `r`) keeps its
+            // real RC semantics, not opaque-handle semantics.
+            let ty_unresolved = matches!(
+                builder.tcx.kind_of(param.ty),
+                gossamer_types::TyKind::Var(_) | gossamer_types::TyKind::Error
+            );
+            let runtime_kind_from_name: Option<&'static str> = if ty_unresolved {
+                match name.name.as_str() {
+                    "request" | "req" | "r" | "rq" => Some("http::Request"),
+                    "response" | "resp" | "rsp" => Some("http::Response"),
+                    "scanner" => Some("bufio::Scanner"),
+                    "client" => Some("http::Client"),
+                    _ => None,
+                }
+            } else {
+                None
             };
             if let Some(rk) = runtime_kind_from_type.or(runtime_kind_from_name) {
                 builder.local_runtime_kind.insert(local, rk);

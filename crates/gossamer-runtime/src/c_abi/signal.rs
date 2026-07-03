@@ -740,6 +740,57 @@ pub unsafe extern "C" fn gos_rt_vec_reversed(v: *const GosVec) -> *mut GosVec {
     })
 }
 
+/// `xs.step_by(step) -> [T]`: every `step`-th element starting at
+/// index 0, as a fresh Vec. A step below 1 is treated as 1 so the
+/// result is total and identical on every tier.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_vec_step_by(v: *const GosVec, step: i64) -> *mut GosVec {
+    ffi_entry!(std::ptr::null_mut(), {
+        if v.is_null() {
+            return unsafe { gos_rt_vec_new(8) };
+        }
+        let src = unsafe { &*v };
+        let step = step.max(1);
+        let out = unsafe { gos_rt_vec_with_capacity(src.elem_bytes, src.len / step + 1) };
+        if !out.is_null() {
+            let mut i = 0;
+            while i < src.len {
+                let src_ptr = unsafe { src.ptr.add((i as usize) * (src.elem_bytes as usize)) };
+                unsafe { gos_rt_vec_push(out, src_ptr) };
+                i += step;
+            }
+        }
+        // Same sharing contract as `gos_rt_vec_slice`: the stepped copy
+        // owns its own share of every element's heap children.
+        unsafe { crate::c_abi::vec::vec_share_owned_elements(v, out) };
+        out
+    })
+}
+
+/// `xs.take(n) -> [T]`: the first `n` elements (clamped to the source
+/// length; a negative `n` yields an empty Vec) as a fresh Vec.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_vec_take(v: *const GosVec, n: i64) -> *mut GosVec {
+    ffi_entry!(std::ptr::null_mut(), {
+        if v.is_null() {
+            return unsafe { gos_rt_vec_new(8) };
+        }
+        let src = unsafe { &*v };
+        let count = n.clamp(0, src.len);
+        let out = unsafe { gos_rt_vec_with_capacity(src.elem_bytes, count.max(1)) };
+        if !out.is_null() {
+            for i in 0..count {
+                let src_ptr = unsafe { src.ptr.add((i as usize) * (src.elem_bytes as usize)) };
+                unsafe { gos_rt_vec_push(out, src_ptr) };
+            }
+        }
+        // Same sharing contract as `gos_rt_vec_slice`: the taken copy
+        // owns its own share of every element's heap children.
+        unsafe { crate::c_abi::vec::vec_share_owned_elements(v, out) };
+        out
+    })
+}
+
 /// `xs.index_of(&needle) -> Option<i64>` for an i64-shaped Vec.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_vec_index_of_i64(v: *const GosVec, needle: i64) -> i128 {

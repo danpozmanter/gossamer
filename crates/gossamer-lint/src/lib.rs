@@ -166,19 +166,22 @@ pub const DAY_ONE_LINTS: &[&str] = &[
     "pattern_matching_unit",
     "panic_without_message",
     "empty_loop",
+    // Batch 5 (conciseness nudges).
+    "fill_loop",
+    "substring_byte_scan",
 ];
 
-/// Runs every enabled lint over `source_file` and returns their
-/// diagnostics in deterministic order (lint code asc, source offset
-/// asc).
+/// Runs every enabled lint over `source_file` (parsed from `src`) and
+/// returns their diagnostics in deterministic order (lint code asc,
+/// source offset asc).
 #[must_use]
-pub fn run(source_file: &SourceFile, registry: &Registry) -> Vec<Diagnostic> {
+pub fn run(source_file: &SourceFile, src: &str, registry: &Registry) -> Vec<Diagnostic> {
     let mut out = Vec::new();
     for (id, level) in registry.entries() {
         let Some(severity) = level.severity() else {
             continue;
         };
-        let findings = lints::run_lint(id, source_file);
+        let findings = lints::run_lint(id, source_file, src);
         for (span, title, help) in findings {
             let location = Location::new(span.file, span);
             let code = lint_code(id);
@@ -258,6 +261,8 @@ fn lint_code(id: &str) -> Code {
         "pattern_matching_unit" => Code("GL0048"),
         "panic_without_message" => Code("GL0049"),
         "empty_loop" => Code("GL0050"),
+        "fill_loop" => Code("GL0051"),
+        "substring_byte_scan" => Code("GL0052"),
         _ => Code("GL9999"),
     }
 }

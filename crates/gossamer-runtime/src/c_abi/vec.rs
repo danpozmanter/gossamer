@@ -84,9 +84,13 @@ pub struct GosVec {
     /// padding before `ptr` so the struct layout (size, ptr offset,
     /// len offset) is unchanged from prior 0.5 releases.
     pub elem_kind: u8,
-    /// Region-allocation marker (was `_reserved[0]`, struct offset 21):
-    /// `VEC_REGION_FLAG` when this header and its buffer live in an arena
-    /// slab, so `gos_rt_vec_free` skips them.
+    /// Header flags (was `_reserved[0]`, struct offset 21), a small
+    /// bitfield: `VEC_REGION_FLAG` when this header and its buffer live
+    /// in an arena slab (so `gos_rt_vec_free` skips them), and
+    /// `VEC_SPLIT_FLAG` when `ptr` points at a separately-allocated
+    /// buffer rather than the inline one that rides with the header (so
+    /// `gos_rt_vec_free` knows to reclaim that buffer on its own). The
+    /// two are mutually exclusive: region vecs never split.
     pub region_flag: u8,
     /// Strong refcount of a non-region Vec - an actual `AtomicU16` so its
     /// atomic loads/stores are sound. (A prior `[u8; 3]` reinterpret-cast to
@@ -98,20 +102,119 @@ pub struct GosVec {
     pub ptr: SyncRawPtr<u8>,
 }
 
-/// `region_flag` value marking a GosVec (and its backing buffer) as
+/// `region_flag` bit marking a GosVec (and its backing buffer) as
 /// arena-region-allocated: both live in region slabs, so `gos_rt_vec_free`
 /// must skip them (they are freed wholesale at `arena_pop`).
 const VEC_REGION_FLAG: u8 = 1;
 
+/// `region_flag` bit marking a non-region GosVec whose `ptr` points at a
+/// separately-allocated element buffer (grown past the inline capacity)
+/// rather than the inline buffer that rides with the header. Set on the
+/// first grow, or at construction for a capacity larger than the inline
+/// buffer holds. `gos_rt_vec_free` reclaims that separate buffer only for
+/// a split vec; an inline vec's buffer is freed with the header block.
+const VEC_SPLIT_FLAG: u8 = 2;
+
+/// Element words held inline, immediately after the [`GosVec`] header, in a
+/// single [`InlineVec`] allocation. Sized so a small vec (the common
+/// `graph[node]` adjacency list) keeps its header and first elements in one
+/// cache line, removing the separate-buffer dependent load: 64 bytes = 8
+/// i64 slots.
+const INLINE_BUF_WORDS: usize = 8;
+const INLINE_BUF_BYTES: usize = INLINE_BUF_WORDS * 8;
+
+/// A non-region `GosVec` header physically followed by its initial element
+/// buffer, allocated as one `Box<InlineVec>`. `repr(C)` keeps `header` at
+/// offset 0 so a `*mut GosVec` and a `*mut InlineVec` share an address and
+/// every codegen path that reads header fields at fixed offsets is
+/// unaffected. While the element count stays within the inline buffer,
+/// `header.ptr` points into `buf` (one allocation, header and first
+/// elements in one cache line); a push past the inline capacity moves `ptr`
+/// to a separately-allocated buffer and sets [`VEC_SPLIT_FLAG`], after which
+/// `buf` is unused space reclaimed with the header.
+#[repr(C)]
+pub(crate) struct InlineVec {
+    pub(crate) header: GosVec,
+    buf: [u64; INLINE_BUF_WORDS],
+}
+
+/// Inline element capacity for a given element width (how many elements of
+/// `elem_bytes` fit in [`INLINE_BUF_BYTES`]). Zero for a zero or oversized
+/// element width, which then always uses a separate buffer.
+#[inline]
+fn inline_cap(elem_bytes: u32) -> i64 {
+    if elem_bytes == 0 || elem_bytes as usize > INLINE_BUF_BYTES {
+        0
+    } else {
+        (INLINE_BUF_BYTES / elem_bytes as usize) as i64
+    }
+}
+
+/// Allocates a non-region `GosVec` as a single `Box<InlineVec>` (header +
+/// contiguous inline element buffer). When `cap` fits the inline buffer,
+/// `header.ptr` points into it and the vec is not split; otherwise a
+/// separate `cap * elem_bytes` buffer is allocated, `header.ptr` points at
+/// it, and [`VEC_SPLIT_FLAG`] is set. `len` initialises the header length;
+/// the data region is left zeroed for the caller to fill. Increments the
+/// vec ledger and sets the strong count to 1, symmetric with
+/// [`super::map::gos_rt_vec_free`].
+pub(crate) unsafe fn alloc_box_vec(
+    elem_bytes: u32,
+    elem_kind: u8,
+    cap: i64,
+    len: i64,
+) -> *mut GosVec {
+    let cap = cap.max(len).max(0);
+    let icap = inline_cap(elem_bytes);
+    let (init_ptr, real_cap, flag) = if cap <= icap {
+        (SyncRawPtr::NULL, icap, 0u8)
+    } else {
+        let bytes = checked_buffer_bytes(cap as usize, elem_bytes as usize);
+        (
+            SyncRawPtr::new(alloc_vec_buffer(bytes)),
+            cap,
+            VEC_SPLIT_FLAG,
+        )
+    };
+    crate::c_abi::ledger::vec_inc();
+    let mut boxed = Box::new(InlineVec {
+        header: GosVec {
+            len,
+            cap: real_cap,
+            elem_bytes,
+            elem_kind,
+            region_flag: flag,
+            rc: std::sync::atomic::AtomicU16::new(1),
+            ptr: init_ptr,
+        },
+        buf: [0u64; INLINE_BUF_WORDS],
+    });
+    if flag == 0 {
+        // Inline: point `ptr` at this box's own contiguous buffer. The heap
+        // address is stable across `Box::into_raw` / `Box::from_raw`, so the
+        // self-reference stays valid for the vec's whole life.
+        let bufptr = boxed.buf.as_mut_ptr().cast::<u8>();
+        boxed.header.ptr = SyncRawPtr::new(bufptr);
+    }
+    Box::into_raw(boxed).cast::<GosVec>()
+}
+
+/// True when this non-region GosVec's `ptr` is a separately-allocated
+/// buffer (grown past the inline capacity) rather than the inline buffer
+/// carried in the [`InlineVec`] header block. `gos_rt_vec_free` reclaims
+/// that separate buffer only for a split vec.
+#[inline]
+pub(crate) fn vec_is_split(v: &GosVec) -> bool {
+    v.region_flag & VEC_SPLIT_FLAG != 0
+}
+
 /// Allocate a GosVec header from the active region if one is open (so it is
 /// freed wholesale at pop and `gos_rt_vec_free` skips it), else from the
-/// global allocator via `Box`. Sets the region flag accordingly.
+/// global allocator as a single `Box<InlineVec>` via [`alloc_box_vec`].
 unsafe fn alloc_vec_header(mut v: GosVec) -> *mut GosVec {
     let p = crate::c_abi::rc::region_alloc_bytes(std::mem::size_of::<GosVec>());
     if p.is_null() {
-        crate::c_abi::ledger::vec_inc();
-        vec_set_rc(&v, 1);
-        Box::into_raw(Box::new(v))
+        unsafe { alloc_box_vec(v.elem_bytes, v.elem_kind, v.cap, v.len) }
     } else {
         v.region_flag = VEC_REGION_FLAG;
         let hp = p.cast::<GosVec>();
@@ -287,6 +390,19 @@ pub(crate) unsafe fn vec_release_owned_children(v: &GosVec) {
     }
 }
 
+/// Increment a `GosVec`'s strong count by one. The `String`-field
+/// counterpart `gos_rt_str_retain` bumps a shared string; this bumps a
+/// shared `Vec`/`[T]` reached as a by-value struct field, so a struct copy
+/// (`let b = a`) gives both owners a share and each `gos_rt_vec_free` at
+/// their deaths balances. Null-safe; region and count-0 headers handled by
+/// `vec_retain_header`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_vec_retain(v: *mut GosVec) {
+    ffi_entry!((), {
+        unsafe { vec_retain_header(v) };
+    });
+}
+
 /// Bump a non-region `GosVec`'s strong count by one (the header-RC
 /// counterpart of `gos_rt_str_retain` for nested-vec children).
 pub(crate) unsafe fn vec_retain_header(v: *mut GosVec) {
@@ -450,7 +566,7 @@ pub(crate) unsafe fn vec_release_guarded_elements(v: &GosVec) {
 /// True when this GosVec was allocated inside an arena region.
 #[inline]
 pub fn vec_is_region(v: &GosVec) -> bool {
-    v.region_flag == VEC_REGION_FLAG
+    v.region_flag & VEC_REGION_FLAG != 0
 }
 
 /// Reads element `idx` of `v` as an i64, honoring the header's
@@ -590,6 +706,25 @@ pub(crate) fn alloc_vec_buffer(bytes: usize) -> *mut u8 {
     ptr
 }
 
+/// Byte size of `count` elements of `elem_bytes` each. A Vec whose
+/// byte size overflows the address space cannot be allocated: the
+/// wrapping product would size a short buffer while the header still
+/// records the oversized `cap`, so subsequent pushes write past the
+/// allocation. Matching the VM's `capacity overflow` panic keeps the
+/// three tiers identical instead of corrupting the heap.
+#[inline]
+fn checked_buffer_bytes(count: usize, elem_bytes: usize) -> usize {
+    count.checked_mul(elem_bytes).unwrap_or_else(|| {
+        let cs = std::ffi::CString::new("capacity overflow").unwrap_or_default();
+        // SAFETY: `cs` is a valid NUL-terminated C string for the call's
+        // duration; `gos_rt_panic` reads it and does not retain the pointer.
+        // It exits the process (main goroutine) or unwinds (spawned
+        // goroutine); this arm never returns.
+        unsafe { gos_rt_panic(cs.as_ptr()) };
+        0
+    })
+}
+
 /// Frees a buffer from [`alloc_vec_buffer`]. `bytes` must equal the
 /// value passed at allocation; every GosVec buffer is sized
 /// `cap * elem_bytes`, stable across the buffer's life.
@@ -603,29 +738,11 @@ pub(crate) unsafe fn free_vec_buffer(ptr: *mut u8, bytes: usize) {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_vec_with_capacity(elem_bytes: u32, cap: i64) -> *mut GosVec {
     ffi_entry!(std::ptr::null_mut(), {
-        if cap <= 0 {
-            return unsafe { gos_rt_vec_new(elem_bytes) };
-        }
-        let bytes = (cap as usize) * (elem_bytes as usize);
-        // Zero-initialised so the backing storage is always valid to
-        // read (clippy::uninit_vec). The interpreter never observes a
-        // slot before it's been explicitly written via push/insert,
-        // but zeroing is cheap and removes the UB risk.
-        let ptr = alloc_vec_buffer(bytes);
-        // Ledger + initial strong count, symmetric with `alloc_vec_header`
-        // (gos_rt_vec_free always decrements the ledger).
-        crate::c_abi::ledger::vec_inc();
-        let v = GosVec {
-            len: 0,
-            cap,
-            elem_bytes,
-            elem_kind: vec_elem_kind::PRIMITIVE,
-            region_flag: 0,
-            rc: std::sync::atomic::AtomicU16::new(0),
-            ptr: SyncRawPtr::new(ptr),
-        };
-        vec_set_rc(&v, 1);
-        Box::into_raw(Box::new(v))
+        // Header + reserved element buffer in one `Box<InlineVec>` (or a
+        // separate buffer for a capacity larger than the inline slot). The
+        // zero-init keeps every slot valid to read before an explicit
+        // push/insert (clippy::uninit_vec), matching the prior behaviour.
+        unsafe { alloc_box_vec(elem_bytes, vec_elem_kind::PRIMITIVE, cap, 0) }
     })
 }
 
@@ -649,35 +766,22 @@ pub unsafe extern "C" fn gos_rt_vec_with_capacity_typed(
         } else {
             elem_kind
         };
-        if cap <= 0 {
-            return unsafe { gos_rt_vec_new_typed(elem_bytes, kind) };
-        }
-        let bytes = (cap as usize) * (elem_bytes as usize);
-        let ptr = alloc_vec_buffer(bytes);
-        // Ledger + initial strong count, symmetric with `alloc_vec_header`.
-        crate::c_abi::ledger::vec_inc();
-        let v = GosVec {
-            len: 0,
-            cap,
-            elem_bytes,
-            elem_kind: kind,
-            region_flag: 0,
-            rc: std::sync::atomic::AtomicU16::new(0),
-            ptr: SyncRawPtr::new(ptr),
-        };
-        vec_set_rc(&v, 1);
-        Box::into_raw(Box::new(v))
+        unsafe { alloc_box_vec(elem_bytes, kind, cap, 0) }
     })
 }
 
-/// Builds a fresh `*mut GosVec` from a stack/heap array. Copies
-/// `len * elem_bytes` bytes from `data` into a freshly-allocated
-/// data buffer; `Box::into_raw`s the resulting GosVec header.
+/// Builds a fresh `*mut GosVec` from a stack/heap array.
+/// `Box::into_raw`s the resulting GosVec header.
 ///
 /// Used at the binding-call boundary to convert a Gossamer
 /// `[T; N]` array literal (or similarly-shaped value) into the
 /// `*mut GosVec` shape the binding's C-ABI thunk expects for a
 /// `Vec<T>` parameter.
+///
+/// The source is the inline `[T; N]` layout - one 8-byte slot per
+/// element - so a sub-word element (`bool` / `u8`, canonical stride 1)
+/// repacks from each slot's low byte; a flat `len * elem_bytes`
+/// memcpy would read the first slots' spare bytes as elements.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_vec_from_arr(
     elem_bytes: u32,
@@ -686,29 +790,28 @@ pub unsafe extern "C" fn gos_rt_vec_from_arr(
 ) -> *mut GosVec {
     ffi_entry!(std::ptr::null_mut(), {
         let len = len.max(0);
-        let n = (len as usize) * (elem_bytes as usize);
-        let buf_ptr = if n == 0 || data.is_null() {
-            std::ptr::null_mut()
-        } else {
-            let p = alloc_vec_buffer(n);
-            unsafe {
-                std::ptr::copy_nonoverlapping(data, p, n);
+        let n = checked_buffer_bytes(len as usize, elem_bytes as usize);
+        // Header + element buffer in one `Box<InlineVec>` (inline for a
+        // small array, else a separate buffer); `ptr` lands at the data
+        // region either way, so the copy target is uniform.
+        let v = unsafe { alloc_box_vec(elem_bytes, vec_elem_kind::PRIMITIVE, len, len) };
+        if n > 0 && !data.is_null() {
+            let eb = elem_bytes as usize;
+            if eb < 8 {
+                for i in 0..(len as usize) {
+                    unsafe {
+                        std::ptr::copy_nonoverlapping(
+                            data.add(i * 8),
+                            (*v).ptr.as_ptr().add(i * eb),
+                            eb,
+                        );
+                    }
+                }
+            } else {
+                unsafe { std::ptr::copy_nonoverlapping(data, (*v).ptr.as_ptr(), n) };
             }
-            p
-        };
-        // Ledger + initial strong count, symmetric with `alloc_vec_header`.
-        crate::c_abi::ledger::vec_inc();
-        let v = GosVec {
-            len,
-            cap: len,
-            elem_bytes,
-            elem_kind: vec_elem_kind::PRIMITIVE,
-            region_flag: 0,
-            rc: std::sync::atomic::AtomicU16::new(0),
-            ptr: SyncRawPtr::new(buf_ptr),
-        };
-        vec_set_rc(&v, 1);
-        Box::into_raw(Box::new(v))
+        }
+        v
     })
 }
 
@@ -729,7 +832,10 @@ pub unsafe extern "C" fn gos_rt_nested_arr_to_vec(
         if raw.is_null() || outer_len <= 0 || inner_len <= 0 || inner_elem_bytes <= 0 {
             return outer;
         }
-        let stride = (inner_len as usize) * (inner_elem_bytes as usize);
+        // Rows use the inline word-per-slot layout (`inner_len` 8-byte
+        // slots each), independent of the element's canonical stride;
+        // `gos_rt_vec_from_arr` repacks each row's sub-word elements.
+        let stride = checked_buffer_bytes(inner_len as usize, 8);
         for i in 0..(outer_len as usize) {
             let inner_raw = unsafe { raw.add(i * stride) };
             let inner_vec =
@@ -804,8 +910,8 @@ pub unsafe extern "C" fn gos_rt_vec_push(v: *mut GosVec, elem: *const u8) {
         if vec.len == vec.cap {
             // Grow geometrically (cap -> max(4, cap*2)).
             let new_cap = if vec.cap == 0 { 4 } else { vec.cap * 2 };
-            let old_bytes = (vec.cap as usize) * (vec.elem_bytes as usize);
-            let new_bytes = (new_cap as usize) * (vec.elem_bytes as usize);
+            let old_bytes = checked_buffer_bytes(vec.cap as usize, vec.elem_bytes as usize);
+            let new_bytes = checked_buffer_bytes(new_cap as usize, vec.elem_bytes as usize);
             if vec_is_region(vec) {
                 // Region-allocated: grow into a fresh region buffer (zeroed)
                 // and abandon the old one in the region - it is reclaimed
@@ -835,17 +941,23 @@ pub unsafe extern "C" fn gos_rt_vec_push(v: *mut GosVec, elem: *const u8) {
             } else {
                 // Zero-initialised - see `gos_rt_vec_with_capacity`.
                 let new_buf = alloc_vec_buffer(new_bytes);
+                let was_split = vec.region_flag & VEC_SPLIT_FLAG != 0;
                 if !vec.ptr.is_null() && old_bytes > 0 {
                     unsafe {
                         std::ptr::copy_nonoverlapping(vec.ptr.as_ptr(), new_buf, old_bytes);
-                        // Free the old buffer; every helper that writes
-                        // `vec.ptr` allocates through `alloc_vec_buffer`, so
-                        // `free_vec_buffer` matches its layout exactly.
-                        free_vec_buffer(vec.ptr.as_ptr(), old_bytes);
+                    }
+                    if was_split {
+                        // The old buffer was a standalone `alloc_vec_buffer`
+                        // block; reclaim it. An inline buffer instead rides
+                        // with the header block and is freed there, so it is
+                        // left untouched here.
+                        unsafe { free_vec_buffer(vec.ptr.as_ptr(), old_bytes) };
                     }
                 }
                 vec.ptr = SyncRawPtr::new(new_buf);
                 vec.cap = new_cap;
+                // `ptr` now owns a separate buffer regardless of prior state.
+                vec.region_flag |= VEC_SPLIT_FLAG;
             }
         }
         // STRING / VEC / MAP elements are pointer-sized and transferred by

@@ -211,6 +211,18 @@ pub fn lint_explanation(id: &str) -> Option<&'static str> {
             "`loop {}` with no body busy-waits forever at 100% CPU. Add a\n\
             `break`, a `continue`, or replace with a real wait primitive."
         }
+        "fill_loop" => {
+            "A `for _ in 0..n { xs.push(value) }` loop that pushes the same\n\
+            literal every iteration is the repeat literal spelled long:\n\
+            `let xs = [value; n]` builds the identical vec in one expression\n\
+            (byte-packed for `bool` / `u8` elements)."
+        }
+        "substring_byte_scan" => {
+            "`s.substring(i, i + 1)` allocates a one-byte String per step of\n\
+            a scan. `s[i]` reads the byte directly as an `i64`: compare with\n\
+            byte literals (`s[i] >= b'0'`), do arithmetic on it\n\
+            (`s[i] - b'0'`), and render with `s[i] as char`."
+        }
         _ => return None,
     })
 }

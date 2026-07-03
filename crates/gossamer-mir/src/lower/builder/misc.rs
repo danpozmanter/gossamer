@@ -627,6 +627,18 @@ impl<'a> Builder<'a> {
                 }
             }
         };
+        // Carry an opaque stdlib blob element tag (`fs::DirInfo` from `walk_dir`
+        // / `list_dir`) onto the loop binding so `e.field` resolves to a
+        // `gos_load(handle, idx * 8)` against the registered shape instead of
+        // falling through to `gos_rt_json_get` (which reads the blob as a JSON
+        // value and yields garbage natively). Restricted to the known blob
+        // handles: tagging a plain user-struct / tuple / String loop var would
+        // reroute its field access and its drop classification.
+        if let Some(en) = self.local_elem_struct.get(&iter_local).cloned()
+            && matches!(en.as_str(), "DirInfo" | "DirEntry")
+        {
+            self.local_struct.entry(elem_local).or_insert(en);
+        }
         match &loop_pat.kind {
             HirPatKind::Binding { name, .. } => {
                 self.bind_local(&name.name, elem_local);
@@ -637,6 +649,35 @@ impl<'a> Builder<'a> {
                 // sub-bindings fall back to string literals at
                 // resolve-time and `actual == expected` reaches
                 // codegen as `bool(i8) == str(ptr)`.
+                //
+                // The tuple pattern is authoritative that the element is a
+                // multi-slot aggregate, so a slot address must exist. The
+                // scalar/`i128`-by-value fast paths above never set one
+                // (they classify by the element type, which can under-widen
+                // to the single-slot fallback when it is left unresolved).
+                // Materialize the slot pointer here from the same
+                // `gos_rt_vec_get_ptr(vec, counter)` the multi-slot path
+                // uses, so field reads always have a base to load from.
+                let slot_ptr = match tuple_slot_ptr {
+                    Some(p) => p,
+                    None => {
+                        let p = self.fresh(i64_ty);
+                        let after_ptr = self.new_block(span);
+                        self.terminate(Terminator::Call {
+                            callee: Operand::Const(ConstValue::Str(
+                                "gos_rt_vec_get_ptr".to_string(),
+                            )),
+                            args: vec![
+                                Operand::Copy(Place::local(iter_local)),
+                                Operand::Copy(Place::local(counter)),
+                            ],
+                            destination: Place::local(p),
+                            target: Some(after_ptr),
+                        });
+                        self.set_current(after_ptr);
+                        p
+                    }
+                };
                 let elem_kinds: Vec<Ty> = match self.tcx.kind_of(elem_ty) {
                     gossamer_types::TyKind::Tuple(elems) => elems.clone(),
                     _ => Vec::new(),
@@ -671,8 +712,6 @@ impl<'a> Builder<'a> {
                         span,
                     );
                     let after_load = self.new_block(span);
-                    let slot_ptr = tuple_slot_ptr
-                        .expect("tuple-destructure for-vec reads fields off the slot address");
                     self.terminate(Terminator::Call {
                         callee: Operand::Const(ConstValue::Str("gos_load".to_string())),
                         args: vec![

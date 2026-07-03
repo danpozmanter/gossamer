@@ -51,15 +51,12 @@ fn main() {
 ## A Script, No Boilerplate
 
 No `fn main`, no ceremony - the file's top-level statements *are* the
-program. Reach for forward pipes and the iterator combinators and a
+program. Sequence combinators are methods on any Vec or range, so a
 data-processing script reads top to bottom:
 
 ```gossamer
-use std::iter
-
 let nums = [4, 8, 15, 16, 23, 42]
-let evens = nums |> iter::filter(|n| n % 2 == 0) |> iter::sum()
-println!("sum of evens: {}", evens)
+println!("sum of evens: {}", nums.filter(|n| n % 2 == 0).sum())
 ```
 
 See [Top-level statements](language/top_level_statements.md).

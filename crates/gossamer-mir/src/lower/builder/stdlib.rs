@@ -819,6 +819,41 @@ impl<'a> Builder<'a> {
     /// (`Option` / `Result`, `u32::MAX` / `- 1`), opaque handles, and
     /// inline-able enums are by-value or single-pointer values handled
     /// elsewhere and are never boxed here.
+    /// Materializes a fixed-array payload argument into a heap GosVec when
+    /// the variant's declared field type is `Vec<T>` / `[T]`. An
+    /// unannotated array-literal local (`let inner = [1, 2, 3]`) infers as
+    /// `[T; N]`; passed to an enum constructor it would otherwise be boxed
+    /// as a raw aggregate blob whose bytes are then misread as a GosVec
+    /// header when the variant is iterated - garbage length, then a fault.
+    /// A direct array-literal argument already lowers as a GosVec because
+    /// its type is inferred in the field's `Vec`/`Slice` context.
+    fn coerce_enum_payload_array(
+        &mut self,
+        payload: Local,
+        expected: Option<Ty>,
+        span: Span,
+    ) -> Local {
+        use gossamer_types::TyKind;
+        let Some(expected) = expected else {
+            return payload;
+        };
+        let peel = |b: &Self, t: Ty| match b.tcx.kind_of(t) {
+            TyKind::Ref { inner, .. } => *inner,
+            _ => t,
+        };
+        if !matches!(
+            self.tcx.kind_of(peel(self, expected)),
+            TyKind::Vec(_) | TyKind::Slice(_)
+        ) {
+            return payload;
+        }
+        let payload_inner = peel(self, self.locals[payload.0 as usize].ty);
+        if let TyKind::Array { elem, len } = self.tcx.kind_of(payload_inner).clone() {
+            return self.coerce_array_to_vec(payload, elem, len, span);
+        }
+        payload
+    }
+
     pub(crate) fn is_boxable_aggregate_payload(&self, ty: Ty) -> bool {
         use gossamer_types::TyKind;
         if self.type_slot_bytes(ty) <= 8 {
@@ -875,6 +910,18 @@ impl<'a> Builder<'a> {
         // Payload bytes only: the discriminant lives in the RC header byte.
         let bytes = (n_args.max(1) * 8) as i128;
 
+        // Declared field types of this variant (tuple and struct payloads
+        // both record theirs), used to materialize a fixed-array argument
+        // into a heap GosVec when the field is `Vec<T>` / `[T]`.
+        let field_tys: Vec<Ty> = self
+            .enums
+            .by_enum
+            .get(enum_name)
+            .and_then(|vs| vs.get(variant_idx as usize))
+            .and_then(|vname| self.enums.variant_field_tys.get(vname))
+            .cloned()
+            .unwrap_or_default();
+
         // Inline-able enums (every variant <=1 field that fits in 8 bytes) use
         // the 2-word by-value `i128` [disc, payload] representation - pack the
         // discriminant and the single field inline, no heap node. Mirrors the
@@ -889,6 +936,7 @@ impl<'a> Builder<'a> {
             );
             let (payload_local, is_f64) = if let Some(arg) = args.first() {
                 let p = self.lower_expr(arg)?;
+                let p = self.coerce_enum_payload_array(p, field_tys.first().copied(), span);
                 let pty = self.locals[p.0 as usize].ty;
                 let is_f64 = matches!(self.tcx.kind_of(pty), gossamer_types::TyKind::Float(_));
                 (p, is_f64)
@@ -980,6 +1028,8 @@ impl<'a> Builder<'a> {
         let mut child_offsets: Vec<i64> = Vec::new();
         for (i, arg) in args.iter().enumerate() {
             let payload_local = self.lower_expr(arg)?;
+            let payload_local =
+                self.coerce_enum_payload_array(payload_local, field_tys.get(i).copied(), span);
             let payload_ty = self.locals[payload_local.0 as usize].ty;
             // A multi-slot aggregate payload (struct / tuple / array > 1 word)
             // does not fit the one-word payload slot. Heap-box it into an RC

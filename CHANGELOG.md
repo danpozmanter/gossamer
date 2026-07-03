@@ -1,5 +1,136 @@
 # Changelog
 
+## 0.24.0 - Performance, memory safety, and expressiveness
+
+A broad performance, correctness, and hardening release driven by a
+benchmark audit against Go, Rust, C++, and the JVM/CLR languages.
+Every change works identically across the three tiers
+(bytecode VM, in-process Cranelift JIT, LLVM AOT) and is covered by a
+tier-parity fixture.
+
+### Compiled-tier performance
+
+- **LLVM aliasing metadata.** The LLVM backend now emits TBAA metadata
+  distinguishing `GosVec` header accesses from element-data accesses, so
+  `-O3` hoists the loop-invariant data pointer and vectorizes element
+  loops. Inline vector push also uses the statically known element stride
+  instead of a runtime `elem_bytes` dispatch.
+- **Single-allocation vectors.** A `Vec`/`[T]` now allocates its header
+  and element buffer contiguously, removing one dependent cache miss per
+  access, and reduces per-vector allocation overhead across the board.
+- **Loop and string-building fusions.** `heap_u8_set` and a
+  16-byte-stride tuple-vector get now inline on the terminator-call
+  route; a `substring(i, i+k)` + `map.inc` pattern fuses into a single
+  borrowed-key map probe with no per-probe string allocation; `dst +=
+  format!(...)` fuses into direct append-formatting and the `Result`
+  i128 carrier shims inline as pure bit operations.
+- **`Vec::with_capacity`** is now available on all three tiers (it was
+  previously missing on the bytecode VM).
+
+### Interpreter performance
+
+- **`gos run` now promotes the implicit top-level `main`.** Hot loops
+  living directly in `main` reach native code for the first time,
+  unlocked by generalizing Cranelift's struct-return-via-out-pointer
+  (sret) to every aggregate shape (struct, fixed array, 3+-tuple) and
+  running the monomorphizer on the JIT MIR path.
+- Idiomatic `[i64]` / `[f64]` slice-typed helper parameters, `Vec<f64>`
+  arguments, and nested-vector returns now promote to native code
+  correctly (they previously fell back to bytecode silently).
+- **Interpreter memory.** Push-built homogeneous `[i64]` / `[f64]`
+  vectors use a packed 8-byte-per-element representation instead of a
+  boxed value array, cutting interpreter RSS on integer/float-vector
+  workloads.
+- **Fewer bytecode dispatches in loops.** Loop back-edges now re-enter
+  the body directly (the fused increment-and-test already proved the
+  bound, so the header check runs only on loop entry), and `for x in
+  xs` iteration fuses its increment + bound test + jump into the same
+  single dispatch the typed range loop uses. An i64 arith whose right
+  operand is a small integer literal (`i % 7`, `n + 1`) executes as one
+  immediate-operand instruction instead of a constant load plus arith,
+  and an i64 local reassignment writes the arith result directly into
+  the local's register instead of moving it there. Together these cut
+  the per-iteration dispatch count of a typed accumulate-over-range body
+  on the pure bytecode tier (`gos run --no-jit`).
+
+### Memory safety and correctness
+
+- **RC leak fixes (deterministic reference counting).** Reassigning an
+  owning container in a loop, a dynamic `[x; n]` repeat array, a
+  returned string accumulator, and a `Vec`/`[T]` field of a by-value
+  struct no longer leak on the compiled tiers. The Cranelift JIT now
+  elaborates aggregate drops correctly, fixing a true unbounded leak in
+  JIT-compiled hot loops.
+- **Single-`Vec`/aggregate-field structs** (`struct Bag { items: [String] }`,
+  `struct Sel { binds: [V] }`) now index, dispatch, copy, and drop
+  correctly on every tier. The one-word "scalar single-slot" optimization
+  was unsound for a sole field that is itself a `Vec`/`[T]` (indexing it
+  read the buffer pointer as an element); such structs now use the normal
+  address-backed representation and the `Ok(...)`-payload path retains the
+  `Vec` field so it is not freed out from under the returned struct. Fixes
+  an AOT SIGSEGV on `r.items[0].len()` and a JIT fault on a Vec-of-enum
+  copy loop.
+- **A heap enum passed by value into a closure** (`iter::map(|s| area(&s))`
+  over a `[Shape]`) no longer reads its tag word as the value on the LLVM
+  tier - the shape thunk forwards the handle pointer by value, so the
+  closure stores it rather than dereferencing it.
+- **`fs::walk_dir` / `list_dir` field access on the compiled tiers.**
+  `for e in walk_dir(root)? { e.is_file / e.size / e.path }` now loads
+  each `DirInfo` field through the blob pointer instead of reading the
+  handle slot (or falling through to a JSON decode), fixing garbage
+  output and a teardown crash on native builds.
+- **A `switch` on a pointer discriminant** (a truthiness / null check on a
+  heap handle) no longer emits invalid LLVM IR that fails the `opt` pass.
+- **Returning `*s` from a `&mut String` parameter** no longer produces a
+  use-after-free / SIGSEGV on the compiled tiers.
+- **`Vec<enum>` and struct-with-enum-field comparison** now produce the
+  correct answer on the AOT tier (previously silently wrong), and
+  `vec == [array literal]` is fixed across tiers.
+- **The cycle collector** now treats cross-goroutine shared objects as
+  external live edges in every phase, uses a CAS claim for reclamation,
+  and returns an owned reference from `Weak::upgrade`, closing a class of
+  concurrent lost-update / double-free races.
+- **Stack overflow** in AOT binaries and JIT-compiled recursion now
+  raises a clean `GX0008` instead of a raw SIGSEGV (a main-thread musl
+  stack-bounds bug was also fixed).
+
+### Security
+
+- **`json::parse` on malformed input** no longer SIGSEGVs on the
+  compiled tier (a remote DoS for services parsing untrusted JSON).
+- **Integer-overflow guards** on `Vec::with_capacity` / `[v; n]` size
+  computation (heap out-of-bounds write) and a bounds + UTF-8 check on
+  `HashMap.inc_at` (out-of-bounds read / info disclosure).
+- **Git dependency URLs** are scheme-allowlisted, reject the `ext::`
+  remote-helper transport and argv-injection, and run git with hardened
+  protocol settings, closing a remote-code-execution path at
+  dependency resolution.
+- **Static file serving** now canonicalizes and confines paths to the
+  document root (symlink-escape and absolute-path traversal fixed) with
+  a size cap, on both the compiled and interpreter servers.
+- **Request/response bounds**: the compiled HTTP/1.1 server caps request
+  headers (431 on overflow), WebSocket continuation-frame reassembly is
+  bounded, and the HTTP client caps the (post-decompression) response
+  body against decompression bombs.
+
+### Language and stdlib
+
+- **Operator overloading** for the arithmetic, bitwise, index, and
+  negation operators (`+ - * / % & | ^ << >> - []` and their
+  compound-assign forms) via user `impl`s, on structs, enums, and
+  generic structs, across all three tiers. Applying an operator to a
+  type without the corresponding impl is now a clean `gos check` error
+  instead of a runtime fault.
+- **`use` groups accept multi-segment paths**: `use std::{env,
+  encoding::json, strings}` now parses.
+- **`std::iter` closure combinators over `f64`**: `iter::map`, `filter`,
+  and `for_each` now pass `f64` elements through the float ABI on the
+  compiled tiers (previously the element bits were handed to the closure
+  in an integer register, yielding garbage), matching the bytecode VM.
+- Fixed a compiler panic on `for (k, v) in pairs` when `pairs` was bound
+  from an enum-variant payload, and made `x.downgrade()` on a non-`Arc`
+  value a `gos check` error rather than a segfault.
+
 ## 0.23.1 - Playground parity: router, comptime, multi-program sessions
 
 ### `std::http::router` pattern lookup in the playground

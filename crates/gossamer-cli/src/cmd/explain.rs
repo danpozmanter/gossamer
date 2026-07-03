@@ -190,6 +190,38 @@ fn diagnostic_explanation(code: &str) -> Option<&'static str> {
                      are automatic; From / Into / the operator traits are written\n\
                      with `impl Trait for T`."
         }
+        "GT0026" => {
+            "A fixed-size array `[value; N]` with a compile-time-constant\n\
+                     `N` was large enough that the compiled tiers would place it\n\
+                     inline on the stack and overflow the OS main-thread stack (a\n\
+                     silent SIGSEGV), while the VM heap-allocates it. Rejected at\n\
+                     check so all three tiers agree. Use a heap `Vec` for large or\n\
+                     dynamically-sized buffers: `let v: [T] = [value; n]` (which\n\
+                     allocates on the heap) instead of `[T; N]`."
+        }
+        "GT0027" => {
+            "A `match` / `if let` / `while let` arm patterns a `json::Value`\n\
+                     scrutinee with a `json::Value::Object(..)` / `::Array(..)` /\n\
+                     `::Int(..)` (etc.) constructor. `json::Value` is an opaque\n\
+                     dynamic-document handle with no matchable discriminant, so the\n\
+                     pattern silently falls through on the VM and faults on the\n\
+                     compiled tiers. Rejected at check so the three tiers agree.\n\
+                     Read the document with the dynamic accessors instead:\n\
+                     `json::as_i64` / `json::as_f64` / `json::as_str` /\n\
+                     `json::as_bool`, `json::is_null`, `json::get(&v, key)`,\n\
+                     `json::at(&v, i)`, `json::keys(&v)`, `json::len(&v)`."
+        }
+        "GT0028" => {
+            "`.downgrade()` was called on a by-value type with no runtime RC\n\
+                     header - a scalar (`i64` / `bool` / ...), an `Option` /\n\
+                     `Result`, or another packed value. `Weak<T>` is a non-owning\n\
+                     pointer into a reference-counted allocation: the compiled\n\
+                     tiers read a header off the value's bits and fault (SIGSEGV)\n\
+                     while the VM returns a bogus handle, so it is rejected at\n\
+                     check. Downgrade a reference-counted aggregate instead - a\n\
+                     struct or payload-bearing enum, the shape that participates in\n\
+                     the cycles a `Weak<T>` is there to break."
+        }
         "GM0001" => {
             "Generic monomorphization received a type substitution that the\n\
                      compiler does not yet support - typically a generic parameter\n\
@@ -290,14 +322,18 @@ fn diagnostic_explanation(code: &str) -> Option<&'static str> {
                      the other path in the meantime."
         }
         "GX0008" => {
-            "The goroutine exceeded the VM's maximum call depth (40 frames).\n\
-                     Each interpreted Gossamer frame adds a large pair of Rust stack\n\
-                     frames (apply + run); the 8 MB OS thread stack can safely hold\n\
-                     around 40 such pairs in a debug build before overflowing.\n\
+            "The goroutine ran out of stack. Recursion is bounded two ways: a\n\
+                     call-depth cap (40 frames in a debug build, 512 in release) and\n\
+                     a byte-budget guard that trips when the native stack grows past\n\
+                     its reserve (64 MiB on a VM / goroutine worker thread, less the\n\
+                     256 KiB unwind margin). Whichever is reached first raises this\n\
+                     clean error rather than faulting on the guard page. Compiled\n\
+                     `gos build` binaries install the same guard and report a\n\
+                     `stack overflow ... aborting` message instead of a raw SIGSEGV.\n\
                      Direct or mutual recursion without a reachable base case is the\n\
                      most common cause. Add a terminating condition, convert to an\n\
-                     iterative loop, or use `gos build` where the native codegen\n\
-                     produces standard call instructions the OS can grow to handle."
+                     iterative loop, or use `gos build`, where native code lets the\n\
+                     OS grow the stack for genuinely deep (bounded) recursion."
         }
         _ => return None,
     })

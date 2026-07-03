@@ -1,0 +1,17 @@
+// Regression [P1]: unbounded recursion must yield a clean stack-overflow
+// diagnostic (GX0008 on the VM / JIT, a `stack overflow ... aborting`
+// message from the installed guard on the compiled tiers) rather than a
+// raw SIGSEGV with empty stderr (exit 139) - the AOT `@main` previously
+// installed no main-thread stack guard. Tree recursion (two calls) keeps
+// every tier from turning the descent into a loop, so all three genuinely
+// grow the stack until the guard trips. stdout is empty on every tier; the
+// exit is nonzero, so this fixture runs with allow_nonzero.
+
+fn deep(n: i64) -> i64 {
+    deep(n + 1) + deep(n + 2)
+}
+
+fn main() {
+    let r = deep(0)
+    println!("unreachable {}", r)
+}

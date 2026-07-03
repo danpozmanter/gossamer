@@ -469,13 +469,14 @@ impl<'a> Builder<'a> {
                 end,
                 inclusive,
             } => {
-                // Standalone Range value. The compiled tier
-                // represents a Range as a 2-i64 tuple
-                // `(lo, hi)`. Open-ended bounds default to 0
-                // for `lo` and `i64::MAX` for `hi`. Used by
-                // slice expressions like `arr[1..]` which the
-                // surrounding Index lowering picks the bounds
-                // out of.
+                // Standalone Range value: an i64 sequence matching the
+                // VM's eager materialisation, produced through the same
+                // `gos_rt_iter_range` the `iter::range` intrinsic uses,
+                // so `0..n |> iter::map(f)` receives a real GosVec.
+                // Index and for-loop positions pick range bounds out
+                // syntactically and never reach this value lowering.
+                // Open-ended bounds default to 0 for `lo` and
+                // `i64::MAX` for `hi`.
                 let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
                 let lo_local = if let Some(s) = start {
                     self.lower_expr(s)?
@@ -523,18 +524,19 @@ impl<'a> Builder<'a> {
                 } else {
                     hi_local
                 };
-                let dest = self.fresh(expr.ty);
-                self.emit_assign(
-                    Place::local(dest),
-                    Rvalue::Aggregate {
-                        kind: crate::ir::AggregateKind::Tuple,
-                        operands: vec![
-                            Operand::Copy(Place::local(lo_local)),
-                            Operand::Copy(Place::local(hi_local)),
-                        ],
-                    },
-                    expr.span,
-                );
+                let vec_i64 = self.tcx.intern(gossamer_types::TyKind::Vec(i64_ty));
+                let dest = self.fresh(vec_i64);
+                let next = self.new_block(expr.span);
+                self.terminate(Terminator::Call {
+                    callee: Operand::Const(ConstValue::Str("gos_rt_iter_range".to_string())),
+                    args: vec![
+                        Operand::Copy(Place::local(lo_local)),
+                        Operand::Copy(Place::local(hi_local)),
+                    ],
+                    destination: Place::local(dest),
+                    target: Some(next),
+                });
+                self.set_current(next);
                 Some(dest)
             }
             // The native build pipeline runs `gossamer_hir::lift_closures`
@@ -928,25 +930,34 @@ impl<'a> Builder<'a> {
                 // must load from the address rather than yield the
                 // pointer. Without this load, `for x in v.iter() { *x }`
                 // prints the iterator's slot pointer, not the element.
-                // `String` is itself pointer-shaped, so `&String` is a
-                // pointer-to-pointer and `*p` as an rvalue needs one
-                // load to reach the String value; passing the bare `&mut
-                // String` to a by-value consumer (e.g. `*out + s`) reads
-                // the slot address as string bytes. Larger aggregates
-                // (structs, Vec, Adt) are consumed through place
-                // projections, not this by-value path.
+                // A `&mut String` is a pointer-to-slot (double
+                // indirection: the mutable ref must be able to rebind the
+                // whole String via `*s = ...`), so `*s` as a value needs
+                // one load to reach the String pointer, exactly like a
+                // scalar pointee. An immutable `&String` already holds the
+                // String pointer directly (single indirection) and so
+                // stays the identity `return Some(inner)` below - its
+                // caller-reference is minted by the return-copy retain.
+                // Larger aggregates (structs, Vec, Adt) are consumed
+                // through place projections, not this by-value path.
                 let inner_ty = self.locals[inner.0 as usize].ty;
-                if let gossamer_types::TyKind::Ref { inner: pointee, .. } =
-                    self.tcx.kind_of(inner_ty)
+                if let gossamer_types::TyKind::Ref {
+                    inner: pointee,
+                    mutability,
+                } = self.tcx.kind_of(inner_ty)
                 {
                     let pointee = *pointee;
-                    if matches!(
+                    let mutability = *mutability;
+                    let scalar_pointee = matches!(
                         self.tcx.kind_of(pointee),
                         gossamer_types::TyKind::Int(_)
                             | gossamer_types::TyKind::Float(_)
                             | gossamer_types::TyKind::Bool
                             | gossamer_types::TyKind::Char
-                    ) {
+                    );
+                    let mut_string_pointee = mutability == gossamer_types::Mutbl::Mut
+                        && matches!(self.tcx.kind_of(pointee), gossamer_types::TyKind::String);
+                    if scalar_pointee || mut_string_pointee {
                         let zero_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
                         let zero = self.fresh(zero_ty);
                         self.emit_assign(
@@ -1446,6 +1457,29 @@ impl<'a> Builder<'a> {
                 }
             }
         }
+        // Mixed growable-vec vs fixed-array `==` / `!=` (`v == [1, 2]`):
+        // the fixed-array operand is a flat slot aggregate, not a `GosVec`,
+        // so neither the flat tuple compare nor `gos_rt_vec_eq` can read
+        // the operand pair as-is. Materialize a borrowed vec view over the
+        // array side and route through the element-wise vec compare - the
+        // structural semantics the VM already implements.
+        if matches!(op, HirBinaryOp::Eq | HirBinaryOp::Ne) {
+            let lhs_arr = self.fixed_array_cmp_shape(lhs_local);
+            let rhs_arr = self.fixed_array_cmp_shape(rhs_local);
+            let lhs_vec = self.vec_elem_cmp_tag(self.locals[lhs_local.0 as usize].ty);
+            let rhs_vec = self.vec_elem_cmp_tag(self.locals[rhs_local.0 as usize].ty);
+            match (lhs_arr, rhs_arr, lhs_vec, rhs_vec) {
+                (Some((elem, len)), None, None, Some(tag)) => {
+                    let coerced = self.coerce_borrow_array_to_vec(lhs_local, elem, len, span);
+                    return Some(self.lower_vec_eq(op, coerced, rhs_local, tag, span));
+                }
+                (None, Some((elem, len)), Some(tag), None) => {
+                    let coerced = self.coerce_borrow_array_to_vec(rhs_local, elem, len, span);
+                    return Some(self.lower_vec_eq(op, lhs_local, coerced, tag, span));
+                }
+                _ => {}
+            }
+        }
         // Tuple comparison: route `==`/`!=`/`<`/`<=`/`>`/`>=` to a runtime
         // structural compare over the flat slot buffer (the VM compares
         // tuples element-wise at runtime). Only tuples of scalar/string
@@ -1860,6 +1894,27 @@ impl<'a> Builder<'a> {
         }
     }
 
+    /// Fixed-size array shape `(elem, len)` of a comparison operand's MIR
+    /// local, resolving through references, when its elements are
+    /// scalar/string-comparable and the length is concrete. The MIR local
+    /// type is authoritative for the operand's runtime representation (a
+    /// flat slot aggregate), regardless of what the HIR coerced the
+    /// expression type to.
+    fn fixed_array_cmp_shape(&self, local: Local) -> Option<(Ty, gossamer_types::ArrayLen)> {
+        use gossamer_types::{ArrayLen, TyKind};
+        let mut t = self.locals[local.0 as usize].ty;
+        while let TyKind::Ref { inner, .. } = self.tcx.kind_of(t) {
+            t = *inner;
+        }
+        match self.tcx.kind_of(t) {
+            TyKind::Array {
+                elem,
+                len: len @ ArrayLen::Concrete(_),
+            } if self.scalar_cmp_tag(*elem).is_some() => Some((*elem, *len)),
+            _ => None,
+        }
+    }
+
     /// Element tag for a growable `Vec<T>` / slice `[T]` (a `GosVec` pointer)
     /// whose element is scalar/string, or `None` otherwise. Fixed arrays are
     /// flat buffers handled by [`Self::tuple_cmp_tags`], not here.
@@ -1953,6 +2008,32 @@ impl<'a> Builder<'a> {
         eq
     }
 
+    /// Resolves a `format!` / append piece to a concrete type for the append
+    /// fusion. The HIR expression type is used when already concrete; otherwise,
+    /// for a bare path referencing a bound local (e.g. an enum-payload binding
+    /// whose HIR type the checker left as an inference var, as in
+    /// `match v { JsonVal::Int(n) => *out += format!("{}", n) }`), the local's
+    /// pinned MIR type is used - the pattern binding pins it to the variant's
+    /// declared payload type. Returns the original (possibly unresolved) type
+    /// when neither is concrete, so the caller's `append_fn` gate still rejects
+    /// it and the buffered-concat fallback fires.
+    fn resolved_piece_ty(&self, p: &HirExpr) -> Ty {
+        use gossamer_types::TyKind;
+        if !matches!(self.tcx.kind_of(p.ty), TyKind::Var(_) | TyKind::Error) {
+            return p.ty;
+        }
+        if let HirExprKind::Path { segments, .. } = &p.kind
+            && let [seg] = segments.as_slice()
+            && let Some(local) = self.lookup_local(&seg.name)
+        {
+            let lty = self.locals[local.0 as usize].ty;
+            if !matches!(self.tcx.kind_of(lty), TyKind::Var(_) | TyKind::Error) {
+                return lty;
+            }
+        }
+        p.ty
+    }
+
     /// Lowers `acc += __concat(pieces...)` to one in-place append per piece
     /// (`acc = gos_rt_str_append_*(acc, piece)`), each copying its piece a
     /// single time into the accumulator. Returns `false` without emitting
@@ -1982,7 +2063,7 @@ impl<'a> Builder<'a> {
         }
         let mut fns = Vec::with_capacity(pieces.len());
         for p in pieces {
-            match append_fn(self, p.ty) {
+            match append_fn(self, self.resolved_piece_ty(p)) {
                 Some(f) => fns.push(f),
                 None => return false,
             }
@@ -2091,8 +2172,10 @@ impl<'a> Builder<'a> {
         // keeps the deref accumulator on the correct in-place path instead of
         // falling through to the general `*s + piece` lowering, which reads the
         // `&mut String` slot pointer as string bytes.
-        let per_piece: Option<Vec<&'static str>> =
-            pieces.iter().map(|p| append_fn(self, p.ty)).collect();
+        let per_piece: Option<Vec<&'static str>> = pieces
+            .iter()
+            .map(|p| append_fn(self, self.resolved_piece_ty(p)))
+            .collect();
         let (emit_pieces, fns): (Vec<&HirExpr>, Vec<&'static str>) = match per_piece {
             Some(fns) => (pieces.iter().collect(), fns),
             None => (vec![piece], vec!["gos_rt_str_concat_drop_a"]),

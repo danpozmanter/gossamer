@@ -74,6 +74,20 @@ use gossamer_mir::{
 };
 use gossamer_types::{FloatTy, IntTy, Ty, TyCtxt, TyKind};
 
+/// `!tbaa` suffix for a load/store of an aggregate *header* field: a `GosVec`
+/// / `GosI64Vec` / `GosU8Vec` len/cap/elem_bytes/data-pointer, or a string
+/// builder's rc/cap/len/tag prefix. Pairs with [`TBAA_DATA`]; the two reference
+/// the sibling TBAA type nodes defined by `crate::emit::TBAA_METADATA` (`!4` =
+/// header access tag, `!5` = element-data access tag). The header lives in a
+/// distinct allocation from - or a disjoint byte range of the same allocation
+/// as - the element buffer, so tagging the two distinctly lets `-O3` hoist a
+/// `len`/`data` load out of an element loop it would otherwise treat as
+/// clobbered by every element store.
+const TBAA_HEADER: &str = ", !tbaa !4";
+/// `!tbaa` suffix for a load/store of aggregate element / string-content bytes
+/// (the memory the header's data pointer addresses). Pairs with [`TBAA_HEADER`].
+const TBAA_DATA: &str = ", !tbaa !5";
+
 impl<'a> Lowerer<'a> {
     /// Inline fast path for `gos_rt_stream_write_byte(stream, b)`.
     ///
@@ -246,7 +260,7 @@ impl<'a> Lowerer<'a> {
         writeln!(self.out, "  br i1 {isnull}, label %{cont}, label %{check}").unwrap();
         writeln!(self.out, "{check}:").unwrap();
         let len = self.fresh();
-        writeln!(self.out, "  {len} = load i64, ptr {v}").unwrap();
+        writeln!(self.out, "  {len} = load i64, ptr {v}{TBAA_HEADER}").unwrap();
         // One unsigned compare catches both `idx < 0` (wraps to a huge
         // unsigned value, >= len) and `idx >= len`. A `GosVec` length is
         // always non-negative, so `(idx as u64) >= (len as u64)` is exactly
@@ -263,14 +277,18 @@ impl<'a> Lowerer<'a> {
         )
         .unwrap();
         let data = self.fresh();
-        writeln!(self.out, "  {data} = load ptr, ptr {data_ptr_addr}").unwrap();
+        writeln!(
+            self.out,
+            "  {data} = load ptr, ptr {data_ptr_addr}{TBAA_HEADER}"
+        )
+        .unwrap();
         let dst = self.fresh();
         writeln!(
             self.out,
             "  {dst} = getelementptr i64, ptr {data}, i64 {idx}"
         )
         .unwrap();
-        writeln!(self.out, "  store i64 {val}, ptr {dst}").unwrap();
+        writeln!(self.out, "  store i64 {val}, ptr {dst}{TBAA_DATA}").unwrap();
         writeln!(self.out, "  br label %{cont}").unwrap();
         writeln!(self.out, "{cont}:").unwrap();
         let _ = destination;
@@ -310,7 +328,7 @@ impl<'a> Lowerer<'a> {
         writeln!(self.out, "  br i1 {isnull}, label %{dflt}, label %{check}").unwrap();
         writeln!(self.out, "{check}:").unwrap();
         let len = self.fresh();
-        writeln!(self.out, "  {len} = load i64, ptr {v}").unwrap();
+        writeln!(self.out, "  {len} = load i64, ptr {v}{TBAA_HEADER}").unwrap();
         // One unsigned compare catches both `idx < 0` (wraps to a huge
         // unsigned value, >= len) and `idx >= len`. A `GosVec` length is
         // always non-negative, so `(idx as u64) >= (len as u64)` is exactly
@@ -327,7 +345,11 @@ impl<'a> Lowerer<'a> {
         )
         .unwrap();
         let data = self.fresh();
-        writeln!(self.out, "  {data} = load ptr, ptr {data_ptr_addr}").unwrap();
+        writeln!(
+            self.out,
+            "  {data} = load ptr, ptr {data_ptr_addr}{TBAA_HEADER}"
+        )
+        .unwrap();
         let src = self.fresh();
         writeln!(
             self.out,
@@ -335,7 +357,7 @@ impl<'a> Lowerer<'a> {
         )
         .unwrap();
         let val = self.fresh();
-        writeln!(self.out, "  {val} = load i64, ptr {src}").unwrap();
+        writeln!(self.out, "  {val} = load i64, ptr {src}{TBAA_DATA}").unwrap();
         if !is_unit_dest {
             writeln!(self.out, "  store i64 {val}, ptr {slot}").unwrap();
         }
@@ -468,7 +490,7 @@ impl<'a> Lowerer<'a> {
         writeln!(self.out, "  br i1 {isnull}, label %{dflt}, label %{check}").unwrap();
         writeln!(self.out, "{check}:").unwrap();
         let len = self.fresh();
-        writeln!(self.out, "  {len} = load i64, ptr {vec_ptr}").unwrap();
+        writeln!(self.out, "  {len} = load i64, ptr {vec_ptr}{TBAA_HEADER}").unwrap();
         // One unsigned compare catches both `idx < 0` (wraps to a huge
         // unsigned value, >= len) and `idx >= len`. A `GosVec` length is
         // always non-negative, so `(idx as u64) >= (len as u64)` is exactly
@@ -492,7 +514,7 @@ impl<'a> Lowerer<'a> {
             writeln!(self.out, "  {off} = mul i64 {idx}, 8").unwrap();
             let ea = self.vec_elem_addr(&vec_ptr, &off);
             let loaded = self.fresh();
-            writeln!(self.out, "  {loaded} = load i64, ptr {ea}").unwrap();
+            writeln!(self.out, "  {loaded} = load i64, ptr {ea}{TBAA_DATA}").unwrap();
             loaded
         } else if byte_elem {
             // Statically-bool element: 1-byte stride, so the offset is the
@@ -500,7 +522,7 @@ impl<'a> Lowerer<'a> {
             // `is_byte` branch.
             let ea = self.vec_elem_addr(&vec_ptr, &idx);
             let b8 = self.fresh();
-            writeln!(self.out, "  {b8} = load i8, ptr {ea}").unwrap();
+            writeln!(self.out, "  {b8} = load i8, ptr {ea}{TBAA_DATA}").unwrap();
             let b64 = self.fresh();
             writeln!(self.out, "  {b64} = zext i8 {b8} to i64").unwrap();
             b64
@@ -512,7 +534,7 @@ impl<'a> Lowerer<'a> {
             )
             .unwrap();
             let eb32 = self.fresh();
-            writeln!(self.out, "  {eb32} = load i32, ptr {eb_addr}").unwrap();
+            writeln!(self.out, "  {eb32} = load i32, ptr {eb_addr}{TBAA_HEADER}").unwrap();
             let eb = self.fresh();
             writeln!(self.out, "  {eb} = zext i32 {eb32} to i64").unwrap();
             let off = self.fresh();
@@ -532,13 +554,13 @@ impl<'a> Lowerer<'a> {
             .unwrap();
             writeln!(self.out, "{byte_b}:").unwrap();
             let b8 = self.fresh();
-            writeln!(self.out, "  {b8} = load i8, ptr {ea}").unwrap();
+            writeln!(self.out, "  {b8} = load i8, ptr {ea}{TBAA_DATA}").unwrap();
             let b64 = self.fresh();
             writeln!(self.out, "  {b64} = zext i8 {b8} to i64").unwrap();
             writeln!(self.out, "  br label %{join_b}").unwrap();
             writeln!(self.out, "{word_b}:").unwrap();
             let w64 = self.fresh();
-            writeln!(self.out, "  {w64} = load i64, ptr {ea}").unwrap();
+            writeln!(self.out, "  {w64} = load i64, ptr {ea}{TBAA_DATA}").unwrap();
             writeln!(self.out, "  br label %{join_b}").unwrap();
             writeln!(self.out, "{join_b}:").unwrap();
             let loaded = self.fresh();
@@ -601,7 +623,7 @@ impl<'a> Lowerer<'a> {
             writeln!(self.out, "  {off} = mul i64 {idx}, 8").unwrap();
             let ea = self.vec_elem_addr(&vec_ptr, &off);
             let loaded = self.fresh();
-            writeln!(self.out, "  {loaded} = load i64, ptr {ea}").unwrap();
+            writeln!(self.out, "  {loaded} = load i64, ptr {ea}{TBAA_DATA}").unwrap();
             loaded
         } else if byte_elem {
             // Statically-bool element: 1-byte stride, so the offset is the
@@ -609,7 +631,7 @@ impl<'a> Lowerer<'a> {
             // `is_byte` branch.
             let ea = self.vec_elem_addr(&vec_ptr, &idx);
             let b8 = self.fresh();
-            writeln!(self.out, "  {b8} = load i8, ptr {ea}").unwrap();
+            writeln!(self.out, "  {b8} = load i8, ptr {ea}{TBAA_DATA}").unwrap();
             let b64 = self.fresh();
             writeln!(self.out, "  {b64} = zext i8 {b8} to i64").unwrap();
             b64
@@ -621,7 +643,7 @@ impl<'a> Lowerer<'a> {
             )
             .unwrap();
             let eb32 = self.fresh();
-            writeln!(self.out, "  {eb32} = load i32, ptr {eb_addr}").unwrap();
+            writeln!(self.out, "  {eb32} = load i32, ptr {eb_addr}{TBAA_HEADER}").unwrap();
             let eb = self.fresh();
             writeln!(self.out, "  {eb} = zext i32 {eb32} to i64").unwrap();
             let off = self.fresh();
@@ -641,13 +663,13 @@ impl<'a> Lowerer<'a> {
             .unwrap();
             writeln!(self.out, "{byte_b}:").unwrap();
             let b8 = self.fresh();
-            writeln!(self.out, "  {b8} = load i8, ptr {ea}").unwrap();
+            writeln!(self.out, "  {b8} = load i8, ptr {ea}{TBAA_DATA}").unwrap();
             let b64 = self.fresh();
             writeln!(self.out, "  {b64} = zext i8 {b8} to i64").unwrap();
             writeln!(self.out, "  br label %{join_b}").unwrap();
             writeln!(self.out, "{word_b}:").unwrap();
             let w64 = self.fresh();
-            writeln!(self.out, "  {w64} = load i64, ptr {ea}").unwrap();
+            writeln!(self.out, "  {w64} = load i64, ptr {ea}{TBAA_DATA}").unwrap();
             writeln!(self.out, "  br label %{join_b}").unwrap();
             writeln!(self.out, "{join_b}:").unwrap();
             let loaded = self.fresh();
@@ -723,7 +745,7 @@ impl<'a> Lowerer<'a> {
         writeln!(self.out, "  br i1 {isnull}, label %{cont}, label %{check}").unwrap();
         writeln!(self.out, "{check}:").unwrap();
         let len = self.fresh();
-        writeln!(self.out, "  {len} = load i64, ptr {vec_ptr}").unwrap();
+        writeln!(self.out, "  {len} = load i64, ptr {vec_ptr}{TBAA_HEADER}").unwrap();
         // One unsigned compare catches both `idx < 0` (wraps to a huge
         // unsigned value, >= len) and `idx >= len`. A `GosVec` length is
         // always non-negative, so `(idx as u64) >= (len as u64)` is exactly
@@ -745,7 +767,7 @@ impl<'a> Lowerer<'a> {
             let off = self.fresh();
             writeln!(self.out, "  {off} = mul i64 {idx}, 8").unwrap();
             let ea = self.vec_elem_addr(&vec_ptr, &off);
-            writeln!(self.out, "  store i64 {val}, ptr {ea}").unwrap();
+            writeln!(self.out, "  store i64 {val}, ptr {ea}{TBAA_DATA}").unwrap();
         } else if byte_elem {
             // Statically-bool element: 1-byte stride, so the offset is the
             // index itself. One `i8` store, no header `elem_bytes` load and no
@@ -753,7 +775,7 @@ impl<'a> Lowerer<'a> {
             let ea = self.vec_elem_addr(&vec_ptr, &idx);
             let v8 = self.fresh();
             writeln!(self.out, "  {v8} = trunc i64 {val} to i8").unwrap();
-            writeln!(self.out, "  store i8 {v8}, ptr {ea}").unwrap();
+            writeln!(self.out, "  store i8 {v8}, ptr {ea}{TBAA_DATA}").unwrap();
         } else {
             let eb_addr = self.fresh();
             writeln!(
@@ -762,7 +784,7 @@ impl<'a> Lowerer<'a> {
             )
             .unwrap();
             let eb32 = self.fresh();
-            writeln!(self.out, "  {eb32} = load i32, ptr {eb_addr}").unwrap();
+            writeln!(self.out, "  {eb32} = load i32, ptr {eb_addr}{TBAA_HEADER}").unwrap();
             let eb = self.fresh();
             writeln!(self.out, "  {eb} = zext i32 {eb32} to i64").unwrap();
             let off = self.fresh();
@@ -779,10 +801,10 @@ impl<'a> Lowerer<'a> {
             writeln!(self.out, "{byte_b}:").unwrap();
             let v8 = self.fresh();
             writeln!(self.out, "  {v8} = trunc i64 {val} to i8").unwrap();
-            writeln!(self.out, "  store i8 {v8}, ptr {ea}").unwrap();
+            writeln!(self.out, "  store i8 {v8}, ptr {ea}{TBAA_DATA}").unwrap();
             writeln!(self.out, "  br label %{cont}").unwrap();
             writeln!(self.out, "{word_b}:").unwrap();
-            writeln!(self.out, "  store i64 {val}, ptr {ea}").unwrap();
+            writeln!(self.out, "  store i64 {val}, ptr {ea}{TBAA_DATA}").unwrap();
         }
         writeln!(self.out, "  br label %{cont}").unwrap();
         writeln!(self.out, "{cont}:").unwrap();
@@ -825,7 +847,7 @@ impl<'a> Lowerer<'a> {
             let off = self.fresh();
             writeln!(self.out, "  {off} = mul i64 {idx}, 8").unwrap();
             let ea = self.vec_elem_addr(&vec_ptr, &off);
-            writeln!(self.out, "  store i64 {val}, ptr {ea}").unwrap();
+            writeln!(self.out, "  store i64 {val}, ptr {ea}{TBAA_DATA}").unwrap();
         } else if byte_elem {
             // Statically-bool element: 1-byte stride, so the offset is the
             // index itself. One `i8` store, no header `elem_bytes` load and no
@@ -833,7 +855,7 @@ impl<'a> Lowerer<'a> {
             let ea = self.vec_elem_addr(&vec_ptr, &idx);
             let v8 = self.fresh();
             writeln!(self.out, "  {v8} = trunc i64 {val} to i8").unwrap();
-            writeln!(self.out, "  store i8 {v8}, ptr {ea}").unwrap();
+            writeln!(self.out, "  store i8 {v8}, ptr {ea}{TBAA_DATA}").unwrap();
         } else {
             let eb_addr = self.fresh();
             writeln!(
@@ -842,7 +864,7 @@ impl<'a> Lowerer<'a> {
             )
             .unwrap();
             let eb32 = self.fresh();
-            writeln!(self.out, "  {eb32} = load i32, ptr {eb_addr}").unwrap();
+            writeln!(self.out, "  {eb32} = load i32, ptr {eb_addr}{TBAA_HEADER}").unwrap();
             let eb = self.fresh();
             writeln!(self.out, "  {eb} = zext i32 {eb32} to i64").unwrap();
             let off = self.fresh();
@@ -863,14 +885,153 @@ impl<'a> Lowerer<'a> {
             writeln!(self.out, "{byte_b}:").unwrap();
             let v8 = self.fresh();
             writeln!(self.out, "  {v8} = trunc i64 {val} to i8").unwrap();
-            writeln!(self.out, "  store i8 {v8}, ptr {ea}").unwrap();
+            writeln!(self.out, "  store i8 {v8}, ptr {ea}{TBAA_DATA}").unwrap();
             writeln!(self.out, "  br label %{join_b}").unwrap();
             writeln!(self.out, "{word_b}:").unwrap();
-            writeln!(self.out, "  store i64 {val}, ptr {ea}").unwrap();
+            writeln!(self.out, "  store i64 {val}, ptr {ea}{TBAA_DATA}").unwrap();
             writeln!(self.out, "  br label %{join_b}").unwrap();
             writeln!(self.out, "{join_b}:").unwrap();
         }
         let _ = destination;
+        emit_terminator_branch(&mut self.out, target);
+        Ok(())
+    }
+
+    /// Emits the branchless inline body of `gos_rt_heap_u8_set(v, idx, val)`.
+    /// `GosU8Vec` is `{ i64 len, ptr data }`; a null vec or out-of-range index
+    /// redirects the store to a scratch byte, reproducing the runtime shim's
+    /// no-op-on-OOB semantics without a per-byte FFI call. The len/data loads
+    /// are header accesses ([`TBAA_HEADER`]) and the byte store is element data
+    /// ([`TBAA_DATA`]), so `-O3` hoists the loop-invariant header loads out of
+    /// the enclosing byte loop (fasta's hot inner loop).
+    pub(crate) fn emit_heap_u8_set_branchless(&mut self, v: &str, idx: &str, val: &str) {
+        self.runtime_refs
+            .insert("@gos_u8_set_scratch = internal global [16 x i8] zeroinitializer".to_string());
+        self.runtime_refs.insert(
+            "@gos_u8_set_hdr = internal global { i64, ptr } { i64 0, ptr @gos_u8_set_scratch }"
+                .to_string(),
+        );
+        let vnn = self.fresh();
+        let vbase = self.fresh();
+        let len = self.fresh();
+        let dptr = self.fresh();
+        let data = self.fresh();
+        let ge0 = self.fresh();
+        let lt = self.fresh();
+        let inb = self.fresh();
+        let elem = self.fresh();
+        let target = self.fresh();
+        let valb = self.fresh();
+        writeln!(self.out, "  {vnn} = icmp ne ptr {v}, null").unwrap();
+        writeln!(
+            self.out,
+            "  {vbase} = select i1 {vnn}, ptr {v}, ptr @gos_u8_set_hdr"
+        )
+        .unwrap();
+        writeln!(self.out, "  {len} = load i64, ptr {vbase}{TBAA_HEADER}").unwrap();
+        writeln!(
+            self.out,
+            "  {dptr} = getelementptr inbounds i8, ptr {vbase}, i64 8"
+        )
+        .unwrap();
+        writeln!(self.out, "  {data} = load ptr, ptr {dptr}{TBAA_HEADER}").unwrap();
+        writeln!(self.out, "  {ge0} = icmp sge i64 {idx}, 0").unwrap();
+        writeln!(self.out, "  {lt} = icmp slt i64 {idx}, {len}").unwrap();
+        writeln!(self.out, "  {inb} = and i1 {ge0}, {lt}").unwrap();
+        writeln!(
+            self.out,
+            "  {elem} = getelementptr inbounds i8, ptr {data}, i64 {idx}"
+        )
+        .unwrap();
+        writeln!(
+            self.out,
+            "  {target} = select i1 {inb}, ptr {elem}, ptr @gos_u8_set_scratch"
+        )
+        .unwrap();
+        writeln!(self.out, "  {valb} = trunc i64 {val} to i8").unwrap();
+        writeln!(self.out, "  store i8 {valb}, ptr {target}{TBAA_DATA}").unwrap();
+    }
+
+    /// Inline fast path for `gos_rt_heap_u8_set(v, idx, val)` on the
+    /// `Terminator::Call` route (`buf.set_byte(i, x)`). Mirrors the
+    /// `Rvalue::CallIntrinsic` inline; the destination is unit, so nothing is
+    /// stored for it.
+    pub(crate) fn lower_heap_u8_set_inline(
+        &mut self,
+        args: &[Operand],
+        destination: &Place,
+        target: Option<&gossamer_mir::BlockId>,
+    ) -> Result<(), BuildError> {
+        let v = self.lower_operand(&args[0])?;
+        let idx = self.lower_operand(&args[1])?;
+        let idx = self.widen_to_i64(&args[1], &idx);
+        let val = self.lower_operand(&args[2])?;
+        self.emit_heap_u8_set_branchless(&v, &idx, &val);
+        let _ = destination;
+        emit_terminator_branch(&mut self.out, target);
+        Ok(())
+    }
+
+    /// Inline fast path for `gos_rt_vec_get_ptr(vec, idx) -> ptr` when the
+    /// destination is a bare element *pointer* (a `&elem`-typed local that a
+    /// following field projection dereferences, e.g. `table[j].1` /
+    /// `bodies[i].field`). Reproduces the runtime shim exactly - null vec /
+    /// out-of-range idx yields null, else `data + idx * elem_bytes`. Removes a
+    /// per-probe FFI call from the linear-search hot loop and lets `-O3` hoist
+    /// the loop-invariant len / elem_bytes / data-pointer header loads.
+    ///
+    /// Only applies when the destination is `ptr`-typed: a multi-slot aggregate
+    /// destination copies the whole element out of the returned address (the
+    /// generic call-result path's memcpy), which this inline does not do.
+    pub(crate) fn lower_vec_get_ptr_inline(
+        &mut self,
+        args: &[Operand],
+        destination: &Place,
+        target: Option<&gossamer_mir::BlockId>,
+    ) -> Result<(), BuildError> {
+        let vec_ptr = self.vec_operand_ptr(&args[0])?;
+        let idx = self.lower_operand(&args[1])?;
+        let idx = self.widen_to_i64(&args[1], &idx);
+        let dest_slot = local_slot(destination.local);
+        let s = self.next_ssa;
+        self.next_ssa += 1;
+        let (check, load, dflt, cont) = (
+            format!("vgp_check_{s}"),
+            format!("vgp_load_{s}"),
+            format!("vgp_dflt_{s}"),
+            format!("vgp_cont_{s}"),
+        );
+        let isnull = self.fresh();
+        writeln!(self.out, "  {isnull} = icmp eq ptr {vec_ptr}, null").unwrap();
+        writeln!(self.out, "  br i1 {isnull}, label %{dflt}, label %{check}").unwrap();
+        writeln!(self.out, "{check}:").unwrap();
+        let len = self.fresh();
+        writeln!(self.out, "  {len} = load i64, ptr {vec_ptr}{TBAA_HEADER}").unwrap();
+        // One unsigned compare catches both `idx < 0` and `idx >= len`; a
+        // GosVec length is always non-negative.
+        let bad = self.fresh();
+        writeln!(self.out, "  {bad} = icmp uge i64 {idx}, {len}").unwrap();
+        writeln!(self.out, "  br i1 {bad}, label %{dflt}, label %{load}").unwrap();
+        writeln!(self.out, "{load}:").unwrap();
+        let eb_addr = self.fresh();
+        writeln!(
+            self.out,
+            "  {eb_addr} = getelementptr i8, ptr {vec_ptr}, i64 16"
+        )
+        .unwrap();
+        let eb32 = self.fresh();
+        writeln!(self.out, "  {eb32} = load i32, ptr {eb_addr}{TBAA_HEADER}").unwrap();
+        let eb = self.fresh();
+        writeln!(self.out, "  {eb} = zext i32 {eb32} to i64").unwrap();
+        let off = self.fresh();
+        writeln!(self.out, "  {off} = mul i64 {idx}, {eb}").unwrap();
+        let ea = self.vec_elem_addr(&vec_ptr, &off);
+        writeln!(self.out, "  store ptr {ea}, ptr {dest_slot}").unwrap();
+        writeln!(self.out, "  br label %{cont}").unwrap();
+        writeln!(self.out, "{dflt}:").unwrap();
+        writeln!(self.out, "  store ptr null, ptr {dest_slot}").unwrap();
+        writeln!(self.out, "  br label %{cont}").unwrap();
+        writeln!(self.out, "{cont}:").unwrap();
         emit_terminator_branch(&mut self.out, target);
         Ok(())
     }
@@ -885,7 +1046,11 @@ impl<'a> Lowerer<'a> {
         )
         .unwrap();
         let dptr = self.fresh();
-        writeln!(self.out, "  {dptr} = load ptr, ptr {dptr_addr}").unwrap();
+        writeln!(
+            self.out,
+            "  {dptr} = load ptr, ptr {dptr_addr}{TBAA_HEADER}"
+        )
+        .unwrap();
         let ea = self.fresh();
         writeln!(self.out, "  {ea} = getelementptr i8, ptr {dptr}, i64 {off}").unwrap();
         ea
@@ -985,7 +1150,7 @@ impl<'a> Lowerer<'a> {
         writeln!(self.out, "  br i1 {isnull}, label %{lz}, label %{ll}").unwrap();
         writeln!(self.out, "{ll}:").unwrap();
         let n = self.fresh();
-        writeln!(self.out, "  {n} = load i64, ptr {v}").unwrap();
+        writeln!(self.out, "  {n} = load i64, ptr {v}{TBAA_HEADER}").unwrap();
         writeln!(self.out, "  br label %{lc}").unwrap();
         writeln!(self.out, "{lz}:").unwrap();
         writeln!(self.out, "  br label %{lc}").unwrap();
@@ -1326,6 +1491,12 @@ impl<'a> Lowerer<'a> {
             }
             _ => val_v,
         };
+        // Static element stride, derived from the operand type exactly as the
+        // get/set paths do. A `Vec<i64/f64/ptr/Vec>` is word-stride, a
+        // `Vec<bool>` is byte-stride; an erased element type stays unknown and
+        // falls back to reading `elem_bytes` from the header at run time.
+        let word_elem = self.vec_operand_has_word_elem(&args[0]);
+        let byte_elem = !word_elem && self.vec_operand_has_byte_elem(&args[0]);
         // Inline no-grow fast path: when the vec is non-null, has spare
         // capacity, and the element stride is known, a push is one store
         // plus a len increment. Two stride cases get fast paths: 8-byte
@@ -1351,7 +1522,7 @@ impl<'a> Lowerer<'a> {
         writeln!(self.out, "  br i1 {isnull}, label %{slow}, label %{chk}").unwrap();
         writeln!(self.out, "{chk}:").unwrap();
         let len = self.fresh();
-        writeln!(self.out, "  {len} = load i64, ptr {vec_ptr}").unwrap();
+        writeln!(self.out, "  {len} = load i64, ptr {vec_ptr}{TBAA_HEADER}").unwrap();
         let cap_addr = self.fresh();
         writeln!(
             self.out,
@@ -1359,71 +1530,101 @@ impl<'a> Lowerer<'a> {
         )
         .unwrap();
         let cap = self.fresh();
-        writeln!(self.out, "  {cap} = load i64, ptr {cap_addr}").unwrap();
+        writeln!(self.out, "  {cap} = load i64, ptr {cap_addr}{TBAA_HEADER}").unwrap();
         let full = self.fresh();
         writeln!(self.out, "  {full} = icmp sge i64 {len}, {cap}").unwrap();
-        let eb_addr = self.fresh();
-        writeln!(
-            self.out,
-            "  {eb_addr} = getelementptr i8, ptr {vec_ptr}, i64 16"
-        )
-        .unwrap();
-        let eb32 = self.fresh();
-        writeln!(self.out, "  {eb32} = load i32, ptr {eb_addr}").unwrap();
-        // Full: must grow - delegate to the runtime. Otherwise dispatch
-        // on the element stride to pick the matching inline store.
-        writeln!(self.out, "  br i1 {full}, label %{slow}, label %{chk2}").unwrap();
-        writeln!(self.out, "{chk2}:").unwrap();
-        let is8 = self.fresh();
-        writeln!(self.out, "  {is8} = icmp eq i32 {eb32}, 8").unwrap();
-        writeln!(self.out, "  br i1 {is8}, label %{word_fast}, label %{chk3}").unwrap();
-        writeln!(self.out, "{chk3}:").unwrap();
-        let is1 = self.fresh();
-        writeln!(self.out, "  {is1} = icmp eq i32 {eb32}, 1").unwrap();
-        writeln!(self.out, "  br i1 {is1}, label %{byte_fast}, label %{slow}").unwrap();
-        // Word-stride (8-byte) fast path: store i64 directly.
-        writeln!(self.out, "{word_fast}:").unwrap();
-        let dptr_addr = self.fresh();
-        writeln!(
-            self.out,
-            "  {dptr_addr} = getelementptr i8, ptr {vec_ptr}, i64 24"
-        )
-        .unwrap();
-        let dptr = self.fresh();
-        writeln!(self.out, "  {dptr} = load ptr, ptr {dptr_addr}").unwrap();
-        let off = self.fresh();
-        writeln!(self.out, "  {off} = mul i64 {len}, 8").unwrap();
-        let ea = self.fresh();
-        writeln!(self.out, "  {ea} = getelementptr i8, ptr {dptr}, i64 {off}").unwrap();
-        writeln!(self.out, "  store i64 {val_i64}, ptr {ea}").unwrap();
-        let len1 = self.fresh();
-        writeln!(self.out, "  {len1} = add i64 {len}, 1").unwrap();
-        writeln!(self.out, "  store i64 {len1}, ptr {vec_ptr}").unwrap();
-        writeln!(self.out, "  br label %{cont}").unwrap();
+        // Full: must grow - delegate to the runtime. Otherwise reach the store
+        // for this element stride. A statically-known stride branches straight
+        // there, skipping the per-push `elem_bytes` header load and the two
+        // runtime stride compares; an unknown stride keeps the dynamic dispatch.
+        if word_elem {
+            writeln!(
+                self.out,
+                "  br i1 {full}, label %{slow}, label %{word_fast}"
+            )
+            .unwrap();
+        } else if byte_elem {
+            writeln!(
+                self.out,
+                "  br i1 {full}, label %{slow}, label %{byte_fast}"
+            )
+            .unwrap();
+        } else {
+            let eb_addr = self.fresh();
+            writeln!(
+                self.out,
+                "  {eb_addr} = getelementptr i8, ptr {vec_ptr}, i64 16"
+            )
+            .unwrap();
+            let eb32 = self.fresh();
+            writeln!(self.out, "  {eb32} = load i32, ptr {eb_addr}{TBAA_HEADER}").unwrap();
+            writeln!(self.out, "  br i1 {full}, label %{slow}, label %{chk2}").unwrap();
+            writeln!(self.out, "{chk2}:").unwrap();
+            let is8 = self.fresh();
+            writeln!(self.out, "  {is8} = icmp eq i32 {eb32}, 8").unwrap();
+            writeln!(self.out, "  br i1 {is8}, label %{word_fast}, label %{chk3}").unwrap();
+            writeln!(self.out, "{chk3}:").unwrap();
+            let is1 = self.fresh();
+            writeln!(self.out, "  {is1} = icmp eq i32 {eb32}, 1").unwrap();
+            writeln!(self.out, "  br i1 {is1}, label %{byte_fast}, label %{slow}").unwrap();
+        }
+        // Word-stride (8-byte) fast path: store i64 directly. Emitted for a
+        // statically word-strided vec and for the dynamic dispatch.
+        if word_elem || !byte_elem {
+            writeln!(self.out, "{word_fast}:").unwrap();
+            let dptr_addr = self.fresh();
+            writeln!(
+                self.out,
+                "  {dptr_addr} = getelementptr i8, ptr {vec_ptr}, i64 24"
+            )
+            .unwrap();
+            let dptr = self.fresh();
+            writeln!(
+                self.out,
+                "  {dptr} = load ptr, ptr {dptr_addr}{TBAA_HEADER}"
+            )
+            .unwrap();
+            let off = self.fresh();
+            writeln!(self.out, "  {off} = mul i64 {len}, 8").unwrap();
+            let ea = self.fresh();
+            writeln!(self.out, "  {ea} = getelementptr i8, ptr {dptr}, i64 {off}").unwrap();
+            writeln!(self.out, "  store i64 {val_i64}, ptr {ea}{TBAA_DATA}").unwrap();
+            let len1 = self.fresh();
+            writeln!(self.out, "  {len1} = add i64 {len}, 1").unwrap();
+            writeln!(self.out, "  store i64 {len1}, ptr {vec_ptr}{TBAA_HEADER}").unwrap();
+            writeln!(self.out, "  br label %{cont}").unwrap();
+        }
         // Byte-stride (1-byte) fast path for bool and byte-buffer elements.
-        // Element address is data_ptr + len (stride == 1, no multiply).
-        writeln!(self.out, "{byte_fast}:").unwrap();
-        let dptr_addr2 = self.fresh();
-        writeln!(
-            self.out,
-            "  {dptr_addr2} = getelementptr i8, ptr {vec_ptr}, i64 24"
-        )
-        .unwrap();
-        let dptr2 = self.fresh();
-        writeln!(self.out, "  {dptr2} = load ptr, ptr {dptr_addr2}").unwrap();
-        let ea2 = self.fresh();
-        writeln!(
-            self.out,
-            "  {ea2} = getelementptr i8, ptr {dptr2}, i64 {len}"
-        )
-        .unwrap();
-        let val8 = self.fresh();
-        writeln!(self.out, "  {val8} = trunc i64 {val_i64} to i8").unwrap();
-        writeln!(self.out, "  store i8 {val8}, ptr {ea2}").unwrap();
-        let len1b = self.fresh();
-        writeln!(self.out, "  {len1b} = add i64 {len}, 1").unwrap();
-        writeln!(self.out, "  store i64 {len1b}, ptr {vec_ptr}").unwrap();
-        writeln!(self.out, "  br label %{cont}").unwrap();
+        // Element address is data_ptr + len (stride == 1, no multiply). Emitted
+        // for a statically byte-strided vec and for the dynamic dispatch.
+        if byte_elem || !word_elem {
+            writeln!(self.out, "{byte_fast}:").unwrap();
+            let dptr_addr2 = self.fresh();
+            writeln!(
+                self.out,
+                "  {dptr_addr2} = getelementptr i8, ptr {vec_ptr}, i64 24"
+            )
+            .unwrap();
+            let dptr2 = self.fresh();
+            writeln!(
+                self.out,
+                "  {dptr2} = load ptr, ptr {dptr_addr2}{TBAA_HEADER}"
+            )
+            .unwrap();
+            let ea2 = self.fresh();
+            writeln!(
+                self.out,
+                "  {ea2} = getelementptr i8, ptr {dptr2}, i64 {len}"
+            )
+            .unwrap();
+            let val8 = self.fresh();
+            writeln!(self.out, "  {val8} = trunc i64 {val_i64} to i8").unwrap();
+            writeln!(self.out, "  store i8 {val8}, ptr {ea2}{TBAA_DATA}").unwrap();
+            let len1b = self.fresh();
+            writeln!(self.out, "  {len1b} = add i64 {len}, 1").unwrap();
+            writeln!(self.out, "  store i64 {len1b}, ptr {vec_ptr}{TBAA_HEADER}").unwrap();
+            writeln!(self.out, "  br label %{cont}").unwrap();
+        }
         writeln!(self.out, "{slow}:").unwrap();
         writeln!(
             self.out,
@@ -1491,7 +1692,7 @@ impl<'a> Lowerer<'a> {
         )
         .unwrap();
         let byte = self.fresh();
-        writeln!(self.out, "  {byte} = load i8, ptr {addr}").unwrap();
+        writeln!(self.out, "  {byte} = load i8, ptr {addr}{TBAA_DATA}").unwrap();
         let ext = self.fresh();
         writeln!(self.out, "  {ext} = zext i8 {byte} to i64").unwrap();
         writeln!(self.out, "  br label %{done}").unwrap();
@@ -1548,7 +1749,7 @@ impl<'a> Lowerer<'a> {
         let tagp = self.fresh();
         writeln!(self.out, "  {tagp} = getelementptr i8, ptr {acc}, i64 -1").unwrap();
         let tag = self.fresh();
-        writeln!(self.out, "  {tag} = load i8, ptr {tagp}").unwrap();
+        writeln!(self.out, "  {tag} = load i8, ptr {tagp}{TBAA_HEADER}").unwrap();
         let isbuilder = self.fresh();
         // STR_BUILDER_TAG = 0xAB.
         writeln!(self.out, "  {isbuilder} = icmp eq i8 {tag}, -85").unwrap();
@@ -1558,15 +1759,15 @@ impl<'a> Lowerer<'a> {
         let rcp = self.fresh();
         writeln!(self.out, "  {rcp} = getelementptr i8, ptr {acc}, i64 -13").unwrap();
         let rc = self.fresh();
-        writeln!(self.out, "  {rc} = load i32, ptr {rcp}").unwrap();
+        writeln!(self.out, "  {rc} = load i32, ptr {rcp}{TBAA_HEADER}").unwrap();
         let capp = self.fresh();
         writeln!(self.out, "  {capp} = getelementptr i8, ptr {acc}, i64 -9").unwrap();
         let cap = self.fresh();
-        writeln!(self.out, "  {cap} = load i32, ptr {capp}").unwrap();
+        writeln!(self.out, "  {cap} = load i32, ptr {capp}{TBAA_HEADER}").unwrap();
         let lenp = self.fresh();
         writeln!(self.out, "  {lenp} = getelementptr i8, ptr {acc}, i64 -5").unwrap();
         let curlen = self.fresh();
-        writeln!(self.out, "  {curlen} = load i32, ptr {lenp}").unwrap();
+        writeln!(self.out, "  {curlen} = load i32, ptr {lenp}{TBAA_HEADER}").unwrap();
         let lentr = self.fresh();
         writeln!(self.out, "  {lentr} = trunc i64 {len} to i32").unwrap();
         let newlen = self.fresh();
@@ -1599,8 +1800,8 @@ impl<'a> Lowerer<'a> {
             "  {nulp} = getelementptr i8, ptr {dst}, i64 {len}"
         )
         .unwrap();
-        writeln!(self.out, "  store i8 0, ptr {nulp}").unwrap();
-        writeln!(self.out, "  store i32 {newlen}, ptr {lenp}").unwrap();
+        writeln!(self.out, "  store i8 0, ptr {nulp}{TBAA_DATA}").unwrap();
+        writeln!(self.out, "  store i32 {newlen}, ptr {lenp}{TBAA_HEADER}").unwrap();
         writeln!(self.out, "  br label %{done}").unwrap();
 
         writeln!(self.out, "{slow}:").unwrap();

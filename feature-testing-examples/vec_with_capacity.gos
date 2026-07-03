@@ -1,0 +1,56 @@
+// `Vec::with_capacity(n)` must behave identically on the VM, Cranelift,
+// and LLVM tiers: it reserves capacity but starts empty (len 0), and the
+// vec grows correctly whether the pushes stay within the reserved inline
+// buffer or spill past it into a separately allocated buffer. Also covers
+// the turbofish `Vec::<T>::with_capacity(n)` spelling and a String-element
+// (typed, deep-freed) vec, plus a build/drop loop that exercises both the
+// inline and split free paths without leaking or double-freeing.
+
+fn fill_i64(cap: i64, count: i64) -> i64 {
+    let mut v: [i64] = Vec::with_capacity(cap)
+    for i in 0..count {
+        v.push(i * i)
+    }
+    let mut sum: i64 = 0
+    for x in v {
+        sum += x
+    }
+    sum + v.len()
+}
+
+fn build_strings(cap: i64, count: i64) -> i64 {
+    let mut parts: [String] = Vec::with_capacity(cap)
+    for i in 0..count {
+        parts.push(format!("item-{}", i))
+    }
+    let mut total: i64 = 0
+    for p in parts {
+        total += p.len()
+    }
+    total
+}
+
+fn main() {
+    // Stays within the inline buffer.
+    println!("small: {}", fill_i64(4, 3))
+    // Grows past the inline buffer into a split buffer.
+    println!("grow: {}", fill_i64(2, 20))
+    // Reserved larger than the inline buffer (split from birth).
+    println!("large: {}", fill_i64(64, 40))
+    // Turbofish spelling.
+    let mut w: [i64] = Vec::<i64>::with_capacity(8)
+    w.push(7)
+    w.push(11)
+    println!("turbofish: {} {}", w[0], w[1])
+    // Typed (String) element vec, deep-freed.
+    println!("strings: {}", build_strings(3, 12))
+    // Build and drop many vecs to exercise both free paths.
+    let mut acc: i64 = 0
+    for r in 0..500 {
+        acc += fill_i64(6, 6)
+        if r % 100 == 0 {
+            acc += build_strings(2, 5)
+        }
+    }
+    println!("loop: {}", acc)
+}

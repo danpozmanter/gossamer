@@ -1,0 +1,15 @@
+// A byte literal participates in integer arithmetic without an explicit
+// `as i64`, mirroring the comparison coercion: `s[i] - b'0'` types to the
+// integer operand's type. Covers literal-left and literal-right operands
+// and the accumulate-digits shape, bit-identical on every tier.
+fn main() {
+    let s = "7a42"
+    println!("{}", s[0] - b'0')
+    println!("{}", b'a' + 1)
+    println!("{}", b'0' + s[0])
+    let mut n = 0
+    for i in 0..s.len() {
+        if s[i] >= b'0' && s[i] <= b'9' { n = n * 10 + s[i] - b'0' }
+    }
+    println!("{}", n)
+}

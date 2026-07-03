@@ -78,6 +78,47 @@ fn registry_fetch_without_catalogue_entry_reports_unsupported() {
 }
 
 #[test]
+fn git_ext_transport_url_is_rejected_before_running_git() {
+    // `ext::sh -c '...'` is git's arbitrary-command transport. The
+    // fetcher must reject it at the source-validation gate, before any
+    // `git` process is spawned.
+    let resolved = synth_resolved(
+        "evil.example/pkg",
+        ResolvedSource::Git {
+            url: "ext::sh -c 'touch /tmp/gossamer_pwned'".to_string(),
+            reference: "main".to_string(),
+        },
+    );
+    let mut cache = Cache::new();
+    let err = Fetcher::default()
+        .fetch_all(&[resolved], &mut cache)
+        .unwrap_err();
+    assert!(
+        matches!(err, CacheError::RejectedGitSource(_)),
+        "ext:: transport must be rejected, got: {err:?}"
+    );
+}
+
+#[test]
+fn git_leading_dash_url_is_rejected_before_running_git() {
+    let resolved = synth_resolved(
+        "evil.example/pkg",
+        ResolvedSource::Git {
+            url: "--upload-pack=touch /tmp/gossamer_pwned".to_string(),
+            reference: "main".to_string(),
+        },
+    );
+    let mut cache = Cache::new();
+    let err = Fetcher::default()
+        .fetch_all(&[resolved], &mut cache)
+        .unwrap_err();
+    assert!(
+        matches!(err, CacheError::RejectedGitSource(_)),
+        "leading-'-' url must be rejected, got: {err:?}"
+    );
+}
+
+#[test]
 fn offline_mode_refuses_unseen_entries() {
     // Use a tarball pin (whose transport is empty) - its initial
     // fetch fails, then offline mode reports the entry-absent error.

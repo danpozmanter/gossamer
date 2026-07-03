@@ -1612,10 +1612,13 @@
 <p>Sum type declaration with payload-carrying variants.</p>
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
 
-<p>Variants carry tuple payloads (<code>Line(i64)</code>, <code>Box(i64, i64)</code>), struct
+<p>Variants carry tuple payloads (<code>Line(i64)</code>, <code>Rect(i64, i64)</code>), struct
 payloads (<code>Named { id: i64 }</code>), or nothing (<code>Dot</code>). Recursive payloads
-work directly (<code>enum List { Cons(i64, Box&lt;List&gt;), Nil }</code>); <code>Box</code> / <code>Arc</code>
-/ <code>Rc</code> are transparent. Match exhaustively.</p>
+work directly with no wrapper - <code>enum List { Cons(i64, List), Nil }</code> -
+because every variant payload is already heap-shared. The <code>Box&lt;List&gt;</code> /
+<code>Arc&lt;List&gt;</code> / <code>Rc&lt;List&gt;</code> spellings are transparent and compile to the
+same thing, so reach for them only when the type reads clearer with the
+wrapper. Match exhaustively.</p>
 <h2 id="compare-by-value-no-derive">Compare by value, no derive<a class="headerlink" href="#compare-by-value-no-derive" title="Permanent link">&para;</a></h2>
 <p>Enums are value types, so <code>==</code> / <code>!=</code> / <code>&lt;</code> / <code>&lt;=</code> / <code>&gt;</code> / <code>&gt;=</code> are
 synthesized automatically - no <code>#[derive]</code> needed - whenever every

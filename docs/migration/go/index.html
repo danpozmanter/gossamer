@@ -2451,12 +2451,11 @@ write the conversion table out by hand:</p>
   asynchronously preempted at loop back-edges - it yields at its next
   call or park point. See
   <a href="../../design/runtime/#preemption">runtime design - Preemption</a>.</li>
-<li>Channels are unbounded by default (like Go's <code>make(chan T)</code>
-  without a buffer size - wait, actually Go's <em>unbuffered</em>
-  channels block on send until a receiver is ready;
-  Gossamer's <code>channel::&lt;T&gt;()</code> returns a buffered channel today,
-  with <code>try_send</code> / <code>try_recv</code> for non-blocking ops). Bounded
-  channels via <code>channel::with_capacity(n)</code>.</li>
+<li>Channels are created with <code>channel()</code> / <code>channel::&lt;T&gt;()</code> and are
+  buffered today, so a send does not block waiting for a receiver.
+  There is no capacity argument - <code>channel()</code> is the only constructor.
+  The producer calls <code>close()</code> to end the stream, so
+  <code>while let Some(v) = rx.recv()</code> is the canonical drain.</li>
 <li><code>select</code> arms are typed by the channel they reference. Catch
   the unblocked case with <code>default =&gt;</code>.</li>
 </ul>
@@ -2545,7 +2544,7 @@ otherwise spawn a <code>let mut acc = 0; for x in xs { acc += … }</code>.</p>
 </tr>
 <tr>
 <td><code>os/exec.Command</code></td>
-<td><code>process::Command::new(prog).arg(a).output()</code></td>
+<td><code>process::run(prog, &amp;args)</code></td>
 <td>✓</td>
 </tr>
 <tr>
@@ -2965,7 +2964,7 @@ split for OS primitives - <code>os.ReadFile</code> → <code>fs::read</code>, <c
 </tr>
 <tr>
 <td><code>os/exec.Command(...)</code></td>
-<td><code>process::Command::new(...)</code></td>
+<td><code>process::run(prog, &amp;args)</code></td>
 </tr>
 <tr>
 <td><code>path/filepath.Join</code></td>

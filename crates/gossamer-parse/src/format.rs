@@ -223,11 +223,19 @@ fn render(lines: &[Line<'_>], file: FileId) -> String {
     let mut cont_after_prev_line = false;
     let mut prev_code_level = 0usize;
     let mut prev_code_was_cont = false;
+    // One blank line separates the leading top-level `use` block from
+    // whatever follows it; authored line choices are otherwise kept.
+    let mut prev_was_top_use = false;
     for line in lines {
         let child_level = stack.last().map_or(0, |open| open.line_level + 1);
         if line.toks.iter().all(Tok::is_comment) {
+            let mut blanks = line.blank_before;
+            if prev_was_top_use && blanks == 0 {
+                blanks = 1;
+            }
+            prev_was_top_use = false;
             entries.push(Entry {
-                blanks: line.blank_before,
+                blanks,
                 indent: EntryIndent::Comment { depth: child_level },
                 body: comment_only_body(&line.toks),
             });
@@ -279,8 +287,20 @@ fn render(lines: &[Line<'_>], file: FileId) -> String {
             .is_some_and(|t| trailing_continuation(t.kind));
         prev_code_level = line_level;
         prev_code_was_cont = line_was_cont;
+        let is_top_use = line_level == 0
+            && !line_was_cont
+            && line
+                .toks
+                .iter()
+                .find(|t| !t.is_comment())
+                .is_some_and(|t| t.text == "use");
+        let mut blanks = line.blank_before;
+        if prev_was_top_use && !is_top_use && blanks == 0 {
+            blanks = 1;
+        }
+        prev_was_top_use = is_top_use;
         entries.push(Entry {
-            blanks: line.blank_before,
+            blanks,
             indent: EntryIndent::Code {
                 indent: INDENT_WIDTH * line_level,
                 carry: line_level.saturating_sub(child_level),

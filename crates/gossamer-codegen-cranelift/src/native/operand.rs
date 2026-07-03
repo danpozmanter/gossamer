@@ -187,6 +187,13 @@ pub(super) enum PrintKind {
     ArrBool(i64),
     /// `[String; N]` flat-buffer literal.
     ArrString(i64),
+    /// `[[i64; M]; N]` flat-buffer nested array (`N * M` contiguous
+    /// slots, rows inline): `gos_rt_arr_format_arr_i64(ptr, N, M)`.
+    ArrArrI64(i64, i64),
+    /// `[[f64; M]; N]` flat-buffer nested array.
+    ArrArrF64(i64, i64),
+    /// `[[bool; M]; N]` flat-buffer nested array.
+    ArrArrBool(i64, i64),
     /// `json::Value` - rendered via `gos_rt_json_render`.
     JsonValue,
     /// `errors::Error` - calls `gos_rt_error_message` then prints as string.
@@ -385,6 +392,21 @@ pub(super) fn operand_print_kind(body: &Body, tcx: &TyCtxt, operand: &Operand) -
                         TyKind::Float(_) => PrintKind::ArrF64(n),
                         TyKind::Bool => PrintKind::ArrBool(n),
                         TyKind::String => PrintKind::ArrString(n),
+                        // Nested fixed array: rows are inline (N * M
+                        // contiguous slots), so the formatter takes both
+                        // static lengths.
+                        TyKind::Array {
+                            elem: inner_elem,
+                            len: inner_len,
+                        } => {
+                            let m = i64::try_from(inner_len.to_usize()).unwrap_or(0);
+                            match tcx.kind_of(*inner_elem) {
+                                TyKind::Int(_) => PrintKind::ArrArrI64(n, m),
+                                TyKind::Float(_) => PrintKind::ArrArrF64(n, m),
+                                TyKind::Bool => PrintKind::ArrArrBool(n, m),
+                                _ => PrintKind::Unsupported("nested array"),
+                            }
+                        }
                         _ => PrintKind::Unsupported("array"),
                     }
                 }
@@ -492,6 +514,12 @@ pub(super) fn operand_aggregate_slots(body: &Body, tcx: &TyCtxt, op: &Operand) -
     match op {
         Operand::Copy(place) if place.projection.is_empty() => {
             let ty = body.local_ty(place.local);
+            // `Option` / `Result` carriers are two-word *values* (i128
+            // SSA), not address-backed aggregates - callers must not
+            // take their address and word-copy through it.
+            if is_carrier_ty(tcx, ty) {
+                return None;
+            }
             if matches!(
                 tcx.kind_of(ty),
                 TyKind::Tuple(_) | TyKind::Adt { .. } | TyKind::Array { .. }

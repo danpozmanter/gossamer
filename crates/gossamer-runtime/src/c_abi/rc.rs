@@ -269,6 +269,15 @@ const COLOR_MASK: u32 = 0b11 << COLOR_SHIFT;
 /// reclamation cost on short-lived allocation churn.
 const REGION_BIT: u32 = 1 << 30;
 
+/// One-shot claim flag for reclaiming a DEAD shared block (bit 28, aliasing
+/// the low collector-color bit, which a shared object never uses: shared
+/// objects are excluded from the per-thread collector and any stale color is
+/// cleared at the share transition). The final strong release and the final
+/// weak release can race on different goroutines with both counts reading
+/// zero; whoever CAS-sets this bit owns the free, so the block is reclaimed
+/// exactly once.
+const SHARED_RECLAIM_BIT: u32 = 1 << COLOR_SHIFT;
+
 // Only the test asserts read this now - the hot retain/release paths
 // check `REGION_BIT` inline off their single atomic `strong` load
 // (`inc_strong` / `dec_strong`) to avoid a second read.
@@ -289,7 +298,9 @@ const COLOR_PURPLE: u32 = 3;
 
 #[inline]
 unsafe fn strong_count(h: *const RcHeader) -> u32 {
-    (unsafe { (*h).strong }) & STRONG_COUNT_MASK
+    // Atomic (relaxed) load: identical codegen to a plain load, but safe to
+    // call on a shared object whose count other goroutines mutate atomically.
+    (unsafe { load_strong(h) }) & STRONG_COUNT_MASK
 }
 
 /// Overwrite the count portion of `strong`, preserving the flag bits.
@@ -475,7 +486,16 @@ unsafe fn mark_shared(payload: *mut u8) {
             continue;
         }
         let a = unsafe { AtomicU32::from_ptr(std::ptr::addr_of_mut!((*h).strong)) };
-        let prev = a.fetch_or(SHARED_BIT, Ordering::Relaxed);
+        // Clear any stale collector color at the thread-local -> shared
+        // transition: bit 28 of the color field doubles as the shared
+        // reclaim-claim flag (`SHARED_RECLAIM_BIT`), which must start clear.
+        // The walk runs pre-publish on the owning thread, so no concurrent
+        // writer exists yet.
+        let prev = match a.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |s| {
+            Some((s & !COLOR_MASK) | SHARED_BIT)
+        }) {
+            Ok(prev) | Err(prev) => prev,
+        };
         if prev & SHARED_BIT == 0 {
             // This object just transitioned thread-local -> shared.
             rc_shared_inc();
@@ -498,7 +518,8 @@ pub unsafe extern "C" fn gos_rt_rc_mark_shared(payload: *mut u8) {
 
 #[inline]
 unsafe fn color_of(h: *const RcHeader) -> u32 {
-    ((unsafe { (*h).strong }) & COLOR_MASK) >> COLOR_SHIFT
+    // Atomic (relaxed) load for the same reason as `strong_count`.
+    ((unsafe { load_strong(h) }) & COLOR_MASK) >> COLOR_SHIFT
 }
 
 #[inline]
@@ -509,7 +530,7 @@ unsafe fn set_color(h: *mut RcHeader, color: u32) {
 
 #[inline]
 unsafe fn is_buffered(h: *const RcHeader) -> bool {
-    (unsafe { (*h).strong }) & BUFFERED_BIT != 0
+    (unsafe { load_strong(h) }) & BUFFERED_BIT != 0
 }
 
 #[inline]
@@ -584,15 +605,17 @@ pub fn rc_cycles_freed() -> usize {
 /// only remaining references are internal. Buffered once (deduplicated by
 /// the header bit); the buffer auto-collects when it crosses the threshold.
 unsafe fn possible_root(payload: *mut u8) {
-    if !unsafe { has_rc_children(payload) } {
-        return;
-    }
     let h = unsafe { header_ptr(payload) };
     // Objects that have escaped to another goroutine are excluded from
     // the per-thread cycle collector - touching their flag bits here is a
     // non-atomic write that would race a concurrent worker's atomic
-    // retain/release. Their cycles leak (like `Arc`); break with weak refs.
+    // retain/release, and even reading their payload slots races the
+    // owning goroutine's mutations. Their cycles leak (like `Arc`);
+    // break with weak refs.
     if unsafe { is_shared(h) } {
+        return;
+    }
+    if !unsafe { has_rc_children(payload) } {
         return;
     }
     // Color purple marks a candidate; skip if already a tracked root.
@@ -1565,13 +1588,23 @@ pub unsafe extern "C" fn gos_rt_rc_release_no_buffer(payload: *mut u8) {
     }
     if d.shared {
         fence(Ordering::Acquire);
+        // A shared object's flag bits are never mutated non-atomically;
+        // `try_reclaim` takes the atomic claim path. A stale buffered pin
+        // defers the free to the owning thread's next collection slice.
+        unsafe { try_reclaim(payload) };
+        return;
     }
     unsafe { set_color(h, COLOR_BLACK) };
-    // Clear any buffered bit a prior release may have set so `try_reclaim`
-    // frees the block now rather than leaving it for the collector. Child
-    // slots are already cleared by the caller, so there are no children to
-    // release here.
-    unsafe { set_buffered(h, false) };
+    // Clear any buffered pin a prior release may have set so `try_reclaim`
+    // frees the block now rather than leaving it for the collector. The pin
+    // and the candidate-buffer entry are dropped together: a freed block
+    // must never linger in `ROOTS`, or a later collection dereferences it.
+    if unsafe { is_buffered(h) } {
+        ROOTS.with(|r| r.borrow_mut().retain(|p| *p != payload));
+        unsafe { set_buffered(h, false) };
+    }
+    // Child slots are already cleared by the caller, so there are no
+    // children to release here.
     unsafe { try_reclaim(payload) };
 }
 
@@ -1659,13 +1692,14 @@ pub unsafe extern "C" fn gos_rt_rc_weak_release(payload: *mut u8) {
     }
 }
 
-/// Attempt to obtain a strong reference from a weak one. If the referent is
-/// still alive (`strong > 0`), increment the strong count and return the
-/// payload; otherwise return null (the `None` shape). Null-safe.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_rc_weak_upgrade(payload: *mut u8) -> *mut u8 {
-    // Hand back the caller's pointer verbatim (tag bits included);
-    // mask only for header access.
+/// Shared core of the weak-upgrade entry points: take a fresh strong
+/// reference iff the referent is still alive. Returns the caller's pointer
+/// verbatim (tag bits included) on success, null once the referent is dead.
+/// For a shared referent the take is a CAS from a non-zero count, so two
+/// goroutines racing an upgrade against the final release can never revive
+/// a dead object (and the liveness check and the count bump are one atomic
+/// step, not a check-then-act).
+unsafe fn weak_upgrade_take(payload: *mut u8) -> *mut u8 {
     let base = untag_rc(payload);
     if in_region_arena(base) {
         return std::ptr::null_mut();
@@ -1697,53 +1731,99 @@ pub unsafe extern "C" fn gos_rt_rc_weak_upgrade(payload: *mut u8) -> *mut u8 {
     } else {
         // Thread-local object: no concurrent writer exists.
         unsafe { set_strong_count(h, count.saturating_add(1)) };
+        // Color black so a later cycle scan treats the revived object as
+        // live. Shared objects never enter the collector and their color
+        // bits carry the reclaim-claim flag, so only the thread-local path
+        // recolors.
+        unsafe { set_color(h, COLOR_BLACK) };
     }
-    // Color black so a concurrent cycle scan treats the revived object as live.
-    unsafe { set_color(h, COLOR_BLACK) };
     payload
 }
 
+/// Attempt to obtain a strong reference from a weak one. If the referent is
+/// still alive (`strong > 0`), increment the strong count and return the
+/// payload; otherwise return null (the `None` shape). Null-safe.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_rc_weak_upgrade(payload: *mut u8) -> *mut u8 {
+    unsafe { weak_upgrade_take(payload) }
+}
+
 /// Upgrade a weak reference to `Option<T>` for the language-level
-/// `w.upgrade()`. Returns a boxed `GosResult` discriminated as `Some`
-/// (disc 0) carrying the payload pointer when the referent is still
-/// alive (`strong > 0`), or `None` (disc 1) once it has been reclaimed.
+/// `w.upgrade()`. Returns the packed `{disc, payload}` pair discriminated
+/// as `Some` (disc 0) carrying the payload pointer when the referent is
+/// still alive (`strong > 0`), or `None` (disc 1) once it has been
+/// reclaimed.
 ///
-/// Unlike [`gos_rt_rc_weak_upgrade`] this does NOT bump the strong
-/// count: the `Some` payload is an interior borrow valid for the
-/// duration of the caller's match arm (whose own live strong reference
-/// keeps the object alive). Bumping the count here would keep dead-once
-/// objects alive across later `upgrade()` calls - silently turning a
-/// `None` into a `Some` - so the borrow model is the sound one for the
-/// synchronous match/if-let idiom. Null-safe (returns `None`).
+/// The `Some` payload carries a fresh strong reference, taken atomically
+/// (CAS from a non-zero count for shared referents), so the value stays
+/// alive for the caller even when another goroutine drops the last other
+/// strong reference concurrently. The MIR lowering pins that reference in
+/// a frame-owned shadow local (`gos_rt_weak_opt_payload`) released at
+/// scope exit, mirroring the interpreter's `Some(value)` clone which lives
+/// until its binding dies. Null-safe (returns `None`).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_rc_weak_upgrade_opt(payload: *mut u8) -> i128 {
-    // Mask tag bits for the header probe; the Some payload keeps the
-    // caller's pointer (and its disc tag) verbatim.
-    let base = untag_rc(payload);
-    let alive = if base.is_null() || in_region_arena(base) {
-        false
-    } else {
-        let h = unsafe { header_ptr(base) };
-        (unsafe { strong_count(h) }) > 0
-    };
-    if alive {
-        crate::c_abi::vec::pack_result(0, payload as i64)
-    } else {
+    let taken = unsafe { weak_upgrade_take(payload) };
+    if taken.is_null() {
         crate::c_abi::vec::pack_result(1, 0)
+    } else {
+        crate::c_abi::vec::pack_result(0, taken as i64)
     }
 }
 
 /// Free a block's allocation only when nothing pins it: no strong refs, no
 /// weak refs, and not awaiting the cycle collector. The single funnel every
-/// release path goes through, so each block is freed exactly once.
+/// release path goes through, so each block is freed exactly once. For a
+/// thread-local block the checks need no atomicity (single mutator); a
+/// shared block routes through the CAS claim in [`try_reclaim_shared`].
 unsafe fn try_reclaim(payload: *mut u8) {
     let h = unsafe { header_ptr(payload) };
-    if unsafe { strong_count(h) } == 0
+    let s = unsafe { load_strong(h) };
+    if s & SHARED_BIT != 0 {
+        unsafe { try_reclaim_shared(payload, h) };
+        return;
+    }
+    if s & STRONG_COUNT_MASK == 0
+        && s & BUFFERED_BIT == 0
         && unsafe { (*h).weak.load(Ordering::Relaxed) } == 0
-        && !unsafe { is_buffered(h) }
     {
         unsafe { free_block(payload) };
     }
+}
+
+/// Reclaim a dead shared block exactly once. The final strong release and
+/// the final weak release can race on different goroutines, both observing
+/// `strong == 0 && weak == 0`; the free is claimed by a CAS setting
+/// [`SHARED_RECLAIM_BIT`], so exactly one claimant frees.
+///
+/// The claim conditions are stable once observed: a dead shared object's
+/// strong count can never rise again (upgrades CAS from a non-zero count
+/// only), and with both counts zero no reference exists from which a new
+/// weak could be minted, so `weak` can never leave zero after it is read
+/// under `strong == 0`. A buffered pin defers the free to the owning
+/// thread's collection slice, which clears the pin and re-runs the claim.
+unsafe fn try_reclaim_shared(payload: *mut u8, h: *mut RcHeader) {
+    let a = unsafe { AtomicU32::from_ptr(std::ptr::addr_of_mut!((*h).strong)) };
+    let mut cur = a.load(Ordering::Acquire);
+    loop {
+        if cur & STRONG_COUNT_MASK != 0 || cur & BUFFERED_BIT != 0 || cur & SHARED_RECLAIM_BIT != 0
+        {
+            return;
+        }
+        if unsafe { (*h).weak.load(Ordering::Acquire) } != 0 {
+            return;
+        }
+        match a.compare_exchange_weak(
+            cur,
+            cur | SHARED_RECLAIM_BIT,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        ) {
+            Ok(_) => break,
+            Err(actual) => cur = actual,
+        }
+    }
+    unsafe { free_block(payload) };
 }
 
 /// Usable byte capacity of an RC block (header + payload), recovered from the
@@ -1823,8 +1903,11 @@ pub unsafe extern "C" fn gos_rt_rc_drop_reuse(payload: *mut u8) -> *mut u8 {
     }
     if d.shared {
         fence(Ordering::Acquire);
+    } else {
+        // Shared flag bits are only ever mutated atomically; the color is
+        // meaningless for shared objects (they never enter the collector).
+        unsafe { set_color(h, COLOR_BLACK) };
     }
-    unsafe { set_color(h, COLOR_BLACK) };
     unsafe { release_rc_children(payload) };
     // Reuse only a thread-local, weak-free, unbuffered block; anything else is
     // reclaimed normally (try_reclaim frees iff unpinned).
@@ -1911,8 +1994,9 @@ unsafe fn rc_release_impl(root: *mut u8) {
     // writes before tearing it down (now exclusively owned - count 0).
     if d.shared {
         fence(Ordering::Acquire);
+    } else {
+        unsafe { set_color(h, COLOR_BLACK) };
     }
-    unsafe { set_color(h, COLOR_BLACK) };
     let meta = unsafe { meta_of(h) };
     // Leaf fast path: a childless object (no RC-pointer children, the
     // overwhelming common case - every enum payload-free variant, every
@@ -1961,8 +2045,9 @@ unsafe fn rc_release_impl(root: *mut u8) {
             }
             if d.shared {
                 fence(Ordering::Acquire);
+            } else {
+                unsafe { set_color(h, COLOR_BLACK) };
             }
-            unsafe { set_color(h, COLOR_BLACK) };
             unsafe {
                 visit_children_raw_buffered(payload, &mut worklist);
             }
@@ -2361,6 +2446,14 @@ pub unsafe extern "C" fn gos_rt_option_slot_retain(slot: *const i64) {
 /// count of every child reachable from `root`, marking the subgraph gray.
 /// After this, a node's count reflects only references from *outside* the
 /// traced subgraph.
+///
+/// A shared (escaped) child is an external live edge: the per-thread
+/// collector never trial-deletes through the shared boundary. Decrementing
+/// a shared child here would transiently zero a live count that another
+/// goroutine's release could observe (freeing a live object), and every
+/// recolor of it would be a non-atomic RMW racing that goroutine's atomic
+/// retain/release (lost update). The edge is instead released for real if
+/// and when the referencing node is freed ([`collect_white`]).
 unsafe fn mark_gray(root: *mut u8) {
     let mut stack = vec![root];
     while let Some(s) = stack.pop() {
@@ -2372,15 +2465,10 @@ unsafe fn mark_gray(root: *mut u8) {
         unsafe {
             visit_rc_children(s, |t| {
                 let th = header_ptr(t);
-                let ts = load_strong(th);
-                if ts & SHARED_BIT != 0 {
-                    // Shared child: atomic decrement so we don't race a
-                    // concurrent retain/release on another goroutine.
-                    let a = AtomicU32::from_ptr(std::ptr::addr_of_mut!((*th).strong));
-                    a.fetch_sub(1, Ordering::Relaxed);
-                } else {
-                    set_strong_count(th, strong_count(th).saturating_sub(1));
+                if load_strong(th) & SHARED_BIT != 0 {
+                    return;
                 }
+                set_strong_count(th, strong_count(th).saturating_sub(1));
                 stack.push(t);
             });
         }
@@ -2401,7 +2489,15 @@ unsafe fn scan(root: *mut u8) {
             unsafe { scan_black(s) };
         } else {
             unsafe { set_color(h, COLOR_WHITE) };
-            unsafe { visit_rc_children(s, |t| stack.push(t)) };
+            // Shared children were never grayed (external live edges);
+            // skip them so their flag word is never even read as a color.
+            unsafe {
+                visit_rc_children(s, |t| {
+                    if load_strong(header_ptr(t)) & SHARED_BIT == 0 {
+                        stack.push(t);
+                    }
+                });
+            }
         }
     }
 }
@@ -2419,15 +2515,13 @@ unsafe fn scan_black(root: *mut u8) {
         unsafe {
             visit_rc_children(s, |t| {
                 let th = header_ptr(t);
-                let ts = load_strong(th);
-                if ts & SHARED_BIT != 0 {
-                    // Shared child: atomic increment mirrors the atomic
-                    // decrement in mark_gray.
-                    let a = AtomicU32::from_ptr(std::ptr::addr_of_mut!((*th).strong));
-                    a.fetch_add(1, Ordering::Relaxed);
-                } else {
-                    set_strong_count(th, strong_count(th).saturating_add(1));
+                if load_strong(th) & SHARED_BIT != 0 {
+                    // Shared child: never trial-deleted by mark_gray, so
+                    // there is nothing to restore (and its flag word must
+                    // never see a non-atomic RMW).
+                    return;
                 }
+                set_strong_count(th, strong_count(th).saturating_add(1));
                 if color_of(th) != COLOR_BLACK {
                     stack.push(t);
                 }
@@ -2464,6 +2558,10 @@ unsafe fn collect_white(root: *mut u8, freed: &mut Vec<*mut u8>) {
             visit_children_raw(s, |c| {
                 if crate::c_abi::string::is_gos_string(c.cast()) {
                     crate::c_abi::string::gos_rt_str_free(c.cast());
+                } else if is_shared(header_ptr(c)) {
+                    // The dying node's edge into the shared heap was never
+                    // trial-deleted (see `mark_gray`); release it for real.
+                    release_shared_edge(c);
                 } else {
                     stack.push(c);
                 }
@@ -2478,6 +2576,44 @@ unsafe fn collect_white(root: *mut u8, freed: &mut Vec<*mut u8>) {
             freed.push(s);
             unsafe { free_block(s) };
         }
+    }
+}
+
+/// Release one strong edge from a freed garbage node into the shared heap.
+/// The collector never trial-deletes through a shared boundary (see
+/// [`mark_gray`]), so a garbage node's edge to a shared child is still
+/// counted and must be released like a mutator release - atomically - when
+/// the node is freed. Uses a local worklist rather than
+/// [`rc_release_impl`]: the collector can run inside `rc_release_impl`'s
+/// thread-local `RELEASE_WORKLIST` borrow, which must not be re-entered.
+///
+/// Children of a shared object are themselves shared (`mark_shared` walks
+/// the whole reachable subgraph at the escape point), so the cascade stays
+/// on the atomic path. A thread-local node reached through such an edge is
+/// still torn down correctly, but is never buffered as a cycle candidate:
+/// buffering could arm a nested collection mid-phase.
+unsafe fn release_shared_edge(root: *mut u8) {
+    let mut worklist: Vec<*mut u8> = vec![root];
+    while let Some(payload) = worklist.pop() {
+        if payload.is_null() {
+            continue;
+        }
+        if unsafe { crate::c_abi::string::is_gos_string(payload.cast()) } {
+            unsafe { crate::c_abi::string::gos_rt_str_free(payload.cast()) };
+            continue;
+        }
+        let h = unsafe { header_ptr(payload) };
+        let d = unsafe { dec_strong(h) };
+        if d.skip || d.next != 0 {
+            continue;
+        }
+        if d.shared {
+            fence(Ordering::Acquire);
+        } else {
+            unsafe { set_color(h, COLOR_BLACK) };
+        }
+        unsafe { visit_children_raw_buffered(payload, &mut worklist) };
+        unsafe { try_reclaim(payload) };
     }
 }
 
@@ -2522,10 +2658,14 @@ unsafe fn collect_cycles_budgeted(budget: Option<usize>) {
     for s in roots {
         let h = unsafe { header_ptr(s) };
         // A candidate that escaped to another goroutine after being
-        // buffered: drop it without touching its flag bits (a concurrent
-        // worker may be mutating them atomically). Shared objects never
-        // re-enter the collector, so the stale buffered bit is harmless.
+        // buffered: drop it from the collector. The stale buffered pin is
+        // cleared atomically (its ROOTS entry is being dropped right here),
+        // and the block is reclaimed if its count already fell to zero -
+        // the releasing goroutine refused to free while the pin was set.
         if unsafe { is_shared(h) } {
+            let a = unsafe { AtomicU32::from_ptr(std::ptr::addr_of_mut!((*h).strong)) };
+            a.fetch_and(!BUFFERED_BIT, Ordering::AcqRel);
+            unsafe { try_reclaim(s) };
             continue;
         }
         if unsafe { color_of(h) } == COLOR_PURPLE {
@@ -3098,7 +3238,7 @@ mod tests {
     }
 
     #[test]
-    fn upgrade_opt_boxes_some_when_alive_without_bumping_strong() {
+    fn upgrade_opt_packs_some_when_alive_taking_a_strong_reference() {
         let _g = count_guard();
         let base = rc_live_count();
         unsafe {
@@ -3117,9 +3257,11 @@ mod tests {
             );
             assert_eq!(
                 strong_of(p),
-                1,
-                "upgrade_opt does not bump the strong count"
+                2,
+                "upgrade_opt takes a fresh strong reference for the Some payload"
             );
+            // The shadow local's scope-end release balances the take.
+            gos_rt_rc_release(p);
             gos_rt_rc_release(p);
             assert_eq!(rc_live_count(), base + 1, "lingers on the weak ref");
             gos_rt_rc_weak_release(p);
@@ -3415,5 +3557,206 @@ mod tests {
             gos_rt_rc_release(head);
         }
         assert_eq!(rc_live_count(), base);
+    }
+
+    // Struct node with one i64 field (word 0) and two RC-pointer children
+    // (words 1 and 2): kind=STRUCT, V=1, [disc0 cc2 off1 off2].
+    fn two_child_meta() -> Vec<i64> {
+        vec![RC_KIND_STRUCT, 1, 0, 2, 1, 2]
+    }
+
+    unsafe fn link_at(parent: *mut u8, word: usize, child: *mut u8) {
+        unsafe { set_child(parent, word, child) };
+        unsafe { gos_rt_rc_retain(child) };
+    }
+
+    #[test]
+    fn shared_child_is_an_external_live_edge_for_the_collector() {
+        let _g = count_guard();
+        fresh_cycle_state();
+        let base = rc_live_count();
+        let meta = two_child_meta();
+        // The object borrows a pointer to this meta, so it must outlive S.
+        let s_meta = node_meta();
+        unsafe {
+            // Shared object S with one extra owner (standing in for the
+            // other goroutine's handle).
+            let s = gos_rt_rc_alloc(16, s_meta.as_ptr());
+            gos_rt_rc_mark_shared(s);
+            assert!(is_shared(header_ptr(s)));
+
+            // Thread-local garbage cycle A <-> B where A also owns an edge
+            // to S. The collector must trace and reclaim the cycle without
+            // ever trial-deleting (or recoloring) S, then release the freed
+            // A's edge to S for real.
+            let a = gos_rt_rc_alloc(24, meta.as_ptr());
+            let b = gos_rt_rc_alloc(24, meta.as_ptr());
+            link_at(a, 1, b);
+            link_at(b, 1, a);
+            link_at(a, 2, s);
+            assert_eq!(strong_of(s), 2, "one handle here, one edge from A");
+            gos_rt_rc_release(a);
+            gos_rt_rc_release(b);
+            assert_eq!(rc_live_count(), base + 3, "cycle + S leak under plain RC");
+            gos_rt_collect_cycles();
+            assert_eq!(rc_live_count(), base + 1, "cycle reclaimed, S survives");
+            assert_eq!(strong_of(s), 1, "the freed node's edge to S released");
+            gos_rt_rc_release(s);
+        }
+        assert_eq!(rc_live_count(), base);
+    }
+
+    #[test]
+    fn buffered_then_shared_candidate_is_unpinned_and_reclaimed() {
+        let _g = count_guard();
+        fresh_cycle_state();
+        let base = rc_live_count();
+        let meta = node_meta();
+        unsafe {
+            // X owns child C, and X survives a decrement while thread-local,
+            // so it is buffered as a cycle candidate (pinning its block).
+            let c = gos_rt_rc_alloc(16, meta.as_ptr());
+            let x = gos_rt_rc_alloc(16, meta.as_ptr());
+            move_child(x, c);
+            gos_rt_rc_retain(x);
+            gos_rt_rc_release(x);
+            assert!(is_buffered(header_ptr(x)), "surviving decrement buffers X");
+
+            // X escapes to another goroutine, then its last owner drops it.
+            // The release tears down C, but the buffered pin defers X's own
+            // block to the owning thread's next collection slice.
+            gos_rt_rc_mark_shared(x);
+            gos_rt_rc_release(x);
+            assert_eq!(rc_live_count(), base + 1, "C freed, X pinned");
+            gos_rt_collect_cycles();
+        }
+        assert_eq!(
+            rc_live_count(),
+            base,
+            "collection clears the stale pin and reclaims the dead shared block"
+        );
+    }
+
+    #[test]
+    fn dead_shared_block_with_weak_is_reclaimed_by_the_last_weak_release() {
+        let _g = count_guard();
+        fresh_cycle_state();
+        let base = rc_live_count();
+        // The object borrows a pointer to this meta, so it must outlive S.
+        let s_meta = node_meta();
+        unsafe {
+            let s = gos_rt_rc_alloc(16, s_meta.as_ptr());
+            gos_rt_rc_mark_shared(s);
+            let w = gos_rt_rc_downgrade(s);
+            assert!(!w.is_null());
+            gos_rt_rc_release(s);
+            assert_eq!(rc_live_count(), base + 1, "weak pins the dead block");
+            // Upgrading the dead shared referent must fail via the CAS path.
+            assert!(gos_rt_rc_weak_upgrade(w).is_null());
+            let opt = gos_rt_rc_weak_upgrade_opt(w);
+            assert_eq!((opt as u64) as i64, 1, "upgrade_opt reports None");
+            gos_rt_rc_weak_release(w);
+        }
+        assert_eq!(rc_live_count(), base);
+    }
+
+    #[test]
+    fn weak_upgrade_opt_takes_an_owned_strong_reference() {
+        let _g = count_guard();
+        fresh_cycle_state();
+        let base = rc_live_count();
+        // The object borrows a pointer to this meta, so it must outlive S.
+        let s_meta = node_meta();
+        unsafe {
+            let s = gos_rt_rc_alloc(16, s_meta.as_ptr());
+            let w = gos_rt_rc_downgrade(s);
+            let opt = gos_rt_rc_weak_upgrade_opt(w);
+            assert_eq!((opt as u64) as i64, 0, "Some");
+            let payload = (opt >> 64) as i64 as usize as *mut u8;
+            assert_eq!(payload, s, "payload is the referent");
+            assert_eq!(strong_of(s), 2, "upgrade took a fresh strong reference");
+            // The shadow local's scope-end release balances the take.
+            gos_rt_rc_release(payload);
+            gos_rt_rc_release(s);
+            gos_rt_rc_weak_release(w);
+        }
+        assert_eq!(rc_live_count(), base);
+    }
+
+    /// Goroutine-shaped stress: worker threads churn atomic retains /
+    /// releases and weak upgrades on shared objects while this thread
+    /// builds and drops thread-local cycles referencing them, running the
+    /// collector throughout. The collector must never mutate the shared
+    /// objects' counts or flags non-atomically (a lost update here shows
+    /// up as a wrong final count, a premature free, or a crash).
+    #[test]
+    #[cfg_attr(miri, ignore)] // spawns real threads over a large iteration count
+    fn collector_races_shared_churn_without_corruption() {
+        let _g = count_guard();
+        fresh_cycle_state();
+        let base = rc_live_count();
+        let n_shared = 4usize;
+        let n_threads = 4usize;
+        let iters = 20_000usize;
+        let cycles = 400usize;
+        let meta = two_child_meta();
+        // Each object stores a borrowed pointer to its meta, so the meta
+        // buffers must outlive every object that references them - the
+        // shared set lives for the whole test, so its meta does too.
+        let shared_meta = node_meta();
+        unsafe {
+            let shared: Vec<usize> = (0..n_shared)
+                .map(|_| {
+                    let s = gos_rt_rc_alloc(16, shared_meta.as_ptr());
+                    gos_rt_rc_mark_shared(s);
+                    s as usize
+                })
+                .collect();
+            let workers: Vec<std::thread::JoinHandle<()>> = (0..n_threads)
+                .map(|t| {
+                    let shared = shared.clone();
+                    std::thread::spawn(move || {
+                        let p = shared[t % shared.len()] as *mut u8;
+                        let w = gos_rt_rc_downgrade(p);
+                        for _ in 0..iters {
+                            gos_rt_rc_retain(p);
+                            let up = gos_rt_rc_weak_upgrade(w);
+                            if !up.is_null() {
+                                gos_rt_rc_release(up);
+                            }
+                            gos_rt_rc_release(p);
+                        }
+                        gos_rt_rc_weak_release(w);
+                    })
+                })
+                .collect();
+            // Meanwhile: thread-local garbage cycles, each holding an edge
+            // into the shared set, collected in slices while the workers run.
+            for i in 0..cycles {
+                let a = gos_rt_rc_alloc(24, meta.as_ptr());
+                let b = gos_rt_rc_alloc(24, meta.as_ptr());
+                link_at(a, 1, b);
+                link_at(b, 1, a);
+                link_at(a, 2, shared[i % shared.len()] as *mut u8);
+                gos_rt_rc_release(a);
+                gos_rt_rc_release(b);
+                if i % 16 == 0 {
+                    gos_rt_collect_cycles();
+                }
+            }
+            gos_rt_collect_cycles();
+            for h in workers {
+                h.join().expect("worker panicked");
+            }
+            for &s in &shared {
+                assert_eq!(
+                    strong_of(s as *mut u8),
+                    1,
+                    "every trial deletion / release of the shared object balanced"
+                );
+                gos_rt_rc_release(s as *mut u8);
+            }
+        }
+        assert_eq!(rc_live_count(), base, "no leak and no double-free");
     }
 }

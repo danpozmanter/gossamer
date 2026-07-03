@@ -1,0 +1,98 @@
+// Push-built scalar vectors ride the VM's flat typed storage (`IntArray` /
+// `FloatVec`, 8 bytes per element) instead of boxed values: the first
+// scalar push into an empty vec and a runtime-count `[v; n]` repeat both
+// promote, and every Vec surface must then behave identically to a boxed
+// array of the same scalars - bit-identical across VM, Cranelift, and LLVM.
+
+fn sum(xs: &[i64]) -> i64 {
+    let mut acc = 0
+    for n in xs {
+        acc += n
+    }
+    acc
+}
+
+fn main() {
+    // Push-built [i64] from an empty literal.
+    let mut v: [i64] = []
+    for i in 0..100 {
+        v.push(i * 3)
+    }
+    println!("len={} sum={} v0={} v99={}", v.len(), sum(&v), v[0], v[99])
+
+    // Reads, writes, and the whole method surface on the promoted vec.
+    v[50] = -1
+    v.swap(0, 99)
+    println!("after_set v50={} v0={} v99={}", v[50], v[0], v[99])
+    println!("contains={} index_of={:?}", v.contains(&-1), v.index_of(&-1))
+    println!("first={:?} last={:?}", v.first(), v.last())
+    let r = v.reversed()
+    println!("rev0={} rev99={}", r[0], r[99])
+    v.insert(0, 7777)
+    println!("ins_len={} ins0={}", v.len(), v[0])
+    v.remove(0)
+    if let Some(p) = v.pop() {
+        println!("popped={} len={}", p, v.len())
+    }
+    v.sort()
+    println!("sorted0={} sorted_last={:?}", v[0], v.last())
+
+    // Structural equality between a push-built and a literal vec.
+    let mut built: [i64] = []
+    built.push(1)
+    built.push(2)
+    built.push(3)
+    println!("eq_literal={}", built == [1, 2, 3])
+
+    // Runtime-count repeat lands in flat storage too.
+    let n = 1000
+    let mut counts = [0; n]
+    for i in 0..n {
+        counts[i % 256] += 1
+    }
+    println!("counts_len={} c0={} sum={}", counts.len(), counts[0], sum(&counts))
+
+    // Push-built [f64].
+    let mut f: [f64] = []
+    f.push(0.0)
+    f.push(1.5)
+    f.push(2.25)
+    f[0] = 0.75
+    let mut fsum = 0.0
+    for x in f {
+        fsum += x
+    }
+    println!("fsum={:.2} f0={:.2}", fsum, f[0])
+
+    // Float repeat with a runtime count.
+    let m = 100
+    let mut fr = [1.25; m]
+    fr[10] = 2.5
+    let mut frsum = 0.0
+    for x in fr {
+        frsum += x
+    }
+    println!("frsum={:.2}", frsum)
+
+    // Nested: push-built [[i64]] of push-built rows.
+    let mut grid: [[i64]] = []
+    for i in 0..10 {
+        let mut row: [i64] = []
+        for j in 0..10 {
+            row.push(i * 10 + j)
+        }
+        grid.push(row)
+    }
+    println!("grid={} corner={}", grid.len(), grid[9][9])
+
+    // Slicing and rest patterns over the promoted representation.
+    if let Ok(mid) = built.slice(1, 3) {
+        println!("slice={} {}", mid[0], mid[1])
+    }
+    if let [head, ..rest] = built {
+        println!("head={} rest_len={}", head, rest.len())
+    }
+
+    // A promoted vec through a function boundary and a debug format.
+    println!("dbg={:?}", built)
+}

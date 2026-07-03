@@ -14,14 +14,11 @@ use std::fs
 use std::time
 
 fn kind_tag(entry: &fs::DirInfo) -> String {
-    if entry.is_symlink {
-        "l"
-    } else if entry.is_dir {
-        "d"
-    } else if entry.is_file {
-        "f"
-    } else {
-        "?"
+    match (entry.is_symlink, entry.is_dir, entry.is_file) {
+        (true, _, _) => "l",
+        (_, true, _) => "d",
+        (_, _, true) => "f",
+        _ => "?",
     }
 }
 
@@ -68,8 +65,7 @@ fn main() -> Result<(), errors::Error> {
     let mut files = 0
     let mut dirs = 0
     let mut total_bytes = 0
-    for i in 0..entries.len() {
-        let entry = &entries[i]
+    for entry in &entries {
         println!("{:<4} {:>14} {:<22} {}",
             kind_tag(entry), comma_size(entry.size), render_modified(entry.modified_ms), entry.name)
         if entry.is_dir {

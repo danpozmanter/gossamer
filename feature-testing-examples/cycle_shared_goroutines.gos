@@ -1,0 +1,66 @@
+// The per-thread cycle collector must treat SHARED (escaped) objects as
+// external live edges: while goroutines concurrently retain / release
+// values that escaped over channels, the main goroutine builds genuine
+// reference cycles that also point at shared data and reclaims them with
+// `runtime::collect_cycles()`. The collector may not trial-delete or
+// recolor through the shared boundary (a lost update there double-frees
+// or leaks), and a freed cycle node's edge into the shared heap must be
+// released exactly once. The observable output is a scalar sum, so it
+// stays bit-identical across VM, Cranelift, and LLVM.
+
+use std::runtime
+use std::sync::channel
+
+struct Node {
+    id: i64,
+    next: Option<Box<Node>>,
+    shared: Option<Box<Node>>,
+}
+
+fn worker(rx: Receiver<Node>, done: Sender<i64>) {
+    let mut sum = 0
+    while let Some(n) = rx.recv() {
+        // Churn the escaped value: copies retain / release its subgraph
+        // atomically while the sender's collector may be mid-trace.
+        let copy = n
+        sum += copy.id
+    }
+    done.send(sum)
+    done.close()
+}
+
+fn main() {
+    let (tx, rx) = channel()
+    let (done_tx, done_rx) = channel()
+    go worker(rx, done_tx)
+
+    let mut total = 0
+    let mut round = 0
+    while round < 200 {
+        // A value that escapes to the worker goroutine (marked shared).
+        let escaped = Node { id: round, next: None, shared: None }
+        tx.send(escaped)
+
+        // A thread-local cycle a <-> b whose member also references a
+        // node built from shared-adjacent data. The cycle dies at the end
+        // of the round; the collector reclaims it and releases the
+        // out-edge exactly once.
+        let mut a = Node { id: round * 2, next: None, shared: None }
+        let mut b = Node { id: round * 3, next: None, shared: None }
+        b.next = Some(Box::new(a))
+        a.next = Some(Box::new(b))
+        a.shared = Some(Box::new(Node { id: round, next: None, shared: None }))
+        total += a.id
+        if let Some(n) = a.next {
+            total += n.id
+        }
+        runtime::collect_cycles()
+        round += 1
+    }
+    tx.close()
+    if let Some(worker_sum) = done_rx.recv() {
+        total += worker_sum
+    }
+    runtime::collect_cycles()
+    println!("total: {}", total)
+}

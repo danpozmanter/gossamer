@@ -1970,9 +1970,37 @@ gaps are one-line additions to the dispatch table.</p>
 <td><code>&amp;str</code></td>
 <td>Zero-copy borrow.</td>
 </tr>
+<tr>
+<td><code>s.to_i64()</code></td>
+<td><code>Option&lt;i64&gt;</code></td>
+<td>Parses the string; <code>None</code> on malformed input.</td>
+</tr>
+<tr>
+<td><code>s.to_f64()</code></td>
+<td><code>Option&lt;f64&gt;</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>s.to_bool()</code></td>
+<td><code>Option&lt;bool&gt;</code></td>
+<td>Accepts <code>true</code> / <code>false</code>.</td>
+</tr>
+<tr>
+<td><code>s.trim_matches(set)</code></td>
+<td><code>String</code></td>
+<td>Strips any char in <code>set</code> from both ends; <code>trim_start_matches</code> / <code>trim_end_matches</code> do one end.</td>
+</tr>
+<tr>
+<td><code>s.split_once(sep)</code></td>
+<td><code>Option&lt;(String, String)&gt;</code></td>
+<td>First occurrence; <code>rsplit_once</code> takes the last.</td>
+</tr>
 </tbody>
 </table>
 <h2 id="vec">Vec<a class="headerlink" href="#vec" title="Permanent link">&para;</a></h2>
+<p>Ranges are plain <code>Vec&lt;i64&gt;</code> values - <code>(2..n)</code> and <code>(1..=n)</code> build the
+sequence directly, so every method below chains off a range too:
+<code>(1..=5).filter(|n| n % 2 == 1).sum()</code>.</p>
 <table>
 <thead>
 <tr>
@@ -2001,6 +2029,91 @@ gaps are one-line additions to the dispatch table.</p>
 <td><code>v.iter()</code></td>
 <td><code>Iter&lt;T&gt;</code></td>
 <td>Lazy iterator.</td>
+</tr>
+<tr>
+<td><code>v.filter(pred)</code></td>
+<td><code>[T]</code></td>
+<td>Elements where <code>pred</code> holds.</td>
+</tr>
+<tr>
+<td><code>v.map(f)</code></td>
+<td><code>[U]</code></td>
+<td>Transform every element.</td>
+</tr>
+<tr>
+<td><code>v.sum()</code></td>
+<td><code>T</code></td>
+<td>Numeric sum; <code>0</code> for empty.</td>
+</tr>
+<tr>
+<td><code>v.min()</code> / <code>v.max()</code></td>
+<td><code>Option&lt;T&gt;</code></td>
+<td><code>None</code> for empty.</td>
+</tr>
+<tr>
+<td><code>v.count(pred)</code></td>
+<td><code>i64</code></td>
+<td>Elements where <code>pred</code> holds.</td>
+</tr>
+<tr>
+<td><code>v.any(pred)</code> / <code>v.all(pred)</code></td>
+<td><code>bool</code></td>
+<td>Short-circuiting.</td>
+</tr>
+<tr>
+<td><code>v.find(pred)</code></td>
+<td><code>Option&lt;T&gt;</code></td>
+<td>First match; <code>v.position(pred)</code> returns its index.</td>
+</tr>
+<tr>
+<td><code>v.fold(init, f)</code></td>
+<td><code>U</code></td>
+<td>Left fold: <code>f(acc, x)</code> per element.</td>
+</tr>
+<tr>
+<td><code>v.max_by_key(f)</code> / <code>v.min_by_key(f)</code></td>
+<td><code>Option&lt;T&gt;</code></td>
+<td>Extremum by derived key.</td>
+</tr>
+<tr>
+<td><code>v.take(n)</code></td>
+<td><code>[T]</code></td>
+<td>First <code>n</code> elements (fewer if short).</td>
+</tr>
+<tr>
+<td><code>v.step_by(n)</code></td>
+<td><code>[T]</code></td>
+<td>Every <code>n</code>-th element, starting at index 0.</td>
+</tr>
+<tr>
+<td><code>v.join(sep)</code></td>
+<td><code>String</code></td>
+<td>Scalar / <code>String</code> elements joined with <code>sep</code>.</td>
+</tr>
+<tr>
+<td><code>v.first()</code> / <code>v.last()</code></td>
+<td><code>Option&lt;T&gt;</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>v.reversed()</code></td>
+<td><code>[T]</code></td>
+<td>Non-mutating; <code>v.reverse()</code> is in-place.</td>
+</tr>
+<tr>
+<td><code>v.contains(&amp;x)</code></td>
+<td><code>bool</code></td>
+<td><code>v.index_of(&amp;x)</code> returns <code>Option&lt;i64&gt;</code>, <code>v.count_of(&amp;x)</code> the tally.</td>
+</tr>
+<tr>
+<td><code>v.sort()</code> / <code>v.sort_by(cmp)</code> / <code>v.sort_by_key(f)</code></td>
+<td><code>()</code></td>
+<td>In-place; <code>Reverse(k)</code> keys give descending order.</td>
+</tr>
+<tr>
+<td><code>v.swap(i, j)</code></td>
+<td><code>()</code></td>
+<td></td>
 </tr>
 </tbody>
 </table>
@@ -2043,6 +2156,11 @@ gaps are one-line additions to the dispatch table.</p>
 <td><code>m.inc(k)</code> / <code>m.inc(k, by)</code></td>
 <td><code>()</code></td>
 <td>Increment an <code>i64</code> counter, inserting <code>0</code> first if absent.</td>
+</tr>
+<tr>
+<td><code>m.or_insert(k, default)</code></td>
+<td><code>V</code></td>
+<td>Value for <code>k</code>, inserting <code>default</code> first when absent; works for aggregate values (structs, tuples) too.</td>
 </tr>
 <tr>
 <td><code>m.len()</code></td>
@@ -2175,12 +2293,12 @@ share these methods:</p>
 <tr>
 <td><code>tx.send(v)</code></td>
 <td><code>()</code></td>
-<td>Blocks if buffered channel is full.</td>
+<td>Enqueues <code>v</code>; a buffered send does not block on a waiting receiver.</td>
 </tr>
 <tr>
 <td><code>rx.recv()</code></td>
-<td><code>T</code></td>
-<td>Blocks until a value is available.</td>
+<td><code>Option&lt;T&gt;</code></td>
+<td>Blocks until a value is available; <code>Some(v)</code>, or <code>None</code> once the channel is closed and drained. The canonical drain is <code>while let Some(v) = rx.recv()</code>.</td>
 </tr>
 <tr>
 <td><code>rx.recv_ctx(&amp;ctx)</code></td>
@@ -2188,14 +2306,9 @@ share these methods:</p>
 <td>Blocks like <code>recv()</code> but returns <code>None</code> when the supplied <a href="../stdlib/#stdcontext"><code>std::context::Context</code></a> fires. Goroutine callers observe cancellation immediately via the scheduler unpark path; OS-thread callers within 50ms via a bounded condvar timeout.</td>
 </tr>
 <tr>
-<td><code>tx.try_send(v)</code></td>
-<td><code>bool</code></td>
-<td>Non-blocking; false if full.</td>
-</tr>
-<tr>
 <td><code>rx.try_recv()</code></td>
 <td><code>Option&lt;T&gt;</code></td>
-<td>Non-blocking; None if empty.</td>
+<td>Non-blocking; <code>None</code> if empty.</td>
 </tr>
 <tr>
 <td><code>tx.close()</code> / <code>rx.close()</code></td>

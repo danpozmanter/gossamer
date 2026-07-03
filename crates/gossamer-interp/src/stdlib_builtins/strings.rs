@@ -134,6 +134,9 @@ pub(crate) fn install_strings(globals: &mut Vec<(&'static str, Value)>) {
         ("replacen", builtin_strings_replacen),
         ("to_lower", builtin_strings_to_lower),
         ("to_upper", builtin_strings_to_upper),
+        ("to_i64", builtin_strings_to_i64),
+        ("to_f64", builtin_strings_to_f64),
+        ("to_bool", builtin_strings_to_bool),
         ("starts_with", builtin_strings_starts_with),
         ("ends_with", builtin_strings_ends_with),
         ("repeat", builtin_strings_repeat),
@@ -225,6 +228,34 @@ pub(crate) fn builtin_strings_find(args: &[Value]) -> RuntimeResult<Value> {
     match strings_std::find(text, &needle) {
         Some(idx) => Ok(some_variant(Value::Int(idx as i64))),
         None => Ok(none_variant()),
+    }
+}
+
+/// `s.to_i64() -> Option<i64>`: strict full-string parse, no trimming.
+pub(crate) fn builtin_strings_to_i64(args: &[Value]) -> RuntimeResult<Value> {
+    let text = args.first().and_then(as_str).unwrap_or("");
+    match text.parse::<i64>() {
+        Ok(n) => Ok(some_variant(Value::Int(n))),
+        Err(_) => Ok(none_variant()),
+    }
+}
+
+/// `s.to_f64() -> Option<f64>`: strict full-string parse.
+pub(crate) fn builtin_strings_to_f64(args: &[Value]) -> RuntimeResult<Value> {
+    let text = args.first().and_then(as_str).unwrap_or("");
+    match text.parse::<f64>() {
+        Ok(f) => Ok(some_variant(Value::Float(f))),
+        Err(_) => Ok(none_variant()),
+    }
+}
+
+/// `s.to_bool() -> Option<bool>`: accepts exactly `true` / `false`.
+pub(crate) fn builtin_strings_to_bool(args: &[Value]) -> RuntimeResult<Value> {
+    let text = args.first().and_then(as_str).unwrap_or("");
+    match text {
+        "true" => Ok(some_variant(Value::Bool(true))),
+        "false" => Ok(some_variant(Value::Bool(false))),
+        _ => Ok(none_variant()),
     }
 }
 
@@ -383,28 +414,29 @@ pub(crate) fn builtin_strings_lines(args: &[Value]) -> RuntimeResult<Value> {
 }
 
 pub(crate) fn builtin_strings_join(args: &[Value]) -> RuntimeResult<Value> {
-    // Two argument shapes: (parts, sep) or (sep, parts).
+    // Two argument shapes: (parts, sep) or (sep, parts). Any sequence
+    // representation joins (boxed Array, flat IntArray / FloatVec):
+    // `collect_array` normalises them, and each element Display-renders,
+    // so `[1, 2, 3].join(" ")` is "1 2 3" on every tier.
     let first = args.first();
     let second = args.get(1);
+    let is_seq = |v: &Value| matches!(v, Value::Array(_) | Value::IntArray(_) | Value::FloatVec(_));
     let (raw_parts, sep_opt): (Option<&Value>, Option<&str>) = match (first, second) {
-        (Some(Value::Array(a)), Some(Value::String(s))) => {
-            (Some(&Value::Array(a.clone())), Some(s.as_str()))
-        }
-        (Some(Value::String(s)), Some(Value::Array(_a))) => (second, Some(s.as_str())),
-        (Some(Value::Array(_a)), _) => (first, Some("")),
+        (Some(parts), Some(Value::String(s))) if is_seq(parts) => (first, Some(s.as_str())),
+        (Some(Value::String(s)), Some(parts)) if is_seq(parts) => (second, Some(s.as_str())),
+        (Some(parts), _) if is_seq(parts) => (first, Some("")),
         _ => return Ok(Value::String(String::new().into())),
     };
     let sep_owned = sep_opt.unwrap_or("").to_string();
-    let parts: Vec<String> = match raw_parts {
-        Some(Value::Array(arr)) => arr
-            .iter()
-            .map(|v| match v {
-                Value::String(s) => s.as_str().to_string(),
-                other => format!("{other}"),
-            })
-            .collect(),
-        _ => Vec::new(),
-    };
+    let parts: Vec<String> = raw_parts
+        .map(|v| crate::stdlib_builtins::encoding_pem::collect_array(v))
+        .unwrap_or_default()
+        .iter()
+        .map(|v| match v {
+            Value::String(s) => s.as_str().to_string(),
+            other => format!("{other}"),
+        })
+        .collect();
     Ok(Value::String(strings_std::join(&parts, &sep_owned).into()))
 }
 

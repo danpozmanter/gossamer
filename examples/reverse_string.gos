@@ -13,14 +13,7 @@ use std::iter
 // Returns the reversed sequence of byte codes. Treats input
 // as bytes - multi-byte UTF-8 would be split mid-codepoint.
 fn reverse_bytes(text: &String) -> [i64] {
-    let bytes = text.as_bytes()
-    let mut out: [i64] = []
-    let mut i = bytes.len()
-    while i > 0 {
-        i -= 1
-        out.push(bytes[i] as i64)
-    }
-    out
+    text.as_bytes().reversed().map(|b| b as i64)
 }
 
 fn is_palindrome(text: &String) -> bool {

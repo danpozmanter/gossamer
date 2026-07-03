@@ -44,6 +44,16 @@ const RESPONSE_400_BYTES: &[u8] =
     b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
 const RESPONSE_413_BYTES: &[u8] =
     b"HTTP/1.1 413 Payload Too Large\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+const RESPONSE_431_BYTES: &[u8] =
+    b"HTTP/1.1 431 Request Header Fields Too Large\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+
+// Upper bound on the request head (request line plus header block)
+// before its terminating CRLFCRLF. A client that streams header bytes
+// without ever completing the head would otherwise grow the read
+// accumulator without limit. Parity source of truth: the interp
+// server's 8 KiB `Config::default().max_header_bytes`
+// (gossamer-std/src/http.rs).
+const MAX_REQUEST_HEAD_BYTES: usize = 8 * 1024;
 
 // Upper bound on a request body, Content-Length-declared or
 // de-chunked. Parity source of truth: the interp server's
@@ -537,6 +547,13 @@ fn handle_http_conn<C: HttpIo>(conn: &mut C, env_addr: usize, fn_addr: usize) {
     let mut continue_sent = false;
     loop {
         let Some(header_end) = find_header_end(&accum) else {
+            // Bound the request head: a slow client that never sends the
+            // terminating CRLFCRLF cannot grow `accum` without limit.
+            // Mirrors the interp server's 8 KiB header cap.
+            if accum.len() > MAX_REQUEST_HEAD_BYTES {
+                let _ = conn.write_all(RESPONSE_431_BYTES);
+                return;
+            }
             if read_more(conn, &mut accum, &mut buf) {
                 continue;
             }
@@ -1480,6 +1497,43 @@ const fn status_reason(status: i64) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// In-memory `HttpIo` for driving `handle_http_conn` in tests:
+    /// serves `input` to `read`, records every `write_all` in `written`.
+    struct MockConn {
+        input: std::io::Cursor<Vec<u8>>,
+        written: Vec<u8>,
+    }
+
+    impl HttpIo for MockConn {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            std::io::Read::read(&mut self.input, buf)
+        }
+        fn write_all(&mut self, buf: &[u8]) -> std::io::Result<()> {
+            self.written.extend_from_slice(buf);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn oversized_request_head_is_rejected_with_431() {
+        // A request line followed by 16 KiB of header bytes with no
+        // terminating CRLFCRLF: the head cap must fire and reply 431
+        // before the accumulator can grow without limit. The request
+        // never completes, so the (null) handler address is never used.
+        let mut raw = b"GET / HTTP/1.1\r\n".to_vec();
+        raw.extend(std::iter::repeat_n(b'X', 16 * 1024));
+        let mut conn = MockConn {
+            input: std::io::Cursor::new(raw),
+            written: Vec::new(),
+        };
+        handle_http_conn(&mut conn, 0, 0);
+        let resp = String::from_utf8_lossy(&conn.written);
+        assert!(
+            resp.starts_with("HTTP/1.1 431"),
+            "expected 431 for oversized head, got: {resp}"
+        );
+    }
 
     fn rendered(result: i128) -> String {
         let mut out = Vec::new();

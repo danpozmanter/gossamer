@@ -1,0 +1,80 @@
+// Typed for-range loops whose bodies are pure i64 arithmetic: the
+// accumulator, constant-operand, and back-edge shapes the bytecode
+// compiler fuses. Output must be bit-identical across VM / JIT / LLVM.
+
+fn exclusive_sum(n: i64) -> i64 {
+    let mut s = 0
+    for i in 0..n { s += i % 7 }
+    s
+}
+
+fn inclusive_sum(n: i64) -> i64 {
+    let mut s = 0
+    for i in 1..=n { s += i * 3 - 1 }
+    s
+}
+
+fn with_continue(n: i64) -> i64 {
+    let mut s = 0
+    for i in 0..n {
+        if i % 3 == 0 { continue }
+        s += i
+    }
+    s
+}
+
+fn with_break(n: i64) -> i64 {
+    let mut s = 0
+    for i in 0..n {
+        if s > 100 { break }
+        s += i + 2
+    }
+    s
+}
+
+fn labeled_nested(n: i64) -> i64 {
+    let mut s = 0
+    'outer: for i in 0..n {
+        for j in 0..n {
+            if j == 3 { continue 'outer }
+            if i == 7 { break 'outer }
+            s += i * 10 + j
+        }
+    }
+    s
+}
+
+fn empty_and_single() -> i64 {
+    let mut s = 100
+    for i in 5..5 { s += i }
+    for i in 9..=9 { s += i }
+    for i in 3..4 { s += i }
+    s
+}
+
+fn negative_bounds() -> i64 {
+    let mut s = 0
+    for i in -4..=4 { s += i * i }
+    s
+}
+
+fn shadowed_const(n: i64) -> i64 {
+    // The same literal appears in two loops at different registers;
+    // hoisted/fused constants must stay scoped to their loop.
+    let mut s = 0
+    for i in 0..n { s += i % 5 }
+    for i in 0..n { s -= i % 5 }
+    for i in 0..n { s += (i + 5) / 5 }
+    s
+}
+
+fn main() {
+    println!("{}", exclusive_sum(1000))
+    println!("{}", inclusive_sum(1000))
+    println!("{}", with_continue(100))
+    println!("{}", with_break(100))
+    println!("{}", labeled_nested(12))
+    println!("{}", empty_and_single())
+    println!("{}", negative_bounds())
+    println!("{}", shadowed_const(50))
+}

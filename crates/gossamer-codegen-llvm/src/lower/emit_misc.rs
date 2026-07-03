@@ -247,6 +247,9 @@ impl<'a> Lowerer<'a> {
                 | ConcatKind::ArrF64(_)
                 | ConcatKind::ArrBool(_)
                 | ConcatKind::ArrString(_)
+                | ConcatKind::ArrArrI64(_, _)
+                | ConcatKind::ArrArrF64(_, _)
+                | ConcatKind::ArrArrBool(_, _)
                 | ConcatKind::JsonValue
                 | ConcatKind::ErrorMessage
                 | ConcatKind::Tuple

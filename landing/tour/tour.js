@@ -50,13 +50,11 @@ println!("pi is about {pi}")
       <code>x |> f(a)</code> threads the value into the <strong>last</strong>
       argument, so it reads <code>f(a, x)</code>.</p>
       <p>The <code>_</code> placeholder instead makes the piped value the
-      receiver: <code>x |> _.trim</code> is <code>x.trim()</code>. The
-      data-last std helpers such as <code>iter::filter</code> and
-      <code>iter::sum_by</code> were shaped to chain through <code>|></code>
-      with no placeholder at all.</p>`,
-    code: `use std::iter
-
-fn double(x: i64) -> i64 { x * 2 }
+      receiver: <code>x |> _.trim</code> is <code>x.trim()</code>. And
+      ranges are plain values, so a combinator chain like
+      <code>(1..=5).filter(...).sum()</code> needs no pipe at all - pick
+      whichever direction reads best.</p>`,
+    code: `fn double(x: i64) -> i64 { x * 2 }
 fn add(a: i64, b: i64) -> i64 { a + b }
 
 // \`x |> f\` is \`f(x)\`; \`x |> f(a)\` lands x in the last slot: \`f(a, x)\`.
@@ -67,10 +65,8 @@ println!("3 |> double |> add(10) = {n}")
 let shout = "  hi there  " |> _.trim |> _.to_upper
 println!("shout = {shout}")
 
-// Data-last helpers read top-down, with no \`let mut\` accumulator.
-let total = iter::range_inclusive(1, 5)
-    |> iter::filter(|n: i64| n % 2 == 1)
-    |> iter::sum_by(|n: i64| n)
+// Ranges are values and combinators are methods - chain them directly.
+let total = (1..=5).filter(|n| n % 2 == 1).sum()
 println!("sum of odds in 1..=5 = {total}")
 `,
   },
@@ -85,12 +81,10 @@ println!("sum of odds in 1..=5 = {total}")
       callable trait - which also accepts capturing closures.</p>
       <p>A higher-order function takes an <code>Fn(...)</code> parameter,
       and a bare <code>fn</code> coerces into it at the call site. The
-      data-last <code>iter</code> helpers are higher-order all the way
-      down, so a pipeline of <code>filter</code> / <code>map</code> /
-      <code>sum_by</code> threads cleanly through <code>|></code>.</p>`,
-    code: `use std::iter
-
-// \`Fn(i64) -> i64\` accepts both capturing closures and bare functions.
+      sequence combinators - <code>filter</code>, <code>map</code>,
+      <code>sum</code> - are higher-order all the way down, taking a
+      closure per step.</p>`,
+    code: `// \`Fn(i64) -> i64\` accepts both capturing closures and bare functions.
 fn apply(f: Fn(i64) -> i64, x: i64) -> i64 { f(x) }
 
 fn inc(y: i64) -> i64 { y + 1 }
@@ -101,11 +95,8 @@ fn main() {
     println!("scaled(5) = {}", apply(scaled, 5))
     println!("inc(41)   = {}", apply(inc, 41))   // bare fn coerces
 
-    // Closures power the data-last iterator helpers, chained with |>.
-    let total = iter::range_inclusive(1, 6)
-        |> iter::filter(|n: i64| n % 2 == 0)
-        |> iter::map(|n: i64| n * n)
-        |> iter::sum_by(|n: i64| n)
+    // Closures power the sequence combinators, one per step.
+    let total = (1..=6).filter(|n| n % 2 == 0).map(|n| n * n).sum()
     println!("sum of squares of evens in 1..=6 = {total}")
 }
 `,
@@ -145,23 +136,25 @@ for s in shapes {
   },
   {
     slug: "recursive-enum",
-    title: "Recursive enums + Box",
+    title: "Recursive enums",
     prose: `
       <p>An enum variant can refer to the enum itself, so a tree or an
-      expression type needs nothing special. <code>Box</code>,
-      <code>Arc</code>, and <code>Rc</code> are transparent - every
-      variant payload is heap-shared - and a <code>match</code> reaches
-      straight through them with no dereference.</p>
-      <p>This is a tiny arithmetic evaluator: an <code>Expr</code> is a
-      number or a binary node, and <code>eval</code> recurses with one
-      exhaustive <code>match</code>. That is the whole shape of a real
-      tree-walking interpreter.</p>`,
-    code: `// Recursive enums work directly; \`Box\` payloads are heap-shared and
-// transparent, so a variant can hold another \`Expr\`.
+      expression type needs nothing special: a variant payload can be the
+      enum, and every node is heap-shared automatically. A
+      <code>match</code> reaches straight through with no dereference.</p>
+      <p><code>Box</code>, <code>Arc</code>, and <code>Rc</code> are
+      transparent - you can write <code>Box&lt;Expr&gt;</code> to signal
+      heap sharing, but the bare <code>Expr</code> form compiles to the
+      same thing and is what most code uses. Here a tiny arithmetic
+      evaluator recurses with one exhaustive <code>match</code> - the
+      whole shape of a real tree-walking interpreter.</p>`,
+    code: `// A recursive enum needs no wrapping: a variant payload can be the enum
+// itself, and every node is heap-shared. \`Box\`/\`Arc\`/\`Rc\` are
+// transparent, so \`Box<Expr>\` would compile to exactly the same thing.
 enum Expr {
     Num(i64),
-    Add(Box<Expr>, Box<Expr>),
-    Mul(Box<Expr>, Box<Expr>),
+    Add(Expr, Expr),
+    Mul(Expr, Expr),
 }
 
 fn eval(e: &Expr) -> i64 {
@@ -174,10 +167,7 @@ fn eval(e: &Expr) -> i64 {
 
 fn main() {
     // (2 + 3) * 4
-    let tree = Expr::Mul(
-        Box::new(Expr::Add(Box::new(Expr::Num(2)), Box::new(Expr::Num(3)))),
-        Box::new(Expr::Num(4)),
-    )
+    let tree = Expr::Mul(Expr::Add(Expr::Num(2), Expr::Num(3)), Expr::Num(4))
     println!("(2 + 3) * 4 = {}", eval(&tree))
 }
 `,
@@ -266,25 +256,22 @@ fn main() {
       <code>HashSet</code>, and <code>BTreeMap</code>.</p>
       <p><code>HashMap</code> carries ergonomic helpers - <code>m.inc(k)</code>
       for counters and <code>m.get_or(k, default)</code> for a fallback read.
-      Iterator pipelines compose with <code>|></code> instead of dropping to
-      a manual loop.</p>`,
+      Combinators such as <code>filter</code> and <code>sum</code> are
+      methods on any Vec or range, so a query never needs a manual
+      loop.</p>`,
     code: `use std::collections::HashMap
-use std::iter
 
 fn main() {
     // A growable Vec; iterate the values directly.
-    let mut nums: [i64] = [4, 8, 15, 16, 23]
+    let mut nums = [4, 8, 15, 16, 23]
     nums.push(42)
-    println!("count = {}, last = {}", nums.len(), nums[nums.len() - 1])
+    println!("count = {}, last = {}", nums.len(), nums.last().unwrap_or(0))
 
-    // Sum the even values with a data-last pipeline.
-    let even_sum = nums
-        |> iter::filter(|n: i64| n % 2 == 0)
-        |> iter::sum_by(|n: i64| n)
-    println!("sum of evens = {even_sum}")
+    // Combinators are methods on any Vec or range.
+    println!("sum of evens = {}", nums.filter(|n| n % 2 == 0).sum())
 
     // HashMap counters: \`inc\` does the get-or-zero-then-add for you.
-    let mut tally: HashMap<String, i64> = HashMap::new()
+    let mut tally = HashMap::new()
     for word in ["go", "go", "rust", "go"] {
         tally.inc(word)
     }
@@ -678,8 +665,8 @@ fn main() {
     prose: `
       <p>One small program, every idea at once: immutable bindings, a
       <code>HashMap</code> counter, iteration with tuple destructuring, a
-      <code>#[derive]</code>d struct, a descending <code>sort_by</code>, and
-      an aligned format spec.</p>
+      <code>#[derive]</code>d struct, a descending <code>sort_by_key</code>
+      with <code>Reverse</code>, and an aligned format spec.</p>
       <p>It counts word frequencies, moves the entries into <code>Tally</code>
       structs, sorts by count, and prints a tidy table. Edit the input text
       and run it again - that is the whole language in twenty lines. Go build
@@ -693,17 +680,17 @@ fn main() {
     let text = "go rust go gossamer rust go"
 
     // Count each word; \`inc\` does get-or-zero then add.
-    let mut counts: HashMap<String, i64> = HashMap::new()
+    let mut counts = HashMap::new()
     for word in text.split(" ") {
         counts.inc(word)
     }
 
     // Move the entries into structs and sort by count, descending.
-    let mut rows: [Tally] = []
+    let mut rows = []
     for (word, count) in counts.iter() {
         rows.push(Tally { word, count })
     }
-    rows.sort_by(|a, b| b.count - a.count)
+    rows.sort_by_key(|r| Reverse(r.count))
 
     for r in rows {
         println!("{:>9} x {}", r.word, r.count)

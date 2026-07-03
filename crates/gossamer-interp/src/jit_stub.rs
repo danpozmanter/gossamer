@@ -29,6 +29,8 @@ pub enum JitKind {
     F64,
     /// Boolean.
     Bool,
+    /// `char` carried as its Unicode scalar value in an integer register.
+    Char,
     /// Unit (no representation).
     Unit,
     /// Packed runtime `GossamerValue`.

@@ -7,14 +7,13 @@
  * `big_numbers.gos`) when you need exact larger values.
  */
 
-use std::iter
 
 fn factorial_recursive(n: i64) -> i64 {
     if n <= 1 { 1 } else { n * factorial_recursive(n - 1) }
 }
 
 fn factorial_iterative(n: i64) -> i64 {
-    iter::range_inclusive(2, n) |> iter::fold(1, |acc, i| acc * i)
+    (2..=n).fold(1, |acc, i| acc * i)
 }
 
 fn main() {

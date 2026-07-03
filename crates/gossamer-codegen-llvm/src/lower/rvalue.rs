@@ -231,6 +231,111 @@ impl<'a> Lowerer<'a> {
     /// position. Mirrors the Cranelift backend's behaviour:
     /// emit a typed `call` against the named runtime symbol,
     /// returning the result as the destination local's value.
+    /// Inlines the pure Result/Option i128 carrier bit-ops
+    /// (`gos_rt_result_new` / `_disc` / `_payload` / `_payload_f64`). Returns
+    /// `Some(ssa)` (coerced to `dest_ty`) when `name` is one of them, else
+    /// `None` so the caller emits the ordinary runtime call. The aggregate
+    /// payload extractor `gos_rt_result_payload_i128` and the constructor
+    /// `gos_rt_result_new_f64` are left on the call path (the former dereferences
+    /// a heap pointer; the latter is rare).
+    fn try_inline_result_carrier(
+        &mut self,
+        name: &str,
+        args: &[Operand],
+        dest_ty: &str,
+    ) -> Result<Option<String>, BuildError> {
+        // Coerce an SSA value to `dest_ty` (a no-op when it already matches,
+        // or when the result is discarded into a `void` / unit destination -
+        // coercing to `void` would emit an invalid `bitcast .. to void`).
+        let coerce_dest = |this: &mut Self, val: String, natural: &str| -> String {
+            if dest_ty == natural || dest_ty == "void" || dest_ty.is_empty() {
+                val
+            } else {
+                this.coerce_llvm_value(&val, natural, dest_ty)
+            }
+        };
+        match name {
+            "gos_rt_result_new" if args.len() == 2 => {
+                // A Unit / `void` operand (`Ok(())`, `Some(())`) carries no
+                // bits: pack it as 0, matching the runtime-call arg path's
+                // void guard. Coercing a `void` value would emit an invalid
+                // `bitcast void to i64`.
+                let to_i64_word = |this: &mut Self, arg: &Operand| -> Result<String, BuildError> {
+                    let ty = this.operand_llvm_ty(arg);
+                    if ty == "void" || ty.is_empty() {
+                        return Ok("0".to_string());
+                    }
+                    let raw = this.lower_operand(arg)?;
+                    Ok(if ty == "i64" {
+                        raw
+                    } else {
+                        this.coerce_llvm_value(&raw, &ty, "i64")
+                    })
+                };
+                let disc = to_i64_word(self, &args[0])?;
+                // Aggregate payloads (by-value struct / tuple / inline enum)
+                // must be heap-copied so the packed pointer outlives the
+                // constructing frame - identical to the runtime-call arg path.
+                let payload = if let Some(hv) = self
+                    .maybe_heap_copy_value_enum(&args[1])
+                    .or_else(|| self.maybe_heap_copy_aggregate(&args[1]))
+                {
+                    hv
+                } else {
+                    to_i64_word(self, &args[1])?
+                };
+                let disc128 = self.fresh();
+                writeln!(self.out, "  {disc128} = zext i64 {disc} to i128").unwrap();
+                let pay128 = self.fresh();
+                writeln!(self.out, "  {pay128} = zext i64 {payload} to i128").unwrap();
+                let payhi = self.fresh();
+                writeln!(self.out, "  {payhi} = shl i128 {pay128}, 64").unwrap();
+                let packed = self.fresh();
+                writeln!(self.out, "  {packed} = or i128 {payhi}, {disc128}").unwrap();
+                Ok(Some(coerce_dest(self, packed, "i128")))
+            }
+            // `gos_rt_weak_opt_payload` is the payload extract of a
+            // `w.upgrade()` result pinned in the frame's shadow local:
+            // identical bit-op to `gos_rt_result_payload` (the None payload
+            // word is 0, so the extract already reads as null for None); the
+            // distinct MIR name only marks the destination as owned in the
+            // drop pass.
+            "gos_rt_result_disc"
+            | "gos_rt_result_payload"
+            | "gos_rt_weak_opt_payload"
+            | "gos_rt_result_payload_f64"
+                if args.len() == 1 =>
+            {
+                let r_ty = self.operand_llvm_ty(&args[0]);
+                let r_raw = self.lower_operand(&args[0])?;
+                let r = if r_ty == "i128" {
+                    r_raw
+                } else {
+                    self.coerce_llvm_value(&r_raw, &r_ty, "i128")
+                };
+                if name == "gos_rt_result_disc" {
+                    // Low 64 bits.
+                    let d = self.fresh();
+                    writeln!(self.out, "  {d} = trunc i128 {r} to i64").unwrap();
+                    return Ok(Some(coerce_dest(self, d, "i64")));
+                }
+                // High 64 bits.
+                let hi = self.fresh();
+                writeln!(self.out, "  {hi} = lshr i128 {r}, 64").unwrap();
+                let p64 = self.fresh();
+                writeln!(self.out, "  {p64} = trunc i128 {hi} to i64").unwrap();
+                if name == "gos_rt_result_payload_f64" {
+                    // Reinterpret the payload bits as an f64.
+                    let f = self.fresh();
+                    writeln!(self.out, "  {f} = bitcast i64 {p64} to double").unwrap();
+                    return Ok(Some(coerce_dest(self, f, "double")));
+                }
+                Ok(Some(coerce_dest(self, p64, "i64")))
+            }
+            _ => Ok(None),
+        }
+    }
+
     pub(crate) fn lower_runtime_call_intrinsic(
         &mut self,
         name: &str,
@@ -238,6 +343,16 @@ impl<'a> Lowerer<'a> {
         dest_local: Local,
     ) -> Result<String, BuildError> {
         let dest_ty = render_ty(self.tcx, self.body.local_ty(dest_local));
+        // Inline the Result/Option i128 carrier bit-ops. The runtime encodes a
+        // `Result<T, E>` / `Option<T>` as a 2-word by-value i128 with the
+        // discriminant in the low 64 bits and the payload in the high 64 bits
+        // (`c_abi/vec.rs::pack_result`). The `new`/`disc`/`payload` shims are
+        // pure register pack/unpack, so `?`-heavy code stops paying an FFI call
+        // per propagation. Inlining also sidesteps the Win64 i128 by-pointer /
+        // `<16 x i8>` calling convention entirely - no ABI boundary is crossed.
+        if let Some(inlined) = self.try_inline_result_carrier(name, args, &dest_ty)? {
+            return Ok(inlined);
+        }
         // Pull canonical parameter types from the runtime registry
         // when the symbol is registered. This sidesteps two related
         // miscompiles: (a) a Unit / `void` operand becoming a `void`
@@ -552,52 +667,7 @@ impl<'a> Lowerer<'a> {
                 let v = self.lower_operand(&args[0])?;
                 let idx = self.lower_operand(&args[1])?;
                 let val = self.lower_operand(&args[2])?;
-                self.runtime_refs.insert(
-                    "@gos_u8_set_scratch = internal global [16 x i8] zeroinitializer".to_string(),
-                );
-                self.runtime_refs.insert(
-                    "@gos_u8_set_hdr = internal global { i64, ptr } { i64 0, ptr @gos_u8_set_scratch }"
-                        .to_string(),
-                );
-                let vnn = self.fresh();
-                let vbase = self.fresh();
-                let len = self.fresh();
-                let dptr = self.fresh();
-                let data = self.fresh();
-                let ge0 = self.fresh();
-                let lt = self.fresh();
-                let inb = self.fresh();
-                let elem = self.fresh();
-                let target = self.fresh();
-                let valb = self.fresh();
-                writeln!(self.out, "  {vnn} = icmp ne ptr {v}, null").unwrap();
-                writeln!(
-                    self.out,
-                    "  {vbase} = select i1 {vnn}, ptr {v}, ptr @gos_u8_set_hdr"
-                )
-                .unwrap();
-                writeln!(self.out, "  {len} = load i64, ptr {vbase}").unwrap();
-                writeln!(
-                    self.out,
-                    "  {dptr} = getelementptr inbounds i8, ptr {vbase}, i64 8"
-                )
-                .unwrap();
-                writeln!(self.out, "  {data} = load ptr, ptr {dptr}").unwrap();
-                writeln!(self.out, "  {ge0} = icmp sge i64 {idx}, 0").unwrap();
-                writeln!(self.out, "  {lt} = icmp slt i64 {idx}, {len}").unwrap();
-                writeln!(self.out, "  {inb} = and i1 {ge0}, {lt}").unwrap();
-                writeln!(
-                    self.out,
-                    "  {elem} = getelementptr inbounds i8, ptr {data}, i64 {idx}"
-                )
-                .unwrap();
-                writeln!(
-                    self.out,
-                    "  {target} = select i1 {inb}, ptr {elem}, ptr @gos_u8_set_scratch"
-                )
-                .unwrap();
-                writeln!(self.out, "  {valb} = trunc i64 {val} to i8").unwrap();
-                writeln!(self.out, "  store i8 {valb}, ptr {target}").unwrap();
+                self.emit_heap_u8_set_branchless(&v, &idx, &val);
                 let dest_ty = render_ty(self.tcx, self.body.local_ty(dest_local));
                 return Ok(match dest_ty.as_str() {
                     "ptr" => "null",

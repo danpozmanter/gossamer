@@ -264,7 +264,14 @@ impl<'tcx> FnBuilder<'tcx> {
                     // Typed-local reassignment: compile the
                     // RHS in the destination kind so no box /
                     // unbox round-trip happens in hot loops.
+                    let rhs_start = self.cur_idx();
                     let src_tr = self.compile_expr_ex(value)?;
+                    if target.kind == RegKind::I64
+                        && src_tr.kind == RegKind::I64
+                        && self.try_fold_i64_move(rhs_start, src_tr.reg, target.reg)
+                    {
+                        return Ok(());
+                    }
                     self.emit_move_into(target, src_tr);
                     return Ok(());
                 }

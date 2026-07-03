@@ -864,10 +864,24 @@ pub unsafe extern "C" fn gos_rt_map_inc_at_str_i64(
         if m.is_null() || seq.is_null() || len <= 0 || start < 0 {
             return 0;
         }
-        let map = unsafe { &mut *m };
-        let key_slice: &[u8] = unsafe {
-            std::slice::from_raw_parts(seq.cast::<u8>().add(start as usize), len as usize)
+        // The true sequence length is read O(1) from the string's length
+        // header (every runtime-built string carries one; a foreign pointer
+        // falls back to `strlen`), the same source `gos_rt_map_inc_str_i64`
+        // uses. Reject a window that runs past the sequence and validate its
+        // UTF-8 before slicing, mirroring the interpreter builtin so an
+        // out-of-range or non-boundary `inc_at` yields 0 on every tier
+        // instead of reading adjacent heap.
+        let seq_bytes = unsafe { crate::c_abi::string::gos_str_key_bytes(seq) };
+        let (start_u, len_u) = (start as usize, len as usize);
+        let end_u = match start_u.checked_add(len_u) {
+            Some(end) if end <= seq_bytes.len() => end,
+            _ => return 0,
         };
+        let key_slice = &seq_bytes[start_u..end_u];
+        if std::str::from_utf8(key_slice).is_err() {
+            return 0;
+        }
+        let map = unsafe { &mut *m };
         let mut storage = map.storage.lock();
         if matches!(*storage, MapStorage::Empty) {
             *storage = MapStorage::StrI64(FxHashMap::default());
@@ -1609,13 +1623,25 @@ pub unsafe extern "C" fn gos_rt_vec_free(v: *mut GosVec) {
         }
         // RC: atomic decrement. Reclaim only when this thread held the last
         // reference (old count was 1). An aliased Vec still has live holders.
+        // `Release` on the decrement publishes this thread's prior writes to
+        // the element payloads; the `Acquire` fence on the final drop then
+        // observes every other holder's writes before teardown - the standard
+        // Arc drop discipline, without which a weakly-ordered target (aarch64,
+        // a shipped tier) could reclaim a buffer while a peer's store is still
+        // in flight.
         let old_rc = crate::c_abi::vec::vec_rc_atomic(unsafe { &*v })
-            .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+            .fetch_sub(1, std::sync::atomic::Ordering::Release);
         if old_rc > 1 {
             return;
         }
+        std::sync::atomic::fence(std::sync::atomic::Ordering::Acquire);
         crate::c_abi::ledger::vec_dec();
-        let boxed = unsafe { Box::from_raw(v) };
+        // Non-region headers are a single `Box<InlineVec>` (header +
+        // inline element buffer); reconstruct it so the buffer that rides
+        // with the header is reclaimed on `drop`, and only a separately
+        // allocated (split) buffer needs its own `free_vec_buffer`.
+        let inline_box = unsafe { Box::from_raw(v.cast::<crate::c_abi::vec::InlineVec>()) };
+        let boxed = &inline_box.header;
         if !boxed.ptr.is_null() && boxed.cap > 0 {
             // Deep-free pointer-bearing element payloads BEFORE
             // reclaiming the backing buffer. Each branch walks the
@@ -1626,13 +1652,13 @@ pub unsafe extern "C" fn gos_rt_vec_free(v: *mut GosVec) {
             // copy-blob children (set-gated in the walk) before the
             // buffer goes away.
             if boxed.elem_kind == vec_elem_kind::AGGR_GUARDED {
-                unsafe { crate::c_abi::vec::vec_release_guarded_elements(&boxed) };
+                unsafe { crate::c_abi::vec::vec_release_guarded_elements(boxed) };
             }
             // Owned-slot-children elements (materializer shims): free
             // each live embedded string / nested vec, including slots a
             // consumer loop never reached (the early-`break` path).
             if boxed.elem_kind == vec_elem_kind::AGGR_OWNED {
-                unsafe { crate::c_abi::vec::vec_release_owned_children(&boxed) };
+                unsafe { crate::c_abi::vec::vec_release_owned_children(boxed) };
             }
             if boxed.elem_kind != vec_elem_kind::PRIMITIVE && boxed.elem_bytes as usize == 8 {
                 let count = boxed.len.max(0) as usize;
@@ -1675,20 +1701,25 @@ pub unsafe extern "C" fn gos_rt_vec_free(v: *mut GosVec) {
                     }
                 }
             }
-            let bytes = (boxed.cap as usize) * (boxed.elem_bytes as usize);
-            // SAFETY: the buffer was allocated by `alloc_vec_buffer(bytes)`.
-            unsafe {
-                crate::c_abi::vec::free_vec_buffer(boxed.ptr.as_ptr(), bytes);
+            // Reclaim the element buffer only when it is a standalone
+            // (split) allocation; an inline buffer is part of the header
+            // block and goes away with `drop(inline_box)` below.
+            if crate::c_abi::vec::vec_is_split(boxed) {
+                let bytes = (boxed.cap as usize) * (boxed.elem_bytes as usize);
+                // SAFETY: a split vec's buffer came from `alloc_vec_buffer(bytes)`.
+                unsafe {
+                    crate::c_abi::vec::free_vec_buffer(boxed.ptr.as_ptr(), bytes);
+                }
             }
         }
-        // Side-table entries are keyed by the header address `boxed`
+        // Side-table entries are keyed by the header address the box
         // still occupies; removal must run AFTER the deep-free walks
         // above (which look the metas up by that address) and before
         // the header drops, so a reused address cannot inherit them.
         // Pass the `Box`'s own borrow, not the raw `v`, so the read of
         // `elem_kind` stays under the Box's exclusive ownership.
-        crate::c_abi::vec::vec_elem_meta_remove(&boxed);
-        drop(boxed);
+        crate::c_abi::vec::vec_elem_meta_remove(boxed);
+        drop(inline_box);
     });
 }
 

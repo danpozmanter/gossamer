@@ -887,6 +887,10 @@ pub(crate) fn validate_chunk(chunk: &FnChunk) -> Result<(), ValidationError> {
                 check_i(op_idx, dst_i)?;
                 check_i(op_idx, src_i)?;
             }
+            Op::ArithImmI64 { dst_i, lhs_i, .. } => {
+                check_i(op_idx, dst_i)?;
+                check_i(op_idx, lhs_i)?;
+            }
             Op::LtI64 {
                 dst_v,
                 lhs_i,

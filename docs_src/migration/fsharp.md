@@ -90,7 +90,7 @@ Gossamer:
 ```gos
 enum Tree {
     Leaf,
-    Node(i64, Box<Tree>, Box<Tree>),
+    Node(i64, Tree, Tree),
 }
 
 fn sum(t: &Tree) -> i64 {
@@ -101,9 +101,11 @@ fn sum(t: &Tree) -> i64 {
 }
 ```
 
-`Box<Tree>` spells out what F# infers for recursive variants.
-The runtime owns every allocation; `Box` is a naming convention, not
-a distinct heap strategy.
+Recursive variants need no wrapper - `Node(i64, Tree, Tree)` mirrors
+F#'s `Node of int * Tree * Tree` directly, because the runtime owns
+every allocation. The `Box<Tree>` / `Arc<Tree>` / `Rc<Tree>` spellings
+are transparent and compile to the same thing, so add one only when it
+makes the type read clearer.
 
 ## Records → structs
 

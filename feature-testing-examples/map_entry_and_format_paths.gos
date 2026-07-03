@@ -1,0 +1,46 @@
+// Map-entry mutation and format field paths. The statement
+// `m.or_insert(k, d).method(args)` writes the mutation back into the
+// map's stored value; a value-position `or_insert` with an aggregate
+// value inserts the default once and hands back the stored entry.
+// Named format captures walk field / tuple-index paths ({a.balance},
+// {t.0}, {o.inner.hits:>4}).
+use std::collections::{BTreeMap, HashMap}
+
+struct Account { balance: i64, txns: i64 }
+impl Account {
+    fn apply(&mut self, amount: i64) {
+        self.balance += amount
+        self.txns += 1
+    }
+}
+
+struct Rec { hits: i64, label: String }
+struct Outer { inner: Rec }
+
+fn main() {
+    let txs = [("alice", 100), ("bob", 50), ("alice", -30), ("carol", 200), ("bob", -20), ("alice", 40)]
+    let mut accounts = BTreeMap::new()
+    for (name, amount) in txs {
+        accounts.or_insert(name, Account { balance: 0, txns: 0 }).apply(amount)
+    }
+    for (name, a) in accounts.iter() {
+        println!("{name}: {a.balance} ({a.txns} transactions)")
+    }
+
+    let mut m = HashMap::new()
+    let a = m.or_insert("x", Rec { hits: 1, label: "first" })
+    println!("{a.hits} {a.label} len={}", m.len())
+    let b = m.or_insert("x", Rec { hits: 99, label: "other" })
+    println!("{b.hits} {b.label} len={}", m.len())
+
+    let mut counts = HashMap::new()
+    counts.or_insert("w", 10)
+    counts.inc("w", 5)
+    println!("{}", counts.get_or("w", 0))
+
+    let o = Outer { inner: Rec { hits: 7, label: "deep" } }
+    println!("{o.inner.hits} {o.inner.label}")
+    println!("[{o.inner.hits:>4}]")
+    let t = (3.14159, "pi")
+    println!("{t.0:.2} {t.1}")
+}

@@ -1,0 +1,14 @@
+// Regression [P2, F15]: `s.substring(start, end)` clamps its byte range but
+// the clamp can land mid-codepoint. The result must stay valid UTF-8 - every
+// Gossamer string is, an invariant the set shims rely on via
+// `from_utf8_unchecked` - by repairing an invalid slice with the same lossy
+// U+FFFD substitution the interpreter builtin uses. `héllo`'s `é` is two
+// bytes, so `substring(0, 2)` splits it and both tiers must yield the same
+// repaired 4-byte string (`h` + U+FFFD). Identical output on every tier.
+
+fn main() {
+    let s = "héllo"
+    let mid = s.substring(0, 2)
+    println!("len={}", mid.len())
+    println!("full={}", s.substring(0, s.len()))
+}

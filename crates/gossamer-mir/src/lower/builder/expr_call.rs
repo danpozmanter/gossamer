@@ -273,6 +273,48 @@ impl<'a> Builder<'a> {
                 );
                 return Some(dest);
             }
+            // `Vec::with_capacity(n)` / `Vec::<T>::with_capacity(n)` reserves
+            // an n-element buffer up front. The runtime helper takes
+            // `(elem_bytes, cap)`, but the surface form passes only the
+            // count, so derive the element width from the destination vec
+            // type and emit the canonical two-argument call - the same shape
+            // the `[v; n]` repeat lowering uses. Keyed under
+            // `gos_rt_vec_with_capacity`, so the drop pass frees the result
+            // like any other constructor-owned vec.
+            if matches!(
+                joined.as_str(),
+                "Vec::with_capacity" | "collections::Vec::with_capacity"
+            ) && args.len() == 1
+            {
+                use gossamer_types::{IntTy, TyKind};
+                if let TyKind::Vec(e) | TyKind::Slice(e) = self.tcx.kind_of(ty) {
+                    let elem_ty = *e;
+                    let cap_local = self.lower_expr(&args[0])?;
+                    let i64_ty = self.tcx.int_ty(IntTy::I64);
+                    let elem_bytes_val = i128::from(self.elem_bytes_of(elem_ty).max(1));
+                    let elem_bytes_local = self.fresh(i64_ty);
+                    self.emit_assign(
+                        Place::local(elem_bytes_local),
+                        Rvalue::Use(Operand::Const(ConstValue::Int(elem_bytes_val))),
+                        span,
+                    );
+                    let dest = self.fresh(ty);
+                    let after = self.new_block(span);
+                    self.terminate(Terminator::Call {
+                        callee: Operand::Const(ConstValue::Str(
+                            "gos_rt_vec_with_capacity".to_string(),
+                        )),
+                        args: vec![
+                            Operand::Copy(Place::local(elem_bytes_local)),
+                            Operand::Copy(Place::local(cap_local)),
+                        ],
+                        destination: Place::local(dest),
+                        target: Some(after),
+                    });
+                    self.set_current(after);
+                    return Some(dest);
+                }
+            }
         }
         // Variant constructor shortcut for `Result<T, E>` and
         // `Option<T>`: `Ok(v)` / `Err(v)` / `Some(v)` lower to

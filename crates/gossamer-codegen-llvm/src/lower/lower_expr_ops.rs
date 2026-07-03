@@ -191,6 +191,17 @@ impl<'a> Lowerer<'a> {
             operand_llvm = "i32".to_string();
             kind = NumericKind::Other;
         }
+        // An unresolved operand type renders `void` (the unit return
+        // type); the operand LLVM types are authoritative - adopt the
+        // sides' concrete type. Match-conjunction `and`s land here when
+        // the accumulator local never got a concrete type.
+        if operand_llvm == "void" {
+            if lhs_llvm != "void" {
+                operand_llvm.clone_from(&lhs_llvm);
+            } else if rhs_llvm != "void" {
+                operand_llvm.clone_from(&rhs_llvm);
+            }
+        }
         // A bare float constant is carried as an f64 bit pattern and
         // renders as `double`; `operand_ty` cannot classify it (and
         // yields the unit return type when no float local exists to
@@ -278,6 +289,12 @@ impl<'a> Lowerer<'a> {
                 let blhs = self.fresh();
                 writeln!(self.out, "  {blhs} = bitcast {lhs_llvm} {lhs_v} to i64").unwrap();
                 lhs_v = blhs;
+            } else if lhs_llvm == "i1" {
+                // A bool operand (e.g. a match-conjunction test) rides
+                // along when the accumulator's type stayed unresolved.
+                let zlhs = self.fresh();
+                writeln!(self.out, "  {zlhs} = zext i1 {lhs_v} to i64").unwrap();
+                lhs_v = zlhs;
             }
             if rhs_llvm == "ptr" {
                 let prhs = self.fresh();
@@ -287,6 +304,10 @@ impl<'a> Lowerer<'a> {
                 let brhs = self.fresh();
                 writeln!(self.out, "  {brhs} = bitcast {rhs_llvm} {rhs_v} to i64").unwrap();
                 rhs_v = brhs;
+            } else if rhs_llvm == "i1" {
+                let zrhs = self.fresh();
+                writeln!(self.out, "  {zrhs} = zext i1 {rhs_v} to i64").unwrap();
+                rhs_v = zrhs;
             }
             operand_llvm = "i64".to_string();
             kind = NumericKind::Int(gossamer_types::IntTy::I64);
@@ -775,6 +796,9 @@ impl<'a> Lowerer<'a> {
                 | ConcatKind::ArrF64(_)
                 | ConcatKind::ArrBool(_)
                 | ConcatKind::ArrString(_)
+                | ConcatKind::ArrArrI64(_, _)
+                | ConcatKind::ArrArrF64(_, _)
+                | ConcatKind::ArrArrBool(_, _)
                 | ConcatKind::JsonValue
                 | ConcatKind::ErrorMessage
                 | ConcatKind::Tuple

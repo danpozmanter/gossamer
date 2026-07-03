@@ -29,7 +29,14 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
-const PER_RUN_TIMEOUT: Duration = Duration::from_mins(1);
+// Ceiling for a single fixture's tier run, sized to catch a genuine hang
+// (an infinite loop lowers to the same never-returns shape) while tolerating
+// a saturated machine: under `cargo test --workspace` this walk runs beside
+// every other crate's tests, so a fixture that builds and runs in well under a
+// second standalone (e.g. an `-O3` monomorphising build) can still be starved
+// for tens of seconds. Five minutes leaves ample headroom for the load without
+// letting a real hang run unbounded.
+const PER_RUN_TIMEOUT: Duration = Duration::from_mins(5);
 
 fn gos_bin() -> PathBuf {
     PathBuf::from(env::var("CARGO_BIN_EXE_gos").expect("CARGO_BIN_EXE_gos"))
@@ -247,6 +254,20 @@ const SPECS: &[Spec] = &[
         args: &["Qwen3.6-35B", "a", "b", "c", "d"],
         ..spec("feature-testing-examples/os_args_clone_roundtrip.gos")
     },
+    // Phase 7A: the compiled tiers inline the `Vec<(i64,f64)>` scalar-projection
+    // get (`table[j].1`) and `buf.set_byte` on the call route; the LCG-driven
+    // probe sum must match the VM's opaque-call path bit-for-bit.
+    spec("feature-testing-examples/p7_fasta_probe.gos"),
+    // Phase 7B: `*out += format!("{}", n)` on an enum-payload binding fuses to a
+    // direct append, and `?`-heavy code inlines the Result i128 carrier bit-ops.
+    spec("feature-testing-examples/p7_deref_format.gos"),
+    // Phase 7C: `seq.substring(i, i+k)` + `m.inc(kmer)` fuses to the borrowed
+    // map probe on the compiled tiers; counts must match the VM's alloc path.
+    spec("feature-testing-examples/p7_substring_inc.gos"),
+    // Typed i64 for-range loops: fused back-edges, constant operands, the
+    // accumulator write-back, continue/break/label routing, and empty/
+    // single-iteration bounds must stay bit-identical across tiers.
+    spec("feature-testing-examples/loop_arith_fusion.gos"),
     // A recursive Box-enum cloned in a loop (the original stays live) must
     // retain each iteration's clone; the loop-carried read must not be
     // move-elided. Covers the sequential and goroutine-shared (captured) paths
@@ -266,6 +287,16 @@ const SPECS: &[Spec] = &[
     // `add`/`sub`/`mul`/`div` impl method; the result is the method's return
     // type (incl. a heterogeneous `Mul -> f64`). Bit-identical across tiers.
     spec("feature-testing-examples/operator_overload_arith.gos"),
+    // Vector-math operator overloading: `Vec3` with `impl Add / Sub / Mul /
+    // Neg / Index` drives `a + b`, `v * s`, `-v`, `v[i]`, and compound
+    // assignment (`+=`, `*=`) through the same impls, inside a hot helper
+    // loop so the JIT tier compiles it. Bit-identical across tiers.
+    spec("feature-testing-examples/operator_overload_vec3.gos"),
+    // Operator overloading on enums (`+`, unary `-`, `+=` on bound locals
+    // and inline constructors) and on generic structs (`impl<T> Add for
+    // Wrap<T>`), including a chained field read of the operator result
+    // (`(a + b).v`) with an `f64` payload. Bit-identical across tiers.
+    spec("feature-testing-examples/operator_overload_enum_generic.gos"),
     // Byte literals compare against the integer byte index without a cast
     // (`s[i] == b'>'`); a byte literal is an `Int` value on every tier.
     spec("feature-testing-examples/byte_literal_compare.gos"),
@@ -392,6 +423,26 @@ const SPECS: &[Spec] = &[
         allow_nonzero: true,
         ..spec("feature-testing-examples/non_exhaustive_match_panic.gos")
     },
+    // A `[v; n]` whose `n * elem_bytes` overflows aborts with a clean
+    // `capacity overflow` panic on every tier (was a heap-corruption OOB
+    // write / SIGSEGV on the compiled tiers). "before" is flushed first.
+    Spec {
+        allow_nonzero: true,
+        ..spec("feature-testing-examples/vec_capacity_overflow.gos")
+    },
+    // Out-of-range `HashMap.inc_at` window returns 0 and inserts nothing on
+    // every tier (was an unbounded slice / OOB read on the compiled tier).
+    spec("feature-testing-examples/map_inc_at_oob.gos"),
+    // Unbounded recursion yields a clean stack-overflow diagnostic instead of
+    // a raw SIGSEGV on every tier now that the AOT `@main` installs the guard.
+    Spec {
+        allow_nonzero: true,
+        ..spec("feature-testing-examples/deep_recursion_stack_overflow.gos")
+    },
+    // A byte-range `substring` that clamps mid-codepoint stays valid UTF-8
+    // via the same lossy repair the interpreter uses (was raw invalid bytes
+    // feeding `from_utf8_unchecked` on the compiled tier).
+    spec("feature-testing-examples/str_substring_utf8_boundary.gos"),
     // Win B stdlib differential-parity coverage: every function in these
     // module groups produces bit-identical output on the VM, Cranelift, and
     // LLVM tiers (the sweep that found and fixed the split/equal_fold/parse,
@@ -435,7 +486,19 @@ const SPECS: &[Spec] = &[
     // aggregate-interior bodies, char-field enums, mixed-arity).
     spec("feature-testing-examples/jit_inline_chain.gos"),
     spec("feature-testing-examples/jit_aggregate_local.gos"),
+    // A hot loop constructing, copying, mutating, and dropping an aggregate
+    // with an RC (String) field each iteration: the JIT must memcpy the copy
+    // into its own frame slot (a mutation of the copy must not alias the
+    // source) and reuse that slot rather than leaking a heap block per round.
+    spec("feature-testing-examples/jit_aggregate_drop.gos"),
     spec("feature-testing-examples/jit_inline_aggregate_return.gos"),
+    // A JIT-promoted hot loop that returns a 3-tuple, a struct, a `[i64; 4]`
+    // array, and a monomorphised generic method's struct by value. Each call
+    // lowers through the generalised structural-return (sret) ABI: the caller
+    // allocates one correctly-sized stack slot per call site and the callee
+    // writes the aggregate through it, so the loop is RSS-flat with no leak and
+    // the returned pointer never dangles. Bit-identical VM / Cranelift / LLVM.
+    spec("feature-testing-examples/aggregate_return_sret.gos"),
     spec("feature-testing-examples/jit_inline_const_args.gos"),
     spec("feature-testing-examples/jit_enum_char_field.gos"),
     spec("feature-testing-examples/jit_inline_vec_ops.gos"),
@@ -459,6 +522,7 @@ const SPECS: &[Spec] = &[
     // variant / nested / or-pattern) and const generic array length.
     spec("feature-testing-examples/let_destructure_struct.gos"),
     spec("feature-testing-examples/const_generic_array_len.gos"),
+    spec("feature-testing-examples/container_reassign_loop.gos"),
     // Closure capturing an inline aggregate reads every field, and the heap
     // box survives an escaping closure.
     spec("feature-testing-examples/closure_capture_aggregate.gos"),
@@ -493,6 +557,16 @@ const SPECS: &[Spec] = &[
     spec("feature-testing-examples/array_bounds_probe.gos"),
     spec("feature-testing-examples/array_literal_vec_methods.gos"),
     spec("feature-testing-examples/vec_aggregate_rc_ownership.gos"),
+    // A by-value struct's `Vec` / `[T]` field: construction moves the vector in,
+    // struct copy / `..base` share it (retained through the vec count), a field
+    // extract borrows it, and every owner frees it once at death. Covers the
+    // drop pass's Vec-field teardown plus the Cranelift single-slot-aggregate
+    // and struct-update (`..base` projected operand) lowering.
+    spec("feature-testing-examples/struct_vec_field.gos"),
+    // Nested vectors: build `Vec<Vec<i64>>` by push and an `[[i64]]` literal,
+    // double-index `a[i][j]`, iterate an inner row via the outer index, mutate
+    // an inner element and grow an inner row, and drop the whole structure.
+    spec("feature-testing-examples/nested_vec_ops.gos"),
     spec("feature-testing-examples/mut_ref_scalar_writeback.gos"),
     spec("feature-testing-examples/mut_ref_string_writeback.gos"),
     spec("feature-testing-examples/byte_vec_i64_model.gos"),
@@ -521,6 +595,7 @@ const SPECS: &[Spec] = &[
     spec("feature-testing-examples/let_else_binding.gos"),
     spec("feature-testing-examples/slice_param_coercion.gos"),
     spec("feature-testing-examples/enum_param_rc_repro.gos"),
+    spec("feature-testing-examples/vec_param_aggregate_ctor.gos"),
     spec("feature-testing-examples/sort_struct_field_closure.gos"),
     spec("feature-testing-examples/sql_driverless.gos"),
     spec("feature-testing-examples/sql_ident_quoting.gos"),
@@ -538,6 +613,10 @@ const SPECS: &[Spec] = &[
     spec("feature-testing-examples/atomic_bool.gos"),
     spec("feature-testing-examples/cycle_collector.gos"),
     spec("feature-testing-examples/cycle_reclaim.gos"),
+    // The collector treats shared (escaped) objects as external live
+    // edges while goroutines churn them: no trial-deletion through the
+    // shared boundary, freed cycle nodes release their out-edges once.
+    spec("feature-testing-examples/cycle_shared_goroutines.gos"),
     spec("feature-testing-examples/jit_native_marshal.gos"),
     spec("feature-testing-examples/arena_regions.gos"),
     spec("feature-testing-examples/auto_regions.gos"),
@@ -814,7 +893,13 @@ const SPECS: &[Spec] = &[
         ..spec("feature-testing-examples/process_spawn_pipe.gos")
     },
     spec("feature-testing-examples/rc_release_drops.gos"),
+    spec("feature-testing-examples/mut_string_return.gos"),
+    spec("feature-testing-examples/string_accumulator_return.gos"),
     spec("feature-testing-examples/weak_refs.gos"),
+    // `w.upgrade()` hands out an owned strong reference pinned in a
+    // frame-owned shadow local: repeated / rebound / discarded upgrades
+    // keep the accounting balanced on every tier.
+    spec("feature-testing-examples/weak_upgrade_ownership.gos"),
     spec("feature-testing-examples/recursive_enum_walk.gos"),
     // Structural `==` / `!=` on heap (recursive / Box / Vec-bearing) enums:
     // equal-but-distinct allocations compare true on every tier.
@@ -961,6 +1046,11 @@ const SPECS: &[Spec] = &[
         ..spec("feature-testing-examples/exec_signal_group.gos")
     },
     spec("feature-testing-examples/vec_runtime_repeat.gos"),
+    spec("feature-testing-examples/vec_with_capacity.gos"),
+    // Push-built / runtime-repeat scalar vecs ride the VM's flat typed
+    // storage (IntArray / FloatVec); the whole Vec surface, plus mixed
+    // vec-vs-fixed-array structural `==`, must agree on every tier.
+    spec("feature-testing-examples/vec_push_typed_storage.gos"),
     spec("feature-testing-examples/range_non_i64.gos"),
     spec("feature-testing-examples/string_push_char.gos"),
     spec("feature-testing-examples/vec_deque.gos"),
@@ -1026,6 +1116,18 @@ const SPECS: &[Spec] = &[
     // string back through the `&mut` cell. The recursive builders promote to
     // the Cranelift JIT; output is bit-identical across the VM, JIT, and AOT.
     spec("feature-testing-examples/enum_transform_jit.gos"),
+    // `for (k, v)` over a `Vec<(String, Enum)>` bound from an enum-variant
+    // pattern - the tuple-destructure for-vec path - plus a fixed-array
+    // literal local stored as an enum payload, which must materialize a heap
+    // GosVec so the nested variant iterates correctly. Bit-identical across
+    // the VM, Cranelift JIT, and LLVM AOT.
+    spec("feature-testing-examples/for_kv_enum_payload.gos"),
+    // Display-rendering `join` on scalar / String sequences and the strict
+    // `to_i64` / `to_f64` / `to_bool` String parses, which lower to the
+    // `gos_rt_str_to_*_opt` Option carriers on the compiled tiers. Guards the
+    // MIR dispatch wiring so the parses stay bit-identical across the VM,
+    // Cranelift JIT, and LLVM AOT.
+    spec("feature-testing-examples/stdlib_surface_join_parse_take.gos"),
 ];
 
 #[derive(Debug)]
@@ -1088,6 +1190,16 @@ fn run_with_timeout(
             Ok(Some(_)) => break,
             Ok(None) => {
                 if Instant::now() >= deadline {
+                    dump_stuck_child_forensics(child.id());
+                    // Under the gdb debug harness, interrupt instead of
+                    // killing first: batch gdb then prints the inferior's
+                    // backtrace into the captured stdout before exiting.
+                    if env::var("GOS_PARITY_GDB").is_ok() {
+                        let _ = Command::new("kill")
+                            .args(["-INT", &child.id().to_string()])
+                            .status();
+                        std::thread::sleep(Duration::from_secs(10));
+                    }
                     let _ = child.kill();
                     let _ = child.wait();
                     timed_out = true;
@@ -1110,6 +1222,49 @@ fn run_with_timeout(
         workdir,
     }
 }
+
+/// Dumps per-thread scheduler state of a child that outlived the run
+/// deadline, so a timeout report shows WHERE the process is stuck
+/// (thread names, wait channels, run state) instead of only that it
+/// was killed. Best-effort: /proc reads that fail are skipped.
+#[cfg(target_os = "linux")]
+fn dump_stuck_child_forensics(pid: u32) {
+    eprintln!("--- stuck-child forensics for pid {pid} ---");
+    if let Ok(status) = fs::read_to_string(format!("/proc/{pid}/status")) {
+        for line in status.lines() {
+            if line.starts_with("State") || line.starts_with("Threads") {
+                eprintln!("  {line}");
+            }
+        }
+    }
+    if let Ok(tasks) = fs::read_dir(format!("/proc/{pid}/task")) {
+        for t in tasks.flatten() {
+            let tid = t.file_name().to_string_lossy().to_string();
+            let comm = fs::read_to_string(format!("/proc/{pid}/task/{tid}/comm"))
+                .unwrap_or_default()
+                .trim()
+                .to_string();
+            let wchan =
+                fs::read_to_string(format!("/proc/{pid}/task/{tid}/wchan")).unwrap_or_default();
+            // Comm may contain spaces, so the run-state field is found
+            // after the last `)` of `/proc/<pid>/stat`.
+            let state = fs::read_to_string(format!("/proc/{pid}/task/{tid}/stat"))
+                .ok()
+                .and_then(|s| {
+                    s.rsplit(')')
+                        .next()
+                        .and_then(|tail| tail.split_whitespace().next())
+                        .map(std::string::ToString::to_string)
+                })
+                .unwrap_or_default();
+            eprintln!("  tid={tid} comm={comm} state={state} wchan={wchan}");
+        }
+    }
+    eprintln!("--- end forensics ---");
+}
+
+#[cfg(not(target_os = "linux"))]
+fn dump_stuck_child_forensics(_pid: u32) {}
 
 /// Formats the full per-tier execution report for a CI failure dump.
 /// Every field is shown even when empty so a crashed-before-output
@@ -1270,8 +1425,21 @@ fn is_executable(p: &Path) -> bool {
 }
 
 fn run_native(bin: &Path, args: &[&str], stdin: &[u8]) -> Run {
-    let mut cmd = Command::new(bin);
-    cmd.args(args);
+    // Debug harness mode: run the binary under gdb (its direct parent, so
+    // Yama's restricted ptrace scope permits it); the deadline path sends
+    // SIGINT and batch gdb prints the backtrace of wherever the inferior
+    // is spinning before the kill.
+    let mut cmd = if env::var("GOS_PARITY_GDB").is_ok() {
+        let mut c = Command::new("gdb");
+        c.args(["--batch", "-ex", "run", "-ex", "bt", "--args"]);
+        c.arg(bin);
+        c.args(args);
+        c
+    } else {
+        let mut c = Command::new(bin);
+        c.args(args);
+        c
+    };
     let mut parts: Vec<String> = vec![bin.display().to_string()];
     parts.extend(args.iter().map(std::string::ToString::to_string));
     let workdir = cmd.get_current_dir().map_or_else(

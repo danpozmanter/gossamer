@@ -416,6 +416,110 @@ pub unsafe extern "C" fn gos_rt_arr_format_string(
     })
 }
 
+/// Renders a flat `[[i64; M]; N]` raw buffer as `[[..], [..], …]`.
+/// The nested repeat/literal layout is `N * M` contiguous 8-byte
+/// slots (inner arrays inline, no per-row header), so the row at
+/// index `i` starts at slot `i * inner`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_arr_format_arr_i64(
+    p: *const i64,
+    outer: i64,
+    inner: i64,
+) -> *mut c_char {
+    ffi_entry!(std::ptr::null_mut(), {
+        if p.is_null() || outer <= 0 || inner <= 0 {
+            return alloc_cstring(b"[]");
+        }
+        let (outer, inner) = (outer as usize, inner as usize);
+        let mut out = String::with_capacity(2 + outer * (2 + inner * 4));
+        out.push('[');
+        for i in 0..outer {
+            if i > 0 {
+                out.push_str(", ");
+            }
+            out.push('[');
+            for j in 0..inner {
+                if j > 0 {
+                    out.push_str(", ");
+                }
+                let n = unsafe { p.add(i * inner + j).read_unaligned() };
+                out.push_str(&format!("{n}"));
+            }
+            out.push(']');
+        }
+        out.push(']');
+        alloc_cstring(out.as_bytes())
+    })
+}
+
+/// Renders a flat `[[f64; M]; N]` raw buffer; same layout contract
+/// as the i64 variant, reading each slot as an f64.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_arr_format_arr_f64(
+    p: *const f64,
+    outer: i64,
+    inner: i64,
+) -> *mut c_char {
+    ffi_entry!(std::ptr::null_mut(), {
+        if p.is_null() || outer <= 0 || inner <= 0 {
+            return alloc_cstring(b"[]");
+        }
+        let (outer, inner) = (outer as usize, inner as usize);
+        let mut out = String::with_capacity(2 + outer * (2 + inner * 6));
+        out.push('[');
+        for i in 0..outer {
+            if i > 0 {
+                out.push_str(", ");
+            }
+            out.push('[');
+            for j in 0..inner {
+                if j > 0 {
+                    out.push_str(", ");
+                }
+                let n = unsafe { p.add(i * inner + j).read_unaligned() };
+                out.push_str(&format!("{n}"));
+            }
+            out.push(']');
+        }
+        out.push(']');
+        alloc_cstring(out.as_bytes())
+    })
+}
+
+/// Renders a flat `[[bool; M]; N]` raw buffer; same layout contract
+/// as the i64 variant, each slot's low bit is the bool.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_arr_format_arr_bool(
+    p: *const i64,
+    outer: i64,
+    inner: i64,
+) -> *mut c_char {
+    ffi_entry!(std::ptr::null_mut(), {
+        if p.is_null() || outer <= 0 || inner <= 0 {
+            return alloc_cstring(b"[]");
+        }
+        let (outer, inner) = (outer as usize, inner as usize);
+        let mut out = String::with_capacity(2 + outer * (2 + inner * 7));
+        out.push('[');
+        for i in 0..outer {
+            if i > 0 {
+                out.push_str(", ");
+            }
+            out.push('[');
+            for j in 0..inner {
+                if j > 0 {
+                    out.push_str(", ");
+                }
+                let raw = unsafe { p.add(i * inner + j).read_unaligned() };
+                out.push_str(if raw & 1 != 0 { "true" } else { "false" });
+            }
+            out.push(']');
+        }
+        out.push(']');
+        alloc_cstring(out.as_bytes())
+    })
+}
+
 /// `os::set_env(name, value) -> Result<(), errors::Error>`.
 ///
 /// Mutates the calling process's environment so subsequently

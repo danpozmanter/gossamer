@@ -22,8 +22,19 @@ println!("[{:>8.2}]", 3.14159)     // [    3.14]
 let msg = format!("{} / {}", 1, 2) // returns a String
 ```
 
-A placeholder whose name is an expression (`{age + 1}`) is a parse error
-(`GP0021`).
+A named capture also walks a field path: struct fields (`{a.balance}`),
+tuple indices (`{t.0}`), nesting (`{o.inner.hits}`), and specs on the
+path (`{a.balance:>8}`, `{f.0:.2}`) all resolve against bindings in
+scope:
+
+```gossamer
+struct Account { owner: String, balance: i64 }
+let a = Account { owner: "jane", balance: 1200 }
+println!("{a.owner}: {a.balance:>8}")
+```
+
+Any other expression in a placeholder (`{age + 1}`, `{v[i]}`) is a parse
+error (`GP0021`) - bind it first or pass it positionally.
 
 ## Desugar macros
 

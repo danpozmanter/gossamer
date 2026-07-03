@@ -341,7 +341,7 @@ fn read_config(path: &String) -> Result<Config, errors::Error> {
 | `File(path).mkdirs()` | `fs::create_dir_all(path)` |
 | `System.getenv("X")` | `env::var("X")` |
 | `System.exit(0)` | `process::exit(0)` |
-| `ProcessBuilder(cmd).start()` | `process::Command::new(cmd).spawn()` |
+| `ProcessBuilder(cmd).start()` | `process::run(cmd, &args)` |
 | `println(x)` | `println!("{x}")` |
 | `System.currentTimeMillis()` | `time::now().as_millis()` |
 | `Thread.sleep(ms)` | `time::sleep(ms)` |
@@ -358,7 +358,7 @@ fn read_config(path: &String) -> Result<Config, errors::Error> {
 | `list.map { }` | `list \|> iter::map(\|x\| …)` |
 | `list.filter { }` | `list \|> iter::filter(\|x\| …)` |
 | `list.fold(init) { acc, x -> }` | `list \|> iter::fold(init, \|acc, x\| …)` |
-| `list.sortedBy { }` | `xs.sort_by(\|a, b\| …)` |
+| `list.sortedBy { }` | `xs.sort_by_key(\|x\| …)` |
 | `OkHttp / Ktor HttpClient` | `http::Client::new()` |
 | `ktor server { }` | `http::serve(addr, handler)` |
 | `kotlinx.serialization` | `encoding::json::encode(v)` |

@@ -117,6 +117,10 @@ enum DeferredStructuralKind {
     Index,
     Call,
     TupleField(u64),
+    /// `value.downgrade()` whose receiver was an unresolved inference
+    /// variable; re-validated as a valid RC-backed receiver after
+    /// defaulting so `let x = 5; x.downgrade()` is caught.
+    Downgrade,
 }
 
 struct DeferredStructural {
@@ -191,6 +195,11 @@ struct TypeChecker<'a> {
     /// `sel.params()` reaches MIR untyped and the compiled tier
     /// guesses the element layout.
     method_ret_types: HashMap<(String, String, usize), Ty>,
+    /// Declared return types of generic-`impl` methods (`impl<T> Add for
+    /// Wrap<T>`), keyed like [`Self::method_ret_types`]. The stored type
+    /// carries rigid `Param` slots; a use site substitutes the receiver
+    /// instantiation's `substs` before returning it.
+    generic_method_ret_types: HashMap<(String, String, usize), Ty>,
     /// Declared argument arity (excluding `self`) of each non-generic
     /// user method, keyed by `(type_name, method_name)`. Drives the
     /// method-call arity check (GT0018): a call with the wrong count
@@ -365,6 +374,7 @@ impl<'a> TypeChecker<'a> {
             current_fn_ret: None,
             loop_break_tys: Vec::new(),
             method_ret_types: HashMap::new(),
+            generic_method_ret_types: HashMap::new(),
             method_arities: HashMap::new(),
             deferred_structural: Vec::new(),
             enum_variant_payloads: HashMap::new(),
@@ -1456,6 +1466,27 @@ impl<'a> TypeChecker<'a> {
                         .insert((name.clone(), fn_decl.name.name.clone(), arity), ret);
                     self.method_arities
                         .insert((name.clone(), fn_decl.name.name.clone()), arity);
+                } else if !decl.generics.params.is_empty()
+                    && fn_decl.generics.params.is_empty()
+                    && let Some(name) = &owner_name
+                {
+                    // Generic-impl methods (`impl<T> Add for Wrap<T>`):
+                    // record the return with rigid `Param` slots, resolved
+                    // inside the impl's generic scope. A receiver-typed use
+                    // site substitutes its instantiation's `substs`.
+                    let arity = fn_decl
+                        .params
+                        .iter()
+                        .filter(|p| matches!(p, FnParam::Typed { .. }))
+                        .count();
+                    let scope = self.enter_generic_scope(&decl.generics);
+                    let ret = match fn_decl.ret.as_ref() {
+                        Some(ty) => self.type_from_ast(ty),
+                        None => self.tcx.unit(),
+                    };
+                    self.leave_generic_scope(scope);
+                    self.generic_method_ret_types
+                        .insert((name.clone(), fn_decl.name.name.clone(), arity), ret);
                 }
             }
         }
@@ -1961,7 +1992,21 @@ impl<'a> TypeChecker<'a> {
         match &expr.kind {
             ExprKind::Literal(lit) => self.type_of_literal(lit, expr.span),
             ExprKind::Path(path) => self.check_path_expr(expr.id, path, expr.span),
-            ExprKind::Call { callee, args } => self.check_call(callee, args, expected),
+            ExprKind::Call { callee, args } => {
+                let ty = self.check_call(callee, args, expected);
+                // A non-generic tuple-variant constructor call is its
+                // enum: unify so bindings (`let p = Sign::Pos(7)`) carry
+                // the nominal type operator dispatch resolves against.
+                // Generic enums are absent from `enum_tys` and keep the
+                // fresh-var path.
+                if let Some(e) = self.variant_ctor_enum_ty(expr) {
+                    let r = self.infer.resolve(self.tcx, ty);
+                    if matches!(self.tcx.kind(r), Some(TyKind::Var(_))) {
+                        self.unify(ty, e, expr.span);
+                    }
+                }
+                ty
+            }
             ExprKind::MethodCall {
                 receiver,
                 name,
@@ -2157,13 +2202,22 @@ impl<'a> TypeChecker<'a> {
             }
             ExprKind::Array(arr) => self.check_array(arr, expected),
             ExprKind::Range { start, end, .. } => {
+                // A value-position range is an integer sequence on every
+                // tier (the VM materialises it eagerly; MIR routes it
+                // through the range materialiser), so it types as
+                // `Vec<elem>` with both bounds unified into `elem`. Index
+                // and for-loop positions consume ranges syntactically and
+                // never read this node type.
+                let elem = self.infer.fresh_int_var(self.tcx);
                 if let Some(start) = start {
-                    self.check_expr(start);
+                    let t = self.check_expr(start);
+                    self.unify(elem, t, start.span);
                 }
                 if let Some(end) = end {
-                    self.check_expr(end);
+                    let t = self.check_expr(end);
+                    self.unify(elem, t, end.span);
                 }
-                self.fresh()
+                self.tcx.intern(TyKind::Vec(elem))
             }
             ExprKind::Try(inner) => {
                 let inner_ty = self.check_expr(inner);
@@ -2272,13 +2326,13 @@ impl<'a> TypeChecker<'a> {
                 other => {
                     // `a[i]` on a user struct / enum routes to its `index` impl
                     // method (one argument); the element type is that method's
-                    // return type.
-                    if matches!(other, TyKind::Adt { .. })
-                        && let Some(adt) = self.adt_name_of(cur)
-                        && let Some(&ret) =
-                            self.method_ret_types.get(&(adt, "index".to_string(), 1))
-                    {
-                        return ret;
+                    // return type. The base node is anchored to its resolved
+                    // nominal type so tier lowering dispatches the call.
+                    if matches!(other, TyKind::Adt { .. }) && self.adt_name_of(cur).is_some() {
+                        self.record(base.id, cur);
+                        if let Some(ret) = self.adt_op_method_ret(cur, "index", 1) {
+                            return ret;
+                        }
                     }
                     if !is_soft_for_structural_use(&other) {
                         let ty = render_ty(self.tcx, cur);
@@ -2864,6 +2918,78 @@ impl<'a> TypeChecker<'a> {
         );
     }
 
+    /// Result type of an `fs::` / `os::` free call, or `None` for the
+    /// unlisted surface. Typed reads keep the `?`-unwrapped payload
+    /// concrete (`fs::read_to_string(p)?.to_lower()` stays `String`
+    /// into codegen), and directory walks yield the `fs::DirInfo`
+    /// sentinel whose field layout is pre-registered so `e.path` /
+    /// `e.size` on the entries stay concretely typed.
+    fn fs_call_ret_ty(&mut self, last: &str) -> Option<Ty> {
+        match last {
+            "file_size" => Some(self.tcx.int_ty(IntTy::I64)),
+            "exists" | "is_file" | "is_dir" | "is_symlink" => Some(self.tcx.bool_ty()),
+            "read_to_string" | "read_file_to_string" => {
+                let s = self.tcx.string_ty();
+                let e = self.tcx.dyn_error_ty();
+                Some(self.result_adt_ty(s, e))
+            }
+            "read" | "read_file" => {
+                let u8_ty = self.tcx.int_ty(IntTy::U8);
+                let v = self.tcx.intern(TyKind::Vec(u8_ty));
+                let e = self.tcx.dyn_error_ty();
+                Some(self.result_adt_ty(v, e))
+            }
+            "walk_dir" | "read_dir" => {
+                let def = gossamer_resolve::DefId::local(u32::MAX - 2);
+                self.tcx.register_def_name(def, "DirInfo");
+                let entry = self.tcx.intern(TyKind::Adt {
+                    def,
+                    substs: crate::Substs::new(),
+                });
+                let v = self.tcx.intern(TyKind::Vec(entry));
+                let e = self.tcx.dyn_error_ty();
+                Some(self.result_adt_ty(v, e))
+            }
+            _ => None,
+        }
+    }
+
+    /// Result type of a `Collection::new()` constructor call, or `None`
+    /// for a non-collection path. An unannotated `let m = HashMap::new()`
+    /// grounds to a real `TyKind::HashMap` (generics pinned by the first
+    /// `insert` / `get`, see `map_method_ret`) so method dispatch reaches
+    /// the properly keyed runtime symbol on every tier; `VecDeque` /
+    /// `HashSet` ground to the same sentinel Adts their annotations
+    /// resolve to.
+    fn collection_ctor_ty(&mut self, module: &[&str]) -> Option<Ty> {
+        let tail = match module {
+            [t] | ["collections", t] | ["std", "collections", t] => *t,
+            _ => return None,
+        };
+        match tail {
+            "VecDeque" => {
+                let elem = self.fresh();
+                let substs = crate::Substs::from_types([elem]);
+                let def = gossamer_resolve::DefId::local(u32::MAX - 9);
+                self.tcx.register_def_name(def, "VecDeque");
+                Some(self.tcx.intern(TyKind::Adt { def, substs }))
+            }
+            "HashMap" | "BTreeMap" => {
+                let key = self.fresh();
+                let value = self.fresh();
+                Some(self.tcx.intern(TyKind::HashMap { key, value }))
+            }
+            "HashSet" => {
+                let elem = self.fresh();
+                let substs = crate::Substs::from_types([elem]);
+                let def = gossamer_resolve::DefId::local(u32::MAX - 7);
+                self.tcx.register_def_name(def, "HashSet");
+                Some(self.tcx.intern(TyKind::Adt { def, substs }))
+            }
+            _ => None,
+        }
+    }
+
     fn check_stdlib_module_ret_ty(
         &mut self,
         module: &[&str],
@@ -2934,27 +3060,13 @@ impl<'a> TypeChecker<'a> {
                 _ => None,
             };
         }
-        // `VecDeque::new()` yields a `VecDeque<?elem>` whose element generic
-        // is pinned by the first `push_back` (see `check_method_call`), so an
-        // unannotated `let q = VecDeque::new()` still recovers `Option<T>` for
-        // `pop_front()` across every tier.
-        if matches!(
-            module,
-            ["VecDeque"] | ["collections", "VecDeque"] | ["std", "collections", "VecDeque"]
-        ) && last == "new"
+        if last == "new"
+            && let Some(ty) = self.collection_ctor_ty(module)
         {
-            let elem = self.fresh();
-            let substs = crate::Substs::from_types([elem]);
-            let def = gossamer_resolve::DefId::local(u32::MAX - 9);
-            self.tcx.register_def_name(def, "VecDeque");
-            return Some(self.tcx.intern(TyKind::Adt { def, substs }));
+            return Some(ty);
         }
         if matches!(module, ["fs" | "os"] | ["std", "fs" | "os"]) {
-            return match last {
-                "file_size" => Some(self.tcx.int_ty(IntTy::I64)),
-                "exists" | "is_file" | "is_dir" | "is_symlink" => Some(self.tcx.bool_ty()),
-                _ => None,
-            };
+            return self.fs_call_ret_ty(last);
         }
         // `time::Duration` constructors yield the transparent Duration
         // newtype so the method-form accessors (`d.as_millis()`) can
@@ -3062,6 +3174,74 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
+    /// Return type of the operator-overload impl method `method` (with
+    /// `arity` non-receiver parameters) on an ADT operand, seeing through
+    /// `&` / `&mut`. Covers non-generic impls directly and generic impls
+    /// (`impl<T> Add for Wrap<T>`) by substituting the operand
+    /// instantiation's generic arguments into the stored return type.
+    /// `None` when the operand is not an ADT or carries no such impl.
+    fn adt_op_method_ret(&mut self, ty: Ty, method: &str, arity: usize) -> Option<Ty> {
+        let mut r = self.infer.resolve(self.tcx, ty);
+        while let Some(TyKind::Ref { inner, .. }) = self.tcx.kind(r) {
+            r = self.infer.resolve(self.tcx, *inner);
+        }
+        let Some(TyKind::Adt { def, substs }) = self.tcx.kind(r) else {
+            return None;
+        };
+        let substs = substs.clone();
+        let name = self.tcx.def_name(*def)?.to_string();
+        if let Some(&ret) = self
+            .method_ret_types
+            .get(&(name.clone(), method.to_string(), arity))
+        {
+            return Some(ret);
+        }
+        let &ret = self
+            .generic_method_ret_types
+            .get(&(name, method.to_string(), arity))?;
+        let subst_tys = substs.types();
+        Some(self.subst_params_in_ty(ret, &subst_tys))
+    }
+
+    /// `time::Duration` / `time::Instant` accessors in method form
+    /// (`d.as_millis()`, `inst.elapsed_ms()`) mirror the qualified free
+    /// calls; all yield a bare `i64`. `None` for every other receiver.
+    fn time_accessor_method_ret(
+        &mut self,
+        resolved: Ty,
+        method: &str,
+        args: &[Expr],
+    ) -> Option<Ty> {
+        if !args.is_empty() {
+            return None;
+        }
+        let duration = matches!(self.tcx.kind(resolved), Some(TyKind::Duration))
+            && matches!(method, "as_millis" | "as_secs" | "as_micros");
+        let instant =
+            matches!(self.tcx.kind(resolved), Some(TyKind::Instant)) && method == "elapsed_ms";
+        (duration || instant).then(|| self.tcx.int_ty(IntTy::I64))
+    }
+
+    /// Return type of `method` (with `arity` non-receiver arguments) called
+    /// on a generic-instantiation receiver, from the generic impl's declared
+    /// return with the instantiation's arguments substituted. `None` for
+    /// non-generic receivers or unknown methods.
+    fn generic_recv_method_ret(&mut self, resolved: Ty, method: &str, arity: usize) -> Option<Ty> {
+        let Some(TyKind::Adt { def, substs }) = self.tcx.kind(resolved) else {
+            return None;
+        };
+        let substs = substs.clone();
+        if substs.types().is_empty() {
+            return None;
+        }
+        let name = self.tcx.def_name(*def)?.to_string();
+        let &ret = self
+            .generic_method_ret_types
+            .get(&(name, method.to_string(), arity))?;
+        let subst_tys = substs.types();
+        Some(self.subst_params_in_ty(ret, &subst_tys))
+    }
+
     /// Coerces a byte literal compared against an integer operand to that
     /// operand's integer type, so `s[i] == b'>'` type-checks without a cast.
     /// Returns true when it applied (caller then skips the same-type unify).
@@ -3159,6 +3339,32 @@ impl<'a> TypeChecker<'a> {
         self.tcx.intern(TyKind::Adt { def, substs })
     }
 
+    /// Returns true when `.downgrade()` on this (already ref-peeled)
+    /// receiver type has no runtime RC header: a by-value scalar, `Unit` /
+    /// `Never`, a transparent time newtype, `Option` / `Result`, or an
+    /// inline (2-word by-value) enum. Such a value carries no pointer for
+    /// `gos_rt_rc_downgrade` to read, so a `Weak` of it faults on the
+    /// compiled tiers.
+    fn downgrade_receiver_is_non_rc(&self, ty: Ty) -> bool {
+        match self.tcx.kind(ty) {
+            Some(
+                TyKind::Bool
+                | TyKind::Char
+                | TyKind::Int(_)
+                | TyKind::Float(_)
+                | TyKind::Unit
+                | TyKind::Never
+                | TyKind::Duration
+                | TyKind::Instant,
+            ) => true,
+            Some(TyKind::Adt { def, .. }) if def.local == u32::MAX || def.local == u32::MAX - 1 => {
+                true
+            }
+            Some(TyKind::Adt { .. }) => self.tcx.is_inline_enum_ty(ty),
+            _ => false,
+        }
+    }
+
     fn weak_adt_ty(&mut self, payload: Ty) -> Ty {
         let substs = crate::Substs::from_types([payload]);
         let def = gossamer_resolve::DefId::local(u32::MAX - 6);
@@ -3172,13 +3378,53 @@ impl<'a> TypeChecker<'a> {
     /// variable; a concretely-typed receiver (e.g. an enum bound from a
     /// variant constructor) needs the explicit rule. Returns `None` for any
     /// other method / receiver so normal dispatch continues.
-    fn check_weak_method(&mut self, method: &str, receiver_ty: Ty, args: &[Expr]) -> Option<Ty> {
+    fn check_weak_method(
+        &mut self,
+        method: &str,
+        receiver_ty: Ty,
+        args: &[Expr],
+        receiver_span: Span,
+    ) -> Option<Ty> {
         if !args.is_empty() {
             return None;
         }
         let mut resolved = self.infer.resolve(self.tcx, receiver_ty);
         while let Some(TyKind::Ref { inner, .. }) = self.tcx.kind(resolved) {
             resolved = self.infer.resolve(self.tcx, *inner);
+        }
+        if method == "downgrade" {
+            // `downgrade` needs a runtime RC pointer to bump the weak count.
+            // A by-value word (scalar / `Option` / `Result` / other packed
+            // value) has no header, so `gos_rt_rc_downgrade` reads a bogus
+            // header off the value's bits and faults on the compiled tiers
+            // (the VM hands back a nonsense handle). Reject it here rather
+            // than let name-global dispatch type it to `Weak<T>`. An
+            // unresolved receiver (`Var`) carries no decision - leave it for
+            // normal dispatch so a later-inferred aggregate still works.
+            if self.downgrade_receiver_is_non_rc(resolved) {
+                self.emit(
+                    TypeError::WeakDowngradeNonRc {
+                        ty: render_ty(self.tcx, resolved),
+                    },
+                    receiver_span,
+                );
+                return Some(self.tcx.error_ty());
+            }
+            if matches!(self.tcx.kind(resolved), Some(TyKind::Adt { .. })) {
+                return Some(self.weak_adt_ty(resolved));
+            }
+            // An unresolved receiver (an unsuffixed literal that defaults
+            // later, e.g. `let x = 5; x.downgrade()`) defers to the
+            // post-defaulting pass, which rejects it if it lands on a
+            // by-value scalar.
+            if matches!(self.tcx.kind(resolved), Some(TyKind::Var(_))) {
+                self.deferred_structural.push(DeferredStructural {
+                    ty: resolved,
+                    span: receiver_span,
+                    kind: DeferredStructuralKind::Downgrade,
+                });
+            }
+            return None;
         }
         match self.tcx.kind(resolved) {
             Some(TyKind::Adt { def, substs })
@@ -3191,7 +3437,6 @@ impl<'a> TypeChecker<'a> {
                     .unwrap_or_else(|| self.fresh());
                 Some(self.option_adt_ty(payload))
             }
-            Some(TyKind::Adt { .. }) if method == "downgrade" => Some(self.weak_adt_ty(resolved)),
             _ => None,
         }
     }
@@ -3309,7 +3554,7 @@ impl<'a> TypeChecker<'a> {
         if let Some(ty) = self.check_channel_method(method, receiver_ty, args) {
             return ty;
         }
-        if let Some(ty) = self.check_weak_method(method, receiver_ty, args) {
+        if let Some(ty) = self.check_weak_method(method, receiver_ty, args, receiver.span) {
             return ty;
         }
         // `x.into()` converts to an inferred target `B` via `B::from`, and
@@ -3377,22 +3622,8 @@ impl<'a> TypeChecker<'a> {
         while let Some(TyKind::Ref { inner, .. }) = self.tcx.kind(resolved) {
             resolved = self.infer.resolve(self.tcx, *inner);
         }
-        // `time::Duration` accessors in method form: `d.as_millis()`
-        // mirrors the qualified `time::Duration::as_millis(d)` free
-        // call, all of which yield a bare `i64`.
-        if matches!(self.tcx.kind(resolved), Some(TyKind::Duration))
-            && matches!(method, "as_millis" | "as_secs" | "as_micros")
-            && args.is_empty()
-        {
-            return self.tcx.int_ty(IntTy::I64);
-        }
-        // `inst.elapsed_ms()` in method form mirrors the qualified
-        // `time::Instant::elapsed_ms(inst)` free call; both yield `i64`.
-        if matches!(self.tcx.kind(resolved), Some(TyKind::Instant))
-            && method == "elapsed_ms"
-            && args.is_empty()
-        {
-            return self.tcx.int_ty(IntTy::I64);
+        if let Some(ty) = self.time_accessor_method_ret(resolved, method, args) {
+            return ty;
         }
         if let Some(TyKind::Adt { def, substs }) = self.tcx.kind(resolved)
             && substs.types().is_empty()
@@ -3403,13 +3634,23 @@ impl<'a> TypeChecker<'a> {
         {
             return ret;
         }
+        // A generic-instantiation receiver (`Wrap<f64>`) types the call
+        // from the generic impl's return with the instantiation's
+        // arguments substituted, so chained uses resolve concretely.
+        if let Some(ret) = self.generic_recv_method_ret(resolved, method, args.len()) {
+            return ret;
+        }
         if let Some(ty) = self.vec_method_ret(method, args, &arg_tys, resolved, receiver.span) {
+            return ty;
+        }
+        if let Some(ty) = self.seq_combinator_method_ret(method, &arg_tys, resolved, receiver.span)
+        {
             return ty;
         }
         if let Some(ty) = self.set_method_ret(method, resolved) {
             return ty;
         }
-        if let Some(ty) = self.map_method_ret(method, resolved) {
+        if let Some(ty) = self.map_method_ret(method, args, &arg_tys, resolved, receiver.span) {
             return ty;
         }
         if matches!(self.tcx.kind(resolved), Some(TyKind::String)) {
@@ -3490,16 +3731,98 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
+    /// Return type of an `iter::` combinator called in method form on a
+    /// sequence receiver (`xs.map(f)`, `xs.filter(f)`, `xs.sum()`, …):
+    /// the same typing as the data-last free form, with the receiver as
+    /// the data argument. `None` for non-sequence receivers and
+    /// non-combinator names, so `Result::map` / `Option::map` / the
+    /// String surface keep their own dispatch.
+    fn seq_combinator_method_ret(
+        &mut self,
+        method: &str,
+        arg_tys: &[Ty],
+        resolved: Ty,
+        span: Span,
+    ) -> Option<Ty> {
+        if !matches!(
+            self.tcx.kind(resolved),
+            Some(TyKind::Vec(_) | TyKind::Slice(_) | TyKind::Array { .. })
+        ) {
+            return None;
+        }
+        match (method, arg_tys.len()) {
+            ("sum", 0) => self.sequence_elem_ty(resolved, span),
+            ("min" | "max", 0) => {
+                let elem = self.sequence_elem_ty(resolved, span)?;
+                Some(self.option_adt_ty(elem))
+            }
+            ("count", 0) => Some(self.tcx.int_ty(IntTy::I64)),
+            // `xs.count(f)`: the accepted-element count - the predicate
+            // takes an element and yields bool.
+            ("count", 1) => {
+                let elem = self.sequence_elem_ty(resolved, span)?;
+                let out = self.callable_output(arg_tys[0], &[elem], span);
+                let b = self.tcx.bool_ty();
+                self.unify(b, out, span);
+                Some(self.tcx.int_ty(IntTy::I64))
+            }
+            (
+                m @ ("map" | "filter" | "for_each" | "any" | "all" | "find" | "position"
+                | "max_by_key" | "min_by_key"),
+                1,
+            )
+            | (m @ "fold", 2) => self.std_combinator_ty("iter", m, arg_tys, resolved, span),
+            _ => None,
+        }
+    }
+
     /// Return type of a method on a `HashMap` / `BTreeMap` receiver whose
     /// result depends on the key/value types. Without this `m.iter()` is a
     /// fresh `Var`, so the for-vec lowering can't see the `(K, V)` element
     /// type and mis-sizes the element (especially when a destructure slot
-    /// is `_`). Returns `None` for a non-map receiver so dispatch continues.
-    fn map_method_ret(&mut self, method: &str, resolved: Ty) -> Option<Ty> {
+    /// is `_`). Key/value-shaped arguments unify against the map's generics
+    /// so an unannotated `HashMap::new()` is grounded by its first
+    /// `insert` / `get` and native dispatch picks the right keyed symbol.
+    /// Returns `None` for a non-map receiver so dispatch continues.
+    fn map_method_ret(
+        &mut self,
+        method: &str,
+        args: &[Expr],
+        arg_tys: &[Ty],
+        resolved: Ty,
+        span: Span,
+    ) -> Option<Ty> {
         let (key, value) = match self.tcx.kind(resolved) {
             Some(TyKind::HashMap { key, value }) => (*key, *value),
             _ => return None,
         };
+        let (key_arg, value_arg) = match (method, args.len()) {
+            ("insert" | "get_or" | "or_insert", 2) => {
+                (arg_tys.first().copied(), arg_tys.get(1).copied())
+            }
+            ("get" | "remove" | "pop" | "contains" | "contains_key", 1) => {
+                (arg_tys.first().copied(), None)
+            }
+            // `inc` is the integer-counter idiom: it pins the value to
+            // i64 so an unannotated `HashMap::new()` grounded only by
+            // `inc` still classifies for the counter lowering.
+            ("inc", 1 | 2) => {
+                let i = self.tcx.int_ty(IntTy::I64);
+                self.unify(value, i, span);
+                (arg_tys.first().copied(), None)
+            }
+            _ => (None, None),
+        };
+        if let Some(arg_ty) = key_arg {
+            let key_peeled = self.peel_refs(key);
+            let arg_peeled = self.peel_refs(arg_ty);
+            self.unify(key_peeled, arg_peeled, span);
+        }
+        if let Some(arg_ty) = value_arg {
+            let value_peeled = self.peel_refs(value);
+            let arg_peeled = self.peel_refs(arg_ty);
+            self.unify(value_peeled, arg_peeled, span);
+        }
         match method {
             // `m.iter()` yields `(K, V)` pairs.
             "iter" => {
@@ -3508,7 +3831,8 @@ impl<'a> TypeChecker<'a> {
             }
             "keys" => Some(self.tcx.intern(TyKind::Vec(key))),
             "values" => Some(self.tcx.intern(TyKind::Vec(value))),
-            "get" => Some(self.option_adt_ty(value)),
+            "get" | "pop" => Some(self.option_adt_ty(value)),
+            "get_or" | "or_insert" => Some(value),
             "contains" | "contains_key" | "is_empty" => Some(self.tcx.bool_ty()),
             "len" => Some(self.tcx.int_ty(IntTy::I64)),
             _ => None,
@@ -3562,6 +3886,49 @@ impl<'a> TypeChecker<'a> {
                 let err = self.tcx.dyn_error_ty();
                 Some(self.result_adt_ty(vec, err))
             }
+            // `xs.join(sep)`: Display-renders scalar / String elements,
+            // separator unifies with String. An aggregate element has no
+            // joinable rendering and is rejected here so it can never
+            // reach a shim that would join pointer words.
+            ("join", 1) => {
+                if let Some(arg_ty) = arg_tys.first() {
+                    let s = self.tcx.string_ty();
+                    let arg_peeled = self.peel_refs(*arg_ty);
+                    self.unify(s, arg_peeled, span);
+                }
+                let elem_resolved = self.infer.resolve(self.tcx, elem);
+                let elem_peeled = self.peel_refs(elem_resolved);
+                if !matches!(
+                    self.tcx.kind_of(elem_peeled),
+                    TyKind::String
+                        | TyKind::Int(_)
+                        | TyKind::Float(_)
+                        | TyKind::Bool
+                        | TyKind::Char
+                        | TyKind::Var(_)
+                ) {
+                    let ty = render_ty(self.tcx, resolved);
+                    self.emit(
+                        TypeError::UnresolvedMethod {
+                            ty,
+                            name: "join".to_string(),
+                        },
+                        span,
+                    );
+                    return Some(self.tcx.error_ty());
+                }
+                Some(self.tcx.string_ty())
+            }
+            // `xs.take(n)` / `xs.step_by(s)`: fresh Vec of the same
+            // element type; the count/stride argument is an integer.
+            ("take" | "step_by", 1) => {
+                if let Some(arg_ty) = arg_tys.first() {
+                    let i = self.tcx.int_ty(IntTy::I64);
+                    let arg_peeled = self.peel_refs(*arg_ty);
+                    self.unify(i, arg_peeled, span);
+                }
+                Some(self.tcx.intern(TyKind::Vec(elem)))
+            }
             _ => None,
         }
     }
@@ -3588,6 +3955,19 @@ impl<'a> TypeChecker<'a> {
             "find" | "rfind" | "find_any" | "rfind_any" | "index_rune" => {
                 let i = self.tcx.int_ty(IntTy::I64);
                 self.option_adt_ty(i)
+            }
+            // Strict full-string parses: `"42".to_i64() -> Option<i64>`.
+            "to_i64" => {
+                let i = self.tcx.int_ty(IntTy::I64);
+                self.option_adt_ty(i)
+            }
+            "to_f64" => {
+                let f = self.tcx.float_ty(FloatTy::F64);
+                self.option_adt_ty(f)
+            }
+            "to_bool" => {
+                let b = self.tcx.bool_ty();
+                self.option_adt_ty(b)
             }
             "contains" | "contains_any" | "contains_rune" | "starts_with" | "ends_with"
             | "equal_fold" | "is_empty" => self.tcx.bool_ty(),
@@ -3703,6 +4083,12 @@ impl<'a> TypeChecker<'a> {
                         }
                     }
                 },
+                DeferredStructuralKind::Downgrade => {
+                    if self.downgrade_receiver_is_non_rc(resolved) {
+                        let ty = render_ty(self.tcx, resolved);
+                        self.emit(TypeError::WeakDowngradeNonRc { ty }, d.span);
+                    }
+                }
             }
         }
     }
@@ -4310,11 +4696,27 @@ impl<'a> TypeChecker<'a> {
             UnaryOp::Neg => {
                 // `-x` on a user struct / enum routes to its `neg` impl
                 // (a zero-arg method on the receiver); the result is that
-                // method's return type. Scalars keep the operand type.
-                if let Some(adt) = self.adt_name_of(resolved)
-                    && let Some(&ret) = self.method_ret_types.get(&(adt, "neg".to_string(), 0))
-                {
-                    ret
+                // method's return type, and the operand node is anchored
+                // to its resolved nominal type so tier lowering dispatches
+                // the call. An ADT with no `impl Neg` is rejected here
+                // rather than faulting at runtime. Scalars keep the
+                // operand type.
+                if self.adt_name_of(resolved).is_some() {
+                    self.record(operand.id, resolved);
+                    if let Some(ret) = self.adt_op_method_ret(resolved, "neg", 0) {
+                        ret
+                    } else {
+                        self.emit(
+                            TypeError::UnresolvedOpImpl {
+                                op: "-".to_string(),
+                                trait_name: "Neg".to_string(),
+                                method: "neg".to_string(),
+                                ty: render_ty(self.tcx, resolved),
+                            },
+                            span,
+                        );
+                        self.tcx.error_ty()
+                    }
                 } else {
                     operand_ty
                 }
@@ -4455,31 +4857,55 @@ impl<'a> TypeChecker<'a> {
                         }
                     }
                 }
-                // Arithmetic on a user struct/enum routes to its operator
-                // impl (`+` -> `add`, `-` -> `sub`, `*` -> `mul`, `/` ->
-                // `div`); the result is that method's return type. An ADT
-                // operand with no such impl is rejected here rather than
-                // miscompiling to a runtime "unsupported value kinds" error.
-                if let Some(method) = arith_op_method(op)
-                    && let Some(adt) = self
-                        .adt_name_of(lhs_ty)
-                        .or_else(|| self.adt_name_of(rhs_ty))
-                {
-                    if let Some(&ret) =
-                        self.method_ret_types
-                            .get(&(adt.clone(), method.to_string(), 1))
-                    {
-                        return ret;
+                // Arithmetic / bitwise on a user struct/enum routes to its
+                // operator impl (`+` -> `add`, `|` -> `bitor`, ...); the
+                // result is that method's return type. Dispatch is
+                // receiver-first (the left operand is `self`), so an ADT
+                // operand with no such impl - or an ADT appearing only on
+                // the right of a non-ADT left operand - is rejected here
+                // rather than miscompiling to a runtime fault.
+                if let Some(method) = arith_op_method(op) {
+                    let lhs_res = self.infer.resolve(self.tcx, lhs_ty);
+                    let rhs_res = self.infer.resolve(self.tcx, rhs_ty);
+                    let lhs_adt = self.adt_name_of(lhs_res);
+                    let rhs_adt = self.adt_name_of(rhs_res);
+                    if lhs_adt.is_some() || rhs_adt.is_some() {
+                        // Anchor ADT operand nodes to their resolved
+                        // nominal type: tier lowering dispatches the
+                        // impl-method call off the operand node's type,
+                        // which otherwise may stay an inference var
+                        // (enum locals in particular).
+                        if lhs_adt.is_some() {
+                            self.record(lhs.id, lhs_res);
+                        }
+                        if rhs_adt.is_some() {
+                            self.record(rhs.id, rhs_res);
+                        }
+                        if lhs_adt.is_some()
+                            && let Some(ret) = self.adt_op_method_ret(lhs_res, method, 1)
+                        {
+                            return ret;
+                        }
+                        let ty = if lhs_adt.is_some() { lhs_res } else { rhs_res };
+                        self.emit(
+                            TypeError::UnresolvedOpImpl {
+                                op: op.as_str().to_string(),
+                                trait_name: op_trait_name(method).to_string(),
+                                method: method.to_string(),
+                                ty: render_ty(self.tcx, ty),
+                            },
+                            span,
+                        );
+                        return self.tcx.error_ty();
                     }
-                    self.emit(
-                        TypeError::UnresolvedOp {
-                            op: op.as_str().to_string(),
-                            lhs: render_ty(self.tcx, self.infer.resolve(self.tcx, lhs_ty)),
-                            rhs: render_ty(self.tcx, self.infer.resolve(self.tcx, rhs_ty)),
-                        },
-                        span,
-                    );
-                    return self.tcx.error_ty();
+                }
+                // A byte literal joins integer arithmetic without an explicit
+                // `as i64` - `s[i] - b'0'` - through the same node re-typing
+                // the comparison arms apply; the result takes the integer
+                // operand's type.
+                let lhs_is_byte = matches!(&lhs.kind, ExprKind::Literal(Literal::Byte(_)));
+                if self.coerce_byte_literal_cmp(lhs, lhs_ty, rhs, rhs_ty) {
+                    return if lhs_is_byte { rhs_ty } else { lhs_ty };
                 }
                 self.unify(lhs_ty, rhs_ty, span);
                 lhs_ty
@@ -4605,6 +5031,37 @@ impl<'a> TypeChecker<'a> {
                 }
             }
         }
+        // Compound assignment on a user struct / enum desugars through the
+        // binary operator, so it routes to the same operator impl
+        // (`+=` -> `add`). The impl's return re-binds the place, so it
+        // must be the place's own type. A place with no impl is rejected
+        // here rather than faulting at runtime; the value operand keeps
+        // the impl's declared parameter shape (a scalar for `v *= 2.0`),
+        // so the place/value unification below is skipped on this path.
+        if let Some(method) = assign_op_method(op) {
+            let pr = self.infer.resolve(self.tcx, place_ty);
+            if self.adt_name_of(pr).is_some() {
+                self.record(place.id, pr);
+                let vr = self.infer.resolve(self.tcx, value_ty);
+                if self.adt_name_of(vr).is_some() {
+                    self.record(value.id, vr);
+                }
+                if let Some(ret) = self.adt_op_method_ret(pr, method, 1) {
+                    self.unify(place_ty, ret, place.span);
+                } else {
+                    self.emit(
+                        TypeError::UnresolvedOpImpl {
+                            op: op.as_str().to_string(),
+                            trait_name: op_trait_name(method).to_string(),
+                            method: method.to_string(),
+                            ty: render_ty(self.tcx, pr),
+                        },
+                        place.span,
+                    );
+                }
+                return self.tcx.unit();
+            }
+        }
         self.unify(place_ty, value_ty, value.span);
         self.tcx.unit()
     }
@@ -4700,6 +5157,7 @@ impl<'a> TypeChecker<'a> {
     fn check_match(&mut self, scrutinee: &Expr, arms: &[MatchArm], expected: Expectation) -> Ty {
         let scrut_ty = self.check_expr(scrutinee);
         self.reject_constructor_scrutinee_mismatch(scrut_ty, arms);
+        self.reject_json_value_variant_patterns(arms);
         let mut result_ty = self.fresh();
         for arm in arms {
             self.push_scope();
@@ -4795,6 +5253,48 @@ impl<'a> TypeChecker<'a> {
                 TypeError::TypeMismatch { expected, found },
                 arm.pattern.span,
             );
+        }
+    }
+
+    /// Rejects `json::Value::Object(..)` / `::Int(..)` / `::Null` (etc.)
+    /// constructor patterns in `match` / `if let` / `while let` arms. The
+    /// `json::Value` handle carries no matchable discriminant across the
+    /// tiers, so such a pattern silently falls through on the VM and faults
+    /// on the compiled tiers; the dynamic accessor API (`json::as_*` /
+    /// `json::get` / `json::keys`) is the supported way to read a document.
+    /// The pattern is judged structurally (not on the scrutinee type) so a
+    /// scrutinee left unresolved by inference is still caught - a
+    /// `json::Value::X` path is never a valid matchable pattern.
+    fn reject_json_value_variant_patterns(&mut self, arms: &[MatchArm]) {
+        for arm in arms {
+            self.reject_json_value_variant_pattern(&arm.pattern);
+        }
+    }
+
+    /// Emits GT0027 for a single `json::Value::X` constructor pattern,
+    /// recursing through or-patterns so every alternative is flagged.
+    fn reject_json_value_variant_pattern(&mut self, pattern: &Pattern) {
+        let path = match &pattern.kind {
+            PatternKind::TupleStruct { path, .. }
+            | PatternKind::Path(path)
+            | PatternKind::Struct { path, .. } => Some(path),
+            PatternKind::Or(alts) => {
+                for alt in alts {
+                    self.reject_json_value_variant_pattern(alt);
+                }
+                None
+            }
+            _ => None,
+        };
+        if let Some(path) = path {
+            if let Some(variant) = json_value_variant_of(path) {
+                self.emit(
+                    TypeError::JsonValuePatternUnsupported {
+                        variant: variant.to_string(),
+                    },
+                    pattern.span,
+                );
+            }
         }
     }
 
@@ -5074,6 +5574,12 @@ impl<'a> TypeChecker<'a> {
                 })
             }
             ArrayExpr::Repeat { value, count } => {
+                // A fixed `[T; N]` is placed inline on the stack by the
+                // compiled tiers; an oversized one overflows the OS main-thread
+                // stack (silent SIGSEGV) while the VM heap-allocates it. The
+                // ceiling sits below the smallest supported main-thread stack
+                // (Windows ~1 MiB) with headroom for the surrounding frames.
+                const MAX_STACK_ARRAY_BYTES: u64 = 256 * 1024;
                 if let Some((container, want_elem)) = growable {
                     let got = self.check_expr_expecting(value, expected.rewrap(want_elem));
                     if expected.unifies() {
@@ -5085,6 +5591,33 @@ impl<'a> TypeChecker<'a> {
                 let elem_ty = self.check_expr(value);
                 self.check_expr(count);
                 if let Some(len) = self.evaluate_array_len(count) {
+                    // Reject an oversized inline fixed array at check so the
+                    // tiers agree and steer the user to a heap `Vec`. Prefer the
+                    // annotated element type (`let a: [i64; N]`) when present:
+                    // the repeat value's own type may still be an undefaulted
+                    // integer var at this point, so the annotation gives the
+                    // accurate slot size and a readable message.
+                    let elem_ty = match self
+                        .expectation_target(expected)
+                        .and_then(|t| self.tcx.kind(t))
+                    {
+                        Some(TyKind::Array { elem, .. }) => self.infer.resolve(self.tcx, *elem),
+                        _ => self.infer.resolve(self.tcx, elem_ty),
+                    };
+                    let elem_bytes = u64::from(self.tcx.slot_bytes(elem_ty).max(8));
+                    let bytes = (len as u64).saturating_mul(elem_bytes);
+                    if bytes > MAX_STACK_ARRAY_BYTES {
+                        self.emit(
+                            TypeError::OversizedStackArray {
+                                elem: render_ty(self.tcx, elem_ty),
+                                len: len as u64,
+                                bytes,
+                                limit: MAX_STACK_ARRAY_BYTES,
+                            },
+                            count.span,
+                        );
+                        return self.tcx.error_ty();
+                    }
                     self.tcx.intern(TyKind::Array {
                         elem: elem_ty,
                         len: crate::ArrayLen::Concrete(len),
@@ -6291,6 +6824,45 @@ fn arith_op_method(op: BinaryOp) -> Option<&'static str> {
     }
 }
 
+/// Operator-overload impl-method name for a compound assignment
+/// (`+=` -> `add`, matching the binary desugar), or `None` for plain `=`.
+fn assign_op_method(op: gossamer_ast::AssignOp) -> Option<&'static str> {
+    use gossamer_ast::AssignOp;
+    match op {
+        AssignOp::Assign => None,
+        AssignOp::AddAssign => Some("add"),
+        AssignOp::SubAssign => Some("sub"),
+        AssignOp::MulAssign => Some("mul"),
+        AssignOp::DivAssign => Some("div"),
+        AssignOp::RemAssign => Some("rem"),
+        AssignOp::BitAndAssign => Some("bitand"),
+        AssignOp::BitOrAssign => Some("bitor"),
+        AssignOp::BitXorAssign => Some("bitxor"),
+        AssignOp::ShlAssign => Some("shl"),
+        AssignOp::ShrAssign => Some("shr"),
+    }
+}
+
+/// Operator trait that declares the overload method `method`
+/// (`add` -> `Add`), for diagnostics that suggest the missing impl.
+fn op_trait_name(method: &str) -> &'static str {
+    match method {
+        "add" => "Add",
+        "sub" => "Sub",
+        "mul" => "Mul",
+        "div" => "Div",
+        "rem" => "Rem",
+        "bitand" => "BitAnd",
+        "bitor" => "BitOr",
+        "bitxor" => "BitXor",
+        "shl" => "Shl",
+        "shr" => "Shr",
+        "neg" => "Neg",
+        "index" => "Index",
+        _ => "Add",
+    }
+}
+
 fn subst_array_len(len: crate::ArrayLen, const_substs: &[Option<i128>]) -> crate::ArrayLen {
     let crate::ArrayLen::Param(idx) = len else {
         return len;
@@ -6472,6 +7044,30 @@ fn path_matches_json_value(path: &TypePath) -> bool {
     )
 }
 
+/// Returns the json variant name when `path` names a `json::Value::X`
+/// constructor in a pattern (`json::Value::Object`,
+/// `encoding::json::Value::Int`, ...). Used to reject such constructors
+/// in pattern position - `json::Value` is an opaque handle with no
+/// matchable discriminant.
+fn json_value_variant_of(path: &TypePath) -> Option<&'static str> {
+    let names: Vec<&str> = path.segments.iter().map(|s| s.name.name.as_str()).collect();
+    let n = names.len();
+    if n < 2 || names[n - 2] != "Value" || !names[..n - 1].contains(&"json") {
+        return None;
+    }
+    match names[n - 1] {
+        "Null" => Some("Null"),
+        "Bool" => Some("Bool"),
+        "Int" => Some("Int"),
+        "Float" => Some("Float"),
+        "Number" => Some("Number"),
+        "String" => Some("String"),
+        "Array" => Some("Array"),
+        "Object" => Some("Object"),
+        _ => None,
+    }
+}
+
 fn path_matches_dyn_error(path: &TypePath) -> bool {
     let names: Vec<&str> = path.segments.iter().map(|s| s.name.name.as_str()).collect();
     matches!(
@@ -6604,9 +7200,12 @@ fn cast_allowed(from: &TyKind, to: &TyKind) -> bool {
     if from_is_num && to_is_num {
         return true;
     }
+    // Any int → char reads the low byte on every tier (the same
+    // masking `u8 as char` always applied), so `s[i] as char` works
+    // without the `(s[i] as u8)` intermediate.
     matches!(
         (from, to),
-        (TyKind::Bool | TyKind::Char, TyKind::Int(_)) | (TyKind::Int(IntTy::U8), TyKind::Char),
+        (TyKind::Bool | TyKind::Char, TyKind::Int(_)) | (TyKind::Int(_), TyKind::Char),
     )
 }
 

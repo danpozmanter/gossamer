@@ -1258,6 +1258,29 @@ fn client_agent(client: *const GosHttpClient) -> ureq::Agent {
     }
 }
 
+/// Upper bound on a buffered response body (post-inflate) for the
+/// compiled HTTP client. Matches the interp native client's
+/// `max_body_bytes` default (gossamer-std/src/http_native_client.rs) so
+/// both tiers reject the same decompression-bomb / oversized-response
+/// shape.
+const MAX_RESPONSE_BODY_BYTES: u64 = 32 * 1024 * 1024;
+
+/// Reads at most `cap` bytes from `reader`, erroring rather than
+/// truncating when the stream would exceed it. Reading one byte past
+/// the cap distinguishes "exactly at cap" from "over cap".
+fn read_body_capped(reader: impl std::io::Read, cap: u64) -> Result<Vec<u8>, String> {
+    use std::io::Read;
+    let mut buf: Vec<u8> = Vec::new();
+    let mut limited = reader.take(cap + 1);
+    limited
+        .read_to_end(&mut buf)
+        .map_err(|e| format!("http: io: {e}"))?;
+    if buf.len() as u64 > cap {
+        return Err(format!("http: response body exceeds {cap}-byte cap"));
+    }
+    Ok(buf)
+}
+
 /// Runs a buffered request on `agent` and lifts the response into a
 /// fully populated `GosHttpResponse` (status, body, headers,
 /// body_bytes, content_type, stream_handle = -1). Shared by every
@@ -1301,15 +1324,11 @@ fn http_response_with_agent(
             value.to_str().unwrap_or("").to_string(),
         ));
     }
-    let body_bytes = {
-        use std::io::Read;
-        let mut buf: Vec<u8> = Vec::new();
-        let mut reader = resp.into_body().into_reader();
-        if let Err(e) = reader.read_to_end(&mut buf) {
-            return Err(format!("http: io: {e}"));
-        }
-        buf
-    };
+    // gzip auto-inflate is on, so the reader yields decompressed bytes;
+    // capping it here bounds the post-inflate size and defeats a
+    // "decompression bomb" that expands to gigabytes from a small
+    // compressed payload.
+    let body_bytes = read_body_capped(resp.into_body().into_reader(), MAX_RESPONSE_BODY_BYTES)?;
     let body_cs = alloc_cstring(body_bytes.as_slice());
     // "text/plain" fallback matches the interp tier's `lift_response`
     // so `.content_type` agrees across tiers when the header is absent.
@@ -1986,6 +2005,28 @@ pub unsafe extern "C" fn gos_rt_http_stream_next_chunk(rs: *const i64, max_bytes
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn response_body_over_cap_is_rejected() {
+        // An endless (decompressed) stream must be refused, not slurped.
+        let bomb = std::io::repeat(0xABu8);
+        let err = read_body_capped(bomb, 1024).unwrap_err();
+        assert!(err.contains("exceeds"), "got: {err}");
+    }
+
+    #[test]
+    fn response_body_within_cap_is_returned() {
+        let ok = std::io::Cursor::new(vec![0u8; 512]);
+        let body = read_body_capped(ok, 1024).unwrap();
+        assert_eq!(body.len(), 512);
+    }
+
+    #[test]
+    fn response_body_exactly_at_cap_is_returned() {
+        let ok = std::io::Cursor::new(vec![0u8; 1024]);
+        let body = read_body_capped(ok, 1024).unwrap();
+        assert_eq!(body.len(), 1024);
+    }
 
     #[test]
     fn response_headers_materialises_tuple_vec_of_cstring_pairs() {

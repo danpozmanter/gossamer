@@ -59,6 +59,10 @@ impl Printer {
     }
 
     fn write_use_entry(&mut self, entry: &UseListEntry) {
+        for seg in &entry.prefix {
+            self.write_ident(seg);
+            self.write("::");
+        }
         self.write_ident(&entry.name);
         if let Some(alias) = &entry.alias {
             self.write(" as ");

@@ -1,0 +1,26 @@
+// A lifted closure borrows its env-loaded captures: the enclosing frame
+// keeps the only owning reference, so repeated calls re-read live
+// storage. Covers byte-stride (bool/u8-shaped) and word-stride captures,
+// direct calls, Fn-param indirection, and iter-combinator envs.
+use std::iter
+
+fn apply(f: Fn(i64) -> bool, x: i64) -> bool { f(x) }
+
+fn main() {
+    let n = 10
+    let sieve = [true; n]
+    let f = |k: i64| sieve[k]
+    println!("{} {} {} {}", f(0), f(3), f(7), f(9))
+    println!("{} {}", apply(f, 2), apply(f, 8))
+
+    let marks = [65; n]
+    let g = |k: i64| marks[k]
+    println!("{} {}", g(3), g(9))
+
+    let odd_live = 2..n |> iter::filter(|k| sieve[k] && k % 2 == 1)
+    println!("{:?}", odd_live)
+
+    let names = ["ada", "grace"]
+    let h = |i: i64| names[i]
+    println!("{} {} {}", h(0), h(1), h(0))
+}

@@ -1,0 +1,13 @@
+---
+source: crates/gossamer-diagnostics/tests/snapshots.rs
+assertion_line: 86
+expression: rendered
+---
+--- plain ---
+error[GT0026]: A fixed-size array `[value; N]` with a compile-time-constant `N` - here
+--- framed ---
+error[GT0026]: A fixed-size array `[value; N]` with a compile-time-constant `N`
+  --> snap.gos:2:5
+     2 |     let x = 1
+       |     ^^^^^
+     error: here

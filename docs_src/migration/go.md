@@ -186,12 +186,11 @@ Goroutine and channel syntax is the same. Behavioural notes:
   asynchronously preempted at loop back-edges - it yields at its next
   call or park point. See
   [runtime design - Preemption](../design/runtime.md#preemption).
-- Channels are unbounded by default (like Go's `make(chan T)`
-  without a buffer size - wait, actually Go's *unbuffered*
-  channels block on send until a receiver is ready;
-  Gossamer's `channel::<T>()` returns a buffered channel today,
-  with `try_send` / `try_recv` for non-blocking ops). Bounded
-  channels via `channel::with_capacity(n)`.
+- Channels are created with `channel()` / `channel::<T>()` and are
+  buffered today, so a send does not block waiting for a receiver.
+  There is no capacity argument - `channel()` is the only constructor.
+  The producer calls `close()` to end the stream, so
+  `while let Some(v) = rx.recv()` is the canonical drain.
 - `select` arms are typed by the channel they reference. Catch
   the unblocked case with `default =>`.
 
@@ -251,7 +250,7 @@ otherwise spawn a `let mut acc = 0; for x in xs { acc += … }`.
 | `os.Exit` | `process::exit(code)` | ✓ |
 | `os.ReadFile` | `os::read_file(path)` | ✓ |
 | `os.WriteFile` | `os::write_file(path, data)` | ✓ |
-| `os/exec.Command` | `process::Command::new(prog).arg(a).output()` | ✓ |
+| `os/exec.Command` | `process::run(prog, &args)` | ✓ |
 | `os/signal.Notify` | `os::signal::on(SIGTERM)` | v1.x |
 | `path/filepath.Walk` | `fs::walk_dir(root)` | v1.x |
 | `bufio.NewScanner` | `bufio::Scanner::new(reader)` | v1.x |
@@ -546,7 +545,7 @@ split for OS primitives - `os.ReadFile` → `fs::read`, `os.Args` →
 | `os.Getwd` | `env::current_dir` |
 | `os.TempDir` | `env::temp_dir` |
 | `os.Exit` | `process::exit` |
-| `os/exec.Command(...)` | `process::Command::new(...)` |
+| `os/exec.Command(...)` | `process::run(prog, &args)` |
 | `path/filepath.Join` | `path::join` |
 | `path/filepath.Walk` | `fs::walk_dir` |
 | `path/filepath.Glob` | `fs::glob` |

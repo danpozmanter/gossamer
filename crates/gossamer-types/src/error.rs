@@ -60,6 +60,19 @@ pub enum TypeError {
         /// Right-hand type (for unary ops this is the operand).
         rhs: String,
     },
+    /// An overloadable operator was applied to a user struct / enum that
+    /// carries no impl of the operator's backing trait.
+    #[error("cannot apply `{op}` to `{ty}`")]
+    UnresolvedOpImpl {
+        /// Operator symbol (`+`, `-`, `+=`, ...).
+        op: String,
+        /// Operator trait that would provide the operation (`Add`).
+        trait_name: String,
+        /// Impl method the operator dispatches to (`add`).
+        method: String,
+        /// The ADT operand's type.
+        ty: String,
+    },
     /// A `match` expression lacks coverage for one or more patterns.
     #[error("non-exhaustive patterns: {missing}")]
     NonExhaustiveMatch {
@@ -295,6 +308,47 @@ pub enum TypeError {
         /// Positional index attempted.
         index: u64,
     },
+    /// A fixed-size array literal `[value; N]` with a compile-time-constant
+    /// `N` whose total byte size exceeds the safe stack threshold. Such a
+    /// literal is placed inline on the stack by the compiled tiers, so a
+    /// multi-megabyte length silently overflows the OS main-thread stack
+    /// (SIGSEGV) while the VM heap-allocates it - rejected at check so the
+    /// three tiers agree and the crash never happens.
+    #[error(
+        "fixed-size array `[{elem}; {len}]` needs {bytes} bytes of stack; the limit is {limit}"
+    )]
+    OversizedStackArray {
+        /// Rendered element type.
+        elem: String,
+        /// Constant element count.
+        len: u64,
+        /// Total stack bytes the array would occupy.
+        bytes: u64,
+        /// The safe stack-array byte ceiling.
+        limit: u64,
+    },
+    /// A `match` / `if let` arm patterns a `json::Value` scrutinee with a
+    /// `json::Value::Object(..)` / `::Array(..)` / `::Int(..)` etc.
+    /// constructor. `json::Value` is an opaque dynamic-document handle
+    /// with no matchable discriminant across the tiers, so such a pattern
+    /// silently falls through on the VM and faults on the compiled tiers;
+    /// rejected at check so the surface stays sound and the dynamic
+    /// accessor API is used instead.
+    #[error("`json::Value::{variant}` cannot be used as a pattern")]
+    JsonValuePatternUnsupported {
+        /// The json variant named in the pattern (`Object`, `Int`, ...).
+        variant: String,
+    },
+    /// `.downgrade()` was called on a by-value type with no runtime RC
+    /// header (a scalar, `Option`/`Result`, or other packed value).
+    /// `Weak<T>` is a non-owning pointer into a reference-counted
+    /// allocation, so the compiled tiers read a header off the value's
+    /// bits and fault (SIGSEGV); rejected at check.
+    #[error("`.downgrade()` is not valid on `{ty}`")]
+    WeakDowngradeNonRc {
+        /// Rendered receiver type.
+        ty: String,
+    },
 }
 
 impl TypeError {
@@ -305,6 +359,7 @@ impl TypeError {
             Self::TypeMismatch { .. } => "type-mismatch",
             Self::UnresolvedMethod { .. } => "unresolved-method",
             Self::UnresolvedOp { .. } => "unresolved-op",
+            Self::UnresolvedOpImpl { .. } => "unresolved-op-impl",
             Self::NonExhaustiveMatch { .. } => "non-exhaustive-match",
             Self::InvalidCast { .. } => "invalid-cast",
             Self::UnknownField { .. } => "unknown-field",
@@ -327,6 +382,9 @@ impl TypeError {
             Self::NotIndexable { .. } => "not-indexable",
             Self::NotCallable { .. } => "not-callable",
             Self::NoTupleField { .. } => "no-tuple-field",
+            Self::OversizedStackArray { .. } => "oversized-stack-array",
+            Self::JsonValuePatternUnsupported { .. } => "json-value-pattern-unsupported",
+            Self::WeakDowngradeNonRc { .. } => "weak-downgrade-non-rc",
         }
     }
 
@@ -336,7 +394,7 @@ impl TypeError {
         match self {
             Self::TypeMismatch { .. } => "GT0001",
             Self::UnresolvedMethod { .. } => "GT0002",
-            Self::UnresolvedOp { .. } => "GT0003",
+            Self::UnresolvedOp { .. } | Self::UnresolvedOpImpl { .. } => "GT0003",
             Self::NonExhaustiveMatch { .. } => "GT0004",
             Self::InvalidCast { .. } => "GT0005",
             Self::UnknownField { .. } => "GT0006",
@@ -359,6 +417,9 @@ impl TypeError {
             Self::NotIndexable { .. } => "GT0021",
             Self::NotCallable { .. } => "GT0022",
             Self::NoTupleField { .. } => "GT0023",
+            Self::OversizedStackArray { .. } => "GT0026",
+            Self::JsonValuePatternUnsupported { .. } => "GT0027",
+            Self::WeakDowngradeNonRc { .. } => "GT0028",
         }
     }
 }
@@ -461,6 +522,23 @@ impl TypeDiagnostic {
                     "operator `{op}` requires matching operand types; got `{lhs}` and `{rhs}`"
                 ));
             }
+            TypeError::UnresolvedOpImpl {
+                op,
+                trait_name,
+                method,
+                ty,
+            } => {
+                let note = if trait_name == "Neg" {
+                    format!("user types support unary `{op}` through an `impl {trait_name}`")
+                } else {
+                    format!(
+                        "user types support `{op}` through an `impl {trait_name}`, dispatched on the left operand"
+                    )
+                };
+                out = out.with_note(note).with_help(format!(
+                    "implement `impl {trait_name} for {ty} {{ fn {method}(..) -> .. }}`"
+                ));
+            }
             TypeError::NonExhaustiveMatch { missing } => {
                 out = out
                     .with_help(format!("add an arm for: {missing}"))
@@ -546,6 +624,43 @@ impl TypeDiagnostic {
             TypeError::NotIndexable { .. }
             | TypeError::NotCallable { .. }
             | TypeError::NoTupleField { .. } => out = structural_use_diagnostic(out, &self.error),
+            TypeError::OversizedStackArray { elem, .. } => {
+                out = out
+                    .with_help(format!(
+                        "use a heap `Vec` instead: `let v: [{elem}] = [value; n]` (or `Vec::with_capacity`)"
+                    ))
+                    .with_note(
+                        "a fixed-size `[T; N]` is placed inline on the stack, so an oversized \
+                         one overflows the OS stack on the compiled tiers (silent SIGSEGV)",
+                    );
+            }
+            TypeError::JsonValuePatternUnsupported { .. } => {
+                out = out
+                    .with_help(
+                        "read a `json::Value` with the dynamic accessors instead: \
+                         `json::as_i64` / `json::as_f64` / `json::as_str` / `json::as_bool`, \
+                         `json::is_null`, `json::get(&v, key)`, `json::at(&v, i)`, \
+                         `json::keys(&v)`, `json::len(&v)`",
+                    )
+                    .with_note(
+                        "`json::Value` is an opaque dynamic-document handle with no matchable \
+                         discriminant, so a `json::Value::Variant(..)` pattern falls through \
+                         on the VM and faults on the compiled tiers",
+                    );
+            }
+            TypeError::WeakDowngradeNonRc { .. } => {
+                out = out
+                    .with_help(
+                        "call `.downgrade()` on a reference-counted aggregate (a struct, \
+                         payload-bearing enum, or other heap value) - the shape that \
+                         participates in cycles a `Weak<T>` breaks",
+                    )
+                    .with_note(
+                        "a scalar / `Option` / `Result` is a by-value word with no RC header, \
+                         so `Weak` of it would read a header off the value's bits and fault \
+                         on the compiled tiers",
+                    );
+            }
         }
         out
     }
@@ -560,7 +675,7 @@ fn structural_use_diagnostic(
     match error {
         TypeError::NotIndexable { ty } => out
             .with_help(format!(
-                "`{ty}` is not a `[T]`, `[T; N]`, `Vec<T>`, or `String`; only those can be indexed"
+                "`{ty}` is not a `[T]`, `[T; N]`, `Vec<T>`, or `String`; index a user type through `impl Index for {ty}`"
             ))
             .with_note(
                 "the VM faults (GX0001) and the compiled tier reads through the value as a pointer",

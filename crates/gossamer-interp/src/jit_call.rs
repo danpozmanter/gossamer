@@ -78,21 +78,43 @@ fn build_native_vec_f64(value: &Value) -> Option<i64> {
         if v.is_null() {
             return None;
         }
-        let Value::Array(arc) = value else {
-            rt::gos_rt_vec_free(v);
-            return None;
-        };
-        for elem in arc.iter() {
-            let bits: i64 = match elem {
-                Value::Float(x) => x.to_bits() as i64,
-                Value::Int(n) => (*n as f64).to_bits() as i64,
-                _ => {
-                    rt::gos_rt_vec_free(v);
-                    return None;
-                }
-            };
+        let push_bits = |bits: u64| {
             let b = bits.to_ne_bytes();
             rt::gos_rt_vec_push(v, b.as_ptr());
+        };
+        match value {
+            // A `Vec<f64>` is stored flat as `FloatVec`, and an array of an
+            // all-f64 struct as `FloatArray`; both back their data with a
+            // `Vec<f64>` the runtime can copy element-wise. Mirroring the
+            // `IntArray` arm of `build_native_vec_i64`, these are the shapes a
+            // `Vec<f64>` argument actually arrives as - without them every
+            // `Vec<f64>` param falls back per call and the body demotes.
+            Value::FloatVec(arc) => {
+                for &x in arc.iter() {
+                    push_bits(x.to_bits());
+                }
+            }
+            Value::FloatArray(inner) => {
+                for &x in inner.data.iter() {
+                    push_bits(x.to_bits());
+                }
+            }
+            Value::Array(arc) => {
+                for elem in arc.iter() {
+                    match elem {
+                        Value::Float(x) => push_bits(x.to_bits()),
+                        Value::Int(n) => push_bits((*n as f64).to_bits()),
+                        _ => {
+                            rt::gos_rt_vec_free(v);
+                            return None;
+                        }
+                    }
+                }
+            }
+            _ => {
+                rt::gos_rt_vec_free(v);
+                return None;
+            }
         }
         Some(v as i64)
     }
@@ -833,6 +855,28 @@ fn native_ptr_to_value(kind: JitKind, ptr: i64) -> Value {
             let bytes = unsafe { std::slice::from_raw_parts(s.cast::<u8>(), len) };
             Value::String(SmolStr::from_str(&String::from_utf8_lossy(bytes)))
         }
+        JitKind::NativeVecVecI64 => {
+            if ptr == 0 {
+                return Value::Array(Arc::new(Vec::new()));
+            }
+            let outer = ptr as *const rt::vec::GosVec;
+            // SAFETY: `outer` is a live `VEC`-kind `GosVec` whose 8-byte slots
+            // each hold an inner `*mut GosVec` of i64 - the layout
+            // `build_native_vec_vec_i64` builds and the body returns.
+            let len = unsafe { rt::gos_rt_vec_len(outer) }.max(0);
+            let mut rows = Vec::with_capacity(len as usize);
+            for i in 0..len {
+                let slot = unsafe { rt::gos_rt_vec_get_ptr(outer, i) };
+                if slot.is_null() {
+                    rows.push(Value::IntArray(Arc::new(Vec::new())));
+                    continue;
+                }
+                // The slot stores the inner `GosVec` pointer by value.
+                let inner = unsafe { slot.cast::<*const rt::vec::GosVec>().read_unaligned() };
+                rows.push(native_ptr_to_value(JitKind::NativeVecI64, inner as i64));
+            }
+            Value::Array(Arc::new(rows))
+        }
         JitKind::StructPtr(idx) => match native_struct_shape(idx) {
             Some(shape) => read_native_struct(ptr, shape),
             None => Value::Unit,
@@ -898,7 +942,12 @@ unsafe fn decode_tuple_return(block: i64, elems: &[TupleElem; 2]) -> Value {
 /// by the body for that kind) and not already freed.
 unsafe fn free_native(kind: JitKind, ptr: i64) {
     match kind {
-        JitKind::NativeVecI64 | JitKind::NativeVecF64 | JitKind::NativeVecTupleIF => unsafe {
+        // A `VEC`-kind outer vec's free recursively reclaims every inner
+        // `GosVec`, so `NativeVecVecI64` frees through the same call.
+        JitKind::NativeVecI64
+        | JitKind::NativeVecF64
+        | JitKind::NativeVecTupleIF
+        | JitKind::NativeVecVecI64 => unsafe {
             rt::gos_rt_vec_free(ptr as *mut rt::vec::GosVec);
         },
         JitKind::NativeStr => unsafe { rt::gos_rt_str_free(ptr as *mut c_char) },
@@ -1003,6 +1052,13 @@ impl GraphCache {
         self.entries.borrow().get(&key).map(|(ptr, _)| *ptr)
     }
 
+    /// `true` when `ptr` is a cache-owned native graph. A body that returns
+    /// one of its `&[[i64]]` params hands back a pointer the cache still owns;
+    /// the trampoline must not free it (the cache frees it at teardown).
+    fn owns_ptr(&self, ptr: i64) -> bool {
+        self.entries.borrow().values().any(|(p, _)| *p == ptr)
+    }
+
     /// Records `ptr` for `key`, retaining the source `Arc` so its address
     /// stays unique for the entry's lifetime.
     fn insert(&self, key: usize, ptr: i64, src: Arc<Vec<Value>>) {
@@ -1080,6 +1136,11 @@ macro_rules! call_through {
                 let f: extern "C" fn($($t),*) -> i8 = unsafe { mem::transmute($ptr) };
                 Some(Value::Bool(f($($a),*) != 0))
             }
+            JitKind::Char => {
+                let f: extern "C" fn($($t),*) -> i64 = unsafe { mem::transmute($ptr) };
+                let word = f($($a),*) as u32;
+                Some(Value::Char(char::from_u32(word).unwrap_or('\u{0}')))
+            }
             JitKind::Unit => {
                 let f: extern "C" fn($($t),*) = unsafe { mem::transmute($ptr) };
                 f($($a),*);
@@ -1126,13 +1187,9 @@ macro_rules! call_through {
             | JitKind::NativeVecI64
             | JitKind::NativeVecF64
             | JitKind::NativeVecTupleIF
+            | JitKind::NativeVecVecI64
             | JitKind::U8VecHandle => {
                 unreachable!("native aggregate returns are canonicalized to I64")
-            }
-            // `Vec<Vec<i64>>` is a param-only kind (declined as a return in
-            // `prepare`), so the stub never sees it as a return shape.
-            JitKind::NativeVecVecI64 => {
-                unreachable!("Vec<Vec<i64>> returns are declined in prepare")
             }
             // Struct returns are declined in `prepare`, so a `StructPtr`
             // return never reaches a stub.
@@ -2514,6 +2571,15 @@ impl Prepared {
     }
 }
 
+/// Logs, under `GOS_JIT_TRACE`, that a promoted body could not be prepared
+/// for native dispatch and will run on bytecode. Without this a body that
+/// promoted but whose shape the trampoline cannot marshal is invisible.
+fn trace_prepare_fail(name: &str, reason: &str) {
+    if jit_trace() {
+        eprintln!("jit: prepare failed for {name} ({reason})");
+    }
+}
+
 /// Resolves dispatch data for `jit`, or `None` if the trampoline can't
 /// cover its shape (the caller then keeps the body on bytecode).
 pub(crate) fn prepare(jit: std::sync::Arc<JitFn>) -> Option<Prepared> {
@@ -2522,6 +2588,7 @@ pub(crate) fn prepare(jit: std::sync::Arc<JitFn>) -> Option<Prepared> {
     let is_tuple_ret = matches!(jit.returns, JitKind::TupleReturn(_));
     let native_arity = jit.params.len() + usize::from(is_tuple_ret);
     if native_arity > MAX_ARGS {
+        trace_prepare_fail(&jit.name, "native arity exceeds MAX_ARGS");
         return None;
     }
     let mut shape: u32 = 0;
@@ -2530,7 +2597,13 @@ pub(crate) fn prepare(jit: std::sync::Arc<JitFn>) -> Option<Prepared> {
             shape |= 1 << i;
         }
     }
-    let stub = resolve_stub(native_arity, shape)?;
+    let Some(stub) = resolve_stub(native_arity, shape) else {
+        trace_prepare_fail(
+            &jit.name,
+            &format!("no dispatch stub for arity {native_arity} shape {shape:#b}"),
+        );
+        return None;
+    };
     let (ret_kind, enum_return, native_return, result_enum) = match jit.returns {
         JitKind::EnumPtr(idx) => (JitKind::I64, Some(idx), None, None),
         JitKind::ResultEnumPtr(idx) => (JitKind::ResultEnumPtr(idx), None, None, Some(idx)),
@@ -2540,15 +2613,19 @@ pub(crate) fn prepare(jit: std::sync::Arc<JitFn>) -> Option<Prepared> {
         | JitKind::NativeVecTupleIF) => (JitKind::I64, None, Some(k), None),
         // A `U8Vec` return would need re-registering the native buffer into
         // the VM registry; not supported, so keep such bodies on bytecode.
-        JitKind::U8VecHandle => return None,
-        // `Vec<Vec<i64>>` is marshalled as a cache-owned param only; a return
-        // would need re-wrapping the nested native vec into VM values and
-        // reconciling ownership with the cache. Keep such bodies on bytecode.
-        JitKind::NativeVecVecI64 => return None,
+        JitKind::U8VecHandle => {
+            trace_prepare_fail(&jit.name, "U8Vec return not marshalled");
+            return None;
+        }
+        // `Vec<Vec<i64>>` returns re-wrap through `invoke_prepared_native`.
+        JitKind::NativeVecVecI64 => (JitKind::I64, None, Some(JitKind::NativeVecVecI64), None),
         // A struct return is a pointer to a stack-local block that would
         // dangle past the call; body_kinds already declines these, but
         // guard here too rather than mis-marshal a raw pointer.
-        JitKind::StructPtr(_) => return None,
+        JitKind::StructPtr(_) => {
+            trace_prepare_fail(&jit.name, "struct return not marshalled");
+            return None;
+        }
         // A 2-tuple return is a pointer to a heap (`gos_rt_aggr_alloc`)
         // block; the stub reads it as `I64` and the native path decodes the
         // slots into a `Value::Tuple`.
@@ -2719,12 +2796,17 @@ pub(crate) fn invoke_prepared(p: &Prepared, args: &[Value], graph_cache: &GraphC
             (_, true) => match value {
                 Value::Int(n) => Slot::I(*n),
                 Value::Bool(b) => Slot::I(i64::from(*b)),
+                Value::Char(c) => Slot::I(i64::from(u32::from(*c))),
                 Value::Unit => Slot::I(0),
                 _ => return Dispatch::Fallback,
             },
             // Slow (unverified) path: full per-kind check.
             (JitKind::I64, false) => match value {
                 Value::Int(n) => Slot::I(*n),
+                _ => return Dispatch::Fallback,
+            },
+            (JitKind::Char, false) => match value {
+                Value::Char(c) => Slot::I(i64::from(u32::from(*c))),
                 _ => return Dispatch::Fallback,
             },
             (JitKind::F64, false) => match value {
@@ -2934,9 +3016,10 @@ fn invoke_prepared_native(p: &Prepared, args: &[Value], graph_cache: &GraphCache
                     return Dispatch::Fallback;
                 }
             }
-            JitKind::I64 | JitKind::Bool | JitKind::Unit => match value {
+            JitKind::I64 | JitKind::Bool | JitKind::Char | JitKind::Unit => match value {
                 Value::Int(n) => Slot::I(*n),
                 Value::Bool(b) => Slot::I(i64::from(*b)),
+                Value::Char(c) => Slot::I(i64::from(u32::from(*c))),
                 Value::Unit => Slot::I(0),
                 _ => {
                     free_in_flight(&natives, &built_enums, &str_cells);
@@ -3053,7 +3136,19 @@ fn invoke_prepared_native(p: &Prepared, args: &[Value], graph_cache: &GraphCache
             free_in_flight(&natives, &built_enums, &str_cells);
             return Dispatch::Fallback;
         };
-        (native_ptr_to_value(nret, ret_ptr), Some((nret, ret_ptr)))
+        let value = native_ptr_to_value(nret, ret_ptr);
+        // A `Vec<Vec<i64>>` body that returns one of its `&[[i64]]` params
+        // hands back a cache-owned pointer; freeing it would leave the cache
+        // holding a dangling graph. Skip the free in that case - the cache
+        // reclaims it at teardown. A freshly-built return (the `build_graph`
+        // shape) is not in the cache and is freed normally.
+        let free_ret = if matches!(nret, JitKind::NativeVecVecI64) && graph_cache.owns_ptr(ret_ptr)
+        {
+            None
+        } else {
+            Some((nret, ret_ptr))
+        };
+        (value, free_ret)
     } else if let Some(shape_idx) = p.enum_return {
         let Value::Int(ret_ptr) = raw else {
             free_in_flight(&natives, &built_enums, &str_cells);

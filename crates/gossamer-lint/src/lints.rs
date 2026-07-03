@@ -18,7 +18,7 @@ use crate::Finding;
 
 /// Dispatches on the lint id and returns the findings from that
 /// specific pass. Used by [`crate::run`].
-pub(crate) fn run_lint(id: &str, sf: &SourceFile) -> Vec<Finding> {
+pub(crate) fn run_lint(id: &str, sf: &SourceFile, src: &str) -> Vec<Finding> {
     match id {
         "unused_variable" => lint_unused_variable(sf),
         "unused_import" => lint_unused_import(sf),
@@ -38,7 +38,7 @@ pub(crate) fn run_lint(id: &str, sf: &SourceFile) -> Vec<Finding> {
         "bool_literal_in_condition" => lint_bool_literal_in_condition(sf),
         "let_and_return" => lint_let_and_return(sf),
         "collapsible_if" => lint_collapsible_if(sf),
-        "if_same_then_else" => lint_if_same_then_else(sf),
+        "if_same_then_else" => lint_if_same_then_else(sf, src),
         "redundant_field_init" => lint_redundant_field_init(sf),
         "needless_else_after_return" => lint_needless_else_after_return(sf),
         "self_compare" => lint_self_compare(sf),
@@ -56,9 +56,9 @@ pub(crate) fn run_lint(id: &str, sf: &SourceFile) -> Vec<Finding> {
         "if_not_else" => lint_if_not_else(sf),
         "empty_string_concat" => lint_empty_string_concat(sf),
         "println_newline_only" => lint_println_newline_only(sf),
-        "match_same_arms" => lint_match_same_arms(sf),
+        "match_same_arms" => lint_match_same_arms(sf, src),
         "manual_swap" => lint_manual_swap(sf),
-        "consecutive_assignment" => lint_consecutive_assignment(sf),
+        "consecutive_assignment" => lint_consecutive_assignment(sf, src),
         "large_unreadable_literal" => lint_large_unreadable_literal(sf),
         "redundant_closure" => lint_redundant_closure(sf),
         "empty_if_body" => lint_empty_if_body(sf),
@@ -70,6 +70,8 @@ pub(crate) fn run_lint(id: &str, sf: &SourceFile) -> Vec<Finding> {
         "pattern_matching_unit" => lint_pattern_matching_unit(sf),
         "panic_without_message" => lint_panic_without_message(sf),
         "empty_loop" => lint_empty_loop(sf),
+        "fill_loop" => lint_fill_loop(sf),
+        "substring_byte_scan" => lint_substring_byte_scan(sf),
         _ => Vec::new(),
     }
 }
@@ -266,19 +268,49 @@ struct Uses {
 
 impl Uses {
     fn collect(&mut self, sf: &SourceFile) {
-        each_fn_body(sf, |body| {
-            walk_expr(body, &mut |expr| {
-                if let ExprKind::Path(path) = &expr.kind {
-                    if let Some(seg) = path.segments.first() {
-                        self.used.insert(seg.name.name.clone());
-                    }
-                }
-            });
-        });
+        let mut scan = NameUseScan {
+            used: &mut self.used,
+        };
+        gossamer_ast::visitor::Visitor::visit_source_file(&mut scan, sf);
     }
 
     fn contains(&self, name: &str) -> bool {
         self.used.contains(name)
+    }
+}
+
+/// Collects every leading path segment a file mentions - expression
+/// paths, type-position paths (annotations, signatures, fields), and
+/// struct-literal shorthand names - so "is this name used" checks see
+/// the same surface the resolver does.
+struct NameUseScan<'a> {
+    used: &'a mut BTreeSet<String>,
+}
+
+impl gossamer_ast::visitor::Visitor for NameUseScan<'_> {
+    fn visit_path_expr(&mut self, path: &PathExpr) {
+        if let Some(seg) = path.segments.first() {
+            self.used.insert(seg.name.name.clone());
+        }
+        gossamer_ast::visitor::walk_path_expr(self, path);
+    }
+
+    fn visit_type_path(&mut self, path: &gossamer_ast::TypePath) {
+        if let Some(seg) = path.segments.first() {
+            self.used.insert(seg.name.name.clone());
+        }
+        gossamer_ast::visitor::walk_type_path(self, path);
+    }
+
+    fn visit_expr(&mut self, expr: &Expr) {
+        if let ExprKind::Struct { fields, .. } = &expr.kind {
+            for field in fields {
+                if field.value.is_none() {
+                    self.used.insert(field.name.name.clone());
+                }
+            }
+        }
+        gossamer_ast::visitor::walk_expr(self, expr);
     }
 }
 
@@ -303,13 +335,10 @@ fn lint_unused_variable(sf: &SourceFile) -> Vec<Finding> {
             }
         }
         let mut used: BTreeSet<String> = BTreeSet::new();
-        walk_block(block, &mut |expr| {
-            if let ExprKind::Path(path) = &expr.kind {
-                if let Some(seg) = path.segments.first() {
-                    used.insert(seg.name.name.clone());
-                }
-            }
-        });
+        {
+            let mut scan = NameUseScan { used: &mut used };
+            gossamer_ast::visitor::Visitor::visit_block(&mut scan, block);
+        }
         for (name, span) in bindings {
             if !used.contains(&name) {
                 out.push((
@@ -568,14 +597,23 @@ fn lint_shadowed_binding(sf: &SourceFile) -> Vec<Finding> {
         };
         let mut seen: BTreeMap<String, Span> = BTreeMap::new();
         for stmt in &block.stmts {
-            if let StmtKind::Let { pattern, .. } = &stmt.kind {
+            if let StmtKind::Let { pattern, init, .. } = &stmt.kind {
                 if let Some((name, span, _)) = ident_name(pattern) {
+                    // `let m = ordered_map::insert(m, ...)` is the
+                    // functional re-bind idiom for the immutable-update
+                    // containers: the new binding is derived from the old
+                    // one, so the shadow is the point.
+                    let rebind = init
+                        .as_ref()
+                        .is_some_and(|init| expr_mentions_name(init, name));
                     if seen.contains_key(name) {
-                        out.push((
-                            span,
-                            format!("`{name}` shadows a prior binding"),
-                            Some("rename to clarify which binding is in use".to_string()),
-                        ));
+                        if !rebind {
+                            out.push((
+                                span,
+                                format!("`{name}` shadows a prior binding"),
+                                Some("rename to clarify which binding is in use".to_string()),
+                            ));
+                        }
                     } else {
                         seen.insert(name.to_string(), span);
                     }
@@ -918,7 +956,7 @@ fn lint_collapsible_if(sf: &SourceFile) -> Vec<Finding> {
     out
 }
 
-fn lint_if_same_then_else(sf: &SourceFile) -> Vec<Finding> {
+fn lint_if_same_then_else(sf: &SourceFile, src: &str) -> Vec<Finding> {
     let mut out = Vec::new();
     each_fn_body(sf, |body| {
         walk_expr(body, &mut |expr| {
@@ -930,7 +968,7 @@ fn lint_if_same_then_else(sf: &SourceFile) -> Vec<Finding> {
             else {
                 return;
             };
-            if spans_equal_text(then_branch.span, else_branch.span) {
+            if spans_equal_text(src, then_branch.span, else_branch.span) {
                 out.push((
                     expr.span,
                     "both branches of the `if` have identical bodies".to_string(),
@@ -942,8 +980,9 @@ fn lint_if_same_then_else(sf: &SourceFile) -> Vec<Finding> {
     out
 }
 
-fn spans_equal_text(a: Span, b: Span) -> bool {
-    a.end - a.start == b.end - b.start
+fn spans_equal_text(src: &str, a: Span, b: Span) -> bool {
+    let text = |s: Span| src.get(s.start as usize..s.end as usize);
+    matches!((text(a), text(b)), (Some(x), Some(y)) if x == y)
 }
 
 fn lint_redundant_field_init(sf: &SourceFile) -> Vec<Finding> {
@@ -1060,6 +1099,20 @@ fn lint_self_compare(sf: &SourceFile) -> Vec<Finding> {
         });
     });
     out
+}
+
+/// True when `expr` (or any subexpression) reads the bare binding `name`.
+fn expr_mentions_name(expr: &Expr, name: &str) -> bool {
+    let mut found = false;
+    walk_expr(expr, &mut |e| {
+        if let ExprKind::Path(path) = &e.kind
+            && path.segments.len() == 1
+            && path.segments.first().is_some_and(|s| s.name.name == name)
+        {
+            found = true;
+        }
+    });
+    found
 }
 
 fn path_text(path: &PathExpr) -> String {
@@ -1535,7 +1588,7 @@ fn lint_println_newline_only(sf: &SourceFile) -> Vec<Finding> {
     out
 }
 
-fn lint_match_same_arms(sf: &SourceFile) -> Vec<Finding> {
+fn lint_match_same_arms(sf: &SourceFile, src: &str) -> Vec<Finding> {
     let mut out = Vec::new();
     each_fn_body(sf, |body| {
         walk_expr(body, &mut |expr| {
@@ -1546,8 +1599,14 @@ fn lint_match_same_arms(sf: &SourceFile) -> Vec<Finding> {
                 for j in (i + 1)..arms.len() {
                     let a = &arms[i].body;
                     let b = &arms[j].body;
-                    if a.span.end - a.span.start == b.span.end - b.span.start
-                        && a.span.end - a.span.start > 0
+                    // Written arm bodies occupy disjoint source ranges;
+                    // parse-time desugars (`while let`, `matches!`) stamp
+                    // synthesized arms with a shared span, so overlapping
+                    // pairs are not user-written duplicates.
+                    let disjoint = a.span.end <= b.span.start || b.span.end <= a.span.start;
+                    if a.span.end - a.span.start > 0
+                        && disjoint
+                        && spans_equal_text(src, a.span, b.span)
                     {
                         out.push((
                             arms[j].body.span,
@@ -1646,7 +1705,7 @@ fn ident_name_of(pattern: &Pattern) -> Option<(String, Span, Mutability)> {
     }
 }
 
-fn lint_consecutive_assignment(sf: &SourceFile) -> Vec<Finding> {
+fn lint_consecutive_assignment(sf: &SourceFile, src: &str) -> Vec<Finding> {
     let mut out = Vec::new();
     each_fn_body(sf, |body| {
         let Some(block) = as_block_ref(body) else {
@@ -1683,7 +1742,9 @@ fn lint_consecutive_assignment(sf: &SourceFile) -> Vec<Finding> {
             if path_text(p1_path) != path_text(p2_path) {
                 continue;
             }
-            if e1.span.end - e1.span.start == e2.span.end - e2.span.start {
+            // Only identical statements are flagged: a second assignment
+            // whose value differs may read the place it overwrites.
+            if spans_equal_text(src, e1.span, e2.span) {
                 out.push((
                     stmts[i + 1].span,
                     "two back-to-back assignments to the same place - the first one is dead"
@@ -2068,6 +2129,100 @@ fn lint_empty_loop(sf: &SourceFile) -> Vec<Finding> {
                     "empty `loop {}` will busy-wait forever".to_string(),
                     Some(
                         "put a `break`, a `continue`, or replace with a real wait primitive"
+                            .to_string(),
+                    ),
+                ));
+            }
+        });
+    });
+    out
+}
+
+/// A `for _ in range { xs.push(CONST) }` fill loop: the repeat literal
+/// `[v; n]` builds the same vec in one expression.
+fn lint_fill_loop(sf: &SourceFile) -> Vec<Finding> {
+    let mut out = Vec::new();
+    each_fn_body(sf, |body| {
+        walk_expr(body, &mut |expr| {
+            let ExprKind::For { iter, body, .. } = &expr.kind else {
+                return;
+            };
+            if !matches!(iter.kind, ExprKind::Range { .. }) {
+                return;
+            }
+            let ExprKind::Block(block) = &body.kind else {
+                return;
+            };
+            let only: Option<&Expr> = match (block.stmts.as_slice(), &block.tail) {
+                ([one], None) => match &one.kind {
+                    StmtKind::Expr { expr, .. } => Some(expr),
+                    _ => None,
+                },
+                ([], Some(tail)) => Some(tail),
+                _ => None,
+            };
+            let Some(only) = only else {
+                return;
+            };
+            let ExprKind::MethodCall { name, args, .. } = &only.kind else {
+                return;
+            };
+            if name.name.as_str() != "push" || args.len() != 1 {
+                return;
+            }
+            if matches!(args[0].kind, ExprKind::Literal(_)) {
+                out.push((
+                    expr.span,
+                    "fill loop pushes the same literal each iteration".to_string(),
+                    Some("build the vec in one expression: `let xs = [value; n]`".to_string()),
+                ));
+            }
+        });
+    });
+    out
+}
+
+/// A `s.substring(i, i + 1)` single-byte read: indexing (`s[i]`, and
+/// `s[i] as char` for rendering) scans without allocating a String
+/// per byte.
+fn lint_substring_byte_scan(sf: &SourceFile) -> Vec<Finding> {
+    let mut out = Vec::new();
+    each_fn_body(sf, |body| {
+        walk_expr(body, &mut |expr| {
+            let ExprKind::MethodCall { name, args, .. } = &expr.kind else {
+                return;
+            };
+            if name.name.as_str() != "substring" || args.len() != 2 {
+                return;
+            }
+            let ExprKind::Path(lo) = &args[0].kind else {
+                return;
+            };
+            let ExprKind::Binary {
+                op: BinaryOp::Add,
+                lhs,
+                rhs,
+            } = &args[1].kind
+            else {
+                return;
+            };
+            let (ExprKind::Path(hi), ExprKind::Literal(Literal::Int(one))) = (&lhs.kind, &rhs.kind)
+            else {
+                return;
+            };
+            if one != "1" {
+                return;
+            }
+            let same = match (lo.segments.first(), hi.segments.first()) {
+                (Some(a), Some(b)) => a.name.name == b.name.name,
+                _ => false,
+            };
+            if same {
+                out.push((
+                    expr.span,
+                    "single-byte substring in a scan".to_string(),
+                    Some(
+                        "read the byte directly: `s[i]` (compare with `b'x'`, render with `s[i] as char`)"
                             .to_string(),
                     ),
                 ));

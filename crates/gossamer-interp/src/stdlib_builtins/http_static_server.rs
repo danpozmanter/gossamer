@@ -150,10 +150,16 @@ pub(crate) fn native_file_server_serve(
 
     let rel = path.strip_prefix(&prefix).unwrap_or(&path);
     let rel = rel.trim_start_matches('/');
-    if rel.contains("..") {
-        return Ok(ok_variant(forbidden_response()));
-    }
-    let full = std::path::PathBuf::from(&root).join(rel);
+    use gossamer_runtime::c_abi::http_bridges::{
+        STATIC_FILE_MAX_BYTES, StaticResolution, resolve_static_path,
+    };
+    let full = match resolve_static_path(std::path::Path::new(&root), rel, STATIC_FILE_MAX_BYTES) {
+        StaticResolution::File(p) => p,
+        StaticResolution::Forbidden => return Ok(ok_variant(forbidden_response())),
+        StaticResolution::NotFound => {
+            return Ok(ok_variant(super::http_router::http_404_response()));
+        }
+    };
     match std::fs::read(&full) {
         Ok(bytes) => {
             let mime = super::http_static_files::guess_mime_from_path(&full.to_string_lossy());

@@ -1635,8 +1635,16 @@ Rust's width / fill / align / radix / precision grammar:</p>
 <a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;[{:&gt;8.2}]&quot;</span><span class="p">,</span><span class="w"> </span><span class="mf">3.14159</span><span class="p">)</span><span class="w">     </span><span class="c1">// [    3.14]</span>
 <a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="kd">let</span><span class="w"> </span><span class="n">msg</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="fm">format!</span><span class="p">(</span><span class="s">&quot;{} / {}&quot;</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">2</span><span class="p">)</span><span class="w"> </span><span class="c1">// returns a String</span>
 </code></pre></div>
-<p>A placeholder whose name is an expression (<code>{age + 1}</code>) is a parse error
-(<code>GP0021</code>).</p>
+<p>A named capture also walks a field path: struct fields (<code>{a.balance}</code>),
+tuple indices (<code>{t.0}</code>), nesting (<code>{o.inner.hits}</code>), and specs on the
+path (<code>{a.balance:&gt;8}</code>, <code>{f.0:.2}</code>) all resolve against bindings in
+scope:</p>
+<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="k">struct</span> <span class="nc">Account</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">owner</span>: <span class="nb">String</span><span class="p">,</span><span class="w"> </span><span class="n">balance</span>: <span class="kt">i64</span> <span class="p">}</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="kd">let</span><span class="w"> </span><span class="n">a</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">Account</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">owner</span>: <span class="s">&quot;jane&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">balance</span>: <span class="mi">1200</span><span class="w"> </span><span class="p">}</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;{a.owner}: {a.balance:&gt;8}&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p>Any other expression in a placeholder (<code>{age + 1}</code>, <code>{v[i]}</code>) is a parse
+error (<code>GP0021</code>) - bind it first or pass it positionally.</p>
 <h2 id="desugar-macros">Desugar macros<a class="headerlink" href="#desugar-macros" title="Permanent link">&para;</a></h2>
 <p>These expand at parse time into ordinary constructs, so they lower
 uniformly on every tier:</p>
@@ -1646,8 +1654,8 @@ uniformly on every tier:</p>
   supplied) message.</li>
 <li><code>dbg!(expr)</code> - prints <code>expr</code> with <code>{:?}</code> to stderr and yields its value.</li>
 </ul>
-<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="k">if</span><span class="w"> </span><span class="fm">matches!</span><span class="p">(</span><span class="n">n</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="o">..=</span><span class="mi">9</span><span class="p">)</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="cm">/* single digit */</span><span class="w"> </span><span class="p">}</span>
-<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="kd">let</span><span class="w"> </span><span class="n">x</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="fm">dbg!</span><span class="p">(</span><span class="n">compute</span><span class="p">())</span><span class="w">   </span><span class="c1">// logs the value, returns it</span>
+<div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="k">if</span><span class="w"> </span><span class="fm">matches!</span><span class="p">(</span><span class="n">n</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="o">..=</span><span class="mi">9</span><span class="p">)</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="cm">/* single digit */</span><span class="w"> </span><span class="p">}</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="kd">let</span><span class="w"> </span><span class="n">x</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="fm">dbg!</span><span class="p">(</span><span class="n">compute</span><span class="p">())</span><span class="w">   </span><span class="c1">// logs the value, returns it</span>
 </code></pre></div>
 <h2 id="build-time-macros">Build-time macros<a class="headerlink" href="#build-time-macros" title="Permanent link">&para;</a></h2>
 <p><code>regex!("…")</code> and <code>sql!("…")</code> validate their literal argument at compile

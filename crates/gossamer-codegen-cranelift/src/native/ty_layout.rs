@@ -149,6 +149,18 @@ pub(super) fn stride_slots_from_ty(tcx: &TyCtxt, ty: Ty) -> Option<u32> {
     }
 }
 
+/// True when `ty` is the by-value two-word `[disc, payload]` carrier -
+/// `Option<T>` (sentinel `u32::MAX - 1`) or `Result<T, E>` (`u32::MAX`).
+/// Carriers travel as i128 SSA values, not as address-backed aggregates:
+/// a projected read of a carrier field loads the packed 16 bytes, and an
+/// aggregate store of a carrier operand splits and stores its halves.
+pub(super) fn is_carrier_ty(tcx: &TyCtxt, ty: Ty) -> bool {
+    matches!(
+        tcx.kind_of(ty),
+        TyKind::Adt { def, .. } if def.local == u32::MAX || def.local == u32::MAX - 1
+    )
+}
+
 pub(super) fn type_slot_count(tcx: &TyCtxt, ty: Ty) -> u32 {
     match tcx.kind_of(ty).clone() {
         TyKind::Tuple(elems) => elems
@@ -178,6 +190,96 @@ pub(super) fn type_slot_count(tcx: &TyCtxt, ty: Ty) -> u32 {
             })
         }
         _ => 1,
+    }
+}
+
+/// True when `ty` descends purely through zero-offset single-slot steps to a
+/// heap-managed leaf - a `String` / `Vec` / `[T]` / RC-node. Combined with an
+/// aggregate-kind check in [`single_slot_addr_aggregate`] to pick out the
+/// one-word structs whose sole field the by-value aggregate drop pass zero-inits
+/// and frees via `local.Field(..)`.
+pub(super) fn single_slot_managed_leaf(tcx: &TyCtxt, ty: Ty) -> bool {
+    match tcx.kind_of(ty) {
+        TyKind::Vec(_) | TyKind::Slice(_) | TyKind::String => true,
+        TyKind::Tuple(_) | TyKind::Array { .. } | TyKind::Adt { .. } => {
+            tcx.is_rc_managed(ty) || {
+                let fields: Vec<Ty> = match tcx.kind_of(ty).clone() {
+                    TyKind::Tuple(elems) => elems,
+                    TyKind::Array { elem, .. } => vec![elem],
+                    TyKind::Adt { def, substs } => {
+                        if def.local == u32::MAX
+                            || def.local == u32::MAX - 1
+                            || tcx.is_inline_enum_ty(ty)
+                        {
+                            return false;
+                        }
+                        match tcx.adt_field_tys(def, &substs) {
+                            Some(tys) => tys.to_vec(),
+                            None => return false,
+                        }
+                    }
+                    _ => return false,
+                };
+                fields.iter().any(|t| single_slot_managed_leaf(tcx, *t))
+            }
+        }
+        _ => false,
+    }
+}
+
+/// True when `ty` is a by-value aggregate (struct / tuple / one-element array)
+/// whose whole layout is one 8-byte slot holding a heap-managed leaf. Such an
+/// aggregate is address-represented exactly like a multi-slot one: a local's
+/// `Variable` holds a pointer to the one-word backing storage (stack slot or
+/// heap block), `Field(0)` walks that address, a `&self` receiver copies the
+/// pointer, and the drop pass's `Field`-projected zero-init / free stores load
+/// through it. A bare `Vec` / `String` / heap-enum local is NOT this shape -
+/// its `Variable` holds the runtime pointer value itself, not an address of
+/// backing storage.
+pub(super) fn single_slot_addr_aggregate(tcx: &TyCtxt, ty: Ty) -> bool {
+    matches!(
+        tcx.kind_of(ty),
+        TyKind::Tuple(_) | TyKind::Array { .. } | TyKind::Adt { .. }
+    ) && !tcx.is_rc_managed(ty)
+        && !is_inline_two_word_ty(tcx, ty)
+        && type_slot_count(tcx, ty) == 1
+        && single_slot_managed_leaf(tcx, ty)
+}
+
+/// Slot width of an aggregate operand, preferring recorded `local_slots`
+/// metadata and falling back to the operand type's `type_slot_count`. Returns
+/// `None` for a single-slot (scalar) operand. Used to size array element
+/// strides and per-operand aggregate copies: a nested-aggregate source local
+/// (`Boxed { p: Point }`, `Wrapper<Point>`) may carry no `local_slots` entry,
+/// and without the type fallback its stride collapses to one slot.
+pub(super) fn operand_elem_slots(
+    local_slots: &HashMap<Local, u32>,
+    tcx: &TyCtxt,
+    body: &Body,
+    op: &Operand,
+) -> Option<u32> {
+    let Operand::Copy(place) = op else {
+        return None;
+    };
+    // A projected place names a FIELD (or element), not the whole local; the
+    // recorded `local_slots` count is the aggregate's width and would memcpy
+    // past the field (corrupting a `..base` struct-update operand `Copy(base
+    // .Field(0))`). Only the empty-projection whole-local read may use it.
+    let ty = if place.projection.is_empty() {
+        if let Some(&slots) = local_slots.get(&place.local) {
+            return Some(slots);
+        }
+        body.local_ty(place.local)
+    } else {
+        resolve_place_ty(tcx, body, place)
+    };
+    let n = type_slot_count(tcx, ty);
+    // A one-word address-represented aggregate operand is an address like any
+    // multi-slot one: its single slot is memcpy'd, not stored as a scalar word.
+    if n > 1 || single_slot_addr_aggregate(tcx, ty) {
+        Some(n.max(1))
+    } else {
+        None
     }
 }
 

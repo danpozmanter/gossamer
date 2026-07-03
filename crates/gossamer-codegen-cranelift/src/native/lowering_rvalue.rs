@@ -144,6 +144,53 @@ pub(super) fn lower_rvalue(
     dst_hint: Option<ir::Type>,
     intrinsics: &mut IntrinsicContext,
 ) -> Result<ir::Value> {
+    lower_rvalue_into(
+        module, builder, locals, body, tcx, rvalue, dst_hint, None, intrinsics,
+    )
+}
+
+/// Lowers `rvalue`, optionally writing an `Aggregate` / `Repeat` result into
+/// `dest_base` (a caller-owned backing slot) rather than a fresh
+/// `gos_rt_aggr_alloc` heap block. Used for non-escaping aggregate locals so a
+/// hot loop reuses one stack slot per iteration instead of leaking a heap
+/// block each time (the bytecode VM and the LLVM tier already keep these on the
+/// stack). Every non-aggregate rvalue ignores `dest_base`.
+/// Stores the low and high 64-bit halves of an `i128` carrier value
+/// (`Option<T>` / `Result<T, E>` - the `[disc, payload]` pair) into
+/// `base + off` / `base + off + 8`, the same little-endian two-word
+/// layout a `load.i128` of the slot reproduces.
+pub(super) fn store_i128_words(
+    builder: &mut FunctionBuilder<'_>,
+    val: ir::Value,
+    base: ir::Value,
+    off: i32,
+) {
+    let (lo, hi) = builder.ins().isplit(val);
+    builder.ins().store(
+        MemFlags::trusted(),
+        lo,
+        base,
+        ir::immediates::Offset32::new(off),
+    );
+    builder.ins().store(
+        MemFlags::trusted(),
+        hi,
+        base,
+        ir::immediates::Offset32::new(off + 8),
+    );
+}
+
+pub(super) fn lower_rvalue_into(
+    module: &mut dyn Module,
+    builder: &mut FunctionBuilder<'_>,
+    locals: &mut HashMap<Local, Variable>,
+    body: &Body,
+    tcx: &TyCtxt,
+    rvalue: &Rvalue,
+    dst_hint: Option<ir::Type>,
+    dest_base: Option<ir::Value>,
+    intrinsics: &mut IntrinsicContext,
+) -> Result<ir::Value> {
     Ok(match rvalue {
         Rvalue::Use(operand) => lower_operand(
             module, builder, locals, body, tcx, operand, dst_hint, intrinsics,
@@ -409,16 +456,15 @@ pub(super) fn lower_rvalue(
             // operand's source, so `outer.tag` lands past the
             // embedded `inner` instead of overlapping it.
             let elem_slots: u32 = match kind {
+                // A nested-aggregate element (e.g. `[Boxed; N]` where
+                // `Boxed { p: Point }` is 2 slots) may lack `local_slots`
+                // metadata; `operand_elem_slots` falls back to the element
+                // type's slot count so the array strides by its full width,
+                // matching the reader's `stride_slots_from_ty`. Without it the
+                // stride collapses to one slot and every element past the first
+                // reads past the buffer.
                 gossamer_mir::AggregateKind::Array => operands.first().map_or(1, |op| {
-                    if let Operand::Copy(place) = op {
-                        intrinsics
-                            .local_slots
-                            .get(&place.local)
-                            .copied()
-                            .unwrap_or(1)
-                    } else {
-                        1
-                    }
+                    operand_elem_slots(&intrinsics.local_slots, tcx, body, op).unwrap_or(1)
                 }),
                 _ => 1,
             };
@@ -493,20 +539,23 @@ pub(super) fn lower_rvalue(
             };
             let size = total_slots * 8;
             let ptr_ty = module.target_config().pointer_type();
-            // Heap-allocate (zeroed) via `gos_rt_aggr_alloc`. Stack-slot
-            // allocation breaks the moment the aggregate address
-            // escapes the constructing frame (returning a struct
-            // from a method, storing it in a vec, …) - the slot
-            // dies on epilogue and the next call overwrites it.
-            // The runtime helper tracks every allocation so the
-            // MIR drop pass can reclaim it via `gos_rt_aggr_free`
-            // at scope exit
-            let alloc_fn =
-                intrinsics.extern_fn(module, "gos_rt_aggr_alloc", &[types::I64], &[ptr_ty])?;
-            let alloc_ref = module.declare_func_in_func(alloc_fn, builder.func);
-            let size_val = builder.ins().iconst(types::I64, i64::from(size.max(8)));
-            let alloc_call = builder.ins().call(alloc_ref, &[size_val]);
-            let base = builder.inst_results(alloc_call)[0];
+            // A caller-owned backing slot (a non-escaping aggregate local's
+            // stack slot) receives the fields directly - no heap block, so a
+            // hot loop reuses one slot per iteration instead of leaking. When
+            // the aggregate may escape the frame (returned, stored in a
+            // longer-lived container) the caller passes `None` and we
+            // heap-allocate (zeroed) via `gos_rt_aggr_alloc`, whose backing
+            // block outlives the frame.
+            let base = if let Some(db) = dest_base {
+                db
+            } else {
+                let alloc_fn =
+                    intrinsics.extern_fn(module, "gos_rt_aggr_alloc", &[types::I64], &[ptr_ty])?;
+                let alloc_ref = module.declare_func_in_func(alloc_fn, builder.func);
+                let size_val = builder.ins().iconst(types::I64, i64::from(size.max(8)));
+                let alloc_call = builder.ins().call(alloc_ref, &[size_val]);
+                builder.inst_results(alloc_call)[0]
+            };
             // Running destination offset (in bytes) for ADT/Tuple
             // aggregates so each prior nested struct's full slot
             // span shifts subsequent fields past its layout.
@@ -520,21 +569,13 @@ pub(super) fn lower_rvalue(
                 // correct for scalar operands (ints/floats/booleans
                 // - values that live directly in the local's SSA
                 // Variable).
-                let operand_aggregate_slots: Option<u32> = match operand {
-                    Operand::Copy(place) if place.projection.is_empty() => {
-                        intrinsics.local_slots.get(&place.local).copied()
-                    }
-                    Operand::Copy(place) => {
-                        // Projected read of a multi-slot field
-                        // (`..base` filling): the read returns the
-                        // field's address; copy its slot span into
-                        // the new aggregate's slot.
-                        let leaf = resolve_place_ty(tcx, body, place);
-                        let count = type_slot_count(tcx, leaf);
-                        if count > 1 { Some(count) } else { None }
-                    }
-                    _ => None,
-                };
+                // A multi-slot source local (with or without recorded metadata)
+                // is memcpy'd by its slot count, not stored as a single
+                // pointer-shaped word. `operand_elem_slots` covers both the
+                // bare-local and projected-field cases with the same type
+                // fallback used for the array stride above.
+                let operand_aggregate_slots: Option<u32> =
+                    operand_elem_slots(&intrinsics.local_slots, tcx, body, operand);
                 let dst_off = match kind {
                     gossamer_mir::AggregateKind::Array => (i as u32) * elem_slots * 8,
                     _ => running_dst_off,
@@ -547,20 +588,29 @@ pub(super) fn lower_rvalue(
                     let src = lower_operand(
                         module, builder, locals, body, tcx, operand, None, intrinsics,
                     )?;
-                    for slot_idx in 0..copy_slots {
-                        let off = (slot_idx as i32) * 8;
-                        let word = builder.ins().load(
-                            types::I64,
-                            MemFlags::trusted(),
-                            src,
-                            ir::immediates::Offset32::new(off),
-                        );
-                        builder.ins().store(
-                            MemFlags::trusted(),
-                            word,
-                            base,
-                            ir::immediates::Offset32::new((dst_off as i32) + off),
-                        );
+                    if value_type(src, builder) == types::I128 {
+                        // A two-slot inline carrier (`Option<T>` /
+                        // `Result<T, E>`) lowers to an i128 SSA *value*,
+                        // not an address - store its halves directly
+                        // rather than word-copying through it as a
+                        // pointer.
+                        store_i128_words(builder, src, base, dst_off as i32);
+                    } else {
+                        for slot_idx in 0..copy_slots {
+                            let off = (slot_idx as i32) * 8;
+                            let word = builder.ins().load(
+                                types::I64,
+                                MemFlags::trusted(),
+                                src,
+                                ir::immediates::Offset32::new(off),
+                            );
+                            builder.ins().store(
+                                MemFlags::trusted(),
+                                word,
+                                base,
+                                ir::immediates::Offset32::new((dst_off as i32) + off),
+                            );
+                        }
                     }
                 } else {
                     let value = lower_operand(
@@ -586,35 +636,43 @@ pub(super) fn lower_rvalue(
             builder.ins().iconst(types::I64, 0)
         }
         Rvalue::Repeat { value, count } => {
-            let elem_slots: u32 = if let Operand::Copy(place) = value {
-                intrinsics
-                    .local_slots
-                    .get(&place.local)
-                    .copied()
-                    .unwrap_or(1)
-            } else {
-                1
-            };
+            // `Some(n)` marks an address-represented aggregate element (its
+            // operand value is a pointer whose `n` slots are copied per
+            // repetition, `n == 1` included); `None` is a scalar element
+            // stored by value.
+            let operand_agg_slots: Option<u32> =
+                operand_elem_slots(&intrinsics.local_slots, tcx, body, value);
+            let elem_slots: u32 = operand_agg_slots.unwrap_or(1);
             let total_slots = u32::try_from(*count)
                 .map_err(|_| anyhow!("native codegen: repeat count too large"))?
                 .saturating_mul(elem_slots);
             let size = total_slots.saturating_mul(8);
             let ptr_ty = module.target_config().pointer_type();
-            // Heap-allocate (zeroed) via gos_rt_aggr_alloc (see
-            // Aggregate path above; same tracking semantics).
-            let alloc_fn =
-                intrinsics.extern_fn(module, "gos_rt_aggr_alloc", &[types::I64], &[ptr_ty])?;
-            let alloc_ref = module.declare_func_in_func(alloc_fn, builder.func);
-            let size_val = builder.ins().iconst(types::I64, i64::from(size.max(8)));
-            let alloc_call = builder.ins().call(alloc_ref, &[size_val]);
-            let base = builder.inst_results(alloc_call)[0];
+            // As in the `Aggregate` path: fill a caller-owned non-escaping
+            // slot directly, else heap-allocate (zeroed) via
+            // `gos_rt_aggr_alloc`. The assign path treats any slot it hands
+            // in as filled on return (it does not rebind the local to the
+            // returned pointer), so a provided `dest_base` must always be
+            // the buffer written here - including for scalar elements,
+            // where the slot (unlike the heap block) is not pre-zeroed and
+            // the zero-store elision below must not fire.
+            let base = if let Some(db) = dest_base {
+                db
+            } else {
+                let alloc_fn =
+                    intrinsics.extern_fn(module, "gos_rt_aggr_alloc", &[types::I64], &[ptr_ty])?;
+                let alloc_ref = module.declare_func_in_func(alloc_fn, builder.func);
+                let size_val = builder.ins().iconst(types::I64, i64::from(size.max(8)));
+                let alloc_call = builder.ins().call(alloc_ref, &[size_val]);
+                builder.inst_results(alloc_call)[0]
+            };
             // Threshold for switching from unrolled stores to a counted
             // loop. Unrolling beyond this generates O(count) Cranelift
             // instructions - for `[f64; 6000]` that inflates the JIT IR
             // to tens of thousands of ops, pushing peak RSS ~30 MB for a
             // single compilation. A loop keeps the IR size O(1).
             const UNROLL_LIMIT: u64 = 16;
-            if elem_slots > 1 {
+            if operand_agg_slots.is_some() {
                 if let Operand::Copy(place) = value {
                     let src = lower_place_read(
                         module,
@@ -626,7 +684,50 @@ pub(super) fn lower_rvalue(
                         Some(ptr_ty),
                         intrinsics,
                     )?;
-                    if *count <= UNROLL_LIMIT {
+                    if value_type(src, builder) == types::I128 {
+                        // A two-slot inline carrier element is an i128
+                        // value, not an address - store its halves per
+                        // repetition instead of loading through it.
+                        if *count <= UNROLL_LIMIT {
+                            for i in 0..*count {
+                                let dst_offset = i32::try_from(i * 16).map_err(|_| {
+                                    anyhow!("native codegen: repeat offset too large")
+                                })?;
+                                store_i128_words(builder, src, base, dst_offset);
+                            }
+                        } else {
+                            let (lo, hi) = builder.ins().isplit(src);
+                            let loop_hdr = builder.create_block();
+                            let loop_body = builder.create_block();
+                            let exit_blk = builder.create_block();
+                            builder.append_block_param(loop_hdr, types::I64);
+                            let zero = builder.ins().iconst(types::I64, 0);
+                            builder.ins().jump(loop_hdr, &[ir::BlockArg::Value(zero)]);
+                            builder.switch_to_block(loop_hdr);
+                            let ctr = builder.block_params(loop_hdr)[0];
+                            let cnt_v = builder.ins().iconst(types::I64, *count as i64);
+                            let ok = builder.ins().icmp(IntCC::SignedLessThan, ctr, cnt_v);
+                            builder.ins().brif(ok, loop_body, &[], exit_blk, &[]);
+                            builder.switch_to_block(loop_body);
+                            let byte_off = builder.ins().imul_imm(ctr, 16_i64);
+                            let dst = builder.ins().iadd(base, byte_off);
+                            builder.ins().store(
+                                MemFlags::trusted(),
+                                lo,
+                                dst,
+                                ir::immediates::Offset32::new(0),
+                            );
+                            builder.ins().store(
+                                MemFlags::trusted(),
+                                hi,
+                                dst,
+                                ir::immediates::Offset32::new(8),
+                            );
+                            let next = builder.ins().iadd_imm(ctr, 1);
+                            builder.ins().jump(loop_hdr, &[ir::BlockArg::Value(next)]);
+                            builder.switch_to_block(exit_blk);
+                        }
+                    } else if *count <= UNROLL_LIMIT {
                         for i in 0..*count {
                             let dst_offset = (i as u32) * elem_slots * 8;
                             for slot_idx in 0..elem_slots {
@@ -684,17 +785,19 @@ pub(super) fn lower_rvalue(
                 }
             } else {
                 // Scalar repeat (`[v; N]` where v is one slot wide).
-                // calloc already zeroed the buffer, so zero constants need
-                // no stores at all - skip the init entirely.
-                let is_zero = matches!(
-                    value,
-                    Operand::Const(
-                        ConstValue::Int(0)
-                            | ConstValue::Float(0)
-                            | ConstValue::Bool(false)
-                            | ConstValue::Unit
-                    )
-                );
+                // The heap block arrives calloc-zeroed, so zero constants
+                // need no stores there; a caller-provided stack slot holds
+                // stale words and must be written even for zeros.
+                let is_zero = dest_base.is_none()
+                    && matches!(
+                        value,
+                        Operand::Const(
+                            ConstValue::Int(0)
+                                | ConstValue::Float(0)
+                                | ConstValue::Bool(false)
+                                | ConstValue::Unit
+                        )
+                    );
                 if !is_zero {
                     let element =
                         lower_operand(module, builder, locals, body, tcx, value, None, intrinsics)?;

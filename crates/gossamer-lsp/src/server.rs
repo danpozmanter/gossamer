@@ -1156,26 +1156,29 @@ impl ServerState {
         let Some(doc) = self.documents.get(uri) else {
             return Value::Array(Vec::new());
         };
-        // Reject formatting requests on documents with parse errors;
-        // the AST printer would otherwise produce nonsensical output.
-        if doc
-            .diagnostics
-            .iter()
-            .any(|d| matches!(d.severity, Severity::Error))
-        {
+        // The stored source is the AUGMENTED program (user text +
+        // synthesized autoderive tail). Format ONLY the user prefix,
+        // through the same token-stream formatter `gos fmt` uses -
+        // rendering `doc.sf` would print the synthesized items and
+        // the parse-time desugars straight into the editor's buffer.
+        let user_source = doc.user_source();
+        let Ok(formatted) = gossamer_parse::format_source(user_source, doc.file) else {
+            // Unparseable, or failed the formatter's token-equivalence
+            // self-check: leave the buffer untouched.
             return Value::Array(Vec::new());
-        }
-        let formatted = format!("{}", doc.sf);
+        };
         let formatted = if formatted.ends_with('\n') {
             formatted
         } else {
             format!("{formatted}\n")
         };
-        if formatted == doc.source() {
+        if formatted == user_source {
             return Value::Array(Vec::new());
         }
-        // Replace the entire document.
-        let (end_line, end_col) = doc.offset_to_position(doc.source().len() as u32);
+        // Replace the user text exactly: the range end is the end of
+        // the editor's buffer, never a position inside the synthesized
+        // tail the client has no lines for.
+        let (end_line, end_col) = doc.offset_to_position(doc.user_len);
         let mut start = BTreeMap::new();
         start.insert("line".to_string(), Value::Number(0.0));
         start.insert("character".to_string(), Value::Number(0.0));
@@ -3178,6 +3181,61 @@ mod tests {
         // Whatever the formatter emits should be fine - we just need
         // the call to complete cleanly.
         let _ = state.formatting(&Value::Object(params));
+    }
+
+    #[test]
+    fn formatting_never_leaks_the_synthesized_autoderive_tail() {
+        // A struct makes the analysis pipeline append synthesized serde
+        // functions to the stored source. A formatting edit must cover
+        // and return ONLY the user text: the synthesized names must not
+        // appear in `newText`, and the edit's end position must not
+        // reach past the editor's buffer (the client would clamp it and
+        // splice the expansion over all but the final line).
+        let src = "struct Account { balance: i64, txns: i64 }\n\nfn main() {\n    let a = Account { balance: 1, txns: 2 }\n    println!(\"{a.balance}\")\n}\n";
+        let mut state = ServerState::new();
+        state.update("file:///fmt_tail.gos", src);
+        let mut params = BTreeMap::new();
+        let mut text_doc = BTreeMap::new();
+        text_doc.insert(
+            "uri".to_string(),
+            Value::String("file:///fmt_tail.gos".to_string()),
+        );
+        params.insert("textDocument".to_string(), Value::Object(text_doc));
+        let response = state.formatting(&Value::Object(params));
+        let Value::Array(edits) = response else {
+            panic!("formatting must return an edit array");
+        };
+        let user_lines = src.lines().count() as f64;
+        for edit in &edits {
+            let Value::Object(edit) = edit else {
+                panic!("edit must be an object");
+            };
+            if let Some(Value::String(new_text)) = edit.get("newText") {
+                assert!(
+                    !new_text.contains("__gos_serde") && !new_text.contains("__concat"),
+                    "formatting leaked synthesized items into the buffer:\n{new_text}"
+                );
+            }
+            let end_line = edit
+                .get("range")
+                .and_then(|r| match r {
+                    Value::Object(r) => r.get("end"),
+                    _ => None,
+                })
+                .and_then(|e| match e {
+                    Value::Object(e) => e.get("line"),
+                    _ => None,
+                })
+                .and_then(|l| match l {
+                    Value::Number(n) => Some(*n),
+                    _ => None,
+                })
+                .expect("edit carries an end line");
+            assert!(
+                end_line <= user_lines,
+                "edit end line {end_line} reaches past the {user_lines}-line editor buffer"
+            );
+        }
     }
 
     #[test]

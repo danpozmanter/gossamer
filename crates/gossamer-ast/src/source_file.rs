@@ -135,29 +135,37 @@ impl ModulePath {
     }
 }
 
-/// One entry in a `use target::{ ... }` brace list.
+/// One entry in a `use target::{ ... }` brace list. An entry may be a
+/// multi-segment path (`use std::{encoding::json}`): `prefix` holds the
+/// segments before the bound `name` (the final segment), so the full
+/// import path is `target :: prefix :: name`.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct UseListEntry {
-    /// Name being imported.
+    /// Path segments before the bound name (empty for a single-segment
+    /// entry like `env`).
+    pub prefix: Vec<Ident>,
+    /// Final segment of the entry, the name bound into scope.
     pub name: Ident,
     /// Optional `as rename`.
     pub alias: Option<Ident>,
 }
 
 impl UseListEntry {
-    /// Constructs an entry with no rename.
+    /// Constructs a single-segment entry with no rename.
     #[must_use]
     pub fn simple(name: impl Into<String>) -> Self {
         Self {
+            prefix: Vec::new(),
             name: Ident::new(name),
             alias: None,
         }
     }
 
-    /// Constructs an entry with `as rename`.
+    /// Constructs a single-segment entry with `as rename`.
     #[must_use]
     pub fn aliased(name: impl Into<String>, alias: impl Into<String>) -> Self {
         Self {
+            prefix: Vec::new(),
             name: Ident::new(name),
             alias: Some(Ident::new(alias)),
         }

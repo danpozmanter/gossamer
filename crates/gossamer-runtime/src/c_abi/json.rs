@@ -197,9 +197,14 @@ pub unsafe extern "C" fn gos_rt_json_parse(text: *const c_char) -> i128 {
             Ok(Err(e)) => {
                 let msg = format!("{e}");
                 let cs = alloc_cstring(msg.as_bytes());
-                unsafe { gos_rt_result_new(1, cs as i64) }
+                let err = unsafe { gos_rt_error_new(cs) };
+                unsafe { gos_rt_result_new(1, err as i64) }
             }
-            Err(_) => unsafe { gos_rt_result_new(1, alloc_cstring(b"invalid UTF-8") as i64) },
+            Err(_) => {
+                let cs = alloc_cstring(b"invalid UTF-8");
+                let err = unsafe { gos_rt_error_new(cs) };
+                unsafe { gos_rt_result_new(1, err as i64) }
+            }
         }
     })
 }

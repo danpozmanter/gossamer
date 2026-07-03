@@ -609,6 +609,140 @@ pub unsafe extern "C" fn gos_rt_iter_filter_i64(env: *const u8, v: *const GosVec
     })
 }
 
+/// `iter::for_each(f, xs)` for `Vec<f64>`. Element bits are read as an
+/// 8-byte word and reinterpreted as `f64` so the closure receives the
+/// value in the float ABI (an `f64` param rides an SSE register, not the
+/// integer register `f(env, x: i64)` would fill).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_iter_for_each_f64(env: *const u8, v: *const GosVec) {
+    ffi_entry!((), {
+        if env.is_null() || v.is_null() {
+            return;
+        }
+        let vec = unsafe { &*v };
+        if vec.len <= 0 {
+            return;
+        }
+        type CallFn = unsafe extern "C" fn(env: *const u8, x: f64) -> i64;
+        let fn_addr_raw = unsafe { (env as *const usize).read() };
+        if fn_addr_raw == 0 {
+            return;
+        }
+        let f: CallFn = unsafe { std::mem::transmute(fn_addr_raw) };
+        for i in 0..vec.len {
+            let x = f64::from_bits(unsafe { gos_rt_vec_get_i64(v, i) } as u64);
+            unsafe { f(env, x) };
+        }
+    });
+}
+
+/// `iter::map(f, xs)` for `Vec<f64> -> Vec<f64>`. Reads each element's
+/// bits as `f64`, calls the float-ABI closure, and stores the result
+/// bits back into the new Vec. The input and output register class each
+/// pick their own shim (an `f64` rides an SSE register, an `i64` /
+/// pointer an integer one) - a mismatched pairing would read the result
+/// out of the wrong register.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_iter_map_f64(env: *const u8, v: *const GosVec) -> *mut GosVec {
+    ffi_entry!(std::ptr::null_mut(), {
+        let out = unsafe { gos_rt_vec_new(8) };
+        if env.is_null() || v.is_null() {
+            return out;
+        }
+        let vec = unsafe { &*v };
+        type CallFn = unsafe extern "C" fn(env: *const u8, x: f64) -> f64;
+        let fn_addr_raw = unsafe { (env as *const usize).read() };
+        if fn_addr_raw == 0 {
+            return out;
+        }
+        let f: CallFn = unsafe { std::mem::transmute(fn_addr_raw) };
+        for i in 0..vec.len {
+            let x = f64::from_bits(unsafe { gos_rt_vec_get_i64(v, i) } as u64);
+            let y = unsafe { f(env, x) };
+            unsafe { gos_rt_vec_push_i64(out, y.to_bits() as i64) };
+        }
+        out
+    })
+}
+
+/// `iter::map(f, xs)` for `Vec<f64> -> Vec<i64 / ptr>` - an `f64`
+/// element mapped to an integer-register result (`|x| x as i64`,
+/// `|x| format!("{}", x)`).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_iter_map_f64_word(env: *const u8, v: *const GosVec) -> *mut GosVec {
+    ffi_entry!(std::ptr::null_mut(), {
+        let out = unsafe { gos_rt_vec_new(8) };
+        if env.is_null() || v.is_null() {
+            return out;
+        }
+        let vec = unsafe { &*v };
+        type CallFn = unsafe extern "C" fn(env: *const u8, x: f64) -> i64;
+        let fn_addr_raw = unsafe { (env as *const usize).read() };
+        if fn_addr_raw == 0 {
+            return out;
+        }
+        let f: CallFn = unsafe { std::mem::transmute(fn_addr_raw) };
+        for i in 0..vec.len {
+            let x = f64::from_bits(unsafe { gos_rt_vec_get_i64(v, i) } as u64);
+            let y = unsafe { f(env, x) };
+            unsafe { gos_rt_vec_push_i64(out, y) };
+        }
+        out
+    })
+}
+
+/// `iter::map(f, xs)` for `Vec<i64 / ptr> -> Vec<f64>` - an
+/// integer-register element mapped to an `f64` result (`|i| i as f64`).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_iter_map_word_f64(env: *const u8, v: *const GosVec) -> *mut GosVec {
+    ffi_entry!(std::ptr::null_mut(), {
+        let out = unsafe { gos_rt_vec_new(8) };
+        if env.is_null() || v.is_null() {
+            return out;
+        }
+        let vec = unsafe { &*v };
+        type CallFn = unsafe extern "C" fn(env: *const u8, x: i64) -> f64;
+        let fn_addr_raw = unsafe { (env as *const usize).read() };
+        if fn_addr_raw == 0 {
+            return out;
+        }
+        let f: CallFn = unsafe { std::mem::transmute(fn_addr_raw) };
+        for i in 0..vec.len {
+            let x = unsafe { gos_rt_vec_get_i64(v, i) };
+            let y = unsafe { f(env, x) };
+            unsafe { gos_rt_vec_push_i64(out, y.to_bits() as i64) };
+        }
+        out
+    })
+}
+
+/// `iter::filter(p, xs)` for `Vec<f64>`. The kept elements are the
+/// original bit patterns; only the predicate sees the reinterpreted
+/// `f64` value.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_iter_filter_f64(env: *const u8, v: *const GosVec) -> *mut GosVec {
+    ffi_entry!(std::ptr::null_mut(), {
+        let out = unsafe { gos_rt_vec_new(8) };
+        if env.is_null() || v.is_null() {
+            return out;
+        }
+        let vec = unsafe { &*v };
+        type PredFn = unsafe extern "C" fn(env: *const u8, x: f64) -> bool;
+        let fn_addr_raw = unsafe { (env as *const usize).read() };
+        if fn_addr_raw == 0 {
+            return out;
+        }
+        let p: PredFn = unsafe { std::mem::transmute(fn_addr_raw) };
+        for i in 0..vec.len {
+            let bits = unsafe { gos_rt_vec_get_i64(v, i) };
+            if unsafe { p(env, f64::from_bits(bits as u64)) } {
+                unsafe { gos_rt_vec_push_i64(out, bits) };
+            }
+        }
+        out
+    })
+}
+
 /// `iter::fold(init, f, xs)` for `Vec<i64>` with i64 accumulator.
 /// Closure body sig: `(env, acc, x) -> acc`.
 #[unsafe(no_mangle)]

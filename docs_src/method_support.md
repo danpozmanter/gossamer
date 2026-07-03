@@ -29,8 +29,17 @@ gaps are one-line additions to the dispatch table.
 | `s.clone()` | `String` | |
 | `s.as_bytes()` | `&[u8]` | Zero-copy borrow. |
 | `s.as_str()` | `&str` | Zero-copy borrow. |
+| `s.to_i64()` | `Option<i64>` | Parses the string; `None` on malformed input. |
+| `s.to_f64()` | `Option<f64>` | |
+| `s.to_bool()` | `Option<bool>` | Accepts `true` / `false`. |
+| `s.trim_matches(set)` | `String` | Strips any char in `set` from both ends; `trim_start_matches` / `trim_end_matches` do one end. |
+| `s.split_once(sep)` | `Option<(String, String)>` | First occurrence; `rsplit_once` takes the last. |
 
 ## Vec
+
+Ranges are plain `Vec<i64>` values - `(2..n)` and `(1..=n)` build the
+sequence directly, so every method below chains off a range too:
+`(1..=5).filter(|n| n % 2 == 1).sum()`.
 
 | Method | Returns | Notes |
 |---|---|---|
@@ -38,6 +47,23 @@ gaps are one-line additions to the dispatch table.
 | `v.pop()` | `Option<T>` | |
 | `v.len()` | `i64` | |
 | `v.iter()` | `Iter<T>` | Lazy iterator. |
+| `v.filter(pred)` | `[T]` | Elements where `pred` holds. |
+| `v.map(f)` | `[U]` | Transform every element. |
+| `v.sum()` | `T` | Numeric sum; `0` for empty. |
+| `v.min()` / `v.max()` | `Option<T>` | `None` for empty. |
+| `v.count(pred)` | `i64` | Elements where `pred` holds. |
+| `v.any(pred)` / `v.all(pred)` | `bool` | Short-circuiting. |
+| `v.find(pred)` | `Option<T>` | First match; `v.position(pred)` returns its index. |
+| `v.fold(init, f)` | `U` | Left fold: `f(acc, x)` per element. |
+| `v.max_by_key(f)` / `v.min_by_key(f)` | `Option<T>` | Extremum by derived key. |
+| `v.take(n)` | `[T]` | First `n` elements (fewer if short). |
+| `v.step_by(n)` | `[T]` | Every `n`-th element, starting at index 0. |
+| `v.join(sep)` | `String` | Scalar / `String` elements joined with `sep`. |
+| `v.first()` / `v.last()` | `Option<T>` | |
+| `v.reversed()` | `[T]` | Non-mutating; `v.reverse()` is in-place. |
+| `v.contains(&x)` | `bool` | `v.index_of(&x)` returns `Option<i64>`, `v.count_of(&x)` the tally. |
+| `v.sort()` / `v.sort_by(cmp)` / `v.sort_by_key(f)` | `()` | In-place; `Reverse(k)` keys give descending order. |
+| `v.swap(i, j)` | `()` | |
 
 ## HashMap
 
@@ -49,6 +75,7 @@ gaps are one-line additions to the dispatch table.
 | `m.contains_key(k)` | `bool` | Key-membership test (`m.contains(k)` is an alias). |
 | `m.remove(k)` | `()` | Deletes the key in place. Use `HashMap::pop(m, k) -> Option<V>` to recover the removed value. |
 | `m.inc(k)` / `m.inc(k, by)` | `()` | Increment an `i64` counter, inserting `0` first if absent. |
+| `m.or_insert(k, default)` | `V` | Value for `k`, inserting `default` first when absent; works for aggregate values (structs, tuples) too. |
 | `m.len()` | `i64` | |
 | `m.iter()` | `[(K, V)]` | `keys()` / `values()` return the halves. |
 
@@ -91,11 +118,10 @@ share these methods:
 
 | Method | Returns | Notes |
 |---|---|---|
-| `tx.send(v)` | `()` | Blocks if buffered channel is full. |
-| `rx.recv()` | `T` | Blocks until a value is available. |
+| `tx.send(v)` | `()` | Enqueues `v`; a buffered send does not block on a waiting receiver. |
+| `rx.recv()` | `Option<T>` | Blocks until a value is available; `Some(v)`, or `None` once the channel is closed and drained. The canonical drain is `while let Some(v) = rx.recv()`. |
 | `rx.recv_ctx(&ctx)` | `Option<T>` | Blocks like `recv()` but returns `None` when the supplied [`std::context::Context`](stdlib.md#stdcontext) fires. Goroutine callers observe cancellation immediately via the scheduler unpark path; OS-thread callers within 50ms via a bounded condvar timeout. |
-| `tx.try_send(v)` | `bool` | Non-blocking; false if full. |
-| `rx.try_recv()` | `Option<T>` | Non-blocking; None if empty. |
+| `rx.try_recv()` | `Option<T>` | Non-blocking; `None` if empty. |
 | `tx.close()` / `rx.close()` | `()` | Subsequent send/recv return immediately. |
 
 ## Streams (`io::stdout` / `io::stderr` / file handles)

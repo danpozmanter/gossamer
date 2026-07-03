@@ -1,0 +1,61 @@
+// Operator overloading on enums and generic structs. An enum operand
+// (bound local or inline constructor) dispatches `+` / unary `-` / `+=`
+// to its impl methods, and a generic `impl<T> Add for Wrap<T>` types
+// `a + b` per instantiation - including a chained field read of the
+// result (`(a + b).v`), which must print `f64` payloads as floats.
+// Output must be bit-identical across the VM, Cranelift, and LLVM.
+enum Sign { Pos(i64), Neg(i64) }
+
+impl Add for Sign {
+    fn add(self, o: Sign) -> Sign {
+        match self {
+            Sign::Pos(a) => match o {
+                Sign::Pos(b) => Sign::Pos(a + b),
+                Sign::Neg(b) => Sign::Pos(a - b),
+            },
+            Sign::Neg(a) => match o {
+                Sign::Pos(b) => Sign::Pos(b - a),
+                Sign::Neg(b) => Sign::Neg(a + b),
+            },
+        }
+    }
+}
+impl Neg for Sign {
+    fn neg(self) -> Sign {
+        match self {
+            Sign::Pos(n) => Sign::Neg(n),
+            Sign::Neg(n) => Sign::Pos(n),
+        }
+    }
+}
+
+struct Wrap<T> { v: T }
+
+impl<T> Add for Wrap<T> {
+    fn add(self, o: Wrap<T>) -> Wrap<T> { Wrap { v: self.v + o.v } }
+}
+
+fn show(s: Sign) {
+    match s {
+        Sign::Pos(n) => println!("pos {n}"),
+        Sign::Neg(n) => println!("neg {n}"),
+    }
+}
+
+fn main() {
+    let p = Sign::Pos(7)
+    let q = Sign::Neg(3)
+    show(p + q)
+    show(-p)
+    show(-Sign::Neg(9))
+    let mut acc = Sign::Pos(1)
+    acc += Sign::Pos(2)
+    acc += Sign::Neg(4)
+    show(acc)
+    let a = Wrap { v: 3 }
+    let b = Wrap { v: 4 }
+    println!("{}", (a + b).v)
+    let c = Wrap { v: 1.5 }
+    let d = Wrap { v: 0.25 }
+    println!("{}", (c + d).v)
+}

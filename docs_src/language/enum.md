@@ -5,10 +5,13 @@ Status: shipped
 Sum type declaration with payload-carrying variants.
 <!-- hand-maintained from here: preserved by `gos doc --emit-stdlib` -->
 
-Variants carry tuple payloads (`Line(i64)`, `Box(i64, i64)`), struct
+Variants carry tuple payloads (`Line(i64)`, `Rect(i64, i64)`), struct
 payloads (`Named { id: i64 }`), or nothing (`Dot`). Recursive payloads
-work directly (`enum List { Cons(i64, Box<List>), Nil }`); `Box` / `Arc`
-/ `Rc` are transparent. Match exhaustively.
+work directly with no wrapper - `enum List { Cons(i64, List), Nil }` -
+because every variant payload is already heap-shared. The `Box<List>` /
+`Arc<List>` / `Rc<List>` spellings are transparent and compile to the
+same thing, so reach for them only when the type reads clearer with the
+wrapper. Match exhaustively.
 
 ## Compare by value, no derive
 

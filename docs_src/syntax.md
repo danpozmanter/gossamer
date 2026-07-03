@@ -188,6 +188,22 @@ for item in iter { ... }
 `break value` returns a value from `loop`. `continue` jumps to
 the top.
 
+## Ranges and sequence methods
+
+A range is a plain `Vec<i64>` value: `(2..n)` is exclusive, `(1..=n)`
+inclusive. The sequence combinators are methods on any Vec or range -
+`filter`, `map`, `sum`, `count(pred)`, `any` / `all`, `find` /
+`position`, `fold`, `min` / `max`, `take`, `step_by`, `join` - so a
+query chains directly with no accumulator:
+
+```gossamer
+let odds_sq = (1..=9).filter(|n| n % 2 == 1).map(|n| n * n).sum()
+let primes = (2..limit).filter(|k| sieve[k])
+```
+
+Range binds looser than arithmetic and tighter than `|>`, so
+`i * i..n` reads `(i * i)..n`.
+
 ## Error handling
 
 ```gossamer
@@ -236,7 +252,8 @@ select {
 M:N scheduler. Blocking primitives (channel ops, mutex contention,
 `time::sleep`, network reads, filesystem syscalls) park the
 goroutine, freeing the worker thread to run other goroutines.
-Channels are typed and bounded; `select` multiplexes receives.
+Channels are typed and buffered (created with `channel()` - there is no
+capacity argument); `select` multiplexes receives.
 
 Scheduling is cooperative with watchdog-assisted preemption: a
 goroutine yields at safepoints (every park point above, plus
@@ -262,13 +279,12 @@ Higher-order parameters distinguish two callable types:
 
 ```gossamer
 fn apply(f: Fn(i64) -> i64, x: i64) -> i64 { f(x) }
+fn add_one(y: i64) -> i64 { y + 1 }
 
 fn main() {
     let scale = 10
     let scaled = |y: i64| scale * y    // captures `scale`
     println!("{}", apply(scaled, 5))   // 50
-
-    fn add_one(y: i64) -> i64 { y + 1 }
     println!("{}", apply(add_one, 41)) // 42 - bare fn coerces
 }
 ```
@@ -346,6 +362,10 @@ let age = 30
 println!("hello, {name}! you are {age} years old.")
 let greeting = format!("welcome, {}", name)
 ```
+
+A named capture may walk a field path - `{account.balance}`, tuple
+index `{t.0}`, nested `{o.inner.hits}` - with specs applying to the
+path (`{account.balance:>8}`).
 
 | Macro | Effect |
 |-------|--------|

@@ -59,6 +59,17 @@ impl Vm {
     pub(crate) fn apply(&self, global: Global, args: Vec<Value>) -> RuntimeResult<Value> {
         match global {
             Global::Fn(chunk) => {
+                // Byte-precise native-stack guard, consulted before the frame
+                // count. A JIT-compiled body recurses on the real OS stack
+                // (not the heap frame pool `MAX_CALL_DEPTH` bounds), so a
+                // frame count alone cannot stop it before the guard page; the
+                // armed byte budget catches that recursion at the boundary and
+                // raises a clean stack-overflow, ending only the current
+                // goroutine instead of aborting the whole process. No-op when
+                // unarmed.
+                if gossamer_coro::stack_guard_tripped() {
+                    return Err(RuntimeError::StackOverflow(MAX_CALL_DEPTH));
+                }
                 // Refuse calls beyond the goroutine call-depth cap. The VM
                 // allocates Gossamer frames on the heap (not on the OS stack),
                 // so without this check a program like `fn f(n) { f(n+1) }`
@@ -86,21 +97,21 @@ impl Vm {
                 // Tier D2 - decrement the per-`Vm` hot counter and
                 // trigger a deferred JIT compile when the budget is
                 // spent. The counter is per-thread (in `ChunkState`),
-                // so each goroutine independently warms up.
-                // `main` is always executed on the bytecode path (the
-                // JIT compiler skips it); its hot counter is irrelevant.
-                // We rely purely on per-function counters so short-lived
-                // scripts that never call any function 16+ times skip the
-                // Cranelift compile pass entirely - a ~3 MB RSS saving for
-                // programs that don't benefit from JIT.
-                if chunk.name != "main" {
-                    let hot = state.hot_counter.get();
-                    if hot > 0 && hot != crate::bytecode::HOT_DISABLED {
-                        let next = hot - 1;
-                        state.hot_counter.set(next);
-                        if next == 0 {
-                            self.try_compile_jit_lazy();
-                        }
+                // so each goroutine independently warms up. `main`
+                // participates like any body: sret covers every
+                // aggregate-return shape, so a hot loop living
+                // directly in the implicit top-level `main` promotes.
+                // A loop-bearing `main` sits in the eager set (counter
+                // starts at 1) and compiles on its single call; a
+                // loop-free `main` never trips its size-scaled
+                // threshold on one call, keeping short scripts off
+                // the Cranelift compile pass entirely.
+                let hot = state.hot_counter.get();
+                if hot > 0 && hot != crate::bytecode::HOT_DISABLED {
+                    let next = hot - 1;
+                    state.hot_counter.set(next);
+                    if next == 0 {
+                        self.try_compile_jit_lazy();
                     }
                 }
                 // Tier D1 - if the deferred compile produced a

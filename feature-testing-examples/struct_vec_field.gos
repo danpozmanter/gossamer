@@ -1,0 +1,81 @@
+// A by-value struct with a `Vec` / `[T]` field: construction moves the vector
+// in, a struct copy / `..base` update shares it (retained through the vec
+// count), a field extract borrows it, and every owner frees it exactly once at
+// death. Exercises the drop pass's Vec/Slice field teardown and the Cranelift
+// single-slot-aggregate and struct-update lowering across all three tiers.
+
+struct Rec { data: [i64], name: String }
+struct Box2 { data: [i64] }
+struct Inner { xs: [i64], tag: String }
+struct Outer { inner: Inner, id: i64 }
+struct Tagged { data: [i64], name: String, id: i64 }
+
+// The vector is built here and moved into the returned struct.
+fn make(n: i64) -> Rec {
+    let mut v: [i64] = []
+    let mut i = 0
+    while i < n {
+        v.push(i * 2)
+        i += 1
+    }
+    Rec { data: v, name: "row" }
+}
+
+// Single-field struct: the whole aggregate is one word (its vec).
+fn make_box(n: i64) -> Box2 {
+    let mut v: [i64] = []
+    let mut i = 0
+    while i < n {
+        v.push(i)
+        i += 1
+    }
+    Box2 { data: v }
+}
+
+fn sum_of(xs: &[i64]) -> i64 {
+    let mut acc = 0
+    for x in xs {
+        acc += x
+    }
+    acc
+}
+
+fn main() {
+    let mut total = 0
+    let mut r = 0
+    while r < 500 {
+        // whole-struct drop each iteration (moved in via a returning fn)
+        let rec = make(8)
+        total += sum_of(&rec.data) + rec.name.len()
+
+        // struct copy: both owners share the vec
+        let a = make(4)
+        let b = a
+        total += sum_of(&a.data) + sum_of(&b.data)
+
+        // field extract into an owned local
+        let d = rec.data
+        total += d.len()
+
+        // single-field struct
+        let bx = make_box(5)
+        total += sum_of(&bx.data)
+
+        // nested by-value struct with a vec field
+        let mut nv: [i64] = []
+        nv.push(r)
+        nv.push(r + 1)
+        let o = Outer { inner: Inner { xs: nv, tag: "t" }, id: r }
+        total += sum_of(&o.inner.xs) + o.id + o.inner.tag.len()
+
+        // `..base` update sharing the vec field
+        let mut bv: [i64] = []
+        bv.push(r * 3)
+        let base = Tagged { data: bv, name: "b", id: r }
+        let upd = Tagged { ..base, id: r + 1 }
+        total += sum_of(&base.data) + sum_of(&upd.data) + upd.id + upd.name.len()
+
+        r += 1
+    }
+    println!("{}", total)
+}

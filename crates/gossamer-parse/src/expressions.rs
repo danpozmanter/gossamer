@@ -20,6 +20,11 @@ use crate::patterns::{byte_literal_value, char_literal_value, string_literal_val
 /// Precedence level strictly stronger than any binary operator.
 const PREC_BELOW_ASSIGN: u8 = 17;
 
+/// Range (`..` / `..=`) precedence: looser than every arithmetic and
+/// logical operator (`i * i..n` is `(i * i)..n`), tighter than `|>`
+/// (`0..n |> f` pipes the whole range).
+const RANGE_PREC: u8 = 14;
+
 /// Maximum precedence for a single clause inside an `if`/`while`
 /// condition chain. Equal to `&&`'s precedence so a clause stops at
 /// the next `&&` separator (and rejects an unparenthesised `||`,
@@ -135,6 +140,14 @@ impl Parser<'_> {
                 continue;
             }
             if self.peek_range_op().is_some() {
+                // Range binds looser than every arithmetic / logical
+                // operator and tighter than `|>` (SPEC §4.7), so
+                // `i * i..n` is `(i * i)..n` and `0..n |> f` pipes the
+                // whole range. Inside a tighter operand parse the `..`
+                // belongs to the enclosing level.
+                if RANGE_PREC >= max_prec {
+                    break;
+                }
                 let range = self.parse_range_infix(lhs);
                 lhs = range;
                 continue;
@@ -213,7 +226,7 @@ impl Parser<'_> {
             RangeKind::Exclusive
         };
         let end = if is_expression_start(self) {
-            Some(Box::new(self.parse_expr_with_prec(15, false)))
+            Some(Box::new(self.parse_expr_with_prec(RANGE_PREC, false)))
         } else {
             None
         };
@@ -1699,7 +1712,8 @@ impl Parser<'_> {
                     concat_args.push(self.alloc_literal_expr(Literal::String(text)));
                 }
                 FormatSegment::Named(name) => {
-                    concat_args.push(self.alloc_path_expr(&name));
+                    let expr = self.alloc_named_capture_expr(&name);
+                    concat_args.push(expr);
                 }
                 FormatSegment::Positional => {
                     if let Some(expr) = positional_iter.next() {
@@ -1715,7 +1729,7 @@ impl Parser<'_> {
                     }
                 }
                 FormatSegment::NamedPrec(name, prec) => {
-                    let arg = self.alloc_path_expr(&name);
+                    let arg = self.alloc_named_capture_expr(&name);
                     let prec_lit = self.alloc_literal_expr(Literal::Int(prec.to_string()));
                     concat_args
                         .push(self.alloc_function_call_expr("__fmt_prec", vec![arg, prec_lit]));
@@ -1727,7 +1741,7 @@ impl Parser<'_> {
                     }
                 }
                 FormatSegment::NamedSpec(name, spec) => {
-                    let arg = self.alloc_path_expr(&name);
+                    let arg = self.alloc_named_capture_expr(&name);
                     let e = self.build_format_spec_expr(arg, &spec);
                     concat_args.push(e);
                 }
@@ -1801,6 +1815,32 @@ impl Parser<'_> {
         let id = self.alloc_id();
         let span = self.last_span();
         Expr::new(id, span, ExprKind::Path(PathExpr::single(name.to_string())))
+    }
+
+    /// Expression for a named format capture: a bare `{ident}` is a
+    /// path, a dotted `{a.balance}` / `{t.0}` folds field / tuple-index
+    /// accesses over the leading binding.
+    fn alloc_named_capture_expr(&mut self, name: &str) -> Expr {
+        let mut parts = name.split('.');
+        let head = parts.next().unwrap_or(name);
+        let mut expr = self.alloc_path_expr(head);
+        for part in parts {
+            let selector = match part.parse::<u32>() {
+                Ok(index) => FieldSelector::Index(index),
+                Err(_) => FieldSelector::Named(Ident::new(part.to_string())),
+            };
+            let id = self.alloc_id();
+            let span = self.last_span();
+            expr = Expr::new(
+                id,
+                span,
+                ExprKind::FieldAccess {
+                    receiver: Box::new(expr),
+                    field: selector,
+                },
+            );
+        }
+        expr
     }
 
     fn collect_delimited_tokens(&mut self, open: Punct, close: Punct) -> String {
@@ -2220,7 +2260,9 @@ enum FormatSegment {
 /// not flagged.
 fn format_name_looks_like_expr(inner: &str) -> bool {
     let name = inner.split(':').next().unwrap_or("").trim();
-    !name.is_empty() && !name.chars().all(|c| c.is_alphanumeric() || c == '_')
+    !name.is_empty()
+        && !is_capture_name(name)
+        && !name.chars().all(|c| c.is_alphanumeric() || c == '_')
 }
 
 /// Splits a template into `FormatSegment`s. `{{` / `}}` escape
@@ -2275,7 +2317,7 @@ fn parse_format_template(template: &str) -> Vec<FormatSegment> {
                 let inner = template[i + 1..close].trim();
                 if inner.is_empty() {
                     segments.push(FormatSegment::Positional);
-                } else if is_identifier(inner) {
+                } else if is_capture_name(inner) {
                     segments.push(FormatSegment::Named(inner.to_string()));
                 } else if format_name_looks_like_expr(inner) {
                     segments.push(FormatSegment::Invalid(inner.to_string()));
@@ -2290,7 +2332,7 @@ fn parse_format_template(template: &str) -> Vec<FormatSegment> {
                     segments.push(FormatSegment::Positional);
                 } else if let Some(name) = inner.strip_suffix(":?") {
                     let name = name.trim();
-                    if is_identifier(name) {
+                    if is_capture_name(name) {
                         segments.push(FormatSegment::Named(name.to_string()));
                     } else {
                         segments.push(FormatSegment::Literal(format!("{{{inner}}}")));
@@ -2378,7 +2420,7 @@ fn parse_precision_spec(inner: &str) -> Option<FormatSegment> {
     let head = head.trim();
     if head.is_empty() {
         Some(FormatSegment::PositionalPrec(prec))
-    } else if is_identifier(head) {
+    } else if is_capture_name(head) {
         Some(FormatSegment::NamedPrec(head.to_string(), prec))
     } else {
         None
@@ -2495,7 +2537,7 @@ fn parse_format_spec(inner: &str) -> Option<FormatSegment> {
     };
     if head.is_empty() {
         Some(FormatSegment::PositionalSpec(spec))
-    } else if is_identifier(head) {
+    } else if is_capture_name(head) {
         Some(FormatSegment::NamedSpec(head.to_string(), spec))
     } else {
         None
@@ -2514,6 +2556,34 @@ fn is_identifier(text: &str) -> bool {
         _ => return false,
     }
     chars.all(|c| c == '_' || c.is_ascii_alphanumeric())
+}
+
+/// A dotted capture path (`a.balance`, `t.0.name`): an identifier head
+/// followed by identifier or tuple-index segments. Bare identifiers are
+/// NOT field paths - they stay on the plain `Named` classification.
+fn is_field_path(text: &str) -> bool {
+    let mut parts = text.split('.');
+    let Some(head) = parts.next() else {
+        return false;
+    };
+    if !is_identifier(head) {
+        return false;
+    }
+    let mut any = false;
+    for part in parts {
+        if !(is_identifier(part) || (!part.is_empty() && part.bytes().all(|b| b.is_ascii_digit())))
+        {
+            return false;
+        }
+        any = true;
+    }
+    any
+}
+
+/// A bare identifier or a dotted capture path - the shapes a named
+/// format capture accepts.
+fn is_capture_name(text: &str) -> bool {
+    is_identifier(text) || is_field_path(text)
 }
 
 fn literal_string(expr: &Expr) -> Option<String> {

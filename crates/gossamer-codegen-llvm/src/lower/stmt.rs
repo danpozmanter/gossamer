@@ -486,7 +486,19 @@ impl<'a> Lowerer<'a> {
                     self.emit_preempt_check();
                 }
                 let v = self.lower_operand(discriminant)?;
-                let ty = render_ty(self.tcx, self.operand_ty(discriminant));
+                let mut ty = render_ty(self.tcx, self.operand_ty(discriminant));
+                let mut v = v;
+                // A pointer discriminant (a truthiness / null check on a heap
+                // handle, e.g. `if json_get(e, "is_file")`) cannot drive an
+                // LLVM `switch` - its condition must be an integer. Reinterpret
+                // the pointer's bits as i64; the case labels are integer
+                // literals (`0` for the null / false arm) that compare directly.
+                if ty == "ptr" {
+                    let int_v = self.fresh();
+                    writeln!(self.out, "  {int_v} = ptrtoint ptr {v} to i64").unwrap();
+                    v = int_v;
+                    ty = "i64".to_string();
+                }
                 writeln!(
                     self.out,
                     "  switch {ty} {v}, label %bb{default} [",

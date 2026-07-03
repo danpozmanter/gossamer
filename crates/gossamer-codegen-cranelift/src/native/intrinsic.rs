@@ -157,6 +157,15 @@ pub(super) struct IntrinsicContext {
     /// operands in non-call position (`let f = fib; f(5)`) can be
     /// materialised as function-pointer values.
     pub(super) functions_by_def: HashMap<u32, FuncId>,
+    /// Return-aggregate slot count for every body that uses the sret
+    /// (structural-return-via-out-pointer) ABI, keyed by mangled/plain body
+    /// name. A call site whose callee is one of these allocates a stack slot of
+    /// exactly this many 8-byte words and passes its address as the hidden
+    /// trailing sret argument, so the result never overflows a fixed-size slot.
+    pub(super) sret_slots_by_name: HashMap<String, u32>,
+    /// The same as [`Self::sret_slots_by_name`] but keyed by def-local id, for
+    /// `Operand::FnRef { def }` callees that resolve by their `DefId`.
+    pub(super) sret_slots_by_def: HashMap<u32, u32>,
     /// Per-function: the cranelift element type of stack-allocated
     /// aggregates rooted at each local. Populated when lowering
     /// `Rvalue::Aggregate` / `Rvalue::Repeat`, consumed by
@@ -174,6 +183,13 @@ pub(super) struct IntrinsicContext {
     /// N]` aggregates produce correct per-element strides.
     /// Cleared between bodies.
     pub(super) local_slots: HashMap<Local, u32>,
+    /// Per-function: locals that own a dedicated backing stack slot
+    /// (allocated in the pre-pass, variable bound to the slot address).
+    /// A whole-aggregate copy into such a local memcpies the source
+    /// words into this slot rather than rebinding the variable to the
+    /// source pointer, so the copy owns independent storage. Cleared
+    /// between bodies.
+    pub(super) stack_slotted: HashSet<Local>,
     /// Per-function: the cranelift type each local's Variable was
     /// declared with. Populated by `define_var_to` on first
     /// declaration; consulted by `operand_print_kind` so print
@@ -188,10 +204,10 @@ pub(super) struct IntrinsicContext {
     /// body scan on every assignment. Cleared between bodies.
     pub(crate) body_cl_types: Vec<Option<ir::Type>>,
     /// Per-function: the hidden structural-return (sret) pointer when this body
-    /// returns a 2-tuple ([`body_returns_sret_tuple`]). Set from the entry
-    /// block's trailing param; the `Return` lowering writes the two result
-    /// words through it instead of heap-allocating a per-call block. `None`
-    /// for every non-sret body. Cleared between bodies.
+    /// returns a by-value aggregate ([`super::body_returns_sret_aggregate`]).
+    /// Set from the entry block's trailing param; the `Return` lowering writes
+    /// the result words through it instead of heap-allocating a per-call block.
+    /// `None` for every non-sret body. Cleared between bodies.
     pub(crate) sret_ptr: Option<ir::Value>,
 }
 
@@ -204,9 +220,12 @@ impl IntrinsicContext {
             next_str_id: 0,
             functions: HashMap::new(),
             functions_by_def: HashMap::new(),
+            sret_slots_by_name: HashMap::new(),
+            sret_slots_by_def: HashMap::new(),
             elem_cl_ty: HashMap::new(),
             elem_slots: HashMap::new(),
             local_slots: HashMap::new(),
+            stack_slotted: HashSet::new(),
             local_declared_ty: HashMap::new(),
             body_cl_types: Vec::new(),
             sret_ptr: None,

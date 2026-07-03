@@ -25,9 +25,10 @@ impl Area for Shape {
 ## Operator overloading
 
 Implementing the matching trait makes an operator dispatch to its method
-on a user struct / enum. The result type is the method's return type, so a
-dot product (`Mul -> f64`) types correctly. Compound assignment routes
-through the same binary method.
+on a user struct, enum, or generic struct - on every tier (bytecode VM,
+JIT, and LLVM AOT alike). The result type is the method's return type, so
+a dot product (`Mul -> f64`) types correctly. Compound assignment
+(`a += b`) routes through the same binary method.
 
 | Operator | Trait | Method |
 |---|---|---|

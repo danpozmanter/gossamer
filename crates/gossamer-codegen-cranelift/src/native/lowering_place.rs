@@ -386,7 +386,18 @@ pub(super) fn lower_place_read(
     // sub-struct to its first slot and segfault on any subsequent
     // `Field`/`Index` step.
     let leaf_ty_mir = resolve_place_ty(tcx, body, place);
-    if type_slot_count(tcx, leaf_ty_mir) > 1 {
+    // An `Option<T>` / `Result<T, E>` leaf is a by-value two-word carrier
+    // - an i128 SSA value everywhere else in the JIT - not an
+    // address-backed aggregate. Its consumers (`gos_rt_result_disc` /
+    // `_payload`, stores, call args) take the packed value, so load the
+    // 16-byte carrier rather than returning the field's address.
+    if is_carrier_ty(tcx, leaf_ty_mir) {
+        return Ok(builder.ins().load(types::I128, MemFlags::new(), addr, 0));
+    }
+    // A one-word address-represented aggregate leaf (a single-managed-field
+    // struct embedded in a parent) is likewise handed out by address so the
+    // receiving local keeps the aggregate representation.
+    if type_slot_count(tcx, leaf_ty_mir) > 1 || single_slot_addr_aggregate(tcx, leaf_ty_mir) {
         return Ok(addr);
     }
     let leaf_ty = resolve_place_cl_type(tcx, body, place, module, hint);

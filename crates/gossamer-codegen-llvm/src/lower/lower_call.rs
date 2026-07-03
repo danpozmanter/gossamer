@@ -266,6 +266,9 @@ impl<'a> Lowerer<'a> {
             | ConcatKind::ArrF64(_)
             | ConcatKind::ArrBool(_)
             | ConcatKind::ArrString(_)
+            | ConcatKind::ArrArrI64(_, _)
+            | ConcatKind::ArrArrF64(_, _)
+            | ConcatKind::ArrArrBool(_, _)
             | ConcatKind::JsonValue
             | ConcatKind::ErrorMessage
             | ConcatKind::Tuple
@@ -606,10 +609,29 @@ impl<'a> Lowerer<'a> {
             self.lower_vec_set_i64_unchecked_inline(args, destination, target)?;
             return Ok(());
         }
-        // NOTE: gos_rt_vec_get_ptr is intentionally NOT inlined - its result
-        // handling is dest-type-dependent (a multi-slot aggregate dest
-        // memcpys from the returned address rather than storing it), which
-        // the generic call-result path handles correctly.
+        // `buf.set_byte(i, x)` on the Terminator::Call route (fasta's inner
+        // loop). The branchless inline also fires on the Rvalue::CallIntrinsic
+        // route (`lower_call_intrinsic`); route both to the same body so the
+        // per-byte FFI call disappears regardless of how the call was lowered.
+        if name == "gos_rt_heap_u8_set" && args.len() == 3 {
+            self.lower_heap_u8_set_inline(args, destination, target)?;
+            return Ok(());
+        }
+        // `gos_rt_vec_get_ptr` is inlined only when the destination is a bare
+        // element pointer (`ptr`-typed) that a following field projection
+        // dereferences - e.g. `table[j].1` on `Vec<(i64, f64)>`, or
+        // `bodies[i].field`. A multi-slot aggregate destination copies the
+        // whole element out of the returned address (the generic call-result
+        // path's memcpy), which the inline does not reproduce, so that case
+        // stays on the opaque call.
+        if name == "gos_rt_vec_get_ptr"
+            && args.len() == 2
+            && render_ty(self.tcx, self.body.local_ty(destination.local)) == "ptr"
+            && !is_aggregate(self.tcx, self.body.local_ty(destination.local))
+        {
+            self.lower_vec_get_ptr_inline(args, destination, target)?;
+            return Ok(());
+        }
         // Variant constructor stubs: `Ok(v)`, `Some(v)`, `Err(e)`
         // pass the wrapped value through unchanged (the compiled
         // tier flattens Option/Result, so `unwrap` is identity).

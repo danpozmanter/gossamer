@@ -236,6 +236,10 @@ impl<'a> Builder<'a> {
                 TyKind::Adt { .. } => {
                     let rendered = gossamer_types::printer::render_ty(self.tcx, cur);
                     let bare = rendered.rsplit("::").next().unwrap_or(&rendered);
+                    // Impl methods register under the type's bare source
+                    // name, so a generic instantiation drops its argument
+                    // suffix (`Wrap<f64>` -> `Wrap`).
+                    let bare = bare.split('<').next().unwrap_or(bare);
                     // `adt#N` is the debug placeholder for an Adt whose name the
                     // tcx never registered (user enums). Reject it so the caller
                     // falls back to the `local_struct` tag, which has the name.

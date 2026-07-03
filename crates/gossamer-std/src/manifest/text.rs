@@ -434,6 +434,21 @@ pub const STRINGS: StdModule = StdModule {
             kind: StdItemKind::Function,
             doc: "Title-cases the first letter of each word.",
         },
+        StdItem {
+            name: "to_i64",
+            kind: StdItemKind::Function,
+            doc: "Strict full-string parse to Option<i64>.",
+        },
+        StdItem {
+            name: "to_f64",
+            kind: StdItemKind::Function,
+            doc: "Strict full-string parse to Option<f64>.",
+        },
+        StdItem {
+            name: "to_bool",
+            kind: StdItemKind::Function,
+            doc: "Parses exactly `true` / `false` to Option<bool>.",
+        },
     ],
 };
 

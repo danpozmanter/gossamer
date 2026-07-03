@@ -65,6 +65,12 @@ pub(crate) struct DocumentAnalysis {
     pub(crate) tcx: TyCtxt,
     pub(crate) diagnostics: Vec<Diagnostic>,
     pub(crate) index: DefinitionIndex,
+    /// Byte length of the text the editor actually holds. The stored
+    /// source is the AUGMENTED program (user text + synthesized
+    /// autoderive tail appended); anything the server sends back to
+    /// the client - formatting edits above all - must stay within
+    /// this prefix.
+    pub(crate) user_len: u32,
 }
 
 /// Runs the full pipeline over `source` and returns the resulting
@@ -128,6 +134,7 @@ pub(crate) fn analyse(uri: &str, source: &str) -> DocumentAnalysis {
         tcx,
         diagnostics,
         index,
+        user_len,
     }
 }
 
@@ -163,6 +170,16 @@ impl DocumentAnalysis {
     #[must_use]
     pub(crate) fn source(&self) -> &str {
         self.map.source(self.file)
+    }
+
+    /// Returns exactly the text the editor holds: the stored source
+    /// minus the synthesized autoderive tail. Everything sent back to
+    /// the client (formatting edits above all) must be computed
+    /// against this prefix, or edits reference positions past the
+    /// client's buffer.
+    #[must_use]
+    pub(crate) fn user_source(&self) -> &str {
+        &self.map.source(self.file)[..self.user_len as usize]
     }
 
     /// Looks up the source span of the top-level item declaring

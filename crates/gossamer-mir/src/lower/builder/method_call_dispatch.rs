@@ -443,9 +443,25 @@ impl<'a> Builder<'a> {
                 self.option_payload_adt_ty(elem)
             }
             "gos_rt_parse_i64_result" => self.result_i64_error_adt_ty(),
-            "gos_rt_str_find_opt" => {
+            "gos_rt_str_find_opt" | "gos_rt_str_to_i64_opt" => {
                 let i = self.tcx.int_ty(gossamer_types::IntTy::I64);
                 let substs = gossamer_types::Substs::from_types([i]);
+                self.tcx.intern(gossamer_types::TyKind::Adt {
+                    def: gossamer_resolve::DefId::local(u32::MAX - 1),
+                    substs,
+                })
+            }
+            "gos_rt_str_to_f64_opt" => {
+                let f = self.tcx.float_ty(gossamer_types::FloatTy::F64);
+                let substs = gossamer_types::Substs::from_types([f]);
+                self.tcx.intern(gossamer_types::TyKind::Adt {
+                    def: gossamer_resolve::DefId::local(u32::MAX - 1),
+                    substs,
+                })
+            }
+            "gos_rt_str_to_bool_opt" => {
+                let b = self.tcx.bool_ty();
+                let substs = gossamer_types::Substs::from_types([b]);
                 self.tcx.intern(gossamer_types::TyKind::Adt {
                     def: gossamer_resolve::DefId::local(u32::MAX - 1),
                     substs,
@@ -475,6 +491,9 @@ impl<'a> Builder<'a> {
             | "gos_rt_path_base"
             | "gos_rt_path_dir"
             | "gos_rt_strings_join"
+            | "gos_rt_vec_join_i64"
+            | "gos_rt_vec_join_f64"
+            | "gos_rt_vec_join_bool"
             | "gos_rt_uuid_v4"
             | "gos_rt_uuid_v7"
             | "gos_rt_uuid_normalize"
@@ -634,10 +653,10 @@ impl<'a> Builder<'a> {
             }
             // In-place `xs.insert(i, v)` returns nothing.
             "gos_rt_vec_insert_at" => self.tcx.unit(),
-            // `reversed()` copies the receiver - preserve its
-            // element type so byte-packed (`Vec<u8>`) receivers
-            // keep their stride-1 indexing downstream.
-            "gos_rt_vec_reversed"
+            // `reversed()` / `take(n)` / `step_by(s)` copy the receiver -
+            // preserve its element type so byte-packed (`Vec<u8>`)
+            // receivers keep their stride-1 indexing downstream.
+            "gos_rt_vec_reversed" | "gos_rt_vec_take" | "gos_rt_vec_step_by"
                 if {
                     let mut flat = receiver_ty;
                     while let TyKind::Ref { inner, .. } = self.tcx.kind_of(flat) {

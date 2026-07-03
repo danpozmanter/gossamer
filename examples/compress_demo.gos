@@ -23,6 +23,7 @@ fn show_roundtrip(name: &str, compressed: Result<[u8], compress::Error>, origina
     }
 }
 
+#[lint(allow(string_literal_concat))]
 fn main() {
     let data = "The quick brown fox jumps over the lazy dog. " +
         "Pack my box with five dozen liquor jugs. " +

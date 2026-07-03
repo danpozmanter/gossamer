@@ -76,7 +76,7 @@ use gossamer_hir::{
 };
 use gossamer_types::{FloatTy, IntTy, Ty, TyCtxt, TyKind};
 
-use crate::bytecode::{ConstIdx, FnChunk, GlobalIdx, InstrIdx, Op, Reg};
+use crate::bytecode::{ConstIdx, FnChunk, GlobalIdx, ImmArithKind, InstrIdx, Op, Reg};
 use crate::value::{RuntimeError, RuntimeResult, SmolStr, Value};
 
 /// Panic message for a `match` that runs off the end without any arm

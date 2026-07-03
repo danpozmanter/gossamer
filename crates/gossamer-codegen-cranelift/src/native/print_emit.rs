@@ -331,6 +331,36 @@ pub(super) fn emit_per_arg_print(
                 print_str,
                 intrinsics,
             )?,
+            PrintKind::ArrArrI64(n, m) => emit_arr_arr_print(
+                module,
+                builder,
+                "gos_rt_arr_format_arr_i64",
+                value,
+                n,
+                m,
+                print_str,
+                intrinsics,
+            )?,
+            PrintKind::ArrArrF64(n, m) => emit_arr_arr_print(
+                module,
+                builder,
+                "gos_rt_arr_format_arr_f64",
+                value,
+                n,
+                m,
+                print_str,
+                intrinsics,
+            )?,
+            PrintKind::ArrArrBool(n, m) => emit_arr_arr_print(
+                module,
+                builder,
+                "gos_rt_arr_format_arr_bool",
+                value,
+                n,
+                m,
+                print_str,
+                intrinsics,
+            )?,
             PrintKind::JsonValue => emit_vec_print(
                 module,
                 builder,
@@ -439,6 +469,35 @@ pub(super) fn emit_arr_print(
     let fref = module.declare_func_in_func(f, builder.func);
     let len_v = builder.ins().iconst(types::I64, len);
     let call = builder.ins().call(fref, &[value, len_v]);
+    let result = builder.inst_results(call)[0];
+    let print_ref = module.declare_func_in_func(print_str, builder.func);
+    builder.ins().call(print_ref, &[result]);
+    Ok(())
+}
+
+/// Prints a flat nested fixed array through its `(ptr, outer, inner)`
+/// runtime formatter.
+pub(super) fn emit_arr_arr_print(
+    module: &mut dyn Module,
+    builder: &mut FunctionBuilder<'_>,
+    helper_name: &'static str,
+    value: ir::Value,
+    outer: i64,
+    inner: i64,
+    print_str: cranelift_module::FuncId,
+    intrinsics: &mut IntrinsicContext,
+) -> Result<()> {
+    let ptr_ty = module.target_config().pointer_type();
+    let f = intrinsics.extern_fn(
+        module,
+        helper_name,
+        &[ptr_ty, types::I64, types::I64],
+        &[ptr_ty],
+    )?;
+    let fref = module.declare_func_in_func(f, builder.func);
+    let outer_v = builder.ins().iconst(types::I64, outer);
+    let inner_v = builder.ins().iconst(types::I64, inner);
+    let call = builder.ins().call(fref, &[value, outer_v, inner_v]);
     let result = builder.inst_results(call)[0];
     let print_ref = module.declare_func_in_func(print_str, builder.func);
     builder.ins().call(print_ref, &[result]);
@@ -664,6 +723,28 @@ pub(super) fn emit_args_to_concat_string(
                 let format_ref = module.declare_func_in_func(format_fn, builder.func);
                 let len_v = builder.ins().iconst(types::I64, len);
                 let call = builder.ins().call(format_ref, &[value, len_v]);
+                let s = builder.inst_results(call)[0];
+                let f = intrinsics.extern_fn_by_name(module, "gos_rt_concat_str")?;
+                let fref = module.declare_func_in_func(f, builder.func);
+                builder.ins().call(fref, &[s]);
+            }
+            PrintKind::ArrArrI64(..) | PrintKind::ArrArrF64(..) | PrintKind::ArrArrBool(..) => {
+                let (helper, n, m) = match kind {
+                    PrintKind::ArrArrI64(n, m) => ("gos_rt_arr_format_arr_i64", n, m),
+                    PrintKind::ArrArrF64(n, m) => ("gos_rt_arr_format_arr_f64", n, m),
+                    PrintKind::ArrArrBool(n, m) => ("gos_rt_arr_format_arr_bool", n, m),
+                    _ => unreachable!(),
+                };
+                let format_fn = intrinsics.extern_fn(
+                    module,
+                    helper,
+                    &[ptr_ty, types::I64, types::I64],
+                    &[ptr_ty],
+                )?;
+                let format_ref = module.declare_func_in_func(format_fn, builder.func);
+                let n_v = builder.ins().iconst(types::I64, n);
+                let m_v = builder.ins().iconst(types::I64, m);
+                let call = builder.ins().call(format_ref, &[value, n_v, m_v]);
                 let s = builder.inst_results(call)[0];
                 let f = intrinsics.extern_fn_by_name(module, "gos_rt_concat_str")?;
                 let fref = module.declare_func_in_func(f, builder.func);

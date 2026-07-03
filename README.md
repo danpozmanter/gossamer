@@ -4,7 +4,13 @@
 
 [Homepage and Docs](http://gossamer-lang.org/)
 
-A language that balances developer experience, execution efficiency, and safety.
+## Northstar
+
+* Trustworthy (Stability, Security, Correctness)
+
+* Ergonomic (Concise, Expressive)
+
+* Performant (Solid Execution Speed, Efficient Resource Usage)
 
 ## Motivations
 
@@ -143,6 +149,25 @@ fn main() {
         |> iter::count
 
     println!("words: {}", words)
+}
+```
+
+Types define their own operators. `impl Add for T` gives `+` its
+meaning, and the same shape covers `-`, `*`, `[]`, and the rest.
+Structural `==` and `.clone()` are automatic - no derive needed - so a
+custom operator is the part that is genuinely yours to write:
+
+```gossamer
+struct Vec2 { x: f64, y: f64 }
+
+impl Add for Vec2 {
+    fn add(self, o: Vec2) -> Vec2 { Vec2 { x: self.x + o.x, y: self.y + o.y } }
+}
+
+fn main() {
+    let sum = Vec2 { x: 1.5, y: 2.0 } + Vec2 { x: 3.0, y: 4.0 }
+    println!("({}, {})", sum.x, sum.y)   // (4.5, 6)
+    println!("{}", sum == sum.clone())   // true
 }
 ```
 
@@ -294,7 +319,7 @@ My main goals are:
 
 * Making Gossamer reliable enough to run real production code, and trust.
 
-* Optimizing Gossamer to be Go-grade or better for performance and resource usage. (This feels close!)
+* Optimizing Gossamer to be Go-grade or better for performance and resource usage. This feels close: on several compute-heavy kernels the compiled tier already reaches or beats Go, and recent interpreter work has narrowed the scripting-mode gap substantially.
 
 * Building a reliable standard library to reduce the need to reach for third party libraries (using Golang as the gold standard, with small changes that feel right).
 

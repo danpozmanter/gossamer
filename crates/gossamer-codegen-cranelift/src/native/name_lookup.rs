@@ -493,6 +493,11 @@ pub(super) fn generic_rt_static_name(name: &str) -> Option<&'static str> {
         "gos_rt_result_new_f64" => Some("gos_rt_result_new_f64"),
         "gos_rt_result_disc" => Some("gos_rt_result_disc"),
         "gos_rt_result_payload" => Some("gos_rt_result_payload"),
+        // Payload extract of a `w.upgrade()` result pinned in the shadow
+        // local: identical bit-op to `gos_rt_result_payload` (the None
+        // payload word is 0, so the extract is already null for None);
+        // the distinct MIR name only marks the destination as owned.
+        "gos_rt_weak_opt_payload" => Some("gos_rt_result_payload"),
         "gos_rt_result_payload_f64" => Some("gos_rt_result_payload_f64"),
         "gos_rt_result_unwrap" => Some("gos_rt_result_unwrap"),
         "gos_rt_result_unwrap_or" => Some("gos_rt_result_unwrap_or"),

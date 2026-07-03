@@ -115,18 +115,51 @@ impl Parser<'_> {
         self.bump();
         let mut entries = Vec::new();
         while !self.at_punct(Punct::RBrace) && !self.at_eof() {
-            let name = self.parse_use_ident();
-            let alias = if self.eat_keyword(Keyword::As) {
-                Some(self.parse_use_ident())
-            } else {
-                None
-            };
-            entries.push(UseListEntry { name, alias });
+            self.parse_use_list_entry(&[], &mut entries);
             if !self.eat_punct(Punct::Comma) {
                 break;
             }
         }
         self.expect_punct(Punct::RBrace, "to close `use` list");
         entries
+    }
+
+    /// Parses one brace-list entry, which may be a multi-segment path
+    /// (`encoding::json`) and may itself open a nested brace group
+    /// (`encoding::{json, yaml}`). `outer` carries the segments contributed
+    /// by any enclosing group so a nested entry records its full prefix.
+    fn parse_use_list_entry(&mut self, outer: &[Ident], entries: &mut Vec<UseListEntry>) {
+        let mut prefix: Vec<Ident> = outer.to_vec();
+        let mut name = self.parse_use_ident();
+        while self.at_punct(Punct::ColonColon) {
+            self.bump();
+            // `a::{b, c}` - a nested group: recurse with `a` folded into
+            // the prefix so each inner entry keeps the full path.
+            if self.at_punct(Punct::LBrace) {
+                let mut nested_prefix = prefix.clone();
+                nested_prefix.push(name);
+                self.bump();
+                while !self.at_punct(Punct::RBrace) && !self.at_eof() {
+                    self.parse_use_list_entry(&nested_prefix, entries);
+                    if !self.eat_punct(Punct::Comma) {
+                        break;
+                    }
+                }
+                self.expect_punct(Punct::RBrace, "to close `use` list");
+                return;
+            }
+            prefix.push(name);
+            name = self.parse_use_ident();
+        }
+        let alias = if self.eat_keyword(Keyword::As) {
+            Some(self.parse_use_ident())
+        } else {
+            None
+        };
+        entries.push(UseListEntry {
+            prefix,
+            name,
+            alias,
+        });
     }
 }

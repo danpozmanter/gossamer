@@ -2213,7 +2213,42 @@ first time through, leave it alone.</p>
   tier rather than fabricating a zero aggregate.</li>
 <li><strong><code>arr.swap(i, j)</code></strong> over the manual three-line temp dance.</li>
 <li><strong><code>m.inc(k)</code> / <code>m.inc(k, by)</code></strong> for counters; <code>m.or_insert(k,
-  default)</code> for get-or-fill.</li>
+  default)</code> for get-or-fill. The statement
+  <code>m.or_insert(k, d).method(args)</code> writes the mutation back into the
+  map's stored value (<code>accounts.or_insert(name, Account { balance: 0,
+  txns: 0 }).apply(amount)</code>), so struct-valued counters fold in one
+  line.</li>
+<li><strong>Method-form sequence combinators.</strong> <code>xs.map(f)</code>, <code>xs.filter(f)</code>,
+  <code>xs.sum()</code>, <code>xs.min()</code> / <code>xs.max()</code> (<code>Option&lt;T&gt;</code>), <code>xs.count()</code> /
+  <code>xs.count(f)</code>, <code>xs.any(f)</code> / <code>xs.all(f)</code>, <code>xs.find(f)</code> /
+  <code>xs.position(f)</code>, <code>xs.max_by_key(f)</code> / <code>xs.min_by_key(f)</code>,
+  <code>xs.fold(init, f)</code>, <code>xs.take(n)</code>, <code>xs.step_by(s)</code> - no import, and
+  ranges are sequences too: <code>(2..n).filter(|k| sieve[k]).take(3)</code>,
+  <code>(1..5).map(|i| i * i).sum()</code>. The data-last <code>iter::</code> free forms
+  remain for <code>|&gt;</code> pipelines.</li>
+<li><strong><code>xs.join(sep)</code> Display-joins any scalar or String sequence.</strong>
+  <code>[1, 2, 3].join(" ")</code> is <code>"1 2 3"</code>; works for <code>f64</code> / <code>bool</code> /
+  <code>String</code> elements (aggregate elements are a check error).</li>
+<li><strong><code>s.to_i64()</code> / <code>s.to_f64()</code> / <code>s.to_bool()</code></strong> - strict full-string
+  parses returning <code>Option&lt;T&gt;</code>: the canonical CLI-arg idiom is
+  <code>env::args().first().unwrap_or("8").to_i64().unwrap_or(8)</code>.</li>
+<li><strong><code>[v; n]</code> with a runtime <code>n</code> builds a Vec</strong> (<code>let mut sieve =
+  [true; n]</code>) - byte-packed for <code>bool</code> / <code>u8</code> elements; never write a
+  push loop to fill a constant.</li>
+<li><strong>Collection constructors infer.</strong> <code>let mut m = HashMap::new()</code> /
+  <code>BTreeMap::new()</code> / <code>HashSet::new()</code> and <code>let mut xs = []</code> ground
+  from first use - annotations only when nothing pins them.</li>
+<li><strong>Byte reads: <code>s[i]</code> is the byte as <code>i64</code>.</strong> Compare and do
+  arithmetic with byte literals directly (<code>s[i] &gt;= b'0'</code>,
+  <code>n = n * 10 + s[i] - b'0'</code>) and render with <code>s[i] as char</code> (any int
+  as char reads the low byte). Prefer this over <code>substring(i, i + 1)</code>
+  string slicing for per-byte scans.</li>
+<li><strong>Format captures walk field paths.</strong> <code>println!("{name}: {a.balance}
+  ({a.txns} transactions)")</code>, tuple indices <code>{t.0}</code>, nesting
+  <code>{o.inner.hits}</code>, and specs <code>{a.balance:&gt;8}</code> / <code>{f.0:.2}</code> all work.</li>
+<li><strong>Range binds looser than arithmetic, tighter than <code>|&gt;</code></strong>
+  (SPEC §4.7): <code>i * i..n</code> is <code>(i * i)..n</code>, and <code>0..n |&gt; iter::sum</code>
+  pipes the whole range.</li>
 <li><strong>Recursive enums work directly.</strong> <code>enum List { Cons(i64,
   Box&lt;List&gt;), Nil }</code>. <code>Box</code> / <code>Arc</code> / <code>Rc</code> are transparent - every
   variant payload is heap-shared; the bare <code>Cons(i64, List)</code> form
@@ -3167,22 +3202,6 @@ bug - reduce it and check against <code>gos test</code> (interpreter) <strong>an
   the real collector runs - this is a behavioral divergence, not just a
   source-level footgun; don't depend on which side you see without
   cross-checking <code>gos build</code>.</li>
-<li><strong>Entry-point <code>Err</code> is dropped, and diverges by tier</strong> (open bug,
-  verified against 0.23.0): when the entry point - either the implicit
-  top-level-statement main or an explicit <code>fn main() -&gt; Result&lt;T, E&gt;</code> -
-  returns <code>Err(e)</code> via <code>?</code>, <code>e</code> is never printed on either tier, and the
-  exit code diverges: <code>gos run</code> exits <code>0</code> (the <code>Result</code> is discarded
-  outright), <code>gos build</code> exits <code>1</code>. Until this is fixed, don't rely on
-  a bare <code>?</code>-propagating main for user-facing error reporting or exit
-  codes - explicitly <code>match</code> at the entry point and call
-  <code>process::exit(n)</code> with a printed message in the <code>Err</code> arm.</li>
-<li><strong><code>fs::read_to_string</code>'s error path is dropped on the native/LLVM
-  tier only</strong> (open bug, verified against 0.23.0): a missing/unreadable
-  path correctly returns <code>Err(...)</code> under <code>gos run</code>, but returns
-  <code>Ok("")</code> under <code>gos build</code>. <code>fs::exists</code>, <code>fs::read</code> (bytes), and
-  <code>fs::write</code>'s error paths are unaffected on both tiers. Guard with
-  <code>fs::exists(&amp;path)</code> before <code>fs::read_to_string</code> if the binary might
-  ever be <code>gos build</code>-compiled.</li>
 </ul>
 <h2 id="15-where-to-read-more">15. Where to read more<a class="headerlink" href="#15-where-to-read-more" title="Permanent link">&para;</a></h2>
 <ul>

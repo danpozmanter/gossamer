@@ -449,6 +449,17 @@ impl<S: Read + Write> WebSocket<S> {
             let frame = self.read_frame()?;
             match frame.opcode {
                 OP_CONTINUATION => {
+                    // Per-frame payload is capped in `read_frame`, but an
+                    // unbounded stream of continuation frames would still
+                    // grow the reassembly buffer without limit. Bound the
+                    // running message size by the same `max_payload`.
+                    if self.fragment_buf.len().saturating_add(frame.payload.len())
+                        > self.max_payload
+                    {
+                        return Err(Error::PayloadTooLarge {
+                            limit: self.max_payload,
+                        });
+                    }
                     self.fragment_buf.extend_from_slice(&frame.payload);
                     if frame.fin {
                         return self.assemble_fragments();
@@ -790,6 +801,51 @@ mod tests {
         ws.max_payload = 1024;
         let err = ws.receive().unwrap_err();
         assert!(matches!(err, Error::PayloadTooLarge { .. }));
+    }
+
+    /// Builds a single masked WebSocket frame (client-to-server shape)
+    /// for `payload` under `opcode` with the given FIN bit.
+    fn masked_frame(fin: bool, opcode: u8, payload: &[u8]) -> Vec<u8> {
+        let mut out = Vec::new();
+        out.push(if fin { 0x80 } else { 0 } | opcode);
+        let mask = [0x11u8, 0x22, 0x33, 0x44];
+        let len = payload.len();
+        if len < 126 {
+            out.push(0x80 | len as u8);
+        } else {
+            let len = u16::try_from(len).expect("test payload fits a 16-bit length");
+            out.push(0x80 | 0x7e);
+            out.extend_from_slice(&len.to_be_bytes());
+        }
+        out.extend_from_slice(&mask);
+        for (i, b) in payload.iter().enumerate() {
+            out.push(b ^ mask[i % 4]);
+        }
+        out
+    }
+
+    #[test]
+    fn fragmented_message_exceeding_limit_is_rejected() {
+        // Two 600-byte fragments (each under max_payload) reassemble to
+        // 1200 bytes, above the 1024-byte cap - the second frame must
+        // be rejected rather than growing the buffer without limit.
+        let mut wire = Vec::new();
+        wire.extend(masked_frame(false, OP_TEXT, &[0x41; 600]));
+        wire.extend(masked_frame(false, OP_CONTINUATION, &[0x42; 600]));
+        let mut ws = WebSocket::server(Cursor::new(wire));
+        ws.max_payload = 1024;
+        let err = ws.receive().unwrap_err();
+        assert!(matches!(err, Error::PayloadTooLarge { .. }));
+    }
+
+    #[test]
+    fn fragmented_message_within_limit_reassembles() {
+        let mut wire = Vec::new();
+        wire.extend(masked_frame(false, OP_TEXT, b"Hello, "));
+        wire.extend(masked_frame(true, OP_CONTINUATION, b"world"));
+        let mut ws = WebSocket::server(Cursor::new(wire));
+        let msg = ws.receive().unwrap();
+        assert_eq!(msg, Message::Text("Hello, world".to_string()));
     }
 
     #[test]

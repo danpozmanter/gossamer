@@ -206,3 +206,62 @@ fn struct_literal_in_delimited_scrutinee_positions_parses() {
     );
     assert_eq!(sf.items.len(), 5, "expected five items");
 }
+
+#[test]
+fn use_brace_group_accepts_multi_segment_paths() {
+    // `use std::{env, encoding::json, strings}` - a multi-segment path
+    // inside a brace group must parse cleanly and expand to the same
+    // entries as the split form.
+    let source = "use std::{env, encoding::json, strings}\n";
+    let mut map = SourceMap::new();
+    let file = map.add_file("grouped.gos", source.to_string());
+    let (sf, diags) = parse_source_file(source, file);
+    assert!(
+        diags.is_empty(),
+        "grouped multi-segment use must parse: {diags:?}"
+    );
+    assert_eq!(sf.uses.len(), 1);
+    let list = sf.uses[0].list.as_ref().expect("brace list");
+    assert_eq!(list.len(), 3);
+    // `env` and `strings` are single-segment; `encoding::json` carries the
+    // `encoding` prefix with `json` as the bound name.
+    assert!(list[0].prefix.is_empty() && list[0].name.name == "env");
+    assert_eq!(
+        list[1]
+            .prefix
+            .iter()
+            .map(|s| s.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["encoding"]
+    );
+    assert_eq!(list[1].name.name, "json");
+    assert!(list[2].prefix.is_empty() && list[2].name.name == "strings");
+}
+
+#[test]
+fn use_brace_group_accepts_nested_groups() {
+    // `use std::{encoding::{json, yaml}, strings}` - a nested brace group.
+    let source = "use std::{encoding::{json, yaml}, strings}\n";
+    let mut map = SourceMap::new();
+    let file = map.add_file("nested.gos", source.to_string());
+    let (sf, diags) = parse_source_file(source, file);
+    assert!(diags.is_empty(), "nested group must parse: {diags:?}");
+    let list = sf.uses[0].list.as_ref().expect("brace list");
+    let names: Vec<(Vec<&str>, &str)> = list
+        .iter()
+        .map(|e| {
+            (
+                e.prefix.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(),
+                e.name.name.as_str(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        names,
+        vec![
+            (vec!["encoding"], "json"),
+            (vec!["encoding"], "yaml"),
+            (vec![], "strings"),
+        ]
+    );
+}

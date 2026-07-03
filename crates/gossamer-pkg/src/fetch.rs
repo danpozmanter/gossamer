@@ -286,6 +286,8 @@ impl Fetcher {
         url: &str,
         reference: &str,
     ) -> Result<CachedSource, CacheError> {
+        validate_git_source(url, reference)
+            .map_err(|msg| CacheError::RejectedGitSource(format!("{}: {msg}", resolved.id)))?;
         let cache_root = crate::cache::default_cache_root().ok_or_else(|| {
             CacheError::Unsupported(format!(
                 "{}: git fetch needs a writable cache (set GOS_CACHE_DIR or $HOME)",
@@ -398,11 +400,61 @@ fn relative_key(base: &Path, file: &Path) -> String {
         .replace('\\', "/")
 }
 
+/// Rejects a git dependency URL or ref that could turn `git` into an
+/// arbitrary-command or argv-injection vector before any git process
+/// runs.
+///
+/// A `<transport>::<address>` prefix (for example `ext::sh -c '...'`)
+/// selects a git remote helper, and `ext::` runs a shell command, so
+/// only the `https://`, `ssh://`, and `git://` transports are allowed;
+/// `file://` and every remote-helper prefix are refused. A URL or ref
+/// beginning with `-` would be parsed by git as an option rather than a
+/// positional argument, so both are rejected here (and every callee
+/// passes `--` before positional URL arguments as a second guard).
+fn validate_git_source(url: &str, reference: &str) -> Result<(), String> {
+    // A `::` before the first `/` is a remote-helper transport prefix
+    // (`ext::`, `fd::`, ...); reject it outright.
+    if let Some(idx) = url.find("::")
+        && !url[..idx].contains('/')
+    {
+        return Err(format!("git url uses a disallowed transport prefix: {url}"));
+    }
+    let scheme_ok =
+        url.starts_with("https://") || url.starts_with("ssh://") || url.starts_with("git://");
+    if !scheme_ok {
+        return Err(format!(
+            "git url scheme not allowed (only https://, ssh://, git://): {url}"
+        ));
+    }
+    if url.starts_with('-') {
+        return Err(format!("git url may not begin with '-': {url}"));
+    }
+    if reference.starts_with('-') {
+        return Err(format!("git ref may not begin with '-': {reference}"));
+    }
+    Ok(())
+}
+
+/// A `git` invocation with the remote-helper (`ext`) and local
+/// (`file`) transports disabled and interactive protocol promotion
+/// turned off, so a hostile URL or repository config cannot execute a
+/// command. Every network-facing git call in this module starts here.
+fn hardened_git() -> Command {
+    let mut cmd = Command::new("git");
+    cmd.arg("-c")
+        .arg("protocol.ext.allow=never")
+        .arg("-c")
+        .arg("protocol.file.allow=never")
+        .env("GIT_PROTOCOL_FROM_USER", "0")
+        .env("GIT_TERMINAL_PROMPT", "0");
+    cmd
+}
+
 /// Ensures `bare_dir` contains a bare clone of `url`, creating it
 /// (or refreshing) as needed.
 fn ensure_git_clone(url: &str, bare_dir: &Path) -> std::io::Result<()> {
     if bare_dir.join("HEAD").is_file() {
-        let out = Command::new("git")
+        let out = hardened_git()
             .arg("--git-dir")
             .arg(bare_dir)
             .arg("fetch")
@@ -421,9 +473,13 @@ fn ensure_git_clone(url: &str, bare_dir: &Path) -> std::io::Result<()> {
     if let Some(parent) = bare_dir.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let out = Command::new("git")
+    // `--` separates options from the positional repository and target
+    // directory, so a URL that slipped a leading `-` past validation
+    // still cannot be read as an option.
+    let out = hardened_git()
         .arg("clone")
         .arg("--bare")
+        .arg("--")
         .arg(url)
         .arg(bare_dir)
         .output()?;
@@ -440,7 +496,11 @@ fn ensure_git_clone(url: &str, bare_dir: &Path) -> std::io::Result<()> {
 /// Produces a tar buffer of the project tree at `reference` from the
 /// bare clone at `bare_dir`.
 fn git_archive(bare_dir: &Path, reference: &str) -> std::io::Result<Vec<u8>> {
-    let out = Command::new("git")
+    // `git archive` reads the tree-ish positionally and treats anything
+    // after `--` as a pathspec, so the ref cannot be guarded with `--`;
+    // `validate_git_source` has already rejected a ref beginning with
+    // `-` (argv injection) before this runs.
+    let out = hardened_git()
         .arg("--git-dir")
         .arg(bare_dir)
         .arg("archive")
@@ -501,5 +561,42 @@ pub fn synthetic_source_for_test(resolved: &Resolved, seed: &str) -> CachedSourc
         id: resolved.id.clone(),
         files,
         digest,
+    }
+}
+
+#[cfg(test)]
+mod git_source_tests {
+    use super::validate_git_source;
+
+    #[test]
+    fn allowed_schemes_pass() {
+        for url in [
+            "https://github.com/owner/repo.git",
+            "ssh://git@github.com/owner/repo.git",
+            "git://example.com/repo.git",
+        ] {
+            assert!(validate_git_source(url, "main").is_ok(), "rejected {url}");
+        }
+    }
+
+    #[test]
+    fn ext_transport_is_rejected() {
+        let err = validate_git_source("ext::sh -c 'touch /tmp/pwned'", "main").unwrap_err();
+        assert!(err.contains("transport prefix"), "got: {err}");
+    }
+
+    #[test]
+    fn file_and_unknown_schemes_are_rejected() {
+        assert!(validate_git_source("file:///etc/passwd", "main").is_err());
+        assert!(validate_git_source("fd::17", "main").is_err());
+        assert!(validate_git_source("/local/path", "main").is_err());
+    }
+
+    #[test]
+    fn leading_dash_url_and_ref_are_rejected() {
+        assert!(validate_git_source("--upload-pack=touch /tmp/pwned", "main").is_err());
+        let err =
+            validate_git_source("https://example.com/repo.git", "--output=/etc/x").unwrap_err();
+        assert!(err.contains("ref may not begin with '-'"), "got: {err}");
     }
 }

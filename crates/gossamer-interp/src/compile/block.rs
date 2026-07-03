@@ -186,9 +186,17 @@ fn count(n: i64) -> i64 {
 
         // The increment itself must survive: removing the dead unit must
         // not remove the `i + 1` add the loop body still needs.
-        let has_add = chunk.instrs[..back_edge]
-            .iter()
-            .any(|op| matches!(op, Op::AddInt { .. } | Op::AddI64 { .. }));
+        let has_add = chunk.instrs[..back_edge].iter().any(|op| {
+            matches!(
+                op,
+                Op::AddInt { .. }
+                    | Op::AddI64 { .. }
+                    | Op::ArithImmI64 {
+                        kind: crate::bytecode::ImmArithKind::Add,
+                        ..
+                    }
+            )
+        });
         assert!(
             has_add,
             "loop body lost its `i + 1` computation; chunk: {:?}",

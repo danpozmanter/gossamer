@@ -83,7 +83,7 @@ mime_guess = "2"
 # auto-derive helpers. `serde_norway` is the maintained fork of the
 # archived `serde_yaml`, API-compatible.
 serde_norway = "0.9"
-quick-xml = "0.40"
+quick-xml = "0.41"
 
 # Crypto digest helpers consumed by `c_abi::crypto` so the
 # compiled tier can call `std::crypto::sha256` / `sha512` /

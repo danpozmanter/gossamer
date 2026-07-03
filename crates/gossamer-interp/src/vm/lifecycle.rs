@@ -484,12 +484,12 @@ impl Vm {
         // hot counter and skip the cranelift cost entirely.
         // `--no-jit` / `GOS_JIT=0` skips the MIR lower too.
         //
-        // Programs with no JIT-eligible helper functions (only
-        // `main`) also skip the MIR lower: `main` is always run on
-        // the bytecode path (see the `if name == "main" { continue; }`
-        // skip in `try_compile_jit_lazy`) so lowering MIR for it
-        // would never be consumed. `hello.gos` lands in this
-        // bucket, shaving the lower + the tcx clone.
+        // Straight-line scripts with no helper functions also skip
+        // the MIR lower: a loop-free `main` with nothing else to
+        // promote never benefits from the cranelift compile.
+        // `hello.gos` lands in this bucket, shaving the lower + the
+        // tcx clone. A `main` that contains a loop counts as
+        // JIT-eligible - its hot loop promotes like any helper's.
         // Coverage runs stay on the bytecode path: the cranelift JIT
         // lowers from MIR and never sees the `Op::CovHit` markers, so a
         // promoted function would silently stop recording line hits.
@@ -497,6 +497,16 @@ impl Vm {
             let shapes = build_native_enum_shapes(program, &tcx);
             let struct_shapes = build_native_struct_shapes(program, &tcx);
             let mut bodies = gossamer_mir::lower_program(program, &mut tcx);
+            // Monomorphise before the JIT sees the bodies, exactly as the LLVM
+            // AOT pipeline does. A generic function / method / struct
+            // instantiated with a concrete type must reach the JIT as a
+            // specialised body with concrete field and return types; left as a
+            // `Param T` template, the JIT statically under-sizes a multi-slot
+            // generic-struct aggregate (`Wrapper<Point>` lays out one slot
+            // instead of two) and overflows its stack slot. The bytecode VM is
+            // unaffected - it runs the separately-compiled chunks, not these
+            // MIR bodies, which are JIT-only.
+            gossamer_mir::monomorphise(&mut bodies, &mut tcx);
             // The in-process JIT's only win is eliding per-call bytecode
             // dispatch; the VM<->native boundary cancels that for a tiny
             // straight-line leaf, so a program with no function that does
@@ -624,26 +634,17 @@ impl Vm {
                 artifact.functions.len()
             );
         }
-        // The codegen's `println` dispatch routes per-arg through
-        // the right runtime helper, so the historical
-        // `println(<i64>)` segfault no longer applies. We do still
-        // skip `main` because the cranelift intrinsic table
-        // doesn't cover every stdlib call wired through the
-        // interp's builtins (slog::info, exec::run,
-        // compress::gzip::*, bufio::read_lines, etc. - anything
-        // newly registered via `install_module` in `builtins.rs`).
-        // When a JIT-compiled `main` hits one of those, the
-        // codegen silently emits a no-op call instead of routing
-        // back to the bytecode builtin, so the program runs but
-        // produces no output. Keep `main` on the bytecode path so
-        // those builtins fire reliably; helper functions still
-        // get the native lowering, which is where the perf win
-        // actually matters.
+        // `main` promotes like any other body: cranelift now lowers
+        // every construct the override path can hand it - aggregate
+        // returns of any shape go through sret, and the JIT MIR is
+        // monomorphised - so a hot loop living directly in the
+        // implicit top-level `main` (the DP / array benchmarks)
+        // reaches native code. Bodies with constructs the JIT cannot
+        // run faithfully (go-spawn sites, cross-goroutine sync
+        // handles, closures) never reach `artifact.functions` - the
+        // per-body gates in `compile_bodies` keep them on bytecode.
         let mut state = self.jit.write();
         for (name, jit_fn) in &artifact.functions {
-            if name == "main" {
-                continue;
-            }
             // Only register an override for names the bytecode VM
             // actually has chunks for. Closure bodies and other
             // synthesised functions live only in the MIR; the VM

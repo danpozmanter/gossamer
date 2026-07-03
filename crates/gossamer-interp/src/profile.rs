@@ -1076,13 +1076,38 @@ fn op_label(tag: usize) -> &'static str {
                 },
                 "FlatSetF64",
             ),
+            (
+                O::IncJumpIfLtI64 {
+                    counter_i: 0,
+                    end_i: 0,
+                    target: 0,
+                },
+                "IncJumpIfLtI64",
+            ),
+            (
+                O::IncJumpIfLeI64 {
+                    counter_i: 0,
+                    end_i: 0,
+                    target: 0,
+                },
+                "IncJumpIfLeI64",
+            ),
+            (
+                O::ArithImmI64 {
+                    kind: crate::bytecode::ImmArithKind::Add,
+                    dst_i: 0,
+                    lhs_i: 0,
+                    imm: 0,
+                },
+                "ArithImmI64",
+            ),
         ];
         let _ = zero;
         let _ = r;
         for (op, name) in entries {
             let t = op_tag(*op);
             if t < MAX_OPS {
-                out[t] = Somename.name;
+                out[t] = Some(*name);
             }
         }
         out

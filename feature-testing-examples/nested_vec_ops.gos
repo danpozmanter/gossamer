@@ -1,0 +1,70 @@
+// Nested vectors (`Vec<Vec<i64>>` / `[[i64]]`): construction by push, an
+// `[[i64]]` array literal, double indexing `a[i][j]`, iterating an inner row
+// via the outer index (`for x in graph[i]`), mutating an inner element and an
+// inner length (push), and dropping the whole structure. The outer vec owns its
+// inner rows and deep-frees them; the compiled tiers must match the VM exactly.
+
+fn build(rows: i64, cols: i64) -> [[i64]] {
+    let mut g: [[i64]] = []
+    for i in 0..rows {
+        let mut row: [i64] = []
+        for j in 0..cols {
+            row.push(i * cols + j)
+        }
+        g.push(row)
+    }
+    g
+}
+
+fn sum_double_index(g: &[[i64]], rows: i64, cols: i64) -> i64 {
+    let mut acc = 0
+    for i in 0..rows {
+        for j in 0..cols {
+            acc += g[i][j]
+        }
+    }
+    acc
+}
+
+fn sum_row_iter(g: &[[i64]], rows: i64) -> i64 {
+    let mut acc = 0
+    for i in 0..rows {
+        for x in g[i] {
+            acc += x
+        }
+    }
+    acc
+}
+
+fn main() {
+    let rows = 6
+    let cols = 5
+
+    // Build a Vec<Vec<i64>> by push and read it two ways.
+    let g = build(rows, cols)
+    let a = sum_double_index(&g, rows, cols)
+    let b = sum_row_iter(&g, rows)
+
+    // Mutate an inner element and grow an inner row, then re-read.
+    let mut m = build(rows, cols)
+    m[0][0] = 1000
+    m[2].push(777)
+    let mut c = 0
+    for i in 0..rows {
+        for x in m[i] {
+            c += x
+        }
+    }
+
+    // An `[[i64]]` array literal coerced to a nested vec.
+    let lit: [[i64]] = [[1, 2, 3], [4, 5], [6]]
+    let mut d = 0
+    for i in 0..lit.len() {
+        for x in lit[i] {
+            d += x
+        }
+    }
+    let e = lit[0][2] + lit[1][0] + lit[2][0]
+
+    println!("{} {} {} {} {}", a, b, c, d, e)
+}

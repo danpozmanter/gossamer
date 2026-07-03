@@ -1539,15 +1539,30 @@ pub(super) fn lower_intrinsic_call_string(
                     }
                     None => builder.ins().iconst(types::I64, 0),
                 };
-                let v64 = coerce_arg_to(builder, value, types::I64)?;
-                let slot = builder.create_sized_stack_slot(StackSlotData::new(
-                    StackSlotKind::ExplicitSlot,
-                    8,
-                    3,
-                ));
-                let slot_addr = builder.ins().stack_addr(ptr_ty, slot, 0);
-                builder.ins().store(MemFlags::trusted(), v64, slot_addr, 0);
-                slot_addr
+                if value_type(value, builder) == types::I128 {
+                    // A two-word carrier element (`Option<T>` /
+                    // `Result<T, E>`): spill the packed value into a
+                    // 16-byte slot - the runtime memcpys
+                    // `vec.elem_bytes` (16) from the address.
+                    let slot = builder.create_sized_stack_slot(StackSlotData::new(
+                        StackSlotKind::ExplicitSlot,
+                        16,
+                        3,
+                    ));
+                    let slot_addr = builder.ins().stack_addr(ptr_ty, slot, 0);
+                    store_i128_words(builder, value, slot_addr, 0);
+                    slot_addr
+                } else {
+                    let v64 = coerce_arg_to(builder, value, types::I64)?;
+                    let slot = builder.create_sized_stack_slot(StackSlotData::new(
+                        StackSlotKind::ExplicitSlot,
+                        8,
+                        3,
+                    ));
+                    let slot_addr = builder.ins().stack_addr(ptr_ty, slot, 0);
+                    builder.ins().store(MemFlags::trusted(), v64, slot_addr, 0);
+                    slot_addr
+                }
             };
             let fref = module.declare_func_in_func(push_fn, builder.func);
             let _ = builder.ins().call(fref, &[vec_p, elem_addr]);

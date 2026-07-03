@@ -120,7 +120,7 @@ and exit in `process::*`.
 | `std::env::var(name).ok()` | `env::var(name)` |
 | `std::env::current_dir` | `env::current_dir` |
 | `std::env::temp_dir` | `env::temp_dir` |
-| `std::process::Command::new(...)` | `process::Command::new(...)` |
+| `std::process::Command::new(...)` | `process::run(prog, &args)` |
 | `std::process::exit` | `process::exit` |
 | `std::path::Path::new(p).join(...)` | `path::join(p, ...)` |
 | `std::sync::Mutex` | `sync::Mutex` |

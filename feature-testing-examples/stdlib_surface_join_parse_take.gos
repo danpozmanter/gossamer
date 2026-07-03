@@ -1,0 +1,33 @@
+// The 0.24.0 conciseness surface: Display-rendering `join` on scalar
+// and String sequences (including sub-word fixed arrays, whose inline
+// word-per-slot layout repacks on Vec coercion), strict `to_i64` /
+// `to_f64` / `to_bool` parses on String, and `take` / `step_by` on
+// sequences - bit-identical on every tier.
+use std::iter
+
+fn main() {
+    println!("{}", [1, 2, 3].join(" "))
+    println!("{}", [1.5, 2.5].join(", "))
+    println!("{}", [true, false].join("|"))
+    println!("{}", [false, true, true].join(","))
+    println!("{}", ["a", "b", "c"].join("-"))
+    let mut grown = [false; 2]
+    grown[0] = true
+    println!("{}", grown.join("|"))
+
+    println!("{:?} {:?}", "42".to_i64(), "x7".to_i64())
+    println!("{:?} {:?}", "-3.25".to_f64(), "".to_f64())
+    println!("{:?} {:?}", "true".to_bool(), "yes".to_bool())
+    println!("{}", "8".to_i64().unwrap_or(3))
+
+    let xs = [10, 20, 30, 40, 50]
+    println!("{:?}", xs.take(3))
+    println!("{:?}", xs.take(0))
+    println!("{:?}", xs.take(99))
+    println!("{:?}", xs.step_by(2))
+    println!("{:?}", xs.step_by(1))
+    let names = ["ada", "grace", "edsger", "barbara"]
+    println!("{:?}", names.take(2))
+    println!("{}", names.step_by(2).join(" & "))
+    println!("{:?}", (0..10 |> iter::filter(|k| k > 2)).take(4))
+}

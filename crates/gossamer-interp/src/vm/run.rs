@@ -1113,6 +1113,13 @@ impl Vm {
                         }
                     };
                     let b = &mut registers[base as usize];
+                    // An `[f64]` vec whose elements so far were all
+                    // integer-valued sits in `IntArray` storage (an `[i64]`
+                    // can never receive a float store); widen it to flat
+                    // float storage before the store below.
+                    if let (Value::IntArray(data), Value::Float(_)) = (&*b, &new_value) {
+                        *b = Value::FloatVec(Arc::new(data.iter().map(|n| *n as f64).collect()));
+                    }
                     match b {
                         Value::Array(items) | Value::Tuple(items) => {
                             // A whole-element indexed write is a lenient no-op
@@ -1252,19 +1259,24 @@ impl Vm {
                 }
                 Op::VecPush { receiver, value } => {
                     let new_value = registers[value as usize].clone();
-                    match &mut registers[receiver as usize] {
-                        Value::Array(items) => Arc::make_mut(items).push(new_value),
-                        Value::IntArray(data) => {
-                            if let Value::Int(n) = new_value {
-                                Arc::make_mut(data).push(n);
+                    let recv = &mut registers[receiver as usize];
+                    if let Some(promoted) = promote_scalar_push(recv, &new_value) {
+                        *recv = promoted;
+                    } else {
+                        match recv {
+                            Value::Array(items) => Arc::make_mut(items).push(new_value),
+                            Value::IntArray(data) => {
+                                if let Value::Int(n) = new_value {
+                                    Arc::make_mut(data).push(n);
+                                }
                             }
-                        }
-                        Value::FloatVec(data) => match new_value {
-                            Value::Float(f) => Arc::make_mut(data).push(f),
-                            Value::Int(n) => Arc::make_mut(data).push(n as f64),
+                            Value::FloatVec(data) => match new_value {
+                                Value::Float(f) => Arc::make_mut(data).push(f),
+                                Value::Int(n) => Arc::make_mut(data).push(n as f64),
+                                _ => {}
+                            },
                             _ => {}
-                        },
-                        _ => {}
+                        }
                     }
                 }
                 Op::StrAppend { receiver, value } => {
@@ -1307,7 +1319,25 @@ impl Vm {
                         _ => continue,
                     };
                     let new_value = registers[value as usize].clone();
-                    match &mut registers[receiver as usize] {
+                    let recv = &mut registers[receiver as usize];
+                    // Same typed-storage routing as `Op::VecPush`: a scalar
+                    // insert into an empty generic array switches it to flat
+                    // storage, and a float insert widens an integer-valued
+                    // `[f64]` out of `IntArray` storage first.
+                    match (&*recv, &new_value) {
+                        (Value::Array(items), Value::Int(_)) if items.is_empty() => {
+                            *recv = Value::IntArray(Arc::new(Vec::new()));
+                        }
+                        (Value::Array(items), Value::Float(_)) if items.is_empty() => {
+                            *recv = Value::FloatVec(Arc::new(Vec::new()));
+                        }
+                        (Value::IntArray(data), Value::Float(_)) => {
+                            *recv =
+                                Value::FloatVec(Arc::new(data.iter().map(|n| *n as f64).collect()));
+                        }
+                        _ => {}
+                    }
+                    match recv {
                         Value::Array(items) => {
                             let v = Arc::make_mut(items);
                             v.insert(idx.min(v.len()), new_value);
@@ -1785,6 +1815,24 @@ impl Vm {
                     }
                     ints[dst_i as usize] = ints[lhs_i as usize].wrapping_rem(r);
                 }
+                Op::ArithImmI64 {
+                    kind,
+                    dst_i,
+                    lhs_i,
+                    imm,
+                } => unsafe {
+                    let lhs = *ints.get_unchecked(lhs_i as usize);
+                    let imm = imm as i64;
+                    // Div/Rem immediates are non-zero by the emitter's
+                    // contract, so no zero check is paid here.
+                    *ints.get_unchecked_mut(dst_i as usize) = match kind {
+                        ImmArithKind::Add => lhs.wrapping_add(imm),
+                        ImmArithKind::Sub => lhs.wrapping_sub(imm),
+                        ImmArithKind::Mul => lhs.wrapping_mul(imm),
+                        ImmArithKind::Div => lhs.wrapping_div(imm),
+                        ImmArithKind::Rem => lhs.wrapping_rem(imm),
+                    };
+                },
                 Op::NegI64 { dst_i, src_i } => {
                     ints[dst_i as usize] = ints[src_i as usize].wrapping_neg();
                 }
@@ -2628,8 +2676,18 @@ impl Vm {
                             return Err(RuntimeError::Type("repeat count must be int".to_string()));
                         }
                     };
-                    let elem = registers[value as usize].clone();
-                    registers[dst as usize] = Value::Array(Arc::new(vec![elem; n]));
+                    // A scalar repeat lands in flat typed storage - 8 bytes
+                    // per element instead of a 16-byte boxed `Value` - the
+                    // same routing `Op::BuildRange` and integer array
+                    // literals use. Every consumer (indexing, `len`,
+                    // iteration, the collection helpers) handles `IntArray` /
+                    // `FloatVec` identically to a boxed array of the same
+                    // scalars, so this is a pure representation change.
+                    registers[dst as usize] = match &registers[value as usize] {
+                        Value::Int(elem) => Value::IntArray(Arc::new(vec![*elem; n])),
+                        Value::Float(elem) => Value::FloatVec(Arc::new(vec![*elem; n])),
+                        elem => Value::Array(Arc::new(vec![elem.clone(); n])),
+                    };
                 }
                 Op::BuildRange {
                     dst,
@@ -3129,6 +3187,31 @@ impl Vm {
 /// on every successful return path of [`Vm::run`]; error unwinds skip
 /// it (the caller's aggregate keeps its pre-call value, matching the
 /// compiled tiers' no-partial-publish behaviour for panics).
+/// Typed-storage promotion for a scalar push. A first `i64` / `f64` push
+/// into an empty generic `Array` switches the vector to flat typed storage
+/// (`IntArray` / `FloatVec`, 8 bytes per element instead of a 16-byte boxed
+/// `Value`), so a push-built scalar vec costs the same as a literal-built
+/// one. A float push onto an `IntArray` widens it to `FloatVec`: an `[i64]`
+/// can never receive a float, so the receiver is an `[f64]` whose elements
+/// so far were integer-valued. Returns the replacement value, or `None`
+/// when the ordinary push applies.
+fn promote_scalar_push(recv: &Value, new_value: &Value) -> Option<Value> {
+    match (recv, new_value) {
+        (Value::Array(items), Value::Int(n)) if items.is_empty() => {
+            Some(Value::IntArray(Arc::new(vec![*n])))
+        }
+        (Value::Array(items), Value::Float(f)) if items.is_empty() => {
+            Some(Value::FloatVec(Arc::new(vec![*f])))
+        }
+        (Value::IntArray(data), Value::Float(f)) => {
+            let mut wide: Vec<f64> = data.iter().map(|n| *n as f64).collect();
+            wide.push(*f);
+            Some(Value::FloatVec(Arc::new(wide)))
+        }
+        _ => None,
+    }
+}
+
 fn publish_ref_cells(cells: &[(usize, Arc<parking_lot::Mutex<Value>>)], registers: &mut [Value]) {
     // Move (not clone) each `&mut` param's final value back into its cell.
     // Cloning would leave the value referenced by both the cell and the

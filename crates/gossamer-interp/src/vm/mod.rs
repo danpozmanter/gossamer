@@ -89,7 +89,7 @@ use gossamer_types::TyCtxt;
 
 use crate::builtins;
 use crate::bytecode;
-use crate::bytecode::{FnChunk, Op};
+use crate::bytecode::{FnChunk, ImmArithKind, Op};
 use crate::compile::compile_fn;
 use crate::jit_call;
 use crate::value::{MapKey, RuntimeError, RuntimeResult, SmolStr, Value};
@@ -1323,16 +1323,74 @@ fn compare(
 }
 
 /// True when `program` declares at least one user `fn` other than
-/// `main`. Used by `Vm::load` to skip MIR lowering + tcx cloning
-/// on programs where the JIT could never produce a useful
-/// override (the bytecode VM always runs `main` on its own path,
-/// so a program whose only function is `main` never benefits from
-/// the cranelift compile).
+/// `main`, or a `main` whose body contains a loop. Used by
+/// `Vm::load` to skip MIR lowering + tcx cloning on programs where
+/// the JIT could never produce a useful override: a loop-free,
+/// helper-free script (`hello.gos`) has no body worth promoting,
+/// while a `main` with a hot loop promotes like any helper.
 fn has_jit_eligible_fn(program: &HirProgram) -> bool {
-    program
-        .items
-        .iter()
-        .any(|item| matches!(&item.kind, HirItemKind::Fn(decl) if decl.name.name != "main"))
+    program.items.iter().any(|item| match &item.kind {
+        HirItemKind::Fn(decl) => {
+            decl.name.name != "main"
+                || decl
+                    .body
+                    .as_ref()
+                    .is_some_and(|body| hir_block_has_loop(&body.block))
+        }
+        _ => false,
+    })
+}
+
+/// Recursive scan for a `loop` / `while` anywhere in `expr` (HIR
+/// desugars `for` into these before this runs). Closures are skipped:
+/// they are lifted to their own top-level functions and gate
+/// independently.
+fn hir_expr_has_loop(expr: &gossamer_hir::HirExpr) -> bool {
+    use gossamer_hir::HirExprKind as K;
+    match &expr.kind {
+        K::Loop { .. } | K::While { .. } => true,
+        K::Block(block) => hir_block_has_loop(block),
+        K::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            hir_expr_has_loop(condition)
+                || hir_expr_has_loop(then_branch)
+                || else_branch.as_deref().is_some_and(hir_expr_has_loop)
+        }
+        K::Match { scrutinee, arms } => {
+            hir_expr_has_loop(scrutinee) || arms.iter().any(|arm| hir_expr_has_loop(&arm.body))
+        }
+        K::Call { callee, args } => hir_expr_has_loop(callee) || args.iter().any(hir_expr_has_loop),
+        K::MethodCall { receiver, args, .. } => {
+            hir_expr_has_loop(receiver) || args.iter().any(hir_expr_has_loop)
+        }
+        K::Field { receiver, .. } | K::TupleIndex { receiver, .. } => hir_expr_has_loop(receiver),
+        K::Index { base, index } => hir_expr_has_loop(base) || hir_expr_has_loop(index),
+        K::Unary { operand, .. } => hir_expr_has_loop(operand),
+        K::Binary { lhs, rhs, .. } => hir_expr_has_loop(lhs) || hir_expr_has_loop(rhs),
+        K::Assign { place, value } => hir_expr_has_loop(place) || hir_expr_has_loop(value),
+        K::Cast { value, .. } => hir_expr_has_loop(value),
+        K::Go(inner) => hir_expr_has_loop(inner),
+        K::Return(value) => value.as_deref().is_some_and(hir_expr_has_loop),
+        K::Break { value, .. } => value.as_deref().is_some_and(hir_expr_has_loop),
+        K::Tuple(elems) => elems.iter().any(hir_expr_has_loop),
+        K::Range { start, end, .. } => {
+            start.as_deref().is_some_and(hir_expr_has_loop)
+                || end.as_deref().is_some_and(hir_expr_has_loop)
+        }
+        _ => false,
+    }
+}
+
+fn hir_block_has_loop(block: &gossamer_hir::HirBlock) -> bool {
+    use gossamer_hir::HirStmtKind as S;
+    block.stmts.iter().any(|stmt| match &stmt.kind {
+        S::Let { init, .. } => init.as_ref().is_some_and(hir_expr_has_loop),
+        S::Expr { expr, .. } | S::Defer(expr) | S::Go(expr) => hir_expr_has_loop(expr),
+        S::Item(_) => false,
+    }) || block.tail.as_deref().is_some_and(hir_expr_has_loop)
 }
 
 /// Conservative scan for any goroutine-spawn site reachable from the

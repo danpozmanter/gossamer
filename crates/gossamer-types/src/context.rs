@@ -565,4 +565,16 @@ impl TyCtxt {
             Some(TyKind::Adt { def, .. }) if def.local == u32::MAX - 6
         )
     }
+
+    /// Returns true when `ty` is a payload-bearing user enum - a heap node
+    /// (tagged-pointer / header-disc) on the compiled tiers, as opposed to an
+    /// inline two-word by-value enum. A `Vec` of such an enum carries boxed,
+    /// individually reference-counted elements.
+    #[must_use]
+    pub fn is_payload_enum(&self, ty: Ty) -> bool {
+        matches!(
+            self.kind(ty),
+            Some(TyKind::Adt { def, .. }) if self.rc_managed_enum_defs.contains(&def.local)
+        )
+    }
 }

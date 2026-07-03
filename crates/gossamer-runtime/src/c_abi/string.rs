@@ -184,6 +184,20 @@ pub(crate) fn boxed_bytes(src: &[u8]) -> Box<[u8]> {
 fn alloc_growable(parts: &[&[u8]], cap: usize) -> *mut c_char {
     let content_len: usize = parts.iter().map(|p| p.len()).sum();
     debug_assert!(cap >= content_len, "alloc_growable: cap < content length");
+    // The builder header stores length and capacity as `u32` (offsets
+    // `ptr[-5]` / `ptr[-9]`). A value past `u32::MAX` cannot be represented,
+    // so refuse it here rather than truncate and later index the buffer with a
+    // wrapped length. A single string this large is not a real workload; treat
+    // it like the allocation failure it effectively is (aborting, matching the
+    // OOM discipline of the `Box::new_uninit_slice` path below) instead of
+    // corrupting the heap. This is on the string-append hot path, so the check
+    // is two comparisons and no allocation.
+    if cap > u32::MAX as usize || content_len > u32::MAX as usize {
+        eprintln!(
+            "gossamer: string length {content_len} exceeds the 4 GiB builder-header limit; aborting"
+        );
+        std::process::abort();
+    }
     // rc(4) + cap(4) + len(4) + tag(1) + content(cap) + NUL(1) = cap + 14.
     // Refcount at the FRONT keeps cap(-9)/len(-5)/tag(-1) offsets unchanged.
     let total = 4 + 4 + 4 + 1 + cap + 1;
@@ -435,31 +449,16 @@ pub unsafe extern "C" fn gos_rt_vec_clone(src: *const GosVec) -> *mut GosVec {
         }
         let s = unsafe { &*src };
         let bytes = (s.len as usize) * (s.elem_bytes as usize);
-        let data: *mut u8 = if bytes == 0 || s.ptr.is_null() {
-            std::ptr::null_mut::<u8>()
-        } else {
-            let mut buf: Vec<u8> = vec![0u8; bytes];
-            unsafe {
-                std::ptr::copy_nonoverlapping(s.ptr.as_ptr(), buf.as_mut_ptr(), bytes);
-            }
-            let p = buf.as_mut_ptr();
-            std::mem::forget(buf);
-            p
-        };
-        // Ledger + initial strong count, symmetric with `alloc_vec_header`
-        // (gos_rt_vec_free always decrements the ledger).
-        crate::c_abi::ledger::vec_inc();
-        let cloned = GosVec {
-            len: s.len,
-            cap: s.len,
-            elem_bytes: s.elem_bytes,
-            elem_kind: s.elem_kind,
-            region_flag: 0,
-            rc: std::sync::atomic::AtomicU16::new(0),
-            ptr: SyncRawPtr::new(data),
-        };
-        crate::c_abi::vec::vec_set_rc(&cloned, 1);
-        let out = Box::into_raw(Box::new(cloned));
+        // Header + element buffer in one `Box<InlineVec>` (inline for a
+        // small vec, else a separate buffer), then copy the source slots
+        // into whichever data region `ptr` lands at. Ledger + strong count
+        // are set by `alloc_box_vec`, symmetric with `gos_rt_vec_free`.
+        let out =
+            unsafe { crate::c_abi::vec::alloc_box_vec(s.elem_bytes, s.elem_kind, s.len, s.len) };
+        let data = unsafe { (*out).ptr.as_ptr() };
+        if bytes > 0 && !s.ptr.is_null() && !data.is_null() {
+            unsafe { std::ptr::copy_nonoverlapping(s.ptr.as_ptr(), data, bytes) };
+        }
         // A clone of a guarded-aggregate vec shares every element's
         // copy-blob children with the source; register the same meta and
         // give the clone its own shares.
@@ -650,10 +649,18 @@ pub unsafe extern "C" fn gos_rt_str_substring(
         let lo = start.clamp(0, len_i) as usize;
         let hi = end.clamp(0, len_i).max(start.clamp(0, len_i)) as usize;
         let bytes = unsafe { std::slice::from_raw_parts(s.cast::<u8>(), len) };
-        // The slice length is authoritative, so skip `alloc_cstring`'s
-        // first-NUL scan over the content (a wasted pass over bytes the copy
-        // below reads again).
-        alloc_cstring_from_slices(&[&bytes[lo..hi]])
+        let slice = &bytes[lo..hi];
+        // Every Gossamer string is valid UTF-8, an invariant consumers rely on
+        // (`from_utf8_unchecked` in the set shims). A clamped byte range can
+        // land mid-codepoint, so validate and repair with the same lossy
+        // U+FFFD substitution the interpreter builtin (`str_substring_inline`)
+        // uses, keeping the result well-formed and the tiers identical. The
+        // valid path skips `alloc_cstring`'s first-NUL scan (the slice length
+        // is authoritative).
+        match std::str::from_utf8(slice) {
+            Ok(_) => alloc_cstring_from_slices(&[slice]),
+            Err(_) => alloc_cstring(String::from_utf8_lossy(slice).as_bytes()),
+        }
     })
 }
 
@@ -1043,6 +1050,54 @@ pub unsafe extern "C" fn gos_rt_str_find_opt(s: *const c_char, needle: *const c_
             unsafe { gos_rt_result_new(1, 0) }
         } else {
             unsafe { gos_rt_result_new(0, idx) }
+        }
+    })
+}
+
+/// `s.to_i64() -> Option<i64>` packed as `{disc, payload}` (`disc 0 =
+/// Some`, `disc 1 = None`). Strict full-string parse, no trimming.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_str_to_i64_opt(s: *const c_char) -> i128 {
+    ffi_entry!(0i128, {
+        if s.is_null() {
+            return unsafe { gos_rt_result_new(1, 0) };
+        }
+        let text = unsafe { std::ffi::CStr::from_ptr(s) }.to_string_lossy();
+        match text.parse::<i64>() {
+            Ok(n) => unsafe { gos_rt_result_new(0, n) },
+            Err(_) => unsafe { gos_rt_result_new(1, 0) },
+        }
+    })
+}
+
+/// `s.to_f64() -> Option<f64>`: the Some payload carries the value's
+/// bits (`gos_rt_result_new_f64`), read back by the f64 payload path.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_str_to_f64_opt(s: *const c_char) -> i128 {
+    ffi_entry!(0i128, {
+        if s.is_null() {
+            return unsafe { gos_rt_result_new(1, 0) };
+        }
+        let text = unsafe { std::ffi::CStr::from_ptr(s) }.to_string_lossy();
+        match text.parse::<f64>() {
+            Ok(f) => crate::c_abi::gos_rt_result_new_f64(0, f),
+            Err(_) => unsafe { gos_rt_result_new(1, 0) },
+        }
+    })
+}
+
+/// `s.to_bool() -> Option<bool>`: accepts exactly `true` / `false`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_str_to_bool_opt(s: *const c_char) -> i128 {
+    ffi_entry!(0i128, {
+        if s.is_null() {
+            return unsafe { gos_rt_result_new(1, 0) };
+        }
+        let text = unsafe { std::ffi::CStr::from_ptr(s) }.to_string_lossy();
+        match text.as_ref() {
+            "true" => unsafe { gos_rt_result_new(0, 1) },
+            "false" => unsafe { gos_rt_result_new(0, 0) },
+            _ => unsafe { gos_rt_result_new(1, 0) },
         }
     })
 }
@@ -1487,6 +1542,97 @@ pub unsafe extern "C" fn gos_rt_strings_join(
                 let s = unsafe { CStr::from_ptr(elem_ptr).to_str().unwrap_or("") };
                 out.push_str(s);
             }
+        }
+        alloc_cstring(out.as_bytes())
+    })
+}
+
+/// Reads element `i` of a scalar Vec at its declared stride: 1-byte
+/// slots widen from `u8`, everything else reads the full 8-byte word.
+unsafe fn vec_scalar_word(vec: &GosVec, i: usize) -> i64 {
+    let p = unsafe { vec.ptr.add(i * (vec.elem_bytes as usize)) };
+    if vec.elem_bytes == 1 {
+        i64::from(unsafe { *p })
+    } else {
+        unsafe { (p as *const i64).read_unaligned() }
+    }
+}
+
+/// `xs.join(sep)` for an integer-element Vec: Display-render each
+/// element, joined by `sep`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_vec_join_i64(v: *const GosVec, sep: *const c_char) -> *mut c_char {
+    ffi_entry!(std::ptr::null_mut(), {
+        if v.is_null() {
+            return alloc_cstring(b"");
+        }
+        let vec = unsafe { &*v };
+        let sep_str = if sep.is_null() {
+            ""
+        } else {
+            unsafe { CStr::from_ptr(sep).to_str().unwrap_or("") }
+        };
+        let len = vec.len.max(0) as usize;
+        let mut out = String::new();
+        for i in 0..len {
+            if i > 0 {
+                out.push_str(sep_str);
+            }
+            let n = unsafe { vec_scalar_word(vec, i) };
+            out.push_str(&format!("{n}"));
+        }
+        alloc_cstring(out.as_bytes())
+    })
+}
+
+/// `xs.join(sep)` for an f64-element Vec.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_vec_join_f64(v: *const GosVec, sep: *const c_char) -> *mut c_char {
+    ffi_entry!(std::ptr::null_mut(), {
+        if v.is_null() {
+            return alloc_cstring(b"");
+        }
+        let vec = unsafe { &*v };
+        let sep_str = if sep.is_null() {
+            ""
+        } else {
+            unsafe { CStr::from_ptr(sep).to_str().unwrap_or("") }
+        };
+        let len = vec.len.max(0) as usize;
+        let mut out = String::new();
+        for i in 0..len {
+            if i > 0 {
+                out.push_str(sep_str);
+            }
+            let bits = unsafe { vec_scalar_word(vec, i) };
+            let f = f64::from_bits(bits as u64);
+            out.push_str(&format!("{f}"));
+        }
+        alloc_cstring(out.as_bytes())
+    })
+}
+
+/// `xs.join(sep)` for a bool-element Vec.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_vec_join_bool(v: *const GosVec, sep: *const c_char) -> *mut c_char {
+    ffi_entry!(std::ptr::null_mut(), {
+        if v.is_null() {
+            return alloc_cstring(b"");
+        }
+        let vec = unsafe { &*v };
+        let sep_str = if sep.is_null() {
+            ""
+        } else {
+            unsafe { CStr::from_ptr(sep).to_str().unwrap_or("") }
+        };
+        let len = vec.len.max(0) as usize;
+        let mut out = String::new();
+        for i in 0..len {
+            if i > 0 {
+                out.push_str(sep_str);
+            }
+            let raw = unsafe { vec_scalar_word(vec, i) };
+            out.push_str(if raw & 1 != 0 { "true" } else { "false" });
         }
         alloc_cstring(out.as_bytes())
     })

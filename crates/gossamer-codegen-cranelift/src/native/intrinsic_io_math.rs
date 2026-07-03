@@ -324,6 +324,30 @@ pub(super) fn lower_intrinsic_call_io_math(
                         let fref = module.declare_func_in_func(f, builder.func);
                         builder.ins().call(fref, &[s]);
                     }
+                    PrintKind::ArrArrI64(..)
+                    | PrintKind::ArrArrF64(..)
+                    | PrintKind::ArrArrBool(..) => {
+                        let (helper, n, m) = match kind {
+                            PrintKind::ArrArrI64(n, m) => ("gos_rt_arr_format_arr_i64", n, m),
+                            PrintKind::ArrArrF64(n, m) => ("gos_rt_arr_format_arr_f64", n, m),
+                            PrintKind::ArrArrBool(n, m) => ("gos_rt_arr_format_arr_bool", n, m),
+                            _ => unreachable!(),
+                        };
+                        let format_fn = intrinsics.extern_fn(
+                            module,
+                            helper,
+                            &[ptr_ty, types::I64, types::I64],
+                            &[ptr_ty],
+                        )?;
+                        let format_ref = module.declare_func_in_func(format_fn, builder.func);
+                        let n_v = builder.ins().iconst(types::I64, n);
+                        let m_v = builder.ins().iconst(types::I64, m);
+                        let call = builder.ins().call(format_ref, &[value, n_v, m_v]);
+                        let s = builder.inst_results(call)[0];
+                        let f = intrinsics.extern_fn_by_name(module, "gos_rt_concat_str")?;
+                        let fref = module.declare_func_in_func(f, builder.func);
+                        builder.ins().call(fref, &[s]);
+                    }
                     PrintKind::JsonValue => {
                         let render_fn = intrinsics.extern_fn(
                             module,

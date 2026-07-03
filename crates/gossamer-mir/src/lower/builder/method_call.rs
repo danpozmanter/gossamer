@@ -131,6 +131,11 @@ impl<'a> Builder<'a> {
             return r;
         }
         if let MethodLowering::Handled(r) =
+            self.lower_seq_combinator_method(receiver, method, args, ty, span)
+        {
+            return r;
+        }
+        if let MethodLowering::Handled(r) =
             self.lower_hashmap_iter_binding_method(receiver, method, args, span)
         {
             return r;
@@ -272,13 +277,18 @@ impl<'a> Builder<'a> {
             return MethodLowering::Handled(Some(dest));
         }
         // `w.upgrade()` - turn a `Weak<T>` back into `Option<T>`.
-        // `gos_rt_rc_weak_upgrade_opt` boxes `Some(payload)` when the
+        // `gos_rt_rc_weak_upgrade_opt` packs `Some(payload)` when the
         // referent is still alive (`strong > 0`) and `None` otherwise,
-        // returning a `*mut GosResult` so the standard match / if-let
-        // discriminant read works on every tier. The Some-payload is an
-        // interior borrow (the caller's live strong reference keeps it
-        // alive for the duration of the match arm), so no strong count is
-        // taken and nothing is released for it here.
+        // as the `{disc, payload}` pair the standard match / if-let
+        // discriminant read works on, on every tier. The Some payload
+        // carries a fresh strong reference taken atomically inside the
+        // shim (a CAS from a non-zero count for shared referents), so an
+        // upgrade racing another goroutine's final release can never hand
+        // out a dead pointer. That reference is pinned in a frame-owned
+        // shadow local (`gos_rt_weak_opt_payload` extracts the payload
+        // word, null for `None`), which the drop pass releases at scope
+        // exit / reassignment - mirroring the interpreter, whose
+        // `Some(value)` holds an `Arc` clone until its binding dies.
         if method.name.as_str() == "upgrade" && args.is_empty() {
             let Some(recv_local) = self.lower_expr(receiver) else {
                 return MethodLowering::Handled(None);
@@ -295,6 +305,15 @@ impl<'a> Builder<'a> {
                 target: Some(next),
             });
             self.set_current(next);
+            let shadow = self.fresh(payload_ty);
+            self.emit_assign(
+                Place::local(shadow),
+                Rvalue::CallIntrinsic {
+                    name: "gos_rt_weak_opt_payload",
+                    args: vec![Operand::Copy(Place::local(dest))],
+                },
+                span,
+            );
             return MethodLowering::Handled(Some(dest));
         }
         MethodLowering::Pass
@@ -729,6 +748,21 @@ impl<'a> Builder<'a> {
                 .map_or(receiver.ty, |l| self.locals[l.0 as usize].ty);
             let val_kind = self.hash_map_value_kind(recv_ty_local);
             let key_kind = self.hash_map_key_kind(recv_ty_local);
+            if std::env::var("GOS_DEBUG_FALLBACK").is_ok() {
+                let (key_dbg, val_dbg) = match self.tcx.kind_of(recv_ty_local) {
+                    gossamer_types::TyKind::HashMap { key, value } => (
+                        format!("{:?}", self.tcx.kind_of(*key)),
+                        format!("{:?}", self.tcx.kind_of(*value)),
+                    ),
+                    other => (format!("{other:?}"), String::new()),
+                };
+                eprintln!(
+                    "inc gate: key={key_dbg} value={val_dbg} val_is_i64={} key_str={} key_i64={}",
+                    matches!(val_kind, Some(MapValueKind::I64)),
+                    matches!(key_kind, Some(MapKeyKind::String)),
+                    matches!(key_kind, Some(MapKeyKind::I64)),
+                );
+            }
             if matches!(val_kind, Some(MapValueKind::I64)) {
                 let (fn_name, key_kind_ok) = match key_kind {
                     Some(MapKeyKind::String) => ("gos_rt_map_inc_str_i64", true),
@@ -1369,6 +1403,15 @@ impl<'a> Builder<'a> {
             "rfind" if matches!(&receiver_kind_flat, TyKind::String) => {
                 Some("gos_rt_str_rfind_opt")
             }
+            "to_i64" if matches!(&receiver_kind_flat, TyKind::String) => {
+                Some("gos_rt_str_to_i64_opt")
+            }
+            "to_f64" if matches!(&receiver_kind_flat, TyKind::String) => {
+                Some("gos_rt_str_to_f64_opt")
+            }
+            "to_bool" if matches!(&receiver_kind_flat, TyKind::String) => {
+                Some("gos_rt_str_to_bool_opt")
+            }
             "replace" => Some("gos_rt_str_replace"),
             "split" => Some("gos_rt_str_split"),
             // 0.7.0 string surface - split_once / rsplit_once return
@@ -1488,20 +1531,37 @@ impl<'a> Builder<'a> {
             {
                 Some("gos_rt_vec_reversed")
             }
-            // `parts.join(sep)` on a `Vec<String>` - the method form of
-            // `strings::join(parts, sep)`, routed to the same shim so the
-            // compiled tiers match the VM. Guarded on a String element so it
-            // never shadows `JoinHandle::join` (handled above, zero args) or a
-            // numeric vec.
+            "take"
+                if args.len() == 1
+                    && matches!(
+                        &receiver_kind_flat,
+                        TyKind::Vec(_) | TyKind::Slice(_) | TyKind::Array { .. }
+                    ) =>
+            {
+                Some("gos_rt_vec_take")
+            }
+            "step_by"
+                if args.len() == 1
+                    && matches!(
+                        &receiver_kind_flat,
+                        TyKind::Vec(_) | TyKind::Slice(_) | TyKind::Array { .. }
+                    ) =>
+            {
+                Some("gos_rt_vec_step_by")
+            }
+            // `xs.join(sep)` - the method form of `strings::join` for a
+            // String element, and the Display-rendering join shims for
+            // scalar elements. Keyed on the element TyKind so a numeric
+            // vec never joins pointer words; the one-arg gate keeps
+            // `JoinHandle::join` (zero args, handled above) unshadowed.
             "join"
                 if args.len() == 1
                     && matches!(
                         &receiver_kind_flat,
                         TyKind::Vec(_) | TyKind::Slice(_) | TyKind::Array { .. }
-                    )
-                    && vec_element_kind(self.tcx, receiver_ty) == VecElemKind::Str =>
+                    ) =>
             {
-                Some("gos_rt_strings_join")
+                self.vec_join_symbol(receiver_ty)
             }
             "contains"
                 if matches!(
@@ -3373,6 +3433,14 @@ impl<'a> Builder<'a> {
             return Some(dest);
         }
 
+        if std::env::var("GOS_DEBUG_FALLBACK").is_ok() {
+            eprintln!(
+                "fallback method={} receiver_ty={:?} dest_ty={:?}",
+                method.name,
+                self.tcx.kind_of(receiver_ty),
+                self.tcx.kind_of(ty)
+            );
+        }
         // No stdlib helper, no struct-impl match. Emit a generic
         // by-name Call: cranelift's `Const(Str(name))` callee path
         // resolves the symbol via `callees_by_name` (lifted
@@ -3407,6 +3475,120 @@ impl<'a> Builder<'a> {
     /// dispatch off it lets a chained temporary resolve the same symbol as a
     /// `let`-bound receiver, identically across the VM, Cranelift, and LLVM
     /// tiers. Mirrors the guarded arms in [`Self::lower_method_call`]'s table.
+    /// `xs.map(f)` / `xs.filter(f)` / `xs.sum()` / … - the method form
+    /// of the `iter::` combinators on a sequence receiver. Routes
+    /// through `try_lower_iter_call` with the receiver threading in as
+    /// the data-last argument, so both surfaces share one lowering.
+    /// Non-sequence receivers pass through: `Result::map`,
+    /// `Option::map`, `HashMap` accessors, and the String surface keep
+    /// their own dispatch.
+    fn lower_seq_combinator_method(
+        &mut self,
+        receiver: &HirExpr,
+        method: &Ident,
+        args: &[HirExpr],
+        ty: Ty,
+        span: Span,
+    ) -> MethodLowering {
+        let joined: Option<&str> = match (method.name.as_str(), args.len()) {
+            ("map", 1) => Some("iter::map"),
+            ("filter", 1) => Some("iter::filter"),
+            ("for_each", 1) => Some("iter::for_each"),
+            ("any", 1) => Some("iter::any"),
+            ("all", 1) => Some("iter::all"),
+            ("find", 1) => Some("iter::find"),
+            ("position", 1) => Some("iter::position"),
+            ("max_by_key", 1) => Some("iter::max_by_key"),
+            ("min_by_key", 1) => Some("iter::min_by_key"),
+            ("fold", 2) => Some("iter::fold"),
+            ("sum", 0) => Some("iter::sum"),
+            ("min", 0) => Some("iter::min"),
+            ("max", 0) => Some("iter::max"),
+            ("count", 0) => Some("iter::count"),
+            _ => None,
+        };
+        let is_pred_count = method.name.as_str() == "count" && args.len() == 1;
+        if joined.is_none() && !is_pred_count {
+            return MethodLowering::Pass;
+        }
+        let mut recv_kind = self.tcx.kind_of(receiver.ty).clone();
+        while let TyKind::Ref { inner, .. } = recv_kind {
+            recv_kind = self.tcx.kind_of(inner).clone();
+        }
+        if !matches!(
+            recv_kind,
+            TyKind::Vec(_) | TyKind::Slice(_) | TyKind::Array { .. }
+        ) {
+            return MethodLowering::Pass;
+        }
+        let mut reordered: Vec<HirExpr> = args.to_vec();
+        reordered.push(receiver.clone());
+        // `xs.count(f)` - the accepted-element count: `iter::filter`
+        // then a length read of the filtered vec. The filter's
+        // destination carries the receiver's sequence type (as a Vec),
+        // not the count's i64.
+        if is_pred_count {
+            let elem = match recv_kind {
+                TyKind::Vec(e) | TyKind::Slice(e) => e,
+                TyKind::Array { elem, .. } => elem,
+                _ => return MethodLowering::Pass,
+            };
+            let filtered_ty = self.tcx.intern(TyKind::Vec(elem));
+            let Some(filtered) =
+                self.try_lower_iter_call("iter::filter", &reordered, filtered_ty, span)
+            else {
+                return MethodLowering::Pass;
+            };
+            let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+            let dest = self.fresh(i64_ty);
+            let next = self.new_block(span);
+            self.terminate(Terminator::Call {
+                callee: Operand::Const(ConstValue::Str("gos_rt_vec_len".to_string())),
+                args: vec![Operand::Copy(Place::local(filtered))],
+                destination: Place::local(dest),
+                target: Some(next),
+            });
+            self.set_current(next);
+            return MethodLowering::Handled(Some(dest));
+        }
+        let Some(joined) = joined else {
+            return MethodLowering::Pass;
+        };
+        if let Some(dest) = self.try_lower_iter_call(joined, &reordered, ty, span) {
+            return MethodLowering::Handled(Some(dest));
+        }
+        // `max_by_key` / `min_by_key` / `position` and friends lower
+        // through the combinator table rather than the iter table.
+        match self.try_lower_combinator_call(joined, &reordered, ty, span) {
+            Some(dest) => MethodLowering::Handled(Some(dest)),
+            None => MethodLowering::Pass,
+        }
+    }
+
+    /// The join shim for a sequence receiver, keyed on the element
+    /// TyKind: String elements reuse `gos_rt_strings_join`, scalar
+    /// elements Display-render through the typed join shims, and an
+    /// aggregate element has no joinable rendering (`None` - rejected
+    /// upstream by the checker rather than joining pointer words).
+    fn vec_join_symbol(&self, receiver_ty: Ty) -> Option<&'static str> {
+        let mut ty = receiver_ty;
+        while let TyKind::Ref { inner, .. } = self.tcx.kind_of(ty) {
+            ty = *inner;
+        }
+        let elem = match self.tcx.kind_of(ty) {
+            TyKind::Vec(e) | TyKind::Slice(e) => *e,
+            TyKind::Array { elem, .. } => *elem,
+            _ => return None,
+        };
+        match self.tcx.kind_of(elem) {
+            TyKind::String => Some("gos_rt_strings_join"),
+            TyKind::Float(_) => Some("gos_rt_vec_join_f64"),
+            TyKind::Bool => Some("gos_rt_vec_join_bool"),
+            TyKind::Int(_) | TyKind::Char | TyKind::Var(_) => Some("gos_rt_vec_join_i64"),
+            _ => None,
+        }
+    }
+
     fn seq_str_method_from_lowered(
         &self,
         name: &str,
@@ -3428,6 +3610,9 @@ impl<'a> Builder<'a> {
             "contains" if matches!(kind, TyKind::String) => Some("gos_rt_str_contains"),
             "find" if matches!(kind, TyKind::String) => Some("gos_rt_str_find_opt"),
             "rfind" if matches!(kind, TyKind::String) => Some("gos_rt_str_rfind_opt"),
+            "to_i64" if matches!(kind, TyKind::String) => Some("gos_rt_str_to_i64_opt"),
+            "to_f64" if matches!(kind, TyKind::String) => Some("gos_rt_str_to_f64_opt"),
+            "to_bool" if matches!(kind, TyKind::String) => Some("gos_rt_str_to_bool_opt"),
             "split_once" if matches!(kind, TyKind::String) => Some("gos_rt_str_split_once"),
             "rsplit_once" if matches!(kind, TyKind::String) => Some("gos_rt_str_rsplit_once"),
             "count" if matches!(kind, TyKind::String) => Some("gos_rt_str_count"),
@@ -3473,7 +3658,9 @@ impl<'a> Builder<'a> {
             "first" if is_seq => Some("gos_rt_vec_first"),
             "last" if is_seq => Some("gos_rt_vec_last"),
             "reversed" if is_seq => Some("gos_rt_vec_reversed"),
-            "join" if args_len == 1 && is_seq && elem_str(self) => Some("gos_rt_strings_join"),
+            "take" if args_len == 1 && is_seq => Some("gos_rt_vec_take"),
+            "step_by" if args_len == 1 && is_seq => Some("gos_rt_vec_step_by"),
+            "join" if args_len == 1 && is_seq => self.vec_join_symbol(ty),
             "contains" if is_seq => Some(if elem_str(self) {
                 "gos_rt_vec_contains_str"
             } else {

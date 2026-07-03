@@ -147,7 +147,12 @@ fn main() {
     // path consumes this archive to produce a fully static binary.
     // Skip silently when the target isn't available - we still ship
     // the dynamic path as a fallback.
-    if cfg!(target_os = "linux") && profile == "release" {
+    // A `-Z` GOSSAMERFLAGS toolchain (nightly sanitizers) has no musl
+    // sanitizer runtime to link against, and a sanitizer-instrumented
+    // gos is a debugging tool that never produces static-musl release
+    // binaries - skip the musl runtime for those builds.
+    let sanitizer_toolchain = env::var("GOSSAMERFLAGS").is_ok_and(|f| f.contains("-Z"));
+    if cfg!(target_os = "linux") && profile == "release" && !sanitizer_toolchain {
         let musl_triple = "x86_64-unknown-linux-musl";
         if rustup_target_installed(musl_triple) {
             let musl_lib_path =
@@ -195,6 +200,19 @@ fn build_runtime_into(
     triple: Option<&str>,
 ) -> PathBuf {
     let cargo = env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
+    // `-Z` flags in `GOSSAMERFLAGS` are target-scoped (nightly
+    // sanitizers): without an explicit `--target` the inner cargo would
+    // also apply them to host proc-macros, which cannot build as
+    // sanitized dylibs. Pin the inner build to the outer TARGET so the
+    // flags stay on target code; the triple-aware artifact paths below
+    // handle the extra directory level.
+    let host_pin;
+    let triple = if triple.is_none() && env::var("GOSSAMERFLAGS").is_ok_and(|f| f.contains("-Z")) {
+        host_pin = env::var("TARGET").expect("cargo sets TARGET for build scripts");
+        Some(host_pin.as_str())
+    } else {
+        triple
+    };
     let inner_target = match triple {
         Some(t) => target_dir.join(format!("runtime-staticlib-{t}")),
         None => target_dir.join("runtime-staticlib"),
@@ -287,7 +305,13 @@ fn build_runtime_into(
     // filesystem, so a reader always sees either the old or the new
     // complete archive, never a half-written one.
     let tmp = outer_artifact.with_extension(format!("a.tmp-{}", std::process::id()));
-    std::fs::copy(&inner_artifact, &tmp).expect("copy staticlib into outer target dir");
+    std::fs::copy(&inner_artifact, &tmp).unwrap_or_else(|e| {
+        panic!(
+            "copy staticlib {} -> {}: {e}",
+            inner_artifact.display(),
+            tmp.display()
+        )
+    });
     std::fs::rename(&tmp, &outer_artifact).expect("atomically publish staticlib");
     outer_artifact
 }

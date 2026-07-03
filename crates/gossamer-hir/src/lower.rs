@@ -133,6 +133,7 @@ fn collect_import_targets(
             for entry in list {
                 let bound = entry.alias.as_ref().unwrap_or(&entry.name).name.clone();
                 let mut full = base.clone();
+                full.extend(entry.prefix.iter().cloned());
                 full.push(entry.name.clone());
                 entries.push((bound, full));
             }
@@ -561,11 +562,16 @@ impl Lowerer<'_> {
                 name,
                 args,
                 ..
-            } => HirExprKind::MethodCall {
-                receiver: Box::new(self.lower_expr(receiver)),
-                name: name.clone(),
-                args: args.iter().map(|a| self.lower_expr(a)).collect(),
-            },
+            } => {
+                if let Some(desugared) = self.desugar_or_insert_value(expr) {
+                    return desugared.kind;
+                }
+                HirExprKind::MethodCall {
+                    receiver: Box::new(self.lower_expr(receiver)),
+                    name: name.clone(),
+                    args: args.iter().map(|a| self.lower_expr(a)).collect(),
+                }
+            }
             AstExprKind::FieldAccess { receiver, field } => self.lower_field(receiver, field),
             AstExprKind::Index { base, index } => HirExprKind::Index {
                 base: Box::new(self.lower_expr(base)),
@@ -1619,10 +1625,21 @@ impl Lowerer<'_> {
         for stmt in &block.stmts {
             stmts.push(self.lower_stmt(stmt));
         }
-        let tail = block
-            .tail
-            .as_ref()
-            .map(|tail| Box::new(self.lower_expr(tail)));
+        // A tail expression whose value is unit is statement-shaped
+        // (loop bodies, single-call blocks) - the entry-mutation
+        // desugar applies there like any expression statement.
+        let tail = block.tail.as_ref().map(|tail| {
+            let unit_tail = {
+                let t = self.ty_of(tail.id);
+                matches!(self.tcx.kind_of(t), gossamer_types::TyKind::Unit)
+            };
+            let lowered = if unit_tail {
+                self.desugar_or_insert_mutation(tail)
+            } else {
+                None
+            };
+            Box::new(lowered.unwrap_or_else(|| self.lower_expr(tail)))
+        });
         let ty = match tail.as_ref() {
             Some(expr) => expr.ty,
             None => self.unit(),
@@ -1683,10 +1700,15 @@ impl Lowerer<'_> {
                     init,
                 }
             }
-            AstStmtKind::Expr { expr, has_semi } => HirStmtKind::Expr {
-                expr: self.lower_expr(expr),
-                has_semi: *has_semi,
-            },
+            AstStmtKind::Expr { expr, has_semi } => {
+                let expr = self
+                    .desugar_or_insert_mutation(expr)
+                    .unwrap_or_else(|| self.lower_expr(expr));
+                HirStmtKind::Expr {
+                    expr,
+                    has_semi: *has_semi,
+                }
+            }
             AstStmtKind::Item(item) => {
                 if let Some(lowered) = self.lower_item(item, &[]) {
                     HirStmtKind::Item(Box::new(lowered))
@@ -1705,6 +1727,295 @@ impl Lowerer<'_> {
             span: stmt.span,
             kind,
         }
+    }
+
+    /// One `let` of the entry desugars (`let [mut] name: ty = init`).
+    fn entry_let_stmt(
+        &mut self,
+        span: Span,
+        name: &str,
+        ty: gossamer_types::Ty,
+        mutable: bool,
+        init: HirExpr,
+    ) -> HirStmt {
+        HirStmt {
+            id: self.fresh(),
+            span,
+            kind: HirStmtKind::Let {
+                pattern: HirPat {
+                    id: self.fresh(),
+                    span,
+                    ty,
+                    kind: HirPatKind::Binding {
+                        name: Ident::new(name),
+                        mutable,
+                    },
+                },
+                ty,
+                init: Some(init),
+            },
+        }
+    }
+
+    /// A bare path expression referencing one of the entry bindings.
+    fn entry_path(&mut self, span: Span, name: &str, ty: gossamer_types::Ty) -> HirExpr {
+        HirExpr {
+            id: self.fresh(),
+            span,
+            ty,
+            kind: HirExprKind::Path {
+                segments: vec![Ident::new(name)],
+                def: None,
+            },
+        }
+    }
+
+    /// The shared prelude of the entry desugars:
+    /// `let __entry_k = k; let mut __entry_v = option::default(d, m.get(__entry_k))`.
+    /// The get-or-default shape materialises an inline aggregate local
+    /// on every tier (the `or_insert` shims carry scalar values only).
+    fn entry_prelude(
+        &mut self,
+        span: Span,
+        key: HirExpr,
+        default: HirExpr,
+        map: HirExpr,
+        value_ty: gossamer_types::Ty,
+    ) -> (HirStmt, HirStmt) {
+        let key_ty = key.ty;
+        let k_let = self.entry_let_stmt(span, "__entry_k", key_ty, false, key);
+        let k_for_get = self.entry_path(span, "__entry_k", key_ty);
+        let value_substs = gossamer_types::Substs::from_types([value_ty]);
+        let option_value_ty = self.tcx.intern(gossamer_types::TyKind::Adt {
+            def: gossamer_resolve::DefId::local(u32::MAX - 1),
+            substs: value_substs,
+        });
+        let get_call = HirExpr {
+            id: self.fresh(),
+            span,
+            ty: option_value_ty,
+            kind: HirExprKind::MethodCall {
+                receiver: Box::new(map),
+                name: Ident::new("get"),
+                args: vec![k_for_get],
+            },
+        };
+        let default_callee = HirExpr {
+            id: self.fresh(),
+            span,
+            ty: value_ty,
+            kind: HirExprKind::Path {
+                segments: vec![Ident::new("option"), Ident::new("default")],
+                def: None,
+            },
+        };
+        let get_or_default = HirExpr {
+            id: self.fresh(),
+            span,
+            ty: value_ty,
+            kind: HirExprKind::Call {
+                callee: Box::new(default_callee),
+                args: vec![default, get_call],
+            },
+        };
+        let v_let = self.entry_let_stmt(span, "__entry_v", value_ty, true, get_or_default);
+        (k_let, v_let)
+    }
+
+    /// The write-back call of the entry desugars:
+    /// `m.insert(__entry_k, __entry_v)`.
+    fn entry_insert_call(
+        &mut self,
+        span: Span,
+        map: HirExpr,
+        key_ty: gossamer_types::Ty,
+        value_ty: gossamer_types::Ty,
+    ) -> HirExpr {
+        let k = self.entry_path(span, "__entry_k", key_ty);
+        let v = self.entry_path(span, "__entry_v", value_ty);
+        let unit_ty = self.unit();
+        HirExpr {
+            id: self.fresh(),
+            span,
+            ty: unit_ty,
+            kind: HirExprKind::MethodCall {
+                receiver: Box::new(map),
+                name: Ident::new("insert"),
+                args: vec![k, v],
+            },
+        }
+    }
+
+    /// Desugars a value-position `m.or_insert(k, d)` whose VALUE type is
+    /// an aggregate into `{ let __k = k; let mut __v = get-or-default;
+    /// m.insert(__k, __v); __v }`. The scalar shims store an 8-byte
+    /// value word; an aggregate default's stack word stored raw leaves
+    /// the map pointing at a dead frame slot, while get / default /
+    /// insert all carry aggregates correctly on every tier.
+    fn desugar_or_insert_value(&mut self, expr: &AstExpr) -> Option<HirExpr> {
+        let AstExprKind::MethodCall {
+            receiver: map_expr,
+            name,
+            args,
+            ..
+        } = &expr.kind
+        else {
+            return None;
+        };
+        if name.name.as_str() != "or_insert" || args.len() != 2 {
+            return None;
+        }
+        if !matches!(map_expr.kind, AstExprKind::Path(_)) {
+            return None;
+        }
+        let map_ty = self.ty_of(map_expr.id);
+        let gossamer_types::TyKind::HashMap { value, .. } = self.tcx.kind_of(map_ty) else {
+            return None;
+        };
+        // Struct / tuple values only: the scalar shims store their
+        // stack word raw (a dead frame slot once the statement ends).
+        // Vec-valued maps keep the engineered borrow path (`or_insert`
+        // returns an alias of the stored vec, marked borrowed so
+        // teardown frees it exactly once); scalars keep the fast shims.
+        let value_kind = self.tcx.kind_of(*value);
+        if !matches!(
+            value_kind,
+            gossamer_types::TyKind::Adt { .. } | gossamer_types::TyKind::Tuple(_)
+        ) {
+            return None;
+        }
+        let span = expr.span;
+        let value_ty = self.ty_of(expr.id);
+        let key = self.lower_expr(&args[0]);
+        let default = self.lower_expr(&args[1]);
+        // Each receiver mention lowers separately so no two tree
+        // positions share a HirId.
+        let map = self.lower_expr(map_expr);
+        let map_again = self.lower_expr(map_expr);
+        let key_ty = key.ty;
+        let (k_let, v_let) = self.entry_prelude(span, key, default, map, value_ty);
+        let insert_call = self.entry_insert_call(span, map_again, key_ty, value_ty);
+        let insert_stmt = HirStmt {
+            id: self.fresh(),
+            span,
+            kind: HirStmtKind::Expr {
+                expr: insert_call,
+                has_semi: true,
+            },
+        };
+        let v_tail = self.entry_path(span, "__entry_v", value_ty);
+        Some(HirExpr {
+            id: self.fresh(),
+            span,
+            ty: value_ty,
+            kind: HirExprKind::Block(HirBlock {
+                id: self.fresh(),
+                span,
+                stmts: vec![k_let, v_let, insert_stmt],
+                tail: Some(Box::new(v_tail)),
+                ty: value_ty,
+                is_comptime: false,
+            }),
+        })
+    }
+
+    /// Desugars the statement `m.or_insert(k, d).method(args)` on a
+    /// HashMap-typed simple-place receiver into an explicit write-back:
+    ///
+    /// ```text
+    /// { let __entry_k = k; let mut __entry_v = get-or-default;
+    ///   __entry_v.method(args); m.insert(__entry_k, __entry_v) }
+    /// ```
+    ///
+    /// so the mutation lands in the map's stored value (the map's value
+    /// semantics hand `or_insert` callers a copy). The key evaluates
+    /// once; the receiver must be a bare path so its re-evaluation is
+    /// the same place. `None` leaves the statement to the normal
+    /// lowering.
+    fn desugar_or_insert_mutation(&mut self, expr: &AstExpr) -> Option<HirExpr> {
+        let AstExprKind::MethodCall {
+            receiver: outer_recv,
+            name: outer_name,
+            args: outer_args,
+            ..
+        } = &expr.kind
+        else {
+            return None;
+        };
+        let AstExprKind::MethodCall {
+            receiver: map_expr,
+            name: inner_name,
+            args: inner_args,
+            ..
+        } = &outer_recv.kind
+        else {
+            return None;
+        };
+        if inner_name.name.as_str() != "or_insert" || inner_args.len() != 2 {
+            return None;
+        }
+        if !matches!(map_expr.kind, AstExprKind::Path(_)) {
+            return None;
+        }
+        let map_ty = self.ty_of(map_expr.id);
+        let gossamer_types::TyKind::HashMap { value, .. } = self.tcx.kind_of(map_ty) else {
+            return None;
+        };
+        // Struct / tuple values only - the copy-then-lose shape this
+        // write-back exists for. Vec values keep the engineered borrow
+        // path; scalar values have no mutating methods to chain.
+        if !matches!(
+            self.tcx.kind_of(*value),
+            gossamer_types::TyKind::Adt { .. } | gossamer_types::TyKind::Tuple(_)
+        ) {
+            return None;
+        }
+        let span = expr.span;
+        let key = self.lower_expr(&inner_args[0]);
+        let default = self.lower_expr(&inner_args[1]);
+        // Each receiver mention lowers separately so no two tree
+        // positions share a HirId.
+        let map = self.lower_expr(map_expr);
+        let map_again = self.lower_expr(map_expr);
+        let key_ty = key.ty;
+        let value_ty = self.ty_of(outer_recv.id);
+        let outer_ty = self.ty_of(expr.id);
+        let unit_ty = self.unit();
+        let (k_let, v_let) = self.entry_prelude(span, key, default, map, value_ty);
+        let v_for_call = self.entry_path(span, "__entry_v", value_ty);
+        let lowered_args: Vec<HirExpr> = outer_args.iter().map(|a| self.lower_expr(a)).collect();
+        let mutate_call = HirExpr {
+            id: self.fresh(),
+            span,
+            ty: outer_ty,
+            kind: HirExprKind::MethodCall {
+                receiver: Box::new(v_for_call),
+                name: outer_name.clone(),
+                args: lowered_args,
+            },
+        };
+        let mutate_stmt = HirStmt {
+            id: self.fresh(),
+            span,
+            kind: HirStmtKind::Expr {
+                expr: mutate_call,
+                has_semi: true,
+            },
+        };
+        let insert_call = self.entry_insert_call(span, map_again, key_ty, value_ty);
+        Some(HirExpr {
+            id: self.fresh(),
+            span,
+            ty: unit_ty,
+            kind: HirExprKind::Block(HirBlock {
+                id: self.fresh(),
+                span,
+                stmts: vec![k_let, v_let, mutate_stmt],
+                tail: Some(Box::new(insert_call)),
+                ty: unit_ty,
+                is_comptime: false,
+            }),
+        })
     }
 
     fn placeholder_expr(&mut self, span: Span) -> HirExpr {

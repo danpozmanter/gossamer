@@ -18,12 +18,7 @@ fn sorted_ascending(xs: &[i64]) -> [i64] {
 }
 
 fn print_array(xs: &[i64]) {
-    print!("[")
-    for i in 0..xs.len() {
-        if i > 0 { print!(", ") }
-        print!("{}", xs[i])
-    }
-    println!("]")
+    println!("[{}]", xs.join(", "))
 }
 
 fn main() {

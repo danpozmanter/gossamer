@@ -1,0 +1,30 @@
+// Method-form sequence combinators (`xs.map(f)`, `xs.filter(f)`,
+// `xs.sum()`, …): the same typing and lowering as the data-last
+// `iter::` free forms, composing with ranges, chaining, and join.
+// `n as char` reads the int's low byte like `u8 as char` always did.
+fn main() {
+    let xs = [3, 1, 4, 1, 5, 9, 2, 6]
+    println!("{:?}", xs.map(|x| x * 2))
+    println!("{:?}", xs.filter(|x| x > 3))
+    println!("{}", xs.sum())
+    println!("{:?} {:?}", xs.max(), xs.min())
+    println!("{} {}", xs.count(), xs.count(|x| x > 3))
+    println!("{:?} {:?}", xs.max_by_key(|x| 10 - x), xs.min_by_key(|x| 10 - x))
+    println!("{}", xs.fold(100, |acc, x| acc + x))
+    println!("{} {}", xs.any(|x| x == 9), xs.all(|x| x > 0))
+    println!("{:?} {:?}", xs.find(|x| x > 4), xs.position(|x| x == 9))
+    let fs = [1.5, 2.5, 3.0]
+    println!("{} {:?}", fs.sum(), fs.map(|f| f * 2.0))
+    println!("{:?}", (2..10).filter(|k| k % 3 == 0))
+    println!("{}", (1..5).map(|i| i * i).sum())
+    println!("{}", xs.filter(|x| x > 2).map(|x| x * 10).join(","))
+    let sieve = [true; 10]
+    println!("{:?}", (2..10).filter(|k| sieve[k]).take(3))
+
+    let s = "hello"
+    println!("{}", s[1] as char)
+    let mut out = ""
+    for i in 0..s.len() { out += format!("{}", s[i] as char) }
+    println!("{}", out)
+    println!("{}", 65 as char)
+}

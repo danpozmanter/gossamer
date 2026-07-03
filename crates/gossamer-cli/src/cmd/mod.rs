@@ -60,6 +60,15 @@ pub(crate) fn with_vm_stack<T: Send + 'static>(f: impl FnOnce() -> T + Send + 's
             // / `bench` / REPL execution the stack-overflow backstop and the
             // JIT fault breadcrumb. Idempotent and process-wide-safe.
             gossamer_runtime::stack_guard::install_stack_guard();
+            // Arm the byte-budget recursion guard at this thread's shallowest
+            // point, budgeted for its native stack. `apply()` consults it
+            // before the frame-count cap so a hot JIT-compiled recursive body
+            // - which grows the real OS stack rather than the heap frame pool
+            // MAX_CALL_DEPTH bounds - raises a clean GX0008 before the guard
+            // page instead of faulting opaquely. The goroutine workers arm
+            // their own; this covers the main `gos run` / `test` / `bench`
+            // execution thread.
+            gossamer_coro::arm_stack_guard(VM_STACK_BYTES - gossamer_coro::STACK_GUARD_MARGIN);
             f()
         })
         .expect("spawn VM execution thread")

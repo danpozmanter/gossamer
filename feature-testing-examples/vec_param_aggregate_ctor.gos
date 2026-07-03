@@ -1,0 +1,51 @@
+// A Vec/[u8] local passed by value into a constructor-shaped function
+// and stored into the returned struct's field: the caller's local and
+// the struct's field-death free each hold their own share, minted by
+// the aggregate-ctor retain. The struct is then copied (a second
+// field-share), a field is reassigned, and a Vec field is read back
+// out into a call argument - every share released exactly once on
+// every tier.
+struct Cfg {
+    key: [u8],
+    trusted: [String],
+}
+
+struct Resp {
+    body: String,
+    headers: [(String, String)],
+}
+
+fn config(key: [u8]) -> Cfg {
+    Cfg { key: key, trusted: [] }
+}
+
+fn key_len(key: [u8]) -> i64 {
+    key.len()
+}
+
+fn attach(r: Resp, tok: &String) -> Resp {
+    let mut r2 = r
+    r2.headers.push(("set-cookie", "gos_csrf=" + tok))
+    r2
+}
+
+fn header_of(headers: &[(String, String)], want: String) -> String {
+    let mut found = ""
+    for (name, value) in headers {
+        if name == want { found = value }
+    }
+    found
+}
+
+fn main() {
+    let key: [u8] = [1, 2, 3, 4, 5, 6, 7, 8]
+    let mut cfg = config(key)
+    cfg.trusted = ["https://app.example.com"]
+    let n = key_len(cfg.key)
+    let resp = Resp { body: "ok", headers: [] }
+    let resp = attach(resp, &"tok")
+    let sc = header_of(&resp.headers, "set-cookie")
+    println!("key_len={n}")
+    println!("cookie={sc}")
+    println!("trusted={}", cfg.trusted.len())
+}

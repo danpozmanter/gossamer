@@ -697,6 +697,60 @@ pub struct GosFileServer {
     prefix: String,
 }
 
+/// Default cap on a static file served to a client, in bytes. A file
+/// larger than this is treated as not-found so an attacker-controlled
+/// path cannot force an unbounded read into memory. Matches
+/// `gossamer_std::http_static_files::FileServer::max_file_bytes`.
+pub const STATIC_FILE_MAX_BYTES: u64 = 100 * 1024 * 1024;
+
+/// Outcome of resolving a static-file request path against a root.
+pub enum StaticResolution {
+    /// An in-root regular file, no larger than the size cap, safe to
+    /// read and serve.
+    File(std::path::PathBuf),
+    /// The request escaped the configured root (absolute path, `..`,
+    /// or a symlink pointing outside the root).
+    Forbidden,
+    /// The request did not resolve to a servable, in-limit regular
+    /// file.
+    NotFound,
+}
+
+/// Resolves `rel` under `root` for a static-file request, enforcing
+/// the traversal and size guards shared by the compiled and interpreted
+/// static file servers. `rel` is the request path with the route
+/// prefix already stripped and leading slashes trimmed.
+///
+/// Both sides are canonicalized and the resolved path must stay within
+/// the canonical `root`; unlike a textual `..` scan this also defeats
+/// symlink escapes and platform path prefixes (Windows `\\?\`, macOS
+/// `/private`). An absolute request path is refused before the join so
+/// it cannot replace the root outright.
+pub fn resolve_static_path(root: &std::path::Path, rel: &str, max_bytes: u64) -> StaticResolution {
+    let rel_path = std::path::Path::new(rel);
+    if rel_path.is_absolute() {
+        return StaticResolution::Forbidden;
+    }
+    let candidate = root.join(rel_path);
+    let Ok(canonical) = std::fs::canonicalize(&candidate) else {
+        return StaticResolution::NotFound;
+    };
+    let root_canonical = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    if !canonical.starts_with(&root_canonical) {
+        return StaticResolution::Forbidden;
+    }
+    let Ok(meta) = std::fs::metadata(&canonical) else {
+        return StaticResolution::NotFound;
+    };
+    if !meta.is_file() {
+        return StaticResolution::NotFound;
+    }
+    if max_bytes > 0 && meta.len() > max_bytes {
+        return StaticResolution::NotFound;
+    }
+    StaticResolution::File(canonical)
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_file_server_new(
     root: *const c_char,
@@ -737,20 +791,27 @@ pub unsafe extern "C" fn gos_rt_file_server_serve(
         let path = request.url_path_only();
         let rel = path.strip_prefix(&server.prefix).unwrap_or(path);
         let rel = rel.trim_start_matches('/');
-        if rel.contains("..") {
-            return crate::c_abi::vec::pack_result(
-                0,
-                Box::into_raw(Box::new(GosHttpResponse {
-                    status: 403,
-                    body: SyncRawPtr::new(alloc_cstring(b"forbidden")),
-                    headers: Vec::new(),
-                    body_bytes: None,
-                    content_type: "text/plain; charset=utf-8".to_string(),
-                    stream_handle: -1,
-                })) as i64,
-            );
-        }
-        let full = std::path::PathBuf::from(&server.root).join(rel);
+        let full = match resolve_static_path(
+            std::path::Path::new(&server.root),
+            rel,
+            STATIC_FILE_MAX_BYTES,
+        ) {
+            StaticResolution::File(p) => p,
+            StaticResolution::Forbidden => {
+                return crate::c_abi::vec::pack_result(
+                    0,
+                    Box::into_raw(Box::new(GosHttpResponse {
+                        status: 403,
+                        body: SyncRawPtr::new(alloc_cstring(b"forbidden")),
+                        headers: Vec::new(),
+                        body_bytes: None,
+                        content_type: "text/plain; charset=utf-8".to_string(),
+                        stream_handle: -1,
+                    })) as i64,
+                );
+            }
+            StaticResolution::NotFound => return router_404_result(),
+        };
         match std::fs::read(&full) {
             Ok(bytes) => {
                 let mime = mime_for_path_str(&full.to_string_lossy());
@@ -1291,4 +1352,102 @@ fn base64_oneshot(input: &[u8]) -> String {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod static_path_tests {
+    use super::{StaticResolution, resolve_static_path};
+
+    fn temp_root(tag: &str) -> std::path::PathBuf {
+        let mut dir = std::env::temp_dir();
+        dir.push(format!(
+            "gossamer_static_guard_{}_{}",
+            tag,
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn in_root_file_is_served() {
+        let root = temp_root("ok");
+        std::fs::write(root.join("hello.txt"), b"hi").unwrap();
+        match resolve_static_path(&root, "hello.txt", 0) {
+            StaticResolution::File(p) => assert!(p.ends_with("hello.txt")),
+            other => panic!("expected File, got {}", label(&other)),
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn dotdot_escape_is_forbidden() {
+        let root = temp_root("escape");
+        std::fs::create_dir_all(root.join("public")).unwrap();
+        std::fs::write(root.join("secret.txt"), b"top secret").unwrap();
+        let public = root.join("public");
+        // `public/../secret.txt` resolves above `public` (the root).
+        assert!(matches!(
+            resolve_static_path(&public, "../secret.txt", 0),
+            StaticResolution::Forbidden
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn absolute_request_path_is_forbidden() {
+        let root = temp_root("abs");
+        let abs = if cfg!(windows) {
+            "C:\\Windows\\win.ini"
+        } else {
+            "/etc/passwd"
+        };
+        assert!(matches!(
+            resolve_static_path(&root, abs, 0),
+            StaticResolution::Forbidden | StaticResolution::NotFound
+        ));
+        // A Unix absolute path is unambiguously Forbidden.
+        if !cfg!(windows) {
+            assert!(matches!(
+                resolve_static_path(&root, "/etc/passwd", 0),
+                StaticResolution::Forbidden
+            ));
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn oversized_file_is_not_found() {
+        let root = temp_root("size");
+        std::fs::write(root.join("big.bin"), vec![0u8; 4096]).unwrap();
+        assert!(matches!(
+            resolve_static_path(&root, "big.bin", 1024),
+            StaticResolution::NotFound
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlink_escape_is_forbidden() {
+        let root = temp_root("symlink");
+        std::fs::write(root.join("outside_target"), b"secret").unwrap();
+        let served = root.join("served");
+        std::fs::create_dir_all(&served).unwrap();
+        std::os::unix::fs::symlink(root.join("outside_target"), served.join("link")).unwrap();
+        assert!(matches!(
+            resolve_static_path(&served, "link", 0),
+            StaticResolution::Forbidden
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    fn label(r: &StaticResolution) -> &'static str {
+        match r {
+            StaticResolution::File(_) => "File",
+            StaticResolution::Forbidden => "Forbidden",
+            StaticResolution::NotFound => "NotFound",
+        }
+    }
 }

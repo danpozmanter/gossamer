@@ -2004,6 +2004,23 @@ pub(crate) fn elide_redundant_rc_pairs(body: &mut Body, tcx: &TyCtxt) {
             if local_live_after(body, &succs, bi, id, x) {
                 continue;
             }
+            // Collector-vs-stack-live contract (F13): a cycle-capable value
+            // (a user struct/enum that can hold a back-reference) is a
+            // potential trial-deletion candidate. Its retain accounts for the
+            // stack reference; cancelling the retain/release pair leaves that
+            // reference uncounted, so a trial deletion triggered by an
+            // allocation safepoint inside the window would treat the value as
+            // cycle-internal and reclaim a still-stack-live member. Keep the
+            // pair when an allocation lies between the retain and its release.
+            // Strings, vecs, and maps cannot form a collectable cycle, so
+            // their pairs still cancel.
+            let cycle_capable = matches!(
+                body.locals.get(x.0 as usize).map(|d| tcx.kind_of(d.ty)),
+                Some(gossamer_types::TyKind::Adt { .. })
+            );
+            if cycle_capable && block_allocates_between(&body.blocks[bi], ir, id) {
+                continue;
+            }
             cancels.push((bi, ir, id));
         }
     }
@@ -2018,6 +2035,25 @@ pub(crate) fn elide_redundant_rc_pairs(body: &mut Body, tcx: &TyCtxt) {
         body.blocks[bi].stmts[ir].kind = StatementKind::Nop;
         body.blocks[bi].stmts[id].kind = StatementKind::Nop;
     }
+}
+
+/// True when block `block` performs an RC allocation between statement
+/// indices `from` and `to` (exclusive). A `gos_rc_alloc` can trip the
+/// cycle collector's allocation-pressure trigger, so it is a collection
+/// safepoint within the retain/release window.
+fn block_allocates_between(block: &BasicBlock, from: usize, to: usize) -> bool {
+    block
+        .stmts
+        .iter()
+        .take(to)
+        .skip(from + 1)
+        .any(|s| match &s.kind {
+            StatementKind::Assign {
+                rvalue: Rvalue::CallIntrinsic { name, .. },
+                ..
+            } => *name == "gos_rc_alloc" || *name == "gos_rc_alloc_tagged",
+            _ => false,
+        })
 }
 
 // ---------------------------------------------------------------------------

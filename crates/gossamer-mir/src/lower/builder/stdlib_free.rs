@@ -1799,6 +1799,9 @@ impl<'a> Builder<'a> {
             "strings::rfind_any" => ("gos_rt_str_last_index_any", self.option_i64_adt_ty()),
             "strings::strip_prefix" => ("gos_rt_str_strip_prefix", self.option_string_adt_ty()),
             "strings::strip_suffix" => ("gos_rt_str_strip_suffix", self.option_string_adt_ty()),
+            "strings::to_i64" => ("gos_rt_str_to_i64_opt", self.option_i64_adt_ty()),
+            "strings::to_f64" => ("gos_rt_str_to_f64_opt", self.option_f64_adt_ty()),
+            "strings::to_bool" => ("gos_rt_str_to_bool_opt", self.option_bool_adt_ty()),
             // String-as-receiver `rfind` returns Option<i64>; same
             // discriminant-packed shape as `find_opt`.
             "strings::rfind" => {
