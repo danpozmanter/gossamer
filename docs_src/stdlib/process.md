@@ -15,6 +15,7 @@ Spawn child processes, exit the current process (Rust std::process shape).
 | `Child` | type | Handle to a still-running child supporting wait / kill. |
 | `run` | fn | One-shot: runs a program with args, captures stdout/stderr, returns Output. |
 | `spawn` | fn | Spawns a child process and returns a Child handle. |
+| `spawn_piped` | fn | Spawns a child with piped stdin/stdout; returns Result<Child, errors::Error>. The Child's write_stdin / close_stdin / read_line / read_stdout / wait / kill methods drive it interactively. |
 | `kill` | fn | Sends SIGKILL (or equivalent) to a Child. |
 | `exit` | fn | Exits the current process with the given status code. |
 | `id` | fn | Returns the current process ID. |

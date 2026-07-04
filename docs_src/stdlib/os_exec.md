@@ -17,6 +17,7 @@ Spawn / wait for child processes (Go's os/exec shape).
 | `Signal` | type | Portable signal selector (Term/Kill/Stop/Cont/Hup/Int/Usr1/Usr2/Pipe/Quit). |
 | `run` | fn | One-shot: runs a program with args, captures stdout/stderr, returns Result<{stdout, stderr, code}, String>. |
 | `spawn` | fn | Non-blocking launch; returns the child PID as Result<i64, errors::Error>. |
+| `spawn_piped` | fn | Spawns a child with piped stdin/stdout; returns Result<Child, errors::Error>. The Child's write_stdin / close_stdin / read_line / read_stdout / wait / kill methods drive it interactively. |
 | `kill` | fn | Best-effort SIGTERM by pid; returns true on success. |
 | `signal` | fn | Send an arbitrary signal number to a pid; returns true on success. |
 | `kill_group` | fn | Send SIGTERM to the entire process group (Unix); best-effort TerminateProcess on Windows. |
