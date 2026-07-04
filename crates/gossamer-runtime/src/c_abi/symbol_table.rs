@@ -524,6 +524,30 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_char_to_str as *const u8,
         ),
         (
+            "gos_rt_child_close_stdin",
+            crate::c_abi::gos_rt_child_close_stdin as *const u8,
+        ),
+        (
+            "gos_rt_child_kill",
+            crate::c_abi::gos_rt_child_kill as *const u8,
+        ),
+        (
+            "gos_rt_child_read_line",
+            crate::c_abi::gos_rt_child_read_line as *const u8,
+        ),
+        (
+            "gos_rt_child_read_stdout",
+            crate::c_abi::gos_rt_child_read_stdout as *const u8,
+        ),
+        (
+            "gos_rt_child_wait",
+            crate::c_abi::gos_rt_child_wait as *const u8,
+        ),
+        (
+            "gos_rt_child_write_stdin",
+            crate::c_abi::gos_rt_child_write_stdin as *const u8,
+        ),
+        (
             "gos_rt_chunked_decode",
             crate::c_abi::gos_rt_chunked_decode as *const u8,
         ),
@@ -946,6 +970,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
         (
             "gos_rt_exec_spawn",
             crate::c_abi::gos_rt_exec_spawn as *const u8,
+        ),
+        (
+            "gos_rt_exec_spawn_piped",
+            crate::c_abi::gos_rt_exec_spawn_piped as *const u8,
         ),
         (
             "gos_rt_exec_wait_timeout",
@@ -3237,6 +3265,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
         (
             "gos_rt_result_ok_or",
             crate::c_abi::gos_rt_result_ok_or as *const u8,
+        ),
+        (
+            "gos_rt_result_ok_or_else",
+            crate::c_abi::gos_rt_result_ok_or_else as *const u8,
         ),
         (
             "gos_rt_result_payload",

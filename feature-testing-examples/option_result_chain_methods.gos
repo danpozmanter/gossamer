@@ -1,0 +1,28 @@
+// Method-form Option/Result chaining combinators: and_then, or_else,
+// filter, ok_or, ok_or_else - identical on every tier.
+fn main() {
+    let doubled = Some(5).and_then(|x: i64| if x > 3 { Some(x * 2) } else { None })
+    println!("{:?}", doubled)
+    let dropped = Some(2).and_then(|x: i64| if x > 3 { Some(x * 2) } else { None })
+    println!("{:?}", dropped)
+    let absent: Option<i64> = None
+    println!("{:?}", absent.and_then(|x: i64| Some(x * 2)))
+
+    println!("{:?}", Some(5).filter(|x: i64| x > 3))
+    println!("{:?}", Some(2).filter(|x: i64| x > 3))
+
+    println!("{:?}", absent.or_else(|| Some(9)))
+    println!("{:?}", Some(1).or_else(|| Some(9)))
+
+    let named: Result<i64, String> = Some(7).ok_or("missing")
+    println!("{:?}", named)
+    let fallback: Result<i64, String> = absent.ok_or_else(|| "computed")
+    println!("{:?}", fallback)
+
+    let ok: Result<i64, String> = Ok(4)
+    let chained = ok.and_then(|x: i64| if x > 0 { Ok(x + 1) } else { Err("neg") })
+    println!("{:?}", chained)
+    let failed: Result<i64, String> = Err("boom")
+    println!("{:?}", failed.and_then(|x: i64| Ok(x + 1)))
+    println!("{:?}", failed.or_else(|e: String| Ok(e.len())))
+}

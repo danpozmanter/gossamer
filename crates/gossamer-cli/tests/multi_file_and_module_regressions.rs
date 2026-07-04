@@ -1601,3 +1601,207 @@ fn gos_test_discovers_tests_in_cross_referencing_files() {
         "expected the sibling-referencing test to be discovered and pass:\n{stdout}",
     );
 }
+
+#[test]
+fn relative_entry_path_bundles_siblings() {
+    // `gos run main.gos` from inside the project directory must bundle
+    // sibling modules exactly like `gos run .` does. A bare relative
+    // entry has an empty `parent()`, and an unabsolutized path made
+    // the module scan read from the empty dir and silently bundle
+    // nothing, so qualified sibling calls failed with GR0001.
+    let dir = fresh_dir("relative-entry");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(
+        dir.join("project.toml"),
+        "[project]\nid = \"example.com/relentry\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("util.gos"),
+        "pub fn add(a: i64, b: i64) -> i64 { a + b }\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("main.gos"),
+        "fn main() { println!(\"{}\", util::add(1, 2)) }\n",
+    )
+    .unwrap();
+    let child = Command::new(gos_bin())
+        .arg("run")
+        .arg("main.gos")
+        .current_dir(&dir)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn gos run");
+    let out = run_with_timeout(child);
+    let _ = fs::remove_dir_all(&dir);
+    assert_eq!(out.2, Some(0), "stderr: {}", out.1);
+    assert_eq!(out.0.trim(), "3", "expected stdout '3', got: {:?}", out.0);
+}
+
+/// Writes a dependency project at `root/<name>` with the given id and
+/// lib source, returning its directory.
+fn write_dep_project(root: &Path, name: &str, id: &str, lib: &str) -> PathBuf {
+    let dir = root.join(name);
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(
+        dir.join("project.toml"),
+        format!("[project]\nid = \"{id}\"\nversion = \"0.1.0\"\n"),
+    )
+    .unwrap();
+    fs::write(dir.join("lib.gos"), lib).unwrap();
+    dir
+}
+
+fn write_app_project(root: &Path, deps: &str, main: &str) -> PathBuf {
+    let dir = root.join("app");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(
+        dir.join("project.toml"),
+        format!(
+            "[project]\nid = \"example.com/app\"\nversion = \"0.1.0\"\n\n[dependencies]\n{deps}"
+        ),
+    )
+    .unwrap();
+    fs::write(dir.join("main.gos"), main).unwrap();
+    dir
+}
+
+#[test]
+fn path_dependency_links_at_run() {
+    let root = fresh_dir("path-dep-run");
+    write_dep_project(
+        &root,
+        "dep",
+        "example.com/dep",
+        "pub fn greet(name: &String) -> String { format!(\"hi {}\", name) }\n",
+    );
+    let app = write_app_project(
+        &root,
+        "dep = { path = \"../dep\" }\n",
+        "use \"example.com/dep\" as dep\n\nfn main() { println!(\"{}\", dep::greet(&\"gos\")) }\n",
+    );
+    let out = project_run_vm(&app);
+    let _ = fs::remove_dir_all(&root);
+    assert_eq!(out.2, Some(0), "stderr: {}", out.1);
+    assert_eq!(out.0.trim(), "hi gos", "stdout: {:?}", out.0);
+}
+
+#[test]
+fn path_dependency_links_at_build() {
+    let root = fresh_dir("path-dep-build");
+    write_dep_project(
+        &root,
+        "dep",
+        "example.com/dep",
+        "pub fn add(a: i64, b: i64) -> i64 { a + b }\n",
+    );
+    let app = write_app_project(
+        &root,
+        "dep = { path = \"../dep\" }\n",
+        "use \"example.com/dep\" as d\n\nfn main() { println!(\"{}\", d::add(20, 22)) }\n",
+    );
+    let out = project_build_run(&app, "app");
+    let _ = fs::remove_dir_all(&root);
+    assert_eq!(out.2, Some(0), "stderr: {}", out.1);
+    assert_eq!(out.0.trim(), "42", "stdout: {:?}", out.0);
+}
+
+#[test]
+fn check_rejects_unknown_path_dep_member() {
+    let root = fresh_dir("path-dep-check");
+    write_dep_project(
+        &root,
+        "dep",
+        "example.com/dep",
+        "pub fn greet() -> String { \"hi\" }\n",
+    );
+    let app = write_app_project(
+        &root,
+        "dep = { path = \"../dep\" }\n",
+        "use \"example.com/dep\" as dep\n\nfn main() { println!(\"{}\", dep::nonexistent()) }\n",
+    );
+    let out = Command::new(gos_bin())
+        .arg("check")
+        .arg(".")
+        .current_dir(&app)
+        .output()
+        .expect("spawn gos check");
+    let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+    let _ = fs::remove_dir_all(&root);
+    assert!(
+        !out.status.success(),
+        "check must reject a nonexistent dep member, stderr: {stderr}"
+    );
+    assert!(
+        stderr.contains("nonexistent"),
+        "diagnostic should name the missing member: {stderr}"
+    );
+}
+
+#[test]
+fn transitive_path_dependency_links_at_run() {
+    let root = fresh_dir("path-dep-transitive");
+    write_dep_project(
+        &root,
+        "base",
+        "example.com/base",
+        "pub fn two() -> i64 { 2 }\n",
+    );
+    let mid = root.join("mid");
+    fs::create_dir_all(&mid).unwrap();
+    fs::write(
+        mid.join("project.toml"),
+        "[project]\nid = \"example.com/mid\"\nversion = \"0.1.0\"\n\n[dependencies]\nbase = { path = \"../base\" }\n",
+    )
+    .unwrap();
+    fs::write(
+        mid.join("lib.gos"),
+        "use \"example.com/base\" as base\n\npub fn double_two() -> i64 { base::two() * 2 }\n",
+    )
+    .unwrap();
+    let app = write_app_project(
+        &root,
+        "mid = { path = \"../mid\" }\n",
+        "use \"example.com/mid\" as mid\n\nfn main() { println!(\"{}\", mid::double_two()) }\n",
+    );
+    let out = project_run_vm(&app);
+    let _ = fs::remove_dir_all(&root);
+    assert_eq!(out.2, Some(0), "stderr: {}", out.1);
+    assert_eq!(out.0.trim(), "4", "stdout: {:?}", out.0);
+}
+
+#[test]
+fn same_fn_name_in_two_sibling_modules_runs() {
+    // Two bundled modules may each define `add`; bare in-module
+    // references bind to the module's own item, qualified calls to
+    // the named module's. Previously a flat namespace made this a
+    // GR0003 duplicate-definition error.
+    let dir = write_project(
+        "same-name-two-modules",
+        "example.com/samename",
+        &[
+            (
+                "alpha.gos",
+                "pub fn add(a: i64, b: i64) -> i64 { a + b }\npub fn twice(a: i64) -> i64 { add(a, a) }\n",
+            ),
+            (
+                "beta.gos",
+                "pub fn add(a: i64, b: i64) -> i64 { (a + b) * 10 }\n",
+            ),
+            (
+                "main.gos",
+                "fn main() {\n    println!(\"{} {} {}\", alpha::add(1, 2), beta::add(1, 2), alpha::twice(4))\n}\n",
+            ),
+        ],
+    );
+    let run = project_run_vm(&dir);
+    assert_eq!(run.2, Some(0), "vm stderr: {}", run.1);
+    assert_eq!(run.0.trim(), "3 30 8", "vm stdout: {:?}", run.0);
+    let build = project_build_run(&dir, "samename");
+    let _ = fs::remove_dir_all(&dir);
+    assert_eq!(build.2, Some(0), "native stderr: {}", build.1);
+    assert_eq!(build.0.trim(), "3 30 8", "native stdout: {:?}", build.0);
+}

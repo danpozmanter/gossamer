@@ -63,10 +63,17 @@ pub(crate) fn run_gos(
 }
 
 /// Force-kills `pid` via the platform's standard process-control
-/// utility, keeping this crate dependency free and unsafe free.
+/// utility, keeping this crate dependency free and unsafe free. The
+/// utility's streams are detached: the server's inherited stdout IS
+/// the JSON-RPC transport, and these tools report their outcome to
+/// stdout/stderr.
 #[cfg(unix)]
 fn kill_pid(pid: u32) {
-    let _ = Command::new("kill").args(["-9", &pid.to_string()]).status();
+    let _ = Command::new("kill")
+        .args(["-9", &pid.to_string()])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
 }
 
 /// `/T` fells the whole child tree (`gos build` spawns llc / cc).
@@ -74,6 +81,8 @@ fn kill_pid(pid: u32) {
 fn kill_pid(pid: u32) {
     let _ = Command::new("taskkill")
         .args(["/PID", &pid.to_string(), "/T", "/F"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
         .status();
 }
 

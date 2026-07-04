@@ -341,6 +341,247 @@ fn wait_timeout_windows(pid: u32, ms: u32) -> i64 {
     }
 }
 
+// ---------------------------------------------------------------
+// Interactive piped children (`process::spawn_piped`).
+//
+// A spawned child's stdin/stdout are held in a process-global
+// registry keyed by an opaque i64 handle; the `Child` methods take
+// the handle. Reads go through a BufReader so `read_line` is
+// incremental. The registry entry is removed at `wait`.
+// ---------------------------------------------------------------
+
+/// One live piped child: the process plus its retained pipe ends.
+struct PipedChild {
+    child: std::process::Child,
+    stdin: Option<std::process::ChildStdin>,
+    stdout: Option<std::io::BufReader<std::process::ChildStdout>>,
+}
+
+static PIPED_CHILDREN: parking_lot::Mutex<Option<std::collections::HashMap<i64, PipedChild>>> =
+    parking_lot::Mutex::new(None);
+static NEXT_CHILD_HANDLE: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(1);
+
+fn with_piped_child<R>(handle: i64, f: impl FnOnce(&mut PipedChild) -> R) -> Option<R> {
+    let mut table = PIPED_CHILDREN.lock();
+    table
+        .get_or_insert_with(Default::default)
+        .get_mut(&handle)
+        .map(f)
+}
+
+/// Spawns `prog` with piped stdin/stdout (stderr nulled) and returns
+/// the opaque registry handle. Shared by the C-ABI shims and the
+/// interpreter builtins so mixed VM/JIT execution sees one registry.
+pub fn piped_child_spawn(prog: &str, args: &[String]) -> Result<i64, String> {
+    let mut command = std::process::Command::new(prog);
+    command.args(args);
+    command.stdin(std::process::Stdio::piped());
+    command.stdout(std::process::Stdio::piped());
+    command.stderr(std::process::Stdio::null());
+    match command.spawn() {
+        Ok(mut child) => {
+            let stdin = child.stdin.take();
+            let stdout = child.stdout.take().map(std::io::BufReader::new);
+            let handle = NEXT_CHILD_HANDLE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            PIPED_CHILDREN
+                .lock()
+                .get_or_insert_with(Default::default)
+                .insert(
+                    handle,
+                    PipedChild {
+                        child,
+                        stdin,
+                        stdout,
+                    },
+                );
+            Ok(handle)
+        }
+        Err(e) => Err(format!("process::spawn_piped({prog}): {e}")),
+    }
+}
+
+/// Writes `bytes` to the child's stdin; false after `close_stdin`,
+/// on a reaped handle, or when the pipe is broken.
+pub fn piped_child_write_stdin(handle: i64, bytes: &[u8]) -> bool {
+    use std::io::Write;
+    with_piped_child(handle, |pc| {
+        pc.stdin
+            .as_mut()
+            .is_some_and(|w| w.write_all(bytes).and_then(|()| w.flush()).is_ok())
+    })
+    .unwrap_or(false)
+}
+
+/// Drops the child's stdin write end so it sees EOF.
+pub fn piped_child_close_stdin(handle: i64) {
+    with_piped_child(handle, |pc| {
+        pc.stdin = None;
+    });
+}
+
+/// Next stdout line without its trailing newline; `None` at EOF or
+/// on a reaped handle.
+pub fn piped_child_read_line(handle: i64) -> Option<String> {
+    use std::io::BufRead;
+    with_piped_child(handle, |pc| {
+        let reader = pc.stdout.as_mut()?;
+        let mut line = String::new();
+        match reader.read_line(&mut line) {
+            Ok(0) | Err(_) => None,
+            Ok(_) => {
+                while line.ends_with('\n') || line.ends_with('\r') {
+                    line.pop();
+                }
+                Some(line)
+            }
+        }
+    })
+    .flatten()
+}
+
+/// Drains the child's stdout to EOF.
+pub fn piped_child_read_stdout(handle: i64) -> Option<String> {
+    use std::io::Read;
+    with_piped_child(handle, |pc| {
+        let reader = pc.stdout.as_mut()?;
+        let mut buf = String::new();
+        reader.read_to_string(&mut buf).ok()?;
+        Some(buf)
+    })
+    .flatten()
+}
+
+/// Closes stdin, reaps the child, and removes the registry entry.
+pub fn piped_child_wait(handle: i64) -> Result<i64, String> {
+    let entry = PIPED_CHILDREN
+        .lock()
+        .get_or_insert_with(Default::default)
+        .remove(&handle);
+    let Some(mut pc) = entry else {
+        return Err("process::Child::wait: unknown or reaped handle".to_string());
+    };
+    pc.stdin = None;
+    match pc.child.wait() {
+        Ok(status) => Ok(i64::from(status.code().unwrap_or(-1))),
+        Err(e) => Err(format!("process::Child::wait: {e}")),
+    }
+}
+
+/// Best-effort terminate; the handle stays until `wait` reaps it.
+pub fn piped_child_kill(handle: i64) -> bool {
+    with_piped_child(handle, |pc| pc.child.kill().is_ok()).unwrap_or(false)
+}
+
+/// Reads the flat `Vec<String>` argv convention shared with
+/// `gos_rt_exec_spawn`.
+fn argv_strings(args: *mut GosVec) -> Vec<String> {
+    let mut out = Vec::new();
+    if args.is_null() {
+        return out;
+    }
+    let v = unsafe { &*args };
+    let elem_bytes = v.elem_bytes as usize;
+    if elem_bytes == 0 || v.ptr.is_null() {
+        return out;
+    }
+    for i in 0..v.len {
+        let slot = unsafe { v.ptr.add((i as usize) * elem_bytes) };
+        let cstr_ptr = unsafe {
+            std::ptr::with_exposed_provenance::<c_char>((slot as *const usize).read_unaligned())
+        };
+        if cstr_ptr.is_null() {
+            out.push(String::new());
+        } else {
+            out.push(unsafe { CStr::from_ptr(cstr_ptr).to_string_lossy().into_owned() });
+        }
+    }
+    out
+}
+
+fn err_result(msg: String) -> i128 {
+    let cs = std::ffi::CString::new(msg).unwrap_or_default();
+    let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+    unsafe { gos_rt_result_new(1, err as i64) }
+}
+
+/// `process::spawn_piped(prog, args) -> Result<Child, errors::Error>`.
+/// The Ok payload is the opaque child handle.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_exec_spawn_piped(prog: *const c_char, args: *mut GosVec) -> i128 {
+    ffi_entry!(0i128, {
+        if prog.is_null() {
+            return err_result("process::spawn_piped: program is null".to_string());
+        }
+        let prog_str = unsafe { CStr::from_ptr(prog).to_string_lossy().into_owned() };
+        match piped_child_spawn(&prog_str, &argv_strings(args)) {
+            Ok(handle) => unsafe { gos_rt_result_new(0, handle) },
+            Err(msg) => err_result(msg),
+        }
+    })
+}
+
+/// `child.write_stdin(s) -> bool`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_child_write_stdin(handle: i64, s: *const c_char) -> i64 {
+    ffi_entry!(0, {
+        let bytes = if s.is_null() {
+            Vec::new()
+        } else {
+            unsafe { CStr::from_ptr(s).to_bytes().to_vec() }
+        };
+        i64::from(piped_child_write_stdin(handle, &bytes))
+    })
+}
+
+/// `child.close_stdin()`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_child_close_stdin(handle: i64) -> i64 {
+    ffi_entry!(0, {
+        piped_child_close_stdin(handle);
+        0
+    })
+}
+
+/// `child.read_line() -> Option<String>`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_child_read_line(handle: i64) -> i128 {
+    ffi_entry!(1i128, {
+        match piped_child_read_line(handle) {
+            Some(line) => {
+                let ptr = alloc_cstring(line.as_bytes()) as i64;
+                unsafe { gos_rt_result_new(0, ptr) }
+            }
+            None => 1i128,
+        }
+    })
+}
+
+/// `child.read_stdout() -> String`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_child_read_stdout(handle: i64) -> *mut c_char {
+    ffi_entry!(std::ptr::null_mut(), {
+        let text = piped_child_read_stdout(handle).unwrap_or_default();
+        alloc_cstring(text.as_bytes())
+    })
+}
+
+/// `child.wait() -> Result<i64, errors::Error>`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_child_wait(handle: i64) -> i128 {
+    ffi_entry!(0i128, {
+        match piped_child_wait(handle) {
+            Ok(code) => unsafe { gos_rt_result_new(0, code) },
+            Err(msg) => err_result(msg),
+        }
+    })
+}
+
+/// `child.kill() -> bool`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_child_kill(handle: i64) -> i64 {
+    ffi_entry!(0, { i64::from(piped_child_kill(handle)) })
+}
+
 #[cfg(test)]
 mod tests {
     use super::tokenize_shell;

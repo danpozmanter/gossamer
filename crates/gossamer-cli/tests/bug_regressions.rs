@@ -2505,3 +2505,130 @@ fn main() {
         out.0
     );
 }
+
+#[test]
+fn hashmap_set_is_an_error_not_a_silent_drop() {
+    // `set` is json's field-update helper; a `HashMap` receiver has
+    // `insert`. Routing a Map receiver into the json helper returned
+    // the receiver unchanged, so the write vanished without a sound.
+    let src = r#"
+fn main() {
+    let mut m = HashMap::new()
+    m.insert("a", 1)
+    m.set("a", 7)
+    println!("{:?}", m.get("a"))
+}
+"#;
+    let dir = fresh_dir("hashmap_set_rejected");
+    let path = write_source(&dir, "hashmap_set_rejected", src);
+    let out = run_vm(&path);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_ne!(out.2, Some(0), "expected failure, stdout: {:?}", out.0);
+    assert!(
+        out.1.contains("insert"),
+        "error should point at `insert`, got: {}",
+        out.1
+    );
+}
+
+#[test]
+fn json_value_set_updates_objects_and_passes_leaves_through() {
+    let src = r#"
+use std::encoding::json
+fn main() -> Result<(), String> {
+    let v = json::parse("{\"a\": 1}").map_err(|e| format!("{e}"))?
+    let v2 = v.set("b", 2)
+    println!("{}", json::render(&v2))
+    let leaf = json::parse("3").map_err(|e| format!("{e}"))?
+    println!("{}", json::render(&leaf.set("x", 1)))
+    Ok(())
+}
+"#;
+    let dir = fresh_dir("json_set_objects");
+    let path = write_source(&dir, "json_set_objects", src);
+    let out = run_vm(&path);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(out.2, Some(0), "stderr: {}", out.1);
+    assert!(
+        out.0.contains("\"b\":2") || out.0.contains("\"b\": 2"),
+        "object update lost: {:?}",
+        out.0
+    );
+    assert!(
+        out.0.lines().nth(1) == Some("3"),
+        "leaf pass-through: {:?}",
+        out.0
+    );
+}
+
+#[test]
+fn sync_qualified_waitgroup_constructor_resolves() {
+    // The native tiers accept both `WaitGroup::new()` and
+    // `sync::WaitGroup::new()`; the VM must bind the qualified
+    // spelling too.
+    let src = r#"
+use std::sync
+fn main() {
+    let wg = sync::WaitGroup::new()
+    wg.add(1)
+    go finish(wg)
+    wg.wait()
+    println!("done")
+}
+fn finish(wg: WaitGroup) { wg.done() }
+"#;
+    let dir = fresh_dir("sync_waitgroup_qualified");
+    let path = write_source(&dir, "sync_waitgroup_qualified", src);
+    let out = run_vm(&path);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(out.2, Some(0), "stderr: {}", out.1);
+    assert_eq!(out.0.trim(), "done", "stdout: {:?}", out.0);
+}
+
+#[test]
+fn option_result_chain_methods_match_across_tiers() {
+    // and_then / or_else / filter / ok_or / ok_or_else in method form
+    // on Option and Result receivers, VM output == native output.
+    let src = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../feature-testing-examples/option_result_chain_methods.gos"),
+    )
+    .expect("read fixture");
+    let dir = fresh_dir("option_result_chain_methods");
+    let path = write_source(&dir, "option_result_chain_methods", &src);
+    let vm = run_vm(&path);
+    assert_eq!(vm.2, Some(0), "vm stderr: {}", vm.1);
+    let expected = "Some(10)\nNone\nNone\nSome(5)\nNone\nSome(9)\nSome(1)\nOk(7)\nErr(computed)\nOk(5)\nErr(boom)\nOk(4)\n";
+    assert_eq!(vm.0, expected, "vm output drift");
+    let scratch = dir.join("bin");
+    std::fs::create_dir_all(&scratch).unwrap();
+    let bin = build_native(&path, &scratch).expect("native build");
+    let native = run_native(&bin);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(native.2, Some(0), "native stderr: {}", native.1);
+    assert_eq!(native.0, expected, "native output drift");
+}
+
+#[test]
+fn process_spawn_piped_round_trips_across_tiers() {
+    // spawn_piped + write_stdin + close_stdin + read_line + wait,
+    // VM output == native output.
+    let src = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../feature-testing-examples/process_spawn_piped.gos"),
+    )
+    .expect("read fixture");
+    let dir = fresh_dir("process_spawn_piped");
+    let path = write_source(&dir, "process_spawn_piped", &src);
+    let expected = "line: apple\nline: mango\nline: pear\nexit: 0\n";
+    let vm = run_vm(&path);
+    assert_eq!(vm.2, Some(0), "vm stderr: {}", vm.1);
+    assert_eq!(vm.0, expected, "vm output drift");
+    let scratch = dir.join("bin");
+    std::fs::create_dir_all(&scratch).unwrap();
+    let bin = build_native(&path, &scratch).expect("native build");
+    let native = run_native(&bin);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(native.2, Some(0), "native stderr: {}", native.1);
+    assert_eq!(native.0, expected, "native output drift");
+}

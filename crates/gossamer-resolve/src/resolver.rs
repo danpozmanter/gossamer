@@ -27,11 +27,53 @@ pub fn resolve_source_file(source: &SourceFile) -> (Resolutions, Vec<ResolveDiag
     (resolver.resolutions, resolver.diagnostics)
 }
 
+/// Module name a `path = "..."` dependency's source is inlined
+/// under by the entry bundler, derived deterministically from the
+/// dependency's project id (`example.com/my-lib` -> `my_lib`). The
+/// resolver binds `use "id" as alias` to a module of this name when
+/// one exists, so both sides must agree on the transform.
+#[must_use]
+pub fn project_dep_module_name(id: &str) -> String {
+    let tail = id.rsplit('/').next().unwrap_or(id);
+    let mut out: String = tail
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+        .collect();
+    if out.chars().next().is_some_and(|c| c.is_ascii_digit()) {
+        out.insert(0, '_');
+    }
+    out
+}
+
+/// A `use "project-id" as alias` whose binding is deferred until
+/// items are collected, so it can resolve to the bundler-inlined
+/// dependency module instead of an opaque import.
+struct DeferredProjectUse {
+    alias: String,
+    module_name: String,
+    use_id: NodeId,
+    span: Span,
+}
+
 struct Resolver {
     resolutions: Resolutions,
     diagnostics: Vec<ResolveDiagnostic>,
     scopes: ScopeStack,
     defs: DefIdGenerator,
+    deferred_project_uses: Vec<DeferredProjectUse>,
+    /// alias -> inlined dependency module name, for `use "id" as
+    /// alias` bindings that resolved to a bundled module. Qualified
+    /// item paths are registered under the module's real name, so
+    /// alias-headed paths rewrite through this map.
+    project_alias_modules: std::collections::HashMap<String, String>,
+    /// Per-inline-module bare-name scopes, keyed by the `mod` item's
+    /// `NodeId`. Built during item collection; pushed onto the scope
+    /// stack while the module's body resolves so bare references bind
+    /// to the module's own items first, and so two modules may define
+    /// the same name without a flat-namespace collision.
+    module_scopes: std::collections::HashMap<NodeId, crate::scope::Scope>,
+    /// Chain of enclosing inline modules during item collection.
+    collect_mod_stack: Vec<NodeId>,
 }
 
 impl Resolver {
@@ -41,17 +83,54 @@ impl Resolver {
             diagnostics: Vec::new(),
             scopes: ScopeStack::with_prelude(),
             defs: DefIdGenerator::new(),
+            deferred_project_uses: Vec::new(),
+            project_alias_modules: std::collections::HashMap::new(),
+            module_scopes: std::collections::HashMap::new(),
+            collect_mod_stack: Vec::new(),
         }
     }
 
     fn run(&mut self, source: &SourceFile) {
         self.collect_imports(&source.uses);
         self.collect_items(&source.items);
+        self.bind_project_imports();
         for item in &source.items {
             if !crate::cfg::item_is_active(&item.attrs) {
                 continue;
             }
             self.resolve_item(item);
+        }
+    }
+
+    /// Binds each deferred `use "project-id" as alias` to the inlined
+    /// dependency module when the bundler provided one; otherwise the
+    /// alias stays an opaque import (registry/git dependencies the
+    /// entry bundler does not inline).
+    fn bind_project_imports(&mut self) {
+        let deferred = std::mem::take(&mut self.deferred_project_uses);
+        for du in deferred {
+            let module_binding = self
+                .scopes
+                .module_mut()
+                .lookup_type(&du.module_name)
+                .filter(|b| {
+                    matches!(
+                        b.resolution,
+                        crate::resolutions::Resolution::Def {
+                            kind: DefKind::Mod,
+                            ..
+                        }
+                    )
+                });
+            match module_binding {
+                Some(binding) => {
+                    let module = self.scopes.module_mut();
+                    module.insert_type(&du.alias, binding);
+                    module.insert_value(&du.alias, binding);
+                    self.project_alias_modules.insert(du.alias, du.module_name);
+                }
+                None => self.define_import(&du.alias, du.use_id, du.span),
+            }
         }
     }
 
@@ -83,6 +162,18 @@ impl Resolver {
         let Some(name) = name else {
             return;
         };
+        // A project import can resolve to a bundler-inlined dependency
+        // module, which is only registered during item collection -
+        // defer the binding until then.
+        if let gossamer_ast::UseTarget::Project { id, .. } = &use_decl.target {
+            self.deferred_project_uses.push(DeferredProjectUse {
+                alias: name,
+                module_name: project_dep_module_name(id),
+                use_id: use_decl.id,
+                span: use_decl.span,
+            });
+            return;
+        }
         self.define_import(&name, use_decl.id, use_decl.span);
     }
 
@@ -247,9 +338,13 @@ impl Resolver {
             ItemKind::Mod(decl) => {
                 self.register_item(item.id, &decl.name, DefKind::Mod, item.span);
                 if let gossamer_ast::ModBody::Inline(inner) = &decl.body {
+                    self.module_scopes
+                        .insert(item.id, crate::scope::Scope::default());
+                    self.collect_mod_stack.push(item.id);
                     module_path.push(decl.name.name.clone());
                     self.collect_items_in(inner, module_path);
                     module_path.pop();
+                    self.collect_mod_stack.pop();
                 }
             }
             ItemKind::Impl(_) | ItemKind::AttrItem(_) => {}
@@ -315,17 +410,50 @@ impl Resolver {
         }
         let def = self.alloc_def(node, kind);
         let binding = Binding::def(def, kind);
+        // Duplicate detection is per module: the bare name registers
+        // in the module's OWN scope (pushed while its body resolves),
+        // so two sibling modules may define the same name.
+        let mut module_scope_ok = true;
+        if let Some(mod_id) = self.collect_mod_stack.last().copied()
+            && let Some(scope) = self.module_scopes.get_mut(&mod_id)
+        {
+            let mut inserted_any = false;
+            if kind.is_type_ns() {
+                inserted_any |= scope.insert_type(&name.name, binding);
+            }
+            if kind.is_value_ns() {
+                inserted_any |= scope.insert_value(&name.name, binding);
+            }
+            if !inserted_any && (kind.is_type_ns() || kind.is_value_ns()) {
+                module_scope_ok = false;
+                self.emit(
+                    ResolveError::DuplicateItem {
+                        name: name.name.clone(),
+                    },
+                    span,
+                );
+            }
+        }
+        // The flat root registration keeps the historical bare-name
+        // visibility (a top-level caller may reference a module item
+        // unqualified when only one module defines it). For FUNCTIONS
+        // a cross-module duplicate is fine - call sites rewrite to the
+        // qualified spelling. Every other kind stays a hard error: the
+        // downstream struct/enum/const machinery is still keyed by
+        // bare name, so a silent first-wins would misbind.
         let module = self.scopes.module_mut();
-        // Register the bare name so callers inside the module can
-        // still write `name(...)` (HIR-flatten visibility).
-        let mut inserted_any = false;
+        let mut root_inserted = false;
         if kind.is_type_ns() {
-            inserted_any |= module.insert_type(&name.name, binding);
+            root_inserted |= module.insert_type(&name.name, binding);
         }
         if kind.is_value_ns() {
-            inserted_any |= module.insert_value(&name.name, binding);
+            root_inserted |= module.insert_value(&name.name, binding);
         }
-        if !inserted_any && (kind.is_type_ns() || kind.is_value_ns()) {
+        if !root_inserted
+            && module_scope_ok
+            && !matches!(kind, DefKind::Fn)
+            && (kind.is_type_ns() || kind.is_value_ns())
+        {
             self.emit(
                 ResolveError::DuplicateItem {
                     name: name.name.clone(),
@@ -365,12 +493,22 @@ impl Resolver {
             }
             ItemKind::Mod(decl) => {
                 if let gossamer_ast::ModBody::Inline(inner) = &decl.body {
+                    // Bare references inside the module bind to the
+                    // module's own items first, then fall through to
+                    // the flat root scope (prelude, top-level items).
+                    let own_scope = self
+                        .module_scopes
+                        .get(&item.id)
+                        .cloned()
+                        .unwrap_or_default();
+                    self.scopes.push_scope(own_scope);
                     for nested in inner {
                         if !crate::cfg::item_is_active(&nested.attrs) {
                             continue;
                         }
                         self.resolve_item(nested);
                     }
+                    self.scopes.pop();
                 }
             }
             ItemKind::AttrItem(_) => {}
@@ -852,6 +990,32 @@ impl Resolver {
                 }
                 return;
             }
+            // A path headed by a `use "id" as alias` dependency
+            // binding: items are registered under the module's real
+            // name, so rewrite the head and retry. The inlined
+            // module's surface is fully known, so a member that still
+            // fails to resolve is a phantom - reject it here instead
+            // of a runtime GX0002 / native undefined symbol.
+            if let Some(real) = self.project_alias_modules.get(effective[0]).cloned() {
+                let mut rejoined = real;
+                for seg in &effective[1..] {
+                    rejoined.push_str("::");
+                    rejoined.push_str(seg);
+                }
+                if let Some(resolution) = self.lookup_value_or_type(&rejoined) {
+                    self.resolutions.insert(anchor, resolution);
+                    for segment in &path.segments {
+                        self.resolve_generic_args(&segment.generics);
+                    }
+                    return;
+                }
+                self.emit(ResolveError::UnresolvedName { name: joined }, span);
+                self.resolutions.insert(anchor, Resolution::Err);
+                for segment in &path.segments {
+                    self.resolve_generic_args(&segment.generics);
+                }
+                return;
+            }
             // Root-cause stdlib-member validation. The resolver is
             // opaque-by-head for stdlib paths - it has no per-module
             // export model, so `module::nonexistent` slipped through
@@ -879,6 +1043,24 @@ impl Resolver {
                     .binary_search(head)
                     .is_ok(),
                 [head, sub, member] if starts_lowercase(sub) && starts_lowercase(member) => {
+                    crate::stdlib_exports::STDLIB_MODULES
+                        .binary_search(head)
+                        .is_ok()
+                }
+                // `module::Type::member` stays opaque-by-head in
+                // general (some type surfaces resolve through
+                // compiler rewrites rather than runtime bindings, so
+                // absence from the table is not proof of a phantom).
+                // Two closed surfaces ARE fully bound and validated:
+                // the `json::Value` / `flag::Value` constructor sets
+                // (`json::Value::string` is the classic casing typo),
+                // and the process/exec namespaces, which bind no
+                // type-associated path at all (`process::Command` is
+                // Rust-internal surface).
+                [head, sub, _member]
+                    if (matches!(*head, "json" | "flag") && *sub == "Value")
+                        || (matches!(*head, "process" | "exec") && !starts_lowercase(sub)) =>
+                {
                     crate::stdlib_exports::STDLIB_MODULES
                         .binary_search(head)
                         .is_ok()

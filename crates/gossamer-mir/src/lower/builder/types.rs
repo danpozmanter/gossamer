@@ -994,6 +994,11 @@ impl<'a> Builder<'a> {
             "UdpSocket" => Some("net::UdpSocket"),
             "UnixStream" => Some("net::UnixStream"),
             "UnixListener" => Some("net::UnixListener"),
+            // A piped child handle extracted from
+            // `process::spawn_piped(..)`'s Ok payload; routes
+            // `write_stdin` / `read_line` / `wait` / ... to the
+            // child shims.
+            "Child" => Some("process::Child"),
             _ => None,
         }
     }
@@ -1044,6 +1049,19 @@ impl<'a> Builder<'a> {
                 TyKind::Adt { def, .. } => {
                     return def.local == u32::MAX || def.local == u32::MAX - 1;
                 }
+                _ => return false,
+            }
+        }
+    }
+
+    /// True for the Option sentinel Adt specifically (ref-transparent).
+    pub(crate) fn is_option_adt(&self, ty: Ty) -> bool {
+        use gossamer_types::TyKind;
+        let mut cur = ty;
+        loop {
+            match self.tcx.kind_of(cur) {
+                TyKind::Ref { inner, .. } => cur = *inner,
+                TyKind::Adt { def, .. } => return def.local == u32::MAX - 1,
                 _ => return false,
             }
         }

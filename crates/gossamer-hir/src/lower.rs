@@ -32,6 +32,13 @@ pub fn lower_source_file(
     table: &TypeTable,
     tcx: &mut TyCtxt,
 ) -> HirProgram {
+    let mut module_fn_paths = std::collections::HashMap::new();
+    collect_module_fn_paths(
+        resolutions,
+        &source.items,
+        &mut Vec::new(),
+        &mut module_fn_paths,
+    );
     let mut lowerer = Lowerer {
         resolutions,
         table,
@@ -41,6 +48,7 @@ pub fn lower_source_file(
         current_fn_ret_ty: None,
         import_targets: collect_import_targets(&source.uses),
         ctor_arity: collect_ctor_arities(&source.items),
+        module_fn_paths,
     };
     let mut items = Vec::new();
     let mut module_path: Vec<String> = Vec::new();
@@ -75,6 +83,42 @@ fn lower_items(
         }
         if let Some(lowered) = lowerer.lower_item(item, module_path) {
             out.push(lowered);
+        }
+    }
+}
+
+/// Maps every inline-module function's `DefId` to its canonical
+/// `mod1::mod2::name` path segments. Path references to these defs
+/// (bare in-module calls included) rewrite to the canonical spelling
+/// so name-keyed dispatch on every tier agrees with the qualified
+/// definition symbol - two modules may then define the same function
+/// name without colliding.
+fn collect_module_fn_paths(
+    resolutions: &Resolutions,
+    items: &[AstItem],
+    module_path: &mut Vec<Ident>,
+    out: &mut std::collections::HashMap<gossamer_resolve::DefId, Vec<Ident>>,
+) {
+    for item in items {
+        if !gossamer_resolve::item_is_active(&item.attrs) {
+            continue;
+        }
+        match &item.kind {
+            AstItemKind::Mod(decl) => {
+                if let gossamer_ast::ModBody::Inline(inner) = &decl.body {
+                    module_path.push(decl.name.clone());
+                    collect_module_fn_paths(resolutions, inner, module_path, out);
+                    module_path.pop();
+                }
+            }
+            AstItemKind::Fn(decl) if !module_path.is_empty() => {
+                if let Some(def) = resolutions.definition_of(item.id) {
+                    let mut segs = module_path.clone();
+                    segs.push(decl.name.clone());
+                    out.insert(def, segs);
+                }
+            }
+            _ => {}
         }
     }
 }
@@ -194,6 +238,11 @@ struct Lowerer<'a> {
     /// (`E::C(..)`) expand to the right number of wildcards, so it matches a
     /// multi-field variant rather than only a single-field one.
     ctor_arity: std::collections::HashMap<String, usize>,
+    /// Canonical `mod::name` segments of every inline-module function,
+    /// keyed by `DefId`. Path references rewrite to this spelling so a
+    /// bare in-module call names the module's own item, not whichever
+    /// same-named sibling registered a flat global last.
+    module_fn_paths: std::collections::HashMap<gossamer_resolve::DefId, Vec<Ident>>,
 }
 
 impl Lowerer<'_> {
@@ -1617,6 +1666,15 @@ impl Lowerer<'_> {
             Some(Resolution::Def { def, .. }) => Some(def),
             _ => None,
         };
+        // A reference to an inline-module function - bare from inside
+        // the module, `super::`-relative, or already qualified -
+        // rewrites to the canonical `mod::name` spelling so every
+        // tier's name-keyed dispatch names this def unambiguously.
+        if let Some(def) = def
+            && let Some(full) = self.module_fn_paths.get(&def)
+        {
+            segments.clone_from(full);
+        }
         HirExprKind::Path { segments, def }
     }
 

@@ -808,8 +808,20 @@ impl Vm {
         let intern = crate::value::intern_type_name;
         match &item.kind {
             HirItemKind::Fn(decl) => {
+                // The chunk's identity carries the canonical
+                // `mod::name` so JIT promotion and stack traces
+                // distinguish same-named functions across modules;
+                // call sites reference the qualified spelling.
+                let compiled: gossamer_hir::HirFn = if let Some(prefix) = &module_prefix {
+                    let mut renamed = decl.clone();
+                    renamed.name =
+                        gossamer_ast::Ident::new(format!("{prefix}::{}", decl.name.name));
+                    renamed
+                } else {
+                    decl.clone()
+                };
                 let chunk = compile_fn(
-                    decl,
+                    &compiled,
                     tcx,
                     layouts,
                     wrappers,

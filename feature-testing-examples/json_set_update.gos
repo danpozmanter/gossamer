@@ -1,0 +1,28 @@
+// json set: object field append/replace via the method form, the
+// qualified free call, chained calls, scalar-value boxing, and the
+// leaf pass-through, identical on every tier.
+use std::encoding::json
+
+fn main() {
+    let built = json::Value::object([("a", json::Value::Int(1))])
+    let with_b = built.set("b", json::Value::Int(2)).set("c", json::Value::Int(3))
+    println!("{}", json::render(&with_b))
+
+    let qualified = json::set(with_b, "d", json::Value::Bool(true))
+    println!("{}", json::render(&qualified))
+
+    match json::parse("{\"x\": 10}") {
+        Ok(parsed) => {
+            let scalars = parsed.set("i", 42).set("f", 1.5).set("s", "str").set("t", true)
+            println!("{}", json::render(&scalars))
+            let replaced = scalars.set("x", 11)
+            println!("{}", json::render(&replaced))
+        }
+        Err(e) => println!("parse error: {}", e),
+    }
+
+    match json::parse("3") {
+        Ok(leaf) => println!("{}", json::render(&leaf.set("k", 1))),
+        Err(e) => println!("parse error: {}", e),
+    }
+}

@@ -3009,50 +3009,43 @@ impl<'a> TypeChecker<'a> {
             let s = self.tcx.string_ty();
             return Some(self.option_adt_ty(s));
         }
+        // `process::spawn_piped(prog, args) -> Result<Child, errors::Error>`.
+        // The Ok payload is the named `Child` sentinel Adt so the
+        // extracted binder carries the `process::Child` runtime kind
+        // and its method calls dispatch to the child shims on every
+        // tier.
+        if matches!(
+            module,
+            ["process" | "exec"] | ["os", "exec"] | ["std", "process"] | ["std", "os", "exec"]
+        ) && last == "spawn_piped"
+        {
+            let child_def = gossamer_resolve::DefId::local(u32::MAX - 8);
+            self.tcx.register_def_name(child_def, "Child");
+            let child_ty = self.tcx.intern(TyKind::Adt {
+                def: child_def,
+                substs: crate::Substs::new(),
+            });
+            let err = self.tcx.dyn_error_ty();
+            return Some(self.result_adt_ty(child_ty, err));
+        }
+        // `json::Value::*` constructor calls produce the opaque dynamic
+        // JSON value. Without this the call is a fresh var, so a
+        // chained method (`.set`, `.get`) loses the JsonValue receiver
+        // tag and the compiled tiers cannot route it to the json
+        // runtime helpers.
+        if matches!(
+            module,
+            ["json", "Value"]
+                | ["encoding", "json", "Value"]
+                | ["std", "encoding", "json", "Value"]
+        ) {
+            return Some(self.tcx.json_value_ty());
+        }
         if matches!(
             module,
             ["json"] | ["encoding", "json"] | ["std", "encoding", "json"]
         ) {
-            return match last {
-                "parse" | "decode" => {
-                    let j = self.tcx.json_value_ty();
-                    let e = self.tcx.dyn_error_ty();
-                    Some(self.result_adt_ty(j, e))
-                }
-                "render" | "encode" => {
-                    self.reject_json_enum_arg(last, callee, args, arg_tys);
-                    Some(self.tcx.string_ty())
-                }
-                "at" | "identity" => Some(self.tcx.json_value_ty()),
-                "get" => {
-                    let j = self.tcx.json_value_ty();
-                    Some(self.option_adt_ty(j))
-                }
-                "len" => Some(self.tcx.int_ty(IntTy::I64)),
-                "is_null" => Some(self.tcx.bool_ty()),
-                "as_i64" => {
-                    let i = self.tcx.int_ty(IntTy::I64);
-                    Some(self.option_adt_ty(i))
-                }
-                "as_f64" => {
-                    let f = self.tcx.float_ty(FloatTy::F64);
-                    Some(self.option_adt_ty(f))
-                }
-                "as_str" => {
-                    let s = self.tcx.string_ty();
-                    Some(self.option_adt_ty(s))
-                }
-                "as_bool" => {
-                    let b = self.tcx.bool_ty();
-                    Some(self.option_adt_ty(b))
-                }
-                "as_array" => {
-                    let j = self.tcx.json_value_ty();
-                    let arr = self.tcx.intern(TyKind::Vec(j));
-                    Some(self.option_adt_ty(arr))
-                }
-                _ => None,
-            };
+            return self.json_module_ret_ty(last, callee, args, arg_tys);
         }
         if matches!(module, ["errors"] | ["std", "errors"]) {
             return match last {
@@ -3090,6 +3083,57 @@ impl<'a> TypeChecker<'a> {
             };
         }
         None
+    }
+
+    /// Return type of a `json::` / `encoding::json::` free-function call
+    /// (`parse`, `get`, `as_i64`, ...); `None` for an unrecognised name.
+    fn json_module_ret_ty(
+        &mut self,
+        last: &str,
+        callee: &Expr,
+        args: &[Expr],
+        arg_tys: &[Ty],
+    ) -> Option<Ty> {
+        match last {
+            "parse" | "decode" => {
+                let j = self.tcx.json_value_ty();
+                let e = self.tcx.dyn_error_ty();
+                Some(self.result_adt_ty(j, e))
+            }
+            "render" | "encode" => {
+                self.reject_json_enum_arg(last, callee, args, arg_tys);
+                Some(self.tcx.string_ty())
+            }
+            "at" | "identity" | "set" => Some(self.tcx.json_value_ty()),
+            "get" => {
+                let j = self.tcx.json_value_ty();
+                Some(self.option_adt_ty(j))
+            }
+            "len" => Some(self.tcx.int_ty(IntTy::I64)),
+            "is_null" => Some(self.tcx.bool_ty()),
+            "as_i64" => {
+                let i = self.tcx.int_ty(IntTy::I64);
+                Some(self.option_adt_ty(i))
+            }
+            "as_f64" => {
+                let f = self.tcx.float_ty(FloatTy::F64);
+                Some(self.option_adt_ty(f))
+            }
+            "as_str" => {
+                let s = self.tcx.string_ty();
+                Some(self.option_adt_ty(s))
+            }
+            "as_bool" => {
+                let b = self.tcx.bool_ty();
+                Some(self.option_adt_ty(b))
+            }
+            "as_array" => {
+                let j = self.tcx.json_value_ty();
+                let arr = self.tcx.intern(TyKind::Vec(j));
+                Some(self.option_adt_ty(arr))
+            }
+            _ => None,
+        }
     }
 
     /// Types the parser-injected format intrinsics and the bare
@@ -3577,43 +3621,7 @@ impl<'a> TypeChecker<'a> {
         {
             return ty;
         }
-        let candidates = self
-            .method_arg_sigs
-            .get(&(method.to_string(), args.len()))
-            .cloned()
-            .unwrap_or_default();
-        // For a `Vec`/slice/array closure-combinator (`xs.sort_by(cmp)`,
-        // `xs.map(f)`), the closure's parameters are the element type. Pin
-        // them via an expectation so a field access in the closure body
-        // resolves to the struct projection instead of the dynamic JSON path.
-        let closure_combinator_inputs = self.vec_combinator_closure_inputs(method, receiver_ty);
-        let mut arg_tys: Vec<Ty> = Vec::with_capacity(args.len());
-        for (i, arg) in args.iter().enumerate() {
-            // Shape literal arguments by the method's declared
-            // parameter so `c.execute(&[V::I(1)])` builds a heap Vec,
-            // matching the free-fn call path. Coerce only - no
-            // unification: dispatch is name-global, so the coercion
-            // target must be unambiguous across every same-named
-            // method (non-container candidates are irrelevant - a
-            // container literal cannot be meant for them).
-            let exp = match (&closure_combinator_inputs, &arg.kind) {
-                (Some(inputs), ExprKind::Closure { params, .. })
-                    if params.len() == inputs.len() =>
-                {
-                    let output = self.fresh();
-                    let sig = FnSig {
-                        inputs: inputs.clone(),
-                        output,
-                    };
-                    Expectation::HasType(self.tcx.intern(TyKind::FnPtr(sig)))
-                }
-                _ => match self.unique_container_expectation(&candidates, i) {
-                    Some(want) => Expectation::Coerce(want),
-                    None => Expectation::None,
-                },
-            };
-            arg_tys.push(self.check_expr_expecting(arg, exp));
-        }
+        let arg_tys = self.check_method_call_arg_tys(method, receiver_ty, args);
         // When the receiver resolves to a non-generic Adt with a
         // recorded method return type, use it: a fresh var here
         // leaves chained results (`sel.params()`) untyped all the
@@ -3653,6 +3661,16 @@ impl<'a> TypeChecker<'a> {
         if let Some(ty) = self.map_method_ret(method, args, &arg_tys, resolved, receiver.span) {
             return ty;
         }
+        // `v.set(k, val)` on a `json::Value` returns the updated value;
+        // a fresh var here would strip the JsonValue tag and leave a
+        // chained `.set(..).set(..)` receiver untagged, so the compiled
+        // tiers could not route the next call to the json helper.
+        if matches!(self.tcx.kind(resolved), Some(TyKind::JsonValue))
+            && method == "set"
+            && args.len() == 2
+        {
+            return self.tcx.json_value_ty();
+        }
         if matches!(self.tcx.kind(resolved), Some(TyKind::String)) {
             // `s.contains(x)` dispatches to the same `strings::` shim as
             // the free function with the receiver as the implicit first
@@ -3667,6 +3685,47 @@ impl<'a> TypeChecker<'a> {
         self.check_method_arity(call_id, resolved, method, args, receiver.span);
         self.maybe_reject_unknown_adt_method(resolved, method, receiver.span);
         self.fresh()
+    }
+
+    /// Types a method call's explicit arguments, shaping each by the
+    /// method's declared parameter. A closure argument to a Vec/slice
+    /// combinator (`xs.sort_by`, `xs.map`) is pinned to the element type
+    /// so a field access in its body resolves to the struct projection
+    /// rather than the dynamic JSON path; a container-literal argument is
+    /// coerced (never unified) toward the sole unambiguous candidate.
+    fn check_method_call_arg_tys(
+        &mut self,
+        method: &str,
+        receiver_ty: Ty,
+        args: &[Expr],
+    ) -> Vec<Ty> {
+        let candidates = self
+            .method_arg_sigs
+            .get(&(method.to_string(), args.len()))
+            .cloned()
+            .unwrap_or_default();
+        let closure_combinator_inputs = self.vec_combinator_closure_inputs(method, receiver_ty);
+        let mut arg_tys: Vec<Ty> = Vec::with_capacity(args.len());
+        for (i, arg) in args.iter().enumerate() {
+            let exp = match (&closure_combinator_inputs, &arg.kind) {
+                (Some(inputs), ExprKind::Closure { params, .. })
+                    if params.len() == inputs.len() =>
+                {
+                    let output = self.fresh();
+                    let sig = FnSig {
+                        inputs: inputs.clone(),
+                        output,
+                    };
+                    Expectation::HasType(self.tcx.intern(TyKind::FnPtr(sig)))
+                }
+                _ => match self.unique_container_expectation(&candidates, i) {
+                    Some(want) => Expectation::Coerce(want),
+                    None => Expectation::None,
+                },
+            };
+            arg_tys.push(self.check_expr_expecting(arg, exp));
+        }
+        arg_tys
     }
 
     /// Rejects a method call whose argument count does not match the
@@ -3796,6 +3855,21 @@ impl<'a> TypeChecker<'a> {
             Some(TyKind::HashMap { key, value }) => (*key, *value),
             _ => return None,
         };
+        // `set` is json's field-update helper, not a map method; the
+        // bare-name dispatch would route it there and the write would
+        // vanish (VM) or the symbol would not link (native), so reject
+        // it uniformly here.
+        if method == "set" {
+            let ty = render_ty(self.tcx, resolved);
+            self.emit(
+                TypeError::UnresolvedMethod {
+                    ty,
+                    name: "set".to_string(),
+                },
+                span,
+            );
+            return Some(self.tcx.error_ty());
+        }
         let (key_arg, value_arg) = match (method, args.len()) {
             ("insert" | "get_or" | "or_insert", 2) => {
                 (arg_tys.first().copied(), arg_tys.get(1).copied())
@@ -4189,7 +4263,7 @@ impl<'a> TypeChecker<'a> {
             (
                 "option",
                 "map" | "and_then" | "filter" | "or" | "or_else" | "default" | "default_with"
-                | "zip",
+                | "zip" | "ok_or" | "ok_or_else",
             ) => 2,
             ("option", "flatten" | "is_some" | "is_none" | "iter") => 1,
             ("iter", "fold" | "scan") => 3,
@@ -4312,13 +4386,35 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
+    /// Unifies `var` with `fallback` when it is still an unresolved
+    /// inference variable. Used to default a combinator's unpinned
+    /// payload slot to the receiver's payload type: an unresolved
+    /// slot blocks `{:?}` lowering on the compiled tiers.
+    fn default_free_var_to(&mut self, var: Ty, fallback: Ty, span: Span) {
+        let resolved = self.infer.resolve(self.tcx, var);
+        if matches!(self.tcx.kind(resolved), Some(TyKind::Var(_))) {
+            self.unify(resolved, fallback, span);
+        }
+    }
+
     /// Resolves `ty` to a Result if possible: an already-Result type
     /// is returned as-is, a free var is unified with
     /// `Result<ok, err>`, anything else degrades to a fresh var.
     fn shape_result_like(&mut self, ty: Ty, ok: Ty, err: Ty, span: Span) -> Ty {
         let resolved = self.infer.resolve(self.tcx, ty);
         match self.tcx.kind(resolved) {
-            Some(TyKind::Adt { def, .. }) if def.local == u32::MAX => resolved,
+            Some(TyKind::Adt { def, substs }) if def.local == u32::MAX => {
+                // Pin the payload slots: a combinator closure's `Ok(v)`
+                // body leaves the Err slot a free var, and an
+                // unresolved payload blocks `{:?}` lowering on the
+                // compiled tiers.
+                let tys = substs.types();
+                if let (Some(&have_ok), Some(&have_err)) = (tys.first(), tys.get(1)) {
+                    self.unify(have_ok, ok, span);
+                    self.unify(have_err, err, span);
+                }
+                resolved
+            }
             Some(TyKind::Var(_)) => {
                 let shaped = self.result_adt_ty(ok, err);
                 self.unify(resolved, shaped, span);
@@ -4332,7 +4428,13 @@ impl<'a> TypeChecker<'a> {
     fn shape_option_like(&mut self, ty: Ty, payload: Ty, span: Span) -> Ty {
         let resolved = self.infer.resolve(self.tcx, ty);
         match self.tcx.kind(resolved) {
-            Some(TyKind::Adt { def, .. }) if def.local == u32::MAX - 1 => resolved,
+            Some(TyKind::Adt { def, substs }) if def.local == u32::MAX - 1 => {
+                let tys = substs.types();
+                if let Some(&have) = tys.first() {
+                    self.unify(have, payload, span);
+                }
+                resolved
+            }
             Some(TyKind::Var(_)) => {
                 let shaped = self.option_adt_ty(payload);
                 self.unify(resolved, shaped, span);
@@ -4379,12 +4481,20 @@ impl<'a> TypeChecker<'a> {
                     "and_then" => {
                         let out = self.callable_output(lead_tys[0], &[ok], span);
                         let next_ok = self.fresh();
-                        self.shape_result_like(out, next_ok, err, span)
+                        let shaped = self.shape_result_like(out, next_ok, err, span);
+                        // An `Err`-only handler leaves the next Ok type
+                        // free; default it to the receiver's so the
+                        // result is fully resolved for the compiled
+                        // tiers' `{:?}` lowering.
+                        self.default_free_var_to(next_ok, ok, span);
+                        shaped
                     }
                     "or_else" => {
                         let out = self.callable_output(lead_tys[0], &[err], span);
                         let next_err = self.fresh();
-                        self.shape_result_like(out, ok, next_err, span)
+                        let shaped = self.shape_result_like(out, ok, next_err, span);
+                        self.default_free_var_to(next_err, err, span);
+                        shaped
                     }
                     "default" => {
                         self.unify(ok, lead_tys[0], span);
@@ -4416,7 +4526,9 @@ impl<'a> TypeChecker<'a> {
                     "and_then" => {
                         let out = self.callable_output(lead_tys[0], &[payload], span);
                         let next = self.fresh();
-                        self.shape_option_like(out, next, span)
+                        let shaped = self.shape_option_like(out, next, span);
+                        self.default_free_var_to(next, payload, span);
+                        shaped
                     }
                     "filter" => {
                         let out = self.callable_output(lead_tys[0], &[payload], span);
@@ -4432,6 +4544,14 @@ impl<'a> TypeChecker<'a> {
                     "or_else" => {
                         let out = self.callable_output(lead_tys[0], &[], span);
                         self.shape_option_like(out, payload, span)
+                    }
+                    "ok_or" => {
+                        let err = self.peel_refs(lead_tys[0]);
+                        self.result_adt_ty(payload, err)
+                    }
+                    "ok_or_else" => {
+                        let err = self.callable_output(lead_tys[0], &[], span);
+                        self.result_adt_ty(payload, err)
                     }
                     "default" => {
                         self.unify(payload, lead_tys[0], span);
@@ -4597,7 +4717,30 @@ impl<'a> TypeChecker<'a> {
                 let (lead, data) = arg_tys.split_at(arity - 1);
                 let lead = lead.to_vec();
                 let span = args.last().map_or(callee.span, |arg| arg.span);
-                self.std_combinator_ty(module, name, &lead, data[0], span)
+                let ty = self.std_combinator_ty(module, name, &lead, data[0], span);
+                // A rowed option/result combinator at full arity whose
+                // data argument is concretely non-payload-shaped (the
+                // classic mistake is the swapped order, data first and
+                // closure last) would run the closure slot as the data
+                // value and yield the empty fallback; reject it.
+                if ty.is_none() {
+                    let shape = match module {
+                        "option" => Some("Option"),
+                        "result" => Some("Result"),
+                        _ => None,
+                    };
+                    if let Some(shape) = shape {
+                        self.emit(
+                            TypeError::CombinatorDataArgMismatch {
+                                combinator: format!("{module}::{name}"),
+                                shape: shape.to_string(),
+                            },
+                            callee.span,
+                        );
+                        return Some(self.tcx.error_ty());
+                    }
+                }
+                ty
             }
             // Partial application (`xs |> iter::map(f)`) is completed
             // at the pipe site, where the data argument's type is

@@ -247,6 +247,23 @@ pub unsafe extern "C" fn gos_rt_option_default_with(opt: i128, env: *const u8) -
     })
 }
 
+/// `opt.ok_or_else(f)` - Some payload becomes Ok (same packed repr),
+/// None becomes `Err(f())`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_result_ok_or_else(opt: i128, env: *const u8) -> i128 {
+    ffi_entry!(NONE, {
+        if gos_rt_result_disc(opt) == 0 {
+            return opt;
+        }
+        let Some(addr) = env_fn_addr(env) else {
+            return opt;
+        };
+        // SAFETY: addr is the callable stored by the closure lowering.
+        let f: ThunkValFn = unsafe { std::mem::transmute(addr) };
+        gos_rt_result_new(1, unsafe { f(env) })
+    })
+}
+
 /// `option::zip(first, second)` - `Some((a, b))` when both are Some.
 /// Matches the interp's argument order: the data-last pipe passes the
 /// piped option as `second`.

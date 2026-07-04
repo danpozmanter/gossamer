@@ -1286,6 +1286,69 @@ impl<'a> Builder<'a> {
         }
     }
 
+    /// Method-form chain combinators on a Result/Option receiver:
+    /// `x.and_then(f)` / `or_else(f)` / `filter(p)` / `ok_or_else(f)`.
+    /// Mirrors the data-last free forms below: the closure crosses the
+    /// C-ABI as the env-blob `lower_iter_closure` builds.
+    pub(crate) fn lower_variant_chain_method(
+        &mut self,
+        receiver: &HirExpr,
+        method: &Ident,
+        closure_arg: &HirExpr,
+        receiver_ty: Ty,
+        ty: Ty,
+        span: Span,
+    ) -> Option<Local> {
+        use gossamer_types::{IntTy, TyKind};
+        let i64_ty = self.tcx.int_ty(IntTy::I64);
+        let is_option = self.is_option_adt(receiver_ty);
+        let helper = match (method.name.as_str(), is_option) {
+            ("and_then", true) => "gos_rt_option_and_then",
+            ("and_then", false) => "gos_rt_result_and_then",
+            ("or_else", true) => "gos_rt_option_or_else",
+            ("or_else", false) => "gos_rt_result_or_else",
+            ("filter", true) => "gos_rt_option_filter",
+            ("ok_or_else", _) => "gos_rt_result_ok_or_else",
+            _ => return None,
+        };
+        // Closure parameter shape: `and_then`/`filter` and Result's
+        // `or_else` receive the payload word; Option's `or_else` and
+        // `ok_or_else` are nullary thunks.
+        let inputs: &[Ty] = match (method.name.as_str(), is_option) {
+            ("or_else", true) | ("ok_or_else", _) => &[],
+            _ => &[i64_ty],
+        };
+        let closure_out = match method.name.as_str() {
+            "filter" => self.tcx.bool_ty(),
+            "ok_or_else" => i64_ty,
+            _ if is_option => {
+                let payload = self.enum_payload_ty(receiver_ty, 0).unwrap_or(i64_ty);
+                self.option_payload_adt_ty(payload)
+            }
+            _ => self.result_i64_error_adt_ty(),
+        };
+        let recv = self.lower_expr(receiver)?;
+        let closure = self.lower_iter_closure(closure_arg, inputs, closure_out, span)?;
+        let checked = if matches!(
+            self.tcx.kind_of(ty),
+            TyKind::Var(_) | TyKind::Error | TyKind::Never
+        ) {
+            receiver_ty
+        } else {
+            ty
+        };
+        let dest_ty = self.result_repr_ty(checked);
+        Some(self.emit_combinator_call(
+            helper,
+            vec![
+                Operand::Copy(Place::local(recv)),
+                Operand::Copy(Place::local(closure)),
+            ],
+            dest_ty,
+            span,
+        ))
+    }
+
     /// Lowers the closure-taking std combinators wired natively in the
     /// Task-22 pass: `result::and_then`/`or_else`/`ok`/`err`/`is_ok`/
     /// `is_err`, the remaining `option::*` family, and the newer

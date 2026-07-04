@@ -736,6 +736,7 @@ fn install_module_builtins(globals: &mut Vec<(&'static str, Value)>) {
         &[
             ("run", builtin_exec_run),
             ("spawn", builtin_exec_spawn),
+            ("spawn_piped", builtin_exec_spawn_piped),
             ("kill", builtin_exec_kill),
             ("signal", builtin_exec_signal),
             ("kill_group", builtin_exec_kill_group),
@@ -749,6 +750,7 @@ fn install_module_builtins(globals: &mut Vec<(&'static str, Value)>) {
         &[
             ("run", builtin_exec_run),
             ("spawn", builtin_exec_spawn),
+            ("spawn_piped", builtin_exec_spawn_piped),
             ("kill", builtin_exec_kill),
             ("signal", builtin_exec_signal),
             ("kill_group", builtin_exec_kill_group),
@@ -762,6 +764,7 @@ fn install_module_builtins(globals: &mut Vec<(&'static str, Value)>) {
         &[
             ("run", builtin_exec_run),
             ("spawn", builtin_exec_spawn),
+            ("spawn_piped", builtin_exec_spawn_piped),
             ("kill", builtin_exec_kill),
             ("signal", builtin_exec_signal),
             ("kill_group", builtin_exec_kill_group),
@@ -773,6 +776,19 @@ fn install_module_builtins(globals: &mut Vec<(&'static str, Value)>) {
         ],
         globals,
     );
+    // `process::Child` piped-handle methods, dispatched by the
+    // receiver struct's qualified name like `WaitGroup::*`.
+    for (name, call) in [
+        ("Child::write_stdin", builtin_child_write_stdin as BuiltinFn),
+        ("Child::close_stdin", builtin_child_close_stdin),
+        ("Child::read_line", builtin_child_read_line),
+        ("Child::read_stdout", builtin_child_read_stdout),
+        ("Child::wait", builtin_child_wait),
+        ("Child::kill", builtin_child_kill),
+    ] {
+        let leaked: &'static str = name;
+        globals.push((leaked, builtin(leaked, call)));
+    }
     install_module(
         "signal",
         &[
@@ -1495,6 +1511,13 @@ fn install_method_helpers(globals: &mut Vec<(&'static str, Value)>) {
     globals.push(("ok", builtin("ok", builtin_variant_ok)));
     globals.push(("err", builtin("err", builtin_variant_err)));
     globals.push(("ok_or", builtin("ok_or", builtin_variant_ok_or)));
+    globals.push((
+        "ok_or_else",
+        native("ok_or_else", native_variant_ok_or_else),
+    ));
+    globals.push(("and_then", native("and_then", native_variant_and_then)));
+    globals.push(("or_else", native("or_else", native_variant_or_else)));
+    globals.push(("filter", native("filter", native_variant_filter)));
     globals.push(("map", native("map", native_variant_map)));
     globals.push(("map_or", native("map_or", native_variant_map_or)));
     globals.push(("map_err", native("map_err", native_variant_map_err)));
@@ -1920,10 +1943,16 @@ fn install_concurrency_builtins(globals: &mut Vec<(&'static str, Value)>) {
         builtin("count_pairs", builtin_u8vec_count_pairs),
     ));
 
-    // `sync::WaitGroup` mirroring Go's API.
+    // `sync::WaitGroup` mirroring Go's API. The constructor is bound
+    // under both spellings like its `sync::` siblings (Mutex, Barrier);
+    // the compiled tiers already accept the qualified form.
     globals.push((
         "WaitGroup::new",
         builtin("WaitGroup::new", builtin_waitgroup_new),
+    ));
+    globals.push((
+        "sync::WaitGroup::new",
+        builtin("sync::WaitGroup::new", builtin_waitgroup_new),
     ));
     globals.push((
         "WaitGroup::add",
@@ -3893,6 +3922,92 @@ fn builtin_exec_spawn(args: &[Value]) -> RuntimeResult<Value> {
 /// Shells out to `/bin/kill` instead of pulling in a libc
 /// dep just for `kill(2)` - the dispatch path is rare (only the
 /// `stop_server` pattern hits it) so an extra fork/exec is fine.
+/// `process::spawn_piped(prog, args) -> Result<Child, errors::Error>`.
+/// The child's stdin/stdout stay piped; the returned handle struct
+/// dispatches the `Child::*` methods. The registry lives in the
+/// runtime crate so VM builtins and JIT-compiled code share it.
+fn builtin_exec_spawn_piped(args: &[Value]) -> RuntimeResult<Value> {
+    let Some(prog) = args.first().and_then(as_str) else {
+        return Ok(err_variant(
+            "process::spawn_piped: program argument must be a string",
+        ));
+    };
+    let mut cmd_args: Vec<String> = Vec::new();
+    if let Some(Value::Array(arr)) = args.get(1) {
+        for arg in arr.iter() {
+            if let Some(s) = as_str(arg) {
+                cmd_args.push(s.to_owned());
+            }
+        }
+    }
+    match gossamer_runtime::c_abi::piped_child_spawn(prog, &cmd_args) {
+        Ok(handle) => Ok(ok_variant(make_handle_struct("Child", handle))),
+        Err(msg) => Ok(err_variant(msg)),
+    }
+}
+
+/// `child.write_stdin(s) -> bool`.
+fn builtin_child_write_stdin(args: &[Value]) -> RuntimeResult<Value> {
+    let Some(handle) = args.first().and_then(|v| struct_handle(v, "Child")) else {
+        return Ok(Value::Bool(false));
+    };
+    let Some(s) = args.get(1).and_then(as_str) else {
+        return Ok(Value::Bool(false));
+    };
+    Ok(Value::Bool(
+        gossamer_runtime::c_abi::piped_child_write_stdin(handle, s.as_bytes()),
+    ))
+}
+
+/// `child.close_stdin()`.
+fn builtin_child_close_stdin(args: &[Value]) -> RuntimeResult<Value> {
+    if let Some(handle) = args.first().and_then(|v| struct_handle(v, "Child")) {
+        gossamer_runtime::c_abi::piped_child_close_stdin(handle);
+    }
+    Ok(Value::Unit)
+}
+
+/// `child.read_line() -> Option<String>`.
+fn builtin_child_read_line(args: &[Value]) -> RuntimeResult<Value> {
+    let Some(handle) = args.first().and_then(|v| struct_handle(v, "Child")) else {
+        return Ok(none_variant());
+    };
+    match gossamer_runtime::c_abi::piped_child_read_line(handle) {
+        Some(line) => Ok(some_variant(Value::String(SmolStr::from(line)))),
+        None => Ok(none_variant()),
+    }
+}
+
+/// `child.read_stdout() -> String`.
+fn builtin_child_read_stdout(args: &[Value]) -> RuntimeResult<Value> {
+    let Some(handle) = args.first().and_then(|v| struct_handle(v, "Child")) else {
+        return Ok(Value::String(SmolStr::default()));
+    };
+    let text = gossamer_runtime::c_abi::piped_child_read_stdout(handle).unwrap_or_default();
+    Ok(Value::String(SmolStr::from(text)))
+}
+
+/// `child.wait() -> Result<i64, errors::Error>`.
+fn builtin_child_wait(args: &[Value]) -> RuntimeResult<Value> {
+    let Some(handle) = args.first().and_then(|v| struct_handle(v, "Child")) else {
+        return Ok(err_variant("process::Child::wait: not a Child handle"));
+    };
+    match gossamer_runtime::c_abi::piped_child_wait(handle) {
+        Ok(code) => Ok(ok_variant(Value::Int(code))),
+        Err(msg) => Ok(err_variant(msg)),
+    }
+}
+
+/// `child.kill() -> bool`.
+fn builtin_child_kill(args: &[Value]) -> RuntimeResult<Value> {
+    let Some(handle) = args.first().and_then(|v| struct_handle(v, "Child")) else {
+        return Ok(Value::Bool(false));
+    };
+    Ok(Value::Bool(gossamer_runtime::c_abi::piped_child_kill(
+        handle,
+    )))
+}
+
 fn builtin_exec_kill(args: &[Value]) -> RuntimeResult<Value> {
     #[cfg(unix)]
     use std::process::{Command as StdCommand, Stdio as StdStdio};
@@ -6624,7 +6739,9 @@ fn builtin_json_set(args: &[Value]) -> RuntimeResult<Value> {
     let Value::Struct(inner) = &receiver else {
         return Ok(receiver);
     };
-    if inner.name != "json::Object" {
+    // `json::parse` builds objects named `Object`; the `Value::object`
+    // constructor builds `json::Object`. Both are object-shaped.
+    if inner.name != "json::Object" && inner.name != "Object" {
         return Ok(receiver);
     }
     let mut fields: Vec<(&'static str, Value)> = inner.fields.to_vec();
@@ -6749,6 +6866,83 @@ fn builtin_variant_ok_or(args: &[Value]) -> RuntimeResult<Value> {
             Ok(Value::variant("Ok", vec![inner.fields[0].clone()]))
         }
         _ => Ok(Value::variant("Err", vec![new_err])),
+    }
+}
+
+/// `opt.and_then(f)` / `res.and_then(f)` - `f(payload)` when
+/// Some/Ok (f returns the next Option/Result), None/Err passthrough.
+fn native_variant_and_then(
+    dispatch: &mut dyn NativeDispatch,
+    args: &[Value],
+) -> RuntimeResult<Value> {
+    let receiver = args.first().cloned().unwrap_or(Value::Unit);
+    let f = args.get(1).cloned().unwrap_or(Value::Unit);
+    match &receiver {
+        Value::Variant(inner)
+            if (inner.name == "Some" || inner.name == "Ok") && !inner.fields.is_empty() =>
+        {
+            invoke_callable(dispatch, &f, vec![inner.fields[0].clone()])
+        }
+        other => Ok(other.clone()),
+    }
+}
+
+/// `opt.or_else(f)` (f takes no argument) / `res.or_else(f)` (f takes
+/// the Err payload) - Some/Ok passthrough.
+fn native_variant_or_else(
+    dispatch: &mut dyn NativeDispatch,
+    args: &[Value],
+) -> RuntimeResult<Value> {
+    let receiver = args.first().cloned().unwrap_or(Value::Unit);
+    let f = args.get(1).cloned().unwrap_or(Value::Unit);
+    match &receiver {
+        Value::Variant(inner) if inner.name == "None" => invoke_callable(dispatch, &f, Vec::new()),
+        Value::Variant(inner) if inner.name == "Err" && !inner.fields.is_empty() => {
+            invoke_callable(dispatch, &f, vec![inner.fields[0].clone()])
+        }
+        other => Ok(other.clone()),
+    }
+}
+
+/// `opt.filter(p)` - keeps `Some(x)` only when `p(x)` holds.
+fn native_variant_filter(
+    dispatch: &mut dyn NativeDispatch,
+    args: &[Value],
+) -> RuntimeResult<Value> {
+    let receiver = args.first().cloned().unwrap_or(Value::Unit);
+    let p = args.get(1).cloned().unwrap_or(Value::Unit);
+    match &receiver {
+        Value::Variant(inner) if inner.name == "Some" && !inner.fields.is_empty() => {
+            if matches!(
+                invoke_callable(dispatch, &p, vec![inner.fields[0].clone()])?,
+                Value::Bool(true)
+            ) {
+                Ok(receiver.clone())
+            } else {
+                Ok(none_variant())
+            }
+        }
+        other => Ok(other.clone()),
+    }
+}
+
+/// `opt.ok_or_else(f)` - `Ok(payload)` when Some, `Err(f())` when None.
+fn native_variant_ok_or_else(
+    dispatch: &mut dyn NativeDispatch,
+    args: &[Value],
+) -> RuntimeResult<Value> {
+    let receiver = args.first().cloned().unwrap_or(Value::Unit);
+    let f = args.get(1).cloned().unwrap_or(Value::Unit);
+    match &receiver {
+        Value::Variant(inner)
+            if (inner.name == "Some" || inner.name == "Ok") && !inner.fields.is_empty() =>
+        {
+            Ok(Value::variant("Ok", vec![inner.fields[0].clone()]))
+        }
+        _ => Ok(Value::variant(
+            "Err",
+            vec![invoke_callable(dispatch, &f, Vec::new())?],
+        )),
     }
 }
 

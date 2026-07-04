@@ -37,9 +37,126 @@ pub(crate) fn read_source(file: &PathBuf) -> Result<String> {
 /// `src/other.gos::greet`) resolve at runtime. See
 /// [`bundle_sibling_modules`] for the bundling contract.
 pub(crate) fn read_entry_source(file: &PathBuf) -> Result<String> {
-    let resolved = resolve_gos_source(file);
+    // A bare relative entry (`gos run main.gos`) has an empty
+    // `parent()`; the module scan must read the entry's real
+    // directory, so anchor the path to the cwd first.
+    let resolved =
+        std::path::absolute(resolve_gos_source(file)).unwrap_or_else(|_| resolve_gos_source(file));
     let entry = fs::read_to_string(&resolved).map_err(|err| friendly_io_error(err, &resolved))?;
-    Ok(bundle_sibling_modules(&resolved, entry))
+    let bundled = bundle_sibling_modules(&resolved, entry);
+    let mut visited = Vec::new();
+    Ok(bundle_path_dependencies(&resolved, bundled, &mut visited))
+}
+
+/// Inlines every `path = "..."` dependency of the entry's project as
+/// a top-level `mod <dep-module-name> { <dep source> }`. Transitive
+/// path dependencies hoist to top-level modules too (deduplicated by
+/// canonical root), so a dependency's own `use "id" as alias` binds
+/// against a sibling module exactly as the consumer's does. The
+/// module name derives from the dependency's project id via
+/// `gossamer_resolve::project_dep_module_name`, which is also what
+/// the resolver binds `use "id" as alias` against. Non-path
+/// dependencies are untouched.
+fn bundle_path_dependencies(entry: &Path, source: String, visited: &mut Vec<PathBuf>) -> String {
+    let mut out = source;
+    let mut worklist: Vec<(PathBuf, PathBuf)> = Vec::new();
+    collect_path_deps(entry, visited, &mut worklist);
+    let mut i = 0;
+    while i < worklist.len() {
+        let (dep_root, dep_entry) = worklist[i].clone();
+        i += 1;
+        let Some((dep_id, _)) = path_dep_entry(&dep_root) else {
+            continue;
+        };
+        let Ok(dep_source) = fs::read_to_string(&dep_entry) else {
+            continue;
+        };
+        let dep_bundled = bundle_sibling_modules(&dep_entry, dep_source);
+        collect_path_deps(&dep_entry, visited, &mut worklist);
+        let mod_name = gossamer_resolve::project_dep_module_name(&dep_id);
+        out.push_str(&format!(
+            "\n// auto-bundled dependency: {} ({})\nmod {} {{\n{}\n}}\n",
+            dep_id,
+            dep_root.display(),
+            mod_name,
+            dep_bundled
+        ));
+    }
+    out
+}
+
+/// Appends the (root, entry) of each not-yet-visited path dependency
+/// of `entry`'s project to `worklist`.
+fn collect_path_deps(
+    entry: &Path,
+    visited: &mut Vec<PathBuf>,
+    worklist: &mut Vec<(PathBuf, PathBuf)>,
+) {
+    let Some(dir) = entry.parent() else {
+        return;
+    };
+    let manifest_path = [dir.join("project.toml")]
+        .into_iter()
+        .chain(dir.parent().map(|p| p.join("project.toml")))
+        .find(|p| p.is_file());
+    let Some(manifest_path) = manifest_path else {
+        return;
+    };
+    let Ok(manifest_text) = fs::read_to_string(&manifest_path) else {
+        return;
+    };
+    let Ok(manifest) = gossamer_pkg::Manifest::parse(&manifest_text) else {
+        return;
+    };
+    let manifest_dir = manifest_path.parent().unwrap_or(dir);
+    for spec in manifest.dependencies.values() {
+        let Some(rel) = dependency_path(spec) else {
+            continue;
+        };
+        let Ok(dep_root) = manifest_dir.join(rel).canonicalize() else {
+            continue;
+        };
+        if visited.contains(&dep_root) {
+            continue;
+        }
+        visited.push(dep_root.clone());
+        if let Some((_, dep_entry)) = path_dep_entry(&dep_root) {
+            worklist.push((dep_root, dep_entry));
+        }
+    }
+}
+
+/// The `path` field of a dependency spec, when it is a local-path
+/// dependency.
+fn dependency_path(spec: &gossamer_pkg::DependencySpec) -> Option<&str> {
+    match spec {
+        gossamer_pkg::DependencySpec::Inline(gossamer_pkg::InlineDependency::Path { path }) => {
+            Some(path)
+        }
+        _ => None,
+    }
+}
+
+/// Resolves a path dependency's project id and entry source file:
+/// `lib.gos` (flat or under `src/`) is the library entry; `main.gos`
+/// is accepted as a fallback for binary-shaped projects.
+fn path_dep_entry(dep_root: &Path) -> Option<(String, PathBuf)> {
+    let manifest_text = fs::read_to_string(dep_root.join("project.toml")).ok()?;
+    let manifest = gossamer_pkg::Manifest::parse(&manifest_text).ok()?;
+    let entry = manifest
+        .project
+        .entry
+        .as_deref()
+        .map(|rel| dep_root.join(rel))
+        .into_iter()
+        .chain([
+            dep_root.join("src/lib.gos"),
+            dep_root.join("lib.gos"),
+            dep_root.join("src/main.gos"),
+            dep_root.join("main.gos"),
+        ])
+        .find(|p| p.is_file())?;
+    Some((manifest.project.id.as_str().to_string(), entry))
 }
 
 /// Auto-bundles a multi-file package into the entry source so the

@@ -334,15 +334,23 @@ fn is_aggregate_copy_src(body: &Body, tcx: &TyCtxt, rvalue: &Rvalue) -> bool {
     // bare `Copy(ref_local)` into a value-typed destination, and the ref
     // local's VALUE is the source address the memcpy needs. Without the
     // peel the copy takes the rebind path, aliasing the destination to the
-    // referent - a later projected write then mutates the source. Only a
-    // value-typed (slot-backed) destination reaches the memcpy path, so a
-    // plain pointer copy between ref-typed locals still rebinds.
+    // referent - a later projected write then mutates the source. A peeled
+    // source must lead to a MULTI-SLOT aggregate: a one-word
+    // address-represented value (an RC enum handle) copies its handle word
+    // by rebinding, and "memcpying" it would dereference the handle.
     let mut leaf = resolve_place_ty(tcx, body, src);
+    let mut peeled = false;
     while let TyKind::Ref { inner, .. } = tcx.kind_of(leaf) {
         leaf = *inner;
+        peeled = true;
     }
+    let slots_ok = if peeled {
+        type_slot_count(tcx, leaf) > 1
+    } else {
+        type_slot_count(tcx, leaf) > 1 || single_slot_addr_aggregate(tcx, leaf)
+    };
     !is_inline_two_word_ty(tcx, leaf)
-        && (type_slot_count(tcx, leaf) > 1 || single_slot_addr_aggregate(tcx, leaf))
+        && slots_ok
         && matches!(
             tcx.kind_of(leaf),
             TyKind::Tuple(_) | TyKind::Array { .. } | TyKind::Adt { .. }
@@ -573,13 +581,18 @@ pub(super) fn lower_statement(
                 let agg_copy_src = matches!(rvalue, Rvalue::Use(Operand::Copy(_)))
                     && is_aggregate_copy_src(body, tcx, rvalue);
                 // A body that returns through the sret ABI copies the result
-                // words into the caller's buffer at Return (and a Copy-built
-                // return local is never treated as a fresh block to free), so
-                // flowing to the return does not disqualify the stack slot -
-                // the frame's storage is never handed out.
+                // words into the caller's buffer at Return, so flowing to the
+                // return does not disqualify the stack slot - PROVIDED the
+                // Return will not also free the returned pointer as a fresh
+                // heap block (`return_local_is_fresh_aggregate`): freeing a
+                // stack slot address aborts. A Copy-built return chain is
+                // never fresh, so the `np = *pos; mutate; np` shape stays
+                // slot-backed while constructor-built returns keep their
+                // heap path.
                 let whole_agg_copy = agg_copy_src
                     && intrinsics.stack_slotted.contains(&place.local)
-                    && (intrinsics.sret_ptr.is_some() || !local_flows_to_return(body, place.local));
+                    && ((intrinsics.sret_ptr.is_some() && !return_local_is_fresh_aggregate(body))
+                        || !local_flows_to_return(body, place.local));
                 // A copy destination that is MUTATED through a projection and
                 // flows to the return slot can take neither path above: a
                 // stack slot cannot outlive the frame, and a rebind aliases

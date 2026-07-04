@@ -349,6 +349,19 @@ pub enum TypeError {
         /// Rendered receiver type.
         ty: String,
     },
+    /// A data-last `option::*` / `result::*` combinator was called at
+    /// full arity with its trailing data argument not shaped as the
+    /// module's payload type - most often the `Option`/`Result` passed
+    /// first and the closure last. The runtime reads the closure slot
+    /// as the data value and silently returns the `None`/`Err`
+    /// fallback, so the checker rejects the call.
+    #[error("`{combinator}` takes its `{shape}` argument last")]
+    CombinatorDataArgMismatch {
+        /// Qualified combinator path, e.g. `option::and_then`.
+        combinator: String,
+        /// The payload shape the data slot requires (`Option`/`Result`).
+        shape: String,
+    },
 }
 
 impl TypeError {
@@ -385,6 +398,7 @@ impl TypeError {
             Self::OversizedStackArray { .. } => "oversized-stack-array",
             Self::JsonValuePatternUnsupported { .. } => "json-value-pattern-unsupported",
             Self::WeakDowngradeNonRc { .. } => "weak-downgrade-non-rc",
+            Self::CombinatorDataArgMismatch { .. } => "combinator-data-arg-mismatch",
         }
     }
 
@@ -420,6 +434,7 @@ impl TypeError {
             Self::OversizedStackArray { .. } => "GT0026",
             Self::JsonValuePatternUnsupported { .. } => "GT0027",
             Self::WeakDowngradeNonRc { .. } => "GT0028",
+            Self::CombinatorDataArgMismatch { .. } => "GT0029",
         }
     }
 }
@@ -513,9 +528,15 @@ impl TypeDiagnostic {
                 }
             }
             TypeError::UnresolvedMethod { ty, name } => {
-                out = out
-                    .with_help(format!("`{ty}` has no method named `{name}`"))
-                    .with_note("check for a typo or an impl block missing from scope");
+                out = if name == "set" && ty.starts_with("HashMap") {
+                    out.with_help(format!("`{ty}` writes with `insert(key, value)`"))
+                        .with_note(
+                            "`set` is the `json::Value` field-update helper, not a map method",
+                        )
+                } else {
+                    out.with_help(format!("`{ty}` has no method named `{name}`"))
+                        .with_note("check for a typo or an impl block missing from scope")
+                };
             }
             TypeError::UnresolvedOp { op, lhs, rhs } => {
                 out = out.with_note(format!(
@@ -647,6 +668,17 @@ impl TypeDiagnostic {
                          discriminant, so a `json::Value::Variant(..)` pattern falls through \
                          on the VM and faults on the compiled tiers",
                     );
+            }
+            TypeError::CombinatorDataArgMismatch { combinator, shape } => {
+                out = out
+                    .with_help(format!(
+                        "write `{combinator}(f, value)` or pipe the value in: \
+                         `value |> {combinator}(f)`"
+                    ))
+                    .with_note(format!(
+                        "the data slot is the last argument; a non-`{shape}` value there \
+                         makes the runtime return the empty fallback instead of applying `f`"
+                    ));
             }
             TypeError::WeakDowngradeNonRc { .. } => {
                 out = out

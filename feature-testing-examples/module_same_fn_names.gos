@@ -1,0 +1,17 @@
+// Two inline modules each define `add` and `scale`; bare in-module
+// references bind to the module's own items, qualified calls to the
+// named module's - identical on every tier.
+mod alpha {
+    pub fn add(a: i64, b: i64) -> i64 { a + b }
+    pub fn scale(a: i64) -> i64 { add(a, a) }
+}
+
+mod beta {
+    pub fn add(a: i64, b: i64) -> i64 { (a + b) * 10 }
+    pub fn scale(a: i64) -> i64 { add(a, 1) }
+}
+
+fn main() {
+    println!("{} {}", alpha::add(1, 2), beta::add(1, 2))
+    println!("{} {}", alpha::scale(4), beta::scale(4))
+}

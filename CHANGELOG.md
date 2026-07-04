@@ -115,6 +115,47 @@ tier-parity fixture.
 
 ### Language and stdlib
 
+- **Module-scoped function names.** Two modules may define the same
+  function name: bare references inside a module bind to the module's
+  own item, every reference lowers to the canonical `mod::name`
+  spelling, and each tier defines the qualified symbol - previously a
+  flat namespace made this a duplicate-definition error (GR0003).
+  Type, const, and static names keep the cross-module uniqueness
+  requirement.
+- **Interactive child processes.** `process::spawn_piped(prog, args)`
+  spawns a child with piped stdin/stdout and returns a `Child` handle
+  with `write_stdin`, `close_stdin`, `read_line`, `read_stdout`,
+  `wait`, and `kill`, on all three tiers - the JSON-RPC-over-stdio
+  transport MCP clients need.
+- **Path dependencies link at run, check, and build.** A
+  `path = "../other"` entry in `[dependencies]` now inlines the
+  dependency's source (transitively) into the compilation unit, so
+  `use "project-id" as name` resolves to real code on every tier
+  instead of faulting with GX0002 at runtime, and `gos check` rejects
+  calls to dependency members that do not exist.
+- **Option/Result chain methods**: `and_then`, `or_else`, `filter`,
+  and `ok_or_else` now work in method form on every tier, and a
+  combinator whose closure leaves a payload slot unresolved defaults
+  it to the receiver's payload type so `{:?}` lowers natively.
+- **`json::Value.set` on parsed objects.** The method form and the
+  qualified `json::set` free call update parse-produced objects,
+  accept scalar values (boxed to a JSON value on the compiled tiers),
+  and chain, identically on every tier; `HashMap.set(..)` - which
+  silently dropped the write - is now a `gos check` error pointing at
+  `insert`.
+- **Swapped-argument std combinators are check errors.** A data-last
+  `option::*` / `result::*` free call whose trailing data argument is
+  not Option/Result-shaped (the classic `option::and_then(opt, f)`
+  argument swap, which silently returned `None`) is rejected with
+  GT0029.
+- **Unknown `json::Value` constructors and `process::Command` paths**
+  are `gos check` errors instead of runtime GX0002 faults, and
+  `sync::WaitGroup::new()` now resolves on the VM like its `sync::`
+  siblings.
+- **`gos run main.gos` with a relative entry path** bundles sibling
+  modules exactly like `gos run .` (the module scan previously read
+  an empty directory and silently bundled nothing).
+
 - **Operator overloading** for the arithmetic, bitwise, index, and
   negation operators (`+ - * / % & | ^ << >> - []` and their
   compound-assign forms) via user `impl`s, on structs, enums, and

@@ -174,6 +174,37 @@ impl<'a> Builder<'a> {
         {
             return r;
         }
+        // Method-form `v.set(key, value)` on a `json::Value` is the
+        // object field-update helper (append-or-replace, returns the
+        // updated value). Custom-lowered because the value argument
+        // crosses the FFI as a `*GosJson` and may need scalar boxing.
+        // `HashMap` receivers never reach here: the checker rejects
+        // `set` on a map (GT0002, `insert` is the map write).
+        if method.name.as_str() == "set"
+            && args.len() == 2
+            && matches!(receiver_kind_flat, TyKind::JsonValue)
+        {
+            return self.lower_json_set_call(receiver, &args[0], &args[1], span);
+        }
+        // Closure-taking chain combinators on a Result/Option receiver
+        // (and_then / or_else / filter / ok_or_else). Lowered like
+        // their data-last free forms: the closure crosses the C-ABI as
+        // the env-blob `lower_iter_closure` builds (which also thunks
+        // non-capturing closures), so the generic table route - which
+        // would pass the raw closure local - cannot carry them.
+        if matches!(
+            method.name.as_str(),
+            "and_then" | "or_else" | "filter" | "ok_or_else"
+        ) && args.len() == 1
+            && matches!(receiver_kind_flat, TyKind::Adt { .. })
+            && self.is_result_or_option_adt(receiver_ty)
+        {
+            if let Some(r) =
+                self.lower_variant_chain_method(receiver, method, &args[0], receiver_ty, ty, span)
+            {
+                return Some(r);
+            }
+        }
 
         // Stage 3 - name-keyed runtime-symbol table; a user impl of the same
         // name shadows a bare-name runtime builtin.
@@ -2175,6 +2206,12 @@ impl<'a> Builder<'a> {
             (Some("net::UdpSocket"), "recv_from") => Some("gos_rt_udp_recv_from"),
             (Some("net::UdpSocket"), "local_addr") => Some("gos_rt_udp_local_addr"),
             (Some("net::UdpSocket"), "close") => Some("gos_rt_udp_close"),
+            (Some("process::Child"), "write_stdin") => Some("gos_rt_child_write_stdin"),
+            (Some("process::Child"), "close_stdin") => Some("gos_rt_child_close_stdin"),
+            (Some("process::Child"), "read_line") => Some("gos_rt_child_read_line"),
+            (Some("process::Child"), "read_stdout") => Some("gos_rt_child_read_stdout"),
+            (Some("process::Child"), "wait") => Some("gos_rt_child_wait"),
+            (Some("process::Child"), "kill") => Some("gos_rt_child_kill"),
             _ => None,
         }
     }
@@ -2388,6 +2425,22 @@ impl<'a> Builder<'a> {
             }
             "gos_rt_btmap_insert" | "gos_rt_flag_set_short" => self.tcx.unit(),
             "gos_rt_deque_push_back" | "gos_rt_deque_push_front" => self.tcx.unit(),
+            // `Child::read_line() -> Option<String>`; `wait` returns
+            // `Result<i64, errors::Error>`. Pinned so the while-let /
+            // match extraction reads the packed enum correctly.
+            "gos_rt_child_read_line" => self.option_string_adt_ty(),
+            "gos_rt_child_read_stdout" => self.tcx.string_ty(),
+            "gos_rt_child_write_stdin" | "gos_rt_child_kill" => self.tcx.bool_ty(),
+            "gos_rt_child_close_stdin" => self.tcx.unit(),
+            "gos_rt_child_wait" => {
+                let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+                let err_ty = self.tcx.dyn_error_ty();
+                let substs = gossamer_types::Substs::from_types([i64_ty, err_ty]);
+                self.tcx.intern(gossamer_types::TyKind::Adt {
+                    def: gossamer_resolve::DefId::local(u32::MAX),
+                    substs,
+                })
+            }
             // `VecDeque<T>::pop_front` / `pop_back` / `peek_front` /
             // `peek_back` return `Option<T>`. Recover the element from the
             // deque's sole generic so a `VecDeque<String>` binds its
@@ -2858,6 +2911,12 @@ impl<'a> Builder<'a> {
             (Some("net::UdpSocket"), "recv_from") => Some("gos_rt_udp_recv_from"),
             (Some("net::UdpSocket"), "local_addr") => Some("gos_rt_udp_local_addr"),
             (Some("net::UdpSocket"), "close") => Some("gos_rt_udp_close"),
+            (Some("process::Child"), "write_stdin") => Some("gos_rt_child_write_stdin"),
+            (Some("process::Child"), "close_stdin") => Some("gos_rt_child_close_stdin"),
+            (Some("process::Child"), "read_line") => Some("gos_rt_child_read_line"),
+            (Some("process::Child"), "read_stdout") => Some("gos_rt_child_read_stdout"),
+            (Some("process::Child"), "wait") => Some("gos_rt_child_wait"),
+            (Some("process::Child"), "kill") => Some("gos_rt_child_kill"),
             (Some("vec::Iter"), "next") => Some("gos_rt_arr_iter_next"),
             _ => None,
         }

@@ -267,6 +267,14 @@ pub(crate) fn collect_fn_ret_names(program: &HirProgram) -> HashMap<String, Ty> 
             HirItemKind::Fn(decl) => {
                 if let Some(ret) = decl.ret {
                     out.insert(decl.name.name.clone(), ret);
+                    // Call sites reference inline-module functions by
+                    // their canonical `mod::name` spelling.
+                    if !item.module_path.is_empty() {
+                        out.insert(
+                            format!("{}::{}", item.module_path.join("::"), decl.name.name),
+                            ret,
+                        );
+                    }
                 }
             }
             HirItemKind::Impl(decl) => {
@@ -738,14 +746,26 @@ pub(crate) fn collect_item(
 ) {
     match &item.kind {
         HirItemKind::Fn(decl) => {
-            // Cross-module callers route through `Operand::FnRef`
-            // keyed by `DefId` (the resolver registers
-            // `other::greet` as a `DefKind::Fn` directly), so a
-            // single bare-name lowering covers both `greet()` and
-            // `other::greet()` call sites. The module-qualified
-            // duplicate body is unnecessary.
+            // An inline-module function's body carries its canonical
+            // `mod::name` symbol (mirroring the `Struct::method`
+            // mangle below), so two modules may define the same
+            // function name without emitting two identically-named
+            // native symbols. Call sites agree: the HIR lowering
+            // rewrites every reference to the qualified spelling and
+            // `Operand::FnRef` resolution is `DefId`-keyed.
+            let mangled: HirFn = if item.module_path.is_empty() {
+                decl.clone()
+            } else {
+                let mut renamed = decl.clone();
+                renamed.name = Ident::new(format!(
+                    "{}::{}",
+                    item.module_path.join("::"),
+                    decl.name.name
+                ));
+                renamed
+            };
             if let Some(body) = lower_fn(
-                decl,
+                &mangled,
                 item.def,
                 item.span,
                 tcx,
@@ -761,7 +781,7 @@ pub(crate) fn collect_item(
                 region_unsafe,
             ) {
                 out.push(body);
-                maybe_push_handler_ok_wrap(decl, 1, tcx, item.span, out);
+                maybe_push_handler_ok_wrap(&mangled, 1, tcx, item.span, out);
             }
         }
         HirItemKind::Impl(decl) => {

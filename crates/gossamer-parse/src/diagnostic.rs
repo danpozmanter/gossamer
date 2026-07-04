@@ -250,7 +250,7 @@ impl ParseError {
             ParseError::UnexpectedConstruct => ("GP0015", "unexpected construct".to_string(), None),
             ParseError::ExternReserved => (
                 "GP0016",
-                "extern blocks are not supported in Gossamer 0.5.0".to_string(),
+                "extern blocks are not supported".to_string(),
                 Some(
                     "FFI is expressed through the `[rust-bindings]` section of `project.toml` \
                      plus the `gossamer-binding` crate (see `docs_src/libraries.md`). \

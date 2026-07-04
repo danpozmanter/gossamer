@@ -1,0 +1,25 @@
+// Interactive child-process pipes: spawn a child with piped stdio,
+// write lines to its stdin, read its stdout incrementally, reap it.
+// `sort` reads all of stdin then writes the sorted lines, so the
+// write-close-read sequence exercises real interactive plumbing
+// without deadlock; it exists on Linux, macOS, and Windows.
+use std::process
+
+fn main() {
+    match process::spawn_piped("sort", []) {
+        Ok(child) => {
+            child.write_stdin("pear\n")
+            child.write_stdin("apple\n")
+            child.write_stdin("mango\n")
+            child.close_stdin()
+            while let Some(line) = child.read_line() {
+                println!("line: {}", line)
+            }
+            match child.wait() {
+                Ok(code) => println!("exit: {}", code),
+                Err(e) => println!("wait error: {}", e),
+            }
+        }
+        Err(e) => println!("spawn error: {}", e),
+    }
+}

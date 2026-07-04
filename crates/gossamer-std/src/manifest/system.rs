@@ -119,6 +119,11 @@ pub const OS_EXEC: StdModule = StdModule {
             doc: "Non-blocking launch; returns the child PID as Result<i64, errors::Error>.",
         },
         StdItem {
+            name: "spawn_piped",
+            kind: StdItemKind::Function,
+            doc: "Spawns a child with piped stdin/stdout; returns Result<Child, errors::Error>. The Child's write_stdin / close_stdin / read_line / read_stdout / wait / kill methods drive it interactively.",
+        },
+        StdItem {
             name: "kill",
             kind: StdItemKind::Function,
             doc: "Best-effort SIGTERM by pid; returns true on success.",
@@ -683,6 +688,11 @@ pub const PROCESS: StdModule = StdModule {
             name: "spawn",
             kind: StdItemKind::Function,
             doc: "Spawns a child process and returns a Child handle.",
+        },
+        StdItem {
+            name: "spawn_piped",
+            kind: StdItemKind::Function,
+            doc: "Spawns a child with piped stdin/stdout; returns Result<Child, errors::Error>. The Child's write_stdin / close_stdin / read_line / read_stdout / wait / kill methods drive it interactively.",
         },
         StdItem {
             name: "kill",

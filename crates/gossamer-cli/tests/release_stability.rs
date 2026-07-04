@@ -1205,6 +1205,43 @@ fn main() {
 }
 
 #[test]
+fn release_rejects_swapped_option_combinator_with_gt0029() {
+    // `option::and_then` is data-last (closure first, Option last);
+    // with the arguments swapped the runtime reads the closure as the
+    // data value and silently returns `None`, so the checker must
+    // reject the call instead.
+    assert_release_build_rejects(
+        "reject_swapped_option_combinator",
+        r#"
+use std::option
+
+fn main() {
+    let a = option::and_then(Some(5), |x: i64| Some(x * 2))
+    println!("{:?}", a)
+}
+"#,
+        "GT0029",
+    );
+}
+
+#[test]
+fn release_rejects_swapped_result_combinator_with_gt0029() {
+    assert_release_build_rejects(
+        "reject_swapped_result_combinator",
+        r#"
+use std::result
+
+fn main() {
+    let r: Result<i64, String> = Ok(5)
+    let m = result::map(r, |x: i64| x * 2)
+    println!("{:?}", m)
+}
+"#,
+        "GT0029",
+    );
+}
+
+#[test]
 fn release_rejects_unrowed_combinator_closure_with_gt0013() {
     // `iter::count` exists but has no checker signature row, so a
     // closure argument's parameter type cannot be inferred - the
@@ -1222,5 +1259,43 @@ fn main() {
 }
 "#,
         "GT0013",
+    );
+}
+
+#[test]
+fn release_rejects_unknown_json_value_ctor_with_gr0001() {
+    // `json::Value::string` (lowercase s) binds nothing at runtime;
+    // the constructors are a closed, fully-registered set, so an
+    // unknown spelling is rejected at check instead of GX0002 at run.
+    assert_release_build_rejects(
+        "reject_json_value_ctor_typo",
+        r#"
+use std::encoding::json
+
+fn main() {
+    let v = json::Value::string("x")
+    println!("{}", json::render(&v))
+}
+"#,
+        "GR0001",
+    );
+}
+
+#[test]
+fn release_rejects_process_command_builder_with_gr0001() {
+    // `process::Command` is Rust-internal surface; no `process::Type`
+    // path binds at runtime, so the builder spelling is rejected at
+    // check instead of GX0002 at run.
+    assert_release_build_rejects(
+        "reject_process_command_builder",
+        r#"
+use std::process
+
+fn main() {
+    let c = process::Command::new("echo")
+    println!("{:?}", c)
+}
+"#,
+        "GR0001",
     );
 }

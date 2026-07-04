@@ -142,6 +142,13 @@ impl ScopeStack {
         self.layers.push(Scope::default());
     }
 
+    /// Pushes an existing scope layer (an inline module's own item
+    /// bindings, collected up front) so lookups inside the module's
+    /// body see its items before the flat root scope.
+    pub(crate) fn push_scope(&mut self, scope: Scope) {
+        self.layers.push(scope);
+    }
+
     /// Pops the top scope. Panics in debug builds if the stack is empty
     /// (callers must balance push/pop).
     pub(crate) fn pop(&mut self) {

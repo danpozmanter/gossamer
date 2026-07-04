@@ -49,6 +49,70 @@ use super::*;
 use super::Builder;
 
 impl<'a> Builder<'a> {
+    /// `set(obj, key, value)` on a `json::Value` (method form or the
+    /// qualified `json::set` free call). `gos_rt_json_set` takes the
+    /// value as a `*GosJson`, so a scalar argument is boxed through
+    /// the matching `gos_rt_json_value_*` constructor first (the VM
+    /// stores any value directly).
+    pub(crate) fn lower_json_set_call(
+        &mut self,
+        obj: &HirExpr,
+        key: &HirExpr,
+        value: &HirExpr,
+        span: Span,
+    ) -> Option<Local> {
+        let obj_local = self.lower_expr(obj)?;
+        let key_local = self.lower_expr(key)?;
+        let val_local = self.box_json_value_arg(value, span)?;
+        let ret_ty = self.tcx.json_value_ty();
+        let dest = self.fresh(ret_ty);
+        let next = self.new_block(span);
+        self.terminate(Terminator::Call {
+            callee: Operand::Const(ConstValue::Str("gos_rt_json_set".to_string())),
+            args: vec![
+                Operand::Copy(Place::local(obj_local)),
+                Operand::Copy(Place::local(key_local)),
+                Operand::Copy(Place::local(val_local)),
+            ],
+            destination: Place::local(dest),
+            target: Some(next),
+        });
+        self.set_current(next);
+        Some(dest)
+    }
+
+    /// Lowers `arg` into a `*GosJson`-typed local: a `json::Value`
+    /// passes through, a scalar is boxed via its `gos_rt_json_value_*`
+    /// constructor (an unresolved `Var` boxes as i64, matching the
+    /// numeric-literal default).
+    fn box_json_value_arg(&mut self, arg: &HirExpr, span: Span) -> Option<Local> {
+        use gossamer_types::TyKind;
+        let arg_local = self.lower_expr(arg)?;
+        let mut ty = self.locals[arg_local.0 as usize].ty;
+        while let TyKind::Ref { inner, .. } = self.tcx.kind_of(ty) {
+            ty = *inner;
+        }
+        let helper = match self.tcx.kind_of(ty) {
+            TyKind::JsonValue => return Some(arg_local),
+            TyKind::Int(_) | TyKind::Var(_) | TyKind::Error => "gos_rt_json_value_int",
+            TyKind::Bool => "gos_rt_json_value_bool",
+            TyKind::Float(_) => "gos_rt_json_value_float",
+            TyKind::String => "gos_rt_json_value_string",
+            _ => return None,
+        };
+        let json_ty = self.tcx.json_value_ty();
+        let dest = self.fresh(json_ty);
+        let next = self.new_block(span);
+        self.terminate(Terminator::Call {
+            callee: Operand::Const(ConstValue::Str(helper.to_string())),
+            args: vec![Operand::Copy(Place::local(arg_local))],
+            destination: Place::local(dest),
+            target: Some(next),
+        });
+        self.set_current(next);
+        Some(dest)
+    }
+
     pub(crate) fn emit_json_get(
         &mut self,
         receiver_local: Local,
@@ -311,14 +375,17 @@ impl<'a> Builder<'a> {
         } else {
             args
         };
+        // `json::set(obj, key, value) → json::Value` - append or
+        // replace a named field on an object-shaped Value. Custom-
+        // lowered so a scalar value argument is boxed to a `*GosJson`.
+        if last == "set" && args.len() == 3 {
+            return self.lower_json_set_call(&args[0], &args[1], &args[2], span);
+        }
         let (rt_name, ret_ty) = match last {
             "parse" | "decode" => ("gos_rt_json_parse", self.result_json_value_error_adt_ty()),
             "render" | "encode" => ("gos_rt_json_render", self.tcx.string_ty()),
             "encode_pretty" => ("gos_rt_json_render_pretty", self.tcx.string_ty()),
             "valid" => ("gos_rt_json_valid", self.tcx.bool_ty()),
-            // `json::set(obj, key, value) → json::Value` - append or
-            // replace a named field on an object-shaped Value.
-            "set" => ("gos_rt_json_set", self.tcx.json_value_ty()),
             // User-level `json::get` returns `Option<json::Value>`.
             // The bare `gos_rt_json_get` is still used by the field-
             // access lowering for `root.a.b.c` (raw chain pointer).

@@ -335,6 +335,12 @@ Full path spelling is validated (GR0005); discover signatures with
   bytes bufio`. `process` is free functions - `process::run(prog,
   args) -> Result<{stdout, stderr, code}, String>` (real exec, no
   shell; NO `Command` builder - that is Rust-binding-only surface).
+  Interactive children: `process::spawn_piped(prog, args) ->
+  Result<Child, errors::Error>`; the `Child` drives piped stdio via
+  `write_stdin(s)`, `close_stdin()`, `read_line() -> Option<String>`
+  (the canonical drain is `while let Some(line) = child.read_line()`),
+  `read_stdout()`, `wait() -> Result<i64, _>`, `kill()` - the
+  JSON-RPC-over-stdio (MCP client) shape.
   `time`: `now_ms`, `Instant`, `Duration`, `sleep`, `after`,
   RFC 3339 parse/format. `flag`: `Set::new` + `string/int/bool`
   cells that auto-deref; no built-in required-flag.
