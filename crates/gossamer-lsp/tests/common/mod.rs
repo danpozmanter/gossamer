@@ -1,13 +1,13 @@
 //! Shared helpers for the LSP integration tests.
 //!
-//! Wraps `gossamer_lsp::testing::ServerHandle` with a few small
+//! Wraps `gossamer_lsp::handle::ServerHandle` with a few small
 //! conveniences (server-with-content factory, value-walking
 //! helpers) so the per-surface test files stay focused on the
 //! assertion shapes they care about.
 
 #![allow(dead_code, unreachable_pub)]
 
-use gossamer_lsp::testing::ServerHandle;
+use gossamer_lsp::handle::ServerHandle;
 use gossamer_std::json::Value;
 
 /// Spawns a fresh server with a single document open.

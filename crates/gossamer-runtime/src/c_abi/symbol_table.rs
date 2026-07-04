@@ -2919,6 +2919,14 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::rc::gos_rt_option_slot_release as *const u8,
         ),
         (
+            "gos_rt_vec_mark_rc_elems",
+            crate::c_abi::vec::gos_rt_vec_mark_rc_elems as *const u8,
+        ),
+        (
+            "gos_rt_vec_mark_vec_elems",
+            crate::c_abi::vec::gos_rt_vec_mark_vec_elems as *const u8,
+        ),
+        (
             "gos_rt_vec_set_elem_meta",
             crate::c_abi::vec::gos_rt_vec_set_elem_meta as *const u8,
         ),

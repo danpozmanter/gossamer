@@ -1403,6 +1403,7 @@ dependencies = [
  "gossamer-lex",
  "gossamer-lint",
  "gossamer-lsp",
+ "gossamer-mcp",
  "gossamer-parse",
  "gossamer-pkg",
  "gossamer-resolve",
@@ -1596,6 +1597,14 @@ dependencies = [
  "gossamer-std",
  "gossamer-types",
  "unicode-ident",
+]
+
+[[package]]
+name = "gossamer-mcp"
+version = "0.24.0"
+dependencies = [
+ "gossamer-lsp",
+ "gossamer-std",
 ]
 
 [[package]]

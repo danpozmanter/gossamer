@@ -240,7 +240,12 @@ pub(super) fn lower_place_address(
                     TyKind::Array { elem, .. } | TyKind::Slice(elem) | TyKind::Vec(elem) => elem,
                     _ => current_ty,
                 };
-                stride_slots = 1;
+                // The next Index (if any) steps within THIS element, so its
+                // stride is the element's own element size - a nested array
+                // `[[[i64; 8]; 6]; 2]` walks 48-, then 8-, then 1-slot
+                // strides. A non-array element leaves no further Index to
+                // take; 1 keeps the terminal scalar load at the cursor.
+                stride_slots = stride_slots_from_ty(tcx, current_ty).unwrap_or(1);
             }
             Projection::Deref => {
                 // `*ptr`: the local already holds a pointer; after

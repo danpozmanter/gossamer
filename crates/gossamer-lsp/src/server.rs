@@ -3518,15 +3518,10 @@ fn main() { Color::R| }
     }
 }
 
-/// Test-only API surface exposed via `lib::testing` for the
-/// integration tests under `crates/gossamer-lsp/tests/`.
-///
-/// The handlers normally drive the server through a JSON-RPC stdio
-/// loop; this module re-exports the in-memory state plus a couple of
-/// helpers so the cross-file references / rename behaviour can be
-/// asserted without spinning up a transport.
-#[doc(hidden)]
-pub mod testing {
+/// In-memory request surface mirroring the JSON-RPC loop, for embedders
+/// that drive the analysis engine without a transport: the `gos mcp`
+/// server's navigation tools and this crate's integration tests.
+pub mod handle {
     use std::collections::BTreeMap;
 
     use gossamer_std::json::Value;
@@ -3562,6 +3557,14 @@ pub mod testing {
         /// Mirrors `textDocument/didClose`.
         pub fn close(&mut self, uri: &str) {
             self.state.close(uri);
+        }
+
+        /// Indexes every `.gos` file under `root` for workspace-wide
+        /// symbol queries, mirroring the `initialize` workspace-roots
+        /// scan (same 1000-file budget).
+        pub fn scan_workspace(&mut self, root: &str) {
+            let mut budget = 1000usize;
+            self.state.scan_workspace_path(root, &mut budget);
         }
 
         /// Mirrors `textDocument/references`.

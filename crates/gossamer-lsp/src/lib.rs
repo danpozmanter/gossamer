@@ -22,4 +22,4 @@ mod stdlib_index;
 mod symbols;
 mod workspace_index;
 
-pub use server::{run_stdio, testing};
+pub use server::{handle, run_stdio};

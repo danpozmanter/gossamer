@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.24.0 - Performance, memory safety, and expressiveness
+## 0.24.0 - Performance, correctness, ergonomics (syntax, gos mcp)
 
 A broad performance, correctness, and hardening release driven by a
 benchmark audit against Go, Rust, C++, and the JVM/CLR languages.
@@ -130,6 +130,42 @@ tier-parity fixture.
 - Fixed a compiler panic on `for (k, v) in pairs` when `pairs` was bound
   from an enum-variant payload, and made `x.downgrade()` on a non-`Arc`
   value a `gos check` error rather than a segfault.
+- **Match-extracted enum payloads are fully typed.** A tuple-variant
+  pattern's binders now carry the variant's declared payload types
+  (borrows of them through a reference scrutinee; scalar payloads copy
+  and bind by value), instead of inference variables that no later use
+  pinned. Method-form combinators on an extracted payload
+  (`Node::Call(xs) => xs.sum()`, `.map`, `.min`, ...) previously failed
+  native builds with an undefined symbol or printed empty `{:?}`
+  output; they now lower and format identically on every tier, and
+  `gos check` catches payload type mismatches it silently accepted.
+- **Vec payloads inside enums own their buffer.** An enum constructed
+  with a `[T]` payload now retains a share of the vector and releases
+  it when the enum is reclaimed, on every tier. Previously the
+  constructing frame kept sole ownership, so an enum that escaped
+  through a function boundary (a by-value argument returned by the
+  callee) read a freed buffer on the compiled tiers - empty contents
+  at best, a segfault under heap pressure - and a directly returned
+  enum leaked its payload instead.
+
+### Toolchain
+
+- **Windows native HTTP handlers via router, middleware, and TLS.** On
+  Win64 the rustc-compiled runtime reads a handler's packed
+  `Result<Response, Error>` return from `xmm0`, while a gossamer
+  `ret i128` returns it in the GP-register pair. Handlers registered
+  through `http::serve` already crossed that boundary through a
+  `<16 x i8>` return thunk; handlers registered through the `Router`
+  verbs, `middleware` composition, `serve_tls`, and the HTTP/3 server
+  now do too (previously they worked only when stale `xmm0` contents
+  happened to match, and faulted otherwise). The registration shims
+  that require the thunk are now a single audited table in the LLVM
+  emitter.
+- **`gos mcp`.** A Model Context Protocol server over stdio for AI coding
+  agents: toolchain tools (`check` with structured diagnostics, `explain`,
+  `run`, `build`, `test`, `fmt`, `doc`), semantic navigation (`hover`,
+  `definition`, `references`, `workspace_symbols`) backed by the LSP
+  analysis engine, and the skill card as an MCP resource and prompt.
 
 ## 0.23.1 - Playground parity: router, comptime, multi-program sessions
 

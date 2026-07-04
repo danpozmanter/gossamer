@@ -1,0 +1,44 @@
+// Vec-bearing enum payloads keep their contents across function
+// boundaries on every tier: constructed as a by-value argument,
+// passed through a second boundary that returns it, and read back by
+// match extraction. The enum owns a share of its Vec child at
+// reclamation, so the constructing frame's buffer is neither freed
+// under the escaped enum nor leaked when the enum dies locally.
+
+pub enum Node {
+    Leaf(i64),
+    Call([i64]),
+}
+
+pub fn ident(n: Node) -> Node { n }
+
+fn make() -> Node {
+    let mut args: [i64] = []
+    args.push(40)
+    args.push(2)
+    ident(Node::Call(args))
+}
+
+fn direct() -> Node {
+    let mut xs: [i64] = []
+    xs.push(7)
+    Node::Call(xs)
+}
+
+fn main() {
+    let out = make()
+    match &out {
+        Node::Call(args) => println!("call len = {} sum = {}", args.len(), args.sum()),
+        _ => println!("not a call"),
+    }
+    let d = direct()
+    match &d {
+        Node::Call(xs) => println!("direct len = {} first = {}", xs.len(), xs[0]),
+        _ => println!("not a call"),
+    }
+    let leaf = ident(Node::Leaf(9))
+    match &leaf {
+        Node::Leaf(v) => println!("leaf = {v}"),
+        _ => println!("not a leaf"),
+    }
+}

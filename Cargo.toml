@@ -17,6 +17,7 @@ members = [
     "crates/gossamer-lex",
     "crates/gossamer-lint",
     "crates/gossamer-lsp",
+    "crates/gossamer-mcp",
     "crates/gossamer-mir",
     "crates/gossamer-parse",
     "crates/gossamer-pkg",
@@ -110,6 +111,7 @@ gossamer-interp = { path = "crates/gossamer-interp", version = "0.24.0" }
 gossamer-lex = { path = "crates/gossamer-lex", version = "0.24.0" }
 gossamer-lint = { path = "crates/gossamer-lint", version = "0.24.0" }
 gossamer-lsp = { path = "crates/gossamer-lsp", version = "0.24.0" }
+gossamer-mcp = { path = "crates/gossamer-mcp", version = "0.24.0" }
 gossamer-mir = { path = "crates/gossamer-mir", version = "0.24.0" }
 gossamer-parse = { path = "crates/gossamer-parse", version = "0.24.0" }
 gossamer-pkg = { path = "crates/gossamer-pkg", version = "0.24.0" }

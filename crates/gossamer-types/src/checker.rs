@@ -5162,7 +5162,6 @@ impl<'a> TypeChecker<'a> {
         for arm in arms {
             self.push_scope();
             let pat_ty = self.type_of_pattern(&arm.pattern);
-            self.bind_pattern(&arm.pattern, pat_ty);
             // String literal patterns compare by value through any leading `&`
             // on the scrutinee, so `match ref_str { "foo" => ... }` is valid.
             let effective_scrut_ty = if matches!(
@@ -5177,7 +5176,13 @@ impl<'a> TypeChecker<'a> {
             } else {
                 scrut_ty
             };
+            // Unify BEFORE binding: the pattern's synthesized type carries
+            // fresh payload vars, and binding resolves each binder through
+            // the inference table - unifying first lets a variant pattern's
+            // binders see the scrutinee's concrete payload types instead of
+            // unresolved vars.
             self.unify(effective_scrut_ty, pat_ty, arm.pattern.span);
+            self.bind_pattern(&arm.pattern, pat_ty);
             if let Some(guard) = &arm.guard {
                 let guard_ty = self.check_expr(guard);
                 let bool_ty = self.tcx.bool_ty();
@@ -6558,16 +6563,17 @@ impl<'a> TypeChecker<'a> {
     /// Returns `None` for any other shape (user enums, unknown
     /// substs); callers fall back to fresh inference variables.
     fn payload_types_for_variant(
-        &self,
+        &mut self,
         path: &gossamer_ast::Path,
         scrutinee_ty: Ty,
     ) -> Option<Vec<Ty>> {
-        let resolved = self.infer.resolve(self.tcx, scrutinee_ty);
-        let resolved = match self.tcx.kind(resolved)? {
-            TyKind::Ref { inner, .. } => *inner,
-            _ => resolved,
-        };
-        let TyKind::Adt { substs, .. } = self.tcx.kind(resolved)? else {
+        let mut resolved = self.infer.resolve(self.tcx, scrutinee_ty);
+        let mut ref_mutability = None;
+        while let Some(TyKind::Ref { inner, mutability }) = self.tcx.kind(resolved) {
+            ref_mutability = Some(*mutability);
+            resolved = self.infer.resolve(self.tcx, *inner);
+        }
+        let TyKind::Adt { def, substs } = self.tcx.kind(resolved)? else {
             return None;
         };
         let last = path.segments.last()?.name.name.as_str();
@@ -6576,7 +6582,46 @@ impl<'a> TypeChecker<'a> {
             ("Some", [t]) => Some(vec![*t]),
             ("Ok", [t, _]) => Some(vec![*t]),
             ("Err", [_, e]) => Some(vec![*e]),
-            _ => None,
+            _ => {
+                // User enums: bind the declared tuple-variant payload
+                // types, keyed by the scrutinee's own resolved enum name
+                // so a same-named variant from another enum cannot unify
+                // into this match. Generic enums fall back to fresh vars
+                // (their stored payloads mention un-substituted params).
+                if !args.is_empty() {
+                    return None;
+                }
+                let enum_name = self.tcx.def_name(*def)?;
+                let tys = self
+                    .enum_variant_payloads
+                    .get(&(enum_name.to_string(), last.to_string()))
+                    .cloned()?;
+                // Match ergonomics: through a reference scrutinee a
+                // heap-shaped payload binds as a borrow (a cursor walk's
+                // `cursor = rest` with `cursor: &List` stays typed), while
+                // a scalar payload copies through the borrow and binds by
+                // value (`Tree::Node(v, ..) => v + 1`), matching how the
+                // lowering loads payload words.
+                Some(match ref_mutability {
+                    Some(mutability) => tys
+                        .into_iter()
+                        .map(|inner| {
+                            let scalar = matches!(
+                                self.tcx.kind(inner),
+                                Some(
+                                    TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Char
+                                )
+                            );
+                            if scalar {
+                                inner
+                            } else {
+                                self.tcx.intern(TyKind::Ref { inner, mutability })
+                            }
+                        })
+                        .collect(),
+                    None => tys,
+                })
+            }
         }
     }
 }

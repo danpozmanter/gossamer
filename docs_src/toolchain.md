@@ -124,6 +124,46 @@ repo:
 - ships VSCode, Vim, Neovim, Helix, Emacs, Sublime, Zed clients
 plus a tree-sitter grammar.
 
+## Agent integration
+
+| Command | Purpose |
+|---------|---------|
+| `gos mcp` | Start a model-context-protocol server on stdio. |
+
+`gos mcp` speaks the Model Context Protocol so AI coding agents
+(Claude Code, OpenCode, Cursor, Zed) can drive the toolchain
+directly:
+
+- `check` - parse + resolve + typecheck; one JSON object per
+  diagnostic (the `--message-format json` schema).
+- `explain` - long-form rationale for a diagnostic code.
+- `run` / `build` / `test` - execute programs and test suites;
+  exit code, stdout, and stderr come back, bounded by a
+  per-call `timeout_ms`.
+- `fmt` / `doc` - formatting and item listings.
+- `hover` / `definition` / `references` / `workspace_symbols` -
+  semantic navigation backed by the same analysis engine as
+  `gos lsp`.
+- The skill card ships as the `gossamer://skill-card` resource
+  and the `skill-card` prompt.
+
+MCP framing is newline-delimited JSON-RPC; LSP framing is
+`Content-Length`-headed. `gos lsp` belongs in an editor's LSP
+configuration and `gos mcp` in an agent's MCP configuration - the
+two are not interchangeable.
+
+Claude Code:
+
+```bash
+claude mcp add gossamer -- gos mcp
+```
+
+Generic client config:
+
+```json
+{ "mcpServers": { "gossamer": { "command": "gos", "args": ["mcp"] } } }
+```
+
 ## Smoke-test
 
 ```sh

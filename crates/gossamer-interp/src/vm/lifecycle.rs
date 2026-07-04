@@ -519,6 +519,13 @@ impl Vm {
                 gossamer_mir::inline_trivial_wrappers(&mut bodies);
                 gossamer_mir::inline_small_callees(&mut bodies);
                 gossamer_mir::inline_general(&mut bodies);
+                // Same post-inline cleanup the AOT pipeline runs: the
+                // cranelift lowering is shared with `gos build`, so the
+                // JIT must hand it the same MIR shape or the tiers can
+                // diverge on constructs only one shape exercises.
+                for body in &mut bodies {
+                    gossamer_mir::optimise(body, &tcx);
+                }
                 // Compute the eager-compile set from the post-inlining
                 // bodies now, while they are still in hand: the deferred
                 // compile below releases `mir_bodies` for spawn-free

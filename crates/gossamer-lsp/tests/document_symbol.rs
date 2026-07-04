@@ -4,7 +4,7 @@
 mod common;
 
 use common::{field, field_str, server_with};
-use gossamer_lsp::testing::{document_params, workspace_symbol_params};
+use gossamer_lsp::handle::{document_params, workspace_symbol_params};
 use gossamer_std::json::Value;
 
 /// Collects every `name` field from a (possibly hierarchical)
@@ -122,7 +122,7 @@ fn document_symbols_carries_kind_field() {
 
 #[test]
 fn workspace_symbols_finds_function_across_files() {
-    let mut server = gossamer_lsp::testing::ServerHandle::new();
+    let mut server = gossamer_lsp::handle::ServerHandle::new();
     server.update("file:///a.gos", "fn alpha() {}\n");
     server.update("file:///b.gos", "fn alphabet() {}\n");
     let response = server.workspace_symbols(&workspace_symbol_params("alpha"));

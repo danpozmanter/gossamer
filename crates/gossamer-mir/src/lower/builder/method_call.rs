@@ -3511,7 +3511,13 @@ impl<'a> Builder<'a> {
         if joined.is_none() && !is_pred_count {
             return MethodLowering::Pass;
         }
-        let mut recv_kind = self.tcx.kind_of(receiver.ty).clone();
+        // Key the sequence gate off the recovered receiver kind, not the
+        // raw HIR type: a match-extracted payload binding (or a chained
+        // stdlib temporary) carries an unresolved inference `Var` in HIR
+        // while its lowered local's type is ground truth. Keying on the
+        // raw type sent `payload.sum()` to the generic by-name fallback,
+        // which only the VM's runtime dispatch could resolve.
+        let (_, mut recv_kind) = self.receiver_dispatch_kinds(receiver);
         while let TyKind::Ref { inner, .. } = recv_kind {
             recv_kind = self.tcx.kind_of(inner).clone();
         }

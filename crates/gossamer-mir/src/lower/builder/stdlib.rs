@@ -1025,6 +1025,7 @@ impl<'a> Builder<'a> {
         // same enum (direct recursion) or an already-registered RC enum
         // (mutual recursion / forward reference).
         let mut payload_locals = Vec::with_capacity(n_args);
+        let mut vec_payloads = vec![false; n_args];
         let mut child_offsets: Vec<i64> = Vec::new();
         for (i, arg) in args.iter().enumerate() {
             let payload_local = self.lower_expr(arg)?;
@@ -1044,6 +1045,18 @@ impl<'a> Builder<'a> {
             } else {
                 if payload_ty == ty || self.tcx.is_rc_managed(payload_ty) {
                     child_offsets.push(i as i64);
+                } else if matches!(
+                    self.tcx.kind_of(payload_ty),
+                    gossamer_types::TyKind::Vec(_) | gossamer_types::TyKind::Slice(_)
+                ) {
+                    // A Vec/[T] payload is a refcounted container the node
+                    // must own: the store below retains the node's share
+                    // and the kind-tagged meta entry has release free it,
+                    // so the vec survives the constructing frame however
+                    // the node escapes (return, call argument, container).
+                    use gossamer_abi::rc::{RC_CHILD_KIND_SHIFT, RC_CHILD_VEC};
+                    child_offsets.push((i as i64) | (RC_CHILD_VEC << RC_CHILD_KIND_SHIFT));
+                    vec_payloads[i] = true;
                 }
                 payload_locals.push(payload_local);
             }
@@ -1106,6 +1119,20 @@ impl<'a> Builder<'a> {
         }
         // Write each payload at offset i*8 (already lowered above).
         for (i, payload_local) in payload_locals.into_iter().enumerate() {
+            // The node's share of a Vec payload (see the kind-tagged meta
+            // entry above); the constructing frame keeps its own release,
+            // so the count stays balanced whether or not the node escapes.
+            if vec_payloads[i] {
+                let retain_dest = self.fresh(unit_ty);
+                self.emit_assign(
+                    Place::local(retain_dest),
+                    Rvalue::CallIntrinsic {
+                        name: "gos_rt_vec_retain",
+                        args: vec![Operand::Copy(Place::local(payload_local))],
+                    },
+                    span,
+                );
+            }
             let off_local = self.fresh(i64_ty);
             self.emit_assign(
                 Place::local(off_local),

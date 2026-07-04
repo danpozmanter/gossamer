@@ -330,7 +330,17 @@ fn is_aggregate_copy_src(body: &Body, tcx: &TyCtxt, rvalue: &Rvalue) -> bool {
     let Rvalue::Use(Operand::Copy(src)) = rvalue else {
         return false;
     };
-    let leaf = resolve_place_ty(tcx, body, src);
+    // Peel `&T` wrappers: the inliner rewrites a `*param` deref-copy as a
+    // bare `Copy(ref_local)` into a value-typed destination, and the ref
+    // local's VALUE is the source address the memcpy needs. Without the
+    // peel the copy takes the rebind path, aliasing the destination to the
+    // referent - a later projected write then mutates the source. Only a
+    // value-typed (slot-backed) destination reaches the memcpy path, so a
+    // plain pointer copy between ref-typed locals still rebinds.
+    let mut leaf = resolve_place_ty(tcx, body, src);
+    while let TyKind::Ref { inner, .. } = tcx.kind_of(leaf) {
+        leaf = *inner;
+    }
     !is_inline_two_word_ty(tcx, leaf)
         && (type_slot_count(tcx, leaf) > 1 || single_slot_addr_aggregate(tcx, leaf))
         && matches!(
@@ -560,10 +570,32 @@ pub(super) fn lower_statement(
                 // `gos_rt_aggr_free`), which a reused stack slot can neither
                 // outlive nor be freed as. Such copies stay on the existing
                 // path; only frame-local copies memcpy into their own slot.
-                let whole_agg_copy = matches!(rvalue, Rvalue::Use(Operand::Copy(_)))
+                let agg_copy_src = matches!(rvalue, Rvalue::Use(Operand::Copy(_)))
+                    && is_aggregate_copy_src(body, tcx, rvalue);
+                // A body that returns through the sret ABI copies the result
+                // words into the caller's buffer at Return (and a Copy-built
+                // return local is never treated as a fresh block to free), so
+                // flowing to the return does not disqualify the stack slot -
+                // the frame's storage is never handed out.
+                let whole_agg_copy = agg_copy_src
                     && intrinsics.stack_slotted.contains(&place.local)
-                    && is_aggregate_copy_src(body, tcx, rvalue)
-                    && !local_flows_to_return(body, place.local);
+                    && (intrinsics.sret_ptr.is_some() || !local_flows_to_return(body, place.local));
+                // A copy destination that is MUTATED through a projection and
+                // flows to the return slot can take neither path above: a
+                // stack slot cannot outlive the frame, and a rebind aliases
+                // the source so the mutation writes through to it (`let mut
+                // np = *pos; np.f = ..; np`). Copy into a fresh heap
+                // aggregate instead - the same storage a returned aggregate
+                // construction uses, freed by the caller's aggregate drop.
+                let heap_agg_copy = agg_copy_src
+                    && !whole_agg_copy
+                    && local_flows_to_return(body, place.local)
+                    && body.blocks.iter().any(|b| {
+                        b.stmts.iter().any(|s| {
+                            matches!(&s.kind, StatementKind::Assign { place: p, .. }
+                                if p.local == place.local && !p.projection.is_empty())
+                        })
+                    });
                 if whole_agg_copy {
                     let slots = type_slot_count(tcx, body.local_ty(place.local)).max(1);
                     let dst_var = ensure_var(
@@ -594,6 +626,41 @@ pub(super) fn lower_statement(
                             builder.ins().store(MemFlags::trusted(), word, dst_ptr, off);
                         }
                     }
+                } else if heap_agg_copy {
+                    let slots = type_slot_count(tcx, body.local_ty(place.local)).max(1);
+                    let ptr_ty = module.target_config().pointer_type();
+                    let alloc_fn = intrinsics.extern_fn(
+                        module,
+                        "gos_rt_aggr_alloc",
+                        &[types::I64],
+                        &[ptr_ty],
+                    )?;
+                    let alloc_ref = module.declare_func_in_func(alloc_fn, builder.func);
+                    let size_val = builder
+                        .ins()
+                        .iconst(types::I64, i64::from((slots * 8).max(8)));
+                    let alloc_call = builder.ins().call(alloc_ref, &[size_val]);
+                    let dst_ptr = builder.inst_results(alloc_call)[0];
+                    if value_type(value, builder) == types::I128 {
+                        store_i128_words(builder, value, dst_ptr, 0);
+                    } else {
+                        let src_ptr = coerce_arg_to(builder, value, ptr_ty).unwrap_or(value);
+                        for slot_idx in 0..slots {
+                            let off = ir::immediates::Offset32::new((slot_idx as i32) * 8);
+                            let word =
+                                builder
+                                    .ins()
+                                    .load(types::I64, MemFlags::trusted(), src_ptr, off);
+                            builder.ins().store(MemFlags::trusted(), word, dst_ptr, off);
+                        }
+                    }
+                    define_var_to(
+                        builder,
+                        locals,
+                        &intrinsics.body_cl_types,
+                        place.local,
+                        dst_ptr,
+                    );
                 } else if agg_into_slot.is_some() {
                     // The aggregate was filled into `place.local`'s own slot;
                     // its variable already holds that slot address, so there
@@ -1541,10 +1608,36 @@ pub(super) fn lower_terminator(
                 // local holds a pointer into a heap slot the caller
                 // owns. Forwarding it directly aliases the caller's
                 // struct, so the callee's `mut p; p.x = …` mutates
-                // the caller's value too. Allocate fresh storage,
-                // memcpy the slots over, and pass the new pointer.
+                // the caller's value too. Copy into a per-call-site
+                // stack slot: the callee's frame nests inside the
+                // call, every callee-side escape (return via sret,
+                // container push, rebinding) copies the words on, and
+                // a heap block here is never reclaimed - a hot search
+                // loop allocated gigabytes per second through it. A
+                // very large aggregate keeps the heap path rather
+                // than risking frame overflow.
                 if let Some(slots) = operand_aggregate_slots(body, tcx, op) {
-                    v = clone_aggregate_value(module, builder, intrinsics, v, slots)?;
+                    if slots <= 4096 {
+                        let ptr_ty = module.target_config().pointer_type();
+                        let slot = builder.create_sized_stack_slot(StackSlotData::new(
+                            StackSlotKind::ExplicitSlot,
+                            slots * 8,
+                            3,
+                        ));
+                        let dst = builder.ins().stack_addr(ptr_ty, slot, 0);
+                        let src_ptr = coerce_arg_to(builder, v, ptr_ty).unwrap_or(v);
+                        for slot_idx in 0..slots {
+                            let off = ir::immediates::Offset32::new((slot_idx as i32) * 8);
+                            let word =
+                                builder
+                                    .ins()
+                                    .load(types::I64, MemFlags::trusted(), src_ptr, off);
+                            builder.ins().store(MemFlags::trusted(), word, dst, off);
+                        }
+                        v = dst;
+                    } else {
+                        v = clone_aggregate_value(module, builder, intrinsics, v, slots)?;
+                    }
                 }
                 if let Some(want) = expected.get(idx).copied() {
                     v = coerce_arg_to(builder, v, want)?;

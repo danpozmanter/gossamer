@@ -1329,6 +1329,8 @@ pub const REGISTRY: &[RuntimeEntry] = &[
     rt!("gos_rt_vec_remove_safe", (Ptr, I64) -> I128, Cranelift, "Result-returning Vec::remove; returns Ok(element) or Err on OOB."),
     rt!("gos_rt_vec_retain", (Ptr) -> Void, Both, "Increment a GosVec's strong count by one (the Vec counterpart of gos_rt_rc_retain): a by-value struct copy sharing a Vec/[T] field gives both owners a share so each gos_rt_vec_free at death balances. Null-safe."),
     rt!("gos_rt_vec_reversed", (Ptr) -> Ptr, Cranelift, "Return a fresh Vec with the elements in reverse order."),
+    rt!("gos_rt_vec_mark_rc_elems", (Ptr) -> Void, Both, "Tag a vec as owning reference-counted enum-node elements: push moves the frame's share in, free releases each element, and storage duplication (clone/slice) retains each copy."),
+    rt!("gos_rt_vec_mark_vec_elems", (Ptr) -> Void, Both, "Tag a vec as owning nested-vec elements: the push minted the container's share, free releases each element vec, and storage duplication (clone/slice) retains each copy."),
     rt!("gos_rt_vec_set_elem_meta", (Ptr, Ptr) -> Void, Both, "Tag a vec as holding guarded aggregate elements and record the per-type meta used to retain/release their copy-blob children on push/free/clone/slice."),
     rt!("gos_rt_vec_set_i64", (Ptr, I64, I64) -> Void, Cranelift, "Write an i64 at index `i` in a GosVec."),
     rt!("gos_rt_vec_set_i64_unchecked", (Ptr, I64, I64) -> Void, Cranelift, "Write an i64 at index `i` in a GosVec without null/bounds guards; emitted only by the counted-loop bounds-check elision where `i` is proven in `[0, len)`."),

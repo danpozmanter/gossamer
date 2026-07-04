@@ -6,7 +6,7 @@
 mod common;
 
 use common::{completion_labels, server_with};
-use gossamer_lsp::testing::position_params;
+use gossamer_lsp::handle::position_params;
 
 /// Returns a completion response and asserts every expected label
 /// appears in it. Embeds the failing label set in the assertion

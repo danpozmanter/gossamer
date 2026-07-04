@@ -3,7 +3,7 @@
 mod common;
 
 use common::{field, field_str, server_with};
-use gossamer_lsp::testing::document_params;
+use gossamer_lsp::handle::document_params;
 use gossamer_std::json::Value;
 
 fn first_edit_new_text(response: &Value) -> Option<String> {

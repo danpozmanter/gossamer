@@ -72,6 +72,15 @@ pub mod vec_elem_kind {
     /// slot-children layouts for an aggregate element's enum/struct
     /// fields.
     pub const RC_NODE: u8 = 7;
+    /// Element is a reference-counted heap node pointer (a payload-bearing
+    /// user enum, possibly tag-bit-encoded) OWNED by the vec: a push moves
+    /// the frame's share in (the MIR treats `gos_rt_vec_push` as consuming,
+    /// same as `STRING` elements), `gos_rt_vec_free` releases each element
+    /// via `gos_rt_rc_release`, and a storage duplication (clone / slice)
+    /// retains each copied element so both storages own their shares. Set
+    /// via [`super::vec::gos_rt_vec_mark_rc_elems`], emitted by the MIR
+    /// lowering right after constructing a vec of payload-enum elements.
+    pub const RC_ENUM: u8 = 8;
 }
 
 #[repr(C)]
@@ -436,9 +445,10 @@ pub(crate) unsafe fn vec_retain_header(v: *mut GosVec) {
 /// Propagates ownership-bearing element kinds from `src` to `out`
 /// after `out` received a raw copy of (some of) `src`'s slots:
 /// re-tags `out` and retains each copied slot's heap children so both
-/// vecs own their shares. Covers `STRING`, `VEC` and `AGGR_OWNED`
-/// element kinds; `AGGR_GUARDED` keeps its dedicated copy-blob path at
-/// the existing call sites. No-op for primitive / region / null vecs.
+/// vecs own their shares. Covers `STRING`, `VEC`, `RC_ENUM` and
+/// `AGGR_OWNED` element kinds; `AGGR_GUARDED` keeps its dedicated
+/// copy-blob path at the existing call sites. No-op for primitive /
+/// region / null vecs.
 pub(crate) unsafe fn vec_share_owned_elements(src: *const GosVec, out: *mut GosVec) {
     if src.is_null() || out.is_null() {
         return;
@@ -446,7 +456,9 @@ pub(crate) unsafe fn vec_share_owned_elements(src: *const GosVec, out: *mut GosV
     let s = unsafe { &*src };
     let o = unsafe { &mut *out };
     match s.elem_kind {
-        vec_elem_kind::STRING | vec_elem_kind::VEC if s.elem_bytes == 8 => {
+        vec_elem_kind::STRING | vec_elem_kind::VEC | vec_elem_kind::RC_ENUM
+            if s.elem_bytes == 8 =>
+        {
             o.elem_kind = s.elem_kind;
             for i in 0..o.len.max(0) as usize {
                 // Exposed-integer slot (flat-slot ABI); recover provenance.
@@ -458,6 +470,9 @@ pub(crate) unsafe fn vec_share_owned_elements(src: *const GosVec, out: *mut GosV
                 match s.elem_kind {
                     vec_elem_kind::STRING => unsafe {
                         crate::c_abi::string::gos_rt_str_retain(child.cast());
+                    },
+                    vec_elem_kind::RC_ENUM => unsafe {
+                        crate::c_abi::rc::gos_rt_rc_retain(child);
                     },
                     _ => unsafe { vec_retain_header(child.cast()) },
                 }
@@ -481,6 +496,43 @@ pub(crate) unsafe fn vec_share_owned_elements(src: *const GosVec, out: *mut GosV
         }
         _ => {}
     }
+}
+
+/// Tags `v` as owning reference-counted enum-node elements
+/// ([`vec_elem_kind::RC_ENUM`]): `gos_rt_vec_free` releases each element
+/// and storage duplication retains each copy. Emitted by the MIR
+/// lowering right after constructing a vec whose element type is a
+/// payload-bearing user enum. Only a `PRIMITIVE` vec is re-tagged, so a
+/// meta set by a materializer shim is never clobbered. No-op for null /
+/// region vecs (region storage is freed wholesale and never walked).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_vec_mark_rc_elems(v: *mut GosVec) {
+    if v.is_null() {
+        return;
+    }
+    let vec = unsafe { &mut *v };
+    if vec_is_region(vec) || vec.elem_kind != vec_elem_kind::PRIMITIVE || vec.elem_bytes != 8 {
+        return;
+    }
+    vec.elem_kind = vec_elem_kind::RC_ENUM;
+}
+
+/// Tags `v` as owning nested-vec elements ([`vec_elem_kind::VEC`]):
+/// `gos_rt_vec_free` releases each element vec's share and storage
+/// duplication (clone / slice / filter) retains each copy. Emitted by
+/// the MIR lowering right after constructing a vec whose element type
+/// is itself `Vec`/`[T]`; the pushes minted the container's shares.
+/// Only a `PRIMITIVE` vec is re-tagged; no-op for null / region vecs.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_vec_mark_vec_elems(v: *mut GosVec) {
+    if v.is_null() {
+        return;
+    }
+    let vec = unsafe { &mut *v };
+    if vec_is_region(vec) || vec.elem_kind != vec_elem_kind::PRIMITIVE || vec.elem_bytes != 8 {
+        return;
+    }
+    vec.elem_kind = vec_elem_kind::VEC;
 }
 
 /// Tags `v` as holding guarded aggregate elements and records the

@@ -1697,6 +1697,12 @@ pub unsafe extern "C" fn gos_rt_vec_free(v: *mut GosVec) {
                             // message + cause heap allocations.
                             let _ = unsafe { Box::from_raw(slot.cast::<GosError>()) };
                         }
+                        vec_elem_kind::RC_ENUM => {
+                            // The vec owns each enum-node element (the push
+                            // moved the frame's share in); release cascades
+                            // through the node's own child meta.
+                            unsafe { crate::c_abi::rc::gos_rt_rc_release(slot) };
+                        }
                         _ => {}
                     }
                 }

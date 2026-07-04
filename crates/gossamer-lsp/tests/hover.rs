@@ -3,7 +3,7 @@
 mod common;
 
 use common::{hover_text, server_with};
-use gossamer_lsp::testing::position_params;
+use gossamer_lsp::handle::position_params;
 use gossamer_std::json::Value;
 
 #[test]

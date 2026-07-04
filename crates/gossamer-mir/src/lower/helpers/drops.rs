@@ -1299,7 +1299,7 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
     }
     // A loop-invariant source (read inside a loop, not reassigned there) is
     // re-read every iteration, so its single static read is not a move.
-    let moved: Vec<bool> = (0..n_locals)
+    let mut moved: Vec<bool> = (0..n_locals)
         .map(|i| {
             owned[i]
                 && total_reads[i] == 1
@@ -1307,6 +1307,107 @@ pub(crate) fn insert_rc_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) 
                 && !(read_in_loop[i] && !assigned_in_loop[i])
         })
         .collect();
+
+    // A move elision is only sound when the consuming read runs on EVERY
+    // path from the value's assignment to function exit: with the retain
+    // and the owner release both elided, a path that skips the consume
+    // (`if cond { keys.push(v) }`) never frees the value. Keep the
+    // elision only when the consuming site's block lies on every
+    // assignment-to-return path - checked by walking the CFG from each
+    // assignment with the consuming block removed; reaching a Return
+    // means a consume-skipping path exists, so the retain/release pair
+    // must stay (the balanced counts are correct on both paths).
+    {
+        // The single consuming site's block per local (total_reads == 1
+        // guarantees at most one). A statement-position consume mid-block
+        // still runs whenever its block is entered, so block granularity
+        // is exact for the walk below; the same-block case additionally
+        // requires the consume at or after the assignment position.
+        let mut consume_site: Vec<Option<(usize, usize)>> = vec![None; n_locals];
+        for (bi, si, l, _) in &retain_sites {
+            let i = l.0 as usize;
+            if i < n_locals {
+                consume_site[i] = Some((*bi, *si));
+            }
+        }
+        for (bi, l) in &terminator_retains {
+            let i = l.0 as usize;
+            if i < n_locals {
+                consume_site[i] = Some((*bi, usize::MAX));
+            }
+        }
+        let mut assign_sites: Vec<Vec<(usize, usize)>> = vec![Vec::new(); n_locals];
+        for (bi, block) in body.blocks.iter().enumerate() {
+            for (si, stmt) in block.stmts.iter().enumerate() {
+                if let StatementKind::Assign { place, .. } = &stmt.kind
+                    && place.projection.is_empty()
+                    && (place.local.0 as usize) < n_locals
+                {
+                    assign_sites[place.local.0 as usize].push((bi, si));
+                }
+            }
+            if let Terminator::Call { destination, .. } = &block.terminator
+                && destination.projection.is_empty()
+                && (destination.local.0 as usize) < n_locals
+            {
+                assign_sites[destination.local.0 as usize].push((bi, usize::MAX));
+            }
+        }
+        let successors = |bi: usize| -> Vec<usize> {
+            match &body.blocks[bi].terminator {
+                Terminator::Goto { target } => vec![target.0 as usize],
+                Terminator::SwitchInt { arms, default, .. } => {
+                    let mut v: Vec<usize> = arms.iter().map(|(_, t)| t.0 as usize).collect();
+                    v.push(default.0 as usize);
+                    v
+                }
+                Terminator::Call { target, .. } => {
+                    target.map(|t| vec![t.0 as usize]).unwrap_or_default()
+                }
+                Terminator::Assert { target, .. } => vec![target.0 as usize],
+                _ => Vec::new(),
+            }
+        };
+        let return_reachable_avoiding = |start: usize, avoid: usize| -> bool {
+            let mut seen = vec![false; body.blocks.len()];
+            let mut stack = vec![start];
+            while let Some(b) = stack.pop() {
+                if b == avoid || b >= body.blocks.len() || seen[b] {
+                    continue;
+                }
+                seen[b] = true;
+                if matches!(body.blocks[b].terminator, Terminator::Return) {
+                    return true;
+                }
+                stack.extend(successors(b));
+            }
+            false
+        };
+        for i in 0..n_locals {
+            if !moved[i] {
+                continue;
+            }
+            let Some((cbi, csi)) = consume_site[i] else {
+                continue;
+            };
+            let covered = assign_sites[i].iter().all(|&(abi, asi)| {
+                if abi == cbi {
+                    // Same block: the consume covers this assignment only
+                    // when it runs after it on the block's straight line.
+                    return csi == usize::MAX || asi < csi;
+                }
+                // The assignment's block flows on through its successors;
+                // if a Return is reachable without entering the consuming
+                // block, a consume-skipping path exists.
+                !successors(abi)
+                    .into_iter()
+                    .any(|s| return_reachable_avoiding(s, cbi))
+            });
+            if !covered {
+                moved[i] = false;
+            }
+        }
+    }
 
     // Drop retains whose source is moved (the single reference transfers
     // to the new owner; no `+1`).
@@ -2677,13 +2778,35 @@ pub(crate) fn insert_vec_elem_metas(body: &mut Body, tcx: &mut gossamer_types::T
     enum VecMeta {
         Guarded(String),
         Owned(String),
+        RcElems,
+        VecElems,
         MapBlob,
     }
     let vec_meta_of = |l: Local| -> Option<VecMeta> {
         if let Some(sym) = owned_meta.get(&l.0) {
             return Some(VecMeta::Owned(sym.clone()));
         }
-        elem_meta_of(l).map(VecMeta::Guarded)
+        if let Some(meta) = elem_meta_of(l).map(VecMeta::Guarded) {
+            return Some(meta);
+        }
+        // A payload-enum element is a single RC node pointer the vec owns
+        // outright: push moves the frame's share in (`gos_rt_vec_push` is
+        // a consuming call for RC-managed locals), so the vec's free must
+        // release each element or every pushed node leaks. String elements
+        // keep their dedicated `STRING` kind; `Weak` elements are not
+        // strong owners.
+        if elem_ty_of(l, tcx).is_some_and(|e| tcx.is_payload_enum(e)) {
+            return Some(VecMeta::RcElems);
+        }
+        // A nested-vec element is a refcounted container the outer vec
+        // owns one share of (the push minted it); free must release each
+        // element or the inner vecs leak.
+        if elem_ty_of(l, tcx)
+            .is_some_and(|e| matches!(tcx.kind_of(e), TyKind::Vec(_) | TyKind::Slice(_)))
+        {
+            return Some(VecMeta::VecElems);
+        }
+        None
     };
 
     // (block, stmt-gap, dest local, meta) for statement ctors; block-head
@@ -2755,6 +2878,14 @@ pub(crate) fn insert_vec_elem_metas(body: &mut Body, tcx: &mut gossamer_types::T
                         Operand::Const(ConstValue::Str(sym.clone())),
                     ],
                 },
+                VecMeta::RcElems => Rvalue::CallIntrinsic {
+                    name: "gos_rt_vec_mark_rc_elems",
+                    args: vec![Operand::Copy(Place::local(l))],
+                },
+                VecMeta::VecElems => Rvalue::CallIntrinsic {
+                    name: "gos_rt_vec_mark_vec_elems",
+                    args: vec![Operand::Copy(Place::local(l))],
+                },
             };
             Statement {
                 kind: StatementKind::Assign {
@@ -2821,10 +2952,13 @@ pub(crate) fn insert_vec_elem_metas(body: &mut Body, tcx: &mut gossamer_types::T
 type PendingRelease = (usize, Local, &'static str, Option<String>);
 
 pub(crate) fn insert_early_releases(body: &mut Body, tcx: &gossamer_types::TyCtxt) {
-    // Locals whose by-value Result/Option payload is extracted with
-    // `gos_rt_result_payload` anywhere in the body - their slot
-    // releases must stay at the return sweep (see the candidate match
-    // below).
+    // Locals whose payload is extracted anywhere in the body - a
+    // by-value Result/Option slot read (`gos_rt_result_payload`) or an
+    // enum-box payload load (`gos_enum_load`). The extraction BORROWS
+    // the value's children (shared field pointers, no retains), and
+    // that borrow's lifetime is invisible to the mention analysis, so
+    // these locals' releases must stay at the return sweep (see the
+    // candidate match below).
     let extracted_from: std::collections::HashSet<u32> = body
         .blocks
         .iter()
@@ -2836,7 +2970,10 @@ pub(crate) fn insert_early_releases(body: &mut Body, tcx: &gossamer_types::TyCtx
             let Rvalue::CallIntrinsic { name, args } = rvalue else {
                 return None;
             };
-            if *name != "gos_rt_result_payload" && *name != "gos_rt_result_payload_f64" {
+            if *name != "gos_rt_result_payload"
+                && *name != "gos_rt_result_payload_f64"
+                && *name != "gos_enum_load"
+            {
                 return None;
             }
             match args.first() {
@@ -2892,7 +3029,12 @@ pub(crate) fn insert_early_releases(body: &mut Body, tcx: &gossamer_types::TyCtx
                 continue;
             }
             let release: &'static str = match *name {
-                "gos_rt_rc_release" => "gos_rt_rc_release",
+                // An enum box whose payload was loaded somewhere in the
+                // body keeps its at-return release: the load result
+                // borrows the box's children (string / vec payloads freed
+                // at box teardown), and an early release would free them
+                // under the borrower.
+                "gos_rt_rc_release" if !extracted_from.contains(&p.local.0) => "gos_rt_rc_release",
                 "gos_rt_rc_weak_release" => "gos_rt_rc_weak_release",
                 "gos_rt_aggr_release_children" => "gos_rt_aggr_release_children",
                 // Early-relocating an option-slot release is unsound
@@ -3279,6 +3421,54 @@ pub(crate) fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyC
     if body.locals.is_empty() {
         return;
     }
+    // Balanced share for a Vec element pushed into a vec: the container's
+    // element teardown (`gos_rt_vec_free`'s VEC element kind) releases one
+    // share per slot, so the push must mint the container's own share
+    // here while the frame keeps its per-site/at-return free - correct on
+    // every path, including a conditional push that never runs.
+    {
+        let unit_ty = tcx.unit_interned().unwrap_or(body.locals[0].ty);
+        let mut retains: Vec<(usize, Local)> = Vec::new();
+        for (bi, block) in body.blocks.iter().enumerate() {
+            if let Terminator::Call {
+                callee: Operand::Const(ConstValue::Str(name)),
+                args,
+                ..
+            } = &block.terminator
+                && name == "gos_rt_vec_push"
+                && let Some(Operand::Copy(p)) = args.get(1)
+                && p.projection.is_empty()
+                && (p.local.0 as usize) < body.locals.len()
+                && matches!(
+                    tcx.kind_of(body.locals[p.local.0 as usize].ty),
+                    TyKind::Vec(_) | TyKind::Slice(_)
+                )
+                && !body.locals[p.local.0 as usize].region
+            {
+                retains.push((bi, p.local));
+            }
+        }
+        for (bi, l) in retains {
+            let dest = Local(u32::try_from(body.locals.len()).expect("local overflow"));
+            body.locals.push(LocalDecl {
+                ty: unit_ty,
+                debug_name: None,
+                mutable: false,
+                region: false,
+            });
+            let span = body.blocks[bi].span;
+            body.blocks[bi].stmts.push(Statement {
+                kind: StatementKind::Assign {
+                    place: Place::local(dest),
+                    rvalue: Rvalue::CallIntrinsic {
+                        name: "gos_rt_vec_retain",
+                        args: vec![Operand::Copy(Place::local(l))],
+                    },
+                },
+                span,
+            });
+        }
+    }
     // Per-local: the constructor symbol that allocated it (if
     // any). `None` means the local was either never assigned, was
     // assigned by something other than a recognised constructor,
@@ -3301,6 +3491,11 @@ pub(crate) fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyC
             // Runtime-symbol form (used by some peephole sites).
             "gos_rt_map_new" | "gos_rt_map_new_with_capacity" => Some("gos_rt_map_free"),
             "gos_rt_vec_new" | "gos_rt_vec_with_capacity" => Some("gos_rt_vec_free"),
+            // Always returns a freshly allocated vec the frame owns,
+            // whatever the destination's inferred type (a cloned borrowed
+            // row lands in a Slice-typed local the type-based inference
+            // below does not cover).
+            "gos_rt_vec_clone" => Some("gos_rt_vec_free"),
             "gos_rt_set_new"
             | "gos_rt_set_union"
             | "gos_rt_set_intersection"
@@ -3492,6 +3687,19 @@ pub(crate) fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyC
                         && p.projection.is_empty()
                         && (p.local.0 as usize) < aliased.len()
                     {
+                        // A Vec element pushed into a vec is BALANCED (a
+                        // retain minted below hands the container its own
+                        // share, freed by the container's element
+                        // teardown), so the frame's per-site reuse of the
+                        // pushed local stays sound and load-bearing.
+                        if name == "gos_rt_vec_push"
+                            && matches!(
+                                tcx.kind_of(body.locals[p.local.0 as usize].ty),
+                                TyKind::Vec(_) | TyKind::Slice(_)
+                            )
+                        {
+                            continue;
+                        }
                         aliased[p.local.0 as usize] = true;
                     }
                 }
@@ -3783,6 +3991,38 @@ pub(crate) fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyC
             }
         }
     }
+    // Enum-box locals (`gos_rc_alloc` / `gos_rc_alloc_tagged` results).
+    // A Vec stored into one is BALANCED at the constructor - the store
+    // retains the box's share and the box's kind-tagged meta entry frees
+    // it on teardown - so the frame's own free stays load-bearing and the
+    // `gos_store` moved-into-return rule below must not suppress it.
+    let enum_box_locals: Vec<bool> = {
+        let mut boxes = vec![false; body.locals.len()];
+        for block in &body.blocks {
+            for stmt in &block.stmts {
+                if let StatementKind::Assign {
+                    place,
+                    rvalue: Rvalue::CallIntrinsic { name, .. },
+                } = &stmt.kind
+                    && matches!(*name, "gos_rc_alloc" | "gos_rc_alloc_tagged")
+                    && place.projection.is_empty()
+                    && (place.local.0 as usize) < boxes.len()
+                {
+                    boxes[place.local.0 as usize] = true;
+                }
+            }
+        }
+        boxes
+    };
+    let is_container_local = |op: &Operand| -> bool {
+        matches!(op, Operand::Copy(p) if p.projection.is_empty()
+        && (p.local.0 as usize) < body.locals.len()
+        && matches!(
+            tcx.kind_of(body.locals[p.local.0 as usize].ty),
+            gossamer_types::TyKind::Vec(_) | gossamer_types::TyKind::Slice(_)
+        ))
+    };
+
     // Calls whose destination flows into `Local::RETURN` move every
     // pointer-shaped Copy argument into the return value too. Tuple
     // construction in particular lowers as a synthesised
@@ -3857,11 +4097,22 @@ pub(crate) fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyC
                         let obj_idx = obj_p.local.0 as usize;
                         if obj_idx < moved_into_return.len() && moved_into_return[obj_idx] {
                             if let Some(val) = args.get(2) {
-                                propagate_call_args(
-                                    std::slice::from_ref(val),
-                                    &mut moved_into_return,
-                                    &mut changed,
-                                );
+                                // A Vec payload stored into an enum box is
+                                // balanced (constructor retain + box-owned
+                                // free through the kind-tagged meta), so
+                                // the frame's own free stays; only
+                                // non-container children escape with the
+                                // returned box.
+                                let balanced =
+                                    enum_box_locals.get(obj_idx).copied().unwrap_or(false)
+                                        && is_container_local(val);
+                                if !balanced {
+                                    propagate_call_args(
+                                        std::slice::from_ref(val),
+                                        &mut moved_into_return,
+                                        &mut changed,
+                                    );
+                                }
                             }
                         }
                         continue;
@@ -3901,8 +4152,9 @@ pub(crate) fn insert_drops_at_returns(body: &mut Body, tcx: &gossamer_types::TyC
             if let Terminator::Call { callee, args, .. } = &block.terminator
                 && let Operand::Const(ConstValue::Str(name)) = callee
                 && name == "gos_rt_vec_push"
-                && let Some(Operand::Copy(p)) = args.get(1)
+                && let Some(elem_op @ Operand::Copy(p)) = args.get(1)
                 && p.projection.is_empty()
+                && !is_container_local(elem_op)
             {
                 let idx = p.local.0 as usize;
                 if idx < moved_into_return.len() && !moved_into_return[idx] {

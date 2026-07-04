@@ -17,6 +17,7 @@ pub mod feature_status;
 pub(crate) mod fmt_cmd;
 pub(crate) mod lint_cmd;
 pub(crate) mod lsp_cmd;
+pub(crate) mod mcp_cmd;
 pub(crate) mod parse;
 pub(crate) mod pkg;
 pub(crate) mod run;

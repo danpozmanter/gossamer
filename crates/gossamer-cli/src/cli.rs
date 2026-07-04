@@ -448,6 +448,11 @@ enum Command {
     /// Start the language-server-protocol adapter on stdio. Intended
     /// to be invoked by an editor, not a human.
     Lsp,
+    /// Start the model-context-protocol server on stdio. Exposes the
+    /// toolchain (check / explain / run / build / test / fmt / doc)
+    /// and semantic navigation as MCP tools for AI coding agents;
+    /// intended to be launched by an MCP client, not a human.
+    Mcp,
     /// Print toolchain environment for diagnosing install issues.
     ///
     /// Surfaces the `gos` version, runtime static-lib path, host
@@ -693,6 +698,7 @@ fn dispatch(command: Option<Command>) -> anyhow::Result<()> {
             forward,
         }) => cmd::watch::run(&command, &path, &forward),
         Some(Command::Lsp) => cmd::lsp_cmd::run(),
+        Some(Command::Mcp) => cmd::mcp_cmd::run(),
         Some(Command::Env) => {
             cmd::env_cmd::run();
             Ok(())

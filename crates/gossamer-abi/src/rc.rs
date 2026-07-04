@@ -49,3 +49,24 @@ pub const RC_KIND_CLOSURE: i64 = 5;
 /// payload that came from a non-RC producer (map get, borrow, the
 /// Cranelift tier's construction-allocated aggregates) is left alone.
 pub const RC_KIND_STRUCT_GUARDED: i64 = 6;
+
+// ---------------------------------------------------------------------
+// Child-entry encoding (RC_KIND_ENUM / RC_KIND_STRUCT records).
+//
+// Each child entry packs the payload WORD index in its low 32 bits and a
+// child kind in the bits above. Kind 0 is a plain RC-node or String
+// pointer (dispatched by header sniff at release), so every pre-existing
+// blob - whose entries are bare word indices - decodes unchanged.
+// ---------------------------------------------------------------------
+
+/// Low 32 bits of a child entry: the payload word index.
+pub const RC_CHILD_WORD_MASK: i64 = 0xffff_ffff;
+/// Bit position of the child kind within a child entry.
+pub const RC_CHILD_KIND_SHIFT: u32 = 32;
+/// Child kind: RC-node or String pointer (header-sniffed at release).
+pub const RC_CHILD_RC: i64 = 0;
+/// Child kind: `*mut GosVec` owned by the node - the constructor retains
+/// the vec's strong count for the node's share and release walks it
+/// through `gos_rt_vec_free`, so a Vec payload survives its constructing
+/// frame however the node escapes (return, call argument, container).
+pub const RC_CHILD_VEC: i64 = 1;

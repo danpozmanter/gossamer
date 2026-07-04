@@ -72,6 +72,7 @@ gossamer-interp = { workspace = true }
 gossamer-lex = { workspace = true }
 gossamer-lint = { workspace = true }
 gossamer-lsp = { workspace = true }
+gossamer-mcp = { workspace = true }
 gossamer-parse = { workspace = true }
 gossamer-pkg = { workspace = true }
 gossamer-resolve = { workspace = true }

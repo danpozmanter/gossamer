@@ -617,6 +617,10 @@ const SPECS: &[Spec] = &[
     // edges while goroutines churn them: no trial-deletion through the
     // shared boundary, freed cycle nodes release their out-edges once.
     spec("feature-testing-examples/cycle_shared_goroutines.gos"),
+    // A Vec-bearing enum payload survives escaping its constructing
+    // frame (by-value call argument, returned through a second
+    // boundary) and is reclaimed exactly once wherever the enum dies.
+    spec("feature-testing-examples/enum_vec_payload_escape.gos"),
     spec("feature-testing-examples/jit_native_marshal.gos"),
     spec("feature-testing-examples/arena_regions.gos"),
     spec("feature-testing-examples/auto_regions.gos"),
@@ -1263,7 +1267,40 @@ fn dump_stuck_child_forensics(pid: u32) {
     eprintln!("--- end forensics ---");
 }
 
-#[cfg(not(target_os = "linux"))]
+/// macOS mirror of the Linux forensics: `sample` (ships with the OS)
+/// captures every thread's stack of the stuck child, so a timeout
+/// report shows WHERE the process is wedged (a parked worker, a
+/// spinning collector, a lost channel wakeup) instead of only that it
+/// was killed. Best-effort: a missing or failing `sample` is skipped.
+#[cfg(target_os = "macos")]
+fn dump_stuck_child_forensics(pid: u32) {
+    eprintln!("--- stuck-child forensics for pid {pid} ---");
+    match Command::new("sample")
+        .args([&pid.to_string(), "2", "-mayDie"])
+        .output()
+    {
+        Ok(out) => {
+            let text = String::from_utf8_lossy(&out.stdout);
+            // The call-graph section is the useful part; the binary
+            // image list below it is noise for a hang report.
+            let graph = text
+                .split("Binary Images:")
+                .next()
+                .unwrap_or(&text)
+                .trim_end();
+            for line in graph.lines() {
+                eprintln!("  {line}");
+            }
+            if !out.status.success() {
+                eprintln!("  (sample exited {:?})", out.status.code());
+            }
+        }
+        Err(e) => eprintln!("  (sample unavailable: {e})"),
+    }
+    eprintln!("--- end forensics ---");
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 fn dump_stuck_child_forensics(_pid: u32) {}
 
 /// Formats the full per-tier execution report for a CI failure dump.

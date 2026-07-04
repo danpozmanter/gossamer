@@ -1,12 +1,12 @@
 //! Integration tests for workspace-wide references and rename.
 //!
-//! Drives the in-process LSP server through `gossamer_lsp::testing`
+//! Drives the in-process LSP server through `gossamer_lsp::handle`
 //! to exercise cross-file resolution, the rename validator, and
 //! the import-quickfix path.
 
 use std::collections::BTreeMap;
 
-use gossamer_lsp::testing::{ServerHandle, position_params, rename_params};
+use gossamer_lsp::handle::{ServerHandle, position_params, rename_params};
 use gossamer_std::json::Value;
 
 /// Returns every `uri` advertised by a `references` response.

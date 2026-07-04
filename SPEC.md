@@ -30,10 +30,9 @@ Gossamer deliberately omits:
 
 The language is designed so that:
 
-- **Character economy.** Fewer keystrokes per idea. Gossamer is an
-  AI-friendly language: most programs in this codebase are written,
-  read, and edited by AI agents, and token count in model context is a
-  real cost. Given two equally-clear forms, the shorter one wins.
+- **Character economy.** Fewer keystrokes per idea. Gossamer aims to
+  be a human-friendly and an AI-friendly language. Given two
+  equally-clear forms, the shorter one wins.
   Concrete consequences:
   - One line-comment syntax (`//`), not three (`//`, `///`, `//!`).
   - One block-comment syntax (`/* */`), not three.

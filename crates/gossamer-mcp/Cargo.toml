@@ -1,0 +1,16 @@
+[package]
+name = "gossamer-mcp"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Model-context-protocol server for Gossamer."
+
+[lints]
+workspace = true
+
+[dependencies]
+gossamer-lsp = { workspace = true }
+gossamer-std = { workspace = true }

@@ -1581,10 +1581,43 @@ fn resolve_env_slot0_fn(body: &Body, env_local: gossamer_mir::Local) -> Option<S
     None
 }
 
+/// Runtime registration shims that store a gossamer handler's
+/// `gos_fn_addr` and later invoke it as `extern "C" fn(..) -> i128`,
+/// mapped to the fn-addr argument's position in the shim's signature.
+/// Every stored callback crosses the rustc/LLVM i128-return boundary,
+/// so on Win64 it must be registered through its `<16 x i8>` `$cabi`
+/// thunk. A runtime shim that gains an i128-returning callback arg
+/// MUST be listed here: an unlisted registration hands the runtime a
+/// GP-pair-returning address that the rustc side reads from xmm0,
+/// so every request through that handler faults.
+const CABI_HANDLER_REGISTRATIONS: &[(&str, usize)] = &[
+    ("gos_rt_http2_bind_and_run_h2c", 2),
+    ("gos_rt_http3_serve", 4),
+    ("gos_rt_http_serve", 2),
+    ("gos_rt_http_serve_tls", 4),
+    ("gos_rt_middleware_new", 1),
+    ("gos_rt_router_add", 4),
+    ("gos_rt_router_add_fn", 3),
+    ("gos_rt_router_delete", 3),
+    ("gos_rt_router_delete_fn", 2),
+    ("gos_rt_router_get", 3),
+    ("gos_rt_router_get_fn", 2),
+    ("gos_rt_router_head", 3),
+    ("gos_rt_router_head_fn", 2),
+    ("gos_rt_router_options", 3),
+    ("gos_rt_router_options_fn", 2),
+    ("gos_rt_router_patch", 3),
+    ("gos_rt_router_patch_fn", 2),
+    ("gos_rt_router_post", 3),
+    ("gos_rt_router_post_fn", 2),
+    ("gos_rt_router_put", 3),
+    ("gos_rt_router_put_fn", 2),
+];
+
 /// Collects the gossamer functions invoked by the rustc-compiled runtime
 /// through `extern "C" fn(..) -> i128`, mapped to their parameter arity:
-/// server-start handlers (`gos_rt_http_serve` / `gos_rt_http2_bind_and_run_h2c`,
-/// whose address is the third call argument) and the closure callbacks of the
+/// handler registrations (the [`CABI_HANDLER_REGISTRATIONS`] table, keyed
+/// by the fn-addr argument position) and the closure callbacks of the
 /// i128-returning std combinators (whose address sits at offset 0 of the env
 /// blob passed to the helper). The Win64 ABI returns the 2-word `i128` in xmm0,
 /// but a gossamer `define i128`/`ret i128` returns it in the GP-register pair,
@@ -1611,11 +1644,11 @@ fn collect_cabi_handlers(all_bodies: &[Body]) -> std::collections::BTreeMap<Stri
             let Operand::Const(ConstValue::Str(sym)) = callee else {
                 continue;
             };
-            if sym.as_str() == "gos_rt_http_serve"
-                || sym.as_str() == "gos_rt_http2_bind_and_run_h2c"
+            if let Some((_, addr_idx)) = CABI_HANDLER_REGISTRATIONS
+                .iter()
+                .find(|(shim, _)| *shim == sym.as_str())
             {
-                // Server-start shims: `(addr, handler_env, fn_addr)`.
-                if let Some(Operand::Copy(addr_place)) = args.get(2)
+                if let Some(Operand::Copy(addr_place)) = args.get(*addr_idx)
                     && let Some(hname) = resolve_fn_addr_name(body, addr_place.local)
                 {
                     let arity = arity_of(&hname);

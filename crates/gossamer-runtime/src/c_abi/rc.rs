@@ -1863,6 +1863,12 @@ unsafe fn release_rc_children(payload: *mut u8) {
                 gos_rt_rc_release(c);
             }
         });
+        // The rc_release above drained any queued Vec frees at its own
+        // exit; the reuse frame itself holds no teardown state, so the
+        // block's own Vec children release directly.
+        visit_vec_children(payload, |v| {
+            crate::c_abi::map::gos_rt_vec_free(v.cast());
+        });
     }
 }
 
@@ -2010,6 +2016,12 @@ unsafe fn rc_release_impl(root: *mut u8) {
     // structures). Reuse a thread-local worklist buffer - allocating a
     // fresh `Vec` per release call was a malloc/free on every node teardown
     // (millions, for tree workloads), dwarfing the actual reclamation.
+    //
+    // Owned Vec children are only QUEUED during the walk and freed once the
+    // outermost teardown frame exits: `gos_rt_vec_free` can release RC-node
+    // elements, re-entering this function (or the collector mid-phase), and
+    // the thread-local worklist must be free for that nested walk to borrow.
+    teardown_enter();
     RELEASE_WORKLIST.with(|cell| {
         let mut worklist = cell.borrow_mut();
         worklist.clear();
@@ -2025,6 +2037,7 @@ unsafe fn rc_release_impl(root: *mut u8) {
                     worklist.push(c);
                 }
             });
+            visit_vec_children(root, queue_vec_child);
         }
         let _ = meta;
         unsafe { try_reclaim(root) };
@@ -2054,10 +2067,12 @@ unsafe fn rc_release_impl(root: *mut u8) {
             unsafe { try_reclaim(payload) };
         }
     });
+    unsafe { teardown_exit() };
 }
 
 /// Fused child dispatch for the worklist loop: strings are freed
-/// immediately, RC children are appended to `worklist`.
+/// immediately, RC children are appended to `worklist`, and owned Vec
+/// children are queued for release at the outermost teardown exit.
 unsafe fn visit_children_raw_buffered(payload: *mut u8, worklist: &mut Vec<*mut u8>) {
     unsafe {
         visit_children_raw(payload, |c| {
@@ -2067,6 +2082,7 @@ unsafe fn visit_children_raw_buffered(payload: *mut u8, worklist: &mut Vec<*mut 
                 worklist.push(c);
             }
         });
+        visit_vec_children(payload, queue_vec_child);
     }
 }
 
@@ -2076,6 +2092,45 @@ thread_local! {
     /// Not re-entered: the walk calls no user code.
     static RELEASE_WORKLIST: std::cell::RefCell<Vec<*mut u8>> =
         std::cell::RefCell::new(Vec::with_capacity(64));
+    /// Owned Vec children of dead nodes, queued during release / collection
+    /// walks and freed only at the outermost teardown exit. Freeing a Vec
+    /// can cascade into RC-node releases, so it must never run while the
+    /// release worklist is borrowed or the collector is mid-phase.
+    static PENDING_VEC_FREES: std::cell::RefCell<Vec<*mut u8>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+    /// Nesting depth of teardown frames (release walks / collection
+    /// slices) on this thread; pending Vec frees drain when it reaches 0.
+    static TEARDOWN_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+/// Queue a dead node's owned Vec child for release at the outermost
+/// teardown exit.
+fn queue_vec_child(v: *mut u8) {
+    PENDING_VEC_FREES.with(|q| q.borrow_mut().push(v));
+}
+
+/// Enter a teardown frame (release walk or collection slice).
+fn teardown_enter() {
+    TEARDOWN_DEPTH.with(|d| d.set(d.get() + 1));
+}
+
+/// Exit a teardown frame; at depth 0 drain the queued Vec frees. Each
+/// free is popped before running so a cascade that re-enters the release
+/// path (and queues or drains more) observes a consistent queue.
+unsafe fn teardown_exit() {
+    let depth = TEARDOWN_DEPTH.with(|d| {
+        let next = d.get().saturating_sub(1);
+        d.set(next);
+        next
+    });
+    if depth != 0 {
+        return;
+    }
+    loop {
+        let next = PENDING_VEC_FREES.with(|q| q.borrow_mut().pop());
+        let Some(v) = next else { break };
+        unsafe { crate::c_abi::map::gos_rt_vec_free(v.cast()) };
+    }
 }
 
 /// Call `f` for each non-null RC-pointer child of `payload`, per its
@@ -2101,8 +2156,41 @@ unsafe fn visit_rc_children(payload: *mut u8, mut f: impl FnMut(*mut u8)) {
 
 unsafe fn visit_children_raw(payload: *mut u8, mut raw_f: impl FnMut(*mut u8)) {
     // Child words may carry tagged-repr enum pointers; consumers work
-    // on payload bases (strings stay odd and untouched).
+    // on payload bases (strings stay odd and untouched). Only kind-0
+    // (RC-node / String) entries reach the callback - container children
+    // (`RC_CHILD_VEC`) are not RC nodes, so the count / color machinery
+    // must never touch them; the teardown paths walk those separately
+    // through [`visit_vec_children`].
     let mut f = |c: *mut u8| raw_f(untag_rc(c));
+    unsafe {
+        visit_entries(payload, |kind, child| {
+            if kind == gossamer_abi::rc::RC_CHILD_RC {
+                f(child);
+            }
+        });
+    }
+}
+
+/// Call `f` for each non-null `RC_CHILD_VEC` child of `payload` - a
+/// `*mut GosVec` the node owns (the constructor retained the node's
+/// share). Teardown frees these through `gos_rt_vec_free`; co-owning
+/// paths (copy, match-binding materialisation) retain them.
+unsafe fn visit_vec_children(payload: *mut u8, mut f: impl FnMut(*mut u8)) {
+    unsafe {
+        visit_entries(payload, |kind, child| {
+            if kind == gossamer_abi::rc::RC_CHILD_VEC {
+                f(child);
+            }
+        });
+    }
+}
+
+/// Walk `payload`'s meta child entries, yielding `(kind, child_ptr)` for
+/// each non-null child word. Entries pack the payload word index in the
+/// low 32 bits and the child kind above (`gossamer_abi::rc`); guarded
+/// metas keep their dedicated pair walk and yield kind 0.
+unsafe fn visit_entries(payload: *mut u8, mut f: impl FnMut(i64, *mut u8)) {
+    use gossamer_abi::rc::{RC_CHILD_KIND_SHIFT, RC_CHILD_WORD_MASK};
     let meta = unsafe { meta_of(header_ptr(payload)) };
     if meta.is_null() {
         return;
@@ -2110,7 +2198,7 @@ unsafe fn visit_children_raw(payload: *mut u8, mut raw_f: impl FnMut(*mut u8)) {
     let kind = unsafe { *meta };
     let variant_count = unsafe { *meta.add(1) };
     if kind == RC_KIND_STRUCT_GUARDED {
-        unsafe { visit_guarded_children(payload, meta, f) };
+        unsafe { visit_guarded_children(payload, meta, |c| f(gossamer_abi::rc::RC_CHILD_RC, c)) };
         return;
     }
     // Only Enum and Struct carry child layouts today. String / Vec / Map
@@ -2130,11 +2218,13 @@ unsafe fn visit_children_raw(payload: *mut u8, mut raw_f: impl FnMut(*mut u8)) {
         let matches = kind == RC_KIND_STRUCT || disc == target_disc;
         if matches {
             for j in 0..child_count.max(0) {
-                let word = unsafe { *meta.add(idx + 2 + j as usize) };
+                let entry = unsafe { *meta.add(idx + 2 + j as usize) };
+                let child_kind = entry >> RC_CHILD_KIND_SHIFT;
+                let word = entry & RC_CHILD_WORD_MASK;
                 let slot = unsafe { payload.add((word as usize) * 8) as *const *mut u8 };
                 let child = unsafe { *slot };
                 if !child.is_null() {
-                    f(child);
+                    f(child_kind, child);
                 }
             }
             return;
@@ -2344,6 +2434,10 @@ pub unsafe extern "C" fn gos_rt_enum_box_aggr(
         visit_children_raw(payload, |c| {
             gos_rt_rc_retain(c);
         });
+        // The copy co-owns any Vec child alongside its source.
+        visit_vec_children(payload, |v| {
+            crate::c_abi::vec::vec_retain_header(v.cast());
+        });
     }
     payload
 }
@@ -2364,6 +2458,10 @@ pub unsafe extern "C" fn gos_rt_rc_retain_children(payload: *mut u8) {
     unsafe {
         visit_children_raw(base, |c| {
             gos_rt_rc_retain(c);
+        });
+        // The binding co-owns any Vec child alongside the box.
+        visit_vec_children(base, |v| {
+            crate::c_abi::vec::vec_retain_header(v.cast());
         });
     }
 }
@@ -2566,6 +2664,11 @@ unsafe fn collect_white(root: *mut u8, freed: &mut Vec<*mut u8>) {
                     stack.push(c);
                 }
             });
+            // Owned Vec children sit outside the RC graph (never
+            // trial-deleted); queue the dying node's share for release at
+            // the outermost teardown exit - a Vec free can cascade into
+            // RC releases, which must not run mid-collection.
+            visit_vec_children(s, queue_vec_child);
         }
         to_free.push(s);
     }
@@ -2649,6 +2752,16 @@ unsafe fn collect_cycles_budgeted(budget: Option<usize>) {
     if roots.is_empty() {
         return;
     }
+    // The whole slice is one teardown frame: owned Vec children of freed
+    // cycle members queue during `collect_white` and drain at the exit
+    // below (or at the enclosing release walk's exit when the collection
+    // fired mid-release).
+    teardown_enter();
+    unsafe { collect_cycles_slice(budget, roots) };
+    unsafe { teardown_exit() };
+}
+
+unsafe fn collect_cycles_slice(budget: Option<usize>, roots: Vec<*mut u8>) {
     let candidates = roots.len();
     let freed_before = CYCLES_FREED.load(Ordering::Relaxed);
     // MarkRoots: trace gray from each still-purple candidate; drop stale

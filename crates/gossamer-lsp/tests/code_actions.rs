@@ -7,7 +7,7 @@
 mod common;
 
 use common::{diagnostics_from, field, field_str, server_with};
-use gossamer_lsp::testing::{code_action_params, range_value};
+use gossamer_lsp::handle::{code_action_params, range_value};
 use gossamer_std::json::Value;
 
 fn action_titles(response: &Value) -> Vec<String> {

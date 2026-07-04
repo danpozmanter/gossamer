@@ -605,6 +605,11 @@ pub unsafe extern "C" fn gos_rt_iter_filter_i64(env: *const u8, v: *const GosVec
                 unsafe { gos_rt_vec_push_i64(out, x) };
             }
         }
+        // The kept slots are raw copies of the source's; when the source
+        // owns pointer-bearing elements the result must hold its own
+        // shares (and carry the same element kind) or the source's free
+        // would dangle every survivor.
+        unsafe { crate::c_abi::vec::vec_share_owned_elements(v, out) };
         out
     })
 }
