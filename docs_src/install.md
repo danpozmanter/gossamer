@@ -19,6 +19,18 @@ The `gos` binary is self-contained. Copy it anywhere on your
 install -m 0755 target/release/gos /usr/local/bin/gos
 ```
 
+On macOS, a locally built `gos` carries only the linker's ad-hoc
+code signature, which the system invalidates once the binary is
+moved - a relocated copy is killed at launch with `Killed: 9`.
+Re-sign it after copying:
+
+```sh
+codesign --force --sign - /usr/local/bin/gos
+```
+
+Published release binaries are already re-signed, so this step
+applies only to a `cargo build` binary you relocate yourself.
+
 ## Dependencies
 
 - **Rust toolchain** - 1.95.0, edition 2024, MSRV 1.95.

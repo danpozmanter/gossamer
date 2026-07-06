@@ -1833,6 +1833,14 @@ build.</p>
 <code>PATH</code>:</p>
 <div class="language-sh highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>install<span class="w"> </span>-m<span class="w"> </span><span class="m">0755</span><span class="w"> </span>target/release/gos<span class="w"> </span>/usr/local/bin/gos
 </code></pre></div>
+<p>On macOS, a locally built <code>gos</code> carries only the linker's ad-hoc
+code signature, which the system invalidates once the binary is
+moved - a relocated copy is killed at launch with <code>Killed: 9</code>.
+Re-sign it after copying:</p>
+<div class="language-sh highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>codesign<span class="w"> </span>--force<span class="w"> </span>--sign<span class="w"> </span>-<span class="w"> </span>/usr/local/bin/gos
+</code></pre></div>
+<p>Published release binaries are already re-signed, so this step
+applies only to a <code>cargo build</code> binary you relocate yourself.</p>
 <h2 id="dependencies">Dependencies<a class="headerlink" href="#dependencies" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>Rust toolchain</strong> - 1.95.0, edition 2024, MSRV 1.95.
@@ -1843,10 +1851,10 @@ build.</p>
   <code>gcc</code> / <code>clang</code> will do.</li>
 </ul>
 <h2 id="verifying">Verifying<a class="headerlink" href="#verifying" title="Permanent link">&para;</a></h2>
-<div class="language-sh highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>gos<span class="w"> </span>--version
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>gos<span class="w"> </span>new<span class="w"> </span>example.com/hello<span class="w"> </span>--path<span class="w"> </span>/tmp/hello
-<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="nb">cd</span><span class="w"> </span>/tmp/hello
-<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>gos<span class="w"> </span>run<span class="w"> </span>src/main.gos
+<div class="language-sh highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>gos<span class="w"> </span>--version
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>gos<span class="w"> </span>new<span class="w"> </span>example.com/hello<span class="w"> </span>--path<span class="w"> </span>/tmp/hello
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="nb">cd</span><span class="w"> </span>/tmp/hello
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>gos<span class="w"> </span>run<span class="w"> </span>src/main.gos
 </code></pre></div>
 <p>You should see <code>hello from hello</code>.</p>
 <h2 id="supported-platforms">Supported platforms<a class="headerlink" href="#supported-platforms" title="Permanent link">&para;</a></h2>
@@ -1919,7 +1927,7 @@ SDKs). (A fully-static single-file binary also comes from <code>gos build
 <p>Musl targets (<code>x86_64-unknown-linux-musl</code>,
 <code>aarch64-unknown-linux-musl</code>) are gated behind the <code>musl</code> Cargo
 feature. Rebuild with:</p>
-<div class="language-sh highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>cargo<span class="w"> </span>build<span class="w"> </span>--workspace<span class="w"> </span>--release<span class="w"> </span>-p<span class="w"> </span>gossamer-driver<span class="w"> </span>--features<span class="w"> </span>musl
+<div class="language-sh highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>cargo<span class="w"> </span>build<span class="w"> </span>--workspace<span class="w"> </span>--release<span class="w"> </span>-p<span class="w"> </span>gossamer-driver<span class="w"> </span>--features<span class="w"> </span>musl
 </code></pre></div>
 <h2 id="editor-support">Editor support<a class="headerlink" href="#editor-support" title="Permanent link">&para;</a></h2>
 <p>Pre-built plug-ins for VSCode, Vim, Neovim, Helix, Emacs, Sublime,
