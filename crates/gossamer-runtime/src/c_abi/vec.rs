@@ -186,7 +186,7 @@ pub(crate) unsafe fn alloc_box_vec(
         )
     };
     crate::c_abi::ledger::vec_inc();
-    let mut boxed = Box::new(InlineVec {
+    let boxed = Box::new(InlineVec {
         header: GosVec {
             len,
             cap: real_cap,
@@ -198,14 +198,21 @@ pub(crate) unsafe fn alloc_box_vec(
         },
         buf: [0u64; INLINE_BUF_WORDS],
     });
+    let boxed_ptr = Box::into_raw(boxed);
     if flag == 0 {
-        // Inline: point `ptr` at this box's own contiguous buffer. The heap
-        // address is stable across `Box::into_raw` / `Box::from_raw`, so the
-        // self-reference stays valid for the vec's whole life.
-        let bufptr = boxed.buf.as_mut_ptr().cast::<u8>();
-        boxed.header.ptr = SyncRawPtr::new(bufptr);
+        // Inline: point `header.ptr` at this block's own contiguous buffer.
+        // The self-pointer is derived from the raw allocation after
+        // `into_raw`, not from a `&mut boxed.buf` borrow taken before it, so
+        // its provenance spans the whole block and stays live across every
+        // later `&mut *boxed_ptr` reborrow of the header. A borrow taken
+        // before `into_raw` is narrower than the allocation and would be
+        // invalidated when `into_raw` reasserts uniqueness over it.
+        unsafe {
+            let bufptr = (&raw mut (*boxed_ptr).buf).cast::<u8>();
+            (*boxed_ptr).header.ptr = SyncRawPtr::new(bufptr);
+        }
     }
-    Box::into_raw(boxed).cast::<GosVec>()
+    boxed_ptr.cast::<GosVec>()
 }
 
 /// True when this non-region GosVec's `ptr` is a separately-allocated

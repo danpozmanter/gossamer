@@ -62,6 +62,15 @@ pub const STACK_GUARD_UPPER_SLOP: usize = 64 * 1024;
 /// every worker. The main thread should also call it from program
 /// entry.
 pub fn install_stack_guard() {
+    // Miri models no signal delivery or guard pages and cannot execute the
+    // `sigaltstack` / `sigaction` / `pthread_getattr_np` foreign calls the
+    // guard installs. The guard only converts a native stack-overflow
+    // SIGSEGV into a clean diagnostic, which is inert under the interpreter,
+    // so installing it there is both impossible and pointless.
+    if cfg!(miri) {
+        return;
+    }
+
     #[cfg(unix)]
     unix::install();
 

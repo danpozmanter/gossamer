@@ -29,6 +29,9 @@
   emits more than a pipe buffer's worth of output.
 - A `[rust-bindings]` call reached from a JIT- or AOT-compiled function
   no longer aborts the compiler.
+- The generated binding build crate stands alone as its own Cargo
+  workspace, so a project or cache directory nested inside another
+  workspace builds instead of failing.
 
 ### Packaging and docs
 

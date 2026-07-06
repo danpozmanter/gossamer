@@ -1636,12 +1636,16 @@ pub unsafe extern "C" fn gos_rt_vec_free(v: *mut GosVec) {
         }
         std::sync::atomic::fence(std::sync::atomic::Ordering::Acquire);
         crate::c_abi::ledger::vec_dec();
-        // Non-region headers are a single `Box<InlineVec>` (header +
-        // inline element buffer); reconstruct it so the buffer that rides
-        // with the header is reclaimed on `drop`, and only a separately
-        // allocated (split) buffer needs its own `free_vec_buffer`.
-        let inline_box = unsafe { Box::from_raw(v.cast::<crate::c_abi::vec::InlineVec>()) };
-        let boxed = &inline_box.header;
+        // Non-region headers are a single `Box<InlineVec>` (header + inline
+        // element buffer). The header's `ptr` for an inline vec aliases this
+        // same allocation's buffer, so the deep-free walk below reads through
+        // a pointer into the block. Drive that walk through the raw pointer
+        // and reconstruct the owning `Box` only afterwards (its drop reclaims
+        // the header block, including any inline buffer); a separately
+        // allocated (split) buffer is reclaimed explicitly via
+        // `free_vec_buffer`.
+        let inline_ptr = v.cast::<crate::c_abi::vec::InlineVec>();
+        let boxed = unsafe { &(*inline_ptr).header };
         if !boxed.ptr.is_null() && boxed.cap > 0 {
             // Deep-free pointer-bearing element payloads BEFORE
             // reclaiming the backing buffer. Each branch walks the
@@ -1725,7 +1729,9 @@ pub unsafe extern "C" fn gos_rt_vec_free(v: *mut GosVec) {
         // Pass the `Box`'s own borrow, not the raw `v`, so the read of
         // `elem_kind` stays under the Box's exclusive ownership.
         crate::c_abi::vec::vec_elem_meta_remove(boxed);
-        drop(inline_box);
+        // Reconstruct the owning box now that the self-referential walk is
+        // done, so its drop reclaims the header block (and any inline buffer).
+        drop(unsafe { Box::from_raw(inline_ptr) });
     });
 }
 

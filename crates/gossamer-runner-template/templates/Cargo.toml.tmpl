@@ -6,6 +6,13 @@ version = "0.0.0"
 edition = "2024"
 publish = false
 
+# Stand alone as a workspace root. The runner is generated inside the
+# gossamer cache, which can itself sit under an unrelated Cargo
+# workspace; an empty table keeps that ancestor from absorbing this
+# crate (cargo would otherwise reject it as a non-member) and anchors
+# the `[patch]` block below.
+[workspace]
+
 [[bin]]
 name = "gos-runner"
 path = "main.rs"

@@ -27,8 +27,7 @@ env:
   CARGO_HTTP_MULTIPLEXING: "false"
 
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
 
 jobs:
   fuzz-weekly:
@@ -80,51 +79,3 @@ jobs:
           name: fuzz-crashes-${{ matrix.target }}-weekly
           path: fuzz/artifacts/${{ matrix.target }}/
           if-no-files-found: ignore
-
-  # Audit M6: weekly corpus minimization. cargo fuzz cmin shrinks
-  # the libFuzzer-grown corpus by removing inputs whose coverage
-  # subsumes others'. We commit the minimised seed back via a PR
-  # if and only if cmin produced fewer files than we started with -
-  # silence is the no-op outcome.
-  fuzz-cmin:
-    name: Fuzz cmin (${{ matrix.target }})
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        target: [lex, parse, manifest, http_request, typecheck, mir_lower, vm_compile, resolve, hir_lower, vm_run]
-    steps:
-      - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@nightly
-        with:
-          toolchain: nightly-2026-04-14
-      - run: rustup set profile minimal
-      - uses: Swatinem/rust-cache@v2
-        with:
-          prefix-key: v1-fuzz-cmin
-          workspaces: fuzz
-      # Install cargo-fuzz as a prebuilt binary (GitHub Releases via
-      # cargo-binstall) - avoids compiling its full dependency tree
-      # from crates.io on every cache miss.
-      - uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-fuzz
-      - name: Minimise corpus
-        working-directory: fuzz
-        run: |
-          set -euo pipefail
-          before=$(find corpus/${{ matrix.target }} -type f 2>/dev/null | wc -l)
-          cargo +nightly-2026-04-14 fuzz cmin --target x86_64-unknown-linux-gnu \
-            ${{ matrix.target }} || true
-          after=$(find corpus/${{ matrix.target }} -type f 2>/dev/null | wc -l)
-          echo "corpus size: $before -> $after"
-      - name: Open PR with minimised corpus
-        uses: peter-evans/create-pull-request@v8
-        with:
-          title: "fuzz: cmin corpus for ${{ matrix.target }}"
-          commit-message: "fuzz: cmin corpus for ${{ matrix.target }}"
-          branch: fuzz-cmin/${{ matrix.target }}
-          body: |
-            Automated `cargo fuzz cmin` run for the
-            `${{ matrix.target }}` target (audit M6).
-          delete-branch: true

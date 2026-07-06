@@ -286,6 +286,13 @@ mod tests {
         assert!(out.contains("name = \"gos-runner-deadbeefcafe\""));
         assert!(out.contains(r#"echo-binding = { path = "/abs/echo" }"#));
         assert!(out.contains(r#"tuigoose = { path = "/abs/tuigoose" }"#));
+        // An empty `[workspace]` table makes the generated crate its own
+        // workspace root, so an ancestor Cargo workspace (e.g. a cache dir
+        // that lives inside one) never absorbs it and fails the build.
+        assert!(
+            out.contains("[workspace]"),
+            "runner manifest must be a standalone workspace root:\n{out}"
+        );
         // Sanity: parse as TOML.
         let _: toml::Value = toml::from_str(&out).expect("rendered Cargo.toml is valid TOML");
     }
@@ -339,6 +346,10 @@ mod tests {
         };
         let cargo = render_staticlib_cargo_toml(&input);
         let _: toml::Value = toml::from_str(&cargo).expect("staticlib Cargo.toml parses");
+        assert!(
+            cargo.contains("[workspace]"),
+            "staticlib manifest must be a standalone workspace root:\n{cargo}"
+        );
         let lib = render_staticlib_lib_rs(&input);
         assert!(syn::parse_file(&lib).is_ok());
         assert!(lib.contains("gos_static_install_bindings"));
