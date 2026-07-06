@@ -821,6 +821,8 @@
       
         
       
+        
+      
     
     
     
@@ -1049,6 +1051,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#agent-integration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Agent integration
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#smoke-test" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1111,6 +1124,34 @@
     
   
     Diagnostics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="zig/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Building with Zig
   
 
     
@@ -1865,6 +1906,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#agent-integration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Agent integration
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#smoke-test" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2131,15 +2183,57 @@ repo:
 <a href="https://github.com/danpozmanter/gossamer-editor-support"><code>danpozmanter/gossamer-editor-support</code></a>
 - ships VSCode, Vim, Neovim, Helix, Emacs, Sublime, Zed clients
 plus a tree-sitter grammar.</p>
+<h2 id="agent-integration">Agent integration<a class="headerlink" href="#agent-integration" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>gos mcp</code></td>
+<td>Start a model-context-protocol server on stdio.</td>
+</tr>
+</tbody>
+</table>
+<p><code>gos mcp</code> speaks the Model Context Protocol so AI coding agents
+(Claude Code, OpenCode, Cursor, Zed) can drive the toolchain
+directly:</p>
+<ul>
+<li><code>check</code> - parse + resolve + typecheck; one JSON object per
+  diagnostic (the <code>--message-format json</code> schema).</li>
+<li><code>explain</code> - long-form rationale for a diagnostic code.</li>
+<li><code>run</code> / <code>build</code> / <code>test</code> - execute programs and test suites;
+  exit code, stdout, and stderr come back, bounded by a
+  per-call <code>timeout_ms</code>.</li>
+<li><code>fmt</code> / <code>doc</code> - formatting and item listings.</li>
+<li><code>hover</code> / <code>definition</code> / <code>references</code> / <code>workspace_symbols</code> -
+  semantic navigation backed by the same analysis engine as
+  <code>gos lsp</code>.</li>
+<li>The skill card ships as the <code>gossamer://skill-card</code> resource
+  and the <code>skill-card</code> prompt.</li>
+</ul>
+<p>MCP framing is newline-delimited JSON-RPC; LSP framing is
+<code>Content-Length</code>-headed. <code>gos lsp</code> belongs in an editor's LSP
+configuration and <code>gos mcp</code> in an agent's MCP configuration - the
+two are not interchangeable.</p>
+<p>Claude Code:</p>
+<div class="language-bash highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>claude<span class="w"> </span>mcp<span class="w"> </span>add<span class="w"> </span>gossamer<span class="w"> </span>--<span class="w"> </span>gos<span class="w"> </span>mcp
+</code></pre></div>
+<p>Generic client config:</p>
+<div class="language-json highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="p">{</span><span class="w"> </span><span class="nt">&quot;mcpServers&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nt">&quot;gossamer&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nt">&quot;command&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;gos&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;args&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;mcp&quot;</span><span class="p">]</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="p">}</span>
+</code></pre></div>
 <h2 id="smoke-test">Smoke-test<a class="headerlink" href="#smoke-test" title="Permanent link">&para;</a></h2>
-<div class="language-sh highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>python3<span class="w"> </span>-<span class="w"> </span><span class="s">&lt;&lt;&#39;PY&#39;</span>
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="s">import json, subprocess</span>
-<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="s">p = subprocess.Popen([&quot;gos&quot;, &quot;lsp&quot;], stdin=subprocess.PIPE, stdout=subprocess.PIPE)</span>
-<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="s">body = json.dumps({&quot;jsonrpc&quot;: &quot;2.0&quot;, &quot;id&quot;: 1, &quot;method&quot;: &quot;initialize&quot;,</span>
-<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="s">                   &quot;params&quot;: {&quot;processId&quot;: None, &quot;capabilities&quot;: {}}}).encode()</span>
-<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="s">p.stdin.write(f&quot;Content-Length: {len(body)}\r\n\r\n&quot;.encode() + body); p.stdin.flush()</span>
-<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="s">print(p.stdout.readline(), p.stdout.readline())</span>
-<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="s">PY</span>
+<div class="language-sh highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>python3<span class="w"> </span>-<span class="w"> </span><span class="s">&lt;&lt;&#39;PY&#39;</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="s">import json, subprocess</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="s">p = subprocess.Popen([&quot;gos&quot;, &quot;lsp&quot;], stdin=subprocess.PIPE, stdout=subprocess.PIPE)</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="s">body = json.dumps({&quot;jsonrpc&quot;: &quot;2.0&quot;, &quot;id&quot;: 1, &quot;method&quot;: &quot;initialize&quot;,</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="s">                   &quot;params&quot;: {&quot;processId&quot;: None, &quot;capabilities&quot;: {}}}).encode()</span>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="s">p.stdin.write(f&quot;Content-Length: {len(body)}\r\n\r\n&quot;.encode() + body); p.stdin.flush()</span>
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="s">print(p.stdout.readline(), p.stdout.readline())</span>
+<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="s">PY</span>
 </code></pre></div>
 
 

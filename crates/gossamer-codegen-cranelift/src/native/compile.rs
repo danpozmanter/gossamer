@@ -652,6 +652,39 @@ pub(crate) fn lower_program_full(
         intrinsics.intern_string(module, &body.name)?;
     }
 
+    // Pre-declare every `gos_binding_*` external call target against the
+    // real module so the parallel phase resolves each from the intrinsic
+    // cache. A [rust-bindings] crate exposing many functions is otherwise
+    // the first caller of a symbol, and that first `declare_function`
+    // would land on the OfflineModule mid-parallel-phase. The signature is
+    // computed exactly as `lower_external_binding_call` does at the call
+    // site, so the single name-keyed declaration matches every use.
+    for body in bodies {
+        for block in &body.blocks {
+            if let Terminator::Call {
+                callee,
+                args,
+                destination,
+                ..
+            } = &block.terminator
+                && let Some(name) = callee_prelude_name(callee)
+                && name.starts_with("gos_binding_")
+            {
+                let dest_ty = body.local_ty(destination.local);
+                let returns: Vec<ir::Type> = match mir_ty_to_cabi(tcx, dest_ty, ptr_ty) {
+                    Some(t) => vec![t],
+                    None => Vec::new(),
+                };
+                let params: Vec<ir::Type> = args
+                    .iter()
+                    .map(|arg| operand_cabi_ty(arg, body, tcx, ptr_ty))
+                    .collect();
+                let static_name: &'static str = Box::leak(name.into_boxed_str());
+                intrinsics.extern_fn(module, static_name, &params, &returns)?;
+            }
+        }
+    }
+
     // N9-C: Build the OfflineModule snapshot. From this point the real
     // ObjectModule is only needed for define_function (N9-E below).
     let offline = build_offline_module(module, &intrinsics, &function_ids_by_name);

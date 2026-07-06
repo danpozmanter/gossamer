@@ -38,6 +38,42 @@
 #[global_allocator]
 static GLOBAL_ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
+// mimalloc's `mi_option_purge_delay` (15) and `mi_option_allow_thp` (43)
+// enum indices. The `libmimalloc-sys` binding exposes only a curated subset
+// of the option enum that omits both, so they are pinned by value and
+// guarded against a future mimalloc enum shift by `allocator_tests` below.
+#[cfg(not(any(tsan, miri, fuzzing, target_arch = "wasm32")))]
+const MI_OPTION_PURGE_DELAY: libmimalloc_sys::mi_option_t = 15;
+#[cfg(not(any(tsan, miri, fuzzing, target_arch = "wasm32")))]
+const MI_OPTION_ALLOW_THP: libmimalloc_sys::mi_option_t = 43;
+
+// Factory defaults of the two pinned options, captured the first time the
+// allocator is configured - before `init_process_allocator` overwrites them
+// to 0. The index-shift guard reads this snapshot instead of a live
+// `mi_option_get`: option state is process-global, so once any caller runs
+// the init the live values read back as 0, and the test runner orders tests
+// non-deterministically. Snapshotting under the `OnceLock` before the first
+// set makes the guard observe the true defaults regardless of ordering.
+#[cfg(not(any(tsan, miri, fuzzing, target_arch = "wasm32")))]
+static MIMALLOC_OPTION_DEFAULTS: std::sync::OnceLock<(i64, i64)> = std::sync::OnceLock::new();
+
+/// Pristine defaults of the two pinned mimalloc options, snapshotted once
+/// before the first `init_process_allocator` call mutates them.
+#[cfg(not(any(tsan, miri, fuzzing, target_arch = "wasm32")))]
+fn mimalloc_option_defaults() -> (i64, i64) {
+    *MIMALLOC_OPTION_DEFAULTS.get_or_init(|| {
+        // SAFETY: option get is thread-safe; the global allocator is mimalloc
+        // in this build, initialised before any code reaches here. `c_long`
+        // widens losslessly to `i64` (it is `i32` on LLP64 Windows).
+        unsafe {
+            (
+                libmimalloc_sys::mi_option_get(MI_OPTION_PURGE_DELAY) as i64,
+                libmimalloc_sys::mi_option_get(MI_OPTION_ALLOW_THP) as i64,
+            )
+        }
+    })
+}
+
 /// Configures the process allocator for a predictable memory footprint.
 ///
 /// Sets mimalloc's purge delay to zero so freed pages return to the OS
@@ -77,8 +113,9 @@ static GLOBAL_ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
 pub fn init_process_allocator() {
     #[cfg(not(any(tsan, miri, fuzzing, target_arch = "wasm32")))]
     {
-        const MI_OPTION_PURGE_DELAY: libmimalloc_sys::mi_option_t = 15;
-        const MI_OPTION_ALLOW_THP: libmimalloc_sys::mi_option_t = 43;
+        // Capture the pristine defaults before overwriting them, so the
+        // index-shift guard test can still read them once this has run.
+        let _ = mimalloc_option_defaults();
         // SAFETY: `mi_option_set` is thread-safe and valid any time after
         // the allocator initialised, which it has by the time `main` runs.
         unsafe {
@@ -143,22 +180,20 @@ mod allocator_tests {
     /// defaulting `allow_thp` to 0, is not a target); if a mimalloc bump
     /// shifts the enum so either index names a different option, its
     /// default check fails loudly - the signal to re-verify the indices
-    /// for the new version. Single test because the defaults must be read
-    /// before any test calls the init; option state is process-global.
+    /// for the new version. The defaults come from
+    /// [`super::mimalloc_option_defaults`], which snapshots them before the
+    /// first init overwrites them, so this stays correct regardless of
+    /// whether another test has already configured the process-global
+    /// allocator.
     #[test]
     fn allocator_option_indices_are_pinned_and_settable() {
-        const MI_OPTION_PURGE_DELAY: libmimalloc_sys::mi_option_t = 15;
-        const MI_OPTION_ALLOW_THP: libmimalloc_sys::mi_option_t = 43;
-        // SAFETY: option get/set are thread-safe; the global allocator is
-        // mimalloc in a non-tsan build, so it is initialised here.
-        let purge_default = unsafe { libmimalloc_sys::mi_option_get(MI_OPTION_PURGE_DELAY) };
+        let (purge_default, thp_default) = super::mimalloc_option_defaults();
         assert_eq!(
             purge_default, 1000,
             "mimalloc option 15 default is {purge_default}, expected the 1000 ms \
              purge_delay default - the enum likely shifted; re-verify the \
              mi_option_purge_delay index for the current mimalloc version",
         );
-        let thp_default = unsafe { libmimalloc_sys::mi_option_get(MI_OPTION_ALLOW_THP) };
         assert_eq!(
             thp_default, 1,
             "mimalloc option 43 default is {thp_default}, expected the allow_thp \
@@ -166,9 +201,11 @@ mod allocator_tests {
              mi_option_allow_thp index for the current mimalloc version",
         );
         super::init_process_allocator();
-        let purge = unsafe { libmimalloc_sys::mi_option_get(MI_OPTION_PURGE_DELAY) };
+        // SAFETY: option get is thread-safe; the global allocator is mimalloc
+        // in a non-tsan build, so it is initialised here.
+        let purge = unsafe { libmimalloc_sys::mi_option_get(super::MI_OPTION_PURGE_DELAY) };
         assert_eq!(purge, 0, "init_process_allocator must set purge_delay to 0");
-        let thp = unsafe { libmimalloc_sys::mi_option_get(MI_OPTION_ALLOW_THP) };
+        let thp = unsafe { libmimalloc_sys::mi_option_get(super::MI_OPTION_ALLOW_THP) };
         assert_eq!(thp, 0, "init_process_allocator must set allow_thp to 0");
     }
 }

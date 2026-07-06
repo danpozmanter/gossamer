@@ -63,6 +63,33 @@ jobs:
           chmod +x "$BASE/install.sh"
           tar -czf "${BASE}.tar.gz" "$BASE"
 
+      # Fully static musl build of the toolchain, shipped alongside the
+      # glibc build for distro-independent use. `gos` links no libLLVM (it
+      # shells out to llc/opt), so the only native code is Rust plus a few
+      # C deps (mimalloc, ring, zstd); `musl-tools`' musl-gcc supplies the
+      # sysroot. No zig or cross toolchain is needed for the native
+      # x86_64 target - zig is only used for the aarch64 cross-musl case.
+      - name: Build static musl binary
+        run: |
+          rustup target add x86_64-unknown-linux-musl
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+          CC_x86_64_unknown_linux_musl=musl-gcc \
+            cargo build --release --target x86_64-unknown-linux-musl --bin gos
+          CC_x86_64_unknown_linux_musl=musl-gcc \
+            cargo build --release --target x86_64-unknown-linux-musl -p gossamer-runtime
+
+      - name: Stage static musl tarball
+        run: |
+          BASE="gos-${VERSION}-linux-x86_64-musl"
+          mkdir "$BASE"
+          cp target/x86_64-unknown-linux-musl/release/gos "$BASE/"
+          cp target/x86_64-unknown-linux-musl/release/libgossamer_runtime.a "$BASE/"
+          cp README.md LICENSE "$BASE/"
+          cp scripts/install.sh "$BASE/"
+          chmod +x "$BASE/install.sh"
+          tar -czf "${BASE}.tar.gz" "$BASE"
+
       - name: Build .deb
         run: |
           cargo deb --no-build -p gossamer-cli
@@ -79,6 +106,7 @@ jobs:
           name: gos-linux-x86_64
           path: |
             gos-*-linux-x86_64.tar.gz
+            gos-*-linux-x86_64-musl.tar.gz
             *.deb
             *.rpm
 

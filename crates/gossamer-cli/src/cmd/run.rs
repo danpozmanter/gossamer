@@ -23,18 +23,31 @@ pub(crate) enum RunMode {
 
 /// `gos run` dispatcher: walks the project root for a default entry
 /// point when no path is supplied.
-pub(crate) fn dispatch(path: Option<PathBuf>, mode: RunMode, args: &[String]) -> Result<()> {
+pub(crate) fn dispatch(
+    path: Option<PathBuf>,
+    mode: RunMode,
+    main_thread: bool,
+    args: &[String],
+) -> Result<()> {
     let resolved = resolve_entry_arg(path)?;
-    run(&resolved, mode, args)
+    run(&resolved, mode, main_thread, args)
 }
 
-fn run(file: &Path, _mode: RunMode, forwarded: &[String]) -> Result<()> {
-    // Execute on a thread with a large native stack so the host's
-    // default main-thread stack size never bounds recursion depth or
-    // the in-process JIT compile pass (see `cmd::with_vm_stack`).
+fn run(file: &Path, _mode: RunMode, main_thread: bool, forwarded: &[String]) -> Result<()> {
     let file = file.to_path_buf();
     let forwarded = forwarded.to_vec();
-    crate::cmd::with_vm_stack(move || run_on_vm(&file, &forwarded))
+    if main_thread {
+        // Execute directly on the process main thread so native
+        // libraries that require it (GLFW / OpenGL / Cocoa / Metal) work
+        // from `[rust-bindings]`. Trades the large spawned-thread stack
+        // for the OS-default main-thread stack (see `cmd::on_main_thread`).
+        crate::cmd::on_main_thread(move || run_on_vm(&file, &forwarded))
+    } else {
+        // Execute on a thread with a large native stack so the host's
+        // default main-thread stack size never bounds recursion depth or
+        // the in-process JIT compile pass (see `cmd::with_vm_stack`).
+        crate::cmd::with_vm_stack(move || run_on_vm(&file, &forwarded))
+    }
 }
 
 fn run_on_vm(file: &PathBuf, forwarded: &[String]) -> Result<()> {

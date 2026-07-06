@@ -136,6 +136,10 @@ struct TypeChecker<'a> {
     diagnostics: Vec<TypeDiagnostic>,
     resolutions: &'a Resolutions,
     scopes: Vec<HashMap<gossamer_lex::Symbol, Ty>>,
+    /// Declared mutability of each in-scope value binding, kept in
+    /// lockstep with `scopes`. A place rooted at an immutable binding
+    /// cannot be assigned to (GT0030).
+    mut_scopes: Vec<HashMap<gossamer_lex::Symbol, bool>>,
     binding_types: HashMap<NodeId, Ty>,
     /// The `Self` type of the `impl` block currently being checked,
     /// so a method's `self` receiver binds to the concrete type
@@ -363,6 +367,7 @@ impl<'a> TypeChecker<'a> {
             diagnostics: Vec::new(),
             resolutions,
             scopes: vec![HashMap::new()],
+            mut_scopes: vec![HashMap::new()],
             binding_types: HashMap::new(),
             current_self_ty: None,
             current_impl_generics: None,
@@ -956,10 +961,12 @@ impl<'a> TypeChecker<'a> {
 
     fn push_scope(&mut self) {
         self.scopes.push(HashMap::new());
+        self.mut_scopes.push(HashMap::new());
     }
 
     fn pop_scope(&mut self) {
         self.scopes.pop();
+        self.mut_scopes.pop();
     }
 
     fn bind_local(&mut self, name: &str, ty: Ty) {
@@ -968,11 +975,32 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
+    /// Records the declared mutability of a value binding in the current
+    /// scope, so an assignment can reject a write to an immutable place.
+    fn bind_local_mutability(&mut self, name: &str, mutable: bool) {
+        if let Some(scope) = self.mut_scopes.last_mut() {
+            scope.insert(gossamer_lex::Symbol::intern(name), mutable);
+        }
+    }
+
     fn lookup_local(&self, name: &str) -> Option<Ty> {
         let sym = gossamer_lex::Symbol::intern(name);
         for scope in self.scopes.iter().rev() {
             if let Some(ty) = scope.get(&sym) {
                 return Some(*ty);
+            }
+        }
+        None
+    }
+
+    /// Declared mutability of the nearest enclosing binding of `name`.
+    /// `None` when the name is not a tracked local (a `const`, `static`,
+    /// module item, or unresolved name), where mutability is not checked.
+    fn lookup_local_mutability(&self, name: &str) -> Option<bool> {
+        let sym = gossamer_lex::Symbol::intern(name);
+        for scope in self.mut_scopes.iter().rev() {
+            if let Some(mutable) = scope.get(&sym) {
+                return Some(*mutable);
             }
         }
         None
@@ -5153,8 +5181,79 @@ impl<'a> TypeChecker<'a> {
         rhs_ty
     }
 
+    /// Resolved reference mutability of `expr`, or `None` when its type is
+    /// not a reference. Lets a write through a `&mut T` succeed regardless
+    /// of the reference binding's own declared mutability.
+    fn expr_ref_mutbl(&self, expr: &Expr) -> Option<Mutbl> {
+        let ty = self.table.get(expr.id)?;
+        let resolved = self.infer.resolve(self.tcx, ty);
+        match self.tcx.kind(resolved) {
+            Some(TyKind::Ref { mutability, .. }) => Some(*mutability),
+            _ => None,
+        }
+    }
+
+    /// Whether an assignment place is writable: writable when rooted at a
+    /// `mut` binding or reached through a `&mut` reference; immutable when
+    /// rooted at a non-`mut` binding or reached through a `&T`; unknown
+    /// otherwise (module item, deref of a non-reference, complex base).
+    /// Only a definitely-immutable place is rejected.
+    fn place_mutability(&self, place: &Expr) -> PlaceMut {
+        match &place.kind {
+            ExprKind::Path(path) => {
+                if path.segments.len() == 1 && path.segments[0].generics.is_empty() {
+                    match self.lookup_local_mutability(&path.segments[0].name.name) {
+                        Some(true) => PlaceMut::Writable,
+                        Some(false) => PlaceMut::Immutable,
+                        None => PlaceMut::Unknown,
+                    }
+                } else {
+                    PlaceMut::Unknown
+                }
+            }
+            ExprKind::FieldAccess { receiver, .. } => self.base_place_mutability(receiver),
+            ExprKind::Index { base, .. } => self.base_place_mutability(base),
+            ExprKind::Unary {
+                op: UnaryOp::Deref,
+                operand,
+            } => match self.expr_ref_mutbl(operand) {
+                Some(Mutbl::Mut) => PlaceMut::Writable,
+                Some(Mutbl::Not) => PlaceMut::Immutable,
+                None => PlaceMut::Unknown,
+            },
+            _ => PlaceMut::Unknown,
+        }
+    }
+
+    /// Mutability of a projection base (`base.field`, `base[i]`): a `&mut`
+    /// base is writable, a `&T` base is immutable, and a value base
+    /// inherits the mutability of its own root binding.
+    fn base_place_mutability(&self, base: &Expr) -> PlaceMut {
+        match self.expr_ref_mutbl(base) {
+            Some(Mutbl::Mut) => PlaceMut::Writable,
+            Some(Mutbl::Not) => PlaceMut::Immutable,
+            None => self.place_mutability(base),
+        }
+    }
+
+    /// Leftmost path-segment name of a place, naming the root binding in
+    /// the immutability diagnostic.
+    fn place_root_name(place: &Expr) -> Option<String> {
+        match &place.kind {
+            ExprKind::Path(path) => path.segments.first().map(|s| s.name.name.clone()),
+            ExprKind::FieldAccess { receiver, .. } => Self::place_root_name(receiver),
+            ExprKind::Index { base, .. } => Self::place_root_name(base),
+            ExprKind::Unary { operand, .. } => Self::place_root_name(operand),
+            _ => None,
+        }
+    }
+
     fn check_assign(&mut self, place: &Expr, value: &Expr, op: gossamer_ast::AssignOp) -> Ty {
         let place_ty = self.check_expr(place);
+        if matches!(self.place_mutability(place), PlaceMut::Immutable) {
+            let name = Self::place_root_name(place).unwrap_or_else(|| "value".to_string());
+            self.emit(TypeError::AssignToImmutable { name }, place.span);
+        }
         // The place's type flows into the value as its expectation so
         // `v = [2, 3]` against a `Vec<i64>` slot lays a heap Vec, not
         // a fixed `[i64; 2]` desynced from the slot's layout.
@@ -6610,9 +6709,12 @@ impl<'a> TypeChecker<'a> {
         self.table.insert(pattern.id, ty);
         match &pattern.kind {
             PatternKind::Ident {
-                name, subpattern, ..
+                name,
+                subpattern,
+                mutability,
             } => {
                 self.bind_local(&name.name, ty);
+                self.bind_local_mutability(&name.name, mutability.is_mutable());
                 if let Some(subpattern) = subpattern {
                     self.bind_pattern(subpattern, ty);
                 }
@@ -7010,6 +7112,17 @@ fn arith_op_method(op: BinaryOp) -> Option<&'static str> {
         BinaryOp::Shr => Some("shr"),
         _ => None,
     }
+}
+
+/// Writability of an assignment place, computed from its root binding's
+/// declared mutability and any reference it is reached through.
+enum PlaceMut {
+    /// Rooted at a `mut` binding or reached through a `&mut` reference.
+    Writable,
+    /// Rooted at a non-`mut` binding or reached through a `&T` reference.
+    Immutable,
+    /// Not statically determinable; not checked.
+    Unknown,
 }
 
 /// Operator-overload impl-method name for a compound assignment

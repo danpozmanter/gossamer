@@ -815,6 +815,8 @@
       
         
       
+        
+      
     
     
     
@@ -931,6 +933,34 @@
     
   
     Diagnostics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../toolchain/zig/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Building with Zig
   
 
     
@@ -1653,6 +1683,11 @@
 <td><code>spawn</code></td>
 <td>fn</td>
 <td>Non-blocking launch; returns the child PID as Result<i64, errors::Error>.</td>
+</tr>
+<tr>
+<td><code>spawn_piped</code></td>
+<td>fn</td>
+<td>Spawns a child with piped stdin/stdout; returns Result<Child, errors::Error>. The Child's write_stdin / close_stdin / read_line / read_stdout / wait / kill methods drive it interactively.</td>
 </tr>
 <tr>
 <td><code>kill</code></td>

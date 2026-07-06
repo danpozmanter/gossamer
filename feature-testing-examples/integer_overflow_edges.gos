@@ -8,11 +8,11 @@ fn main() {
     let max_u64: u64 = 18446744073709551615
 
     // Wrapping / checked behaviour should be consistent
-    let a: i64 = max_i64 - 1
+    let mut a: i64 = max_i64 - 1
     a += 1
     println!("i64 near-max + 1 = {}", a)
 
-    let b: u64 = max_u64 - 2
+    let mut b: u64 = max_u64 - 2
     b += 1
     // Both VM (i64-internal) and compiled tier agree when printing as i64.
     println!("u64 near-max + 1 = {}", b as i64)
@@ -36,7 +36,7 @@ fn main() {
 
     // Explicit widening via intermediate
     let g: i32 = 2147483647
-    let h: i64 = g as i64
+    let mut h: i64 = g as i64
     h += 1
     println!("i32 max widened + 1 = {}", h)
 }

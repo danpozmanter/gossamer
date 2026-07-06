@@ -64,7 +64,9 @@ See [Top-level statements](language/top_level_statements.md).
 ## Why Gossamer
 
 - **Ergonomic** - Forward pipes, Rust-like error handling, minimal magic.
-- **Efficient** - Gossamer runs with minimal impact on memory, and it runs fast.
+- **Efficient** - a small memory footprint, near-instant startup on the
+bytecode VM for a quick edit-run cycle, and native compiled execution
+when you ship a binary.
 - **Interpreted and Compiled** - Develop code quickly with a bytecode vm powered
 interpreter and a REPL. Ship an optimized compiled single binary.
 - **Portable** - First-class on Linux (x86_64 and aarch64, including

@@ -76,3 +76,19 @@ pub(crate) fn with_vm_stack<T: Send + 'static>(f: impl FnOnce() -> T + Send + 's
         .join()
         .unwrap_or_else(|payload| std::panic::resume_unwind(payload))
 }
+
+/// Runs `f` directly on the calling (process main) thread, installing the
+/// native fault handler and arming the recursion guard for this thread's
+/// actual stack size rather than the large [`VM_STACK_BYTES`] reserve a
+/// spawned thread gets. Used by `gos run --main-thread` so native
+/// libraries that mandate the process main thread (GLFW / Cocoa / Metal
+/// on macOS, called through `[rust-bindings]`) can create windows and
+/// pump their event loop. The trade-off is the OS default main-thread
+/// stack, so deeply recursive programs have less headroom here.
+pub(crate) fn on_main_thread<T>(f: impl FnOnce() -> T) -> T {
+    gossamer_runtime::stack_guard::install_stack_guard();
+    let stack =
+        gossamer_runtime::stack_guard::current_thread_stack_size().unwrap_or(VM_STACK_BYTES);
+    gossamer_coro::arm_stack_guard(stack.saturating_sub(gossamer_coro::STACK_GUARD_MARGIN));
+    f()
+}

@@ -10,11 +10,13 @@
 
 #![forbid(unsafe_code)]
 
+mod fuse;
 mod ids;
 mod lift;
 mod lower;
 mod tree;
 
+pub use fuse::fuse_iter_pipelines;
 pub use ids::{HirId, HirIdGenerator};
 pub use lift::{collect_free_vars, collect_pattern_names, lift_closures};
 pub use lower::lower_source_file;

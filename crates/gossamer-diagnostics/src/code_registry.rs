@@ -611,6 +611,16 @@ pub const REGISTRY: &[(&str, &str)] = &[
                      downgrade a heap aggregate (struct / payload enum) instead.",
     ),
     (
+        "GT0030",
+        "An assignment targeted a binding that was not declared `mut`.\n\
+                     `let` and parameter bindings are immutable by default, so a\n\
+                     place rooted at one cannot be written with `=` or a compound\n\
+                     `+=` / `-=` / ... . Declare it `let mut name` (or `mut name`\n\
+                     in the parameter list). Writing through a `&mut T` reference\n\
+                     stays allowed regardless of the pointer binding's own\n\
+                     mutability.",
+    ),
+    (
         "GX0001",
         "A runtime value had the wrong shape for the operation. The\n\
                      interpreter catches this at execution time; the native\n\

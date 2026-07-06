@@ -1,0 +1,12 @@
+---
+source: crates/gossamer-diagnostics/tests/snapshots.rs
+expression: rendered
+---
+--- plain ---
+error[GT0030]: An assignment targeted a binding that was not declared `mut`. - here
+--- framed ---
+error[GT0030]: An assignment targeted a binding that was not declared `mut`.
+  --> snap.gos:2:5
+     2 |     let x = 1
+       |     ^^^^^
+     error: here

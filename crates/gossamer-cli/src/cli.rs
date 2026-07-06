@@ -76,6 +76,14 @@ enum Command {
         /// `GOS_JIT=0` in the environment.
         #[arg(long)]
         no_jit: bool,
+        /// Run the VM on the process main thread instead of a spawned
+        /// thread. Required for `[rust-bindings]` that call native
+        /// libraries which must run on the main thread (GLFW / OpenGL /
+        /// Cocoa / Metal on macOS). The main thread's OS-default stack is
+        /// smaller than the spawned thread's reserve, so deeply recursive
+        /// programs have less headroom.
+        #[arg(long = "main-thread")]
+        main_thread: bool,
         /// Arguments forwarded to the interpreted program (after `--`).
         #[arg(last = true)]
         args: Vec<String>,
@@ -547,11 +555,12 @@ fn dispatch(command: Option<Command>) -> anyhow::Result<()> {
         Some(Command::Run {
             file,
             no_jit,
+            main_thread,
             args,
             locked,
         }) => {
             crate::cmd::pkg::enforce_lockfile_if_requested(locked)?;
-            dispatch_run(file, no_jit, &args)
+            dispatch_run(file, no_jit, main_thread, &args)
         }
         Some(Command::Build {
             file,
@@ -753,14 +762,19 @@ fn dispatch_feature_status(
     })
 }
 
-fn dispatch_run(file: Option<PathBuf>, no_jit: bool, args: &[String]) -> anyhow::Result<()> {
+fn dispatch_run(
+    file: Option<PathBuf>,
+    no_jit: bool,
+    main_thread: bool,
+    args: &[String],
+) -> anyhow::Result<()> {
     // The register-based bytecode VM is the only `gos run` engine;
     // the CLI exposes no engine selection.
     let mode = RunMode::Vm;
     if no_jit {
         gossamer_interp::set_jit_disabled();
     }
-    cmd::run::dispatch(file, mode, args)
+    cmd::run::dispatch(file, mode, main_thread, args)
 }
 
 /// Codegen optimisation level. Both modes go through the LLVM

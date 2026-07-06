@@ -53,7 +53,13 @@ pub fn lower_source_file(
     let mut items = Vec::new();
     let mut module_path: Vec<String> = Vec::new();
     lower_items(&mut lowerer, &source.items, &mut items, &mut module_path);
-    HirProgram { items }
+    let mut program = HirProgram { items };
+    // Fuse `iter::` range pipelines into loops before returning, so every
+    // consumer (the bytecode VM, and the native path that lifts closures
+    // next) sees the same fused HIR. Runs before closure lifting, so
+    // stage/terminal closures are still inline and can be spliced in.
+    crate::fuse::fuse_iter_pipelines(&mut program, &mut *lowerer.tcx, &mut lowerer.ids);
+    program
 }
 
 /// Flattens items in source order, descending into inline modules so

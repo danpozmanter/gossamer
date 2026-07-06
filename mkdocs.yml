@@ -75,6 +75,7 @@ nav:
       - Overview: toolchain.md
       - Lints: toolchain/lints.md
       - Diagnostics: toolchain/diagnostics.md
+      - Building with Zig: toolchain/zig.md
   - Examples: examples.md
   - Production:
       - Deployment: deployment.md

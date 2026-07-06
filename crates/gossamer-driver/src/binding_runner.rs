@@ -1075,19 +1075,21 @@ fn run_cargo_build(
         cmd.arg(kind_flag).arg(kind_value);
     }
     cmd.env("CARGO_TARGET_DIR", target_dir);
-    // Inherit stderr so cargo errors surface immediately. Capture
-    // stdout so progress noise doesn't pollute the user's terminal
-    // unless something fails.
+    // Capture both streams so cargo's progress and diagnostics are shown
+    // only when the build fails, keeping the user's terminal clean on
+    // success while still surfacing errors.
     cmd.stderr(Stdio::piped());
     cmd.stdout(Stdio::piped());
     let mut child = cmd.spawn().map_err(BindingRunnerError::Io)?;
-    let stdout = child.stdout.take();
-    let stderr = child.stderr.take();
-    let stdout_buf = collect_stream(stdout);
-    let stderr_buf = collect_stream(stderr);
+    // Each pipe is drained by its own reader started before `wait`, so a
+    // pipe that fills to its OS buffer limit cannot back-pressure cargo
+    // into blocking on `write` while we block on `wait`. cargo routinely
+    // emits more than a pipe buffer's worth of warnings on stderr.
+    let stdout_reader = spawn_stream_reader(child.stdout.take());
+    let stderr_reader = spawn_stream_reader(child.stderr.take());
     let status = child.wait()?;
-    let stdout_text = stdout_buf.lock().clone();
-    let stderr_text = stderr_buf.lock().clone();
+    let stdout_text = stdout_reader.join().unwrap_or_default();
+    let stderr_text = stderr_reader.join().unwrap_or_default();
     if !status.success() {
         // Forward both streams so the user sees what went wrong.
         let _ = writeln!(io::stderr(), "{stdout_text}");
@@ -1100,19 +1102,20 @@ fn run_cargo_build(
     Ok(())
 }
 
-fn collect_stream<R: Read + Send + 'static>(stream: Option<R>) -> std::sync::Arc<Mutex<String>> {
-    let acc = std::sync::Arc::new(Mutex::new(String::new()));
-    if let Some(mut s) = stream {
-        let acc2 = acc.clone();
-        std::thread::spawn(move || {
-            let mut buf = String::new();
+/// Reads `stream` to EOF on its own thread, returning the join handle so
+/// callers can start a reader for every child pipe before waiting on the
+/// child. Concurrent readers keep any one pipe from filling and blocking
+/// the child mid-write.
+fn spawn_stream_reader<R: Read + Send + 'static>(
+    stream: Option<R>,
+) -> std::thread::JoinHandle<String> {
+    std::thread::spawn(move || {
+        let mut buf = String::new();
+        if let Some(mut s) = stream {
             let _ = s.read_to_string(&mut buf);
-            *acc2.lock() = buf;
-        })
-        .join()
-        .ok();
-    }
-    acc
+        }
+        buf
+    })
 }
 
 fn max_path_dep_mtime(
@@ -1301,6 +1304,31 @@ mod tests {
         let path = dir.join("project.toml");
         fs::write(&path, body).unwrap();
         path
+    }
+
+    // A child that fills its stderr pipe before writing stdout must be
+    // drained by concurrent readers; draining the pipes one after the
+    // other lets the unread pipe fill and wedges the child mid-write,
+    // matching the deadlock `run_cargo_build` avoids for cargo's stderr.
+    #[cfg(unix)]
+    #[test]
+    fn stream_readers_drain_concurrently_without_deadlock() {
+        const STDERR_BYTES: usize = 256 * 1024;
+        let mut child = Command::new("sh")
+            .arg("-c")
+            .arg(format!("yes X | head -c {STDERR_BYTES} 1>&2; printf DONE"))
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn sh");
+        let stdout_reader = spawn_stream_reader(child.stdout.take());
+        let stderr_reader = spawn_stream_reader(child.stderr.take());
+        let status = child.wait().expect("wait");
+        let stdout_text = stdout_reader.join().unwrap();
+        let stderr_text = stderr_reader.join().unwrap();
+        assert!(status.success());
+        assert_eq!(stdout_text, "DONE");
+        assert_eq!(stderr_text.len(), STDERR_BYTES);
     }
 
     #[test]

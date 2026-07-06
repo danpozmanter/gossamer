@@ -121,6 +121,83 @@ fn if_branches_with_matching_types_pass() {
     assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
 }
 
+fn has_immutable_assign(checked: &Checked) -> bool {
+    checked
+        .diagnostics
+        .iter()
+        .any(|d| matches!(d.error, TypeError::AssignToImmutable { .. }))
+}
+
+#[test]
+fn compound_assign_to_immutable_let_is_rejected() {
+    let checked = run("fn main() { let total: i64 = 0\n total += 5 }\n");
+    assert!(
+        has_immutable_assign(&checked),
+        "expected GT0030: {:?}",
+        checked.diagnostics
+    );
+}
+
+#[test]
+fn plain_assign_to_immutable_let_is_rejected() {
+    let checked = run("fn main() { let x: i64 = 0\n x = 5 }\n");
+    assert!(has_immutable_assign(&checked), "{:?}", checked.diagnostics);
+}
+
+#[test]
+fn assign_to_mut_let_is_accepted() {
+    let checked = run("fn main() { let mut total: i64 = 0\n total += 5 }\n");
+    assert!(
+        !has_immutable_assign(&checked),
+        "unexpected GT0030: {:?}",
+        checked.diagnostics
+    );
+}
+
+#[test]
+fn assign_to_immutable_parameter_is_rejected() {
+    let checked = run("fn f(x: i64) -> i64 { x += 1\n x }\n");
+    assert!(has_immutable_assign(&checked), "{:?}", checked.diagnostics);
+}
+
+#[test]
+fn assign_to_mut_parameter_is_accepted() {
+    let checked = run("fn f(mut x: i64) -> i64 { x += 1\n x }\n");
+    assert!(
+        !has_immutable_assign(&checked),
+        "unexpected GT0030: {:?}",
+        checked.diagnostics
+    );
+}
+
+#[test]
+fn field_assign_through_immutable_binding_is_rejected() {
+    let checked = run("struct P { x: i64 }\nfn main() { let p = P { x: 1 }\n p.x = 5 }\n");
+    assert!(has_immutable_assign(&checked), "{:?}", checked.diagnostics);
+}
+
+#[test]
+fn field_assign_through_mut_binding_is_accepted() {
+    let checked = run("struct P { x: i64 }\nfn main() { let mut p = P { x: 1 }\n p.x = 5 }\n");
+    assert!(
+        !has_immutable_assign(&checked),
+        "unexpected GT0030: {:?}",
+        checked.diagnostics
+    );
+}
+
+#[test]
+fn write_through_mut_reference_parameter_is_accepted() {
+    // The `p` binding is not itself `mut`, but a `&mut P` reference makes
+    // the pointed-to place writable - matching Rust and not a false GT0030.
+    let checked = run("struct P { x: i64 }\nfn bump(p: &mut P) { p.x = 9 }\n");
+    assert!(
+        !has_immutable_assign(&checked),
+        "unexpected GT0030: {:?}",
+        checked.diagnostics
+    );
+}
+
 #[test]
 fn comparison_produces_bool() {
     let checked = run("fn main() { let b = 1i32 < 2i32 }\n");

@@ -1669,6 +1669,93 @@ fn examples_rust_binding_add_project_tests_all_pass() {
 }
 
 #[test]
+fn jit_compiled_binding_call_resolves_predeclared_symbol() {
+    // A [rust-bindings] call reached from a JIT-compiled function must
+    // resolve its `gos_binding_*` symbol from the intrinsic cache that
+    // the pre-declare phase fills. Otherwise the first reference lands in
+    // the Cranelift parallel phase, where OfflineModule::declare_function
+    // is unreachable, and the gos-vm thread aborts. Forcing an immediate
+    // JIT (GOSSAMER_JIT_THRESHOLD=1) over a hot loop drives that path.
+    let addlib = examples_dir()
+        .join("projects")
+        .join("rust_binding_add")
+        .join("addlib");
+    assert!(
+        addlib.join("Cargo.toml").is_file(),
+        "missing addlib crate at {}",
+        addlib.display()
+    );
+    let workspace_root = examples_dir()
+        .parent()
+        .expect("workspace root")
+        .to_path_buf();
+
+    let tmp = env::temp_dir().join(format!("gos-jit-binding-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(tmp.join("src")).expect("create src");
+    std::fs::write(
+        tmp.join("project.toml"),
+        format!(
+            "[project]\nid = \"example.com/jitbind\"\nversion = \"0.1.0\"\n\n\
+             [rust-bindings]\naddlib = {{ path = {addlib:?} }}\n"
+        ),
+    )
+    .expect("write project.toml");
+    std::fs::write(
+        tmp.join("src").join("main.gos"),
+        "use addlib::add\n\
+         fn hot(x: i64) -> i64 { add(x, 1) }\n\
+         fn main() {\n    \
+             let mut total: i64 = 0\n    \
+             for i in 0..3000 { total += hot(i) }\n    \
+             println!(\"total = {}\", total)\n\
+         }\n",
+    )
+    .expect("write main.gos");
+
+    let out = Command::new(gos_bin())
+        .arg("run")
+        .arg("src/main.gos")
+        .current_dir(&tmp)
+        .env("GOSSAMER_ROOT", &workspace_root)
+        .env("GOSSAMER_CACHE", tmp.join("cache"))
+        .env("GOSSAMER_JIT_THRESHOLD", "1")
+        .output()
+        .expect("spawn run");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let _ = std::fs::remove_dir_all(&tmp);
+    assert!(
+        out.status.success(),
+        "gos run aborted on a JIT-compiled binding call\nstdout: {stdout}\nstderr: {stderr}"
+    );
+    // sum_{i=0}^{2999} add(i, 1) == sum(1..=3000) == 3000 * 3001 / 2.
+    assert!(
+        stdout.contains("total = 4501500"),
+        "unexpected output:\nstdout: {stdout}\nstderr: {stderr}"
+    );
+}
+
+#[test]
+fn run_main_thread_flag_executes_program() {
+    // `gos run --main-thread` runs the VM on the process main thread
+    // (for native libraries that require it) instead of the spawned
+    // `gos-vm` thread. The program must still execute correctly.
+    let fixture = write_fixture("main-thread", "fn main() { println!(\"mt {}\", 40 + 2) }\n");
+    let out = Command::new(gos_bin())
+        .arg("run")
+        .arg("--main-thread")
+        .arg(&fixture)
+        .output()
+        .expect("spawn run --main-thread");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let _ = std::fs::remove_file(&fixture);
+    assert!(out.status.success(), "stderr: {stderr}");
+    assert!(stdout.contains("mt 42"), "unexpected output: {stdout}");
+}
+
+#[test]
 fn skill_prompt_subcommand_prints_skill_card() {
     let out = Command::new(gos_bin())
         .arg("skill-prompt")

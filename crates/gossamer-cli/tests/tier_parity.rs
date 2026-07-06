@@ -268,6 +268,11 @@ const SPECS: &[Spec] = &[
     // accumulator write-back, continue/break/label routing, and empty/
     // single-iteration bounds must stay bit-identical across tiers.
     spec("feature-testing-examples/loop_arith_fusion.gos"),
+    // `iter::` combinator chains over integer ranges fuse to a single loop
+    // with the stage/terminal closures inlined (filter/map/sum_by/sum/
+    // count/product/fold/for_each/any/all). Every fused shape must produce
+    // the same result the eager combinator path would across all tiers.
+    spec("feature-testing-examples/iter_pipeline_fusion.gos"),
     // A recursive Box-enum cloned in a loop (the original stays live) must
     // retain each iteration's clone; the loop-carried read must not be
     // move-elided. Covers the sequential and goroutine-shared (captured) paths

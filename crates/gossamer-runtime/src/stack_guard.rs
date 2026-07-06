@@ -104,6 +104,24 @@ pub fn clear_jit_breadcrumb() {
     JIT_BODY_PTR.store(std::ptr::null_mut(), Ordering::Release);
 }
 
+/// Total stack size in bytes of the calling thread, or `None` when the
+/// platform cannot report it. The byte-budget recursion guard uses this
+/// to size itself when the VM runs on the process main thread (`gos run
+/// --main-thread`), whose stack is the OS default rather than the large
+/// reserve a spawned VM thread receives.
+#[must_use]
+pub fn current_thread_stack_size() -> Option<usize> {
+    #[cfg(unix)]
+    {
+        let (lo, hi) = unix::thread_stack_bounds();
+        (hi > lo).then(|| hi - lo)
+    }
+    #[cfg(not(unix))]
+    {
+        None
+    }
+}
+
 /// Composes the fault note into `scratch`, returning its byte length.
 /// Always produces a line on a non-stack-overflow fault: it names the
 /// JIT-compiled body that was running, or states the fault was outside
@@ -284,6 +302,13 @@ mod unix {
             }
             (lo, hi)
         }
+    }
+
+    /// Stack `(lo, hi)` bounds of the calling thread, or `(0, 0)` when the
+    /// platform cannot report them. Resolves to the active per-target
+    /// `discover_stack_bounds`.
+    pub(super) fn thread_stack_bounds() -> (usize, usize) {
+        discover_stack_bounds()
     }
 
     /// Whether the calling thread is the process main thread. On Linux the

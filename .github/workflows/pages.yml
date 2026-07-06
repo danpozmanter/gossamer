@@ -92,7 +92,14 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: github-pages
-      url: ${{ steps.deploy.outputs.page_url }}
+      url: ${{ steps.deploy.outputs.page_url || steps.deploy-retry.outputs.page_url }}
     steps:
+      # The Pages backend can transiently reject an otherwise-valid publish
+      # ("Deployment failed, try again later."). The uploaded artifact and the
+      # deployment are idempotent, so re-attempt once before failing the job.
       - id: deploy
+        uses: actions/deploy-pages@v5
+        continue-on-error: true
+      - id: deploy-retry
+        if: steps.deploy.outcome == 'failure'
         uses: actions/deploy-pages@v5

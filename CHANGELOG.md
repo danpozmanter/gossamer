@@ -1,5 +1,43 @@
 # Changelog
 
+## 0.24.1 - Iterator fusion, mutability enforcement, rust-bindings fixes
+
+### Performance
+
+- **Iterator pipeline fusion.** An `iter::` combinator chain over an
+  integer range (`filter` / `map` stages feeding `sum` / `sum_by` /
+  `count` / `product` / `product_by` / `fold` / `for_each` / `any` /
+  `all`) compiles to a single loop with its closures inlined, matching a
+  hand-written accumulator loop with no intermediate allocation, and
+  identically across the bytecode VM, Cranelift JIT, and LLVM AOT.
+
+### Correctness
+
+- **Mutability is enforced.** Assigning to a `let` binding or parameter
+  not declared `mut` is now a compile error (GT0030). Writes through a
+  `&mut` reference and in-place mutating methods are unaffected.
+
+### Language runtime
+
+- **`gos run --main-thread`.** Runs the VM on the process main thread so
+  `[rust-bindings]` crates can call native libraries that require it
+  (GLFW, OpenGL, Cocoa, Metal).
+
+### Rust bindings
+
+- `gos run` / `gos build` no longer hang when a binding's `cargo build`
+  emits more than a pipe buffer's worth of output.
+- A `[rust-bindings]` call reached from a JIT- or AOT-compiled function
+  no longer aborts the compiler.
+
+### Packaging and docs
+
+- A statically linked `x86_64` musl `gos` binary is published alongside
+  the glibc build.
+- The language tour bundles CodeMirror as a local asset instead of
+  loading it from a third-party CDN.
+- New guide: building native binaries with zig.
+
 ## 0.24.0 - Performance, correctness, ergonomics (syntax, gos mcp)
 
 A broad performance, correctness, and hardening release driven by a

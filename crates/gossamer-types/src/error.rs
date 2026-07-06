@@ -362,6 +362,14 @@ pub enum TypeError {
         /// The payload shape the data slot requires (`Option`/`Result`).
         shape: String,
     },
+    /// An assignment (`=` or a compound `+=` / ...) targets a binding
+    /// that was not declared `mut`. `let`/parameter bindings are
+    /// immutable by default; a place rooted at one cannot be written.
+    #[error("cannot assign to immutable binding `{name}`")]
+    AssignToImmutable {
+        /// Name of the immutable root binding.
+        name: String,
+    },
 }
 
 impl TypeError {
@@ -399,6 +407,7 @@ impl TypeError {
             Self::JsonValuePatternUnsupported { .. } => "json-value-pattern-unsupported",
             Self::WeakDowngradeNonRc { .. } => "weak-downgrade-non-rc",
             Self::CombinatorDataArgMismatch { .. } => "combinator-data-arg-mismatch",
+            Self::AssignToImmutable { .. } => "assign-to-immutable",
         }
     }
 
@@ -435,6 +444,7 @@ impl TypeError {
             Self::JsonValuePatternUnsupported { .. } => "GT0027",
             Self::WeakDowngradeNonRc { .. } => "GT0028",
             Self::CombinatorDataArgMismatch { .. } => "GT0029",
+            Self::AssignToImmutable { .. } => "GT0030",
         }
     }
 }
@@ -691,6 +701,16 @@ impl TypeDiagnostic {
                         "a scalar / `Option` / `Result` is a by-value word with no RC header, \
                          so `Weak` of it would read a header off the value's bits and fault \
                          on the compiled tiers",
+                    );
+            }
+            TypeError::AssignToImmutable { name } => {
+                out = out
+                    .with_help(format!(
+                        "declare it mutable: `let mut {name} = ...` (or `mut {name}` in the \
+                         parameter list)"
+                    ))
+                    .with_note(
+                        "bindings are immutable by default; only a `mut` place can be assigned",
                     );
             }
         }
