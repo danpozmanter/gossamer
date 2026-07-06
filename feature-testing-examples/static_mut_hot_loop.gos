@@ -1,0 +1,22 @@
+// `static mut` scalar load/store lowered natively by the Cranelift JIT/AOT
+// backend. Previously any `static mut` access declined the body to the VM,
+// which poisoned whole-module JIT: a hot loop sharing a module with a
+// static-mut'd LCG ran entirely interpreted. Here `next` reads and writes the
+// seed through the shared backing cell while `main`'s loop is JIT-promoted, so
+// the compiled cell and the VM cell must agree bit-for-bit across VM /
+// Cranelift / LLVM.
+
+static mut SEED: i64 = 88172645463325252
+
+fn next() -> i64 {
+    SEED = SEED * 6364136223846793005 + 1442695040888963407
+    (SEED >> 33) & 0x7fffffff
+}
+
+fn main() {
+    let mut acc: i64 = 0
+    for _ in 0..2000000 {
+        acc = (acc + next() % 1000) % 1000000007
+    }
+    println!("{}", acc)
+}

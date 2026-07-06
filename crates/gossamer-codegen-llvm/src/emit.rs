@@ -712,7 +712,13 @@ fn compile_bodies_parallel_incremental(
     // Partition all bodies into N chunks. Chunk assignment is deterministic
     // so the cache key is stable across builds with identical bodies.
     //
-    let ideal_n_chunks = PARALLEL_MAX_THREADS.min(bodies.len());
+    // Scale the parallel-codegen fan-out to the host's core count (falling
+    // back to PARALLEL_MAX_THREADS) so a large program uses every core. The
+    // div_ceil(MIN_BODIES_PER_CHUNK) cap below still keeps >= 10 bodies per
+    // chunk, so more cores never shrink chunks past the inlining floor.
+    let max_threads =
+        std::thread::available_parallelism().map_or(PARALLEL_MAX_THREADS, std::num::NonZero::get);
+    let ideal_n_chunks = max_threads.min(bodies.len());
     let n_chunks = ideal_n_chunks
         .min(bodies.len().div_ceil(MIN_BODIES_PER_CHUNK))
         .max(1);

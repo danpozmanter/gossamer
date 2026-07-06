@@ -273,6 +273,11 @@ const SPECS: &[Spec] = &[
     // count/product/fold/for_each/any/all). Every fused shape must produce
     // the same result the eager combinator path would across all tiers.
     spec("feature-testing-examples/iter_pipeline_fusion.gos"),
+    // `static mut` scalar load/store lowered natively: an LCG advances a
+    // static-mut seed in a helper while `main`'s hot loop is JIT-promoted.
+    // The compiled backing cell and the VM's shared cell must agree, and the
+    // static must not poison whole-module JIT the way the VM-only decline did.
+    spec("feature-testing-examples/static_mut_hot_loop.gos"),
     // A recursive Box-enum cloned in a loop (the original stays live) must
     // retain each iteration's clone; the loop-carried read must not be
     // move-elided. Covers the sequential and goroutine-shared (captured) paths

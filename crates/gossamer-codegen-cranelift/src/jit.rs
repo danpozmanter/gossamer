@@ -537,6 +537,66 @@ pub fn jit_eager_loop_bodies(
         .collect()
 }
 
+/// Every `static mut` symbol read or written by `body`.
+fn body_static_symbols(body: &Body) -> Vec<&str> {
+    use gossamer_mir::{Rvalue, StatementKind};
+    let mut out: Vec<&str> = Vec::new();
+    for block in &body.blocks {
+        for stmt in &block.stmts {
+            match &stmt.kind {
+                StatementKind::Assign {
+                    rvalue: Rvalue::StaticLoad(sref),
+                    ..
+                } => out.push(sref.symbol.as_str()),
+                StatementKind::StaticStore { target, .. } => out.push(target.symbol.as_str()),
+                _ => {}
+            }
+        }
+    }
+    out
+}
+
+/// Removes from `compile_set` every body that accesses a `static mut` shared
+/// with a body outside the set. A JIT-compiled body reads and writes the
+/// static's native backing cell; a body left on the VM reads and writes the
+/// VM's separate `Global::MutStatic` cell. Correctness requires every accessor
+/// of a static to sit on the same side of the tier boundary, so if any accessor
+/// is not compiled, none of them are - they all fall back to the VM's one
+/// shared cell. Iterated to a fixpoint because dropping one accessor can strand
+/// another static's last remaining compiled accessor.
+fn restrict_static_leaky_bodies<'a>(
+    compile_set: &mut std::collections::HashSet<&'a str>,
+    bodies: &'a [Body],
+) {
+    let mut accessors: HashMap<&'a str, Vec<&'a str>> = HashMap::new();
+    for b in bodies {
+        for sym in body_static_symbols(b) {
+            accessors.entry(sym).or_default().push(b.name.as_str());
+        }
+    }
+    if accessors.is_empty() {
+        return;
+    }
+    loop {
+        let mut to_remove: std::collections::HashSet<&str> = std::collections::HashSet::new();
+        for bods in accessors.values() {
+            if !bods.iter().all(|n| compile_set.contains(n)) {
+                for n in bods {
+                    if compile_set.contains(n) {
+                        to_remove.insert(*n);
+                    }
+                }
+            }
+        }
+        if to_remove.is_empty() {
+            break;
+        }
+        for n in to_remove {
+            compile_set.remove(n);
+        }
+    }
+}
+
 /// Compiles every body in `bodies` through cranelift-jit and returns
 /// the resulting handle table. Functions whose codegen path errors,
 /// or whose ABI shape is not supported by the dispatch trampoline,
@@ -558,7 +618,10 @@ pub fn compile_to_jit(
     // empty artifact without instantiating the JIT module: building it
     // faults in the Cranelift compiler (~5 MB resident) that this
     // program would never benefit from.
-    let compile_set = jit_compile_set(bodies, tcx, enum_shapes, struct_shapes);
+    let mut compile_set = jit_compile_set(bodies, tcx, enum_shapes, struct_shapes);
+    // Keep every accessor of a `static mut` on the same tier: a compiled body
+    // uses the static's native cell, a VM body its `Global::MutStatic` cell.
+    restrict_static_leaky_bodies(&mut compile_set, bodies);
     if compile_set.is_empty() {
         return Ok(JitArtifact {
             module: None,
@@ -592,8 +655,16 @@ pub fn compile_to_jit(
             if std::env::var("GOS_JIT_TRACE").is_ok() {
                 eprintln!("jit: module build failed ({err}); retrying without main");
             }
-            let without_main: Vec<Body> =
-                filtered.into_iter().filter(|b| b.name != "main").collect();
+            // Dropping `main` sends it to the VM; re-run the static-mut
+            // connectivity check so no compiled body is left sharing a static
+            // with the now-interpreted `main`. `compile_set` still borrows
+            // `bodies` (not `filtered`), so it survives moving `filtered`.
+            compile_set.retain(|n| *n != "main");
+            restrict_static_leaky_bodies(&mut compile_set, bodies);
+            let without_main: Vec<Body> = filtered
+                .into_iter()
+                .filter(|b| compile_set.contains(b.name.as_str()))
+                .collect();
             if without_main.is_empty() {
                 return Ok(JitArtifact {
                     module: None,

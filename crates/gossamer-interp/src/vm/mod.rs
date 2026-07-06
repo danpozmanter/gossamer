@@ -1133,6 +1133,7 @@ fn record_shape(state: &ChunkState, cache_idx: u16, observed: u8) {
 /// shape and quickens the slot. String concatenation lives here
 /// because `+` is the only Gossamer operator that overloads onto
 /// `Value::String`.
+#[inline]
 fn adaptive_add(
     state: &ChunkState,
     cache_idx: u16,
@@ -1179,6 +1180,7 @@ fn adaptive_add(
     clippy::too_many_arguments,
     reason = "lowering plumbing - every parameter is needed by the surrounding pipeline"
 )]
+#[inline]
 fn adaptive_arith(
     state: &ChunkState,
     cache_idx: u16,
@@ -1209,6 +1211,7 @@ fn adaptive_arith(
 /// Specialised dispatch for `Op::DivInt`. Integer divide-by-zero
 /// surfaces as a runtime error, so the int-int hot path still
 /// has to branch on `y == 0`. Float division never errors.
+#[inline]
 fn adaptive_div(
     state: &ChunkState,
     cache_idx: u16,
@@ -1237,6 +1240,7 @@ fn adaptive_div(
 }
 
 /// Specialised dispatch for `Op::RemInt`. Mirrors [`adaptive_div`].
+#[inline]
 fn adaptive_rem(
     state: &ChunkState,
     cache_idx: u16,

@@ -115,8 +115,11 @@ A `MultiScheduler` owns:
 `go expr(args)` is a real stackful coroutine. Construction:
 
 1. `gossamer_runtime::sched_global::spawn(closure)` allocates a
-   16 KiB `corosensei::Coroutine` stack (override:
-   `GOSSAMER_GOROUTINE_STACK=N`).
+   1 MiB `corosensei::Coroutine` stack (override:
+   `GOSSAMER_GOROUTINE_STACK=N`). The stack is an `mmap` reservation
+   fronted by a guard page; the OS commits pages on first touch, so
+   resident memory tracks the depth a goroutine actually uses rather
+   than the reservation. See [Goroutine stack model](goroutine_stacks.md).
 2. The coroutine's entry shim publishes its `Yielder` pointer to a
    shared slot, sets the worker's TLS yielder, then runs `closure`.
 3. The scheduler wraps the coroutine in a `GoroutineTask` whose
@@ -136,9 +139,14 @@ task back onto the injector. Any free worker picks it up and
 resumes the coroutine - possibly on a different OS thread than the
 one it suspended on.
 
-A blocked goroutine costs ~16 KiB of mmap'd stack, not an OS
-thread. 10 000 idle goroutines fit on a 4-worker scheduler in
-roughly 160 MiB of address space.
+A blocked goroutine costs only the few KiB of stack its shallow
+frame actually touched - not an OS thread, and not the 1 MiB
+reservation. Thousands of concurrent goroutines stay in the tens of
+MiB of resident memory; the 1 MiB reservations consume address space
+(abundant on 64-bit) that never becomes resident until used. The
+[Goroutine stack model](goroutine_stacks.md) note explains why this
+guard-page / lazy-commit scheme was chosen over Go-style copyable
+stacks.
 
 The wake-before-park race window (where `unpark(gid)` arrives
 before the goroutine has actually been moved into `parked`) is

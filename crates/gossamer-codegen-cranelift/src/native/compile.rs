@@ -685,6 +685,20 @@ pub(crate) fn lower_program_full(
         }
     }
 
+    // Pre-intern every scalar `static mut` referenced by a load or store so
+    // the parallel phase resolves the backing writable data object from the
+    // intrinsic cache instead of calling declare_data on the OfflineModule.
+    // Non-scalar statics are left un-interned: their lowering declines the
+    // body, which then runs on the VM.
+    for body in bodies {
+        for sref in collect_body_static_refs(body) {
+            if is_scalar_static_ty(tcx, sref.ty) {
+                let cl_ty = cl_type_of(tcx, sref.ty, module);
+                intrinsics.intern_static(module, sref, cl_ty)?;
+            }
+        }
+    }
+
     // N9-C: Build the OfflineModule snapshot. From this point the real
     // ObjectModule is only needed for define_function (N9-E below).
     let offline = build_offline_module(module, &intrinsics, &function_ids_by_name);

@@ -910,11 +910,21 @@ pub(super) fn lower_rvalue_into(
         Rvalue::CallIntrinsic { .. } => {
             unreachable!("CallIntrinsic must be routed through the statement path")
         }
-        // `static mut` access has no Cranelift JIT lowering; declining
-        // the body keeps it on the bytecode VM, which handles the
-        // shared cell correctly.
-        Rvalue::StaticLoad(_) => {
-            bail!("native codegen: static mut load unsupported; running on VM")
+        // `static mut` scalar read: load from the static's backing writable
+        // data object. Non-scalar statics (String/aggregate) keep the VM
+        // fallback since their init is a heap value, not an inline word.
+        Rvalue::StaticLoad(sref) => {
+            if !is_scalar_static_ty(tcx, sref.ty) {
+                bail!(
+                    "native codegen: static mut load of non-scalar type unsupported; running on VM"
+                )
+            }
+            let cl_ty = cl_type_of(tcx, sref.ty, module);
+            let data_id = intrinsics.intern_static(module, sref, cl_ty)?;
+            let ptr_ty = module.target_config().pointer_type();
+            let gv = module.declare_data_in_func(data_id, builder.func);
+            let addr = builder.ins().global_value(ptr_ty, gv);
+            builder.ins().load(cl_ty, MemFlags::trusted(), addr, 0)
         }
     })
 }

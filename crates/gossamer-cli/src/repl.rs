@@ -173,6 +173,31 @@ pub(crate) fn cmd_repl() -> Result<()> {
             continue;
         }
 
+        // An assignment (`name = "Mark"`, `count += 1`, ...) mutates a binding
+        // from an earlier input. Accumulate it in order with the `let`s so the
+        // mutation re-applies before every later input, and run it once now for
+        // its effect. A failure (unknown or immutable target) rolls it back and
+        // reports the error, leaving the session unchanged.
+        if input_is_assignment(trimmed) {
+            lets.push(trimmed.to_string());
+            let probe_body = format!("{}\n    ()\n", lets.join("\n    "));
+            let probe = format!(
+                "{}\nfn __irepl_{n}() {{\n    {body}}}\n",
+                declarations.join("\n"),
+                n = input_no,
+                body = probe_body,
+            );
+            match build_and_call(&probe, &format!("__irepl_{input_no}")) {
+                Ok(_) => {}
+                Err(msg) => {
+                    lets.pop();
+                    eprintln!("{}: {msg}", crate::style::error("error"));
+                }
+            }
+            input_no += 1;
+            continue;
+        }
+
         let let_body = if lets.is_empty() {
             String::new()
         } else {
@@ -201,6 +226,46 @@ pub(crate) fn cmd_repl() -> Result<()> {
         }
         input_no += 1;
     }
+}
+
+/// True when `input` is a single assignment statement (`x = e`, `x += e`,
+/// `x.f = e`, `x[i] = e`, `*x = e`). Such a statement mutates a binding
+/// introduced by an earlier input; the REPL accumulates it alongside the
+/// `let`s so the write survives into later inputs, rather than applying it in a
+/// throwaway frame that is then discarded. Parsing (instead of scanning for an
+/// `=`) keeps `==` / `<=` comparisons and `let` initializers from being misread
+/// as assignments.
+fn input_is_assignment(input: &str) -> bool {
+    use gossamer_ast::{ExprKind, ItemKind, StmtKind};
+    let source = format!("fn __irepl_classify() {{ {input} }}\n");
+    let mut map = gossamer_lex::SourceMap::new();
+    let file = map.add_file("irepl-classify".to_string(), source.clone());
+    let (sf, diags) = gossamer_parse::parse_source_file(&source, file);
+    if !diags.is_empty() {
+        return false;
+    }
+    let Some(item) = sf.items.first() else {
+        return false;
+    };
+    let ItemKind::Fn(decl) = &item.kind else {
+        return false;
+    };
+    let Some(body) = &decl.body else {
+        return false;
+    };
+    let ExprKind::Block(block) = &body.kind else {
+        return false;
+    };
+    // A bare `x = e` (no trailing `;`) parses as the block's tail expression;
+    // `x = e;` parses as the final statement. Check whichever carries the value.
+    let target = block.tail.as_deref().or_else(|| match block.stmts.last() {
+        Some(stmt) => match &stmt.kind {
+            StmtKind::Expr { expr, .. } => Some(expr.as_ref()),
+            _ => None,
+        },
+        None => None,
+    });
+    matches!(target.map(|e| &e.kind), Some(ExprKind::Assign { .. }))
 }
 
 /// Validates that the accumulated declarations parse, resolve, and

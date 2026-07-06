@@ -90,6 +90,37 @@ fn repl_persists_bindings_across_lines() {
 }
 
 #[test]
+fn repl_mutable_assignment_persists_across_lines() {
+    // Regression (issue #14): reassigning a `let mut` binding from an earlier
+    // input was applied in a throwaway frame and discarded, so a later read
+    // still saw the original value.
+    let out = run_repl("let mut name = \"Steven\"\nname = \"Mark\"\nname\n");
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        out.stdout.contains("Out[3]: Mark"),
+        "reassignment to `name` did not persist; stdout: {}",
+        out.stdout
+    );
+    assert!(
+        !out.stdout.contains("Steven"),
+        "stale value returned after reassignment; stdout: {}",
+        out.stdout
+    );
+}
+
+#[test]
+fn repl_compound_assignment_accumulates_across_lines() {
+    // `+=` on a persisted binding must fold across inputs, in order.
+    let out = run_repl("let mut c = 0\nc += 5\nc += 3\nc\n");
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        out.stdout.contains("Out[4]: 8"),
+        "compound assignment did not accumulate; stdout: {}",
+        out.stdout
+    );
+}
+
+#[test]
 fn repl_prints_runtime_error_without_crashing() {
     let out = run_repl("panic!(\"boom\")\n1 + 1\n");
     assert!(

@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.24.2 - static mut JIT lowering, parallel codegen scaling
+
+### Performance
+
+- **`static mut` compiles natively instead of declining to the VM.** A
+  scalar `static mut` load or store now lowers to a native access on the
+  Cranelift tier. Previously any `static mut` access kept its whole body
+  on the bytecode VM, and one such access anywhere in a module held the
+  entire module interpreted, so a hot loop sharing a module with a
+  `static mut` counter never reached native code. Such programs now
+  promote under `gos run`, byte-identical across the VM, Cranelift JIT,
+  and LLVM AOT. Every accessor of a static stays on one tier so the
+  compiled cell and the interpreter's cell never diverge.
+- **Parallel codegen fan-out scales to the host core count.** The LLVM
+  backend's object-chunk fan-out follows `available_parallelism` rather
+  than a fixed cap, while still holding enough bodies per chunk to
+  preserve cross-body inlining.
+- **Interpreter arithmetic dispatch inlines its hot path.** The adaptive
+  integer and float arithmetic handlers fold into the bytecode dispatch
+  loop.
+
+### Fixes
+
+- **REPL reassignments persist across inputs.** Assigning to a `let mut`
+  binding from an earlier line (`name = "Mark"`) is now carried into later
+  lines instead of being applied in a throwaway frame and discarded;
+  compound assignments (`count += 1`) fold across lines in order.
+
 ## 0.24.1 - Iterator fusion, mutability enforcement, rust-bindings fixes
 
 ### Performance

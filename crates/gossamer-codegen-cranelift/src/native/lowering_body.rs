@@ -184,6 +184,26 @@ pub(super) fn collect_body_str_consts(body: &Body) -> Vec<String> {
     out
 }
 
+/// Every `static mut` referenced by a load or store in `body`, so the caller
+/// can pre-intern the backing writable data object in the real module before
+/// the parallel IR phase (the `OfflineModule` panics on `declare_data`).
+pub(super) fn collect_body_static_refs(body: &Body) -> Vec<&gossamer_mir::StaticRef> {
+    let mut out: Vec<&gossamer_mir::StaticRef> = Vec::new();
+    for block in &body.blocks {
+        for stmt in &block.stmts {
+            match &stmt.kind {
+                StatementKind::Assign {
+                    rvalue: Rvalue::StaticLoad(sref),
+                    ..
+                } => out.push(sref),
+                StatementKind::StaticStore { target, .. } => out.push(target),
+                _ => {}
+            }
+        }
+    }
+    out
+}
+
 /// Upper bound (in 8-byte slots) on an aggregate that may be constructed or
 /// copied into a frame stack slot rather than a heap block. Structs and tuples
 /// stay well under it; a large `[v; N]` array exceeds it and keeps its heap

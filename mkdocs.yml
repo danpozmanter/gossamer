@@ -89,6 +89,7 @@ nav:
   - Design notes:
       - Diagnostics style: design/diagnostics.md
       - Runtime internals: design/runtime.md
+      - Goroutine stack model: design/goroutine_stacks.md
       - Self-hosting study: design/selfhosting.md
   - Skill card: skill_card.md
   - Security: security.md

@@ -146,6 +146,11 @@ pub(super) struct IntrinsicContext {
     /// symbol (`gos_rc_meta_<id>`). Deduped so a variant constructed at
     /// many sites shares one data object.
     pub(super) rc_metas: HashMap<String, DataId>,
+    /// Cached `DataId` for each scalar `static mut`'s backing writable data
+    /// object, keyed by the static's mangled symbol. A read in `main` and a
+    /// write in a helper both resolve to this one cell so mutations persist
+    /// across the compiled module.
+    pub(super) statics: HashMap<String, DataId>,
     /// Monotonic counter for freshly-generated rodata symbol names.
     pub(super) next_str_id: u32,
     /// Mirror of `function_ids_by_name` from [`compile_to_object`].
@@ -217,6 +222,7 @@ impl IntrinsicContext {
             strings: HashMap::new(),
             externs: HashMap::new(),
             rc_metas: HashMap::new(),
+            statics: HashMap::new(),
             next_str_id: 0,
             functions: HashMap::new(),
             functions_by_def: HashMap::new(),
@@ -291,6 +297,52 @@ impl IntrinsicContext {
         let global = module.declare_data_in_func(data_id, builder.func);
         let base = builder.ins().global_value(ptr_ty, global);
         builder.ins().iadd_imm(base, 5)
+    }
+
+    /// Returns the `DataId` for a scalar `static mut`'s backing writable
+    /// data object, defining it on first use with the const initializer
+    /// written little-endian at the storage width. `cl_ty` is the storage
+    /// type from [`cl_type_of`]; callers restrict `sref` to a scalar type,
+    /// so every load and store of the static within the module shares this
+    /// one cell (matching the LLVM backend's single coalesced global).
+    pub(super) fn intern_static(
+        &mut self,
+        module: &mut dyn Module,
+        sref: &gossamer_mir::StaticRef,
+        cl_ty: ir::Type,
+    ) -> Result<DataId> {
+        if let Some(id) = self.statics.get(&sref.symbol).copied() {
+            return Ok(id);
+        }
+        let id = module
+            .declare_data(&sref.symbol, Linkage::Local, true, false)
+            .map_err(|e| anyhow!("declare static {}: {e}", sref.symbol))?;
+        let raw: u64 = match &sref.init {
+            ConstValue::Int(n) => i64_truncate(*n) as u64,
+            ConstValue::Bool(b) => u64::from(*b),
+            ConstValue::Char(c) => u64::from(u32::from(*c)),
+            ConstValue::Float(bits) => {
+                if cl_ty == types::F32 {
+                    u64::from((f64::from_bits(*bits) as f32).to_bits())
+                } else {
+                    *bits
+                }
+            }
+            ConstValue::Unit => 0,
+            ConstValue::Str(_) => {
+                bail!("native codegen: static mut string init unsupported; running on VM")
+            }
+        };
+        let width = cl_ty.bytes() as usize;
+        let bytes = raw.to_le_bytes()[..width].to_vec();
+        let mut description = DataDescription::new();
+        description.define(bytes.into_boxed_slice());
+        description.set_align(8);
+        module
+            .define_data(id, &description)
+            .map_err(|e| anyhow!("define static {}: {e}", sref.symbol))?;
+        self.statics.insert(sref.symbol.clone(), id);
+        Ok(id)
     }
 
     /// Returns the `DataId` for an RC type-meta blob, defining a
