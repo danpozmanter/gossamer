@@ -35,6 +35,7 @@ fn main() {
     let strong = Node::Pair(10, 20)
     let w = strong.downgrade()
     println!("alive_sum={}", describe(w))
+    let _keep_strong_alive = strong
 
     // Copying a weak keeps observing the same referent.
     let strong2 = Node::Leaf(5)
@@ -48,6 +49,7 @@ fn main() {
         },
         None => println!("copy_dead"),
     }
+    let _keep_strong2_alive = strong2
 
     // `if let` upgrade form on a live referent.
     let strong3 = Node::Leaf(7)
@@ -61,6 +63,7 @@ fn main() {
     } else {
         println!("iflet_dead")
     }
+    let _keep_strong3_alive = strong3
 
     // Dead: the referent was dropped at the end of make_dead_weak.
     let dead = make_dead_weak()

@@ -81,4 +81,5 @@ fn main() {
         }
     }
     println!("iflet_hits={}", hits)
+    let _keep_strong_alive = strong
 }

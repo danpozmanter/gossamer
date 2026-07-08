@@ -180,6 +180,10 @@ fn jit_divide_by_zero_is_clean_panic_not_trap() {
     // code and a GX0005 message; a trap kills the child by signal.
     const CHILD_ENV: &str = "GOS_JIT_DIVZERO_CHILD";
     if std::env::var(CHILD_ENV).is_ok() {
+        // Keep this regression body small while still forcing promotion in the
+        // child: production tiering now has a work floor that can otherwise
+        // leave the tiny one-trip loop on bytecode.
+        unsafe { std::env::set_var("GOSSAMER_JIT_MIN_WORK", "0") };
         let _g = GosJitGuard::new();
         // `divi` carries a one-trip loop so it is JIT-worthy under the
         // promote-only-real-work policy; the divide still runs natively,
@@ -189,7 +193,9 @@ fn jit_divide_by_zero_is_clean_panic_not_trap() {
         );
         warm_up(&vm, "divi", &[Value::Int(10), Value::Int(2)]);
         // Trip the divide-by-zero on the now-native body.
-        let _ = vm.call("divi", vec![Value::Int(1), Value::Int(0)]);
+        if let Err(err) = vm.call("divi", vec![Value::Int(1), Value::Int(0)]) {
+            panic!("{err}");
+        }
         // Only reached if the body somehow did not panic; exit clean.
         std::process::exit(0);
     }
@@ -214,6 +220,10 @@ fn jit_divide_by_zero_is_clean_panic_not_trap() {
             output.status.signal()
         );
     }
+    assert!(
+        !output.status.success(),
+        "JIT divide-by-zero unexpectedly exited successfully; stderr:\n{stderr}"
+    );
     assert!(
         stderr.contains("GX0005"),
         "JIT divide-by-zero must produce a clean error[GX0005] panic; \
