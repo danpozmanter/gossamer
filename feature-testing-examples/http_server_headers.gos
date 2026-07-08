@@ -46,7 +46,7 @@ fn main() {
             let mut has_server = false
             let mut has_date = false
             for (k, _v) in r.headers {
-                let lower = k.to_lower()
+                let lower = k.to_lowercase()
                 if lower == "server" {
                     has_server = true
                 }

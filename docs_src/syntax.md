@@ -208,7 +208,7 @@ Range binds looser than arithmetic and tighter than `|>`, so
 
 ```gossamer
 fn load(path: String) -> Result<String, io::Error> {
-    let raw = os::read_file_to_string(&path)?
+    let raw = fs::read_to_string(&path)?
     Ok(raw)
 }
 ```
@@ -274,7 +274,7 @@ Higher-order parameters distinguish two callable types:
 
 | Type | Accepts | Representation |
 |------|---------|----------------|
-| `fn(args) -> ret` | non-capturing items only | raw code pointer |
+| `fn(args) -> ret` | raw pointer shape; named item coercion is not implemented | raw code pointer |
 | `Fn(args) -> ret` | bare items **and** capturing closures | env+code fat pointer |
 
 ```gossamer

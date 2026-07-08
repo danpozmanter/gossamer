@@ -74,26 +74,6 @@ pub const OS_EXEC: StdModule = StdModule {
     summary: "Spawn / wait for child processes (Go's os/exec shape).",
     items: &[
         StdItem {
-            name: "Command",
-            kind: StdItemKind::Type,
-            doc: "Builder for spawning a child process.",
-        },
-        StdItem {
-            name: "Stdio",
-            kind: StdItemKind::Type,
-            doc: "Inherit / Piped / Null wiring for stdin/stdout/stderr.",
-        },
-        StdItem {
-            name: "Output",
-            kind: StdItemKind::Type,
-            doc: "Captured stdout, stderr, and exit status from a finished child.",
-        },
-        StdItem {
-            name: "ExitStatus",
-            kind: StdItemKind::Type,
-            doc: "Numeric exit code (None when killed by signal).",
-        },
-        StdItem {
             name: "Child",
             kind: StdItemKind::Type,
             doc: "Handle to a still-running child supporting wait / kill.",
@@ -146,7 +126,7 @@ pub const OS_EXEC: StdModule = StdModule {
         StdItem {
             name: "pipeline_run",
             kind: StdItemKind::Function,
-            doc: "Run a Vec<String> of shell-tokenised commands as a stdout-to-stdin pipeline; returns Result<Output, errors::Error>.",
+            doc: "Run a Vec<String> of shell-tokenised commands as a stdout-to-stdin pipeline.",
         },
     ],
 };
@@ -198,26 +178,6 @@ pub const PATH: StdModule = StdModule {
             doc: "Returns (dir, file) for the supplied path.",
         },
         StdItem {
-            name: "base",
-            kind: StdItemKind::Function,
-            doc: "Final path segment.",
-        },
-        StdItem {
-            name: "dir",
-            kind: StdItemKind::Function,
-            doc: "Directory portion.",
-        },
-        StdItem {
-            name: "ext",
-            kind: StdItemKind::Function,
-            doc: "Dotted extension, if any.",
-        },
-        StdItem {
-            name: "clean",
-            kind: StdItemKind::Function,
-            doc: "Collapses `.`, `..`, and duplicate separators.",
-        },
-        StdItem {
             name: "parent",
             kind: StdItemKind::Function,
             doc: "Parent directory, or None at the root.",
@@ -228,7 +188,7 @@ pub const PATH: StdModule = StdModule {
             doc: "Final path component, or None.",
         },
         StdItem {
-            name: "stem",
+            name: "file_stem",
             kind: StdItemKind::Function,
             doc: "File name without its extension.",
         },
@@ -245,10 +205,10 @@ pub const PATH: StdModule = StdModule {
         StdItem {
             name: "normalize",
             kind: StdItemKind::Function,
-            doc: "Lexically normalizes the path (alias of clean).",
+            doc: "Lexically normalizes the path.",
         },
         StdItem {
-            name: "has_prefix",
+            name: "starts_with",
             kind: StdItemKind::Function,
             doc: "Reports whether the path begins with a prefix component-wise.",
         },
@@ -277,7 +237,7 @@ pub const FS: StdModule = StdModule {
         StdItem {
             name: "read_dir",
             kind: StdItemKind::Function,
-            doc: "Returns the immediate children of a directory.",
+            doc: "Returns DirInfo metadata for the immediate children of a directory.",
         },
         StdItem {
             name: "walk_dir",
@@ -308,11 +268,6 @@ pub const FS: StdModule = StdModule {
             name: "remove_dir_all",
             kind: StdItemKind::Function,
             doc: "Recursively removes a directory and its contents.",
-        },
-        StdItem {
-            name: "remove_all",
-            kind: StdItemKind::Function,
-            doc: "Deletes a file or a directory tree.",
         },
         StdItem {
             name: "copy",
@@ -358,11 +313,6 @@ pub const FS: StdModule = StdModule {
             name: "canonicalize",
             kind: StdItemKind::Function,
             doc: "Resolves a path to an absolute, symlink-free canonical form.",
-        },
-        StdItem {
-            name: "list_dir",
-            kind: StdItemKind::Function,
-            doc: "Returns directory entries with name/size/kind metadata.",
         },
     ],
 };
@@ -500,7 +450,7 @@ pub const IO: StdModule = StdModule {
 
 pub const OS: StdModule = StdModule {
     path: "std::os",
-    summary: "Operating-system identity and deprecated re-exports of env/process/fs.",
+    summary: "Operating-system identity and process standard input.",
     items: &[
         StdItem {
             name: "family",
@@ -513,139 +463,9 @@ pub const OS: StdModule = StdModule {
             doc: "Returns the target CPU architecture (e.g. \"x86_64\").",
         },
         StdItem {
-            name: "args",
-            kind: StdItemKind::Function,
-            doc: "Deprecated: use env::args.",
-        },
-        StdItem {
-            name: "program_name",
-            kind: StdItemKind::Function,
-            doc: "Deprecated: use env::program_name.",
-        },
-        StdItem {
-            name: "env",
-            kind: StdItemKind::Function,
-            doc: "Deprecated: use env::var.",
-        },
-        StdItem {
-            name: "set_env",
-            kind: StdItemKind::Function,
-            doc: "Deprecated: use env::set_var.",
-        },
-        StdItem {
-            name: "exit",
-            kind: StdItemKind::Function,
-            doc: "Deprecated: use process::exit.",
-        },
-        StdItem {
-            name: "read_file",
-            kind: StdItemKind::Function,
-            doc: "Deprecated: use fs::read.",
-        },
-        StdItem {
-            name: "read_file_to_string",
-            kind: StdItemKind::Function,
-            doc: "Deprecated: use fs::read_to_string.",
-        },
-        StdItem {
-            name: "write_file",
-            kind: StdItemKind::Function,
-            doc: "Deprecated: use fs::write.",
-        },
-        StdItem {
-            name: "remove_file",
-            kind: StdItemKind::Function,
-            doc: "Deprecated: use fs::remove_file.",
-        },
-        StdItem {
-            name: "rename",
-            kind: StdItemKind::Function,
-            doc: "Deprecated: use fs::rename.",
-        },
-        StdItem {
-            name: "exists",
-            kind: StdItemKind::Function,
-            doc: "Deprecated: use fs::exists.",
-        },
-        StdItem {
-            name: "mkdir",
-            kind: StdItemKind::Function,
-            doc: "Deprecated: use fs::create_dir.",
-        },
-        StdItem {
-            name: "mkdir_all",
-            kind: StdItemKind::Function,
-            doc: "Deprecated: use fs::create_dir_all.",
-        },
-        StdItem {
-            name: "read_dir",
-            kind: StdItemKind::Function,
-            doc: "Deprecated: use fs::read_dir.",
-        },
-        StdItem {
-            name: "File",
-            kind: StdItemKind::Type,
-            doc: "Deprecated: use fs::File.",
-        },
-        StdItem {
-            name: "cwd",
-            kind: StdItemKind::Function,
-            doc: "Current working directory.",
-        },
-        StdItem {
             name: "stdin",
             kind: StdItemKind::Function,
             doc: "Process standard input stream (Go's os.Stdin).",
-        },
-        StdItem {
-            name: "unset_env",
-            kind: StdItemKind::Function,
-            doc: "Removes an environment variable.",
-        },
-        StdItem {
-            name: "is_file",
-            kind: StdItemKind::Function,
-            doc: "Reports whether the path is a regular file.",
-        },
-        StdItem {
-            name: "is_dir",
-            kind: StdItemKind::Function,
-            doc: "Reports whether the path is a directory.",
-        },
-        StdItem {
-            name: "is_symlink",
-            kind: StdItemKind::Function,
-            doc: "Reports whether the path is a symbolic link.",
-        },
-        StdItem {
-            name: "file_size",
-            kind: StdItemKind::Function,
-            doc: "Size of the file in bytes.",
-        },
-        StdItem {
-            name: "temp_dir",
-            kind: StdItemKind::Function,
-            doc: "System temporary-file directory.",
-        },
-        StdItem {
-            name: "canonicalize",
-            kind: StdItemKind::Function,
-            doc: "Resolves a path to its absolute canonical form.",
-        },
-        StdItem {
-            name: "remove_dir",
-            kind: StdItemKind::Function,
-            doc: "Removes an empty directory.",
-        },
-        StdItem {
-            name: "remove_dir_all",
-            kind: StdItemKind::Function,
-            doc: "Removes a directory and its contents recursively.",
-        },
-        StdItem {
-            name: "copy",
-            kind: StdItemKind::Function,
-            doc: "Copies a file, returning the byte count.",
         },
     ],
 };
@@ -655,26 +475,6 @@ pub const PROCESS: StdModule = StdModule {
     summary: "Spawn child processes, exit the current process (Rust std::process shape).",
     items: &[
         StdItem {
-            name: "Command",
-            kind: StdItemKind::Type,
-            doc: "Builder for spawning a child process.",
-        },
-        StdItem {
-            name: "Stdio",
-            kind: StdItemKind::Type,
-            doc: "Inherit / Piped / Null wiring for stdin/stdout/stderr.",
-        },
-        StdItem {
-            name: "Output",
-            kind: StdItemKind::Type,
-            doc: "Captured stdout, stderr, and exit status from a finished child.",
-        },
-        StdItem {
-            name: "ExitStatus",
-            kind: StdItemKind::Type,
-            doc: "Numeric exit code (None when killed by signal).",
-        },
-        StdItem {
             name: "Child",
             kind: StdItemKind::Type,
             doc: "Handle to a still-running child supporting wait / kill.",
@@ -682,12 +482,12 @@ pub const PROCESS: StdModule = StdModule {
         StdItem {
             name: "run",
             kind: StdItemKind::Function,
-            doc: "One-shot: runs a program with args, captures stdout/stderr, returns Output.",
+            doc: "One-shot: runs a program with args, captures stdout/stderr plus the exit code.",
         },
         StdItem {
             name: "spawn",
             kind: StdItemKind::Function,
-            doc: "Spawns a child process and returns a Child handle.",
+            doc: "Spawns a child process and returns its PID.",
         },
         StdItem {
             name: "spawn_piped",
@@ -732,7 +532,7 @@ pub const PROCESS: StdModule = StdModule {
         StdItem {
             name: "pipeline_run",
             kind: StdItemKind::Function,
-            doc: "Runs a shell-tokenised pipeline, returning the final Output.",
+            doc: "Runs a shell-tokenised pipeline and returns captured stdout/stderr plus the final exit code.",
         },
     ],
 };

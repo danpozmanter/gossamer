@@ -19,7 +19,7 @@ Names available without any import - the print macros, `min`/`max`/`clamp`, `spa
 | [`std::archive::zip`](#stdarchivezip) | 3 | ZIP archive reader and writer. |
 | [`std::bufio`](#stdbufio) | 7 | Buffered readers, writers, and line scanners. |
 | [`std::bytes`](#stdbytes) | 5 | Byte buffers, builders, and slice helpers. |
-| [`std::collections`](#stdcollections) | 6 | Built-in container types. |
+| [`std::collections`](#stdcollections) | 5 | Built-in container types. |
 | [`std::collections::deque`](#stdcollectionsdeque) | 7 | Double-ended queue over Vec<i64>. Re-bind shape on every mutator. |
 | [`std::collections::heap`](#stdcollectionsheap) | 4 | Binary min-heap (priority queue) over Vec<i64>. Re-bind shape: `let h = heap::push(h, v)`. |
 | [`std::collections::ordered_map`](#stdcollectionsordered_map) | 5 | Sorted key/value map (i64 -> i64) backed by a flat pair Vec. Re-bind on every mutator. |
@@ -35,7 +35,6 @@ Names available without any import - the print macros, `min`/`max`/`clamp`, `spa
 | [`std::context`](#stdcontext) | 1 | Request-scoped cancellation, deadlines, and timeouts. |
 | [`std::crypto::aead`](#stdcryptoaead) | 4 | Authenticated encryption with associated data. |
 | [`std::crypto::blake3`](#stdcryptoblake3) | 2 | BLAKE3 hashing. |
-| [`std::crypto::cipher`](#stdcryptocipher) | 2 | AES key handling + CBC / CTR block-cipher modes. |
 | [`std::crypto::ecdsa`](#stdcryptoecdsa) | 3 | ECDSA over the NIST P-256 curve. |
 | [`std::crypto::ed25519`](#stdcryptoed25519) | 3 | Ed25519 digital signatures. |
 | [`std::crypto::hmac`](#stdcryptohmac) | 2 | HMAC-SHA-256 keyed MACs. |
@@ -63,12 +62,12 @@ Names available without any import - the print macros, `min`/`max`/`clamp`, `spa
 | [`std::errors`](#stderrors) | 6 | Error construction, wrapping, and chain traversal. |
 | [`std::flag`](#stdflag) | 7 | Batteries-included CLI argument parsing. |
 | [`std::fmt`](#stdfmt) | 9 | Formatted printing and string interpolation. |
-| [`std::fs`](#stdfs) | 21 | Filesystem reading, writing, and traversal (Rust std::fs shape). |
+| [`std::fs`](#stdfs) | 19 | Filesystem reading, writing, and traversal (Rust std::fs shape). |
 | [`std::hash::adler32`](#stdhashadler32) | 3 | Adler-32 checksums. |
 | [`std::hash::crc32`](#stdhashcrc32) | 3 | CRC-32 (IEEE) checksums. |
 | [`std::hash::fnv`](#stdhashfnv) | 3 | FNV-1a non-cryptographic hash (32-bit, 64-bit). |
 | [`std::html`](#stdhtml) | 2 | HTML text escaping and unescaping. |
-| [`std::html::template`](#stdhtmltemplate) | 4 | Context-aware HTML templates with auto-escape (text/attr/URL/JS). The context classifier is heuristic - sound for typical server-rendered responses but NOT a content-security-policy substitute; sanitize untrusted HTML fragments with a dedicated sanitizer. |
+| [`std::html::template`](#stdhtmltemplate) | 1 | Context-aware HTML templates with auto-escape (text/attr/URL/JS). The context classifier is heuristic - sound for typical server-rendered responses but NOT a content-security-policy substitute; sanitize untrusted HTML fragments with a dedicated sanitizer. |
 | [`std::http`](#stdhttp) | 29 | HTTP/1.1 and HTTP/2 client and server. HTTP/2 negotiates via ALPN over TLS automatically (Go-style); h2c entry points are explicit. |
 | [`std::http::chunked`](#stdhttpchunked) | 4 | RFC 7230 §4.1 chunked transfer-encoding reader and writer. |
 | [`std::http::cookie`](#stdhttpcookie) | 5 | RFC 6265 cookie parser and Set-Cookie builder. |
@@ -91,33 +90,32 @@ Names available without any import - the print macros, `min`/`max`/`clamp`, `spa
 | [`std::iter`](#stditer) | 46 | Sequence adapters over Vec<T>: map, filter, fold, zip, enumerate, chain, etc. |
 | [`std::jwt`](#stdjwt) | 10 | RFC 7519 sign / verify for HS256 / HS384 / HS512, ES256, and EdDSA tokens. |
 | [`std::lifecycle`](#stdlifecycle) | 1 | Graceful-shutdown coordinator with signal handling and sd_notify support. |
-| [`std::math`](#stdmath) | 52 | Mathematical constants and f64 functions (Go's math package shape). |
+| [`std::math`](#stdmath) | 46 | Mathematical constants and f64 functions (Go's math package shape). |
 | [`std::math::big`](#stdmathbig) | 33 | Arbitrary-precision integers (num-bigint). |
 | [`std::math::bits`](#stdmathbits) | 13 | Integer bit-manipulation operations (Go's math/bits shape). |
 | [`std::math::rand`](#stdmathrand) | 1 | Deterministic pseudo-random number generation. |
 | [`std::metrics`](#stdmetrics) | 6 | Prometheus-compatible primitives (Counter, Gauge, Histogram) and a Registry rendering the standard text-exposition format. |
 | [`std::mime`](#stdmime) | 9 | RFC 2045 media type parsing, parameter extraction, and extension lookup. |
-| [`std::net`](#stdnet) | 5 | TCP/UDP networking primitives. |
+| [`std::net`](#stdnet) | 4 | TCP/UDP networking primitives. |
 | [`std::net::ip`](#stdnetip) | 10 | String-level IPv4 / IPv6 parsing and classification helpers. |
 | [`std::net::netip`](#stdnetnetip) | 11 | Typed IP-address parsing, classification, and addr:port helpers (Go's net/netip shape). |
 | [`std::net::url`](#stdneturl) | 5 | URL parsing, rendering, and query escaping. |
-| [`std::option`](#stdoption) | 12 | Data-last Option combinators for pipeline chaining: map, filter, default, and_then, etc. |
-| [`std::os`](#stdos) | 29 | Operating-system identity and deprecated re-exports of env/process/fs. |
-| [`std::os::exec`](#stdosexec) | 14 | Spawn / wait for child processes (Go's os/exec shape). |
+| [`std::option`](#stdoption) | 12 | Data-last Option combinators for pipeline chaining: map, filter, unwrap_or, and_then, etc. |
+| [`std::os`](#stdos) | 3 | Operating-system identity and process standard input. |
+| [`std::os::exec`](#stdosexec) | 11 | Spawn / wait for child processes (Go's os/exec shape). |
 | [`std::os::signal`](#stdossignal) | 5 | POSIX-style signal subscription (Go's os/signal shape). |
 | [`std::os::user`](#stdosuser) | 6 | POSIX user / group lookup. Unix-backed by `nix`; Windows falls back to env vars. |
 | [`std::panic`](#stdpanic) | 1 | Panic / `catch_unwind` integration. |
-| [`std::path`](#stdpath) | 13 | POSIX-style path manipulation. |
-| [`std::process`](#stdprocess) | 15 | Spawn child processes, exit the current process (Rust std::process shape). |
+| [`std::path`](#stdpath) | 9 | POSIX-style path manipulation. |
+| [`std::process`](#stdprocess) | 12 | Spawn child processes, exit the current process (Rust std::process shape). |
 | [`std::regex`](#stdregex) | 10 | Compiled regular expressions (Rust `regex` crate syntax; no backreferences or look-around). |
-| [`std::result`](#stdresult) | 10 | Data-last Result combinators for pipeline chaining: map, map_err, default_with, etc. |
+| [`std::result`](#stdresult) | 10 | Data-last Result combinators for pipeline chaining: map, map_err, unwrap_or_else, etc. |
 | [`std::runtime`](#stdruntime) | 4 | Goroutine / scheduler introspection and tuning. |
 | [`std::slog`](#stdslog) | 8 | Structured, levelled logging. |
-| [`std::strconv`](#stdstrconv) | 16 | Conversions between strings and primitive numeric types. |
-| [`std::strings`](#stdstrings) | 35 | Polished `String` operations. |
+| [`std::strconv`](#stdstrconv) | 10 | Conversions between strings and primitive numeric types. |
+| [`std::strings`](#stdstrings) | 40 | Polished `String` operations. |
 | [`std::sync`](#stdsync) | 9 | Synchronisation primitives beyond channels. |
 | [`std::testing`](#stdtesting) | 4 | Assertions and sub-test harness helpers. |
-| [`std::text::template`](#stdtexttemplate) | 3 | Plain-text templates (no escaping). |
 | [`std::thread`](#stdthread) | 3 | Native OS threads. For goroutines use the `go expr` syntax. |
 | [`std::time`](#stdtime) | 13 | Wall-clock and monotonic time facilities. |
 | [`std::tls`](#stdtls) | 5 | TLS termination and TLS client dialling (rustls-backed). Wired through both http::Server::bind_and_run_tls and http::Client; mTLS / ALPN / SNI exposed. |
@@ -181,7 +179,6 @@ Built-in container types.
 | Item | Kind | Doc |
 |------|------|-----|
 | `BTreeMap` | type | Ordered map. |
-| `BTreeSet` | type | Ordered set built on top of `BTreeMap`. |
 | `HashMap` | type | Hash map backed by the swiss-table layout. |
 | `HashSet` | type | Unordered set built on top of `HashMap`. |
 | `Vec` | type | Growable contiguous sequence. |
@@ -346,15 +343,6 @@ BLAKE3 hashing.
 | `digest` | fn | Returns the 32-byte BLAKE3 digest of an input. |
 | `hex` | fn | Returns the digest as lowercase hex. |
 
-## `std::crypto::cipher`
-
-AES key handling + CBC / CTR block-cipher modes.
-
-| Item | Kind | Doc |
-|------|------|-----|
-| `AesKey` | type | Validated key bytes for the chosen size. |
-| `AesKeySize` | type | Aes128 / Aes192 / Aes256. |
-
 ## `std::crypto::ecdsa`
 
 ECDSA over the NIST P-256 curve.
@@ -473,7 +461,7 @@ Driver-pluggable SQL database access. No driver ships in the box; bring your own
 | `PooledConn` | type | Connection checked out from a `Pool`; returned on drop. |
 | `Row` | type | Current row inside a `Rows` walk; valid until the cursor advances or closes. Typed `get_i64`, `get_f64`, `get_bool`, `get_text`, `get_blob` plus `get_opt_*` and `is_null`. |
 | `Rows` | type | Result-set cursor. `next_row`, `columns`, `close` (idempotent). Advancing frees the previous Row; a full drain reclaims everything. For early exits, `defer rows.close()`. |
-| `Select` | type | Fluent SELECT builder. `Select::new(table).columns(&[..]).where_eq(col, val).order_by(col, asc).limit(n).render() -> (sql, params)`. Emits Postgres-style `$N` placeholders. |
+| `Select` | type | Fluent SELECT builder. `Select::new(table).columns(&[..]).where_eq(col, sql::Value::Int(...))...render() -> String`; `.params()` returns the bound parameters. Emits Postgres-style `$N` placeholders. |
 | `Stmt` | type | Prepared statement. |
 | `Tx` | type | Active transaction. `commit`, `rollback`, `savepoint`, `release_savepoint`, `rollback_to_savepoint`, `execute`. |
 | `Value` | type | Bound or fetched value. Null / Bool / Int / Float / Text / Blob. |
@@ -709,12 +697,10 @@ Filesystem reading, writing, and traversal (Rust std::fs shape).
 | `is_dir` | fn | Returns whether a path exists and is a directory. |
 | `is_file` | fn | Returns whether a path exists and is a regular file. |
 | `is_symlink` | fn | Returns whether a path exists and is a symbolic link. |
-| `list_dir` | fn | Returns directory entries with name/size/kind metadata. |
 | `metadata` | fn | Returns filesystem metadata for a path. |
 | `read` | fn | Reads an entire file into memory as bytes. |
-| `read_dir` | fn | Returns the immediate children of a directory. |
+| `read_dir` | fn | Returns DirInfo metadata for the immediate children of a directory. |
 | `read_to_string` | fn | Reads an entire file into memory as UTF-8 text. |
-| `remove_all` | fn | Deletes a file or a directory tree. |
 | `remove_dir` | fn | Removes an empty directory. |
 | `remove_dir_all` | fn | Recursively removes a directory and its contents. |
 | `remove_file` | fn | Removes a single file. |
@@ -767,9 +753,6 @@ Context-aware HTML templates with auto-escape (text/attr/URL/JS). The context cl
 
 | Item | Kind | Doc |
 |------|------|-----|
-| `Template` | type | Compiled HTML template. |
-| `parse` | fn | Parses a template string. |
-| `render` | fn | Renders a template with the supplied data context. |
 | `render_json` | fn | render_json(source, json_data) -> Result<String, Error>: renders a context-aware HTML template against a JSON data context. Stateless and wired bit-identically across every tier. |
 
 ## `std::http`
@@ -1036,7 +1019,8 @@ Sequence adapters over Vec<T>: map, filter, fold, zip, enumerate, chain, etc.
 | `all` | fn | True if every element satisfies f. |
 | `any` | fn | True if any element satisfies f. |
 | `chain` | fn | Concatenates two sequences. |
-| `chunk_by_size` | fn | Non-overlapping chunks of length n. |
+| `chunk_by` | fn | Groups elements into a map keyed by f. |
+| `chunks` | fn | Non-overlapping chunks of length n. |
 | `count` | fn | Number of elements. |
 | `count_by` | fn | Counts elements per key derived by f. |
 | `dedup` | fn | Removes consecutive duplicate elements. |
@@ -1049,7 +1033,6 @@ Sequence adapters over Vec<T>: map, filter, fold, zip, enumerate, chain, etc.
 | `flatten` | fn | Flattens a Vec<Vec<T>> into Vec<T>. |
 | `fold` | fn | Reduces a sequence with an accumulator. |
 | `for_each` | fn | Applies f to each element for its side effect. |
-| `group_by` | fn | Groups elements into a map keyed by f. |
 | `map` | fn | Applies f to each element, returning a new Vec. |
 | `max` | fn | Largest element, or None when empty. |
 | `max_by` | fn | Largest element by the comparison closure. |
@@ -1066,7 +1049,7 @@ Sequence adapters over Vec<T>: map, filter, fold, zip, enumerate, chain, etc.
 | `range_inclusive` | fn | Closed integer sequence [start, end]. |
 | `reduce` | fn | Folds with the first element as the initial accumulator. |
 | `repeat` | fn | A value repeated n times. |
-| `reversed` | fn | Returns a reversed copy. |
+| `rev` | fn | Returns a rev copy. |
 | `scan` | fn | Folds while yielding each intermediate accumulator. |
 | `skip` | fn | All elements after the first n. |
 | `skip_while` | fn | Elements after the leading run satisfying f. |
@@ -1077,7 +1060,7 @@ Sequence adapters over Vec<T>: map, filter, fold, zip, enumerate, chain, etc.
 | `take` | fn | First n elements. |
 | `take_while` | fn | Leading run of elements satisfying f. |
 | `unzip` | fn | Splits a sequence of pairs into two Vecs. |
-| `windowed` | fn | Overlapping windows of width n. |
+| `windows` | fn | Overlapping windows of width n. |
 | `zip` | fn | Pairs elements from two sequences. |
 
 ## `std::jwt`
@@ -1112,7 +1095,6 @@ Mathematical constants and f64 functions (Go's math package shape).
 | Item | Kind | Doc |
 |------|------|-----|
 | `abs` | fn | Absolute value of x. |
-| `abs_i64` | fn | Absolute value of an i64. |
 | `acos` | fn | Arccosine (radians). |
 | `asin` | fn | Arcsine (radians). |
 | `atan` | fn | Arctangent (radians). |
@@ -1123,13 +1105,10 @@ Mathematical constants and f64 functions (Go's math package shape).
 | `copysign` | fn | Magnitude of x with sign of y. |
 | `cos` | fn | Cosine (radians). |
 | `cosh` | fn | Hyperbolic cosine. |
-| `dim` | fn | max(x-y, 0) - Go's math.Dim. |
 | `exp` | fn | e^x. |
 | `exp2` | fn | 2^x. |
 | `floor` | fn | Largest integer ≤ x. |
-| `fmod` | fn | Floating-point remainder x%y. |
 | `hypot` | fn | Euclidean distance √(x²+y²). |
-| `inf` | fn | Returns ±infinity based on sign. |
 | `is_inf` | fn | Reports whether x is infinite. |
 | `is_nan` | fn | Reports whether x is NaN. |
 | `ln` | fn | Natural logarithm. |
@@ -1137,13 +1116,10 @@ Mathematical constants and f64 functions (Go's math package shape).
 | `log10` | fn | Base-10 logarithm. |
 | `log2` | fn | Base-2 logarithm. |
 | `max` | fn | Greater of two values. |
-| `max_f64` | fn | Greater of two f64 values. |
-| `max_i64` | fn | Greater of two i64 values. |
 | `min` | fn | Lesser of two values. |
-| `min_f64` | fn | Lesser of two f64 values. |
-| `min_i64` | fn | Lesser of two i64 values. |
-| `nan` | fn | Returns the IEEE 754 NaN value. |
+| `positive_diff` | fn | max(x-y, 0). |
 | `pow` | fn | x raised to the power y. |
+| `rem` | fn | Floating-point remainder x%y. |
 | `round` | fn | Nearest integer, half away from zero. |
 | `sin` | fn | Sine (radians). |
 | `sinh` | fn | Hyperbolic sine. |
@@ -1159,6 +1135,7 @@ Mathematical constants and f64 functions (Go's math package shape).
 | `LOG2_E` | const | Base-2 logarithm of e. |
 | `MAX_F64` | const | Largest finite f64 value. |
 | `MIN_POSITIVE_F64` | const | Smallest positive normal f64 value. |
+| `NAN` | const | Not-a-number value. |
 | `NEG_INF` | const | Negative infinity. |
 | `PHI` | const | Golden ratio φ. |
 | `PI` | const | Archimedes' constant π. |
@@ -1270,8 +1247,7 @@ TCP/UDP networking primitives.
 | `TcpListener` | type | Accepts incoming TCP connections. |
 | `TcpStream` | type | Bidirectional TCP byte stream. |
 | `UdpSocket` | type | Bound UDP socket for datagram I/O. |
-| `lookup` | fn | Resolves a hostname to its IP addresses (alias of resolve). |
-| `resolve` | fn | Resolves a hostname to a list of IP addresses. |
+| `lookup` | fn | Resolves a hostname to its IP addresses. |
 
 ## `std::net::ip`
 
@@ -1322,13 +1298,11 @@ URL parsing, rendering, and query escaping.
 
 ## `std::option`
 
-Data-last Option combinators for pipeline chaining: map, filter, default, and_then, etc.
+Data-last Option combinators for pipeline chaining: map, filter, unwrap_or, and_then, etc.
 
 | Item | Kind | Doc |
 |------|------|-----|
 | `and_then` | fn | Chains a fallible step: Some(v) -> f(v), None stays None. |
-| `default` | fn | Unwraps with a fallback value for None. |
-| `default_with` | fn | Unwraps with a lazily computed fallback for None. |
 | `filter` | fn | Keeps Some(v) only when the predicate holds. |
 | `flatten` | fn | Collapses Option<Option<T>> one level. |
 | `is_none` | fn | True for None. |
@@ -1337,43 +1311,19 @@ Data-last Option combinators for pipeline chaining: map, filter, default, and_th
 | `map` | fn | Transforms the Some payload, None stays None. |
 | `or` | fn | First Some of self and the alternative. |
 | `or_else` | fn | First Some of self and a lazily built alternative. |
+| `unwrap_or` | fn | Unwraps with a fallback value for None. |
+| `unwrap_or_else` | fn | Unwraps with a lazily computed fallback for None. |
 | `zip` | fn | Pairs two Somes into Some((a, b)). |
 
 ## `std::os`
 
-Operating-system identity and deprecated re-exports of env/process/fs.
+Operating-system identity and process standard input.
 
 | Item | Kind | Doc |
 |------|------|-----|
-| `File` | type | Deprecated: use fs::File. |
 | `arch` | fn | Returns the target CPU architecture (e.g. "x86_64"). |
-| `args` | fn | Deprecated: use env::args. |
-| `canonicalize` | fn | Resolves a path to its absolute canonical form. |
-| `copy` | fn | Copies a file, returning the byte count. |
-| `cwd` | fn | Current working directory. |
-| `env` | fn | Deprecated: use env::var. |
-| `exists` | fn | Deprecated: use fs::exists. |
-| `exit` | fn | Deprecated: use process::exit. |
 | `family` | fn | Returns "unix" or "windows" for the running OS family. |
-| `file_size` | fn | Size of the file in bytes. |
-| `is_dir` | fn | Reports whether the path is a directory. |
-| `is_file` | fn | Reports whether the path is a regular file. |
-| `is_symlink` | fn | Reports whether the path is a symbolic link. |
-| `mkdir` | fn | Deprecated: use fs::create_dir. |
-| `mkdir_all` | fn | Deprecated: use fs::create_dir_all. |
-| `program_name` | fn | Deprecated: use env::program_name. |
-| `read_dir` | fn | Deprecated: use fs::read_dir. |
-| `read_file` | fn | Deprecated: use fs::read. |
-| `read_file_to_string` | fn | Deprecated: use fs::read_to_string. |
-| `remove_dir` | fn | Removes an empty directory. |
-| `remove_dir_all` | fn | Removes a directory and its contents recursively. |
-| `remove_file` | fn | Deprecated: use fs::remove_file. |
-| `rename` | fn | Deprecated: use fs::rename. |
-| `set_env` | fn | Deprecated: use env::set_var. |
 | `stdin` | fn | Process standard input stream (Go's os.Stdin). |
-| `temp_dir` | fn | System temporary-file directory. |
-| `unset_env` | fn | Removes an environment variable. |
-| `write_file` | fn | Deprecated: use fs::write. |
 
 ## `std::os::exec`
 
@@ -1382,18 +1332,15 @@ Spawn / wait for child processes (Go's os/exec shape).
 | Item | Kind | Doc |
 |------|------|-----|
 | `Child` | type | Handle to a still-running child supporting wait / kill. |
-| `Command` | type | Builder for spawning a child process. |
-| `ExitStatus` | type | Numeric exit code (None when killed by signal). |
-| `Output` | type | Captured stdout, stderr, and exit status from a finished child. |
 | `Pipeline` | type | Multi-stage subprocess pipeline (stdout-to-stdin chain). |
 | `Signal` | type | Portable signal selector (Term/Kill/Stop/Cont/Hup/Int/Usr1/Usr2/Pipe/Quit). |
-| `Stdio` | type | Inherit / Piped / Null wiring for stdin/stdout/stderr. |
 | `kill` | fn | Best-effort SIGTERM by pid; returns true on success. |
 | `kill_group` | fn | Send SIGTERM to the entire process group (Unix); best-effort TerminateProcess on Windows. |
-| `pipeline_run` | fn | Run a Vec<String> of shell-tokenised commands as a stdout-to-stdin pipeline; returns Result<Output, errors::Error>. |
+| `pipeline_run` | fn | Run a Vec<String> of shell-tokenised commands as a stdout-to-stdin pipeline. |
 | `run` | fn | One-shot: runs a program with args, captures stdout/stderr, returns Result<{stdout, stderr, code}, String>. |
 | `signal` | fn | Send an arbitrary signal number to a pid; returns true on success. |
 | `spawn` | fn | Non-blocking launch; returns the child PID as Result<i64, errors::Error>. |
+| `spawn_piped` | fn | Spawns a child with piped stdin/stdout; returns Result<Child, errors::Error>. The Child's write_stdin / close_stdin / read_line / read_stdout / wait / kill methods drive it interactively. |
 | `wait_timeout` | fn | Wait up to N ms for a pid to exit; returns exit code, -1 on timeout, -2 on error. |
 
 ## `std::os::signal`
@@ -1435,19 +1382,15 @@ POSIX-style path manipulation.
 
 | Item | Kind | Doc |
 |------|------|-----|
-| `base` | fn | Final path segment. |
-| `clean` | fn | Collapses `.`, `..`, and duplicate separators. |
-| `dir` | fn | Directory portion. |
-| `ext` | fn | Dotted extension, if any. |
 | `extension` | fn | Dotted extension as an Option. |
 | `file_name` | fn | Final path component, or None. |
-| `has_prefix` | fn | Reports whether the path begins with a prefix component-wise. |
+| `file_stem` | fn | File name without its extension. |
 | `is_absolute` | fn | Reports whether the path is absolute. |
 | `join` | fn | Joins two path fragments. |
-| `normalize` | fn | Lexically normalizes the path (alias of clean). |
+| `normalize` | fn | Lexically normalizes the path. |
 | `parent` | fn | Parent directory, or None at the root. |
 | `split` | fn | Returns (dir, file) for the supplied path. |
-| `stem` | fn | File name without its extension. |
+| `starts_with` | fn | Reports whether the path begins with a prefix component-wise. |
 
 ## `std::process`
 
@@ -1456,19 +1399,16 @@ Spawn child processes, exit the current process (Rust std::process shape).
 | Item | Kind | Doc |
 |------|------|-----|
 | `Child` | type | Handle to a still-running child supporting wait / kill. |
-| `Command` | type | Builder for spawning a child process. |
-| `ExitStatus` | type | Numeric exit code (None when killed by signal). |
-| `Output` | type | Captured stdout, stderr, and exit status from a finished child. |
-| `Stdio` | type | Inherit / Piped / Null wiring for stdin/stdout/stderr. |
 | `abort` | fn | Aborts the current process without unwinding. |
 | `exit` | fn | Exits the current process with the given status code. |
 | `id` | fn | Returns the current process ID. |
 | `kill` | fn | Sends SIGKILL (or equivalent) to a Child. |
 | `kill_group` | fn | Sends a signal to a process group (POSIX). |
-| `pipeline_run` | fn | Runs a shell-tokenised pipeline, returning the final Output. |
-| `run` | fn | One-shot: runs a program with args, captures stdout/stderr, returns Output. |
+| `pipeline_run` | fn | Runs a shell-tokenised pipeline and returns captured stdout/stderr plus the final exit code. |
+| `run` | fn | One-shot: runs a program with args, captures stdout/stderr plus the exit code. |
 | `signal` | fn | Sends a signal to a process by PID (POSIX). |
-| `spawn` | fn | Spawns a child process and returns a Child handle. |
+| `spawn` | fn | Spawns a child process and returns its PID. |
+| `spawn_piped` | fn | Spawns a child with piped stdin/stdout; returns Result<Child, errors::Error>. The Child's write_stdin / close_stdin / read_line / read_stdout / wait / kill methods drive it interactively. |
 | `wait_timeout` | fn | Waits for a child with a timeout (POSIX). |
 
 ## `std::regex`
@@ -1490,13 +1430,11 @@ Compiled regular expressions (Rust `regex` crate syntax; no backreferences or lo
 
 ## `std::result`
 
-Data-last Result combinators for pipeline chaining: map, map_err, default_with, etc.
+Data-last Result combinators for pipeline chaining: map, map_err, unwrap_or_else, etc.
 
 | Item | Kind | Doc |
 |------|------|-----|
 | `and_then` | fn | Chains a fallible step on the Ok payload. |
-| `default` | fn | Unwraps Ok with a fallback value for Err. |
-| `default_with` | fn | Consumes the result, handling Err with a callback. |
 | `err` | fn | Err payload as an Option. |
 | `is_err` | fn | True for Err. |
 | `is_ok` | fn | True for Ok. |
@@ -1504,6 +1442,8 @@ Data-last Result combinators for pipeline chaining: map, map_err, default_with, 
 | `map_err` | fn | Transforms the Err payload, Ok passes through. |
 | `ok` | fn | Ok payload as an Option. |
 | `or_else` | fn | Recovers from Err with a fallback computation. |
+| `unwrap_or` | fn | Unwraps Ok with a fallback value for Err. |
+| `unwrap_or_else` | fn | Consumes the result, handling Err with a callback. |
 
 ## `std::runtime`
 
@@ -1537,19 +1477,13 @@ Conversions between strings and primitive numeric types.
 
 | Item | Kind | Doc |
 |------|------|-----|
-| `atoi` | fn | Alias for parse_i64 (Go-style spelling). |
 | `format_f64` | fn | Renders an `f64` as a decimal string. |
-| `format_float` | fn | Alias for format_f64. |
 | `format_i64` | fn | Renders an `i64` as a decimal string. |
 | `format_i64_radix` | fn | Formats an i64 in the given base (2..=36). |
-| `format_int` | fn | Alias for format_i64. |
-| `itoa` | fn | Alias for format_i64 (Go-style spelling). |
 | `parse_bool` | fn | Parses `"true"` / `"false"` into a bool. |
 | `parse_f64` | fn | Parses a decimal `f64`. |
-| `parse_float` | fn | Alias for parse_f64. |
 | `parse_i64` | fn | Parses a decimal `i64`. |
 | `parse_i64_radix` | fn | Parses an i64 from a string in the given base (2..=36). |
-| `parse_int` | fn | Alias for parse_i64. |
 | `parse_u64` | fn | Parses a decimal `u64`. |
 | `quote` | fn | Wraps a string in double quotes with escapes. |
 | `unquote` | fn | Removes surrounding quotes and resolves escapes. |
@@ -1560,7 +1494,9 @@ Polished `String` operations.
 
 | Item | Kind | Doc |
 |------|------|-----|
+| `bytes` | fn | Returns the UTF-8 bytes of the string. |
 | `center` | fn | Symmetric pad to `width` using the given pad character. |
+| `chars` | fn | Returns the Unicode scalar values of the string. |
 | `contains` | fn | Returns whether the string contains a substring. |
 | `contains_any` | fn | Reports whether the string contains any rune in a set. |
 | `count` | fn | Counts non-overlapping occurrences of `needle`. |
@@ -1586,9 +1522,12 @@ Polished `String` operations.
 | `starts_with` | fn | Returns whether the string starts with the given prefix. |
 | `strip_prefix` | fn | Removes a leading prefix if present. |
 | `strip_suffix` | fn | Removes a trailing suffix if present. |
-| `to_lower` | fn | Lowercases every character. |
+| `to_bool` | fn | Parses exactly `true` / `false` to Option<bool>. |
+| `to_f64` | fn | Strict full-string parse to Option<f64>. |
+| `to_i64` | fn | Strict full-string parse to Option<i64>. |
+| `to_lowercase` | fn | Lowercases every character. |
 | `to_title` | fn | Title-cases the first letter of each word. |
-| `to_upper` | fn | Uppercases every character. |
+| `to_uppercase` | fn | Uppercases every character. |
 | `trim` | fn | Removes leading and trailing whitespace. |
 | `trim_end` | fn | Removes trailing whitespace. |
 | `trim_end_matches` | fn | Removes trailing characters in the given set. |
@@ -1622,16 +1561,6 @@ Assertions and sub-test harness helpers.
 | `check` | fn | Asserts a condition. |
 | `check_eq` | fn | Asserts equality, rendering a diff on failure. |
 | `check_ok` | fn | Asserts a Result is Ok, recording without panicking. |
-
-## `std::text::template`
-
-Plain-text templates (no escaping).
-
-| Item | Kind | Doc |
-|------|------|-----|
-| `Template` | type | Compiled text template. |
-| `parse` | fn | Parses a template string. |
-| `render` | fn | Renders a template with the supplied data context. |
 
 ## `std::thread`
 
@@ -1672,8 +1601,8 @@ TLS termination and TLS client dialling (rustls-backed). Wired through both http
 | `CertKey` | type | PEM-encoded certificate chain + private key. |
 | `ClientConfig` | type | Opaque client-side TLS configuration. |
 | `ServerConfig` | type | Opaque server-side TLS configuration. |
-| `client_config` | fn | Builds a client config. Returns Err until rustls lands. |
-| `server_config` | fn | Builds a server config from a CertKey. Returns Err until rustls lands. |
+| `client_config` | fn | Builds a rustls-backed client config. |
+| `server_config` | fn | Builds a rustls-backed server config from a CertKey. |
 
 ## `std::trace`
 

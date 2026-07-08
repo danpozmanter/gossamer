@@ -365,11 +365,11 @@ impl<'a> Lowerer<'a> {
             operand_llvm = "i64".to_string();
             kind = NumericKind::Int(gossamer_types::IntTy::I64);
         }
-        // `Div` / `Rem` keep the signed-i64 runtime model for every
-        // ≤64-bit type (the VM uses `wrapping_div` / `wrapping_rem` on
-        // `i64`), so the declared signedness only selects `udiv`/`urem`
-        // for the 128-bit types.
-        let op_signed = |i: gossamer_types::IntTy| int_width(i) <= 64 || int_signed(i);
+        // `Div` / `Rem` follow the declared integer signedness. This
+        // matters for `u64` / `usize` values whose bit pattern would be
+        // negative as an `i64`; narrower unsigned operands compare the
+        // same under signed and unsigned division after widening.
+        let op_signed = int_signed;
         // `< <= > >=` and `>>` use unsigned instructions (`icmp u*` /
         // `lshr`) only for the unsigned families that can exceed
         // `i64::MAX` - `u64` / `usize` / `u128`; every other ≤64-bit type

@@ -79,8 +79,9 @@ use gossamer_types::{FloatTy, IntTy, Ty, TyCtxt, TyKind};
 
 use crate::emit::BuildError;
 use crate::ty::{
-    NumericKind, elem_slots, field_slot_offset, int_signed, int_width, is_aggregate, is_unit,
-    numeric_kind, render_ty, slot_count,
+    NumericKind, STACK_AGGREGATE_SPILL_BYTES, aggregate_storage_bytes, elem_slots,
+    field_slot_offset, int_signed, int_width, is_aggregate, is_unit, numeric_kind, render_ty,
+    slot_count,
 };
 
 /// Adds the typed `declare` for `name` from the ABI registry into `refs`.
@@ -303,7 +304,6 @@ mod vec_elem_kind_llvm {
     pub(super) const STRING: i32 = 1;
     pub(super) const VEC: i32 = 2;
     pub(super) const MAP: i32 = 3;
-    #[allow(dead_code, reason = "reserved for errors::Error deep-free wiring")]
     pub(super) const ERROR: i32 = 4;
 }
 
@@ -324,6 +324,7 @@ fn llvm_vec_elem_kind_from_local(body: &Body, tcx: &TyCtxt, dest_local: Local) -
         Some(TyKind::String) => vec_elem_kind_llvm::STRING,
         Some(TyKind::Vec(_) | TyKind::Slice(_)) => vec_elem_kind_llvm::VEC,
         Some(TyKind::HashMap { .. }) => vec_elem_kind_llvm::MAP,
+        Some(TyKind::DynError) => vec_elem_kind_llvm::ERROR,
         _ => vec_elem_kind_llvm::PRIMITIVE,
     }
 }

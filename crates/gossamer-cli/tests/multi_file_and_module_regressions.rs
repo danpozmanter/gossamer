@@ -330,14 +330,14 @@ fn native_binary_os_read_file_to_string_returns_real_contents() {
     let payload_path = dir.join("payload.txt");
     fs::write(&payload_path, b"hello-from-disk").unwrap();
     let src = format!(
-        r#"use std::os
+        r#"use std::fs
 fn main() {{
     let p: String = "{p}".to_string()
-    match os::read_file_to_string(&p) {{
+    match fs::read_to_string(&p) {{
         Ok(s) => println!("ok len={{}} content={{}}", s.len(), s),
         Err(e) => println!("err: {{}}", e),
     }}
-    println!("exists = {{}}", os::exists(&p))
+    println!("exists = {{}}", fs::exists(&p))
 }}
 "#,
         // Embed with forward slashes: a Windows path has backslashes, and

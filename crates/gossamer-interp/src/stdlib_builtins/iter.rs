@@ -101,7 +101,9 @@ use crate::builtins::{
     BuiltinFnPub, as_str, err_variant, install_module_pub, none_variant, ok_variant, some_variant,
     value_to_int,
 };
-use crate::value::{MapKey, NativeCall, NativeDispatch, RuntimeResult, Value};
+use crate::value::{
+    MapKey, NativeCall, NativeDispatch, RuntimeResult, Value, dense_map, dense_map_with_capacity,
+};
 
 /// Entry point invoked from `builtins::install`.
 use super::*;
@@ -120,7 +122,7 @@ pub(crate) fn install_iter(globals: &mut Vec<(&'static str, Value)>) {
         ("enumerate", builtin_iter_enumerate),
         ("chain", builtin_iter_chain),
         ("flatten", builtin_iter_flatten),
-        ("reversed", builtin_iter_reversed),
+        ("rev", builtin_iter_reversed),
         ("dedup", builtin_iter_dedup),
         ("sum", builtin_iter_sum),
         ("product", builtin_iter_product),
@@ -130,9 +132,9 @@ pub(crate) fn install_iter(globals: &mut Vec<(&'static str, Value)>) {
         ("range_inclusive", builtin_iter_range_inclusive),
         ("repeat", builtin_iter_repeat),
         ("unzip", builtin_iter_unzip),
-        ("windowed", builtin_iter_windowed),
+        ("windows", builtin_iter_windowed),
         ("pairwise", builtin_iter_pairwise),
-        ("chunk_by_size", builtin_iter_chunk_by_size),
+        ("chunks", builtin_iter_chunk_by_size),
     ];
     for (short, call) in static_entries {
         let qualified: &'static str = Box::leak(format!("iter::{short}").into_boxed_str());
@@ -165,7 +167,7 @@ pub(crate) fn install_iter(globals: &mut Vec<(&'static str, Value)>) {
         ("max_by", native_iter_max_by),
         ("min_by_key", native_iter_min_by_key),
         ("max_by_key", native_iter_max_by_key),
-        ("group_by", native_iter_group_by),
+        ("chunk_by", native_iter_group_by),
         ("count_by", native_iter_count_by),
     ];
     for (short, call) in native_entries {
@@ -836,10 +838,10 @@ pub(crate) fn native_iter_group_by(
         let k = dispatch.call_value(&key, vec![x.clone()])?;
         groups.entry(MapKey::from_value(&k)).or_default().push(x);
     }
-    let map: rustc_hash::FxHashMap<MapKey, Value> = groups
-        .into_iter()
-        .map(|(k, v)| (k, Value::Array(Arc::new(v))))
-        .collect();
+    let mut map = dense_map_with_capacity(groups.len());
+    for (k, v) in groups {
+        map.insert(k, Value::Array(Arc::new(v)));
+    }
     Ok(Value::Map(Arc::new(parking_lot::Mutex::new(map))))
 }
 
@@ -861,19 +863,18 @@ pub(crate) fn native_iter_count_by(
     // `HashMap<i64, i64>`-typed receivers, and those ops hard-fail on
     // a generic Value::Map (the "receiver lost typed invariant" bug).
     if all_int_keys {
-        let typed: rustc_hash::FxHashMap<i64, i64> = counts
-            .into_iter()
-            .filter_map(|(k, v)| match k {
-                MapKey::Int(n) => Some((n, v)),
-                _ => None,
-            })
-            .collect();
+        let mut typed = dense_map_with_capacity(counts.len());
+        for (k, v) in counts {
+            if let MapKey::Int(n) = k {
+                typed.insert(n, v);
+            }
+        }
         return Ok(Value::IntMap(Arc::new(parking_lot::Mutex::new(typed))));
     }
-    let map: rustc_hash::FxHashMap<MapKey, Value> = counts
-        .into_iter()
-        .map(|(k, v)| (k, Value::Int(v)))
-        .collect();
+    let mut map = dense_map();
+    for (k, v) in counts {
+        map.insert(k, Value::Int(v));
+    }
     Ok(Value::Map(Arc::new(parking_lot::Mutex::new(map))))
 }
 
@@ -1059,16 +1060,7 @@ pub(crate) fn some_payload(v: &Value) -> Option<Value> {
 /// `Equal` for cross-type comparisons rather than panicking.
 pub(crate) fn compare_values_total(a: &Value, b: &Value) -> std::cmp::Ordering {
     use std::cmp::Ordering;
-    match (a, b) {
-        (Value::Int(x), Value::Int(y)) => x.cmp(y),
-        (Value::Float(x), Value::Float(y)) => x.partial_cmp(y).unwrap_or(Ordering::Equal),
-        (Value::Int(x), Value::Float(y)) => (*x as f64).partial_cmp(y).unwrap_or(Ordering::Equal),
-        (Value::Float(x), Value::Int(y)) => x.partial_cmp(&(*y as f64)).unwrap_or(Ordering::Equal),
-        (Value::Bool(x), Value::Bool(y)) => x.cmp(y),
-        (Value::Char(x), Value::Char(y)) => x.cmp(y),
-        (Value::String(x), Value::String(y)) => x.as_str().cmp(y.as_str()),
-        _ => Ordering::Equal,
-    }
+    crate::vm::value_ordering(a, b).unwrap_or(Ordering::Equal)
 }
 
 // ----------------------------------------------------------------------

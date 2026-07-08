@@ -11,16 +11,6 @@
 use std::env
 use std::errors
 use std::fs
-use std::time
-
-fn kind_tag(entry: &fs::DirInfo) -> String {
-    match (entry.is_symlink, entry.is_dir, entry.is_file) {
-        (true, _, _) => "l",
-        (_, true, _) => "d",
-        (_, _, true) => "f",
-        _ => "?",
-    }
-}
 
 // Renders a non-negative integer with thousands separators.
 fn comma_size(n: i64) -> String {
@@ -42,37 +32,41 @@ fn comma_size(n: i64) -> String {
     out
 }
 
-fn render_modified(unix_ms: i64) -> String {
-    if unix_ms <= 0 {
-        return ""
+fn kind_tag(is_dir: bool, is_file: bool, is_symlink: bool) -> String {
+    if is_dir {
+        return "d"
     }
-    match time::format_rfc3339(unix_ms) {
-        Ok(s) => s,
-        Err(_) => "",
+    if is_file {
+        return "f"
     }
+    if is_symlink {
+        return "l"
+    }
+    "?"
 }
 
 fn main() -> Result<(), errors::Error> {
     let args = env::args()
     let target = if args.is_empty() { "." } else { args[0].clone() }
 
-    let entries = fs::list_dir(&target)
-        .map_err(|e| errors::newf("list_dir {}: {}", target, e))?
+    let entries = fs::read_dir(&target)
+        .map_err(|e| errors::newf("read_dir {}: {}", target, e))?
 
     println!("listing of {}", target)
-    println!("{:<4} {:>14} {:<22} name", "kind", "size", "modified")
+    println!("{:<4} {:>14} name", "kind", "size")
 
     let mut files = 0
     let mut dirs = 0
     let mut total_bytes = 0
     for entry in &entries {
-        println!("{:<4} {:>14} {:<22} {}",
-            kind_tag(entry), comma_size(entry.size), render_modified(entry.modified_ms), entry.name)
+        let kind = kind_tag(entry.is_dir, entry.is_file, entry.is_symlink)
+        let size = if entry.is_file { entry.size } else { 0 }
+        println!("{:<4} {:>14} {}", kind, comma_size(size), entry.name)
         if entry.is_dir {
             dirs += 1
         } else if entry.is_file {
             files += 1
-            total_bytes += entry.size
+            total_bytes += size
         }
     }
 

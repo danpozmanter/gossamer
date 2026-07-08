@@ -679,10 +679,18 @@ impl<'tcx> FnBuilder<'tcx> {
             }
             HirBinaryOp::Div => {
                 let dst = self.alloc_int();
-                self.emit(Op::DivI64 {
-                    dst_i: dst,
-                    lhs_i,
-                    rhs_i,
+                self.emit(if cmp_unsigned {
+                    Op::DivU64 {
+                        dst_i: dst,
+                        lhs_i,
+                        rhs_i,
+                    }
+                } else {
+                    Op::DivI64 {
+                        dst_i: dst,
+                        lhs_i,
+                        rhs_i,
+                    }
                 });
                 Ok(TypedReg {
                     reg: dst,
@@ -691,10 +699,18 @@ impl<'tcx> FnBuilder<'tcx> {
             }
             HirBinaryOp::Rem => {
                 let dst = self.alloc_int();
-                self.emit(Op::RemI64 {
-                    dst_i: dst,
-                    lhs_i,
-                    rhs_i,
+                self.emit(if cmp_unsigned {
+                    Op::RemU64 {
+                        dst_i: dst,
+                        lhs_i,
+                        rhs_i,
+                    }
+                } else {
+                    Op::RemI64 {
+                        dst_i: dst,
+                        lhs_i,
+                        rhs_i,
+                    }
                 });
                 Ok(TypedReg {
                     reg: dst,

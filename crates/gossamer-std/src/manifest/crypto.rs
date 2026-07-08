@@ -365,23 +365,6 @@ pub const CRYPTO_INSECURE: StdModule = StdModule {
     ],
 };
 
-pub const CRYPTO_CIPHER: StdModule = StdModule {
-    path: "std::crypto::cipher",
-    summary: "AES key handling + CBC / CTR block-cipher modes.",
-    items: &[
-        StdItem {
-            name: "AesKey",
-            kind: StdItemKind::Type,
-            doc: "Validated key bytes for the chosen size.",
-        },
-        StdItem {
-            name: "AesKeySize",
-            kind: StdItemKind::Type,
-            doc: "Aes128 / Aes192 / Aes256.",
-        },
-    ],
-};
-
 pub const CRYPTO_PASSWORD: StdModule = StdModule {
     path: "std::crypto::password",
     summary: "Argon2id password hashing facade: PHC-string hash / verify / re-hash policy.",

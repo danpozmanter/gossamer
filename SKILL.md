@@ -157,7 +157,7 @@ Left-associative, very low precedence.
 - `x |> f` is `f(x)`; `x |> f(a, b)` puts `x` in the LAST slot:
   `f(a, b, x)`; same for `x |> recv.m(a)`.
 - `_` makes the piped value the RECEIVER: `x |> _.m(a)` is `x.m(a)`;
-  bare `s |> _.trim |> _.to_upper` chains nullary methods; `_.0`,
+  bare `s |> _.trim |> _.to_uppercase` chains nullary methods; `_.0`,
   `_[i]`, and bare `_` (identity) work.
 - Closure steps thread the value into the last slot too.
 
@@ -239,13 +239,14 @@ fn load(path: &String) -> Result<String, errors::Error> {
 `{}` on a wrapped error prints the colon-joined chain;
 `.message()` is the top message only. Ok-path piping:
 `fs::read_to_string(f) |> result::map(|s| print!("{s}"))
-|> result::default_with(|e| eprintln!("{e}"))`.
+|> result::unwrap_or_else(|e| eprintln!("{e}"))`.
 
 Panics are goroutine-scoped: a spawned goroutine's panic ends only
 that goroutine; a main-goroutine panic is fatal (exit 101). Integer
 divide/modulo by zero panics (GX0005); `i64::MIN / -1` wraps. Deep
-recursion raises a clean stack-overflow (GX0008) - for genuinely
-deep recursion use `gos build` (the OS grows native stacks).
+recursion is bounded: the VM/JIT reports GX0008 and native builds use
+the installed stack guard (`stack overflow ... aborting`) rather than
+silently corrupting memory.
 
 ## 9. Concurrency
 
@@ -278,17 +279,18 @@ timer: `time::after(d) -> Receiver` as a select timeout arm.
 real OS threads.
 
 **Closures**: `|x: T| body`; capture is automatic (no `move`).
-`fn(args) -> ret` accepts only non-capturing items; `Fn(args) -> ret`
-accepts both (implicit coercion; no FnMut/FnOnce distinction).
+Use `Fn(args) -> ret` for callback parameters. Plain `fn(args) -> ret`
+is a raw pointer shape; named function item coercion is not implemented
+(no FnMut/FnOnce distinction in practice).
 
 **Iterators**: any type with `fn next(&mut self) -> Option<T>` works
-in `for`. `std::iter`'s `Lazy` adapter gives allocation-free
-`map`/`filter`/`take`/`skip`/`step_by` chains over any sequence.
+in `for`. Sequence combinators (`map`/`filter`/`take`/`skip`/`step_by`)
+are callable as methods/free functions and materialize results.
 
 ## 10. Data structures
 
 - `[T]` growable (push/pop/swap/sort/sort_by, `contains`, `index_of`,
-  `first`/`last`, `reversed`, `slice(a, b) -> Result`); `[T; N]`
+  `first`/`last`, `rev`, `slice(a, b) -> Result`); `[T; N]`
   fixed; tuples `.0`/`.1`; tuple structs fully usable. Method-call
   `xs.insert/remove` are silent in-place; the Result-returning forms
   are the qualified `Vec::insert(xs, i, v)` / `Vec::remove(xs, i)`.
@@ -344,19 +346,18 @@ Full path spelling is validated (GR0005); discover signatures with
   `time`: `now_ms`, `Instant`, `Duration`, `sleep`, `after`,
   RFC 3339 parse/format. `flag`: `Set::new` + `string/int/bool`
   cells that auto-deref; no built-in required-flag.
-- Text: `strings strconv utf8 unicode regex`. Prefer `to_lower` /
-  `to_upper`; `split_once`, `substring(a, b)` clamps, `byte_at(i)`
+- Text: `strings strconv utf8 unicode regex`. Prefer `to_lowercase` /
+  `to_uppercase`; `split_once`, `substring(a, b)` clamps, `byte_at(i)`
   zero-fills OOB; Unicode 16 + UAX #31 identifiers (`let café = 1`);
-  named regex groups via `captures_named`.
+  dynamic regex captures are positional in Gossamer code.
 - Collections: section 10. Prelude scalar `min`/`max`/`clamp`
   (vec-shaped `min(xs)`/`max(xs)` return `Option<T>`).
 - Encoding: `encoding::{json, yaml, toml, xml, csv, base64, base32,
   ascii85, hex, pem, binary}`. Typed serde is free functions with a
   turbofish - `from_json::<T>(&text)?` / `to_json::<T>(v)` (same for
-  yaml/toml). Struct fields must be scalars, `String`, nested
-  structs, or `[T]`/`Vec<T>` of those: an `Option<T>` / `HashMap` /
-  tuple / `[T; N]` / `json::Value` field makes the synthesized
-  serializer not exist at all (GR0001 "cannot find"). For dynamic or
+  yaml/toml). Struct fields may be scalars, `String`, `Option<T>`,
+  tuples, `HashMap<String, V>`, nested structs, and `Vec<T>` of those;
+  fixed arrays/slices are rejected with a type diagnostic. For dynamic or
   partially-known shapes use `json::parse` + `get`/`at`/`as_i64`/
   `as_str`/`keys`/`len`. Unknown JSON keys are ignored.
 - Web: `net` (Tcp/Udp/Unix sockets, `url`, `netip`, `ip`), `http`
@@ -367,10 +368,10 @@ Full path spelling is validated (GR0005); discover signatures with
   `r.path_value("name")` / `r.path_int("id")`), `http::websocket`
   (no `wss://` yet), `http_h3`, `http::static_files`, `http::proxy`,
   middleware/session/csrf/form/multipart/state/health, `html`,
-  `mime`. Experimental: `html::template`, `text::template`, `tls`,
+  `mime`. Experimental: `html::template::render_json`, `tls`,
   `database::sql` (drivers via `[rust-bindings]`).
 - Misc: `sort`, `math::{rand, big}`, `crypto::{rand, sha256, sha512,
-  hmac, blake3, aead, ed25519, ecdsa, x509, kdf, cipher, password
+  hmac, blake3, aead, ed25519, ecdsa, x509, kdf, password
   (Argon2id), subtle}` (`crypto::insecure` = MD5/SHA1 compat only),
   `hash::{fnv, crc32, adler32}`, `uuid` (v4/v7), `jwt`,
   `compress::{gzip, flate, zlib, zstd, bzip2}`, `archive::{zip,

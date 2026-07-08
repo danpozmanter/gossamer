@@ -63,7 +63,7 @@ Gossamer:
 ```gos
 let len: Option<i64> = name.map(|s: String| s.len() as i64)
 let display = name.unwrap_or("anonymous")
-let forced = name.unwrap().to_upper()
+let forced = name.unwrap().to_uppercase()
 ```
 
 For conditional access, `if let` is idiomatic:
@@ -256,7 +256,7 @@ Gossamer uses `impl` blocks or standalone free functions:
 
 ```gos
 fn shout(s: &String) -> String {
-    strings::to_upper(s) + "!"
+    strings::to_uppercase(s) + "!"
 }
 ```
 
@@ -265,7 +265,7 @@ If the method belongs logically to a type you own, use `impl`:
 ```gos
 impl MyType {
     pub fn shout(&self) -> String {
-        strings::to_upper(&self.name) + "!"
+        strings::to_uppercase(&self.name) + "!"
     }
 }
 ```
@@ -348,7 +348,7 @@ fn read_config(path: &String) -> Result<Config, errors::Error> {
 | `Regex(pattern).matches(s)` | `regex::compile(pattern)?.is_match(&s)` |
 | `s.split(delim)` | `strings::split(&s, delim)` |
 | `s.trim()` | `strings::trim(&s)` |
-| `s.uppercase()` | `strings::to_upper(&s)` |
+| `s.uppercase()` | `strings::to_uppercase(&s)` |
 | `s.toInt()` | `strconv::parse_i64(&s)` |
 | `n.toString()` | `strconv::format_i64(n)` |
 | `listOf(...)` | `[...]` (`Vec<T>`) |

@@ -12,15 +12,15 @@ use std::{errors, iter, option, result}
 fn result_family() {
     let ok: Result<i64, errors::Error> = Ok(2)
     let bad: Result<i64, errors::Error> = Err(errors::new("boom"))
-    let mapped = ok |> result::map(|x: i64| x * 3) |> result::default(0)
+    let mapped = ok |> result::map(|x: i64| x * 3) |> result::unwrap_or(0)
     let remapped = bad
         |> result::map_err(|e: errors::Error| errors::wrap(e, "outer"))
-        |> result::default_with(|e: errors::Error| {
-            println!("result map_err+default_with {e}")
+        |> result::unwrap_or_else(|e: errors::Error| {
+            println!("result map_err+unwrap_or_else {e}")
         })
     let _ = remapped
-    let chained = ok |> result::and_then(|x: i64| Ok(x + 10)) |> result::default(0)
-    let recovered = bad |> result::or_else(|_e: errors::Error| Ok(7)) |> result::default(0)
+    let chained = ok |> result::and_then(|x: i64| Ok(x + 10)) |> result::unwrap_or(0)
+    let recovered = bad |> result::or_else(|_e: errors::Error| Ok(7)) |> result::unwrap_or(0)
     println!("result map {mapped} and_then {chained} or_else {recovered}")
     let some_ok = ok |> result::ok
     let some_err = bad |> result::err
@@ -36,17 +36,17 @@ fn result_family() {
 fn option_family() {
     let a: Option<i64> = Some(3)
     let none: Option<i64> = None
-    let mapped = a |> option::map(|x: i64| x + 1) |> option::default(0)
+    let mapped = a |> option::map(|x: i64| x + 1) |> option::unwrap_or(0)
     let chained = a |> option::and_then(|x: i64| if x > 1 { Some(x * 10) } else { None })
-        |> option::default(0)
-    let kept = a |> option::filter(|x: i64| x % 2 == 1) |> option::default(0)
-    let ored = none |> option::or(Some(5)) |> option::default(0)
-    let lazy = none |> option::or_else(|| Some(6)) |> option::default(0)
-    let fallback = none |> option::default_with(|| 9)
-    println!("option map {mapped} and_then {chained} filter {kept} or {ored} or_else {lazy} default_with {fallback}")
+        |> option::unwrap_or(0)
+    let kept = a |> option::filter(|x: i64| x % 2 == 1) |> option::unwrap_or(0)
+    let ored = none |> option::or(Some(5)) |> option::unwrap_or(0)
+    let lazy = none |> option::or_else(|| Some(6)) |> option::unwrap_or(0)
+    let fallback = none |> option::unwrap_or_else(|| 9)
+    println!("option map {mapped} and_then {chained} filter {kept} or {ored} or_else {lazy} unwrap_or_else {fallback}")
     let pair = a |> option::zip(Some(4))
     let nested: Option<Option<i64>> = Some(Some(8))
-    let flat = nested |> option::flatten |> option::default(0)
+    let flat = nested |> option::flatten |> option::unwrap_or(0)
     let mut zip_sum = 0
     if let Some((x, y)) = pair {
         zip_sum = x + y
@@ -85,7 +85,7 @@ fn iter_transforms() {
 fn iter_reductions() {
     let xs = [1, 2, 3, 4]
     let folded = xs |> iter::fold(100, |acc: i64, x: i64| acc + x)
-    let reduced = xs |> iter::reduce(|a: i64, b: i64| a * b) |> option::default(0)
+    let reduced = xs |> iter::reduce(|a: i64, b: i64| a * b) |> option::unwrap_or(0)
     let sq = xs |> iter::sum_by(|x: i64| x * x)
     let prod = [2, 3] |> iter::product_by(|x: i64| x + 1)
     let parity_counts = xs |> iter::count_by(|x: i64| x % 2)
@@ -104,10 +104,10 @@ fn iter_reductions() {
 
 fn iter_searches() {
     let xs = [3, 1, 4, 1, 5]
-    let found = xs |> iter::find(|x: i64| x > 3) |> option::default(0)
-    let pos = xs |> iter::position(|x: i64| x == 4) |> option::default(0 - 1)
+    let found = xs |> iter::find(|x: i64| x > 3) |> option::unwrap_or(0)
+    let pos = xs |> iter::position(|x: i64| x == 4) |> option::unwrap_or(0 - 1)
     let fmapped = xs |> iter::find_map(|x: i64| if x > 3 { Some(x * 100) } else { None })
-        |> option::default(0)
+        |> option::unwrap_or(0)
     println!("iter find {found} position {pos} find_map {fmapped}")
     let prefix = xs |> iter::take_while(|x: i64| x >= 1)
     let mut take_sum = 0
@@ -126,10 +126,10 @@ fn iter_orderings() {
         "iter sort_by {} {} {} sort_by_key {} {} {}",
         asc[0], asc[1], asc[2], by_key[0], by_key[1], by_key[2]
     )
-    let lo = xs |> iter::min_by(|a: i64, b: i64| a - b) |> option::default(0)
-    let hi = xs |> iter::max_by(|a: i64, b: i64| a - b) |> option::default(0)
-    let lo_key = xs |> iter::min_by_key(|x: i64| 0 - x) |> option::default(0)
-    let hi_key = xs |> iter::max_by_key(|x: i64| 0 - x) |> option::default(0)
+    let lo = xs |> iter::min_by(|a: i64, b: i64| a - b) |> option::unwrap_or(0)
+    let hi = xs |> iter::max_by(|a: i64, b: i64| a - b) |> option::unwrap_or(0)
+    let lo_key = xs |> iter::min_by_key(|x: i64| 0 - x) |> option::unwrap_or(0)
+    let hi_key = xs |> iter::max_by_key(|x: i64| 0 - x) |> option::unwrap_or(0)
     println!("iter min_by {lo} max_by {hi} min_by_key {lo_key} max_by_key {hi_key}")
 }
 
@@ -139,7 +139,7 @@ fn iter_groupings() {
     for x in evens { even_sum += x }
     let mut odd_sum = 0
     for x in odds { odd_sum += x }
-    let groups = [1, 2, 3, 4] |> iter::group_by(|x: i64| x % 2)
+    let groups = [1, 2, 3, 4] |> iter::chunk_by(|x: i64| x % 2)
     let zero_bucket = groups.get_or(0, [])
     let mut bucket_sum = 0
     for x in zero_bucket { bucket_sum += x }

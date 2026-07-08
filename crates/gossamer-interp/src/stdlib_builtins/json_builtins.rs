@@ -101,7 +101,7 @@ use crate::builtins::{
     BuiltinFnPub, as_str, err_variant, install_module_pub, none_variant, ok_variant, some_variant,
     value_to_int,
 };
-use crate::value::{MapKey, NativeCall, NativeDispatch, RuntimeResult, Value};
+use crate::value::{MapKey, NativeCall, NativeDispatch, RuntimeResult, Value, dense_map};
 
 /// Entry point invoked from `builtins::install`.
 use super::*;
@@ -135,7 +135,7 @@ pub(crate) fn json_std_to_value(v: gossamer_std::json::Value) -> Value {
         JV::String(s) => Value::String(s.into()),
         JV::Array(arr) => Value::Array(Arc::new(arr.into_iter().map(json_std_to_value).collect())),
         JV::Object(map) => {
-            let mut hmap = rustc_hash::FxHashMap::default();
+            let mut hmap = dense_map();
             for (k, v) in map {
                 hmap.insert(MapKey::Str(k.into()), json_std_to_value(v));
             }

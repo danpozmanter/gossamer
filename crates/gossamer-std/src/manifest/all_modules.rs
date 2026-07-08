@@ -123,7 +123,6 @@ pub const ALL_MODULES: &[StdModule] = &[
     ENCODING_YAML,
     HTML_TEMPLATE,
     HTML,
-    TEXT_TEMPLATE,
     DATABASE_SQL,
     // P0 gap-fill: math, unicode, utf8 expansion, encoding, strings.
     MATH,
@@ -160,7 +159,6 @@ pub const ALL_MODULES: &[StdModule] = &[
     HASH_ADLER32,
     MATH_BIG,
     CRYPTO_INSECURE,
-    CRYPTO_CIPHER,
     // 0.7.0 stdlib expansion - uuid, container module, mime, toml,
     // httptest, netip, os::user, plus auto-derive extensions.
     UUID,

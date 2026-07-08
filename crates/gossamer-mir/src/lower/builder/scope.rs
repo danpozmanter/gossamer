@@ -388,10 +388,8 @@ impl<'a> Builder<'a> {
             HirExprKind::MethodCall { name, .. } => match name.name.as_str() {
                 "len" | "count" | "find" | "byte_at" | "as_i64" | "to_int" | "abs" | "pow"
                 | "signum" => Some(TyKind::Int(gossamer_types::IntTy::I64)),
-                "to_string" | "trim" | "to_lowercase" | "to_uppercase" | "to_lower"
-                | "to_upper" | "replace" | "repeat" | "as_str" | "clone_str" | "message" => {
-                    Some(TyKind::String)
-                }
+                "to_string" | "trim" | "to_lowercase" | "to_uppercase" | "replace" | "repeat"
+                | "as_str" | "clone_str" | "message" => Some(TyKind::String),
                 "is_empty" | "contains" | "starts_with" | "ends_with" | "is_some" | "is_none"
                 | "is_ok" | "is_err" => Some(TyKind::Bool),
                 _ => None,

@@ -106,6 +106,6 @@ fn main() {
         Err(e) => println!("whole error: {}", e),
     }
 
-    let _ = fs::remove_all(root)
+    let _ = fs::remove_dir_all(root)
     process::exit(0)
 }

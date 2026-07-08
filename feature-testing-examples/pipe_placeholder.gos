@@ -32,7 +32,7 @@ fn main() {
     println!("{}", r)
 
     // chained method steps
-    let up = "go" |> _.to_upper |> _.repeat(3)
+    let up = "go" |> _.to_uppercase |> _.repeat(3)
     println!("{}", up)
 
     // tuple index and array index
@@ -76,7 +76,7 @@ mod tests {
 
     #[test]
     fn chained_methods() {
-        testing::check(("go" |> _.to_upper |> _.repeat(2)) == "GOGO", "chains compose")
+        testing::check(("go" |> _.to_uppercase |> _.repeat(2)) == "GOGO", "chains compose")
     }
 
     #[test]

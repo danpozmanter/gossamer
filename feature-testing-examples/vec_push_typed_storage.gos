@@ -26,7 +26,7 @@ fn main() {
     println!("after_set v50={} v0={} v99={}", v[50], v[0], v[99])
     println!("contains={} index_of={:?}", v.contains(&-1), v.index_of(&-1))
     println!("first={:?} last={:?}", v.first(), v.last())
-    let r = v.reversed()
+    let r = v.rev()
     println!("rev0={} rev99={}", r[0], r[99])
     v.insert(0, 7777)
     println!("ins_len={} ins0={}", v.len(), v[0])

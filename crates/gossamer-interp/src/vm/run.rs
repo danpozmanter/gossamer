@@ -1195,7 +1195,7 @@ impl Vm {
                         // (canonical, pointer-stable across every clone of
                         // any instance of this type), so its address is a
                         // ready-made guard token - no second hash needed.
-                        let token = inner.name.as_ptr() as u64;
+                        let token = u64::from(inner.name.id());
                         let slot = &state.field_caches[cache_idx as usize];
                         if slot.type_token.get() == token {
                             let off = slot.offset.get() as usize;
@@ -1814,6 +1814,28 @@ impl Vm {
                         return Err(RuntimeError::Panic("divide by zero".to_string()));
                     }
                     ints[dst_i as usize] = ints[lhs_i as usize].wrapping_rem(r);
+                }
+                Op::DivU64 {
+                    dst_i,
+                    lhs_i,
+                    rhs_i,
+                } => {
+                    let r = ints[rhs_i as usize] as u64;
+                    if r == 0 {
+                        return Err(RuntimeError::Panic("divide by zero".to_string()));
+                    }
+                    ints[dst_i as usize] = ((ints[lhs_i as usize] as u64) / r) as i64;
+                }
+                Op::RemU64 {
+                    dst_i,
+                    lhs_i,
+                    rhs_i,
+                } => {
+                    let r = ints[rhs_i as usize] as u64;
+                    if r == 0 {
+                        return Err(RuntimeError::Panic("divide by zero".to_string()));
+                    }
+                    ints[dst_i as usize] = ((ints[lhs_i as usize] as u64) % r) as i64;
                 }
                 Op::ArithImmI64 {
                     kind,
@@ -2736,8 +2758,7 @@ impl Vm {
                     let expected: &'static str = chunk.shape_names[name_idx as usize];
                     let matches = match &registers[src as usize] {
                         Value::Variant(inner) => {
-                            std::ptr::eq(inner.name, expected)
-                                && inner.fields.len() == arity as usize
+                            inner.name.as_str() == expected && inner.fields.len() == arity as usize
                         }
                         Value::NativeEnum(owner) => {
                             let disc = crate::value::native_enum_disc(owner.ptr, owner.shape);
@@ -2766,7 +2787,7 @@ impl Vm {
                     let expected: &'static str = chunk.shape_names[name_idx as usize];
                     let matches = matches!(
                         &registers[src as usize],
-                        Value::Struct(inner) if std::ptr::eq(inner.name, expected)
+                        Value::Struct(inner) if inner.name.as_str() == expected
                     );
                     registers[dst as usize] = Value::Bool(matches);
                 }
@@ -3044,18 +3065,12 @@ impl Vm {
                 },
                 Op::BuildIntMap { dst_v } => {
                     registers[dst_v as usize] = Value::IntMap(Arc::new(parking_lot::Mutex::new(
-                        rustc_hash::FxHashMap::with_capacity_and_hasher(
-                            16,
-                            rustc_hash::FxBuildHasher,
-                        ),
+                        crate::value::dense_map_with_capacity(16),
                     )));
                 }
                 Op::BuildStrIntMap { dst_v } => {
                     registers[dst_v as usize] = Value::StrIntMap(Arc::new(
-                        parking_lot::Mutex::new(rustc_hash::FxHashMap::with_capacity_and_hasher(
-                            16,
-                            rustc_hash::FxBuildHasher,
-                        )),
+                        parking_lot::Mutex::new(crate::value::dense_map_with_capacity(16)),
                     ));
                 }
                 Op::IntMapInc {

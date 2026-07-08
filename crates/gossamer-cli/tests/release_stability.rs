@@ -996,15 +996,16 @@ fn release_read_file_bytes_for_loop_mixed_width_sum() {
         "read_file_bytes_sum",
         r#"
 use std::errors
-use std::os
+use std::env
+use std::fs
 use std::path
 
 fn main() -> Result<(), errors::Error> {
     let payload: [u8] = [0, 255, 1, 254]
-    let tmp = path::join(&os::temp_dir(), &"gos_rel_byte_sum_probe.bin")
-    os::write_file(&tmp, &payload)?
-    let mut bytes = os::read_file(&tmp)?
-    os::remove_file(&tmp)?
+    let tmp = path::join(&env::temp_dir(), &"gos_rel_byte_sum_probe.bin")
+    fs::write(&tmp, &payload)?
+    let mut bytes = fs::read(&tmp)?
+    fs::remove_file(&tmp)?
     let mut total: i64 = 0
     for b in bytes {
         total += b as i64
@@ -1056,9 +1057,9 @@ fn main() {
 
 #[test]
 fn release_packed_byte_vec_helpers_honor_stride() {
-    // `os::read_file` hands the compiled tiers a packed
+    // `fs::read` hands the compiled tiers a packed
     // elem_bytes=1 vec. The Vec helper surface (`first` / `last` /
-    // `index_of` / `count_of` / `contains` / `reversed` / `pop`)
+    // `index_of` / `count_of` / `contains` / `rev` / `pop`)
     // must honor the header stride instead of reading 8 bytes per
     // element, and `pop` must return `Option<last>` while
     // shortening the receiver. Expected values match the VM run.
@@ -1066,15 +1067,16 @@ fn release_packed_byte_vec_helpers_honor_stride() {
         "packed_byte_vec_helpers",
         r#"
 use std::errors
-use std::os
+use std::env
+use std::fs
 use std::path
 
 fn main() -> Result<(), errors::Error> {
     let payload: [u8] = [9, 3, 7, 3, 1]
-    let tmp = path::join(&os::temp_dir(), &"gos_rel_packed_helpers.bin")
-    os::write_file(&tmp, &payload)?
-    let mut bytes = os::read_file(&tmp)?
-    os::remove_file(&tmp)?
+    let tmp = path::join(&env::temp_dir(), &"gos_rel_packed_helpers.bin")
+    fs::write(&tmp, &payload)?
+    let mut bytes = fs::read(&tmp)?
+    fs::remove_file(&tmp)?
     if let Some(f) = bytes.first() {
         println!("first = {}", f)
     }
@@ -1087,8 +1089,8 @@ fn main() -> Result<(), errors::Error> {
     println!("count_of 3 = {}", bytes.count_of(&3))
     println!("contains 9 = {}", bytes.contains(&9))
     println!("contains 8 = {}", bytes.contains(&8))
-    let r = bytes.reversed()
-    println!("reversed = {} {} {} {} {}", r[0], r[1], r[2], r[3], r[4])
+    let r = bytes.rev()
+    println!("rev = {} {} {} {} {}", r[0], r[1], r[2], r[3], r[4])
     if let Some(p) = bytes.pop() {
         println!("pop = {}", p)
     }
@@ -1096,7 +1098,7 @@ fn main() -> Result<(), errors::Error> {
     Ok(())
 }
 "#,
-        "first = 9\nlast = 1\nindex_of 7 = 2\ncount_of 3 = 2\ncontains 9 = true\ncontains 8 = false\nreversed = 1 3 7 3 9\npop = 1\nlen after pop = 4\n",
+        "first = 9\nlast = 1\nindex_of 7 = 2\ncount_of 3 = 2\ncontains 9 = true\ncontains 8 = false\nrev = 1 3 7 3 9\npop = 1\nlen after pop = 4\n",
     );
 }
 

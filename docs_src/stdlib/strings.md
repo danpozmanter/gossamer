@@ -14,13 +14,15 @@ Polished `String` operations.
 | `contains` | fn | Returns whether the string contains a substring. |
 | `find` | fn | Returns the byte position of the first match. |
 | `replace` | fn | Replaces every occurrence of `from` with `to`. |
-| `to_lower` | fn | Lowercases every character. |
-| `to_upper` | fn | Uppercases every character. |
+| `to_lowercase` | fn | Lowercases every character. |
+| `to_uppercase` | fn | Uppercases every character. |
 | `starts_with` | fn | Returns whether the string starts with the given prefix. |
 | `ends_with` | fn | Returns whether the string ends with the given suffix. |
 | `split_once` | fn | Splits on the first occurrence of `sep`; returns Option<(String, String)>. |
 | `rsplit_once` | fn | Splits on the last occurrence of `sep`; returns Option<(String, String)>. |
 | `count` | fn | Counts non-overlapping occurrences of `needle`. |
+| `bytes` | fn | Returns the UTF-8 bytes of the string. |
+| `chars` | fn | Returns the Unicode scalar values of the string. |
 | `center` | fn | Symmetric pad to `width` using the given pad character. |
 | `slice` | fn | Safe byte-range slice returning Result<String, errors::Error>. |
 | `split_whitespace` | fn | Splits on runs of whitespace, dropping empty fields. |

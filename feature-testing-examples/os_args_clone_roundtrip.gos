@@ -1,4 +1,4 @@
-// Regression: `os::args()` elements must be owned, refcounted gos
+// Regression: `env::args()` elements must be owned, refcounted gos
 // strings, not raw libc `argv` pointers. Cloning one arg (an RC
 // retain) while others are still live must not corrupt any of them.
 // On a tier that exposes raw argv, the retain writes a fabricated RC
@@ -7,10 +7,10 @@
 // silently mutated or the process segfaults. Output must be
 // bit-identical across the VM, Cranelift, and LLVM tiers.
 
-use std::os
+use std::env
 
 fn main() {
-    let args = os::args()
+    let args = env::args()
     let mut first = ""
     let mut rest: [String] = [].to_vec()
     let argc = args.len() as i64

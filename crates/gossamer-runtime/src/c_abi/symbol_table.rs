@@ -1093,6 +1093,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_flush_stdout as *const u8,
         ),
         (
+            "gos_rt_fmt_radix_i64",
+            crate::c_abi::gos_rt_fmt_radix_i64 as *const u8,
+        ),
+        (
             "gos_rt_fs_canonicalize",
             crate::c_abi::gos_rt_fs_canonicalize as *const u8,
         ),
@@ -4950,6 +4954,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
         (
             "gos_rt_vec_join_bool",
             crate::c_abi::gos_rt_vec_join_bool as *const u8,
+        ),
+        (
+            "gos_rt_vec_join_char",
+            crate::c_abi::gos_rt_vec_join_char as *const u8,
         ),
         (
             "gos_rt_vec_join_f64",

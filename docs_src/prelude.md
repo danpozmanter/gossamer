@@ -104,7 +104,7 @@ Always-in-scope type names:
   transparent in a managed runtime - spelling compatibility with
   Rust), `Weak<T>`.
 - Collections: `Vec<T>`, `HashMap<K, V>`, `HashSet<T>`,
-  `BTreeMap<K, V>`, `BTreeSet<T>`, `VecDeque<T>`, `Range`.
+  `BTreeMap<K, V>`, `VecDeque<T>`, `Range`.
 - Concurrency: `Sender<T>`, `Receiver<T>`, `Mutex<T>`,
   `WaitGroup`, `JoinHandle<T>`.
 

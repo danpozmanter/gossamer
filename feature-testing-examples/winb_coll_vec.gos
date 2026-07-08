@@ -1,5 +1,5 @@
 // Win B collections sweep: Vec / [T] method surface across tiers.
-// push/pop/len/contains/index_of/count_of/first/last/reversed/sort/
+// push/pop/len/contains/index_of/count_of/first/last/rev/sort/
 // sort_by/slice/swap and the Result-returning qualified
 // Vec::insert / Vec::remove, on representative + edge inputs (empty,
 // single, duplicate, out-of-range). Bit-identical VM vs compiled.
@@ -47,13 +47,13 @@ fn main() {
     show_opt_i64("empty first", none_vec.first())
     show_opt_i64("empty last", none_vec.last())
 
-    // reversed (non-mutating) then original unchanged.
+    // rev (non-mutating) then original unchanged.
     let r = [1, 2, 3, 4]
-    let rr = r.reversed()
-    print!("reversed ")
+    let rr = r.rev()
+    print!("rev ")
     for v in rr { print!("{} ", v) }
     println!("")
-    print!("orig-after-reversed ")
+    print!("orig-after-rev ")
     for v in r { print!("{} ", v) }
     println!("")
 

@@ -45,11 +45,11 @@ fn main() {
     }
 
     // ---- path::* free fns ----
-    println!("path::base = {}", path::base(&"a/b/c.gos"))
-    println!("path::dir = {}", path::dir(&"a/b/c.gos"))
-    match path::ext(&"a/b/c.gos") {
-        Some(e) => println!("path::ext = {}", e),
-        None => println!("path::ext = none"),
+    println!("path::file_name = {}", path::file_name(&"a/b/c.gos").unwrap_or(""))
+    println!("path::parent = {}", path::parent(&"a/b/c.gos").unwrap_or(""))
+    match path::extension(&"a/b/c.gos") {
+        Some(e) => println!("path::extension = {}", e),
+        None => println!("path::extension = none"),
     }
 
     // ---- Vec method surface ----
@@ -62,8 +62,8 @@ fn main() {
         Some(v) => println!("last = {}", v),
         None => println!("last = none"),
     }
-    let rev = nums.reversed()
-    println!("reversed[0] = {}", rev[0])
+    let rev = nums.rev()
+    println!("rev[0] = {}", rev[0])
     println!("contains 30 = {}", nums.contains(&30))
     println!("contains 99 = {}", nums.contains(&99))
     match nums.index_of(&20) {

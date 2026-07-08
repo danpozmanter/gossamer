@@ -862,6 +862,22 @@ fn op_label(tag: usize) -> &'static str {
                 },
                 "RemI64",
             ),
+            (
+                O::DivU64 {
+                    dst_i: 0,
+                    lhs_i: 0,
+                    rhs_i: 0,
+                },
+                "DivU64",
+            ),
+            (
+                O::RemU64 {
+                    dst_i: 0,
+                    lhs_i: 0,
+                    rhs_i: 0,
+                },
+                "RemU64",
+            ),
             (O::NegI64 { dst_i: 0, src_i: 0 }, "NegI64"),
             (
                 O::LtI64 {

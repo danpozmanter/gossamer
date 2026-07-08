@@ -308,25 +308,6 @@ pub enum TypeError {
         /// Positional index attempted.
         index: u64,
     },
-    /// A fixed-size array literal `[value; N]` with a compile-time-constant
-    /// `N` whose total byte size exceeds the safe stack threshold. Such a
-    /// literal is placed inline on the stack by the compiled tiers, so a
-    /// multi-megabyte length silently overflows the OS main-thread stack
-    /// (SIGSEGV) while the VM heap-allocates it - rejected at check so the
-    /// three tiers agree and the crash never happens.
-    #[error(
-        "fixed-size array `[{elem}; {len}]` needs {bytes} bytes of stack; the limit is {limit}"
-    )]
-    OversizedStackArray {
-        /// Rendered element type.
-        elem: String,
-        /// Constant element count.
-        len: u64,
-        /// Total stack bytes the array would occupy.
-        bytes: u64,
-        /// The safe stack-array byte ceiling.
-        limit: u64,
-    },
     /// A `match` / `if let` arm patterns a `json::Value` scrutinee with a
     /// `json::Value::Object(..)` / `::Array(..)` / `::Int(..)` etc.
     /// constructor. `json::Value` is an opaque dynamic-document handle
@@ -403,7 +384,6 @@ impl TypeError {
             Self::NotIndexable { .. } => "not-indexable",
             Self::NotCallable { .. } => "not-callable",
             Self::NoTupleField { .. } => "no-tuple-field",
-            Self::OversizedStackArray { .. } => "oversized-stack-array",
             Self::JsonValuePatternUnsupported { .. } => "json-value-pattern-unsupported",
             Self::WeakDowngradeNonRc { .. } => "weak-downgrade-non-rc",
             Self::CombinatorDataArgMismatch { .. } => "combinator-data-arg-mismatch",
@@ -440,7 +420,6 @@ impl TypeError {
             Self::NotIndexable { .. } => "GT0021",
             Self::NotCallable { .. } => "GT0022",
             Self::NoTupleField { .. } => "GT0023",
-            Self::OversizedStackArray { .. } => "GT0026",
             Self::JsonValuePatternUnsupported { .. } => "GT0027",
             Self::WeakDowngradeNonRc { .. } => "GT0028",
             Self::CombinatorDataArgMismatch { .. } => "GT0029",
@@ -655,16 +634,6 @@ impl TypeDiagnostic {
             TypeError::NotIndexable { .. }
             | TypeError::NotCallable { .. }
             | TypeError::NoTupleField { .. } => out = structural_use_diagnostic(out, &self.error),
-            TypeError::OversizedStackArray { elem, .. } => {
-                out = out
-                    .with_help(format!(
-                        "use a heap `Vec` instead: `let v: [{elem}] = [value; n]` (or `Vec::with_capacity`)"
-                    ))
-                    .with_note(
-                        "a fixed-size `[T; N]` is placed inline on the stack, so an oversized \
-                         one overflows the OS stack on the compiled tiers (silent SIGSEGV)",
-                    );
-            }
             TypeError::JsonValuePatternUnsupported { .. } => {
                 out = out
                     .with_help(
@@ -861,7 +830,7 @@ fn std_fn_value_diagnostic(
     .with_note(
         "the VM models std functions as callable builtin values, but the compiled \
          tiers need a concrete runtime symbol; only the tabled supported set \
-         (errors::new, strings::to_upper/.../trim, strconv::parse_int/...) can be \
+         (errors::new, strings::to_uppercase/.../trim, strconv::parse_i64/...) can be \
          passed directly",
     )
 }

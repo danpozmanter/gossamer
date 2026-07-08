@@ -666,6 +666,16 @@ impl<'a> Builder<'a> {
         } else {
             &names[..]
         };
+        if let Some((int_ty, value)) = int_assoc_const(strip_std) {
+            let ty = self.tcx.int_ty(int_ty);
+            let local = self.fresh(ty);
+            self.emit_assign(
+                Place::local(local),
+                Rvalue::Use(Operand::Const(ConstValue::Int(value))),
+                span,
+            );
+            return Some(local);
+        }
         let json_unit = matches!(
             (
                 strip_std.first(),
@@ -2915,9 +2925,50 @@ fn math_const_bits(name: &str) -> Option<u64> {
         "MIN_POSITIVE_F64" => f64::MIN_POSITIVE,
         "INF" => f64::INFINITY,
         "NEG_INF" => f64::NEG_INFINITY,
+        "NAN" => f64::NAN,
         _ => return None,
     };
     Some(v.to_bits())
+}
+
+fn int_assoc_const(segments: &[&str]) -> Option<(gossamer_types::IntTy, i128)> {
+    use gossamer_types::IntTy;
+    if segments.len() != 2 {
+        return None;
+    }
+    let ty = match segments[0] {
+        "i8" => IntTy::I8,
+        "i16" => IntTy::I16,
+        "i32" => IntTy::I32,
+        "i64" => IntTy::I64,
+        "isize" => IntTy::Isize,
+        "u8" => IntTy::U8,
+        "u16" => IntTy::U16,
+        "u32" => IntTy::U32,
+        "u64" => IntTy::U64,
+        "usize" => IntTy::Usize,
+        _ => return None,
+    };
+    let value = match (ty, segments[1]) {
+        (IntTy::I8, "MIN") => i128::from(i8::MIN),
+        (IntTy::I8, "MAX") => i128::from(i8::MAX),
+        (IntTy::I16, "MIN") => i128::from(i16::MIN),
+        (IntTy::I16, "MAX") => i128::from(i16::MAX),
+        (IntTy::I32, "MIN") => i128::from(i32::MIN),
+        (IntTy::I32, "MAX") => i128::from(i32::MAX),
+        (IntTy::I64 | IntTy::Isize, "MIN") => i128::from(i64::MIN),
+        (IntTy::I64 | IntTy::Isize, "MAX") => i128::from(i64::MAX),
+        (IntTy::U8, "MIN") => 0,
+        (IntTy::U8, "MAX") => i128::from(u8::MAX),
+        (IntTy::U16, "MIN") => 0,
+        (IntTy::U16, "MAX") => i128::from(u16::MAX),
+        (IntTy::U32, "MIN") => 0,
+        (IntTy::U32, "MAX") => i128::from(u32::MAX),
+        (IntTy::U64 | IntTy::Usize, "MIN") => 0,
+        (IntTy::U64 | IntTy::Usize, "MAX") => i128::from(u64::MAX),
+        _ => return None,
+    };
+    Some((ty, value))
 }
 
 /// Operator-overload impl-method name for an arithmetic binary operator

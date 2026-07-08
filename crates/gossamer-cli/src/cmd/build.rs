@@ -1347,13 +1347,11 @@ fn emit_native_objects(
     let mut object_paths: Vec<PathBuf> = build.llvm_objects;
     if build.has_cranelift_companion {
         object_paths.push(cl_path);
-        if std::env::var("GOS_LLVM_TRACE").is_ok() {
-            eprintln!(
-                "build: per-function Cranelift companion engaged for {n} bodies: {names:?}",
-                n = build.fallback_bodies.len(),
-                names = build.fallback_bodies,
-            );
-        }
+        eprintln!(
+            "build: per-function Cranelift companion engaged for {n} bodies: {names:?}",
+            n = build.fallback_bodies.len(),
+            names = build.fallback_bodies,
+        );
     }
     Ok((object_paths, Some(build.triple)))
 }

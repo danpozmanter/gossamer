@@ -56,8 +56,7 @@ pub unsafe extern "C" fn gos_rt_strconv_parse_i64(s: *const c_char) -> i128 {
     })
 }
 
-/// `strconv::atoi(s) -> Result<i64, errors::Error>` - alias for
-/// `parse_i64`.
+/// Legacy ABI helper for `strconv::parse_i64(s) -> Result<i64, errors::Error>`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_strconv_atoi(s: *const c_char) -> i128 {
     unsafe { gos_rt_strconv_parse_i64(s) }
@@ -126,7 +125,7 @@ pub unsafe extern "C" fn gos_rt_strconv_format_i64(n: i64) -> *mut c_char {
     unsafe { gos_rt_i64_to_str(n) }
 }
 
-/// `strconv::itoa(n) -> String` - alias for `format_i64`.
+/// Legacy ABI helper for `strconv::format_i64(n) -> String`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_strconv_itoa(n: i64) -> *mut c_char {
     unsafe { gos_rt_i64_to_str(n) }
@@ -204,6 +203,32 @@ pub unsafe extern "C" fn gos_rt_strconv_format_i64_radix(n: i64, base: i64) -> *
             }
             digits.iter().rev().collect()
         };
+        alloc_cstring(out.as_bytes())
+    })
+}
+
+/// Format-spec intrinsic for `{:b}` / `{:o}` / `{:x}`-style integer
+/// rendering. Negative values are rendered as their 64-bit two's-complement
+/// bit pattern, matching Rust's radix formatters.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_fmt_radix_i64(n: i64, base: i64) -> *mut c_char {
+    ffi_entry!(std::ptr::null_mut(), {
+        let radix = u32::try_from(base).unwrap_or(10);
+        if !(2..=36).contains(&radix) {
+            return alloc_cstring(n.to_string().as_bytes());
+        }
+        let mut v = u128::from(n as u64);
+        if v == 0 {
+            return alloc_cstring(b"0");
+        }
+        let r = u128::from(radix);
+        let mut digits = Vec::new();
+        while v > 0 {
+            let d = (v % r) as u32;
+            digits.push(std::char::from_digit(d, radix).unwrap_or('0'));
+            v /= r;
+        }
+        let out: String = digits.iter().rev().collect();
         alloc_cstring(out.as_bytes())
     })
 }

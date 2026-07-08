@@ -99,7 +99,6 @@ use gossamer_std::utf16 as utf16_std;
 
 use crate::builtins::{
     BuiltinFnPub, as_str, err_variant, install_module_pub, none_variant, ok_variant, some_variant,
-    value_to_int,
 };
 use crate::value::{MapKey, NativeCall, NativeDispatch, RuntimeResult, Value};
 
@@ -110,18 +109,11 @@ pub(crate) fn install_thread(globals: &mut Vec<(&'static str, Value)>) {
     install_module_pub(
         "thread",
         &[
-            ("sleep_ms", builtin_thread_sleep_ms),
             ("num_cpus", builtin_thread_num_cpus),
             ("yield_now", builtin_thread_yield_now),
         ],
         globals,
     );
-}
-
-pub(crate) fn builtin_thread_sleep_ms(args: &[Value]) -> RuntimeResult<Value> {
-    let ms = args.first().and_then(value_to_int).unwrap_or(0).max(0) as u64;
-    gossamer_std::thread::sleep_ms(ms);
-    Ok(Value::Unit)
 }
 
 pub(crate) fn builtin_thread_num_cpus(_args: &[Value]) -> RuntimeResult<Value> {

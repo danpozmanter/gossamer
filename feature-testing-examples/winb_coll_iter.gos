@@ -26,19 +26,19 @@ fn main() {
 
     // fold / reduce (+ empty reduce -> None).
     println!("fold {}", xs |> iter::fold(1000, |a: i64, b: i64| a + b))
-    println!("reduce {}", xs |> iter::reduce(|a: i64, b: i64| a * b) |> option::default(0))
+    println!("reduce {}", xs |> iter::reduce(|a: i64, b: i64| a * b) |> option::unwrap_or(0))
     let empty: Vec<i64> = []
-    println!("reduce empty {}", empty |> iter::reduce(|a: i64, b: i64| a + b) |> option::default(-1))
+    println!("reduce empty {}", empty |> iter::reduce(|a: i64, b: i64| a + b) |> option::unwrap_or(-1))
 
     // find present + absent.
-    println!("find {}", xs |> iter::find(|n: i64| n > 3) |> option::default(0))
-    println!("find none {}", xs |> iter::find(|n: i64| n > 99) |> option::default(-1))
+    println!("find {}", xs |> iter::find(|n: i64| n > 3) |> option::unwrap_or(0))
+    println!("find none {}", xs |> iter::find(|n: i64| n > 99) |> option::unwrap_or(-1))
 
     // array terminals: sum / count / min / max.
     println!("sum {}", [3, 1, 2, 4] |> iter::sum)
     println!("count {}", [3, 1, 2, 4] |> iter::count)
-    println!("min {}", [3, 1, 2, 4] |> iter::min |> option::default(0))
-    println!("max {}", [3, 1, 2, 4] |> iter::max |> option::default(0))
+    println!("min {}", [3, 1, 2, 4] |> iter::min |> option::unwrap_or(0))
+    println!("max {}", [3, 1, 2, 4] |> iter::max |> option::unwrap_or(0))
 
     // sum_by, take, skip, step_by (eager free fns).
     println!("sum_by {}", xs |> iter::sum_by(|n: i64| n * n))
@@ -50,7 +50,7 @@ fn main() {
     println!("skip3 sum {}", ks)
 
     // group_by + partition.
-    let groups = [1, 2, 3, 4, 5, 6] |> iter::group_by(|n: i64| n % 3)
+    let groups = [1, 2, 3, 4, 5, 6] |> iter::chunk_by(|n: i64| n % 3)
     println!("group_by buckets {}", groups.len())
     let mut g0 = 0
     for x in groups.get_or(0, []) { g0 += x }

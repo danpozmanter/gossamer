@@ -112,23 +112,12 @@ pub(crate) fn install_path(globals: &mut Vec<(&'static str, Value)>) {
         &[
             ("parent", builtin_path_parent),
             ("file_name", builtin_path_file_name),
-            ("stem", builtin_path_stem),
-            ("ext", builtin_path_ext),
+            ("file_stem", builtin_path_stem),
             ("extension", builtin_path_ext),
             ("is_absolute", builtin_path_is_absolute),
             ("normalize", builtin_path_normalize),
-            // 0.7.0 - `base`, `dir`, `join`, `clean`,
-            // `has_prefix` matching the doc surface in SKILL.md and
-            // the compiled-tier runtime helpers. Note `split` is
-            // qualified-only (registered manually below) because
-            // bare-name `split` is the workhorse String/Vec method
-            // and the path-shaped tuple-returning variant must not
-            // shadow it.
-            ("base", builtin_path_base),
-            ("dir", builtin_path_dir),
             ("join", builtin_path_join_two),
-            ("clean", builtin_path_clean),
-            ("has_prefix", builtin_path_has_prefix),
+            ("starts_with", builtin_path_starts_with),
         ],
         globals,
     );
@@ -172,7 +161,7 @@ pub(crate) fn builtin_path_split(args: &[Value]) -> RuntimeResult<Value> {
     ])))
 }
 
-pub(crate) fn builtin_path_has_prefix(args: &[Value]) -> RuntimeResult<Value> {
+pub(crate) fn builtin_path_starts_with(args: &[Value]) -> RuntimeResult<Value> {
     let path = args.first().and_then(as_str).unwrap_or("");
     let prefix = args.get(1).and_then(as_str).unwrap_or("");
     Ok(Value::Bool(path_std::has_prefix(path, prefix)))

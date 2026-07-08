@@ -533,7 +533,7 @@ impl<'a> Builder<'a> {
                 });
                 ("gos_rt_fs_read_to_string_result", result_ty)
             }
-            "fs::write" | "os::write_file" => {
+            "fs::write" => {
                 // Pick the bytes-shaped variant when the contents
                 // argument is a Vec<u8> / &[u8] - the c-string-shaped
                 // helper would truncate at the first NUL and corrupt
@@ -579,20 +579,17 @@ impl<'a> Builder<'a> {
                 (sym, self.result_unit_error_adt_ty())
             }
             "fs::create_dir" => ("gos_rt_fs_create_dir", self.result_unit_error_adt_ty()),
-            "fs::create_dir_all" | "os::mkdir" | "os::mkdir_all" | "fs::mkdir"
-            | "fs::mkdir_all" => (
+            "fs::create_dir_all" => (
                 "gos_rt_os_mkdir_all_result",
                 self.result_unit_error_adt_ty(),
             ),
-            "fs::remove_file" | "os::remove_file" => (
+            "fs::remove_file" => (
                 "gos_rt_os_remove_file_result",
                 self.result_unit_error_adt_ty(),
             ),
             // Non-recursive empty-directory removal, matching the interp.
-            "fs::remove_dir" | "os::remove_dir" => {
-                ("gos_rt_fs_remove_dir", self.result_unit_error_adt_ty())
-            }
-            "fs::remove_all" | "fs::remove_dir_all" | "os::remove_dir_all" => (
+            "fs::remove_dir" => ("gos_rt_fs_remove_dir", self.result_unit_error_adt_ty()),
+            "fs::remove_dir_all" => (
                 "gos_rt_os_remove_dir_all_result",
                 self.result_unit_error_adt_ty(),
             ),
@@ -606,7 +603,7 @@ impl<'a> Builder<'a> {
         _args: &[HirExpr],
     ) -> Option<(&'static str, gossamer_types::Ty)> {
         Some(match joined {
-            "fs::list_dir" | "fs::walk_dir" | "path::walk" | "os::list_dir" => {
+            "fs::read_dir" | "fs::walk_dir" | "path::walk" => {
                 // Return type is `Result<Vec<DirInfo>, errors::Error>`.
                 // Pin the dest as a Result Adt whose first generic
                 // is `Vec<DirInfo>` so `.map_err(...)?` unwraps to a
@@ -645,21 +642,7 @@ impl<'a> Builder<'a> {
         _args: &[HirExpr],
     ) -> Option<(&'static str, gossamer_types::Ty)> {
         Some(match joined {
-            // `os::read_file_to_string(path) -> Result<String, IoError>`
-            // is a re-spelling of `fs::read_to_string` in the
-            // stdlib. Compiled mode never wired a binding for the
-            // os-prefixed name, so the call previously fell through
-            // to a generic dispatch that returned an empty string.
-            // Mirror `fs::read_to_string`'s shape - the runtime
-            // helper hands back a `*mut c_char`, the MIR type is
-            // `String`, and downstream `.map_err(...)?` paths do
-            // the result-wrap themselves.
-            "os::read_file_to_string" => ("gos_rt_fs_read_to_string", self.tcx.string_ty()),
-            // `os::read_file(path) -> Result<Vec<u8>, errors::Error>` -
-            // returns the raw bytes so binary files (images,
-            // archives, …) round-trip through Gossamer without the
-            // UTF-8-lossy collapse `read_file_to_string` would apply.
-            "os::read_file" | "fs::read" | "fs::read_file" => {
+            "fs::read" => {
                 let u8_ty = self.tcx.int_ty(gossamer_types::IntTy::U8);
                 let v = self.tcx.intern(gossamer_types::TyKind::Vec(u8_ty));
                 let e = self.tcx.dyn_error_ty();
@@ -670,29 +653,14 @@ impl<'a> Builder<'a> {
                 });
                 ("gos_rt_fs_read_bytes_result", result_ty)
             }
-            // `os::read_dir(path) -> Result<Vec<String>, IoError>`.
-            // The runtime helper hands back a `*mut GosVec` of
-            // C-string names (errors land as an empty vec for now,
-            // matching the interp's behaviour-by-shape). Pin the
-            // dest type to `Vec<String>` so downstream `for entry
-            // in entries` iterates real C-string slots instead of
-            // segfaulting on the null pointer that the generic
-            // fall-through used to hand back.
-            "os::read_dir" | "fs::read_dir" => {
-                let s = self.tcx.string_ty();
-                let v = self.tcx.intern(gossamer_types::TyKind::Vec(s));
-                ("gos_rt_os_read_dir", v)
-            }
             // 0.10.0 - os/fs copy + canonicalize, crypto::subtle.
-            "os::copy" | "fs::copy" => ("gos_rt_fs_copy", self.result_i64_error_adt_ty()),
-            "os::canonicalize" | "fs::canonicalize" => {
-                ("gos_rt_fs_canonicalize", self.result_string_error_adt_ty())
-            }
+            "fs::copy" => ("gos_rt_fs_copy", self.result_i64_error_adt_ty()),
+            "fs::canonicalize" => ("gos_rt_fs_canonicalize", self.result_string_error_adt_ty()),
             // `os::arch()` / `os::family()` - target introspection.
             "os::arch" => ("gos_rt_os_arch", self.tcx.string_ty()),
             "os::family" => ("gos_rt_os_family", self.tcx.string_ty()),
-            // `os::rename(from, to)` / `fs::rename(from, to)` -> Result<(), Error>.
-            "os::rename" | "fs::rename" => {
+            // `fs::rename(from, to)` -> Result<(), Error>.
+            "fs::rename" => {
                 let unit_ty = self.tcx.unit();
                 let err_ty = self.tcx.dyn_error_ty();
                 let substs = gossamer_types::Substs::from_types([unit_ty, err_ty]);
@@ -705,8 +673,7 @@ impl<'a> Builder<'a> {
             "os::program_name" | "env::program_name" => {
                 ("gos_rt_os_program_name", self.tcx.string_ty())
             }
-            // `os::set_cwd` is a re-spelling of `env::set_current_dir`.
-            "os::set_cwd" => {
+            "env::set_current_dir" => {
                 let unit_ty = self.tcx.unit();
                 let err_ty = self.tcx.dyn_error_ty();
                 let substs = gossamer_types::Substs::from_types([unit_ty, err_ty]);
@@ -716,16 +683,16 @@ impl<'a> Builder<'a> {
                 });
                 ("gos_rt_env_set_current_dir", result_ty)
             }
-            "os::env" | "env::var" => ("gos_rt_os_env", self.option_string_adt_ty()),
-            "os::exists" | "fs::exists" => ("gos_rt_os_exists", self.tcx.bool_ty()),
-            "os::is_file" | "fs::is_file" => ("gos_rt_os_is_file", self.tcx.bool_ty()),
-            "os::is_dir" | "fs::is_dir" => ("gos_rt_os_is_dir", self.tcx.bool_ty()),
-            "os::is_symlink" | "fs::is_symlink" => ("gos_rt_os_is_symlink", self.tcx.bool_ty()),
-            "os::file_size" | "fs::file_size" => (
+            "env::var" => ("gos_rt_os_env", self.option_string_adt_ty()),
+            "fs::exists" => ("gos_rt_os_exists", self.tcx.bool_ty()),
+            "fs::is_file" => ("gos_rt_os_is_file", self.tcx.bool_ty()),
+            "fs::is_dir" => ("gos_rt_os_is_dir", self.tcx.bool_ty()),
+            "fs::is_symlink" => ("gos_rt_os_is_symlink", self.tcx.bool_ty()),
+            "fs::file_size" => (
                 "gos_rt_os_file_size",
                 self.tcx.int_ty(gossamer_types::IntTy::I64),
             ),
-            "os::cwd" | "env::current_dir" => ("gos_rt_os_cwd", self.result_string_error_adt_ty()),
+            "env::current_dir" => ("gos_rt_os_cwd", self.result_string_error_adt_ty()),
             _ => return None,
         })
     }
@@ -736,7 +703,7 @@ impl<'a> Builder<'a> {
         _args: &[HirExpr],
     ) -> Option<(&'static str, gossamer_types::Ty)> {
         Some(match joined {
-            // `os::args() -> Vec<String>`. Pinning the dest type
+            // `env::args() -> Vec<String>`. Pinning the dest type
             // here is what teaches `args[i].len()` to dispatch
             // through `gos_rt_str_len` instead of the generic
             // `gos_rt_arr_len`. Single-file builds got
@@ -750,20 +717,20 @@ impl<'a> Builder<'a> {
             // `*mut GosVec` whose data pointer is `argv + 1`, so
             // index access through the standard `header.ptr + i *
             // elem_bytes` shape Just Works.
-            "os::args" | "env::args" => {
+            "env::args" => {
                 let s = self.tcx.string_ty();
                 let v = self.tcx.intern(gossamer_types::TyKind::Vec(s));
                 ("gos_rt_os_args", v)
             }
-            // `os::set_env(name, value) -> Result<(), errors::Error>`.
+            // `env::set_var(name, value) -> Result<(), errors::Error>`.
             // Pin the Ok payload to unit and the Err to
             // `errors::Error` so callers' `?` shapes find the
             // right field layout. Without this binding the
             // compiled tier silently no-op'd `set_env` because
             // the generic free-call dispatch couldn't resolve
-            // the symbol, and downstream `os::env` reads
+            // the symbol, and downstream `env::var` reads
             // returned the old value.
-            "os::set_env" | "set_env" => {
+            "env::set_var" => {
                 let unit_ty = self.tcx.unit();
                 let err_ty = self.tcx.dyn_error_ty();
                 let substs = gossamer_types::Substs::from_types([unit_ty, err_ty]);
@@ -773,7 +740,7 @@ impl<'a> Builder<'a> {
                 });
                 ("gos_rt_os_set_env", result_ty)
             }
-            "os::unset_env" | "unset_env" => ("gos_rt_os_unset_env", self.tcx.unit()),
+            "env::unset_var" => ("gos_rt_os_unset_env", self.tcx.unit()),
             _ => return None,
         })
     }
@@ -790,18 +757,15 @@ impl<'a> Builder<'a> {
                 let tup = self.tcx.intern(gossamer_types::TyKind::Tuple(vec![s, s]));
                 ("gos_rt_path_split", tup)
             }
-            "path::clean" | "path::normalize" => ("gos_rt_path_clean", self.tcx.string_ty()),
+            "path::normalize" => ("gos_rt_path_clean", self.tcx.string_ty()),
             "path::is_absolute" => ("gos_rt_path_is_absolute", self.tcx.bool_ty()),
-            "path::has_prefix" => ("gos_rt_path_has_prefix", self.tcx.bool_ty()),
+            "path::starts_with" => ("gos_rt_path_has_prefix", self.tcx.bool_ty()),
             "path::extension" => ("gos_rt_path_ext", self.option_string_adt_ty()),
-            "path::base" => ("gos_rt_path_base", self.tcx.string_ty()),
-            "path::dir" => ("gos_rt_path_dir", self.tcx.string_ty()),
-            "path::ext" => ("gos_rt_path_ext", self.option_string_adt_ty()),
             // 0.10.0 - path Option-returning free fns. Each wraps
             // the matching `gos_rt_path_*_opt` helper which packs a
             // `*mut GosResult` (disc=0 Some(String), disc=1 None).
             "path::parent" => ("gos_rt_path_parent", self.option_string_adt_ty()),
-            "path::stem" => ("gos_rt_path_stem", self.option_string_adt_ty()),
+            "path::file_stem" => ("gos_rt_path_stem", self.option_string_adt_ty()),
             "path::file_name" => ("gos_rt_path_file_name", self.option_string_adt_ty()),
             _ => return None,
         })
@@ -835,9 +799,7 @@ impl<'a> Builder<'a> {
                 self.tcx.int_ty(gossamer_types::IntTy::I64),
             ),
             "io::ReadAll" => ("gos_rt_io_read_all", self.tcx.string_ty()),
-            "net::resolve" | "net::lookup" => {
-                ("gos_rt_net_resolve", self.result_vec_string_error_ty())
-            }
+            "net::lookup" => ("gos_rt_net_resolve", self.result_vec_string_error_ty()),
             "net::ip::is_valid" => ("gos_rt_netip_is_valid", self.tcx.bool_ty()),
             "net::ip::is_v4" => ("gos_rt_netip_is_v4", self.tcx.bool_ty()),
             "net::ip::is_v6" => ("gos_rt_netip_is_v6", self.tcx.bool_ty()),
@@ -1190,9 +1152,22 @@ impl<'a> Builder<'a> {
     fn lower_math_2_free(
         &mut self,
         joined: &str,
-        _args: &[HirExpr],
+        args: &[HirExpr],
     ) -> Option<(&'static str, gossamer_types::Ty)> {
         Some(match joined {
+            "math::abs" if args.len() == 1 => {
+                if arg_is_float(self.tcx, &args[0]) {
+                    (
+                        "gos_rt_math_abs",
+                        self.tcx.float_ty(gossamer_types::FloatTy::F64),
+                    )
+                } else {
+                    (
+                        "gos_rt_math_abs_i64",
+                        self.tcx.int_ty(gossamer_types::IntTy::I64),
+                    )
+                }
+            }
             "math::tanh" => (
                 "gos_rt_math_tanh",
                 self.tcx.float_ty(gossamer_types::FloatTy::F64),
@@ -1217,7 +1192,7 @@ impl<'a> Builder<'a> {
                 "gos_rt_math_exp2",
                 self.tcx.float_ty(gossamer_types::FloatTy::F64),
             ),
-            "math::fmod" => (
+            "math::rem" => (
                 "gos_rt_math_fmod",
                 self.tcx.float_ty(gossamer_types::FloatTy::F64),
             ),
@@ -1229,7 +1204,7 @@ impl<'a> Builder<'a> {
                 "gos_rt_math_copysign",
                 self.tcx.float_ty(gossamer_types::FloatTy::F64),
             ),
-            "math::dim" => (
+            "math::positive_diff" => (
                 "gos_rt_math_dim",
                 self.tcx.float_ty(gossamer_types::FloatTy::F64),
             ),
@@ -1237,44 +1212,8 @@ impl<'a> Builder<'a> {
                 "gos_rt_math_trunc",
                 self.tcx.float_ty(gossamer_types::FloatTy::F64),
             ),
-            "math::nan" => (
-                "gos_rt_math_nan",
-                self.tcx.float_ty(gossamer_types::FloatTy::F64),
-            ),
-            "math::inf" => (
-                "gos_rt_math_inf",
-                self.tcx.float_ty(gossamer_types::FloatTy::F64),
-            ),
             "math::is_nan" => ("gos_rt_math_is_nan", self.tcx.bool_ty()),
             "math::is_inf" => ("gos_rt_math_is_inf", self.tcx.bool_ty()),
-            "math::abs_i64" => (
-                "gos_rt_math_abs_i64",
-                self.tcx.int_ty(gossamer_types::IntTy::I64),
-            ),
-            // `math::mod_float` is a documented alias of `math::fmod`.
-            "math::mod_float" => (
-                "gos_rt_math_fmod",
-                self.tcx.float_ty(gossamer_types::FloatTy::F64),
-            ),
-            // Typed scalar min/max: the bare `min`/`max` prelude reuses
-            // these `gos_rt_*` helpers; the `math::`-qualified spellings
-            // pin the operand width explicitly.
-            "math::min_f64" => (
-                "gos_rt_min_f64",
-                self.tcx.float_ty(gossamer_types::FloatTy::F64),
-            ),
-            "math::max_f64" => (
-                "gos_rt_max_f64",
-                self.tcx.float_ty(gossamer_types::FloatTy::F64),
-            ),
-            "math::min_i64" => (
-                "gos_rt_min_i64",
-                self.tcx.int_ty(gossamer_types::IntTy::I64),
-            ),
-            "math::max_i64" => (
-                "gos_rt_max_i64",
-                self.tcx.int_ty(gossamer_types::IntTy::I64),
-            ),
             // 0.10.0 - arbitrary-precision big integers. Every value
             // is carried as a decimal `String` (matching the interp),
             // so all the arithmetic entries take/return `String`.
@@ -1731,13 +1670,23 @@ impl<'a> Builder<'a> {
             "strings::trim" => ("gos_rt_str_trim", self.tcx.string_ty()),
             "strings::trim_start" => ("gos_rt_str_trim_start", self.tcx.string_ty()),
             "strings::trim_end" => ("gos_rt_str_trim_end", self.tcx.string_ty()),
-            "strings::to_upper" => ("gos_rt_str_to_upper", self.tcx.string_ty()),
-            "strings::to_lower" => ("gos_rt_str_to_lower", self.tcx.string_ty()),
+            "strings::to_uppercase" => ("gos_rt_str_to_upper", self.tcx.string_ty()),
+            "strings::to_lowercase" => ("gos_rt_str_to_lower", self.tcx.string_ty()),
             "strings::contains" => ("gos_rt_str_contains", self.tcx.bool_ty()),
             "strings::replace" => ("gos_rt_str_replace", self.tcx.string_ty()),
             "strings::starts_with" => ("gos_rt_str_starts_with", self.tcx.bool_ty()),
             "strings::ends_with" => ("gos_rt_str_ends_with", self.tcx.bool_ty()),
             "strings::repeat" => ("gos_rt_str_repeat", self.tcx.string_ty()),
+            "strings::bytes" => {
+                let u8_ty = self.tcx.int_ty(gossamer_types::IntTy::U8);
+                let v = self.tcx.intern(gossamer_types::TyKind::Vec(u8_ty));
+                ("gos_rt_str_as_bytes", v)
+            }
+            "strings::chars" => {
+                let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
+                let v = self.tcx.intern(gossamer_types::TyKind::Vec(i64_ty));
+                ("gos_rt_str_chars", v)
+            }
             "strings::lines" => {
                 let s = self.tcx.string_ty();
                 let v = self.tcx.intern(gossamer_types::TyKind::Vec(s));
@@ -1825,15 +1774,10 @@ impl<'a> Builder<'a> {
         Some(match joined {
             // 0.10.0 - strconv free fns. parse_* return
             // Result<T, errors::Error> packed as a *mut GosResult;
-            // format_* / itoa return String.
-            "strconv::parse_i64" | "strconv::parse_int" => {
-                ("gos_rt_strconv_parse_i64", self.result_i64_error_adt_ty())
-            }
+            // format_* return String.
+            "strconv::parse_i64" => ("gos_rt_strconv_parse_i64", self.result_i64_error_adt_ty()),
             "strconv::parse_u64" => ("gos_rt_strconv_parse_u64", self.result_i64_error_adt_ty()),
-            "strconv::atoi" => ("gos_rt_strconv_atoi", self.result_i64_error_adt_ty()),
-            "strconv::parse_f64" | "strconv::parse_float" => {
-                ("gos_rt_strconv_parse_f64", self.result_f64_error_adt_ty())
-            }
+            "strconv::parse_f64" => ("gos_rt_strconv_parse_f64", self.result_f64_error_adt_ty()),
             "strconv::parse_bool" => ("gos_rt_strconv_parse_bool", self.result_bool_error_adt_ty()),
             "strconv::parse_i64_radix" => (
                 "gos_rt_strconv_parse_i64_radix",
@@ -1847,17 +1791,12 @@ impl<'a> Builder<'a> {
             // Format-spec intrinsics from `{:spec}` expansion. `__fmt_radix`
             // and `__fmt_upper` reuse the strconv/strings shims; `__fmt_pad`
             // applies width/alignment/fill to an already-rendered string.
-            "__fmt_radix" => ("gos_rt_strconv_format_i64_radix", self.tcx.string_ty()),
+            "__fmt_radix" => ("gos_rt_fmt_radix_i64", self.tcx.string_ty()),
             "__fmt_upper" => ("gos_rt_str_to_upper", self.tcx.string_ty()),
             "__fmt_pad" => ("gos_rt_fmt_pad", self.tcx.string_ty()),
-            "strconv::format_i64" | "strconv::format_int" => {
-                ("gos_rt_strconv_format_i64", self.tcx.string_ty())
-            }
+            "strconv::format_i64" => ("gos_rt_strconv_format_i64", self.tcx.string_ty()),
             "strconv::format_u64" => ("gos_rt_strconv_format_i64", self.tcx.string_ty()),
-            "strconv::itoa" => ("gos_rt_strconv_itoa", self.tcx.string_ty()),
-            "strconv::format_f64" | "strconv::format_float" => {
-                ("gos_rt_strconv_format_f64", self.tcx.string_ty())
-            }
+            "strconv::format_f64" => ("gos_rt_strconv_format_f64", self.tcx.string_ty()),
             "strconv::format_bool" => ("gos_rt_strconv_format_bool", self.tcx.string_ty()),
             _ => return None,
         })
@@ -2356,10 +2295,8 @@ impl<'a> Builder<'a> {
                 "gos_rt_thread_num_cpus",
                 self.tcx.int_ty(gossamer_types::IntTy::I64),
             ),
-            "env::temp_dir" | "os::temp_dir" => ("gos_rt_env_temp_dir", self.tcx.string_ty()),
-            "env::home_dir" | "os::home_dir" | "os::home" => {
-                ("gos_rt_env_home_dir", self.option_string_adt_ty())
-            }
+            "env::temp_dir" => ("gos_rt_env_temp_dir", self.tcx.string_ty()),
+            "env::home_dir" => ("gos_rt_env_home_dir", self.option_string_adt_ty()),
             _ => return None,
         })
     }
@@ -2418,7 +2355,7 @@ impl<'a> Builder<'a> {
             // 0.10.0 - time::* free fns previously VM-only. The
             // monotonic/now shims already existed in the runtime;
             // these arms route the language-level calls to them.
-            "time::sleep" | "thread::sleep_ms" => ("gos_rt_sleep_ms", self.tcx.unit()),
+            "time::sleep" => ("gos_rt_sleep_ms", self.tcx.unit()),
             "time::now" | "time::unix_ms" => (
                 "gos_rt_time_now_ms",
                 self.tcx.int_ty(gossamer_types::IntTy::I64),
@@ -2504,10 +2441,18 @@ impl<'a> Builder<'a> {
             "mime::type_by_extension" => ("gos_rt_mime_type_by_extension", self.tcx.string_ty()),
             "mime::extension_by_type" => ("gos_rt_mime_extension_by_type", self.tcx.string_ty()),
             "mime::is_valid" => ("gos_rt_mime_is_valid", self.tcx.bool_ty()),
-            "toml::to_json" => ("gos_rt_toml_to_json", self.result_string_error_adt_ty()),
-            "toml::from_json" => ("gos_rt_toml_from_json", self.result_string_error_adt_ty()),
-            "toml::is_valid" => ("gos_rt_toml_is_valid", self.tcx.bool_ty()),
-            "toml::pretty" => ("gos_rt_toml_pretty", self.result_string_error_adt_ty()),
+            "toml::to_json" | "encoding::toml::to_json" => {
+                ("gos_rt_toml_to_json", self.result_string_error_adt_ty())
+            }
+            "toml::from_json" | "encoding::toml::from_json" => {
+                ("gos_rt_toml_from_json", self.result_string_error_adt_ty())
+            }
+            "toml::is_valid" | "encoding::toml::is_valid" => {
+                ("gos_rt_toml_is_valid", self.tcx.bool_ty())
+            }
+            "toml::pretty" | "encoding::toml::pretty" => {
+                ("gos_rt_toml_pretty", self.result_string_error_adt_ty())
+            }
             // `encoding::yaml::parse(text) -> Result<json::Value, _>`:
             // YAML projected onto the JSON value tree so the dynamic
             // document path reuses the json::Value runtime type (the VM
@@ -2522,9 +2467,15 @@ impl<'a> Builder<'a> {
             "yaml::encode" | "encoding::yaml::encode" => {
                 ("gos_rt_yaml_encode", self.result_string_error_adt_ty())
             }
-            "yaml::to_json" => ("gos_rt_yaml_to_json", self.result_string_error_adt_ty()),
-            "yaml::from_json" => ("gos_rt_yaml_from_json", self.result_string_error_adt_ty()),
-            "yaml::is_valid" => ("gos_rt_yaml_is_valid", self.tcx.bool_ty()),
+            "yaml::to_json" | "encoding::yaml::to_json" => {
+                ("gos_rt_yaml_to_json", self.result_string_error_adt_ty())
+            }
+            "yaml::from_json" | "encoding::yaml::from_json" => {
+                ("gos_rt_yaml_from_json", self.result_string_error_adt_ty())
+            }
+            "yaml::is_valid" | "encoding::yaml::is_valid" => {
+                ("gos_rt_yaml_is_valid", self.tcx.bool_ty())
+            }
             _ => return None,
         })
     }
@@ -2539,6 +2490,23 @@ impl<'a> Builder<'a> {
                 "gos_rt_sync_map_new",
                 self.tcx.int_ty(gossamer_types::IntTy::I64),
             ),
+            "sync::Map::insert" | "Map::insert" => ("gos_rt_sync_map_set", self.tcx.unit()),
+            "sync::Map::remove" | "Map::remove" => ("gos_rt_sync_map_delete", self.tcx.unit()),
+            "sync::Map::get" | "Map::get" => ("gos_rt_sync_map_get", self.option_string_adt_ty()),
+            "sync::Map::len" | "Map::len" => (
+                "gos_rt_sync_map_len",
+                self.tcx.int_ty(gossamer_types::IntTy::I64),
+            ),
+            "sync::Map::contains_key" | "Map::contains_key" => {
+                ("gos_rt_sync_map_contains", self.tcx.bool_ty())
+            }
+            "sync::Map::keys" | "Map::keys" => {
+                let str_ty = self.tcx.string_ty();
+                (
+                    "gos_rt_sync_map_keys",
+                    self.tcx.intern(gossamer_types::TyKind::Vec(str_ty)),
+                )
+            }
             // Qualified-atomic free-call spellings route to the existing
             // AtomicI64 shims (the method form already lowered).
             "sync::AtomicI64::new"
@@ -3625,6 +3593,7 @@ impl<'a> Builder<'a> {
     fn stdlib_runtime_kind(rt_name: &str) -> Option<&'static str> {
         match rt_name {
             "gos_rt_flag_set_new" => Some("flag::Set"),
+            "gos_rt_signal_on" => Some("signal::Notifier"),
             "gos_rt_bufio_scanner_new" => Some("bufio::Scanner"),
             "gos_rt_http_client_new" => Some("http::Client"),
             "gos_rt_http_client_builder_new" => Some("http::ClientBuilder"),

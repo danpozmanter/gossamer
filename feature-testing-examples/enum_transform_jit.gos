@@ -16,7 +16,7 @@ enum Node {
 fn transform(v: Node) -> Node {
     match v {
         Node::Leaf(n) => Node::Leaf(n + 1),
-        Node::Text(s) => Node::Text(strings::to_upper(&s)),
+        Node::Text(s) => Node::Text(strings::to_uppercase(&s)),
         Node::List(xs) => {
             let mut out: Vec<Node> = []
             for x in xs { out.push(transform(x)) }

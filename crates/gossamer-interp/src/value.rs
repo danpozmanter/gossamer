@@ -15,8 +15,10 @@
 // keeps the safe-Rust discipline.
 #![allow(unsafe_code)]
 
+use std::alloc::{Layout, alloc, dealloc, handle_alloc_error};
 use std::collections::VecDeque;
 use std::fmt;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, OnceLock};
 
 use parking_lot::Mutex;
@@ -27,6 +29,21 @@ use gossamer_runtime::{
     TAG_IMMEDIATE, TAG_SINGLETON, fits_i56, from_f64, from_heap_handle, from_i64, from_singleton,
     tag_of, to_f64, to_heap_handle, to_i64, to_singleton,
 };
+
+/// Dense-entry map backing interpreter `HashMap` values.
+pub type DenseMap<K, V> = indexmap::IndexMap<K, V, rustc_hash::FxBuildHasher>;
+
+/// Constructs an empty dense interpreter map with the VM's hash builder.
+#[must_use]
+pub fn dense_map<K, V>() -> DenseMap<K, V> {
+    DenseMap::with_hasher(rustc_hash::FxBuildHasher)
+}
+
+/// Constructs a dense interpreter map with an initial entry capacity.
+#[must_use]
+pub fn dense_map_with_capacity<K, V>(capacity: usize) -> DenseMap<K, V> {
+    DenseMap::with_capacity_and_hasher(capacity, rustc_hash::FxBuildHasher)
+}
 
 /// One runtime value produced or consumed by the interpreter.
 ///
@@ -94,26 +111,26 @@ pub enum Value {
     Native(Arc<NativeInner>),
     /// Concurrent channel endpoint.
     Channel(Channel),
-    /// Hash-map aggregate. `FxHashMap` is O(1) per op vs the
-    /// previous `BTreeMap`'s O(log N); on k-nucleotide this is
-    /// the bulk of the interp speedup. The mutex keeps
+    /// Hash-map aggregate. `IndexMap` keeps entries dense while retaining
+    /// O(1) lookup through the Fx hasher; this avoids hashbrown's full
+    /// `(K, V)` power-of-two bucket slack on map-heavy workloads. The mutex keeps
     /// `Value: Send + Sync` so goroutines can pass maps through
     /// channels.
-    Map(Arc<parking_lot::Mutex<rustc_hash::FxHashMap<MapKey, Value>>>),
+    Map(Arc<parking_lot::Mutex<DenseMap<MapKey, Value>>>),
     /// Typed `HashMap<i64, i64>` aggregate. Skips the [`MapKey`]
     /// enum-tag dispatch on every op and avoids the [`Value`]
     /// box around each integer value. k-nucleotide's k-mer
     /// frequency tables ride this variant, dropping per-iteration
     /// hash + compare cost dramatically.
-    IntMap(Arc<parking_lot::Mutex<rustc_hash::FxHashMap<i64, i64>>>),
+    IntMap(Arc<parking_lot::Mutex<DenseMap<i64, i64>>>),
     /// Typed `HashMap<String, i64>` aggregate. Drops both the
     /// [`MapKey`] enum tag and the [`Value`] box around each count:
     /// an entry is a bare `(SmolStr, i64)`, ~16 bytes lighter than
     /// the generic `Map`'s `(MapKey, Value)`. Because a `HashMap`
-    /// stores entries inline in one contiguous bucket array, that
-    /// per-entry saving translates directly into lower peak RSS for
-    /// string-frequency tables (k-mer / n-gram / token counts).
-    StrIntMap(Arc<parking_lot::Mutex<rustc_hash::FxHashMap<SmolStr, i64>>>),
+    /// keeps entries dense, that per-entry saving translates directly into
+    /// lower peak RSS for string-frequency tables (k-mer / n-gram / token
+    /// counts).
+    StrIntMap(Arc<parking_lot::Mutex<DenseMap<SmolStr, i64>>>),
     /// Unsigned 64-bit integer - same bit pattern as `Int(n as i64)`
     /// but formats as an unsigned decimal value. Used exclusively for
     /// `x as u64` casts to preserve unsigned display semantics.
@@ -443,7 +460,7 @@ pub enum MapKey {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct AggKey {
     /// Type / variant name (`""` for a tuple, `"[]"` for an array).
-    pub name: &'static str,
+    pub name: TypeTag,
     /// Each field's key, recursively.
     pub fields: Box<[MapKey]>,
 }
@@ -462,15 +479,15 @@ impl MapKey {
             Value::Float(f) => Self::Int(f.to_bits() as i64),
             Value::String(s) => Self::Str(s.clone()),
             Value::Tuple(vals) => Self::Agg(Box::new(AggKey {
-                name: "",
+                name: intern_type_tag(""),
                 fields: vals.iter().map(Self::from_value).collect(),
             })),
             Value::Array(vals) => Self::Agg(Box::new(AggKey {
-                name: "[]",
+                name: intern_type_tag("[]"),
                 fields: vals.iter().map(Self::from_value).collect(),
             })),
             Value::IntArray(ns) => Self::Agg(Box::new(AggKey {
-                name: "[]",
+                name: intern_type_tag("[]"),
                 fields: ns.iter().map(|n| Self::Int(*n)).collect(),
             })),
             Value::Struct(inner) => Self::Agg(Box::new(AggKey {
@@ -530,8 +547,8 @@ pub struct FloatArrayInner {
 /// Boxed payload of [`Value::Variant`].
 #[derive(Debug, Clone)]
 pub struct VariantInner {
-    /// Variant name (interned, see `intern_type_name`).
-    pub name: &'static str,
+    /// Variant name (interned, see `intern_type_tag`).
+    pub name: TypeTag,
     /// Positional fields stored inline for the common arity (≤ 2):
     /// `Some(x)`, `Ok`/`Err`, and a two-child enum node (linked-list
     /// `Cons`, tree `Node`) keep their payload in the same heap block
@@ -545,8 +562,8 @@ pub struct VariantInner {
 /// Boxed payload of [`Value::Struct`].
 #[derive(Debug, Clone)]
 pub struct StructInner {
-    /// Struct name (interned, see `intern_type_name`).
-    pub name: &'static str,
+    /// Struct name (interned, see `intern_type_tag`).
+    pub name: TypeTag,
     /// Field name/value pairs in declaration order, stored inline. The
     /// field name is an interned `&'static str` (shared across every
     /// instance of the type) rather than an owned `String`, so a struct
@@ -586,7 +603,7 @@ pub struct NativeInner {
 ///   (little-endian); the eighth byte (byte index 7, the high
 ///   byte) holds the length in `0..=7`.
 /// - `raw >> 63 == 1`: heap. The low 63 bits hold a pointer
-///   produced by `Arc::into_raw` for an `Arc<String>`. On
+///   produced by the thin RC byte-buffer allocator. On
 ///   `x86_64` / aarch64, user-space pointers fit in 48 bits, so
 ///   masking the high bit is lossless.
 ///
@@ -598,7 +615,7 @@ pub struct NativeInner {
 /// allocation for those values.
 ///
 /// **Safety.** All pointer arithmetic is contained in this type.
-/// `Drop` and `Clone` decrement / increment the underlying Arc
+/// `Drop` and `Clone` decrement / increment the underlying heap string
 /// only when the heap tag is set; inline values are pure `u64`
 /// values that don't own anything. The unsafe block in
 /// `as_str` casts the storage to `&[u8]`; the bytes are
@@ -612,6 +629,88 @@ const SMOL_HEAP_TAG: u64 = 1u64 << 63;
 const SMOL_PTR_MASK: u64 = !SMOL_HEAP_TAG;
 const SMOL_INLINE_MAX: usize = 7;
 
+#[repr(C)]
+struct HeapSmolStr {
+    strong: AtomicU32,
+    len: u32,
+}
+
+impl HeapSmolStr {
+    fn layout(len: usize) -> Layout {
+        let header = Layout::new::<Self>();
+        let bytes = Layout::array::<u8>(len).expect("SmolStr heap layout overflow");
+        header
+            .extend(bytes)
+            .expect("SmolStr heap layout overflow")
+            .0
+            .pad_to_align()
+    }
+
+    #[allow(
+        clippy::cast_ptr_alignment,
+        reason = "alloc uses HeapSmolStr::layout, whose alignment is at least HeapSmolStr's alignment"
+    )]
+    fn alloc(bytes: &[u8]) -> *const Self {
+        let len_u32 = u32::try_from(bytes.len()).expect("SmolStr heap string too large");
+        let layout = Self::layout(bytes.len());
+        // SAFETY: `layout` is non-zero and was computed for the header + payload.
+        let ptr = unsafe { alloc(layout) };
+        if ptr.is_null() {
+            handle_alloc_error(layout);
+        }
+        let header = ptr.cast::<Self>();
+        // SAFETY: `header` points to a fresh allocation large enough for
+        // the header plus `bytes.len()` payload bytes.
+        unsafe {
+            header.write(Self {
+                strong: AtomicU32::new(1),
+                len: len_u32,
+            });
+            std::ptr::copy_nonoverlapping(bytes.as_ptr(), Self::bytes_mut(header), bytes.len());
+        }
+        header
+    }
+
+    unsafe fn bytes_ptr(header: *const Self) -> *const u8 {
+        // SAFETY: caller guarantees `header` points to a valid `HeapSmolStr`.
+        unsafe { header.cast::<u8>().add(std::mem::size_of::<Self>()) }
+    }
+
+    unsafe fn bytes_mut(header: *mut Self) -> *mut u8 {
+        // SAFETY: caller guarantees `header` points to a valid mutable allocation.
+        unsafe { header.cast::<u8>().add(std::mem::size_of::<Self>()) }
+    }
+
+    unsafe fn as_str<'a>(header: *const Self) -> &'a str {
+        // SAFETY: caller guarantees `header` is live. Payload bytes came
+        // from a `str`/`String`, so they are valid UTF-8.
+        let len = unsafe { (*header).len as usize };
+        let bytes = unsafe { std::slice::from_raw_parts(Self::bytes_ptr(header), len) };
+        unsafe { std::str::from_utf8_unchecked(bytes) }
+    }
+
+    unsafe fn inc(header: *const Self) {
+        // SAFETY: caller owns a live strong reference to `header`.
+        let prev = unsafe { (*header).strong.fetch_add(1, Ordering::Relaxed) };
+        assert!(prev != u32::MAX, "SmolStr refcount overflow");
+    }
+
+    unsafe fn dec(header: *const Self) {
+        // SAFETY: caller owns one strong reference to `header`.
+        if unsafe { (*header).strong.fetch_sub(1, Ordering::Release) } == 1 {
+            std::sync::atomic::fence(Ordering::Acquire);
+            let len = unsafe { (*header).len as usize };
+            let layout = Self::layout(len);
+            // SAFETY: this is the final strong reference, so no other
+            // thread can access the allocation after the release/acquire pair.
+            unsafe {
+                std::ptr::drop_in_place(header.cast_mut());
+                dealloc(header.cast::<u8>().cast_mut(), layout);
+            }
+        }
+    }
+}
+
 impl SmolStr {
     /// Empty string (inline, len 0).
     #[must_use]
@@ -621,7 +720,7 @@ impl SmolStr {
 
     /// Constructs a [`SmolStr`] from a borrowed `&str`. Strings
     /// up to 7 bytes are stored inline; longer strings allocate
-    /// a fresh `Arc<String>`.
+    /// a fresh thin RC byte buffer.
     ///
     /// Intentionally not the [`std::str::FromStr`] trait method -
     /// `FromStr` returns `Result` to model fallible parsing and
@@ -636,29 +735,27 @@ impl SmolStr {
         if s.len() <= SMOL_INLINE_MAX {
             Self::new_inline(s.as_bytes())
         } else {
-            Self::new_heap(Arc::new(s.to_string()))
+            Self::new_heap(s.as_bytes())
         }
     }
 
     /// Constructs a [`SmolStr`] from an owned [`String`]. Avoids
-    /// re-allocating when the string is heap-bound; for inline-
-    /// fitting strings the owned string is dropped after copy.
+    /// re-allocating for inline-fitting strings; heap-bound strings
+    /// move their bytes into the thin RC buffer.
     #[must_use]
     pub fn from_string(s: String) -> Self {
         if s.len() <= SMOL_INLINE_MAX {
             Self::new_inline(s.as_bytes())
         } else {
-            Self::new_heap(Arc::new(s))
+            Self::new_heap(s.as_bytes())
         }
     }
 
-    /// Constructs from an existing `Arc<String>` - used by hot
-    /// paths that have already paid the allocation. Always
-    /// stores as heap (no inline-promotion to keep the
-    /// constructor branch-free).
+    /// Constructs from an existing `Arc<String>` - used by value
+    /// registry paths that still expose strings that way.
     #[must_use]
     pub fn from_arc(arc: Arc<String>) -> Self {
-        Self::new_heap(arc)
+        Self::from_str(arc.as_str())
     }
 
     fn new_inline(bytes: &[u8]) -> Self {
@@ -673,15 +770,15 @@ impl SmolStr {
         }
     }
 
-    fn new_heap(arc: Arc<String>) -> Self {
-        // SAFETY: `Arc::into_raw` returns a pointer obtained
-        // from the global allocator; user-space pointers on
-        // supported targets fit in the low 63 bits, so OR-ing
-        // the tag bit is information-preserving.
-        let ptr = Arc::into_raw(arc) as usize as u64;
+    fn new_heap(bytes: &[u8]) -> Self {
+        // SAFETY: `HeapSmolStr::alloc` returns an aligned allocation
+        // obtained from the global allocator; user-space pointers on
+        // supported targets fit in the low 63 bits, so OR-ing the tag
+        // bit is information-preserving.
+        let ptr = HeapSmolStr::alloc(bytes) as usize as u64;
         debug_assert!(
             ptr & SMOL_HEAP_TAG == 0,
-            "Arc<String> pointer must have high bit clear"
+            "HeapSmolStr pointer must have high bit clear"
         );
         Self {
             raw: ptr | SMOL_HEAP_TAG,
@@ -707,14 +804,13 @@ impl SmolStr {
                 std::str::from_utf8_unchecked(slice)
             }
         } else {
-            // Heap: dereference the Arc<String>.
-            // SAFETY: only constructed via `Arc::into_raw`;
+            // Heap: dereference the thin RC byte buffer.
+            // SAFETY: only constructed via `HeapSmolStr::alloc`;
             // the strong count is at least 1 for the lifetime
             // of `self` (we hold one reference). We never give
-            // out the raw pointer or call `from_raw` outside
-            // `Drop` / `Clone`.
-            let ptr = (self.raw & SMOL_PTR_MASK) as *const String;
-            unsafe { (*ptr).as_str() }
+            // out the raw pointer outside `Drop` / `Clone`.
+            let ptr = (self.raw & SMOL_PTR_MASK) as *const HeapSmolStr;
+            unsafe { HeapSmolStr::as_str(ptr) }
         }
     }
 
@@ -740,22 +836,14 @@ impl SmolStr {
                 let mut owned = String::with_capacity(len + s.len());
                 owned.push_str(self.as_str());
                 owned.push_str(s);
-                *self = Self::new_heap(Arc::new(owned));
+                *self = Self::new_heap(owned.as_bytes());
             }
         } else {
-            // Heap: recover the `Arc<String>` this `SmolStr` owns, grow
-            // it in place when uniquely held, then re-store.
-            // SAFETY: `self.raw` was produced by `Arc::into_raw` in
-            // `new_heap` and we hold exactly that one strong reference.
-            // `from_raw` recovers it once; the grown Arc is handed back
-            // to `new_heap` (which re-`into_raw`s it), conserving the
-            // strong count. The stale `self` returned by `replace` is
-            // `forget`-ten so its `Drop` cannot free the consumed
-            // pointer a second time.
-            let ptr = (self.raw & SMOL_PTR_MASK) as *const String;
-            let mut arc = unsafe { Arc::from_raw(ptr) };
-            Arc::make_mut(&mut arc).push_str(s);
-            std::mem::forget(std::mem::replace(self, Self::new_heap(arc)));
+            let mut owned = String::with_capacity(self.len() + s.len());
+            owned.push_str(self.as_str());
+            owned.push_str(s);
+            let old = std::mem::replace(self, Self::new_heap(owned.as_bytes()));
+            drop(old);
         }
     }
 
@@ -788,10 +876,8 @@ impl Clone for SmolStr {
             // SAFETY: we own a strong reference; reconstruct an
             // Arc to bump the count, then forget so we don't
             // drop our copy. The original raw stays valid.
-            let ptr = (self.raw & SMOL_PTR_MASK) as *const String;
-            unsafe {
-                Arc::increment_strong_count(ptr);
-            }
+            let ptr = (self.raw & SMOL_PTR_MASK) as *const HeapSmolStr;
+            unsafe { HeapSmolStr::inc(ptr) };
         }
         Self { raw: self.raw }
     }
@@ -801,12 +887,9 @@ impl Drop for SmolStr {
     fn drop(&mut self) {
         if self.raw & SMOL_HEAP_TAG != 0 {
             // SAFETY: we own one strong reference produced by
-            // `Arc::into_raw`. Recovering and dropping decrements
-            // the count exactly once.
-            let ptr = (self.raw & SMOL_PTR_MASK) as *const String;
-            unsafe {
-                drop(Arc::from_raw(ptr));
-            }
+            // `HeapSmolStr::alloc`. Decrementing releases it exactly once.
+            let ptr = (self.raw & SMOL_PTR_MASK) as *const HeapSmolStr;
+            unsafe { HeapSmolStr::dec(ptr) };
         }
     }
 }
@@ -896,10 +979,76 @@ impl From<Arc<String>> for SmolStr {
     }
 }
 
-// SAFETY: heap storage holds an `Arc<String>` (Send + Sync).
+// SAFETY: heap storage is a thin atomic-refcounted immutable byte buffer.
 // Inline storage is plain bytes copyable across threads.
 unsafe impl Send for SmolStr {}
 unsafe impl Sync for SmolStr {}
+
+/// Compact integer identity for struct and enum-variant names.
+///
+/// The intern table owns one leaked `&'static str` per distinct name, while
+/// each aggregate node stores only the numeric tag. Callers that need the text
+/// recover it through [`Self::as_str`].
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct TypeTag(u32);
+
+#[derive(Default)]
+struct TypeTagTable {
+    by_name: rustc_hash::FxHashMap<&'static str, u32>,
+    names: Vec<&'static str>,
+}
+
+static TYPE_TAGS: std::sync::LazyLock<parking_lot::Mutex<TypeTagTable>> =
+    std::sync::LazyLock::new(|| parking_lot::Mutex::new(TypeTagTable::default()));
+
+impl TypeTag {
+    /// Returns the interned textual name for this tag.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        TYPE_TAGS
+            .lock()
+            .names
+            .get(self.0 as usize)
+            .copied()
+            .unwrap_or("<invalid>")
+    }
+
+    /// Returns the compact numeric identity stored in aggregate nodes.
+    #[must_use]
+    pub fn id(self) -> u32 {
+        self.0
+    }
+}
+
+impl fmt::Debug for TypeTag {
+    fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Debug::fmt(self.as_str(), out)
+    }
+}
+
+impl fmt::Display for TypeTag {
+    fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
+        out.write_str(self.as_str())
+    }
+}
+
+impl AsRef<str> for TypeTag {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+
+impl PartialEq<str> for TypeTag {
+    fn eq(&self, other: &str) -> bool {
+        self.as_str() == other
+    }
+}
+
+impl PartialEq<&str> for TypeTag {
+    fn eq(&self, other: &&str) -> bool {
+        self.as_str() == *other
+    }
+}
 
 /// Returns a `&'static str` identity for `name`, allocating once
 /// per distinct byte sequence. Used by [`Value::variant`],
@@ -922,6 +1071,26 @@ pub(crate) fn intern_type_name(name: &str) -> &'static str {
     leaked
 }
 
+/// Returns a compact identity for a type / variant name, allocating the name
+/// text at most once through [`intern_type_name`].
+#[must_use]
+pub(crate) fn intern_type_tag(name: &str) -> TypeTag {
+    let interned = intern_type_name(name);
+    let mut tags = TYPE_TAGS.lock();
+    if let Some(&id) = tags.by_name.get(interned) {
+        return TypeTag(id);
+    }
+    let id = u32::try_from(tags.names.len()).unwrap_or(u32::MAX);
+    tags.names.push(interned);
+    tags.by_name.insert(interned, id);
+    TypeTag(id)
+}
+
+#[must_use]
+fn type_tag_from_static(name: &'static str) -> TypeTag {
+    intern_type_tag(name)
+}
+
 /// Closed integer range eligible for the small-variant cache, mirroring
 /// the `CPython` small-int cache. Bounds the cache to
 /// `names x (SMALL_INT_MAX - SMALL_INT_MIN + 1)` entries per thread.
@@ -940,12 +1109,12 @@ const SMALL_VARIANT_STR_MAX: usize = 16;
 /// content, so it identifies the variant exactly.
 #[derive(PartialEq, Eq, Hash)]
 enum SmallVariantKey {
-    Unit(&'static str),
-    Int(&'static str, i64),
-    Bool(&'static str, bool),
+    Unit(TypeTag),
+    Int(TypeTag, i64),
+    Bool(TypeTag, bool),
     /// A single short `String` payload. The `SmolStr` is inline (≤ the
     /// `SMALL_VARIANT_STR_MAX` bound) so the key holds no heap allocation.
-    Str(&'static str, SmolStr),
+    Str(TypeTag, SmolStr),
 }
 
 thread_local! {
@@ -968,7 +1137,7 @@ thread_local! {
 /// small-variant interning: nullary, or a single `Int` in the cached
 /// range, or a single `Bool`. Everything else (multi-field nodes,
 /// large ints, aggregate payloads) returns `None` and allocates fresh.
-fn small_variant_key(name: &'static str, fields: &[Value]) -> Option<SmallVariantKey> {
+fn small_variant_key(name: TypeTag, fields: &[Value]) -> Option<SmallVariantKey> {
     match fields {
         [] => Some(SmallVariantKey::Unit(name)),
         [Value::Int(n)] if (SMALL_VARIANT_INT_MIN..=SMALL_VARIANT_INT_MAX).contains(n) => {
@@ -991,7 +1160,7 @@ fn small_variant_key(name: &'static str, fields: &[Value]) -> Option<SmallVarian
 /// keeps liveness (and thus `Weak::upgrade`) faithful to the user's
 /// references.
 fn intern_small_variant(
-    name: &'static str,
+    name: TypeTag,
     fields: Vec<Value>,
     key: SmallVariantKey,
 ) -> Arc<VariantInner> {
@@ -1065,14 +1234,14 @@ impl Value {
     /// there is no lock contention across per-connection VM threads.
     #[must_use]
     pub fn variant(name: impl AsRef<str>, fields: Vec<Value>) -> Self {
-        let name = intern_type_name(name.as_ref());
+        let name = intern_type_tag(name.as_ref());
         // Step 8: a variant of a registered native enum shape (scalar / string /
         // nested-enum fields) is built directly in the compiled-tier
         // representation, so it flows through the JIT with zero marshalling and
         // the VM and JIT share one shape end to end. `Vec`-bearing variants keep
         // the boxed form (their marshalling ownership is handled at the boundary
         // as before). Ambiguous variant names fall through to `Variant`.
-        if let Some(shape) = native_shape_for_variant(name) {
+        if let Some(shape) = native_shape_for_variant(name.as_str()) {
             let mut inner = VariantInner {
                 name,
                 fields: SmallVec::from_vec(fields),
@@ -1124,6 +1293,7 @@ impl Value {
     /// [`Value::variant`] would rebuild a native handle and loop forever.
     #[must_use]
     pub(crate) fn variant_boxed(name: &'static str, fields: Vec<Value>) -> Self {
+        let name = type_tag_from_static(name);
         if let Some(key) = small_variant_key(name, &fields) {
             return Self::Variant(intern_small_variant(name, fields, key));
         }
@@ -1136,7 +1306,7 @@ impl Value {
     #[must_use]
     pub fn struct_(name: impl AsRef<str>, fields: Vec<(&'static str, Value)>) -> Self {
         Self::Struct(Arc::new(StructInner {
-            name: intern_type_name(name.as_ref()),
+            name: intern_type_tag(name.as_ref()),
             fields: fields.into_boxed_slice(),
         }))
     }
@@ -1631,7 +1801,7 @@ impl fmt::Display for Value {
                 let elems: Vec<Value> = data.iter().copied().map(Value::Float).collect();
                 write_array(out, &elems)
             }
-            Self::Variant(inner) => write_variant(out, inner.name, &inner.fields),
+            Self::Variant(inner) => write_variant(out, inner.name.as_str(), &inner.fields),
             Self::Struct(inner) => {
                 // Placeholder expressions evaluate to this sentinel in the VM;
                 // the compiled tiers emit "<value>" for the same cases.
@@ -1681,7 +1851,7 @@ impl fmt::Display for Value {
                         return Ok(());
                     }
                 }
-                write_struct(out, inner.name, &inner.fields)
+                write_struct(out, inner.name.as_str(), &inner.fields)
             }
             Self::Closure(_) => out.write_str("<closure>"),
             Self::Builtin(inner) => write!(out, "<builtin {}>", inner.name),
@@ -1713,12 +1883,9 @@ fn write_tuple(out: &mut fmt::Formatter<'_>, parts: &[Value]) -> fmt::Result {
 
 /// Renders a `HashMap` as `{k: v, …}` with entries sorted by key so
 /// the output is deterministic and byte-identical to the compiled
-/// tiers' `gos_rt_map_format` (an `FxHashMap`'s bucket order is
-/// neither stable nor shared across tiers).
-fn write_map(
-    out: &mut fmt::Formatter<'_>,
-    map: &rustc_hash::FxHashMap<MapKey, Value>,
-) -> fmt::Result {
+/// tiers' `gos_rt_map_format` (native map storage has its own
+/// implementation-defined order).
+fn write_map(out: &mut fmt::Formatter<'_>, map: &DenseMap<MapKey, Value>) -> fmt::Result {
     out.write_str("{")?;
     let mut entries: Vec<(&MapKey, &Value)> = map.iter().collect();
     entries.sort_by(|a, b| a.0.cmp(b.0));
@@ -1733,10 +1900,7 @@ fn write_map(
 
 /// Key-sorted rendering of an `i64`-keyed, `i64`-valued map. Mirrors
 /// [`write_map`] for the [`Value::IntMap`] storage shape.
-fn write_int_map(
-    out: &mut fmt::Formatter<'_>,
-    map: &rustc_hash::FxHashMap<i64, i64>,
-) -> fmt::Result {
+fn write_int_map(out: &mut fmt::Formatter<'_>, map: &DenseMap<i64, i64>) -> fmt::Result {
     out.write_str("{")?;
     let mut entries: Vec<(&i64, &i64)> = map.iter().collect();
     entries.sort_by_key(|&(k, _)| *k);
@@ -1752,10 +1916,7 @@ fn write_int_map(
 /// Key-sorted rendering of a `String`-keyed, `i64`-valued map.
 /// Mirrors [`write_map`] for the [`Value::StrIntMap`] storage shape,
 /// quoting keys exactly as the generic map's string keys render.
-fn write_str_int_map(
-    out: &mut fmt::Formatter<'_>,
-    map: &rustc_hash::FxHashMap<SmolStr, i64>,
-) -> fmt::Result {
+fn write_str_int_map(out: &mut fmt::Formatter<'_>, map: &DenseMap<SmolStr, i64>) -> fmt::Result {
     out.write_str("{")?;
     let mut entries: Vec<(&SmolStr, &i64)> = map.iter().collect();
     entries.sort_by(|a, b| a.0.as_str().cmp(b.0.as_str()));
@@ -2698,7 +2859,7 @@ mod mapkey_size_tests {
 
 #[cfg(test)]
 mod deep_drop_tests {
-    use super::{StructInner, Value, VariantInner};
+    use super::{StructInner, Value, VariantInner, intern_type_tag};
     use smallvec::SmallVec;
     use std::sync::Arc;
 
@@ -2711,7 +2872,7 @@ mod deep_drop_tests {
     #[test]
     fn deep_variant_chain_drops_without_stack_overflow() {
         let mut v = Value::Variant(Arc::new(VariantInner {
-            name: "Nil",
+            name: intern_type_tag("Nil"),
             fields: SmallVec::new(),
         }));
         for _ in 0..DEPTH {
@@ -2719,7 +2880,7 @@ mod deep_drop_tests {
             fields.push(Value::Int(0));
             fields.push(v);
             v = Value::Variant(Arc::new(VariantInner {
-                name: "Cons",
+                name: intern_type_tag("Cons"),
                 fields,
             }));
         }
@@ -2732,7 +2893,7 @@ mod deep_drop_tests {
         for _ in 0..DEPTH {
             let fields: Box<[(&'static str, Value)]> = Box::new([("next", v)]);
             v = Value::Struct(Arc::new(StructInner {
-                name: "Link",
+                name: intern_type_tag("Link"),
                 fields,
             }));
         }
@@ -2750,7 +2911,7 @@ mod deep_drop_tests {
             let mut fields: SmallVec<[Value; 2]> = SmallVec::new();
             fields.push(arr);
             v = Value::Variant(Arc::new(VariantInner {
-                name: "Wrap",
+                name: intern_type_tag("Wrap"),
                 fields,
             }));
         }

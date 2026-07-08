@@ -10,10 +10,10 @@
 
 use std::iter
 
-// Returns the reversed sequence of byte codes. Treats input
+// Returns the rev sequence of byte codes. Treats input
 // as bytes - multi-byte UTF-8 would be split mid-codepoint.
 fn reverse_bytes(text: &String) -> [i64] {
-    text.as_bytes().reversed().map(|b| b as i64)
+    text.as_bytes().rev().map(|b| b as i64)
 }
 
 fn is_palindrome(text: &String) -> bool {
@@ -30,7 +30,7 @@ fn main() {
     for s in inputs {
         let rev = reverse_bytes(&s)
         let label = if is_palindrome(&s) { "palindrome" } else { "not palindrome" }
-        println!("{} reversed-bytes={} ({})", s, rev.len(), label)
+        println!("{} rev-bytes={} ({})", s, rev.len(), label)
         print!("  codes:")
         rev |> iter::for_each(|code: i64| print!(" {}", code))
         println!()

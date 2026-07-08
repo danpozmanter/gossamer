@@ -94,7 +94,7 @@ fn assert_release_stdout_eq(name: &str, body: &str, expected: &str) {
 
 // ===============================================================
 // strconv free-fn dispatch - `parse_*` return Result<T,Error>,
-// `format_*` / `itoa` return String directly.
+// `format_*` return String directly.
 // ===============================================================
 
 #[test]
@@ -182,39 +182,6 @@ fn main() {
     );
 }
 
-#[test]
-fn aot_strconv_itoa() {
-    assert_release_stdout_eq(
-        "strconv_itoa",
-        r#"
-use std::strconv
-fn main() {
-    println!("s={}", strconv::itoa(42))
-}
-"#,
-        "s=42\n",
-    );
-}
-
-#[test]
-fn aot_strconv_atoi() {
-    assert_release_stdout_eq(
-        "strconv_atoi",
-        r#"
-use std::strconv
-use std::errors
-fn parse(s: &String) -> Result<i64, errors::Error> {
-    let n = strconv::atoi(s)?
-    Ok(n)
-}
-fn main() {
-    if let Ok(n) = parse(&"7") { println!("n={}", n) }
-}
-"#,
-        "n=7\n",
-    );
-}
-
 // ===============================================================
 // strings free-fn dispatch - every entry has a `gos_rt_str_*`
 // runtime shim, the MIR free-fn table just doesn't route to it.
@@ -256,7 +223,7 @@ fn aot_strings_to_upper() {
         r#"
 use std::strings
 fn main() {
-    println!("{}", strings::to_upper("hi"))
+    println!("{}", strings::to_uppercase("hi"))
 }
 "#,
         "HI\n",
@@ -270,7 +237,7 @@ fn aot_strings_to_lower() {
         r#"
 use std::strings
 fn main() {
-    println!("{}", strings::to_lower("HI"))
+    println!("{}", strings::to_lowercase("HI"))
 }
 "#,
         "hi\n",
@@ -493,7 +460,7 @@ fn aot_path_stem() {
         r#"
 use std::path
 fn main() {
-    if let Some(s) = path::stem("/a/file.txt") {
+    if let Some(s) = path::file_stem("/a/file.txt") {
         println!("{}", s)
     }
 }

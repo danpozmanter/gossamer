@@ -273,6 +273,7 @@ pub fn compile_to_object_with_options(
         Some(main_rename),
         options.omit_c_main_shim,
         define_only_set.as_ref(),
+        LoweringMode::Parallel,
     )?;
 
     if !options.omit_c_main_shim {
@@ -324,6 +325,7 @@ pub fn compile_to_object_at_path_with_options(
         Some(main_rename),
         options.omit_c_main_shim,
         define_only_set.as_ref(),
+        LoweringMode::Parallel,
     )?;
 
     if !options.omit_c_main_shim {
@@ -441,6 +443,25 @@ pub(crate) fn lower_program(
     lower_program_with_linkage(module, bodies, tcx, entry_symbol_for_main, Linkage::Local)
 }
 
+/// JIT-specific lowerer: build CLIF serially so short `gos run`
+/// promotions do not instantiate rayon's global worker pool.
+pub(crate) fn lower_program_serial(
+    module: &mut dyn Module,
+    bodies: &[Body],
+    tcx: &TyCtxt,
+    entry_symbol_for_main: Option<&str>,
+) -> Result<LoweredProgram> {
+    lower_program_full(
+        module,
+        bodies,
+        tcx,
+        entry_symbol_for_main,
+        false,
+        None,
+        LoweringMode::Serial,
+    )
+}
+
 /// Like [`lower_program`] but lets the caller pick the linkage
 /// for user-defined functions. The fallback companion path
 /// uses `Linkage::Export` so the LLVM-emitted primary object
@@ -463,7 +484,14 @@ pub(crate) fn lower_program_with_linkage(
         entry_symbol_for_main,
         matches!(linkage, Linkage::Export),
         None,
+        LoweringMode::Parallel,
     )
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LoweringMode {
+    Parallel,
+    Serial,
 }
 
 /// Internal lowerer with full per-body linkage / definition
@@ -478,6 +506,7 @@ pub(crate) fn lower_program_full(
     entry_symbol_for_main: Option<&str>,
     cross_object: bool,
     define_only: Option<&HashSet<String>>,
+    mode: LoweringMode,
 ) -> Result<LoweredProgram> {
     if std::env::var("GOS_DUMP_MIR").is_ok() {
         for body in bodies {
@@ -709,41 +738,50 @@ pub(crate) fn lower_program_full(
     // into the escape set.
     let capture_summary = gossamer_mir::build_capture_summary(bodies);
 
-    // N9-D: Build every function's IR in parallel. Each rayon thread
-    // receives its own clone of `offline` and `intrinsics`; per-body
-    // mutable state starts cleared because those maps are empty at
-    // clone time (they are only filled during lower_body).
+    // N9-D: Build every function's IR. Object/AOT builds keep the
+    // parallel path; the in-process JIT uses `Serial` to avoid faulting
+    // rayon workers for a handful of short-lived hot bodies.
     let dump_clif = std::env::var("GOS_DUMP_CLIF").is_ok();
-    let ir_pairs: Vec<(FuncId, String, Function)> = bodies
-        .par_iter()
-        .zip(body_type_vecs.par_iter())
-        .filter(|(body, _)| body_should_be_defined(&body.name))
-        .map(|(body, bct)| -> Result<(FuncId, String, Function)> {
-            let id = function_ids_by_name
-                .get(&body.name)
-                .copied()
-                .ok_or_else(|| anyhow!("function id missing: {}", body.name))?;
-            let mut offline_clone = offline.clone();
-            let mut local_intrinsics = intrinsics.clone();
-            local_intrinsics.body_cl_types.clone_from(bct);
-            let signature = build_signature_from_types(&offline_clone, body, tcx, bct);
-            let mut func =
-                Function::with_name_signature(UserFuncName::user(0, id.as_u32()), signature);
-            let mut fb_ctx = FunctionBuilderContext::new();
-            lower_body(
-                &mut offline_clone,
-                &mut func,
-                &mut fb_ctx,
-                body,
-                tcx,
-                &function_ids_by_def,
-                &function_ids_by_name,
-                &mut local_intrinsics,
-                &capture_summary,
-            )?;
-            Ok((id, body.name.clone(), func))
-        })
-        .collect::<Result<Vec<_>>>()?;
+    let lower_one = |body: &Body,
+                     bct: &Vec<Option<ir::Type>>|
+     -> Result<(FuncId, String, Function)> {
+        let id = function_ids_by_name
+            .get(&body.name)
+            .copied()
+            .ok_or_else(|| anyhow!("function id missing: {}", body.name))?;
+        let mut offline_clone = offline.clone();
+        let mut local_intrinsics = intrinsics.clone();
+        local_intrinsics.body_cl_types.clone_from(bct);
+        let signature = build_signature_from_types(&offline_clone, body, tcx, bct);
+        let mut func = Function::with_name_signature(UserFuncName::user(0, id.as_u32()), signature);
+        let mut fb_ctx = FunctionBuilderContext::new();
+        lower_body(
+            &mut offline_clone,
+            &mut func,
+            &mut fb_ctx,
+            body,
+            tcx,
+            &function_ids_by_def,
+            &function_ids_by_name,
+            &mut local_intrinsics,
+            &capture_summary,
+        )?;
+        Ok((id, body.name.clone(), func))
+    };
+    let ir_pairs: Vec<(FuncId, String, Function)> = match mode {
+        LoweringMode::Parallel => bodies
+            .par_iter()
+            .zip(body_type_vecs.par_iter())
+            .filter(|(body, _)| body_should_be_defined(&body.name))
+            .map(|(body, bct)| lower_one(body, bct))
+            .collect::<Result<Vec<_>>>()?,
+        LoweringMode::Serial => bodies
+            .iter()
+            .zip(body_type_vecs.iter())
+            .filter(|(body, _)| body_should_be_defined(&body.name))
+            .map(|(body, bct)| lower_one(body, bct))
+            .collect::<Result<Vec<_>>>()?,
+    };
 
     // N9-E: Emit each compiled function into the real ObjectModule
     // sequentially (ObjectModule is not Sync). Cranelift compilation

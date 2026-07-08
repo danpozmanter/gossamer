@@ -43,8 +43,10 @@ pub(crate) fn install_rwlock(globals: &mut Vec<(&'static str, Value)>) {
     let plain: &[(&str, BuiltinFnPub)] = &[
         ("RwLock::new", builtin_rwlock_new),
         ("sync::RwLock::new", builtin_rwlock_new),
-        ("sync::RwLock::get", builtin_rwlock_get),
-        ("sync::RwLock::set", builtin_rwlock_set),
+        ("sync::RwLock::read", builtin_rwlock_get),
+        ("RwLock::read", builtin_rwlock_get),
+        ("sync::RwLock::write", builtin_rwlock_set),
+        ("RwLock::write", builtin_rwlock_set),
     ];
     for (name, call) in plain {
         globals.push((*name, crate::builtins::builtin_pub(name, *call)));

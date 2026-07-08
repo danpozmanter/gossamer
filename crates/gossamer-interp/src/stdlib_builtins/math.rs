@@ -138,19 +138,11 @@ pub(crate) fn install_math(globals: &mut Vec<(&'static str, Value)>) {
             ("min", builtin_math_min),
             ("max", builtin_math_max),
             ("clamp", builtin_math_clamp),
-            ("min_f64", builtin_math_min_f64),
-            ("max_f64", builtin_math_max_f64),
-            ("min_i64", builtin_math_min_i64),
-            ("max_i64", builtin_math_max_i64),
-            ("abs_i64", builtin_math_abs_i64),
-            ("fmod", builtin_math_fmod),
-            ("mod_float", builtin_math_fmod),
+            ("rem", builtin_math_fmod),
             ("is_nan", builtin_math_is_nan),
             ("is_inf", builtin_math_is_inf),
-            ("nan", builtin_math_nan),
-            ("inf", builtin_math_inf),
             ("copysign", builtin_math_copysign),
-            ("dim", builtin_math_dim),
+            ("positive_diff", builtin_math_dim),
         ],
         globals,
     );
@@ -168,6 +160,7 @@ pub(crate) fn install_math(globals: &mut Vec<(&'static str, Value)>) {
         ("math::MIN_POSITIVE_F64", math_std::MIN_POSITIVE_F64),
         ("math::INF", math_std::INF),
         ("math::NEG_INF", math_std::NEG_INF),
+        ("math::NAN", f64::NAN),
     ] {
         let leaked: &'static str = Box::leak(name.to_string().into_boxed_str());
         globals.push((leaked, Value::Float(val)));
@@ -183,6 +176,9 @@ pub(crate) fn arg_f64(args: &[Value], idx: usize) -> f64 {
 }
 
 pub(crate) fn builtin_math_abs(args: &[Value]) -> RuntimeResult<Value> {
+    if let Some(Value::Int(n)) = args.first() {
+        return Ok(Value::Int(math_std::abs_i64(*n)));
+    }
     Ok(Value::Float(math_std::abs(arg_f64(args, 0))))
 }
 pub(crate) fn builtin_math_sqrt(args: &[Value]) -> RuntimeResult<Value> {

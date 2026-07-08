@@ -26,10 +26,14 @@ impl<'tcx> FnBuilder<'tcx> {
     ) -> RuntimeResult<BlockResult> {
         self.push_scope();
         self.defer_stack.push(Vec::new());
+        let clear_after_stmt = crate::compile::consume::block_last_use_clears(block);
         let mut diverges = false;
-        for stmt in &block.stmts {
+        for (idx, stmt) in block.stmts.iter().enumerate() {
             if self.compile_stmt(stmt)? {
                 diverges = true;
+            }
+            if !diverges && let Some(names) = clear_after_stmt.get(idx) {
+                self.emit_last_use_clears(names);
             }
         }
         let result = if diverges {
@@ -63,6 +67,20 @@ impl<'tcx> FnBuilder<'tcx> {
         self.pop_scope();
         Ok(result)
     }
+
+    fn emit_last_use_clears(&mut self, names: &[String]) {
+        for name in names {
+            let Some(typed) = self.lookup_local(name) else {
+                continue;
+            };
+            if typed.kind == RegKind::Value {
+                self.emit(Op::ClearRegs {
+                    start: typed.reg,
+                    count: 1,
+                });
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -71,7 +89,7 @@ mod elide_unit_load_tests {
 
     use gossamer_hir::{HirExprKind, HirFn, HirItemKind, lower_source_file};
     use gossamer_lex::SourceMap;
-    use gossamer_parse::parse_source_file;
+    use gossamer_parse::{parse_source_file, synthesize_entry_main};
     use gossamer_resolve::resolve_source_file;
     use gossamer_types::{TyCtxt, typecheck_source_file};
 
@@ -84,8 +102,10 @@ mod elide_unit_load_tests {
     fn compile_named(source: &str, fn_name: &str) -> (FnChunk, HirFn) {
         let mut map = SourceMap::new();
         let file = map.add_file("test.gos", source.to_string());
-        let (sf, parse_diags) = parse_source_file(source, file);
+        let (mut sf, parse_diags) = parse_source_file(source, file);
         assert!(parse_diags.is_empty(), "parse: {parse_diags:?}");
+        let entry_diags = synthesize_entry_main(&mut sf);
+        assert!(entry_diags.is_empty(), "entry main: {entry_diags:?}");
         let (resolutions, _) = resolve_source_file(&sf);
         let mut tcx = TyCtxt::new();
         let (table, _) = typecheck_source_file(&sf, &resolutions, &mut tcx);
@@ -224,6 +244,44 @@ fn pick(flag: bool) -> i64 {
                 .iter()
                 .any(|op| matches!(op, Op::Return { .. })),
             "value-producing block must return a value; chunk: {:?}",
+            chunk.instrs
+        );
+    }
+
+    #[test]
+    fn block_clears_value_local_after_last_statement_use() {
+        let source = r#"
+fn f() {
+    let s = "abcdef"
+    let n = s.len()
+    println!("{}", n)
+}
+"#;
+        let (chunk, _) = compile_named(source, "f");
+        assert!(
+            chunk
+                .instrs
+                .iter()
+                .any(|op| matches!(op, Op::ClearRegs { count: 1, .. })),
+            "expected a statement-level last-use clear; chunk: {:?}",
+            chunk.instrs
+        );
+    }
+
+    #[test]
+    fn top_level_block_clears_value_local_after_last_statement_use() {
+        let source = r#"
+let s = "abcdef"
+let n = s.len()
+println!("{}", n)
+"#;
+        let (chunk, _) = compile_named(source, "main");
+        assert!(
+            chunk
+                .instrs
+                .iter()
+                .any(|op| matches!(op, Op::ClearRegs { count: 1, .. })),
+            "expected top-level statement last-use clear; chunk: {:?}",
             chunk.instrs
         );
     }

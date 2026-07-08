@@ -2,15 +2,15 @@
 
 Status: shipped
 
-Data-last Result combinators for pipeline chaining: map, map_err, default_with, etc.
+Data-last Result combinators for pipeline chaining: map, map_err, unwrap_or_else, etc.
 
 ## Public items
 
 | Name | Kind | Description |
 |---|---|---|
 | `and_then` | fn | Chains a fallible step on the Ok payload. |
-| `default` | fn | Unwraps Ok with a fallback value for Err. |
-| `default_with` | fn | Consumes the result, handling Err with a callback. |
+| `unwrap_or` | fn | Unwraps Ok with a fallback value for Err. |
+| `unwrap_or_else` | fn | Consumes the result, handling Err with a callback. |
 | `err` | fn | Err payload as an Option. |
 | `is_err` | fn | True for Err. |
 | `is_ok` | fn | True for Ok. |

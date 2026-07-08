@@ -2482,7 +2482,7 @@ impl<'a> Builder<'a> {
     /// type the checker left unresolved (stdlib call results are often a
     /// `Var`). Walks the common Vec-producing shapes - a concrete
     /// Vec/Slice/Array type, the String split/lines family, `chars`, and the
-    /// element-preserving `reversed`/`to_vec`/`clone` adapters (recursing into
+    /// element-preserving `rev`/`to_vec`/`clone` adapters (recursing into
     /// their receiver) - so the loop binds the right element type across every
     /// tier instead of defaulting to i64 and iterating heap pointers.
     pub(crate) fn for_loop_elem_ty(&mut self, iter: &HirExpr) -> Option<Ty> {
@@ -2514,7 +2514,7 @@ impl<'a> Builder<'a> {
                         _ => self.tcx.string_ty(),
                     })
                 }
-                "reversed" | "to_vec" | "clone" => self.for_loop_elem_ty(receiver),
+                "rev" | "to_vec" | "clone" => self.for_loop_elem_ty(receiver),
                 _ => None,
             };
         }
@@ -2855,7 +2855,7 @@ impl<'a> Builder<'a> {
                         }
                     }
                 }
-                // Element-preserving Vec adapters (`xs.reversed()`,
+                // Element-preserving Vec adapters (`xs.rev()`,
                 // `xs.to_vec()`, `xs.clone()`) consumed directly as the
                 // iterable carry a `Var` HIR type; recover the element type
                 // from the adapter's receiver so the loop binds it correctly.
@@ -2873,7 +2873,7 @@ impl<'a> Builder<'a> {
                                 MapKeyKind::I64 => self.tcx.int_ty(gossamer_types::IntTy::I64),
                                 _ => self.tcx.string_ty(),
                             });
-                        } else if matches!(name.name.as_str(), "reversed" | "to_vec" | "clone") {
+                        } else if matches!(name.name.as_str(), "rev" | "to_vec" | "clone") {
                             for_vec_elem = self.for_loop_elem_ty(receiver);
                         }
                     }
@@ -3010,10 +3010,8 @@ impl<'a> Builder<'a> {
                                 | "std::iter::zip"
                                 | "iter::pairwise"
                                 | "std::iter::pairwise" => Some(pair_ty),
-                                "iter::windowed"
-                                | "std::iter::windowed"
-                                | "iter::chunk_by_size"
-                                | "std::iter::chunk_by_size" => Some(vec_i64),
+                                "iter::windows" | "std::iter::windows" | "iter::chunks"
+                                | "std::iter::chunks" => Some(vec_i64),
                                 "iter::flatten" | "std::iter::flatten" | "iter::dedup"
                                 | "std::iter::dedup" => Some(i64_ty),
                                 _ => None,

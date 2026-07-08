@@ -193,19 +193,12 @@ impl Resolver {
         }
         let rest: Vec<&str> = p.segments[1..].iter().map(|s| s.name.as_str()).collect();
         let joined = rest.join("::");
-        let table = crate::stdlib_exports::STDLIB_MODULE_PATHS;
-        let is_module_or_namespace = |path: &str| -> bool {
-            table.binary_search(&path).is_ok()
-                || table.iter().any(|m| {
-                    m.len() > path.len() && m.starts_with(path) && m.as_bytes()[path.len()] == b':'
-                })
-        };
-        if is_module_or_namespace(&joined) {
+        if crate::stdlib_exports::is_stdlib_module_path_or_namespace(&joined) {
             return;
         }
         if rest.len() >= 2 {
             let parent = rest[..rest.len() - 1].join("::");
-            if is_module_or_namespace(&parent) {
+            if crate::stdlib_exports::is_stdlib_module_path_or_namespace(&parent) {
                 return;
             }
         }
@@ -1039,13 +1032,9 @@ impl Resolver {
             // never sees those names; only genuine nested-module
             // free-function calls reach this branch.
             let stdlib_phantom = match effective.as_slice() {
-                [head, _member] => crate::stdlib_exports::STDLIB_MODULES
-                    .binary_search(head)
-                    .is_ok(),
+                [head, _member] => crate::stdlib_exports::is_stdlib_module_name(head),
                 [head, sub, member] if starts_lowercase(sub) && starts_lowercase(member) => {
-                    crate::stdlib_exports::STDLIB_MODULES
-                        .binary_search(head)
-                        .is_ok()
+                    crate::stdlib_exports::is_stdlib_module_name(head)
                 }
                 // `module::Type::member` stays opaque-by-head in
                 // general (some type surfaces resolve through
@@ -1061,9 +1050,7 @@ impl Resolver {
                     if (matches!(*head, "json" | "flag") && *sub == "Value")
                         || (matches!(*head, "process" | "exec") && !starts_lowercase(sub)) =>
                 {
-                    crate::stdlib_exports::STDLIB_MODULES
-                        .binary_search(head)
-                        .is_ok()
+                    crate::stdlib_exports::is_stdlib_module_name(head)
                 }
                 _ => false,
             } && !self.stdlib_member_resolves(&joined, &effective);
@@ -1117,21 +1104,14 @@ impl Resolver {
     /// when its full spelling is bound, or when `head::sub` is a real
     /// module path and the `sub::member` binding spelling is bound.
     fn stdlib_member_resolves(&self, joined: &str, effective: &[&str]) -> bool {
-        if crate::stdlib_exports::STDLIB_QUALIFIED
-            .binary_search(&joined)
-            .is_ok()
-        {
+        if crate::stdlib_exports::is_stdlib_qualified(joined) {
             return true;
         }
         if let [head, sub, member] = effective {
             let parent = format!("{head}::{sub}");
             let binding_member = format!("{sub}::{member}");
-            if crate::stdlib_exports::STDLIB_MODULE_PATHS
-                .binary_search(&parent.as_str())
-                .is_ok()
-                && crate::stdlib_exports::STDLIB_QUALIFIED
-                    .binary_search(&binding_member.as_str())
-                    .is_ok()
+            if crate::stdlib_exports::is_stdlib_module_path_or_namespace(&parent)
+                && crate::stdlib_exports::is_stdlib_qualified(&binding_member)
             {
                 return true;
             }

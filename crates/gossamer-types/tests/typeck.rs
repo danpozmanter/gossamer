@@ -633,12 +633,12 @@ fn piped_iter_map_closure_param_pins_to_elem_type() {
 fn piped_result_default_with_closure_param_pins_to_err_type() {
     let checked = run("use std::result\n\
          fn fail() -> Result<i64, String> { Err(\"boom\") }\n\
-         fn main() { let v = fail() |> result::default_with(|e| println!(\"{e}\")) }\n");
+         fn main() { let v = fail() |> result::unwrap_or_else(|e| println!(\"{e}\")) }\n");
     assert!(checked.diagnostics.is_empty(), "{:?}", checked.diagnostics);
     let init = let_init(&checked, "main", 0);
     assert!(
         matches!(closure_param_kind(&checked, init), TyKind::String),
-        "result::default_with closure param must pin to the Err payload String"
+        "result::unwrap_or_else closure param must pin to the Err payload String"
     );
 }
 
@@ -867,26 +867,29 @@ fn index_on_vec_and_string_is_accepted() {
 }
 
 #[test]
-fn oversized_fixed_array_is_rejected() {
-    // A `[T; N]` this large is placed inline on the stack by the compiled
-    // tiers and silently overflows the OS stack (SIGSEGV); rejected at check.
-    let d = diagnostics_for("fn main() { let a: [i64; 100000000] = [0; 100000000]; let _ = a }\n");
-    assert!(has_code(&d, "GT0026"), "{d:?}");
+fn reasonable_fixed_array_is_accepted() {
+    let d = diagnostics_for("fn main() { let a: [i64; 16] = [0; 16]; println!(\"{}\", a[0]) }\n");
+    assert!(d.is_empty(), "{d:?}");
 }
 
 #[test]
-fn reasonable_fixed_array_is_accepted() {
-    // A small fixed array stays on the stack safely and must not trip GT0026.
-    let d = diagnostics_for("fn main() { let a: [i64; 16] = [0; 16]; println!(\"{}\", a[0]) }\n");
-    assert!(!has_code(&d, "GT0026"), "{d:?}");
+fn benchmark_sized_fixed_array_is_accepted() {
+    let d = diagnostics_for(
+        "fn main() { let a: [f64; 40000] = [0.0; 40000]; println!(\"{}\", a[0]) }\n",
+    );
+    assert!(d.is_empty(), "{d:?}");
+}
+
+#[test]
+fn very_large_fixed_array_is_accepted() {
+    let d = diagnostics_for("fn main() { let a: [i64; 100000000] = [0; 100000000]; let _ = a }\n");
+    assert!(d.is_empty(), "{d:?}");
 }
 
 #[test]
 fn oversized_repeat_into_vec_is_accepted() {
-    // The same count targeting a heap `Vec` is fine - only inline fixed
-    // arrays are stack-bounded, so this must not trip GT0026.
     let d = diagnostics_for("fn main() { let v: [i64] = [0; 100000000]; let _ = v.len() }\n");
-    assert!(!has_code(&d, "GT0026"), "{d:?}");
+    assert!(d.is_empty(), "{d:?}");
 }
 
 #[test]

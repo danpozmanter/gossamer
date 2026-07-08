@@ -113,6 +113,8 @@ pub(crate) fn install_encoding_toml(globals: &mut Vec<(&'static str, Value)>) {
         ("is_valid", builtin_toml_is_valid),
         ("pretty", builtin_toml_pretty),
     ] {
+        let q: &'static str = Box::leak(format!("encoding::toml::{short}").into_boxed_str());
+        globals.push((q, crate::builtins::builtin_pub(q, call)));
         let q: &'static str = Box::leak(format!("toml::{short}").into_boxed_str());
         globals.push((q, crate::builtins::builtin_pub(q, call)));
     }

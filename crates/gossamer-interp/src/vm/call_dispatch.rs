@@ -108,10 +108,20 @@ impl Vm {
                 // the Cranelift compile pass entirely.
                 let hot = state.hot_counter.get();
                 if hot > 0 && hot != crate::bytecode::HOT_DISABLED {
+                    state.jit_observed_work.set(
+                        state
+                            .jit_observed_work
+                            .get()
+                            .saturating_add(state.instr_count.max(1)),
+                    );
                     let next = hot - 1;
                     state.hot_counter.set(next);
                     if next == 0 {
-                        self.try_compile_jit_lazy();
+                        if state.jit_observed_work.get() >= state.jit_min_work {
+                            self.try_compile_jit_lazy();
+                        } else {
+                            state.hot_counter.set(1);
+                        }
                     }
                 }
                 // Tier D1 - if the deferred compile produced a

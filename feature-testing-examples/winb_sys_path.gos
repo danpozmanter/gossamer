@@ -28,32 +28,32 @@ fn main() {
         println!("split({})=[{}][{}]", p, d, f)
     }
 
-    // base / dir
+    // file_name / parent
     for p in paths {
-        println!("base({})=[{}] dir=[{}]", p, path::base(&p), path::dir(&p))
+        println!("file_name({})=[{}] parent=[{}]",
+            p, opt(path::file_name(&p)), opt(path::parent(&p)))
     }
 
-    // ext / extension / stem / file_name / parent
+    // extension / file_stem / file_name / parent
     let names = [
         "file.txt", "noext", ".hidden", "a/b.tar.gz", "a/b.gos",
         "/", "", "dir/", "x.", "..", ".", "a/.config",
     ]
     for p in names {
-        println!("ext({})=[{}]", p, opt(path::ext(&p)))
         println!("extension({})=[{}]", p, opt(path::extension(&p)))
-        println!("stem({})=[{}]", p, opt(path::stem(&p)))
+        println!("file_stem({})=[{}]", p, opt(path::file_stem(&p)))
         println!("file_name({})=[{}]", p, opt(path::file_name(&p)))
         println!("parent({})=[{}]", p, opt(path::parent(&p)))
     }
 
-    // clean / normalize
+    // normalize
     let dirty = [
         "a/./b/../c", "/x//y/../z", "", ".", "..", "../x", "a//b",
         "/../..", "a/b/../../c", "./", "/./", "a/b/.", "/a/b/../../c",
         "...", "a/...", "/",
     ]
     for p in dirty {
-        println!("clean({})=[{}] norm=[{}]", p, path::clean(&p), path::normalize(&p))
+        println!("normalize({})=[{}]", p, path::normalize(&p))
     }
 
     // is_absolute
@@ -61,13 +61,13 @@ fn main() {
         println!("is_absolute({})={}", p, path::is_absolute(&p))
     }
 
-    // has_prefix
+    // starts_with
     let prefixes = [
         ("/a/b/c", "/a/b"), ("/a/b/c", "/x"), ("a/b/c", "a/b"),
         ("a/b", "a/b"), ("a/bc", "a/b"), ("/a/b/c", "/a/b/"),
         ("a", "a"), ("a/b", "a/b/c"), ("", ""),
     ]
     for (p, pre) in prefixes {
-        println!("has_prefix({},{})={}", p, pre, path::has_prefix(&p, &pre))
+        println!("starts_with({},{})={}", p, pre, path::starts_with(&p, &pre))
     }
 }

@@ -31,6 +31,6 @@ fn main() {
     assert(d.is_dir, "dir is_dir true")
     assert(!d.is_file, "dir not file")
 
-    let _ = fs::remove_all(&dir)
+    let _ = fs::remove_dir_all(&dir)
     println!("ok")
 }

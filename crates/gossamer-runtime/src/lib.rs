@@ -38,12 +38,16 @@
 #[global_allocator]
 static GLOBAL_ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
-// mimalloc's `mi_option_purge_delay` (15) and `mi_option_allow_thp` (43)
-// enum indices. The `libmimalloc-sys` binding exposes only a curated subset
-// of the option enum that omits both, so they are pinned by value and
-// guarded against a future mimalloc enum shift by `allocator_tests` below.
+// mimalloc's `mi_option_purge_delay` (15),
+// `mi_option_deprecated_max_segment_reclaim` (21), and
+// `mi_option_allow_thp` (43) enum indices. The `libmimalloc-sys` binding
+// exposes only a curated subset of the option enum that omits these on the
+// v3 build, so they are pinned by value and guarded against a future mimalloc
+// enum shift by `allocator_tests` below.
 #[cfg(not(any(tsan, miri, fuzzing, target_arch = "wasm32")))]
 const MI_OPTION_PURGE_DELAY: libmimalloc_sys::mi_option_t = 15;
+#[cfg(not(any(tsan, miri, fuzzing, target_arch = "wasm32")))]
+const MI_OPTION_MAX_SEGMENT_RECLAIM: libmimalloc_sys::mi_option_t = 21;
 #[cfg(not(any(tsan, miri, fuzzing, target_arch = "wasm32")))]
 const MI_OPTION_ALLOW_THP: libmimalloc_sys::mi_option_t = 43;
 
@@ -55,12 +59,12 @@ const MI_OPTION_ALLOW_THP: libmimalloc_sys::mi_option_t = 43;
 // non-deterministically. Snapshotting under the `OnceLock` before the first
 // set makes the guard observe the true defaults regardless of ordering.
 #[cfg(not(any(tsan, miri, fuzzing, target_arch = "wasm32")))]
-static MIMALLOC_OPTION_DEFAULTS: std::sync::OnceLock<(i64, i64)> = std::sync::OnceLock::new();
+static MIMALLOC_OPTION_DEFAULTS: std::sync::OnceLock<(i64, i64, i64)> = std::sync::OnceLock::new();
 
 /// Pristine defaults of the two pinned mimalloc options, snapshotted once
 /// before the first `init_process_allocator` call mutates them.
 #[cfg(not(any(tsan, miri, fuzzing, target_arch = "wasm32")))]
-fn mimalloc_option_defaults() -> (i64, i64) {
+fn mimalloc_option_defaults() -> (i64, i64, i64) {
     *MIMALLOC_OPTION_DEFAULTS.get_or_init(|| {
         // SAFETY: option get is thread-safe; the global allocator is mimalloc
         // in this build, initialised before any code reaches here. `c_long`
@@ -68,6 +72,7 @@ fn mimalloc_option_defaults() -> (i64, i64) {
         unsafe {
             (
                 libmimalloc_sys::mi_option_get(MI_OPTION_PURGE_DELAY) as i64,
+                libmimalloc_sys::mi_option_get(MI_OPTION_MAX_SEGMENT_RECLAIM) as i64,
                 libmimalloc_sys::mi_option_get(MI_OPTION_ALLOW_THP) as i64,
             )
         }
@@ -95,7 +100,9 @@ fn mimalloc_option_defaults() -> (i64, i64) {
 /// it. No-op under `ThreadSanitizer` and Miri, where the system
 /// allocator is used.
 ///
-/// Also disables mimalloc's transparent-huge-page request. By default
+/// Also raises mimalloc's abandoned-segment reclaim ceiling so short-lived
+/// worker heaps do not leave reclaimable segments behind after a collection
+/// pass, and disables mimalloc's transparent-huge-page request. By default
 /// mimalloc `madvise(MADV_HUGEPAGE)`s its arena memory, so on Linux with
 /// THP in `madvise` mode the kernel backs even a tiny live set with
 /// 2 MiB pages - a process whose heap fits in tens of KiB stays several
@@ -104,12 +111,12 @@ fn mimalloc_option_defaults() -> (i64, i64) {
 /// measurable wall-clock on our workloads and keeps RSS proportional to
 /// the live set.
 ///
-/// `15` and `43` are mimalloc's `mi_option_purge_delay` and
-/// `mi_option_allow_thp`. The `libmimalloc-sys` binding exposes only a
-/// curated subset of the option enum that omits these, so they are
-/// pinned by value and guarded against a future mimalloc enum shift by
-/// the `allocator_tests` unit tests below, which assert each index still
-/// reports its documented default.
+/// `15`, `21`, and `43` are mimalloc's `mi_option_purge_delay`,
+/// `mi_option_deprecated_max_segment_reclaim`, and `mi_option_allow_thp`.
+/// The `libmimalloc-sys` binding exposes only a curated subset of the option
+/// enum on v3, so they are pinned by value and guarded against a future
+/// mimalloc enum shift by the `allocator_tests` unit tests below, which assert
+/// each index still reports its documented default.
 pub fn init_process_allocator() {
     #[cfg(not(any(tsan, miri, fuzzing, target_arch = "wasm32")))]
     {
@@ -120,8 +127,23 @@ pub fn init_process_allocator() {
         // the allocator initialised, which it has by the time `main` runs.
         unsafe {
             libmimalloc_sys::mi_option_set(MI_OPTION_PURGE_DELAY, 0);
+            libmimalloc_sys::mi_option_set(MI_OPTION_MAX_SEGMENT_RECLAIM, 100);
             libmimalloc_sys::mi_option_set(MI_OPTION_ALLOW_THP, 0);
         }
+    }
+}
+
+/// Forces the process allocator to collect abandoned heaps and purge eligible
+/// pages. This is a no-op in builds that do not use mimalloc.
+pub fn collect_process_allocator(force: bool) {
+    #[cfg(not(any(tsan, miri, fuzzing, target_arch = "wasm32")))]
+    {
+        // SAFETY: `mi_collect` is process-global and thread-safe in mimalloc.
+        unsafe { libmimalloc_sys::mi_collect(force) };
+    }
+    #[cfg(any(tsan, miri, fuzzing, target_arch = "wasm32"))]
+    {
+        let _ = force;
     }
 }
 
@@ -187,12 +209,18 @@ mod allocator_tests {
     /// allocator.
     #[test]
     fn allocator_option_indices_are_pinned_and_settable() {
-        let (purge_default, thp_default) = super::mimalloc_option_defaults();
+        let (purge_default, reclaim_default, thp_default) = super::mimalloc_option_defaults();
         assert_eq!(
             purge_default, 1000,
             "mimalloc option 15 default is {purge_default}, expected the 1000 ms \
              purge_delay default - the enum likely shifted; re-verify the \
              mi_option_purge_delay index for the current mimalloc version",
+        );
+        assert_eq!(
+            reclaim_default, 10,
+            "mimalloc option 21 default is {reclaim_default}, expected the abandoned-segment \
+             reclaim default - the enum likely shifted; re-verify the \
+             mi_option_deprecated_max_segment_reclaim index for the current mimalloc version",
         );
         assert_eq!(
             thp_default, 1,
@@ -205,6 +233,12 @@ mod allocator_tests {
         // in a non-tsan build, so it is initialised here.
         let purge = unsafe { libmimalloc_sys::mi_option_get(super::MI_OPTION_PURGE_DELAY) };
         assert_eq!(purge, 0, "init_process_allocator must set purge_delay to 0");
+        let reclaim =
+            unsafe { libmimalloc_sys::mi_option_get(super::MI_OPTION_MAX_SEGMENT_RECLAIM) };
+        assert_eq!(
+            reclaim, 100,
+            "init_process_allocator must set max_segment_reclaim to 100"
+        );
         let thp = unsafe { libmimalloc_sys::mi_option_get(super::MI_OPTION_ALLOW_THP) };
         assert_eq!(thp, 0, "init_process_allocator must set allow_thp to 0");
     }

@@ -45,12 +45,22 @@ pub fn unset_env(name: &str) {
 
 /// Reads the entire contents of a file into memory.
 pub fn read_file(path: &str) -> Result<Vec<u8>, IoError> {
-    std::fs::read(path).map_err(|e| IoError::from_std(e, path))
+    std::fs::read(path)
+        .map(|mut bytes| {
+            bytes.shrink_to_fit();
+            bytes
+        })
+        .map_err(|e| IoError::from_std(e, path))
 }
 
 /// Reads the entire contents of a file as UTF-8 text.
 pub fn read_file_to_string(path: &str) -> Result<String, IoError> {
-    std::fs::read_to_string(path).map_err(|e| IoError::from_std(e, path))
+    std::fs::read_to_string(path)
+        .map(|mut text| {
+            text.shrink_to_fit();
+            text
+        })
+        .map_err(|e| IoError::from_std(e, path))
 }
 
 /// Writes `bytes` to `path`, creating or truncating the file.

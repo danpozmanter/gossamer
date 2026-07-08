@@ -187,6 +187,15 @@ impl<'a> Lowerer<'a> {
             }
             let slot = local_slot(Local(i as u32));
             if is_aggregate(self.tcx, decl.ty) {
+                if let Some(bytes) = self.heap_spilled_local_bytes(Local(i as u32)) {
+                    declare_rt(&mut self.runtime_refs, "gos_rt_aggr_alloc");
+                    writeln!(
+                        self.out,
+                        "  {slot} = call ptr @gos_rt_aggr_alloc(i64 {bytes})"
+                    )
+                    .unwrap();
+                    continue;
+                }
                 // Aggregates use Cranelift's flat layout:
                 // 8-byte i64-sized slots, one per scalar
                 // field, struct-of-struct flattened in
@@ -209,6 +218,31 @@ impl<'a> Lowerer<'a> {
                     writeln!(self.out, "  {slot} = alloca {ty}").unwrap();
                 }
             }
+        }
+    }
+
+    pub(crate) fn heap_spilled_local_bytes(&self, local: Local) -> Option<u64> {
+        let ty = self.body.local_ty(local);
+        if !is_aggregate(self.tcx, ty) {
+            return None;
+        }
+        let bytes = aggregate_storage_bytes(self.tcx, ty)?;
+        (bytes > STACK_AGGREGATE_SPILL_BYTES).then_some(bytes)
+    }
+
+    pub(crate) fn emit_heap_spill_frees(&mut self) {
+        for (i, _) in self.body.locals.iter().enumerate() {
+            let local = Local(i as u32);
+            let Some(bytes) = self.heap_spilled_local_bytes(local) else {
+                continue;
+            };
+            declare_rt(&mut self.runtime_refs, "gos_rt_aggr_free");
+            writeln!(
+                self.out,
+                "  call void @\"gos_rt_aggr_free\"(ptr {slot}, i64 {bytes})",
+                slot = local_slot(local)
+            )
+            .unwrap();
         }
     }
 

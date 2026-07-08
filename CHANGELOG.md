@@ -1,6 +1,31 @@
 # Changelog
 
-## 0.24.2 - static mut JIT lowering, parallel codegen scaling
+## 0.25.0 - stdlib naming, runtime memory, conformance hardening
+
+### Stdlib and docs
+
+- **Stdlib names now use the canonical surface consistently.** Deprecated aliases were removed across interpreter dispatch, MIR lowering, type metadata, examples, and reference docs, with path, iterator, option/result, strconv, strings, sync, math, net, fs, env, and process examples updated to the new spellings.
+- **Examples and generated docs were refreshed for the renamed APIs.** VM and native tiers now agree on the canonical stdlib examples, including filesystem directory metadata, string casing, vector reversal, sync primitives, math constants, and conversion helpers.
+
+### Runtime memory
+
+- **Interpreter strings and maps use denser storage.** Heap strings now use a thin refcounted backing allocation, and interpreter `HashMap` values use dense entry storage while preserving deterministic key-sorted user-facing iteration.
+- **JIT startup and retained state were trimmed.** The in-process JIT lowers bodies serially, avoids preparing Cranelift for once-entered loops that cannot switch tiers mid-frame, still promotes recursive helper workloads, avoids creating the goroutine pool for goroutine-free programs, and asks the allocator to collect transient compiler allocations after finalization.
+- **Allocator, lifetime, and stdlib lookup paths were tightened.** Mimalloc now reclaims abandoned segments more aggressively, stdlib resolver checks stay on static sorted tables, common read buffers shrink after loading, and statement-level last-use clears release large interpreter locals before later allocations raise the peak.
+- **Aggregate tags are compact in the interpreter.** Struct and enum variant nodes now store integer type tags while still recovering the interned names for display, dispatch, equality, and native-tier interop.
+- **Integer `math::abs` now matches compiled-tier semantics on the bytecode VM.** Integer inputs stay integer and use the saturating path; floating-point inputs retain floating-point behavior.
+
+### Conformance hardening
+
+- **Compiled-tier value handling was tightened across scalar carriers, aggregates, strings, and runtime shims.** Generic specialization now preserves scalar register classes, structural ordering is shared by sort/min/max, embedded-NUL strings keep their full contents, character joins use the correct layout, runtime errors own their messages, and dangerous overflow/OOB paths now diagnose or lower consistently.
+- **`gos check` rejects more shapes that tiers cannot execute uniformly.** Oversized integer literals, primitive integer associated constants, SQL query-builder value arguments, and previously loose stdlib/method forms now resolve or fail before codegen instead of leaving VM/build divergence.
+- **Cross-tier verification now exercises the real surfaces it names.** The parity harness runs the actual JIT tier, scans all runtime helper definitions, covers every feature-testing fixture, keeps stale skips out of the gate, and extends unsigned arithmetic/radix coverage.
+- **Tier-parity fixtures now track canonical lowering paths.** Map-entry desugaring uses the public option surface, fixed-port router fixtures are covered serially, unsigned LLVM arithmetic follows declared types, and timing-sensitive channel examples avoid scheduler-dependent results.
+- **Stdlib promises now match callable surface.** Non-callable manifest entries and stale guidance were removed or corrected, qualified encoding namespaces are wired consistently, signal notifier method forms build natively, and explicit LLVM fallback use is reported instead of hidden.
+- **Latent lowering hazards were hardened.** Error vectors carry the correct deep-free tag, unknown struct fields no longer read as unit, and dynamic JSON field fallback is limited to real JSON values.
+- **Large fixed arrays compile without source rewrites.** The compiled tier now spills large inline aggregate locals to runtime-managed storage, preserving fixed-array semantics without a type-checker stack-size rejection.
+
+## 0.24.2 - static mut JIT lowering, parallel codegen scaling, fixes
 
 ### Performance
 

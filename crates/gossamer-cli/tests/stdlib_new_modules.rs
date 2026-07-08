@@ -434,7 +434,7 @@ fn main() {
     let xs = [10, 20, 30]
     println!("{}", iter::count(xs))
     println!("{}", iter::sum(xs))
-    let r = iter::reversed(xs)
+    let r = iter::rev(xs)
     println!("{}", r[0])
 }
 "#,

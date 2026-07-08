@@ -9,6 +9,11 @@
 
 use gossamer_types::{FloatTy, IntTy, Ty, TyCtxt, TyKind};
 
+/// Aggregate locals above this footprint are backed by a runtime heap
+/// allocation instead of an LLVM stack `alloca`. This is a codegen storage
+/// choice: fixed-size array semantics remain `[T; N]`.
+pub(crate) const STACK_AGGREGATE_SPILL_BYTES: u64 = 512 * 1024;
+
 /// LLVM type rendering for a MIR type. Returns the short
 /// textual form (`i64`, `double`, `i1`, `ptr`, `void`).
 ///
@@ -239,6 +244,11 @@ pub(crate) fn slot_count(tcx: &TyCtxt, ty: Ty) -> Option<u32> {
         }
         _ => None,
     }
+}
+
+/// Byte footprint for an inline aggregate's flat-slot representation.
+pub(crate) fn aggregate_storage_bytes(tcx: &TyCtxt, ty: Ty) -> Option<u64> {
+    slot_count(tcx, ty).map(|slots| u64::from(slots.max(1)) * 8)
 }
 
 /// Size in slots of a *single element* of an aggregate type -

@@ -110,7 +110,7 @@ pub(crate) fn install_option(globals: &mut Vec<(&'static str, Value)>) {
     let static_entries: &[(&str, BuiltinFnPub)] = &[
         ("is_some", builtin_option_is_some),
         ("is_none", builtin_option_is_none),
-        ("default", builtin_option_default),
+        ("unwrap_or", builtin_option_default),
         ("or", builtin_option_or),
         ("flatten", builtin_option_flatten),
         ("zip", builtin_option_zip),
@@ -124,7 +124,7 @@ pub(crate) fn install_option(globals: &mut Vec<(&'static str, Value)>) {
         ("map", native_option_map),
         ("and_then", native_option_and_then),
         ("filter", native_option_filter),
-        ("default_with", native_option_default_with),
+        ("unwrap_or_else", native_option_unwrap_or_else),
         ("or_else", native_option_or_else),
         ("iter", native_option_iter),
     ];
@@ -221,7 +221,7 @@ pub(crate) fn native_option_filter(
     Ok(none_variant())
 }
 
-pub(crate) fn native_option_default_with(
+pub(crate) fn native_option_unwrap_or_else(
     dispatch: &mut dyn NativeDispatch,
     args: &[Value],
 ) -> RuntimeResult<Value> {

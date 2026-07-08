@@ -831,9 +831,9 @@ dependencies = [
 
 [[package]]
 name = "crossbeam-epoch"
-version = "0.9.18"
+version = "0.9.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5b82ac4a3c2ca9c3460964f020e1402edd5753411d7737aa39c3714ad1b5420e"
+checksum = "2d6914041f254d6e9176c01941b21115dcfb7089e55135a35411081bd106ef3f"
 dependencies = [
  "crossbeam-utils",
 ]
@@ -1350,11 +1350,11 @@ dependencies = [
 
 [[package]]
 name = "gossamer-abi"
-version = "0.24.2"
+version = "0.25.0"
 
 [[package]]
 name = "gossamer-ast"
-version = "0.24.2"
+version = "0.25.0"
 dependencies = [
  "gossamer-lex",
  "serde",
@@ -1362,7 +1362,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-binding"
-version = "0.24.2"
+version = "0.25.0"
 dependencies = [
  "gossamer-ast",
  "gossamer-binding-macros",
@@ -1377,7 +1377,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-binding-macros"
-version = "0.24.2"
+version = "0.25.0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1386,7 +1386,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-cli"
-version = "0.24.2"
+version = "0.25.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -1427,7 +1427,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-codegen-cranelift"
-version = "0.24.2"
+version = "0.25.0"
 dependencies = [
  "anyhow",
  "cranelift-codegen",
@@ -1454,7 +1454,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-codegen-llvm"
-version = "0.24.2"
+version = "0.25.0"
 dependencies = [
  "anyhow",
  "gossamer-abi",
@@ -1470,14 +1470,14 @@ dependencies = [
 
 [[package]]
 name = "gossamer-coro"
-version = "0.24.2"
+version = "0.25.0"
 dependencies = [
  "corosensei",
 ]
 
 [[package]]
 name = "gossamer-diagnostics"
-version = "0.24.2"
+version = "0.25.0"
 dependencies = [
  "gossamer-ast",
  "gossamer-lex",
@@ -1489,7 +1489,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-driver"
-version = "0.24.2"
+version = "0.25.0"
 dependencies = [
  "anyhow",
  "gossamer-ast",
@@ -1517,7 +1517,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-hir"
-version = "0.24.2"
+version = "0.25.0"
 dependencies = [
  "gossamer-ast",
  "gossamer-lex",
@@ -1528,7 +1528,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-http3"
-version = "0.24.2"
+version = "0.25.0"
 dependencies = [
  "bytes",
  "h3",
@@ -1544,7 +1544,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-interp"
-version = "0.24.2"
+version = "0.25.0"
 dependencies = [
  "gossamer-ast",
  "gossamer-codegen-cranelift",
@@ -1558,6 +1558,7 @@ dependencies = [
  "gossamer-std",
  "gossamer-types",
  "gossamer-ws",
+ "indexmap",
  "parking_lot",
  "rustc-hash",
  "smallvec",
@@ -1566,7 +1567,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-lex"
-version = "0.24.2"
+version = "0.25.0"
 dependencies = [
  "insta",
  "parking_lot",
@@ -1577,7 +1578,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-lint"
-version = "0.24.2"
+version = "0.25.0"
 dependencies = [
  "gossamer-ast",
  "gossamer-diagnostics",
@@ -1587,7 +1588,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-lsp"
-version = "0.24.2"
+version = "0.25.0"
 dependencies = [
  "gossamer-ast",
  "gossamer-diagnostics",
@@ -1601,7 +1602,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-mcp"
-version = "0.24.2"
+version = "0.25.0"
 dependencies = [
  "gossamer-lsp",
  "gossamer-std",
@@ -1609,7 +1610,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-mir"
-version = "0.24.2"
+version = "0.25.0"
 dependencies = [
  "gossamer-abi",
  "gossamer-ast",
@@ -1622,7 +1623,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-parse"
-version = "0.24.2"
+version = "0.25.0"
 dependencies = [
  "gossamer-ast",
  "gossamer-diagnostics",
@@ -1633,7 +1634,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-pkg"
-version = "0.24.2"
+version = "0.25.0"
 dependencies = [
  "ed25519-dalek",
  "parking_lot",
@@ -1648,7 +1649,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-playground"
-version = "0.24.2"
+version = "0.25.0"
 dependencies = [
  "console_error_panic_hook",
  "gossamer-ast",
@@ -1666,7 +1667,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-resolve"
-version = "0.24.2"
+version = "0.25.0"
 dependencies = [
  "gossamer-ast",
  "gossamer-diagnostics",
@@ -1678,7 +1679,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-runner-template"
-version = "0.24.2"
+version = "0.25.0"
 dependencies = [
  "syn",
  "toml",
@@ -1686,7 +1687,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-runtime"
-version = "0.24.2"
+version = "0.25.0"
 dependencies = [
  "aes-gcm",
  "argon2",
@@ -1752,14 +1753,14 @@ dependencies = [
 
 [[package]]
 name = "gossamer-sched"
-version = "0.24.2"
+version = "0.25.0"
 dependencies = [
  "gossamer-runtime",
 ]
 
 [[package]]
 name = "gossamer-std"
-version = "0.24.2"
+version = "0.25.0"
 dependencies = [
  "aes",
  "aes-gcm",
@@ -1835,7 +1836,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-template"
-version = "0.24.2"
+version = "0.25.0"
 dependencies = [
  "serde_json",
  "thiserror",
@@ -1843,7 +1844,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-types"
-version = "0.24.2"
+version = "0.25.0"
 dependencies = [
  "gossamer-ast",
  "gossamer-diagnostics",
@@ -1855,7 +1856,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-ws"
-version = "0.24.2"
+version = "0.25.0"
 dependencies = [
  "parking_lot",
  "thiserror",
@@ -4376,7 +4377,7 @@ dependencies = [
 
 [[package]]
 name = "xtask"
-version = "0.24.2"
+version = "0.25.0"
 dependencies = [
  "anyhow",
  "gossamer-lint",

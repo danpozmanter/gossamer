@@ -69,6 +69,6 @@ fn main() {
         Err(e) => println!("missing error: {}", e),
     }
 
-    let _ = fs::remove_all(root)
+    let _ = fs::remove_dir_all(root)
     process::exit(0)
 }

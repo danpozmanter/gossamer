@@ -160,7 +160,7 @@ Gossamer:
 ```gos
 let parsed = input
     |> option::and_then(try_parse)
-    |> option::default(0)
+    |> option::unwrap_or(0)
 ```
 
 `?` works for `Result` propagation exactly as in Rust.

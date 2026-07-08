@@ -27,7 +27,7 @@ fn main() {
     // BTreeMap::keys() -> Vec<String> in sorted order. Bound to a
     // local before iterating (the inline `for k in m.keys()` form
     // hits the shared inline-method-call-in-for-loop element-typing
-    // gap, tracked with the reversed-index class).
+    // gap, tracked with the rev-index class).
     let mut ranks: BTreeMap<String, i64> = BTreeMap::new()
     ranks.insert("banana", 3)
     ranks.insert("apple", 1)

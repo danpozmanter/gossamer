@@ -121,14 +121,9 @@ pub const NET: StdModule = StdModule {
             doc: "Bound UDP socket for datagram I/O.",
         },
         StdItem {
-            name: "resolve",
-            kind: StdItemKind::Function,
-            doc: "Resolves a hostname to a list of IP addresses.",
-        },
-        StdItem {
             name: "lookup",
             kind: StdItemKind::Function,
-            doc: "Resolves a hostname to its IP addresses (alias of resolve).",
+            doc: "Resolves a hostname to its IP addresses.",
         },
     ],
 };

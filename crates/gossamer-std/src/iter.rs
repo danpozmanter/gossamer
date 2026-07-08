@@ -244,7 +244,7 @@ pub fn flatten<T: Clone>(xss: &[Vec<T>]) -> Vec<T> {
 
 /// Reverses a slice into a new `Vec`.
 #[must_use]
-pub fn reversed<T: Clone>(xs: &[T]) -> Vec<T> {
+pub fn rev<T: Clone>(xs: &[T]) -> Vec<T> {
     xs.iter().rev().cloned().collect()
 }
 

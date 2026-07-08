@@ -737,6 +737,20 @@ const SPECS: &[Spec] = &[
     Spec {
         skip_all: Some(
             "binds a fixed loopback port - covered serially by \
+             http_router_params_parity_across_tiers",
+        ),
+        ..spec("feature-testing-examples/http_router_params.gos")
+    },
+    Spec {
+        skip_all: Some(
+            "binds a fixed loopback port - covered serially by \
+             http_router_typed_params_parity_across_tiers",
+        ),
+        ..spec("feature-testing-examples/http_router_typed_params.gos")
+    },
+    Spec {
+        skip_all: Some(
+            "binds a fixed loopback port - covered serially by \
              http_router_chain_parity_across_tiers",
         ),
         ..spec("feature-testing-examples/http_router_chain.gos")
@@ -1004,13 +1018,7 @@ const SPECS: &[Spec] = &[
     spec("feature-testing-examples/stdlib_archive.gos"),
     spec("feature-testing-examples/struct_update_base.gos"),
     spec("feature-testing-examples/at_binding_subpattern.gos"),
-    Spec {
-        skip_parity: Some(
-            "blocking channel recv without sleep returns None immediately in compiled tiers; \
-             use channel_close_drain.gos (with time::sleep) for cross-tier drain coverage",
-        ),
-        ..spec("feature-testing-examples/scheduler_drain.gos")
-    },
+    spec("feature-testing-examples/scheduler_drain.gos"),
     spec("feature-testing-examples/static_mut_basic.gos"),
     spec("feature-testing-examples/static_mut_goroutines.gos"),
     spec("feature-testing-examples/closure_goroutine.gos"),
@@ -1079,6 +1087,19 @@ const SPECS: &[Spec] = &[
     spec("feature-testing-examples/vec_single_field_struct.gos"),
     spec("feature-testing-examples/inline_index_remap.gos"),
     spec("feature-testing-examples/string_append_realloc.gos"),
+    spec("feature-testing-examples/byte_literal_arith.gos"),
+    spec("feature-testing-examples/closure_env_container_capture.gos"),
+    spec("feature-testing-examples/inferred_map_dispatch.gos"),
+    spec("feature-testing-examples/iterator_trait_user_impl.gos"),
+    Spec {
+        allow_nonzero: true,
+        ..spec("feature-testing-examples/jit_panic_trace.gos")
+    },
+    spec("feature-testing-examples/map_entry_and_format_paths.gos"),
+    spec("feature-testing-examples/nested_repeat_literal.gos"),
+    spec("feature-testing-examples/range_pipeline_iter.gos"),
+    spec("feature-testing-examples/seq_method_combinators.gos"),
+    spec("feature-testing-examples/stdlib_slog.gos"),
     // Top-level statements (implicit `fn main`): plain, `?`-propagation,
     // mixed-with-items, and an explicit process exit code.
     spec("examples/top_level_statements.gos"),
@@ -1147,6 +1168,32 @@ const SPECS: &[Spec] = &[
     // Cranelift JIT, and LLVM AOT.
     spec("feature-testing-examples/stdlib_surface_join_parse_take.gos"),
 ];
+
+#[test]
+fn specs_cover_every_feature_testing_example() {
+    use std::collections::BTreeSet;
+
+    let root = workspace_root();
+    let dir = root.join("feature-testing-examples");
+    let on_disk: BTreeSet<String> = fs::read_dir(&dir)
+        .unwrap_or_else(|e| panic!("read_dir {}: {e}", dir.display()))
+        .filter_map(Result::ok)
+        .map(|e| e.path())
+        .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("gos"))
+        .filter_map(|p| p.file_name().map(|s| s.to_string_lossy().into_owned()))
+        .collect();
+    let in_specs: BTreeSet<String> = SPECS
+        .iter()
+        .filter_map(|spec| spec.path.strip_prefix("feature-testing-examples/"))
+        .map(str::to_string)
+        .collect();
+    let missing: Vec<_> = on_disk.difference(&in_specs).cloned().collect();
+    assert!(
+        missing.is_empty(),
+        "feature-testing-examples fixtures missing from SPECS: {}",
+        missing.join(", ")
+    );
+}
 
 #[derive(Debug)]
 struct Run {
@@ -1415,6 +1462,44 @@ fn run_vm(src: &Path, args: &[&str], stdin: &[u8]) -> Run {
     )
 }
 
+fn run_jit(src: &Path, args: &[&str], stdin: &[u8]) -> Run {
+    let gos = gos_bin();
+    let mut cmd = Command::new(&gos);
+    cmd.arg("run")
+        .arg(src)
+        .env("GOSSAMER_JIT_THRESHOLD", "1")
+        .env_remove("GOS_JIT");
+    let mut parts: Vec<String> = vec![
+        "GOSSAMER_JIT_THRESHOLD=1".to_string(),
+        gos.display().to_string(),
+        "run".to_string(),
+    ];
+    parts.push(src.display().to_string());
+    if !args.is_empty() {
+        cmd.arg("--").args(args);
+        parts.push("--".to_string());
+        parts.extend(args.iter().map(std::string::ToString::to_string));
+    }
+    let workdir = cmd.get_current_dir().map_or_else(
+        || env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+        std::path::Path::to_path_buf,
+    );
+    let child = cmd
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn gos run with JIT");
+    run_with_timeout(
+        child,
+        stdin,
+        Instant::now() + PER_RUN_TIMEOUT,
+        src.to_path_buf(),
+        parts.join(" "),
+        workdir,
+    )
+}
+
 fn build_native(src: &Path, release: bool, scratch: &Path) -> Result<PathBuf, String> {
     let mut cmd = Command::new(gos_bin());
     cmd.arg("build");
@@ -1517,13 +1602,7 @@ fn run_tier(spec: &Spec, tier: Tier) -> Result<Run, String> {
     let src = workspace_root().join(spec.path);
     match tier {
         Tier::Vm => Ok(run_vm(&src, spec.args, spec.stdin)),
-        Tier::Cranelift => {
-            let scratch = fresh_dir(&format!("cl-{}", file_tag(spec.path)));
-            let bin = build_native(&src, false, &scratch)?;
-            let run = run_native(&bin, spec.args, spec.stdin);
-            let _ = fs::remove_dir_all(&scratch);
-            Ok(run)
-        }
+        Tier::Cranelift => Ok(run_jit(&src, spec.args, spec.stdin)),
         Tier::Llvm => {
             let scratch = fresh_dir(&format!("ll-{}", file_tag(spec.path)));
             let bin = build_native(&src, true, &scratch)?;

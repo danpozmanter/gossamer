@@ -110,18 +110,12 @@ pub(crate) fn install_strconv(globals: &mut Vec<(&'static str, Value)>) {
     install_module_pub(
         "strconv",
         &[
-            ("parse_int", builtin_strconv_parse_i64),
             ("parse_i64", builtin_strconv_parse_i64),
             ("parse_u64", builtin_strconv_parse_u64),
-            ("parse_float", builtin_strconv_parse_f64),
             ("parse_f64", builtin_strconv_parse_f64),
             ("parse_bool", builtin_strconv_parse_bool),
-            ("format_int", builtin_strconv_format_i64),
             ("format_i64", builtin_strconv_format_i64),
-            ("format_float", builtin_strconv_format_f64),
             ("format_f64", builtin_strconv_format_f64),
-            ("itoa", builtin_strconv_format_i64),
-            ("atoi", builtin_strconv_parse_i64),
             ("parse_i64_radix", builtin_strconv_parse_i64_radix),
             ("format_i64_radix", builtin_strconv_format_i64_radix),
             ("quote", builtin_strconv_quote),
@@ -173,7 +167,7 @@ pub(crate) fn builtin_strconv_unquote(args: &[Value]) -> RuntimeResult<Value> {
 }
 
 pub(crate) fn builtin_strconv_parse_i64(args: &[Value]) -> RuntimeResult<Value> {
-    let text = match arg_str_at(args, 0, "strconv::parse_int", "argument") {
+    let text = match arg_str_at(args, 0, "strconv::parse_i64", "argument") {
         Ok(s) => s,
         Err(v) => return Ok(v),
     };
@@ -195,7 +189,7 @@ pub(crate) fn builtin_strconv_parse_u64(args: &[Value]) -> RuntimeResult<Value> 
 }
 
 pub(crate) fn builtin_strconv_parse_f64(args: &[Value]) -> RuntimeResult<Value> {
-    let text = match arg_str_at(args, 0, "strconv::parse_float", "argument") {
+    let text = match arg_str_at(args, 0, "strconv::parse_f64", "argument") {
         Ok(s) => s,
         Err(v) => return Ok(v),
     };

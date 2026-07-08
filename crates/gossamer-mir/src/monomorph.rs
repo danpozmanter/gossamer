@@ -494,15 +494,18 @@ fn resolve(tcx: &mut TyCtxt, ty: Ty) -> Ty {
 /// flat-i64 slot as a single pointer, so a routed call's pointer-width ABI
 /// matches the concrete copy's ABI exactly - the copy then sees the real
 /// layout (struct fields, tuple/string/vec contents) instead of an opaque
-/// `Param`. Scalars (`Int`/`Bool`/`Char`/`()`) stay on the template (the slot
-/// carries them as-is). `Float` also stays on the template: it is a float
-/// register class the i64 slot cannot carry, and routing it would need
-/// register-class marshalling at the call boundary (a separate codegen change).
+/// `Param`. Scalars with ABI-sensitive register classes (`Float`/`Bool`/`Char`)
+/// also need concrete copies: keeping them behind an opaque `Param` leaves LLVM
+/// to treat the payload as an i64 slot and loses the real operation/display
+/// semantics.
 fn substs_need_concrete_copy(substs: &Substs, tcx: &TyCtxt) -> bool {
     substs.as_slice().iter().any(|a| match a {
         GenericArg::Type(t) => matches!(
             tcx.kind_of(*t),
-            TyKind::Adt { .. }
+            TyKind::Float(_)
+                | TyKind::Bool
+                | TyKind::Char
+                | TyKind::Adt { .. }
                 | TyKind::Tuple(_)
                 | TyKind::String
                 | TyKind::Vec(_)

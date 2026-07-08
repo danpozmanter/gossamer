@@ -333,7 +333,7 @@ pub(crate) fn build_variant_to_native_enum(
     let disc = shape
         .variants
         .iter()
-        .position(|v| std::ptr::eq(v.name, inner.name) || v.name == inner.name)?;
+        .position(|v| v.name == inner.name.as_str())?;
     let vshape = &shape.variants[disc];
     if vshape.fields.len() != inner.fields.len() {
         return None;
@@ -685,7 +685,7 @@ fn read_native_struct(ptr: i64, shape: &NativeStructShape) -> Value {
         })
         .collect();
     Value::Struct(std::sync::Arc::new(StructInner {
-        name: shape.struct_name,
+        name: crate::value::intern_type_tag(shape.struct_name),
         fields,
     }))
 }

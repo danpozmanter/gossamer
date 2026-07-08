@@ -261,6 +261,8 @@ impl<'tcx> FnBuilder<'tcx> {
                 | Op::MulI64 { dst_i, .. }
                 | Op::DivI64 { dst_i, .. }
                 | Op::RemI64 { dst_i, .. }
+                | Op::DivU64 { dst_i, .. }
+                | Op::RemU64 { dst_i, .. }
                 | Op::ArithImmI64 { dst_i, .. },
             ) if *dst_i == src_i => {
                 *dst_i = new_dst;

@@ -1771,9 +1771,9 @@ const COMBINATOR_MATRIX: &[(&str, &str, &str)] = &[
         "gos_rt_option_or_else",
     ),
     (
-        "option::default_with",
+        "option::unwrap_or_else",
         "use std::option\nfn main() { let o: Option<i64> = None\n\
-             let v = o |> option::default_with(|| 6)\nlet _ = v }",
+             let v = o |> option::unwrap_or_else(|| 6)\nlet _ = v }",
         "gos_rt_option_default_with",
     ),
     (
@@ -1881,8 +1881,8 @@ const COMBINATOR_MATRIX: &[(&str, &str, &str)] = &[
         "gos_rt_iter_max_by_key_i64",
     ),
     (
-        "iter::group_by",
-        "use std::iter\nfn main() { let m = [1, 2] |> iter::group_by(|x: i64| x % 2)\nlet _ = m }",
+        "iter::chunk_by",
+        "use std::iter\nfn main() { let m = [1, 2] |> iter::chunk_by(|x: i64| x % 2)\nlet _ = m }",
         "gos_rt_iter_group_by_i64",
     ),
     (
@@ -1961,7 +1961,7 @@ fn std_fn_value_map_err_resolves_to_runtime_symbol() {
 #[test]
 fn std_fn_value_iter_map_resolves_to_runtime_symbol() {
     let source = "use std::{iter, strings}\n\
-                  fn main() { let out = [\"ab\"] |> iter::map(strings::to_upper)\nlet _ = out }";
+                  fn main() { let out = [\"ab\"] |> iter::map(strings::to_uppercase)\nlet _ = out }";
     let (bodies, _) = build_with_lift(source);
     let main = bodies.iter().find(|b| b.name == "main").expect("main");
     let strings = const_strings(main);
@@ -1970,7 +1970,7 @@ fn std_fn_value_iter_map_resolves_to_runtime_symbol() {
         "expected the runtime symbol in MIR: {strings:?}"
     );
     assert!(
-        !strings.iter().any(|s| s == "strings::to_upper"),
+        !strings.iter().any(|s| s == "strings::to_uppercase"),
         "source path must not leak into MIR: {strings:?}"
     );
 }

@@ -298,6 +298,13 @@ pub(crate) struct ChunkState {
     /// `Cell<i32>` (single-thread mutation only - each `Vm` owns
     /// its own counter, so cross-thread atomicity is unneeded).
     pub(crate) hot_counter: Cell<i32>,
+    /// Approximate bytecode work observed for this chunk on this VM.
+    pub(crate) jit_observed_work: Cell<u64>,
+    /// Work floor that must be reached before a hot-counter trip may
+    /// instantiate the Cranelift JIT.
+    pub(crate) jit_min_work: u64,
+    /// Bytecode instruction count, used as the per-entry work increment.
+    pub(crate) instr_count: u64,
     /// Per-chunk memoised JIT override (see [`JitResolve`]). Lets the
     /// hot path skip the shared `RwLock<JitState>` probe and the
     /// `HashMap<String>` name lookup after the first post-install call.
@@ -335,6 +342,9 @@ impl ChunkState {
                 .map(|_| crate::bytecode::FieldCacheSlot::default())
                 .collect(),
             hot_counter: Cell::new(initial),
+            jit_observed_work: Cell::new(0),
+            jit_min_work: crate::bytecode::jit_min_work_for(instr_count),
+            instr_count: instr_count as u64,
             jit_resolve: RefCell::new(JitResolve::Unresolved),
         }
     }
@@ -926,7 +936,7 @@ fn index_get_consume(base: &mut Value, raw: i64) -> RuntimeResult<Value> {
 /// method-name lookup misses.
 fn qualified_key(receiver: &Value, method: &str) -> Option<&'static str> {
     match receiver {
-        Value::Struct(inner) => Some(intern_qualified(inner.name, method)),
+        Value::Struct(inner) => Some(intern_qualified(inner.name.as_str(), method)),
         Value::Channel(_) => Some(intern_qualified("Channel", method)),
         Value::String(_) => Some(intern_qualified("String", method)),
         // `Vec`-receiver methods resolve by type so a bare name shared with
@@ -970,7 +980,7 @@ pub(crate) fn type_token(v: &Value) -> u64 {
             // stable across every clone of any instance of this type - the
             // same identity `Op::StructIs` relies on via `ptr::eq`. Use it
             // directly instead of re-hashing through a second pool.
-            TAG_STRUCT | (inner.name.as_ptr() as u64 & 0x00FF_FFFF_FFFF_FFFF)
+            TAG_STRUCT | (u64::from(inner.name.id()) & 0x00FF_FFFF_FFFF_FFFF)
         }
         Value::Channel(_) => TAG_CHANNEL,
         Value::String(_) => TAG_STRING,
@@ -980,7 +990,7 @@ pub(crate) fn type_token(v: &Value) -> u64 {
         Value::Tuple(_) => TAG_TUPLE,
         Value::Variant(inner) => {
             // Globally-interned canonical pointer (see the `Struct` arm).
-            TAG_VARIANT | (inner.name.as_ptr() as u64 & 0x00FF_FFFF_FFFF_FFFF)
+            TAG_VARIANT | (u64::from(inner.name.id()) & 0x00FF_FFFF_FFFF_FFFF)
         }
         // Primitives + non-cacheable receivers fall through to the
         // slow path on every call. The IC slot stores token=0 and
@@ -1326,75 +1336,135 @@ fn compare(
     Ok(Value::Bool(matches))
 }
 
-/// True when `program` declares at least one user `fn` other than
-/// `main`, or a `main` whose body contains a loop. Used by
-/// `Vm::load` to skip MIR lowering + tcx cloning on programs where
-/// the JIT could never produce a useful override: a loop-free,
-/// helper-free script (`hello.gos`) has no body worth promoting,
-/// while a `main` with a hot loop promotes like any helper.
+/// True when `program` declares at least one recursive user `fn` other than
+/// `main`. Used by `Vm::load` to skip MIR lowering on programs where the JIT
+/// cannot improve the current invocation: without OSR, a loop living directly
+/// in a once-entered frame cannot switch to native code mid-frame, so preparing
+/// a JIT snapshot only raises peak RSS.
 fn has_jit_eligible_fn(program: &HirProgram) -> bool {
     program.items.iter().any(|item| match &item.kind {
         HirItemKind::Fn(decl) => {
             decl.name.name != "main"
-                || decl
+                && decl
                     .body
                     .as_ref()
-                    .is_some_and(|body| hir_block_has_loop(&body.block))
+                    .is_some_and(|body| hir_block_calls_name(&body.block, decl.name.name.as_str()))
         }
         _ => false,
     })
 }
 
-/// Recursive scan for a `loop` / `while` anywhere in `expr` (HIR
-/// desugars `for` into these before this runs). Closures are skipped:
-/// they are lifted to their own top-level functions and gate
-/// independently.
-fn hir_expr_has_loop(expr: &gossamer_hir::HirExpr) -> bool {
+fn hir_block_calls_name(block: &gossamer_hir::HirBlock, name: &str) -> bool {
+    block.stmts.iter().any(|stmt| match &stmt.kind {
+        gossamer_hir::HirStmtKind::Let { init, .. } => init
+            .as_ref()
+            .is_some_and(|expr| hir_expr_calls_name(expr, name)),
+        gossamer_hir::HirStmtKind::Expr { expr, .. }
+        | gossamer_hir::HirStmtKind::Defer(expr)
+        | gossamer_hir::HirStmtKind::Go(expr) => hir_expr_calls_name(expr, name),
+        gossamer_hir::HirStmtKind::Item(_) => false,
+    }) || block
+        .tail
+        .as_deref()
+        .is_some_and(|expr| hir_expr_calls_name(expr, name))
+}
+
+fn hir_expr_calls_name(expr: &gossamer_hir::HirExpr, name: &str) -> bool {
     use gossamer_hir::HirExprKind as K;
     match &expr.kind {
-        K::Loop { .. } | K::While { .. } => true,
-        K::Block(block) => hir_block_has_loop(block),
+        K::Call { callee, args } => {
+            let direct = matches!(
+                &callee.kind,
+                K::Path { segments, .. }
+                    if segments.len() == 1 && segments[0].name.as_str() == name
+            );
+            direct
+                || hir_expr_calls_name(callee, name)
+                || args.iter().any(|arg| hir_expr_calls_name(arg, name))
+        }
+        K::MethodCall { receiver, args, .. } => {
+            hir_expr_calls_name(receiver, name)
+                || args.iter().any(|arg| hir_expr_calls_name(arg, name))
+        }
+        K::Field { receiver, .. } | K::TupleIndex { receiver, .. } => {
+            hir_expr_calls_name(receiver, name)
+        }
+        K::Index { base, index } => {
+            hir_expr_calls_name(base, name) || hir_expr_calls_name(index, name)
+        }
+        K::Unary { operand, .. } | K::Cast { value: operand, .. } => {
+            hir_expr_calls_name(operand, name)
+        }
+        K::Binary { lhs, rhs, .. } => {
+            hir_expr_calls_name(lhs, name) || hir_expr_calls_name(rhs, name)
+        }
+        K::Assign { place, value } => {
+            hir_expr_calls_name(place, name) || hir_expr_calls_name(value, name)
+        }
         K::If {
             condition,
             then_branch,
             else_branch,
         } => {
-            hir_expr_has_loop(condition)
-                || hir_expr_has_loop(then_branch)
-                || else_branch.as_deref().is_some_and(hir_expr_has_loop)
+            hir_expr_calls_name(condition, name)
+                || hir_expr_calls_name(then_branch, name)
+                || else_branch
+                    .as_deref()
+                    .is_some_and(|branch| hir_expr_calls_name(branch, name))
         }
         K::Match { scrutinee, arms } => {
-            hir_expr_has_loop(scrutinee) || arms.iter().any(|arm| hir_expr_has_loop(&arm.body))
+            hir_expr_calls_name(scrutinee, name)
+                || arms.iter().any(|arm| {
+                    arm.guard
+                        .as_ref()
+                        .is_some_and(|guard| hir_expr_calls_name(guard, name))
+                        || hir_expr_calls_name(&arm.body, name)
+                })
         }
-        K::Call { callee, args } => hir_expr_has_loop(callee) || args.iter().any(hir_expr_has_loop),
-        K::MethodCall { receiver, args, .. } => {
-            hir_expr_has_loop(receiver) || args.iter().any(hir_expr_has_loop)
+        K::Loop { body, .. } => hir_expr_calls_name(body, name),
+        K::While {
+            condition, body, ..
+        } => hir_expr_calls_name(condition, name) || hir_expr_calls_name(body, name),
+        K::Block(block) => hir_block_calls_name(block, name),
+        K::Closure { body, .. } => hir_expr_calls_name(body, name),
+        K::LiftedClosure { captures, .. } => {
+            captures.iter().any(|cap| hir_expr_calls_name(cap, name))
         }
-        K::Field { receiver, .. } | K::TupleIndex { receiver, .. } => hir_expr_has_loop(receiver),
-        K::Index { base, index } => hir_expr_has_loop(base) || hir_expr_has_loop(index),
-        K::Unary { operand, .. } => hir_expr_has_loop(operand),
-        K::Binary { lhs, rhs, .. } => hir_expr_has_loop(lhs) || hir_expr_has_loop(rhs),
-        K::Assign { place, value } => hir_expr_has_loop(place) || hir_expr_has_loop(value),
-        K::Cast { value, .. } => hir_expr_has_loop(value),
-        K::Go(inner) => hir_expr_has_loop(inner),
-        K::Return(value) => value.as_deref().is_some_and(hir_expr_has_loop),
-        K::Break { value, .. } => value.as_deref().is_some_and(hir_expr_has_loop),
-        K::Tuple(elems) => elems.iter().any(hir_expr_has_loop),
+        K::Tuple(elems) => elems.iter().any(|elem| hir_expr_calls_name(elem, name)),
+        K::Array(arr) => match arr {
+            gossamer_hir::HirArrayExpr::List(elems) => {
+                elems.iter().any(|elem| hir_expr_calls_name(elem, name))
+            }
+            gossamer_hir::HirArrayExpr::Repeat { value, count } => {
+                hir_expr_calls_name(value, name) || hir_expr_calls_name(count, name)
+            }
+        },
+        K::Go(inner) => hir_expr_calls_name(inner, name),
         K::Range { start, end, .. } => {
-            start.as_deref().is_some_and(hir_expr_has_loop)
-                || end.as_deref().is_some_and(hir_expr_has_loop)
+            start
+                .as_deref()
+                .is_some_and(|start| hir_expr_calls_name(start, name))
+                || end
+                    .as_deref()
+                    .is_some_and(|end| hir_expr_calls_name(end, name))
         }
-        _ => false,
+        K::Return(value) | K::Break { value, .. } => value
+            .as_deref()
+            .is_some_and(|value| hir_expr_calls_name(value, name)),
+        K::Select { arms } => arms.iter().any(|arm| {
+            let op_calls = match &arm.op {
+                gossamer_hir::HirSelectOp::Recv { channel, .. } => {
+                    hir_expr_calls_name(channel, name)
+                }
+                gossamer_hir::HirSelectOp::Send { channel, value } => {
+                    hir_expr_calls_name(channel, name) || hir_expr_calls_name(value, name)
+                }
+                gossamer_hir::HirSelectOp::Default => false,
+            };
+            op_calls || hir_expr_calls_name(&arm.body, name)
+        }),
+        K::Path { .. } | K::Literal(_) | K::Continue { .. } | K::Placeholder => false,
     }
-}
-
-fn hir_block_has_loop(block: &gossamer_hir::HirBlock) -> bool {
-    use gossamer_hir::HirStmtKind as S;
-    block.stmts.iter().any(|stmt| match &stmt.kind {
-        S::Let { init, .. } => init.as_ref().is_some_and(hir_expr_has_loop),
-        S::Expr { expr, .. } | S::Defer(expr) | S::Go(expr) => hir_expr_has_loop(expr),
-        S::Item(_) => false,
-    }) || block.tail.as_deref().is_some_and(hir_expr_has_loop)
 }
 
 /// Conservative scan for any goroutine-spawn site reachable from the
@@ -1515,7 +1585,7 @@ fn seq_elements(v: &Value) -> Option<Vec<Value>> {
 /// Total-ish structural ordering over comparable values: scalars by their
 /// natural order, tuples and vec/array values lexicographically (recursing
 /// element-wise). Errors on NaN and on genuinely incomparable kinds.
-fn value_ordering(a: &Value, b: &Value) -> RuntimeResult<std::cmp::Ordering> {
+pub(crate) fn value_ordering(a: &Value, b: &Value) -> RuntimeResult<std::cmp::Ordering> {
     use std::cmp::Ordering;
     let a_deref = auto_deref_cell(a);
     let b_deref = auto_deref_cell(b);
@@ -1577,14 +1647,15 @@ pub(crate) fn auto_deref_cell(v: &Value) -> Option<Value> {
     crate::builtins::resolve_cell(set_id, &flag_name)
 }
 
-/// Native struct-field read. Returns `Value::Unit` on unknown fields
-/// so partially-typed programs keep running.
+/// Native struct-field read.
 fn field_get(receiver: &Value, name: &str) -> RuntimeResult<Value> {
     if let Value::Struct(inner) = receiver {
         if let Some((_, v)) = inner.fields.iter().find(|(ident, _)| (*ident) == name) {
             return Ok(v.clone());
         }
-        return Ok(Value::Unit);
+        return Err(RuntimeError::Type(format!(
+            "unknown field `{name}` on struct value"
+        )));
     }
     Err(RuntimeError::Type(format!(
         "field access on non-struct `{receiver}`"

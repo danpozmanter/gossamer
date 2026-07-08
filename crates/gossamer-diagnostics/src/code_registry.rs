@@ -583,14 +583,6 @@ pub const REGISTRY: &[(&str, &str)] = &[
                      automatic or implemented with `impl Trait for T`.",
     ),
     (
-        "GT0026",
-        "A fixed-size array `[value; N]` with a compile-time-constant `N`\n\
-                     was large enough that placing it inline on the stack would\n\
-                     overflow the OS main-thread stack on the compiled tiers (a\n\
-                     silent SIGSEGV), while the VM heap-allocates it. Rejected at\n\
-                     check so the tiers agree; use a heap `Vec` (`[T]`) instead.",
-    ),
-    (
         "GT0027",
         "A `match` / `if let` arm patterns a `json::Value` scrutinee with a\n\
                      `json::Value::Object(..)` / `::Array(..)` / `::Int(..)` (etc.)\n\

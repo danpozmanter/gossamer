@@ -713,7 +713,7 @@ impl<'a> Builder<'a> {
                 self.set_current(next);
                 Some(dest)
             }
-            ("iter::reversed", 1) => {
+            ("iter::rev", 1) => {
                 self.lower_iter_simple_vec_in_vec_out("gos_rt_iter_reversed_i64", args, ty, span)
             }
             ("iter::chain", 2) => {
@@ -784,7 +784,7 @@ impl<'a> Builder<'a> {
                     span,
                 ))
             }
-            ("iter::windowed", 2) => {
+            ("iter::windows", 2) => {
                 let n = self.lower_expr(&args[0])?;
                 let vec_local = self.lower_iter_vec_arg(&args[1])?;
                 let inner = self.tcx.intern(TyKind::Vec(i64_ty));
@@ -799,7 +799,7 @@ impl<'a> Builder<'a> {
                     span,
                 ))
             }
-            ("iter::chunk_by_size", 2) => {
+            ("iter::chunks", 2) => {
                 let n = self.lower_expr(&args[0])?;
                 let vec_local = self.lower_iter_vec_arg(&args[1])?;
                 let inner = self.tcx.intern(TyKind::Vec(i64_ty));
@@ -1057,7 +1057,7 @@ impl<'a> Builder<'a> {
         }
     }
 
-    /// Destination type for `option::default` / `result::default`:
+    /// Destination type for `option::unwrap_or` / `result::unwrap_or`:
     /// the call expression's HIR type when concrete, else the payload
     /// type (`substs[0]`) recovered from the scrutinee's HIR or MIR
     /// type, else i64. The call-expression type is often still an
@@ -1109,7 +1109,7 @@ impl<'a> Builder<'a> {
             ("option::is_none", 1) => {
                 self.lower_combinator_pred_call("gos_rt_option_is_none", args, span)
             }
-            ("option::default", 2) => {
+            ("option::unwrap_or", 2) => {
                 let fallback = self.lower_expr(&args[0])?;
                 let opt = self.lower_expr(&args[1])?;
                 let dest_ty = self.unwrap_default_dest_ty(ty, args[1].ty, opt);
@@ -1162,10 +1162,10 @@ impl<'a> Builder<'a> {
                 self.set_current(next);
                 Some(dest)
             }
-            // `result::default(v, res) -> T`. Data-last pipe: the
+            // `result::unwrap_or(v, res) -> T`. Data-last pipe: the
             // fallback value is arg 0, the Result arg 1. Returns the
             // `Ok` payload, or the fallback when the Result is `Err`.
-            ("result::default", 2) => {
+            ("result::unwrap_or", 2) => {
                 let fallback = self.lower_expr(&args[0])?;
                 let res_local = self.lower_expr(&args[1])?;
                 let dest_ty = self.unwrap_default_dest_ty(ty, args[1].ty, res_local);
@@ -1189,10 +1189,10 @@ impl<'a> Builder<'a> {
                 self.set_current(next);
                 Some(dest)
             }
-            // `result::default_with(f, res) -> T`. Data-last pipe: the
+            // `result::unwrap_or_else(f, res) -> T`. Data-last pipe: the
             // closure is arg 0, the Result arg 1. Returns the `Ok`
             // value, or the closure applied to the `Err` payload.
-            ("result::default_with", 2) => {
+            ("result::unwrap_or_else", 2) => {
                 let closure_local = self.lower_iter_closure(&args[0], &[i64_ty], i64_ty, span)?;
                 let res_local = self.lower_expr(&args[1])?;
                 let dest_ty = if matches!(
@@ -1476,7 +1476,7 @@ impl<'a> Builder<'a> {
             ("sync::Once::call" | "Once::call", 2) => {
                 // `Once::call(o, || ...)` - handle first, nullary closure
                 // second. The closure crosses the C-ABI through the same
-                // env-thunk convention as `option::default_with`; the run
+                // env-thunk convention as `option::unwrap_or_else`; the run
                 // body's value is ignored (the i64 result is the ran flag).
                 let handle = self.lower_expr(&args[0])?;
                 let closure = self.lower_iter_closure(&args[1], &[], i64_ty, span)?;
@@ -1543,7 +1543,7 @@ impl<'a> Builder<'a> {
                     span,
                 ))
             }
-            ("option::default_with", 2) => {
+            ("option::unwrap_or_else", 2) => {
                 let closure = self.lower_iter_closure(&args[0], &[], i64_ty, span)?;
                 let opt = self.lower_expr(&args[1])?;
                 let dest_ty = self.unwrap_default_dest_ty(ty, args[1].ty, opt);
@@ -1825,10 +1825,10 @@ impl<'a> Builder<'a> {
                     span,
                 ))
             }
-            ("iter::group_by" | "iter::count_by", 2) => {
+            ("iter::chunk_by" | "iter::count_by", 2) => {
                 let closure = self.lower_iter_closure(&args[0], &[i64_ty], i64_ty, span)?;
                 let vec_local = self.lower_iter_vec_arg(&args[1])?;
-                let (helper, dest_ty) = if joined == "iter::group_by" {
+                let (helper, dest_ty) = if joined == "iter::chunk_by" {
                     let dest = if matches!(self.tcx.kind_of(ty), TyKind::HashMap { .. }) {
                         ty
                     } else {
@@ -1992,7 +1992,7 @@ impl<'a> Builder<'a> {
         let v = self.lower_iter_vec_arg(&args[0])?;
         // Pin the dest to `Vec<elem>` (never the call's raw Array/Var
         // type): the shim returns a heap `*mut GosVec`, so an
-        // unannotated `iter::reversed(xs)[i]` would otherwise take the
+        // unannotated `iter::rev(xs)[i]` would otherwise take the
         // stack-array index path on a heap pointer and SIGSEGV.
         let i64_ty = self.tcx.int_ty(IntTy::I64);
         let elem = match self.tcx.kind_of(ty) {

@@ -680,7 +680,7 @@ const STDLIB_SUPPORT: &[StdlibSupport] = &[
         Coverage::Full,
         Coverage::Full,
         Coverage::Full,
-        "on(SIGTERM/SIGINT/SIGHUP/SIGUSR1/SIGUSR2/SIGQUIT) + Notifier::wait/try_wait. Wired through interp builtins, MIR lower, and C ABI.",
+        "on(signum) + Notifier::wait/try_wait. Wired through interp builtins, MIR lower, and C ABI.",
     ),
     item(
         "std::strings",
@@ -701,7 +701,7 @@ const STDLIB_SUPPORT: &[StdlibSupport] = &[
         Coverage::Full,
         Coverage::Full,
         Coverage::Full,
-        "Vec, HashMap, HashSet, VecDeque (both ends), BTreeMap (String/i64 keys). BTreeSet declared.",
+        "Vec, HashMap, HashSet, VecDeque (both ends), BTreeMap (String/i64 keys).",
     ),
     item(
         "std::net",
@@ -958,7 +958,7 @@ fn render_stdlib_coverage_page(items: &[StdlibSupport]) -> String {
         out,
         "Columns:\n\n\
          - **Interp** - `gos run` (bytecode VM + tree-walker fallback).\n\
-         - **Compiled** - `gos build` (Cranelift) and `gos build --release` (LLVM).\n\
+         - **Compiled** - `gos build` and `gos build --release` (LLVM AOT).\n\
          - **Tests** - at least one integration test exercising the item.\n\n\
          Glyphs: ✓ supported · ◑ partial · ✗ missing.\n"
     )
@@ -993,8 +993,7 @@ fn render_stdlib_coverage_page(items: &[StdlibSupport]) -> String {
          - A module is marked `Compiled ✓` when at least one of its\n\
          items has a runtime symbol declared in\n\
          `gossamer-codegen-llvm/src/emit.rs::RUNTIME_DECLARATIONS`\n\
-         and a Cranelift import in\n\
-         `gossamer-codegen-cranelift/src/native.rs`, or is\n\
+         and the runtime/JIT symbol registry, or is\n\
          dispatched as a method via\n\
          `gossamer-mir/src/lower.rs::lower_method_call`.\n\n\
          - A module is marked `Tests ✓` when at least one\n\

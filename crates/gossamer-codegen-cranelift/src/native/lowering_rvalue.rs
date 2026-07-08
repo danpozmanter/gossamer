@@ -1117,8 +1117,20 @@ pub(super) fn lower_binop(
         BinOp::Add => builder.ins().iadd(a, b),
         BinOp::Sub => builder.ins().isub(a, b),
         BinOp::Mul => builder.ins().imul(a, b),
-        BinOp::Div => builder.ins().sdiv(a, b),
-        BinOp::Rem => builder.ins().srem(a, b),
+        BinOp::Div => {
+            if unsigned {
+                builder.ins().udiv(a, b)
+            } else {
+                builder.ins().sdiv(a, b)
+            }
+        }
+        BinOp::Rem => {
+            if unsigned {
+                builder.ins().urem(a, b)
+            } else {
+                builder.ins().srem(a, b)
+            }
+        }
         BinOp::BitAnd => builder.ins().band(a, b),
         BinOp::BitOr => builder.ins().bor(a, b),
         BinOp::BitXor => builder.ins().bxor(a, b),

@@ -98,7 +98,7 @@ use std::collections::HashSet
 let mut set: HashSet<String> = HashSet::new()
 for n in users {
     if n.len() > 0 {
-        set.insert(n.to_lower())
+        set.insert(n.to_lowercase())
     }
 }
 let mut names = set.to_vec()

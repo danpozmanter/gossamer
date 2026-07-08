@@ -412,6 +412,7 @@ impl<'a> Lowerer<'a> {
                 let ret_ty = self.body.local_ty(Local::RETURN);
                 let ret_llvm = render_ty(self.tcx, ret_ty);
                 if is_unit(self.tcx, ret_ty) {
+                    self.emit_heap_spill_frees();
                     writeln!(self.out, "  ret void").unwrap();
                 } else if is_aggregate(self.tcx, ret_ty) {
                     if let Some(slots) = slot_count(self.tcx, ret_ty) {
@@ -435,6 +436,7 @@ impl<'a> Lowerer<'a> {
                             slot = local_slot(Local::RETURN)
                         )
                         .unwrap();
+                        self.emit_heap_spill_frees();
                         writeln!(self.out, "  ret ptr {heap}").unwrap();
                     } else {
                         // Handle-Adt (recursive enum, opaque sentinel
@@ -453,6 +455,7 @@ impl<'a> Lowerer<'a> {
                             slot = local_slot(Local::RETURN)
                         )
                         .unwrap();
+                        self.emit_heap_spill_frees();
                         writeln!(self.out, "  ret ptr {tmp}").unwrap();
                     }
                 } else {
@@ -463,6 +466,7 @@ impl<'a> Lowerer<'a> {
                         slot = local_slot(Local::RETURN)
                     )
                     .unwrap();
+                    self.emit_heap_spill_frees();
                     writeln!(self.out, "  ret {ret_llvm} {tmp}").unwrap();
                 }
                 Ok(())

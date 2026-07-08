@@ -999,6 +999,7 @@ impl<'a> Builder<'a> {
             // `write_stdin` / `read_line` / `wait` / ... to the
             // child shims.
             "Child" => Some("process::Child"),
+            "Notifier" => Some("signal::Notifier"),
             _ => None,
         }
     }

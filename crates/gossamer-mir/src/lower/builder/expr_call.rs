@@ -434,9 +434,7 @@ impl<'a> Builder<'a> {
                             self.tcx.float_ty(gossamer_types::FloatTy::F64)
                         }
                         "time::now_ns" | "time::now_ms" | "strconv::parse_i64"
-                        | "strconv::parse_int" | "strconv::atoi" | "gos_rt_math_sqrt" => {
-                            self.tcx.int_ty(gossamer_types::IntTy::I64)
-                        }
+                        | "gos_rt_math_sqrt" => self.tcx.int_ty(gossamer_types::IntTy::I64),
                         // String-returning stdlib helpers. The
                         // runtime returns a `*mut c_char` which the
                         // codegen needs to know is a String so

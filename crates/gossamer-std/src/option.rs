@@ -1,7 +1,7 @@
 //! Chaining combinators for `std::option`.
 //!
 //! Generic, data-last. Mirrors F#'s `Option` module so
-//! `opt |> option::map(f) |> option::default(0)` threads cleanly.
+//! `opt |> option::map(f) |> option::unwrap_or(0)` threads cleanly.
 //!
 //! The user-facing dispatch in `.gos` programs lives in
 //! `crates/gossamer-interp/src/stdlib_builtins.rs::install_option` -
@@ -28,13 +28,13 @@ pub fn filter<T, P: FnOnce(&T) -> bool>(p: P, opt: Option<T>) -> Option<T> {
     opt.filter(p)
 }
 
-/// `x` if `Some(x)`, otherwise `v`. F# `Option.defaultValue`.
-pub fn default<T>(v: T, opt: Option<T>) -> T {
+/// `x` if `Some(x)`, otherwise `v`.
+pub fn unwrap_or<T>(v: T, opt: Option<T>) -> T {
     opt.unwrap_or(v)
 }
 
 /// `x` if `Some(x)`, otherwise `f()`.
-pub fn default_with<T, F: FnOnce() -> T>(f: F, opt: Option<T>) -> T {
+pub fn unwrap_or_else<T, F: FnOnce() -> T>(f: F, opt: Option<T>) -> T {
     opt.unwrap_or_else(f)
 }
 
@@ -89,8 +89,8 @@ mod tests {
 
     #[test]
     fn default_falls_back() {
-        assert_eq!(default(0, Some(5)), 5);
-        assert_eq!(default(0, None::<i64>), 0);
+        assert_eq!(unwrap_or(0, Some(5)), 5);
+        assert_eq!(unwrap_or(0, None::<i64>), 0);
     }
 
     #[test]

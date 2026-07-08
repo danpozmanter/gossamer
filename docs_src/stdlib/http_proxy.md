@@ -30,7 +30,7 @@ and let the client/server engines manage their own:
 fn forwardable_headers(headers: &[(String, String)]) -> [(String, String)] {
     let mut out: [(String, String)] = []
     for (name, value) in headers {
-        let n = name.to_lower()
+        let n = name.to_lowercase()
         let restricted = n == "connection" || n == "content-length" ||
             n == "host" || n == "upgrade" || n == "accept-encoding"
         if !restricted {

@@ -514,13 +514,14 @@ impl TyCtxt {
             return false;
         }
         // `net::TcpStream` / `TcpListener` / `UdpSocket` / `UnixStream` /
-        // `UnixListener` (sentinels `u32::MAX - 16 ..= - 12`) are bare i64
-        // socket handles with no RC header - never reference-counted, freed
-        // by `close` / process teardown like the other opaque handles above.
+        // `UnixListener` (sentinels `u32::MAX - 16 ..= - 12`) and
+        // `signal::Notifier` (`u32::MAX - 17`) are bare i64 handles with
+        // no RC header - never reference-counted, freed by runtime
+        // ownership / process teardown like the other opaque handles above.
         if matches!(
             self.kind(ty),
             Some(TyKind::Adt { def, .. })
-                if (u32::MAX - 16..=u32::MAX - 12).contains(&def.local)
+                if (u32::MAX - 17..=u32::MAX - 12).contains(&def.local)
         ) {
             return false;
         }

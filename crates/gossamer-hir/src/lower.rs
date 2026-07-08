@@ -1835,7 +1835,7 @@ impl Lowerer<'_> {
     }
 
     /// The shared prelude of the entry desugars:
-    /// `let __entry_k = k; let mut __entry_v = option::default(d, m.get(__entry_k))`.
+    /// `let __entry_k = k; let mut __entry_v = option::unwrap_or(d, m.get(__entry_k))`.
     /// The get-or-default shape materialises an inline aggregate local
     /// on every tier (the `or_insert` shims carry scalar values only).
     fn entry_prelude(
@@ -1869,7 +1869,7 @@ impl Lowerer<'_> {
             span,
             ty: value_ty,
             kind: HirExprKind::Path {
-                segments: vec![Ident::new("option"), Ident::new("default")],
+                segments: vec![Ident::new("option"), Ident::new("unwrap_or")],
                 def: None,
             },
         };

@@ -42,8 +42,8 @@ fn main() {
 
     // to_upper / to_lower
     let mixed = "Hello World"
-    println!("upper = {}", mixed.to_upper())
-    println!("lower = {}", mixed.to_lower())
+    println!("upper = {}", mixed.to_uppercase())
+    println!("lower = {}", mixed.to_lowercase())
 
     // as_bytes length vs char semantics
     let ascii_str = "abcdef"

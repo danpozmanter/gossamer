@@ -22,18 +22,21 @@ use gossamer_std::signal as signal_std;
 use gossamer_std::slog as slog_std;
 use gossamer_std::time as time_std;
 
-use crate::value::{MapKey, NativeDispatch, RuntimeError, RuntimeResult, SmolStr, Value};
+use crate::value::{
+    DenseMap, MapKey, NativeDispatch, RuntimeError, RuntimeResult, SmolStr, Value,
+    dense_map_with_capacity,
+};
 
 thread_local! {
     pub(crate) static PROGRAM_ARGS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
     pub(crate) static PROGRAM_NAME: RefCell<String> = RefCell::new(String::from("gos"));
 }
 
-/// Overwrites the program-level argument list that `os::args()`
+/// Overwrites the program-level argument list that `env::args()`
 /// returns. Called by the CLI entrypoint before invoking `main`.
 ///
 /// Wires both execution paths:
-/// - The bytecode VM's `os::args()` builtin reads from the
+/// - The bytecode VM's `env::args()` builtin reads from the
 ///   `PROGRAM_ARGS` thread-local cell below.
 /// - JIT-compiled `main` calls into the runtime's
 ///   `gos_rt_os_args`, which reads from a *different* static
@@ -665,27 +668,6 @@ fn install_module_builtins(globals: &mut Vec<(&'static str, Value)>) {
             // os identity (canonical - stays on os::).
             ("family", builtin_os_family),
             ("arch", builtin_os_arch),
-            // Deprecated re-exports - kept callable so existing
-            // user code keeps working; see env::*, process::exit,
-            // fs::* for the canonical paths.
-            ("args", builtin_os_args),
-            ("program_name", builtin_os_program_name),
-            ("env", builtin_os_env),
-            ("cwd", builtin_os_cwd),
-            // `os::list_dir` shares `fs::list_dir`'s `Result<Vec<DirInfo>,
-            // _>` shape so both tiers return the same struct (the
-            // compiled tier routes both through `gos_rt_fs_list_dir`).
-            ("list_dir", builtin_fs_list_dir),
-            ("exit", builtin_os_exit),
-            ("read_file", builtin_os_read_file),
-            ("read_file_to_string", builtin_os_read_file_to_string),
-            ("write_file", builtin_os_write_file),
-            ("remove_file", builtin_os_remove_file),
-            ("rename", builtin_os_rename),
-            ("exists", builtin_os_exists),
-            ("mkdir", builtin_os_mkdir),
-            ("mkdir_all", builtin_os_mkdir_all),
-            ("read_dir", builtin_os_read_dir),
             // Stdin pseudo-stream + read_line. `os::stdin()`
             // returns a sentinel that `read_line` recognises;
             // reads pull a line from the host process's stdin.
@@ -816,21 +798,16 @@ fn install_module_builtins(globals: &mut Vec<(&'static str, Value)>) {
         "fs",
         &[
             ("walk_dir", builtin_fs_walk_dir),
-            ("list_dir", builtin_fs_list_dir),
             ("read", builtin_os_read_file),
             ("read_to_string", builtin_os_read_file_to_string),
-            ("read_file", builtin_os_read_file),
             ("write", builtin_os_write_file),
             ("create_dir_all", builtin_os_mkdir_all),
             ("create_dir", builtin_os_mkdir),
-            ("mkdir", builtin_os_mkdir),
-            ("mkdir_all", builtin_os_mkdir_all),
             ("remove_file", builtin_os_remove_file),
             ("remove_dir", builtin_fs_remove_dir),
             ("remove_dir_all", builtin_fs_remove_dir_all),
-            ("remove_all", builtin_fs_remove_dir_all),
             ("rename", builtin_os_rename),
-            ("read_dir", builtin_os_read_dir),
+            ("read_dir", builtin_fs_list_dir),
             ("exists", builtin_os_exists),
             ("is_file", builtin_fs_is_file),
             ("is_dir", builtin_fs_is_dir),
@@ -941,7 +918,6 @@ fn install_module_builtins(globals: &mut Vec<(&'static str, Value)>) {
             ("keys", builtin_map_keys),
             ("values", builtin_map_values),
             ("iter", builtin_map_iter),
-            ("entries", builtin_map_iter),
             ("clear", builtin_map_clear),
             ("is_empty", builtin_map_is_empty),
         ],
@@ -958,7 +934,6 @@ fn install_module_builtins(globals: &mut Vec<(&'static str, Value)>) {
     globals.push(("keys", builtin("keys", builtin_map_keys)));
     globals.push(("values", builtin("values", builtin_map_values)));
     globals.push(("iter", builtin("iter", builtin_map_iter)));
-    globals.push(("entries", builtin("entries", builtin_map_iter)));
     globals.push(("get_or", builtin("get_or", builtin_map_get_or)));
     globals.push(("inc", builtin("inc", builtin_map_inc)));
     globals.push(("or_insert", builtin("or_insert", builtin_map_or_insert)));
@@ -977,6 +952,27 @@ fn install_module_builtins(globals: &mut Vec<(&'static str, Value)>) {
             // produced by `json_value_to_gossamer`, so a JSON object
             // is a struct keyed by field name and a JSON array is a
             // `Value::Array`.
+            ("get", builtin_json_get),
+            ("set", builtin_json_set),
+            ("at", builtin_json_at),
+            ("keys", builtin_json_keys),
+            ("len", builtin_json_len),
+            ("is_null", builtin_json_is_null),
+            ("as_str", builtin_json_as_str),
+            ("as_i64", builtin_json_as_i64),
+            ("as_f64", builtin_json_as_f64),
+            ("as_bool", builtin_json_as_bool),
+            ("as_array", builtin_json_as_array),
+        ],
+        globals,
+    );
+    install_module(
+        "encoding::json",
+        &[
+            ("parse", builtin_json_parse),
+            ("render", builtin_json_render),
+            ("encode", builtin_json_render),
+            ("decode", builtin_json_decode),
             ("get", builtin_json_get),
             ("set", builtin_json_set),
             ("at", builtin_json_at),
@@ -1267,7 +1263,7 @@ fn register_flag_spec(set_id: u64, spec: &Value) -> Option<(&'static str, Value)
 }
 
 /// Batch constructor. Creates the internal `Set`, registers every
-/// spec, parses `os::args()`, and returns a `Flags` struct with one
+/// spec, parses `env::args()`, and returns a `Flags` struct with one
 /// cell-typed field per spec (named after the spec's long name).
 /// Callers access parsed values via `*flags.<long>` - no mutation
 /// needed at the call site.
@@ -1330,6 +1326,7 @@ fn install_method_helpers(globals: &mut Vec<(&'static str, Value)>) {
     globals.push(("split", builtin("split", builtin_split)));
     globals.push(("trim", builtin("trim", builtin_trim)));
     globals.push(("as_bytes", builtin("as_bytes", builtin_as_bytes)));
+    globals.push(("String::bytes", builtin("String::bytes", builtin_as_bytes)));
     globals.push(("push", builtin("push", builtin_push)));
     globals.push(("pop", builtin("pop", builtin_pop)));
     globals.push(("insert", builtin("insert", builtin_insert)));
@@ -1413,8 +1410,8 @@ fn install_method_helpers(globals: &mut Vec<(&'static str, Value)>) {
     globals.push(("Vec::first", builtin("Vec::first", builtin_first)));
     globals.push(("last", builtin("last", builtin_last)));
     globals.push(("Vec::last", builtin("Vec::last", builtin_last)));
-    globals.push(("reversed", builtin("reversed", builtin_reversed)));
-    globals.push(("Vec::reversed", builtin("Vec::reversed", builtin_reversed)));
+    globals.push(("rev", builtin("rev", builtin_reversed)));
+    globals.push(("Vec::rev", builtin("Vec::rev", builtin_reversed)));
     globals.push(("index_of", builtin("index_of", builtin_index_of)));
     globals.push(("Vec::index_of", builtin("Vec::index_of", builtin_index_of)));
     globals.push(("count_of", builtin("count_of", builtin_count_of)));
@@ -1449,19 +1446,19 @@ fn install_method_helpers(globals: &mut Vec<(&'static str, Value)>) {
         "collections::HashMap::pop",
         builtin("collections::HashMap::pop", builtin_map_pop),
     ));
-    // `String::to_lower` / `String::to_upper` - short Rust/Go-style
-    // names for the existing to_lowercase / to_uppercase shims.
-    // Registered as qualified keys so `s.to_lower()` on a `String`
+    // `String::to_lowercase` / `String::to_uppercase` - Rust spellings
+    // for the existing Unicode lowercase / uppercase shims.
+    // Registered as qualified keys so `s.to_lowercase()` on a `String`
     // receiver dispatches here rather than to the char-level
     // `unicode::to_lower` shim (which would silently return the
     // first scalar only).
     globals.push((
-        "String::to_lower",
-        builtin("String::to_lower", builtin_to_lowercase),
+        "String::to_lowercase",
+        builtin("String::to_lowercase", builtin_to_lowercase),
     ));
     globals.push((
-        "String::to_upper",
-        builtin("String::to_upper", builtin_to_uppercase),
+        "String::to_uppercase",
+        builtin("String::to_uppercase", builtin_to_uppercase),
     ));
     // Fundamental String-building surface. `String::new` /
     // `String::with_capacity` are Path-call globals (no receiver);
@@ -2323,6 +2320,9 @@ fn builtin_math_ln(args: &[Value]) -> RuntimeResult<Value> {
     Ok(Value::Float(math_arg(args).ln()))
 }
 fn builtin_math_abs(args: &[Value]) -> RuntimeResult<Value> {
+    if let Some(Value::Int(n)) = args.first() {
+        return Ok(Value::Int(n.saturating_abs()));
+    }
     Ok(Value::Float(math_arg(args).abs()))
 }
 fn builtin_math_floor(args: &[Value]) -> RuntimeResult<Value> {
@@ -2426,7 +2426,10 @@ fn builtin_stream_read_to_string(args: &[Value]) -> RuntimeResult<Value> {
     let stdin = std::io::stdin();
     let mut buf = String::new();
     match stdin.lock().read_to_string(&mut buf) {
-        Ok(_) => Ok(Value::String(buf.into())),
+        Ok(_) => {
+            buf.shrink_to_fit();
+            Ok(Value::String(buf.into()))
+        }
         Err(_) => Ok(Value::String(SmolStr::from(String::new()))),
     }
 }
@@ -2445,7 +2448,10 @@ fn builtin_io_read_all(args: &[Value]) -> RuntimeResult<Value> {
     let stdin = std::io::stdin();
     let mut buf = String::new();
     match stdin.lock().read_to_string(&mut buf) {
-        Ok(_) => Ok(Value::String(buf.into())),
+        Ok(_) => {
+            buf.shrink_to_fit();
+            Ok(Value::String(buf.into()))
+        }
         Err(_) => Ok(Value::String(SmolStr::from(String::new()))),
     }
 }
@@ -2465,7 +2471,10 @@ fn builtin_io_copy(args: &[Value]) -> RuntimeResult<Value> {
     let stdin = std::io::stdin();
     let mut buf = String::new();
     let n = match stdin.lock().read_to_string(&mut buf) {
-        Ok(n) => n as i64,
+        Ok(n) => {
+            buf.shrink_to_fit();
+            n as i64
+        }
         Err(_) => return Ok(Value::Int(0)),
     };
     if dst_fd == 2 {
@@ -2533,17 +2542,13 @@ fn builtin_fmt_radix(args: &[Value]) -> RuntimeResult<Value> {
             value.to_string()
         }
     } else {
-        let negative = value < 0;
-        let mut v = i128::from(value).unsigned_abs();
+        let mut v = u128::from(value as u64);
         let r = u128::from(radix);
         let mut digits = Vec::new();
         while v > 0 {
             let d = (v % r) as u32;
             digits.push(std::char::from_digit(d, radix).unwrap_or('0'));
             v /= r;
-        }
-        if negative {
-            digits.push('-');
         }
         digits.iter().rev().collect()
     };
@@ -3319,7 +3324,7 @@ fn request_to_value(request: &http_std::Request) -> Value {
     let body_text = String::from_utf8_lossy(&request.body).into_owned();
     // Binary-safe sibling of the UTF-8-lossy `body` field - one
     // `Value::Int` per byte, matching the `resp.raw_bytes` and
-    // `os::read_file` byte-array shape.
+    // `fs::read` byte-array shape.
     let raw_body: Vec<Value> = request
         .body
         .iter()
@@ -4248,16 +4253,14 @@ fn builtin_signal_try_wait(args: &[Value]) -> RuntimeResult<Value> {
     Ok(Value::Bool(notifier.try_wait()))
 }
 
-/// `fs::list_dir(path: String) -> Result<[DirInfo], String>` - direct-children
+/// `fs::read_dir(path: String) -> Result<[DirInfo], String>` - direct-children
 /// listing with metadata. `DirInfo` is a struct carrying the entry's
 /// name, full path, type predicates, byte size (`0` for directories),
 /// and modification time as unix milliseconds. The result is sorted
-/// by name. Pairs with `fs::walk_dir` (recursive) and `os::read_dir`
-/// (names only); use this one when the call site needs to render or
-/// filter on metadata.
+/// by name. Pairs with `fs::walk_dir` for recursive traversal.
 fn builtin_fs_list_dir(args: &[Value]) -> RuntimeResult<Value> {
     let Some(path) = args.first().and_then(as_str) else {
-        return Ok(err_variant("fs::list_dir: path argument must be a string"));
+        return Ok(err_variant("fs::read_dir: path argument must be a string"));
     };
     let entries = match fs_std::read_dir(path) {
         Ok(es) => es,
@@ -4267,7 +4270,7 @@ fn builtin_fs_list_dir(args: &[Value]) -> RuntimeResult<Value> {
     Ok(ok_variant(Value::Array(Arc::new(items))))
 }
 
-/// Builds the `DirInfo` struct value shared by `fs::list_dir` and
+/// Builds the `DirInfo` struct value shared by `fs::read_dir` and
 /// `fs::walk_dir`; field order matches the compiled tier's blob.
 fn dir_info_value(entry: &fs_std::DirEntry) -> Value {
     let (size, modified_ms) = std::fs::metadata(&entry.path).map_or((0_i64, 0_i64), |m| {
@@ -4294,7 +4297,7 @@ fn dir_info_value(entry: &fs_std::DirEntry) -> Value {
 
 /// `fs::walk_dir(root: String) -> Result<[DirInfo], String>`. Recursive
 /// walk; returns every descendant entry with the same `DirInfo`
-/// shape as `fs::list_dir` (and as the compiled tiers). The
+/// shape as `fs::read_dir` (and as the compiled tiers). The
 /// gossamer-std API uses a visitor closure for streaming; this
 /// builtin materialises the list to keep the .gos call site
 /// simple. Aliased as `path::walk` for Go-shaped spelling.
@@ -4469,13 +4472,14 @@ fn builtin_bufio_scanner_new(args: &[Value]) -> RuntimeResult<Value> {
     let lines: Vec<Value> = if is_stdin {
         let mut buf = String::new();
         let _ = std::io::stdin().read_to_string(&mut buf);
+        buf.shrink_to_fit();
         buf.lines()
             .map(|s| Value::String(SmolStr::from(s.to_string())))
             .collect()
     } else {
         Vec::new()
     };
-    let mut state = rustc_hash::FxHashMap::with_capacity_and_hasher(4, rustc_hash::FxBuildHasher);
+    let mut state = dense_map_with_capacity(4);
     state.insert(
         MapKey::Str(SmolStr::from("lines")),
         Value::Array(Arc::new(lines)),
@@ -4494,9 +4498,7 @@ fn builtin_bufio_scanner_new(args: &[Value]) -> RuntimeResult<Value> {
 }
 
 /// Extracts the mutable state Map from a Scanner struct.
-fn scanner_state(
-    args: &[Value],
-) -> Option<Arc<parking_lot::Mutex<rustc_hash::FxHashMap<MapKey, Value>>>> {
+fn scanner_state(args: &[Value]) -> Option<Arc<parking_lot::Mutex<DenseMap<MapKey, Value>>>> {
     if let Some(Value::Struct(inner)) = args.first() {
         if inner.name == "Scanner" {
             for (name, val) in &inner.fields {
@@ -4589,7 +4591,8 @@ fn builtin_bufio_read_lines(args: &[Value]) -> RuntimeResult<Value> {
         ));
     };
     match std::fs::read_to_string(path) {
-        Ok(contents) => {
+        Ok(mut contents) => {
+            contents.shrink_to_fit();
             let lines: Vec<Value> = contents
                 .lines()
                 .map(|s| Value::String(SmolStr::from(s.to_string())))
@@ -4935,14 +4938,12 @@ fn coerce_json_to_kind(value: &json_std::Value, kind: &JsonSchemaKind) -> Result
         }
         (json_std::Value::Object(_), K::Struct(name)) => coerce_json_to_named_struct(value, name),
         (json_std::Value::Object(map), K::Map(value_kind)) => {
-            let storage: rustc_hash::FxHashMap<MapKey, Value> = map
-                .iter()
-                .map(|(k, v)| {
-                    let coerced =
-                        coerce_json_to_kind(v, value_kind).map_err(|m| format!("[{k:?}]: {m}"))?;
-                    Ok((MapKey::Str(SmolStr::from(k.clone())), coerced))
-                })
-                .collect::<Result<rustc_hash::FxHashMap<_, _>, String>>()?;
+            let mut storage = dense_map_with_capacity(map.len());
+            for (k, v) in map {
+                let coerced =
+                    coerce_json_to_kind(v, value_kind).map_err(|m| format!("[{k:?}]: {m}"))?;
+                storage.insert(MapKey::Str(SmolStr::from(k.clone())), coerced);
+            }
             Ok(Value::Map(Arc::new(parking_lot::Mutex::new(storage))))
         }
         (got, want) => Err(format!(
@@ -5448,14 +5449,14 @@ fn builtin_map_pop(args: &[Value]) -> RuntimeResult<Value> {
     match args.first() {
         Some(Value::Map(m)) => {
             let key = MapKey::from_value(key_val);
-            match m.lock().remove(&key) {
+            match m.lock().swap_remove(&key) {
                 Some(v) => Ok(some_variant(v)),
                 None => Ok(none_variant()),
             }
         }
         Some(Value::IntMap(m)) => {
             let key = value_to_int(key_val).unwrap_or(0);
-            match m.lock().remove(&key) {
+            match m.lock().swap_remove(&key) {
                 Some(v) => Ok(some_variant(Value::Int(v))),
                 None => Ok(none_variant()),
             }
@@ -5464,7 +5465,7 @@ fn builtin_map_pop(args: &[Value]) -> RuntimeResult<Value> {
             let Value::String(k) = key_val else {
                 return Ok(none_variant());
             };
-            match m.lock().remove(k) {
+            match m.lock().swap_remove(k) {
                 Some(v) => Ok(some_variant(Value::Int(v))),
                 None => Ok(none_variant()),
             }
@@ -5763,7 +5764,7 @@ fn builtin_pop(args: &[Value]) -> RuntimeResult<Value> {
 
 fn builtin_map_new(_args: &[Value]) -> RuntimeResult<Value> {
     Ok(Value::Map(Arc::new(parking_lot::Mutex::new(
-        rustc_hash::FxHashMap::with_capacity_and_hasher(16, rustc_hash::FxBuildHasher),
+        dense_map_with_capacity(16),
     ))))
 }
 
@@ -5774,7 +5775,7 @@ fn builtin_map_new(_args: &[Value]) -> RuntimeResult<Value> {
 fn builtin_map_with_capacity(args: &[Value]) -> RuntimeResult<Value> {
     let cap = arg_int(args, 0).unwrap_or(0).max(0) as usize;
     Ok(Value::IntMap(Arc::new(parking_lot::Mutex::new(
-        rustc_hash::FxHashMap::with_capacity_and_hasher(cap, rustc_hash::FxBuildHasher),
+        dense_map_with_capacity(cap),
     ))))
 }
 
@@ -6048,21 +6049,21 @@ fn builtin_map_remove(args: &[Value]) -> RuntimeResult<Value> {
                 return Ok(Value::Map(Arc::clone(map)));
             };
             let key = MapKey::from_value(v);
-            map.lock().remove(&key);
+            map.lock().swap_remove(&key);
             Ok(Value::Map(Arc::clone(map)))
         }
         Some(Value::IntMap(map)) => {
             let Some(Value::Int(k)) = args.get(1) else {
                 return Ok(Value::IntMap(Arc::clone(map)));
             };
-            map.lock().remove(k);
+            map.lock().swap_remove(k);
             Ok(Value::IntMap(Arc::clone(map)))
         }
         Some(Value::StrIntMap(map)) => {
             let Some(Value::String(k)) = args.get(1) else {
                 return Ok(Value::StrIntMap(Arc::clone(map)));
             };
-            map.lock().remove(k);
+            map.lock().swap_remove(k);
             Ok(Value::StrIntMap(Arc::clone(map)))
         }
         _ => Ok(args.first().cloned().unwrap_or(Value::Unit)),
@@ -6109,8 +6110,8 @@ fn builtin_map_keys(args: &[Value]) -> RuntimeResult<Value> {
     match args.first() {
         Some(Value::Map(map)) => {
             // Sort by key for deterministic order that matches `iter()`
-            // and the compiled tier (a `FxHashMap`'s bucket order is
-            // neither stable nor the same across tiers).
+            // and the compiled tier's implementation-defined native map
+            // order.
             let mut keys: Vec<MapKey> = map.lock().keys().cloned().collect();
             keys.sort();
             out.extend(keys.iter().map(MapKey::to_value));
@@ -6212,9 +6213,9 @@ fn builtin_map_values(args: &[Value]) -> RuntimeResult<Value> {
 /// as a no-op pass-through to the for-loop.
 fn builtin_map_iter(args: &[Value]) -> RuntimeResult<Value> {
     // Sort by key on every call so `BTreeMap` users get deterministic
-    // iteration order. The interp uses `FxHashMap` for both `HashMap`
-    // and `BTreeMap` internally, so we can't tell them apart at the
-    // value level - sorting unifies observed order across the two.
+    // iteration order. The VM uses one runtime value shape for both
+    // `HashMap` and `BTreeMap`, so sorting unifies observed order across
+    // the two.
     match args.first() {
         Some(Value::Map(map)) => {
             let mut entries: Vec<(MapKey, Value)> = map
@@ -6496,14 +6497,7 @@ fn builtin_sort(args: &[Value]) -> RuntimeResult<Value> {
     match args.first() {
         Some(Value::Array(parts)) => {
             let mut owned = parts.as_ref().clone();
-            owned.sort_by(|a, b| match (a, b) {
-                (Value::Int(x), Value::Int(y)) => x.cmp(y),
-                (Value::Float(x), Value::Float(y)) => {
-                    x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal)
-                }
-                (Value::String(x), Value::String(y)) => x.as_str().cmp(y.as_str()),
-                _ => std::cmp::Ordering::Equal,
-            });
+            owned.sort_by(crate::stdlib_builtins::iter::compare_values_total);
             Ok(Value::Array(Arc::new(owned)))
         }
         Some(Value::IntArray(data)) => {
@@ -7938,7 +7932,7 @@ fn builtin_u8vec_count_kmers(args: &[Value]) -> RuntimeResult<Value> {
     let buf_len = arg_int(args, 1).unwrap_or(0).max(0) as usize;
     let k = arg_int(args, 2).unwrap_or(0).max(0) as usize;
     let len = vec_arc.len().min(buf_len);
-    let counts: rustc_hash::FxHashMap<i64, i64> = kmer_count(&vec_arc[..len], k);
+    let counts = kmer_count(&vec_arc[..len], k);
     Ok(Value::IntMap(Arc::new(parking_lot::Mutex::new(counts))))
 }
 
@@ -7947,27 +7941,23 @@ fn builtin_u8vec_count_kmers(args: &[Value]) -> RuntimeResult<Value> {
 /// frequency. Tight C-side loop replacing the `while`-loop +
 /// `Op::IntMapInc` chain user code would emit. Pre-allocates
 /// the map with a sane capacity (capped well below the worst-
-/// case buffer length so a k=18 call does not reserve tens of
-/// megabytes of hashbrown slots upfront - hashbrown still grows
-/// by doubling beyond the cap, but the cap keeps steady-state
-/// RSS predictable for the small-k calls).
+/// case buffer length so a k=18 call does not reserve a large dense
+/// table up front. The cap keeps steady-state RSS predictable for
+/// the small-k calls.
 // Soft cap on the pre-allocated map capacity: 64 K slots
-// (~1 MB at 16 B/slot). Hashbrown still grows by doubling
-// beyond this - the cap just keeps steady-state RSS
-// predictable for the small-k calls without paying
-// catastrophic up-front cost on k=18.
+// cap just keeps steady-state RSS predictable for the small-k calls
+// without paying catastrophic up-front cost on k=18.
 const KMER_CAP_SOFT: usize = 64 * 1024;
 
 #[inline]
-fn kmer_count(buf: &[std::sync::atomic::AtomicU8], k: usize) -> rustc_hash::FxHashMap<i64, i64> {
+fn kmer_count(buf: &[std::sync::atomic::AtomicU8], k: usize) -> DenseMap<i64, i64> {
     let upper_by_alphabet = if k == 0 || k >= 32 {
         usize::MAX
     } else {
         1usize.checked_shl((k as u32) * 2).unwrap_or(usize::MAX)
     };
     let cap = upper_by_alphabet.clamp(64, KMER_CAP_SOFT);
-    let mut counts: rustc_hash::FxHashMap<i64, i64> =
-        rustc_hash::FxHashMap::with_capacity_and_hasher(cap, rustc_hash::FxBuildHasher);
+    let mut counts = dense_map_with_capacity(cap);
     if k == 0 || k > buf.len() {
         return counts;
     }

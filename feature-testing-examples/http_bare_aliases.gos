@@ -89,7 +89,7 @@ fn main() {
         Ok(r) => println!("serve_file status={} body={}", r.status, r.body),
         Err(e) => println!("serve_file error: {}", e),
     }
-    let _ = fs::remove_all(&file)
+    let _ = fs::remove_dir_all(&file)
 
     process::exit(0)
 }

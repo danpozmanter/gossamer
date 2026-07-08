@@ -101,7 +101,7 @@ use crate::builtins::{
     BuiltinFnPub, as_str, err_variant, install_module_pub, none_variant, ok_variant, some_variant,
     value_to_int,
 };
-use crate::value::{MapKey, NativeCall, NativeDispatch, RuntimeResult, Value};
+use crate::value::{MapKey, NativeCall, NativeDispatch, RuntimeResult, Value, dense_map};
 
 /// Entry point invoked from `builtins::install`.
 use super::*;
@@ -121,7 +121,7 @@ pub(crate) fn xml_node_to_value(node: &gossamer_std::encoding::xml::Node) -> Val
     use gossamer_std::encoding::xml::Node;
     match node {
         Node::Text(s) => {
-            let mut map = rustc_hash::FxHashMap::default();
+            let mut map = dense_map();
             map.insert(
                 MapKey::Str("__xml_type".into()),
                 Value::String("text".into()),
@@ -134,7 +134,7 @@ pub(crate) fn xml_node_to_value(node: &gossamer_std::encoding::xml::Node) -> Val
             attrs,
             children,
         } => {
-            let mut map = rustc_hash::FxHashMap::default();
+            let mut map = dense_map();
             map.insert(
                 MapKey::Str("__xml_type".into()),
                 Value::String("element".into()),
@@ -143,7 +143,7 @@ pub(crate) fn xml_node_to_value(node: &gossamer_std::encoding::xml::Node) -> Val
                 MapKey::Str("name".into()),
                 Value::String(name.clone().into()),
             );
-            let mut attr_map = rustc_hash::FxHashMap::default();
+            let mut attr_map = dense_map();
             for (k, v) in attrs {
                 attr_map.insert(
                     MapKey::Str(k.clone().into()),

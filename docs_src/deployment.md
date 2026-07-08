@@ -248,8 +248,9 @@ load balancer:
 4. Repeat.
 
 In-place hot-swap (`SIGUSR2` exec-the-new-binary-without-dropping-listeners)
-is not in v1; the `os::exec` and `os::signal` work in v1.x will
-make it possible.
+is not in v1; `os::exec` and `os::signal` are available building
+blocks, but listener handoff and supervisor coordination still need a
+dedicated runtime pattern.
 
 ## Observability
 

@@ -68,7 +68,7 @@ if err != nil {
 
 ```gos
 // Gossamer
-let data = os::read_file("config.toml")?
+let data = fs::read("config.toml")?
 ```
 
 `?` unwraps `Ok` or returns the `Err`. The function must declare
@@ -77,7 +77,7 @@ its return type as `Result<T, E>`.
 For panicking on impossible errors, use `unwrap` or `expect`:
 
 ```gos
-let data = os::read_file("config.toml").expect("config required")
+let data = fs::read("config.toml").expect("config required")
 ```
 
 There is no nil-pointer equivalent. `Option<T>` is the
@@ -225,7 +225,7 @@ let total = xs
 
 `std::iter` (SPEC §10.4) ships F#-style chaining combinators -
 `map`, `filter`, `for_each`, `fold`, `sum_by`, `find`, `any`, `all`,
-`take`, `skip`, `range`/`range_inclusive`, `chain`, `reversed`,
+`take`, `skip`, `range`/`range_inclusive`, `chain`, `rev`,
 plus closure-taking siblings. Argument order is data-last so each
 combinator threads naturally through `|>`. Mirror modules for
 `Option<T>` (`std::option`) and `Result<T, E>` (`std::result`)
@@ -248,10 +248,10 @@ otherwise spawn a `let mut acc = 0; for x in xs { acc += … }`.
 | `os.Args` | `env::args()` | ✓ |
 | `os.Getenv` | `env::var(name)` | ✓ |
 | `os.Exit` | `process::exit(code)` | ✓ |
-| `os.ReadFile` | `os::read_file(path)` | ✓ |
-| `os.WriteFile` | `os::write_file(path, data)` | ✓ |
+| `os.ReadFile` | `fs::read(path)` | ✓ |
+| `os.WriteFile` | `fs::write(path, data)` | ✓ |
 | `os/exec.Command` | `process::run(prog, &args)` | ✓ |
-| `os/signal.Notify` | `os::signal::on(SIGTERM)` | v1.x |
+| `os/signal.Notify` | `os::signal::on(15)` | v1.x |
 | `path/filepath.Walk` | `fs::walk_dir(root)` | v1.x |
 | `bufio.NewScanner` | `bufio::Scanner::new(reader)` | v1.x |
 | `compress/gzip` | `compress::gzip::Reader::new(r)` | v1.x |
@@ -305,7 +305,7 @@ fmt.Println(n)
 
 ```gos
 // Gossamer
-let data = os::read_file_to_string("input.txt")?
+let data = fs::read_to_string("input.txt")?
 let n = strings::count(&data, "\n")
 println!("{}", n)
 ```

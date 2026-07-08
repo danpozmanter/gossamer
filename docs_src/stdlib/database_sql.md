@@ -23,6 +23,6 @@ Driver-pluggable SQL database access. No driver ships in the box; bring your own
 | `Pool` | type | Connection pool. `new`, `fill`, `get` (blocks up to `acquire_timeout`), `len`. Cheap to clone. |
 | `PoolConfig` | type | Pool tuning: `min`, `max`, `idle_timeout`, `max_lifetime`, `acquire_timeout`, `statement_cache`. Fluent `with_*` builders. |
 | `PooledConn` | type | Connection checked out from a `Pool`; returned on drop. |
-| `Select` | type | Fluent SELECT builder. `Select::new(table).columns(&[..]).where_eq(col, val).order_by(col, asc).limit(n).render() -> (sql, params)`. Emits Postgres-style `$N` placeholders. |
+| `Select` | type | Fluent SELECT builder. `Select::new(table).columns(&[..]).where_eq(col, sql::Value::Int(...))...render() -> String`; `.params()` returns the bound parameters. Emits Postgres-style `$N` placeholders. |
 | `migrate` | fn | Forward-only schema migrations from a directory of `<version>_<slug>.sql` files. `migrate::up(&mut conn, dir)` applies pending migrations, each in its own transaction; `migrate::discover`, `migrate::applied`, `migrate::plan`, `migrate::init` round out the surface. |
 

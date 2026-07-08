@@ -94,7 +94,7 @@ run_step() {
 
 run_step "cargo fmt"                                       cargo fmt
 run_step "cargo clippy --workspace --all-targets"          cargo clippy --workspace --all-targets -- -D warnings
-run_step "cargo test --workspace --no-fail-fast"           cargo test --workspace --no-fail-fast
+run_step "cargo test --workspace --no-fail-fast"           cargo test --workspace --no-fail-fast -- --test-threads=1
 # Stdlib docs drift gate - verifies docs_src/stdlib/ pages match
 # what `manifest::ALL_MODULES` would emit. Build the binary first
 # so the check uses the freshly built crate.

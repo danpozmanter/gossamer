@@ -107,29 +107,11 @@ use crate::value::{MapKey, NativeCall, NativeDispatch, RuntimeResult, Value};
 use super::*;
 
 pub(crate) fn install_os_extras(globals: &mut Vec<(&'static str, Value)>) {
-    install_module_pub(
-        "os",
-        &[
-            ("set_env", builtin_os_set_env),
-            ("unset_env", builtin_os_unset_env),
-            ("is_file", builtin_os_is_file),
-            ("is_dir", builtin_os_is_dir),
-            ("is_symlink", builtin_os_is_symlink),
-            ("file_size", builtin_os_file_size),
-            ("home", builtin_os_home),
-            ("temp_dir", builtin_os_temp_dir),
-            ("set_cwd", builtin_os_set_cwd),
-            ("canonicalize", builtin_os_canonicalize),
-            ("remove_dir", builtin_os_remove_dir),
-            ("remove_dir_all", builtin_os_remove_dir_all),
-            ("copy", builtin_os_copy),
-        ],
-        globals,
-    );
+    let _ = globals;
 }
 
 pub(crate) fn builtin_os_set_env(args: &[Value]) -> RuntimeResult<Value> {
-    let name = match arg_str_at(args, 0, "os::set_env", "name") {
+    let name = match arg_str_at(args, 0, "env::set_var", "name") {
         Ok(s) => s,
         Err(v) => return Ok(v),
     };
@@ -180,7 +162,7 @@ pub(crate) fn builtin_os_temp_dir(_args: &[Value]) -> RuntimeResult<Value> {
 }
 
 pub(crate) fn builtin_os_set_cwd(args: &[Value]) -> RuntimeResult<Value> {
-    let path = match arg_str_at(args, 0, "os::set_cwd", "path") {
+    let path = match arg_str_at(args, 0, "env::set_current_dir", "path") {
         Ok(s) => s,
         Err(v) => return Ok(v),
     };
@@ -191,7 +173,7 @@ pub(crate) fn builtin_os_set_cwd(args: &[Value]) -> RuntimeResult<Value> {
 }
 
 pub(crate) fn builtin_os_canonicalize(args: &[Value]) -> RuntimeResult<Value> {
-    let path = match arg_str_at(args, 0, "os::canonicalize", "path") {
+    let path = match arg_str_at(args, 0, "fs::canonicalize", "path") {
         Ok(s) => s,
         Err(v) => return Ok(v),
     };
@@ -202,7 +184,7 @@ pub(crate) fn builtin_os_canonicalize(args: &[Value]) -> RuntimeResult<Value> {
 }
 
 pub(crate) fn builtin_os_remove_dir(args: &[Value]) -> RuntimeResult<Value> {
-    let path = match arg_str_at(args, 0, "os::remove_dir", "path") {
+    let path = match arg_str_at(args, 0, "fs::remove_dir", "path") {
         Ok(s) => s,
         Err(v) => return Ok(v),
     };
@@ -213,7 +195,7 @@ pub(crate) fn builtin_os_remove_dir(args: &[Value]) -> RuntimeResult<Value> {
 }
 
 pub(crate) fn builtin_os_remove_dir_all(args: &[Value]) -> RuntimeResult<Value> {
-    let path = match arg_str_at(args, 0, "os::remove_dir_all", "path") {
+    let path = match arg_str_at(args, 0, "fs::remove_dir_all", "path") {
         Ok(s) => s,
         Err(v) => return Ok(v),
     };
@@ -224,11 +206,11 @@ pub(crate) fn builtin_os_remove_dir_all(args: &[Value]) -> RuntimeResult<Value> 
 }
 
 pub(crate) fn builtin_os_copy(args: &[Value]) -> RuntimeResult<Value> {
-    let src = match arg_str_at(args, 0, "os::copy", "source path") {
+    let src = match arg_str_at(args, 0, "fs::copy", "source path") {
         Ok(s) => s,
         Err(v) => return Ok(v),
     };
-    let dst = match arg_str_at(args, 1, "os::copy", "destination path") {
+    let dst = match arg_str_at(args, 1, "fs::copy", "destination path") {
         Ok(s) => s,
         Err(v) => return Ok(v),
     };

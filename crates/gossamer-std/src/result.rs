@@ -28,12 +28,12 @@ pub fn or_else<T, E, F, M: FnOnce(E) -> Result<T, F>>(m: M, r: Result<T, E>) -> 
 }
 
 /// `x` if `Ok(x)`, otherwise `v`.
-pub fn default<T, E>(v: T, r: Result<T, E>) -> T {
+pub fn unwrap_or<T, E>(v: T, r: Result<T, E>) -> T {
     r.unwrap_or(v)
 }
 
 /// `x` if `Ok(x)`, otherwise `f(e)`.
-pub fn default_with<T, E, F: FnOnce(E) -> T>(f: F, r: Result<T, E>) -> T {
+pub fn unwrap_or_else<T, E, F: FnOnce(E) -> T>(f: F, r: Result<T, E>) -> T {
     r.unwrap_or_else(f)
 }
 
@@ -90,8 +90,8 @@ mod tests {
 
     #[test]
     fn default_falls_back() {
-        assert_eq!(default(0, Ok::<_, &str>(5)), 5);
-        assert_eq!(default(0, Err::<i64, _>("bad")), 0);
+        assert_eq!(unwrap_or(0, Ok::<_, &str>(5)), 5);
+        assert_eq!(unwrap_or(0, Err::<i64, _>("bad")), 0);
     }
 
     #[test]

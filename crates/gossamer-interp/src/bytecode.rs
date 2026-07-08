@@ -901,6 +901,10 @@ pub enum Op {
     DivI64 { dst_i: Reg, lhs_i: Reg, rhs_i: Reg },
     /// Checked `ints[dst_i] = ints[lhs_i] % ints[rhs_i]`.
     RemI64 { dst_i: Reg, lhs_i: Reg, rhs_i: Reg },
+    /// Checked unsigned `ints[dst_i] = (ints[lhs_i] as u64) / (ints[rhs_i] as u64)`.
+    DivU64 { dst_i: Reg, lhs_i: Reg, rhs_i: Reg },
+    /// Checked unsigned `ints[dst_i] = (ints[lhs_i] as u64) % (ints[rhs_i] as u64)`.
+    RemU64 { dst_i: Reg, lhs_i: Reg, rhs_i: Reg },
     /// Wrapping `ints[dst_i] = -ints[src_i]`.
     NegI64 { dst_i: Reg, src_i: Reg },
     /// `registers[dst_v] = Bool(ints[lhs_i] < ints[rhs_i])`.
@@ -1641,6 +1645,12 @@ pub(crate) const HOT_THRESHOLD_FLOOR: i32 = 16;
 /// using `i32::MAX` as a "never trips" marker is safe.
 pub(crate) const HOT_DISABLED: i32 = i32::MAX;
 
+/// Minimum observed bytecode work before a hot counter may spend the
+/// fixed Cranelift compile tax. The unit is approximately
+/// `instr_count * function_entries`; it is intentionally a work floor,
+/// not a benchmark-name special case.
+pub(crate) const JIT_MIN_OBSERVED_WORK: u64 = 8192;
+
 /// Computes the per-chunk hot-counter initial value. Big chunks
 /// tier up sooner because each apply runs more bytecode; the
 /// `(BASE * 50) / max(50, instr_count)` form keeps a 50-instr
@@ -1661,6 +1671,14 @@ pub(crate) fn hot_threshold_for(instr_count: usize) -> i32 {
     scaled.max(HOT_THRESHOLD_FLOOR)
 }
 
+#[must_use]
+pub(crate) fn jit_min_work_for(_instr_count: usize) -> u64 {
+    if let Some(override_val) = jit_min_work_override() {
+        return override_val;
+    }
+    JIT_MIN_OBSERVED_WORK
+}
+
 fn jit_threshold_override() -> Option<i32> {
     use std::sync::OnceLock;
     static OVERRIDE: OnceLock<Option<i32>> = OnceLock::new();
@@ -1669,6 +1687,16 @@ fn jit_threshold_override() -> Option<i32> {
             .ok()
             .and_then(|s| s.parse::<i32>().ok())
             .filter(|n| *n > 0)
+    })
+}
+
+fn jit_min_work_override() -> Option<u64> {
+    use std::sync::OnceLock;
+    static OVERRIDE: OnceLock<Option<u64>> = OnceLock::new();
+    *OVERRIDE.get_or_init(|| {
+        std::env::var("GOSSAMER_JIT_MIN_WORK")
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok())
     })
 }
 

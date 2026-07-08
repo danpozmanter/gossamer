@@ -23,8 +23,8 @@ gaps are one-line additions to the dispatch table.
 | `s.find(needle)` | `Option<i64>` | Byte position of first match. |
 | `s.replace(from, to)` | `String` | Replaces every occurrence. |
 | `s.split(delim)` | `[String]` | Splits on every delimiter occurrence. |
-| `s.to_lower()` | `String` | Lowercase; Unicode-aware. (`to_lowercase` is not a method.) |
-| `s.to_upper()` | `String` | Uppercase; Unicode-aware. |
+| `s.to_lowercase()` | `String` | Lowercase; Unicode-aware. (`to_lowercase` is not a method.) |
+| `s.to_uppercase()` | `String` | Uppercase; Unicode-aware. |
 | `s.to_string()` | `String` | No-op clone for `&str`/`String`. |
 | `s.clone()` | `String` | |
 | `s.as_bytes()` | `&[u8]` | Zero-copy borrow. |
@@ -60,7 +60,7 @@ sequence directly, so every method below chains off a range too:
 | `v.step_by(n)` | `[T]` | Every `n`-th element, starting at index 0. |
 | `v.join(sep)` | `String` | Scalar / `String` elements joined with `sep`. |
 | `v.first()` / `v.last()` | `Option<T>` | |
-| `v.reversed()` | `[T]` | Non-mutating; `v.reverse()` is in-place. |
+| `v.rev()` | `[T]` | Non-mutating; `v.reverse()` is in-place. |
 | `v.contains(&x)` | `bool` | `v.index_of(&x)` returns `Option<i64>`, `v.count_of(&x)` the tally. |
 | `v.sort()` / `v.sort_by(cmp)` / `v.sort_by_key(f)` | `()` | In-place; `Reverse(k)` keys give descending order. |
 | `v.swap(i, j)` | `()` | |

@@ -15,7 +15,7 @@ use std::http
 fn header_of(headers: &[(String, String)], want: String) -> String {
     let mut found = ""
     for (name, value) in headers {
-        if name.to_lower() == want { found = value }
+        if name.to_lowercase() == want { found = value }
     }
     found
 }

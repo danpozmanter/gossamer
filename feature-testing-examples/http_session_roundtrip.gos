@@ -12,7 +12,7 @@ use std::http
 fn cookie_value(headers: &[(String, String)]) -> String {
     let mut sc = ""
     for (name, value) in headers {
-        if name.to_lower() == "set-cookie" { sc = value }
+        if name.to_lowercase() == "set-cookie" { sc = value }
     }
     // Browsers echo only the bare `name=value` pair back in `Cookie`.
     match sc.split_once(";") {

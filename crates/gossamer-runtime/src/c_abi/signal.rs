@@ -713,7 +713,7 @@ pub unsafe extern "C" fn gos_rt_vec_last(v: *const GosVec) -> i128 {
     })
 }
 
-/// `xs.reversed() -> Vec<T>` - fresh Vec with the same elements in
+/// `xs.rev() -> Vec<T>` - fresh Vec with the same elements in
 /// reverse order. Element bytes are copied through the i64-erased
 /// ABI matching the rest of the Vec surface.
 #[unsafe(no_mangle)]
@@ -733,7 +733,7 @@ pub unsafe extern "C" fn gos_rt_vec_reversed(v: *const GosVec) -> *mut GosVec {
                 unsafe { gos_rt_vec_push(out, src_ptr) };
             }
         }
-        // Same sharing contract as `gos_rt_vec_slice`: the reversed copy
+        // Same sharing contract as `gos_rt_vec_slice`: the rev copy
         // owns its own share of every element's heap children.
         unsafe { crate::c_abi::vec::vec_share_owned_elements(v, out) };
         out

@@ -132,8 +132,8 @@ pub(crate) fn install_strings(globals: &mut Vec<(&'static str, Value)>) {
         ("slice", builtin_strings_slice),
         ("replace", builtin_strings_replace),
         ("replacen", builtin_strings_replacen),
-        ("to_lower", builtin_strings_to_lower),
-        ("to_upper", builtin_strings_to_upper),
+        ("to_lowercase", builtin_strings_to_lower),
+        ("to_uppercase", builtin_strings_to_upper),
         ("to_i64", builtin_strings_to_i64),
         ("to_f64", builtin_strings_to_f64),
         ("to_bool", builtin_strings_to_bool),
@@ -152,6 +152,8 @@ pub(crate) fn install_strings(globals: &mut Vec<(&'static str, Value)>) {
         ("equal_fold", builtin_strings_equal_fold),
         ("trim_matches", builtin_strings_trim_matches),
         ("to_title", builtin_strings_to_title),
+        ("chars", builtin_strings_chars),
+        ("bytes", builtin_strings_bytes),
     ];
     install_module_pub("strings", TABLE, globals);
     install_module_pub("String", TABLE, globals);
@@ -385,6 +387,20 @@ pub(crate) fn builtin_strings_to_lower(args: &[Value]) -> RuntimeResult<Value> {
 pub(crate) fn builtin_strings_to_upper(args: &[Value]) -> RuntimeResult<Value> {
     let text = args.first().and_then(as_str).unwrap_or("");
     Ok(Value::String(strings_std::to_uppercase(text).into()))
+}
+
+pub(crate) fn builtin_strings_chars(args: &[Value]) -> RuntimeResult<Value> {
+    let text = args.first().and_then(as_str).unwrap_or("");
+    Ok(Value::Array(Arc::new(
+        text.chars().map(Value::Char).collect(),
+    )))
+}
+
+pub(crate) fn builtin_strings_bytes(args: &[Value]) -> RuntimeResult<Value> {
+    let text = args.first().and_then(as_str).unwrap_or("");
+    Ok(Value::IntArray(Arc::new(
+        text.as_bytes().iter().map(|b| i64::from(*b)).collect(),
+    )))
 }
 
 pub(crate) fn builtin_strings_starts_with(args: &[Value]) -> RuntimeResult<Value> {

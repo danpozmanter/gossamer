@@ -1,7 +1,7 @@
-//! `os::set_env` / `os::unset_env` parity across the three tiers.
+//! `env::set_var` / `env::unset_var` parity across the three tiers.
 //!
 //! Regression coverage for the 2026-05-07 daemon-launch report:
-//! the compiled tier silently no-op'd `os::set_env` because MIR
+//! the compiled tier silently no-op'd `env::set_var` because MIR
 //! had no dispatch arm for the call, so a daemon spawned via
 //! `exec::spawn` after `set_env("LD_LIBRARY_PATH", ...)` couldn't
 //! find its libraries (the env var the parent thought it set was
@@ -166,14 +166,14 @@ fn assert_three_tier_stdout(tag: &str, source: &str, expected: &str) {
 fn os_set_env_round_trips_through_os_env_in_all_tiers() {
     // Set a unique env var, read it back. The compiled tier
     // must hit the runtime's `safe_env::set_env` path so
-    // `os::env` (which also routes through libc / safe_env)
+    // `env::var` (which also routes through libc / safe_env)
     // returns the value just written. No Unix-specific system
     // calls involved - runs on all platforms.
     let src = r#"
-use std::os
+use std::env
 fn main() {
-    os::set_env(&"GOS_ENV_PROBE_2026".to_string(), &"yes-set-2026".to_string())
-    let v = os::env(&"GOS_ENV_PROBE_2026".to_string()).unwrap_or("MISSING".to_string())
+    env::set_var(&"GOS_ENV_PROBE_2026".to_string(), &"yes-set-2026".to_string())
+    let v = env::var(&"GOS_ENV_PROBE_2026".to_string()).unwrap_or("MISSING".to_string())
     println!("got={}", v)
 }
 "#;
@@ -188,10 +188,10 @@ fn os_set_env_propagates_to_a_spawned_child_in_all_tiers() {
     // pattern (e.g. setting a runtime path before spawning a
     // shared-library-dependent child).
     let src = r#"
-use std::os
-use std::os::exec
+use std::env
+use std::env::exec
 fn main() {
-    os::set_env(&"GOS_PROBE_CHILD_2026".to_string(), &"propagated".to_string())
+    env::set_var(&"GOS_PROBE_CHILD_2026".to_string(), &"propagated".to_string())
     let args: [String] = [].to_vec()
     match exec::run(&"/usr/bin/env".to_string(), &args) {
         Ok(o) => {
@@ -218,10 +218,10 @@ fn os_set_env_propagates_to_a_spawned_child_in_all_tiers_windows() {
     // Windows equivalent: `cmd /c set GOS_PROBE_CHILD_2026` prints
     // `GOS_PROBE_CHILD_2026=propagated` if the var is in the environment.
     let src = r#"
-use std::os
-use std::os::exec
+use std::env
+use std::env::exec
 fn main() {
-    os::set_env(&"GOS_PROBE_CHILD_2026".to_string(), &"propagated".to_string())
+    env::set_var(&"GOS_PROBE_CHILD_2026".to_string(), &"propagated".to_string())
     let args: [String] = ["/c", "set", "GOS_PROBE_CHILD_2026"].to_vec()
     match exec::run(&"cmd".to_string(), &args) {
         Ok(o) => {

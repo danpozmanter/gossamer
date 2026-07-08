@@ -101,7 +101,7 @@ use crate::builtins::{
     BuiltinFnPub, as_str, err_variant, install_module_pub, none_variant, ok_variant, some_variant,
     value_to_int,
 };
-use crate::value::{MapKey, NativeCall, NativeDispatch, RuntimeResult, Value};
+use crate::value::{MapKey, NativeCall, NativeDispatch, RuntimeResult, Value, dense_map};
 
 /// Entry point invoked from `builtins::install`.
 use super::*;
@@ -125,6 +125,8 @@ pub(crate) fn install_encoding_yaml(globals: &mut Vec<(&'static str, Value)>) {
         ("from_json", builtin_yaml_from_json),
         ("is_valid", builtin_yaml_is_valid),
     ] {
+        let q: &'static str = Box::leak(format!("encoding::yaml::{short}").into_boxed_str());
+        globals.push((q, crate::builtins::builtin_pub(q, call)));
         let q: &'static str = Box::leak(format!("yaml::{short}").into_boxed_str());
         globals.push((q, crate::builtins::builtin_pub(q, call)));
     }
@@ -165,7 +167,7 @@ pub(crate) fn yaml_value_to_gossamer(v: gossamer_std::encoding::yaml::Value) -> 
             seq.into_iter().map(yaml_value_to_gossamer).collect(),
         )),
         YV::Map(pairs) => {
-            let mut hmap = rustc_hash::FxHashMap::default();
+            let mut hmap = dense_map();
             for (k, v) in pairs {
                 let key = match k {
                     YV::String(s) => MapKey::Str(s.into()),

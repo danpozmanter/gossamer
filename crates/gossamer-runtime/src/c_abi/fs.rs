@@ -444,8 +444,8 @@ pub unsafe extern "C" fn gos_rt_path_join(a: *const c_char, b: *const c_char) ->
     })
 }
 
-/// `path::base(p) -> String` - final path component (filename),
-/// matching `gossamer_std::path::base`. Inlined here so the runtime
+/// Final path component helper for `path::file_name`.
+/// Inlined here so the runtime
 /// crate stays free of a dep on `gossamer-std`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_path_base(p: *const c_char) -> *mut c_char {
@@ -463,8 +463,8 @@ pub unsafe extern "C" fn gos_rt_path_base(p: *const c_char) -> *mut c_char {
     })
 }
 
-/// `path::dir(p) -> String` - parent directory; returns `"."`
-/// when no separator is present.
+/// Parent directory helper for `path::parent`.
+/// Returns `"."` when no separator is present.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_path_dir(p: *const c_char) -> *mut c_char {
     ffi_entry!(std::ptr::null_mut(), {
@@ -514,10 +514,10 @@ pub unsafe extern "C" fn gos_rt_path_split(p: *const c_char) -> *mut i64 {
     })
 }
 
-/// `path::ext(p) -> Option<String>` - extension with the leading
+/// `path::extension(p) -> Option<String>` - extension with the leading
 /// dot wrapped in `Some`, or `None` if absent / the dot is at the
 /// very start of the file name. Mirrors the interp / stdlib
-/// `path::ext` Option-returning shape.
+/// `path::extension` Option-returning shape.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_path_ext(p: *const c_char) -> i128 {
     ffi_entry!(0i128, {
@@ -569,7 +569,7 @@ pub unsafe extern "C" fn gos_rt_path_parent(p: *const c_char) -> i128 {
     })
 }
 
-/// `path::stem(p) -> Option<String>` - basename minus the
+/// `path::file_stem(p) -> Option<String>` - basename minus the
 /// extension. Returns None when the basename is empty.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_path_stem(p: *const c_char) -> i128 {
@@ -618,8 +618,8 @@ pub unsafe extern "C" fn gos_rt_path_file_name(p: *const c_char) -> i128 {
     })
 }
 
-/// `path::clean(p) / path::normalize(p) -> String`. Lexical
-/// cleanup mirroring `gossamer_std::path::clean` (no I/O); the
+/// `path::normalize(p) -> String`. Lexical
+/// cleanup mirroring `gossamer_std::path::normalize` (no I/O); the
 /// runtime crate stays free of a dep on `gossamer-std`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_path_clean(p: *const c_char) -> *mut c_char {
@@ -646,7 +646,7 @@ pub unsafe extern "C" fn gos_rt_path_is_absolute(p: *const c_char) -> i32 {
     })
 }
 
-/// `path::has_prefix(p, prefix) -> bool` - path-aware prefix test.
+/// `path::starts_with(p, prefix) -> bool` - path-aware prefix test.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_path_has_prefix(p: *const c_char, prefix: *const c_char) -> i32 {
     ffi_entry!(-1, {
@@ -825,8 +825,8 @@ fn path_join(base: &str, segment: &str) -> String {
     out
 }
 
-/// Lexical path clean shared by `gos_rt_path_clean` /
-/// `gos_rt_path_has_prefix`. Mirrors `gossamer_std::path::clean`.
+/// Lexical path normalization shared by `gos_rt_path_clean` /
+/// `gos_rt_path_has_prefix`. Mirrors `gossamer_std::path::normalize`.
 fn path_clean(path: &str) -> String {
     if path.is_empty() {
         return ".".to_string();

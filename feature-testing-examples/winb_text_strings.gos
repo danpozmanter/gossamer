@@ -68,9 +68,9 @@ fn main() {
     println!("replace-multi = {:?}", strings::replace(&"naïve naïve", &"naïve", &"X"))
 
     // case
-    println!("to_lower = {:?}", strings::to_lower(&"HÉLLO"))
-    println!("to_upper = {:?}", strings::to_upper(&"héllo"))
-    println!("to_upper-ss = {:?}", strings::to_upper(&"straße"))
+    println!("to_lower = {:?}", strings::to_lowercase(&"HÉLLO"))
+    println!("to_upper = {:?}", strings::to_uppercase(&"héllo"))
+    println!("to_upper-ss = {:?}", strings::to_uppercase(&"straße"))
     println!("to_title = {:?}", strings::to_title(&"hello world foo"))
     println!("to_title-multi = {:?}", strings::to_title(&"über alles"))
 

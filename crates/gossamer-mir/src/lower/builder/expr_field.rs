@@ -612,7 +612,7 @@ impl<'a> Builder<'a> {
         }
 
         // Stdlib struct via `local_struct` tag (e.g. `fs::DirInfo`
-        // returned from `fs::list_dir`). The receiver was tagged
+        // returned from `fs::read_dir`). The receiver was tagged
         // when its element-struct propagated through the
         // `entries[i]` index. Resolve the field name to a
         // positional `Field(idx)` against the registered shape
@@ -776,47 +776,25 @@ impl<'a> Builder<'a> {
             .local_struct
             .get(&receiver_local)
             .cloned()
-            .or_else(|| self.struct_name_of(receiver.ty))
-            .or_else(|| {
-                // Last-resort lookup: if exactly one struct in
-                // the program defines a field named `name`,
-                // assume the receiver is that struct. This
-                // recovers field access on receivers whose MIR
-                // type was left as Var by the type checker
-                // (common for results of `parse_opts()?` /
-                // similar patterns where the typer didn't
-                // propagate the wrapper's inner generic).
-                let mut candidates: Vec<&String> = self
-                    .structs
-                    .iter()
-                    .filter(|(_, fields)| fields.iter().any(|f| f == &name.name))
-                    .map(|(n, _)| n)
-                    .collect();
-                if candidates.len() == 1 {
-                    Some(candidates.pop().unwrap().clone())
-                } else {
-                    None
-                }
-            });
+            .or_else(|| self.struct_name_of(receiver.ty));
         let field_order = struct_name
             .as_ref()
             .and_then(|n| self.structs.get(n))
             .cloned();
         let Some(order) = field_order else {
-            // Last-resort fallback for opaque receivers: when the
-            // receiver type is an unresolved inference variable
-            // (`Var`), `Never`, or `Error`, we can't tell what
-            // struct it would have been. The single most common
-            // shape that lands here is field access on a
-            // `json::Value` whose carrier type wasn't pinned by the
-            // Type-checker validated this access already. When the
-            // MIR receiver type stays opaque (Var / Never / Error)
-            // we fall back to the JSON-get path; that produces the
-            // right answer for json::Value carriers and a null for
-            // genuinely missing fields. Other receiver kinds reach
-            // here only on a checker bug - promote to a JSON-get
-            // soft fallback so the build still succeeds.
-            return Some(self.emit_json_get(receiver_local, &name.name, span));
+            // Only real json::Value carriers use dynamic field get.
+            // Other unresolved receivers indicate a checker/lowering
+            // leak and must not silently turn into JSON null.
+            if matches!(
+                self.tcx.kind_of(receiver.ty),
+                gossamer_types::TyKind::JsonValue
+            ) || matches!(
+                self.tcx.kind_of(self.locals[receiver_local.0 as usize].ty),
+                gossamer_types::TyKind::JsonValue
+            ) {
+                return Some(self.emit_json_get(receiver_local, &name.name, span));
+            }
+            return None;
         };
         if let Some(sname) = struct_name {
             // Tag the receiver so subsequent field accesses
@@ -830,12 +808,8 @@ impl<'a> Builder<'a> {
         // The type-checker rejects accesses to unknown field
         // names, so this lookup must succeed for any program that
         // reaches MIR. If a future refactor relaxes that check,
-        // route the read through `gos_rt_json_get` so the build
-        // still produces a value - null for absent fields - rather
-        // than refusing to lower.
-        let Some(idx) = idx else {
-            return Some(self.emit_json_get(receiver_local, &name.name, span));
-        };
+        // decline lowering instead of reading a bogus field.
+        let idx = idx?;
         let dest = self.fresh(ty);
         let place = Place {
             local: receiver_local,

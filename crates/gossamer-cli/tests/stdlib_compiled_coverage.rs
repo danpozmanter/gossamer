@@ -41,9 +41,22 @@ const DISPATCH_SOURCES: &[&str] = &[
 const COMPILED_VIA_SPECIAL_MECHANISM: &[&str] = &[
     // `lower_json_free_call` recognises the whole `json` / `encoding::json`
     // module by its segment chain (not per-function string patterns).
+    "encoding::json::as_array",
+    "encoding::json::as_bool",
+    "encoding::json::as_f64",
+    "encoding::json::as_i64",
+    "encoding::json::as_str",
+    "encoding::json::at",
+    "encoding::json::decode",
     "encoding::json::encode",
     "encoding::json::encode_pretty",
+    "encoding::json::get",
+    "encoding::json::is_null",
+    "encoding::json::keys",
+    "encoding::json::len",
     "encoding::json::parse",
+    "encoding::json::render",
+    "encoding::json::set",
     "encoding::json::valid",
     "json::as_array",
     "json::as_bool",
@@ -81,7 +94,6 @@ const COMPILED_VIA_SPECIAL_MECHANISM: &[&str] = &[
     "io::stdout",
     "os::stdin",
     // Process-control statements lowered directly to runtime calls.
-    "os::exit",
     "process::abort",
     "process::exit",
     "process::id",

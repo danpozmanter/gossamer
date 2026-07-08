@@ -62,7 +62,7 @@ fn main() {
         Err(e) => println!("mkdir error: {}", e)
     }
     println!("dir exists: {}", fs::exists(dir))
-    match fs::remove_all(dir) {
+    match fs::remove_dir_all(dir) {
         Ok(_) => println!("dir removed"),
         Err(e) => println!("rmdir error: {}", e)
     }

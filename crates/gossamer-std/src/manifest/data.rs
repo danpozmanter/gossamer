@@ -151,7 +151,7 @@ pub const DATABASE_SQL: StdModule = StdModule {
         StdItem {
             name: "Select",
             kind: StdItemKind::Type,
-            doc: "Fluent SELECT builder. `Select::new(table).columns(&[..]).where_eq(col, val).order_by(col, asc).limit(n).render() -> (sql, params)`. Emits Postgres-style `$N` placeholders.",
+            doc: "Fluent SELECT builder. `Select::new(table).columns(&[..]).where_eq(col, sql::Value::Int(...))...render() -> String`; `.params()` returns the bound parameters. Emits Postgres-style `$N` placeholders.",
         },
         StdItem {
             name: "migrate",
@@ -189,11 +189,6 @@ pub const COLLECTIONS: StdModule = StdModule {
             name: "HashSet",
             kind: StdItemKind::Type,
             doc: "Unordered set built on top of `HashMap`.",
-        },
-        StdItem {
-            name: "BTreeSet",
-            kind: StdItemKind::Type,
-            doc: "Ordered set built on top of `BTreeMap`.",
         },
     ],
 };

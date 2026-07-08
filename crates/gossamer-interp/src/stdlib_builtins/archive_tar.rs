@@ -231,7 +231,7 @@ pub(crate) fn install_sync_atomic_u64(globals: &mut Vec<(&'static str, Value)>) 
         ("AtomicU64::load", builtin_atomic_u64_load),
         ("AtomicU64::store", builtin_atomic_u64_store),
         ("AtomicU64::fetch_add", builtin_atomic_u64_fetch_add),
-        ("AtomicU64::compare_and_swap", builtin_atomic_u64_cas),
+        ("AtomicU64::compare_exchange", builtin_atomic_u64_cas),
     ];
     for (name, call) in entries {
         let qualified: &'static str = Box::leak(format!("sync::{name}").into_boxed_str());

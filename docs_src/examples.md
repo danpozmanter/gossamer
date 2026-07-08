@@ -36,7 +36,7 @@ fn main() {
     let xs = [1, 3, 5, 9, 14, 21]
     let first_big = xs
         |> iter::find(|n: i64| n > 10)
-        |> option::default(-1)
+        |> option::unwrap_or(-1)
     println!("first > 10 (or -1): {first_big}")
 }
 ```
@@ -47,7 +47,7 @@ fn main() {
   Runs under `gos run`.
 - **`function_piping.gos`** - tour of the `|>` forward-pipe
   operator plus the `std::iter` / `std::option` combinator
-  surface (`filter`, `sum_by`, `find`, `option::default`, …).
+  surface (`filter`, `sum_by`, `find`, `option::unwrap_or`, …).
   Runs under `gos run` (bytecode VM + Cranelift JIT), `gos build`
   (LLVM `-O0`), and `gos build --release` (LLVM `-O3`); the
   tier_parity test confirms identical output across all three.
@@ -73,7 +73,7 @@ fn main() {
   channel, producer / consumer shape. Runs under `gos run`
   (bytecode VM) and `gos build` (native), with channel operations
   lowered natively on every tier.
-- **`line_count.gos`** - walks a directory via `os::read_dir`,
+- **`line_count.gos`** - walks a directory via `fs::read_dir`,
   counts plain-text lines per file, fans out through a channel.
   Uses goroutines and `select`.
 - **`web_server.gos`** - HTTP/1.1 echo server mirroring FastAPI's

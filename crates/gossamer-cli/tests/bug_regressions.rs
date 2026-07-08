@@ -323,7 +323,7 @@ fn eprintln_runs_without_aborting_via_jit() {
 
 #[test]
 fn os_exit_flushes_stdout_in_native_binary() {
-    // `os::exit(N)` after `println!` must flush the runtime's
+    // `process::exit(N)` after `println!` must flush the runtime's
     // stdout buffer before terminating; otherwise the buffered
     // output is dropped (`gos_rt_exit` previously skipped the
     // drain and called `std::process::exit` directly).
@@ -331,7 +331,7 @@ fn os_exit_flushes_stdout_in_native_binary() {
     let src = write_source(
         &dir,
         "exit_flush",
-        "use std::os\nfn main() {\n    println!(\"before exit\")\n    os::exit(2)\n}\n",
+        "use std::process\nfn main() {\n    println!(\"before exit\")\n    process::exit(2)\n}\n",
     );
     let cl_dir = dir.join("cl");
     fs::create_dir_all(&cl_dir).unwrap();
@@ -1203,10 +1203,10 @@ fn try_operator_in_macro_arg_propagates_early_return() {
     // to Ok(v), so the Err value was passed to __concat / print
     // instead of returning early from `cat`.
     let src = r#"
-use std::{errors, os}
+use std::{errors, fs}
 
 fn cat(f: &String) -> Result<(), errors::Error> {
-    Ok(print!("{}", os::read_file_to_string(f)?))
+    Ok(print!("{}", fs::read_to_string(f)?))
 }
 
 fn main() {
@@ -1743,7 +1743,7 @@ fn main() -> Result<(), errors::Error> {
 
 #[test]
 fn write_file_with_vec_u8_preserves_embedded_nul() {
-    // `os::write_file(path, &Vec<u8>)` must route through the
+    // `fs::write(path, &Vec<u8>)` must route through the
     // bytes-shaped runtime helper; the c-string helper would
     // truncate at the first NUL and silently corrupt binary
     // writes. Reads the file back to confirm every byte
@@ -1754,12 +1754,12 @@ fn write_file_with_vec_u8_preserves_embedded_nul() {
     let src = format!(
         r#"
 use std::errors
-use std::os
+use std::fs
 
 fn main() -> Result<(), errors::Error> {{
     let payload: [u8] = [72, 105, 0, 65, 66, 67, 10]
-    os::write_file(&"{tmp}", &payload)?
-    let back = os::read_file(&"{tmp}")?
+    fs::write(&"{tmp}", &payload)?
+    let back = fs::read(&"{tmp}")?
     println!("len={{}}", back.len())
     println!("byte2={{}}", back[2])
     println!("byte3={{}}", back[3])
@@ -1849,8 +1849,8 @@ fn main() -> Result<(), errors::Error> {
 
 #[test]
 fn sync_map_round_trips_set_get_delete_across_tiers() {
-    // `sync::Map` is a concurrent string-keyed map. set / get /
-    // contains / delete / len must dispatch correctly on every
+    // `sync::Map` is a concurrent string-keyed map. insert / get /
+    // contains_key / remove / len must dispatch correctly on every
     // tier. The Option<String> returned by `.get` was previously
     // pinned to `i64` in the kind_dispatch fallback, surfacing
     // as `bar=<raw-pointer-as-number>` for the Some arm and
@@ -1860,20 +1860,20 @@ use std::sync
 
 fn main() {
     let m = sync::Map::new()
-    m.set("alpha", "1")
-    m.set("beta", "2")
-    println!("len={}", m.len())
-    match m.get("beta") {
+    sync::Map::insert(m, "alpha", "1")
+    sync::Map::insert(m, "beta", "2")
+    println!("len={}", sync::Map::len(m))
+    match sync::Map::get(m, "beta") {
         Some(v) => println!("beta={}", v),
         None => println!("beta missing"),
     }
-    match m.get("nope") {
+    match sync::Map::get(m, "nope") {
         Some(_) => println!("nope unexpected"),
         None => println!("nope=None"),
     }
-    m.delete("alpha")
-    println!("contains alpha: {}", m.contains("alpha"))
-    println!("after-delete len={}", m.len())
+    sync::Map::remove(m, "alpha")
+    println!("contains alpha: {}", sync::Map::contains_key(m, "alpha"))
+    println!("after-delete len={}", sync::Map::len(m))
 }
 "#;
     let dir = fresh_dir("sync_map");

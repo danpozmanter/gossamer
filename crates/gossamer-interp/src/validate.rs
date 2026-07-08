@@ -849,6 +849,16 @@ pub(crate) fn validate_chunk(chunk: &FnChunk) -> Result<(), ValidationError> {
                 lhs_i,
                 rhs_i,
             }
+            | Op::DivU64 {
+                dst_i,
+                lhs_i,
+                rhs_i,
+            }
+            | Op::RemU64 {
+                dst_i,
+                lhs_i,
+                rhs_i,
+            }
             | Op::BitAndI64 {
                 dst_i,
                 lhs_i,

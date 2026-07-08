@@ -13,14 +13,14 @@ fn main() {
     println!("{}", match words.first() { Some(x) => x, None => "?" })
     println!("{}", match words.last() { Some(x) => x, None => "?" })
     println!("{}", words.join("-"))
-    let rev = words.reversed()
+    let rev = words.rev()
     println!("{}|{}", rev[0], rev[3])
 
     let nums = [10, 20, 30, 20]
     println!("{}", nums.contains(20))
     println!("{}", match nums.index_of(30) { Some(i) => i, None => -1 })
     println!("{}", nums.count_of(20))
-    let nrev = nums.reversed()
+    let nrev = nums.rev()
     println!("{}|{}", nrev[0], nrev[3])
 }
 
@@ -34,8 +34,8 @@ mod tests {
         testing::check(w.contains("b"), "contains on array literal")
         testing::check(w.count_of("b") == 2, "count_of on array literal")
         testing::check(w.join("+") == "a+b+c+b", "join on array literal")
-        let r = w.reversed()
-        testing::check(r[0] == "b" && r[3] == "a", "reversed on array literal")
+        let r = w.rev()
+        testing::check(r[0] == "b" && r[3] == "a", "rev on array literal")
     }
 
     #[test]

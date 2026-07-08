@@ -1511,7 +1511,7 @@ impl<'a> Builder<'a> {
             }
             // 0.7.0 Vec method surface. `xs.slice(a, b)?` returns a
             // Result<Vec<T>, errors::Error>; `xs.first()` / `xs.last()`
-            // return Option<T>; `xs.reversed()` returns a fresh Vec;
+            // return Option<T>; `xs.rev()` returns a fresh Vec;
             // `xs.contains` / `xs.index_of` / `xs.count_of` need
             // element-type dispatch (String vs i64).
             // `xs.slice(a, b)?` - receiver shape decides which
@@ -1554,7 +1554,7 @@ impl<'a> Builder<'a> {
             {
                 Some("gos_rt_vec_last")
             }
-            "reversed"
+            "rev"
                 if matches!(
                     &receiver_kind_flat,
                     TyKind::Vec(_) | TyKind::Slice(_) | TyKind::Array { .. }
@@ -1738,8 +1738,8 @@ impl<'a> Builder<'a> {
                     Some("")
                 }
             }
-            "to_lower" => Some("gos_rt_str_to_lower"),
-            "to_upper" => Some("gos_rt_str_to_upper"),
+            "to_lowercase" => Some("gos_rt_str_to_lower"),
+            "to_uppercase" => Some("gos_rt_str_to_upper"),
             "push" => Some("gos_rt_vec_push"),
             "pop" => Some("gos_rt_vec_pop_opt"),
             "sort" => Some(
@@ -2127,11 +2127,11 @@ impl<'a> Builder<'a> {
         method: &Ident,
     ) -> Option<&'static str> {
         match (rk, method.name.as_str()) {
-            (Some("sync::Map"), "set" | "insert") => Some("gos_rt_sync_map_set"),
+            (Some("sync::Map"), "insert") => Some("gos_rt_sync_map_set"),
             (Some("sync::Map"), "get") => Some("gos_rt_sync_map_get"),
-            (Some("sync::Map"), "delete" | "remove") => Some("gos_rt_sync_map_delete"),
+            (Some("sync::Map"), "remove") => Some("gos_rt_sync_map_delete"),
             (Some("sync::Map"), "len") => Some("gos_rt_sync_map_len"),
-            (Some("sync::Map"), "contains" | "contains_key") => Some("gos_rt_sync_map_contains"),
+            (Some("sync::Map"), "contains_key") => Some("gos_rt_sync_map_contains"),
             (Some("sync::Map"), "keys") => Some("gos_rt_sync_map_keys"),
             (Some("math::rand::Rng"), "next_u64") => Some("gos_rt_math_rng_next_u64"),
             (Some("math::rand::Rng"), "next_u32") => Some("gos_rt_math_rng_next_u32"),
@@ -2146,8 +2146,8 @@ impl<'a> Builder<'a> {
             (Some("validate::Errors"), "count") => Some("gos_rt_validate_errors_count"),
             (Some("validate::Errors"), "get") => Some("gos_rt_validate_errors_get"),
             (Some("validate::Errors"), "collect") => Some("gos_rt_validate_errors_collect"),
-            (Some("sync::RwLock"), "get") => Some("gos_rt_rwlock_get"),
-            (Some("sync::RwLock"), "set") => Some("gos_rt_rwlock_set"),
+            (Some("sync::RwLock"), "read") => Some("gos_rt_rwlock_get"),
+            (Some("sync::RwLock"), "write") => Some("gos_rt_rwlock_set"),
             // AtomicBool load/store route to the bool-typed shims so
             // the load result renders `true` / `false`; the name-only
             // table below keeps AtomicI64 on the i64 path.
@@ -2212,6 +2212,8 @@ impl<'a> Builder<'a> {
             (Some("process::Child"), "read_stdout") => Some("gos_rt_child_read_stdout"),
             (Some("process::Child"), "wait") => Some("gos_rt_child_wait"),
             (Some("process::Child"), "kill") => Some("gos_rt_child_kill"),
+            (Some("signal::Notifier"), "wait") => Some("gos_rt_signal_wait"),
+            (Some("signal::Notifier"), "try_wait") => Some("gos_rt_signal_try_wait"),
             _ => None,
         }
     }
@@ -2432,6 +2434,8 @@ impl<'a> Builder<'a> {
             "gos_rt_child_read_stdout" => self.tcx.string_ty(),
             "gos_rt_child_write_stdin" | "gos_rt_child_kill" => self.tcx.bool_ty(),
             "gos_rt_child_close_stdin" => self.tcx.unit(),
+            "gos_rt_signal_wait" => self.tcx.unit(),
+            "gos_rt_signal_try_wait" => self.tcx.bool_ty(),
             "gos_rt_child_wait" => {
                 let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
                 let err_ty = self.tcx.dyn_error_ty();
@@ -2835,11 +2839,11 @@ impl<'a> Builder<'a> {
         method: &Ident,
     ) -> Option<&'static str> {
         match (rk, method.name.as_str()) {
-            (Some("sync::Map"), "set" | "insert") => Some("gos_rt_sync_map_set"),
+            (Some("sync::Map"), "insert") => Some("gos_rt_sync_map_set"),
             (Some("sync::Map"), "get") => Some("gos_rt_sync_map_get"),
-            (Some("sync::Map"), "delete" | "remove") => Some("gos_rt_sync_map_delete"),
+            (Some("sync::Map"), "remove") => Some("gos_rt_sync_map_delete"),
             (Some("sync::Map"), "len") => Some("gos_rt_sync_map_len"),
-            (Some("sync::Map"), "contains" | "contains_key") => Some("gos_rt_sync_map_contains"),
+            (Some("sync::Map"), "contains_key") => Some("gos_rt_sync_map_contains"),
             (Some("sync::Map"), "keys") => Some("gos_rt_sync_map_keys"),
             (Some("math::rand::Rng"), "next_u64") => Some("gos_rt_math_rng_next_u64"),
             (Some("math::rand::Rng"), "next_u32") => Some("gos_rt_math_rng_next_u32"),
@@ -2854,8 +2858,8 @@ impl<'a> Builder<'a> {
             (Some("validate::Errors"), "count") => Some("gos_rt_validate_errors_count"),
             (Some("validate::Errors"), "get") => Some("gos_rt_validate_errors_get"),
             (Some("validate::Errors"), "collect") => Some("gos_rt_validate_errors_collect"),
-            (Some("sync::RwLock"), "get") => Some("gos_rt_rwlock_get"),
-            (Some("sync::RwLock"), "set") => Some("gos_rt_rwlock_set"),
+            (Some("sync::RwLock"), "read") => Some("gos_rt_rwlock_get"),
+            (Some("sync::RwLock"), "write") => Some("gos_rt_rwlock_set"),
             (Some("sync::AtomicBool"), "load") => Some("gos_rt_atomic_bool_load"),
             (Some("sync::AtomicBool"), "store") => Some("gos_rt_atomic_bool_store"),
             (Some("context::Context"), "is_cancelled") => Some("gos_rt_ctx_is_cancelled"),
@@ -2917,6 +2921,8 @@ impl<'a> Builder<'a> {
             (Some("process::Child"), "read_stdout") => Some("gos_rt_child_read_stdout"),
             (Some("process::Child"), "wait") => Some("gos_rt_child_wait"),
             (Some("process::Child"), "kill") => Some("gos_rt_child_kill"),
+            (Some("signal::Notifier"), "wait") => Some("gos_rt_signal_wait"),
+            (Some("signal::Notifier"), "try_wait") => Some("gos_rt_signal_try_wait"),
             (Some("vec::Iter"), "next") => Some("gos_rt_arr_iter_next"),
             _ => None,
         }
@@ -3649,7 +3655,8 @@ impl<'a> Builder<'a> {
             TyKind::String => Some("gos_rt_strings_join"),
             TyKind::Float(_) => Some("gos_rt_vec_join_f64"),
             TyKind::Bool => Some("gos_rt_vec_join_bool"),
-            TyKind::Int(_) | TyKind::Char | TyKind::Var(_) => Some("gos_rt_vec_join_i64"),
+            TyKind::Char => Some("gos_rt_vec_join_char"),
+            TyKind::Int(_) | TyKind::Var(_) => Some("gos_rt_vec_join_i64"),
             _ => None,
         }
     }
@@ -3722,7 +3729,7 @@ impl<'a> Builder<'a> {
             }
             "first" if is_seq => Some("gos_rt_vec_first"),
             "last" if is_seq => Some("gos_rt_vec_last"),
-            "reversed" if is_seq => Some("gos_rt_vec_reversed"),
+            "rev" if is_seq => Some("gos_rt_vec_reversed"),
             "take" if args_len == 1 && is_seq => Some("gos_rt_vec_take"),
             "step_by" if args_len == 1 && is_seq => Some("gos_rt_vec_step_by"),
             "join" if args_len == 1 && is_seq => self.vec_join_symbol(ty),

@@ -150,6 +150,7 @@ pub(super) fn vec_elem_kind_from_dest(
         TyKind::String => vec_elem_kind_codegen::STRING,
         TyKind::Vec(_) => vec_elem_kind_codegen::VEC,
         TyKind::HashMap { .. } => vec_elem_kind_codegen::MAP,
+        TyKind::DynError => vec_elem_kind_codegen::ERROR,
         // `errors::Error` is a pointer-bearing opaque type whose
         // payload (message + cause chain) lives on the heap. The
         // runtime's deep-free path drops the outer Box; the inner

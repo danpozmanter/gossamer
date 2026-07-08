@@ -84,9 +84,9 @@ fn main() {
     show_bool(&"maybe")
     show_bool(&"")
 
-    // format_i64 / format_f64 / radix / itoa / atoi aliases
+    // format_i64 / format_f64 / radix
     println!("format_i64(-128) = {}", strconv::format_i64(-128))
-    println!("itoa(255) = {}", strconv::itoa(255))
+    println!("format_i64(255) = {}", strconv::format_i64(255))
     println!("format_f64(3.5) = {}", strconv::format_f64(3.5))
     println!("format_f64(0.0) = {}", strconv::format_f64(0.0))
     println!("format_i64_radix(255, 16) = {}", strconv::format_i64_radix(255, 16))

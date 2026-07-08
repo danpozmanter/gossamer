@@ -24,7 +24,7 @@ fn main() {
     println!("abs={:.4}", math::abs(-3.5))
     println!("hypot={:.4}", math::hypot(3.0, 4.0))
     println!("copysign={:.4}", math::copysign(3.0, -1.0))
-    println!("dim={:.4}", math::dim(5.0, 2.0))
-    println!("fmod={:.4}", math::fmod(7.5, 2.0))
+    println!("dim={:.4}", math::positive_diff(5.0, 2.0))
+    println!("rem={:.4}", math::rem(7.5, 2.0))
     println!("exp2={:.4}", math::exp2(3.0))
 }

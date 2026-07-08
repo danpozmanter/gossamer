@@ -48,7 +48,7 @@ fn main() {
     // Histogram via channel fan-out
     let (htx, hrx) = channel()
     go parallel_histogram([[1, 2, 3], [4, 5, 6], [7, 8, 9]], htx)
-    time::sleep(20)
+    time::sleep(80)
     htx.close()
 
     let mut sums: [i64] = []

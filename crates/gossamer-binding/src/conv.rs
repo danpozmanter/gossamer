@@ -9,7 +9,9 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use gossamer_interp::value::{MapKey, RuntimeError, RuntimeResult, SmolStr, Value};
+use gossamer_interp::value::{
+    MapKey, RuntimeError, RuntimeResult, SmolStr, Value, dense_map_with_capacity,
+};
 
 /// Materialises a typed Rust value out of a Gossamer [`Value`].
 pub trait FromGos: Sized {
@@ -595,8 +597,7 @@ where
     V: ToGos,
 {
     fn to_gos(self) -> Value {
-        let mut out: rustc_hash::FxHashMap<MapKey, Value> =
-            rustc_hash::FxHashMap::with_capacity_and_hasher(self.len(), rustc_hash::FxBuildHasher);
+        let mut out = dense_map_with_capacity(self.len());
         for (k, v) in self {
             let key_value = k.to_gos();
             let key = value_to_map_key(&key_value);
@@ -786,11 +787,7 @@ fn dyn_to_value(d: DynValue) -> Value {
             Value::Array(Arc::new(inner))
         }
         DynValue::Map(entries) => {
-            let mut out: rustc_hash::FxHashMap<MapKey, Value> =
-                rustc_hash::FxHashMap::with_capacity_and_hasher(
-                    entries.len(),
-                    rustc_hash::FxBuildHasher,
-                );
+            let mut out = dense_map_with_capacity(entries.len());
             for (k, v) in entries {
                 let key_value = dyn_to_value(k);
                 let key = value_to_map_key(&key_value);
@@ -1110,7 +1107,7 @@ mod tests {
 
     #[test]
     fn hash_map_i64_i64_round_trip_via_intmap() {
-        let mut intmap: rustc_hash::FxHashMap<i64, i64> = rustc_hash::FxHashMap::default();
+        let mut intmap = dense_map_with_capacity(2);
         intmap.insert(1, 100);
         intmap.insert(2, 200);
         let v = Value::IntMap(Arc::new(parking_lot::Mutex::new(intmap)));

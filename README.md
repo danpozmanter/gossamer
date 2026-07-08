@@ -144,7 +144,7 @@ fn main() {
 
     // Free functions pipe the same way.
     let words = "  Hello  World  "
-        |> strings::to_lower
+        |> strings::to_lowercase
         |> strings::split_whitespace
         |> iter::count
 

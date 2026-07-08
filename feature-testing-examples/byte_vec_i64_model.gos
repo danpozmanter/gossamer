@@ -5,10 +5,11 @@
 // by saturating at i64 width with no narrow mask. Regression
 // fixture for the LLVM/Cranelift miscompiles where `sum += b`
 // over a `[u8]` wrapped at 8 bits (sum mod 256) and a `for` loop
-// over `os::read_file` bytes emitted invalid mixed-width IR.
+// over `fs::read` bytes emitted invalid mixed-width IR.
 
 use std::errors
-use std::os
+use std::env
+use std::fs
 use std::path
 
 fn main() -> Result<(), errors::Error> {
@@ -51,10 +52,10 @@ fn main() -> Result<(), errors::Error> {
     // elem_bytes=1 vec from the runtime; indexing, element
     // writes, and for-loops must honour the header stride.
     let payload: [u8] = [0, 255, 1, 254]
-    let tmp = path::join(&os::temp_dir(), &"gos_byte_vec_i64_model.bin")
-    os::write_file(&tmp, &payload)?
-    let mut bytes = os::read_file(&tmp)?
-    os::remove_file(&tmp)?
+    let tmp = path::join(&env::temp_dir(), &"gos_byte_vec_i64_model.bin")
+    fs::write(&tmp, &payload)?
+    let mut bytes = fs::read(&tmp)?
+    fs::remove_file(&tmp)?
     bytes[1] = 9
     let mut fsum = 0
     for b in bytes {

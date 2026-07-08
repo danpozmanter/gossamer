@@ -4,11 +4,11 @@
 // execution modes.
 
 fn main() {
-    let max_i64: i64 = 9223372036854775807
+    let math_max_int: i64 = 9223372036854775807
     let max_u64: u64 = 18446744073709551615
 
     // Wrapping / checked behaviour should be consistent
-    let mut a: i64 = max_i64 - 1
+    let mut a: i64 = math_max_int - 1
     a += 1
     println!("i64 near-max + 1 = {}", a)
 

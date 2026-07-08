@@ -374,10 +374,7 @@ pub(crate) unsafe fn gos_rt_str_mark_shared(s: *const c_char) {
 /// Allocate an owned, NUL-terminated heap string holding `s`'s bytes (the
 /// `STR_ALLOC_TAG` allocator shape).
 pub fn alloc_cstring(s: &[u8]) -> *mut c_char {
-    // Pick the first NUL (if any) so we never copy past it.
-    let nul = s.iter().position(|&b| b == 0).unwrap_or(s.len());
-    let len = nul;
-    alloc_cstring_from_slices(&[&s[..len]])
+    alloc_cstring_from_slices(&[s])
 }
 
 /// Allocates one c-string holding the byte-wise concatenation of
@@ -1638,6 +1635,33 @@ pub unsafe extern "C" fn gos_rt_vec_join_bool(v: *const GosVec, sep: *const c_ch
     })
 }
 
+/// `xs.join(sep)` for a char-element Vec.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_vec_join_char(v: *const GosVec, sep: *const c_char) -> *mut c_char {
+    ffi_entry!(std::ptr::null_mut(), {
+        if v.is_null() {
+            return alloc_cstring(b"");
+        }
+        let vec = unsafe { &*v };
+        let sep_str = if sep.is_null() {
+            ""
+        } else {
+            unsafe { CStr::from_ptr(sep).to_str().unwrap_or("") }
+        };
+        let len = vec.len.max(0) as usize;
+        let mut out = String::new();
+        for i in 0..len {
+            if i > 0 {
+                out.push_str(sep_str);
+            }
+            let raw = unsafe { vec_scalar_word(vec, i) };
+            let ch = char::from_u32(raw as u32).unwrap_or('\u{FFFD}');
+            out.push(ch);
+        }
+        alloc_cstring(out.as_bytes())
+    })
+}
+
 /// Splits `s` on `\n` and returns a fresh `*mut GosVec` of
 /// c-string pointers, one per line. Trailing empty lines
 /// (from `"a\nb\n"`) are dropped to mirror Rust's `lines()`.
@@ -1715,6 +1739,9 @@ pub unsafe extern "C" fn gos_rt_str_repeat(s: *const c_char, n: i64) -> *mut c_c
             unsafe { CStr::from_ptr(s).to_str().unwrap_or("") }
         };
         let n = if n < 0 { 0 } else { n as usize };
+        if s.len().checked_mul(n).is_none() {
+            unsafe { gos_rt_panic(c"string repeat capacity overflow".as_ptr()) };
+        }
         alloc_cstring(s.repeat(n).as_bytes())
     })
 }

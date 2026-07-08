@@ -24,7 +24,6 @@ One page per module. Source is `crates/gossamer-std/src/`; this index is regener
 | [`std::context`](context.md) | Request-scoped cancellation, deadlines, and timeouts. |
 | [`std::crypto::aead`](crypto_aead.md) | Authenticated encryption with associated data. |
 | [`std::crypto::blake3`](crypto_blake3.md) | BLAKE3 hashing. |
-| [`std::crypto::cipher`](crypto_cipher.md) | AES key handling + CBC / CTR block-cipher modes. |
 | [`std::crypto::ecdsa`](crypto_ecdsa.md) | ECDSA over the NIST P-256 curve. |
 | [`std::crypto::ed25519`](crypto_ed25519.md) | Ed25519 digital signatures. |
 | [`std::crypto::hmac`](crypto_hmac.md) | HMAC-SHA-256 keyed MACs. |
@@ -90,8 +89,8 @@ One page per module. Source is `crates/gossamer-std/src/`; this index is regener
 | [`std::net::ip`](net_ip.md) | String-level IPv4 / IPv6 parsing and classification helpers. |
 | [`std::net::netip`](net_netip.md) | Typed IP-address parsing, classification, and addr:port helpers (Go's net/netip shape). |
 | [`std::net::url`](net_url.md) | URL parsing, rendering, and query escaping. |
-| [`std::option`](option.md) | Data-last Option combinators for pipeline chaining: map, filter, default, and_then, etc. |
-| [`std::os`](os.md) | Operating-system identity and deprecated re-exports of env/process/fs. |
+| [`std::option`](option.md) | Data-last Option combinators for pipeline chaining: map, filter, unwrap_or, and_then, etc. |
+| [`std::os`](os.md) | Operating-system identity and process standard input. |
 | [`std::os::exec`](os_exec.md) | Spawn / wait for child processes (Go's os/exec shape). |
 | [`std::os::signal`](os_signal.md) | POSIX-style signal subscription (Go's os/signal shape). |
 | [`std::os::user`](os_user.md) | POSIX user / group lookup. Unix-backed by `nix`; Windows falls back to env vars. |
@@ -99,14 +98,13 @@ One page per module. Source is `crates/gossamer-std/src/`; this index is regener
 | [`std::path`](path.md) | POSIX-style path manipulation. |
 | [`std::process`](process.md) | Spawn child processes, exit the current process (Rust std::process shape). |
 | [`std::regex`](regex.md) | Compiled regular expressions (Rust `regex` crate syntax; no backreferences or look-around). |
-| [`std::result`](result.md) | Data-last Result combinators for pipeline chaining: map, map_err, default_with, etc. |
+| [`std::result`](result.md) | Data-last Result combinators for pipeline chaining: map, map_err, unwrap_or_else, etc. |
 | [`std::runtime`](runtime.md) | Goroutine / scheduler introspection and tuning. |
 | [`std::slog`](slog.md) | Structured, levelled logging. |
 | [`std::strconv`](strconv.md) | Conversions between strings and primitive numeric types. |
 | [`std::strings`](strings.md) | Polished `String` operations. |
 | [`std::sync`](sync.md) | Synchronisation primitives beyond channels. |
 | [`std::testing`](testing.md) | Assertions and sub-test harness helpers. |
-| [`std::text::template`](text_template.md) | Plain-text templates (no escaping). |
 | [`std::thread`](thread.md) | Native OS threads. For goroutines use the `go expr` syntax. |
 | [`std::time`](time.md) | Wall-clock and monotonic time facilities. |
 | [`std::tls`](tls.md) | TLS termination and TLS client dialling (rustls-backed). Wired through both http::Server::bind_and_run_tls and http::Client; mTLS / ALPN / SNI exposed. |

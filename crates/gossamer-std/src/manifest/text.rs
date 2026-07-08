@@ -290,12 +290,12 @@ pub const STRINGS: StdModule = StdModule {
             doc: "Replaces every occurrence of `from` with `to`.",
         },
         StdItem {
-            name: "to_lower",
+            name: "to_lowercase",
             kind: StdItemKind::Function,
             doc: "Lowercases every character.",
         },
         StdItem {
-            name: "to_upper",
+            name: "to_uppercase",
             kind: StdItemKind::Function,
             doc: "Uppercases every character.",
         },
@@ -323,6 +323,16 @@ pub const STRINGS: StdModule = StdModule {
             name: "count",
             kind: StdItemKind::Function,
             doc: "Counts non-overlapping occurrences of `needle`.",
+        },
+        StdItem {
+            name: "bytes",
+            kind: StdItemKind::Function,
+            doc: "Returns the UTF-8 bytes of the string.",
+        },
+        StdItem {
+            name: "chars",
+            kind: StdItemKind::Function,
+            doc: "Returns the Unicode scalar values of the string.",
         },
         StdItem {
             name: "center",
@@ -485,37 +495,6 @@ pub const STRCONV: StdModule = StdModule {
             name: "format_f64",
             kind: StdItemKind::Function,
             doc: "Renders an `f64` as a decimal string.",
-        },
-        // Shorter aliases - SKILL.md and Go's `strconv` use these.
-        StdItem {
-            name: "parse_int",
-            kind: StdItemKind::Function,
-            doc: "Alias for parse_i64.",
-        },
-        StdItem {
-            name: "atoi",
-            kind: StdItemKind::Function,
-            doc: "Alias for parse_i64 (Go-style spelling).",
-        },
-        StdItem {
-            name: "parse_float",
-            kind: StdItemKind::Function,
-            doc: "Alias for parse_f64.",
-        },
-        StdItem {
-            name: "format_int",
-            kind: StdItemKind::Function,
-            doc: "Alias for format_i64.",
-        },
-        StdItem {
-            name: "itoa",
-            kind: StdItemKind::Function,
-            doc: "Alias for format_i64 (Go-style spelling).",
-        },
-        StdItem {
-            name: "format_float",
-            kind: StdItemKind::Function,
-            doc: "Alias for format_f64.",
         },
         StdItem {
             name: "parse_i64_radix",

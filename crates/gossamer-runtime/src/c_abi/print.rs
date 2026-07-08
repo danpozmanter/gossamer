@@ -15,7 +15,6 @@
 #![allow(unused_unsafe)]
 #![allow(clippy::wildcard_imports)]
 
-use std::ffi::CStr;
 use std::os::raw::c_char;
 
 // ---------------------------------------------------------------
@@ -323,7 +322,7 @@ pub unsafe extern "C" fn gos_rt_print_str(s: *const c_char) {
         let bytes = if s.is_null() {
             b"" as &[u8]
         } else {
-            unsafe { CStr::from_ptr(s).to_bytes() }
+            unsafe { crate::c_abi::gos_str_key_bytes(s) }
         };
         unsafe { write_stdout(bytes) };
     });
@@ -391,7 +390,7 @@ pub unsafe extern "C" fn gos_rt_eprint_str(s: *const c_char) {
         let bytes = if s.is_null() {
             b"" as &[u8]
         } else {
-            unsafe { CStr::from_ptr(s).to_bytes() }
+            unsafe { crate::c_abi::gos_str_key_bytes(s) }
         };
         unsafe { gos_rt_flush_stdout() };
         use std::io::Write;

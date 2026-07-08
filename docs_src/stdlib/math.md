@@ -15,6 +15,7 @@ Mathematical constants and f64 functions (Go's math package shape).
 | `LN_10` | const | Natural log of 10. |
 | `PHI` | const | Golden ratio φ. |
 | `INF` | const | Positive infinity. |
+| `NAN` | const | Not-a-number value. |
 | `abs` | fn | Absolute value of x. |
 | `sqrt` | fn | Square root. |
 | `cbrt` | fn | Cube root. |
@@ -37,18 +38,11 @@ Mathematical constants and f64 functions (Go's math package shape).
 | `log` | fn | Logarithm with given base. |
 | `pow` | fn | x raised to the power y. |
 | `hypot` | fn | Euclidean distance √(x²+y²). |
-| `min_f64` | fn | Lesser of two f64 values. |
-| `max_f64` | fn | Greater of two f64 values. |
-| `min_i64` | fn | Lesser of two i64 values. |
-| `max_i64` | fn | Greater of two i64 values. |
-| `abs_i64` | fn | Absolute value of an i64. |
-| `fmod` | fn | Floating-point remainder x%y. |
+| `rem` | fn | Floating-point remainder x%y. |
 | `is_nan` | fn | Reports whether x is NaN. |
 | `is_inf` | fn | Reports whether x is infinite. |
-| `nan` | fn | Returns the IEEE 754 NaN value. |
-| `inf` | fn | Returns ±infinity based on sign. |
 | `copysign` | fn | Magnitude of x with sign of y. |
-| `dim` | fn | max(x-y, 0) - Go's math.Dim. |
+| `positive_diff` | fn | max(x-y, 0). |
 | `sinh` | fn | Hyperbolic sine. |
 | `cosh` | fn | Hyperbolic cosine. |
 | `tanh` | fn | Hyperbolic tangent. |

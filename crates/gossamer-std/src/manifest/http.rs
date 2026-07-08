@@ -91,12 +91,12 @@ pub const TLS: StdModule = StdModule {
         StdItem {
             name: "server_config",
             kind: StdItemKind::Function,
-            doc: "Builds a server config from a CertKey. Returns Err until rustls lands.",
+            doc: "Builds a rustls-backed server config from a CertKey.",
         },
         StdItem {
             name: "client_config",
             kind: StdItemKind::Function,
-            doc: "Builds a client config. Returns Err until rustls lands.",
+            doc: "Builds a rustls-backed client config.",
         },
     ],
 };
@@ -104,50 +104,11 @@ pub const TLS: StdModule = StdModule {
 pub const HTML_TEMPLATE: StdModule = StdModule {
     path: "std::html::template",
     summary: "Context-aware HTML templates with auto-escape (text/attr/URL/JS). The context classifier is heuristic - sound for typical server-rendered responses but NOT a content-security-policy substitute; sanitize untrusted HTML fragments with a dedicated sanitizer.",
-    items: &[
-        StdItem {
-            name: "Template",
-            kind: StdItemKind::Type,
-            doc: "Compiled HTML template.",
-        },
-        StdItem {
-            name: "parse",
-            kind: StdItemKind::Function,
-            doc: "Parses a template string.",
-        },
-        StdItem {
-            name: "render",
-            kind: StdItemKind::Function,
-            doc: "Renders a template with the supplied data context.",
-        },
-        StdItem {
-            name: "render_json",
-            kind: StdItemKind::Function,
-            doc: "render_json(source, json_data) -> Result<String, Error>: renders a context-aware HTML template against a JSON data context. Stateless and wired bit-identically across every tier.",
-        },
-    ],
-};
-
-pub const TEXT_TEMPLATE: StdModule = StdModule {
-    path: "std::text::template",
-    summary: "Plain-text templates (no escaping).",
-    items: &[
-        StdItem {
-            name: "Template",
-            kind: StdItemKind::Type,
-            doc: "Compiled text template.",
-        },
-        StdItem {
-            name: "parse",
-            kind: StdItemKind::Function,
-            doc: "Parses a template string.",
-        },
-        StdItem {
-            name: "render",
-            kind: StdItemKind::Function,
-            doc: "Renders a template with the supplied data context.",
-        },
-    ],
+    items: &[StdItem {
+        name: "render_json",
+        kind: StdItemKind::Function,
+        doc: "render_json(source, json_data) -> Result<String, Error>: renders a context-aware HTML template against a JSON data context. Stateless and wired bit-identically across every tier.",
+    }],
 };
 
 pub const HTTP: StdModule = StdModule {

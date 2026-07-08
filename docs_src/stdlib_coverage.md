@@ -8,7 +8,7 @@ module.
 Columns:
 
 - **Interp** - `gos run` (bytecode VM + tree-walker fallback).
-- **Compiled** - `gos build` (Cranelift) and `gos build --release` (LLVM).
+- **Compiled** - `gos build` and `gos build --release` (LLVM AOT).
 - **Tests** - at least one integration test exercising the item.
 
 Glyphs: ✓ supported · ◑ partial · ✗ missing.
@@ -19,10 +19,10 @@ Glyphs: ✓ supported · ◑ partial · ✗ missing.
 | `std::io` | ✓ | ✓ | ✓ | stdout, stderr, stdin, write, write_byte, write_byte_array, flush, read_line, read_to_string. |
 | `std::os` | ✓ | ✓ | ✓ | args, env, exit, read_file, write_file, mkdir, mkdir_all, read_dir. |
 | `std::os::exec` | ✓ | ✓ | ✓ | Command builder + output / status / spawn / kill / wait. Wired through interp builtins, MIR lower, and C ABI. |
-| `std::os::signal` | ✓ | ✓ | ✓ | on(SIGTERM/SIGINT/SIGHUP/SIGUSR1/SIGUSR2/SIGQUIT) + Notifier::wait/try_wait. Wired through interp builtins, MIR lower, and C ABI. |
+| `std::os::signal` | ✓ | ✓ | ✓ | on(signum) + Notifier::wait/try_wait. Wired through interp builtins, MIR lower, and C ABI. |
 | `std::strings` | ✓ | ✓ | ✓ | split, trim, contains, find, replace, to_lower, to_upper, starts_with, ends_with. |
 | `std::strconv` | ✓ | ✓ | ✓ | parse_i64, parse_u64, parse_f64, parse_bool, format_i64, format_f64. |
-| `std::collections` | ✓ | ✓ | ✓ | Vec, HashMap, HashSet, VecDeque (both ends), BTreeMap (String/i64 keys). BTreeSet declared. |
+| `std::collections` | ✓ | ✓ | ✓ | Vec, HashMap, HashSet, VecDeque (both ends), BTreeMap (String/i64 keys). |
 | `std::net` | ✓ | ✓ | ✓ | TcpListener, TcpStream. UdpSocket partial. |
 | `std::http` | ✓ | ✓ | ✓ | HTTP/1.1 + HTTP/2 server + client (push + trailers); HTTP/3 via std::http_h3. |
 | `std::encoding::json` | ✓ | ✓ | ✓ | encode + decode + Value. |
@@ -70,8 +70,7 @@ A `✗` means none of the items are wired.
 - A module is marked `Compiled ✓` when at least one of its
 items has a runtime symbol declared in
 `gossamer-codegen-llvm/src/emit.rs::RUNTIME_DECLARATIONS`
-and a Cranelift import in
-`gossamer-codegen-cranelift/src/native.rs`, or is
+and the runtime/JIT symbol registry, or is
 dispatched as a method via
 `gossamer-mir/src/lower.rs::lower_method_call`.
 

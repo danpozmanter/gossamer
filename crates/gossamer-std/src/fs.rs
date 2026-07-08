@@ -117,6 +117,7 @@ pub fn read_to_string(path: impl AsRef<Path>) -> io::Result<String> {
         let mut file = stdfs::File::open(&path)?;
         let mut out = String::new();
         file.read_to_string(&mut out)?;
+        out.shrink_to_fit();
         Ok(out)
     })
 }
@@ -147,7 +148,11 @@ pub fn exists(path: impl AsRef<Path>) -> bool {
 /// Reads the entire contents of `path` into a byte vector.
 pub fn read(path: impl AsRef<Path>) -> io::Result<Vec<u8>> {
     let path = path.as_ref().to_path_buf();
-    crate::blocking_pool::run(move || stdfs::read(&path))
+    crate::blocking_pool::run(move || {
+        let mut bytes = stdfs::read(&path)?;
+        bytes.shrink_to_fit();
+        Ok(bytes)
+    })
 }
 
 /// `true` iff `path` exists and is a regular file.

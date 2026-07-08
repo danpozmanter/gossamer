@@ -2948,7 +2948,7 @@ impl<'a> TypeChecker<'a> {
 
     /// Result type of an `fs::` / `os::` free call, or `None` for the
     /// unlisted surface. Typed reads keep the `?`-unwrapped payload
-    /// concrete (`fs::read_to_string(p)?.to_lower()` stays `String`
+    /// concrete (`fs::read_to_string(p)?.to_lowercase()` stays `String`
     /// into codegen), and directory walks yield the `fs::DirInfo`
     /// sentinel whose field layout is pre-registered so `e.path` /
     /// `e.size` on the entries stay concretely typed.
@@ -3055,6 +3055,33 @@ impl<'a> TypeChecker<'a> {
             });
             let err = self.tcx.dyn_error_ty();
             return Some(self.result_adt_ty(child_ty, err));
+        }
+        // `signal::on(sig) -> signal::Notifier`. The runtime value is
+        // the same opaque i64 handle; the sentinel type keeps
+        // method-form dispatch (`n.wait()`, `n.try_wait()`) uniform
+        // with free-form dispatch across tiers.
+        if matches!(
+            module,
+            ["signal"] | ["os", "signal"] | ["std", "os", "signal"]
+        ) && last == "on"
+        {
+            let notifier_def = gossamer_resolve::DefId::local(u32::MAX - 17);
+            self.tcx.register_def_name(notifier_def, "Notifier");
+            return Some(self.tcx.intern(TyKind::Adt {
+                def: notifier_def,
+                substs: crate::Substs::new(),
+            }));
+        }
+        if matches!(
+            module,
+            ["signal"] | ["os", "signal"] | ["std", "os", "signal"]
+        ) && matches!(last, "wait" | "try_wait")
+        {
+            return Some(if last == "wait" {
+                self.tcx.unit()
+            } else {
+                self.tcx.bool_ty()
+            });
         }
         // `json::Value::*` constructor calls produce the opaque dynamic
         // JSON value. Without this the call is a fresh var, so a
@@ -3593,7 +3620,7 @@ impl<'a> TypeChecker<'a> {
             "sort_by" | "min_by" | "max_by" => Some(vec![elem, elem]),
             "sort_by_key" | "min_by_key" | "max_by_key" | "map" | "filter" | "filter_map"
             | "flat_map" | "for_each" | "any" | "all" | "find" | "position" | "find_map"
-            | "take_while" | "skip_while" | "partition" | "group_by" | "count_by" | "sum_by"
+            | "take_while" | "skip_while" | "partition" | "chunk_by" | "count_by" | "sum_by"
             | "product_by" => Some(vec![elem]),
             _ => None,
         }
@@ -3657,6 +3684,14 @@ impl<'a> TypeChecker<'a> {
         let mut resolved = self.infer.resolve(self.tcx, receiver_ty);
         while let Some(TyKind::Ref { inner, .. }) = self.tcx.kind(resolved) {
             resolved = self.infer.resolve(self.tcx, *inner);
+        }
+        if method == "where_eq"
+            && args.len() == 2
+            && let Some(TyKind::Adt { def, .. }) = self.tcx.kind(resolved)
+            && self.tcx.def_name(*def) == Some("__gos_sql_Select")
+            && let Some(value_ty) = self.tcx.enum_ty_by_name("__gos_sql_Value")
+        {
+            self.unify(value_ty, arg_tys[1], args[1].span);
         }
         if let Some(ty) = self.time_accessor_method_ret(resolved, method, args) {
             return ty;
@@ -3976,7 +4011,7 @@ impl<'a> TypeChecker<'a> {
         }
         match (method, args.len()) {
             ("first" | "last", 0) => Some(self.option_adt_ty(elem)),
-            ("reversed" | "to_vec", 0) => Some(self.tcx.intern(TyKind::Vec(elem))),
+            ("rev" | "to_vec", 0) => Some(self.tcx.intern(TyKind::Vec(elem))),
             ("index_of", 1) => {
                 let i = self.tcx.int_ty(IntTy::I64);
                 Some(self.option_adt_ty(i))
@@ -4080,9 +4115,10 @@ impl<'a> TypeChecker<'a> {
             // typed bindings lower from a known type instead of an inference
             // var carrying an untyped heap payload into MIR.
             "trim" | "trim_start" | "trim_end" | "trim_matches" | "trim_start_matches"
-            | "trim_end_matches" | "to_upper" | "to_lower" | "to_uppercase" | "to_lowercase"
-            | "to_title" | "replace" | "replacen" | "repeat" | "pad_left" | "pad_right"
-            | "center" | "substring" => self.tcx.string_ty(),
+            | "trim_end_matches" | "to_uppercase" | "to_lowercase" | "to_title" | "replace"
+            | "replacen" | "repeat" | "pad_left" | "pad_right" | "center" | "substring" => {
+                self.tcx.string_ty()
+            }
             // `as_bytes` -> `[u8]` (runtime `*mut GosVec` of bytes).
             "as_bytes" => {
                 let u8_ty = self.tcx.int_ty(IntTy::U8);
@@ -4284,13 +4320,14 @@ impl<'a> TypeChecker<'a> {
     /// `None` for names it has no signature row for.
     fn std_combinator_arity(module: &str, name: &str) -> Option<usize> {
         let arity = match (module, name) {
-            ("result", "map" | "map_err" | "and_then" | "or_else" | "default" | "default_with") => {
-                2
-            }
+            (
+                "result",
+                "map" | "map_err" | "and_then" | "or_else" | "unwrap_or" | "unwrap_or_else",
+            ) => 2,
             ("result", "ok" | "err" | "is_ok" | "is_err") => 1,
             (
                 "option",
-                "map" | "and_then" | "filter" | "or" | "or_else" | "default" | "default_with"
+                "map" | "and_then" | "filter" | "or" | "or_else" | "unwrap_or" | "unwrap_or_else"
                 | "zip" | "ok_or" | "ok_or_else",
             ) => 2,
             ("option", "flatten" | "is_some" | "is_none" | "iter") => 1,
@@ -4300,7 +4337,7 @@ impl<'a> TypeChecker<'a> {
                 "for_each" | "map" | "filter" | "filter_map" | "flat_map" | "reduce" | "sum_by"
                 | "product_by" | "any" | "all" | "find" | "position" | "find_map" | "take_while"
                 | "skip_while" | "partition" | "sort_by" | "sort_by_key" | "min_by" | "max_by"
-                | "min_by_key" | "max_by_key" | "group_by" | "count_by",
+                | "min_by_key" | "max_by_key" | "chunk_by" | "count_by",
             ) => 2,
             _ => return None,
         };
@@ -4524,7 +4561,7 @@ impl<'a> TypeChecker<'a> {
                         self.default_free_var_to(next_err, err, span);
                         shaped
                     }
-                    "default" => {
+                    "unwrap_or" => {
                         self.unify(ok, lead_tys[0], span);
                         ok
                     }
@@ -4533,7 +4570,7 @@ impl<'a> TypeChecker<'a> {
                     // `f(e)`), and the dominant shape is a discarded
                     // call with a unit handler - pin only the param
                     // and leave the result free.
-                    "default_with" => {
+                    "unwrap_or_else" => {
                         let _ = self.callable_output(lead_tys[0], &[err], span);
                         self.fresh()
                     }
@@ -4581,12 +4618,12 @@ impl<'a> TypeChecker<'a> {
                         let err = self.callable_output(lead_tys[0], &[], span);
                         self.result_adt_ty(payload, err)
                     }
-                    "default" => {
+                    "unwrap_or" => {
                         self.unify(payload, lead_tys[0], span);
                         payload
                     }
                     // Same mixed-type rationale as the Result row.
-                    "default_with" => {
+                    "unwrap_or_else" => {
                         let _ = self.callable_output(lead_tys[0], &[], span);
                         self.fresh()
                     }
@@ -4707,7 +4744,7 @@ impl<'a> TypeChecker<'a> {
                         let _ = self.callable_output(lead_tys[0], &[elem], span);
                         self.option_adt_ty(elem)
                     }
-                    "group_by" => {
+                    "chunk_by" => {
                         let key = self.callable_output(lead_tys[0], &[elem], span);
                         let value = self.tcx.intern(TyKind::Vec(elem));
                         self.tcx.intern(TyKind::HashMap { key, value })
@@ -4950,7 +4987,7 @@ impl<'a> TypeChecker<'a> {
 
     fn check_binary(&mut self, op: BinaryOp, lhs: &Expr, rhs: &Expr, span: Span) -> Ty {
         // The rhs of `|>` is a callee position: a bare std path there
-        // (`x |> strings::to_upper`) is the partial-application call
+        // (`x |> strings::to_uppercase`) is the partial-application call
         // shape, not a first-class fn value.
         if op == BinaryOp::PipeGt && matches!(rhs.kind, ExprKind::Path(_)) {
             self.callee_path_nodes.insert(rhs.id);
@@ -5821,12 +5858,6 @@ impl<'a> TypeChecker<'a> {
                 })
             }
             ArrayExpr::Repeat { value, count } => {
-                // A fixed `[T; N]` is placed inline on the stack by the
-                // compiled tiers; an oversized one overflows the OS main-thread
-                // stack (silent SIGSEGV) while the VM heap-allocates it. The
-                // ceiling sits below the smallest supported main-thread stack
-                // (Windows ~1 MiB) with headroom for the surrounding frames.
-                const MAX_STACK_ARRAY_BYTES: u64 = 256 * 1024;
                 if let Some((container, want_elem)) = growable {
                     let got = self.check_expr_expecting(value, expected.rewrap(want_elem));
                     if expected.unifies() {
@@ -5838,12 +5869,6 @@ impl<'a> TypeChecker<'a> {
                 let elem_ty = self.check_expr(value);
                 self.check_expr(count);
                 if let Some(len) = self.evaluate_array_len(count) {
-                    // Reject an oversized inline fixed array at check so the
-                    // tiers agree and steer the user to a heap `Vec`. Prefer the
-                    // annotated element type (`let a: [i64; N]`) when present:
-                    // the repeat value's own type may still be an undefaulted
-                    // integer var at this point, so the annotation gives the
-                    // accurate slot size and a readable message.
                     let elem_ty = match self
                         .expectation_target(expected)
                         .and_then(|t| self.tcx.kind(t))
@@ -5851,20 +5876,6 @@ impl<'a> TypeChecker<'a> {
                         Some(TyKind::Array { elem, .. }) => self.infer.resolve(self.tcx, *elem),
                         _ => self.infer.resolve(self.tcx, elem_ty),
                     };
-                    let elem_bytes = u64::from(self.tcx.slot_bytes(elem_ty).max(8));
-                    let bytes = (len as u64).saturating_mul(elem_bytes);
-                    if bytes > MAX_STACK_ARRAY_BYTES {
-                        self.emit(
-                            TypeError::OversizedStackArray {
-                                elem: render_ty(self.tcx, elem_ty),
-                                len: len as u64,
-                                bytes,
-                                limit: MAX_STACK_ARRAY_BYTES,
-                            },
-                            count.span,
-                        );
-                        return self.tcx.error_ty();
-                    }
                     self.tcx.intern(TyKind::Array {
                         elem: elem_ty,
                         len: crate::ArrayLen::Concrete(len),
@@ -5965,6 +5976,9 @@ impl<'a> TypeChecker<'a> {
     ) -> Ty {
         let segments: Vec<&str> = path.segments.iter().map(|s| s.name.name.as_str()).collect();
         let joined = segments.join("::");
+        if let Some((int_ty, _value)) = int_assoc_const(&segments) {
+            return self.tcx.int_ty(int_ty);
+        }
         if let Some(entry) = crate::std_fn_values::std_fn_value(
             joined.strip_prefix("std::").unwrap_or(joined.as_str()),
         ) {
@@ -6071,9 +6085,9 @@ impl<'a> TypeChecker<'a> {
         // type-mismatch diagnostic. Only literals whose
         // magnitude is genuinely impossible to represent in any
         // Gossamer integer type get the GT0009 here.
-        if let Some(magnitude) = parse_int_magnitude(text)
-            && magnitude > u128::from(u64::MAX)
-        {
+        let literal_too_wide =
+            parse_int_magnitude(text).is_none_or(|magnitude| magnitude > u128::from(u64::MAX));
+        if literal_too_wide {
             self.emit(
                 TypeError::IntLiteralOverflow {
                     literal: text.to_string(),
@@ -6490,6 +6504,7 @@ impl<'a> TypeChecker<'a> {
             // breaks the compiled lowering. A fresh inference var keeps them
             // on the working name-global path.
             "U8Vec" => Some(20),
+            "Notifier" => Some(17),
             _ => None,
         };
         if let Some(off) = stdlib_def_offset {
@@ -6497,6 +6512,7 @@ impl<'a> TypeChecker<'a> {
             match tail {
                 "Context" => self.tcx.register_def_name(def, "context::Context"),
                 "U8Vec" => self.tcx.register_def_name(def, tail),
+                "Notifier" => self.tcx.register_def_name(def, tail),
                 _ => {}
             }
             return self.tcx.intern(TyKind::Adt {
@@ -6953,8 +6969,10 @@ fn strings_fn_str_params(name: &str) -> Option<&'static [(usize, StrArgShape)]> 
         "replace" | "replacen" => &[(0, Str), (1, StrOrChar), (2, StrOrChar)],
         "equal_fold" => &[(0, Str), (1, Str)],
         "center" | "pad_left" | "pad_right" => &[(0, Str), (2, StrOrChar)],
-        "split_whitespace" | "trim" | "trim_start" | "trim_end" | "to_lower" | "to_upper"
-        | "to_title" | "lines" | "repeat" | "slice" | "substring" | "byte_at" => &[(0, Str)],
+        "split_whitespace" | "trim" | "trim_start" | "trim_end" | "to_lowercase"
+        | "to_uppercase" | "to_title" | "lines" | "repeat" | "slice" | "substring" | "byte_at" => {
+            &[(0, Str)]
+        }
         _ => return None,
     })
 }
@@ -7196,7 +7214,7 @@ fn parse_int_magnitude(text: &str) -> Option<u128> {
 /// negation, applying the signed-range bound from the negative side.
 fn int_literal_fits(text: &str, ty: IntTy) -> bool {
     let Some(magnitude) = parse_int_magnitude(text) else {
-        return true;
+        return false;
     };
     let negative = text.trim_start().starts_with('-');
     let (signed_max, signed_min_abs, unsigned_max) = int_bounds(ty);
@@ -7241,6 +7259,45 @@ fn parse_int(text: &str) -> Option<u128> {
         return u128::from_str_radix(rest, 8).ok();
     }
     text.parse::<u128>().ok()
+}
+
+fn int_assoc_const(segments: &[&str]) -> Option<(IntTy, i128)> {
+    if segments.len() != 2 {
+        return None;
+    }
+    let ty = match segments[0] {
+        "i8" => IntTy::I8,
+        "i16" => IntTy::I16,
+        "i32" => IntTy::I32,
+        "i64" => IntTy::I64,
+        "isize" => IntTy::Isize,
+        "u8" => IntTy::U8,
+        "u16" => IntTy::U16,
+        "u32" => IntTy::U32,
+        "u64" => IntTy::U64,
+        "usize" => IntTy::Usize,
+        _ => return None,
+    };
+    let value = match (ty, segments[1]) {
+        (IntTy::I8, "MIN") => i128::from(i8::MIN),
+        (IntTy::I8, "MAX") => i128::from(i8::MAX),
+        (IntTy::I16, "MIN") => i128::from(i16::MIN),
+        (IntTy::I16, "MAX") => i128::from(i16::MAX),
+        (IntTy::I32, "MIN") => i128::from(i32::MIN),
+        (IntTy::I32, "MAX") => i128::from(i32::MAX),
+        (IntTy::I64 | IntTy::Isize, "MIN") => i128::from(i64::MIN),
+        (IntTy::I64 | IntTy::Isize, "MAX") => i128::from(i64::MAX),
+        (IntTy::U8, "MIN") => 0,
+        (IntTy::U8, "MAX") => i128::from(u8::MAX),
+        (IntTy::U16, "MIN") => 0,
+        (IntTy::U16, "MAX") => i128::from(u16::MAX),
+        (IntTy::U32, "MIN") => 0,
+        (IntTy::U32, "MAX") => i128::from(u32::MAX),
+        (IntTy::U64 | IntTy::Usize, "MIN") => 0,
+        (IntTy::U64 | IntTy::Usize, "MAX") => i128::from(u64::MAX),
+        _ => return None,
+    };
+    Some((ty, value))
 }
 
 fn strip_int_suffix(text: &str) -> String {
@@ -7562,8 +7619,8 @@ fn is_string_method(name: &str) -> bool {
             | "trim_end_matches"
             | "replace"
             | "replacen"
-            | "to_lower"
-            | "to_upper"
+            | "to_lowercase"
+            | "to_uppercase"
             | "to_title"
             | "repeat"
             | "join"

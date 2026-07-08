@@ -1,4 +1,4 @@
-// option::default across payload shapes: the Some payload passes
+// option::unwrap_or across payload shapes: the Some payload passes
 // through, the fallback replaces a None - for i64, f64, and String
 // payloads, both direct-call and |>-piped spellings.
 
@@ -7,23 +7,23 @@ use std::option
 fn main() {
     let some_i: Option<i64> = Some(42)
     let none_i: Option<i64> = None
-    println!("{}", some_i |> option::default(-1))
-    println!("{}", none_i |> option::default(-1))
+    println!("{}", some_i |> option::unwrap_or(-1))
+    println!("{}", none_i |> option::unwrap_or(-1))
 
     let some_s: Option<String> = Some("payload")
     let none_s: Option<String> = None
-    println!("{}", some_s |> option::default("fallback"))
-    println!("{}", none_s |> option::default("fallback"))
+    println!("{}", some_s |> option::unwrap_or("fallback"))
+    println!("{}", none_s |> option::unwrap_or("fallback"))
 
     let some_f: Option<f64> = Some(2.5)
     let none_f: Option<f64> = None
-    println!("{}", some_f |> option::default(0.5))
-    println!("{}", none_f |> option::default(0.5))
+    println!("{}", some_f |> option::unwrap_or(0.5))
+    println!("{}", none_f |> option::unwrap_or(0.5))
 
-    let direct = option::default(7, none_i)
+    let direct = option::unwrap_or(7, none_i)
     println!("{}", direct)
 
-    let bound = some_s |> option::default("unused")
+    let bound = some_s |> option::unwrap_or("unused")
     let twice = bound + "!"
     println!("{}", twice)
 }

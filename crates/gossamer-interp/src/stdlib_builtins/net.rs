@@ -106,14 +106,7 @@ use crate::value::{MapKey, NativeCall, NativeDispatch, RuntimeResult, Value};
 use super::*;
 
 pub(crate) fn install_net(globals: &mut Vec<(&'static str, Value)>) {
-    install_module_pub(
-        "net",
-        &[
-            ("resolve", builtin_net_resolve),
-            ("lookup", builtin_net_resolve),
-        ],
-        globals,
-    );
+    install_module_pub("net", &[("lookup", builtin_net_resolve)], globals);
     let entries: &[(&str, BuiltinFnPub)] = &[
         ("TcpListener::bind", builtin_tcp_listener_bind),
         ("TcpListener::accept", builtin_tcp_listener_accept),

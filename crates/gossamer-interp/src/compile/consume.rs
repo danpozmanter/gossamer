@@ -508,3 +508,285 @@ pub(crate) fn consumable_locals(decl: &HirFn) -> HashSet<String> {
     a.visit_block(&body.block, 0, false);
     a.finish()
 }
+
+#[derive(Default)]
+struct BlockLastUse {
+    locals: HashSet<String>,
+    duplicate_or_shadowed: HashSet<String>,
+    captured: HashSet<String>,
+    last_stmt: HashMap<String, usize>,
+}
+
+impl BlockLastUse {
+    fn new(block: &HirBlock) -> Self {
+        let mut this = Self::default();
+        for stmt in &block.stmts {
+            if let HirStmtKind::Let { pattern, .. } = &stmt.kind {
+                let mut names = HashSet::new();
+                collect_pattern_names(pattern, &mut names);
+                for name in names {
+                    if !this.locals.insert(name.clone()) {
+                        this.duplicate_or_shadowed.insert(name);
+                    }
+                }
+            }
+        }
+        this
+    }
+
+    fn record_path(
+        &mut self,
+        name: &str,
+        stmt_idx: usize,
+        shadowed: &HashSet<String>,
+        captured: bool,
+    ) {
+        if !self.locals.contains(name) || shadowed.contains(name) {
+            return;
+        }
+        if captured {
+            self.captured.insert(name.to_string());
+        } else {
+            self.last_stmt.insert(name.to_string(), stmt_idx);
+        }
+    }
+
+    fn visit_stmt(
+        &mut self,
+        stmt: &HirStmt,
+        stmt_idx: usize,
+        shadowed: &mut HashSet<String>,
+        captured: bool,
+    ) {
+        match &stmt.kind {
+            HirStmtKind::Let { pattern, init, .. } => {
+                if let Some(init) = init {
+                    self.visit_expr(init, stmt_idx, shadowed, captured);
+                }
+                self.shadow_pattern(pattern, shadowed);
+            }
+            HirStmtKind::Expr { expr, .. } => self.visit_expr(expr, stmt_idx, shadowed, captured),
+            HirStmtKind::Defer(expr) => self.visit_expr(expr, stmt_idx, shadowed, true),
+            HirStmtKind::Go(expr) => self.visit_expr(expr, stmt_idx, shadowed, true),
+            HirStmtKind::Item(_) => {}
+        }
+    }
+
+    fn visit_top_stmt(&mut self, stmt: &HirStmt, stmt_idx: usize) {
+        let mut shadowed = HashSet::new();
+        match &stmt.kind {
+            HirStmtKind::Let { init, .. } => {
+                if let Some(init) = init {
+                    self.visit_expr(init, stmt_idx, &mut shadowed, false);
+                }
+            }
+            HirStmtKind::Expr { expr, .. } => {
+                self.visit_expr(expr, stmt_idx, &mut shadowed, false);
+            }
+            HirStmtKind::Defer(expr) => self.visit_expr(expr, stmt_idx, &mut shadowed, true),
+            HirStmtKind::Go(expr) => self.visit_expr(expr, stmt_idx, &mut shadowed, true),
+            HirStmtKind::Item(_) => {}
+        }
+    }
+
+    fn visit_block(
+        &mut self,
+        block: &HirBlock,
+        stmt_idx: usize,
+        shadowed: &mut HashSet<String>,
+        captured: bool,
+    ) {
+        let snapshot = shadowed.clone();
+        for stmt in &block.stmts {
+            self.visit_stmt(stmt, stmt_idx, shadowed, captured);
+        }
+        if let Some(tail) = &block.tail {
+            self.visit_expr(tail, stmt_idx, shadowed, captured);
+        }
+        *shadowed = snapshot;
+    }
+
+    fn shadow_pattern(&mut self, pattern: &HirPat, shadowed: &mut HashSet<String>) {
+        let mut names = HashSet::new();
+        collect_pattern_names(pattern, &mut names);
+        for name in names {
+            if self.locals.contains(&name) {
+                shadowed.insert(name.clone());
+                self.duplicate_or_shadowed.insert(name);
+            }
+        }
+    }
+
+    fn visit_expr(
+        &mut self,
+        expr: &HirExpr,
+        stmt_idx: usize,
+        shadowed: &mut HashSet<String>,
+        captured: bool,
+    ) {
+        match &expr.kind {
+            HirExprKind::Path { segments, .. } => {
+                if let [seg] = segments.as_slice() {
+                    self.record_path(&seg.name, stmt_idx, shadowed, captured);
+                }
+            }
+            HirExprKind::Call { callee, args } => {
+                self.visit_expr(callee, stmt_idx, shadowed, captured);
+                for arg in args {
+                    self.visit_expr(arg, stmt_idx, shadowed, captured);
+                }
+            }
+            HirExprKind::MethodCall { receiver, args, .. } => {
+                self.visit_expr(receiver, stmt_idx, shadowed, captured);
+                for arg in args {
+                    self.visit_expr(arg, stmt_idx, shadowed, captured);
+                }
+            }
+            HirExprKind::Field { receiver, .. } | HirExprKind::TupleIndex { receiver, .. } => {
+                self.visit_expr(receiver, stmt_idx, shadowed, captured);
+            }
+            HirExprKind::Index { base, index } => {
+                self.visit_expr(base, stmt_idx, shadowed, captured);
+                self.visit_expr(index, stmt_idx, shadowed, captured);
+            }
+            HirExprKind::Unary { operand, .. } | HirExprKind::Cast { value: operand, .. } => {
+                self.visit_expr(operand, stmt_idx, shadowed, captured);
+            }
+            HirExprKind::Binary { lhs, rhs, .. } => {
+                self.visit_expr(lhs, stmt_idx, shadowed, captured);
+                self.visit_expr(rhs, stmt_idx, shadowed, captured);
+            }
+            HirExprKind::Assign { place, value } => {
+                self.visit_expr(place, stmt_idx, shadowed, captured);
+                self.visit_expr(value, stmt_idx, shadowed, captured);
+            }
+            HirExprKind::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                self.visit_expr(condition, stmt_idx, shadowed, captured);
+                self.visit_expr(then_branch, stmt_idx, shadowed, captured);
+                if let Some(else_branch) = else_branch {
+                    self.visit_expr(else_branch, stmt_idx, shadowed, captured);
+                }
+            }
+            HirExprKind::Match { scrutinee, arms } => {
+                self.visit_expr(scrutinee, stmt_idx, shadowed, captured);
+                for arm in arms {
+                    let snapshot = shadowed.clone();
+                    self.shadow_pattern(&arm.pattern, shadowed);
+                    if let Some(guard) = &arm.guard {
+                        self.visit_expr(guard, stmt_idx, shadowed, captured);
+                    }
+                    self.visit_expr(&arm.body, stmt_idx, shadowed, captured);
+                    *shadowed = snapshot;
+                }
+            }
+            HirExprKind::Loop { body, .. } => self.visit_expr(body, stmt_idx, shadowed, captured),
+            HirExprKind::While {
+                condition, body, ..
+            } => {
+                self.visit_expr(condition, stmt_idx, shadowed, captured);
+                self.visit_expr(body, stmt_idx, shadowed, captured);
+            }
+            HirExprKind::Block(block) => self.visit_block(block, stmt_idx, shadowed, captured),
+            HirExprKind::Closure { params, body, .. } => {
+                let snapshot = shadowed.clone();
+                for param in params {
+                    self.shadow_pattern(&param.pattern, shadowed);
+                }
+                self.visit_expr(body, stmt_idx, shadowed, true);
+                *shadowed = snapshot;
+            }
+            HirExprKind::LiftedClosure { captures, .. } => {
+                for cap in captures {
+                    self.visit_expr(cap, stmt_idx, shadowed, true);
+                }
+            }
+            HirExprKind::Tuple(elems) => {
+                for elem in elems {
+                    self.visit_expr(elem, stmt_idx, shadowed, captured);
+                }
+            }
+            HirExprKind::Array(arr) => match arr {
+                HirArrayExpr::List(elems) => {
+                    for elem in elems {
+                        self.visit_expr(elem, stmt_idx, shadowed, captured);
+                    }
+                }
+                HirArrayExpr::Repeat { value, count } => {
+                    self.visit_expr(value, stmt_idx, shadowed, captured);
+                    self.visit_expr(count, stmt_idx, shadowed, captured);
+                }
+            },
+            HirExprKind::Go(inner) => self.visit_expr(inner, stmt_idx, shadowed, true),
+            HirExprKind::Range { start, end, .. } => {
+                if let Some(start) = start {
+                    self.visit_expr(start, stmt_idx, shadowed, captured);
+                }
+                if let Some(end) = end {
+                    self.visit_expr(end, stmt_idx, shadowed, captured);
+                }
+            }
+            HirExprKind::Return(value) | HirExprKind::Break { value, .. } => {
+                if let Some(value) = value {
+                    self.visit_expr(value, stmt_idx, shadowed, captured);
+                }
+            }
+            HirExprKind::Select { arms } => {
+                for arm in arms {
+                    let snapshot = shadowed.clone();
+                    match &arm.op {
+                        gossamer_hir::HirSelectOp::Recv { pattern, channel } => {
+                            self.visit_expr(channel, stmt_idx, shadowed, captured);
+                            self.shadow_pattern(pattern, shadowed);
+                        }
+                        gossamer_hir::HirSelectOp::Send { channel, value } => {
+                            self.visit_expr(channel, stmt_idx, shadowed, captured);
+                            self.visit_expr(value, stmt_idx, shadowed, captured);
+                        }
+                        gossamer_hir::HirSelectOp::Default => {}
+                    }
+                    self.visit_expr(&arm.body, stmt_idx, shadowed, captured);
+                    *shadowed = snapshot;
+                }
+            }
+            HirExprKind::Literal(_) | HirExprKind::Continue { .. } | HirExprKind::Placeholder => {}
+        }
+    }
+
+    fn finish(mut self, block: &HirBlock) -> Vec<Vec<String>> {
+        if let Some(tail) = &block.tail {
+            let mut shadowed = HashSet::new();
+            self.visit_expr(tail, block.stmts.len(), &mut shadowed, false);
+            for name in self.locals.clone() {
+                if self.last_stmt.get(&name).copied() == Some(block.stmts.len()) {
+                    self.captured.insert(name);
+                }
+            }
+        }
+        let mut clears = vec![Vec::new(); block.stmts.len()];
+        for (name, idx) in self.last_stmt {
+            if self.duplicate_or_shadowed.contains(&name) || self.captured.contains(&name) {
+                continue;
+            }
+            if let Some(slot) = clears.get_mut(idx) {
+                slot.push(name);
+            }
+        }
+        clears
+    }
+}
+
+/// For each statement in `block`, returns value-local names that can be cleared
+/// immediately after that statement because their final read in the block has
+/// completed. This is deliberately conservative: shadowing, captures, defers,
+/// and tail-expression uses keep a name live until normal scope exit.
+pub(crate) fn block_last_use_clears(block: &HirBlock) -> Vec<Vec<String>> {
+    let mut a = BlockLastUse::new(block);
+    for (idx, stmt) in block.stmts.iter().enumerate() {
+        a.visit_top_stmt(stmt, idx);
+    }
+    a.finish(block)
+}

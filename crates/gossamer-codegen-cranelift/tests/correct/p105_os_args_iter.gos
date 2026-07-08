@@ -1,7 +1,7 @@
-use std::os
+use std::env
 
 fn main() {
-    let args = os::args()
+    let args = env::args()
     let n = args.len() as i64
     println!("argc = {}", n)
     let mut i: i64 = 0

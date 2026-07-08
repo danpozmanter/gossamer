@@ -400,7 +400,7 @@ impl<'a> Builder<'a> {
             | "gos_rt_http_response_status"
             | "gos_rt_parse_i64" => self.tcx.int_ty(gossamer_types::IntTy::I64),
             // `m.get_or(k, default)` returns the stored value word.
-            // For Vec-valued maps (`iter::group_by` results) that word
+            // For Vec-valued maps (`iter::chunk_by` results) that word
             // is a vec pointer - pin the dest to the value type so
             // for-loops and indexing dispatch through the vec helpers
             // instead of treating it as a scalar.
@@ -620,7 +620,7 @@ impl<'a> Builder<'a> {
                     })
                 }
             }
-            // `path::ext` returns `Option<String>`.
+            // `path::extension` returns `Option<String>`.
             "gos_rt_path_ext" => self.option_string_adt_ty(),
             "gos_rt_vec_slice_result" | "gos_rt_vec_insert_safe" | "gos_rt_intarr_slice_result" => {
                 let i = self.tcx.int_ty(gossamer_types::IntTy::I64);
@@ -653,7 +653,7 @@ impl<'a> Builder<'a> {
             }
             // In-place `xs.insert(i, v)` returns nothing.
             "gos_rt_vec_insert_at" => self.tcx.unit(),
-            // `reversed()` / `take(n)` / `step_by(s)` copy the receiver -
+            // `rev()` / `take(n)` / `step_by(s)` copy the receiver -
             // preserve its element type so byte-packed (`Vec<u8>`)
             // receivers keep their stride-1 indexing downstream.
             "gos_rt_vec_reversed" | "gos_rt_vec_take" | "gos_rt_vec_step_by"
@@ -673,7 +673,7 @@ impl<'a> Builder<'a> {
                     flat = *inner;
                 }
                 // A `[T; N]` array receiver is coerced to a `GosVec` before the
-                // call, so the reversed copy is a heap `Vec<T>`, not a flat
+                // call, so the rev copy is a heap `Vec<T>`, not a flat
                 // `[T; N]` - indexing the result as an inline array would read
                 // the GosVec header. `Vec` / `Slice` keep their own type.
                 match self.tcx.kind_of(flat).clone() {

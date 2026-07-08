@@ -154,8 +154,8 @@ pub unsafe extern "C" fn gos_rt_math_trunc(x: f64) -> f64 {
     ffi_entry!(f64::NAN, { x.trunc() })
 }
 
-/// `math::abs_i64(x)` - magnitude of `x`, saturating at `i64::MAX`
-/// for `i64::MIN` (mirrors `gossamer_std::math::abs_i64`).
+/// Integer path for `math::abs(x)`, saturating at `i64::MAX`
+/// for `i64::MIN`.
 #[unsafe(no_mangle)]
 pub extern "C" fn gos_rt_math_abs_i64(x: i64) -> i64 {
     x.saturating_abs()

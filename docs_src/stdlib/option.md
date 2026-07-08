@@ -2,15 +2,15 @@
 
 Status: shipped
 
-Data-last Option combinators for pipeline chaining: map, filter, default, and_then, etc.
+Data-last Option combinators for pipeline chaining: map, filter, unwrap_or, and_then, etc.
 
 ## Public items
 
 | Name | Kind | Description |
 |---|---|---|
 | `and_then` | fn | Chains a fallible step: Some(v) -> f(v), None stays None. |
-| `default` | fn | Unwraps with a fallback value for None. |
-| `default_with` | fn | Unwraps with a lazily computed fallback for None. |
+| `unwrap_or` | fn | Unwraps with a fallback value for None. |
+| `unwrap_or_else` | fn | Unwraps with a lazily computed fallback for None. |
 | `filter` | fn | Keeps Some(v) only when the predicate holds. |
 | `flatten` | fn | Collapses Option<Option<T>> one level. |
 | `is_none` | fn | True for None. |

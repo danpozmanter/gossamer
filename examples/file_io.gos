@@ -49,6 +49,6 @@ fn main() -> Result<(), errors::Error> {
         .map_err(|e| errors::wrap(e, "parse json"))?
     println!("parsed json: {}", json::render(&parsed))
 
-    fs::remove_all(&dir).map_err(|e| errors::wrap(e, "cleanup"))?
+    fs::remove_dir_all(&dir).map_err(|e| errors::wrap(e, "cleanup"))?
     Ok(())
 }

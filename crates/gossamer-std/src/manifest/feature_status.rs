@@ -200,11 +200,6 @@ pub const FEATURE_STATUS: &[FeatureStatus] = &[
         status: Status::Experimental,
         doc: "Context-aware HTML template engine - auto-escape works (text/attr/URL/JS), pipeline operator set still expanding. Heuristic classifier, NOT a content-security-policy substitute; the `html::escape` primitive (wired on every tier) is the supported cross-tier escape.",
     },
-    FeatureStatus {
-        path: "std::text::template",
-        status: Status::Experimental,
-        doc: "Plain-text template engine - feature parity with html::template tracked together.",
-    },
     // -----------------------------------------------------------------
     // Sub-module stdlib feature entries. Not manifest modules (the
     // implicit-Shipped walk never synthesises them), so the 0.13.0

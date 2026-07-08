@@ -354,7 +354,7 @@ bytes.
 | `[T; N]` | Fixed-size array. Analogue of Go's `[N]T`. (There is no `Array<T, N>` spelling.) |
 | `HashMap<K, V>` | Hash map. Analogue of Go's `map[K]V`. |
 | `BTreeMap<K, V>` | Ordered map. |
-| `HashSet<T>`, `BTreeSet<T>` | Sets. |
+| `HashSet<T>` | Sets. |
 | `Sender<T>`, `Receiver<T>` | Channel endpoints. Always come as a pair from `channel<T>()`. |
 
 All collections are managed reference types. Assigning
@@ -447,7 +447,8 @@ FnType = "fn" "(" [ TypeList ] ")" [ "->" Type ]
        | "FnOnce" "(" [ TypeList ] ")" [ "->" Type ]
 ```
 
-Plain `fn(...) -> ...` is a non-capturing function pointer. `Fn`,
+Plain `fn(...) -> ...` is a raw function-pointer shape; named function
+item coercion is not implemented. `Fn`,
 `FnMut`, `FnOnce` are closure traits (as in Rust). Closures that capture
 the environment satisfy the appropriate closure trait and are
 heap-allocated. Because there is no borrow checker, `Fn` and `FnMut`
@@ -1926,7 +1927,7 @@ transformation when the chain doesn't return from the enclosing fn.
 ### 10.7 `std::collections`
 
 - `Vec<T>`, `HashMap<K, V>`, `BTreeMap<K, V>`, `HashSet<T>`,
-  `BTreeSet<T>`, `VecDeque<T>`, `LinkedList<T>`.
+  `VecDeque<T>`, `LinkedList<T>`.
 
 ### 10.8 `std::sync`
 

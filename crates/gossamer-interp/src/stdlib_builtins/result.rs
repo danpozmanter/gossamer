@@ -112,7 +112,7 @@ pub(crate) fn install_result(globals: &mut Vec<(&'static str, Value)>) {
         ("is_err", builtin_result_is_err),
         ("ok", builtin_result_ok),
         ("err", builtin_result_err),
-        ("default", builtin_result_default),
+        ("unwrap_or", builtin_result_default),
     ];
     for (short, call) in static_entries {
         let qualified: &'static str = Box::leak(format!("result::{short}").into_boxed_str());
@@ -124,7 +124,7 @@ pub(crate) fn install_result(globals: &mut Vec<(&'static str, Value)>) {
         ("map_err", native_result_map_err),
         ("and_then", native_result_and_then),
         ("or_else", native_result_or_else),
-        ("default_with", native_result_default_with),
+        ("unwrap_or_else", native_result_unwrap_or_else),
     ];
     for (short, call) in native_entries {
         let qualified: &'static str = Box::leak(format!("result::{short}").into_boxed_str());
@@ -249,7 +249,7 @@ pub(crate) fn native_result_or_else(
     Ok(r)
 }
 
-pub(crate) fn native_result_default_with(
+pub(crate) fn native_result_unwrap_or_else(
     dispatch: &mut dyn NativeDispatch,
     args: &[Value],
 ) -> RuntimeResult<Value> {

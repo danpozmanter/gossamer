@@ -3,15 +3,15 @@
 use std::env;
 
 use gossamer_std::{
-    fmt as gfmt,
+    env as genv, fmt as gfmt, fs,
     io::{InMemoryReader, InMemoryWriter, Reader, Writer},
-    item, module, modules, os,
+    item, module, modules,
     registry::StdItemKind,
 };
 
 #[test]
 fn registry_lists_phase_22_modules() {
-    for path in ["std::fmt", "std::io", "std::os"] {
+    for path in ["std::fmt", "std::io", "std::os", "std::fs", "std::env"] {
         assert!(module(path).is_some(), "missing {path}");
     }
 }
@@ -32,20 +32,40 @@ fn io_module_exposes_buffered_wrappers() {
 }
 
 #[test]
-fn os_module_lists_filesystem_helpers() {
+fn canonical_modules_list_system_helpers() {
     let m = module("std::os").unwrap();
+    let names: Vec<_> = m.items.iter().map(|i| i.name).collect();
+    for expected in ["family", "arch", "stdin"] {
+        assert!(names.contains(&expected), "missing {expected}");
+    }
+
+    let m = module("std::env").unwrap();
     let names: Vec<_> = m.items.iter().map(|i| i.name).collect();
     for expected in [
         "args",
-        "env",
-        "exit",
-        "read_file",
-        "write_file",
+        "program_name",
+        "var",
+        "set_var",
+        "unset_var",
+        "current_dir",
+        "set_current_dir",
+        "home_dir",
+        "temp_dir",
+    ] {
+        assert!(names.contains(&expected), "missing {expected}");
+    }
+
+    let m = module("std::fs").unwrap();
+    let names: Vec<_> = m.items.iter().map(|i| i.name).collect();
+    for expected in [
+        "read",
+        "read_to_string",
+        "write",
         "exists",
-        "mkdir",
-        "mkdir_all",
         "read_dir",
-        "File",
+        "create_dir_all",
+        "remove_file",
+        "remove_dir_all",
     ] {
         assert!(names.contains(&expected), "missing {expected}");
     }
@@ -112,34 +132,33 @@ fn in_memory_reader_drains_to_eof() {
 fn os_filesystem_round_trip_against_tmp_dir() {
     let mut dir = env::temp_dir();
     dir.push("gossamer-std-phase22");
-    let _ = os::remove_file(dir.to_str().unwrap());
-    os::mkdir_all(dir.to_str().unwrap()).expect("mkdir_all");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).expect("create_dir_all");
     let path = dir.join("hello.txt");
-    let path = path.to_str().unwrap();
-    os::write_file(path, b"hi from gossamer").unwrap();
-    assert!(os::exists(path));
-    let bytes = os::read_file(path).unwrap();
+    fs::write(&path, b"hi from gossamer").unwrap();
+    assert!(fs::exists(&path));
+    let bytes = fs::read(&path).unwrap();
     assert_eq!(bytes, b"hi from gossamer");
-    let text = os::read_file_to_string(path).unwrap();
+    let text = fs::read_to_string(&path).unwrap();
     assert_eq!(text, "hi from gossamer");
-    let listing = os::read_dir(dir.to_str().unwrap()).unwrap();
-    assert!(listing.iter().any(|e| e == "hello.txt"));
-    os::remove_file(path).unwrap();
-    assert!(!os::exists(path));
+    let listing = fs::read_dir(&dir).unwrap();
+    assert!(listing.iter().any(|e| e.name == "hello.txt" && e.is_file));
+    fs::remove_file(&path).unwrap();
+    assert!(!fs::exists(&path));
     let _ = std::fs::remove_dir(dir);
 }
 
 #[test]
 fn os_set_env_round_trips_through_safe_runtime_wrapper() {
     let key = "GOSSAMER_PHASE22_SET_ENV";
-    os::set_env(key, "ok").expect("set_env should now succeed via safe wrapper");
-    assert_eq!(os::env(key).as_deref(), Some("ok"));
-    os::unset_env(key);
-    assert_eq!(os::env(key), None);
+    genv::set_var(key, "ok").expect("set_var should now succeed via safe wrapper");
+    assert_eq!(genv::var(key).as_deref(), Some("ok"));
+    genv::unset_var(key);
+    assert_eq!(genv::var(key), None);
 }
 
 #[test]
 fn os_args_returns_at_least_the_executable_path() {
-    let argv = os::args();
+    let argv = genv::args();
     assert!(!argv.is_empty());
 }

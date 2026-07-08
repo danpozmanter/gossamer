@@ -13,5 +13,4 @@ Built-in container types.
 | `HashMap` | type | Hash map backed by the swiss-table layout. |
 | `BTreeMap` | type | Ordered map. |
 | `HashSet` | type | Unordered set built on top of `HashMap`. |
-| `BTreeSet` | type | Ordered set built on top of `BTreeMap`. |
 

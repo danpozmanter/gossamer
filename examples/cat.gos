@@ -2,7 +2,7 @@
  * cat - concatenate files to stdout.
  *
  * Demonstrates grouped `use`, `Result` + `|>` pipeline style,
- * `result::map` for the ok-path, `result::default_with` to
+ * `result::map` for the ok-path, `result::unwrap_or_else` to
  * handle errors in the pipe, and `{name}` named-capture.
  *
  * Run:
@@ -16,5 +16,5 @@ fn cat(f: &String) -> Result<(), errors::Error> {
 }
 
 fn main() {
-    env::args() |> iter::for_each(|f| cat(&f) |> result::default_with(|e| eprintln!("{f}: {e}")))
+    env::args() |> iter::for_each(|f| cat(&f) |> result::unwrap_or_else(|e| eprintln!("{f}: {e}")))
 }

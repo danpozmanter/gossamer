@@ -49,7 +49,7 @@ The register-based bytecode VM in `gossamer-interp` is the sole
 2. Compiles every top-level function and inherent-impl method to a
    register-machine `FnChunk`, registered under both the unqualified
    (`foo`) and type-qualified (`Type::foo`) names.
-3. Registers builtin callables for stdlib functions (`os::args`,
+3. Registers builtin callables for stdlib functions (`env::args`,
    `time::sleep`, `json::parse`, …) and variant constructors for
    every user enum.
 4. Executes the compiled bytecode in a register machine, keeping

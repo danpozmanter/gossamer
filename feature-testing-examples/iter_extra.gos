@@ -1,7 +1,7 @@
 // Exercises the eight iter combinators that previously had no
 // compiled-tier lowering (enumerate, zip, flatten, dedup, unzip,
-// windowed, pairwise, chunk_by_size) plus the reversed-index idiom
-// `iter::reversed(xs)[i]` (the unannotated-result SIGSEGV class).
+// windowed, pairwise, chunk_by_size) plus the rev-index idiom
+// `iter::rev(xs)[i]` (the unannotated-result SIGSEGV class).
 //
 // i64-element only - matches the `_i64` shim family. Output is
 // scalar-only (no tuple Debug) so it is bit-identical across the
@@ -51,7 +51,7 @@ fn main() {
 
     // -- windowed(n, xs): sliding width-2 windows.
     let mut wsum = 0
-    for w in iter::windowed(2, xs) {
+    for w in iter::windows(2, xs) {
         wsum += w[0] * w[1]
     }
     println!("windowed {}", wsum)
@@ -67,16 +67,16 @@ fn main() {
     let nine = [1, 2, 3, 4, 5]
     let mut chunks = 0
     let mut last_first = 0
-    for c in iter::chunk_by_size(2, nine) {
+    for c in iter::chunks(2, nine) {
         chunks += 1
         last_first = c[0]
     }
     println!("chunk_by_size {} {}", chunks, last_first)
 
-    // -- reversed-index idiom: indexing the heap-vec result directly,
+    // -- rev-index idiom: indexing the heap-vec result directly,
     // with no `: [i64]` annotation (the SIGSEGV regression).
-    let r = iter::reversed(xs)
-    println!("reversed {} {} {} {}", r[0], r[1], r[2], r[3])
+    let r = iter::rev(xs)
+    println!("rev {} {} {} {}", r[0], r[1], r[2], r[3])
 
     // -- same crash class for take / skip / chain / range / repeat.
     let t = iter::take(2, xs)

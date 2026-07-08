@@ -3281,12 +3281,7 @@ mod tests {
     fn module_qualified_completion_returns_module_members() {
         let mut state = ServerState::new();
         let labels = complete_at(&mut state, "fn main() { os::e| }\n", "file:///os.gos");
-        // `os::e|` should suggest `env`, `exit`, `exists`, and the
-        // `exec` submodule.
-        assert!(
-            labels.iter().any(|l| l == "env"),
-            "expected `env` in {labels:?}"
-        );
+        // `os::e|` should suggest the `exec` submodule.
         assert!(
             labels.iter().any(|l| l == "exec"),
             "expected `exec` submodule in {labels:?}"
@@ -3445,7 +3440,7 @@ fn main() { Color::R| }
     #[test]
     fn module_member_completion_carries_documentation() {
         let mut state = ServerState::new();
-        let response = complete_full(&mut state, "fn main() { os::a| }\n", "file:///doc.gos");
+        let response = complete_full(&mut state, "fn main() { env::a| }\n", "file:///doc.gos");
         let Value::Array(items) = response else {
             panic!("expected array");
         };
@@ -3469,7 +3464,7 @@ fn main() { Color::R| }
         }
         assert!(
             found_doc,
-            "expected `os::args` completion to carry documentation"
+            "expected `env::args` completion to carry documentation"
         );
     }
 

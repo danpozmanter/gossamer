@@ -24,7 +24,7 @@ fn main() {
     // each must spawn (its result is discarded) on every tier. Their
     // asynchronous execution leaves main's output untouched.
     go time::sleep(1)
-    go strings::to_upper(&"async")
+    go strings::to_uppercase(&"async")
 
     // Blocking stdlib free call under `go`: the deterministic async
     // proof. `gate` is shared by value through the process-global

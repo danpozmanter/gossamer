@@ -190,15 +190,6 @@ fn diagnostic_explanation(code: &str) -> Option<&'static str> {
                      are automatic; From / Into / the operator traits are written\n\
                      with `impl Trait for T`."
         }
-        "GT0026" => {
-            "A fixed-size array `[value; N]` with a compile-time-constant\n\
-                     `N` was large enough that the compiled tiers would place it\n\
-                     inline on the stack and overflow the OS main-thread stack (a\n\
-                     silent SIGSEGV), while the VM heap-allocates it. Rejected at\n\
-                     check so all three tiers agree. Use a heap `Vec` for large or\n\
-                     dynamically-sized buffers: `let v: [T] = [value; n]` (which\n\
-                     allocates on the heap) instead of `[T; N]`."
-        }
         "GT0027" => {
             "A `match` / `if let` / `while let` arm patterns a `json::Value`\n\
                      scrutinee with a `json::Value::Object(..)` / `::Array(..)` /\n\

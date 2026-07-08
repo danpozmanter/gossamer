@@ -52,20 +52,8 @@ pub const STD_FN_VALUES: &[StdFnValue] = &[
         ret: StdValTy::Error,
     },
     StdFnValue {
-        path: "strconv::atoi",
-        rt_symbol: "gos_rt_strconv_atoi",
-        params: &[StdValTy::Str],
-        ret: StdValTy::ResultI64,
-    },
-    StdFnValue {
         path: "strconv::format_i64",
         rt_symbol: "gos_rt_strconv_format_i64",
-        params: &[StdValTy::I64],
-        ret: StdValTy::Str,
-    },
-    StdFnValue {
-        path: "strconv::itoa",
-        rt_symbol: "gos_rt_strconv_itoa",
         params: &[StdValTy::I64],
         ret: StdValTy::Str,
     },
@@ -76,19 +64,13 @@ pub const STD_FN_VALUES: &[StdFnValue] = &[
         ret: StdValTy::ResultI64,
     },
     StdFnValue {
-        path: "strconv::parse_int",
-        rt_symbol: "gos_rt_strconv_parse_i64",
-        params: &[StdValTy::Str],
-        ret: StdValTy::ResultI64,
-    },
-    StdFnValue {
-        path: "strings::to_lower",
+        path: "strings::to_lowercase",
         rt_symbol: "gos_rt_str_to_lower",
         params: &[StdValTy::Str],
         ret: StdValTy::Str,
     },
     StdFnValue {
-        path: "strings::to_upper",
+        path: "strings::to_uppercase",
         rt_symbol: "gos_rt_str_to_upper",
         params: &[StdValTy::Str],
         ret: StdValTy::Str,
@@ -180,7 +162,7 @@ mod tests {
             Some("gos_rt_error_new")
         );
         assert_eq!(
-            rt_symbol_for_std_fn("std::strings::to_upper"),
+            rt_symbol_for_std_fn("std::strings::to_uppercase"),
             Some("gos_rt_str_to_upper")
         );
         assert_eq!(rt_symbol_for_std_fn("strings::nope"), None);
@@ -189,7 +171,7 @@ mod tests {
     #[test]
     fn shape_check_rejects_consts_and_user_paths() {
         assert!(is_std_fn_value_shape(&["errors", "new"]));
-        assert!(is_std_fn_value_shape(&["std", "strings", "to_upper"]));
+        assert!(is_std_fn_value_shape(&["std", "strings", "to_uppercase"]));
         assert!(!is_std_fn_value_shape(&["math", "PI"]));
         assert!(!is_std_fn_value_shape(&["mymod", "helper"]));
         assert!(!is_std_fn_value_shape(&["errors"]));

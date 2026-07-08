@@ -65,12 +65,12 @@ fn main() {
 }
 
 #[test]
-fn strconv_parse_int_round_trips() {
+fn strconv_parse_i64_round_trips() {
     let src = r#"
 fn main() {
-    let parsed = strconv::parse_int("123")
+    let parsed = strconv::parse_i64("123")
     let n = parsed.unwrap_or(0)
-    println(strconv::format_int(n))
+    println(strconv::format_i64(n))
 }
 "#;
     assert_eq!(run(src), "123\n");
@@ -98,10 +98,10 @@ fn main() {
 fn os_extra_helpers_query_filesystem() {
     let src = r#"
 fn main() {
-    let temp = os::temp_dir()
-    let exists_temp = os::is_dir(temp)
+    let temp = env::temp_dir()
+    let exists_temp = fs::is_dir(temp)
     println(exists_temp)
-    let not_a_file = os::is_file("/__definitely_not_a_real_path__")
+    let not_a_file = fs::is_file("/__definitely_not_a_real_path__")
     println(not_a_file)
 }
 "#;
@@ -116,9 +116,9 @@ fn main() {
     println(dir.unwrap_or(""))
     let base = path::file_name("/tmp/foo/bar.txt")
     println(base.unwrap_or(""))
-    let stem = path::stem("/tmp/foo/bar.txt")
+    let stem = path::file_stem("/tmp/foo/bar.txt")
     println(stem.unwrap_or(""))
-    let ext = path::ext("/tmp/foo/bar.txt")
+    let ext = path::extension("/tmp/foo/bar.txt")
     println(ext.unwrap_or(""))
 }
 "#;
@@ -170,13 +170,13 @@ fn main() {
 }
 
 #[test]
-fn atomic_bool_compare_and_swap() {
+fn atomic_bool_compare_exchange() {
     let src = r#"
 fn main() {
     let b = AtomicBool::new(false)
-    let did_swap = AtomicBool::compare_and_swap(b, false, true)
+    let did_swap = AtomicBool::compare_exchange(b, false, true)
     println(did_swap)
-    let again = AtomicBool::compare_and_swap(b, false, true)
+    let again = AtomicBool::compare_exchange(b, false, true)
     println(again)
     println(AtomicBool::load(b))
 }

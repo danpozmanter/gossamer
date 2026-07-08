@@ -1,5 +1,5 @@
 use std::flag
-use std::os
+use std::env
 use std::time
 
 fn main() -> Result<(), flag::Error> {
@@ -10,7 +10,7 @@ fn main() -> Result<(), flag::Error> {
     let f = fs.float("f", 1.5, "float")
     let b = fs.bool("b", true, "bool")
     let d = fs.duration("d", time::Duration::from_secs(3), "duration")
-    let _ = fs.parse(os::args())?
+    let _ = fs.parse(env::args())?
     println!("s={}", *s)
     println!("i={}", *i)
     println!("u={}", *u)

@@ -1,24 +1,24 @@
 // math predicate + typed min/max wiring must lower bit-identically
-// on every tier. is_nan/is_inf/nan/inf/trunc/abs_i64 plus the
-// width-pinned min_f64/max_f64/min_i64/max_i64 and the fmod alias
-// mod_float previously had no compiled-tier dispatch arm.
+// on every tier. is_nan/is_inf/nan/inf/trunc/math_abs plus the
+// width-pinned math_min_float/math_max_float/math_min_int/math_max_int and the rem alias
+// math_rem previously had no compiled-tier dispatch arm.
 
 use std::math
 
 fn main() {
-    println!("is_nan(nan)={}", math::is_nan(math::nan()))
+    println!("is_nan(nan)={}", math::is_nan(math::NAN))
     println!("is_nan(1.0)={}", math::is_nan(1.0))
-    println!("is_inf(+inf,1)={}", math::is_inf(math::inf(1), 1))
-    println!("is_inf(-inf,-1)={}", math::is_inf(math::inf(-1), -1))
-    println!("is_inf(+inf,-1)={}", math::is_inf(math::inf(1), -1))
+    println!("is_inf(+inf,1)={}", math::is_inf(math::INF, 1))
+    println!("is_inf(-inf,-1)={}", math::is_inf(math::NEG_INF, -1))
+    println!("is_inf(+inf,-1)={}", math::is_inf(math::INF, -1))
     println!("is_inf(1.0,0)={}", math::is_inf(1.0, 0))
     println!("trunc(3.7)={:.1}", math::trunc(3.7))
     println!("trunc(-3.7)={:.1}", math::trunc(-3.7))
-    println!("abs_i64(-42)={}", math::abs_i64(-42))
-    println!("abs_i64(9)={}", math::abs_i64(9))
-    println!("min_f64={:.2}", math::min_f64(2.5, 1.5))
-    println!("max_f64={:.2}", math::max_f64(2.5, 1.5))
-    println!("min_i64={}", math::min_i64(7, 3))
-    println!("max_i64={}", math::max_i64(7, 3))
-    println!("mod_float={:.2}", math::mod_float(7.5, 2.0))
+    println!("math_abs(-42)={}", math::abs(-42))
+    println!("math_abs(9)={}", math::abs(9))
+    println!("math_min_float={:.2}", math::min(2.5, 1.5))
+    println!("math_max_float={:.2}", math::max(2.5, 1.5))
+    println!("math_min_int={}", math::min(7, 3))
+    println!("math_max_int={}", math::max(7, 3))
+    println!("math_rem={:.2}", math::rem(7.5, 2.0))
 }

@@ -9,7 +9,9 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 /// Called by the CLI entrypoint after `main` returns so spawned work
 /// has a chance to land before the process exits.
 pub fn join_outstanding_goroutines() {
-    pool().drain();
+    if let Some(pool) = POOL.get() {
+        pool.drain();
+    }
 }
 
 /// Goroutine task: a closure to run on a pool worker.

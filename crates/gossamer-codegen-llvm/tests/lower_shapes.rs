@@ -15,7 +15,7 @@ use gossamer_mir::{
     BasicBlock, BinOp, BlockId, Body, ConstValue, Local, LocalDecl, Operand, Place, Rvalue,
     Statement, StatementKind, Terminator,
 };
-use gossamer_types::{IntTy, TyCtxt, TyKind};
+use gossamer_types::{ArrayLen, IntTy, TyCtxt, TyKind};
 
 fn dummy_span() -> Span {
     let mut map = SourceMap::new();
@@ -221,4 +221,61 @@ fn ir_contains_target_triple() {
     let (body, tcx) = build_const_int_main(0);
     let ir = render_ir_to_string(&[body], &tcx, false).unwrap();
     assert!(ir.contains("target triple"), "IR was:\n{ir}");
+}
+
+#[test]
+fn large_fixed_array_local_spills_to_heap_storage() {
+    let mut tcx = TyCtxt::new();
+    let unit_ty = tcx.intern(TyKind::Unit);
+    let i64_ty = tcx.intern(TyKind::Int(IntTy::I64));
+    let arr_ty = tcx.intern(TyKind::Array {
+        elem: i64_ty,
+        len: ArrayLen::Concrete(100_000_000),
+    });
+    let body = Body {
+        name: "main".to_string(),
+        def: None,
+        arity: 0,
+        locals: vec![
+            LocalDecl {
+                ty: unit_ty,
+                debug_name: None,
+                mutable: false,
+                region: false,
+            },
+            LocalDecl {
+                ty: arr_ty,
+                debug_name: None,
+                mutable: false,
+                region: false,
+            },
+        ],
+        blocks: vec![BasicBlock {
+            id: BlockId(0),
+            stmts: vec![Statement {
+                span: dummy_span(),
+                kind: StatementKind::Assign {
+                    place: place(1),
+                    rvalue: Rvalue::Repeat {
+                        value: Operand::Const(ConstValue::Int(0)),
+                        count: 100_000_000,
+                    },
+                },
+            }],
+            terminator: Terminator::Return,
+            span: dummy_span(),
+        }],
+        span: dummy_span(),
+    };
+
+    let ir = render_ir_to_string(&[body], &tcx, false).unwrap();
+    assert!(
+        ir.contains("%l1 = call ptr @gos_rt_aggr_alloc(i64 800000000)"),
+        "IR was:\n{ir}"
+    );
+    assert!(!ir.contains("%l1 = alloca"), "IR was:\n{ir}");
+    assert!(
+        ir.contains("call void @\"gos_rt_aggr_free\"(ptr %l1, i64 800000000)"),
+        "IR was:\n{ir}"
+    );
 }

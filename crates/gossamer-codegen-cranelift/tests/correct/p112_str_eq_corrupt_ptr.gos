@@ -1,13 +1,13 @@
-use std::os
+use std::env
 
 fn main() {
     // After lowering through a runtime helper that pins a typed-i64
     // result, calling `arg == "literal"` must dispatch through
     // `gos_rt_str_eq` correctly. This pattern was the original
-    // os::args bug - argv[i] read via stride-8 lands as a real
+    // env::args bug - argv[i] read via stride-8 lands as a real
     // c-string pointer, but the typechecker had it as i64-pinned
     // which routed eq to a bogus path.
-    let args = os::args()
+    let args = env::args()
     let mut found_one = false
     let mut found_two = false
     let n = args.len() as i64

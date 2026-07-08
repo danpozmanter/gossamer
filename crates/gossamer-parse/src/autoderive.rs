@@ -2768,10 +2768,10 @@ impl __gos_sql_Tx {
 const HTTP_SECURITY_WRAPPERS: &str = r##"
 // ---- shared helpers ----
 fn __gos_http_header_lookup(headers: &[(String, String)], name: &String) -> String {
-    let target = name.to_lower()
+    let target = name.to_lowercase()
     let mut found = ""
     for (k, v) in headers {
-        if k.to_lower() == target { found = v }
+        if k.to_lowercase() == target { found = v }
     }
     found
 }
@@ -2807,7 +2807,7 @@ fn __gos_http_origin_from_referer(referer: &String) -> String {
     }
 }
 fn __gos_http_origins_equal(a: &String, b: &String) -> bool {
-    __gos_http_trim_slash(a).to_lower() == __gos_http_trim_slash(b).to_lower()
+    __gos_http_trim_slash(a).to_lowercase() == __gos_http_trim_slash(b).to_lowercase()
 }
 
 // ---- csrf (request/response integrated) ----
@@ -2839,10 +2839,10 @@ fn __gos_http_csrf_config(key: [u8]) -> __gos_http_csrf_Config {
     }
 }
 fn __gos_http_csrf_is_safe(config: &__gos_http_csrf_Config, method: &String) -> bool {
-    let m = method.to_lower()
+    let m = method.to_lowercase()
     let mut safe = false
     for s in config.safe_methods {
-        if s.to_lower() == m { safe = true }
+        if s.to_lowercase() == m { safe = true }
     }
     safe
 }
@@ -2850,7 +2850,7 @@ fn __gos_http_csrf_extract_token(r: http::Request, config: &__gos_http_csrf_Conf
     let h = __gos_http_header_lookup(&r.headers, &config.header_name)
     if h != "" { return Some(h) }
     let ct = __gos_http_header_lookup(&r.headers, &"content-type")
-    if ct.to_lower().starts_with("application/x-www-form-urlencoded") {
+    if ct.to_lowercase().starts_with("application/x-www-form-urlencoded") {
         let f = r.form_value(config.form_field)
         if f != "" { return Some(f) }
     }
@@ -2880,7 +2880,7 @@ fn __gos_http_csrf_origin_allowed(r: http::Request, config: &__gos_http_csrf_Con
     }
     let host = __gos_http_header_lookup(&r.headers, &"host")
     if host == "" { return false }
-    __gos_http_origin_host(&candidate).to_lower() == host.to_lower()
+    __gos_http_origin_host(&candidate).to_lowercase() == host.to_lowercase()
 }
 fn __gos_http_csrf_check(r: http::Request, route_auth: __gos_http_csrf_RouteAuth, config: &__gos_http_csrf_Config) -> Result<(), errors::Error> {
     match route_auth {
@@ -3079,13 +3079,13 @@ fn __gos_http_multipart_boundary(content_type: &String) -> String {
     }
 }
 fn __gos_http_multipart_header_value(head: &String, key: &String) -> String {
-    let target = key.to_lower()
+    let target = key.to_lowercase()
     let lines: [String] = strings::lines(head)
     for line in lines {
         let l: String = line
         match l.split_once(":") {
             Some((k, v)) => {
-                if k.trim().to_lower() == target { return v.trim() }
+                if k.trim().to_lowercase() == target { return v.trim() }
             },
             None => {},
         }

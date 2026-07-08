@@ -45,7 +45,7 @@ know:
 - `crypto::rand::fill` uses `getrandom` and returns an explicit
   error if the OS RNG is unavailable. Callers must not
   silently discard that error in security-sensitive code.
-- `os::env` / `os::args` / `os::set_env` work in both the
+- `env::var` / `env::args` / `env::set_var` work in both the
   interpreter and the compiled tier. Mutation paths
   (`set_env` / `unset_env`) route through
   `gossamer_runtime::safe_env` so they are safe to call before

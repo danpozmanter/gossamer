@@ -87,6 +87,10 @@ const RUST_ONLY: &[&str] = &[
     "gos_rt_go_spawn",
     "gos_rt_heap_i64_free",
     "gos_rt_heap_u8_free",
+    // RC inspection/release helpers used by the interpreter and build
+    // linkage keepalive list, not emitted as MIR runtime calls.
+    "gos_rt_rc_release_no_buffer",
+    "gos_rt_rc_strong_count",
     "gos_rt_str_free",
     "gos_rt_result_dbg",
     "gos_rt_sync_i64_add",
@@ -134,21 +138,24 @@ const RUST_ONLY: &[&str] = &[
 fn read_to_string(rel: &str) -> String {
     // The split of `c_abi.rs` → `c_abi/` directory and `native.rs` →
     // `native/` directory means a single file read is no longer
-    // enough. Resolve `<rel>` to either the literal file (if it
-    // still exists) or, if the same path stem refers to a directory
-    // sibling, concatenate every `.rs` under that directory.
+    // enough. When both the module file and a sibling directory
+    // exist, concatenate both; otherwise the helper scan can pass
+    // over only `pub mod` declarations.
     let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let direct = crate_root.join(rel);
-    if direct.is_file() {
-        return fs::read_to_string(&direct)
-            .unwrap_or_else(|e| panic!("failed to read {}: {e}", direct.display()));
-    }
-    // Try the directory form: drop ".rs" and look for files inside.
     let dir = if let Some(stripped) = rel.strip_suffix(".rs") {
         crate_root.join(stripped)
     } else {
         direct.clone()
     };
+    let mut out = String::new();
+    if direct.is_file() {
+        out.push_str(
+            &fs::read_to_string(&direct)
+                .unwrap_or_else(|e| panic!("failed to read {}: {e}", direct.display())),
+        );
+        out.push('\n');
+    }
     if dir.is_dir() {
         let mut entries: Vec<PathBuf> = fs::read_dir(&dir)
             .unwrap_or_else(|e| panic!("failed to read_dir {}: {e}", dir.display()))
@@ -157,13 +164,15 @@ fn read_to_string(rel: &str) -> String {
             .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("rs"))
             .collect();
         entries.sort();
-        let mut out = String::new();
         for path in entries {
             out.push_str(&fs::read_to_string(&path).unwrap_or_else(|e| {
                 panic!("failed to read {}: {e}", path.display());
             }));
             out.push('\n');
         }
+        return out;
+    }
+    if !out.is_empty() {
         return out;
     }
     panic!(
@@ -230,8 +239,11 @@ fn every_runtime_helper_has_llvm_declaration_or_prefix_handler() {
     let mut llvm_dispatched = dispatched_helpers(&llvm_emit);
     llvm_dispatched.extend(dispatched_helpers(&llvm_lower));
 
-    // Build a set of Cranelift-only symbol names from the typed
-    // ABI registry. These legitimately have no LLVM declaration.
+    // Build a set from the typed ABI registry. Registry-known
+    // `gos_rt_*` calls are declared through the dynamic `declare_rt`
+    // path in the LLVM lowerer; Cranelift-only entries are skipped for
+    // the same reason as before.
+    let registry_known: BTreeSet<&str> = gossamer_abi::REGISTRY.iter().map(|e| e.name).collect();
     let cranelift_only: BTreeSet<&str> = gossamer_abi::REGISTRY
         .iter()
         .filter(|e| e.tier == gossamer_abi::Tier::Cranelift)
@@ -243,6 +255,7 @@ fn every_runtime_helper_has_llvm_declaration_or_prefix_handler() {
         .filter(|name| !llvm_dispatched.contains(name.as_str()))
         .filter(|name| !PREFIX_HANDLED.iter().any(|p| name.starts_with(p)))
         .filter(|name| !RUST_ONLY.contains(&name.as_str()))
+        .filter(|name| !registry_known.contains(name.as_str()))
         .filter(|name| !cranelift_only.contains(name.as_str()))
         .collect();
     if !missing.is_empty() {
@@ -267,12 +280,14 @@ fn every_runtime_helper_has_aot_dispatch_or_prefix_handler() {
     let native = read_to_string(NATIVE_PATH);
     let declared = declared_helpers(&runtime);
     let dispatched = dispatched_helpers(&native);
+    let registry_known: BTreeSet<&str> = gossamer_abi::REGISTRY.iter().map(|e| e.name).collect();
 
     let missing: Vec<&String> = declared
         .iter()
         .filter(|name| !dispatched.contains(name.as_str()))
         .filter(|name| !PREFIX_HANDLED.iter().any(|p| name.starts_with(p)))
         .filter(|name| !RUST_ONLY.contains(&name.as_str()))
+        .filter(|name| !registry_known.contains(name.as_str()))
         .collect();
 
     if !missing.is_empty() {

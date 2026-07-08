@@ -4,10 +4,11 @@
 //! playground links this stub in place of `gossamer-codegen-cranelift`.
 //! It mirrors the public types and entry points the VM references
 //! (`JitKind`, `JitFn`, `JitArtifact`, [`has_worthy_jit_body`],
-//! [`compile_to_jit`]) but never compiles anything: `has_worthy_jit_body`
-//! always returns `false` and `compile_to_jit` yields an empty artifact,
-//! so every Gossamer function runs on the bytecode VM. The JIT is purely
-//! a speed optimisation, so this is a clean functional equivalent.
+//! [`compile_to_jit_for_promotion`]) but never compiles anything:
+//! `has_worthy_jit_body` always returns `false` and both compile entry
+//! points yield an empty artifact, so every Gossamer function runs on the
+//! bytecode VM. The JIT is purely a speed optimisation, so this is a clean
+//! functional equivalent.
 
 // This stub deliberately mirrors the cranelift backend's public API (types,
 // variants, entry points) so the VM's `jit_call` trampoline type-checks
@@ -129,6 +130,17 @@ pub fn jit_eager_loop_bodies(
 /// and runs everything on the bytecode interpreter.
 #[allow(clippy::missing_errors_doc)]
 pub fn compile_to_jit(
+    _bodies: &[gossamer_mir::Body],
+    _tcx: &gossamer_types::TyCtxt,
+    _enum_shapes: &HashMap<u32, u32>,
+    _struct_shapes: &HashMap<u32, u32>,
+) -> Result<JitArtifact, String> {
+    Ok(JitArtifact::default())
+}
+
+/// wasm applies no promotion policy because it cannot compile native code.
+#[allow(clippy::missing_errors_doc)]
+pub fn compile_to_jit_for_promotion(
     _bodies: &[gossamer_mir::Body],
     _tcx: &gossamer_types::TyCtxt,
     _enum_shapes: &HashMap<u32, u32>,

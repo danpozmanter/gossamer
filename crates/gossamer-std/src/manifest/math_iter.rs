@@ -119,6 +119,11 @@ pub const MATH: StdModule = StdModule {
             doc: "Positive infinity.",
         },
         StdItem {
+            name: "NAN",
+            kind: StdItemKind::Const,
+            doc: "Not-a-number value.",
+        },
+        StdItem {
             name: "abs",
             kind: StdItemKind::Function,
             doc: "Absolute value of x.",
@@ -229,32 +234,7 @@ pub const MATH: StdModule = StdModule {
             doc: "Euclidean distance √(x²+y²).",
         },
         StdItem {
-            name: "min_f64",
-            kind: StdItemKind::Function,
-            doc: "Lesser of two f64 values.",
-        },
-        StdItem {
-            name: "max_f64",
-            kind: StdItemKind::Function,
-            doc: "Greater of two f64 values.",
-        },
-        StdItem {
-            name: "min_i64",
-            kind: StdItemKind::Function,
-            doc: "Lesser of two i64 values.",
-        },
-        StdItem {
-            name: "max_i64",
-            kind: StdItemKind::Function,
-            doc: "Greater of two i64 values.",
-        },
-        StdItem {
-            name: "abs_i64",
-            kind: StdItemKind::Function,
-            doc: "Absolute value of an i64.",
-        },
-        StdItem {
-            name: "fmod",
+            name: "rem",
             kind: StdItemKind::Function,
             doc: "Floating-point remainder x%y.",
         },
@@ -269,24 +249,14 @@ pub const MATH: StdModule = StdModule {
             doc: "Reports whether x is infinite.",
         },
         StdItem {
-            name: "nan",
-            kind: StdItemKind::Function,
-            doc: "Returns the IEEE 754 NaN value.",
-        },
-        StdItem {
-            name: "inf",
-            kind: StdItemKind::Function,
-            doc: "Returns ±infinity based on sign.",
-        },
-        StdItem {
             name: "copysign",
             kind: StdItemKind::Function,
             doc: "Magnitude of x with sign of y.",
         },
         StdItem {
-            name: "dim",
+            name: "positive_diff",
             kind: StdItemKind::Function,
-            doc: "max(x-y, 0) - Go's math.Dim.",
+            doc: "max(x-y, 0).",
         },
         StdItem {
             name: "sinh",
@@ -458,9 +428,9 @@ pub const ITER: StdModule = StdModule {
             doc: "Flattens a Vec<Vec<T>> into Vec<T>.",
         },
         StdItem {
-            name: "reversed",
+            name: "rev",
             kind: StdItemKind::Function,
-            doc: "Returns a reversed copy.",
+            doc: "Returns a rev copy.",
         },
         StdItem {
             name: "dedup",
@@ -538,7 +508,7 @@ pub const ITER: StdModule = StdModule {
             doc: "Splits a sequence of pairs into two Vecs.",
         },
         StdItem {
-            name: "windowed",
+            name: "windows",
             kind: StdItemKind::Function,
             doc: "Overlapping windows of width n.",
         },
@@ -548,7 +518,7 @@ pub const ITER: StdModule = StdModule {
             doc: "Consecutive overlapping pairs.",
         },
         StdItem {
-            name: "chunk_by_size",
+            name: "chunks",
             kind: StdItemKind::Function,
             doc: "Non-overlapping chunks of length n.",
         },
@@ -643,7 +613,7 @@ pub const ITER: StdModule = StdModule {
             doc: "Element with the largest derived key.",
         },
         StdItem {
-            name: "group_by",
+            name: "chunk_by",
             kind: StdItemKind::Function,
             doc: "Groups elements into a map keyed by f.",
         },
@@ -836,7 +806,7 @@ pub const MATH_BIG: StdModule = StdModule {
 /// `std::option` - data-last combinators that thread through `|>`.
 pub const OPTION: StdModule = StdModule {
     path: "std::option",
-    summary: "Data-last Option combinators for pipeline chaining: map, filter, default, and_then, etc.",
+    summary: "Data-last Option combinators for pipeline chaining: map, filter, unwrap_or, and_then, etc.",
     items: &[
         StdItem {
             name: "and_then",
@@ -844,12 +814,12 @@ pub const OPTION: StdModule = StdModule {
             doc: "Chains a fallible step: Some(v) -> f(v), None stays None.",
         },
         StdItem {
-            name: "default",
+            name: "unwrap_or",
             kind: StdItemKind::Function,
             doc: "Unwraps with a fallback value for None.",
         },
         StdItem {
-            name: "default_with",
+            name: "unwrap_or_else",
             kind: StdItemKind::Function,
             doc: "Unwraps with a lazily computed fallback for None.",
         },
@@ -904,7 +874,7 @@ pub const OPTION: StdModule = StdModule {
 /// `std::result` - data-last combinators that thread through `|>`.
 pub const RESULT: StdModule = StdModule {
     path: "std::result",
-    summary: "Data-last Result combinators for pipeline chaining: map, map_err, default_with, etc.",
+    summary: "Data-last Result combinators for pipeline chaining: map, map_err, unwrap_or_else, etc.",
     items: &[
         StdItem {
             name: "and_then",
@@ -912,12 +882,12 @@ pub const RESULT: StdModule = StdModule {
             doc: "Chains a fallible step on the Ok payload.",
         },
         StdItem {
-            name: "default",
+            name: "unwrap_or",
             kind: StdItemKind::Function,
             doc: "Unwraps Ok with a fallback value for Err.",
         },
         StdItem {
-            name: "default_with",
+            name: "unwrap_or_else",
             kind: StdItemKind::Function,
             doc: "Consumes the result, handling Err with a callback.",
         },

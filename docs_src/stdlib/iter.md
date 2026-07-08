@@ -15,7 +15,7 @@ Sequence adapters over Vec<T>: map, filter, fold, zip, enumerate, chain, etc.
 | `enumerate` | fn | Pairs each element with its index. |
 | `chain` | fn | Concatenates two sequences. |
 | `flatten` | fn | Flattens a Vec<Vec<T>> into Vec<T>. |
-| `reversed` | fn | Returns a reversed copy. |
+| `rev` | fn | Returns a rev copy. |
 | `dedup` | fn | Removes consecutive duplicate elements. |
 | `map` | fn | Applies f to each element, returning a new Vec. |
 | `filter` | fn | Returns elements where f is true. |
@@ -31,9 +31,9 @@ Sequence adapters over Vec<T>: map, filter, fold, zip, enumerate, chain, etc.
 | `range_inclusive` | fn | Closed integer sequence [start, end]. |
 | `repeat` | fn | A value repeated n times. |
 | `unzip` | fn | Splits a sequence of pairs into two Vecs. |
-| `windowed` | fn | Overlapping windows of width n. |
+| `windows` | fn | Overlapping windows of width n. |
 | `pairwise` | fn | Consecutive overlapping pairs. |
-| `chunk_by_size` | fn | Non-overlapping chunks of length n. |
+| `chunks` | fn | Non-overlapping chunks of length n. |
 | `for_each` | fn | Applies f to each element for its side effect. |
 | `filter_map` | fn | Maps each element and keeps the Some results. |
 | `reduce` | fn | Folds with the first element as the initial accumulator. |
@@ -52,6 +52,6 @@ Sequence adapters over Vec<T>: map, filter, fold, zip, enumerate, chain, etc.
 | `max_by` | fn | Largest element by the comparison closure. |
 | `min_by_key` | fn | Element with the smallest derived key. |
 | `max_by_key` | fn | Element with the largest derived key. |
-| `group_by` | fn | Groups elements into a map keyed by f. |
+| `chunk_by` | fn | Groups elements into a map keyed by f. |
 | `count_by` | fn | Counts elements per key derived by f. |
 

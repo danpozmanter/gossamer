@@ -1,39 +1,29 @@
-// Deprecated-but-callable aliases that previously had no compiled
-// dispatch: os::home, os::set_cwd, thread::sleep_ms, fs::mkdir,
-// fs::mkdir_all, fs::read_file, path::walk. Each routes to the same
-// runtime shim as its canonical spelling, so the output is identical
-// to the canonical form across every tier.
+// Canonical stdlib namespace wiring across tiers.
 
 use std::env
 use std::fs
-use std::os
 use std::path
-use std::thread
 
 fn main() {
-    // os::home == env::home_dir (Option<String>).
-    match os::home() {
+    match env::home_dir() {
         Some(h) => println!("home_nonempty={}", h.len() > 0),
         None => println!("home_nonempty=false"),
     }
 
-    thread::sleep_ms(1)
-    println!("slept=true")
-
     let dir = path::join(&env::temp_dir(), &"gossamer-alias-demo")
-    let _ = fs::remove_all(&dir)
+    let _ = fs::remove_dir_all(&dir)
     let nested = path::join(&dir, &"a")
-    match fs::mkdir_all(&nested) {
+    match fs::create_dir_all(&nested) {
         Ok(_) => println!("mkdir_all_ok=true"),
         Err(e) => println!("mkdir_all_err={}", e),
     }
 
     let file = path::join(&dir, &"data.bin")
     let _ = fs::write(&file, &"abc")
-    let bytes = fs::read_file(&file).unwrap()
+    let bytes = fs::read(&file).unwrap()
     println!("read_file_len={}", bytes.len())
 
-    match os::set_cwd(&dir) {
+    match env::set_current_dir(&dir) {
         Ok(_) => println!("set_cwd_ok=true"),
         Err(e) => println!("set_cwd_err={}", e),
     }
@@ -41,5 +31,5 @@ fn main() {
     let entries = path::walk(&dir).unwrap()
     println!("walk_nonempty={}", entries.len() > 0)
 
-    let _ = fs::remove_all(&dir)
+    let _ = fs::remove_dir_all(&dir)
 }

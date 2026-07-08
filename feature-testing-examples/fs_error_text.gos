@@ -6,14 +6,13 @@
 // 2)"). Deterministic: only never-existing paths are touched.
 
 use std::fs
-use std::os
 
 fn main() {
     match fs::write("/nonexistent-dir-gosfixture/file.txt", "hi") {
         Ok(_) => println!("write ok"),
         Err(e) => println!("write err: {}", e),
     }
-    match os::read_file(&"/nonexistent-file-gosfixture") {
+    match fs::read(&"/nonexistent-file-gosfixture") {
         Ok(_) => println!("read ok"),
         Err(e) => println!("read err: {}", e),
     }

@@ -3,7 +3,7 @@
 // must have its param pinned from the payload type, so String /
 // Error payloads print as text on the compiled tiers instead of as
 // raw pointers. Covers map_err / option::map / iter::map / filter /
-// result::default_with over String payloads, the
+// result::unwrap_or_else over String payloads, the
 // `map_err(errors::new)` eta shape (std fn as a value), a live
 // `http::request(...).map_err(|e| format!(...))` against a refused
 // loopback port (23907 - reserved, never bound), and a GT-clean
@@ -19,7 +19,7 @@ fn main() {
     }
 
     let name: Option<String> = Some("ada")
-    let loud = name |> option::map(|s| strings::to_upper(&s)) |> option::default("none")
+    let loud = name |> option::map(|s| strings::to_uppercase(&s)) |> option::unwrap_or("none")
     println!("option_map={}", loud)
 
     let words = ["alpha", "be", "gamma"]
@@ -33,7 +33,7 @@ fn main() {
     }
 
     let failing: Result<i64, errors::Error> = Err(errors::new("nope"))
-    failing |> result::default_with(|e| println!("default_with={e}"))
+    failing |> result::unwrap_or_else(|e| println!("unwrap_or_else={e}"))
 
     let eta: Result<i64, String> = Err("raw")
     let lifted = eta.map_err(errors::new)
