@@ -42,6 +42,8 @@ pub enum JitKind {
     /// `Result<Enum, _>` return as the by-value two-word `i128`; payload is
     /// the `Ok` enum's VM shape-table index.
     ResultEnumPtr(u32),
+    /// `Result<String, _>` return as the by-value two-word `i128`.
+    ResultNativeStr,
     /// All-scalar user struct as a pointer to its flat field-slot block;
     /// payload is the VM struct-shape-table index.
     StructPtr(u32),

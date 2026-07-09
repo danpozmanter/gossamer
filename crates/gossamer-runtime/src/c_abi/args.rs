@@ -157,15 +157,9 @@ pub unsafe extern "C" fn gos_rt_set_args(argc: c_int, argv: *const *const c_char
     });
 }
 
-/// Returns freed pages to the OS promptly by setting mimalloc's purge
-/// delay to zero. mimalloc's default (1000 ms in v3) defers the
-/// `madvise` purge to batch it; on a phase-structured program - build a
-/// large map, drop it, build the next - every dropped phase's pages stay
-/// resident until process exit, so peak RSS becomes the SUM of all
-/// phases instead of the largest live set (measured: k-nucleotide
-/// `--release` 52.6 MB -> 28.8 MB, wall-clock unchanged). Delegates to
-/// the single implementation in the crate root; the option index and
-/// rationale live there.
+/// Configures mimalloc options that need to be process-wide. Delegates to the
+/// single implementation in the crate root; the option indices and rationale
+/// live there.
 fn configure_allocator() {
     crate::init_process_allocator();
 }
@@ -178,12 +172,12 @@ fn configure_allocator() {
 // argv capture above in compiled programs, Rust's pre-main runtime in
 // the `gos` binary - which precedes every `runtime_init` call site.
 // THP is Linux-only, so the constructor is too; other platforms keep
-// the `runtime_init`/CLI-main call, where only the purge delay
-// matters and late application is harmless. Lives in this module
-// (not lib.rs) so the archive member is always pulled in: every
-// compiled binary references `gos_rt_set_args`. Excluded from this
-// crate's own test binary, whose option-index guard test must read
-// the pristine mimalloc defaults before anything sets them.
+// the `runtime_init`/CLI-main call, where the remaining allocator knobs
+// are safe to apply later. Lives in this module (not lib.rs) so the
+// archive member is always pulled in: every compiled binary references
+// `gos_rt_set_args`. Excluded from this crate's own test binary, whose
+// option-index guard test must read the pristine mimalloc defaults before
+// anything sets them.
 #[cfg(all(target_os = "linux", not(tsan), not(test)))]
 #[used]
 #[unsafe(link_section = ".init_array")]

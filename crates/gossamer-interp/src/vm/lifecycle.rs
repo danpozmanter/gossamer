@@ -64,17 +64,21 @@ impl Vm {
         // the same eager-compile set. The set may be empty when the runtime
         // policy requires lazy promotion instead.
         let empty_shapes = std::collections::HashMap::new();
-        let jit_eager_names = match (&mir_bodies, &tcx_snapshot, &enum_shape_defs) {
-            (Some(bodies), Some(tcx), Some(shapes)) => jit_backend::jit_eager_loop_bodies(
-                bodies,
-                tcx,
-                shapes,
-                struct_shape_defs.as_deref().unwrap_or(&empty_shapes),
-            )
-            .into_iter()
-            .collect(),
-            _ => std::collections::HashSet::new(),
-        };
+        let mut jit_eager_names: std::collections::HashSet<String> =
+            match (&mir_bodies, &tcx_snapshot, &enum_shape_defs) {
+                (Some(bodies), Some(tcx), Some(shapes)) => jit_backend::jit_eager_loop_bodies(
+                    bodies,
+                    tcx,
+                    shapes,
+                    struct_shape_defs.as_deref().unwrap_or(&empty_shapes),
+                )
+                .into_iter()
+                .collect(),
+                _ => std::collections::HashSet::new(),
+            };
+        if !jit_eager_names.is_empty() {
+            jit_eager_names.insert("main".to_string());
+        }
         Self {
             globals,
             prelude: builtins::prelude_globals(),
@@ -523,10 +527,14 @@ impl Vm {
                 // bodies now, while they are still in hand: the deferred
                 // compile below releases `mir_bodies` for spawn-free
                 // programs, so this is the last point the set is derivable.
-                *self.jit_eager_names.borrow_mut() =
+                let mut eager_names: std::collections::HashSet<String> =
                     jit_backend::jit_eager_loop_bodies(&bodies, &tcx, &shapes, &struct_shapes)
                         .into_iter()
                         .collect();
+                if !eager_names.is_empty() {
+                    eager_names.insert("main".to_string());
+                }
+                *self.jit_eager_names.borrow_mut() = eager_names;
                 *self.enum_shape_defs.borrow_mut() = Some(Arc::new(shapes));
                 *self.struct_shape_defs.borrow_mut() = Some(Arc::new(struct_shapes));
                 *self.mir_bodies.borrow_mut() = Some(Arc::new(bodies));
@@ -681,13 +689,19 @@ impl Vm {
                 reason = "JitFn carries non-Sync raw fn ptrs; Arc shape needed for shared-ownership across the override map"
             )]
             let jit_arc = Arc::new(jit_fn.clone());
-            state.insert_override(name.clone(), jit_arc);
+            state.insert_override(name.clone(), jit_arc.clone());
+            state
+                .chunk_overrides
+                .insert(Arc::as_ptr(chunk) as usize, jit_arc);
         }
         self.jit_override_count
             .store(state.overrides.len(), Ordering::Release);
         state.artifact = Some(artifact);
         state.compiled = JitCompileState::Done;
         drop(state);
+        for chunk_state in self.chunk_state_map.borrow().values() {
+            *chunk_state.jit_resolve.borrow_mut() = crate::vm::JitResolve::Unresolved;
+        }
         // Spawn-free programs hand the MIR to no child Vm, so reclaim it
         // now (the compile is the last reader) rather than at run end -
         // freeing the live set before the program reaches its peak.
@@ -1080,12 +1094,11 @@ fn build_native_enum_shapes(
 }
 
 /// Builds native shape descriptors for every user struct whose fields are
-/// all scalars (`i64` / `f64` / `bool` / `char`), registers them in the
-/// process-global struct-shape table, and returns `DefId.local -> shape
-/// index` for the cranelift eligibility check. An all-scalar struct is a
-/// flat field-slot block at the JIT boundary - one 8-byte slot per field,
-/// no heap children - so the trampoline marshals it (and writes back a
-/// `&mut self` mutation) with no reference counting.
+/// scalars or `String`, registers them in the process-global struct-shape
+/// table, and returns `DefId.local -> shape index` for the Cranelift
+/// eligibility check. A registered struct is a flat field-slot block at the
+/// JIT boundary - one 8-byte slot per field. String slots own temporary
+/// native strings that the trampoline copies out and frees after the call.
 fn build_native_struct_shapes(
     program: &HirProgram,
     tcx: &TyCtxt,
@@ -1124,21 +1137,22 @@ fn build_native_struct_shapes(
             continue;
         }
         let mut fields = Vec::with_capacity(field_names.len());
-        let mut all_scalar = true;
+        let mut supported = true;
         for (n, t) in field_names.iter().zip(field_tys.iter()) {
             let kind = match tcx.kind_of(*t) {
                 TyKind::Int(_) => NativeFieldKind::I64,
                 TyKind::Float(_) => NativeFieldKind::F64,
                 TyKind::Bool => NativeFieldKind::Bool,
                 TyKind::Char => NativeFieldKind::Char,
+                TyKind::String => NativeFieldKind::Str,
                 _ => {
-                    all_scalar = false;
+                    supported = false;
                     break;
                 }
             };
             fields.push((n.name.as_str(), kind));
         }
-        if !all_scalar {
+        if !supported {
             continue;
         }
         cands.push(Cand {

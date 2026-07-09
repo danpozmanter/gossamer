@@ -81,16 +81,12 @@ fn mimalloc_option_defaults() -> (i64, i64, i64) {
 
 /// Configures the process allocator for a predictable memory footprint.
 ///
-/// Sets mimalloc's purge delay to zero so freed pages return to the OS
-/// promptly. mimalloc's default (1000 ms in v3) defers the `madvise`
-/// purge to batch it; on a phase-structured program - build a large map,
-/// drop it, build the next - every dropped phase's pages stay resident
-/// until process exit, so peak RSS becomes the SUM of all phases instead
-/// of the largest live set (measured: k-nucleotide `--release` 52.6 MB
-/// -> 28.8 MB, wall-clock unchanged). This trades mimalloc's
-/// throughput-favouring default for the predictable footprint a language
-/// runtime wants; the lock-free allocation fast path that motivated
-/// mimalloc is unaffected.
+/// Leaves mimalloc's purge delay at its batching default. For allocation-heavy
+/// programs that construct and destroy many small heap objects, forcing
+/// immediate purges turns steady-state deallocation into a stream of
+/// `madvise` calls and can dominate runtime. Explicit phase boundaries can
+/// still call [`collect_process_allocator`] when the VM knows a large live set
+/// has become dead.
 ///
 /// Compiled Gossamer programs reach this from their generated `main` via
 /// `gos_rt_set_args` -> `runtime_init`; the `gos` binary (which links
@@ -100,16 +96,15 @@ fn mimalloc_option_defaults() -> (i64, i64, i64) {
 /// it. No-op under `ThreadSanitizer` and Miri, where the system
 /// allocator is used.
 ///
-/// Also raises mimalloc's abandoned-segment reclaim ceiling so short-lived
+/// Raises mimalloc's abandoned-segment reclaim ceiling so short-lived
 /// worker heaps do not leave reclaimable segments behind after a collection
 /// pass, and disables mimalloc's transparent-huge-page request. By default
 /// mimalloc `madvise(MADV_HUGEPAGE)`s its arena memory, so on Linux with
 /// THP in `madvise` mode the kernel backs even a tiny live set with
 /// 2 MiB pages - a process whose heap fits in tens of KiB stays several
 /// MiB resident - and mimalloc widens its minimal purge size to 2 MiB to
-/// match, which defeats the prompt purge above. Disabling it costs no
-/// measurable wall-clock on our workloads and keeps RSS proportional to
-/// the live set.
+/// match. Disabling it costs no measurable wall-clock on our workloads and
+/// keeps RSS proportional to the live set.
 ///
 /// `15`, `21`, and `43` are mimalloc's `mi_option_purge_delay`,
 /// `mi_option_deprecated_max_segment_reclaim`, and `mi_option_allow_thp`.
@@ -120,13 +115,13 @@ fn mimalloc_option_defaults() -> (i64, i64, i64) {
 pub fn init_process_allocator() {
     #[cfg(not(any(tsan, miri, fuzzing, target_arch = "wasm32")))]
     {
-        // Capture the pristine defaults before overwriting them, so the
-        // index-shift guard test can still read them once this has run.
+        // Capture the pristine defaults before overwriting the options we do
+        // tune, so the index-shift guard test can still read them once this
+        // has run.
         let _ = mimalloc_option_defaults();
         // SAFETY: `mi_option_set` is thread-safe and valid any time after
         // the allocator initialised, which it has by the time `main` runs.
         unsafe {
-            libmimalloc_sys::mi_option_set(MI_OPTION_PURGE_DELAY, 0);
             libmimalloc_sys::mi_option_set(MI_OPTION_MAX_SEGMENT_RECLAIM, 100);
             libmimalloc_sys::mi_option_set(MI_OPTION_ALLOW_THP, 0);
         }
@@ -232,7 +227,10 @@ mod allocator_tests {
         // SAFETY: option get is thread-safe; the global allocator is mimalloc
         // in a non-tsan build, so it is initialised here.
         let purge = unsafe { libmimalloc_sys::mi_option_get(super::MI_OPTION_PURGE_DELAY) };
-        assert_eq!(purge, 0, "init_process_allocator must set purge_delay to 0");
+        assert_eq!(
+            purge, 1000,
+            "init_process_allocator must leave purge_delay at mimalloc's batching default"
+        );
         let reclaim =
             unsafe { libmimalloc_sys::mi_option_get(super::MI_OPTION_MAX_SEGMENT_RECLAIM) };
         assert_eq!(

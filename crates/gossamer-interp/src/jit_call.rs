@@ -619,15 +619,43 @@ impl Drop for BuiltEnums {
     }
 }
 
-/// Marshals an all-scalar `Value::Struct` into a freshly allocated flat
+/// Owns a marshalled flat struct block and every heap child in its slots.
+struct NativeStructBacking {
+    slots: Box<[i64]>,
+    shape: &'static NativeStructShape,
+}
+
+impl NativeStructBacking {
+    fn as_ptr(&self) -> i64 {
+        self.slots.as_ptr() as i64
+    }
+}
+
+impl Drop for NativeStructBacking {
+    fn drop(&mut self) {
+        for (slot, (_, kind)) in self.slots.iter().zip(self.shape.fields.iter()) {
+            if matches!(kind, NativeFieldKind::Str) && *slot != 0 {
+                // SAFETY: string slots are owned native strings built by
+                // `build_native_struct` or written by a native body into this
+                // trampoline-owned struct block.
+                unsafe { free_native(JitKind::NativeStr, *slot) };
+            }
+        }
+    }
+}
+
+/// Marshals a supported `Value::Struct` into a freshly allocated flat
 /// field-slot block (the compiled-tier struct layout: one 8-byte slot per
-/// field, field `i` at byte offset `i * 8`, NO RC header). Returns the
-/// owned backing buffer; the caller passes its pointer to the JIT body and
-/// keeps the buffer alive across the call (a `&mut self` body mutates its
-/// slots in place, read back by [`read_native_struct`]). `None` when the
-/// value isn't a struct of the shape's scalar fields, so the caller falls
-/// back to bytecode.
-fn build_native_struct(value: &Value, shape: &NativeStructShape) -> Option<Box<[i64]>> {
+/// field, field `i` at byte offset `i * 8`, NO RC header). String fields are
+/// copied into owned native strings held by the backing block. The caller
+/// passes the block pointer to the JIT body and keeps it alive across the
+/// call; a `&mut self` body mutates its slots in place and those slots are
+/// read back by [`read_native_struct`]. `None` means the value did not match
+/// the registered struct shape, so the caller falls back to bytecode.
+fn build_native_struct(
+    value: &Value,
+    shape: &'static NativeStructShape,
+) -> Option<NativeStructBacking> {
     let Value::Struct(inner) = value else {
         return None;
     };
@@ -643,13 +671,29 @@ fn build_native_struct(value: &Value, shape: &NativeStructShape) -> Option<Box<[
             (NativeFieldKind::F64, Value::Int(n)) => (*n as f64).to_bits() as i64,
             (NativeFieldKind::Bool, Value::Bool(b)) => i64::from(*b),
             (NativeFieldKind::Char, Value::Char(c)) => *c as i64,
-            // A non-scalar field can't reach a registered shape, and a
-            // value whose kind doesn't match the field declines the marshal.
-            _ => return None,
+            (NativeFieldKind::Str, Value::String(s)) => {
+                rt::alloc_cstring(s.as_str().as_bytes()) as i64
+            }
+            // Other heap fields cannot reach a registered struct shape, and a
+            // value whose kind does not match the field declines the marshal.
+            _ => {
+                free_native_struct_slots(&slots, shape);
+                return None;
+            }
         };
         slots[i] = word;
     }
-    Some(slots)
+    Some(NativeStructBacking { slots, shape })
+}
+
+fn free_native_struct_slots(slots: &[i64], shape: &NativeStructShape) {
+    for (slot, (_, kind)) in slots.iter().zip(shape.fields.iter()) {
+        if matches!(kind, NativeFieldKind::Str) && *slot != 0 {
+            // SAFETY: only slots already written by `build_native_struct` are
+            // non-zero here, and each is an owned native string.
+            unsafe { free_native(JitKind::NativeStr, *slot) };
+        }
+    }
 }
 
 /// Reads a native flat struct block back into an owned `Value::Struct`,
@@ -675,9 +719,8 @@ fn read_native_struct(ptr: i64, shape: &NativeStructShape) -> Value {
                 NativeFieldKind::Char => {
                     Value::Char(char::from_u32(word as u32).unwrap_or('\u{0}'))
                 }
-                // Registered struct shapes are all-scalar; these never occur.
-                NativeFieldKind::Str
-                | NativeFieldKind::Enum(_)
+                NativeFieldKind::Str => native_ptr_to_value(JitKind::NativeStr, word),
+                NativeFieldKind::Enum(_)
                 | NativeFieldKind::VecEnum(_)
                 | NativeFieldKind::VecStrEnumTuple(_) => Value::Unit,
             };
@@ -1166,7 +1209,7 @@ macro_rules! call_through {
             // argument has an identical ABI on every target, unlike an `i128`
             // return (which Windows x64 places in a register Rust reads
             // differently). `invoke_prepared_native` decodes the carrier tuple.
-            JitKind::ResultEnumPtr(_) => {
+            JitKind::ResultEnumPtr(_) | JitKind::ResultNativeStr => {
                 // A `u128` slot is 16-byte aligned, matching the thunk's
                 // aligned `i128` store; `disc` is the low word, `payload`
                 // the high word.
@@ -2515,6 +2558,10 @@ pub(crate) struct Prepared {
     /// stub yields the `[disc, payload]` carrier tuple and the native path
     /// decodes the `Ok` enum (this shape) / `Err` error and frees it.
     result_enum: Option<u32>,
+    /// `true` when the real return was `Result<String, errors::Error>`.
+    /// The stub yields the same `[disc, payload]` carrier tuple; the native
+    /// path copies and frees the `Ok` string payload or decodes the `Err`.
+    result_native_str: bool,
     /// `Some(kind)` when the real return was a native aggregate
     /// (`NativeStr` / `NativeVecI64`); the raw pointer is read back and
     /// freed after the call.
@@ -2604,13 +2651,14 @@ pub(crate) fn prepare(jit: std::sync::Arc<JitFn>) -> Option<Prepared> {
         );
         return None;
     };
-    let (ret_kind, enum_return, native_return, result_enum) = match jit.returns {
-        JitKind::EnumPtr(idx) => (JitKind::I64, Some(idx), None, None),
-        JitKind::ResultEnumPtr(idx) => (JitKind::ResultEnumPtr(idx), None, None, Some(idx)),
+    let (ret_kind, enum_return, native_return, result_enum, result_native_str) = match jit.returns {
+        JitKind::EnumPtr(idx) => (JitKind::I64, Some(idx), None, None, false),
+        JitKind::ResultEnumPtr(idx) => (JitKind::ResultEnumPtr(idx), None, None, Some(idx), false),
+        JitKind::ResultNativeStr => (JitKind::ResultNativeStr, None, None, None, true),
         k @ (JitKind::NativeStr
         | JitKind::NativeVecI64
         | JitKind::NativeVecF64
-        | JitKind::NativeVecTupleIF) => (JitKind::I64, None, Some(k), None),
+        | JitKind::NativeVecTupleIF) => (JitKind::I64, None, Some(k), None, false),
         // A `U8Vec` return would need re-registering the native buffer into
         // the VM registry; not supported, so keep such bodies on bytecode.
         JitKind::U8VecHandle => {
@@ -2618,7 +2666,13 @@ pub(crate) fn prepare(jit: std::sync::Arc<JitFn>) -> Option<Prepared> {
             return None;
         }
         // `Vec<Vec<i64>>` returns re-wrap through `invoke_prepared_native`.
-        JitKind::NativeVecVecI64 => (JitKind::I64, None, Some(JitKind::NativeVecVecI64), None),
+        JitKind::NativeVecVecI64 => (
+            JitKind::I64,
+            None,
+            Some(JitKind::NativeVecVecI64),
+            None,
+            false,
+        ),
         // A struct return is a pointer to a stack-local block that would
         // dangle past the call; body_kinds already declines these, but
         // guard here too rather than mis-marshal a raw pointer.
@@ -2629,8 +2683,8 @@ pub(crate) fn prepare(jit: std::sync::Arc<JitFn>) -> Option<Prepared> {
         // A 2-tuple return is a pointer to a heap (`gos_rt_aggr_alloc`)
         // block; the stub reads it as `I64` and the native path decodes the
         // slots into a `Value::Tuple`.
-        JitKind::TupleReturn(_) => (JitKind::I64, None, None, None),
-        other => (other, None, None, None),
+        JitKind::TupleReturn(_) => (JitKind::I64, None, None, None, false),
+        other => (other, None, None, None, false),
     };
     let tuple_return = match jit.returns {
         JitKind::TupleReturn(elems) => Some(elems),
@@ -2651,6 +2705,7 @@ pub(crate) fn prepare(jit: std::sync::Arc<JitFn>) -> Option<Prepared> {
         matches!(jit.returns, JitKind::EnumPtr(idx) if shape_needs_deep_free(idx));
     let has_native = native_return.is_some()
         || result_enum.is_some()
+        || result_native_str
         || tuple_return.is_some()
         || enum_param_deep
         || enum_return_deep
@@ -2672,6 +2727,7 @@ pub(crate) fn prepare(jit: std::sync::Arc<JitFn>) -> Option<Prepared> {
         ret_kind,
         enum_return,
         result_enum,
+        result_native_str,
         native_return,
         tuple_return,
         has_native,
@@ -2790,6 +2846,7 @@ pub(crate) fn invoke_prepared(p: &Prepared, args: &[Value], graph_cache: &GraphC
                 | JitKind::U8VecHandle
                 | JitKind::StructPtr(_)
                 | JitKind::ResultEnumPtr(_)
+                | JitKind::ResultNativeStr
                 | JitKind::TupleReturn(_),
                 _,
             ) => return Dispatch::Fallback,
@@ -2879,7 +2936,7 @@ fn invoke_prepared_native(p: &Prepared, args: &[Value], graph_cache: &GraphCache
     // whole call (the JIT body reads / mutates their slots through the
     // pointer recorded in `natives`). They are freed when this Vec drops
     // at function exit, after write-back has read any `&mut self` mutation.
-    let mut struct_backings: Vec<Box<[i64]>> = Vec::new();
+    let mut struct_backings: Vec<NativeStructBacking> = Vec::new();
     // Native enum trees marshalled in for `EnumPtr` `Value::Variant` params:
     // `(native ptr, shape index)`. The trampoline owns each end to end and
     // frees it with `free_native_enum` after the call (the body only borrows
@@ -3002,7 +3059,7 @@ fn invoke_prepared_native(p: &Prepared, args: &[Value], graph_cache: &GraphCache
                     free_in_flight(&natives, &built_enums, &str_cells);
                     return Dispatch::Fallback;
                 };
-                let ptr = backing.as_ptr() as i64;
+                let ptr = backing.as_ptr();
                 struct_backings.push(backing);
                 natives.push((*kind, ptr, cell));
                 Slot::I(ptr)
@@ -3026,9 +3083,9 @@ fn invoke_prepared_native(p: &Prepared, args: &[Value], graph_cache: &GraphCache
                     return Dispatch::Fallback;
                 }
             },
-            // `ResultEnumPtr` and `TupleReturn` are return-only kinds
+            // Result carriers and `TupleReturn` are return-only kinds
             // (rejected as params by `body_kinds`); never in the param list.
-            JitKind::ResultEnumPtr(_) | JitKind::TupleReturn(_) => {
+            JitKind::ResultEnumPtr(_) | JitKind::ResultNativeStr | JitKind::TupleReturn(_) => {
                 free_in_flight(&natives, &built_enums, &str_cells);
                 return Dispatch::Fallback;
             }
@@ -3127,6 +3184,28 @@ fn invoke_prepared_native(p: &Prepared, args: &[Value], graph_cache: &GraphCache
                 owned: true,
             }));
             Value::variant("Ok", vec![v])
+        } else {
+            Value::variant("Err", vec![read_native_error(payload)])
+        };
+        (v, None)
+    } else if p.result_native_str {
+        let Value::Tuple(t) = &raw else {
+            free_in_flight(&natives, &built_enums, &str_cells);
+            return Dispatch::Fallback;
+        };
+        let (Some(Value::Int(disc)), Some(Value::Int(payload))) = (t.first(), t.get(1)) else {
+            free_in_flight(&natives, &built_enums, &str_cells);
+            return Dispatch::Fallback;
+        };
+        let (disc, payload) = (*disc, *payload);
+        let v = if disc == 0 {
+            let s = native_ptr_to_value(JitKind::NativeStr, payload);
+            if payload != 0 {
+                // SAFETY: an owned native string returned in the `Ok` payload,
+                // copied out above and freed exactly once here.
+                unsafe { free_native(JitKind::NativeStr, payload) };
+            }
+            Value::variant("Ok", vec![s])
         } else {
             Value::variant("Err", vec![read_native_error(payload)])
         };

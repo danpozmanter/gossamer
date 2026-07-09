@@ -263,9 +263,10 @@ pub struct Vm {
 /// [`Vm::chunk_state_for`] are valid for the lifetime of the
 /// owning `Vm`.
 /// Memoised JIT-override resolution for a chunk. `Unresolved` until
-/// the first call after the one-shot JIT install; then fixed (the
-/// override map only shrinks afterward, so a cached resolution - even
-/// an `Arc`-held evicted entry - stays valid).
+/// the first call after a JIT install, then fixed until the next install
+/// invalidates all chunk resolutions. A cached `Some` stays valid even if
+/// the override map later evicts the entry because it owns the prepared
+/// dispatch data.
 #[derive(Clone, Default)]
 pub(crate) enum JitResolve {
     /// Not yet resolved against the installed override map.
@@ -274,7 +275,7 @@ pub(crate) enum JitResolve {
     /// Resolved: this chunk has no native override (stays bytecode).
     None,
     /// Resolved: pre-computed dispatch data to call through.
-    Some(std::sync::Arc<crate::jit_call::Prepared>),
+    Some(std::rc::Rc<crate::jit_call::Prepared>),
 }
 
 pub(crate) struct ChunkState {
@@ -343,7 +344,11 @@ impl ChunkState {
                 .collect(),
             hot_counter: Cell::new(initial),
             jit_observed_work: Cell::new(0),
-            jit_min_work: crate::bytecode::jit_min_work_for(instr_count),
+            jit_min_work: if eager {
+                0
+            } else {
+                crate::bytecode::jit_min_work_for(instr_count)
+            },
             instr_count: instr_count as u64,
             jit_resolve: RefCell::new(JitResolve::Unresolved),
         }
@@ -371,6 +376,12 @@ pub(crate) struct JitState {
     /// long-running daemon that JITs new functions over time
     /// doesn't grow this map without bound.
     pub(crate) overrides: HashMap<String, Arc<JitFn>>,
+    /// Map from the bytecode chunk's stable `Arc` allocation address to the
+    /// JIT entry. Impl methods have qualified JIT names
+    /// (`Type::method`) but their shared bytecode chunk can still be named
+    /// only `method`; pointer-keyed lookup lets `apply` find the exact
+    /// promoted method without relying on collision-prone bare names.
+    pub(crate) chunk_overrides: HashMap<usize, Arc<JitFn>>,
     /// FIFO record of insertion order for `overrides`. On every
     /// insert that pushes the map past [`JIT_OVERRIDE_CAP`] entries
     /// the front name is popped and its entry dropped - releasing
@@ -937,6 +948,10 @@ fn index_get_consume(base: &mut Value, raw: i64) -> RuntimeResult<Value> {
 fn qualified_key(receiver: &Value, method: &str) -> Option<&'static str> {
     match receiver {
         Value::Struct(inner) => Some(intern_qualified(inner.name.as_str(), method)),
+        Value::MutCell(cell) => {
+            let inner = cell.lock();
+            qualified_key(&inner, method)
+        }
         Value::Channel(_) => Some(intern_qualified("Channel", method)),
         Value::String(_) => Some(intern_qualified("String", method)),
         // `Vec`-receiver methods resolve by type so a bare name shared with
@@ -991,6 +1006,10 @@ pub(crate) fn type_token(v: &Value) -> u64 {
         Value::Variant(inner) => {
             // Globally-interned canonical pointer (see the `Struct` arm).
             TAG_VARIANT | (u64::from(inner.name.id()) & 0x00FF_FFFF_FFFF_FFFF)
+        }
+        Value::MutCell(cell) => {
+            let inner = cell.lock();
+            type_token(&inner)
         }
         // Primitives + non-cacheable receivers fall through to the
         // slow path on every call. The IC slot stores token=0 and
@@ -1336,22 +1355,95 @@ fn compare(
     Ok(Value::Bool(matches))
 }
 
-/// True when `program` declares at least one recursive user `fn` other than
-/// `main`. Used by `Vm::load` to skip MIR lowering on programs where the JIT
-/// cannot improve the current invocation: without OSR, a loop living directly
-/// in a once-entered frame cannot switch to native code mid-frame, so preparing
-/// a JIT snapshot only raises peak RSS.
+/// True when `program` declares at least one recursive user `fn` or contains a
+/// loop that the backend may promote on first call. Used by `Vm::load` to skip
+/// MIR lowering on programs where the JIT cannot improve the current
+/// invocation.
 fn has_jit_eligible_fn(program: &HirProgram) -> bool {
     program.items.iter().any(|item| match &item.kind {
-        HirItemKind::Fn(decl) => {
-            decl.name.name != "main"
-                && decl
-                    .body
-                    .as_ref()
-                    .is_some_and(|body| hir_block_calls_name(&body.block, decl.name.name.as_str()))
-        }
+        HirItemKind::Fn(decl) => decl.body.as_ref().is_some_and(|body| {
+            hir_block_has_loop(&body.block)
+                || hir_block_calls_name(&body.block, decl.name.name.as_str())
+        }),
         _ => false,
     })
+}
+
+fn hir_block_has_loop(block: &gossamer_hir::HirBlock) -> bool {
+    block.stmts.iter().any(|stmt| match &stmt.kind {
+        gossamer_hir::HirStmtKind::Let { init, .. } => init.as_ref().is_some_and(hir_expr_has_loop),
+        gossamer_hir::HirStmtKind::Expr { expr, .. }
+        | gossamer_hir::HirStmtKind::Defer(expr)
+        | gossamer_hir::HirStmtKind::Go(expr) => hir_expr_has_loop(expr),
+        gossamer_hir::HirStmtKind::Item(item) => match &item.kind {
+            HirItemKind::Fn(decl) => decl
+                .body
+                .as_ref()
+                .is_some_and(|body| hir_block_has_loop(&body.block)),
+            _ => false,
+        },
+    }) || block.tail.as_deref().is_some_and(hir_expr_has_loop)
+}
+
+fn hir_expr_has_loop(expr: &gossamer_hir::HirExpr) -> bool {
+    use gossamer_hir::HirExprKind as K;
+    match &expr.kind {
+        K::Loop { .. } | K::While { .. } => true,
+        K::Call { callee, args } => hir_expr_has_loop(callee) || args.iter().any(hir_expr_has_loop),
+        K::MethodCall { receiver, args, .. } => {
+            hir_expr_has_loop(receiver) || args.iter().any(hir_expr_has_loop)
+        }
+        K::Field { receiver, .. } | K::TupleIndex { receiver, .. } => hir_expr_has_loop(receiver),
+        K::Index { base, index } => hir_expr_has_loop(base) || hir_expr_has_loop(index),
+        K::Unary { operand, .. } | K::Cast { value: operand, .. } => hir_expr_has_loop(operand),
+        K::Binary { lhs, rhs, .. } => hir_expr_has_loop(lhs) || hir_expr_has_loop(rhs),
+        K::Assign { place, value } => hir_expr_has_loop(place) || hir_expr_has_loop(value),
+        K::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            hir_expr_has_loop(condition)
+                || hir_expr_has_loop(then_branch)
+                || else_branch.as_deref().is_some_and(hir_expr_has_loop)
+        }
+        K::Match { scrutinee, arms } => {
+            hir_expr_has_loop(scrutinee)
+                || arms.iter().any(|arm| {
+                    arm.guard.as_ref().is_some_and(hir_expr_has_loop)
+                        || hir_expr_has_loop(&arm.body)
+                })
+        }
+        K::Block(block) => hir_block_has_loop(block),
+        K::Closure { body, .. } => hir_expr_has_loop(body),
+        K::LiftedClosure { captures, .. } => captures.iter().any(hir_expr_has_loop),
+        K::Tuple(elems) => elems.iter().any(hir_expr_has_loop),
+        K::Array(arr) => match arr {
+            gossamer_hir::HirArrayExpr::List(elems) => elems.iter().any(hir_expr_has_loop),
+            gossamer_hir::HirArrayExpr::Repeat { value, count } => {
+                hir_expr_has_loop(value) || hir_expr_has_loop(count)
+            }
+        },
+        K::Go(inner) => hir_expr_has_loop(inner),
+        K::Range { start, end, .. } => {
+            start.as_deref().is_some_and(hir_expr_has_loop)
+                || end.as_deref().is_some_and(hir_expr_has_loop)
+        }
+        K::Return(value) | K::Break { value, .. } => {
+            value.as_deref().is_some_and(hir_expr_has_loop)
+        }
+        K::Select { arms } => arms.iter().any(|arm| {
+            let op_has_loop = match &arm.op {
+                gossamer_hir::HirSelectOp::Recv { channel, .. } => hir_expr_has_loop(channel),
+                gossamer_hir::HirSelectOp::Send { channel, value } => {
+                    hir_expr_has_loop(channel) || hir_expr_has_loop(value)
+                }
+                gossamer_hir::HirSelectOp::Default => false,
+            };
+            op_has_loop || hir_expr_has_loop(&arm.body)
+        }),
+        K::Path { .. } | K::Literal(_) | K::Continue { .. } | K::Placeholder => false,
+    }
 }
 
 fn hir_block_calls_name(block: &gossamer_hir::HirBlock, name: &str) -> bool {

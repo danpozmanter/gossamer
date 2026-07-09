@@ -61,6 +61,11 @@ pub enum JitKind {
     /// `*mut GosError`. The trampoline decodes the `i128` and marshals each
     /// side back to a VM `Value`. Return-only.
     ResultEnumPtr(u32),
+    /// A `Result<String, errors::Error>` RETURN using the same two-word
+    /// carrier shape as [`Self::ResultEnumPtr`]. On `Ok`, the payload is an
+    /// owned native string pointer; on `Err`, a native `*mut GosError`.
+    /// Return-only.
+    ResultNativeStr,
     /// An all-scalar user struct (`&self` / `&mut self` / by-value)
     /// crossing the boundary as a pointer to a flat field-slot block
     /// (one 8-byte slot per field, field `i` at byte offset `i * 8`, NO
@@ -320,9 +325,9 @@ fn jit_compile_set<'a>(
     };
 
     // Seed the compile set from bodies that can amortize native code across
-    // repeated entries without OSR: recursive helpers. A loop in `main` or in
-    // a once-called helper is intentionally not a root because compiling an
-    // already-running frame cannot make that active frame native.
+    // substantial repeated work: recursive helpers and loop-bearing bodies.
+    // A body that is not itself hot but is reachable from one of those roots
+    // is pulled in by the BFS below so intra-module call references resolve.
     let trace = std::env::var("GOS_JIT_TRACE").is_ok();
     let mut included: std::collections::HashSet<&str> = bodies
         .iter()
@@ -331,7 +336,7 @@ fn jit_compile_set<'a>(
             let unlowerable_local =
                 body_uses_unlowerable_local_repr(b, tcx, enum_shapes, struct_shapes);
             let goroutine_hit = body_has_cross_goroutine_ops(b);
-            let amortizes = b.name != "main" && reaches_self(b.name.as_str());
+            let amortizes = reaches_self(b.name.as_str()) || body_has_loop(b);
             if trace && (!kinds_ok || unlowerable_local || goroutine_hit) {
                 eprintln!(
                     "jit: seed-reject {} (kinds_ok={kinds_ok} \
@@ -394,7 +399,8 @@ fn jit_compile_set<'a>(
 
 /// `true` when at least one body is worth promoting to native code:
 /// it is JIT-promotable (scalar/enum-pointer signature) AND does
-/// substantial work per cross-boundary call because it recurses. The
+/// substantial work per cross-boundary call because it recurses or contains
+/// a loop. The
 /// in-process JIT's only speedup is eliding per-call
 /// bytecode dispatch, which the VM<->native boundary marshalling
 /// cancels for a tiny straight-line leaf called from bytecode. A program
@@ -441,18 +447,21 @@ pub fn has_worthy_jit_body(
         false
     };
     bodies.iter().any(|b| {
-        b.name != "main"
-            && body_kinds(b, tcx, enum_shapes, struct_shapes).is_some()
-            && reaches_self(b.name.as_str())
+        body_kinds(b, tcx, enum_shapes, struct_shapes).is_some()
+            && (reaches_self(b.name.as_str())
+                || (body_has_loop(b)
+                    && !body_uses_unlowerable_local_repr(b, tcx, enum_shapes, struct_shapes)
+                    && !body_has_cross_goroutine_ops(b)))
     })
 }
 
 /// Names of bodies worth JIT-compiling on first call.
 ///
-/// Eager first-call compilation is currently disabled because a loop in an
-/// already-entered frame cannot switch that active frame to native code
-/// without OSR. Recursive helpers still promote through the normal compile
-/// path.
+/// A loop-bearing body may only be called once, so it would never trip a
+/// call-count threshold before doing its expensive work. Starting its hot
+/// counter at one lets the VM compile the module before entering that body and
+/// dispatch the same call through native code when the body has a supported
+/// boundary shape.
 #[allow(
     clippy::implicit_hasher,
     reason = "single interp caller passes the same HashMap shape compile_to_jit uses"
@@ -464,8 +473,74 @@ pub fn jit_eager_loop_bodies(
     enum_shapes: &HashMap<u32, u32>,
     struct_shapes: &HashMap<u32, u32>,
 ) -> Vec<String> {
-    let _ = (bodies, tcx, enum_shapes, struct_shapes);
-    Vec::new()
+    bodies
+        .iter()
+        .filter(|body| {
+            body_has_loop(body)
+                && body_kinds(body, tcx, enum_shapes, struct_shapes).is_some()
+                && !body_uses_unlowerable_local_repr(body, tcx, enum_shapes, struct_shapes)
+                && !body_has_cross_goroutine_ops(body)
+        })
+        .map(|body| body.name.clone())
+        .collect()
+}
+
+fn body_has_loop(body: &Body) -> bool {
+    use gossamer_mir::Terminator;
+    fn successors(term: &Terminator, out: &mut Vec<usize>) {
+        out.clear();
+        match term {
+            Terminator::Goto { target } => out.push(target.0 as usize),
+            Terminator::SwitchInt { arms, default, .. } => {
+                for (_, b) in arms {
+                    out.push(b.0 as usize);
+                }
+                out.push(default.0 as usize);
+            }
+            Terminator::Call {
+                target: Some(b), ..
+            } => out.push(b.0 as usize),
+            Terminator::Assert { target, .. } | Terminator::Drop { target, .. } => {
+                out.push(target.0 as usize);
+            }
+            Terminator::Return
+            | Terminator::Unreachable
+            | Terminator::Panic { .. }
+            | Terminator::Call { target: None, .. } => {}
+        }
+    }
+    let n = body.blocks.len();
+    let mut color = vec![0u8; n]; // 0 = white, 1 = grey, 2 = black
+    let mut succ = Vec::new();
+    for start in 0..n {
+        if color[start] != 0 {
+            continue;
+        }
+        color[start] = 1;
+        let mut stack: Vec<(usize, usize)> = vec![(start, 0)];
+        while let Some(&(node, idx)) = stack.last() {
+            successors(&body.blocks[node].terminator, &mut succ);
+            if idx < succ.len() {
+                stack.last_mut().expect("nonempty stack").1 += 1;
+                let next = succ[idx];
+                if next >= n {
+                    continue;
+                }
+                match color[next] {
+                    0 => {
+                        color[next] = 1;
+                        stack.push((next, 0));
+                    }
+                    1 => return true,
+                    _ => {}
+                }
+            } else {
+                color[node] = 2;
+                stack.pop();
+            }
+        }
+    }
+    false
 }
 
 /// Every `static mut` symbol read or written by `body`.
@@ -670,7 +745,7 @@ fn compile_bodies(
     // the key, so dispatch is unaffected.
     let lowered = lower_program_serial(&mut module, filtered, tcx, Some("gos_main"))?;
 
-    // A `Result<Enum, _>`-returning body hands its `[disc, payload]` carrier
+    // A `Result<T, _>`-returning body hands its `[disc, payload]` carrier
     // back as an `i128` by value. The Rust trampoline reads that return from
     // a register the Windows x64 ABI disagrees with, so wrap each such body
     // in an out-pointer thunk (Cranelift-to-Cranelift call, then a pointer
@@ -680,7 +755,7 @@ fn compile_bodies(
     for body in filtered {
         if !matches!(
             body_kinds(body, tcx, enum_shapes, struct_shapes),
-            Some((_, JitKind::ResultEnumPtr(_)))
+            Some((_, JitKind::ResultEnumPtr(_) | JitKind::ResultNativeStr))
         ) {
             continue;
         }
@@ -885,14 +960,18 @@ fn body_jit_unsupported(body: &Body, tcx: &TyCtxt) -> bool {
         ) {
             return true;
         }
-        // A `Vec`/`[T]` whose element is a payload-bearing (boxed,
-        // individually reference-counted) enum. The trampoline marshals a
-        // vector by its content pointer, but a vector of boxed enums needs
-        // per-element ownership tracking the native path does not model, so
-        // manipulating one in a compiled body corrupts the shared elements.
-        // Keep such bodies on bytecode.
+        // A `Vec`/`[T]` whose element is a payload-bearing enum is safe in a
+        // read-only, `Unit`-returning serializer body, but not in bodies that
+        // build and return enum DOMs: the native local vector owns per-element
+        // enum references, and those constructor paths still need deeper
+        // ownership modelling. Keep builders such as JSON parse/transform on
+        // bytecode until that model is complete.
         if let TyKind::Vec(elem) | TyKind::Slice(elem) = lty
             && tcx.is_payload_enum(*elem)
+            && !matches!(
+                tcx.kind_of(body.local_ty(gossamer_mir::Local::RETURN)),
+                TyKind::Unit
+            )
         {
             return true;
         }
@@ -1132,10 +1211,13 @@ fn body_kinds(
     for pidx in 1..=body.arity {
         let local = gossamer_mir::Local(pidx);
         let kind = ty_to_kind(tcx, body.local_ty(local), enum_shapes, struct_shapes)?;
-        // `ResultEnumPtr` / `TupleReturn` are return-only marshalling shapes;
+        // Result carriers / `TupleReturn` are return-only marshalling shapes;
         // the trampoline has no inbound parameter path for them, so a body
         // taking one as a parameter stays on bytecode.
-        if matches!(kind, JitKind::ResultEnumPtr(_) | JitKind::TupleReturn(_)) {
+        if matches!(
+            kind,
+            JitKind::ResultEnumPtr(_) | JitKind::ResultNativeStr | JitKind::TupleReturn(_)
+        ) {
             return None;
         }
         params.push(kind);
@@ -1241,6 +1323,7 @@ fn ty_to_kind(
                 TyKind::Adt { def: ok_def, .. } if tcx.is_rc_managed(ok_ty) => enum_shapes
                     .get(&ok_def.local)
                     .map(|idx| JitKind::ResultEnumPtr(*idx)),
+                TyKind::String => Some(JitKind::ResultNativeStr),
                 _ => None,
             }
         }

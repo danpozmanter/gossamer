@@ -144,18 +144,17 @@ impl Vm {
                     // JIT install is one-shot and the map only shrinks.
                     let mut slot = state.jit_resolve.borrow_mut();
                     if matches!(&*slot, crate::vm::JitResolve::Unresolved) {
-                        // `Prepared` carries the non-Sync raw JIT fn ptr
-                        // (and a per-entry verification `Cell`); the VM is
-                        // single-threaded, so the `Arc` never crosses a
-                        // thread. `Arc` (not `Rc`) keeps the resolution
-                        // valid even after the override map evicts it.
-                        #[allow(
-                            clippy::arc_with_non_send_sync,
-                            reason = "Prepared carries non-Sync raw fn ptr; per-ChunkState cache stays on one thread"
-                        )]
-                        let resolved = match self.jit.read().overrides.get(chunk.name).cloned() {
+                        let chunk_key = Arc::as_ptr(&chunk) as usize;
+                        let override_jit = {
+                            let jit = self.jit.read();
+                            jit.chunk_overrides
+                                .get(&chunk_key)
+                                .or_else(|| jit.overrides.get(chunk.name))
+                                .cloned()
+                        };
+                        let resolved = match override_jit {
                             Some(j) => match jit_call::prepare(j) {
-                                Some(p) => crate::vm::JitResolve::Some(std::sync::Arc::new(p)),
+                                Some(p) => crate::vm::JitResolve::Some(std::rc::Rc::new(p)),
                                 None => crate::vm::JitResolve::None,
                             },
                             None => crate::vm::JitResolve::None,

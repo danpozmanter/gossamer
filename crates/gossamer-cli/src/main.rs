@@ -12,9 +12,8 @@
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
-    // Return freed pages to the OS promptly (mimalloc purge delay -> 0)
-    // so the `gos run` VM tier and the toolchain share the predictable
-    // footprint compiled programs get from `runtime_init`.
+    // Apply the same process-wide allocator knobs to the `gos run` VM tier
+    // and the toolchain that compiled programs get from `runtime_init`.
     gossamer_runtime::init_process_allocator();
     // Arm the byte-budget recursion guard at the shallowest point of
     // the main thread, so deeply recursive walker code (closures,
