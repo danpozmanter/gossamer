@@ -271,6 +271,9 @@ fn render(lines: &[Line<'_>], file: FileId) -> String {
         } else {
             (child_level, false)
         };
+        let starts_in_top_use_list = stack
+            .iter()
+            .any(|open| open.kind == BraceKind::UseList && open.line_level == 0);
         let body = render_code_line(
             line,
             file,
@@ -294,11 +297,12 @@ fn render(lines: &[Line<'_>], file: FileId) -> String {
                 .iter()
                 .find(|t| !t.is_comment())
                 .is_some_and(|t| t.text == "use");
+        let is_top_use_part = is_top_use || starts_in_top_use_list;
         let mut blanks = line.blank_before;
-        if prev_was_top_use && !is_top_use && blanks == 0 {
+        if prev_was_top_use && !is_top_use_part && blanks == 0 {
             blanks = 1;
         }
-        prev_was_top_use = is_top_use;
+        prev_was_top_use = is_top_use_part;
         entries.push(Entry {
             blanks,
             indent: EntryIndent::Code {
@@ -935,6 +939,12 @@ mod tests {
     #[test]
     fn use_list_braces_stay_tight() {
         let source = "use std::{iter, os, strings}\n\nfn main() { }\n";
+        assert_eq!(fmt(source), source);
+    }
+
+    #[test]
+    fn multiline_top_use_list_does_not_gain_blank_after_opener() {
+        let source = "use std::{iter, os,\n    strings}\n\nfn main() { }\n";
         assert_eq!(fmt(source), source);
     }
 
