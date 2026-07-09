@@ -217,63 +217,24 @@ impl<'a> Builder<'a> {
             _ => return None,
         };
         if is_vec_or_slice && recv_place.projection.is_empty() {
-            // Vec/Slice swap goes through the runtime helpers so
-            // the GosVec header isn't mis-treated as a flat
-            // element buffer. The previous inline 4-op store
-            // wrote into the GosVec header (offset 0 = len) and
-            // bubble_sort silently no-op'd or corrupted state.
-            let i64_ty = self.tcx.int_ty(gossamer_types::IntTy::I64);
-            let elem_at_i = self.fresh(i64_ty);
-            let next1 = self.new_block(span);
-            self.terminate(Terminator::Call {
-                callee: Operand::Const(ConstValue::Str("gos_rt_vec_get_i64".to_string())),
-                args: vec![
-                    Operand::Copy(Place::local(recv_place.local)),
-                    Operand::Copy(Place::local(i_local)),
-                ],
-                destination: Place::local(elem_at_i),
-                target: Some(next1),
-            });
-            self.set_current(next1);
-            let elem_at_j = self.fresh(i64_ty);
-            let next2 = self.new_block(span);
-            self.terminate(Terminator::Call {
-                callee: Operand::Const(ConstValue::Str("gos_rt_vec_get_i64".to_string())),
-                args: vec![
-                    Operand::Copy(Place::local(recv_place.local)),
-                    Operand::Copy(Place::local(j_local)),
-                ],
-                destination: Place::local(elem_at_j),
-                target: Some(next2),
-            });
-            self.set_current(next2);
+            // Vec/Slice swap goes through a dedicated helper so the GosVec
+            // header is not mis-treated as a flat element buffer. Keep the
+            // existing scalar get/set semantics (null/OOB => no-op) while
+            // avoiding four separate helper calls in heap-shaped hot loops.
             let unit_ty = self.tcx.unit();
-            let set1 = self.fresh(unit_ty);
-            let next3 = self.new_block(span);
+            let swap = self.fresh(unit_ty);
+            let next = self.new_block(span);
             self.terminate(Terminator::Call {
-                callee: Operand::Const(ConstValue::Str("gos_rt_vec_set_i64".to_string())),
+                callee: Operand::Const(ConstValue::Str("gos_rt_vec_swap_i64".to_string())),
                 args: vec![
                     Operand::Copy(Place::local(recv_place.local)),
                     Operand::Copy(Place::local(i_local)),
-                    Operand::Copy(Place::local(elem_at_j)),
-                ],
-                destination: Place::local(set1),
-                target: Some(next3),
-            });
-            self.set_current(next3);
-            let set2 = self.fresh(unit_ty);
-            let next4 = self.new_block(span);
-            self.terminate(Terminator::Call {
-                callee: Operand::Const(ConstValue::Str("gos_rt_vec_set_i64".to_string())),
-                args: vec![
-                    Operand::Copy(Place::local(recv_place.local)),
                     Operand::Copy(Place::local(j_local)),
-                    Operand::Copy(Place::local(elem_at_i)),
                 ],
-                destination: Place::local(set2),
-                target: Some(next4),
+                destination: Place::local(swap),
+                target: Some(next),
             });
-            self.set_current(next4);
+            self.set_current(next);
             let unit_local = self.lower_unit(span);
             return Some(unit_local);
         }

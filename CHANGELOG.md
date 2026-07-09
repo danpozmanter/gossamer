@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.25.1 - gos release optimizations
+
+### Runtime memory
+
+- **Allocator page purging now favors low release RSS.** Gossamer configures mimalloc with immediate page purging by default, while `GOS_ALLOC_PURGE_DELAY=<ms>` can restore batching for applications where fewer purge syscalls matter more than resident memory.
+- **Auto-regions no longer reject scalar-only `static mut` callees.** The compiler still treats heap-owning static writes as region-unsafe, but scalar static updates such as deterministic PRNG seeds no longer block automatic loop regions.
+
 ## 0.25.0 - stdlib naming, runtime memory, conformance hardening
 
 ### Stdlib and docs

@@ -944,6 +944,15 @@ pub unsafe extern "C" fn gos_rt_str_to_upper(s: *const c_char) -> *mut c_char {
         } else {
             unsafe { CStr::from_ptr(s).to_bytes() }
         };
+        if bytes.is_ascii() {
+            let mut out = boxed_bytes(bytes).into_vec();
+            for b in &mut out {
+                if b'a' <= *b && *b <= b'z' {
+                    *b -= b'a' - b'A';
+                }
+            }
+            return alloc_cstring(&out);
+        }
         let st = std::str::from_utf8(bytes).unwrap_or("");
         alloc_cstring(st.to_uppercase().as_bytes())
     })

@@ -4,7 +4,7 @@
 
 [Homepage and Docs](http://gossamer-lang.org/)
 
-## Northstar
+## North Star
 
 * Trustworthy (Stability, Security, Correctness)
 

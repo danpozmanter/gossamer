@@ -54,11 +54,11 @@ pub(crate) fn is_copy_ty(tcx: &TyCtxt, ty: Ty) -> bool {
 /// value through a parameter. Calling one inside an auto-region is unsound.
 /// Computed as a transitive closure over the static call graph.
 pub(crate) fn collect_region_unsafe_fns(program: &HirProgram, tcx: &TyCtxt) -> HashSet<DefId> {
-    let mut static_defs: HashSet<DefId> = HashSet::new();
+    let mut static_tys: HashMap<DefId, Ty> = HashMap::new();
     for item in &program.items {
-        if let HirItemKind::Static(_) = &item.kind {
+        if let HirItemKind::Static(s) = &item.kind {
             if let Some(d) = item.def {
-                static_defs.insert(d);
+                static_tys.insert(d, s.ty);
             }
         }
     }
@@ -85,7 +85,7 @@ pub(crate) fn collect_region_unsafe_fns(program: &HirProgram, tcx: &TyCtxt) -> H
         let mut scan = Scan {
             tcx,
             params: &params,
-            statics: &static_defs,
+            statics: &static_tys,
             unsafe_now: false,
             callees: HashSet::new(),
         };
@@ -202,7 +202,7 @@ fn place_root_name(expr: &HirExpr) -> Option<&str> {
 struct Scan<'a> {
     tcx: &'a TyCtxt,
     params: &'a HashSet<String>,
-    statics: &'a HashSet<DefId>,
+    statics: &'a HashMap<DefId, Ty>,
     unsafe_now: bool,
     callees: HashSet<DefId>,
 }
@@ -262,10 +262,18 @@ impl Scan<'_> {
                 }
             }
             HirExprKind::Assign { place, value } => {
-                // Writing a static, or storing a non-Copy value through a
-                // parameter, escapes.
+                // Writing heap ownership into a static, or storing a
+                // non-Copy value through a parameter, escapes. Scalar
+                // static cells (e.g. deterministic PRNG seeds) cannot retain
+                // an arena-owned pointer, so they do not make callers
+                // region-unsafe.
                 if let HirExprKind::Path { def: Some(d), .. } = &place.kind {
-                    if self.statics.contains(d) {
+                    if self
+                        .statics
+                        .get(d)
+                        .is_some_and(|ty| !is_copy_ty(self.tcx, *ty))
+                        || (self.statics.contains_key(d) && !is_copy_ty(self.tcx, value.ty))
+                    {
                         self.unsafe_now = true;
                     }
                 }
@@ -393,7 +401,7 @@ impl RegionReject {
                 "body assigns a heap value into a binding that outlives the iteration"
             }
             Self::UnsafeCallee => {
-                "body calls a region-unsafe fn (spawns a goroutine, writes a static, or mutates a parameter)"
+                "body calls a region-unsafe fn (spawns a goroutine, writes heap data to a static, or mutates a parameter)"
             }
             Self::UnresolvedCallee => "body calls through an unresolved/indirect callee",
             Self::DeferGoOrItem => "body contains a defer, go, or nested item",

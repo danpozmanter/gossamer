@@ -51,13 +51,14 @@ const MI_OPTION_MAX_SEGMENT_RECLAIM: libmimalloc_sys::mi_option_t = 21;
 #[cfg(not(any(tsan, miri, fuzzing, target_arch = "wasm32")))]
 const MI_OPTION_ALLOW_THP: libmimalloc_sys::mi_option_t = 43;
 
-// Factory defaults of the two pinned options, captured the first time the
-// allocator is configured - before `init_process_allocator` overwrites them
-// to 0. The index-shift guard reads this snapshot instead of a live
+// Factory defaults of the pinned options, captured the first time the
+// allocator is configured - before `init_process_allocator` overwrites them.
+// The index-shift guard reads this snapshot instead of a live
 // `mi_option_get`: option state is process-global, so once any caller runs
-// the init the live values read back as 0, and the test runner orders tests
-// non-deterministically. Snapshotting under the `OnceLock` before the first
-// set makes the guard observe the true defaults regardless of ordering.
+// the init the live values read back as our tuned values, and the test runner
+// orders tests non-deterministically. Snapshotting under the `OnceLock`
+// before the first set makes the guard observe the true defaults regardless
+// of ordering.
 #[cfg(not(any(tsan, miri, fuzzing, target_arch = "wasm32")))]
 static MIMALLOC_OPTION_DEFAULTS: std::sync::OnceLock<(i64, i64, i64)> = std::sync::OnceLock::new();
 
@@ -79,14 +80,25 @@ fn mimalloc_option_defaults() -> (i64, i64, i64) {
     })
 }
 
+/// Default mimalloc purge delay for release programs, in milliseconds.
+///
+/// Immediate purge keeps resident memory close to the live set on programs
+/// with large allocation/free phases. `GOS_ALLOC_PURGE_DELAY=<ms>` restores
+/// mimalloc batching for applications that prefer fewer `madvise` calls.
+#[cfg(not(any(tsan, miri, fuzzing, target_arch = "wasm32")))]
+fn configured_purge_delay() -> std::os::raw::c_long {
+    std::env::var("GOS_ALLOC_PURGE_DELAY")
+        .ok()
+        .and_then(|s| s.parse::<std::os::raw::c_long>().ok())
+        .unwrap_or(0)
+}
+
 /// Configures the process allocator for a predictable memory footprint.
 ///
-/// Leaves mimalloc's purge delay at its batching default. For allocation-heavy
-/// programs that construct and destroy many small heap objects, forcing
-/// immediate purges turns steady-state deallocation into a stream of
-/// `madvise` calls and can dominate runtime. Explicit phase boundaries can
-/// still call [`collect_process_allocator`] when the VM knows a large live set
-/// has become dead.
+/// Sets mimalloc's purge delay to immediate by default so freed allocation
+/// phases return pages to the OS instead of retaining them until mimalloc's
+/// batching timer fires. Set `GOS_ALLOC_PURGE_DELAY=<ms>` to restore or tune
+/// batching for applications where fewer purge syscalls beat lower RSS.
 ///
 /// Compiled Gossamer programs reach this from their generated `main` via
 /// `gos_rt_set_args` -> `runtime_init`; the `gos` binary (which links
@@ -122,6 +134,7 @@ pub fn init_process_allocator() {
         // SAFETY: `mi_option_set` is thread-safe and valid any time after
         // the allocator initialised, which it has by the time `main` runs.
         unsafe {
+            libmimalloc_sys::mi_option_set(MI_OPTION_PURGE_DELAY, configured_purge_delay());
             libmimalloc_sys::mi_option_set(MI_OPTION_MAX_SEGMENT_RECLAIM, 100);
             libmimalloc_sys::mi_option_set(MI_OPTION_ALLOW_THP, 0);
         }
@@ -227,16 +240,21 @@ mod allocator_tests {
         // SAFETY: option get is thread-safe; the global allocator is mimalloc
         // in a non-tsan build, so it is initialised here.
         let purge = unsafe { libmimalloc_sys::mi_option_get(super::MI_OPTION_PURGE_DELAY) };
+        let expected_purge = super::configured_purge_delay();
         assert_eq!(
-            purge, 1000,
-            "init_process_allocator must leave purge_delay at mimalloc's batching default"
+            purge, expected_purge,
+            "init_process_allocator must set purge_delay to the configured release value"
         );
+        // SAFETY: option get is thread-safe; the global allocator is mimalloc
+        // in a non-tsan build, so it is initialised here.
         let reclaim =
             unsafe { libmimalloc_sys::mi_option_get(super::MI_OPTION_MAX_SEGMENT_RECLAIM) };
         assert_eq!(
             reclaim, 100,
             "init_process_allocator must set max_segment_reclaim to 100"
         );
+        // SAFETY: option get is thread-safe; the global allocator is mimalloc
+        // in a non-tsan build, so it is initialised here.
         let thp = unsafe { libmimalloc_sys::mi_option_get(super::MI_OPTION_ALLOW_THP) };
         assert_eq!(thp, 0, "init_process_allocator must set allow_thp to 0");
     }

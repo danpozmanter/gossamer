@@ -15,6 +15,7 @@ use gossamer_mir::{
     BasicBlock, BinOp, BlockId, Body, ConstValue, Local, LocalDecl, Operand, Place, Rvalue,
     Statement, StatementKind, Terminator,
 };
+use gossamer_resolve::DefId;
 use gossamer_types::{ArrayLen, IntTy, TyCtxt, TyKind};
 
 fn dummy_span() -> Span {
@@ -120,6 +121,126 @@ fn build_const_int_main(value: i64) -> (Body, TyCtxt) {
     (body, tcx)
 }
 
+fn build_vec_pop_main() -> (Body, TyCtxt) {
+    let mut tcx = TyCtxt::new();
+    let unit = tcx.intern(TyKind::Unit);
+    let i64_ty = tcx.intern(TyKind::Int(IntTy::I64));
+    let vec_i64 = tcx.intern(TyKind::Vec(i64_ty));
+    let option_i64 = tcx.intern(TyKind::Adt {
+        def: DefId::local(u32::MAX - 1),
+        substs: gossamer_types::Substs::from_types([i64_ty]),
+    });
+    let body = Body {
+        name: "main".to_string(),
+        def: None,
+        arity: 0,
+        locals: vec![
+            LocalDecl {
+                ty: unit,
+                debug_name: None,
+                mutable: false,
+                region: false,
+            },
+            LocalDecl {
+                ty: vec_i64,
+                debug_name: None,
+                mutable: true,
+                region: false,
+            },
+            LocalDecl {
+                ty: option_i64,
+                debug_name: None,
+                mutable: false,
+                region: false,
+            },
+        ],
+        blocks: vec![
+            BasicBlock {
+                id: BlockId(0),
+                stmts: vec![],
+                terminator: Terminator::Call {
+                    callee: Operand::Const(ConstValue::Str("gos_rt_vec_pop_opt".to_string())),
+                    args: vec![Operand::Copy(place(1))],
+                    destination: place(2),
+                    target: Some(BlockId(1)),
+                },
+                span: dummy_span(),
+            },
+            BasicBlock {
+                id: BlockId(1),
+                stmts: vec![],
+                terminator: Terminator::Return,
+                span: dummy_span(),
+            },
+        ],
+        span: dummy_span(),
+    };
+    (body, tcx)
+}
+
+fn build_vec_swap_main() -> (Body, TyCtxt) {
+    let mut tcx = TyCtxt::new();
+    let unit = tcx.intern(TyKind::Unit);
+    let i64_ty = tcx.intern(TyKind::Int(IntTy::I64));
+    let vec_i64 = tcx.intern(TyKind::Vec(i64_ty));
+    let body = Body {
+        name: "main".to_string(),
+        def: None,
+        arity: 0,
+        locals: vec![
+            LocalDecl {
+                ty: unit,
+                debug_name: None,
+                mutable: false,
+                region: false,
+            },
+            LocalDecl {
+                ty: vec_i64,
+                debug_name: None,
+                mutable: true,
+                region: false,
+            },
+            LocalDecl {
+                ty: i64_ty,
+                debug_name: None,
+                mutable: false,
+                region: false,
+            },
+            LocalDecl {
+                ty: i64_ty,
+                debug_name: None,
+                mutable: false,
+                region: false,
+            },
+        ],
+        blocks: vec![
+            BasicBlock {
+                id: BlockId(0),
+                stmts: vec![const_int_assign(2, 0), const_int_assign(3, 1)],
+                terminator: Terminator::Call {
+                    callee: Operand::Const(ConstValue::Str("gos_rt_vec_swap_i64".to_string())),
+                    args: vec![
+                        Operand::Copy(place(1)),
+                        Operand::Copy(place(2)),
+                        Operand::Copy(place(3)),
+                    ],
+                    destination: place(0),
+                    target: Some(BlockId(1)),
+                },
+                span: dummy_span(),
+            },
+            BasicBlock {
+                id: BlockId(1),
+                stmts: vec![],
+                terminator: Terminator::Return,
+                span: dummy_span(),
+            },
+        ],
+        span: dummy_span(),
+    };
+    (body, tcx)
+}
+
 #[test]
 fn const_int_zero_emits_store_i64() {
     let (body, tcx) = build_const_int_main(0);
@@ -207,6 +328,31 @@ fn binop_rem_i64_emits_srem_instruction() {
     let (body, tcx) = build_binop_main(BinOp::Rem, 17, 5);
     let ir = render_ir_to_string(&[body], &tcx, false).unwrap();
     assert!(ir.contains("srem i64"), "IR was:\n{ir}");
+}
+
+#[test]
+fn vec_i64_pop_option_is_inlined() {
+    let (body, tcx) = build_vec_pop_main();
+    let ir = render_ir_to_string(&[body], &tcx, false).unwrap();
+    assert!(
+        !ir.contains("call i128 @gos_rt_vec_pop_opt"),
+        "Vec<i64>::pop should inline instead of calling runtime:\n{ir}"
+    );
+    assert!(ir.contains("vpop_some_"), "IR was:\n{ir}");
+    assert!(ir.contains("shl i128"), "IR was:\n{ir}");
+    assert!(ir.contains("store i128"), "IR was:\n{ir}");
+}
+
+#[test]
+fn vec_i64_swap_is_inlined() {
+    let (body, tcx) = build_vec_swap_main();
+    let ir = render_ir_to_string(&[body], &tcx, false).unwrap();
+    assert!(
+        !ir.contains("call void @gos_rt_vec_swap_i64"),
+        "Vec<i64>::swap should inline instead of calling runtime:\n{ir}"
+    );
+    assert!(ir.contains("vsw_swap_"), "IR was:\n{ir}");
+    assert!(ir.contains("store i64"), "IR was:\n{ir}");
 }
 
 #[test]

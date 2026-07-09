@@ -617,6 +617,28 @@ pub unsafe extern "C" fn gos_rt_vec_set_i64_unchecked(v: *mut GosVec, idx: i64, 
     });
 }
 
+/// Swaps two scalar-shaped Vec elements. No-op for null receivers or
+/// out-of-range indices, matching the old MIR expansion through
+/// `gos_rt_vec_get_i64` + `gos_rt_vec_set_i64`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_vec_swap_i64(v: *mut GosVec, i: i64, j: i64) {
+    ffi_entry!((), {
+        if v.is_null() {
+            return;
+        }
+        let vec = unsafe { &mut *v };
+        if i < 0 || i >= vec.len || j < 0 || j >= vec.len || i == j {
+            return;
+        }
+        let a = unsafe { crate::c_abi::vec::vec_elem_load_i64(vec, i) };
+        let b = unsafe { crate::c_abi::vec::vec_elem_load_i64(vec, j) };
+        unsafe {
+            crate::c_abi::vec::vec_elem_store_i64(vec, i, b);
+            crate::c_abi::vec::vec_elem_store_i64(vec, j, a);
+        }
+    });
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_vec_get_ptr(v: *const GosVec, idx: i64) -> *mut u8 {
     ffi_entry!(std::ptr::null_mut(), {

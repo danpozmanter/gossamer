@@ -1352,6 +1352,7 @@ pub const REGISTRY: &[RuntimeEntry] = &[
     rt!("gos_rt_vec_sort_i64", (Ptr) -> Void, Cranelift, "Sort a Vec<i64> in ascending order in place."),
     rt!("gos_rt_vec_sort_str", (Ptr) -> Void, Cranelift, "Sort a Vec<String> lexicographically (UTF-8 byte order) in place."),
     rt!("gos_rt_vec_step_by", (Ptr, I64) -> Ptr, Both, "xs.step_by(step) -> fresh Vec of every step-th element; step below 1 is treated as 1."),
+    rt!("gos_rt_vec_swap_i64", (Ptr, I64, I64) -> Void, Cranelift, "Swap two scalar-shaped GosVec elements; null or out-of-range indices are a no-op."),
     rt!("gos_rt_vec_take", (Ptr, I64) -> Ptr, Both, "xs.take(n) -> fresh Vec of the first n elements, clamped to [0, len]."),
     rt!("gos_rt_vec_with_capacity", (I32, I64) -> Ptr, Cranelift, "Allocate a GosVec with a pre-reserved capacity."),
     rt!("gos_rt_vec_with_capacity_typed", (I32, I64, I32) -> Ptr, Cranelift, "Allocate a GosVec with a pre-reserved capacity and an elem_kind tag for deep-free."),

@@ -551,6 +551,15 @@ impl<'a> Lowerer<'a> {
             self.lower_vec_push_inline(args, destination, target)?;
             return Ok(());
         }
+        if name == "gos_rt_vec_pop_opt"
+            && args.len() == 1
+            && render_ty(self.tcx, self.body.local_ty(destination.local)) == "i128"
+            && (self.vec_operand_has_word_elem(&args[0])
+                || self.vec_operand_has_byte_elem(&args[0]))
+        {
+            self.lower_vec_pop_opt_inline(args, destination, target)?;
+            return Ok(());
+        }
         // Inline scalar `min`/`max` on i64 to a branchless `icmp`+`select`
         // (value-identical to the runtime `a.min(b)`/`a.max(b)`), removing a
         // per-call FFI boundary from tight numeric loops and unblocking
@@ -607,6 +616,14 @@ impl<'a> Lowerer<'a> {
         // the inner loop is a straight store.
         if name == "gos_rt_vec_set_i64_unchecked" && args.len() == 3 {
             self.lower_vec_set_i64_unchecked_inline(args, destination, target)?;
+            return Ok(());
+        }
+        if name == "gos_rt_vec_swap_i64"
+            && args.len() == 3
+            && (self.vec_operand_has_word_elem(&args[0])
+                || self.vec_operand_has_byte_elem(&args[0]))
+        {
+            self.lower_vec_swap_i64_inline(args, destination, target)?;
             return Ok(());
         }
         // `buf.set_byte(i, x)` on the Terminator::Call route (fasta's inner

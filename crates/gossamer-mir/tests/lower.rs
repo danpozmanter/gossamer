@@ -1567,6 +1567,86 @@ fn call_names(body: &gossamer_mir::Body) -> Vec<String> {
 }
 
 #[test]
+fn scalar_static_mut_callee_does_not_block_auto_region() {
+    let source = r"
+enum Node {
+    Leaf(i64),
+    Pair(Node, Node),
+}
+
+static mut SEED: i64 = 1
+
+fn rand() -> i64 {
+    SEED = SEED * 6364136223846793005 + 1442695040888963407
+    SEED
+}
+
+fn build(depth: i64) -> Node {
+    let v = rand()
+    if depth == 0 {
+        return Node::Leaf(v)
+    }
+    Node::Pair(build(depth - 1), build(depth - 1))
+}
+
+fn count(n: &Node) -> i64 {
+    match n {
+        Node::Leaf(_) => 1,
+        Node::Pair(l, r) => 1 + count(l) + count(r),
+    }
+}
+
+fn main() {
+    let mut total = 0
+    for _ in 0..3 {
+        let tree = build(4)
+        total += count(&tree)
+    }
+}
+";
+    let (bodies, _) = build(source);
+    let main = bodies.iter().find(|b| b.name == "main").expect("main");
+    let names = call_names(main);
+    assert!(
+        names.iter().any(|n| n == "gos_rt_arena_push"),
+        "allocating loop should be auto-regioned despite scalar static mut callee: {names:?}"
+    );
+    assert!(
+        names.iter().any(|n| n == "gos_rt_arena_pop"),
+        "allocating loop should close its auto-region: {names:?}"
+    );
+}
+
+#[test]
+fn heap_static_mut_callee_still_blocks_auto_region() {
+    let source = r#"
+static mut HOLD: String = ""
+
+fn make() -> String { "x" }
+
+fn stash(s: String) {
+    HOLD = s
+}
+
+fn main() {
+    for _ in 0..3 {
+        let s = make()
+        stash(s)
+    }
+}
+"#;
+    let (bodies, _) = build(source);
+    let main = bodies.iter().find(|b| b.name == "main").expect("main");
+    let names = call_names(main);
+    assert!(
+        !names
+            .iter()
+            .any(|n| n == "gos_rt_arena_push" || n == "gos_rt_arena_pop"),
+        "heap static mut write must remain region-unsafe: {names:?}"
+    );
+}
+
+#[test]
 fn http_response_literal_full_lowers_to_constructor_and_setters() {
     let source = "use std::http\n\
                   fn h() -> http::Response {\n\

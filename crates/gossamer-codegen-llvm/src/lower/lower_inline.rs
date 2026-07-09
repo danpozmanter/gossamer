@@ -897,6 +897,94 @@ impl<'a> Lowerer<'a> {
         Ok(())
     }
 
+    /// Inline fast path for `gos_rt_vec_swap_i64(vec, i, j)`. This preserves
+    /// the scalar Vec semantics of the runtime helper: null receivers and
+    /// out-of-range indices are no-ops, while in-range indices exchange one
+    /// word- or byte-shaped element.
+    pub(crate) fn lower_vec_swap_i64_inline(
+        &mut self,
+        args: &[Operand],
+        destination: &Place,
+        target: Option<&gossamer_mir::BlockId>,
+    ) -> Result<(), BuildError> {
+        let word_elem = self.vec_operand_has_word_elem(&args[0]);
+        let byte_elem = !word_elem && self.vec_operand_has_byte_elem(&args[0]);
+        if !word_elem && !byte_elem {
+            return Err(BuildError::Unsupported(
+                "inline Vec::swap requires statically word- or byte-sized elements",
+            ));
+        }
+        let vec_ptr = self.vec_operand_ptr(&args[0])?;
+        let i_raw = self.lower_operand(&args[1])?;
+        let i = self.widen_to_i64(&args[1], &i_raw);
+        let j_raw = self.lower_operand(&args[2])?;
+        let j = self.widen_to_i64(&args[2], &j_raw);
+        let s = self.next_ssa;
+        self.next_ssa += 1;
+        let (check, check_j, swap, cont) = (
+            format!("vsw_check_{s}"),
+            format!("vsw_check_j_{s}"),
+            format!("vsw_swap_{s}"),
+            format!("vsw_cont_{s}"),
+        );
+
+        let isnull = self.fresh();
+        writeln!(self.out, "  {isnull} = icmp eq ptr {vec_ptr}, null").unwrap();
+        writeln!(self.out, "  br i1 {isnull}, label %{cont}, label %{check}").unwrap();
+
+        writeln!(self.out, "{check}:").unwrap();
+        let len = self.fresh();
+        writeln!(self.out, "  {len} = load i64, ptr {vec_ptr}{TBAA_HEADER}").unwrap();
+        let i_bad = self.fresh();
+        writeln!(self.out, "  {i_bad} = icmp uge i64 {i}, {len}").unwrap();
+        writeln!(self.out, "  br i1 {i_bad}, label %{cont}, label %{check_j}").unwrap();
+
+        writeln!(self.out, "{check_j}:").unwrap();
+        let j_bad = self.fresh();
+        writeln!(self.out, "  {j_bad} = icmp uge i64 {j}, {len}").unwrap();
+        writeln!(self.out, "  br i1 {j_bad}, label %{cont}, label %{swap}").unwrap();
+
+        writeln!(self.out, "{swap}:").unwrap();
+        if word_elem {
+            let i_off = self.fresh();
+            writeln!(self.out, "  {i_off} = mul i64 {i}, 8").unwrap();
+            let j_off = self.fresh();
+            writeln!(self.out, "  {j_off} = mul i64 {j}, 8").unwrap();
+            let i_addr = self.vec_elem_addr(&vec_ptr, &i_off);
+            let j_addr = self.vec_elem_addr(&vec_ptr, &j_off);
+            let a = self.fresh();
+            writeln!(self.out, "  {a} = load i64, ptr {i_addr}{TBAA_DATA}").unwrap();
+            let b = self.fresh();
+            writeln!(self.out, "  {b} = load i64, ptr {j_addr}{TBAA_DATA}").unwrap();
+            writeln!(self.out, "  store i64 {b}, ptr {i_addr}{TBAA_DATA}").unwrap();
+            writeln!(self.out, "  store i64 {a}, ptr {j_addr}{TBAA_DATA}").unwrap();
+        } else {
+            let i_addr = self.vec_elem_addr(&vec_ptr, &i);
+            let j_addr = self.vec_elem_addr(&vec_ptr, &j);
+            let a = self.fresh();
+            writeln!(self.out, "  {a} = load i8, ptr {i_addr}{TBAA_DATA}").unwrap();
+            let b = self.fresh();
+            writeln!(self.out, "  {b} = load i8, ptr {j_addr}{TBAA_DATA}").unwrap();
+            writeln!(self.out, "  store i8 {b}, ptr {i_addr}{TBAA_DATA}").unwrap();
+            writeln!(self.out, "  store i8 {a}, ptr {j_addr}{TBAA_DATA}").unwrap();
+        }
+        writeln!(self.out, "  br label %{cont}").unwrap();
+
+        writeln!(self.out, "{cont}:").unwrap();
+        if !is_unit(self.tcx, self.body.local_ty(destination.local)) {
+            let dest_ty = render_ty(self.tcx, self.body.local_ty(destination.local));
+            let dslot = local_slot(destination.local);
+            let zero = match dest_ty.as_str() {
+                "ptr" => "null",
+                "double" | "float" => "0.0",
+                _ => "0",
+            };
+            writeln!(self.out, "  store {dest_ty} {zero}, ptr {dslot}").unwrap();
+        }
+        emit_terminator_branch(&mut self.out, target);
+        Ok(())
+    }
+
     /// Emits the branchless inline body of `gos_rt_heap_u8_set(v, idx, val)`.
     /// `GosU8Vec` is `{ i64 len, ptr data }`; a null vec or out-of-range index
     /// redirects the store to a scratch byte, reproducing the runtime shim's
@@ -1643,6 +1731,85 @@ impl<'a> Lowerer<'a> {
             };
             writeln!(self.out, "  store {dest_ty} {zero}, ptr {dslot}").unwrap();
         }
+        emit_terminator_branch(&mut self.out, target);
+        Ok(())
+    }
+
+    /// Inline fast path for `gos_rt_vec_pop_opt(v) -> Option<T>` when `T` is
+    /// represented as one word or one byte. Null / empty returns `None`
+    /// (`disc = 1`); otherwise the vector length is decremented and the last
+    /// element is packed into the high word of the by-value `i128` Option.
+    pub(crate) fn lower_vec_pop_opt_inline(
+        &mut self,
+        args: &[Operand],
+        destination: &Place,
+        target: Option<&gossamer_mir::BlockId>,
+    ) -> Result<(), BuildError> {
+        let word_elem = self.vec_operand_has_word_elem(&args[0]);
+        let byte_elem = !word_elem && self.vec_operand_has_byte_elem(&args[0]);
+        if !word_elem && !byte_elem {
+            return Err(BuildError::Unsupported(
+                "inline Vec::pop requires statically word- or byte-sized elements",
+            ));
+        }
+        let vec_ptr = self.vec_operand_ptr(&args[0])?;
+        let s = self.next_ssa;
+        self.next_ssa += 1;
+        let (check, some, none, cont) = (
+            format!("vpop_check_{s}"),
+            format!("vpop_some_{s}"),
+            format!("vpop_none_{s}"),
+            format!("vpop_cont_{s}"),
+        );
+
+        let isnull = self.fresh();
+        writeln!(self.out, "  {isnull} = icmp eq ptr {vec_ptr}, null").unwrap();
+        writeln!(self.out, "  br i1 {isnull}, label %{none}, label %{check}").unwrap();
+
+        writeln!(self.out, "{check}:").unwrap();
+        let len = self.fresh();
+        writeln!(self.out, "  {len} = load i64, ptr {vec_ptr}{TBAA_HEADER}").unwrap();
+        let empty = self.fresh();
+        writeln!(self.out, "  {empty} = icmp sle i64 {len}, 0").unwrap();
+        writeln!(self.out, "  br i1 {empty}, label %{none}, label %{some}").unwrap();
+
+        writeln!(self.out, "{some}:").unwrap();
+        let len1 = self.fresh();
+        writeln!(self.out, "  {len1} = add i64 {len}, -1").unwrap();
+        writeln!(self.out, "  store i64 {len1}, ptr {vec_ptr}{TBAA_HEADER}").unwrap();
+        let payload = if word_elem {
+            let off = self.fresh();
+            writeln!(self.out, "  {off} = mul i64 {len1}, 8").unwrap();
+            let ea = self.vec_elem_addr(&vec_ptr, &off);
+            let loaded = self.fresh();
+            writeln!(self.out, "  {loaded} = load i64, ptr {ea}{TBAA_DATA}").unwrap();
+            loaded
+        } else {
+            let ea = self.vec_elem_addr(&vec_ptr, &len1);
+            let b8 = self.fresh();
+            writeln!(self.out, "  {b8} = load i8, ptr {ea}{TBAA_DATA}").unwrap();
+            let b64 = self.fresh();
+            writeln!(self.out, "  {b64} = zext i8 {b8} to i64").unwrap();
+            b64
+        };
+        let payload128 = self.fresh();
+        writeln!(self.out, "  {payload128} = zext i64 {payload} to i128").unwrap();
+        let packed_some = self.fresh();
+        writeln!(self.out, "  {packed_some} = shl i128 {payload128}, 64").unwrap();
+        writeln!(self.out, "  br label %{cont}").unwrap();
+
+        writeln!(self.out, "{none}:").unwrap();
+        writeln!(self.out, "  br label %{cont}").unwrap();
+
+        writeln!(self.out, "{cont}:").unwrap();
+        let packed = self.fresh();
+        writeln!(
+            self.out,
+            "  {packed} = phi i128 [ {packed_some}, %{some} ], [ 1, %{none} ]"
+        )
+        .unwrap();
+        let slot = local_slot(destination.local);
+        writeln!(self.out, "  store i128 {packed}, ptr {slot}, align 16").unwrap();
         emit_terminator_branch(&mut self.out, target);
         Ok(())
     }
