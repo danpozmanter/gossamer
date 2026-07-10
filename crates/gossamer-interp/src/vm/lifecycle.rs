@@ -268,7 +268,7 @@ impl Vm {
     pub fn load(
         &mut self,
         program: &HirProgram,
-        mut tcx: TyCtxt,
+        tcx: TyCtxt,
         enable_inlining: bool,
     ) -> RuntimeResult<()> {
         // Prepass: collect struct field orderings so `__struct`
@@ -494,10 +494,15 @@ impl Vm {
         // Coverage runs stay on the bytecode path: the cranelift JIT
         // lowers from MIR and never sees the `Op::CovHit` markers, so a
         // promoted function would silently stop recording line hits.
-        if jit_call::jit_enabled() && has_jit_eligible_fn(program) && !self.coverage_active() {
-            let shapes = build_native_enum_shapes(program, &tcx);
-            let struct_shapes = build_native_struct_shapes(program, &tcx);
-            let mut bodies = gossamer_mir::lower_program(program, &mut tcx);
+        if jit_call::jit_enabled()
+            && has_jit_eligible_fn(program)
+            && !program_calls_collect_cycles(program)
+            && !self.coverage_active()
+        {
+            let mut jit_tcx = tcx.clone();
+            let shapes = build_native_enum_shapes(program, &jit_tcx);
+            let struct_shapes = build_native_struct_shapes(program, &jit_tcx);
+            let mut bodies = gossamer_mir::lower_program(program, &mut jit_tcx);
             // Monomorphise before the JIT sees the bodies, exactly as the LLVM
             // AOT pipeline does. A generic function / method / struct
             // instantiated with a concrete type must reach the JIT as a
@@ -507,12 +512,12 @@ impl Vm {
             // instead of two) and overflows its stack slot. The bytecode VM is
             // unaffected - it runs the separately-compiled chunks, not these
             // MIR bodies, which are JIT-only.
-            gossamer_mir::monomorphise(&mut bodies, &mut tcx);
+            gossamer_mir::monomorphise(&mut bodies, &mut jit_tcx);
             // The in-process JIT's win is eliding repeated bytecode dispatch
             // inside native recursion. Gate the compile snapshot on that
             // shape so programs that cannot promote a useful body do not
             // prepare the native compiler.
-            if jit_backend::has_worthy_jit_body(&bodies, &tcx, &shapes, &struct_shapes) {
+            if jit_backend::has_worthy_jit_body(&bodies, &jit_tcx, &shapes, &struct_shapes) {
                 gossamer_mir::inline_trivial_wrappers(&mut bodies);
                 gossamer_mir::inline_small_callees(&mut bodies);
                 gossamer_mir::inline_general(&mut bodies);
@@ -521,14 +526,14 @@ impl Vm {
                 // JIT must hand it the same MIR shape or the tiers can
                 // diverge on constructs only one shape exercises.
                 for body in &mut bodies {
-                    gossamer_mir::optimise(body, &tcx);
+                    gossamer_mir::optimise(body, &jit_tcx);
                 }
                 // Compute the eager-compile set from the post-inlining
                 // bodies now, while they are still in hand: the deferred
                 // compile below releases `mir_bodies` for spawn-free
                 // programs, so this is the last point the set is derivable.
                 let mut eager_names: std::collections::HashSet<String> =
-                    jit_backend::jit_eager_loop_bodies(&bodies, &tcx, &shapes, &struct_shapes)
+                    jit_backend::jit_eager_loop_bodies(&bodies, &jit_tcx, &shapes, &struct_shapes)
                         .into_iter()
                         .collect();
                 if !eager_names.is_empty() {
@@ -538,14 +543,12 @@ impl Vm {
                 *self.enum_shape_defs.borrow_mut() = Some(Arc::new(shapes));
                 *self.struct_shape_defs.borrow_mut() = Some(Arc::new(struct_shapes));
                 *self.mir_bodies.borrow_mut() = Some(Arc::new(bodies));
-                // Move the owned type context into the snapshot - no clone.
-                // `load` takes `tcx` by value precisely so this hand-off is
-                // a move: it duplicated the entire `TyCtxt` at load time
-                // when the snapshot cloned, and stranded the caller with an
-                // empty interner when it used `mem::take` on a borrow.
-                // By-value ownership makes the consume explicit and costs
-                // neither.
-                *self.tcx_snapshot.borrow_mut() = Some(Arc::new(tcx));
+                // Store the JIT-local type context. MIR lowering and
+                // monomorphisation intern additional types, so they must not
+                // mutate the `tcx` the bytecode VM compiled its chunks
+                // against; otherwise an empty promotion set can still perturb
+                // VM-only execution.
+                *self.tcx_snapshot.borrow_mut() = Some(Arc::new(jit_tcx));
                 // A spawn-free program never hands its MIR to a child Vm, so
                 // the deferred compile can free it the moment it lands - well
                 // before the program's allocation peak.
@@ -644,6 +647,10 @@ impl Vm {
                 "jit: compiled {} functions in {compile_ms} ms",
                 artifact.functions.len()
             );
+        }
+        if artifact.functions.is_empty() {
+            self.jit.write().compiled = JitCompileState::Failed;
+            return;
         }
         // Only bodies admitted by the promotion policy reach
         // `artifact.functions`. Bodies with constructs the JIT cannot run

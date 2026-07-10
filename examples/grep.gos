@@ -14,7 +14,7 @@ use std::bufio
 use std::errors
 use std::env
 use std::flag
-use std::os
+use std::io
 use std::process
 
 fn main() -> Result<(), errors::Error> {
@@ -30,7 +30,7 @@ fn main() -> Result<(), errors::Error> {
     let count_only = *count
     let line_numbers = *numbers
 
-    let mut scanner = bufio::Scanner::new(os::stdin())
+    let mut scanner = bufio::Scanner::new(io::stdin())
     let mut line_no: u64 = 0
     let mut hits: u64 = 0
     while scanner.scan() {

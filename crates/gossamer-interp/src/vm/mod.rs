@@ -1369,6 +1369,135 @@ fn has_jit_eligible_fn(program: &HirProgram) -> bool {
     })
 }
 
+fn program_calls_collect_cycles(program: &HirProgram) -> bool {
+    program.items.iter().any(|item| match &item.kind {
+        HirItemKind::Fn(decl) => decl
+            .body
+            .as_ref()
+            .is_some_and(|body| hir_block_calls_collect_cycles(&body.block)),
+        HirItemKind::Const(k) => hir_expr_calls_collect_cycles(&k.value),
+        HirItemKind::Static(s) => hir_expr_calls_collect_cycles(&s.value),
+        _ => false,
+    })
+}
+
+fn hir_block_calls_collect_cycles(block: &gossamer_hir::HirBlock) -> bool {
+    block.stmts.iter().any(|stmt| match &stmt.kind {
+        gossamer_hir::HirStmtKind::Let { init, .. } => {
+            init.as_ref().is_some_and(hir_expr_calls_collect_cycles)
+        }
+        gossamer_hir::HirStmtKind::Expr { expr, .. }
+        | gossamer_hir::HirStmtKind::Defer(expr)
+        | gossamer_hir::HirStmtKind::Go(expr) => hir_expr_calls_collect_cycles(expr),
+        gossamer_hir::HirStmtKind::Item(item) => match &item.kind {
+            HirItemKind::Fn(decl) => decl
+                .body
+                .as_ref()
+                .is_some_and(|body| hir_block_calls_collect_cycles(&body.block)),
+            _ => false,
+        },
+    }) || block
+        .tail
+        .as_deref()
+        .is_some_and(hir_expr_calls_collect_cycles)
+}
+
+fn hir_expr_calls_collect_cycles(expr: &gossamer_hir::HirExpr) -> bool {
+    use gossamer_hir::HirExprKind as K;
+    match &expr.kind {
+        K::Call { callee, args } => {
+            let collect_call = matches!(
+                &callee.kind,
+                K::Path { segments, .. }
+                    if segments.last().is_some_and(|seg| seg.name == "collect_cycles")
+                        && (segments.len() == 1
+                            || segments
+                                .get(segments.len().saturating_sub(2))
+                                .is_some_and(|seg| seg.name == "runtime"))
+            );
+            collect_call
+                || hir_expr_calls_collect_cycles(callee)
+                || args.iter().any(hir_expr_calls_collect_cycles)
+        }
+        K::MethodCall { receiver, args, .. } => {
+            hir_expr_calls_collect_cycles(receiver)
+                || args.iter().any(hir_expr_calls_collect_cycles)
+        }
+        K::Field { receiver, .. } | K::TupleIndex { receiver, .. } => {
+            hir_expr_calls_collect_cycles(receiver)
+        }
+        K::Index { base, index } => {
+            hir_expr_calls_collect_cycles(base) || hir_expr_calls_collect_cycles(index)
+        }
+        K::Unary { operand, .. } | K::Cast { value: operand, .. } => {
+            hir_expr_calls_collect_cycles(operand)
+        }
+        K::Binary { lhs, rhs, .. } => {
+            hir_expr_calls_collect_cycles(lhs) || hir_expr_calls_collect_cycles(rhs)
+        }
+        K::Assign { place, value } => {
+            hir_expr_calls_collect_cycles(place) || hir_expr_calls_collect_cycles(value)
+        }
+        K::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            hir_expr_calls_collect_cycles(condition)
+                || hir_expr_calls_collect_cycles(then_branch)
+                || else_branch
+                    .as_deref()
+                    .is_some_and(hir_expr_calls_collect_cycles)
+        }
+        K::Match { scrutinee, arms } => {
+            hir_expr_calls_collect_cycles(scrutinee)
+                || arms.iter().any(|arm| {
+                    arm.guard
+                        .as_ref()
+                        .is_some_and(hir_expr_calls_collect_cycles)
+                        || hir_expr_calls_collect_cycles(&arm.body)
+                })
+        }
+        K::Loop { body, .. } => hir_expr_calls_collect_cycles(body),
+        K::While {
+            condition, body, ..
+        } => hir_expr_calls_collect_cycles(condition) || hir_expr_calls_collect_cycles(body),
+        K::Block(block) => hir_block_calls_collect_cycles(block),
+        K::Closure { body, .. } => hir_expr_calls_collect_cycles(body),
+        K::LiftedClosure { captures, .. } => captures.iter().any(hir_expr_calls_collect_cycles),
+        K::Tuple(elems) => elems.iter().any(hir_expr_calls_collect_cycles),
+        K::Array(arr) => match arr {
+            gossamer_hir::HirArrayExpr::List(elems) => {
+                elems.iter().any(hir_expr_calls_collect_cycles)
+            }
+            gossamer_hir::HirArrayExpr::Repeat { value, count } => {
+                hir_expr_calls_collect_cycles(value) || hir_expr_calls_collect_cycles(count)
+            }
+        },
+        K::Go(inner) => hir_expr_calls_collect_cycles(inner),
+        K::Range { start, end, .. } => {
+            start.as_deref().is_some_and(hir_expr_calls_collect_cycles)
+                || end.as_deref().is_some_and(hir_expr_calls_collect_cycles)
+        }
+        K::Return(value) | K::Break { value, .. } => {
+            value.as_deref().is_some_and(hir_expr_calls_collect_cycles)
+        }
+        K::Select { arms } => arms.iter().any(|arm| {
+            let op_calls = match &arm.op {
+                gossamer_hir::HirSelectOp::Recv { channel, .. } => {
+                    hir_expr_calls_collect_cycles(channel)
+                }
+                gossamer_hir::HirSelectOp::Send { channel, value } => {
+                    hir_expr_calls_collect_cycles(channel) || hir_expr_calls_collect_cycles(value)
+                }
+                gossamer_hir::HirSelectOp::Default => false,
+            };
+            op_calls || hir_expr_calls_collect_cycles(&arm.body)
+        }),
+        K::Path { .. } | K::Literal(_) | K::Continue { .. } | K::Placeholder => false,
+    }
+}
+
 fn hir_block_has_loop(block: &gossamer_hir::HirBlock) -> bool {
     block.stmts.iter().any(|stmt| match &stmt.kind {
         gossamer_hir::HirStmtKind::Let { init, .. } => init.as_ref().is_some_and(hir_expr_has_loop),

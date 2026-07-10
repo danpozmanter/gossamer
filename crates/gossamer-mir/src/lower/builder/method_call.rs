@@ -63,6 +63,8 @@ enum SymbolLookup {
     Found(Option<&'static str>),
 }
 
+type KindDispatchArgs = (Vec<Operand>, &'static str, Vec<(Local, Local)>);
+
 impl<'a> Builder<'a> {
     pub(crate) fn lower_method_call(
         &mut self,
@@ -2309,7 +2311,7 @@ impl<'a> Builder<'a> {
         span: Span,
     ) -> Option<Local> {
         let receiver_local = self.lower_expr(receiver)?;
-        let (arg_operands, rt) =
+        let (arg_operands, rt, mut_ref_reloads) =
             self.kind_dispatch_arg_operands(rt, receiver, receiver_local, args, span)?;
         let pinned = self.dispatch_pinned_ty(rt, receiver, receiver_local, ty);
         let dest = self.fresh(pinned);
@@ -2324,6 +2326,16 @@ impl<'a> Builder<'a> {
             target: Some(next),
         });
         self.set_current(next);
+        for (place_local, ref_local) in mut_ref_reloads {
+            self.emit_assign(
+                Place::local(place_local),
+                Rvalue::Use(Operand::Copy(Place {
+                    local: ref_local,
+                    projection: vec![crate::ir::Projection::Deref],
+                })),
+                span,
+            );
+        }
         Some(dest)
     }
 
@@ -2335,8 +2347,9 @@ impl<'a> Builder<'a> {
         receiver_local: Local,
         args: &[HirExpr],
         span: Span,
-    ) -> Option<(Vec<Operand>, &'static str)> {
+    ) -> Option<KindDispatchArgs> {
         let mut arg_operands = Vec::with_capacity(args.len() + 1);
+        let mut mut_ref_reloads = Vec::new();
         arg_operands.push(Operand::Copy(Place::local(receiver_local)));
         // `xs.slice(a, b)` on a `[T; N]` literal needs the
         // static length: the inline buffer carries no length
@@ -2390,11 +2403,19 @@ impl<'a> Builder<'a> {
         if router_handler_method && !args.is_empty() {
             let handler_idx = args.len() - 1;
             for arg in &args[..handler_idx] {
+                let reload_target = self.mut_ref_reload_target(arg);
                 let a = self.lower_expr(arg)?;
+                if let Some(place_local) = reload_target {
+                    mut_ref_reloads.push((place_local, a));
+                }
                 let a = self.auto_deref_cell(a, span);
                 arg_operands.push(Operand::Copy(Place::local(a)));
             }
+            let reload_target = self.mut_ref_reload_target(&args[handler_idx]);
             let handler_local = self.lower_expr(&args[handler_idx])?;
+            if let Some(place_local) = reload_target {
+                mut_ref_reloads.push((place_local, handler_local));
+            }
             match self.emit_router_handler_abi(handler_local, span) {
                 RouterHandlerAbi::Bare(fn_addr) => {
                     arg_operands.push(fn_addr);
@@ -2423,7 +2444,11 @@ impl<'a> Builder<'a> {
                     | "gos_rt_flag_set_parse"
             );
             for arg in args {
+                let reload_target = self.mut_ref_reload_target(arg);
                 let a = self.lower_expr(arg)?;
+                if let Some(place_local) = reload_target {
+                    mut_ref_reloads.push((place_local, a));
+                }
                 let a = self.auto_deref_cell(a, span);
                 let a = if coerce_vec_args {
                     let lt = self.locals[a.0 as usize].ty;
@@ -2444,7 +2469,7 @@ impl<'a> Builder<'a> {
                 arg_operands.push(Operand::Copy(Place::local(a)));
             }
         }
-        Some((arg_operands, rt))
+        Some((arg_operands, rt, mut_ref_reloads))
     }
 
     /// Pin the MIR result type for a dispatched runtime symbol.
@@ -2513,6 +2538,7 @@ impl<'a> Builder<'a> {
             // `Result<i64, errors::Error>`. Pinned so the while-let /
             // match extraction reads the packed enum correctly.
             "gos_rt_child_read_line" => self.option_string_adt_ty(),
+            "gos_rt_stream_read_line" => self.result_i64_error_adt_ty(),
             "gos_rt_child_read_stdout" => self.tcx.string_ty(),
             "gos_rt_child_write_stdin" | "gos_rt_child_kill" => self.tcx.bool_ty(),
             "gos_rt_child_close_stdin" => self.tcx.unit(),

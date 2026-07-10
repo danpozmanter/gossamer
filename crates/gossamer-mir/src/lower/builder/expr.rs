@@ -52,7 +52,7 @@ impl<'a> Builder<'a> {
     pub(crate) fn lower_expr(&mut self, expr: &HirExpr) -> Option<Local> {
         match &expr.kind {
             HirExprKind::Literal(lit) => Some(self.lower_literal(lit, expr.ty, expr.span)),
-            HirExprKind::Path { segments, def } => {
+            HirExprKind::Path { segments, def, .. } => {
                 self.lower_path(segments, *def, expr.ty, expr.span)
             }
             HirExprKind::Unary { op, operand } => {
@@ -862,6 +862,13 @@ impl<'a> Builder<'a> {
                 // to `gos_rt_map_get_i64(m, k_value)`) continue to work.
                 let scalar = matches!(
                     self.tcx.kind_of(operand.ty),
+                    gossamer_types::TyKind::Int(_)
+                        | gossamer_types::TyKind::Float(_)
+                        | gossamer_types::TyKind::Bool
+                        | gossamer_types::TyKind::Char
+                        | gossamer_types::TyKind::String
+                ) || matches!(
+                    self.tcx.kind_of(self.locals[inner.0 as usize].ty),
                     gossamer_types::TyKind::Int(_)
                         | gossamer_types::TyKind::Float(_)
                         | gossamer_types::TyKind::Bool

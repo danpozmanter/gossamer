@@ -633,12 +633,13 @@ const SMOL_INLINE_MAX: usize = 7;
 struct HeapSmolStr {
     strong: AtomicU32,
     len: u32,
+    cap: u32,
 }
 
 impl HeapSmolStr {
-    fn layout(len: usize) -> Layout {
+    fn layout(cap: usize) -> Layout {
         let header = Layout::new::<Self>();
-        let bytes = Layout::array::<u8>(len).expect("SmolStr heap layout overflow");
+        let bytes = Layout::array::<u8>(cap).expect("SmolStr heap layout overflow");
         header
             .extend(bytes)
             .expect("SmolStr heap layout overflow")
@@ -646,8 +647,9 @@ impl HeapSmolStr {
             .pad_to_align()
     }
 
-    fn alloc(bytes: &[u8]) -> *const Self {
-        Self::alloc_with_fill(bytes.len(), |dst| {
+    fn alloc_with_capacity(bytes: &[u8], cap: usize) -> *const Self {
+        debug_assert!(cap >= bytes.len());
+        Self::alloc_with_fill(bytes.len(), cap, |dst| {
             // SAFETY: `alloc_with_fill` passes `bytes.len()` writable payload
             // bytes; the fresh allocation cannot overlap the source slice.
             unsafe {
@@ -657,7 +659,7 @@ impl HeapSmolStr {
     }
 
     fn alloc_ascii_upper(bytes: &[u8]) -> *const Self {
-        Self::alloc_with_fill(bytes.len(), |dst| {
+        Self::alloc_with_fill(bytes.len(), bytes.len(), |dst| {
             for (i, &b) in bytes.iter().enumerate() {
                 let upper = if b.is_ascii_lowercase() {
                     b - (b'a' - b'A')
@@ -677,12 +679,13 @@ impl HeapSmolStr {
         clippy::cast_ptr_alignment,
         reason = "alloc uses HeapSmolStr::layout, whose alignment is at least HeapSmolStr's alignment"
     )]
-    fn alloc_with_fill<F>(len: usize, fill: F) -> *const Self
+    fn alloc_with_fill<F>(len: usize, cap: usize, fill: F) -> *const Self
     where
         F: FnOnce(*mut u8),
     {
         let len_u32 = u32::try_from(len).expect("SmolStr heap string too large");
-        let layout = Self::layout(len);
+        let cap_u32 = u32::try_from(cap).expect("SmolStr heap string too large");
+        let layout = Self::layout(cap);
         // SAFETY: `layout` is non-zero and was computed for the header +
         // payload.
         let ptr = unsafe { alloc(layout) };
@@ -696,6 +699,7 @@ impl HeapSmolStr {
             header.write(Self {
                 strong: AtomicU32::new(1),
                 len: len_u32,
+                cap: cap_u32,
             });
             fill(Self::bytes_mut(header));
         }
@@ -726,12 +730,33 @@ impl HeapSmolStr {
         assert!(prev != u32::MAX, "SmolStr refcount overflow");
     }
 
+    unsafe fn is_unique(header: *const Self) -> bool {
+        // SAFETY: caller owns a live strong reference to `header`.
+        unsafe { (*header).strong.load(Ordering::Acquire) == 1 }
+    }
+
+    unsafe fn append_unique(header: *mut Self, bytes: &[u8]) {
+        // SAFETY: caller guarantees unique ownership and enough capacity.
+        let len = unsafe { (*header).len as usize };
+        let cap = unsafe { (*header).cap as usize };
+        debug_assert!(len + bytes.len() <= cap);
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                bytes.as_ptr(),
+                Self::bytes_mut(header).add(len),
+                bytes.len(),
+            );
+            (*header).len =
+                u32::try_from(len + bytes.len()).expect("SmolStr heap string too large");
+        }
+    }
+
     unsafe fn dec(header: *const Self) {
         // SAFETY: caller owns one strong reference to `header`.
         if unsafe { (*header).strong.fetch_sub(1, Ordering::Release) } == 1 {
             std::sync::atomic::fence(Ordering::Acquire);
-            let len = unsafe { (*header).len as usize };
-            let layout = Self::layout(len);
+            let cap = unsafe { (*header).cap as usize };
+            let layout = Self::layout(cap);
             // SAFETY: this is the final strong reference, so no other
             // thread can access the allocation after the release/acquire pair.
             unsafe {
@@ -835,11 +860,16 @@ impl SmolStr {
     }
 
     fn new_heap(bytes: &[u8]) -> Self {
+        Self::new_heap_with_capacity(bytes, bytes.len())
+    }
+
+    fn new_heap_with_capacity(bytes: &[u8], cap: usize) -> Self {
+        debug_assert!(cap >= bytes.len());
         // SAFETY: `HeapSmolStr::alloc` returns an aligned allocation
         // obtained from the global allocator; user-space pointers on
         // supported targets fit in the low 63 bits, so OR-ing the tag
         // bit is information-preserving.
-        let ptr = HeapSmolStr::alloc(bytes) as usize as u64;
+        let ptr = HeapSmolStr::alloc_with_capacity(bytes, cap) as usize as u64;
         debug_assert!(
             ptr & SMOL_HEAP_TAG == 0,
             "HeapSmolStr pointer must have high bit clear"
@@ -847,6 +877,12 @@ impl SmolStr {
         Self {
             raw: ptr | SMOL_HEAP_TAG,
         }
+    }
+
+    fn grown_capacity(current: usize, needed: usize) -> usize {
+        debug_assert!(needed > current);
+        let doubled = current.saturating_mul(2).max(16);
+        doubled.max(needed)
     }
 
     /// Returns the borrowed string contents. Inline storage
@@ -878,13 +914,12 @@ impl SmolStr {
         }
     }
 
-    /// Appends `s` in place. The heap variant grows its `Arc<String>`
-    /// with amortized spare capacity when uniquely owned (via
-    /// `Arc::make_mut`), so repeated appends to a `mut String` cost
-    /// O(total length) instead of O(n^2). A shared heap string is
-    /// copied once on the next append (copy-on-write). Inline storage
-    /// appends in place until it exceeds the 7-byte window, then
-    /// promotes to a heap string sized for both halves.
+    /// Appends `s` in place. The heap variant keeps spare capacity and grows
+    /// it when uniquely owned, so repeated appends to a `mut String` cost
+    /// O(total length) instead of O(n^2). A shared heap string is copied once
+    /// on the next append (copy-on-write). Inline storage appends in place
+    /// until it exceeds the 7-byte window, then promotes to a heap string
+    /// sized for both halves.
     pub fn push_str(&mut self, s: &str) {
         if s.is_empty() {
             return;
@@ -900,13 +935,35 @@ impl SmolStr {
                 let mut owned = String::with_capacity(len + s.len());
                 owned.push_str(self.as_str());
                 owned.push_str(s);
-                *self = Self::new_heap(owned.as_bytes());
+                *self = Self::new_heap_with_capacity(
+                    owned.as_bytes(),
+                    Self::grown_capacity(SMOL_INLINE_MAX, owned.len()),
+                );
             }
         } else {
-            let mut owned = String::with_capacity(self.len() + s.len());
+            let ptr = (self.raw & SMOL_PTR_MASK) as *mut HeapSmolStr;
+            // SAFETY: `ptr` comes from a live heap SmolStr owned by `self`.
+            let (len, cap, unique) = unsafe {
+                (
+                    (*ptr).len as usize,
+                    (*ptr).cap as usize,
+                    HeapSmolStr::is_unique(ptr),
+                )
+            };
+            let needed = len + s.len();
+            if unique && needed <= cap {
+                // SAFETY: uniqueness and capacity are checked immediately above.
+                unsafe { HeapSmolStr::append_unique(ptr, s.as_bytes()) };
+                return;
+            }
+            let new_cap = Self::grown_capacity(cap, needed);
+            let mut owned = String::with_capacity(needed);
             owned.push_str(self.as_str());
             owned.push_str(s);
-            let old = std::mem::replace(self, Self::new_heap(owned.as_bytes()));
+            let old = std::mem::replace(
+                self,
+                Self::new_heap_with_capacity(owned.as_bytes(), new_cap),
+            );
             drop(old);
         }
     }
@@ -1065,16 +1122,46 @@ struct TypeTagTable {
 static TYPE_TAGS: std::sync::LazyLock<parking_lot::Mutex<TypeTagTable>> =
     std::sync::LazyLock::new(|| parking_lot::Mutex::new(TypeTagTable::default()));
 
+thread_local! {
+    /// Per-thread positive cache for the fixed set of type/variant names a
+    /// loaded program uses.  Constructor-heavy workloads otherwise take the
+    /// global name-intern and tag-table mutexes for every node even though the
+    /// mapping became immutable after its first lookup.
+    static TYPE_TAG_CACHE: std::cell::RefCell<
+        rustc_hash::FxHashMap<&'static str, TypeTag>
+    > = std::cell::RefCell::new(rustc_hash::FxHashMap::default());
+    /// Reverse side of `TYPE_TAG_CACHE`, indexed by compact tag id.  Native
+    /// enum construction compares a node tag to its shape name for every
+    /// allocation; this avoids taking `TYPE_TAGS`' global mutex for that
+    /// immutable reverse lookup.
+    static TYPE_NAME_CACHE: std::cell::RefCell<Vec<Option<&'static str>>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
 impl TypeTag {
     /// Returns the interned textual name for this tag.
     #[must_use]
     pub fn as_str(self) -> &'static str {
-        TYPE_TAGS
+        if let Some(name) =
+            TYPE_NAME_CACHE.with(|cache| cache.borrow().get(self.0 as usize).copied().flatten())
+        {
+            return name;
+        }
+        let name = TYPE_TAGS
             .lock()
             .names
             .get(self.0 as usize)
             .copied()
-            .unwrap_or("<invalid>")
+            .unwrap_or("<invalid>");
+        TYPE_NAME_CACHE.with(|cache| {
+            let mut cache = cache.borrow_mut();
+            let need = self.0 as usize + 1;
+            if cache.len() < need {
+                cache.resize(need, None);
+            }
+            cache[self.0 as usize] = Some(name);
+        });
+        name
     }
 
     /// Returns the compact numeric identity stored in aggregate nodes.
@@ -1139,15 +1226,32 @@ pub(crate) fn intern_type_name(name: &str) -> &'static str {
 /// text at most once through [`intern_type_name`].
 #[must_use]
 pub(crate) fn intern_type_tag(name: &str) -> TypeTag {
+    if let Some(tag) = TYPE_TAG_CACHE.with(|cache| cache.borrow().get(name).copied()) {
+        return tag;
+    }
     let interned = intern_type_name(name);
     let mut tags = TYPE_TAGS.lock();
-    if let Some(&id) = tags.by_name.get(interned) {
-        return TypeTag(id);
-    }
-    let id = u32::try_from(tags.names.len()).unwrap_or(u32::MAX);
-    tags.names.push(interned);
-    tags.by_name.insert(interned, id);
-    TypeTag(id)
+    let tag = if let Some(&id) = tags.by_name.get(interned) {
+        TypeTag(id)
+    } else {
+        let id = u32::try_from(tags.names.len()).unwrap_or(u32::MAX);
+        tags.names.push(interned);
+        tags.by_name.insert(interned, id);
+        TypeTag(id)
+    };
+    drop(tags);
+    TYPE_TAG_CACHE.with(|cache| {
+        cache.borrow_mut().insert(interned, tag);
+    });
+    TYPE_NAME_CACHE.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        let need = tag.id() as usize + 1;
+        if cache.len() < need {
+            cache.resize(need, None);
+        }
+        cache[tag.id() as usize] = Some(interned);
+    });
+    tag
 }
 
 #[must_use]
@@ -1263,6 +1367,7 @@ pub(crate) fn empty_value_arc() -> Arc<Vec<Value>> {
 /// Shared empty `Arc<Vec<(&'static str, Value)>>` sentinel for
 /// field-less struct constructors.
 #[must_use]
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 pub(crate) fn empty_struct_fields() -> Arc<Vec<(&'static str, Value)>> {
     static EMPTY: OnceLock<Arc<Vec<(&'static str, Value)>>> = OnceLock::new();
     Arc::clone(EMPTY.get_or_init(|| Arc::new(Vec::new())))
@@ -1298,14 +1403,15 @@ impl Value {
     /// there is no lock contention across per-connection VM threads.
     #[must_use]
     pub fn variant(name: impl AsRef<str>, fields: Vec<Value>) -> Self {
-        let name = intern_type_tag(name.as_ref());
+        let raw_name = name.as_ref();
+        let name = intern_type_tag(raw_name);
         // Step 8: a variant of a registered native enum shape (scalar / string /
         // nested-enum fields) is built directly in the compiled-tier
         // representation, so it flows through the JIT with zero marshalling and
         // the VM and JIT share one shape end to end. `Vec`-bearing variants keep
         // the boxed form (their marshalling ownership is handled at the boundary
         // as before). Ambiguous variant names fall through to `Variant`.
-        if let Some(shape) = native_shape_for_variant(name.as_str()) {
+        if let Some(shape) = native_shape_for_variant(name, raw_name) {
             let mut inner = VariantInner {
                 name,
                 fields: SmallVec::from_vec(fields),
@@ -2682,11 +2788,45 @@ static VARIANT_NAME_TO_SHAPE: std::sync::LazyLock<
     parking_lot::RwLock<rustc_hash::FxHashMap<&'static str, Option<&'static NativeEnumShape>>>,
 > = std::sync::LazyLock::new(|| parking_lot::RwLock::new(rustc_hash::FxHashMap::default()));
 
+/// Bumped after every shape registration. A later program can make a variant
+/// name that was unique become ambiguous, so thread-local positive caches must
+/// be discarded across registrations.
+static NATIVE_SHAPE_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+thread_local! {
+    /// Positive-only constructor-shape cache. Negative results cannot be
+    /// cached because a later program load may register the name; once a shape
+    /// is found, however, the append-only registry makes it immutable.
+    static NATIVE_SHAPE_CACHE: std::cell::RefCell<(
+        u64,
+        rustc_hash::FxHashMap<TypeTag, &'static NativeEnumShape>
+    )> = std::cell::RefCell::new((0, rustc_hash::FxHashMap::default()));
+}
+
 /// The native enum shape that uniquely declares a variant named `name`, or
 /// `None` if no native shape declares it or more than one does.
 #[must_use]
-pub(crate) fn native_shape_for_variant(name: &str) -> Option<&'static NativeEnumShape> {
-    VARIANT_NAME_TO_SHAPE.read().get(name).copied().flatten()
+pub(crate) fn native_shape_for_variant(
+    tag: TypeTag,
+    name: &str,
+) -> Option<&'static NativeEnumShape> {
+    use std::sync::atomic::Ordering;
+    let generation = NATIVE_SHAPE_GENERATION.load(Ordering::Acquire);
+    if let Some(shape) = NATIVE_SHAPE_CACHE.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        if cache.0 != generation {
+            cache.0 = generation;
+            cache.1.clear();
+        }
+        cache.1.get(&tag).copied()
+    }) {
+        return Some(shape);
+    }
+    let shape = VARIANT_NAME_TO_SHAPE.read().get(name).copied().flatten()?;
+    NATIVE_SHAPE_CACHE.with(|cache| {
+        cache.borrow_mut().1.insert(tag, shape);
+    });
+    Some(shape)
 }
 
 /// Atomically reserves a contiguous block of shape indices and
@@ -2733,6 +2873,7 @@ pub fn register_native_shapes<R>(
         }
         t.push(shape);
     }
+    NATIVE_SHAPE_GENERATION.fetch_add(1, std::sync::atomic::Ordering::Release);
     result
 }
 
@@ -2807,6 +2948,45 @@ pub fn native_enum_field(owner: &NativeEnumOwner, idx: usize) -> Value {
         NativeFieldKind::VecEnum(eidx) => native_vec_enum_to_array(word, *eidx),
         NativeFieldKind::VecStrEnumTuple(eidx) => native_vec_str_enum_to_array(word, *eidx),
     }
+}
+
+/// Moves an enum-pointer field out of a uniquely owned native node without a
+/// retain/release round trip.  Returns `None` when the node is shared or the
+/// field is not itself an enum, in which case the VM must use
+/// [`native_enum_field`] and preserve ordinary clone semantics.
+///
+/// Clearing the payload slot transfers the parent's one child reference to
+/// the returned handle: the parent's metadata-driven drop sees null and does
+/// not release it a second time.  This is the native counterpart of draining a
+/// slot from `VariantInner::fields` in `VariantFieldConsume`.
+#[must_use]
+pub fn native_enum_field_consume(owner: &mut NativeEnumOwner, idx: usize) -> Option<Value> {
+    let base = owner.ptr & !7;
+    if base == 0 {
+        return None;
+    }
+    // Arc uniqueness only proves the Rust handle is unique.  Native nodes have
+    // their own RC domain, so require its count to be one before mutating a
+    // payload slot that another native alias could observe.
+    let unique = unsafe { gossamer_runtime::c_abi::gos_rt_rc_strong_count(base as *mut u8) == 1 };
+    if !unique {
+        return None;
+    }
+    let disc = native_enum_disc(owner.ptr, owner.shape);
+    let kind = owner.shape.variants.get(disc)?.fields.get(idx)?;
+    let NativeFieldKind::Enum(shape_idx) = kind else {
+        return None;
+    };
+    let shape = native_shape(*shape_idx)?;
+    let slot = (base + idx * 8) as *mut i64;
+    // SAFETY: `slot` is a field of the uniquely owned allocation.  Reading and
+    // zeroing it atomically transfers the parent's reference to the new owner.
+    let word = unsafe { std::ptr::replace(slot, 0) };
+    Some(Value::NativeEnum(Arc::new(NativeEnumOwner {
+        ptr: word as usize,
+        shape,
+        owned: false,
+    })))
 }
 
 /// Reads a native `Vec<E>` payload word (a `*mut GosVec` of 8-byte native
@@ -3001,6 +3181,33 @@ mod mapkey_size_tests {
 }
 
 #[cfg(test)]
+mod smolstr_tests {
+    use super::SmolStr;
+
+    #[test]
+    fn repeated_appends_preserve_contents() {
+        let mut s = SmolStr::new();
+        for _ in 0..10_000 {
+            s.push_str("abc");
+        }
+        assert_eq!(s.len(), 30_000);
+        assert!(s.as_str().starts_with("abcabc"));
+        assert!(s.as_str().ends_with("abc"));
+    }
+
+    #[test]
+    fn append_to_shared_heap_string_is_copy_on_write() {
+        let mut left = SmolStr::from("abcdefgh");
+        let right = left.clone();
+
+        left.push_str("-mutated");
+
+        assert_eq!(right.as_str(), "abcdefgh");
+        assert_eq!(left.as_str(), "abcdefgh-mutated");
+    }
+}
+
+#[cfg(test)]
 mod deep_drop_tests {
     use super::{StructInner, Value, VariantInner, intern_type_tag};
     use smallvec::SmallVec;
@@ -3059,5 +3266,114 @@ mod deep_drop_tests {
             }));
         }
         drop(v);
+    }
+}
+
+#[cfg(test)]
+mod native_consume_tests {
+    use super::{
+        NativeEnumOwner, NativeEnumShape, NativeFieldKind, NativeVariantShape, Value,
+        intern_type_name, intern_type_tag, native_enum_field_consume, native_shape_for_variant,
+        register_native_shapes,
+    };
+
+    #[test]
+    fn native_shape_cache_invalidates_when_name_becomes_ambiguous() {
+        const VARIANT: &str = "ShapeCacheAmbiguousVariant";
+        let first = register_native_shapes(|base| {
+            let shape: &'static NativeEnumShape = Box::leak(Box::new(NativeEnumShape {
+                enum_name: intern_type_name("ShapeCacheFirst"),
+                index: base,
+                tagged: true,
+                variants: vec![NativeVariantShape {
+                    name: intern_type_name(VARIANT),
+                    fields: Vec::new(),
+                }],
+            }));
+            (vec![shape], shape)
+        });
+        let tag = intern_type_tag(VARIANT);
+        assert!(std::ptr::eq(
+            native_shape_for_variant(tag, VARIANT).expect("initial unique shape"),
+            first
+        ));
+
+        register_native_shapes(|base| {
+            let shape: &'static NativeEnumShape = Box::leak(Box::new(NativeEnumShape {
+                enum_name: intern_type_name("ShapeCacheSecond"),
+                index: base,
+                tagged: true,
+                variants: vec![NativeVariantShape {
+                    name: intern_type_name(VARIANT),
+                    fields: Vec::new(),
+                }],
+            }));
+            (vec![shape], ())
+        });
+        assert!(
+            native_shape_for_variant(tag, VARIANT).is_none(),
+            "registration generation must invalidate the cached unique shape"
+        );
+    }
+
+    #[test]
+    fn consuming_unique_native_child_transfers_without_retain() {
+        let (child_shape, parent_shape) = register_native_shapes(|base| {
+            let child: &'static NativeEnumShape = Box::leak(Box::new(NativeEnumShape {
+                enum_name: intern_type_name("ConsumeChild"),
+                index: base,
+                tagged: false,
+                variants: vec![NativeVariantShape {
+                    name: intern_type_name("ConsumeLeaf"),
+                    fields: vec![NativeFieldKind::I64],
+                }],
+            }));
+            let parent: &'static NativeEnumShape = Box::leak(Box::new(NativeEnumShape {
+                enum_name: intern_type_name("ConsumeParent"),
+                index: base + 1,
+                tagged: false,
+                variants: vec![NativeVariantShape {
+                    name: intern_type_name("ConsumeNode"),
+                    fields: vec![NativeFieldKind::Enum(base)],
+                }],
+            }));
+            (vec![child, parent], (child, parent))
+        });
+
+        // Null metadata is sufficient here: the test explicitly transfers the
+        // only child slot before either allocation drops.
+        let child = unsafe { gossamer_runtime::c_abi::gos_rt_rc_alloc(8, std::ptr::null()) };
+        let parent = unsafe { gossamer_runtime::c_abi::gos_rt_rc_alloc(8, std::ptr::null()) };
+        assert!(!child.is_null() && !parent.is_null());
+        unsafe {
+            *((child as usize - 3) as *mut u8) = 0;
+            child.cast::<i64>().write_unaligned(7);
+            *((parent as usize - 3) as *mut u8) = 0;
+            parent.cast::<i64>().write_unaligned(child as i64);
+        }
+        let before = unsafe { gossamer_runtime::c_abi::gos_rt_rc_strong_count(child) };
+        let mut owner = NativeEnumOwner {
+            ptr: parent as usize,
+            shape: parent_shape,
+            owned: false,
+        };
+        let moved = native_enum_field_consume(&mut owner, 0).expect("unique child moves");
+        assert_eq!(
+            unsafe { parent.cast::<i64>().read_unaligned() },
+            0,
+            "parent slot cleared"
+        );
+        let Value::NativeEnum(child_owner) = moved else {
+            panic!("consume returned non-enum")
+        };
+        assert_eq!(child_owner.ptr, child as usize);
+        assert!(std::ptr::eq(child_owner.shape, child_shape));
+        assert_eq!(
+            unsafe { gossamer_runtime::c_abi::gos_rt_rc_strong_count(child) },
+            before,
+            "moving a child must not retain it"
+        );
+        drop(child_owner);
+        drop(owner);
     }
 }

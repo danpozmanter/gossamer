@@ -327,7 +327,7 @@ impl Vm {
         callee: Value,
         args: Vec<Value>,
     ) -> RuntimeResult<Value> {
-        let channel = crate::value::Channel::new();
+        let channel = crate::value::Channel::unbounded();
         let worker_channel = channel.clone();
         self.spawn_on_pool(move |vm| {
             let outcome = match vm.dispatch_call(&callee, args) {

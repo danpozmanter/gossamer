@@ -15,11 +15,13 @@
 #![allow(unused_unsafe)]
 #![allow(clippy::wildcard_imports)]
 
-use std::ffi::CStr;
+use std::ffi::{CStr, CString};
 use std::io::{BufRead, Read};
 use std::os::raw::c_char;
 
 use super::*;
+use crate::c_abi::errors::gos_rt_error_new;
+use crate::c_abi::vec::gos_rt_result_new;
 
 // ---------------------------------------------------------------
 // Streams - io::stdout / io::stderr / io::stdin
@@ -35,9 +37,10 @@ use super::*;
 // Write methods (`write_byte`, `write`, `write_str`, `flush`)
 // route every stdout-fd call through the thread-local 64 KiB
 // line-buffer; stderr writes go direct-to-syscall (it's error
-// output, we want it unbuffered). Read methods (`read_line`,
-// `read_to_string`) read from libc `fgets` / stdin; they
-// allocate a fresh String through the GC arena and return it.
+// output, we want it unbuffered). Read methods read from stdin:
+// `read_line(&mut String)` appends into the caller's buffer slot
+// and returns `Result<i64, errors::Error>`; `read_to_string`
+// allocates a fresh String through the GC arena and returns it.
 
 #[repr(C)]
 pub struct GosStream {
@@ -298,30 +301,49 @@ pub unsafe extern "C" fn gos_rt_stream_flush(stream: *const GosStream) {
     });
 }
 
-/// Reads one line from `stream` (expected to be stdin). Strips
-/// the trailing `\n` if present. Returns the GC-arena-owned
-/// C-string pointer; an empty string on EOF or any read error.
+fn stream_read_line_err(message: &str) -> i128 {
+    let msg = CString::new(message).unwrap_or_else(|_| c"read_line failed".to_owned());
+    let err = unsafe { gos_rt_error_new(msg.as_ptr()) };
+    gos_rt_result_new(1, err as i64)
+}
+
+/// Reads one line from `stream` (expected to be stdin), appends the raw line
+/// to the caller's `String` slot, and returns `Ok(bytes_read)`. The buffer
+/// keeps the newline; callers can use `trim()` when they want prompt input.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gos_rt_stream_read_line(stream: *const GosStream) -> *mut c_char {
-    ffi_entry!(std::ptr::null_mut(), {
+pub unsafe extern "C" fn gos_rt_stream_read_line(
+    stream: *const GosStream,
+    buf_slot: *mut *mut c_char,
+) -> i128 {
+    ffi_entry!(stream_read_line_err("read_line: runtime panic"), {
+        if buf_slot.is_null() {
+            return stream_read_line_err("read_line: expected &mut String buffer");
+        }
         let fd = unsafe { stream_fd(stream) };
         if fd != 0 {
-            return alloc_cstring(b"");
+            return gos_rt_result_new(0, 0);
         }
         unsafe { gos_rt_flush_stdout() };
         let stdin = std::io::stdin();
         let mut line = String::new();
         match stdin.lock().read_line(&mut line) {
-            Ok(_) => {
-                if line.ends_with('\n') {
-                    line.pop();
-                    if line.ends_with('\r') {
-                        line.pop();
-                    }
+            Ok(n) => {
+                let current = unsafe { *buf_slot };
+                let mut out = if current.is_null() {
+                    String::new()
+                } else {
+                    unsafe { CStr::from_ptr(current) }
+                        .to_string_lossy()
+                        .into_owned()
+                };
+                out.push_str(&line);
+                let updated = alloc_cstring(out.as_bytes());
+                unsafe {
+                    *buf_slot = updated;
                 }
-                alloc_cstring(line.as_bytes())
+                gos_rt_result_new(0, n as i64)
             }
-            Err(_) => alloc_cstring(b""),
+            Err(e) => stream_read_line_err(&format!("read_line: {e}")),
         }
     })
 }

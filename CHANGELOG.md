@@ -20,6 +20,12 @@
   handles. VM-to-native enum construction now moves uniquely-owned recursive
   children into the parent where safe and releases retained/fresh fields with
   matching ownership on failure.
+- **Recursive enum execution does less dispatch and synchronization.** Safe
+  scalar-returning traversals can tier up through Cranelift; native consuming
+  pattern extraction transfers uniquely owned children, and per-thread
+  tag/shape caches avoid repeated global-table locks during node construction.
+- The bytecode inliner now covers small straight-line helpers with local or
+  `static mut` state updates, removing their repeated VM call frames.
 
 ### REPL and docs
 
@@ -52,6 +58,10 @@
 
 ### Stability
 
+- **Recursive heap-enum producers stay on the bytecode tier until the JIT has
+  consuming return ownership.** This prevents native tree construction or
+  rewriting from retaining an input and output tree together, while preserving
+  native promotion for read-only recursive traversals.
 - **Cranelift native cleanup now uses one summary-aware cleanup plan from block
   entry through return.** This removes a possible leak/double-free split when
   interprocedural capture summaries change drop placement.
@@ -69,6 +79,10 @@
   fixtures.** The existing VM/native-boundary fixtures now run through the
   aggressive promotion gate so marshalling/freeing regressions are caught
   earlier.
+- **Native CI is bounded and less failure-prone.** Cranelift native build tests
+  now run the already-built `gos` binary with per-child timeouts instead of
+  recursively invoking `cargo run`, the native CI job has an explicit timeout,
+  and stdlib/ABI drift checks were updated for the new concurrency helpers.
 - **Local validation output is easier to follow.** `check.sh` now prints quiet
   phase headers for the major gate groups before running the individual steps,
   so a local full check shows where it is without turning every command verbose.

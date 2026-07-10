@@ -42,6 +42,7 @@ const ALLOWED_UNMANIFESTED: &[&str] = &[
     // Each entry's canonical spelling is the manifest member; these
     // are convenience / deprecated aliases the runtime keeps callable.
     "channel::new",                           // -> sync::channel
+    "channel::unbounded",                     // -> sync::channel_unbounded
     "fs::create_dir",                         // -> fs::create_dir_all
     "fs::create_dir_all",                     // -> fs::create_dir_all
     "fs::read",                               // -> fs::read

@@ -75,7 +75,7 @@ One page per module. Source is `crates/gossamer-std/src/`; this index is regener
 | [`std::http::static_files`](http_static_files.md) | Caching static-file handler: ETag, Last-Modified, byte ranges, MIME sniff. |
 | [`std::http::websocket`](http_websocket.md) | RFC 6455 WebSocket support. Server-side accept + send_text / send_binary / ping / pong / close. |
 | [`std::http_h3`](http_h3.md) | First-party HTTP/3 server + client over QUIC (RFC 9114; quinn + h3). Each `serve` and `Client` instance owns a private tokio runtime; callers see only synchronous entry points. |
-| [`std::io`](io.md) | Stream-oriented I/O abstractions. |
+| [`std::io`](io.md) | Stream-oriented I/O abstractions and process standard streams. |
 | [`std::iter`](iter.md) | Sequence adapters over Vec<T>: map, filter, fold, zip, enumerate, chain, etc. |
 | [`std::jwt`](jwt.md) | RFC 7519 sign / verify for HS256 / HS384 / HS512, ES256, and EdDSA tokens. |
 | [`std::lifecycle`](lifecycle.md) | Graceful-shutdown coordinator with signal handling and sd_notify support. |
@@ -90,7 +90,7 @@ One page per module. Source is `crates/gossamer-std/src/`; this index is regener
 | [`std::net::netip`](net_netip.md) | Typed IP-address parsing, classification, and addr:port helpers (Go's net/netip shape). |
 | [`std::net::url`](net_url.md) | URL parsing, rendering, and query escaping. |
 | [`std::option`](option.md) | Data-last Option combinators for pipeline chaining: map, filter, unwrap_or, and_then, etc. |
-| [`std::os`](os.md) | Operating-system identity and process standard input. |
+| [`std::os`](os.md) | Operating-system identity. |
 | [`std::os::exec`](os_exec.md) | Spawn / wait for child processes (Go's os/exec shape). |
 | [`std::os::signal`](os_signal.md) | POSIX-style signal subscription (Go's os/signal shape). |
 | [`std::os::user`](os_user.md) | POSIX user / group lookup. Unix-backed by `nix`; Windows falls back to env vars. |

@@ -483,11 +483,11 @@ pub(super) fn lower_intrinsic_call_io_math(
         // return an opaque pointer to a static `GosStream`.
         // Method dispatch on the returned value routes to the
         // `gos_rt_stream_*` helpers below.
-        "io::stdout" | "io::stderr" | "io::stdin" | "os::stdout" | "os::stderr" | "os::stdin" => {
+        "io::stdout" | "io::stderr" | "io::stdin" => {
             let rt_name = match name {
-                "io::stdout" | "os::stdout" => "gos_rt_io_stdout",
-                "io::stderr" | "os::stderr" => "gos_rt_io_stderr",
-                "io::stdin" | "os::stdin" => "gos_rt_io_stdin",
+                "io::stdout" => "gos_rt_io_stdout",
+                "io::stderr" => "gos_rt_io_stderr",
+                "io::stdin" => "gos_rt_io_stdin",
                 _ => unreachable!(),
             };
             let rt_fn = intrinsics.extern_fn(module, rt_name, &[], &[ptr_ty])?;
@@ -683,12 +683,58 @@ pub(super) fn lower_intrinsic_call_io_math(
             );
             Ok(true)
         }
-        "gos_rt_stream_read_line" | "gos_rt_stream_read_to_string" => {
-            let rt_name: &'static str = match name {
-                "gos_rt_stream_read_line" => "gos_rt_stream_read_line",
-                _ => "gos_rt_stream_read_to_string",
+        "gos_rt_stream_read_line" => {
+            let rt_fn = intrinsics.extern_fn(
+                module,
+                "gos_rt_stream_read_line",
+                &[ptr_ty, ptr_ty],
+                &[types::I128],
+            )?;
+            let fref = module.declare_func_in_func(rt_fn, builder.func);
+            let stream = match args.first() {
+                Some(a) => lower_operand(
+                    module,
+                    builder,
+                    locals,
+                    body,
+                    tcx,
+                    a,
+                    Some(ptr_ty),
+                    intrinsics,
+                )?,
+                None => builder.ins().iconst(ptr_ty, 0),
             };
-            let rt_fn = intrinsics.extern_fn(module, rt_name, &[ptr_ty], &[ptr_ty])?;
+            let buf = match args.get(1) {
+                Some(a) => lower_operand(
+                    module,
+                    builder,
+                    locals,
+                    body,
+                    tcx,
+                    a,
+                    Some(ptr_ty),
+                    intrinsics,
+                )?,
+                None => builder.ins().iconst(ptr_ty, 0),
+            };
+            let call = builder.ins().call(fref, &[stream, buf]);
+            let result = builder.inst_results(call)[0];
+            define_var_to(
+                builder,
+                locals,
+                &intrinsics.body_cl_types,
+                destination.local,
+                result,
+            );
+            Ok(true)
+        }
+        "gos_rt_stream_read_to_string" => {
+            let rt_fn = intrinsics.extern_fn(
+                module,
+                "gos_rt_stream_read_to_string",
+                &[ptr_ty],
+                &[ptr_ty],
+            )?;
             let fref = module.declare_func_in_func(rt_fn, builder.func);
             let stream = match args.first() {
                 Some(a) => lower_operand(

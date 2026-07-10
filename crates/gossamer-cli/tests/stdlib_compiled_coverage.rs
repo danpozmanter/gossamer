@@ -92,15 +92,17 @@ const COMPILED_VIA_SPECIAL_MECHANISM: &[&str] = &[
     "io::stderr",
     "io::stdin",
     "io::stdout",
-    "os::stdin",
     // Process-control statements lowered directly to runtime calls.
     "process::abort",
     "process::exit",
     "process::id",
     // Channel construction destructured at the binding site.
     "channel::new",
+    "channel::unbounded",
     "std::sync::channel",
+    "std::sync::channel_unbounded",
     "sync::channel",
+    "sync::channel_unbounded",
 ];
 
 fn workspace_root() -> PathBuf {

@@ -69,6 +69,32 @@ fn tail_inline_cost(expr: &HirExpr) -> Option<usize> {
     Some(1 + children)
 }
 
+/// Cost of a straight-line statement that can be safely replayed at an inline
+/// call site.  A bare-path assignment covers both local scratch bindings and
+/// `static mut` updates such as a tiny PRNG step; the isolated callee scope
+/// preserves name hygiene and the normal assignment compiler still decides
+/// whether the path is local or static.
+fn stmt_inline_cost(stmt: &HirStmt) -> Option<usize> {
+    match &stmt.kind {
+        HirStmtKind::Let {
+            pattern,
+            init: Some(init),
+            ..
+        } if matches!(pattern.kind, HirPatKind::Binding { .. }) => {
+            Some(1 + tail_inline_cost(init)?)
+        }
+        HirStmtKind::Expr { expr, .. } => match &expr.kind {
+            HirExprKind::Assign { place, value }
+                if matches!(place.kind, HirExprKind::Path { .. }) =>
+            {
+                Some(1 + tail_inline_cost(value)?)
+            }
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
 /// Recognises a user function the bytecode compiler may inline at its
 /// call sites: a free function (no `self` receiver) whose body is a
 /// single tail expression (no statements), every parameter a plain
@@ -80,10 +106,6 @@ pub(crate) fn detect_inlinable_fn(decl: &HirFn, tcx: &TyCtxt) -> Option<Inlinabl
         return None;
     }
     let body = decl.body.as_ref()?;
-    // Single-tail-expression body: matches `fn mat_a(i, j) -> f64 { … }`.
-    if !body.block.stmts.is_empty() {
-        return None;
-    }
     let tail = body.block.tail.as_deref()?;
     for param in &decl.params {
         if !matches!(param.pattern.kind, HirPatKind::Binding { .. }) {
@@ -96,12 +118,18 @@ pub(crate) fn detect_inlinable_fn(decl: &HirFn, tcx: &TyCtxt) -> Option<Inlinabl
             return None;
         }
     }
-    let cost = tail_inline_cost(tail)?;
+    let stmt_cost = body
+        .block
+        .stmts
+        .iter()
+        .try_fold(0usize, |sum, stmt| Some(sum + stmt_inline_cost(stmt)?))?;
+    let cost = stmt_cost + tail_inline_cost(tail)?;
     if cost > INLINE_TAIL_COST_LIMIT {
         return None;
     }
     Some(InlinableFn {
         params: decl.params.iter().map(|p| p.pattern.clone()).collect(),
+        stmts: body.block.stmts.clone(),
         tail: tail.clone(),
         cost,
     })
@@ -187,12 +215,60 @@ impl<'tcx> FnBuilder<'tcx> {
                 self.bind_local(&param_name.name, *arg);
             }
         }
-        let result = self.compile_expr_ex(&info.tail);
+        let result = (|| {
+            for stmt in &info.stmts {
+                // `stmt_inline_cost` rejects every diverging statement shape.
+                let diverges = self.compile_stmt(stmt)?;
+                debug_assert!(!diverges);
+            }
+            self.compile_expr_ex(&info.tail)
+        })();
         // Restore the caller's scopes and pop the recursion stack on every
         // exit path, including the error path, before surfacing the result.
         self.scopes = saved_scopes;
         self.consumable = saved_consumable;
         self.inlining.pop();
         Ok(Some(result?))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::detect_inlinable_fn;
+    use gossamer_hir::{HirItemKind, lower_source_file};
+    use gossamer_lex::SourceMap;
+    use gossamer_parse::parse_source_file;
+    use gossamer_resolve::resolve_source_file;
+    use gossamer_types::{TyCtxt, typecheck_source_file};
+
+    #[test]
+    fn straight_line_static_update_is_inlinable() {
+        let source = r"
+static mut STATE: i64 = 1
+fn next() -> i64 {
+    STATE = STATE * 3 + 1
+    STATE >> 1
+}
+";
+        let mut map = SourceMap::new();
+        let file = map.add_file("inline_static.gos", source.to_string());
+        let (sf, parse_diags) = parse_source_file(source, file);
+        assert!(parse_diags.is_empty(), "parse: {parse_diags:?}");
+        let (resolutions, resolve_diags) = resolve_source_file(&sf);
+        assert!(resolve_diags.is_empty(), "resolve: {resolve_diags:?}");
+        let mut tcx = TyCtxt::new();
+        let (table, type_diags) = typecheck_source_file(&sf, &resolutions, &mut tcx);
+        assert!(type_diags.is_empty(), "typecheck: {type_diags:?}");
+        let program = lower_source_file(&sf, &resolutions, &table, &mut tcx);
+        let next = program
+            .items
+            .iter()
+            .find_map(|item| match &item.kind {
+                HirItemKind::Fn(decl) if decl.name.name.as_str() == "next" => Some(decl),
+                _ => None,
+            })
+            .expect("next function");
+        let inline = detect_inlinable_fn(next, &tcx).expect("straight-line helper should inline");
+        assert_eq!(inline.stmts.len(), 1, "the state update must be replayed");
     }
 }

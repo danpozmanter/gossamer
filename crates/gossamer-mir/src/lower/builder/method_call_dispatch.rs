@@ -300,7 +300,6 @@ impl<'a> Builder<'a> {
             | "gos_rt_heap_u8_to_string"
             | "gos_rt_i64_to_str"
             | "gos_rt_f64_to_str"
-            | "gos_rt_stream_read_line"
             | "gos_rt_stream_read_to_string"
             | "gos_rt_map_get_str_str"
             | "gos_rt_map_get_or_str_str"
@@ -861,6 +860,7 @@ impl<'a> Builder<'a> {
             // `Child::read_line() -> Option<String>` - same pin as
             // the HTTP stream's line reader.
             "gos_rt_child_read_line" => self.option_string_adt_ty(),
+            "gos_rt_stream_read_line" => self.result_i64_error_adt_ty(),
             "gos_rt_child_read_stdout" => self.tcx.string_ty(),
             "gos_rt_child_write_stdin" | "gos_rt_child_kill" => self.tcx.bool_ty(),
             // `Child::wait() -> Result<i64, errors::Error>`.

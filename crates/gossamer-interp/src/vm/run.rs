@@ -2804,9 +2804,15 @@ impl Vm {
                                 .unwrap_or(Value::Unit),
                             None => arc.fields.get(idx as usize).cloned().unwrap_or(Value::Unit),
                         },
-                        Value::NativeEnum(owner) => {
-                            crate::value::native_enum_field(owner, idx as usize)
-                        }
+                        Value::NativeEnum(arc) => match Arc::get_mut(arc) {
+                            Some(owner) => {
+                                crate::value::native_enum_field_consume(owner, idx as usize)
+                                    .unwrap_or_else(|| {
+                                        crate::value::native_enum_field(owner, idx as usize)
+                                    })
+                            }
+                            None => crate::value::native_enum_field(arc, idx as usize),
+                        },
                         _ => Value::Unit,
                     };
                     registers[dst as usize] = result;

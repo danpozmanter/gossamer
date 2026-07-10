@@ -9,7 +9,7 @@ use std::env;
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::path::PathBuf;
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 fn gos_bin() -> PathBuf {
     // CARGO_BIN_EXE_<name> is set by cargo when running tests.
@@ -113,6 +113,46 @@ fn run_subcommand_executes_via_vm() {
     );
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("cli-vm-run"));
+    let _ = std::fs::remove_file(&fixture);
+}
+
+#[test]
+fn stdin_read_line_appends_to_mut_string() {
+    let fixture = write_fixture(
+        "stdin-read-line",
+        r#"use std::io
+
+fn main() {
+    let mut input = String::new()
+    io::stdin().read_line(&mut input).unwrap()
+    println!("typed={} bytes={}", input.trim(), input.len())
+}
+"#,
+    );
+    let mut child = Command::new(gos_bin())
+        .args(["run"])
+        .arg(&fixture)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn run");
+    child
+        .stdin
+        .as_mut()
+        .expect("stdin")
+        .write_all(b"hello\n")
+        .expect("write stdin");
+    let out = child.wait_with_output().expect("wait run");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "typed=hello bytes=6\n"
+    );
     let _ = std::fs::remove_file(&fixture);
 }
 

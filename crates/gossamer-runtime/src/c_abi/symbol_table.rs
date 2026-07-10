@@ -3435,6 +3435,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_router_serve as *const u8,
         ),
         (
+            "gos_rt_runtime_scheduler_stats_json",
+            crate::c_abi::gos_rt_runtime_scheduler_stats_json as *const u8,
+        ),
+        (
             "gos_rt_rwlock_get",
             crate::c_abi::gos_rt_rwlock_get as *const u8,
         ),
@@ -3481,10 +3485,6 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
         (
             "gos_rt_select_wait",
             crate::c_abi::gos_rt_select_wait as *const u8,
-        ),
-        (
-            "gos_rt_runtime_scheduler_stats_json",
-            crate::c_abi::gos_rt_runtime_scheduler_stats_json as *const u8,
         ),
         (
             "gos_rt_set_args",
@@ -4138,12 +4138,12 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_strconv_parse_i64_bytes as *const u8,
         ),
         (
-            "gos_rt_strconv_parse_i64_range",
-            crate::c_abi::gos_rt_strconv_parse_i64_range as *const u8,
-        ),
-        (
             "gos_rt_strconv_parse_i64_radix",
             crate::c_abi::gos_rt_strconv_parse_i64_radix as *const u8,
+        ),
+        (
+            "gos_rt_strconv_parse_i64_range",
+            crate::c_abi::gos_rt_strconv_parse_i64_range as *const u8,
         ),
         (
             "gos_rt_strconv_parse_u64",

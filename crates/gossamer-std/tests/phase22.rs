@@ -35,7 +35,7 @@ fn io_module_exposes_buffered_wrappers() {
 fn canonical_modules_list_system_helpers() {
     let m = module("std::os").unwrap();
     let names: Vec<_> = m.items.iter().map(|i| i.name).collect();
-    for expected in ["family", "arch", "stdin"] {
+    for expected in ["family", "arch"] {
         assert!(names.contains(&expected), "missing {expected}");
     }
 

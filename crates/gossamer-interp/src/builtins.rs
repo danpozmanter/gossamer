@@ -668,10 +668,6 @@ fn install_module_builtins(globals: &mut Vec<(&'static str, Value)>) {
             // os identity (canonical - stays on os::).
             ("family", builtin_os_family),
             ("arch", builtin_os_arch),
-            // Stdin pseudo-stream + read_line. `os::stdin()`
-            // returns a sentinel that `read_line` recognises;
-            // reads pull a line from the host process's stdin.
-            ("stdin", builtin_os_stdin),
         ],
         globals,
     );
@@ -893,10 +889,6 @@ fn install_module_builtins(globals: &mut Vec<(&'static str, Value)>) {
         "Scanner::text",
         builtin("Scanner::text", builtin_bufio_scanner_text),
     ));
-    // Method-call dispatch for `<stream>.read_line()` - the same
-    // builtin handles both `os::stdin().read_line()` and the
-    // method-call form. Adds `read_line` to the global table.
-    globals.push(("read_line", builtin("read_line", builtin_stdin_read_line)));
     // HashMap surface - exposed both qualified (`HashMap::*`) and
     // bare (`m.get(k)`, `m.insert(k, v)`) so user code can use the
     // method form. Mutating methods (insert/remove/clear) ride the
@@ -2307,6 +2299,7 @@ fn stream_of(fd: i64) -> Value {
 
 fn stream_fd(value: &Value) -> i64 {
     match value {
+        Value::MutCell(cell) => stream_fd(&cell.lock()),
         Value::Struct(inner) if inner.name == "Stream" => {
             for (f_name, f_val) in &inner.fields {
                 if (*f_name) == "fd" {
@@ -2423,22 +2416,30 @@ fn builtin_stream_flush(_args: &[Value]) -> RuntimeResult<Value> {
 fn builtin_stream_read_line(args: &[Value]) -> RuntimeResult<Value> {
     use std::io::BufRead;
     let fd = args.first().map_or(0, stream_fd);
+    let Some(Value::MutCell(cell)) = args.get(1) else {
+        return Ok(err_variant(
+            "read_line: expected &mut String buffer".to_string(),
+        ));
+    };
     if fd != 0 {
-        return Ok(Value::String(SmolStr::from(String::new())));
+        return Ok(ok_variant(Value::Int(0)));
     }
     let stdin = std::io::stdin();
     let mut line = String::new();
     match stdin.lock().read_line(&mut line) {
-        Ok(_) => {
-            if line.ends_with('\n') {
-                line.pop();
-                if line.ends_with('\r') {
-                    line.pop();
-                }
-            }
-            Ok(Value::String(line.into()))
+        Ok(n) => {
+            let mut guard = cell.lock();
+            let Some(existing) = as_str(&guard) else {
+                return Ok(err_variant(
+                    "read_line: expected &mut String buffer".to_string(),
+                ));
+            };
+            let mut out = existing.to_string();
+            out.push_str(&line);
+            *guard = Value::String(SmolStr::from(out));
+            Ok(ok_variant(Value::Int(n as i64)))
         }
-        Err(_) => Ok(Value::String(SmolStr::from(String::new()))),
+        Err(e) => Ok(err_variant(format!("read_line: {e}"))),
     }
 }
 
@@ -4465,55 +4466,13 @@ fn json_escape_str(value: &str) -> String {
     out
 }
 
-/// Stdin sentinel - `os::stdin()` returns a struct whose name
-/// (`StdinStream`) is the recognition key for `read_line` and
-/// `Scanner::new`. The struct carries no fields; identity is by
-/// type name only.
-fn builtin_os_stdin(_args: &[Value]) -> RuntimeResult<Value> {
-    Ok(Value::struct_(
-        "StdinStream",
-        Arc::unwrap_or_clone(crate::value::empty_struct_fields()),
-    ))
-}
-
-/// `<stream>.read_line() -> Option<String>`. Reads one line from
-/// the host process's stdin. Returns `None` on EOF, `Some(line)`
-/// otherwise (terminating `\n` stripped). Operates on the
-/// `StdinStream` sentinel produced by `os::stdin()`. Any other
-/// receiver returns `None`.
-fn builtin_stdin_read_line(args: &[Value]) -> RuntimeResult<Value> {
-    use std::io::BufRead as _;
-    let is_stdin = matches!(args.first(), Some(Value::Struct(s)) if s.name == "StdinStream");
-    if !is_stdin {
-        return Ok(none_variant());
-    }
-    let stdin = std::io::stdin();
-    let mut handle = stdin.lock();
-    let mut line = String::new();
-    match handle.read_line(&mut line) {
-        Ok(0) => Ok(none_variant()),
-        Ok(_) => {
-            // Strip a single trailing `\n` (or `\r\n` on Windows-style
-            // inputs) to match the documented `read_line` shape.
-            if line.ends_with('\n') {
-                line.pop();
-                if line.ends_with('\r') {
-                    line.pop();
-                }
-            }
-            Ok(some_variant(Value::String(SmolStr::from(line))))
-        }
-        Err(_) => Ok(none_variant()),
-    }
-}
-
 /// `bufio::Scanner::new(stream)` - constructs a scanner.
 ///
 /// State is kept in a Map (`Arc<Mutex>`) so `scan()`/`text()` can mutate
 /// the cursor without requiring the immutable-struct writeback path.
 fn builtin_bufio_scanner_new(args: &[Value]) -> RuntimeResult<Value> {
     use std::io::Read;
-    let is_stdin = matches!(args.first(), Some(Value::Struct(s)) if s.name == "StdinStream");
+    let is_stdin = args.first().is_some_and(|v| stream_fd(v) == 0);
     let lines: Vec<Value> = if is_stdin {
         let mut buf = String::new();
         let _ = std::io::stdin().read_to_string(&mut buf);
@@ -4544,7 +4503,15 @@ fn builtin_bufio_scanner_new(args: &[Value]) -> RuntimeResult<Value> {
 
 /// Extracts the mutable state Map from a Scanner struct.
 fn scanner_state(args: &[Value]) -> Option<Arc<parking_lot::Mutex<DenseMap<MapKey, Value>>>> {
-    if let Some(Value::Struct(inner)) = args.first() {
+    let first = args.first()?;
+    let guard;
+    let value = if let Value::MutCell(cell) = first {
+        guard = cell.lock();
+        &*guard
+    } else {
+        first
+    };
+    if let Value::Struct(inner) = value {
         if inner.name == "Scanner" {
             for (name, val) in &inner.fields {
                 if *name == "__state" {

@@ -62,7 +62,7 @@ Names available without any import - the print macros, `min`/`max`/`clamp`, `spa
 | [`std::errors`](#stderrors) | 6 | Error construction, wrapping, and chain traversal. |
 | [`std::flag`](#stdflag) | 7 | Batteries-included CLI argument parsing. |
 | [`std::fmt`](#stdfmt) | 9 | Formatted printing and string interpolation. |
-| [`std::fs`](#stdfs) | 19 | Filesystem reading, writing, and traversal (Rust std::fs shape). |
+| [`std::fs`](#stdfs) | 23 | Filesystem reading, writing, and traversal (Rust std::fs shape). |
 | [`std::hash::adler32`](#stdhashadler32) | 3 | Adler-32 checksums. |
 | [`std::hash::crc32`](#stdhashcrc32) | 3 | CRC-32 (IEEE) checksums. |
 | [`std::hash::fnv`](#stdhashfnv) | 3 | FNV-1a non-cryptographic hash (32-bit, 64-bit). |
@@ -86,7 +86,7 @@ Names available without any import - the print macros, `min`/`max`/`clamp`, `spa
 | [`std::http::static_files`](#stdhttpstatic_files) | 3 | Caching static-file handler: ETag, Last-Modified, byte ranges, MIME sniff. |
 | [`std::http::websocket`](#stdhttpwebsocket) | 12 | RFC 6455 WebSocket support. Server-side accept + send_text / send_binary / ping / pong / close. |
 | [`std::http_h3`](#stdhttp_h3) | 4 | First-party HTTP/3 server + client over QUIC (RFC 9114; quinn + h3). Each `serve` and `Client` instance owns a private tokio runtime; callers see only synchronous entry points. |
-| [`std::io`](#stdio) | 10 | Stream-oriented I/O abstractions. |
+| [`std::io`](#stdio) | 10 | Stream-oriented I/O abstractions and process standard streams. |
 | [`std::iter`](#stditer) | 46 | Sequence adapters over Vec<T>: map, filter, fold, zip, enumerate, chain, etc. |
 | [`std::jwt`](#stdjwt) | 10 | RFC 7519 sign / verify for HS256 / HS384 / HS512, ES256, and EdDSA tokens. |
 | [`std::lifecycle`](#stdlifecycle) | 1 | Graceful-shutdown coordinator with signal handling and sd_notify support. |
@@ -101,7 +101,7 @@ Names available without any import - the print macros, `min`/`max`/`clamp`, `spa
 | [`std::net::netip`](#stdnetnetip) | 11 | Typed IP-address parsing, classification, and addr:port helpers (Go's net/netip shape). |
 | [`std::net::url`](#stdneturl) | 5 | URL parsing, rendering, and query escaping. |
 | [`std::option`](#stdoption) | 12 | Data-last Option combinators for pipeline chaining: map, filter, unwrap_or, and_then, etc. |
-| [`std::os`](#stdos) | 3 | Operating-system identity and process standard input. |
+| [`std::os`](#stdos) | 2 | Operating-system identity. |
 | [`std::os::exec`](#stdosexec) | 11 | Spawn / wait for child processes (Go's os/exec shape). |
 | [`std::os::signal`](#stdossignal) | 5 | POSIX-style signal subscription (Go's os/signal shape). |
 | [`std::os::user`](#stdosuser) | 6 | POSIX user / group lookup. Unix-backed by `nix`; Windows falls back to env vars. |
@@ -712,8 +712,6 @@ Filesystem reading, writing, and traversal (Rust std::fs shape).
 | `walk_dir` | fn | Recursively visits every descendant entry. |
 | `write` | fn | Writes bytes to a file, creating or truncating it. |
 
-Streaming `File` handles expose `read(max)`, `read_to_string()`, `write(bytes)` / `write_all(bytes)`, `flush()`, and `close()`. `OpenOptions::new()` exposes `read`, `write`, `append`, `truncate`, `create`, `create_new`, and `open(path)` for flag-controlled opens.
-
 ## `std::hash::adler32`
 
 Adler-32 checksums.
@@ -1001,7 +999,7 @@ First-party HTTP/3 server + client over QUIC (RFC 9114; quinn + h3). Each `serve
 
 ## `std::io`
 
-Stream-oriented I/O abstractions.
+Stream-oriented I/O abstractions and process standard streams.
 
 | Item | Kind | Doc |
 |------|------|-----|
@@ -1013,7 +1011,7 @@ Stream-oriented I/O abstractions.
 | `Copy` | fn | Copies all bytes from src to dst; returns the byte count. |
 | `ReadAll` | fn | Drains a reader to a String. Mirrors Go's io.ReadAll. |
 | `stderr` | fn | Returns a handle to the process's standard error stream. |
-| `stdin` | fn | Returns a handle to the process's standard input stream. |
+| `stdin` | fn | Returns a handle to the process's standard input stream. Use read_line(&mut String) for interactive prompts. |
 | `stdout` | fn | Returns a handle to the process's standard output stream. |
 
 ## `std::iter`
@@ -1255,8 +1253,6 @@ TCP/UDP networking primitives.
 | `UdpSocket` | type | Bound UDP socket for datagram I/O. |
 | `lookup` | fn | Resolves a hostname to its IP addresses. |
 
-`TcpStream` exposes `read(max)`, `read_to_string()`, `write(bytes)` / `write_all(bytes)`, `set_read_timeout_ms(ms)`, `set_write_timeout_ms(ms)`, `clear_read_timeout()`, `clear_write_timeout()`, and `close()`.
-
 ## `std::net::ip`
 
 String-level IPv4 / IPv6 parsing and classification helpers.
@@ -1325,13 +1321,12 @@ Data-last Option combinators for pipeline chaining: map, filter, unwrap_or, and_
 
 ## `std::os`
 
-Operating-system identity and process standard input.
+Operating-system identity.
 
 | Item | Kind | Doc |
 |------|------|-----|
 | `arch` | fn | Returns the target CPU architecture (e.g. "x86_64"). |
 | `family` | fn | Returns "unix" or "windows" for the running OS family. |
-| `stdin` | fn | Process standard input stream (Go's os.Stdin). |
 
 ## `std::os::exec`
 
@@ -1558,8 +1553,8 @@ Synchronisation primitives beyond channels.
 | `Once` | type | One-shot initialisation latch. |
 | `RwLock` | type | Reader-writer lock. |
 | `WaitGroup` | type | Counts goroutines and waits for them to finish. |
-| `channel` | fn | Creates an unbuffered typed channel, returning (Sender, Receiver). |
-| `channel_unbounded` | fn | Creates an explicit unbounded queue channel. |
+| `channel` | fn | Creates a typed channel, returning (Sender, Receiver). |
+| `channel_unbounded` | fn | Creates an explicit unbounded typed channel, returning (Sender, Receiver). |
 
 ## `std::testing`
 
@@ -1571,7 +1566,7 @@ Assertions and sub-test harness helpers.
 | `check` | fn | Asserts a condition. |
 | `check_eq` | fn | Asserts equality, rendering a diff on failure. |
 | `check_ok` | fn | Asserts a Result is Ok, recording without panicking. |
-| `wait_for_scheduler_idle` | fn | Waits up to a timeout for goroutine scheduler quiescence. |
+| `wait_for_scheduler_idle` | fn | Waits for the scheduler to become idle within a timeout. |
 
 ## `std::thread`
 
@@ -1728,3 +1723,4 @@ Trait-based field validation: implement Validate, collect FieldErrors into Error
 | `Errors` | type | Aggregated FieldError set, indexable by dotted path. |
 | `FieldError` | type | One field-scoped validation failure: dotted path, message, optional code. |
 | `Validate` | trait | Implement on a struct to declare field-level validation rules. |
+

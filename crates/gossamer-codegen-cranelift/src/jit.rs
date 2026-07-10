@@ -279,6 +279,37 @@ fn body_uses_unlowerable_local_repr(
     })
 }
 
+/// A recursive heap-enum producer needs consuming/return ownership semantics
+/// that the current JIT boundary does not yet provide.  Promoting one can
+/// either keep its whole input live while producing another tree or return a
+/// malformed ownership graph. Scalar-returning recursive traversals only
+/// borrow their enum input and are safe to promote.
+fn body_returns_rc(body: &Body, tcx: &TyCtxt) -> bool {
+    fn ty_contains_rc(tcx: &TyCtxt, mut ty: gossamer_types::Ty) -> bool {
+        while let TyKind::Ref { inner, .. } = tcx.kind_of(ty) {
+            ty = *inner;
+        }
+        if tcx.is_rc_managed(ty) {
+            return true;
+        }
+        match tcx.kind_of(ty) {
+            TyKind::Tuple(elems) => elems.iter().any(|elem| ty_contains_rc(tcx, *elem)),
+            TyKind::Array { elem, .. }
+            | TyKind::Slice(elem)
+            | TyKind::Vec(elem)
+            | TyKind::Sender(elem)
+            | TyKind::Receiver(elem)
+            | TyKind::JoinHandle(elem) => ty_contains_rc(tcx, *elem),
+            TyKind::HashMap { key, value } => {
+                ty_contains_rc(tcx, *key) || ty_contains_rc(tcx, *value)
+            }
+            _ => false,
+        }
+    }
+
+    ty_contains_rc(tcx, body.local_ty(gossamer_mir::Local::RETURN))
+}
+
 /// Computes the minimal set of body names needed in the JIT module.
 ///
 /// Starts from bodies whose param/return types support JIT promotion
@@ -336,16 +367,19 @@ fn jit_compile_set<'a>(
             let unlowerable_local =
                 body_uses_unlowerable_local_repr(b, tcx, enum_shapes, struct_shapes);
             let goroutine_hit = body_has_cross_goroutine_ops(b);
-            let amortizes = reaches_self(b.name.as_str()) || body_has_loop(b);
-            if trace && (!kinds_ok || unlowerable_local || goroutine_hit) {
+            let recursive = reaches_self(b.name.as_str());
+            let recursive_rc_return = recursive && body_returns_rc(b, tcx);
+            let amortizes = recursive || body_has_loop(b);
+            if trace && (!kinds_ok || unlowerable_local || goroutine_hit || recursive_rc_return) {
                 eprintln!(
                     "jit: seed-reject {} (kinds_ok={kinds_ok} \
                      unlowerable_local={unlowerable_local} \
-                     goroutine={goroutine_hit})",
+                     goroutine={goroutine_hit} \
+                     recursive_rc_return={recursive_rc_return})",
                     b.name
                 );
             }
-            kinds_ok && !unlowerable_local && !goroutine_hit && amortizes
+            kinds_ok && !unlowerable_local && !goroutine_hit && !recursive_rc_return && amortizes
         })
         .map(|b| b.name.as_str())
         .collect();
@@ -358,8 +392,9 @@ fn jit_compile_set<'a>(
         let (calls, _) = body_user_calls(body, &all_names, &def_to_name);
         for callee in calls {
             let ok = body_map.get(callee).is_some_and(|b| {
-                !body_uses_unlowerable_local_repr(b, tcx, enum_shapes, struct_shapes)
-                    && !body_has_cross_goroutine_ops(b)
+                !(body_uses_unlowerable_local_repr(b, tcx, enum_shapes, struct_shapes)
+                    || body_has_cross_goroutine_ops(b)
+                    || (reaches_self(b.name.as_str()) && body_returns_rc(b, tcx)))
             });
             if ok && included.insert(callee) {
                 worklist.push(callee);
@@ -420,39 +455,9 @@ pub fn has_worthy_jit_body(
     enum_shapes: &HashMap<u32, u32>,
     struct_shapes: &HashMap<u32, u32>,
 ) -> bool {
-    let all_names: std::collections::HashSet<&str> =
-        bodies.iter().map(|b| b.name.as_str()).collect();
-    let def_to_name: HashMap<u32, &str> = bodies
-        .iter()
-        .filter_map(|b| b.def.map(|d| (d.local, b.name.as_str())))
-        .collect();
-    let mut graph: HashMap<&str, Vec<&str>> = HashMap::new();
-    for b in bodies {
-        let (calls, _) = body_user_calls(b, &all_names, &def_to_name);
-        graph.insert(b.name.as_str(), calls);
-    }
-    let reaches_self = |start: &str| -> bool {
-        let mut seen = std::collections::HashSet::new();
-        let mut stack: Vec<&str> = graph.get(start).into_iter().flatten().copied().collect();
-        while let Some(node) = stack.pop() {
-            if node == start {
-                return true;
-            }
-            if seen.insert(node)
-                && let Some(succ) = graph.get(node)
-            {
-                stack.extend(succ.iter().copied());
-            }
-        }
-        false
-    };
-    bodies.iter().any(|b| {
-        body_kinds(b, tcx, enum_shapes, struct_shapes).is_some()
-            && (reaches_self(b.name.as_str())
-                || (body_has_loop(b)
-                    && !body_uses_unlowerable_local_repr(b, tcx, enum_shapes, struct_shapes)
-                    && !body_has_cross_goroutine_ops(b)))
-    })
+    let mut compile_set = jit_compile_set(bodies, tcx, enum_shapes, struct_shapes);
+    restrict_static_leaky_bodies(&mut compile_set, bodies);
+    !compile_set.is_empty()
 }
 
 /// Names of bodies worth JIT-compiling on first call.
@@ -473,14 +478,11 @@ pub fn jit_eager_loop_bodies(
     enum_shapes: &HashMap<u32, u32>,
     struct_shapes: &HashMap<u32, u32>,
 ) -> Vec<String> {
+    let mut compile_set = jit_compile_set(bodies, tcx, enum_shapes, struct_shapes);
+    restrict_static_leaky_bodies(&mut compile_set, bodies);
     bodies
         .iter()
-        .filter(|body| {
-            body_has_loop(body)
-                && body_kinds(body, tcx, enum_shapes, struct_shapes).is_some()
-                && !body_uses_unlowerable_local_repr(body, tcx, enum_shapes, struct_shapes)
-                && !body_has_cross_goroutine_ops(body)
-        })
+        .filter(|body| body_has_loop(body) && compile_set.contains(body.name.as_str()))
         .map(|body| body.name.clone())
         .collect()
 }

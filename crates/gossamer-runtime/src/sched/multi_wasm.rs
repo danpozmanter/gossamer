@@ -132,6 +132,19 @@ impl MultiScheduler {
     /// worker (the calling stack). Kept for API parity with native.
     pub fn set_worker_count(&self, _n: usize) {}
 
+    /// Effective worker count. The wasm runtime is always
+    /// single-threaded.
+    #[must_use]
+    pub fn worker_count(&self) -> usize {
+        1
+    }
+
+    /// Maximum worker count on wasm. There is no host thread pool.
+    #[must_use]
+    pub const fn worker_count_cap() -> usize {
+        1
+    }
+
     /// Accepts and echoes the requested cap. The single-threaded
     /// runtime never enforces it (goroutines run to completion
     /// immediately), so the previous value is reported as the new one.

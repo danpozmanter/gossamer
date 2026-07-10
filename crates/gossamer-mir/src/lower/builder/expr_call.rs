@@ -917,7 +917,7 @@ impl<'a> Builder<'a> {
     /// `String` operand takes a slot address. A bare path that *forwards* an
     /// existing `&mut` parameter is already a pointer and needs no reload, so
     /// only the explicit `&mut <local>` form qualifies.
-    fn mut_ref_reload_target(&self, arg: &HirExpr) -> Option<Local> {
+    pub(crate) fn mut_ref_reload_target(&self, arg: &HirExpr) -> Option<Local> {
         use gossamer_types::TyKind;
         let HirExprKind::Unary {
             op: HirUnaryOp::RefMut,
@@ -926,19 +926,20 @@ impl<'a> Builder<'a> {
         else {
             return None;
         };
-        let writeback = matches!(
-            self.tcx.kind_of(operand.ty),
-            TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Char | TyKind::String
-        );
-        if !writeback {
-            return None;
-        }
         let HirExprKind::Path { segments, .. } = &operand.kind else {
             return None;
         };
         let [seg] = segments.as_slice() else {
             return None;
         };
-        self.lookup_local(&seg.name)
+        let local = self.lookup_local(&seg.name)?;
+        let writeback = matches!(
+            self.tcx.kind_of(operand.ty),
+            TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Char | TyKind::String
+        ) || matches!(
+            self.tcx.kind_of(self.locals[local.0 as usize].ty),
+            TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Char | TyKind::String
+        );
+        writeback.then_some(local)
     }
 }

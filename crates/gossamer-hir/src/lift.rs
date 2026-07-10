@@ -850,7 +850,7 @@ fn is_closed<S: std::hash::BuildHasher + Clone>(
     bound: &HashSet<String, S>,
 ) -> bool {
     match &expr.kind {
-        HirExprKind::Path { segments, def } => {
+        HirExprKind::Path { segments, def, .. } => {
             // Fully-qualified paths and resolved DefIds point to top-
             // level items - treat those as "closed" (not captures).
             if def.is_some() || segments.len() > 1 {
@@ -978,6 +978,7 @@ fn capture_ty_in_expr(expr: &HirExpr, name: &str) -> Option<gossamer_types::Ty> 
     if let HirExprKind::Path {
         segments,
         def: None,
+        ..
     } = &expr.kind
         && segments.len() == 1
         && segments[0].name.as_str() == name
@@ -1080,7 +1081,7 @@ fn walk_free<S: std::hash::BuildHasher + Clone>(
     seen: &mut HashSet<String>,
 ) {
     match &expr.kind {
-        HirExprKind::Path { segments, def } => {
+        HirExprKind::Path { segments, def, .. } => {
             if def.is_some() || segments.len() > 1 {
                 return;
             }

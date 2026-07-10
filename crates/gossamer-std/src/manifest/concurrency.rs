@@ -150,5 +150,10 @@ pub const SYNC: StdModule = StdModule {
             kind: StdItemKind::Function,
             doc: "Creates a typed channel, returning (Sender, Receiver).",
         },
+        StdItem {
+            name: "channel_unbounded",
+            kind: StdItemKind::Function,
+            doc: "Creates an explicit unbounded typed channel, returning (Sender, Receiver).",
+        },
     ],
 };

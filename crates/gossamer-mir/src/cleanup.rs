@@ -64,7 +64,6 @@ pub const HEAP_ALLOCATOR_PAIRS: &[(&str, &str)] = &[
     // bindings whose only uses are non-capturing reader helpers
     // (length / byte / substring read) reach the free.
     ("gos_rt_stream_read_to_string", "gos_rt_str_free"),
-    ("gos_rt_stream_read_line", "gos_rt_str_free"),
 ];
 
 /// Where in the body a particular cleanup entry should be emitted.

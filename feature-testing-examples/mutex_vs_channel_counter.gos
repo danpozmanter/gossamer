@@ -30,7 +30,7 @@ fn channel_worker(tx: channel::Sender<i64>) {
 }
 
 fn counter_with_channel() -> i64 {
-    let (tx, rx) = channel()
+    let (tx, rx) = channel(2)
 
     go channel_worker(tx)
     go channel_worker(tx)

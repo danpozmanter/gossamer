@@ -2563,11 +2563,64 @@ impl<'tcx> FnBuilder<'tcx> {
             });
             return Ok(dst);
         }
-        let arg_regs: Vec<Reg> = args
-            .iter()
-            .map(|a| self.compile_expr(a))
-            .collect::<RuntimeResult<Vec<_>>>()?;
         let args_start = self.next_reg;
+        self.next_reg = self
+            .next_reg
+            .checked_add(u16::try_from(args.len()).map_err(|_| RuntimeError::Arity {
+                expected: u16::MAX as usize,
+                found: args.len(),
+            })?)
+            .expect("register overflow reserving method args");
+        let mut cell_takes: Vec<(Reg, Reg)> = Vec::new();
+        let mut place_takes: Vec<(&HirExpr, Reg)> = Vec::new();
+        let mut arg_regs: Vec<Reg> = Vec::with_capacity(args.len());
+        for (i, arg) in args.iter().enumerate() {
+            if let Some(home) = self.mut_ref_arg_home(arg) {
+                let cell = self.alloc_reg();
+                if Self::mut_ref_place_name(arg)
+                    .is_some_and(|name| Self::mut_arg_move_safe(args, i, name))
+                {
+                    self.emit(Op::CellNewMove {
+                        dst: cell,
+                        src: home,
+                    });
+                } else {
+                    self.emit(Op::CellNew {
+                        dst: cell,
+                        src: home,
+                    });
+                }
+                cell_takes.push((home, cell));
+                arg_regs.push(cell);
+            } else if let Some(place) = Self::mut_ref_writeback_place(self.tcx, arg) {
+                let place_reg = self.compile_expr(place)?;
+                let cell = self.alloc_reg();
+                let local_home = Self::path_single_seg_name(place).and_then(|name| {
+                    self.lookup_local(name)
+                        .filter(|tr| tr.kind == RegKind::Value)
+                        .map(|_| name)
+                });
+                if local_home.is_some_and(|name| Self::mut_arg_move_safe(args, i, name)) {
+                    self.emit(Op::CellNewMove {
+                        dst: cell,
+                        src: place_reg,
+                    });
+                } else {
+                    self.emit(Op::CellNew {
+                        dst: cell,
+                        src: place_reg,
+                    });
+                }
+                if local_home.is_some() {
+                    cell_takes.push((place_reg, cell));
+                } else {
+                    place_takes.push((place, cell));
+                }
+                arg_regs.push(cell);
+            } else {
+                arg_regs.push(self.compile_expr(arg)?);
+            }
+        }
         for (i, r) in arg_regs.iter().enumerate() {
             let slot = args_start
                 .checked_add(u16::try_from(i).expect("argc overflow"))
@@ -2602,6 +2655,14 @@ impl<'tcx> FnBuilder<'tcx> {
             argc,
             cache_idx,
         });
+        for (home, cell) in cell_takes {
+            self.emit(Op::CellTake { dst: home, cell });
+        }
+        for (place, cell) in place_takes {
+            let tmp = self.alloc_reg();
+            self.emit(Op::CellTake { dst: tmp, cell });
+            self.compile_place_store(place, tmp)?;
+        }
         // Mutating-method writeback. The builtins for `push` /
         // `insert` / etc. return the *new* aggregate rather than
         // mutating in place, so the VM has to thread the result back
@@ -3077,16 +3138,20 @@ impl<'tcx> FnBuilder<'tcx> {
     /// [`Self::mut_ref_arg_home`]; everything that isn't a write-through
     /// place (a temporary, a deref of a call result) returns `None`.
     fn mut_ref_writeback_place<'a>(tcx: &TyCtxt, arg: &'a HirExpr) -> Option<&'a HirExpr> {
-        if !crate::compile::is_mut_ref_writeback(tcx, arg.ty) {
-            return None;
-        }
-        let place = match &arg.kind {
+        let typed_as_mut_ref = crate::compile::is_mut_ref_writeback(tcx, arg.ty);
+        let (place, explicit_mut_place) = match &arg.kind {
             HirExprKind::Unary {
                 op: HirUnaryOp::RefMut,
                 operand,
-            } => operand.as_ref(),
-            _ => arg,
+            } => (operand.as_ref(), true),
+            _ => (arg, false),
         };
+        if !typed_as_mut_ref && !explicit_mut_place {
+            return None;
+        }
+        if explicit_mut_place && crate::compile::is_mut_ref_fixed_array(tcx, arg.ty) {
+            return None;
+        }
         matches!(
             place.kind,
             HirExprKind::Path { .. } | HirExprKind::Field { .. } | HirExprKind::Index { .. }

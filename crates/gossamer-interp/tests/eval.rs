@@ -123,6 +123,30 @@ fn main() {
 }
 
 #[test]
+fn enum_constructors_work_directly_and_as_values() {
+    let source = r"
+enum Node {
+    Leaf(i64),
+    Pair(Node, Node),
+}
+
+fn weight(n: Node) -> i64 {
+    match n {
+        Leaf(v) => v,
+        Pair(l, r) => weight(l) + weight(r),
+    }
+}
+
+fn main() {
+    let leaf = Leaf
+    let tree = Pair(Leaf(2i64), leaf(5i64))
+    println(weight(tree))
+}
+";
+    assert_eq!(run_program(source), "7\n");
+}
+
+#[test]
 fn result_unwrap_or_returns_default_on_err() {
     let source = r#"
 fn main() {
@@ -711,18 +735,16 @@ fn main() {
 fn spawn_runs_callable_in_background_thread() {
     let source = r#"
 fn main() {
-    let (tx, rx) = channel::new()
-    spawn(|| tx.send(99i64))
-    let v = rx.recv()
-    println(v)
+    let h = spawn(|| 99i64)
+    match h.join() {
+        Ok(v) => println(v),
+        Err(e) => println(e),
+    }
 }
 "#;
     let out = run_program(source);
     gossamer_interp::join_outstanding_goroutines();
-    assert!(
-        out == "Some(99)\n" || out == "None\n",
-        "expected Some(99) or None fallback; got {out:?}"
-    );
+    assert_eq!(out, "99\n");
 }
 
 #[test]

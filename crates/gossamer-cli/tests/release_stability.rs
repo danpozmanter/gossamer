@@ -380,7 +380,7 @@ fn main() {
 
 #[test]
 fn release_channel_send_recv_drains_in_order() {
-    // FIFO channel semantics - main pushes 5 values, drains 5 via
+    // FIFO bounded-channel semantics - main pushes 5 values, drains 5 via
     // `if let Some(v) = rx.recv()`. Catches Option<T> aggregate
     // construction from runtime returns + channel ABI.
     assert_release_stdout_eq(
@@ -389,7 +389,7 @@ fn release_channel_send_recv_drains_in_order() {
 use std::sync::channel
 
 fn main() {
-    let (tx, rx) = channel()
+    let (tx, rx) = channel(5)
     let mut k = 0
     while k < 5 {
         tx.send(k * 10)

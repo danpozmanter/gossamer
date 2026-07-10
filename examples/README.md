@@ -9,6 +9,7 @@ JIT, and the `gos build` native binary).
 | File | Topic | Status |
 |------|-------|--------|
 | `hello_world.gos` | First program; `println!` | runs |
+| `input.gos` | Basic interactive input with `std::io` | runs |
 | `web_server.gos` | HTTP/1.1 routed server over `std::http` | runs |
 | `cli_args.gos` | Command-line argument parsing (`std::flag`) | runs |
 | `file_io.gos` | File read / write - text + JSON | runs |
@@ -28,6 +29,7 @@ JIT, and the `gos build` native binary).
 
 ```sh
 gos run examples/hello_world.gos
+gos run examples/input.gos
 gos run examples/web_server.gos &
 curl 'http://localhost:8080/echo?msg=hi'
 gos test examples/testing.gos

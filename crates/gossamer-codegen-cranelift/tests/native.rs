@@ -1,28 +1,95 @@
 //! End-to-end tests that `gos build` lowers a range of language
 //! constructs to a runnable native executable.
 //!
-//! These drive the real `gos build` pipeline (LLVM is the only
-//! native codegen backend; the Cranelift backend is JIT-only and is
-//! exercised through `gos run` in the tier-parity suite). Each test
-//! compiles a `.gos` fixture, runs the produced binary, and asserts
-//! its exit code. A build that falls back to a launcher script, or
-//! cannot link on the runner, makes the test skip rather than fail.
+//! These drive the real `gos build` pipeline. Every child process is
+//! bounded: native tests run in CI's long serial job, and an unbounded
+//! `gos build` or produced binary can otherwise consume the whole job
+//! timeout without naming the culprit.
 
 #![allow(missing_docs)]
 
-use std::path::PathBuf;
-use std::process::Command;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Output, Stdio};
+use std::sync::OnceLock;
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::time::{Duration, Instant};
+
+const BUILD_TIMEOUT: Duration = Duration::from_mins(2);
+const RUN_TIMEOUT: Duration = Duration::from_secs(20);
 
 fn workspace_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
-        .and_then(std::path::Path::parent)
+        .and_then(Path::parent)
         .expect("workspace root")
         .to_path_buf()
 }
 
-/// Returns the path to the debug binary produced by `gos build`, including `.exe` on Windows.
-fn debug_bin(dir: &std::path::Path, stem: &str) -> PathBuf {
+fn gos_bin() -> PathBuf {
+    static GOS: OnceLock<PathBuf> = OnceLock::new();
+    GOS.get_or_init(|| {
+        if let Ok(path) = std::env::var("CARGO_BIN_EXE_gos") {
+            return PathBuf::from(path);
+        }
+        let mut path = workspace_root().join("target").join("debug").join("gos");
+        if !std::env::consts::EXE_EXTENSION.is_empty() {
+            path.set_extension(std::env::consts::EXE_EXTENSION);
+        }
+        if !path.exists() {
+            let mut cmd = Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".into()));
+            cmd.args(["build", "--quiet", "--bin", "gos"])
+                .current_dir(workspace_root());
+            let out = run_output(&mut cmd, "cargo build --bin gos", BUILD_TIMEOUT);
+            assert!(
+                out.status.success(),
+                "building gos failed:\nstdout={}\nstderr={}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            );
+        }
+        path
+    })
+    .clone()
+}
+
+fn run_output(command: &mut Command, label: &str, timeout: Duration) -> Output {
+    let mut child = command
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap_or_else(|err| panic!("spawn {label}: {err}"));
+    let deadline = Instant::now() + timeout;
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => return child.wait_with_output().expect("collect child output"),
+            Ok(None) if Instant::now() >= deadline => {
+                let _ = child.kill();
+                let out = child.wait_with_output().expect("collect timed-out output");
+                panic!(
+                    "{label} timed out after {timeout:?}\nstdout={}\nstderr={}",
+                    String::from_utf8_lossy(&out.stdout),
+                    String::from_utf8_lossy(&out.stderr)
+                );
+            }
+            Ok(None) => std::thread::sleep(Duration::from_millis(25)),
+            Err(err) => panic!("wait {label}: {err}"),
+        }
+    }
+}
+
+fn fresh_dir(name: &str) -> PathBuf {
+    static COUNTER: AtomicU32 = AtomicU32::new(0);
+    let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let dir = std::env::temp_dir().join(format!(
+        "gossamer-native-{pid}-{n}-{name}",
+        pid = std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("create fixture dir");
+    dir
+}
+
+fn debug_bin(dir: &Path, stem: &str) -> PathBuf {
     let mut p = dir.join("target").join("debug").join(stem);
     if !std::env::consts::EXE_EXTENSION.is_empty() {
         p.set_extension(std::env::consts::EXE_EXTENSION);
@@ -30,477 +97,180 @@ fn debug_bin(dir: &std::path::Path, stem: &str) -> PathBuf {
     p
 }
 
+struct Fixture {
+    dir: PathBuf,
+    bin: PathBuf,
+}
+
+impl Drop for Fixture {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.dir);
+    }
+}
+
+fn build_fixture(name: &str, source: &str) -> Option<Fixture> {
+    let dir = fresh_dir(name);
+    let src = dir.join(format!("{name}.gos"));
+    std::fs::write(&src, source).expect("write fixture source");
+    let mut cmd = Command::new(gos_bin());
+    cmd.arg("build").arg(&src).current_dir(workspace_root());
+    let out = run_output(&mut cmd, &format!("gos build {name}"), BUILD_TIMEOUT);
+    if !out.status.success() {
+        eprintln!(
+            "skipping {name} - gos build failed:\nstdout={}\nstderr={}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+        return None;
+    }
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    if stdout.contains("launcher") {
+        eprintln!("skipping {name} - gos build fell back to launcher: {stdout}");
+        let _ = std::fs::remove_dir_all(&dir);
+        return None;
+    }
+    Some(Fixture {
+        bin: debug_bin(&dir, name),
+        dir,
+    })
+}
+
+fn assert_exit(name: &str, source: &str, code: i32) {
+    let Some(fixture) = build_fixture(name, source) else {
+        return;
+    };
+    let mut cmd = Command::new(&fixture.bin);
+    let out = run_output(&mut cmd, &format!("run {name}"), RUN_TIMEOUT);
+    assert_eq!(
+        out.status.code(),
+        Some(code),
+        "{name}: expected exit {code}; stdout={} stderr={}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+fn assert_stdout_contains(name: &str, source: &str, needle: &str) {
+    let Some(fixture) = build_fixture(name, source) else {
+        return;
+    };
+    let mut cmd = Command::new(&fixture.bin);
+    let out = run_output(&mut cmd, &format!("run {name}"), RUN_TIMEOUT);
+    assert!(
+        out.status.success(),
+        "{name}: native binary exit={:?}",
+        out.status.code()
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains(needle), "{name}: stdout={stdout}");
+}
+
 #[test]
 fn gos_build_handles_tuple_destructuring_let() {
-    let fixture_dir =
-        std::env::temp_dir().join(format!("gossamer-cranelift-detup-{}", std::process::id()));
-    std::fs::create_dir_all(&fixture_dir).unwrap();
-    let src = fixture_dir.join("d.gos");
-    std::fs::write(
-        &src,
+    assert_exit(
+        "detup",
         "fn main() -> i64 {\n    let (a, b) = (11i64, 22i64)\n    a + b\n}\n",
-    )
-    .unwrap();
-    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
-    let build = Command::new(&cargo)
-        .args(["run", "--quiet", "--bin", "gos", "--", "build"])
-        .arg(&src)
-        .current_dir(workspace_root())
-        .output()
-        .expect("spawn gos build");
-    if !build.status.success() || String::from_utf8_lossy(&build.stdout).contains("launcher") {
-        let _ = std::fs::remove_dir_all(&fixture_dir);
-        return;
-    }
-    let run = Command::new(debug_bin(&fixture_dir, "d"))
-        .output()
-        .expect("run d");
-    assert_eq!(
-        run.status.code(),
-        Some(33),
-        "let (a, b) = (11, 22); a + b == 33"
+        33,
     );
-    let _ = std::fs::remove_dir_all(&fixture_dir);
 }
 
 #[test]
 fn gos_build_handles_numeric_cast() {
-    let fixture_dir =
-        std::env::temp_dir().join(format!("gossamer-cranelift-cast-{}", std::process::id()));
-    std::fs::create_dir_all(&fixture_dir).unwrap();
-    let src = fixture_dir.join("c.gos");
-    std::fs::write(
-        &src,
+    assert_exit(
+        "cast",
         "fn main() -> i64 {\n    let n = 7i64;\n    (n as i64) + 5i64\n}\n",
-    )
-    .unwrap();
-    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
-    let build = Command::new(&cargo)
-        .args(["run", "--quiet", "--bin", "gos", "--", "build"])
-        .arg(&src)
-        .current_dir(workspace_root())
-        .output()
-        .expect("spawn gos build");
-    if !build.status.success() || String::from_utf8_lossy(&build.stdout).contains("launcher") {
-        let _ = std::fs::remove_dir_all(&fixture_dir);
-        return;
-    }
-    let run = Command::new(debug_bin(&fixture_dir, "c"))
-        .output()
-        .expect("run c");
-    assert_eq!(run.status.code(), Some(12), "7 as i64 + 5 == 12");
-    let _ = std::fs::remove_dir_all(&fixture_dir);
+        12,
+    );
 }
 
 #[test]
 fn gos_build_handles_int_literal_match() {
-    let fixture_dir =
-        std::env::temp_dir().join(format!("gossamer-cranelift-match-{}", std::process::id()));
-    std::fs::create_dir_all(&fixture_dir).unwrap();
-    let src = fixture_dir.join("m.gos");
-    std::fs::write(
-        &src,
+    assert_exit(
+        "match_int",
         "fn main() -> i64 {\n    let n = 1i64\n    match n {\n        0i64 => 10i64,\n        1i64 => 20i64,\n        _ => 30i64,\n    }\n}\n",
-    )
-    .unwrap();
-    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
-    let build = Command::new(&cargo)
-        .args(["run", "--quiet", "--bin", "gos", "--", "build"])
-        .arg(&src)
-        .current_dir(workspace_root())
-        .output()
-        .expect("spawn gos build");
-    if !build.status.success() {
-        eprintln!(
-            "skipping - gos build failed: {}",
-            String::from_utf8_lossy(&build.stderr)
-        );
-        let _ = std::fs::remove_dir_all(&fixture_dir);
-        return;
-    }
-    let stdout = String::from_utf8_lossy(&build.stdout);
-    if stdout.contains("launcher") {
-        eprintln!("skipping - match build fell back to launcher: {stdout}");
-        let _ = std::fs::remove_dir_all(&fixture_dir);
-        return;
-    }
-    let run = Command::new(debug_bin(&fixture_dir, "m"))
-        .output()
-        .expect("run m");
-    assert_eq!(run.status.code(), Some(20), "match arm 1 should return 20");
-    let _ = std::fs::remove_dir_all(&fixture_dir);
+        20,
+    );
 }
 
 #[test]
 fn gos_build_handles_tuples_and_arrays() {
-    let fixture_dir =
-        std::env::temp_dir().join(format!("gossamer-cranelift-agg-{}", std::process::id()));
-    std::fs::create_dir_all(&fixture_dir).unwrap();
-
-    let tuple_src = fixture_dir.join("tup.gos");
-    std::fs::write(
-        &tuple_src,
+    assert_exit(
+        "tuple",
         "fn main() -> i64 {\n    let pair = (10i64, 20i64, 30i64)\n    pair.0 + pair.2\n}\n",
-    )
-    .unwrap();
-
-    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
-    let build = Command::new(&cargo)
-        .args(["run", "--quiet", "--bin", "gos", "--", "build"])
-        .arg(&tuple_src)
-        .current_dir(workspace_root())
-        .output()
-        .expect("spawn gos build");
-    if !build.status.success() {
-        eprintln!(
-            "skipping - gos build failed: {}",
-            String::from_utf8_lossy(&build.stderr)
-        );
-        let _ = std::fs::remove_dir_all(&fixture_dir);
-        return;
-    }
-    let stdout = String::from_utf8_lossy(&build.stdout);
-    if stdout.contains("launcher") {
-        eprintln!("skipping - tuple build fell back to launcher: {stdout}");
-        let _ = std::fs::remove_dir_all(&fixture_dir);
-        return;
-    }
-
-    let exe = debug_bin(&fixture_dir, "tup");
-    let run = Command::new(&exe).output().expect("run tup");
-    assert_eq!(
-        run.status.code(),
-        Some(40),
-        "tuple main should exit 40; stderr={}",
-        String::from_utf8_lossy(&run.stderr)
+        40,
     );
-
-    let rep_src = fixture_dir.join("rep.gos");
-    std::fs::write(
-        &rep_src,
+    assert_exit(
+        "repeat_array",
         "fn main() -> i64 {\n    let xs = [9i64; 4i64]\n    xs[2i64] + xs[3i64]\n}\n",
-    )
-    .unwrap();
-    let build = Command::new(&cargo)
-        .args(["run", "--quiet", "--bin", "gos", "--", "build"])
-        .arg(&rep_src)
-        .current_dir(workspace_root())
-        .output()
-        .expect("spawn gos build for repeat");
-    if build.status.success() && !String::from_utf8_lossy(&build.stdout).contains("launcher") {
-        let run = Command::new(debug_bin(&fixture_dir, "rep"))
-            .output()
-            .expect("run rep");
-        assert_eq!(run.status.code(), Some(18), "[9; 4][2] + [9; 4][3] == 18");
-    }
-
-    let arr_src = fixture_dir.join("arr.gos");
-    std::fs::write(
-        &arr_src,
+        18,
+    );
+    assert_exit(
+        "array",
         "fn main() -> i64 {\n    let xs = [5i64, 7i64, 9i64]\n    xs[2i64]\n}\n",
-    )
-    .unwrap();
-    let build = Command::new(&cargo)
-        .args(["run", "--quiet", "--bin", "gos", "--", "build"])
-        .arg(&arr_src)
-        .current_dir(workspace_root())
-        .output()
-        .expect("spawn gos build");
-    if !build.status.success() {
-        eprintln!("skipping arr - gos build failed");
-        let _ = std::fs::remove_dir_all(&fixture_dir);
-        return;
-    }
-    let stdout = String::from_utf8_lossy(&build.stdout);
-    if stdout.contains("launcher") {
-        eprintln!("skipping arr - fell back to launcher: {stdout}");
-        let _ = std::fs::remove_dir_all(&fixture_dir);
-        return;
-    }
-    let run = Command::new(debug_bin(&fixture_dir, "arr"))
-        .output()
-        .expect("run arr");
-    assert_eq!(run.status.code(), Some(9));
-
-    let _ = std::fs::remove_dir_all(&fixture_dir);
+        9,
+    );
 }
 
 #[test]
 fn gos_build_monomorphises_generic_function_calls() {
-    let fixture_dir =
-        std::env::temp_dir().join(format!("gossamer-cranelift-mono-{}", std::process::id()));
-    std::fs::create_dir_all(&fixture_dir).unwrap();
-    let src = fixture_dir.join("mono.gos");
-    // Two distinct generic call-sites with different type arguments
-    // should each get their own specialised body while still running
-    // to completion identically to the monomorphic hand-coded version.
-    std::fs::write(
-        &src,
+    assert_exit(
+        "mono",
         "fn first<T>(a: T, b: T) -> T { a }\nfn main() -> i64 {\n    let i = first::<i64>(41i64, 999i64)\n    let b = first::<bool>(true, false)\n    if b { i + 1i64 } else { 0i64 }\n}\n",
-    )
-    .unwrap();
-    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
-    let build = Command::new(&cargo)
-        .args(["run", "--quiet", "--bin", "gos", "--", "build"])
-        .arg(&src)
-        .current_dir(workspace_root())
-        .output()
-        .expect("spawn gos build");
-    if !build.status.success() || String::from_utf8_lossy(&build.stdout).contains("launcher") {
-        let _ = std::fs::remove_dir_all(&fixture_dir);
-        return;
-    }
-    let run = Command::new(debug_bin(&fixture_dir, "mono"))
-        .output()
-        .expect("run mono");
-    assert_eq!(
-        run.status.code(),
-        Some(42),
-        "first::<i64>(41,_) + 1 should be 42; stderr={}",
-        String::from_utf8_lossy(&run.stderr)
+        42,
     );
-    let _ = std::fs::remove_dir_all(&fixture_dir);
 }
 
 #[test]
 fn gos_build_handles_first_class_closure_passed_to_higher_order_function() {
-    let fixture_dir =
-        std::env::temp_dir().join(format!("gossamer-cranelift-fcc-{}", std::process::id()));
-    std::fs::create_dir_all(&fixture_dir).unwrap();
-    let src = fixture_dir.join("fcc.gos");
-    // Capturing closure passed through a `Fn(_)` parameter to a
-    // higher-order function. The closure value is an env pointer
-    // (heap blob `[fn_addr, captures…]`) produced by
-    // `lift_capturing` + the MIR `gos_alloc` / `gos_store`
-    // sequence. `Fn(i64) -> i64` is the closure-trait callable
-    // type - it routes through the env+code dispatch in the
-    // codegen's `Terminator::Call` arm, so `f(x)` inside `apply`
-    // loads `fn_addr` from `env+0` and calls it with `(env, x)`.
-    //
-    // Note: the bare `fn(_)` type stays a raw code pointer; only
-    // `Fn(_)` carries the env. See closure_fn_trait_plan.md for
-    // the design.
-    std::fs::write(
-        &src,
+    assert_exit(
+        "fcc",
         "fn apply(f: Fn(i64) -> i64, x: i64) -> i64 { f(x) }\nfn main() -> i64 {\n    let c = 10i64\n    let add_c = |y: i64| c + y\n    apply(add_c, 32i64)\n}\n",
-    )
-    .unwrap();
-    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
-    let build = Command::new(&cargo)
-        .args(["run", "--quiet", "--bin", "gos", "--", "build"])
-        .arg(&src)
-        .current_dir(workspace_root())
-        .output()
-        .expect("spawn gos build");
-    if !build.status.success() || String::from_utf8_lossy(&build.stdout).contains("launcher") {
-        eprintln!(
-            "skipping - gos build failed/launcher: stdout={} stderr={}",
-            String::from_utf8_lossy(&build.stdout),
-            String::from_utf8_lossy(&build.stderr)
-        );
-        let _ = std::fs::remove_dir_all(&fixture_dir);
-        return;
-    }
-    let run = Command::new(debug_bin(&fixture_dir, "fcc"))
-        .output()
-        .expect("run fcc");
-    assert_eq!(
-        run.status.code(),
-        Some(42),
-        "apply(|y| c + y where c = 10, 32) should yield 42; stderr={}",
-        String::from_utf8_lossy(&run.stderr)
+        42,
     );
-    let _ = std::fs::remove_dir_all(&fixture_dir);
 }
 
 #[test]
 fn gos_build_handles_capturing_closure_via_heap_allocated_env() {
-    let fixture_dir =
-        std::env::temp_dir().join(format!("gossamer-cranelift-capcl-{}", std::process::id()));
-    std::fs::create_dir_all(&fixture_dir).unwrap();
-    let src = fixture_dir.join("cap.gos");
-    // `|y| x + y` captures `x`. lift_closures emits an
-    // `__closure_0(env, y)` whose body loads `x` from env, and the
-    // MIR lowerer wraps the creation site in `gos_alloc` + `gos_store`.
-    std::fs::write(
-        &src,
+    assert_exit(
+        "cap",
         "fn main() -> i64 {\n    let x = 10i64\n    let add_x = |y: i64| x + y\n    add_x(32i64)\n}\n",
-    )
-    .unwrap();
-    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
-    let build = Command::new(&cargo)
-        .args(["run", "--quiet", "--bin", "gos", "--", "build"])
-        .arg(&src)
-        .current_dir(workspace_root())
-        .output()
-        .expect("spawn gos build");
-    if !build.status.success() || String::from_utf8_lossy(&build.stdout).contains("launcher") {
-        eprintln!(
-            "skipping - gos build failed/launcher: stdout={} stderr={}",
-            String::from_utf8_lossy(&build.stdout),
-            String::from_utf8_lossy(&build.stderr)
-        );
-        let _ = std::fs::remove_dir_all(&fixture_dir);
-        return;
-    }
-    let run = Command::new(debug_bin(&fixture_dir, "cap"))
-        .output()
-        .expect("run cap");
-    assert_eq!(
-        run.status.code(),
-        Some(42),
-        "capturing closure: x=10 + y=32 = 42; stderr={}",
-        String::from_utf8_lossy(&run.stderr)
+        42,
     );
-    let _ = std::fs::remove_dir_all(&fixture_dir);
 }
 
 #[test]
 fn gos_build_handles_non_capturing_closure_via_direct_call() {
-    let fixture_dir =
-        std::env::temp_dir().join(format!("gossamer-cranelift-closure-{}", std::process::id()));
-    std::fs::create_dir_all(&fixture_dir).unwrap();
-    let src = fixture_dir.join("cl.gos");
-    // `|x| x + 1` captures nothing, so lift_closures promotes it to
-    // a top-level function. The call below becomes a direct call.
-    std::fs::write(
-        &src,
+    assert_exit(
+        "closure",
         "fn main() -> i64 {\n    let plus = |x: i64| x + 1i64\n    plus(41i64)\n}\n",
-    )
-    .unwrap();
-    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
-    let build = Command::new(&cargo)
-        .args(["run", "--quiet", "--bin", "gos", "--", "build"])
-        .arg(&src)
-        .current_dir(workspace_root())
-        .output()
-        .expect("spawn gos build");
-    if !build.status.success() || String::from_utf8_lossy(&build.stdout).contains("launcher") {
-        let _ = std::fs::remove_dir_all(&fixture_dir);
-        return;
-    }
-    let run = Command::new(debug_bin(&fixture_dir, "cl"))
-        .output()
-        .expect("run cl");
-    assert_eq!(
-        run.status.code(),
-        Some(42),
-        "|x| x + 1 applied to 41 should yield 42; stderr={}",
-        String::from_utf8_lossy(&run.stderr)
+        42,
     );
-    let _ = std::fs::remove_dir_all(&fixture_dir);
 }
 
 #[test]
 fn gos_build_handles_for_loop_over_range() {
-    let fixture_dir =
-        std::env::temp_dir().join(format!("gossamer-cranelift-for-{}", std::process::id()));
-    std::fs::create_dir_all(&fixture_dir).unwrap();
-    let src = fixture_dir.join("fr.gos");
-    std::fs::write(
-        &src,
+    assert_exit(
+        "for_range",
         "fn main() -> i64 {\n    let mut sum = 0i64\n    for n in 0i64..10i64 {\n        sum = sum + n\n    }\n    sum\n}\n",
-    )
-    .unwrap();
-    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
-    let build = Command::new(&cargo)
-        .args(["run", "--quiet", "--bin", "gos", "--", "build"])
-        .arg(&src)
-        .current_dir(workspace_root())
-        .output()
-        .expect("spawn gos build");
-    if !build.status.success() || String::from_utf8_lossy(&build.stdout).contains("launcher") {
-        let _ = std::fs::remove_dir_all(&fixture_dir);
-        return;
-    }
-    let run = Command::new(debug_bin(&fixture_dir, "fr"))
-        .output()
-        .expect("run fr");
-    assert_eq!(
-        run.status.code(),
-        Some(45),
-        "sum of 0..10 should be 45; stderr={}",
-        String::from_utf8_lossy(&run.stderr)
+        45,
     );
-    let _ = std::fs::remove_dir_all(&fixture_dir);
 }
 
 #[test]
 fn gos_build_handles_struct_literal_and_field_access() {
-    let fixture_dir =
-        std::env::temp_dir().join(format!("gossamer-cranelift-struct-{}", std::process::id()));
-    std::fs::create_dir_all(&fixture_dir).unwrap();
-    let src = fixture_dir.join("s.gos");
-    std::fs::write(
-        &src,
+    assert_exit(
+        "struct_field",
         "struct Point { x: i64, y: i64 }\nfn main() -> i64 {\n    let p = Point { x: 10i64, y: 32i64 }\n    p.x + p.y\n}\n",
-    )
-    .unwrap();
-    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
-    let build = Command::new(&cargo)
-        .args(["run", "--quiet", "--bin", "gos", "--", "build"])
-        .arg(&src)
-        .current_dir(workspace_root())
-        .output()
-        .expect("spawn gos build");
-    if !build.status.success() || String::from_utf8_lossy(&build.stdout).contains("launcher") {
-        let _ = std::fs::remove_dir_all(&fixture_dir);
-        return;
-    }
-    let run = Command::new(debug_bin(&fixture_dir, "s"))
-        .output()
-        .expect("run struct binary");
-    assert_eq!(
-        run.status.code(),
-        Some(42),
-        "Point {{ x: 10, y: 32 }}; p.x + p.y == 42; stderr={}",
-        String::from_utf8_lossy(&run.stderr)
+        42,
     );
-    let _ = std::fs::remove_dir_all(&fixture_dir);
 }
 
 #[test]
 fn gos_build_produces_native_println_binary() {
-    // Drive the full `gos build` pipeline against a hello-world
-    // source. Asserts that the output is a real executable (not a
-    // launcher shell script) and that running it prints the string
-    // to stdout.
-    let fixture_dir =
-        std::env::temp_dir().join(format!("gossamer-cranelift-println-{}", std::process::id()));
-    std::fs::create_dir_all(&fixture_dir).unwrap();
-    let src_path = fixture_dir.join("hi.gos");
-    std::fs::write(&src_path, "fn main() { println(\"native says hi\") }\n").unwrap();
-
-    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
-    let build = Command::new(&cargo)
-        .args(["run", "--quiet", "--bin", "gos", "--", "build"])
-        .arg(&src_path)
-        .current_dir(workspace_root())
-        .output()
-        .expect("spawn gos build");
-    if !build.status.success() {
-        eprintln!(
-            "skipping - gos build failed: {}",
-            String::from_utf8_lossy(&build.stderr)
-        );
-        let _ = std::fs::remove_dir_all(&fixture_dir);
-        return;
-    }
-    let stdout = String::from_utf8_lossy(&build.stdout);
-    if stdout.contains("launcher") {
-        eprintln!("skipping - build fell back to launcher: {stdout}");
-        let _ = std::fs::remove_dir_all(&fixture_dir);
-        return;
-    }
-
-    let exe = debug_bin(&fixture_dir, "hi");
-    let run = Command::new(&exe).output().expect("run native binary");
-    assert!(
-        run.status.success(),
-        "native binary exit: {:?}",
-        run.status.code()
+    assert_stdout_contains(
+        "println",
+        "fn main() { println(\"native says hi\") }\n",
+        "native says hi",
     );
-    let out = String::from_utf8_lossy(&run.stdout);
-    assert!(out.contains("native says hi"), "stdout: {out}");
-    let _ = std::fs::remove_dir_all(&fixture_dir);
 }

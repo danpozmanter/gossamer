@@ -843,7 +843,6 @@ pub const STDLIB_QUALIFIED: &[&str] = &[
     "os::signal::on",
     "os::signal::try_wait",
     "os::signal::wait",
-    "os::stdin",
     "path::extension",
     "path::file_name",
     "path::file_stem",

@@ -142,7 +142,7 @@ share these methods:
 | `rx.try_recv()` | `Option<T>` | Non-blocking; `None` if empty. |
 | `tx.close()` / `rx.close()` | `()` | Subsequent send/recv return immediately. |
 
-## Streams (`io::stdout` / `io::stderr` / file handles)
+## Streams (`io::stdin` / `io::stdout` / `io::stderr` / file handles)
 
 | Method | Returns | Notes |
 |---|---|---|
@@ -150,7 +150,7 @@ share these methods:
 | `out.write_byte(b)` | `()` | Single byte. |
 | `out.write_byte_array(arr, len)` | `()` | Bulk write from `[i64; N]` or `[u8; N]`. |
 | `out.flush()` | `()` | Force buffer drain. |
-| `r.read_line()` | `Option<String>` | Up to next `\n` (excluding it). |
+| `io::stdin().read_line(&mut s)` | `Result<i64, errors::Error>` | Appends the raw line to `s` and returns the byte count. The buffer keeps the newline; use `s.trim()` for prompts. |
 | `r.read_to_string()` | `String` | Reads until EOF. |
 
 ## Concurrency primitives

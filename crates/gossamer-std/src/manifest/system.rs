@@ -413,7 +413,7 @@ pub const BUFIO: StdModule = StdModule {
 
 pub const IO: StdModule = StdModule {
     path: "std::io",
-    summary: "Stream-oriented I/O abstractions.",
+    summary: "Stream-oriented I/O abstractions and process standard streams.",
     items: &[
         StdItem {
             name: "Reader",
@@ -438,7 +438,7 @@ pub const IO: StdModule = StdModule {
         StdItem {
             name: "stdin",
             kind: StdItemKind::Function,
-            doc: "Returns a handle to the process's standard input stream.",
+            doc: "Returns a handle to the process's standard input stream. Use read_line(&mut String) for interactive prompts.",
         },
         StdItem {
             name: "stdout",
@@ -470,7 +470,7 @@ pub const IO: StdModule = StdModule {
 
 pub const OS: StdModule = StdModule {
     path: "std::os",
-    summary: "Operating-system identity and process standard input.",
+    summary: "Operating-system identity.",
     items: &[
         StdItem {
             name: "family",
@@ -481,11 +481,6 @@ pub const OS: StdModule = StdModule {
             name: "arch",
             kind: StdItemKind::Function,
             doc: "Returns the target CPU architecture (e.g. \"x86_64\").",
-        },
-        StdItem {
-            name: "stdin",
-            kind: StdItemKind::Function,
-            doc: "Process standard input stream (Go's os.Stdin).",
         },
     ],
 };

@@ -131,6 +131,21 @@ pub(crate) fn is_mut_ref_vec(tcx: &TyCtxt, ty: Ty) -> bool {
     matches!(tcx.kind(*inner), Some(TyKind::Vec(_) | TyKind::Slice(_)))
 }
 
+/// Returns `true` for `&mut [T; N]`. Fixed arrays copy at the call
+/// boundary on the compiled tiers, so the VM must not opt them into
+/// mutable write-back cells just because the source spelling used
+/// `&mut`.
+pub(crate) fn is_mut_ref_fixed_array(tcx: &TyCtxt, ty: Ty) -> bool {
+    let Some(TyKind::Ref {
+        mutability: gossamer_types::Mutbl::Mut,
+        inner,
+    }) = tcx.kind(ty)
+    else {
+        return false;
+    };
+    matches!(tcx.kind(*inner), Some(TyKind::Array { .. }))
+}
+
 /// Returns `true` when `ty` is a `&mut T` whose mutation through the
 /// reference must be visible to the caller on every tier: `&mut Vec<T>`
 /// / `&mut [T]` (the cell-protocol shapes above), `&mut <scalar
@@ -188,8 +203,10 @@ pub(crate) type InlinableWrappers = std::collections::HashMap<String, Vec<String
 pub(crate) struct InlinableFn {
     /// Parameter binding patterns in declaration order.
     pub(crate) params: Vec<HirPat>,
-    /// The function's tail expression - its sole computation, re-compiled
-    /// directly into the caller at each inlined call site.
+    /// Straight-line statements evaluated before [`Self::tail`].
+    pub(crate) stmts: Vec<HirStmt>,
+    /// The function's tail expression, re-compiled directly into the caller
+    /// after [`Self::stmts`].
     pub(crate) tail: HirExpr,
     /// Weighted node count of `tail`, charged against the caller's inline
     /// budget so transitive inlining stays bounded.

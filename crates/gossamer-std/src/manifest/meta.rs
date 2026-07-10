@@ -79,6 +79,11 @@ pub const RUNTIME: StdModule = StdModule {
             doc: "Runs the reference-cycle collector and returns objects reclaimed.",
         },
         StdItem {
+            name: "scheduler_stats_json",
+            kind: StdItemKind::Function,
+            doc: "Returns a compact JSON snapshot of goroutine scheduler counters.",
+        },
+        StdItem {
             name: "arena_push",
             kind: StdItemKind::Function,
             doc: "Opens an arena region for bump allocation.",
@@ -245,6 +250,11 @@ pub const TESTING: StdModule = StdModule {
             name: "check_ok",
             kind: StdItemKind::Function,
             doc: "Asserts a Result is Ok, recording without panicking.",
+        },
+        StdItem {
+            name: "wait_for_scheduler_idle",
+            kind: StdItemKind::Function,
+            doc: "Waits for the scheduler to become idle within a timeout.",
         },
     ],
 };
