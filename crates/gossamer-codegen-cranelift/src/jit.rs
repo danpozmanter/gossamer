@@ -279,35 +279,37 @@ fn body_uses_unlowerable_local_repr(
     })
 }
 
-/// A recursive heap-enum producer needs consuming/return ownership semantics
-/// that the current JIT boundary does not yet provide.  Promoting one can
-/// either keep its whole input live while producing another tree or return a
-/// malformed ownership graph. Scalar-returning recursive traversals only
-/// borrow their enum input and are safe to promote.
-fn body_returns_rc(body: &Body, tcx: &TyCtxt) -> bool {
-    fn ty_contains_rc(tcx: &TyCtxt, mut ty: gossamer_types::Ty) -> bool {
-        while let TyKind::Ref { inner, .. } = tcx.kind_of(ty) {
-            ty = *inner;
-        }
-        if tcx.is_rc_managed(ty) {
-            return true;
-        }
-        match tcx.kind_of(ty) {
-            TyKind::Tuple(elems) => elems.iter().any(|elem| ty_contains_rc(tcx, *elem)),
-            TyKind::Array { elem, .. }
-            | TyKind::Slice(elem)
-            | TyKind::Vec(elem)
-            | TyKind::Sender(elem)
-            | TyKind::Receiver(elem)
-            | TyKind::JoinHandle(elem) => ty_contains_rc(tcx, *elem),
-            TyKind::HashMap { key, value } => {
-                ty_contains_rc(tcx, *key) || ty_contains_rc(tcx, *value)
-            }
-            _ => false,
-        }
+fn ty_contains_rc(tcx: &TyCtxt, mut ty: gossamer_types::Ty) -> bool {
+    while let TyKind::Ref { inner, .. } = tcx.kind_of(ty) {
+        ty = *inner;
     }
+    if tcx.is_rc_managed(ty) {
+        return true;
+    }
+    match tcx.kind_of(ty) {
+        TyKind::Tuple(elems) => elems.iter().any(|elem| ty_contains_rc(tcx, *elem)),
+        TyKind::Array { elem, .. }
+        | TyKind::Slice(elem)
+        | TyKind::Vec(elem)
+        | TyKind::Sender(elem)
+        | TyKind::Receiver(elem)
+        | TyKind::JoinHandle(elem) => ty_contains_rc(tcx, *elem),
+        TyKind::HashMap { key, value } => ty_contains_rc(tcx, *key) || ty_contains_rc(tcx, *value),
+        _ => false,
+    }
+}
 
+fn body_returns_rc(body: &Body, tcx: &TyCtxt) -> bool {
     ty_contains_rc(tcx, body.local_ty(gossamer_mir::Local::RETURN))
+}
+
+/// Recursive RC producers can stay native when they receive only scalar
+/// inputs: their recursive calls exchange freshly allocated native nodes and
+/// cross the VM boundary just once at the final return. A producer accepting
+/// an RC-managed input still needs boundary ownership transfer semantics, so
+/// it remains interpreted.
+fn body_has_rc_params(body: &Body, tcx: &TyCtxt) -> bool {
+    (1..=body.arity).any(|idx| ty_contains_rc(tcx, body.local_ty(gossamer_mir::Local(idx))))
 }
 
 /// Computes the minimal set of body names needed in the JIT module.
@@ -368,7 +370,8 @@ fn jit_compile_set<'a>(
                 body_uses_unlowerable_local_repr(b, tcx, enum_shapes, struct_shapes);
             let goroutine_hit = body_has_cross_goroutine_ops(b);
             let recursive = reaches_self(b.name.as_str());
-            let recursive_rc_return = recursive && body_returns_rc(b, tcx);
+            let recursive_rc_return =
+                recursive && body_returns_rc(b, tcx) && body_has_rc_params(b, tcx);
             let amortizes = recursive || body_has_loop(b);
             if trace && (!kinds_ok || unlowerable_local || goroutine_hit || recursive_rc_return) {
                 eprintln!(
@@ -394,7 +397,9 @@ fn jit_compile_set<'a>(
             let ok = body_map.get(callee).is_some_and(|b| {
                 !(body_uses_unlowerable_local_repr(b, tcx, enum_shapes, struct_shapes)
                     || body_has_cross_goroutine_ops(b)
-                    || (reaches_self(b.name.as_str()) && body_returns_rc(b, tcx)))
+                    || (reaches_self(b.name.as_str())
+                        && body_returns_rc(b, tcx)
+                        && body_has_rc_params(b, tcx)))
             });
             if ok && included.insert(callee) {
                 worklist.push(callee);

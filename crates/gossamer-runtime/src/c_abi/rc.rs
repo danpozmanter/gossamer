@@ -2147,7 +2147,11 @@ unsafe fn visit_rc_children(payload: *mut u8, mut f: impl FnMut(*mut u8)) {
     // through [`visit_string_children`].
     unsafe {
         visit_children_raw(payload, |child| {
-            if !crate::c_abi::string::is_gos_string(child.cast()) {
+            // A tagged nullary enum is non-null in its stored representation
+            // (for example `Tree::Nil` is `0x2`) but has no allocation behind
+            // it.  The cycle collector dereferences every graph edge, so it
+            // must not receive the untagged null value.
+            if !child.is_null() && !crate::c_abi::string::is_gos_string(child.cast()) {
                 f(child);
             }
         });
@@ -2654,6 +2658,12 @@ unsafe fn collect_white(root: *mut u8, freed: &mut Vec<*mut u8>) {
         // destructor rather than silently skipped, mirroring rc_release_impl.
         unsafe {
             visit_children_raw(s, |c| {
+                // `visit_children_raw` stays branch-free for the regular
+                // release path.  The collector, unlike that path, must not
+                // dereference an untagged nullary-enum value.
+                if c.is_null() {
+                    return;
+                }
                 if crate::c_abi::string::is_gos_string(c.cast()) {
                     crate::c_abi::string::gos_rt_str_free(c.cast());
                 } else if is_shared(header_ptr(c)) {
@@ -3612,6 +3622,25 @@ mod tests {
             set_child(node, 1, l1);
             assert_eq!(rc_live_count(), base + 3);
             gos_rt_rc_release(node);
+        }
+        assert_eq!(rc_live_count(), base);
+    }
+
+    #[test]
+    fn cycle_collection_ignores_tagged_nullary_enum_children() {
+        let _g = count_guard();
+        fresh_cycle_state();
+        let base = rc_live_count();
+        let meta = tree_meta();
+        unsafe {
+            let node = alloc_with_disc(2, 1, meta.as_ptr());
+            // Keep a self-cycle alive long enough to enter the cycle
+            // collector, alongside a tagged `Tree::Nil` child (`0x2`).
+            set_child(node, 0, node);
+            gos_rt_rc_retain(node);
+            set_child(node, 1, 2usize as *mut u8);
+            gos_rt_rc_release(node);
+            gos_rt_collect_cycles();
         }
         assert_eq!(rc_live_count(), base);
     }

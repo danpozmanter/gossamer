@@ -58,10 +58,12 @@
 
 ### Stability
 
-- **Recursive heap-enum producers stay on the bytecode tier until the JIT has
-  consuming return ownership.** This prevents native tree construction or
-  rewriting from retaining an input and output tree together, while preserving
-  native promotion for read-only recursive traversals.
+- **Safe recursive heap-enum producers tier up again.** Functions with only
+  scalar inputs now build fresh enum trees natively; producers that accept
+  RC-managed inputs remain on bytecode until their boundary ownership transfer
+  is supported.
+- **Cycle collection ignores tagged nullary enum values.** Graph walks no
+  longer dereference a null payload after stripping a unit-variant tag.
 - **Cranelift native cleanup now uses one summary-aware cleanup plan from block
   entry through return.** This removes a possible leak/double-free split when
   interprocedural capture summaries change drop placement.
@@ -1066,8 +1068,7 @@ Memory and GC:
   never stall the goroutine on an unbounded sweep. Explicit
   `runtime::collect_cycles()` still fully drains.
 - **Faster region allocation.** The arena-region bump path takes a single
-  thread-local probe instead of two; allocation-heavy region code (e.g.
-  binary-trees) is ~1.5x faster.
+  thread-local probe instead of two; allocation-heavy region code.
 - **Deep structures tear down without overflowing the stack** on the
   interpreter tier: dropping a million-deep list / tree / graph is iterative
   past a depth threshold, matching the native tier's robustness.
