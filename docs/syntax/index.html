@@ -887,6 +887,8 @@
       
         
       
+        
+      
     
     
     
@@ -984,6 +986,34 @@
     
   
     Prelude (no imports)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../core_method_contract/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Core method contract
   
 
     
@@ -1615,6 +1645,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -1703,6 +1737,62 @@
     
   
     Runtime internals
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../design/memory_model/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Memory model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../design/goroutine_stacks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Goroutine stack model
   
 
     
@@ -2250,7 +2340,7 @@ query chains directly with no accumulator:</p>
 <code>i * i..n</code> reads <code>(i * i)..n</code>.</p>
 <h2 id="error-handling">Error handling<a class="headerlink" href="#error-handling" title="Permanent link">&para;</a></h2>
 <div class="language-gossamer highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="k">fn</span> <span class="nf">load</span><span class="p">(</span><span class="n">path</span>: <span class="nb">String</span><span class="p">)</span><span class="w"> </span>-&gt; <span class="nb">Result</span><span class="o">&lt;</span><span class="nb">String</span><span class="p">,</span><span class="w"> </span><span class="n">io</span>::<span class="n">Error</span><span class="o">&gt;</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="n">raw</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">os</span>::<span class="n">read_file_to_string</span><span class="p">(</span><span class="o">&amp;</span><span class="n">path</span><span class="p">)</span><span class="o">?</span>
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="n">raw</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">fs</span>::<span class="n">read_to_string</span><span class="p">(</span><span class="o">&amp;</span><span class="n">path</span><span class="p">)</span><span class="o">?</span>
 <a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="w">    </span><span class="nb">Ok</span><span class="p">(</span><span class="n">raw</span><span class="p">)</span>
 <a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="p">}</span>
 </code></pre></div>
@@ -2285,8 +2375,9 @@ referenced after it exits. See the
 M:N scheduler. Blocking primitives (channel ops, mutex contention,
 <code>time::sleep</code>, network reads, filesystem syscalls) park the
 goroutine, freeing the worker thread to run other goroutines.
-Channels are typed and buffered (created with <code>channel()</code> - there is no
-capacity argument); <code>select</code> multiplexes receives.</p>
+Channels are typed: <code>channel()</code> / <code>channel(0)</code> is unbuffered,
+<code>channel(n)</code> is bounded, and <code>channel::unbounded()</code> is the explicit
+queue form. <code>select</code> multiplexes sends and receives.</p>
 <p>Scheduling is cooperative with watchdog-assisted preemption: a
 goroutine yields at safepoints (every park point above, plus
 function-call / scheduler-step boundaries), and a watchdog forces a
@@ -2311,7 +2402,7 @@ work transparently (runtime-managed, no <code>move</code>).</p>
 <tbody>
 <tr>
 <td><code>fn(args) -&gt; ret</code></td>
-<td>non-capturing items only</td>
+<td>raw pointer shape; named item coercion is not implemented</td>
 <td>raw code pointer</td>
 </tr>
 <tr>

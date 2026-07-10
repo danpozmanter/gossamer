@@ -1110,6 +1110,34 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_fs_create_dir_all as *const u8,
         ),
         (
+            "gos_rt_fs_file_close",
+            crate::c_abi::gos_rt_fs_file_close as *const u8,
+        ),
+        (
+            "gos_rt_fs_file_create",
+            crate::c_abi::gos_rt_fs_file_create as *const u8,
+        ),
+        (
+            "gos_rt_fs_file_flush",
+            crate::c_abi::gos_rt_fs_file_flush as *const u8,
+        ),
+        (
+            "gos_rt_fs_file_open",
+            crate::c_abi::gos_rt_fs_file_open as *const u8,
+        ),
+        (
+            "gos_rt_fs_file_read",
+            crate::c_abi::gos_rt_fs_file_read as *const u8,
+        ),
+        (
+            "gos_rt_fs_file_read_to_string",
+            crate::c_abi::gos_rt_fs_file_read_to_string as *const u8,
+        ),
+        (
+            "gos_rt_fs_file_write",
+            crate::c_abi::gos_rt_fs_file_write as *const u8,
+        ),
+        (
             "gos_rt_fs_list_dir",
             crate::c_abi::gos_rt_fs_list_dir as *const u8,
         ),
@@ -1120,6 +1148,38 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
         (
             "gos_rt_fs_metadata_raw",
             crate::c_abi::gos_rt_fs_metadata_raw as *const u8,
+        ),
+        (
+            "gos_rt_fs_open_options_append",
+            crate::c_abi::gos_rt_fs_open_options_append as *const u8,
+        ),
+        (
+            "gos_rt_fs_open_options_create",
+            crate::c_abi::gos_rt_fs_open_options_create as *const u8,
+        ),
+        (
+            "gos_rt_fs_open_options_create_new",
+            crate::c_abi::gos_rt_fs_open_options_create_new as *const u8,
+        ),
+        (
+            "gos_rt_fs_open_options_new",
+            crate::c_abi::gos_rt_fs_open_options_new as *const u8,
+        ),
+        (
+            "gos_rt_fs_open_options_open",
+            crate::c_abi::gos_rt_fs_open_options_open as *const u8,
+        ),
+        (
+            "gos_rt_fs_open_options_read",
+            crate::c_abi::gos_rt_fs_open_options_read as *const u8,
+        ),
+        (
+            "gos_rt_fs_open_options_truncate",
+            crate::c_abi::gos_rt_fs_open_options_truncate as *const u8,
+        ),
+        (
+            "gos_rt_fs_open_options_write",
+            crate::c_abi::gos_rt_fs_open_options_write as *const u8,
         ),
         (
             "gos_rt_fs_read_bytes_result",
@@ -3423,6 +3483,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_select_wait as *const u8,
         ),
         (
+            "gos_rt_runtime_scheduler_stats_json",
+            crate::c_abi::gos_rt_runtime_scheduler_stats_json as *const u8,
+        ),
+        (
             "gos_rt_set_args",
             crate::c_abi::gos_rt_set_args as *const u8,
         ),
@@ -3982,6 +4046,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_str_as_bytes as *const u8,
         ),
         (
+            "gos_rt_str_clear",
+            crate::c_abi::gos_rt_str_clear as *const u8,
+        ),
+        (
             "gos_rt_str_byte_at",
             crate::c_abi::gos_rt_str_byte_at as *const u8,
         ),
@@ -4054,8 +4122,24 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_strconv_parse_f64 as *const u8,
         ),
         (
+            "gos_rt_strconv_parse_f64_bytes",
+            crate::c_abi::gos_rt_strconv_parse_f64_bytes as *const u8,
+        ),
+        (
+            "gos_rt_strconv_parse_f64_range",
+            crate::c_abi::gos_rt_strconv_parse_f64_range as *const u8,
+        ),
+        (
             "gos_rt_strconv_parse_i64",
             crate::c_abi::gos_rt_strconv_parse_i64 as *const u8,
+        ),
+        (
+            "gos_rt_strconv_parse_i64_bytes",
+            crate::c_abi::gos_rt_strconv_parse_i64_bytes as *const u8,
+        ),
+        (
+            "gos_rt_strconv_parse_i64_range",
+            crate::c_abi::gos_rt_strconv_parse_i64_range as *const u8,
         ),
         (
             "gos_rt_strconv_parse_i64_radix",
@@ -4213,6 +4297,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_str_slice as *const u8,
         ),
         (
+            "gos_rt_str_truncate",
+            crate::c_abi::gos_rt_str_truncate as *const u8,
+        ),
+        (
             "gos_rt_str_split",
             crate::c_abi::gos_rt_str_split as *const u8,
         ),
@@ -4247,6 +4335,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
         (
             "gos_rt_str_substring",
             crate::c_abi::gos_rt_str_substring as *const u8,
+        ),
+        (
+            "gos_rt_string_from_utf8",
+            crate::c_abi::gos_rt_string_from_utf8 as *const u8,
         ),
         (
             "gos_rt_str_to_bool_opt",
@@ -4445,6 +4537,14 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_tcp_stream_close as *const u8,
         ),
         (
+            "gos_rt_tcp_stream_clear_read_timeout",
+            crate::c_abi::gos_rt_tcp_stream_clear_read_timeout as *const u8,
+        ),
+        (
+            "gos_rt_tcp_stream_clear_write_timeout",
+            crate::c_abi::gos_rt_tcp_stream_clear_write_timeout as *const u8,
+        ),
+        (
             "gos_rt_tcp_stream_connect",
             crate::c_abi::gos_rt_tcp_stream_connect as *const u8,
         ),
@@ -4457,6 +4557,14 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_tcp_stream_read_to_string as *const u8,
         ),
         (
+            "gos_rt_tcp_stream_set_read_timeout_ms",
+            crate::c_abi::gos_rt_tcp_stream_set_read_timeout_ms as *const u8,
+        ),
+        (
+            "gos_rt_tcp_stream_set_write_timeout_ms",
+            crate::c_abi::gos_rt_tcp_stream_set_write_timeout_ms as *const u8,
+        ),
+        (
             "gos_rt_tcp_stream_write",
             crate::c_abi::gos_rt_tcp_stream_write as *const u8,
         ),
@@ -4467,6 +4575,10 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
         (
             "gos_rt_testing_check_eq_i64",
             crate::c_abi::gos_rt_testing_check_eq_i64 as *const u8,
+        ),
+        (
+            "gos_rt_testing_wait_for_scheduler_idle",
+            crate::c_abi::gos_rt_testing_wait_for_scheduler_idle as *const u8,
         ),
         (
             "gos_rt_thread_num_cpus",
@@ -4948,6 +5060,14 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_vec_insert_at as *const u8,
         ),
         (
+            "gos_rt_vec_clear",
+            crate::c_abi::gos_rt_vec_clear as *const u8,
+        ),
+        (
+            "gos_rt_vec_extend",
+            crate::c_abi::gos_rt_vec_extend as *const u8,
+        ),
+        (
             "gos_rt_vec_insert_safe",
             crate::c_abi::gos_rt_vec_insert_safe as *const u8,
         ),
@@ -5015,8 +5135,20 @@ pub fn runtime_symbol_addrs() -> Vec<(&'static str, *const u8)> {
             crate::c_abi::gos_rt_vec_push_i64 as *const u8,
         ),
         (
+            "gos_rt_vec_reserve_at_least",
+            crate::c_abi::gos_rt_vec_reserve_at_least as *const u8,
+        ),
+        (
+            "gos_rt_vec_reserve_exact",
+            crate::c_abi::gos_rt_vec_reserve_exact as *const u8,
+        ),
+        (
             "gos_rt_vec_remove_safe",
             crate::c_abi::gos_rt_vec_remove_safe as *const u8,
+        ),
+        (
+            "gos_rt_vec_truncate",
+            crate::c_abi::gos_rt_vec_truncate as *const u8,
         ),
         (
             "gos_rt_vec_reversed",

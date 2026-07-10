@@ -92,9 +92,17 @@ run_step() {
     rm -f "$log"
 }
 
+phase() {
+    echo
+    echo "-- $1 --"
+}
+
+phase "core Rust gates"
 run_step "cargo fmt"                                       cargo fmt
 run_step "cargo clippy --workspace --all-targets"          cargo clippy --workspace --all-targets -- -D warnings
 run_step "cargo test --workspace --no-fail-fast"           cargo test --workspace --no-fail-fast -- --test-threads=1
+
+phase "tooling and documentation gates"
 # Stdlib docs drift gate - verifies docs_src/stdlib/ pages match
 # what `manifest::ALL_MODULES` would emit. Build the binary first
 # so the check uses the freshly built crate.
@@ -128,6 +136,7 @@ if [[ $run_doctests -eq 1 ]]; then
         cargo test --doc --workspace --release
 fi
 
+phase "dependency policy gates"
 # cargo-deny - license + advisory + bans + sources gate
 # (`.github/workflows/ci.yml` deny job). Skip cleanly if
 # `cargo-deny` isn't installed so the local pass keeps moving.
@@ -156,6 +165,7 @@ fi
 # need a target-prefixed gcc that's hard to expect on dev machines
 # - those stay CI-only.
 if [[ $run_cross -eq 1 ]]; then
+    phase "cross-target gates"
     if rustup target list --installed 2>/dev/null | grep -q '^wasm32-unknown-unknown$'; then
         run_step "cargo check --target wasm32-unknown-unknown (wasm-portable crates)" \
             cargo check -p gossamer-abi -p gossamer-binding-macros \
@@ -211,6 +221,7 @@ fi
 #      just under whatever nightly is on the dev box.
 #   3. Skip with a one-line install hint.
 if [[ $run_sanitizers -eq 1 ]]; then
+    phase "sanitizer gates"
     asan_pinned="nightly-2026-04-14"
     asan_toolchain=""
     if rustup toolchain list 2>/dev/null | grep -q "^${asan_pinned}"; then
@@ -274,6 +285,7 @@ fi
 # stays useful on dev machines that haven't set the harness up.
 fuzz_secs="${GOSSAMER_FUZZ_SECS:-10}"
 if [[ $run_fuzz -eq 1 ]] && command -v cargo-fuzz >/dev/null 2>&1 && rustup toolchain list 2>/dev/null | grep -q '^nightly'; then
+    phase "fuzz smoke gates"
     echo "==> fuzz smoke (${fuzz_secs}s per target)"
     fuzz_log="$(mktemp -d)/fuzz.log"
     for target in lex parse manifest http_request typecheck resolve mir_lower hir_lower vm_compile vm_run; do

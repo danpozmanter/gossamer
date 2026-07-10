@@ -994,6 +994,8 @@ impl<'a> Builder<'a> {
             "UdpSocket" => Some("net::UdpSocket"),
             "UnixStream" => Some("net::UnixStream"),
             "UnixListener" => Some("net::UnixListener"),
+            "File" => Some("fs::File"),
+            "OpenOptions" => Some("fs::OpenOptions"),
             // A piped child handle extracted from
             // `process::spawn_piped(..)`'s Ok payload; routes
             // `write_stdin` / `read_line` / `wait` / ... to the

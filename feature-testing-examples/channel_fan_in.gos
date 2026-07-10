@@ -10,7 +10,7 @@ fn worker(id: i64, tx: channel::Sender<i64>, val: i64) {
 }
 
 fn main() {
-    let (tx, rx) = channel()
+    let (tx, rx) = channel::unbounded()
 
     go worker(1, tx, 10)
     go worker(2, tx, 20)
@@ -48,7 +48,7 @@ mod tests {
 
     #[test]
     fn fan_in_total() {
-        let (tx, rx) = channel()
+        let (tx, rx) = channel::unbounded()
         go super::worker(1, tx, 10)
         go super::worker(2, tx, 20)
         go super::worker(3, tx, 30)

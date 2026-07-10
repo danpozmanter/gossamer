@@ -20,6 +20,39 @@ unsafe fn str_of<'a>(s: *const c_char) -> &'a str {
     }
 }
 
+unsafe fn bytes_of<'a>(ptr: *const u8, len: i64) -> Option<&'a str> {
+    if ptr.is_null() || len < 0 {
+        return None;
+    }
+    let bytes = unsafe { std::slice::from_raw_parts(ptr, len as usize) };
+    std::str::from_utf8(bytes).ok()
+}
+
+unsafe fn str_range_of<'a>(s: *const c_char, start: i64, end: i64) -> Result<&'a str, String> {
+    let len = if s.is_null() {
+        0i64
+    } else {
+        match unsafe { super::string::str_header_len(s) } {
+            Some(l) => l as i64,
+            None => unsafe { super::string::c_str_len(s) as i64 },
+        }
+    };
+    if start < 0 || end < 0 || start > end || end > len {
+        return Err(format!(
+            "slice: range [{start}, {end}) out of bounds for length {len}"
+        ));
+    }
+    let lo = start as usize;
+    let hi = end as usize;
+    let bytes = if s.is_null() {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(s.cast::<u8>(), len as usize) }
+    };
+    std::str::from_utf8(&bytes[lo..hi])
+        .map_err(|_| format!("slice: range [{start}, {end}) does not fall on UTF-8 boundaries"))
+}
+
 /// Renders a `std::num` integer parse failure exactly as
 /// `gossamer_std::strconv::ParseError` Displays it, so the compiled
 /// tier's error text is byte-identical to `gos run` (which formats
@@ -46,6 +79,54 @@ fn int_err_text(value: &str, err: &std::num::ParseIntError) -> String {
 pub unsafe extern "C" fn gos_rt_strconv_parse_i64(s: *const c_char) -> i128 {
     ffi_entry!(0i128, {
         let trimmed = unsafe { str_of(s) }.trim();
+        if trimmed.is_empty() {
+            return unsafe { strconv_err("empty input") };
+        }
+        match trimmed.parse::<i64>() {
+            Ok(n) => unsafe { gos_rt_result_new(0, n) },
+            Err(e) => unsafe { strconv_err(&int_err_text(trimmed, &e)) },
+        }
+    })
+}
+
+/// Byte-counted variant of `strconv::parse_i64`.
+///
+/// The caller passes a borrowed UTF-8 byte slice, avoiding the temporary
+/// runtime String that `strings::slice(...)? |> strconv::parse_i64`
+/// would otherwise allocate before parsing.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_strconv_parse_i64_bytes(ptr: *const u8, len: i64) -> i128 {
+    ffi_entry!(0i128, {
+        let Some(text) = (unsafe { bytes_of(ptr, len) }) else {
+            return unsafe { strconv_err("invalid input: \"<non-utf8>\"") };
+        };
+        let trimmed = text.trim();
+        if trimmed.is_empty() {
+            return unsafe { strconv_err("empty input") };
+        }
+        match trimmed.parse::<i64>() {
+            Ok(n) => unsafe { gos_rt_result_new(0, n) },
+            Err(e) => unsafe { strconv_err(&int_err_text(trimmed, &e)) },
+        }
+    })
+}
+
+/// Range-counted variant of `strconv::parse_i64`.
+///
+/// This validates `s[start..end]` exactly like `strings::slice`, then parses the
+/// borrowed range without allocating a temporary runtime `String`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_strconv_parse_i64_range(
+    s: *const c_char,
+    start: i64,
+    end: i64,
+) -> i128 {
+    ffi_entry!(0i128, {
+        let text = match unsafe { str_range_of(s, start, end) } {
+            Ok(text) => text,
+            Err(msg) => return unsafe { strconv_err(&msg) },
+        };
+        let trimmed = text.trim();
         if trimmed.is_empty() {
             return unsafe { strconv_err("empty input") };
         }
@@ -93,6 +174,50 @@ pub unsafe extern "C" fn gos_rt_strconv_parse_f64(s: *const c_char) -> i128 {
         // empty input as `ParseError::Empty`, and surface every other
         // failure as `ParseError::Invalid`.
         let trimmed = unsafe { str_of(s) }.trim();
+        if trimmed.is_empty() {
+            return unsafe { strconv_err("empty input") };
+        }
+        match trimmed.parse::<f64>() {
+            Ok(x) => unsafe { gos_rt_result_new(0, x.to_bits() as i64) },
+            Err(_) => unsafe { strconv_err(&format!("invalid input: {trimmed:?}")) },
+        }
+    })
+}
+
+/// Byte-counted variant of `strconv::parse_f64`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_strconv_parse_f64_bytes(ptr: *const u8, len: i64) -> i128 {
+    ffi_entry!(0i128, {
+        let Some(text) = (unsafe { bytes_of(ptr, len) }) else {
+            return unsafe { strconv_err("invalid input: \"<non-utf8>\"") };
+        };
+        let trimmed = text.trim();
+        if trimmed.is_empty() {
+            return unsafe { strconv_err("empty input") };
+        }
+        match trimmed.parse::<f64>() {
+            Ok(x) => unsafe { gos_rt_result_new(0, x.to_bits() as i64) },
+            Err(_) => unsafe { strconv_err(&format!("invalid input: {trimmed:?}")) },
+        }
+    })
+}
+
+/// Range-counted variant of `strconv::parse_f64`.
+///
+/// This validates `s[start..end]` exactly like `strings::slice`, then parses the
+/// borrowed range without allocating a temporary runtime `String`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_strconv_parse_f64_range(
+    s: *const c_char,
+    start: i64,
+    end: i64,
+) -> i128 {
+    ffi_entry!(0i128, {
+        let text = match unsafe { str_range_of(s, start, end) } {
+            Ok(text) => text,
+            Err(msg) => return unsafe { strconv_err(&msg) },
+        };
+        let trimmed = text.trim();
         if trimmed.is_empty() {
             return unsafe { strconv_err("empty input") };
         }

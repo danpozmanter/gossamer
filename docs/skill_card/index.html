@@ -631,6 +631,8 @@
       
         
       
+        
+      
     
     
     
@@ -728,6 +730,34 @@
     
   
     Prelude (no imports)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../core_method_contract/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Core method contract
   
 
     
@@ -1359,6 +1389,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -1447,6 +1481,62 @@
     
   
     Runtime internals
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../design/memory_model/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Memory model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../design/goroutine_stacks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Goroutine stack model
   
 
     
@@ -2169,7 +2259,7 @@ Left-associative, very low precedence.</p>
 <li><code>x |&gt; f</code> is <code>f(x)</code>; <code>x |&gt; f(a, b)</code> puts <code>x</code> in the LAST slot:
   <code>f(a, b, x)</code>; same for <code>x |&gt; recv.m(a)</code>.</li>
 <li><code>_</code> makes the piped value the RECEIVER: <code>x |&gt; _.m(a)</code> is <code>x.m(a)</code>;
-  bare <code>s |&gt; _.trim |&gt; _.to_upper</code> chains nullary methods; <code>_.0</code>,
+  bare <code>s |&gt; _.trim |&gt; _.to_uppercase</code> chains nullary methods; <code>_.0</code>,
   <code>_[i]</code>, and bare <code>_</code> (identity) work.</li>
 <li>Closure steps thread the value into the last slot too.</li>
 </ul>
@@ -2243,12 +2333,13 @@ errors through <code>From</code>, and works inside macro args).</p>
 <code>{}</code> on a wrapped error prints the colon-joined chain;
 <code>.message()</code> is the top message only. Ok-path piping:
 <code>fs::read_to_string(f) |&gt; result::map(|s| print!("{s}"))
-|&gt; result::default_with(|e| eprintln!("{e}"))</code>.</p>
+|&gt; result::unwrap_or_else(|e| eprintln!("{e}"))</code>.</p>
 <p>Panics are goroutine-scoped: a spawned goroutine's panic ends only
 that goroutine; a main-goroutine panic is fatal (exit 101). Integer
 divide/modulo by zero panics (GX0005); <code>i64::MIN / -1</code> wraps. Deep
-recursion raises a clean stack-overflow (GX0008) - for genuinely
-deep recursion use <code>gos build</code> (the OS grows native stacks).</p>
+recursion is bounded: the VM/JIT reports GX0008 and native builds use
+the installed stack guard (<code>stack overflow ... aborting</code>) rather than
+silently corrupting memory.</p>
 <h2 id="9-concurrency">9. Concurrency<a class="headerlink" href="#9-concurrency" title="Permanent link">&para;</a></h2>
 <p><code>go expr</code> is fire-and-forget; <code>spawn(f)</code> returns a <code>JoinHandle&lt;T&gt;</code>
 (<code>handle.join()</code> -&gt; <code>Result&lt;T, String&gt;</code>). Typed channels: <code>recv()</code>
@@ -2275,15 +2366,16 @@ timer: <code>time::after(d) -&gt; Receiver</code> as a select timeout arm.
 <code>Barrier</code>, and <code>Map</code> (concurrent string-&gt;string); <code>std::thread</code> is
 real OS threads.</p>
 <p><strong>Closures</strong>: <code>|x: T| body</code>; capture is automatic (no <code>move</code>).
-<code>fn(args) -&gt; ret</code> accepts only non-capturing items; <code>Fn(args) -&gt; ret</code>
-accepts both (implicit coercion; no FnMut/FnOnce distinction).</p>
+Use <code>Fn(args) -&gt; ret</code> for callback parameters. Plain <code>fn(args) -&gt; ret</code>
+is a raw pointer shape; named function item coercion is not implemented
+(no FnMut/FnOnce distinction in practice).</p>
 <p><strong>Iterators</strong>: any type with <code>fn next(&amp;mut self) -&gt; Option&lt;T&gt;</code> works
-in <code>for</code>. <code>std::iter</code>'s <code>Lazy</code> adapter gives allocation-free
-<code>map</code>/<code>filter</code>/<code>take</code>/<code>skip</code>/<code>step_by</code> chains over any sequence.</p>
+in <code>for</code>. Sequence combinators (<code>map</code>/<code>filter</code>/<code>take</code>/<code>skip</code>/<code>step_by</code>)
+are callable as methods/free functions and materialize results.</p>
 <h2 id="10-data-structures">10. Data structures<a class="headerlink" href="#10-data-structures" title="Permanent link">&para;</a></h2>
 <ul>
 <li><code>[T]</code> growable (push/pop/swap/sort/sort_by, <code>contains</code>, <code>index_of</code>,
-  <code>first</code>/<code>last</code>, <code>reversed</code>, <code>slice(a, b) -&gt; Result</code>); <code>[T; N]</code>
+  <code>first</code>/<code>last</code>, <code>rev</code>, <code>slice(a, b) -&gt; Result</code>); <code>[T; N]</code>
   fixed; tuples <code>.0</code>/<code>.1</code>; tuple structs fully usable. Method-call
   <code>xs.insert/remove</code> are silent in-place; the Result-returning forms
   are the qualified <code>Vec::insert(xs, i, v)</code> / <code>Vec::remove(xs, i)</code>.</li>
@@ -2334,19 +2426,18 @@ test</code> also compiles and runs fenced code in doc comments.</p>
   <code>time</code>: <code>now_ms</code>, <code>Instant</code>, <code>Duration</code>, <code>sleep</code>, <code>after</code>,
   RFC 3339 parse/format. <code>flag</code>: <code>Set::new</code> + <code>string/int/bool</code>
   cells that auto-deref; no built-in required-flag.</li>
-<li>Text: <code>strings strconv utf8 unicode regex</code>. Prefer <code>to_lower</code> /
-  <code>to_upper</code>; <code>split_once</code>, <code>substring(a, b)</code> clamps, <code>byte_at(i)</code>
+<li>Text: <code>strings strconv utf8 unicode regex</code>. Prefer <code>to_lowercase</code> /
+  <code>to_uppercase</code>; <code>split_once</code>, <code>substring(a, b)</code> clamps, <code>byte_at(i)</code>
   zero-fills OOB; Unicode 16 + UAX #31 identifiers (<code>let café = 1</code>);
-  named regex groups via <code>captures_named</code>.</li>
+  dynamic regex captures are positional in Gossamer code.</li>
 <li>Collections: section 10. Prelude scalar <code>min</code>/<code>max</code>/<code>clamp</code>
   (vec-shaped <code>min(xs)</code>/<code>max(xs)</code> return <code>Option&lt;T&gt;</code>).</li>
 <li>Encoding: <code>encoding::{json, yaml, toml, xml, csv, base64, base32,
   ascii85, hex, pem, binary}</code>. Typed serde is free functions with a
   turbofish - <code>from_json::&lt;T&gt;(&amp;text)?</code> / <code>to_json::&lt;T&gt;(v)</code> (same for
-  yaml/toml). Struct fields must be scalars, <code>String</code>, nested
-  structs, or <code>[T]</code>/<code>Vec&lt;T&gt;</code> of those: an <code>Option&lt;T&gt;</code> / <code>HashMap</code> /
-  tuple / <code>[T; N]</code> / <code>json::Value</code> field makes the synthesized
-  serializer not exist at all (GR0001 "cannot find"). For dynamic or
+  yaml/toml). Struct fields may be scalars, <code>String</code>, <code>Option&lt;T&gt;</code>,
+  tuples, <code>HashMap&lt;String, V&gt;</code>, nested structs, and <code>Vec&lt;T&gt;</code> of those;
+  fixed arrays/slices are rejected with a type diagnostic. For dynamic or
   partially-known shapes use <code>json::parse</code> + <code>get</code>/<code>at</code>/<code>as_i64</code>/
   <code>as_str</code>/<code>keys</code>/<code>len</code>. Unknown JSON keys are ignored.</li>
 <li>Web: <code>net</code> (Tcp/Udp/Unix sockets, <code>url</code>, <code>netip</code>, <code>ip</code>), <code>http</code>
@@ -2357,10 +2448,10 @@ test</code> also compiles and runs fenced code in doc comments.</p>
   <code>r.path_value("name")</code> / <code>r.path_int("id")</code>), <code>http::websocket</code>
   (no <code>wss://</code> yet), <code>http_h3</code>, <code>http::static_files</code>, <code>http::proxy</code>,
   middleware/session/csrf/form/multipart/state/health, <code>html</code>,
-  <code>mime</code>. Experimental: <code>html::template</code>, <code>text::template</code>, <code>tls</code>,
+  <code>mime</code>. Experimental: <code>html::template::render_json</code>, <code>tls</code>,
   <code>database::sql</code> (drivers via <code>[rust-bindings]</code>).</li>
 <li>Misc: <code>sort</code>, <code>math::{rand, big}</code>, <code>crypto::{rand, sha256, sha512,
-  hmac, blake3, aead, ed25519, ecdsa, x509, kdf, cipher, password
+  hmac, blake3, aead, ed25519, ecdsa, x509, kdf, password
   (Argon2id), subtle}</code> (<code>crypto::insecure</code> = MD5/SHA1 compat only),
   <code>hash::{fnv, crc32, adler32}</code>, <code>uuid</code> (v4/v7), <code>jwt</code>,
   <code>compress::{gzip, flate, zlib, zstd, bzip2}</code>, <code>archive::{zip,

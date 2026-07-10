@@ -51,6 +51,7 @@ use std::net::{TcpListener, TcpStream};
 use std::os::raw::c_char;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, LazyLock};
+use std::time::Duration;
 
 use parking_lot::Mutex;
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
@@ -478,6 +479,68 @@ pub unsafe extern "C" fn gos_rt_tcp_stream_write(h: i64, data: *const super::vec
             tcp_err("TcpStream::write: stale handle")
         }
     })
+}
+
+fn timeout_duration(ms: i64) -> Option<Duration> {
+    if ms <= 0 {
+        None
+    } else {
+        Some(Duration::from_millis(ms as u64))
+    }
+}
+
+/// `net::TcpStream::set_read_timeout_ms(handle, ms) -> Result<(), Error>`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_tcp_stream_set_read_timeout_ms(h: i64, ms: i64) -> i128 {
+    ffi_entry!(0i128, {
+        let timeout = timeout_duration(ms);
+        if let Some(tls) = tls_clone(h) {
+            match tls.lock().sock.set_read_timeout(timeout) {
+                Ok(()) => super::vec::gos_rt_result_new(0, 0),
+                Err(e) => tcp_err(&format!("{e}")),
+            }
+        } else if let Some(stream) = stream_clone(h) {
+            match stream.set_read_timeout(timeout) {
+                Ok(()) => super::vec::gos_rt_result_new(0, 0),
+                Err(e) => tcp_err(&format!("{e}")),
+            }
+        } else {
+            tcp_err("TcpStream::set_read_timeout_ms: stale handle")
+        }
+    })
+}
+
+/// `net::TcpStream::set_write_timeout_ms(handle, ms) -> Result<(), Error>`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_tcp_stream_set_write_timeout_ms(h: i64, ms: i64) -> i128 {
+    ffi_entry!(0i128, {
+        let timeout = timeout_duration(ms);
+        if let Some(tls) = tls_clone(h) {
+            match tls.lock().sock.set_write_timeout(timeout) {
+                Ok(()) => super::vec::gos_rt_result_new(0, 0),
+                Err(e) => tcp_err(&format!("{e}")),
+            }
+        } else if let Some(stream) = stream_clone(h) {
+            match stream.set_write_timeout(timeout) {
+                Ok(()) => super::vec::gos_rt_result_new(0, 0),
+                Err(e) => tcp_err(&format!("{e}")),
+            }
+        } else {
+            tcp_err("TcpStream::set_write_timeout_ms: stale handle")
+        }
+    })
+}
+
+/// `net::TcpStream::clear_read_timeout(handle) -> Result<(), Error>`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_tcp_stream_clear_read_timeout(h: i64) -> i128 {
+    unsafe { gos_rt_tcp_stream_set_read_timeout_ms(h, 0) }
+}
+
+/// `net::TcpStream::clear_write_timeout(handle) -> Result<(), Error>`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_tcp_stream_clear_write_timeout(h: i64) -> i128 {
+    unsafe { gos_rt_tcp_stream_set_write_timeout_ms(h, 0) }
 }
 
 /// `net::TcpStream::close(handle)`.

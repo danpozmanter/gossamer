@@ -627,6 +627,8 @@
       
         
       
+        
+      
     
     
     
@@ -724,6 +726,34 @@
     
   
     Prelude (no imports)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../core_method_contract/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Core method contract
   
 
     
@@ -1355,6 +1385,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -1443,6 +1477,62 @@
     
   
     Runtime internals
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/memory_model/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Memory model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/goroutine_stacks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Goroutine stack model
   
 
     
@@ -1628,7 +1718,7 @@
 
 <h1 id="stdoption"><code>std::option</code><a class="headerlink" href="#stdoption" title="Permanent link">&para;</a></h1>
 <p>Status: shipped</p>
-<p>Data-last Option combinators for pipeline chaining: map, filter, default, and_then, etc.</p>
+<p>Data-last Option combinators for pipeline chaining: map, filter, unwrap_or, and_then, etc.</p>
 <h2 id="public-items">Public items<a class="headerlink" href="#public-items" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -1645,12 +1735,12 @@
 <td>Chains a fallible step: Some(v) -&gt; f(v), None stays None.</td>
 </tr>
 <tr>
-<td><code>default</code></td>
+<td><code>unwrap_or</code></td>
 <td>fn</td>
 <td>Unwraps with a fallback value for None.</td>
 </tr>
 <tr>
-<td><code>default_with</code></td>
+<td><code>unwrap_or_else</code></td>
 <td>fn</td>
 <td>Unwraps with a lazily computed fallback for None.</td>
 </tr>

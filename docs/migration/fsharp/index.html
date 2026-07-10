@@ -631,6 +631,8 @@
       
         
       
+        
+      
     
     
     
@@ -728,6 +730,34 @@
     
   
     Prelude (no imports)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../core_method_contract/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Core method contract
   
 
     
@@ -1562,6 +1592,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -1650,6 +1684,62 @@
     
   
     Runtime internals
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/memory_model/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Memory model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/goroutine_stacks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Goroutine stack model
   
 
     
@@ -2185,7 +2275,7 @@ structs compare by value (<code>==</code>, <code>&lt;</code> lexicographically) 
 <p>Gossamer:</p>
 <div class="language-gos highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="kd">let</span><span class="w"> </span><span class="n">parsed</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">input</span>
 <a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="w">    </span><span class="o">|&gt;</span><span class="w"> </span><span class="n">option</span>::<span class="n">and_then</span><span class="p">(</span><span class="n">try_parse</span><span class="p">)</span>
-<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="w">    </span><span class="o">|&gt;</span><span class="w"> </span><span class="n">option</span>::<span class="n">default</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="w">    </span><span class="o">|&gt;</span><span class="w"> </span><span class="n">option</span>::<span class="n">unwrap_or</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
 </code></pre></div>
 <p><code>?</code> works for <code>Result</code> propagation exactly as in Rust.</p>
 <h2 id="async-concurrency">Async / concurrency<a class="headerlink" href="#async-concurrency" title="Permanent link">&para;</a></h2>

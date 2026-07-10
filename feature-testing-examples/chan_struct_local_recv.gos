@@ -1,6 +1,7 @@
 // A multi-field struct (including a heap `String` field) sent over a channel
 // and received through a *local* binding's `Receiver` - both an inferred
-// `let (tx, rx) = channel()` and a recv in the same function as the send.
+// `let (tx, rx) = channel::unbounded()` and a recv in the same function
+// as the send.
 // The recv'd payload is a boxed pointer that must deref for field access; the
 // channel handle must wire correctly through the inferred `(Sender, Receiver)`
 // tuple. Must print identical output on every tier.
@@ -30,7 +31,7 @@ fn main() {
     let via_param = consume(rx1)
 
     // Inferred channel, send and recv in the same function on a local Receiver.
-    let (tx2, rx2) = channel()
+    let (tx2, rx2) = channel::unbounded()
     tx2.send(Msg { id: 10, text: format!("xy") })
     tx2.send(Msg { id: 20, text: format!("zzz") })
     tx2.close()

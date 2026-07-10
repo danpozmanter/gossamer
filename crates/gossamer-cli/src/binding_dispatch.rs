@@ -11,7 +11,6 @@ use std::path::{Path, PathBuf};
 use gossamer_driver::binding_runner::{
     BindingRunner, BindingRunnerError, DumpedType, Profile as RunnerProfile, parse_signature_dump,
 };
-use gossamer_pkg::{Manifest, find_manifest};
 use gossamer_resolve::{
     BindingType, ExternalItem, ExternalModule, all_external_modules, set_external_modules,
 };
@@ -75,40 +74,31 @@ fn first_subcommand(args: &[OsString]) -> Option<String> {
 ///
 /// Successful dispatch never returns: [`BindingRunner::exec`]
 /// calls `std::process::exit` after the child completes.
+#[must_use]
 pub fn dispatch_runner_if_needed(args: &[OsString]) -> DispatchOutcome {
     if !needs_runner_dispatch(args) {
         return DispatchOutcome::InProcess;
     }
-    let Ok(cwd) = std::env::current_dir() else {
-        return DispatchOutcome::InProcess;
-    };
-    let Some(manifest_path) = find_manifest(&cwd) else {
-        return DispatchOutcome::InProcess;
-    };
-    let Ok(manifest_text) = std::fs::read_to_string(&manifest_path) else {
-        return DispatchOutcome::InProcess;
-    };
+    let project = crate::paths::project_context();
     // A present-but-malformed manifest is a hard error, never a
     // silent "no bindings": a bare `id = "name"` used to skip the
     // binding runner here while check/test kept passing, leaving
     // every binding call unbound at runtime.
-    let manifest = match Manifest::parse(&manifest_text) {
+    let Some(manifest_result) = project.manifest_result() else {
+        return DispatchOutcome::InProcess;
+    };
+    let manifest = match manifest_result {
         Ok(m) => m,
         Err(err) => {
             return DispatchOutcome::Failed(
-                gossamer_driver::binding_runner::BindingRunnerError::Manifest(format!(
-                    "{}: {err}",
-                    manifest_path.display()
-                )),
+                gossamer_driver::binding_runner::BindingRunnerError::Manifest(err.to_string()),
             );
         }
     };
     if manifest.rust_bindings.is_empty() {
         return DispatchOutcome::InProcess;
     }
-    let manifest_dir = manifest_path
-        .parent()
-        .map_or_else(|| PathBuf::from("."), Path::to_path_buf);
+    let manifest_dir = project.manifest_dir().unwrap_or_else(|| PathBuf::from("."));
     let Some(gossamer_root) = locate_gossamer_root() else {
         return DispatchOutcome::Failed(gossamer_driver::binding_runner::BindingRunnerError::Io(
             std::io::Error::other("cannot locate gossamer source root (set GOSSAMER_ROOT)"),
@@ -116,7 +106,7 @@ pub fn dispatch_runner_if_needed(args: &[OsString]) -> DispatchOutcome {
     };
     let profile = profile_for_args(args);
     let runner =
-        match BindingRunner::from_manifest(&manifest, &manifest_dir, &gossamer_root, profile) {
+        match BindingRunner::from_manifest(manifest, &manifest_dir, &gossamer_root, profile) {
             Ok(Some(r)) => r,
             Ok(None) => return DispatchOutcome::InProcess,
             Err(err) => {
@@ -218,37 +208,25 @@ pub fn ensure_external_signatures() -> Result<usize, BindingRunnerError> {
     if !all_external_modules().is_empty() {
         return Ok(all_external_modules().len());
     }
-    let Ok(cwd) = std::env::current_dir() else {
-        return Ok(0);
-    };
-    let Some(manifest_path) = find_manifest(&cwd) else {
-        return Ok(0);
-    };
-    let Ok(manifest_text) = std::fs::read_to_string(&manifest_path) else {
-        return Ok(0);
-    };
+    let project = crate::paths::project_context();
     // Mirror `dispatch_runner_if_needed`: a malformed manifest must
     // not silently degrade to "no bindings".
-    let manifest = match Manifest::parse(&manifest_text) {
+    let Some(manifest_result) = project.manifest_result() else {
+        return Ok(0);
+    };
+    let manifest = match manifest_result {
         Ok(m) => m,
-        Err(err) => {
-            return Err(BindingRunnerError::Manifest(format!(
-                "{}: {err}",
-                manifest_path.display()
-            )));
-        }
+        Err(err) => return Err(BindingRunnerError::Manifest(err.to_string())),
     };
     if manifest.rust_bindings.is_empty() {
         return Ok(0);
     }
-    let manifest_dir = manifest_path
-        .parent()
-        .map_or_else(|| PathBuf::from("."), Path::to_path_buf);
+    let manifest_dir = project.manifest_dir().unwrap_or_else(|| PathBuf::from("."));
     let Some(gossamer_root) = locate_gossamer_root() else {
         return Ok(0);
     };
     let runner = match BindingRunner::from_manifest(
-        &manifest,
+        manifest,
         &manifest_dir,
         &gossamer_root,
         RunnerProfile::Debug,

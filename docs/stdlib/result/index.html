@@ -627,6 +627,8 @@
       
         
       
+        
+      
     
     
     
@@ -724,6 +726,34 @@
     
   
     Prelude (no imports)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../core_method_contract/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Core method contract
   
 
     
@@ -1355,6 +1385,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -1443,6 +1477,62 @@
     
   
     Runtime internals
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/memory_model/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Memory model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/goroutine_stacks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Goroutine stack model
   
 
     
@@ -1628,7 +1718,7 @@
 
 <h1 id="stdresult"><code>std::result</code><a class="headerlink" href="#stdresult" title="Permanent link">&para;</a></h1>
 <p>Status: shipped</p>
-<p>Data-last Result combinators for pipeline chaining: map, map_err, default_with, etc.</p>
+<p>Data-last Result combinators for pipeline chaining: map, map_err, unwrap_or_else, etc.</p>
 <h2 id="public-items">Public items<a class="headerlink" href="#public-items" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -1645,12 +1735,12 @@
 <td>Chains a fallible step on the Ok payload.</td>
 </tr>
 <tr>
-<td><code>default</code></td>
+<td><code>unwrap_or</code></td>
 <td>fn</td>
 <td>Unwraps Ok with a fallback value for Err.</td>
 </tr>
 <tr>
-<td><code>default_with</code></td>
+<td><code>unwrap_or_else</code></td>
 <td>fn</td>
 <td>Consumes the result, handling Err with a callback.</td>
 </tr>

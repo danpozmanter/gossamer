@@ -30,7 +30,7 @@ fn main() {
 
     // 3. A closed channel still drains its buffered values in order,
     //    then yields the zero value once empty.
-    let (tx2, rx2) = channel()
+    let (tx2, rx2) = channel::unbounded()
     tx2.send(7)
     tx2.send(8)
     tx2.close()
@@ -68,7 +68,7 @@ mod select_closed_tests {
 
     #[test]
     fn closed_recv_arm_is_ready_with_zero() {
-        let (tx, rx) = channel()
+        let (tx, rx) = channel::unbounded()
         tx.close()
         let chosen = select {
             v = rx.recv() => v,

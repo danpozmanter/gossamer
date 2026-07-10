@@ -69,6 +69,7 @@ nav:
       - stdlib/index.md
       - Overview: stdlib.md
       - Prelude (no imports): prelude.md
+      - Core method contract: core_method_contract.md
       - Method support: method_support.md
       - Coverage matrix: stdlib_coverage.md
   - Toolchain:
@@ -89,6 +90,7 @@ nav:
   - Design notes:
       - Diagnostics style: design/diagnostics.md
       - Runtime internals: design/runtime.md
+      - Memory model: design/memory_model.md
       - Goroutine stack model: design/goroutine_stacks.md
       - Self-hosting study: design/selfhosting.md
   - Skill card: skill_card.md

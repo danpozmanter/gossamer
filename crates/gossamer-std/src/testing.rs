@@ -45,6 +45,25 @@ pub fn check_ok<T, E: std::fmt::Debug>(result: Result<T, E>, message: &str) -> R
     result.map_err(|err| Error::new(format!("{message}: {err:?}")))
 }
 
+/// Waits until the global goroutine scheduler is idle, or until
+/// `timeout` elapses. This is intended for concurrency tests that need a
+/// bounded quiescence point without hard-coded sleeps.
+#[must_use]
+pub fn wait_for_scheduler_idle(timeout: std::time::Duration) -> bool {
+    let deadline = std::time::Instant::now() + timeout;
+    let scheduler = gossamer_runtime::sched_global::scheduler();
+    loop {
+        let stats = scheduler.stats();
+        if scheduler.live_goroutines() == 0 && stats.spawned == stats.finished {
+            return true;
+        }
+        if std::time::Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+}
+
 /// Marker handed to `#[bench]` functions by the `gos bench` harness.
 ///
 /// The bench fn signature is `fn name(b: &mut Bencher)`; the harness
@@ -274,6 +293,13 @@ mod tests {
     fn check_eq_renders_diff_on_mismatch() {
         let err = check_eq(&1, &2, "ints").unwrap_err();
         assert!(err.message().contains("ints: left=1, right=2"));
+    }
+
+    #[test]
+    fn wait_for_scheduler_idle_returns_true_when_already_idle() {
+        assert!(wait_for_scheduler_idle(std::time::Duration::from_millis(
+            10
+        )));
     }
 
     #[test]

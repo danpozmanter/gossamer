@@ -10,8 +10,9 @@
 //! `cancel` / `is_cancelled` / `done` methods. Cancellation is eager
 //! down the tree (a `cancel` flips every descendant's flag) and
 //! `is_cancelled` also walks up the parent chain and honours an
-//! optional deadline. Deadlines use `std::time::Instant` only - no
-//! OS-specific timer code, so the shim is identical on every target.
+//! optional deadline. Deadlines use `std::time::Instant` plus a small
+//! timer thread that drives the same cancellation path as explicit
+//! cancel, so `done_chan()` is selectable on timeout.
 //!
 //! The closure-returning `with_cancel -> (ctx, cancel)` shape from the
 //! library `gossamer_std::context` is intentionally out of scope here:
@@ -20,10 +21,8 @@
 //! (`gos_rt_ctx_cancelled`) returns a channel the cancel walk closes,
 //! so cancellation is observable from a `select` arm: a parked select
 //! is unparked when the channel closes, and a closed channel's recv
-//! arm is always ready. A deadline (`with_timeout`) flips
-//! `is_cancelled` lazily on read but does not close the done channel,
-//! so only explicit `cancel` (this context or an ancestor) drives the
-//! selectable path.
+//! arm is always ready. A deadline (`with_timeout`) actively closes the
+//! done channel through the normal cancel walk.
 //!
 //! The handle is an opaque heap `Box<GosCtx>` carried as an `i64` on
 //! compiled tiers; it leaks at process exit like the other runtime
@@ -80,6 +79,16 @@ fn alloc_ctx(deadline: Option<Instant>, parent: usize) -> *mut GosCtx {
     }));
     if let Some(p) = ctx_at(parent) {
         p.children.lock().push(child as usize);
+    }
+    if let Some(deadline) = deadline {
+        let addr = child as usize;
+        std::thread::spawn(move || {
+            let now = Instant::now();
+            if deadline > now {
+                std::thread::sleep(deadline - now);
+            }
+            cancel_node(addr);
+        });
     }
     child
 }

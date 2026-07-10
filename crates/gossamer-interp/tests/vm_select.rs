@@ -4,10 +4,10 @@
 //! exercising native `select` lowering (`Op::Select`
 //! over a `select_arms` table) and the runtime poll/park loop over
 //! `Value::Channel`. The four scenarios pin the `select`
-//! semantics: a ready recv arm beats `default`, a send
-//! arm on an unbounded channel is always ready, `default` fires when
-//! nothing is ready, and a `default`-less select parks until a
-//! producer goroutine sends.
+//! semantics: a ready recv arm beats `default`, a send arm on an
+//! explicit unbounded channel is always ready, `default` fires when
+//! nothing is ready, and a `default`-less select parks until a producer
+//! goroutine sends.
 
 use gossamer_hir::lower_source_file;
 use gossamer_interp::{Vm, set_stdout_writer};
@@ -49,7 +49,7 @@ fn ready_recv_arm_beats_default() {
     let src = r#"
 use std::sync::channel
 fn main() {
-    let (tx, rx) = channel()
+    let (tx, rx) = channel::unbounded()
     tx.send(7)
     let v = select {
         x = rx.recv() => x,
@@ -66,7 +66,7 @@ fn send_arm_on_unbounded_channel_is_ready() {
     let src = r#"
 use std::sync::channel
 fn main() {
-    let (tx, rx) = channel()
+    let (tx, rx) = channel::unbounded()
     select {
         tx.send(99) => println!("sent"),
         default => println!("not sent"),
@@ -121,4 +121,21 @@ fn main() {
 }
 "#;
     assert_eq!(run_main(src), "got=42\n");
+}
+
+#[test]
+fn context_timeout_done_chan_wakes_select() {
+    let src = r#"
+use std::context
+
+fn main() {
+    let root = context::Context::background()
+    let ctx = context::Context::with_timeout(root, 1)
+    let v = select {
+        _ = ctx.done_chan().recv() => 1,
+    }
+    println!("timeout={}", v)
+}
+"#;
+    assert_eq!(run_main(src), "timeout=1\n");
 }

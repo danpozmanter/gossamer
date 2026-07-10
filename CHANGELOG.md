@@ -1,5 +1,78 @@
 # Changelog
 
+## 0.26.0 - REPL help, stability, concurrency, performance, stdlib
+
+### Performance
+
+- **Cold-start frontend setup does less work.** Autoderive now skips its probe
+  parse for sources with no lexical synthesis triggers, and CLI project
+  manifest discovery is memoized for the current invocation.
+- **Release Vec and parse hot paths are leaner.** The runtime now exposes
+  byte-slice `strconv` parse helpers, real Vec reserve helpers, and a guarded
+  MIR bounds-check rewrite for locally proven Vec indices.
+- Release lowering now fuses parse-only `strings::slice` +
+  `strconv::parse_i64` / `parse_f64` into range parse helpers, infers
+  conservative counted-loop Vec capacity for fresh push-built vectors, avoids
+  zeroing spare Vec capacity, reuses string length headers in append/concat
+  fallbacks, and removes an extra allocation/copy from ASCII uppercase while
+  preserving Unicode fallback behavior.
+- Interpreted recursive enum transfer no longer retains dead native payload
+  handles. VM-to-native enum construction now moves uniquely-owned recursive
+  children into the parent where safe and releases retained/fresh fields with
+  matching ownership on failure.
+
+### REPL and docs
+
+- **The REPL now has searchable help and directory commands.** `%help`,
+  `%help <symbol>`, `%help /regex/`, `%dir`, `%dir <namespace-or-symbol>`, and
+  `%dir /regex/` expose stdlib modules, stdlib items, language feature status,
+  and current command guidance without pretending to be Gossamer code.
+- **Stdlib item metadata has one registry source.** Module/item docs, feature
+  status, and REPL discovery now share sorted item records instead of parallel
+  ad hoc tables.
+- The new core method contract page records what must work across VM,
+  JIT, and release tiers.
+
+### Stdlib
+
+- **Filesystem streaming handles are available across tiers.** `fs::File`
+  and `fs::OpenOptions` now support open/create/read/read_to_string/write/flush
+  and close in release and interpreted execution, with generated docs updated.
+- **TCP streams gained timeout controls across tiers.** `set_read_timeout_ms`,
+  `set_write_timeout_ms`, `clear_read_timeout`, and `clear_write_timeout`
+  are wired for compiled and interpreted `net::TcpStream` handles.
+- **Concurrency semantics now match Go more closely.** `channel()` /
+  `channel(0)` are true unbuffered rendezvous channels, `channel(n)` is
+  bounded, and `channel::unbounded()` is the explicit queue form. `select`
+  readiness, context deadline wakeups, and `time::after` one-shot delivery were
+  fixed across tiers.
+- **Concurrency diagnostics and tests gained first-class hooks.**
+  `runtime::scheduler_stats_json()` and `testing::wait_for_scheduler_idle()`
+  expose scheduler state for deterministic tests and debugging.
+
+### Stability
+
+- **Cranelift native cleanup now uses one summary-aware cleanup plan from block
+  entry through return.** This removes a possible leak/double-free split when
+  interprocedural capture summaries change drop placement.
+- **Release and JIT channel typing is stricter.** `channel(n)` and
+  `channel::unbounded()` now preserve the shared `Sender<T>` / `Receiver<T>`
+  element type, and Cranelift preserves explicit channel capacity.
+- **Runtime Vec stale-free handling is hardened.** Heap Vec headers are tracked
+  while live so a repeated raw-pointer free returns before reading a reclaimed
+  header, while the side table stays bounded by currently-live Vecs.
+- **Runtime ABI drift checks now compare type classes, not just symbol names and
+  arity.** The audit caught and fixed stale registry declarations for channel
+  close, set/regex boolean-shaped returns, typed Vec element tags, and
+  go-spawn function address words.
+- **Forced-JIT parity now covers recursive enum/vector/string ownership
+  fixtures.** The existing VM/native-boundary fixtures now run through the
+  aggressive promotion gate so marshalling/freeing regressions are caught
+  earlier.
+- **Local validation output is easier to follow.** `check.sh` now prints quiet
+  phase headers for the major gate groups before running the individual steps,
+  so a local full check shows where it is without turning every command verbose.
+
 ## 0.25.1 - gos release optimizations
 
 ### Runtime memory

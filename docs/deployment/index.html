@@ -631,6 +631,8 @@
       
         
       
+        
+      
     
     
     
@@ -728,6 +730,34 @@
     
   
     Prelude (no imports)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../core_method_contract/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Core method contract
   
 
     
@@ -1624,6 +1654,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -1712,6 +1746,62 @@
     
   
     Runtime internals
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../design/memory_model/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Memory model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../design/goroutine_stacks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Goroutine stack model
   
 
     
@@ -2319,8 +2409,9 @@ load balancer:</p>
 <li>Repeat.</li>
 </ol>
 <p>In-place hot-swap (<code>SIGUSR2</code> exec-the-new-binary-without-dropping-listeners)
-is not in v1; the <code>os::exec</code> and <code>os::signal</code> work in v1.x will
-make it possible.</p>
+is not in v1; <code>os::exec</code> and <code>os::signal</code> are available building
+blocks, but listener handoff and supervisor coordination still need a
+dedicated runtime pattern.</p>
 <h2 id="observability">Observability<a class="headerlink" href="#observability" title="Permanent link">&para;</a></h2>
 <p>A production Gossamer service ships with three diagnostic
 surfaces that match Go's. Configure as:</p>

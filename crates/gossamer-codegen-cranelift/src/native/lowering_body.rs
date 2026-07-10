@@ -412,6 +412,7 @@ pub(super) fn lower_body(
             &callees_by_name,
             &block.terminator,
             intrinsics,
+            &cleanup_plan,
             block.id.as_u32(),
         )?;
     }

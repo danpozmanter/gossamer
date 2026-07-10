@@ -113,7 +113,7 @@ pub const NET: StdModule = StdModule {
         StdItem {
             name: "TcpStream",
             kind: StdItemKind::Type,
-            doc: "Bidirectional TCP byte stream.",
+            doc: "Bidirectional TCP byte stream; supports read/write, TLS upgrade, close, and read/write timeout setters.",
         },
         StdItem {
             name: "UdpSocket",

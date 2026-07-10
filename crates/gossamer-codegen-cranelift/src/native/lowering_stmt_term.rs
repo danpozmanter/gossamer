@@ -1015,6 +1015,7 @@ pub(super) fn lower_terminator(
     callees_by_name: &HashMap<String, ir::FuncRef>,
     terminator: &Terminator,
     intrinsics: &mut IntrinsicContext,
+    cleanup_plan: &gossamer_mir::CleanupPlan,
     src_block: u32,
 ) -> Result<()> {
     match terminator {
@@ -1028,19 +1029,13 @@ pub(super) fn lower_terminator(
             // a per-call shadow stack (see the matching note in
             // `lowering_body::lower_body`). Backtraces come from real
             // stack unwinding on panic / SIGQUIT.
-            // Emit cleanup calls for every owning heap-typed local
-            // identified by `gossamer_mir::plan_cleanup`. Each entry
-            // is a `(local, free_fn)` pair where the local was
-            // assigned the result of a runtime allocator call
-            // (`gos_rt_heap_*_new` / `gos_rt_chan_new`) and the MIR
-            // escape analysis confirmed the value never leaves this
-            // body. Without this loop the `_free` symbols ship in
-            // the runtime but are never called - every owning Vec /
-            // Channel leaks to process exit.
-            let cleanup = gossamer_mir::plan_cleanup(body);
-            if !cleanup.is_empty() {
+            // Emit cleanup calls using the same summary-aware plan the body
+            // lowering used for block-entry/block-exit cleanup. Recomputing a
+            // summary-less plan here can disagree with block cleanup and
+            // produce either leaks or duplicate frees.
+            if !cleanup_plan.is_empty() {
                 let ptr_ty = module.target_config().pointer_type();
-                for entry in cleanup.at_return() {
+                for entry in cleanup_plan.at_return() {
                     let Some(&var) = locals.get(&entry.local) else {
                         continue;
                     };

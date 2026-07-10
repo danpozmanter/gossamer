@@ -646,27 +646,58 @@ impl HeapSmolStr {
             .pad_to_align()
     }
 
+    fn alloc(bytes: &[u8]) -> *const Self {
+        Self::alloc_with_fill(bytes.len(), |dst| {
+            // SAFETY: `alloc_with_fill` passes `bytes.len()` writable payload
+            // bytes; the fresh allocation cannot overlap the source slice.
+            unsafe {
+                std::ptr::copy_nonoverlapping(bytes.as_ptr(), dst, bytes.len());
+            }
+        })
+    }
+
+    fn alloc_ascii_upper(bytes: &[u8]) -> *const Self {
+        Self::alloc_with_fill(bytes.len(), |dst| {
+            for (i, &b) in bytes.iter().enumerate() {
+                let upper = if b.is_ascii_lowercase() {
+                    b - (b'a' - b'A')
+                } else {
+                    b
+                };
+                // SAFETY: `alloc_with_fill` passes `bytes.len()` writable
+                // payload bytes and this loop writes each byte exactly once.
+                unsafe {
+                    *dst.add(i) = upper;
+                }
+            }
+        })
+    }
+
     #[allow(
         clippy::cast_ptr_alignment,
         reason = "alloc uses HeapSmolStr::layout, whose alignment is at least HeapSmolStr's alignment"
     )]
-    fn alloc(bytes: &[u8]) -> *const Self {
-        let len_u32 = u32::try_from(bytes.len()).expect("SmolStr heap string too large");
-        let layout = Self::layout(bytes.len());
-        // SAFETY: `layout` is non-zero and was computed for the header + payload.
+    fn alloc_with_fill<F>(len: usize, fill: F) -> *const Self
+    where
+        F: FnOnce(*mut u8),
+    {
+        let len_u32 = u32::try_from(len).expect("SmolStr heap string too large");
+        let layout = Self::layout(len);
+        // SAFETY: `layout` is non-zero and was computed for the header +
+        // payload.
         let ptr = unsafe { alloc(layout) };
         if ptr.is_null() {
             handle_alloc_error(layout);
         }
         let header = ptr.cast::<Self>();
-        // SAFETY: `header` points to a fresh allocation large enough for
-        // the header plus `bytes.len()` payload bytes.
+        // SAFETY: `header` points to a fresh allocation large enough for the
+        // header plus `len` payload bytes.
         unsafe {
             header.write(Self {
                 strong: AtomicU32::new(1),
                 len: len_u32,
             });
-            std::ptr::copy_nonoverlapping(bytes.as_ptr(), Self::bytes_mut(header), bytes.len());
+            fill(Self::bytes_mut(header));
         }
         header
     }
@@ -748,6 +779,39 @@ impl SmolStr {
             Self::new_inline(s.as_bytes())
         } else {
             Self::new_heap(s.as_bytes())
+        }
+    }
+
+    /// Constructs an uppercase string, using a byte-wise fast path for ASCII
+    /// and Rust's Unicode expansion for non-ASCII.
+    #[must_use]
+    pub fn to_uppercase_from(s: &str) -> Self {
+        if !s.is_ascii() {
+            return Self::from_string(s.to_uppercase());
+        }
+        let bytes = s.as_bytes();
+        if bytes.len() <= SMOL_INLINE_MAX {
+            let mut buf = [0u8; 8];
+            for (i, &b) in bytes.iter().enumerate() {
+                buf[i] = if b.is_ascii_lowercase() {
+                    b - (b'a' - b'A')
+                } else {
+                    b
+                };
+            }
+            buf[7] = bytes.len() as u8;
+            Self {
+                raw: u64::from_le_bytes(buf),
+            }
+        } else {
+            let ptr = HeapSmolStr::alloc_ascii_upper(bytes) as usize as u64;
+            debug_assert!(
+                ptr & SMOL_HEAP_TAG == 0,
+                "HeapSmolStr pointer must have high bit clear"
+            );
+            Self {
+                raw: ptr | SMOL_HEAP_TAG,
+            }
         }
     }
 
@@ -1251,24 +1315,15 @@ impl Value {
                 .iter()
                 .any(|f| matches!(f, Value::Array(_) | Value::Tuple(_)));
             if !has_aggregate
-                && let Some(ptr) = crate::jit_call::build_variant_to_native_enum(&inner, shape)
+                && let Some(built) =
+                    crate::jit_call::build_variant_to_native_enum_moving(&inner, shape)
             {
-                // The native node co-owns each nested-enum child (a retain);
-                // neutralise those fields so `inner`'s drop does not also free
-                // the subtree now owned by the node. Scalar / string fields keep
-                // their normal drop (the node copied their value out).
-                for f in &mut inner.fields {
-                    if matches!(f, Value::NativeEnum(_)) {
-                        std::mem::forget(std::mem::replace(f, Value::Unit));
-                    }
-                }
-                // A VM-constructed node is cleanly reference-counted (one strong
-                // count, children retained once), unlike a JIT-returned tree that
-                // carries caller-cleans over-retention. It uses the standard
-                // release-one / free-when-last teardown so that a value later
-                // shared through `Weak::upgrade` (root strong > 1) is not drained
-                // out from under the borrowed handle. `owned` (drain-all) is
-                // reserved for the JIT-return path that needs it.
+                // Unique native child handles are moved directly into the
+                // parent node; shared children fall back to retain + drop of the
+                // caller's original handle. This keeps recursive tree
+                // construction from building an extra reference per edge while
+                // preserving aliasing semantics for non-unique values.
+                let (ptr, _exclusive) = built.apply_to_fields(&mut inner);
                 return Self::NativeEnum(Arc::new(NativeEnumOwner {
                     ptr: ptr as usize,
                     shape,
@@ -1337,57 +1392,109 @@ impl Value {
     }
 }
 
-/// Shared buffered channel backing a `(Sender<T>, Receiver<T>)` pair.
+/// Shared channel backing a `(Sender<T>, Receiver<T>)` pair.
 ///
-/// Buffered semantics: `send` pushes, `recv` pops. `recv` returns
-/// `Some(value)` when a value is available and `None` when the
-/// buffer is empty. `Value::Channel` is `Send + Sync` so it can
-/// travel across goroutine boundaries once the scheduler backing
-/// `go expr` ships.
-///
-/// A Condvar lets receivers (and `select`) park instead of polling
-/// when the channel is empty - a `send` notifies all waiters so they
-/// can re-check.
+/// Capacity semantics mirror modern Go where `0` is an unbuffered
+/// rendezvous channel, positive values are bounded buffers, and
+/// `Channel::unbounded()` is the explicit queue form retained for
+/// Gossamer code that wants non-blocking producer growth.
 #[derive(Clone)]
 pub struct Channel {
     inner: Arc<ChannelInner>,
 }
 
 struct ChannelInner {
-    buf: Mutex<VecDeque<Value>>,
+    state: Mutex<ChannelState>,
     cv: parking_lot::Condvar,
-    /// Buffered capacity. `0` means unbounded - a send never blocks on
-    /// a full buffer. A positive capacity bounds the buffer: a send
-    /// parks while `buf.len() >= capacity`, matching the compiled tier's
-    /// `gos_rt_chan_new(elem_bytes, cap)` where `cap <= 0` is unbounded.
-    capacity: usize,
-    /// `close()` flips this to `true`; receivers that find an empty
-    /// buffer with `closed = true` return `None` instead of parking
-    /// forever. Stored as an `AtomicBool` so peers (e.g. select's
-    /// readiness probe) can observe the closed state without
-    /// acquiring `buf` - no hand-rolled `unsafe impl Sync` needed
-    /// and no race possible on the read.
-    closed: std::sync::atomic::AtomicBool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ChannelCapacity {
+    Unbuffered,
+    Unbounded,
+    Bounded(usize),
+}
+
+struct ChannelMessage {
+    id: u64,
+    value: Value,
+}
+
+struct ChannelState {
+    buf: VecDeque<ChannelMessage>,
+    capacity: ChannelCapacity,
+    closed: bool,
+    next_send_id: u64,
+    waiting_receivers: usize,
+    select_waiters: Vec<Arc<SelectWaiter>>,
+}
+
+/// Wait handle used by the bytecode VM to park one `select` expression
+/// across several channels and wake when any arm may be ready.
+pub struct SelectWaiter {
+    ready: Mutex<bool>,
+    cv: parking_lot::Condvar,
+}
+
+impl SelectWaiter {
+    fn new() -> Arc<Self> {
+        Arc::new(Self {
+            ready: Mutex::new(false),
+            cv: parking_lot::Condvar::new(),
+        })
+    }
+
+    fn wake(&self) {
+        let mut ready = self.ready.lock();
+        *ready = true;
+        self.cv.notify_all();
+    }
+
+    fn wait(&self) {
+        let mut ready = self.ready.lock();
+        while !*ready {
+            self.cv.wait(&mut ready);
+        }
+    }
 }
 
 impl Channel {
-    /// Constructs a new unbounded channel.
+    /// Constructs a new unbuffered channel.
     #[must_use]
     pub fn new() -> Self {
         Self::with_capacity(0)
     }
 
+    /// Constructs an explicit unbounded queue channel.
+    #[must_use]
+    pub fn unbounded() -> Self {
+        Self::with_mode(ChannelCapacity::Unbounded)
+    }
+
     /// Constructs a channel with the given buffered capacity. A
-    /// `capacity` of `0` is unbounded; a positive value bounds the
+    /// `capacity` of `0` is unbuffered; a positive value bounds the
     /// buffer so a send parks once the buffer reaches capacity.
     #[must_use]
     pub fn with_capacity(capacity: usize) -> Self {
+        if capacity == 0 {
+            Self::with_mode(ChannelCapacity::Unbuffered)
+        } else {
+            Self::with_mode(ChannelCapacity::Bounded(capacity))
+        }
+    }
+
+    fn with_mode(capacity: ChannelCapacity) -> Self {
         Self {
             inner: Arc::new(ChannelInner {
-                buf: Mutex::new(VecDeque::new()),
+                state: Mutex::new(ChannelState {
+                    buf: VecDeque::new(),
+                    capacity,
+                    closed: false,
+                    next_send_id: 1,
+                    waiting_receivers: 0,
+                    select_waiters: Vec::new(),
+                }),
                 cv: parking_lot::Condvar::new(),
-                capacity,
-                closed: std::sync::atomic::AtomicBool::new(false),
             }),
         }
     }
@@ -1398,34 +1505,62 @@ impl Channel {
     /// capacity, so a producer outrunning its consumer applies
     /// backpressure exactly as the compiled tier's `gos_rt_chan_send`.
     pub fn send(&self, value: Value) {
-        let mut guard = self.inner.buf.lock();
-        if self.inner.capacity != 0 {
-            while guard.len() >= self.inner.capacity {
-                self.inner.cv.wait(&mut guard);
+        let mut guard = self.inner.state.lock();
+        match guard.capacity {
+            ChannelCapacity::Unbuffered => {
+                let id = guard.next_send_id;
+                guard.next_send_id = guard.next_send_id.wrapping_add(1).max(1);
+                guard.buf.push_back(ChannelMessage { id, value });
+                self.notify_channel_changed(&mut guard);
+                while guard.buf.iter().any(|msg| msg.id == id) && !guard.closed {
+                    self.inner.cv.wait(&mut guard);
+                }
+            }
+            ChannelCapacity::Unbounded => {
+                guard.buf.push_back(ChannelMessage { id: 0, value });
+                self.notify_channel_changed(&mut guard);
+            }
+            ChannelCapacity::Bounded(capacity) => {
+                while guard.buf.len() >= capacity {
+                    self.inner.cv.wait(&mut guard);
+                }
+                guard.buf.push_back(ChannelMessage { id: 0, value });
+                self.notify_channel_changed(&mut guard);
             }
         }
-        guard.push_back(value);
-        // Stay safe under the existing lock-discipline; `closed` is
-        // only ever touched while `buf` is locked.
-        self.inner.cv.notify_all();
-        drop(guard);
     }
 
     /// Non-blocking send. Enqueues `value` and returns `true` when the
-    /// buffer had room (always true for an unbounded channel); returns
+    /// operation can complete immediately; returns
     /// `false` without enqueueing when a bounded buffer is at capacity.
     /// Used by `select` so a full send arm reads as not-ready instead
     /// of blocking inside the readiness probe.
     #[must_use]
     pub fn try_send(&self, value: Value) -> bool {
-        let mut guard = self.inner.buf.lock();
-        if self.inner.capacity != 0 && guard.len() >= self.inner.capacity {
-            return false;
+        let mut guard = self.inner.state.lock();
+        match guard.capacity {
+            ChannelCapacity::Unbuffered => {
+                if guard.waiting_receivers == 0 {
+                    return false;
+                }
+                guard.buf.push_back(ChannelMessage { id: 0, value });
+                self.notify_channel_changed(&mut guard);
+                true
+            }
+            ChannelCapacity::Unbounded => {
+                guard.buf.push_back(ChannelMessage { id: 0, value });
+                self.notify_channel_changed(&mut guard);
+                true
+            }
+            ChannelCapacity::Bounded(capacity) => {
+                if guard.buf.len() >= capacity {
+                    return false;
+                }
+                guard.buf.push_back(ChannelMessage { id: 0, value });
+                self.notify_channel_changed(&mut guard);
+                true
+            }
         }
-        guard.push_back(value);
-        self.inner.cv.notify_all();
-        drop(guard);
-        true
     }
 
     /// Marks the channel as closed and wakes every parked receiver
@@ -1437,26 +1572,12 @@ impl Channel {
     /// (fatal on `main`) and never aborts the whole process.
     #[must_use]
     pub fn close(&self) -> bool {
-        let guard = self.inner.buf.lock();
-        // Compare-exchange under the buf lock so the
-        // already-closed check and the set are a single atomic
-        // observation; the lock also pairs with parked receivers
-        // so they re-poll `closed` after their condvar wait.
-        if self
-            .inner
-            .closed
-            .compare_exchange(
-                false,
-                true,
-                std::sync::atomic::Ordering::AcqRel,
-                std::sync::atomic::Ordering::Acquire,
-            )
-            .is_err()
-        {
+        let mut guard = self.inner.state.lock();
+        if guard.closed {
             return false;
         }
-        self.inner.cv.notify_all();
-        drop(guard);
+        guard.closed = true;
+        self.notify_channel_changed(&mut guard);
         true
     }
 
@@ -1465,12 +1586,10 @@ impl Channel {
     /// drain-aware semantics should use [`Channel::recv`]).
     #[must_use]
     pub fn try_recv(&self) -> Option<Value> {
-        let mut guard = self.inner.buf.lock();
-        let value = guard.pop_front();
-        if value.is_some() && self.inner.capacity != 0 {
-            // A pop frees a slot on a bounded channel; wake any sender
-            // parked on the full buffer so it can proceed.
-            self.inner.cv.notify_all();
+        let mut guard = self.inner.state.lock();
+        let value = guard.buf.pop_front().map(|msg| msg.value);
+        if value.is_some() {
+            self.notify_channel_changed(&mut guard);
         }
         value
     }
@@ -1482,20 +1601,19 @@ impl Channel {
     /// drains and exits cleanly when the producer closes.
     #[must_use]
     pub fn recv(&self) -> Option<Value> {
-        let mut guard = self.inner.buf.lock();
+        let mut guard = self.inner.state.lock();
         loop {
-            if let Some(v) = guard.pop_front() {
-                if self.inner.capacity != 0 {
-                    // A pop frees a slot on a bounded channel; wake any
-                    // sender parked on the full buffer so it can proceed.
-                    self.inner.cv.notify_all();
-                }
-                return Some(v);
+            if let Some(msg) = guard.buf.pop_front() {
+                self.notify_channel_changed(&mut guard);
+                return Some(msg.value);
             }
-            if self.inner.closed.load(std::sync::atomic::Ordering::Acquire) {
+            if guard.closed {
                 return None;
             }
+            guard.waiting_receivers += 1;
+            self.wake_select_waiters(&guard);
             self.inner.cv.wait(&mut guard);
+            guard.waiting_receivers = guard.waiting_receivers.saturating_sub(1);
         }
     }
 
@@ -1503,27 +1621,52 @@ impl Channel {
     /// pending value. Used by `select` to pick a ready arm.
     #[must_use]
     pub fn is_ready(&self) -> bool {
-        !self.inner.buf.lock().is_empty()
+        !self.inner.state.lock().buf.is_empty()
     }
 
     /// `true` when both buffer drained and channel closed.
     #[must_use]
     pub fn is_closed(&self) -> bool {
-        let guard = self.inner.buf.lock();
-        self.inner.closed.load(std::sync::atomic::Ordering::Acquire) && guard.is_empty()
+        let guard = self.inner.state.lock();
+        guard.closed && guard.buf.is_empty()
     }
 
-    /// Parks the caller on the channel's Condvar until either a
-    /// value arrives or `timeout` elapses. Returns `true` if the
-    /// channel became non-empty during the wait.
-    #[must_use]
-    pub fn wait_for(&self, timeout: std::time::Duration) -> bool {
-        let mut guard = self.inner.buf.lock();
-        if !guard.is_empty() {
-            return true;
+    /// Registers a `select` waiter that will be woken when this
+    /// channel's readiness may have changed.
+    pub fn register_select_waiter(&self, waiter: &Arc<SelectWaiter>) {
+        let mut guard = self.inner.state.lock();
+        if !guard.select_waiters.iter().any(|w| Arc::ptr_eq(w, waiter)) {
+            guard.select_waiters.push(Arc::clone(waiter));
         }
-        let _ = self.inner.cv.wait_for(&mut guard, timeout);
-        !guard.is_empty()
+    }
+
+    /// Removes a previously registered `select` waiter.
+    pub fn unregister_select_waiter(&self, waiter: &Arc<SelectWaiter>) {
+        let mut guard = self.inner.state.lock();
+        guard.select_waiters.retain(|w| !Arc::ptr_eq(w, waiter));
+    }
+
+    /// Constructs a waiter for a blocking `select`.
+    #[must_use]
+    pub fn select_waiter() -> Arc<SelectWaiter> {
+        SelectWaiter::new()
+    }
+
+    /// Blocks until any registered channel wakes the waiter.
+    pub fn wait_select(waiter: &SelectWaiter) {
+        waiter.wait();
+    }
+
+    fn notify_channel_changed(&self, guard: &mut ChannelState) {
+        self.inner.cv.notify_all();
+        self.wake_select_waiters(guard);
+    }
+
+    fn wake_select_waiters(&self, guard: &ChannelState) {
+        let waiters = guard.select_waiters.clone();
+        for waiter in waiters {
+            waiter.wake();
+        }
     }
 }
 
@@ -1535,7 +1678,7 @@ impl Default for Channel {
 
 impl fmt::Debug for Channel {
     fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(out, "<channel len={}>", self.inner.buf.lock().len())
+        write!(out, "<channel len={}>", self.inner.state.lock().buf.len())
     }
 }
 

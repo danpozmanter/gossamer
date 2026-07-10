@@ -182,4 +182,6 @@ pub mod uuid;
 /// Validation framework: `Validate` trait, builtins (length, range, email, regex, ...).
 pub mod validate;
 
-pub use registry::{StdItem, StdItemKind, StdModule, item, module, modules};
+pub use registry::{
+    StdItem, StdItemKind, StdItemRecord, StdModule, item, item_records, module, modules,
+};

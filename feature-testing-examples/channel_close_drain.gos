@@ -73,7 +73,7 @@ fn main() {
     // collect via `try_recv` after a sleep instead. The
     // close+drain pattern requires a single owner of the close
     // step (typically the last sender to finish).
-    let (mtx, mrx) = channel()
+    let (mtx, mrx) = channel::unbounded()
     go count_sender(mtx, 5)
     go count_sender(mtx, 5)
     time::sleep(40)

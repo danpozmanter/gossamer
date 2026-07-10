@@ -37,7 +37,7 @@ use gossamer_hir::{
     HirLiteral, HirMatchArm, HirPat, HirPatKind, HirProgram, HirStmt, HirStmtKind, HirUnaryOp,
 };
 use gossamer_lex::Span;
-use gossamer_types::{Ty, TyCtxt};
+use gossamer_types::{Ty, TyCtxt, TyKind};
 
 use crate::ir::{
     BasicBlock, BinOp, BlockId, Body, ConstValue, Local, LocalDecl, Operand, Place, Rvalue,
@@ -253,6 +253,27 @@ impl<'a> Builder<'a> {
             // `String::from(&str)` without a separate conversion.
             if joined == "String::from" && args.len() == 1 {
                 return self.lower_expr(&args[0]);
+            }
+            if joined == "String::from_utf8" && args.len() == 1 {
+                let mut bytes_local = self.lower_expr(&args[0])?;
+                if let TyKind::Array { elem, len } = self
+                    .tcx
+                    .kind_of(self.locals[bytes_local.0 as usize].ty)
+                    .clone()
+                {
+                    bytes_local = self.coerce_array_to_vec(bytes_local, elem, len, span);
+                }
+                let result_ty = self.result_string_error_adt_ty();
+                let dest = self.fresh(result_ty);
+                let next = self.new_block(span);
+                self.terminate(Terminator::Call {
+                    callee: Operand::Const(ConstValue::Str("gos_rt_string_from_utf8".to_string())),
+                    args: vec![Operand::Copy(Place::local(bytes_local))],
+                    destination: Place::local(dest),
+                    target: Some(next),
+                });
+                self.set_current(next);
+                return Some(dest);
             }
             // `String::new()` / `String::with_capacity(_)` materialise
             // an empty owned String. Gos `String` is the runtime's

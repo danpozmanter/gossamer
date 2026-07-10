@@ -1060,7 +1060,8 @@ pub(super) fn lower_intrinsic_call_handles(
         // Channels delegate to the gossamer-runtime staticlib.
         // Element size is hard-coded to i64-equivalent (8 bytes) -
         // every scalar and every GC pointer fits in that word.
-        // Unbounded capacity via `cap = 0`.
+        // `cap = 0` is an unbuffered rendezvous channel. Explicit
+        // unbounded queue channels use `cap = -1`.
         //
         // The frontend types `channel()` as a tuple
         // `(Sender<T>, Receiver<T>)` - two slots - so the user's
@@ -1072,7 +1073,14 @@ pub(super) fn lower_intrinsic_call_handles(
         // channel handle to send and receive sites. Without
         // this, `pair.1` reads garbage from the second tuple
         // slot and `recv` no-ops on a null channel pointer.
-        "channel" | "channel::new" | "sync::channel" | "sync::Channel::new" | "gos_rt_chan_new"
+        "channel"
+        | "channel::new"
+        | "channel::unbounded"
+        | "sync::channel"
+        | "sync::channel_unbounded"
+        | "std::sync::channel_unbounded"
+        | "sync::Channel::new"
+        | "gos_rt_chan_new"
         | "Channel::new" => {
             let new_fn = intrinsics.extern_fn(
                 module,
@@ -1082,7 +1090,17 @@ pub(super) fn lower_intrinsic_call_handles(
             )?;
             let fref = module.declare_func_in_func(new_fn, builder.func);
             let elem = builder.ins().iconst(types::I32, 8);
-            let cap = builder.ins().iconst(types::I64, 0);
+            let cap = if matches!(
+                name,
+                "channel::unbounded" | "sync::channel_unbounded" | "std::sync::channel_unbounded"
+            ) {
+                builder.ins().iconst(types::I64, -1)
+            } else if let Some(arg) = args.first() {
+                let raw = lower_operand(module, builder, locals, body, tcx, arg, None, intrinsics)?;
+                coerce_arg_to(builder, raw, types::I64)?
+            } else {
+                builder.ins().iconst(types::I64, 0)
+            };
             let call = builder.ins().call(fref, &[elem, cap]);
             let chan_ptr = builder.inst_results(call)[0];
             // 16-byte tuple slot; write chan_ptr to offsets 0

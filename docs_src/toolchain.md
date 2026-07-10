@@ -75,7 +75,13 @@ interactive session. The first-slice supports:
   expression sees previously-bound locals in scope. `%bindings`
   lists the active set.
 - Meta-commands `%quit`, `%history`, `%bindings`, `%reset`,
-  `%help`.
+  `%help`, and `%dir`.
+- `%help <symbol>` shows stdlib module/item or language-feature
+  documentation from the manifest and feature-status registry;
+  `%help /regex/` searches that same surface.
+- `%dir` lists stdlib modules; `%dir <namespace-or-symbol>` lists a
+  module's items or matching symbols; `%dir /regex/` filters stdlib
+  modules/items.
 - Ctrl-D exits cleanly.
 
 Stream K grows this to IPython parity (syntax highlighting, tab

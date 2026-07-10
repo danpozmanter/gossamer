@@ -12,9 +12,13 @@
         <meta name="author" content="Gossamer contributors">
       
       
-        <link rel="canonical" href="https://danpozmanter.github.io/gossamer/docs/stdlib/crypto_cipher/">
+        <link rel="canonical" href="https://danpozmanter.github.io/gossamer/docs/design/memory_model/">
       
       
+        <link rel="prev" href="../runtime/">
+      
+      
+        <link rel="next" href="../goroutine_stacks/">
       
       
         
@@ -25,7 +29,7 @@
     
     
       
-        <title>std::crypto::cipher - Gossamer</title>
+        <title>Memory model - Gossamer</title>
       
     
     
@@ -78,7 +82,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#stdcryptocipher" class="md-skip">
+        <a href="#memory-model" class="md-skip">
           Skip to content
         </a>
       
@@ -113,7 +117,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              std::crypto::cipher
+              Memory model
             
           </span>
         </div>
@@ -627,6 +631,8 @@
       
         
       
+        
+      
     
     
     
@@ -644,7 +650,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../" class="md-nav__link ">
+            <a href="../../stdlib/" class="md-nav__link ">
               
   
   
@@ -688,7 +694,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../" class="md-nav__link">
+      <a href="../../stdlib/" class="md-nav__link">
         
   
   
@@ -724,6 +730,34 @@
     
   
     Prelude (no imports)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../core_method_contract/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Core method contract
   
 
     
@@ -1344,8 +1378,10 @@
       
   
   
+    
   
   
+  
     
     
       
@@ -1355,6 +1391,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -1364,11 +1404,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_14" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_14" checked>
         
           
           <label class="md-nav__link" for="__nav_14" id="__nav_14_label" tabindex="">
@@ -1389,7 +1429,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_14_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_14_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_14">
             <span class="md-nav__icon md-icon"></span>
             
@@ -1407,7 +1447,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../design/diagnostics/" class="md-nav__link">
+      <a href="../diagnostics/" class="md-nav__link">
         
   
   
@@ -1435,7 +1475,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../design/runtime/" class="md-nav__link">
+      <a href="../runtime/" class="md-nav__link">
         
   
   
@@ -1460,10 +1500,157 @@
                 
   
   
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Memory model
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Memory model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#happens-before-edges" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Happens-before edges
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#channels" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Channels
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#select" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Select
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#race-detector" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Race detector
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
   
   
     <li class="md-nav__item">
-      <a href="../../design/selfhosting/" class="md-nav__link">
+      <a href="../goroutine_stacks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Goroutine stack model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../selfhosting/" class="md-nav__link">
         
   
   
@@ -1599,10 +1786,43 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#public-items" class="md-nav__link">
+  <a href="#happens-before-edges" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Public items
+        Happens-before edges
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#channels" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Channels
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#select" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Select
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#race-detector" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Race detector
       
     </span>
   </a>
@@ -1626,31 +1846,58 @@
 
 
 
-<h1 id="stdcryptocipher"><code>std::crypto::cipher</code><a class="headerlink" href="#stdcryptocipher" title="Permanent link">&para;</a></h1>
+<h1 id="memory-model">Memory model<a class="headerlink" href="#memory-model" title="Permanent link">&para;</a></h1>
 <p>Status: shipped</p>
-<p>AES key handling + CBC / CTR block-cipher modes.</p>
-<h2 id="public-items">Public items<a class="headerlink" href="#public-items" title="Permanent link">&para;</a></h2>
-<table>
-<thead>
-<tr>
-<th>Name</th>
-<th>Kind</th>
-<th>Description</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>AesKey</code></td>
-<td>type</td>
-<td>Validated key bytes for the chosen size.</td>
-</tr>
-<tr>
-<td><code>AesKeySize</code></td>
-<td>type</td>
-<td>Aes128 / Aes192 / Aes256.</td>
-</tr>
-</tbody>
-</table>
+<p>Gossamer programs are expected to be data-race free. When a program
+shares mutable heap state across goroutines, it must order access with
+channels, <code>std::sync</code> primitives, or atomics.</p>
+<p>For race-free programs, each goroutine observes memory as if goroutines
+were interleaved at synchronization points. A data race is a pair of
+conflicting accesses to the same memory location from different
+goroutines, at least one of them a write, with no happens-before edge
+between them.</p>
+<h2 id="happens-before-edges">Happens-before edges<a class="headerlink" href="#happens-before-edges" title="Permanent link">&para;</a></h2>
+<p>The runtime establishes synchronization for these operations:</p>
+<ul>
+<li>Starting a goroutine happens before that goroutine begins executing.</li>
+<li>A channel send synchronizes with the receive that obtains that value.</li>
+<li>Closing a channel synchronizes with receives that observe the closed
+  and drained state.</li>
+<li><code>select</code> uses the same send, receive, and close edges as the selected
+  operation.</li>
+<li><code>Mutex</code> unlock synchronizes with a later lock that observes the
+  release.</li>
+<li><code>RwLock</code> write unlock synchronizes with later readers or writers that
+  acquire the lock.</li>
+<li><code>WaitGroup::done</code> synchronizes with a <code>wait</code> that observes the count
+  reach zero.</li>
+<li>Atomic operations synchronize according to the operation's documented
+  ordering. Current stdlib atomics use conservative acquire/release or
+  stronger runtime ordering for their exposed methods.</li>
+</ul>
+<h2 id="channels">Channels<a class="headerlink" href="#channels" title="Permanent link">&para;</a></h2>
+<p><code>channel()</code> and <code>channel(0)</code> create an unbuffered rendezvous channel.
+A send on an unbuffered channel does not complete until a receiver
+accepts that exact value.</p>
+<p><code>channel(n)</code> for <code>n &gt; 0</code> creates a bounded buffered channel. Sends block
+when the buffer is full. Receives block when the buffer is empty.</p>
+<p><code>channel::unbounded()</code> creates an explicit unbounded queue channel for
+code that intentionally wants producer sends to complete without a
+receiver or capacity limit.</p>
+<p>Receiving from a closed and drained channel returns <code>None</code>. Closing an
+already-closed channel is an error.</p>
+<h2 id="select">Select<a class="headerlink" href="#select" title="Permanent link">&para;</a></h2>
+<p>When multiple non-default <code>select</code> arms are ready, Gossamer polls arms in
+pseudo-random order so source order does not deterministically win.
+<code>default</code> is selected only when no send or receive arm is ready.</p>
+<p>Blocking <code>select</code> registers interest in all channel arms and wakes when
+any of those channels may have become ready.</p>
+<h2 id="race-detector">Race detector<a class="headerlink" href="#race-detector" title="Permanent link">&para;</a></h2>
+<p><code>gos test --race</code> instruments compiled test code and reports
+unsynchronized heap access pairs. The detector tracks vector clocks and
+the synchronization edges above. It is intended to catch real program
+races, but it is not a substitute for the memory model: code that shares
+mutable state should still use channels, locks, wait groups, or atomics.</p>
 
 
 

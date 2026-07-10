@@ -631,6 +631,8 @@
       
         
       
+        
+      
     
     
     
@@ -728,6 +730,34 @@
     
   
     Prelude (no imports)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../core_method_contract/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Core method contract
   
 
     
@@ -1546,6 +1576,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -1634,6 +1668,62 @@
     
   
     Runtime internals
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../design/memory_model/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Memory model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../design/goroutine_stacks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Goroutine stack model
   
 
     
@@ -1967,7 +2057,7 @@ the implementation by a rev.</p>
 </tr>
 <tr>
 <td><code>gos run FILE</code></td>
-<td>Execute via the register-based bytecode VM (with in-process Cranelift JIT).</td>
+<td>Execute via the register-based bytecode VM. Recursive helper workloads may promote through the in-process Cranelift JIT.</td>
 </tr>
 <tr>
 <td><code>gos build [--release] [--target TRIPLE] FILE</code></td>
@@ -2129,7 +2219,13 @@ interactive session. The first-slice supports:</p>
   expression sees previously-bound locals in scope. <code>%bindings</code>
   lists the active set.</li>
 <li>Meta-commands <code>%quit</code>, <code>%history</code>, <code>%bindings</code>, <code>%reset</code>,
-  <code>%help</code>.</li>
+  <code>%help</code>, and <code>%dir</code>.</li>
+<li><code>%help &lt;symbol&gt;</code> shows stdlib module/item or language-feature
+  documentation from the manifest and feature-status registry;
+  <code>%help /regex/</code> searches that same surface.</li>
+<li><code>%dir</code> lists stdlib modules; <code>%dir &lt;namespace-or-symbol&gt;</code> lists a
+  module's items or matching symbols; <code>%dir /regex/</code> filters stdlib
+  modules/items.</li>
 <li>Ctrl-D exits cleanly.</li>
 </ul>
 <p>Stream K grows this to IPython parity (syntax highlighting, tab

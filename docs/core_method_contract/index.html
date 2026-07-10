@@ -12,27 +12,31 @@
         <meta name="author" content="Gossamer contributors">
       
       
-        <link rel="canonical" href="https://danpozmanter.github.io/gossamer/docs/stdlib/text_template/">
+        <link rel="canonical" href="https://danpozmanter.github.io/gossamer/docs/core_method_contract/">
       
       
+        <link rel="prev" href="../prelude/">
+      
+      
+        <link rel="next" href="../method_support/">
       
       
         
       
       
-      <link rel="icon" href="../../img/GossamerLogo.png">
+      <link rel="icon" href="../img/GossamerLogo.png">
       <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
     
     
       
-        <title>std::text::template - Gossamer</title>
+        <title>Core method contract - Gossamer</title>
       
     
     
-      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      <link rel="stylesheet" href="../assets/stylesheets/main.484c7ddc.min.css">
       
         
-        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
       
       
 
@@ -51,9 +55,9 @@
       
     
     
-      <link rel="stylesheet" href="../../stylesheets/extra.css">
+      <link rel="stylesheet" href="../stylesheets/extra.css">
     
-    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
 
@@ -78,7 +82,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#stdtexttemplate" class="md-skip">
+        <a href="#core-method-contract" class="md-skip">
           Skip to content
         </a>
       
@@ -94,9 +98,9 @@
 
 <header class="md-header md-header--shadow" data-md-component="header">
   <nav class="md-header__inner md-grid" aria-label="Header">
-    <a href="../.." title="Gossamer" class="md-header__button md-logo" aria-label="Gossamer" data-md-component="logo">
+    <a href=".." title="Gossamer" class="md-header__button md-logo" aria-label="Gossamer" data-md-component="logo">
       
-  <img src="../../img/GossamerLogo.png" alt="logo">
+  <img src="../img/GossamerLogo.png" alt="logo">
 
     </a>
     <label class="md-header__button md-icon" for="__drawer">
@@ -113,7 +117,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              std::text::template
+              Core method contract
             
           </span>
         </div>
@@ -231,9 +235,9 @@
 
 <nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
-    <a href="../.." title="Gossamer" class="md-nav__button md-logo" aria-label="Gossamer" data-md-component="logo">
+    <a href=".." title="Gossamer" class="md-nav__button md-logo" aria-label="Gossamer" data-md-component="logo">
       
-  <img src="../../img/GossamerLogo.png" alt="logo">
+  <img src="../img/GossamerLogo.png" alt="logo">
 
     </a>
     Gossamer
@@ -260,7 +264,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../.." class="md-nav__link">
+      <a href=".." class="md-nav__link">
         
   
   
@@ -287,7 +291,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../install/" class="md-nav__link">
+      <a href="../install/" class="md-nav__link">
         
   
   
@@ -314,7 +318,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../running/" class="md-nav__link">
+      <a href="../running/" class="md-nav__link">
         
   
   
@@ -341,7 +345,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../wasm/" class="md-nav__link">
+      <a href="../wasm/" class="md-nav__link">
         
   
   
@@ -368,7 +372,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../syntax/" class="md-nav__link">
+      <a href="../syntax/" class="md-nav__link">
         
   
   
@@ -424,7 +428,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../language/" class="md-nav__link ">
+            <a href="../language/" class="md-nav__link ">
               
   
   
@@ -468,7 +472,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/top_level_statements/" class="md-nav__link">
+      <a href="../language/top_level_statements/" class="md-nav__link">
         
   
   
@@ -496,7 +500,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/arena/" class="md-nav__link">
+      <a href="../language/arena/" class="md-nav__link">
         
   
   
@@ -524,7 +528,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/comptime/" class="md-nav__link">
+      <a href="../language/comptime/" class="md-nav__link">
         
   
   
@@ -559,7 +563,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../memory/" class="md-nav__link">
+      <a href="../memory/" class="md-nav__link">
         
   
   
@@ -586,7 +590,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../libraries/" class="md-nav__link">
+      <a href="../libraries/" class="md-nav__link">
         
   
   
@@ -610,6 +614,8 @@
       
   
   
+    
+  
   
   
     
@@ -627,6 +633,8 @@
       
         
       
+        
+      
     
     
     
@@ -636,15 +644,15 @@
       
     
     
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_9" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_9" checked>
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../" class="md-nav__link ">
+            <a href="../stdlib/" class="md-nav__link ">
               
   
   
@@ -668,7 +676,7 @@
             
           </div>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_9_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_9_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_9">
             <span class="md-nav__icon md-icon"></span>
             
@@ -688,7 +696,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../" class="md-nav__link">
+      <a href="../stdlib/" class="md-nav__link">
         
   
   
@@ -716,7 +724,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../prelude/" class="md-nav__link">
+      <a href="../prelude/" class="md-nav__link">
         
   
   
@@ -741,10 +749,140 @@
                 
   
   
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Core method contract
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Core method contract
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#strings" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Strings
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#vectors" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Vectors
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#maps-and-sets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Maps and sets
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#option-and-result" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Option and Result
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#compatibility-apis" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Compatibility APIs
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
   
   
     <li class="md-nav__item">
-      <a href="../../method_support/" class="md-nav__link">
+      <a href="../method_support/" class="md-nav__link">
         
   
   
@@ -772,7 +910,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../stdlib_coverage/" class="md-nav__link">
+      <a href="../stdlib_coverage/" class="md-nav__link">
         
   
   
@@ -869,7 +1007,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../toolchain/" class="md-nav__link">
+      <a href="../toolchain/" class="md-nav__link">
         
   
   
@@ -897,7 +1035,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../toolchain/lints/" class="md-nav__link">
+      <a href="../toolchain/lints/" class="md-nav__link">
         
   
   
@@ -925,7 +1063,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../toolchain/diagnostics/" class="md-nav__link">
+      <a href="../toolchain/diagnostics/" class="md-nav__link">
         
   
   
@@ -953,7 +1091,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../toolchain/zig/" class="md-nav__link">
+      <a href="../toolchain/zig/" class="md-nav__link">
         
   
   
@@ -988,7 +1126,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../examples/" class="md-nav__link">
+      <a href="../examples/" class="md-nav__link">
         
   
   
@@ -1073,7 +1211,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../deployment/" class="md-nav__link">
+      <a href="../deployment/" class="md-nav__link">
         
   
   
@@ -1101,7 +1239,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../codegen_abi/" class="md-nav__link">
+      <a href="../codegen_abi/" class="md-nav__link">
         
   
   
@@ -1200,7 +1338,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../migration/rust/" class="md-nav__link">
+      <a href="../migration/rust/" class="md-nav__link">
         
   
   
@@ -1228,7 +1366,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../migration/go/" class="md-nav__link">
+      <a href="../migration/go/" class="md-nav__link">
         
   
   
@@ -1256,7 +1394,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../migration/python/" class="md-nav__link">
+      <a href="../migration/python/" class="md-nav__link">
         
   
   
@@ -1284,7 +1422,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../migration/fsharp/" class="md-nav__link">
+      <a href="../migration/fsharp/" class="md-nav__link">
         
   
   
@@ -1312,7 +1450,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../migration/kotlin/" class="md-nav__link">
+      <a href="../migration/kotlin/" class="md-nav__link">
         
   
   
@@ -1348,6 +1486,10 @@
   
     
     
+      
+        
+      
+        
       
         
       
@@ -1407,7 +1549,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../design/diagnostics/" class="md-nav__link">
+      <a href="../design/diagnostics/" class="md-nav__link">
         
   
   
@@ -1435,7 +1577,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../design/runtime/" class="md-nav__link">
+      <a href="../design/runtime/" class="md-nav__link">
         
   
   
@@ -1463,7 +1605,63 @@
   
   
     <li class="md-nav__item">
-      <a href="../../design/selfhosting/" class="md-nav__link">
+      <a href="../design/memory_model/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Memory model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../design/goroutine_stacks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Goroutine stack model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../design/selfhosting/" class="md-nav__link">
         
   
   
@@ -1498,7 +1696,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../skill_card/" class="md-nav__link">
+      <a href="../skill_card/" class="md-nav__link">
         
   
   
@@ -1525,7 +1723,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../security/" class="md-nav__link">
+      <a href="../security/" class="md-nav__link">
         
   
   
@@ -1552,7 +1750,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/" class="md-nav__link">
+      <a href="../contributing/" class="md-nav__link">
         
   
   
@@ -1599,10 +1797,54 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#public-items" class="md-nav__link">
+  <a href="#strings" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Public items
+        Strings
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#vectors" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Vectors
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#maps-and-sets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Maps and sets
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#option-and-result" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Option and Result
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#compatibility-apis" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Compatibility APIs
       
     </span>
   </a>
@@ -1626,36 +1868,241 @@
 
 
 
-<h1 id="stdtexttemplate"><code>std::text::template</code><a class="headerlink" href="#stdtexttemplate" title="Permanent link">&para;</a></h1>
-<p>Status: experimental</p>
-<p>Plain-text templates (no escaping).</p>
-<h2 id="public-items">Public items<a class="headerlink" href="#public-items" title="Permanent link">&para;</a></h2>
+<h1 id="core-method-contract">Core method contract<a class="headerlink" href="#core-method-contract" title="Permanent link">&para;</a></h1>
+<p>This page defines the small inherent-method surface Gossamer treats as core.
+Items listed as shipped must work consistently in <code>gos run</code>, forced-JIT
+execution, and <code>gos build --release</code> unless a row explicitly says otherwise.</p>
+<p>The contract is intentionally narrow. A method belongs here only when the
+interpreter, MIR lowering, compiled runtime ABI, docs, and parity tests agree.</p>
+<h2 id="strings">Strings<a class="headerlink" href="#strings" title="Permanent link">&para;</a></h2>
+<p>Shipped:</p>
 <table>
 <thead>
 <tr>
-<th>Name</th>
-<th>Kind</th>
-<th>Description</th>
+<th>Method or associated function</th>
+<th>Returns</th>
+<th>Notes</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td><code>Template</code></td>
-<td>type</td>
-<td>Compiled text template.</td>
+<td><code>String::new()</code></td>
+<td><code>String</code></td>
+<td>Empty owned string.</td>
 </tr>
 <tr>
-<td><code>parse</code></td>
-<td>fn</td>
-<td>Parses a template string.</td>
+<td><code>String::with_capacity(n)</code></td>
+<td><code>String</code></td>
+<td>Capacity hint is accepted for Rust familiarity; current string values are immutable/runtime-owned, so the hint is advisory.</td>
 </tr>
 <tr>
-<td><code>render</code></td>
-<td>fn</td>
-<td>Renders a template with the supplied data context.</td>
+<td><code>String::from(value)</code></td>
+<td><code>String</code></td>
+<td>Identity for strings; display conversion for scalar values.</td>
+</tr>
+<tr>
+<td><code>String::from_utf8(bytes)</code></td>
+<td><code>Result&lt;String, errors::Error&gt;</code></td>
+<td>Decodes a byte vector as UTF-8; invalid sequences return <code>Err</code>.</td>
+</tr>
+<tr>
+<td><code>s.len()</code></td>
+<td><code>i64</code></td>
+<td>Byte length.</td>
+</tr>
+<tr>
+<td><code>s.is_empty()</code></td>
+<td><code>bool</code></td>
+<td>Equivalent to <code>s.len() == 0</code>.</td>
+</tr>
+<tr>
+<td><code>s.clear()</code></td>
+<td><code>()</code></td>
+<td>Mutating-method writeback replaces the string with <code>""</code>.</td>
+</tr>
+<tr>
+<td><code>s.truncate(n)</code></td>
+<td><code>()</code></td>
+<td>Mutating-method writeback keeps at most <code>n</code> bytes, clamped to a valid UTF-8 boundary.</td>
+</tr>
+<tr>
+<td><code>s.push(ch)</code> / <code>s.push_char(ch)</code></td>
+<td><code>()</code></td>
+<td>Mutating-method writeback appends a Unicode scalar.</td>
+</tr>
+<tr>
+<td><code>s.push_byte(b)</code></td>
+<td><code>()</code></td>
+<td>Appends the byte as the matching Unicode scalar.</td>
+</tr>
+<tr>
+<td><code>s.push_str(t)</code></td>
+<td><code>()</code></td>
+<td>Appends string contents.</td>
+</tr>
+<tr>
+<td><code>s.chars()</code></td>
+<td><code>[char]</code></td>
+<td>Unicode scalar values.</td>
+</tr>
+<tr>
+<td><code>s.as_bytes()</code></td>
+<td><code>&amp;[u8]</code></td>
+<td>Zero-copy byte view.</td>
+</tr>
+<tr>
+<td><code>s.as_str()</code></td>
+<td><code>&amp;str</code></td>
+<td>Zero-copy string view.</td>
+</tr>
+<tr>
+<td><code>s.clone()</code> / <code>s.to_string()</code></td>
+<td><code>String</code></td>
+<td>Owned string value.</td>
 </tr>
 </tbody>
 </table>
+<h2 id="vectors">Vectors<a class="headerlink" href="#vectors" title="Permanent link">&para;</a></h2>
+<p>Shipped:</p>
+<table>
+<thead>
+<tr>
+<th>Method or associated function</th>
+<th>Returns</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Vec::new()</code></td>
+<td><code>[T]</code></td>
+<td>Empty vector.</td>
+</tr>
+<tr>
+<td><code>Vec::with_capacity(n)</code></td>
+<td><code>[T]</code></td>
+<td>Preallocates in compiled tiers; interpreter accepts the hint but does not expose capacity.</td>
+</tr>
+<tr>
+<td><code>v.push(item)</code></td>
+<td><code>()</code></td>
+<td>Mutates by method writeback.</td>
+</tr>
+<tr>
+<td><code>v.pop()</code></td>
+<td><code>Option&lt;T&gt;</code></td>
+<td>Last element, or <code>None</code>.</td>
+</tr>
+<tr>
+<td><code>v.clear()</code></td>
+<td><code>()</code></td>
+<td>Drops all elements and preserves the current allocation where the tier can.</td>
+</tr>
+<tr>
+<td><code>v.truncate(n)</code></td>
+<td><code>()</code></td>
+<td>Drops elements after <code>n</code>; negative lengths clamp to <code>0</code>.</td>
+</tr>
+<tr>
+<td><code>v.extend(xs)</code> / <code>v.extend_from_slice(xs)</code></td>
+<td><code>()</code></td>
+<td>Copies elements from another vector or inline array with matching element layout.</td>
+</tr>
+<tr>
+<td><code>v.len()</code></td>
+<td><code>i64</code></td>
+<td>Element count.</td>
+</tr>
+<tr>
+<td><code>v.is_empty()</code></td>
+<td><code>bool</code></td>
+<td>Equivalent to <code>v.len() == 0</code>.</td>
+</tr>
+<tr>
+<td><code>v.first()</code> / <code>v.last()</code></td>
+<td><code>Option&lt;T&gt;</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>v.insert(i, item)</code> / <code>v.remove(i)</code></td>
+<td><code>Result&lt;_, errors::Error&gt;</code></td>
+<td>Bounds-checked forms.</td>
+</tr>
+<tr>
+<td><code>v.swap(i, j)</code></td>
+<td><code>()</code></td>
+<td>In-place when both indices are in range.</td>
+</tr>
+<tr>
+<td><code>v.sort()</code> / <code>v.sort_by(cmp)</code> / <code>v.sort_by_key(f)</code></td>
+<td><code>()</code></td>
+<td>In-place.</td>
+</tr>
+<tr>
+<td><code>v.iter()</code></td>
+<td><code>Iter&lt;T&gt;</code></td>
+<td>Lazy iterator.</td>
+</tr>
+<tr>
+<td>Eager helpers (<code>map</code>, <code>filter</code>, <code>take</code>, <code>step_by</code>, <code>rev</code>)</td>
+<td><code>[T]</code></td>
+<td>Return new vectors.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="maps-and-sets">Maps and sets<a class="headerlink" href="#maps-and-sets" title="Permanent link">&para;</a></h2>
+<p>Shipped:</p>
+<table>
+<thead>
+<tr>
+<th>Type</th>
+<th>Methods</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>HashMap&lt;K, V&gt;</code></td>
+<td><code>insert</code>, <code>get</code>, <code>get_or</code>, <code>contains_key</code>, <code>contains</code>, <code>remove</code>, <code>pop</code>, <code>or_insert</code>, <code>inc</code>, <code>len</code>, <code>iter</code>, <code>keys</code>, <code>values</code></td>
+</tr>
+<tr>
+<td><code>HashSet&lt;T&gt;</code></td>
+<td><code>insert</code>, <code>contains</code>, <code>remove</code>, <code>len</code>, <code>clear</code>, <code>to_vec</code>, <code>union</code>, <code>intersection</code>, <code>difference</code>, <code>symmetric_difference</code>, <code>is_subset</code>, <code>is_superset</code>, <code>is_disjoint</code></td>
+</tr>
+<tr>
+<td><code>BTreeMap&lt;K, V&gt;</code></td>
+<td><code>insert</code>, <code>get</code>, <code>get_or</code>, <code>contains</code>, <code>contains_key</code>, <code>remove</code>, <code>len</code>, <code>iter</code>, <code>keys</code>, <code>values</code></td>
+</tr>
+<tr>
+<td><code>VecDeque&lt;T&gt;</code></td>
+<td><code>push_back</code>, <code>push_front</code>, <code>pop_back</code>, <code>pop_front</code>, <code>peek_back</code>, <code>peek_front</code>, <code>len</code>, <code>is_empty</code></td>
+</tr>
+</tbody>
+</table>
+<h2 id="option-and-result">Option and Result<a class="headerlink" href="#option-and-result" title="Permanent link">&para;</a></h2>
+<p>Shipped:</p>
+<table>
+<thead>
+<tr>
+<th>Type</th>
+<th>Methods</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Option&lt;T&gt;</code></td>
+<td><code>is_some</code>, <code>is_none</code>, <code>unwrap</code>, <code>expect</code>, <code>unwrap_or</code>, <code>unwrap_or_else</code>, <code>map</code>, <code>and_then</code>, <code>filter</code>, <code>or_else</code>, <code>ok_or</code>, <code>ok_or_else</code>, <code>flatten</code>, <code>zip</code></td>
+</tr>
+<tr>
+<td><code>Result&lt;T, E&gt;</code></td>
+<td><code>is_ok</code>, <code>is_err</code>, <code>unwrap</code>, <code>expect</code>, <code>unwrap_or</code>, <code>unwrap_or_else</code>, <code>map</code>, <code>map_err</code>, <code>and_then</code>, <code>or_else</code>, <code>ok</code>, <code>err</code>, <code>transpose</code></td>
+</tr>
+</tbody>
+</table>
+<h2 id="compatibility-apis">Compatibility APIs<a class="headerlink" href="#compatibility-apis" title="Permanent link">&para;</a></h2>
+<p>Some older container helpers still return sentinel values such as <code>0</code>, <code>-1</code>,
+or an empty string for absence or failure. New core APIs should prefer
+<code>Option&lt;T&gt;</code> or <code>Result&lt;T, errors::Error&gt;</code>. Existing sentinel helpers remain
+compatibility aliases until their callers have migrated.</p>
 
 
 
@@ -1713,10 +2160,10 @@
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.instant", "navigation.tracking", "navigation.top", "navigation.sections", "navigation.indexes", "toc.follow", "search.suggest", "search.highlight", "content.code.copy", "content.code.annotate", "content.tabs.link"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.instant", "navigation.tracking", "navigation.top", "navigation.sections", "navigation.indexes", "toc.follow", "search.suggest", "search.highlight", "content.code.copy", "content.code.annotate", "content.tabs.link"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      <script src="../assets/javascripts/bundle.79ae519e.min.js"></script>
       
     
   </body>

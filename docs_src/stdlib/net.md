@@ -9,7 +9,7 @@ TCP/UDP networking primitives.
 | Name | Kind | Description |
 |---|---|---|
 | `TcpListener` | type | Accepts incoming TCP connections. |
-| `TcpStream` | type | Bidirectional TCP byte stream. |
+| `TcpStream` | type | Bidirectional TCP byte stream; supports read/write, TLS upgrade, close, and read/write timeout setters. |
 | `UdpSocket` | type | Bound UDP socket for datagram I/O. |
 | `lookup` | fn | Resolves a hostname to its IP addresses. |
 

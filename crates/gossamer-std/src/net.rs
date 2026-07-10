@@ -176,6 +176,40 @@ impl TcpStream {
         Ok(Self { inner, mio: mirror })
     }
 
+    /// Sets the per-syscall read timeout on the underlying socket.
+    pub fn set_read_timeout(&self, timeout: Option<Duration>) -> Result<(), IoError> {
+        self.inner
+            .set_read_timeout(timeout)
+            .map_err(|e| IoError::from_std(e, "TcpStream::set_read_timeout"))
+    }
+
+    /// Sets the per-syscall write timeout on the underlying socket.
+    pub fn set_write_timeout(&self, timeout: Option<Duration>) -> Result<(), IoError> {
+        self.inner
+            .set_write_timeout(timeout)
+            .map_err(|e| IoError::from_std(e, "TcpStream::set_write_timeout"))
+    }
+
+    /// Convenience wrapper for Gossamer code: non-positive values clear.
+    pub fn set_read_timeout_ms(&self, ms: i64) -> Result<(), IoError> {
+        self.set_read_timeout((ms > 0).then(|| Duration::from_millis(ms as u64)))
+    }
+
+    /// Convenience wrapper for Gossamer code: non-positive values clear.
+    pub fn set_write_timeout_ms(&self, ms: i64) -> Result<(), IoError> {
+        self.set_write_timeout((ms > 0).then(|| Duration::from_millis(ms as u64)))
+    }
+
+    /// Clears the read timeout.
+    pub fn clear_read_timeout(&self) -> Result<(), IoError> {
+        self.set_read_timeout(None)
+    }
+
+    /// Clears the write timeout.
+    pub fn clear_write_timeout(&self) -> Result<(), IoError> {
+        self.set_write_timeout(None)
+    }
+
     /// Reads up to `buf.len()` bytes into `buf`. Parks the caller on
     /// the poller while the kernel buffer is empty.
     pub fn read(&mut self, buf: &mut [u8]) -> Result<usize, IoError> {
@@ -380,6 +414,42 @@ pub struct TlsStream {
 }
 
 impl TlsStream {
+    /// Sets the per-syscall read timeout on the underlying socket.
+    pub fn set_read_timeout(&self, timeout: Option<Duration>) -> Result<(), IoError> {
+        self.inner
+            .sock
+            .set_read_timeout(timeout)
+            .map_err(|e| IoError::from_std(e, "TlsStream::set_read_timeout"))
+    }
+
+    /// Sets the per-syscall write timeout on the underlying socket.
+    pub fn set_write_timeout(&self, timeout: Option<Duration>) -> Result<(), IoError> {
+        self.inner
+            .sock
+            .set_write_timeout(timeout)
+            .map_err(|e| IoError::from_std(e, "TlsStream::set_write_timeout"))
+    }
+
+    /// Convenience wrapper for Gossamer code: non-positive values clear.
+    pub fn set_read_timeout_ms(&self, ms: i64) -> Result<(), IoError> {
+        self.set_read_timeout((ms > 0).then(|| Duration::from_millis(ms as u64)))
+    }
+
+    /// Convenience wrapper for Gossamer code: non-positive values clear.
+    pub fn set_write_timeout_ms(&self, ms: i64) -> Result<(), IoError> {
+        self.set_write_timeout((ms > 0).then(|| Duration::from_millis(ms as u64)))
+    }
+
+    /// Clears the read timeout.
+    pub fn clear_read_timeout(&self) -> Result<(), IoError> {
+        self.set_read_timeout(None)
+    }
+
+    /// Clears the write timeout.
+    pub fn clear_write_timeout(&self) -> Result<(), IoError> {
+        self.set_write_timeout(None)
+    }
+
     /// Reads up to `buf.len()` decrypted bytes; `Ok(0)` is a clean close.
     pub fn read(&mut self, buf: &mut [u8]) -> Result<usize, IoError> {
         self.inner

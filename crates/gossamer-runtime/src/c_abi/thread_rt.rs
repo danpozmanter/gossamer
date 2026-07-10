@@ -14,3 +14,28 @@ pub unsafe extern "C" fn gos_rt_thread_num_cpus() -> i64 {
         std::thread::available_parallelism().map_or(1, |n| n.get() as i64)
     })
 }
+
+/// `runtime::scheduler_stats_json() -> String` - low-overhead snapshot
+/// of the global goroutine scheduler counters.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_runtime_scheduler_stats_json() -> *mut std::os::raw::c_char {
+    ffi_entry!(std::ptr::null_mut(), {
+        let scheduler = crate::sched_global::scheduler();
+        let stats = scheduler.stats();
+        let text = format!(
+            "{{\"spawned\":{},\"finished\":{},\"steps\":{},\"yields\":{},\"steals\":{},\"injects\":{},\"parks\":{},\"unparks\":{},\"live_goroutines\":{},\"worker_count\":{},\"worker_count_cap\":{}}}",
+            stats.spawned,
+            stats.finished,
+            stats.steps,
+            stats.yields,
+            stats.steals,
+            stats.injects,
+            stats.parks,
+            stats.unparks,
+            scheduler.live_goroutines(),
+            scheduler.worker_count(),
+            crate::sched::MultiScheduler::worker_count_cap(),
+        );
+        std::ffi::CString::new(text).unwrap_or_default().into_raw()
+    })
+}

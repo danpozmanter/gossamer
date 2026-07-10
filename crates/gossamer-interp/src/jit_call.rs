@@ -44,7 +44,8 @@ use gossamer_codegen_cranelift::{JitFn, JitKind, TupleElem};
 use gossamer_runtime::c_abi as rt;
 
 use crate::value::{
-    NativeFieldKind, NativeStructShape, SmolStr, StructInner, Value, native_struct_shape,
+    NativeEnumShape, NativeFieldKind, NativeStructShape, SmolStr, StructInner, Value, VariantInner,
+    native_struct_shape,
 };
 
 /// One trampoline-owned native object built for an aggregate parameter,
@@ -326,9 +327,67 @@ fn enum_shape_meta(shape: &crate::value::NativeEnumShape) -> &'static [i64] {
 /// bytecode). One `gos_rt_rc_release` of the returned pointer reclaims the
 /// node and every child it recursively built.
 pub(crate) fn build_variant_to_native_enum(
-    inner: &crate::value::VariantInner,
-    shape: &crate::value::NativeEnumShape,
+    inner: &VariantInner,
+    shape: &NativeEnumShape,
 ) -> Option<i64> {
+    build_variant_to_native_enum_inner(inner, shape, false).map(|built| built.ptr)
+}
+
+pub(crate) struct NativeEnumBuild {
+    pub(crate) ptr: i64,
+    pub(crate) exclusive: bool,
+    actions: Vec<NativeFieldAction>,
+}
+
+impl NativeEnumBuild {
+    pub(crate) fn apply_to_fields(self, inner: &mut VariantInner) -> (i64, bool) {
+        for action in self.actions {
+            match action {
+                NativeFieldAction::DropOriginal(i) => {
+                    inner.fields[i] = Value::Unit;
+                }
+                NativeFieldAction::TransferOriginal(i) => {
+                    let old = std::mem::replace(&mut inner.fields[i], Value::Unit);
+                    std::mem::forget(old);
+                }
+            }
+        }
+        (self.ptr, self.exclusive)
+    }
+}
+
+#[derive(Clone, Copy)]
+enum NativeFieldAction {
+    DropOriginal(usize),
+    TransferOriginal(usize),
+}
+
+#[derive(Clone, Copy)]
+enum BuiltFieldOwnership {
+    Scalar,
+    FreshOwned,
+    RetainedOne,
+    BorrowedForTransfer,
+}
+
+struct BuiltField {
+    kind: NativeFieldKind,
+    word: i64,
+    ownership: BuiltFieldOwnership,
+}
+
+pub(crate) fn build_variant_to_native_enum_moving(
+    inner: &VariantInner,
+    shape: &NativeEnumShape,
+) -> Option<NativeEnumBuild> {
+    build_variant_to_native_enum_inner(inner, shape, true)
+}
+
+fn build_variant_to_native_enum_inner(
+    inner: &VariantInner,
+    shape: &NativeEnumShape,
+    transfer_unique: bool,
+) -> Option<NativeEnumBuild> {
     use crate::value::NativeFieldKind;
     let disc = shape
         .variants
@@ -343,10 +402,18 @@ pub(crate) fn build_variant_to_native_enum(
         // Unit variant: tagged repr is disc-in-pointer over a null base;
         // header repr is a shared immortal singleton. Neither needs freeing.
         return if shape.tagged {
-            Some((disc as i64) << 1)
+            Some(NativeEnumBuild {
+                ptr: (disc as i64) << 1,
+                exclusive: true,
+                actions: Vec::new(),
+            })
         } else {
             let p = rt::gos_rt_enum_unit(disc as i64);
-            (!p.is_null()).then_some(p as i64)
+            (!p.is_null()).then_some(NativeEnumBuild {
+                ptr: p as i64,
+                exclusive: true,
+                actions: Vec::new(),
+            })
         };
     }
     let meta = enum_shape_meta(shape);
@@ -372,52 +439,120 @@ pub(crate) fn build_variant_to_native_enum(
     // already built are freed per their kind (the node-meta release reaches
     // only `Str` / `Enum` children, never the `Vec` fields), then the
     // all-zero node is released - no leak, no double free.
-    let mut words: Vec<i64> = Vec::with_capacity(nfields);
+    let mut fields: Vec<BuiltField> = Vec::with_capacity(nfields);
+    let mut actions: Vec<NativeFieldAction> = Vec::new();
+    let mut exclusive = true;
     for (i, kind) in vshape.fields.iter().enumerate() {
-        let word: Option<i64> = match (kind, &inner.fields[i]) {
-            (NativeFieldKind::I64, Value::Int(n)) => Some(*n),
-            (NativeFieldKind::I64, Value::Uint(u)) => Some(*u as i64),
-            (NativeFieldKind::F64, Value::Float(f)) => Some(f.to_bits() as i64),
-            (NativeFieldKind::Bool, Value::Bool(b)) => Some(i64::from(*b)),
-            (NativeFieldKind::Char, Value::Char(c)) => Some(*c as i64),
-            (NativeFieldKind::Str, Value::String(s)) => {
-                Some(rt::alloc_cstring(s.as_str().as_bytes()) as i64)
-            }
+        let built: Option<BuiltField> = match (kind, &inner.fields[i]) {
+            (NativeFieldKind::I64, Value::Int(n)) => Some(BuiltField {
+                kind: *kind,
+                word: *n,
+                ownership: BuiltFieldOwnership::Scalar,
+            }),
+            (NativeFieldKind::I64, Value::Uint(u)) => Some(BuiltField {
+                kind: *kind,
+                word: *u as i64,
+                ownership: BuiltFieldOwnership::Scalar,
+            }),
+            (NativeFieldKind::F64, Value::Float(f)) => Some(BuiltField {
+                kind: *kind,
+                word: f.to_bits() as i64,
+                ownership: BuiltFieldOwnership::Scalar,
+            }),
+            (NativeFieldKind::Bool, Value::Bool(b)) => Some(BuiltField {
+                kind: *kind,
+                word: i64::from(*b),
+                ownership: BuiltFieldOwnership::Scalar,
+            }),
+            (NativeFieldKind::Char, Value::Char(c)) => Some(BuiltField {
+                kind: *kind,
+                word: *c as i64,
+                ownership: BuiltFieldOwnership::Scalar,
+            }),
+            (NativeFieldKind::Str, Value::String(s)) => Some(BuiltField {
+                kind: *kind,
+                word: rt::alloc_cstring(s.as_str().as_bytes()) as i64,
+                ownership: BuiltFieldOwnership::FreshOwned,
+            }),
             (NativeFieldKind::Enum(sidx), Value::Variant(child)) => {
-                crate::value::native_shape(*sidx)
-                    .and_then(|cs| build_variant_to_native_enum(child, cs))
+                let child = crate::value::native_shape(*sidx)
+                    .and_then(|cs| build_variant_to_native_enum_inner(child, cs, false));
+                child.map(|built| {
+                    exclusive &= built.exclusive;
+                    BuiltField {
+                        kind: *kind,
+                        word: built.ptr,
+                        ownership: BuiltFieldOwnership::FreshOwned,
+                    }
+                })
             }
             (NativeFieldKind::Enum(_), Value::NativeEnum(h)) => {
-                // SAFETY: co-owning an already-native child; retain so the
-                // parent's release balances it.
-                unsafe { rt::gos_rt_rc_retain(h.ptr as *mut u8) };
-                Some(h.ptr as i64)
+                let base = h.ptr & !7;
+                let unique_native = base != 0
+                    && Arc::strong_count(h) == 1
+                    && unsafe { rt::gos_rt_rc_strong_count(base as *mut u8) } == 1;
+                if transfer_unique && unique_native {
+                    actions.push(NativeFieldAction::TransferOriginal(i));
+                    Some(BuiltField {
+                        kind: *kind,
+                        word: h.ptr as i64,
+                        ownership: BuiltFieldOwnership::BorrowedForTransfer,
+                    })
+                } else {
+                    // SAFETY: co-owning an already-native child; retain so the
+                    // parent's release balances it.
+                    unsafe { rt::gos_rt_rc_retain(h.ptr as *mut u8) };
+                    actions.push(NativeFieldAction::DropOriginal(i));
+                    exclusive = false;
+                    Some(BuiltField {
+                        kind: *kind,
+                        word: h.ptr as i64,
+                        ownership: BuiltFieldOwnership::RetainedOne,
+                    })
+                }
             }
-            (NativeFieldKind::VecEnum(eidx), Value::Array(arc)) => marshal_vec_enum(arc, *eidx),
+            (NativeFieldKind::VecEnum(eidx), Value::Array(arc)) => {
+                exclusive = false;
+                marshal_vec_enum(arc, *eidx).map(|word| BuiltField {
+                    kind: *kind,
+                    word,
+                    ownership: BuiltFieldOwnership::FreshOwned,
+                })
+            }
             (NativeFieldKind::VecStrEnumTuple(eidx), Value::Array(arc)) => {
-                marshal_vec_str_enum(arc, *eidx)
+                exclusive = false;
+                marshal_vec_str_enum(arc, *eidx).map(|word| BuiltField {
+                    kind: *kind,
+                    word,
+                    ownership: BuiltFieldOwnership::FreshOwned,
+                })
             }
             _ => None,
         };
-        let Some(w) = word else {
-            for (j, built) in words.iter().enumerate() {
-                free_built_field(vshape.fields[j], *built);
+        let Some(built) = built else {
+            for built in &fields {
+                free_built_field(built.kind, built.word, built.ownership);
             }
             // SAFETY: live node whose slots are all still zero; the
             // children built so far were freed above.
             unsafe { rt::gos_rt_rc_release(payload) };
             return None;
         };
-        words.push(w);
+        fields.push(built);
     }
-    for (i, w) in words.iter().enumerate() {
+    for (i, built) in fields.iter().enumerate() {
         // SAFETY: slot `i` is within the just-allocated payload.
-        unsafe { *((base + i * 8) as *mut i64) = *w };
+        unsafe { *((base + i * 8) as *mut i64) = built.word };
     }
-    Some(if shape.tagged {
+    let ptr = if shape.tagged {
         (base as i64) | ((disc as i64) << 1)
     } else {
         base as i64
+    };
+    Some(NativeEnumBuild {
+        ptr,
+        exclusive,
+        actions,
     })
 }
 
@@ -521,25 +656,44 @@ fn marshal_vec_str_enum(elems: &[Value], eidx: u32) -> Option<i64> {
 /// Frees one native field word built by [`build_variant_to_native_enum`],
 /// per its kind. Used only on the mid-build bail path (the node-meta
 /// release cannot reach `Vec` fields). Scalars own nothing and are no-ops.
-fn free_built_field(kind: NativeFieldKind, word: i64) {
-    match kind {
-        NativeFieldKind::Str => {
+fn free_built_field(kind: NativeFieldKind, word: i64, ownership: BuiltFieldOwnership) {
+    match (kind, ownership) {
+        (_, BuiltFieldOwnership::Scalar | BuiltFieldOwnership::BorrowedForTransfer) => {}
+        (NativeFieldKind::Enum(_), BuiltFieldOwnership::RetainedOne) => {
+            let base = (word as usize) & !7;
+            if base != 0 {
+                // SAFETY: this balances exactly the retain taken while building
+                // the parent field. The original VM handle still owns its ref.
+                unsafe { rt::gos_rt_rc_release(base as *mut u8) };
+            }
+        }
+        (NativeFieldKind::Str, BuiltFieldOwnership::FreshOwned) => {
             if word != 0 {
                 // SAFETY: a live cstring built for this `Str` field.
                 unsafe { rt::gos_rt_str_free(word as *mut c_char) };
             }
         }
-        NativeFieldKind::Enum(eidx) => {
+        (NativeFieldKind::Enum(eidx), BuiltFieldOwnership::FreshOwned) => {
             if let Some(s) = crate::value::native_shape(eidx) {
                 free_native_enum(word, s);
             }
         }
-        NativeFieldKind::VecEnum(eidx) => free_native_vec_enum(word, eidx),
-        NativeFieldKind::VecStrEnumTuple(eidx) => free_native_vec_str_enum(word, eidx),
-        NativeFieldKind::I64
-        | NativeFieldKind::F64
-        | NativeFieldKind::Bool
-        | NativeFieldKind::Char => {}
+        (NativeFieldKind::VecEnum(eidx), BuiltFieldOwnership::FreshOwned) => {
+            free_native_vec_enum(word, eidx);
+        }
+        (NativeFieldKind::VecStrEnumTuple(eidx), BuiltFieldOwnership::FreshOwned) => {
+            free_native_vec_str_enum(word, eidx);
+        }
+        (
+            NativeFieldKind::I64
+            | NativeFieldKind::F64
+            | NativeFieldKind::Bool
+            | NativeFieldKind::Char
+            | NativeFieldKind::Str
+            | NativeFieldKind::VecEnum(_)
+            | NativeFieldKind::VecStrEnumTuple(_),
+            _,
+        ) => {}
     }
 }
 

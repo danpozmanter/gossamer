@@ -3240,7 +3240,28 @@ fn publish_ref_cells(cells: &[(usize, Arc<parking_lot::Mutex<Value>>)], register
     }
 }
 
-/// One non-blocking poll over every `select` arm in source order.
+fn shuffled_select_order(n: usize) -> Vec<usize> {
+    let mut order: Vec<usize> = (0..n).collect();
+    if n <= 1 {
+        return order;
+    }
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0_u64, |d| d.as_nanos() as u64);
+    let mut x = nanos
+        ^ ((std::thread::current().name().map_or(0, str::len) as u64) << 32)
+        ^ 0x9E37_79B9_7F4A_7C15;
+    for i in (1..n).rev() {
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        let j = (x as usize) % (i + 1);
+        order.swap(i, j);
+    }
+    order
+}
+
+/// One non-blocking poll over every `select` arm in pseudo-random order.
 /// Returns the chosen arm's `body_block` - writing a received value
 /// into the recv arm's `bind_reg`, or completing a send - or `None`
 /// when no arm (including `default`) is ready. The two-pass scan
@@ -3251,7 +3272,8 @@ fn select_try_once(
     registers: &mut [Value],
 ) -> Option<crate::bytecode::InstrIdx> {
     use crate::bytecode::SelectArmKind;
-    for arm in arms {
+    for index in shuffled_select_order(arms.len()) {
+        let arm = &arms[index];
         match arm.kind {
             SelectArmKind::Recv => {
                 let Value::Channel(ch) = &registers[arm.channel_reg as usize] else {
@@ -3296,26 +3318,21 @@ fn select_try_once(
     None
 }
 
-/// Polls every `select` arm, parking on the receive arms' condvar when
-/// nothing is ready and no `default` exists, and re-polling on each
-/// wake. Returns the chosen arm's `body_block`. Blocking semantics over
-/// `Value::Channel` - `Channel::send`/`close` notify every waiter, so
-/// the first push wakes the park; the bounded wait keeps a missed
-/// notify from stranding the goroutine, and a (spec-disallowed)
-/// send-only select with no default yields briefly rather than
-/// busy-spinning.
+/// Polls every `select` arm, registering one waiter across every
+/// channel arm when nothing is ready and no `default` exists. Any
+/// send, recv, close, or receiver-arrival event wakes the waiter and
+/// the VM re-polls all arms in a fresh pseudo-random order.
 fn select_dispatch(
     arms: &[crate::bytecode::SelectArmMeta],
     registers: &mut [Value],
 ) -> crate::bytecode::InstrIdx {
     use crate::bytecode::SelectArmKind;
-    use std::time::Duration;
     if let Some(target) = select_try_once(arms, registers) {
         return target;
     }
-    let recv_channels: Vec<crate::value::Channel> = arms
+    let channels: Vec<crate::value::Channel> = arms
         .iter()
-        .filter(|a| a.kind == SelectArmKind::Recv)
+        .filter(|a| a.kind != SelectArmKind::Default)
         .filter_map(|a| match &registers[a.channel_reg as usize] {
             Value::Channel(ch) => Some(ch.clone()),
             _ => None,
@@ -3325,10 +3342,23 @@ fn select_dispatch(
         if let Some(target) = select_try_once(arms, registers) {
             return target;
         }
-        if recv_channels.is_empty() {
-            std::thread::sleep(Duration::from_millis(1));
+        if channels.is_empty() {
+            std::thread::sleep(std::time::Duration::from_millis(1));
             continue;
         }
-        let _ = recv_channels[0].wait_for(Duration::from_millis(50));
+        let waiter = crate::value::Channel::select_waiter();
+        for ch in &channels {
+            ch.register_select_waiter(&waiter);
+        }
+        if let Some(target) = select_try_once(arms, registers) {
+            for ch in &channels {
+                ch.unregister_select_waiter(&waiter);
+            }
+            return target;
+        }
+        crate::value::Channel::wait_select(&waiter);
+        for ch in &channels {
+            ch.unregister_select_waiter(&waiter);
+        }
     }
 }

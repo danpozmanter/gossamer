@@ -3029,6 +3029,9 @@ impl<'a> TypeChecker<'a> {
         if let Some(ty) = self.check_qualified_map_accessor_ret(module, last, arg_tys) {
             return Some(ty);
         }
+        if is_channel_constructor_path(module, last) {
+            return Some(self.channel_tuple_ty());
+        }
         // `env::var(name) -> Option<String>`. Typing it concretely lets the
         // match checker reject matching its result with `Result` patterns
         // (`Ok`/`Err`), which otherwise silently fell through on the VM and
@@ -3208,16 +3211,19 @@ impl<'a> TypeChecker<'a> {
             "__concat" | "__fmt_prec" | "__fmt_pad" | "__fmt_radix" | "__fmt_upper" => {
                 self.tcx.string_ty()
             }
-            // `channel()` -> `(Sender<?T>, Receiver<?T>)` sharing one element
-            // var, so `tx.send(v)` unifies the element through the shared `?T`
-            // and `rx.recv()` yields `Option<?T>` with the real payload type
-            // even for an inferred (local) channel.
-            "channel" if arg_tys.is_empty() => {
-                let elem = self.fresh();
-                let sender = self.tcx.intern(TyKind::Sender(elem));
-                let receiver = self.tcx.intern(TyKind::Receiver(elem));
-                self.tcx.intern(TyKind::Tuple(vec![sender, receiver]))
-            }
+            // `channel()` / `channel(n)` / `channel::unbounded()` ->
+            // `(Sender<?T>, Receiver<?T>)` sharing one element var, so
+            // `tx.send(v)` unifies the element through the shared `?T` and
+            // `rx.recv()` yields `Option<?T>` with the real payload type even
+            // for an inferred local channel. The optional constructor argument
+            // is capacity only; it never changes the element type.
+            "channel"
+            | "channel::new"
+            | "channel::unbounded"
+            | "sync::channel"
+            | "sync::channel_unbounded"
+            | "std::sync::channel"
+            | "std::sync::channel_unbounded" => self.channel_tuple_ty(),
             "Some" => {
                 let payload = arg_tys.first().copied().unwrap_or_else(|| self.fresh());
                 self.option_adt_ty(payload)
@@ -3239,6 +3245,13 @@ impl<'a> TypeChecker<'a> {
             _ => return None,
         };
         Some(ty)
+    }
+
+    fn channel_tuple_ty(&mut self) -> Ty {
+        let elem = self.fresh();
+        let sender = self.tcx.intern(TyKind::Sender(elem));
+        let receiver = self.tcx.intern(TyKind::Receiver(elem));
+        self.tcx.intern(TyKind::Tuple(vec![sender, receiver]))
     }
 
     /// The `[(String, [u8])]` entry-list parameter type of the stdlib
@@ -6931,6 +6944,15 @@ fn is_definitely_not_callable_value(kind: &TyKind) -> bool {
             | TyKind::Instant
             | TyKind::JsonValue
             | TyKind::DynError
+    )
+}
+
+fn is_channel_constructor_path(module: &[&str], last: &str) -> bool {
+    matches!(
+        (module, last),
+        (["channel"], "new" | "unbounded")
+            | (["sync"] | ["std", "sync"], "channel" | "channel_unbounded")
+            | (["sync", "Channel"] | ["std", "sync", "Channel"], "new")
     )
 }
 

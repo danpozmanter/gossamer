@@ -209,6 +209,7 @@ pub fn lower_program(program: &HirProgram, tcx: &mut TyCtxt) -> Vec<Body> {
         // pass cannot tell it owns a `String` and never releases it (a leak).
         propagate_copy_types(body, tcx);
         rewrite_str_concat_consuming(body);
+        crate::opt::reserve_vecs_for_counted_push_loops(body);
         // Fuse `seq.substring(i, i+k)` + `m.inc(kmer)` into the borrowed-slice
         // probe before the RC passes, so the eliminated scratch String gets no
         // retain/release.
@@ -221,6 +222,7 @@ pub fn lower_program(program: &HirProgram, tcx: &mut TyCtxt) -> Vec<Body> {
         insert_early_releases(body, tcx);
         hoist_loop_carried_releases(body, tcx);
         crate::opt::suppress_container_moved_releases(body);
+        crate::opt::fuse_slice_parse_ranges(body);
         if std::env::var("GOS_DUMP_MIR_RC").is_ok() {
             eprintln!("=== MIR(post-rc) {} ===", body.name);
             for block in &body.blocks {

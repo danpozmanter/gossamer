@@ -126,6 +126,22 @@ pub(crate) fn install_net(globals: &mut Vec<(&'static str, Value)>) {
             builtin_tcp_stream_start_tls_insecure,
         ),
         ("TcpStream::start_tls_ca", builtin_tcp_stream_start_tls_ca),
+        (
+            "TcpStream::set_read_timeout_ms",
+            builtin_tcp_stream_set_read_timeout_ms,
+        ),
+        (
+            "TcpStream::set_write_timeout_ms",
+            builtin_tcp_stream_set_write_timeout_ms,
+        ),
+        (
+            "TcpStream::clear_read_timeout",
+            builtin_tcp_stream_clear_read_timeout,
+        ),
+        (
+            "TcpStream::clear_write_timeout",
+            builtin_tcp_stream_clear_write_timeout,
+        ),
         ("TcpStream::close", builtin_tcp_stream_close),
         ("UdpSocket::bind", builtin_udp_bind),
         ("UdpSocket::send_to", builtin_udp_send_to),
@@ -402,6 +418,126 @@ pub(crate) fn builtin_tcp_stream_write(args: &[Value]) -> RuntimeResult<Value> {
     match res {
         Ok(()) => Ok(ok_variant(Value::Int(bytes.len() as i64))),
         Err(e) => Ok(err_variant(e)),
+    }
+}
+
+fn tcp_timeout_duration(ms: i64) -> Option<std::time::Duration> {
+    (ms > 0).then(|| std::time::Duration::from_millis(ms as u64))
+}
+
+fn set_tcp_stream_timeout(id: i64, ms: i64, read: bool) -> Result<(), String> {
+    let timeout = tcp_timeout_duration(ms);
+    if tls_has(id) {
+        return match fetch_socket(&TLS_STREAM_REGISTRY, id) {
+            Some(arc) => {
+                let guard = arc.lock();
+                let res = if read {
+                    guard.set_read_timeout(timeout)
+                } else {
+                    guard.set_write_timeout(timeout)
+                };
+                res.map_err(|e| e.to_string())
+            }
+            None => Err("TcpStream::timeout: stale handle".to_string()),
+        };
+    }
+    match fetch_socket(&TCP_STREAM_REGISTRY, id) {
+        Some(arc) => {
+            let guard = arc.lock();
+            match guard.as_ref() {
+                Some(stream) => {
+                    let res = if read {
+                        stream.set_read_timeout(timeout)
+                    } else {
+                        stream.set_write_timeout(timeout)
+                    };
+                    res.map_err(|e| e.to_string())
+                }
+                None => Err("TcpStream::timeout: closed handle".to_string()),
+            }
+        }
+        None => Err("TcpStream::timeout: stale handle".to_string()),
+    }
+}
+
+fn tcp_stream_timeout_builtin(args: &[Value], read: bool, clear: bool) -> RuntimeResult<Value> {
+    let Some(id) = args.first().and_then(handle_id) else {
+        return Ok(err_variant("TcpStream::timeout: missing handle"));
+    };
+    let ms = if clear {
+        0
+    } else {
+        args.get(1).and_then(value_to_int).unwrap_or(0)
+    };
+    match set_tcp_stream_timeout(id, ms, read) {
+        Ok(()) => Ok(ok_variant(Value::Unit)),
+        Err(e) => Ok(err_variant(e)),
+    }
+}
+
+pub(crate) fn builtin_tcp_stream_set_read_timeout_ms(args: &[Value]) -> RuntimeResult<Value> {
+    tcp_stream_timeout_builtin(args, true, false)
+}
+
+pub(crate) fn builtin_tcp_stream_set_write_timeout_ms(args: &[Value]) -> RuntimeResult<Value> {
+    tcp_stream_timeout_builtin(args, false, false)
+}
+
+pub(crate) fn builtin_tcp_stream_clear_read_timeout(args: &[Value]) -> RuntimeResult<Value> {
+    tcp_stream_timeout_builtin(args, true, true)
+}
+
+pub(crate) fn builtin_tcp_stream_clear_write_timeout(args: &[Value]) -> RuntimeResult<Value> {
+    tcp_stream_timeout_builtin(args, false, true)
+}
+
+#[cfg(test)]
+mod tcp_timeout_tests {
+    use super::*;
+
+    fn ok_payload(value: Value) -> Value {
+        match value {
+            Value::Variant(inner) if inner.name.as_str() == "Ok" => inner
+                .fields
+                .first()
+                .cloned()
+                .expect("Ok payload should exist"),
+            other => panic!("expected Ok variant, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn tcp_stream_timeout_builtins_accept_real_stream_handle() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let accept_thread = std::thread::spawn(move || {
+            let _ = listener.accept();
+        });
+
+        let stream = ok_payload(
+            builtin_tcp_stream_connect(&[Value::String(addr.to_string().into())]).expect("connect"),
+        );
+        ok_payload(
+            builtin_tcp_stream_set_read_timeout_ms(&[stream.clone(), Value::Int(10)])
+                .expect("set read timeout"),
+        );
+        ok_payload(
+            builtin_tcp_stream_set_write_timeout_ms(&[stream.clone(), Value::Int(10)])
+                .expect("set write timeout"),
+        );
+        ok_payload(
+            builtin_tcp_stream_clear_read_timeout(std::slice::from_ref(&stream))
+                .expect("clear read timeout"),
+        );
+        ok_payload(
+            builtin_tcp_stream_clear_write_timeout(std::slice::from_ref(&stream))
+                .expect("clear write timeout"),
+        );
+        assert!(matches!(
+            builtin_tcp_stream_close(&[stream]).expect("close"),
+            Value::Unit
+        ));
+        accept_thread.join().expect("accept thread");
     }
 }
 

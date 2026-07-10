@@ -633,6 +633,8 @@
       
         
       
+        
+      
     
     
     
@@ -730,6 +732,34 @@
     
   
     Prelude (no imports)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../core_method_contract/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Core method contract
   
 
     
@@ -1441,6 +1471,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -1529,6 +1563,62 @@
     
   
     Runtime internals
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../design/memory_model/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Memory model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../design/goroutine_stacks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Goroutine stack model
   
 
     
@@ -1742,7 +1832,7 @@ module.</p>
 <p>Columns:</p>
 <ul>
 <li><strong>Interp</strong> - <code>gos run</code> (bytecode VM + tree-walker fallback).</li>
-<li><strong>Compiled</strong> - <code>gos build</code> (Cranelift) and <code>gos build --release</code> (LLVM).</li>
+<li><strong>Compiled</strong> - <code>gos build</code> and <code>gos build --release</code> (LLVM AOT).</li>
 <li><strong>Tests</strong> - at least one integration test exercising the item.</li>
 </ul>
 <p>Glyphs: ✓ supported · ◑ partial · ✗ missing.</p>
@@ -1790,7 +1880,7 @@ module.</p>
 <td style="text-align: center;">✓</td>
 <td style="text-align: center;">✓</td>
 <td style="text-align: center;">✓</td>
-<td>on(SIGTERM/SIGINT/SIGHUP/SIGUSR1/SIGUSR2/SIGQUIT) + Notifier::wait/try_wait. Wired through interp builtins, MIR lower, and C ABI.</td>
+<td>on(signum) + Notifier::wait/try_wait. Wired through interp builtins, MIR lower, and C ABI.</td>
 </tr>
 <tr>
 <td><code>std::strings</code></td>
@@ -1811,7 +1901,7 @@ module.</p>
 <td style="text-align: center;">✓</td>
 <td style="text-align: center;">✓</td>
 <td style="text-align: center;">✓</td>
-<td>Vec, HashMap, HashSet, VecDeque (both ends), BTreeMap (String/i64 keys). BTreeSet declared.</td>
+<td>Vec, HashMap, HashSet, VecDeque (both ends), BTreeMap (String/i64 keys).</td>
 </tr>
 <tr>
 <td><code>std::net</code></td>
@@ -2040,8 +2130,7 @@ A <code>✗</code> means none of the items are wired.</p>
 <p>A module is marked <code>Compiled ✓</code> when at least one of its
 items has a runtime symbol declared in
 <code>gossamer-codegen-llvm/src/emit.rs::RUNTIME_DECLARATIONS</code>
-and a Cranelift import in
-<code>gossamer-codegen-cranelift/src/native.rs</code>, or is
+and the runtime/JIT symbol registry, or is
 dispatched as a method via
 <code>gossamer-mir/src/lower.rs::lower_method_call</code>.</p>
 </li>

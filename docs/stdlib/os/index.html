@@ -627,6 +627,8 @@
       
         
       
+        
+      
     
     
     
@@ -724,6 +726,34 @@
     
   
     Prelude (no imports)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../core_method_contract/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Core method contract
   
 
     
@@ -1355,6 +1385,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -1443,6 +1477,62 @@
     
   
     Runtime internals
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/memory_model/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Memory model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/goroutine_stacks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Goroutine stack model
   
 
     
@@ -1628,7 +1718,7 @@
 
 <h1 id="stdos"><code>std::os</code><a class="headerlink" href="#stdos" title="Permanent link">&para;</a></h1>
 <p>Status: shipped</p>
-<p>Operating-system identity and deprecated re-exports of env/process/fs.</p>
+<p>Operating-system identity and process standard input.</p>
 <h2 id="public-items">Public items<a class="headerlink" href="#public-items" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -1650,139 +1740,9 @@
 <td>Returns the target CPU architecture (e.g. "x86_64").</td>
 </tr>
 <tr>
-<td><code>args</code></td>
-<td>fn</td>
-<td>Deprecated: use env::args.</td>
-</tr>
-<tr>
-<td><code>program_name</code></td>
-<td>fn</td>
-<td>Deprecated: use env::program_name.</td>
-</tr>
-<tr>
-<td><code>env</code></td>
-<td>fn</td>
-<td>Deprecated: use env::var.</td>
-</tr>
-<tr>
-<td><code>set_env</code></td>
-<td>fn</td>
-<td>Deprecated: use env::set_var.</td>
-</tr>
-<tr>
-<td><code>exit</code></td>
-<td>fn</td>
-<td>Deprecated: use process::exit.</td>
-</tr>
-<tr>
-<td><code>read_file</code></td>
-<td>fn</td>
-<td>Deprecated: use fs::read.</td>
-</tr>
-<tr>
-<td><code>read_file_to_string</code></td>
-<td>fn</td>
-<td>Deprecated: use fs::read_to_string.</td>
-</tr>
-<tr>
-<td><code>write_file</code></td>
-<td>fn</td>
-<td>Deprecated: use fs::write.</td>
-</tr>
-<tr>
-<td><code>remove_file</code></td>
-<td>fn</td>
-<td>Deprecated: use fs::remove_file.</td>
-</tr>
-<tr>
-<td><code>rename</code></td>
-<td>fn</td>
-<td>Deprecated: use fs::rename.</td>
-</tr>
-<tr>
-<td><code>exists</code></td>
-<td>fn</td>
-<td>Deprecated: use fs::exists.</td>
-</tr>
-<tr>
-<td><code>mkdir</code></td>
-<td>fn</td>
-<td>Deprecated: use fs::create_dir.</td>
-</tr>
-<tr>
-<td><code>mkdir_all</code></td>
-<td>fn</td>
-<td>Deprecated: use fs::create_dir_all.</td>
-</tr>
-<tr>
-<td><code>read_dir</code></td>
-<td>fn</td>
-<td>Deprecated: use fs::read_dir.</td>
-</tr>
-<tr>
-<td><code>File</code></td>
-<td>type</td>
-<td>Deprecated: use fs::File.</td>
-</tr>
-<tr>
-<td><code>cwd</code></td>
-<td>fn</td>
-<td>Current working directory.</td>
-</tr>
-<tr>
 <td><code>stdin</code></td>
 <td>fn</td>
 <td>Process standard input stream (Go's os.Stdin).</td>
-</tr>
-<tr>
-<td><code>unset_env</code></td>
-<td>fn</td>
-<td>Removes an environment variable.</td>
-</tr>
-<tr>
-<td><code>is_file</code></td>
-<td>fn</td>
-<td>Reports whether the path is a regular file.</td>
-</tr>
-<tr>
-<td><code>is_dir</code></td>
-<td>fn</td>
-<td>Reports whether the path is a directory.</td>
-</tr>
-<tr>
-<td><code>is_symlink</code></td>
-<td>fn</td>
-<td>Reports whether the path is a symbolic link.</td>
-</tr>
-<tr>
-<td><code>file_size</code></td>
-<td>fn</td>
-<td>Size of the file in bytes.</td>
-</tr>
-<tr>
-<td><code>temp_dir</code></td>
-<td>fn</td>
-<td>System temporary-file directory.</td>
-</tr>
-<tr>
-<td><code>canonicalize</code></td>
-<td>fn</td>
-<td>Resolves a path to its absolute canonical form.</td>
-</tr>
-<tr>
-<td><code>remove_dir</code></td>
-<td>fn</td>
-<td>Removes an empty directory.</td>
-</tr>
-<tr>
-<td><code>remove_dir_all</code></td>
-<td>fn</td>
-<td>Removes a directory and its contents recursively.</td>
-</tr>
-<tr>
-<td><code>copy</code></td>
-<td>fn</td>
-<td>Copies a file, returning the byte count.</td>
 </tr>
 </tbody>
 </table>

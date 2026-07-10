@@ -386,7 +386,9 @@ pub(crate) fn builtin_strings_to_lower(args: &[Value]) -> RuntimeResult<Value> {
 
 pub(crate) fn builtin_strings_to_upper(args: &[Value]) -> RuntimeResult<Value> {
     let text = args.first().and_then(as_str).unwrap_or("");
-    Ok(Value::String(strings_std::to_uppercase(text).into()))
+    Ok(Value::String(crate::value::SmolStr::to_uppercase_from(
+        text,
+    )))
 }
 
 pub(crate) fn builtin_strings_chars(args: &[Value]) -> RuntimeResult<Value> {

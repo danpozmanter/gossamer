@@ -1016,6 +1016,48 @@ impl<'a> Builder<'a> {
                 return MethodLowering::Handled(Some(self.lower_unit(span)));
             }
         }
+        // `s.clear()` / `s.truncate(n)` on a String receiver. Strings are
+        // immutable runtime byte buffers, so mutation is modeled as a fresh
+        // string plus receiver-local writeback, matching the push family.
+        if matches!(method.name.as_str(), "clear" | "truncate")
+            && (method.name.as_str() == "clear" && args.is_empty()
+                || method.name.as_str() == "truncate" && args.len() == 1)
+            && let Some(recv_local) = self.receiver_local_from_path(receiver)
+        {
+            let recv_ty = self.locals[recv_local.0 as usize].ty;
+            let mut peeled = recv_ty;
+            while let TyKind::Ref { inner, .. } = self.tcx.kind_of(peeled) {
+                peeled = *inner;
+            }
+            if matches!(self.tcx.kind_of(peeled), TyKind::String) {
+                let mut call_args = vec![Operand::Copy(Place::local(recv_local))];
+                let rt = if method.name.as_str() == "clear" {
+                    call_args.clear();
+                    "gos_rt_str_clear"
+                } else {
+                    let Some(arg_local) = self.lower_expr(&args[0]) else {
+                        return MethodLowering::Handled(None);
+                    };
+                    call_args.push(Operand::Copy(Place::local(arg_local)));
+                    "gos_rt_str_truncate"
+                };
+                let dest = self.fresh(recv_ty);
+                let next = self.new_block(span);
+                self.terminate(Terminator::Call {
+                    callee: Operand::Const(ConstValue::Str(rt.to_string())),
+                    args: call_args,
+                    destination: Place::local(dest),
+                    target: Some(next),
+                });
+                self.set_current(next);
+                self.emit_assign(
+                    Place::local(recv_local),
+                    Rvalue::Use(Operand::Copy(Place::local(dest))),
+                    span,
+                );
+                return MethodLowering::Handled(Some(self.lower_unit(span)));
+            }
+        }
         MethodLowering::Pass
     }
 
@@ -1323,6 +1365,18 @@ impl<'a> Builder<'a> {
             "clone" => match &receiver_kind_flat {
                 TyKind::Vec(_) | TyKind::Slice(_) => Some("gos_rt_vec_clone"),
                 _ => Some(""),
+            },
+            "extend" | "extend_from_slice" if args.len() == 1 => match &receiver_kind_flat {
+                TyKind::Vec(_) | TyKind::Slice(_) | TyKind::Array { .. } => {
+                    Some("gos_rt_vec_extend")
+                }
+                _ => None,
+            },
+            "truncate" if args.len() == 1 => match &receiver_kind_flat {
+                TyKind::Vec(_) | TyKind::Slice(_) | TyKind::Array { .. } => {
+                    Some("gos_rt_vec_truncate")
+                }
+                _ => None,
             },
             // Option / Result methods. Result/Option now live as
             // `*mut GosResult { disc, payload }` heap aggregates
@@ -1932,8 +1986,11 @@ impl<'a> Builder<'a> {
                     _ => Some("gos_rt_map_contains_key_i64"),
                 }
             }
-            "clear" => match &receiver_kind_flat {
+            "clear" if args.is_empty() => match &receiver_kind_flat {
                 TyKind::HashMap { .. } => Some("gos_rt_map_clear"),
+                TyKind::Vec(_) | TyKind::Slice(_) | TyKind::Array { .. } => {
+                    Some("gos_rt_vec_clear")
+                }
                 _ => None,
             },
             // `m.inc_at(seq, start, len, by)` - zero-copy slice
@@ -2190,10 +2247,34 @@ impl<'a> Builder<'a> {
             (Some("net::TcpStream"), "read") => Some("gos_rt_tcp_stream_read"),
             (Some("net::TcpStream"), "read_to_string") => Some("gos_rt_tcp_stream_read_to_string"),
             (Some("net::TcpStream"), "write" | "write_all") => Some("gos_rt_tcp_stream_write"),
+            (Some("net::TcpStream"), "set_read_timeout_ms") => {
+                Some("gos_rt_tcp_stream_set_read_timeout_ms")
+            }
+            (Some("net::TcpStream"), "set_write_timeout_ms") => {
+                Some("gos_rt_tcp_stream_set_write_timeout_ms")
+            }
+            (Some("net::TcpStream"), "clear_read_timeout") => {
+                Some("gos_rt_tcp_stream_clear_read_timeout")
+            }
+            (Some("net::TcpStream"), "clear_write_timeout") => {
+                Some("gos_rt_tcp_stream_clear_write_timeout")
+            }
             (Some("net::TcpStream"), "start_tls") => Some("gos_rt_tcp_start_tls"),
             (Some("net::TcpStream"), "start_tls_insecure") => Some("gos_rt_tcp_start_tls_insecure"),
             (Some("net::TcpStream"), "start_tls_ca") => Some("gos_rt_tcp_start_tls_ca"),
             (Some("net::TcpStream"), "close") => Some("gos_rt_tcp_stream_close"),
+            (Some("fs::File"), "read") => Some("gos_rt_fs_file_read"),
+            (Some("fs::File"), "read_to_string") => Some("gos_rt_fs_file_read_to_string"),
+            (Some("fs::File"), "write" | "write_all") => Some("gos_rt_fs_file_write"),
+            (Some("fs::File"), "flush") => Some("gos_rt_fs_file_flush"),
+            (Some("fs::File"), "close") => Some("gos_rt_fs_file_close"),
+            (Some("fs::OpenOptions"), "read") => Some("gos_rt_fs_open_options_read"),
+            (Some("fs::OpenOptions"), "write") => Some("gos_rt_fs_open_options_write"),
+            (Some("fs::OpenOptions"), "append") => Some("gos_rt_fs_open_options_append"),
+            (Some("fs::OpenOptions"), "truncate") => Some("gos_rt_fs_open_options_truncate"),
+            (Some("fs::OpenOptions"), "create") => Some("gos_rt_fs_open_options_create"),
+            (Some("fs::OpenOptions"), "create_new") => Some("gos_rt_fs_open_options_create_new"),
+            (Some("fs::OpenOptions"), "open") => Some("gos_rt_fs_open_options_open"),
             (Some("net::UnixListener"), "accept") => Some("gos_rt_unix_listener_accept"),
             (Some("net::UnixListener"), "close") => Some("gos_rt_unix_listener_close"),
             (Some("net::UnixStream"), "read") => Some("gos_rt_unix_stream_read"),
@@ -2336,6 +2417,7 @@ impl<'a> Builder<'a> {
                 "gos_rt_http_client_request"
                     | "gos_rt_http_client_request_bytes"
                     | "gos_rt_tcp_stream_write"
+                    | "gos_rt_fs_file_write"
                     | "gos_rt_unix_stream_write"
                     | "gos_rt_udp_send_to"
                     | "gos_rt_flag_set_parse"
@@ -2579,12 +2661,24 @@ impl<'a> Builder<'a> {
             | "gos_rt_unix_stream_read_to_string"
             | "gos_rt_udp_local_addr" => self.result_string_error_adt_ty(),
             "gos_rt_tcp_stream_write"
+            | "gos_rt_tcp_stream_set_read_timeout_ms"
+            | "gos_rt_tcp_stream_set_write_timeout_ms"
+            | "gos_rt_tcp_stream_clear_read_timeout"
+            | "gos_rt_tcp_stream_clear_write_timeout"
+            | "gos_rt_fs_file_create"
+            | "gos_rt_fs_file_open"
+            | "gos_rt_fs_open_options_open"
+            | "gos_rt_fs_file_write"
+            | "gos_rt_fs_file_flush"
             | "gos_rt_unix_stream_write"
             | "gos_rt_udp_send_to"
             | "gos_rt_tcp_start_tls"
             | "gos_rt_tcp_start_tls_insecure"
             | "gos_rt_tcp_start_tls_ca" => self.result_i64_error_adt_ty(),
-            "gos_rt_tcp_stream_read" | "gos_rt_unix_stream_read" => self.result_vec_u8_error_ty(),
+            "gos_rt_tcp_stream_read" | "gos_rt_unix_stream_read" | "gos_rt_fs_file_read" => {
+                self.result_vec_u8_error_ty()
+            }
+            "gos_rt_fs_file_read_to_string" => self.result_string_error_adt_ty(),
             "gos_rt_tcp_listener_accept" | "gos_rt_unix_listener_accept" => {
                 let i = self.tcx.int_ty(gossamer_types::IntTy::I64);
                 let s = self.tcx.string_ty();
@@ -2602,6 +2696,7 @@ impl<'a> Builder<'a> {
             }
             "gos_rt_tcp_listener_close"
             | "gos_rt_tcp_stream_close"
+            | "gos_rt_fs_file_close"
             | "gos_rt_unix_listener_close"
             | "gos_rt_unix_stream_close"
             | "gos_rt_udp_close" => self.tcx.unit(),
@@ -2640,6 +2735,16 @@ impl<'a> Builder<'a> {
             | "gos_rt_set_symmetric_difference" => Some("collections::HashSet"),
             "gos_rt_tcp_listener_accept" => Some("net::accept_pair"),
             "gos_rt_unix_listener_accept" => Some("net::unix_accept_pair"),
+            "gos_rt_fs_file_create" | "gos_rt_fs_file_open" | "gos_rt_fs_open_options_open" => {
+                Some("fs::File")
+            }
+            "gos_rt_fs_open_options_new"
+            | "gos_rt_fs_open_options_read"
+            | "gos_rt_fs_open_options_write"
+            | "gos_rt_fs_open_options_append"
+            | "gos_rt_fs_open_options_truncate"
+            | "gos_rt_fs_open_options_create"
+            | "gos_rt_fs_open_options_create_new" => Some("fs::OpenOptions"),
             "gos_rt_tcp_start_tls"
             | "gos_rt_tcp_start_tls_insecure"
             | "gos_rt_tcp_start_tls_ca" => Some("net::TcpStream"),
@@ -2899,10 +3004,34 @@ impl<'a> Builder<'a> {
             (Some("net::TcpStream"), "read") => Some("gos_rt_tcp_stream_read"),
             (Some("net::TcpStream"), "read_to_string") => Some("gos_rt_tcp_stream_read_to_string"),
             (Some("net::TcpStream"), "write" | "write_all") => Some("gos_rt_tcp_stream_write"),
+            (Some("net::TcpStream"), "set_read_timeout_ms") => {
+                Some("gos_rt_tcp_stream_set_read_timeout_ms")
+            }
+            (Some("net::TcpStream"), "set_write_timeout_ms") => {
+                Some("gos_rt_tcp_stream_set_write_timeout_ms")
+            }
+            (Some("net::TcpStream"), "clear_read_timeout") => {
+                Some("gos_rt_tcp_stream_clear_read_timeout")
+            }
+            (Some("net::TcpStream"), "clear_write_timeout") => {
+                Some("gos_rt_tcp_stream_clear_write_timeout")
+            }
             (Some("net::TcpStream"), "start_tls") => Some("gos_rt_tcp_start_tls"),
             (Some("net::TcpStream"), "start_tls_insecure") => Some("gos_rt_tcp_start_tls_insecure"),
             (Some("net::TcpStream"), "start_tls_ca") => Some("gos_rt_tcp_start_tls_ca"),
             (Some("net::TcpStream"), "close") => Some("gos_rt_tcp_stream_close"),
+            (Some("fs::File"), "read") => Some("gos_rt_fs_file_read"),
+            (Some("fs::File"), "read_to_string") => Some("gos_rt_fs_file_read_to_string"),
+            (Some("fs::File"), "write" | "write_all") => Some("gos_rt_fs_file_write"),
+            (Some("fs::File"), "flush") => Some("gos_rt_fs_file_flush"),
+            (Some("fs::File"), "close") => Some("gos_rt_fs_file_close"),
+            (Some("fs::OpenOptions"), "read") => Some("gos_rt_fs_open_options_read"),
+            (Some("fs::OpenOptions"), "write") => Some("gos_rt_fs_open_options_write"),
+            (Some("fs::OpenOptions"), "append") => Some("gos_rt_fs_open_options_append"),
+            (Some("fs::OpenOptions"), "truncate") => Some("gos_rt_fs_open_options_truncate"),
+            (Some("fs::OpenOptions"), "create") => Some("gos_rt_fs_open_options_create"),
+            (Some("fs::OpenOptions"), "create_new") => Some("gos_rt_fs_open_options_create_new"),
+            (Some("fs::OpenOptions"), "open") => Some("gos_rt_fs_open_options_open"),
             (Some("net::UnixListener"), "accept") => Some("gos_rt_unix_listener_accept"),
             (Some("net::UnixListener"), "close") => Some("gos_rt_unix_listener_close"),
             (Some("net::UnixStream"), "read") => Some("gos_rt_unix_stream_read"),
@@ -3270,6 +3399,7 @@ impl<'a> Builder<'a> {
                     | "gos_rt_map_or_insert_str_i64"
             )
         );
+        let coerce_vec_extend_arg = matches!(runtime_symbol, Some("gos_rt_vec_extend"));
         // String methods whose needle / pattern argument is a `&str`
         // the runtime helper reads as a `*const c_char`. A `char`
         // literal (`s.contains('e')`, `s.replace('l', "L")`) lowers to
@@ -3304,7 +3434,7 @@ impl<'a> Builder<'a> {
             // mirrors the bytecode VM's auto-unwrap shape so
             // `get_comic(flags.number)` works without `*`.
             let a = self.auto_deref_cell(a, span);
-            let a = if coerce_map_value {
+            let a = if coerce_map_value || coerce_vec_extend_arg {
                 let lt = self.locals[a.0 as usize].ty;
                 if let TyKind::Array { elem, len } = self.tcx.kind_of(lt).clone() {
                     self.coerce_array_to_vec(a, elem, len, span)

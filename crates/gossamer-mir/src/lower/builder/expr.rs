@@ -293,9 +293,9 @@ impl<'a> Builder<'a> {
             HirExprKind::Select { arms } => {
                 // Real multiplexing via the runtime select builder. The arms
                 // are registered in source order; `gos_rt_select_wait` polls
-                // them (lowest-index ready arm wins) and parks the goroutine
-                // until one is ready unless a default arm exists - matching the
-                // VM walker's `eval_select`. The recv payload rides the same
+                // ready communications in pseudo-random order and parks the
+                // goroutine until one is ready unless a default arm exists.
+                // The recv payload rides the same
                 // 8-byte word contract as `gos_rt_chan_recv_option`.
                 use gossamer_hir::{HirPatKind, HirSelectOp};
                 let span = expr.span;

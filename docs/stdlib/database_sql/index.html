@@ -627,6 +627,8 @@
       
         
       
+        
+      
     
     
     
@@ -724,6 +726,34 @@
     
   
     Prelude (no imports)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../core_method_contract/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Core method contract
   
 
     
@@ -1355,6 +1385,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -1443,6 +1477,62 @@
     
   
     Runtime internals
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/memory_model/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Memory model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/goroutine_stacks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Goroutine stack model
   
 
     
@@ -1717,7 +1807,7 @@
 <tr>
 <td><code>Select</code></td>
 <td>type</td>
-<td>Fluent SELECT builder. <code>Select::new(table).columns(&amp;[..]).where_eq(col, val).order_by(col, asc).limit(n).render() -&gt; (sql, params)</code>. Emits Postgres-style <code>$N</code> placeholders.</td>
+<td>Fluent SELECT builder. <code>Select::new(table).columns(&amp;[..]).where_eq(col, sql::Value::Int(...))...render() -&gt; String</code>; <code>.params()</code> returns the bound parameters. Emits Postgres-style <code>$N</code> placeholders.</td>
 </tr>
 <tr>
 <td><code>migrate</code></td>

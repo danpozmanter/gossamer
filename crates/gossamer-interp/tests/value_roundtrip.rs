@@ -104,6 +104,19 @@ fn string_roundtrips() {
 }
 
 #[test]
+fn smolstr_uppercase_fast_path_matches_unicode_contract() {
+    assert_eq!(
+        SmolStr::to_uppercase_from("json-tag_42").as_str(),
+        "JSON-TAG_42"
+    );
+    assert_eq!(
+        SmolStr::to_uppercase_from("longer-json-tag_42").as_str(),
+        "LONGER-JSON-TAG_42"
+    );
+    assert_eq!(SmolStr::to_uppercase_from("straße").as_str(), "STRASSE");
+}
+
+#[test]
 fn tuple_roundtrips() {
     let v = Value::Tuple(Arc::from(vec![
         Value::Int(1),

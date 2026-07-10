@@ -22,7 +22,7 @@ use gossamer_ast::{
     EnumDecl, EnumVariant, GenericArg, Item, ItemKind, ModBody, ModulePath, NodeId, SourceFile,
     StructBody, StructDecl, TypeKind, UseDecl, UseTarget,
 };
-use gossamer_lex::{FileId, SourceMap, Span};
+use gossamer_lex::{FileId, Keyword, Lexer, Punct, SourceMap, Span, TokenKind};
 
 use crate::ParseDiagnostic;
 
@@ -2153,18 +2153,6 @@ fn emit_struct_derive_impl(
 /// source into the source map before invoking `parse_source_file`.
 #[must_use]
 pub fn augment_source(source: &str) -> String {
-    let mut probe_map = SourceMap::new();
-    let probe_file = probe_map.add_file("<autoderive-probe>", source.to_string());
-    let (parsed, _) = crate::parse_source_file(source, probe_file);
-    let serde = synthesize_serde_impls(&parsed);
-    let derives = synthesize_derive_impls(&parsed);
-    // Field-reflection functions for `typeInfo::<T>()`, emitted only
-    // when the source reflects (keeps non-reflecting programs lean).
-    let type_info = if source.contains("typeInfo") {
-        synthesize_type_info(&parsed)
-    } else {
-        String::new()
-    };
     // Compile-time validation macro backers (`regex!` / `sql!`).
     let validators = synthesize_validators(source);
     // Stdlib structs (pem::Block, …) are real Gossamer structs +
@@ -2173,31 +2161,24 @@ pub fn augment_source(source: &str) -> String {
     // code compiles + runs on every tier. `rewrite_stdlib_struct_surface`
     // (in parse_with_autoderive) redirects the user's
     // `encoding::pem::*` call / literal / type sites onto these.
-    let mut stdlib_wrappers = String::new();
-    if source.contains("pem::") {
-        stdlib_wrappers.push_str(PEM_WRAPPERS);
-    }
-    if source.contains("x509::") {
-        stdlib_wrappers.push_str(X509_WRAPPERS);
-    }
-    if source.contains("fs::metadata") {
-        stdlib_wrappers.push_str(FS_METADATA_WRAPPERS);
-    }
-    if source.contains("tar::") {
-        stdlib_wrappers.push_str(TAR_WRAPPERS);
-    }
-    if source.contains("zip::") {
-        stdlib_wrappers.push_str(ZIP_WRAPPERS);
-    }
-    if source.contains("sql::") {
-        stdlib_wrappers.push_str(SQL_WRAPPERS);
-    }
-    if HTTP_SECURITY_MARKERS.iter().any(|m| source.contains(m)) {
-        stdlib_wrappers.push_str(HTTP_SECURITY_WRAPPERS);
-    }
-    if source.contains("time::after") {
-        stdlib_wrappers.push_str(TIME_TIMER_WRAPPERS);
-    }
+    let stdlib_wrappers = synthesize_stdlib_wrappers(source);
+    let (serde, derives, type_info) = if source_may_need_ast_synthesis(source) {
+        let mut probe_map = SourceMap::new();
+        let probe_file = probe_map.add_file("<autoderive-probe>", source.to_string());
+        let (parsed, _) = crate::parse_source_file(source, probe_file);
+        let serde = synthesize_serde_impls(&parsed);
+        let derives = synthesize_derive_impls(&parsed);
+        // Field-reflection functions for `typeInfo::<T>()`, emitted only
+        // when the source reflects (keeps non-reflecting programs lean).
+        let type_info = if source.contains("typeInfo") {
+            synthesize_type_info(&parsed)
+        } else {
+            String::new()
+        };
+        (serde, derives, type_info)
+    } else {
+        (String::new(), String::new(), String::new())
+    };
     if synth_is_empty(&serde)
         && stdlib_wrappers.is_empty()
         && derives.is_empty()
@@ -2225,6 +2206,53 @@ pub fn augment_source(source: &str) -> String {
     combined.push_str(&type_info);
     combined.push_str(&validators);
     combined
+}
+
+/// Returns true when an AST walk could synthesize source. Most files contain
+/// only functions and imports; for those, avoid the probe parse and let the
+/// later authoritative frontend parse handle normal rewrites.
+fn source_may_need_ast_synthesis(source: &str) -> bool {
+    let mut map = SourceMap::new();
+    let file = map.add_file("<autoderive-prescan>", String::new());
+    let mut lexer = Lexer::new(source, file);
+    loop {
+        let token = lexer.next_token();
+        match token.kind {
+            TokenKind::Keyword(Keyword::Struct | Keyword::Enum) => return true,
+            TokenKind::Punct(Punct::Hash) => return true,
+            TokenKind::Eof => return false,
+            _ => {}
+        }
+    }
+}
+
+fn synthesize_stdlib_wrappers(source: &str) -> String {
+    let mut stdlib_wrappers = String::new();
+    if source.contains("pem::") {
+        stdlib_wrappers.push_str(PEM_WRAPPERS);
+    }
+    if source.contains("x509::") {
+        stdlib_wrappers.push_str(X509_WRAPPERS);
+    }
+    if source.contains("fs::metadata") {
+        stdlib_wrappers.push_str(FS_METADATA_WRAPPERS);
+    }
+    if source.contains("tar::") {
+        stdlib_wrappers.push_str(TAR_WRAPPERS);
+    }
+    if source.contains("zip::") {
+        stdlib_wrappers.push_str(ZIP_WRAPPERS);
+    }
+    if source.contains("sql::") {
+        stdlib_wrappers.push_str(SQL_WRAPPERS);
+    }
+    if HTTP_SECURITY_MARKERS.iter().any(|m| source.contains(m)) {
+        stdlib_wrappers.push_str(HTTP_SECURITY_WRAPPERS);
+    }
+    if source.contains("time::after") {
+        stdlib_wrappers.push_str(TIME_TIMER_WRAPPERS);
+    }
+    stdlib_wrappers
 }
 
 /// Real-struct + wrapper source for `std::encoding::pem`. The
@@ -2286,7 +2314,7 @@ fn __gos_time_after_fire(tx: Sender<i64>, d: time::Duration) {
     tx.close()
 }
 fn __gos_time_after(d: time::Duration) -> Receiver<i64> {
-    let (tx, rx) = channel()
+    let (tx, rx) = channel(1)
     go __gos_time_after_fire(tx, d)
     rx
 }
@@ -4599,5 +4627,33 @@ mod autoderive_tests {
                    struct Outer { id: i64, tags: [String], inner: Inner }\n\
                    fn main() { let _ = to_json::<Outer>(Outer { id: 1, tags: [\"a\"], inner: Inner { n: 2 } }); }";
         assert!(serde_field_errors(src).is_empty());
+    }
+
+    #[test]
+    fn prescan_ignores_type_keywords_in_comments_and_strings() {
+        let src = "fn main() {\n\
+                   \tlet _ = \"struct NotAType\"\n\
+                   \t// enum AlsoNotAType { A }\n\
+                   }\n";
+        assert!(!super::source_may_need_ast_synthesis(src));
+        assert_eq!(super::augment_source(src), src);
+    }
+
+    #[test]
+    fn prescan_detects_real_type_declarations() {
+        assert!(super::source_may_need_ast_synthesis(
+            "struct Point { x: i64 }\nfn main() {}\n"
+        ));
+        assert!(super::source_may_need_ast_synthesis(
+            "enum Color { Red }\nfn main() {}\n"
+        ));
+    }
+
+    #[test]
+    fn validator_only_source_still_augments_without_type_declarations() {
+        let src = "fn main() { let _ = regex!(\"^[a]+$\") }\n";
+        let augmented = super::augment_source(src);
+        assert!(augmented.contains("__gos_regex_validate"));
+        assert!(augmented.starts_with(src));
     }
 }

@@ -19,14 +19,13 @@
 //! mirror of the compiled `gos_rt_ctx_*` shims. Cancellation is eager
 //! down the child tree; `is_cancelled` also walks up the parent chain
 //! and honours an optional deadline. Deadlines use `std::time::Instant`
-//! so behaviour is identical on every target.
+//! plus a small timer thread that drives the same cancellation path as
+//! explicit cancel, so `done_chan()` is selectable on timeout.
 //!
 //! The closure-returning `with_cancel -> (ctx, cancel)` shape is a
 //! documented follow-up. `done_chan()` returns the context's "done"
-//! channel; `cancel` closes it so a `select` recv arm on the channel
-//! becomes ready (closed-channel select readiness). A deadline
-//! (`with_timeout`) flips `is_cancelled` lazily but does not close the
-//! channel, so only explicit `cancel` drives the selectable path.
+//! channel; `cancel` or deadline expiry closes it so a `select` recv arm
+//! on the channel becomes ready (closed-channel select readiness).
 
 use std::collections::HashMap as StdHashMap;
 use std::sync::Arc;
@@ -114,6 +113,15 @@ fn alloc_node(deadline: Option<Instant>, parent: Option<i64>) -> Value {
         if let Some(p) = node_of(pid) {
             p.children.lock().push(id);
         }
+    }
+    if let Some(deadline) = deadline {
+        std::thread::spawn(move || {
+            let now = Instant::now();
+            if deadline > now {
+                std::thread::sleep(deadline - now);
+            }
+            cancel_node(id);
+        });
     }
     ctx_handle(id)
 }

@@ -186,9 +186,10 @@ Goroutine and channel syntax is the same. Behavioural notes:
   asynchronously preempted at loop back-edges - it yields at its next
   call or park point. See
   [runtime design - Preemption](../design/runtime.md#preemption).
-- Channels are created with `channel()` / `channel::<T>()` and are
-  buffered today, so a send does not block waiting for a receiver.
-  There is no capacity argument - `channel()` is the only constructor.
+- Channels are created with `channel()` / `channel::<T>()`.
+  `channel()` and `channel(0)` are unbuffered rendezvous channels,
+  `channel(n)` for `n > 0` is bounded, and
+  `channel::unbounded()` is the explicit queue form.
   The producer calls `close()` to end the stream, so
   `while let Some(v) = rx.recv()` is the canonical drain.
 - `select` arms are typed by the channel they reference. Catch

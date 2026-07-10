@@ -673,7 +673,10 @@ impl<'a> Lowerer<'a> {
             name.as_str(),
             "channel"
                 | "channel::new"
+                | "channel::unbounded"
                 | "sync::channel"
+                | "sync::channel_unbounded"
+                | "std::sync::channel_unbounded"
                 | "sync::Channel::new"
                 | "gos_rt_chan_new"
                 | "Channel::new"
@@ -684,7 +687,14 @@ impl<'a> Lowerer<'a> {
             } else {
                 None
             };
-            let cap = cap_arg.unwrap_or_else(|| "0".to_string());
+            let cap = if matches!(
+                name.as_str(),
+                "channel::unbounded" | "sync::channel_unbounded" | "std::sync::channel_unbounded"
+            ) {
+                "-1".to_string()
+            } else {
+                cap_arg.unwrap_or_else(|| "0".to_string())
+            };
             let tmp = self.fresh();
             writeln!(
                 self.out,

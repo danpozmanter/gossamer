@@ -232,6 +232,8 @@ pub(super) fn lower_generic_rt_call(
         "gos_rt_str_zfill" => (&[ptr_ty, types::I64], Some(ptr_ty)),
         "gos_rt_str_center" => (&[ptr_ty, types::I64, types::I64], Some(ptr_ty)),
         "gos_rt_str_slice" => (&[ptr_ty, types::I64, types::I64], Some(ptr_ty)),
+        "gos_rt_str_clear" => (&[], Some(ptr_ty)),
+        "gos_rt_str_truncate" => (&[ptr_ty, types::I64], Some(ptr_ty)),
         "gos_rt_str_rfind_opt" => (&[ptr_ty, ptr_ty], Some(ptr_ty)),
         "gos_rt_strings_join" => (&[ptr_ty, ptr_ty], Some(ptr_ty)),
         "gos_rt_io_copy" => (&[ptr_ty, ptr_ty], Some(types::I64)),
@@ -257,6 +259,9 @@ pub(super) fn lower_generic_rt_call(
         "gos_rt_vec_slice_result" => (&[ptr_ty, types::I64, types::I64], Some(ptr_ty)),
         "gos_rt_vec_insert_safe" => (&[ptr_ty, types::I64, types::I64], Some(ptr_ty)),
         "gos_rt_vec_remove_safe" => (&[ptr_ty, types::I64], Some(ptr_ty)),
+        "gos_rt_vec_clear" => (&[ptr_ty], None),
+        "gos_rt_vec_extend" => (&[ptr_ty, ptr_ty], None),
+        "gos_rt_vec_truncate" => (&[ptr_ty, types::I64], None),
         "gos_rt_map_keys_vec" => (&[ptr_ty], Some(ptr_ty)),
         "gos_rt_map_values_vec" => (&[ptr_ty], Some(ptr_ty)),
         "gos_rt_map_pop_i64" => (&[ptr_ty, types::I64], Some(types::I128)),
@@ -287,6 +292,20 @@ pub(super) fn lower_generic_rt_call(
         "gos_rt_fs_read_to_string" => (&[ptr_ty], Some(ptr_ty)),
         "gos_rt_fs_write" => (&[ptr_ty, ptr_ty], Some(types::I64)),
         "gos_rt_fs_create_dir_all" => (&[ptr_ty], Some(types::I64)),
+        "gos_rt_fs_file_close" => (&[types::I64], None),
+        "gos_rt_fs_file_create" | "gos_rt_fs_file_open" => (&[ptr_ty], Some(types::I128)),
+        "gos_rt_fs_file_flush" => (&[types::I64], Some(types::I128)),
+        "gos_rt_fs_file_read" => (&[types::I64, types::I64], Some(types::I128)),
+        "gos_rt_fs_file_read_to_string" => (&[types::I64], Some(types::I128)),
+        "gos_rt_fs_file_write" => (&[types::I64, ptr_ty], Some(types::I128)),
+        "gos_rt_fs_open_options_new" => (&[], Some(types::I64)),
+        "gos_rt_fs_open_options_append"
+        | "gos_rt_fs_open_options_create"
+        | "gos_rt_fs_open_options_create_new"
+        | "gos_rt_fs_open_options_read"
+        | "gos_rt_fs_open_options_truncate"
+        | "gos_rt_fs_open_options_write" => (&[types::I64, types::I32], Some(types::I64)),
+        "gos_rt_fs_open_options_open" => (&[types::I64, ptr_ty], Some(types::I128)),
         "gos_rt_path_join" => (&[ptr_ty, ptr_ty], Some(ptr_ty)),
         "gos_rt_flag_set_new" => (&[ptr_ty], Some(ptr_ty)),
         "gos_rt_flag_set_string" => (&[ptr_ty, ptr_ty, ptr_ty, ptr_ty], Some(ptr_ty)),
@@ -411,6 +430,12 @@ pub(super) fn lower_generic_rt_call(
         "gos_rt_net_ip_octets" => (&[ptr_ty], Some(ptr_ty)),
         "gos_rt_tcp_listener_close" => (&[types::I64], None),
         "gos_rt_tcp_stream_close" => (&[types::I64], None),
+        "gos_rt_tcp_stream_clear_read_timeout" | "gos_rt_tcp_stream_clear_write_timeout" => {
+            (&[types::I64], Some(types::I128))
+        }
+        "gos_rt_tcp_stream_set_read_timeout_ms" | "gos_rt_tcp_stream_set_write_timeout_ms" => {
+            (&[types::I64, types::I64], Some(types::I128))
+        }
         "gos_rt_udp_close" => (&[types::I64], None),
         "gos_rt_field_error_new" => (&[ptr_ty, ptr_ty, ptr_ty], Some(ptr_ty)),
         "gos_rt_field_error_path" => (&[ptr_ty], Some(ptr_ty)),
@@ -538,7 +563,10 @@ pub(super) fn lower_generic_rt_call(
         "gos_rt_http_response_headers" => (&[ptr_ty], Some(ptr_ty)),
         "gos_rt_http_response_content_type" => (&[ptr_ty], Some(ptr_ty)),
         "gos_rt_http_response_location" => (&[ptr_ty], Some(ptr_ty)),
+        "gos_rt_strconv_parse_f64_bytes" => (&[ptr_ty, types::I64], Some(types::I128)),
+        "gos_rt_strconv_parse_i64_bytes" => (&[ptr_ty, types::I64], Some(types::I128)),
         "gos_rt_vec_get_i64" => (&[ptr_ty, types::I64], Some(types::I64)),
+        "gos_rt_vec_reserve_at_least" | "gos_rt_vec_reserve_exact" => (&[ptr_ty, types::I64], None),
         "gos_rt_vec_set_i64" => (&[ptr_ty, types::I64, types::I64], None),
         "gos_rt_vec_format_i64" => (&[ptr_ty], Some(ptr_ty)),
         "gos_rt_tuple_format" => (&[ptr_ty, types::I64, ptr_ty], Some(ptr_ty)),
@@ -585,6 +613,7 @@ pub(super) fn lower_generic_rt_call(
         "gos_rt_btmap_len" => (&[ptr_ty], Some(types::I64)),
         "gos_rt_btmap_keys" => (&[ptr_ty], Some(ptr_ty)),
         "gos_rt_str_as_bytes" => (&[ptr_ty], Some(ptr_ty)),
+        "gos_rt_string_from_utf8" => (&[ptr_ty], Some(types::I128)),
         "gos_rt_vec_clone" => (&[ptr_ty], Some(ptr_ty)),
         "gos_rt_map_inc_str_i64" => (&[ptr_ty, ptr_ty, types::I64], Some(types::I64)),
         "gos_rt_map_or_insert_str_i64" => (&[ptr_ty, ptr_ty, types::I64], Some(types::I64)),
@@ -663,6 +692,8 @@ pub(super) fn lower_generic_rt_call(
         }
         "gos_rt_testing_check" => (&[types::I8, ptr_ty], Some(types::I8)),
         "gos_rt_testing_check_eq_i64" => (&[types::I64, types::I64, ptr_ty], Some(types::I8)),
+        "gos_rt_testing_wait_for_scheduler_idle" => (&[types::I64], Some(types::I8)),
+        "gos_rt_runtime_scheduler_stats_json" => (&[], Some(ptr_ty)),
         "gos_rt_parse_i64_result" => (&[ptr_ty], Some(ptr_ty)),
         "gos_rt_iter_count_by_i64" => (&[ptr_ty, ptr_ty], Some(ptr_ty)),
         "gos_rt_iter_filter_map_i64" => (&[ptr_ty, ptr_ty], Some(ptr_ty)),

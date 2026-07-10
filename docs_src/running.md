@@ -30,6 +30,8 @@ Once `gos` is on your `PATH`, every subcommand takes either a
 | `gos tidy` | Re-canonicalise the manifest |
 | `gos fetch` / `gos vendor` | Populate the package cache / vendor tree |
 | `gos` (no args) | Interactive REPL |
+| `gos repl` then `%help strings::trim` | Show stdlib or language help from the manifest |
+| `gos repl` then `%dir strings` | List stdlib modules or module contents |
 
 ## Entry file
 

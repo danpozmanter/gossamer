@@ -220,6 +220,26 @@ pub const FS: StdModule = StdModule {
     summary: "Filesystem reading, writing, and traversal (Rust std::fs shape).",
     items: &[
         StdItem {
+            name: "File",
+            kind: StdItemKind::Type,
+            doc: "Streaming file handle; supports read, read_to_string, write, flush, and close.",
+        },
+        StdItem {
+            name: "OpenOptions",
+            kind: StdItemKind::Type,
+            doc: "Builder for opening files with read/write/append/create/truncate flags.",
+        },
+        StdItem {
+            name: "open",
+            kind: StdItemKind::Function,
+            doc: "Opens a file for streaming reads.",
+        },
+        StdItem {
+            name: "create",
+            kind: StdItemKind::Function,
+            doc: "Creates or truncates a file and returns a streaming file handle.",
+        },
+        StdItem {
             name: "read",
             kind: StdItemKind::Function,
             doc: "Reads an entire file into memory as bytes.",

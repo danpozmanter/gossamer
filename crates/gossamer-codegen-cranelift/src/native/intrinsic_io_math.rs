@@ -1817,6 +1817,7 @@ pub(super) fn lower_intrinsic_call_io_math(
                 )?,
                 None => builder.ins().iconst(ptr_ty, 0),
             };
+            let fn_addr = coerce_arg_to(builder, fn_addr, types::I64)?;
             let _ = builder.ins().call(fref, &[fn_addr]);
             let unit = builder.ins().iconst(types::I64, 0);
             define_var_to(
@@ -1832,7 +1833,7 @@ pub(super) fn lower_intrinsic_call_io_math(
             let rt_fn = intrinsics.extern_fn(
                 module,
                 "gos_rt_go_spawn_call_1",
-                &[ptr_ty, types::I64],
+                &[types::I64, types::I64],
                 &[],
             )?;
             let fref = module.declare_func_in_func(rt_fn, builder.func);
@@ -1849,6 +1850,7 @@ pub(super) fn lower_intrinsic_call_io_math(
                 )?,
                 None => builder.ins().iconst(ptr_ty, 0),
             };
+            let fn_addr = coerce_arg_to(builder, fn_addr, types::I64)?;
             let a0 = match args.get(1) {
                 Some(a) => lower_operand(module, builder, locals, body, tcx, a, None, intrinsics)?,
                 None => builder.ins().iconst(types::I64, 0),
@@ -1869,7 +1871,7 @@ pub(super) fn lower_intrinsic_call_io_math(
             let rt_fn = intrinsics.extern_fn(
                 module,
                 "gos_rt_go_spawn_call_2",
-                &[ptr_ty, types::I64, types::I64],
+                &[types::I64, types::I64, types::I64],
                 &[],
             )?;
             let fref = module.declare_func_in_func(rt_fn, builder.func);
@@ -1886,6 +1888,7 @@ pub(super) fn lower_intrinsic_call_io_math(
                 )?,
                 None => builder.ins().iconst(ptr_ty, 0),
             };
+            let fn_addr = coerce_arg_to(builder, fn_addr, types::I64)?;
             let a0 = match args.get(1) {
                 Some(a) => lower_operand(module, builder, locals, body, tcx, a, None, intrinsics)?,
                 None => builder.ins().iconst(types::I64, 0),
@@ -1911,7 +1914,7 @@ pub(super) fn lower_intrinsic_call_io_math(
             let rt_fn = intrinsics.extern_fn(
                 module,
                 "gos_rt_go_spawn_call_3",
-                &[ptr_ty, types::I64, types::I64, types::I64],
+                &[types::I64, types::I64, types::I64, types::I64],
                 &[],
             )?;
             let fref = module.declare_func_in_func(rt_fn, builder.func);
@@ -1928,6 +1931,7 @@ pub(super) fn lower_intrinsic_call_io_math(
                 )?,
                 None => builder.ins().iconst(ptr_ty, 0),
             };
+            let fn_addr = coerce_arg_to(builder, fn_addr, types::I64)?;
             let a0 = match args.get(1) {
                 Some(a) => lower_operand(module, builder, locals, body, tcx, a, None, intrinsics)?,
                 None => builder.ins().iconst(types::I64, 0),
@@ -1959,7 +1963,7 @@ pub(super) fn lower_intrinsic_call_io_math(
                 module,
                 "gos_rt_go_spawn_call_5",
                 &[
-                    ptr_ty,
+                    types::I64,
                     types::I64,
                     types::I64,
                     types::I64,
@@ -1982,6 +1986,7 @@ pub(super) fn lower_intrinsic_call_io_math(
                 )?,
                 None => builder.ins().iconst(ptr_ty, 0),
             };
+            let fn_addr = coerce_arg_to(builder, fn_addr, types::I64)?;
             let mut vals = Vec::with_capacity(5);
             for i in 1..=5 {
                 let v = match args.get(i) {
@@ -2010,7 +2015,7 @@ pub(super) fn lower_intrinsic_call_io_math(
                 module,
                 "gos_rt_go_spawn_call_6",
                 &[
-                    ptr_ty,
+                    types::I64,
                     types::I64,
                     types::I64,
                     types::I64,
@@ -2034,6 +2039,7 @@ pub(super) fn lower_intrinsic_call_io_math(
                 )?,
                 None => builder.ins().iconst(ptr_ty, 0),
             };
+            let fn_addr = coerce_arg_to(builder, fn_addr, types::I64)?;
             let mut vals = Vec::with_capacity(6);
             for i in 1..=6 {
                 let v = match args.get(i) {
@@ -2061,7 +2067,7 @@ pub(super) fn lower_intrinsic_call_io_math(
             let rt_fn = intrinsics.extern_fn(
                 module,
                 "gos_rt_go_spawn_call_4",
-                &[ptr_ty, types::I64, types::I64, types::I64, types::I64],
+                &[types::I64, types::I64, types::I64, types::I64, types::I64],
                 &[],
             )?;
             let fref = module.declare_func_in_func(rt_fn, builder.func);
@@ -2078,6 +2084,7 @@ pub(super) fn lower_intrinsic_call_io_math(
                 )?,
                 None => builder.ins().iconst(ptr_ty, 0),
             };
+            let fn_addr = coerce_arg_to(builder, fn_addr, types::I64)?;
             let a0 = match args.get(1) {
                 Some(a) => lower_operand(module, builder, locals, body, tcx, a, None, intrinsics)?,
                 None => builder.ins().iconst(types::I64, 0),

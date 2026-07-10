@@ -76,6 +76,7 @@
 use std::cell::RefCell;
 use std::collections::HashMap as StdHashMap;
 use std::io::Read as IoRead;
+use std::io::Write as IoWrite;
 use std::sync::Arc;
 
 use gossamer_ast::Ident;
@@ -110,6 +111,8 @@ pub(crate) fn install_fs_extras(globals: &mut Vec<(&'static str, Value)>) {
     install_module_pub(
         "fs",
         &[
+            ("open", builtin_fs_file_open),
+            ("create", builtin_fs_file_create),
             ("is_file", builtin_os_is_file),
             ("is_dir", builtin_os_is_dir),
             ("is_symlink", builtin_os_is_symlink),
@@ -127,6 +130,259 @@ pub(crate) fn install_fs_extras(globals: &mut Vec<(&'static str, Value)>) {
         let q = "__gos_fs_metadata_raw";
         globals.push((q, crate::builtins::builtin_pub(q, builtin_fs_metadata_raw)));
     }
+    let methods: &[(&str, BuiltinFnPub)] = &[
+        ("File::open", builtin_fs_file_open),
+        ("File::create", builtin_fs_file_create),
+        ("File::read", builtin_fs_file_read),
+        ("File::read_to_string", builtin_fs_file_read_to_string),
+        ("File::write", builtin_fs_file_write),
+        ("File::write_all", builtin_fs_file_write),
+        ("File::flush", builtin_fs_file_flush),
+        ("File::close", builtin_fs_file_close),
+        ("OpenOptions::new", builtin_fs_open_options_new),
+        ("OpenOptions::read", builtin_fs_open_options_read),
+        ("OpenOptions::write", builtin_fs_open_options_write),
+        ("OpenOptions::append", builtin_fs_open_options_append),
+        ("OpenOptions::truncate", builtin_fs_open_options_truncate),
+        ("OpenOptions::create", builtin_fs_open_options_create),
+        (
+            "OpenOptions::create_new",
+            builtin_fs_open_options_create_new,
+        ),
+        ("OpenOptions::open", builtin_fs_open_options_open),
+    ];
+    for (short, call) in methods {
+        let qualified: &'static str = Box::leak(format!("fs::{short}").into_boxed_str());
+        globals.push((qualified, crate::builtins::builtin_pub(qualified, *call)));
+        globals.push((*short, crate::builtins::builtin_pub(short, *call)));
+    }
+}
+
+#[derive(Default, Clone)]
+struct FsOpenOptionsState {
+    read: bool,
+    write: bool,
+    append: bool,
+    truncate: bool,
+    create: bool,
+    create_new: bool,
+}
+
+static NEXT_FS_HANDLE: GlobalReg<i64> =
+    GlobalReg::new(|| parking_lot::ReentrantMutex::new(RefCell::new(1)));
+static FS_FILE_REGISTRY: GlobalReg<StdHashMap<i64, Arc<parking_lot::Mutex<std::fs::File>>>> =
+    GlobalReg::new(|| parking_lot::ReentrantMutex::new(RefCell::new(StdHashMap::new())));
+static FS_OPEN_OPTIONS_REGISTRY: GlobalReg<
+    StdHashMap<i64, Arc<parking_lot::Mutex<FsOpenOptionsState>>>,
+> = GlobalReg::new(|| parking_lot::ReentrantMutex::new(RefCell::new(StdHashMap::new())));
+
+fn next_fs_handle() -> i64 {
+    NEXT_FS_HANDLE.with(|c| {
+        let mut v = c.borrow_mut();
+        let id = *v;
+        *v += 1;
+        id
+    })
+}
+
+fn insert_file_handle(file: std::fs::File) -> Value {
+    let id = next_fs_handle();
+    FS_FILE_REGISTRY.with(|r| {
+        r.borrow_mut()
+            .insert(id, Arc::new(parking_lot::Mutex::new(file)));
+    });
+    handle_struct("fs::File", id)
+}
+
+fn insert_open_options_handle(opts: FsOpenOptionsState) -> Value {
+    let id = next_fs_handle();
+    FS_OPEN_OPTIONS_REGISTRY.with(|r| {
+        r.borrow_mut()
+            .insert(id, Arc::new(parking_lot::Mutex::new(opts)));
+    });
+    handle_struct("fs::OpenOptions", id)
+}
+
+fn fetch_file_handle(id: i64) -> Option<Arc<parking_lot::Mutex<std::fs::File>>> {
+    FS_FILE_REGISTRY.with(|r| r.borrow().get(&id).cloned())
+}
+
+fn fetch_open_options_handle(id: i64) -> Option<Arc<parking_lot::Mutex<FsOpenOptionsState>>> {
+    FS_OPEN_OPTIONS_REGISTRY.with(|r| r.borrow().get(&id).cloned())
+}
+
+fn std_open_options(opts: &FsOpenOptionsState) -> std::fs::OpenOptions {
+    let mut out = std::fs::OpenOptions::new();
+    out.read(opts.read)
+        .write(opts.write)
+        .append(opts.append)
+        .truncate(opts.truncate)
+        .create(opts.create)
+        .create_new(opts.create_new);
+    out
+}
+
+pub(crate) fn builtin_fs_file_open(args: &[Value]) -> RuntimeResult<Value> {
+    let path = match arg_str_at(args, 0, "File::open", "path") {
+        Ok(s) => s,
+        Err(v) => return Ok(v),
+    };
+    match std::fs::File::open(path) {
+        Ok(file) => Ok(ok_variant(insert_file_handle(file))),
+        Err(e) => Ok(err_variant(e.to_string())),
+    }
+}
+
+pub(crate) fn builtin_fs_file_create(args: &[Value]) -> RuntimeResult<Value> {
+    let path = match arg_str_at(args, 0, "File::create", "path") {
+        Ok(s) => s,
+        Err(v) => return Ok(v),
+    };
+    match std::fs::File::create(path) {
+        Ok(file) => Ok(ok_variant(insert_file_handle(file))),
+        Err(e) => Ok(err_variant(e.to_string())),
+    }
+}
+
+pub(crate) fn builtin_fs_open_options_new(_args: &[Value]) -> RuntimeResult<Value> {
+    Ok(insert_open_options_handle(FsOpenOptionsState::default()))
+}
+
+fn fs_open_options_set(args: &[Value], field: fn(&mut FsOpenOptionsState) -> &mut bool) -> Value {
+    let Some(id) = args.first().and_then(handle_id) else {
+        return err_variant("OpenOptions: missing handle");
+    };
+    let enabled = matches!(args.get(1), Some(Value::Bool(true)));
+    let Some(opts) = fetch_open_options_handle(id) else {
+        return err_variant("OpenOptions: stale handle");
+    };
+    *field(&mut opts.lock()) = enabled;
+    handle_struct("fs::OpenOptions", id)
+}
+
+pub(crate) fn builtin_fs_open_options_read(args: &[Value]) -> RuntimeResult<Value> {
+    Ok(fs_open_options_set(args, |opts| &mut opts.read))
+}
+
+pub(crate) fn builtin_fs_open_options_write(args: &[Value]) -> RuntimeResult<Value> {
+    Ok(fs_open_options_set(args, |opts| &mut opts.write))
+}
+
+pub(crate) fn builtin_fs_open_options_append(args: &[Value]) -> RuntimeResult<Value> {
+    Ok(fs_open_options_set(args, |opts| &mut opts.append))
+}
+
+pub(crate) fn builtin_fs_open_options_truncate(args: &[Value]) -> RuntimeResult<Value> {
+    Ok(fs_open_options_set(args, |opts| &mut opts.truncate))
+}
+
+pub(crate) fn builtin_fs_open_options_create(args: &[Value]) -> RuntimeResult<Value> {
+    Ok(fs_open_options_set(args, |opts| &mut opts.create))
+}
+
+pub(crate) fn builtin_fs_open_options_create_new(args: &[Value]) -> RuntimeResult<Value> {
+    Ok(fs_open_options_set(args, |opts| &mut opts.create_new))
+}
+
+pub(crate) fn builtin_fs_open_options_open(args: &[Value]) -> RuntimeResult<Value> {
+    let Some(id) = args.first().and_then(handle_id) else {
+        return Ok(err_variant("OpenOptions::open: missing handle"));
+    };
+    let path = match arg_str_at(args, 1, "OpenOptions::open", "path") {
+        Ok(s) => s,
+        Err(v) => return Ok(v),
+    };
+    let Some(opts) = fetch_open_options_handle(id) else {
+        return Ok(err_variant("OpenOptions::open: stale handle"));
+    };
+    match std_open_options(&opts.lock()).open(path) {
+        Ok(file) => Ok(ok_variant(insert_file_handle(file))),
+        Err(e) => Ok(err_variant(e.to_string())),
+    }
+}
+
+pub(crate) fn builtin_fs_file_read(args: &[Value]) -> RuntimeResult<Value> {
+    let Some(id) = args.first().and_then(handle_id) else {
+        return Ok(err_variant("File::read: missing handle"));
+    };
+    let max = args
+        .get(1)
+        .and_then(value_to_int)
+        .unwrap_or(4096)
+        .clamp(1, 1 << 24);
+    let Some(file) = fetch_file_handle(id) else {
+        return Ok(err_variant("File::read: stale handle"));
+    };
+    let mut buf = vec![0u8; max as usize];
+    match file.lock().read(&mut buf) {
+        Ok(n) => {
+            buf.truncate(n);
+            Ok(ok_variant(Value::Array(Arc::new(
+                buf.into_iter().map(|b| Value::Int(i64::from(b))).collect(),
+            ))))
+        }
+        Err(e) => Ok(err_variant(e.to_string())),
+    }
+}
+
+pub(crate) fn builtin_fs_file_read_to_string(args: &[Value]) -> RuntimeResult<Value> {
+    let Some(id) = args.first().and_then(handle_id) else {
+        return Ok(err_variant("File::read_to_string: missing handle"));
+    };
+    let Some(file) = fetch_file_handle(id) else {
+        return Ok(err_variant("File::read_to_string: stale handle"));
+    };
+    let mut out = String::new();
+    match file.lock().read_to_string(&mut out) {
+        Ok(_) => Ok(ok_variant(Value::String(out.into()))),
+        Err(e) => Ok(err_variant(e.to_string())),
+    }
+}
+
+pub(crate) fn builtin_fs_file_write(args: &[Value]) -> RuntimeResult<Value> {
+    let Some(id) = args.first().and_then(handle_id) else {
+        return Ok(err_variant("File::write: missing handle"));
+    };
+    let bytes: Vec<u8> = match args.get(1) {
+        Some(Value::String(s)) => s.as_bytes().to_vec(),
+        Some(Value::Array(arr)) => arr
+            .iter()
+            .filter_map(|v| match v {
+                Value::Int(n) => u8::try_from(*n).ok(),
+                _ => None,
+            })
+            .collect(),
+        _ => return Ok(err_variant("File::write: expected string or byte array")),
+    };
+    let Some(file) = fetch_file_handle(id) else {
+        return Ok(err_variant("File::write: stale handle"));
+    };
+    match file.lock().write_all(&bytes) {
+        Ok(()) => Ok(ok_variant(Value::Int(bytes.len() as i64))),
+        Err(e) => Ok(err_variant(e.to_string())),
+    }
+}
+
+pub(crate) fn builtin_fs_file_flush(args: &[Value]) -> RuntimeResult<Value> {
+    let Some(id) = args.first().and_then(handle_id) else {
+        return Ok(err_variant("File::flush: missing handle"));
+    };
+    let Some(file) = fetch_file_handle(id) else {
+        return Ok(err_variant("File::flush: stale handle"));
+    };
+    match file.lock().flush() {
+        Ok(()) => Ok(ok_variant(Value::Unit)),
+        Err(e) => Ok(err_variant(e.to_string())),
+    }
+}
+
+pub(crate) fn builtin_fs_file_close(args: &[Value]) -> RuntimeResult<Value> {
+    if let Some(id) = args.first().and_then(handle_id) {
+        FS_FILE_REGISTRY.with(|r| {
+            r.borrow_mut().remove(&id);
+        });
+    }
+    Ok(Value::Unit)
 }
 
 pub(crate) fn builtin_fs_metadata_raw(args: &[Value]) -> RuntimeResult<Value> {
@@ -180,6 +436,81 @@ pub(crate) fn builtin_fs_metadata(args: &[Value]) -> RuntimeResult<Value> {
             )))
         }
         Err(e) => Ok(err_variant(format!("metadata: {e}"))),
+    }
+}
+
+#[cfg(test)]
+mod file_handle_tests {
+    use super::*;
+
+    fn ok_payload(value: Value) -> Value {
+        match value {
+            Value::Variant(inner) if inner.name.as_str() == "Ok" => inner
+                .fields
+                .first()
+                .cloned()
+                .expect("Ok payload should exist"),
+            other => panic!("expected Ok variant, got {other:?}"),
+        }
+    }
+
+    fn temp_path(name: &str) -> String {
+        let mut path = std::env::temp_dir();
+        path.push(format!(
+            "gossamer-interp-{name}-{}-{}.txt",
+            std::process::id(),
+            next_fs_handle()
+        ));
+        path.to_string_lossy().into_owned()
+    }
+
+    #[test]
+    fn file_handle_create_write_reopen_read_to_string() {
+        let path = temp_path("file-handle");
+        let created = ok_payload(
+            builtin_fs_file_create(&[Value::String(path.clone().into())]).expect("create"),
+        );
+        ok_payload(
+            builtin_fs_file_write(&[created.clone(), Value::String(SmolStr::from("hello file"))])
+                .expect("write"),
+        );
+        ok_payload(builtin_fs_file_flush(std::slice::from_ref(&created)).expect("flush"));
+        assert!(matches!(
+            builtin_fs_file_close(std::slice::from_ref(&created)).expect("close"),
+            Value::Unit
+        ));
+
+        let opened =
+            ok_payload(builtin_fs_file_open(&[Value::String(path.clone().into())]).expect("open"));
+        let read = ok_payload(
+            builtin_fs_file_read_to_string(std::slice::from_ref(&opened)).expect("read"),
+        );
+        assert!(matches!(read, Value::String(s) if s.as_str() == "hello file"));
+        let _ = builtin_fs_file_close(&[opened]);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn open_options_handle_opens_with_configured_flags() {
+        let path = temp_path("open-options");
+        let opts = builtin_fs_open_options_new(&[]).expect("new");
+        let opts = builtin_fs_open_options_write(&[opts, Value::Bool(true)]).expect("write");
+        let opts = builtin_fs_open_options_create(&[opts, Value::Bool(true)]).expect("create");
+        let opts = builtin_fs_open_options_truncate(&[opts, Value::Bool(true)]).expect("truncate");
+        let file = ok_payload(
+            builtin_fs_open_options_open(&[opts, Value::String(path.clone().into())])
+                .expect("open"),
+        );
+        ok_payload(
+            builtin_fs_file_write(&[file.clone(), Value::String(SmolStr::from("via opts"))])
+                .expect("write"),
+        );
+        let _ = builtin_fs_file_close(&[file]);
+        assert_eq!(
+            std::fs::read_to_string(&path).expect("read file"),
+            "via opts"
+        );
+        let _ = std::fs::remove_file(path);
     }
 }
 

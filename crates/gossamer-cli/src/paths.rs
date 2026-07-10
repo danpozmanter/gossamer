@@ -6,8 +6,10 @@
 use std::fs;
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 use anyhow::{Context, Result, anyhow};
+use gossamer_pkg::{Manifest, find_manifest};
 
 /// `true` when ANSI colour escapes should be written to stderr.
 /// Honours `NO_COLOR` and `CLICOLOR=0`; otherwise tests for a TTY.
@@ -397,18 +399,66 @@ pub(crate) fn resolve_gos_source(path: &PathBuf) -> PathBuf {
     path.clone()
 }
 
+/// Current-project filesystem context discovered from the process cwd.
+///
+/// Commands often need the nearest `project.toml` more than once during a
+/// single invocation (runner dispatch, source entry resolution, static binding
+/// setup). This memoizes only the manifest lookup and parse; source files and
+/// dependency bundles still read fresh from disk at their existing call sites.
+#[derive(Debug, Clone)]
+pub(crate) struct ProjectContext {
+    pub(crate) cwd: PathBuf,
+    pub(crate) manifest_path: Option<PathBuf>,
+    manifest: Option<std::result::Result<Manifest, String>>,
+}
+
+impl ProjectContext {
+    pub(crate) fn manifest_dir(&self) -> Option<PathBuf> {
+        self.manifest_path
+            .as_deref()
+            .and_then(Path::parent)
+            .map(Path::to_path_buf)
+    }
+
+    pub(crate) fn manifest_result(&self) -> Option<std::result::Result<&Manifest, &str>> {
+        self.manifest
+            .as_ref()
+            .map(|result| result.as_ref().map_err(String::as_str))
+    }
+}
+
+/// Returns the memoized current-project context, recomputing when cwd changes.
+pub(crate) fn project_context() -> ProjectContext {
+    static CACHE: Mutex<Option<ProjectContext>> = Mutex::new(None);
+
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let mut guard = CACHE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some(ctx) = guard.as_ref()
+        && ctx.cwd == cwd
+    {
+        return ctx.clone();
+    }
+
+    let manifest_path = find_manifest(&cwd);
+    let manifest = manifest_path.as_ref().and_then(|path| {
+        let text = fs::read_to_string(path).ok()?;
+        Some(Manifest::parse(&text).map_err(|err| format!("{}: {err}", path.display())))
+    });
+    let ctx = ProjectContext {
+        cwd,
+        manifest_path,
+        manifest,
+    };
+    *guard = Some(ctx.clone());
+    ctx
+}
+
 /// Walks up from the cwd looking for the nearest `project.toml`.
 /// Returns the directory that contains it (the project root).
 pub(crate) fn find_project_root() -> Option<PathBuf> {
-    let cwd = std::env::current_dir().ok()?;
-    let mut cursor: &Path = &cwd;
-    loop {
-        if cursor.join("project.toml").is_file() {
-            return Some(cursor.to_path_buf());
-        }
-        let parent = cursor.parent()?;
-        cursor = parent;
-    }
+    project_context().manifest_dir()
 }
 
 /// Default source root for whole-project commands (`check`, `lint`,

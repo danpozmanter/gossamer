@@ -179,6 +179,46 @@ fn main() {
 }
 
 #[test]
+fn core_method_contract_mutators_work_in_all_tiers() {
+    let src = r#"
+fn main() {
+    let mut xs: [i64] = [1, 2]
+    xs.extend([3, 4])
+    println!("len1={}", xs.len())
+    xs.truncate(3)
+    println!("len2={}", xs.len())
+    xs.clear()
+    println!("len3={}", xs.len())
+
+    let mut ys: [i64] = [5]
+    ys.extend_from_slice([6, 7])
+    println!("y2={}", ys[2])
+
+    let mut words: [String] = ["a"].to_vec()
+    let more: [String] = ["b"].to_vec()
+    words.extend(more)
+    println!("word={}", words[1])
+
+    let mut s = String::from("hello")
+    s.truncate(3)
+    println!("s={}", s)
+    s.clear()
+    println!("slen={}", s.len())
+
+    let ok = String::from_utf8([104, 105])
+    println!("utf8={}", ok.unwrap())
+    let bad = String::from_utf8([255])
+    println!("bad={}", bad.is_err())
+}
+"#;
+    assert_three_tier_stdout(
+        "core_method_contract_mutators",
+        src,
+        "len1=4\nlen2=3\nlen3=0\ny2=7\nword=b\ns=hel\nslen=0\nutf8=hi\nbad=true",
+    );
+}
+
+#[test]
 fn vec_push_string_then_index_works_in_all_tiers() {
     // String elements take the same dispatch - the runtime's
     // `gos_rt_vec_push` writes the i64-shaped pointer through

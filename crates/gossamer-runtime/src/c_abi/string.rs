@@ -32,7 +32,7 @@ use super::*;
 // ABI; users that want O(1) length should use the GosStr header
 // helpers (future). For L2 the single-owner story is enough.
 
-unsafe fn c_str_len(s: *const c_char) -> usize {
+pub(crate) unsafe fn c_str_len(s: *const c_char) -> usize {
     if s.is_null() {
         return 0;
     }
@@ -103,7 +103,7 @@ const STR_REGION_TAG: u8 = 0xAA;
 /// `ptr[-5..-1]` and `ptr[-1]` on a foreign pointer is the same probabilistic
 /// prefix probe `gos_rt_str_free` already relies on.
 #[inline]
-unsafe fn str_header_len(s: *const c_char) -> Option<usize> {
+pub(crate) unsafe fn str_header_len(s: *const c_char) -> Option<usize> {
     if s.is_null() {
         return Some(0);
     }
@@ -183,7 +183,30 @@ pub(crate) fn boxed_bytes(src: &[u8]) -> Box<[u8]> {
 /// Returns a pointer to `content[0]`; the 9-byte header lives just before it.
 fn alloc_growable(parts: &[&[u8]], cap: usize) -> *mut c_char {
     let content_len: usize = parts.iter().map(|p| p.len()).sum();
-    debug_assert!(cap >= content_len, "alloc_growable: cap < content length");
+    alloc_growable_with_fill(content_len, cap, |out| {
+        let mut off = 0;
+        for p in parts {
+            // SAFETY: `alloc_growable_with_fill` passes `cap` writable content
+            // bytes and `cap >= content_len`; this loop writes each input part
+            // exactly once into the first `content_len` bytes.
+            unsafe {
+                copy_small_bytes(p.as_ptr(), out.add(off), p.len());
+            }
+            off += p.len();
+        }
+    })
+}
+
+/// Allocates a growable runtime string and lets `fill` initialise exactly the
+/// first `content_len` bytes of the content region.
+fn alloc_growable_with_fill<F>(content_len: usize, cap: usize, fill: F) -> *mut c_char
+where
+    F: FnOnce(*mut u8),
+{
+    debug_assert!(
+        cap >= content_len,
+        "alloc_growable_with_fill: cap < content length"
+    );
     // The builder header stores length and capacity as `u32` (offsets
     // `ptr[-5]` / `ptr[-9]`). A value past `u32::MAX` cannot be represented,
     // so refuse it here rather than truncate and later index the buffer with a
@@ -220,21 +243,20 @@ fn alloc_growable(parts: &[&[u8]], cap: usize) -> *mut c_char {
     } else {
         (region_base, STR_REGION_TAG, false)
     };
-    // SAFETY: `base` points to `total` writable bytes.
+    // SAFETY: `base` points to `total` writable bytes. Header fields and the
+    // trailing zero region are initialised here; `fill` initialises the content
+    // prefix promised by its caller.
     unsafe {
         std::ptr::copy_nonoverlapping(1u32.to_le_bytes().as_ptr(), base, 4);
         std::ptr::copy_nonoverlapping((cap as u32).to_le_bytes().as_ptr(), base.add(4), 4);
         std::ptr::copy_nonoverlapping((content_len as u32).to_le_bytes().as_ptr(), base.add(8), 4);
         *base.add(12) = tag;
-        let mut off = 13;
-        for p in parts {
-            copy_small_bytes(p.as_ptr(), base.add(off), p.len());
-            off += p.len();
-        }
+        let content = base.add(13);
+        fill(content);
         if zero_tail {
             // Zero the spare capacity and NUL terminator (`cap - content_len +
             // 1` bytes); a no-spare string writes the single trailing NUL.
-            std::ptr::write_bytes(base.add(off), 0, total - off);
+            std::ptr::write_bytes(content.add(content_len), 0, cap - content_len + 1);
         }
         // Region-allocated strings are bulk-freed at
         // `arena_pop` and intentionally skipped by `gos_rt_str_free`, so they
@@ -244,7 +266,7 @@ fn alloc_growable(parts: &[&[u8]], cap: usize) -> *mut c_char {
         if tag != STR_REGION_TAG {
             crate::c_abi::ledger::str_inc();
         }
-        base.add(13).cast::<c_char>()
+        content.cast::<c_char>()
     }
 }
 
@@ -399,6 +421,27 @@ pub fn alloc_cstring_from_slices(parts: &[&[u8]]) -> *mut c_char {
     alloc_growable(parts, total)
 }
 
+/// Allocate one runtime string and fill it with ASCII-uppercase bytes from
+/// `src`. The caller has already proven `src.is_ascii()`, so Unicode
+/// expansion never applies and the output length equals the input length.
+fn alloc_ascii_upper_cstring(src: &[u8]) -> *mut c_char {
+    let len = src.len();
+    alloc_growable_with_fill(len, len, |out| {
+        for (i, &b) in src.iter().enumerate() {
+            let upper = if b.is_ascii_lowercase() {
+                b - (b'a' - b'A')
+            } else {
+                b
+            };
+            // SAFETY: `alloc_growable_with_fill` passes `len` writable content
+            // bytes and this loop writes each byte exactly once.
+            unsafe {
+                *out.add(i) = upper;
+            }
+        }
+    })
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_str_len(s: *const c_char) -> i64 {
     ffi_entry!(-1, {
@@ -412,6 +455,64 @@ pub unsafe extern "C" fn gos_rt_str_len(s: *const c_char) -> i64 {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_str_is_empty(s: *const c_char) -> bool {
     ffi_entry!(false, { unsafe { gos_rt_str_len(s) == 0 } })
+}
+
+/// `s.clear()` for compiled String method lowering. Strings are immutable at
+/// the ABI boundary, so this returns a fresh empty string for caller writeback.
+#[unsafe(no_mangle)]
+pub extern "C" fn gos_rt_str_clear() -> *mut c_char {
+    alloc_cstring(b"")
+}
+
+/// `s.truncate(n)` for compiled String method lowering. The public method takes
+/// a byte length; if `n` lands inside a UTF-8 scalar, truncate to the preceding
+/// valid boundary so the returned Gossamer String remains well-formed.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_str_truncate(s: *const c_char, n: i64) -> *mut c_char {
+    ffi_entry!(std::ptr::null_mut(), {
+        if s.is_null() || n <= 0 {
+            return alloc_cstring(b"");
+        }
+        let len = unsafe { str_header_len(s) }.unwrap_or_else(|| unsafe { c_str_len(s) });
+        let cap = (n as usize).min(len);
+        let bytes = unsafe { std::slice::from_raw_parts(s.cast::<u8>(), len) };
+        let end = match std::str::from_utf8(bytes) {
+            Ok(text) => text
+                .char_indices()
+                .map(|(idx, _)| idx)
+                .chain(std::iter::once(text.len()))
+                .take_while(|idx| *idx <= cap)
+                .last()
+                .unwrap_or(0),
+            Err(_) => cap,
+        };
+        alloc_cstring_from_slices(&[&bytes[..end]])
+    })
+}
+
+/// `String::from_utf8(bytes) -> Result<String, errors::Error>`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_string_from_utf8(bytes: *const GosVec) -> i128 {
+    ffi_entry!(0i128, {
+        if bytes.is_null() {
+            return unsafe { gos_rt_result_new(0, alloc_cstring(b"") as i64) };
+        }
+        let vec = unsafe { &*bytes };
+        let mut out = Vec::with_capacity(vec.len.max(0) as usize);
+        for idx in 0..vec.len.max(0) {
+            let b = unsafe { crate::c_abi::vec::vec_elem_load_i64(vec, idx) };
+            out.push(b as u8);
+        }
+        match std::str::from_utf8(&out) {
+            Ok(_) => unsafe { gos_rt_result_new(0, alloc_cstring_from_slices(&[&out]) as i64) },
+            Err(e) => {
+                let msg = format!("String::from_utf8: {e}");
+                let cs = std::ffi::CString::new(msg).unwrap_or_default();
+                let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+                unsafe { gos_rt_result_new(1, err as i64) }
+            }
+        }
+    })
 }
 
 /// Generic length-zero check used by `is_empty` for any
@@ -675,12 +776,12 @@ pub unsafe extern "C" fn gos_rt_str_concat(a: *const c_char, b: *const c_char) -
         let a_bytes: &[u8] = if a_empty {
             &[]
         } else {
-            unsafe { CStr::from_ptr(a).to_bytes() }
+            unsafe { gos_str_key_bytes(a) }
         };
         let b_bytes: &[u8] = if b_empty {
             &[]
         } else {
-            unsafe { CStr::from_ptr(b).to_bytes() }
+            unsafe { gos_str_key_bytes(b) }
         };
         alloc_cstring_from_slices(&[a_bytes, b_bytes])
     })
@@ -721,12 +822,12 @@ pub unsafe extern "C" fn gos_rt_str_concat_drop_a(
             let a_bytes: &[u8] = if a_empty {
                 &[]
             } else {
-                unsafe { CStr::from_ptr(a).to_bytes() }
+                unsafe { gos_str_key_bytes(a) }
             };
             return alloc_growable(&[a_bytes], 64.max(a_bytes.len()));
         }
 
-        let b_bytes: &[u8] = unsafe { CStr::from_ptr(b).to_bytes() };
+        let b_bytes: &[u8] = unsafe { gos_str_key_bytes(b) };
         let len_b = b_bytes.len();
 
         // Fast path: a is a growable string (heap or region) - try in-place
@@ -775,7 +876,7 @@ pub unsafe extern "C" fn gos_rt_str_concat_drop_a(
         let a_bytes: &[u8] = if a_empty {
             &[]
         } else {
-            unsafe { CStr::from_ptr(a).to_bytes() }
+            unsafe { gos_str_key_bytes(a) }
         };
         let new_len = a_bytes.len() + len_b;
         let new_cap = (new_len * 2).max(64);
@@ -846,7 +947,7 @@ pub unsafe extern "C" fn gos_rt_str_append_bytes(
     let a_bytes: &[u8] = if a_empty {
         &[]
     } else {
-        unsafe { CStr::from_ptr(acc).to_bytes() }
+        unsafe { gos_str_key_bytes(acc) }
     };
     let result = alloc_growable(&[a_bytes, b_bytes], ((a_bytes.len() + len_b) * 2).max(64));
     if !acc.is_null() {
@@ -866,13 +967,11 @@ pub unsafe extern "C" fn gos_rt_str_append_bytes(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gos_rt_str_append_i64(acc: *const c_char, n: i64) -> *mut c_char {
     // Bare + byte-counted: see gos_rt_str_concat_drop_a / gos_rt_str_append_bytes.
-    use std::io::{Cursor, Write};
-    // 20 digits + sign fit in 21 bytes.
-    let mut buf = [0u8; 24];
-    let mut cur = Cursor::new(&mut buf[..]);
-    let _ = write!(cur, "{n}");
-    let len = cur.position() as i64;
-    unsafe { gos_rt_str_append_bytes(acc, buf.as_ptr(), len) }
+    // `itoa` formats into a stack buffer without the generic `fmt::Write`
+    // machinery; this is the hot fused path for `s += format!("{}", i)`.
+    let mut buf = itoa::Buffer::new();
+    let digits = buf.format(n);
+    unsafe { gos_rt_str_append_bytes(acc, digits.as_ptr(), digits.len() as i64) }
 }
 
 /// Appends the decimal form of `x` straight onto growable string `acc`.
@@ -945,13 +1044,7 @@ pub unsafe extern "C" fn gos_rt_str_to_upper(s: *const c_char) -> *mut c_char {
             unsafe { CStr::from_ptr(s).to_bytes() }
         };
         if bytes.is_ascii() {
-            let mut out = boxed_bytes(bytes).into_vec();
-            for b in &mut out {
-                if b'a' <= *b && *b <= b'z' {
-                    *b -= b'a' - b'A';
-                }
-            }
-            return alloc_cstring(&out);
+            return alloc_ascii_upper_cstring(bytes);
         }
         let st = std::str::from_utf8(bytes).unwrap_or("");
         alloc_cstring(st.to_uppercase().as_bytes())

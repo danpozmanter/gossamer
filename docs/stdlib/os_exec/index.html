@@ -627,6 +627,8 @@
       
         
       
+        
+      
     
     
     
@@ -724,6 +726,34 @@
     
   
     Prelude (no imports)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../core_method_contract/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Core method contract
   
 
     
@@ -1355,6 +1385,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -1443,6 +1477,62 @@
     
   
     Runtime internals
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/memory_model/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Memory model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/goroutine_stacks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Goroutine stack model
   
 
     
@@ -1640,26 +1730,6 @@
 </thead>
 <tbody>
 <tr>
-<td><code>Command</code></td>
-<td>type</td>
-<td>Builder for spawning a child process.</td>
-</tr>
-<tr>
-<td><code>Stdio</code></td>
-<td>type</td>
-<td>Inherit / Piped / Null wiring for stdin/stdout/stderr.</td>
-</tr>
-<tr>
-<td><code>Output</code></td>
-<td>type</td>
-<td>Captured stdout, stderr, and exit status from a finished child.</td>
-</tr>
-<tr>
-<td><code>ExitStatus</code></td>
-<td>type</td>
-<td>Numeric exit code (None when killed by signal).</td>
-</tr>
-<tr>
 <td><code>Child</code></td>
 <td>type</td>
 <td>Handle to a still-running child supporting wait / kill.</td>
@@ -1712,7 +1782,7 @@
 <tr>
 <td><code>pipeline_run</code></td>
 <td>fn</td>
-<td>Run a Vec<String> of shell-tokenised commands as a stdout-to-stdin pipeline; returns Result<Output, errors::Error>.</td>
+<td>Run a Vec<String> of shell-tokenised commands as a stdout-to-stdin pipeline.</td>
 </tr>
 </tbody>
 </table>

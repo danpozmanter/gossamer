@@ -627,6 +627,8 @@
       
         
       
+        
+      
     
     
     
@@ -724,6 +726,34 @@
     
   
     Prelude (no imports)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../core_method_contract/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Core method contract
   
 
     
@@ -1355,6 +1385,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -1443,6 +1477,62 @@
     
   
     Runtime internals
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/memory_model/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Memory model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/goroutine_stacks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Goroutine stack model
   
 
     
@@ -1650,26 +1740,6 @@
 <td>Returns (dir, file) for the supplied path.</td>
 </tr>
 <tr>
-<td><code>base</code></td>
-<td>fn</td>
-<td>Final path segment.</td>
-</tr>
-<tr>
-<td><code>dir</code></td>
-<td>fn</td>
-<td>Directory portion.</td>
-</tr>
-<tr>
-<td><code>ext</code></td>
-<td>fn</td>
-<td>Dotted extension, if any.</td>
-</tr>
-<tr>
-<td><code>clean</code></td>
-<td>fn</td>
-<td>Collapses <code>.</code>, <code>..</code>, and duplicate separators.</td>
-</tr>
-<tr>
 <td><code>parent</code></td>
 <td>fn</td>
 <td>Parent directory, or None at the root.</td>
@@ -1680,7 +1750,7 @@
 <td>Final path component, or None.</td>
 </tr>
 <tr>
-<td><code>stem</code></td>
+<td><code>file_stem</code></td>
 <td>fn</td>
 <td>File name without its extension.</td>
 </tr>
@@ -1697,10 +1767,10 @@
 <tr>
 <td><code>normalize</code></td>
 <td>fn</td>
-<td>Lexically normalizes the path (alias of clean).</td>
+<td>Lexically normalizes the path.</td>
 </tr>
 <tr>
-<td><code>has_prefix</code></td>
+<td><code>starts_with</code></td>
 <td>fn</td>
 <td>Reports whether the path begins with a prefix component-wise.</td>
 </tr>

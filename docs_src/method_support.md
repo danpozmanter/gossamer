@@ -15,7 +15,18 @@ gaps are one-line additions to the dispatch table.
 
 | Method | Returns | Notes |
 |---|---|---|
+| `String::new()` | `String` | Associated function; empty owned string. |
+| `String::with_capacity(n)` | `String` | Associated function; accepts a capacity hint, currently advisory for VM strings. |
+| `String::from(value)` | `String` | Associated function; identity for strings, display conversion for scalars. |
+| `String::from_utf8(bytes)` | `Result<String, errors::Error>` | Associated function; decodes a byte vector, returning `Err` for invalid UTF-8. |
 | `s.len()` | `i64` | Byte length, not codepoint count. Use `utf8::rune_count` for code points. |
+| `s.is_empty()` | `bool` | |
+| `s.clear()` | `()` | Replaces the string with `""` through mutating-method writeback. |
+| `s.truncate(n)` | `()` | Keeps at most `n` bytes, clamped to a valid UTF-8 boundary. |
+| `s.push(ch)` / `s.push_char(ch)` | `()` | Appends a Unicode scalar through mutating-method writeback. |
+| `s.push_byte(b)` | `()` | Appends the byte as the matching Unicode scalar. |
+| `s.push_str(t)` | `()` | Appends string contents through mutating-method writeback. |
+| `s.chars()` | `[char]` | Unicode scalar values. |
 | `s.trim()` | `String` | ASCII whitespace strip. |
 | `s.contains(needle)` | `bool` | Substring search. |
 | `s.starts_with(prefix)` | `bool` | |
@@ -43,9 +54,15 @@ sequence directly, so every method below chains off a range too:
 
 | Method | Returns | Notes |
 |---|---|---|
+| `Vec::new()` | `[T]` | Associated function; empty vector. |
+| `Vec::with_capacity(n)` | `[T]` | Associated function; preallocates in compiled tiers, accepted as an advisory hint in the VM. |
 | `v.push(item)` | `()` | Amortised O(1). |
 | `v.pop()` | `Option<T>` | |
+| `v.clear()` | `()` | Removes all elements. |
+| `v.truncate(n)` | `()` | Keeps the first `n` elements, clamping negative lengths to `0`. |
+| `v.extend(xs)` / `v.extend_from_slice(xs)` | `()` | Appends elements from another vector or inline array with matching element layout. |
 | `v.len()` | `i64` | |
+| `v.is_empty()` | `bool` | |
 | `v.iter()` | `Iter<T>` | Lazy iterator. |
 | `v.filter(pred)` | `[T]` | Elements where `pred` holds. |
 | `v.map(f)` | `[U]` | Transform every element. |
@@ -60,6 +77,7 @@ sequence directly, so every method below chains off a range too:
 | `v.step_by(n)` | `[T]` | Every `n`-th element, starting at index 0. |
 | `v.join(sep)` | `String` | Scalar / `String` elements joined with `sep`. |
 | `v.first()` / `v.last()` | `Option<T>` | |
+| `v.insert(i, item)` / `v.remove(i)` | `Result<_, errors::Error>` | Bounds-checked mutation helpers. |
 | `v.rev()` | `[T]` | Non-mutating; `v.reverse()` is in-place. |
 | `v.contains(&x)` | `bool` | `v.index_of(&x)` returns `Option<i64>`, `v.count_of(&x)` the tally. |
 | `v.sort()` / `v.sort_by(cmp)` / `v.sort_by_key(f)` | `()` | In-place; `Reverse(k)` keys give descending order. |

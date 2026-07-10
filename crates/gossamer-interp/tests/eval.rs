@@ -456,7 +456,7 @@ fn main() {
 fn channels_deliver_sent_values_in_fifo_order() {
     let source = r#"
 fn main() {
-    let (tx, rx) = channel::new()
+    let (tx, rx) = channel::unbounded()
     tx.send(1i64)
     tx.send(2i64)
     tx.send(3i64)
@@ -662,7 +662,7 @@ fn run() -> Result<i64, String> {
 fn select_picks_ready_channel_over_default() {
     let source = r#"
 fn main() {
-    let (tx, rx) = channel::new()
+    let (tx, rx) = channel::unbounded()
     tx.send(7i64)
     select {
         v = rx.recv() => println("recv"),
@@ -693,8 +693,8 @@ fn main() {
 fn select_dispatches_to_second_ready_arm_when_first_empty() {
     let source = r#"
 fn main() {
-    let (tx_a, rx_a) = channel::new()
-    let (tx_b, rx_b) = channel::new()
+    let (tx_a, rx_a) = channel::unbounded()
+    let (tx_b, rx_b) = channel::unbounded()
     tx_b.send(11i64)
     select {
         v = rx_a.recv() => println("a"),

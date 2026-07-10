@@ -252,8 +252,9 @@ select {
 M:N scheduler. Blocking primitives (channel ops, mutex contention,
 `time::sleep`, network reads, filesystem syscalls) park the
 goroutine, freeing the worker thread to run other goroutines.
-Channels are typed and buffered (created with `channel()` - there is no
-capacity argument); `select` multiplexes receives.
+Channels are typed: `channel()` / `channel(0)` is unbuffered,
+`channel(n)` is bounded, and `channel::unbounded()` is the explicit
+queue form. `select` multiplexes sends and receives.
 
 Scheduling is cooperative with watchdog-assisted preemption: a
 goroutine yields at safepoints (every park point above, plus

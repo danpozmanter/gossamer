@@ -15,10 +15,89 @@
 #![allow(unused_unsafe)]
 #![allow(clippy::wildcard_imports)]
 
+use std::collections::HashMap;
 use std::ffi::CStr;
+use std::io::{Read, Write};
 use std::os::raw::c_char;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicI64, Ordering};
 
 use super::*;
+use parking_lot::Mutex;
+
+#[derive(Default)]
+#[allow(clippy::struct_excessive_bools)]
+struct GosOpenOptions {
+    read: bool,
+    write: bool,
+    append: bool,
+    truncate: bool,
+    create: bool,
+    create_new: bool,
+}
+
+static FILE_HANDLES: Mutex<Option<HashMap<i64, Arc<Mutex<std::fs::File>>>>> = Mutex::new(None);
+static OPEN_OPTIONS_HANDLES: Mutex<Option<HashMap<i64, Arc<Mutex<GosOpenOptions>>>>> =
+    Mutex::new(None);
+static NEXT_FS_HANDLE: AtomicI64 = AtomicI64::new(1);
+
+fn next_fs_handle() -> i64 {
+    NEXT_FS_HANDLE.fetch_add(1, Ordering::Relaxed)
+}
+
+fn insert_file(file: std::fs::File) -> i64 {
+    let h = next_fs_handle();
+    FILE_HANDLES
+        .lock()
+        .get_or_insert_with(HashMap::new)
+        .insert(h, Arc::new(Mutex::new(file)));
+    h
+}
+
+fn file_clone(h: i64) -> Option<Arc<Mutex<std::fs::File>>> {
+    FILE_HANDLES
+        .lock()
+        .as_ref()
+        .and_then(|m| m.get(&h).cloned())
+}
+
+fn insert_open_options(opts: GosOpenOptions) -> i64 {
+    let h = next_fs_handle();
+    OPEN_OPTIONS_HANDLES
+        .lock()
+        .get_or_insert_with(HashMap::new)
+        .insert(h, Arc::new(Mutex::new(opts)));
+    h
+}
+
+fn open_options_clone(h: i64) -> Option<Arc<Mutex<GosOpenOptions>>> {
+    OPEN_OPTIONS_HANDLES
+        .lock()
+        .as_ref()
+        .and_then(|m| m.get(&h).cloned())
+}
+
+fn apply_open_options(opts: &GosOpenOptions) -> std::fs::OpenOptions {
+    let mut out = std::fs::OpenOptions::new();
+    out.read(opts.read)
+        .write(opts.write)
+        .append(opts.append)
+        .truncate(opts.truncate)
+        .create(opts.create)
+        .create_new(opts.create_new);
+    out
+}
+
+fn fs_err(msg: &str) -> i128 {
+    let cs = std::ffi::CString::new(msg).unwrap_or_default();
+    let err = unsafe { gos_rt_error_new(cs.as_ptr()) };
+    unsafe { gos_rt_result_new(1, err as i64) }
+}
+
+fn fs_io_err(err: &std::io::Error, context: &str) -> i128 {
+    let msg = classify_io_error(err, context);
+    fs_err(&msg)
+}
 
 // ---------------------------------------------------------------
 // fs / path helpers - read_to_string, write, create_dir_all,
@@ -125,6 +204,157 @@ fn classify_io_error(err: &std::io::Error, context: &str) -> String {
         ErrorKind::PermissionDenied => format!("permission denied: {context}"),
         _ => format!("io: {context}: {err}"),
     }
+}
+
+/// `fs::File::open(path) -> Result<File, Error>`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_fs_file_open(path: *const c_char) -> i128 {
+    ffi_entry!(0i128, {
+        if path.is_null() {
+            return fs_err("File::open: null path");
+        }
+        let p = unsafe { CStr::from_ptr(path).to_string_lossy().into_owned() };
+        match std::fs::File::open(&p) {
+            Ok(file) => unsafe { gos_rt_result_new(0, insert_file(file)) },
+            Err(e) => fs_io_err(&e, &p),
+        }
+    })
+}
+
+/// `fs::File::create(path) -> Result<File, Error>`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_fs_file_create(path: *const c_char) -> i128 {
+    ffi_entry!(0i128, {
+        if path.is_null() {
+            return fs_err("File::create: null path");
+        }
+        let p = unsafe { CStr::from_ptr(path).to_string_lossy().into_owned() };
+        match std::fs::File::create(&p) {
+            Ok(file) => unsafe { gos_rt_result_new(0, insert_file(file)) },
+            Err(e) => fs_io_err(&e, &p),
+        }
+    })
+}
+
+/// `fs::OpenOptions::new() -> OpenOptions`.
+#[unsafe(no_mangle)]
+pub extern "C" fn gos_rt_fs_open_options_new() -> i64 {
+    insert_open_options(GosOpenOptions::default())
+}
+
+macro_rules! open_option_setter {
+    ($name:ident, $field:ident) => {
+        #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn $name(h: i64, enabled: i32) -> i64 {
+            ffi_entry!(h, {
+                if let Some(opts) = open_options_clone(h) {
+                    opts.lock().$field = enabled != 0;
+                }
+                h
+            })
+        }
+    };
+}
+
+open_option_setter!(gos_rt_fs_open_options_read, read);
+open_option_setter!(gos_rt_fs_open_options_write, write);
+open_option_setter!(gos_rt_fs_open_options_append, append);
+open_option_setter!(gos_rt_fs_open_options_truncate, truncate);
+open_option_setter!(gos_rt_fs_open_options_create, create);
+open_option_setter!(gos_rt_fs_open_options_create_new, create_new);
+
+/// `fs::OpenOptions::open(path) -> Result<File, Error>`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_fs_open_options_open(h: i64, path: *const c_char) -> i128 {
+    ffi_entry!(0i128, {
+        if path.is_null() {
+            return fs_err("OpenOptions::open: null path");
+        }
+        let Some(opts) = open_options_clone(h) else {
+            return fs_err("OpenOptions::open: stale handle");
+        };
+        let p = unsafe { CStr::from_ptr(path).to_string_lossy().into_owned() };
+        match apply_open_options(&opts.lock()).open(&p) {
+            Ok(file) => unsafe { gos_rt_result_new(0, insert_file(file)) },
+            Err(e) => fs_io_err(&e, &p),
+        }
+    })
+}
+
+/// `fs::File::read(max) -> Result<Vec<u8>, Error>`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_fs_file_read(h: i64, max: i64) -> i128 {
+    ffi_entry!(0i128, {
+        let Some(file) = file_clone(h) else {
+            return fs_err("File::read: stale handle");
+        };
+        let cap = max.clamp(1, 1 << 24) as usize;
+        let mut buf = vec![0u8; cap];
+        match file.lock().read(&mut buf) {
+            Ok(n) => {
+                buf.truncate(n);
+                unsafe { gos_rt_result_new(0, super::encoding::bytes_to_gosvec(&buf) as i64) }
+            }
+            Err(e) => fs_io_err(&e, "File::read"),
+        }
+    })
+}
+
+/// `fs::File::read_to_string() -> Result<String, Error>`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_fs_file_read_to_string(h: i64) -> i128 {
+    ffi_entry!(0i128, {
+        let Some(file) = file_clone(h) else {
+            return fs_err("File::read_to_string: stale handle");
+        };
+        let mut text = String::new();
+        match file.lock().read_to_string(&mut text) {
+            Ok(_) => unsafe { gos_rt_result_new(0, alloc_cstring(text.as_bytes()) as i64) },
+            Err(e) => fs_io_err(&e, "File::read_to_string"),
+        }
+    })
+}
+
+/// `fs::File::write(data: Vec<u8>) -> Result<i64, Error>`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_fs_file_write(
+    h: i64,
+    data: *const crate::c_abi::vec::GosVec,
+) -> i128 {
+    ffi_entry!(0i128, {
+        let Some(file) = file_clone(h) else {
+            return fs_err("File::write: stale handle");
+        };
+        let bytes = unsafe { super::encoding::gosvec_u8(data) };
+        match file.lock().write_all(&bytes) {
+            Ok(()) => unsafe { gos_rt_result_new(0, bytes.len() as i64) },
+            Err(e) => fs_io_err(&e, "File::write"),
+        }
+    })
+}
+
+/// `fs::File::flush() -> Result<(), Error>`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_fs_file_flush(h: i64) -> i128 {
+    ffi_entry!(0i128, {
+        let Some(file) = file_clone(h) else {
+            return fs_err("File::flush: stale handle");
+        };
+        match file.lock().flush() {
+            Ok(()) => unsafe { gos_rt_result_new(0, 0) },
+            Err(e) => fs_io_err(&e, "File::flush"),
+        }
+    })
+}
+
+/// `fs::File::close()`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_rt_fs_file_close(h: i64) {
+    ffi_entry!((), {
+        if let Some(files) = FILE_HANDLES.lock().as_mut() {
+            files.remove(&h);
+        }
+    });
 }
 
 /// `os::write_file(path, contents) -> Result<(), IoError>` - Result

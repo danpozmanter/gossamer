@@ -8,6 +8,10 @@ Filesystem reading, writing, and traversal (Rust std::fs shape).
 
 | Name | Kind | Description |
 |---|---|---|
+| `File` | type | Streaming file handle; supports read, read_to_string, write, flush, and close. |
+| `OpenOptions` | type | Builder for opening files with read/write/append/create/truncate flags. |
+| `open` | fn | Opens a file for streaming reads. |
+| `create` | fn | Creates or truncates a file and returns a streaming file handle. |
 | `read` | fn | Reads an entire file into memory as bytes. |
 | `read_to_string` | fn | Reads an entire file into memory as UTF-8 text. |
 | `write` | fn | Writes bytes to a file, creating or truncating it. |

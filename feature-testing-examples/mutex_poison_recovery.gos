@@ -32,7 +32,7 @@ fn parallel_histogram(data: [[i64]], tx: channel::Sender<i64>) {
 
 fn main() {
     // Channel-based counter: no shared mutable state
-    let (tx, rx) = channel()
+    let (tx, rx) = channel::unbounded()
     go increment_via_channel(tx, 50)
     go increment_via_channel(tx, 50)
     time::sleep(40)
@@ -46,7 +46,7 @@ fn main() {
     println!("expected 100: {}", total == 100)
 
     // Histogram via channel fan-out
-    let (htx, hrx) = channel()
+    let (htx, hrx) = channel::unbounded()
     go parallel_histogram([[1, 2, 3], [4, 5, 6], [7, 8, 9]], htx)
     time::sleep(80)
     htx.close()
@@ -82,7 +82,7 @@ mod tests {
 
     #[test]
     fn channel_counter_reaches_target() {
-        let (tx, rx) = channel()
+        let (tx, rx) = channel::unbounded()
         go super::increment_via_channel(tx, 20)
         time::sleep(20)
         tx.close()
@@ -95,7 +95,7 @@ mod tests {
 
     #[test]
     fn two_goroutines_sum_correctly() {
-        let (tx, rx) = channel()
+        let (tx, rx) = channel::unbounded()
         go super::increment_via_channel(tx, 30)
         go super::increment_via_channel(tx, 30)
         time::sleep(30)

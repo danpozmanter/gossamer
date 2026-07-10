@@ -335,6 +335,42 @@ mod tests {
     }
 
     #[test]
+    fn detector_treats_channel_handoff_as_happens_before() {
+        let _g = TEST_GUARD.lock();
+        enable();
+        let _ = drain_races();
+        record_access(140, 0xE001, true);
+        // Channel send/receive records sender -> receiver.
+        record_sync(140, 141);
+        record_access(141, 0xE001, false);
+        assert!(drain_races().is_empty());
+    }
+
+    #[test]
+    fn detector_treats_mutex_unlock_lock_as_happens_before() {
+        let _g = TEST_GUARD.lock();
+        enable();
+        let _ = drain_races();
+        record_access(142, 0xE002, true);
+        // Mutex unlock publishes the owner to the next locker.
+        record_sync(142, 143);
+        record_access(143, 0xE002, true);
+        assert!(drain_races().is_empty());
+    }
+
+    #[test]
+    fn detector_treats_waitgroup_done_wait_as_happens_before() {
+        let _g = TEST_GUARD.lock();
+        enable();
+        let _ = drain_races();
+        record_access(144, 0xE003, true);
+        // WaitGroup done synchronizes with the waiter that observes drain.
+        record_sync(144, 145);
+        record_access(145, 0xE003, false);
+        assert!(drain_races().is_empty());
+    }
+
+    #[test]
     fn detector_tracks_multiple_concurrent_readers_for_war() {
         let _g = TEST_GUARD.lock();
         enable();

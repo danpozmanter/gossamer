@@ -350,6 +350,7 @@ impl<'a> Builder<'a> {
         let join = self.new_block(span);
 
         for arm in arms {
+            let setup_block = self.new_block(span);
             let arm_block = self.new_block(span);
             let next_block = self.new_block(span);
 
@@ -359,11 +360,16 @@ impl<'a> Builder<'a> {
             // are recorded against MIR locals here too.
             self.push_scope();
             // Defer payload extraction for Result/Option arms into
-            // arm_block so the payload pointer is only dereferenced
+            // setup_block so the payload pointer is only dereferenced
             // on the matching branch. Without this, `gos_rt_result_payload`
             // runs unconditionally in the header block and crashes
             // when the scrutinee is None/Err on the next iteration.
-            self.payload_defer_block = Some(arm_block);
+            //
+            // Keep setup separate from the user arm body. `while let`
+            // lowers through this path, and merging payload setup with
+            // the body block made later body emission depend on the exact
+            // block state left behind by predicate lowering.
+            self.payload_defer_block = Some(setup_block);
             // 0.8.0: no always-matches fallback. When
             // `lower_pattern_predicate` doesn't decode the
             // pattern shape (tuple/struct/range/or-patterns that
@@ -412,8 +418,11 @@ impl<'a> Builder<'a> {
             self.terminate(Terminator::SwitchInt {
                 discriminant: Operand::Copy(Place::local(predicate)),
                 arms: vec![(0, next_block)],
-                default: arm_block,
+                default: setup_block,
             });
+
+            self.set_current(setup_block);
+            self.terminate(Terminator::Goto { target: arm_block });
 
             self.set_current(arm_block);
             if let Some(value_local) = self.lower_expr(&arm.body) {

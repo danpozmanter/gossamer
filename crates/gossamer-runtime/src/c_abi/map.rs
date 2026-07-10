@@ -1614,6 +1614,9 @@ pub unsafe extern "C" fn gos_rt_vec_free(v: *mut GosVec) {
         if v.is_null() {
             return;
         }
+        if !crate::c_abi::vec::vec_is_live_heap_header(v) {
+            return;
+        }
         // Region-allocated vecs (header + buffer in arena slabs) are freed
         // wholesale at `arena_pop` - never individually. Touching them here
         // via `Box::from_raw` / `Vec::from_raw_parts` would corrupt the
@@ -1635,6 +1638,7 @@ pub unsafe extern "C" fn gos_rt_vec_free(v: *mut GosVec) {
             return;
         }
         std::sync::atomic::fence(std::sync::atomic::Ordering::Acquire);
+        crate::c_abi::vec::vec_note_final_free(v);
         crate::c_abi::ledger::vec_dec();
         // Non-region headers are a single `Box<InlineVec>` (header + inline
         // element buffer). The header's `ptr` for an inline vec aliases this

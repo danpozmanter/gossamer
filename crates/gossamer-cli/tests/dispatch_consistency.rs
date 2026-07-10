@@ -13,14 +13,18 @@
 //! strings. All symbol-name validation flows through the typed
 //! `gossamer_abi::REGISTRY`.
 //!
-//! Signatures are intentionally not checked here (Rust `bool`
-//! vs. LLVM `i8` etc.); param-count parity is verified by
-//! `registry_param_counts_match_runtime_exports`.
+//! Runtime signatures are checked at the C-ABI class level: raw pointers and
+//! callback function pointers are `Ptr`, Rust `bool` is `I8`, 32-bit C scalar
+//! types are `I32`, and `usize`/`u64` are compared as the existing 64-bit ABI
+//! class. This catches width/return drift without treating signedness aliases
+//! as separate machine ABIs.
 
 #![allow(missing_docs)]
 
 use std::collections::HashSet;
 use std::path::PathBuf;
+
+use gossamer_abi::AbiType;
 
 /// Collects every `gos_rt_*` symbol exported via
 /// `pub (unsafe)? extern "C" fn ...` in `c_abi.rs` and the other
@@ -317,6 +321,162 @@ fn parse_param_counts(source: &str) -> std::collections::HashMap<String, usize> 
     out
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ParsedRuntimeSig {
+    params: Vec<AbiType>,
+    ret: AbiType,
+}
+
+fn split_top_level_params(params_text: &str) -> Vec<&str> {
+    let trimmed = params_text.trim().trim_end_matches(',').trim();
+    if trimmed.is_empty() {
+        return Vec::new();
+    }
+    let mut start = 0usize;
+    let mut paren_depth = 0i32;
+    let mut angle_depth = 0i32;
+    let mut bracket_depth = 0i32;
+    let mut out = Vec::new();
+    for (idx, c) in trimmed.char_indices() {
+        match c {
+            '(' => paren_depth += 1,
+            ')' => paren_depth -= 1,
+            '<' => angle_depth += 1,
+            '>' if angle_depth > 0 => angle_depth -= 1,
+            '[' => bracket_depth += 1,
+            ']' => bracket_depth -= 1,
+            ',' if paren_depth == 0 && angle_depth == 0 && bracket_depth == 0 => {
+                let part = trimmed[start..idx].trim();
+                if !part.is_empty() {
+                    out.push(part);
+                }
+                start = idx + c.len_utf8();
+            }
+            _ => {}
+        }
+    }
+    let tail = trimmed[start..].trim();
+    if !tail.is_empty() {
+        out.push(tail);
+    }
+    out
+}
+
+fn param_type_text(param: &str) -> Option<&str> {
+    let (_, ty) = param.split_once(':')?;
+    Some(ty.trim())
+}
+
+fn abi_class_for_rust_type(ty: &str, is_return: bool) -> Option<AbiType> {
+    let ty = ty.trim();
+    if ty.is_empty() || ty == "()" {
+        return Some(AbiType::Void);
+    }
+    if is_return && ty == "!" {
+        return Some(AbiType::Void);
+    }
+    if ty.starts_with('*') || ty.starts_with('&') || ty.starts_with("extern \"C\" fn") {
+        return Some(AbiType::Ptr);
+    }
+    match ty {
+        "bool" | "u8" | "i8" | "c_char" | "std::os::raw::c_char" => Some(AbiType::I8),
+        "i32" | "u32" => Some(AbiType::I32),
+        "i64" | "u64" | "usize" | "isize" => Some(AbiType::I64),
+        "i128" => Some(AbiType::I128),
+        "f64" => Some(AbiType::F64),
+        _ => None,
+    }
+}
+
+fn parse_return_type(rest_after_params: &str) -> Option<AbiType> {
+    let trimmed = rest_after_params.trim_start();
+    if !trimmed.starts_with("->") {
+        return Some(AbiType::Void);
+    }
+    let ret = trimmed["->".len()..]
+        .trim_start()
+        .chars()
+        .take_while(|&c| c != '{' && c != ';' && c != '\n')
+        .collect::<String>();
+    abi_class_for_rust_type(ret.trim(), true)
+}
+
+/// Parses `gos_rt_*` function ABI classes from visible Rust extern function
+/// declarations. Macro-generated exports are intentionally absent here and are
+/// still covered by the export-existence test.
+fn parse_runtime_sigs(source: &str) -> std::collections::HashMap<String, ParsedRuntimeSig> {
+    let mut out = std::collections::HashMap::new();
+    let mut cursor = 0usize;
+    while let Some(rel) = source[cursor..].find("fn gos_rt_") {
+        let i = cursor + rel;
+        let rest = &source[i..];
+        let after_fn = &rest["fn ".len()..];
+        let Some(paren) = after_fn.find('(') else {
+            cursor = i + "fn gos_rt_".len();
+            continue;
+        };
+        let name = after_fn[..paren].trim().to_string();
+        let params_start = "fn ".len() + paren + 1;
+        let mut paren_depth = 1i32;
+        let mut angle_depth = 0i32;
+        let mut bracket_depth = 0i32;
+        let mut params_end = params_start;
+        for (j, c) in rest[params_start..].char_indices() {
+            match c {
+                '(' => paren_depth += 1,
+                ')' => {
+                    paren_depth -= 1;
+                    if paren_depth == 0 && angle_depth == 0 && bracket_depth == 0 {
+                        params_end = params_start + j;
+                        break;
+                    }
+                }
+                '<' => angle_depth += 1,
+                '>' if angle_depth > 0 => angle_depth -= 1,
+                '[' => bracket_depth += 1,
+                ']' => bracket_depth -= 1,
+                _ => {}
+            }
+        }
+        if paren_depth != 0 || angle_depth != 0 || bracket_depth != 0 {
+            cursor = i + "fn gos_rt_".len();
+            continue;
+        }
+        let params_text = &rest[params_start..params_end];
+        let mut params = Vec::new();
+        let mut supported = true;
+        for param in split_top_level_params(params_text) {
+            let Some(ty) = param_type_text(param) else {
+                supported = false;
+                break;
+            };
+            let Some(abi) = abi_class_for_rust_type(ty, false) else {
+                supported = false;
+                break;
+            };
+            params.push(abi);
+        }
+        let after_params = &rest[params_end + 1..];
+        let return_abi = if let Some(parsed_return) = parse_return_type(after_params) {
+            parsed_return
+        } else {
+            supported = false;
+            AbiType::Void
+        };
+        if supported {
+            out.insert(
+                name,
+                ParsedRuntimeSig {
+                    params,
+                    ret: return_abi,
+                },
+            );
+        }
+        cursor = i + params_end + 1;
+    }
+    out
+}
+
 /// Every REGISTRY entry's `params.len()` must match the number of
 /// parameters declared in the corresponding `pub extern "C" fn` in
 /// the runtime source. Catches param-count mismatches that would
@@ -353,6 +513,53 @@ fn registry_param_counts_match_runtime_exports() {
     assert!(
         mismatches.is_empty(),
         "{} param-count mismatch{}:\n  {}",
+        mismatches.len(),
+        if mismatches.len() == 1 { "" } else { "es" },
+        mismatches.join("\n  ")
+    );
+}
+
+/// Every visible runtime `pub extern "C" fn gos_rt_*` entry in the ABI
+/// registry must match the Rust implementation's C-ABI class signature.
+/// Macro-generated exports are validated for existence but do not have a
+/// visible expanded signature in the scanned source.
+#[test]
+fn registry_abi_classes_match_runtime_exports() {
+    let mut all_sigs: std::collections::HashMap<String, ParsedRuntimeSig> =
+        std::collections::HashMap::new();
+    for path in runtime_source_files() {
+        if let Ok(source) = std::fs::read_to_string(&path) {
+            all_sigs.extend(parse_runtime_sigs(&source));
+        }
+    }
+    assert!(
+        all_sigs.len() > 50,
+        "signature parser found only {} functions - likely broken",
+        all_sigs.len()
+    );
+
+    let mut mismatches: Vec<String> = Vec::new();
+    let mut covered = 0usize;
+    for entry in gossamer_abi::REGISTRY {
+        let Some(actual) = all_sigs.get(entry.name) else {
+            continue;
+        };
+        covered += 1;
+        if actual.params != entry.sig.params || actual.ret != entry.sig.ret {
+            mismatches.push(format!(
+                "{}: REGISTRY has ({:?}) -> {:?}, runtime has ({:?}) -> {:?}",
+                entry.name, entry.sig.params, entry.sig.ret, actual.params, actual.ret
+            ));
+        }
+    }
+    assert!(
+        covered > 200,
+        "signature audit covered only {covered} registry entries; parser likely missed too much"
+    );
+    mismatches.sort();
+    assert!(
+        mismatches.is_empty(),
+        "{} ABI-class mismatch{}:\n  {}",
         mismatches.len(),
         if mismatches.len() == 1 { "" } else { "es" },
         mismatches.join("\n  ")

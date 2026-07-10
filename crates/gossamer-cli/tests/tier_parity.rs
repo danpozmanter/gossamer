@@ -2685,10 +2685,13 @@ fn lowers_without_fallback_group(group: usize) {
 /// possible, and the policy the eager-promotion path relies on. The JIT
 /// must produce output identical to the bytecode interpreter (`GOS_JIT=0`)
 /// on the shapes it once silently miscompiled or segfaulted on: a closure
-/// passed to a higher-order call, a `&mut` aggregate parameter, and a
-/// `Vec`-parameter slice-pattern match. The eligibility gate
-/// (`body_jit_unsupported`) keeps those bodies on bytecode; a divergence
-/// here means the gate let an un-lowerable body through again.
+/// passed to a higher-order call, a `&mut` aggregate parameter,
+/// `Vec`-parameter slice-pattern matching, and recursive enum/vector/string
+/// ownership at the VM/native boundary. The eligibility gate
+/// (`body_jit_unsupported`) keeps unsupported bodies on bytecode, while the
+/// supported recursive fixtures force marshal/free paths through native code;
+/// a divergence here means either the gate let an un-lowerable body through or
+/// a supported boundary shape lost ownership parity.
 #[test]
 fn forced_jit_matches_bytecode_on_unlowerable_shapes() {
     let root = workspace_root();
@@ -2696,6 +2699,11 @@ fn forced_jit_matches_bytecode_on_unlowerable_shapes() {
         "examples/factorial.gos",
         "feature-testing-examples/string_append_realloc.gos",
         "feature-testing-examples/slice_patterns.gos",
+        "feature-testing-examples/jit_native_marshal.gos",
+        "feature-testing-examples/vec_vec_i64_jit.gos",
+        "feature-testing-examples/json_parse_jit.gos",
+        "feature-testing-examples/enum_transform_jit.gos",
+        "feature-testing-examples/for_kv_enum_payload.gos",
     ];
     for rel in fixtures {
         let path = root.join(rel);

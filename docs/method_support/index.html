@@ -15,7 +15,7 @@
         <link rel="canonical" href="https://danpozmanter.github.io/gossamer/docs/method_support/">
       
       
-        <link rel="prev" href="../prelude/">
+        <link rel="prev" href="../core_method_contract/">
       
       
         <link rel="next" href="../stdlib_coverage/">
@@ -633,6 +633,8 @@
       
         
       
+        
+      
     
     
     
@@ -730,6 +732,34 @@
     
   
     Prelude (no imports)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../core_method_contract/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Core method contract
   
 
     
@@ -1529,6 +1559,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -1617,6 +1651,62 @@
     
   
     Runtime internals
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../design/memory_model/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Memory model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../design/goroutine_stacks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Goroutine stack model
   
 
     
@@ -1931,9 +2021,64 @@ gaps are one-line additions to the dispatch table.</p>
 </thead>
 <tbody>
 <tr>
+<td><code>String::new()</code></td>
+<td><code>String</code></td>
+<td>Associated function; empty owned string.</td>
+</tr>
+<tr>
+<td><code>String::with_capacity(n)</code></td>
+<td><code>String</code></td>
+<td>Associated function; accepts a capacity hint, currently advisory for VM strings.</td>
+</tr>
+<tr>
+<td><code>String::from(value)</code></td>
+<td><code>String</code></td>
+<td>Associated function; identity for strings, display conversion for scalars.</td>
+</tr>
+<tr>
+<td><code>String::from_utf8(bytes)</code></td>
+<td><code>Result&lt;String, errors::Error&gt;</code></td>
+<td>Associated function; decodes a byte vector, returning <code>Err</code> for invalid UTF-8.</td>
+</tr>
+<tr>
 <td><code>s.len()</code></td>
 <td><code>i64</code></td>
 <td>Byte length, not codepoint count. Use <code>utf8::rune_count</code> for code points.</td>
+</tr>
+<tr>
+<td><code>s.is_empty()</code></td>
+<td><code>bool</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>s.clear()</code></td>
+<td><code>()</code></td>
+<td>Replaces the string with <code>""</code> through mutating-method writeback.</td>
+</tr>
+<tr>
+<td><code>s.truncate(n)</code></td>
+<td><code>()</code></td>
+<td>Keeps at most <code>n</code> bytes, clamped to a valid UTF-8 boundary.</td>
+</tr>
+<tr>
+<td><code>s.push(ch)</code> / <code>s.push_char(ch)</code></td>
+<td><code>()</code></td>
+<td>Appends a Unicode scalar through mutating-method writeback.</td>
+</tr>
+<tr>
+<td><code>s.push_byte(b)</code></td>
+<td><code>()</code></td>
+<td>Appends the byte as the matching Unicode scalar.</td>
+</tr>
+<tr>
+<td><code>s.push_str(t)</code></td>
+<td><code>()</code></td>
+<td>Appends string contents through mutating-method writeback.</td>
+</tr>
+<tr>
+<td><code>s.chars()</code></td>
+<td><code>[char]</code></td>
+<td>Unicode scalar values.</td>
 </tr>
 <tr>
 <td><code>s.trim()</code></td>
@@ -1971,12 +2116,12 @@ gaps are one-line additions to the dispatch table.</p>
 <td>Splits on every delimiter occurrence.</td>
 </tr>
 <tr>
-<td><code>s.to_lower()</code></td>
+<td><code>s.to_lowercase()</code></td>
 <td><code>String</code></td>
 <td>Lowercase; Unicode-aware. (<code>to_lowercase</code> is not a method.)</td>
 </tr>
 <tr>
-<td><code>s.to_upper()</code></td>
+<td><code>s.to_uppercase()</code></td>
 <td><code>String</code></td>
 <td>Uppercase; Unicode-aware.</td>
 </tr>
@@ -2041,6 +2186,16 @@ sequence directly, so every method below chains off a range too:
 </thead>
 <tbody>
 <tr>
+<td><code>Vec::new()</code></td>
+<td><code>[T]</code></td>
+<td>Associated function; empty vector.</td>
+</tr>
+<tr>
+<td><code>Vec::with_capacity(n)</code></td>
+<td><code>[T]</code></td>
+<td>Associated function; preallocates in compiled tiers, accepted as an advisory hint in the VM.</td>
+</tr>
+<tr>
 <td><code>v.push(item)</code></td>
 <td><code>()</code></td>
 <td>Amortised O(1).</td>
@@ -2051,8 +2206,28 @@ sequence directly, so every method below chains off a range too:
 <td></td>
 </tr>
 <tr>
+<td><code>v.clear()</code></td>
+<td><code>()</code></td>
+<td>Removes all elements.</td>
+</tr>
+<tr>
+<td><code>v.truncate(n)</code></td>
+<td><code>()</code></td>
+<td>Keeps the first <code>n</code> elements, clamping negative lengths to <code>0</code>.</td>
+</tr>
+<tr>
+<td><code>v.extend(xs)</code> / <code>v.extend_from_slice(xs)</code></td>
+<td><code>()</code></td>
+<td>Appends elements from another vector or inline array with matching element layout.</td>
+</tr>
+<tr>
 <td><code>v.len()</code></td>
 <td><code>i64</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>v.is_empty()</code></td>
+<td><code>bool</code></td>
 <td></td>
 </tr>
 <tr>
@@ -2126,7 +2301,12 @@ sequence directly, so every method below chains off a range too:
 <td></td>
 </tr>
 <tr>
-<td><code>v.reversed()</code></td>
+<td><code>v.insert(i, item)</code> / <code>v.remove(i)</code></td>
+<td><code>Result&lt;_, errors::Error&gt;</code></td>
+<td>Bounds-checked mutation helpers.</td>
+</tr>
+<tr>
+<td><code>v.rev()</code></td>
 <td><code>[T]</code></td>
 <td>Non-mutating; <code>v.reverse()</code> is in-place.</td>
 </tr>

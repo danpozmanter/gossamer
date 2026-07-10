@@ -18,7 +18,7 @@
         <link rel="prev" href="../diagnostics/">
       
       
-        <link rel="next" href="../selfhosting/">
+        <link rel="next" href="../memory_model/">
       
       
         
@@ -631,6 +631,8 @@
       
         
       
+        
+      
     
     
     
@@ -728,6 +730,34 @@
     
   
     Prelude (no imports)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../core_method_contract/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Core method contract
   
 
     
@@ -1361,6 +1391,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -1614,6 +1648,62 @@
   
 </nav>
       
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../memory_model/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Memory model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../goroutine_stacks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Goroutine stack model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
     </li>
   
 
@@ -1933,7 +2023,7 @@ owns the stage so a new contributor can find the real source.</p>
 <li>Compiles every top-level function and inherent-impl method to a
    register-machine <code>FnChunk</code>, registered under both the unqualified
    (<code>foo</code>) and type-qualified (<code>Type::foo</code>) names.</li>
-<li>Registers builtin callables for stdlib functions (<code>os::args</code>,
+<li>Registers builtin callables for stdlib functions (<code>env::args</code>,
    <code>time::sleep</code>, <code>json::parse</code>, …) and variant constructors for
    every user enum.</li>
 <li>Executes the compiled bytecode in a register machine, keeping
@@ -1993,8 +2083,11 @@ user code.</p>
 <p><code>go expr(args)</code> is a real stackful coroutine. Construction:</p>
 <ol>
 <li><code>gossamer_runtime::sched_global::spawn(closure)</code> allocates a
-   16 KiB <code>corosensei::Coroutine</code> stack (override:
-   <code>GOSSAMER_GOROUTINE_STACK=N</code>).</li>
+   1 MiB <code>corosensei::Coroutine</code> stack (override:
+   <code>GOSSAMER_GOROUTINE_STACK=N</code>). The stack is an <code>mmap</code> reservation
+   fronted by a guard page; the OS commits pages on first touch, so
+   resident memory tracks the depth a goroutine actually uses rather
+   than the reservation. See <a href="../goroutine_stacks/">Goroutine stack model</a>.</li>
 <li>The coroutine's entry shim publishes its <code>Yielder</code> pointer to a
    shared slot, sets the worker's TLS yielder, then runs <code>closure</code>.</li>
 <li>The scheduler wraps the coroutine in a <code>GoroutineTask</code> whose
@@ -2013,9 +2106,14 @@ worker, ...) calls <code>MultiScheduler::unpark(gid)</code> which pushes the
 task back onto the injector. Any free worker picks it up and
 resumes the coroutine - possibly on a different OS thread than the
 one it suspended on.</p>
-<p>A blocked goroutine costs ~16 KiB of mmap'd stack, not an OS
-thread. 10 000 idle goroutines fit on a 4-worker scheduler in
-roughly 160 MiB of address space.</p>
+<p>A blocked goroutine costs only the few KiB of stack its shallow
+frame actually touched - not an OS thread, and not the 1 MiB
+reservation. Thousands of concurrent goroutines stay in the tens of
+MiB of resident memory; the 1 MiB reservations consume address space
+(abundant on 64-bit) that never becomes resident until used. The
+<a href="../goroutine_stacks/">Goroutine stack model</a> note explains why this
+guard-page / lazy-commit scheme was chosen over Go-style copyable
+stacks.</p>
 <p>The wake-before-park race window (where <code>unpark(gid)</code> arrives
 before the goroutine has actually been moved into <code>parked</code>) is
 closed by a <code>pre_unpark</code> set: if <code>unpark(gid)</code> finds the gid not

@@ -627,6 +627,8 @@
       
         
       
+        
+      
     
     
     
@@ -724,6 +726,34 @@
     
   
     Prelude (no imports)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../core_method_contract/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Core method contract
   
 
     
@@ -1355,6 +1385,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -1443,6 +1477,62 @@
     
   
     Runtime internals
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/memory_model/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Memory model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/goroutine_stacks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Goroutine stack model
   
 
     
@@ -1675,6 +1765,11 @@
 <td>Positive infinity.</td>
 </tr>
 <tr>
+<td><code>NAN</code></td>
+<td>const</td>
+<td>Not-a-number value.</td>
+</tr>
+<tr>
 <td><code>abs</code></td>
 <td>fn</td>
 <td>Absolute value of x.</td>
@@ -1785,32 +1880,7 @@
 <td>Euclidean distance √(x²+y²).</td>
 </tr>
 <tr>
-<td><code>min_f64</code></td>
-<td>fn</td>
-<td>Lesser of two f64 values.</td>
-</tr>
-<tr>
-<td><code>max_f64</code></td>
-<td>fn</td>
-<td>Greater of two f64 values.</td>
-</tr>
-<tr>
-<td><code>min_i64</code></td>
-<td>fn</td>
-<td>Lesser of two i64 values.</td>
-</tr>
-<tr>
-<td><code>max_i64</code></td>
-<td>fn</td>
-<td>Greater of two i64 values.</td>
-</tr>
-<tr>
-<td><code>abs_i64</code></td>
-<td>fn</td>
-<td>Absolute value of an i64.</td>
-</tr>
-<tr>
-<td><code>fmod</code></td>
+<td><code>rem</code></td>
 <td>fn</td>
 <td>Floating-point remainder x%y.</td>
 </tr>
@@ -1825,24 +1895,14 @@
 <td>Reports whether x is infinite.</td>
 </tr>
 <tr>
-<td><code>nan</code></td>
-<td>fn</td>
-<td>Returns the IEEE 754 NaN value.</td>
-</tr>
-<tr>
-<td><code>inf</code></td>
-<td>fn</td>
-<td>Returns ±infinity based on sign.</td>
-</tr>
-<tr>
 <td><code>copysign</code></td>
 <td>fn</td>
 <td>Magnitude of x with sign of y.</td>
 </tr>
 <tr>
-<td><code>dim</code></td>
+<td><code>positive_diff</code></td>
 <td>fn</td>
-<td>max(x-y, 0) - Go's math.Dim.</td>
+<td>max(x-y, 0).</td>
 </tr>
 <tr>
 <td><code>sinh</code></td>

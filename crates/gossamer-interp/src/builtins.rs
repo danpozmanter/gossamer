@@ -707,6 +707,7 @@ fn install_module_builtins(globals: &mut Vec<(&'static str, Value)>) {
             ("collect_cycles", builtin_runtime_collect_cycles),
             ("arena_push", builtin_runtime_region_noop),
             ("arena_pop", builtin_runtime_region_noop),
+            ("scheduler_stats_json", builtin_runtime_scheduler_stats_json),
             ("set_panic_hook", builtin_runtime_set_panic_hook),
         ],
         globals,
@@ -1043,6 +1044,10 @@ fn install_module_builtins(globals: &mut Vec<(&'static str, Value)>) {
             ("check", builtin_testing_check),
             ("check_eq", builtin_testing_check_eq),
             ("check_ok", builtin_testing_check_ok),
+            (
+                "wait_for_scheduler_idle",
+                builtin_testing_wait_for_scheduler_idle,
+            ),
         ],
         globals,
     );
@@ -1333,6 +1338,10 @@ fn install_method_helpers(globals: &mut Vec<(&'static str, Value)>) {
     globals.push(("remove", builtin("remove", builtin_remove)));
     globals.push(("clear", builtin("clear", builtin_clear)));
     globals.push(("extend", builtin("extend", builtin_extend)));
+    globals.push((
+        "extend_from_slice",
+        builtin("extend_from_slice", builtin_extend),
+    ));
     globals.push(("truncate", builtin("truncate", builtin_truncate)));
     globals.push(("sort", builtin("sort", builtin_sort)));
     globals.push(("sort_by", native("sort_by", native_sort_by)));
@@ -1473,6 +1482,10 @@ fn install_method_helpers(globals: &mut Vec<(&'static str, Value)>) {
         builtin("String::with_capacity", builtin_str_new),
     ));
     globals.push(("String::from", builtin("String::from", builtin_str_from)));
+    globals.push((
+        "String::from_utf8",
+        builtin("String::from_utf8", builtin_str_from_utf8),
+    ));
     globals.push(("String::push", builtin("String::push", builtin_str_push)));
     globals.push((
         "String::push_char",
@@ -1745,8 +1758,20 @@ fn install_concurrency_builtins(globals: &mut Vec<(&'static str, Value)>) {
     globals.push(("channel", builtin("channel", builtin_channel_new)));
     globals.push(("channel::new", builtin("channel::new", builtin_channel_new)));
     globals.push((
+        "channel::unbounded",
+        builtin("channel::unbounded", builtin_channel_unbounded),
+    ));
+    globals.push((
         "sync::channel",
         builtin("sync::channel", builtin_channel_new),
+    ));
+    globals.push((
+        "sync::channel_unbounded",
+        builtin("sync::channel_unbounded", builtin_channel_unbounded),
+    ));
+    globals.push((
+        "std::sync::channel_unbounded",
+        builtin("std::sync::channel_unbounded", builtin_channel_unbounded),
     ));
     globals.push((
         "Channel::send",
@@ -2558,7 +2583,7 @@ fn builtin_fmt_radix(args: &[Value]) -> RuntimeResult<Value> {
 /// `__fmt_upper(s)` - uppercases the rendered string (for `{:X}`).
 fn builtin_fmt_upper(args: &[Value]) -> RuntimeResult<Value> {
     let s = args.first().and_then(as_str).unwrap_or("");
-    Ok(Value::String(s.to_uppercase().into()))
+    Ok(Value::String(SmolStr::to_uppercase_from(s)))
 }
 
 /// `__fmt_pad(s, width, fill, align)` - pads a rendered string to `width`.
@@ -3804,6 +3829,26 @@ fn builtin_runtime_set_panic_hook(args: &[Value]) -> RuntimeResult<Value> {
 
 fn builtin_runtime_collect_cycles(_args: &[Value]) -> RuntimeResult<Value> {
     Ok(Value::Unit)
+}
+
+fn builtin_runtime_scheduler_stats_json(_args: &[Value]) -> RuntimeResult<Value> {
+    let scheduler = gossamer_runtime::sched_global::scheduler();
+    let stats = scheduler.stats();
+    Ok(Value::String(format!(
+        "{{\"spawned\":{},\"finished\":{},\"steps\":{},\"yields\":{},\"steals\":{},\"injects\":{},\"parks\":{},\"unparks\":{},\"live_goroutines\":{},\"worker_count\":{},\"worker_count_cap\":{}}}",
+        stats.spawned,
+        stats.finished,
+        stats.steps,
+        stats.yields,
+        stats.steals,
+        stats.injects,
+        stats.parks,
+        stats.unparks,
+        scheduler.live_goroutines(),
+        scheduler.worker_count(),
+        gossamer_runtime::sched::MultiScheduler::worker_count_cap(),
+    )
+    .into()))
 }
 
 /// `runtime::arena_push()` / `runtime::arena_pop()`. Arena regions are a
@@ -5196,7 +5241,7 @@ fn builtin_to_uppercase(args: &[Value]) -> RuntimeResult<Value> {
     let Some(Value::String(s)) = args.first() else {
         return Ok(Value::String(SmolStr::from(String::new())));
     };
-    Ok(Value::String(SmolStr::from(s.to_uppercase())))
+    Ok(Value::String(SmolStr::to_uppercase_from(s.as_str())))
 }
 
 fn builtin_to_lowercase(args: &[Value]) -> RuntimeResult<Value> {
@@ -5222,6 +5267,28 @@ fn builtin_str_from(args: &[Value]) -> RuntimeResult<Value> {
         Some(Value::Char(c)) => Ok(Value::String(SmolStr::from(c.to_string()))),
         Some(other) => Ok(Value::String(SmolStr::from(format!("{other}")))),
         None => Ok(Value::String(SmolStr::from(String::new()))),
+    }
+}
+
+/// `String::from_utf8(bytes)` decodes a byte vector and returns
+/// `Result<String, errors::Error>`.
+fn builtin_str_from_utf8(args: &[Value]) -> RuntimeResult<Value> {
+    let Some(bytes_value) = args.first() else {
+        return Ok(err_variant("String::from_utf8: missing byte vector"));
+    };
+    let Some(items) = array_as_values(bytes_value) else {
+        return Ok(err_variant("String::from_utf8: expected byte vector"));
+    };
+    let mut bytes = Vec::with_capacity(items.len());
+    for item in &items {
+        let Some(n) = value_to_int(item) else {
+            return Ok(err_variant("String::from_utf8: expected integer byte"));
+        };
+        bytes.push((n & 0xff) as u8);
+    }
+    match String::from_utf8(bytes) {
+        Ok(s) => Ok(ok_variant(Value::String(SmolStr::from(s)))),
+        Err(e) => Ok(err_variant(format!("String::from_utf8: {e}"))),
     }
 }
 
@@ -6427,10 +6494,12 @@ fn builtin_clear(args: &[Value]) -> RuntimeResult<Value> {
     ) {
         return builtin_map_clear(args);
     }
-    if matches!(args.first(), Some(Value::Array(_))) {
-        Ok(Value::empty_array())
-    } else {
-        Ok(args.first().cloned().unwrap_or(Value::Unit))
+    match args.first() {
+        Some(Value::Array(_)) => Ok(Value::empty_array()),
+        Some(Value::IntArray(_)) => Ok(Value::IntArray(Arc::new(Vec::new()))),
+        Some(Value::FloatVec(_)) => Ok(Value::FloatVec(Arc::new(Vec::new()))),
+        Some(Value::String(_)) => Ok(Value::String(SmolStr::from(String::new()))),
+        _ => Ok(args.first().cloned().unwrap_or(Value::Unit)),
     }
 }
 
@@ -6488,6 +6557,16 @@ fn builtin_truncate(args: &[Value]) -> RuntimeResult<Value> {
             let mut owned = data.as_ref().clone();
             owned.truncate(cap);
             Ok(Value::FloatVec(Arc::new(owned)))
+        }
+        Some(Value::String(s)) => {
+            let end = s
+                .char_indices()
+                .map(|(idx, _)| idx)
+                .chain(std::iter::once(s.len()))
+                .take_while(|idx| *idx <= cap)
+                .last()
+                .unwrap_or(0);
+            Ok(Value::String(SmolStr::from(&s[..end])))
         }
         _ => Ok(args.first().cloned().unwrap_or(Value::Unit)),
     }
@@ -7120,6 +7199,23 @@ fn builtin_testing_check_ok(args: &[Value]) -> RuntimeResult<Value> {
     }
 }
 
+fn builtin_testing_wait_for_scheduler_idle(args: &[Value]) -> RuntimeResult<Value> {
+    let timeout_ms = args.first().and_then(value_to_int).unwrap_or(1000).max(0);
+    let deadline = std::time::Instant::now()
+        + std::time::Duration::from_millis(u64::try_from(timeout_ms).unwrap_or(0));
+    let scheduler = gossamer_runtime::sched_global::scheduler();
+    loop {
+        let stats = scheduler.stats();
+        if scheduler.live_goroutines() == 0 && stats.spawned == stats.finished {
+            return Ok(Value::Bool(true));
+        }
+        if std::time::Instant::now() >= deadline {
+            return Ok(Value::Bool(false));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+}
+
 /// Structural equality check used by `testing::check_eq`; more
 /// forgiving than `==` on values since it walks aggregates instead
 /// of bailing out on type mismatch. Returns `false` rather than an
@@ -7248,14 +7344,21 @@ fn builtin_struct_new(args: &[Value]) -> RuntimeResult<Value> {
 }
 
 fn builtin_channel_new(args: &[Value]) -> RuntimeResult<Value> {
-    // `channel(N)` bounds the buffer to capacity `N`; `channel()` (or a
-    // non-positive `N`) is unbounded. Matches the compiled tier's
-    // `gos_rt_chan_new(elem_bytes, cap)` where `cap <= 0` is unbounded.
+    // `channel()` / `channel(0)` is an unbuffered rendezvous channel,
+    // matching Go's zero-capacity channel. `channel(N)` for positive N
+    // is bounded. Use `channel::unbounded()` for the old queue form.
     let capacity = match args.first() {
         Some(Value::Int(n)) if *n > 0 => *n as usize,
         _ => 0,
     };
     let channel = crate::value::Channel::with_capacity(capacity);
+    let sender = Value::Channel(channel.clone());
+    let receiver = Value::Channel(channel);
+    Ok(Value::Tuple(Arc::from(vec![sender, receiver])))
+}
+
+fn builtin_channel_unbounded(_args: &[Value]) -> RuntimeResult<Value> {
+    let channel = crate::value::Channel::unbounded();
     let sender = Value::Channel(channel.clone());
     let receiver = Value::Channel(channel);
     Ok(Value::Tuple(Arc::from(vec![sender, receiver])))

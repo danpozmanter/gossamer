@@ -31,6 +31,31 @@ pub struct StdItem {
     pub doc: &'static str,
 }
 
+/// Fully-qualified item metadata derived from the stdlib manifest.
+///
+/// This is the item-level contract used by docs/audit tooling. The
+/// manifest remains the authoring source (`StdModule { items: ... }`);
+/// this record flattens it into a stable per-item view so drift tests do
+/// not need to reimplement path/status joining.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StdItemRecord {
+    /// Canonical item path, e.g. `std::encoding::json::parse`.
+    pub path: String,
+    /// Module path, e.g. `std::encoding::json`.
+    pub module_path: &'static str,
+    /// Item name inside the module.
+    pub name: &'static str,
+    /// Kind tag used by docs and resolver audits.
+    pub kind: StdItemKind,
+    /// Lifecycle status inherited from the module unless explicitly
+    /// overridden by future item-level metadata.
+    pub status: crate::manifest::feature_status::Status,
+    /// Module summary for roll-up reports.
+    pub module_summary: &'static str,
+    /// One-line item documentation.
+    pub doc: &'static str,
+}
+
 /// Classification for a stdlib item.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StdItemKind {
@@ -70,4 +95,68 @@ pub fn item(qualified: &str) -> Option<(&'static StdModule, &'static StdItem)> {
         .iter()
         .find(|i| i.name == last)
         .map(|i| (module, i))
+}
+
+/// Returns one flattened metadata record for every manifest item.
+///
+/// The vector is sorted by canonical item path and contains no aliases.
+/// Deprecated convenience aliases live in resolver/interpreter tables and
+/// must map back to one of these canonical records in drift tests.
+#[must_use]
+pub fn item_records() -> Vec<StdItemRecord> {
+    let mut out = Vec::new();
+    for module in modules() {
+        let status = crate::manifest::feature_status::lookup(module.path)
+            .map_or(crate::manifest::feature_status::Status::Shipped, |entry| {
+                entry.status
+            });
+        for item in module.items {
+            out.push(StdItemRecord {
+                path: format!("{}::{}", module.path, item.name),
+                module_path: module.path,
+                name: item.name,
+                kind: item.kind,
+                status,
+                module_summary: module.summary,
+                doc: item.doc,
+            });
+        }
+    }
+    out.sort_by(|a, b| a.path.cmp(&b.path));
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn item_records_are_sorted_unique_and_complete() {
+        let records = item_records();
+        let manifest_count: usize = modules().iter().map(|module| module.items.len()).sum();
+        assert_eq!(
+            records.len(),
+            manifest_count,
+            "flattened item metadata lost or duplicated manifest entries"
+        );
+        assert!(
+            records
+                .windows(2)
+                .all(|window| window[0].path < window[1].path),
+            "item records must be sorted by canonical path"
+        );
+    }
+
+    #[test]
+    fn item_records_inherit_module_status() {
+        let records = item_records();
+        let tls = records
+            .iter()
+            .find(|record| record.path == "std::tls::ServerConfig")
+            .expect("std::tls::ServerConfig is manifest-listed");
+        assert_eq!(
+            tls.status,
+            crate::manifest::feature_status::Status::Experimental
+        );
+    }
 }

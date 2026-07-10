@@ -69,6 +69,73 @@ pub fn num_goroutines() -> usize {
     gossamer_runtime::sigquit::snapshot().len()
 }
 
+/// Snapshot of global goroutine scheduler counters.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SchedulerStats {
+    /// Total goroutines spawned.
+    pub spawned: u64,
+    /// Total goroutines finished.
+    pub finished: u64,
+    /// Total task step calls.
+    pub steps: u64,
+    /// Total yielded steps.
+    pub yields: u64,
+    /// Total successful work steals.
+    pub steals: u64,
+    /// Total pulls from the global injector.
+    pub injects: u64,
+    /// Total goroutine parks.
+    pub parks: u64,
+    /// Total successful unparks.
+    pub unparks: u64,
+    /// Currently live goroutine count tracked by the scheduler.
+    pub live_goroutines: usize,
+    /// Current scheduler worker target.
+    pub worker_count: usize,
+    /// Hard worker-count cap.
+    pub worker_count_cap: usize,
+}
+
+/// Returns a low-overhead snapshot of the global scheduler counters.
+#[must_use]
+pub fn scheduler_stats() -> SchedulerStats {
+    let scheduler = gossamer_runtime::sched_global::scheduler();
+    let stats = scheduler.stats();
+    SchedulerStats {
+        spawned: stats.spawned,
+        finished: stats.finished,
+        steps: stats.steps,
+        yields: stats.yields,
+        steals: stats.steals,
+        injects: stats.injects,
+        parks: stats.parks,
+        unparks: stats.unparks,
+        live_goroutines: scheduler.live_goroutines(),
+        worker_count: scheduler.worker_count(),
+        worker_count_cap: gossamer_runtime::sched::MultiScheduler::worker_count_cap(),
+    }
+}
+
+/// Returns [`scheduler_stats`] rendered as a compact JSON object.
+#[must_use]
+pub fn scheduler_stats_json() -> String {
+    let stats = scheduler_stats();
+    format!(
+        "{{\"spawned\":{},\"finished\":{},\"steps\":{},\"yields\":{},\"steals\":{},\"injects\":{},\"parks\":{},\"unparks\":{},\"live_goroutines\":{},\"worker_count\":{},\"worker_count_cap\":{}}}",
+        stats.spawned,
+        stats.finished,
+        stats.steps,
+        stats.yields,
+        stats.steals,
+        stats.injects,
+        stats.parks,
+        stats.unparks,
+        stats.live_goroutines,
+        stats.worker_count,
+        stats.worker_count_cap,
+    )
+}
+
 // --- runtime::caller / runtime::stack (P1 stdlib) -------------------
 
 /// One frame in a [`stack`] or `callers` dump.
@@ -222,6 +289,14 @@ mod tests {
         let _guard = MAX_PROCS_LOCK.lock();
         let _ = set_max_procs(0);
         assert_eq!(max_procs(), num_cpus());
+    }
+
+    #[test]
+    fn scheduler_stats_json_contains_core_counters() {
+        let text = scheduler_stats_json();
+        assert!(text.contains("\"spawned\":"));
+        assert!(text.contains("\"finished\":"));
+        assert!(text.contains("\"worker_count\":"));
     }
 
     #[test]

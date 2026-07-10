@@ -205,3 +205,96 @@ fn repl_meta_quit_terminates_with_exit_zero() {
         out.stdout
     );
 }
+
+#[test]
+fn repl_meta_help_preserves_base_banner() {
+    let out = run_repl("%help\n");
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        out.stdout
+            .contains("meta-commands: %quit  %history  %bindings  %reset  %help  %dir"),
+        "bare %help should keep the existing banner; stdout: {}",
+        out.stdout
+    );
+    assert!(
+        out.stdout.contains("`let` bindings persist across inputs."),
+        "bare %help should keep the existing REPL summary; stdout: {}",
+        out.stdout
+    );
+}
+
+#[test]
+fn repl_meta_help_finds_stdlib_symbol() {
+    let out = run_repl("%help strings::trim\n");
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        out.stdout.contains("std::strings::trim [fn]"),
+        "expected qualified stdlib item help; stdout: {}",
+        out.stdout
+    );
+    assert!(
+        out.stdout
+            .contains("Removes leading and trailing whitespace."),
+        "expected manifest doc text; stdout: {}",
+        out.stdout
+    );
+}
+
+#[test]
+fn repl_meta_help_searches_regex() {
+    let out = run_repl("%help /question_mark/\n");
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        out.stdout.contains("lang::question_mark (shipped)"),
+        "expected feature-status regex match; stdout: {}",
+        out.stdout
+    );
+}
+
+#[test]
+fn repl_meta_dir_lists_modules() {
+    let out = run_repl("%dir\n");
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        out.stdout.contains("std::strings"),
+        "expected stdlib module list; stdout: {}",
+        out.stdout
+    );
+    assert!(
+        out.stdout.contains("module"),
+        "expected module rows; stdout: {}",
+        out.stdout
+    );
+}
+
+#[test]
+fn repl_meta_dir_lists_namespace_items() {
+    let out = run_repl("%dir strings\n");
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        out.stdout.contains("std::strings"),
+        "expected strings module row; stdout: {}",
+        out.stdout
+    );
+    assert!(
+        out.stdout.contains("std::strings::trim"),
+        "expected strings item rows; stdout: {}",
+        out.stdout
+    );
+}
+
+#[test]
+fn repl_meta_dir_filters_regex() {
+    let out = run_repl("%dir /std::regex::replace_all/\n");
+    assert!(out.success, "repl should exit zero; stderr: {}", out.stderr);
+    assert!(
+        out.stdout.contains("std::regex::replace_all"),
+        "expected regex-filtered item; stdout: {}",
+        out.stdout
+    );
+    assert!(
+        !out.stdout.contains("Out["),
+        "meta-command should not evaluate as an expression; stdout: {}",
+        out.stdout
+    );
+}

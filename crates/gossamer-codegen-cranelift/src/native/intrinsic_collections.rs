@@ -682,7 +682,7 @@ pub(super) fn lower_intrinsic_call_collections(
                 // does not leak its element payloads.
                 let new_fn = intrinsics.extern_fn_by_name(module, "gos_rt_vec_new_typed")?;
                 let fref = module.declare_func_in_func(new_fn, builder.func);
-                let kind_val = builder.ins().iconst(types::I32, i64::from(kind));
+                let kind_val = builder.ins().iconst(types::I8, i64::from(kind));
                 let call = builder.ins().call(fref, &[eb, kind_val]);
                 builder.inst_results(call)[0]
             };
@@ -743,11 +743,11 @@ pub(super) fn lower_intrinsic_call_collections(
                 let new_fn = intrinsics.extern_fn(
                     module,
                     "gos_rt_vec_with_capacity_typed",
-                    &[types::I32, types::I64, types::I32],
+                    &[types::I32, types::I64, types::I8],
                     &[ptr_ty],
                 )?;
                 let fref = module.declare_func_in_func(new_fn, builder.func);
-                let kind_val = builder.ins().iconst(types::I32, i64::from(kind));
+                let kind_val = builder.ins().iconst(types::I8, i64::from(kind));
                 let call = builder.ins().call(fref, &[eb, cap64, kind_val]);
                 builder.inst_results(call)[0]
             };

@@ -800,6 +800,16 @@ impl<'a> Builder<'a> {
             ),
             "io::ReadAll" => ("gos_rt_io_read_all", self.tcx.string_ty()),
             "net::lookup" => ("gos_rt_net_resolve", self.result_vec_string_error_ty()),
+            "fs::open" | "fs::File::open" => {
+                ("gos_rt_fs_file_open", self.result_i64_error_adt_ty())
+            }
+            "fs::create" | "fs::File::create" => {
+                ("gos_rt_fs_file_create", self.result_i64_error_adt_ty())
+            }
+            "fs::OpenOptions::new" | "OpenOptions::new" => (
+                "gos_rt_fs_open_options_new",
+                self.tcx.int_ty(gossamer_types::IntTy::I64),
+            ),
             "net::ip::is_valid" => ("gos_rt_netip_is_valid", self.tcx.bool_ty()),
             "net::ip::is_v4" => ("gos_rt_netip_is_v4", self.tcx.bool_ty()),
             "net::ip::is_v6" => ("gos_rt_netip_is_v6", self.tcx.bool_ty()),
@@ -2938,6 +2948,9 @@ impl<'a> Builder<'a> {
             "url::query_unescape" => ("gos_rt_url_query_unescape", self.tcx.string_ty()),
             "url::path_unescape" => ("gos_rt_url_path_unescape", self.tcx.string_ty()),
             "runtime::collect_cycles" => ("gos_rt_collect_cycles", self.tcx.unit()),
+            "runtime::scheduler_stats_json" => {
+                ("gos_rt_runtime_scheduler_stats_json", self.tcx.string_ty())
+            }
             // Bare `fn(String)` only: the hook is a raw code pointer the
             // runtime calls with the rendered message.
             "runtime::set_panic_hook" => ("gos_rt_set_panic_hook", self.tcx.unit()),
@@ -2953,6 +2966,9 @@ impl<'a> Builder<'a> {
             }
             "testing::check" => ("gos_rt_testing_check", self.tcx.bool_ty()),
             "testing::check_eq" => ("gos_rt_testing_check_eq_i64", self.tcx.bool_ty()),
+            "testing::wait_for_scheduler_idle" => {
+                ("gos_rt_testing_wait_for_scheduler_idle", self.tcx.bool_ty())
+            }
             "testing::check_ok" => {
                 // Pass-through identity in compiled mode - assumes
                 // happy path.
@@ -3635,6 +3651,8 @@ impl<'a> Builder<'a> {
             }
             "gos_rt_tcp_listener_bind" => Some("net::TcpListener"),
             "gos_rt_tcp_stream_connect" => Some("net::TcpStream"),
+            "gos_rt_fs_file_open" | "gos_rt_fs_file_create" => Some("fs::File"),
+            "gos_rt_fs_open_options_new" => Some("fs::OpenOptions"),
             "gos_rt_unix_listener_bind" => Some("net::UnixListener"),
             "gos_rt_unix_stream_connect" => Some("net::UnixStream"),
             "gos_rt_udp_bind" => Some("net::UdpSocket"),

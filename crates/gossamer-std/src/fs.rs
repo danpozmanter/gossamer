@@ -1,7 +1,7 @@
 //! Runtime support for `std::fs` - filesystem walking + mutation
 //! helpers on top of `std::fs`.
 
-use std::fs::{self as stdfs, File, Metadata};
+use std::fs::{self as stdfs, Metadata};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 #[cfg(not(target_arch = "wasm32"))]
@@ -14,6 +14,8 @@ use notify::{
 };
 #[cfg(not(target_arch = "wasm32"))]
 use parking_lot::Mutex;
+
+pub use std::fs::{File, OpenOptions};
 
 /// Directory entry surfaced by [`read_dir`].
 #[derive(Debug, Clone)]

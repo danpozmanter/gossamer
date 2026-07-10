@@ -169,9 +169,9 @@ pub enum Op {
     /// Native `select { … }` dispatch over [`Value::Channel`] arms.
     /// The arm metadata for this select occupies the contiguous range
     /// `FnChunk::select_arms[first .. first + count]`. The handler
-    /// polls each arm in source order (recv via `try_recv`, send via
-    /// `send`, a `default` arm last), parking on the receive arms'
-    /// condvar when nothing is ready and no `default` exists. On a
+    /// polls communication arms in pseudo-random order (recv via
+    /// `try_recv`, send via `try_send`, a `default` arm last), parking
+    /// across all channel arms when nothing is ready and no `default` exists. On a
     /// winning recv it writes the received value into the arm's
     /// `bind_reg`; in every case it sets `pc` to the winning arm's
     /// `body_block`, which moves the arm's result into the shared

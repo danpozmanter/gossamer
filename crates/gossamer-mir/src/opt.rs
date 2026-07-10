@@ -5,7 +5,7 @@
 
 #![forbid(unsafe_code)]
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use gossamer_lex::Span;
 use gossamer_types::{TyCtxt, TyKind};
@@ -72,8 +72,394 @@ pub fn optimise(body: &mut Body, tcx: &TyCtxt) {
     crate::verify::debug_verify_body(body);
     bounds_check_elim(body, tcx);
     crate::verify::debug_verify_body(body);
+    local_branch_bounds_check_elim(body, tcx);
+    crate::verify::debug_verify_body(body);
     bounds_check_versioning(body, tcx);
     crate::verify::debug_verify_body(body);
+}
+
+/// Rewrites `Vec::new(elem_bytes)` into `gos_rt_vec_with_capacity(elem_bytes,
+/// bound)` when the fresh vector is immediately populated by a counted loop
+/// whose condition is `i < bound` and whose body pushes into that same vector.
+///
+/// This is intentionally allocation-only: it does not change the loop, element
+/// values, container type, or visible semantics. A negative / zero bound is
+/// harmless because the runtime capacity helper treats it like an empty reserve.
+pub(crate) fn reserve_vecs_for_counted_push_loops(body: &mut Body) {
+    let mut rewrites: Vec<(usize, Vec<Operand>)> = Vec::new();
+    for (bi, block) in body.blocks.iter().enumerate() {
+        let Terminator::Call {
+            callee,
+            args,
+            destination,
+            target,
+        } = &block.terminator
+        else {
+            continue;
+        };
+        if !destination.projection.is_empty() || args.len() != 1 {
+            continue;
+        }
+        if !matches!(callee, Operand::Const(ConstValue::Str(name)) if name == "Vec::new" || name == "gos_rt_vec_new")
+        {
+            continue;
+        }
+        let Some(start) = target else { continue };
+        let Some(bound) = counted_push_loop_bound(body, *start, destination.local) else {
+            continue;
+        };
+        if !reserve_bound_available_at_entry(body, &bound) {
+            continue;
+        }
+        rewrites.push((bi, vec![args[0].clone(), bound]));
+    }
+    for (bi, args) in rewrites {
+        if let Terminator::Call {
+            callee,
+            args: call_args,
+            ..
+        } = &mut body.blocks[bi].terminator
+        {
+            *callee = Operand::Const(ConstValue::Str("gos_rt_vec_with_capacity".to_string()));
+            *call_args = args;
+        }
+    }
+}
+
+fn reserve_bound_available_at_entry(body: &Body, bound: &Operand) -> bool {
+    match bound {
+        Operand::Const(_) => true,
+        Operand::Copy(place) if place.projection.is_empty() => {
+            place.local.0 != 0 && place.local.0 <= body.arity
+        }
+        _ => false,
+    }
+}
+
+fn counted_push_loop_bound(body: &Body, start: BlockId, vec_local: Local) -> Option<Operand> {
+    let mut seen = HashSet::new();
+    let mut work = VecDeque::from([(start, 0usize)]);
+    while let Some((bid, depth)) = work.pop_front() {
+        if depth > 64 || !seen.insert(bid) {
+            continue;
+        }
+        let block = body.blocks.get(bid.0 as usize)?;
+        if let Some((body_entry, bound)) = counted_loop_body_and_bound(block)
+            && loop_body_pushes_vec(body, body_entry, bid, vec_local)
+        {
+            return Some(bound);
+        }
+        for succ in terminator_successors(&block.terminator) {
+            work.push_back((succ, depth + 1));
+        }
+    }
+    None
+}
+
+fn counted_loop_body_and_bound(block: &BasicBlock) -> Option<(BlockId, Operand)> {
+    let Terminator::SwitchInt {
+        discriminant,
+        arms,
+        default,
+    } = &block.terminator
+    else {
+        return None;
+    };
+    let cond_local = whole_copy_local(discriminant)?;
+    let body_entry = *default;
+    if !arms
+        .iter()
+        .any(|(value, target)| *value == 0 && *target != body_entry)
+    {
+        return None;
+    }
+    for stmt in &block.stmts {
+        let StatementKind::Assign { place, rvalue } = &stmt.kind else {
+            continue;
+        };
+        if place.local != cond_local || !place.projection.is_empty() {
+            continue;
+        }
+        let Rvalue::BinaryOp {
+            op: BinOp::Lt,
+            lhs,
+            rhs,
+        } = rvalue
+        else {
+            continue;
+        };
+        if whole_copy_local(lhs).is_some() {
+            return Some((body_entry, rhs.clone()));
+        }
+    }
+    None
+}
+
+fn loop_body_pushes_vec(body: &Body, entry: BlockId, loop_head: BlockId, vec_local: Local) -> bool {
+    let mut seen = HashSet::new();
+    let mut work = VecDeque::from([(entry, 0usize)]);
+    while let Some((bid, depth)) = work.pop_front() {
+        if bid == loop_head || depth > 128 || !seen.insert(bid) {
+            continue;
+        }
+        let Some(block) = body.blocks.get(bid.0 as usize) else {
+            continue;
+        };
+        if terminator_pushes_vec(&block.terminator, vec_local) {
+            return true;
+        }
+        for succ in terminator_successors(&block.terminator) {
+            work.push_back((succ, depth + 1));
+        }
+    }
+    false
+}
+
+fn terminator_pushes_vec(term: &Terminator, vec_local: Local) -> bool {
+    let Terminator::Call { callee, args, .. } = term else {
+        return false;
+    };
+    if !matches!(callee, Operand::Const(ConstValue::Str(name)) if name == "gos_rt_vec_push" || name == "gos_rt_vec_push_i64")
+    {
+        return false;
+    }
+    args.first().and_then(whole_copy_local) == Some(vec_local)
+}
+
+fn terminator_successors(term: &Terminator) -> Vec<BlockId> {
+    match term {
+        Terminator::Goto { target } => vec![*target],
+        Terminator::SwitchInt { arms, default, .. } => {
+            let mut out = Vec::with_capacity(arms.len() + 1);
+            out.push(*default);
+            out.extend(arms.iter().map(|(_, target)| *target));
+            out
+        }
+        Terminator::Assert { target, .. } => vec![*target],
+        Terminator::Call {
+            target: Some(target),
+            ..
+        } => vec![*target],
+        Terminator::Return
+        | Terminator::Unreachable
+        | Terminator::Panic { .. }
+        | Terminator::Drop { .. }
+        | Terminator::Call { target: None, .. } => Vec::new(),
+    }
+}
+
+/// Fuses `strings::slice(input,start,end)?` immediately consumed by
+/// `strconv::parse_i64` / `parse_f64` into a range parse helper. The helper
+/// performs the same range and UTF-8 validation as `strings::slice`, then
+/// parses the borrowed bytes without allocating a temporary runtime `String`.
+///
+/// This runs after drop insertion, when `?` has been lowered to result-disc /
+/// payload blocks. It only fires when the unwrapped string local is otherwise
+/// used for parse/release/zeroing, so user-visible `String` values still
+/// materialise normally.
+pub(crate) fn fuse_slice_parse_ranges(body: &mut Body) {
+    let slice_by_result = slice_calls_by_result(body);
+    if slice_by_result.is_empty() {
+        return;
+    }
+
+    let mut payload_defs: HashMap<Local, Local> = HashMap::new();
+    let mut copy_defs: HashMap<Local, Option<Local>> = HashMap::new();
+    let mut bindings: Vec<(Local, usize, Local)> = Vec::new();
+    for (bi, block) in body.blocks.iter().enumerate() {
+        for stmt in &block.stmts {
+            let StatementKind::Assign { place, rvalue } = &stmt.kind else {
+                continue;
+            };
+            if !place.projection.is_empty() {
+                continue;
+            }
+            match rvalue {
+                Rvalue::CallIntrinsic { name, args }
+                    if *name == "gos_rt_result_payload" && args.len() == 1 =>
+                {
+                    if let Some(src) = whole_copy_local(&args[0]) {
+                        payload_defs.insert(place.local, src);
+                    }
+                }
+                Rvalue::Use(op) => {
+                    if let Some(src) = whole_copy_local(op) {
+                        let prior = copy_defs.insert(place.local, Some(src));
+                        if prior.is_some() {
+                            copy_defs.insert(place.local, None);
+                        }
+                        bindings.push((place.local, bi, src));
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    let mut candidates: HashMap<Local, (usize, Vec<Operand>, usize)> = HashMap::new();
+    for (str_local, bind_block, src) in bindings {
+        let Some(result_local) = trace_payload_result(src, &copy_defs, &payload_defs) else {
+            continue;
+        };
+        let Some((slice_block, range_args)) = slice_by_result.get(&result_local) else {
+            continue;
+        };
+        if slice_parse_local_is_private(body, str_local) {
+            candidates.insert(str_local, (*slice_block, range_args.clone(), bind_block));
+        }
+    }
+    if candidates.is_empty() {
+        return;
+    }
+
+    let mut changed: HashMap<Local, bool> = HashMap::new();
+    for block in &mut body.blocks {
+        let Terminator::Call { callee, args, .. } = &mut block.terminator else {
+            continue;
+        };
+        let Some(str_local) = args.first().and_then(whole_copy_local) else {
+            continue;
+        };
+        let Some((_, range_args, _)) = candidates.get(&str_local) else {
+            continue;
+        };
+        let Operand::Const(ConstValue::Str(name)) = callee else {
+            continue;
+        };
+        let helper = match name.as_str() {
+            "gos_rt_strconv_parse_i64" => "gos_rt_strconv_parse_i64_range",
+            "gos_rt_strconv_parse_f64" => "gos_rt_strconv_parse_f64_range",
+            _ => continue,
+        };
+        *name = helper.to_string();
+        args.clone_from(range_args);
+        changed.insert(str_local, true);
+    }
+
+    for (str_local, (slice_block, _, bind_block)) in candidates {
+        if !changed.get(&str_local).copied().unwrap_or(false) {
+            continue;
+        }
+        let target = body.blocks[bind_block].id;
+        body.blocks[slice_block].terminator = Terminator::Goto { target };
+        for stmt in &mut body.blocks[bind_block].stmts {
+            if assigns_whole_local(stmt, str_local) {
+                stmt.kind = StatementKind::Nop;
+            }
+        }
+    }
+}
+
+fn slice_calls_by_result(body: &Body) -> HashMap<Local, (usize, Vec<Operand>)> {
+    let mut slice_by_result = HashMap::new();
+    for (bi, block) in body.blocks.iter().enumerate() {
+        let Terminator::Call {
+            callee,
+            args,
+            destination,
+            target,
+        } = &block.terminator
+        else {
+            continue;
+        };
+        if *target == Some(block.id) || args.len() != 3 {
+            continue;
+        }
+        if !matches!(callee, Operand::Const(ConstValue::Str(name)) if name == "gos_rt_str_slice") {
+            continue;
+        }
+        if destination.projection.is_empty() {
+            slice_by_result.insert(destination.local, (bi, args.clone()));
+        }
+    }
+    slice_by_result
+}
+
+fn whole_copy_local(op: &Operand) -> Option<Local> {
+    match op {
+        Operand::Copy(p) if p.projection.is_empty() => Some(p.local),
+        _ => None,
+    }
+}
+
+fn trace_payload_result(
+    mut local: Local,
+    copy_defs: &HashMap<Local, Option<Local>>,
+    payload_defs: &HashMap<Local, Local>,
+) -> Option<Local> {
+    for _ in 0..16 {
+        if let Some(result) = payload_defs.get(&local) {
+            return Some(*result);
+        }
+        match copy_defs.get(&local).copied().flatten() {
+            Some(next) if next != local => local = next,
+            _ => return None,
+        }
+    }
+    None
+}
+
+fn assigns_whole_local(stmt: &Statement, local: Local) -> bool {
+    matches!(
+        &stmt.kind,
+        StatementKind::Assign { place, .. } if place.local == local && place.projection.is_empty()
+    )
+}
+
+fn slice_parse_local_is_private(body: &Body, local: Local) -> bool {
+    for block in &body.blocks {
+        for stmt in &block.stmts {
+            let StatementKind::Assign { place, rvalue } = &stmt.kind else {
+                continue;
+            };
+            if place.local == local && place.projection.is_empty() {
+                match rvalue {
+                    Rvalue::Use(Operand::Const(ConstValue::Int(0))) => {}
+                    Rvalue::Use(Operand::Copy(_)) => {}
+                    _ => return false,
+                }
+            } else if rvalue_mentions_local(rvalue, local) {
+                if !matches!(
+                    rvalue,
+                    Rvalue::CallIntrinsic { name, args }
+                        if *name == "gos_rt_rc_release"
+                            && args.len() == 1
+                            && whole_copy_local(&args[0]) == Some(local)
+                ) {
+                    return false;
+                }
+            }
+        }
+        if terminator_mentions_local_forbidden(&block.terminator, local) {
+            return false;
+        }
+    }
+    true
+}
+
+fn terminator_mentions_local_forbidden(term: &Terminator, local: Local) -> bool {
+    match term {
+        Terminator::Call { callee, args, .. } => {
+            let is_parse = matches!(
+                callee,
+                Operand::Const(ConstValue::Str(name))
+                    if name == "gos_rt_strconv_parse_i64" || name == "gos_rt_strconv_parse_f64"
+            );
+            for (idx, arg) in args.iter().enumerate() {
+                if operand_mentions_local(arg, local) && !(is_parse && idx == 0) {
+                    return true;
+                }
+            }
+            operand_mentions_local(callee, local)
+        }
+        Terminator::SwitchInt { discriminant, .. } => operand_mentions_local(discriminant, local),
+        Terminator::Assert { cond, .. } => operand_mentions_local(cond, local),
+        Terminator::Drop { place, .. } => place_mentions_local(place, local),
+        Terminator::Goto { .. }
+        | Terminator::Return
+        | Terminator::Unreachable
+        | Terminator::Panic { .. } => false,
+    }
 }
 
 /// Detects trivial wrapper functions (a two-block body whose entry block
@@ -2575,6 +2961,164 @@ pub(crate) fn bounds_check_elim(body: &mut Body, tcx: &TyCtxt) {
     }
 }
 
+fn switch_true_successor(arms: &[(i128, BlockId)], default: BlockId) -> usize {
+    let mut true_target: Option<BlockId> = None;
+    for (value, target) in arms {
+        if *value == 1 {
+            true_target = Some(*target);
+            break;
+        }
+    }
+    let target = true_target.unwrap_or(default);
+    target.0 as usize
+}
+
+enum BranchBoundFact {
+    IndexLtLen { index: Local, xs: Local },
+    LenPositive { len: Local, xs: Local },
+}
+
+fn branch_bound_fact(body: &Body, block_index: usize) -> Option<(usize, BranchBoundFact)> {
+    let block = &body.blocks[block_index];
+    let Terminator::SwitchInt {
+        discriminant: Operand::Copy(disc),
+        arms,
+        default,
+    } = &block.terminator
+    else {
+        return None;
+    };
+    if !disc.projection.is_empty() {
+        return None;
+    }
+    let true_successor = switch_true_successor(arms, *default);
+    if true_successor >= body.blocks.len() {
+        return None;
+    }
+    let cmp = unique_def_rvalue(body, disc.local)?;
+    let Rvalue::BinaryOp { op, lhs, rhs } = cmp else {
+        return None;
+    };
+    match (op, lhs, rhs) {
+        (BinOp::Lt, Operand::Copy(idx), Operand::Copy(bound))
+            if idx.projection.is_empty() && bound.projection.is_empty() =>
+        {
+            let xs = bound_traces_to_len(body, &[], block_index, bound.local)?;
+            let in_loop = |_| false;
+            if value_traces_nonneg(body, &in_loop, idx.local, &mut Vec::new()) {
+                return Some((
+                    true_successor,
+                    BranchBoundFact::IndexLtLen {
+                        index: idx.local,
+                        xs,
+                    },
+                ));
+            }
+            None
+        }
+        (BinOp::Lt, Operand::Const(ConstValue::Int(0)), Operand::Copy(bound))
+        | (BinOp::Gt, Operand::Copy(bound), Operand::Const(ConstValue::Int(0)))
+            if bound.projection.is_empty() =>
+        {
+            let xs = bound_traces_to_len(body, &[], block_index, bound.local)?;
+            Some((
+                true_successor,
+                BranchBoundFact::LenPositive {
+                    len: bound.local,
+                    xs,
+                },
+            ))
+        }
+        _ => None,
+    }
+}
+
+fn local_is_len_minus_one(body: &Body, local: Local, len: Local) -> bool {
+    matches!(
+        unique_def_rvalue(body, local),
+        Some(Rvalue::BinaryOp {
+            op: BinOp::Sub,
+            lhs: Operand::Copy(lhs),
+            rhs: Operand::Const(ConstValue::Int(1)),
+        }) if lhs.projection.is_empty() && lhs.local == len
+    )
+}
+
+fn guarded_successor_has_no_vec_side_effects(block: &BasicBlock, xs: Local) -> bool {
+    block
+        .stmts
+        .iter()
+        .all(|stmt| !stmt_mentions_local(stmt, xs))
+}
+
+/// Branch-local bounds facts for heap-style code. Rewrites a checked scalar
+/// Vec get/set in the proven true successor of either `idx < xs.len()` or
+/// `xs.len() > 0` followed by `last = len - 1`. This deliberately does not
+/// clone blocks or reason across arbitrary statements; it only removes the
+/// runtime guard when local control flow proves the single terminator access.
+pub(crate) fn local_branch_bounds_check_elim(body: &mut Body, tcx: &TyCtxt) {
+    let mut rewrites: Vec<(usize, &'static str)> = Vec::new();
+    for h in 0..body.blocks.len() {
+        let Some((successor, fact)) = branch_bound_fact(body, h) else {
+            continue;
+        };
+        let block = &body.blocks[successor];
+        let Terminator::Call {
+            callee: Operand::Const(ConstValue::Str(name)),
+            args,
+            ..
+        } = &block.terminator
+        else {
+            continue;
+        };
+        let Some(unchecked) = unchecked_variant(name) else {
+            continue;
+        };
+        let idx_arg = match (name.as_str(), args.as_slice()) {
+            ("gos_rt_vec_get_i64", [_, idx]) => idx,
+            ("gos_rt_vec_set_i64", [_, idx, _]) => idx,
+            _ => continue,
+        };
+        let Some(Operand::Copy(receiver)) = args.first() else {
+            continue;
+        };
+        if !receiver.projection.is_empty()
+            || !guarded_successor_has_no_vec_side_effects(block, receiver.local)
+        {
+            continue;
+        }
+        if !vec_elem_is_unchecked_scalar(body, tcx, receiver.local) {
+            continue;
+        }
+        let Operand::Copy(idx_place) = idx_arg else {
+            continue;
+        };
+        if !idx_place.projection.is_empty() {
+            continue;
+        }
+        let proven = match fact {
+            BranchBoundFact::IndexLtLen { index, xs } => {
+                receiver.local == xs
+                    && idx_place.local == index
+                    && !block_writes_local(block, index)
+            }
+            BranchBoundFact::LenPositive { len, xs } => {
+                receiver.local == xs
+                    && !block_writes_local(block, len)
+                    && local_is_len_minus_one(body, idx_place.local, len)
+            }
+        };
+        if proven {
+            rewrites.push((successor, unchecked));
+        }
+    }
+    for (b, name) in rewrites {
+        if let Terminator::Call { callee, .. } = &mut body.blocks[b].terminator {
+            *callee = Operand::Const(ConstValue::Str(name.to_string()));
+        }
+    }
+}
+
 /// A scalar vec element access `xs[base + counter]` inside a counted loop
 /// whose index is an affine function of the loop counter with coefficient
 /// one. `base` is a loop-invariant operand: `Const(0)` for a bare
@@ -3192,7 +3736,10 @@ mod elision_tests {
     use gossamer_lex::{SourceMap, Span};
     use gossamer_types::TyCtxt;
 
-    use super::{bounds_check_elim, elide_redundant_rc_pairs};
+    use super::{
+        bounds_check_elim, elide_redundant_rc_pairs, fuse_slice_parse_ranges,
+        local_branch_bounds_check_elim, reserve_vecs_for_counted_push_loops,
+    };
     use crate::ir::{
         BasicBlock, BinOp, BlockId, Body, ConstValue, Local, LocalDecl, Operand, Place, Projection,
         Rvalue, Statement, StatementKind, Terminator,
@@ -3548,5 +4095,429 @@ mod elision_tests {
             &Operand::Const(ConstValue::Str("gos_rt_vec_get_i64".to_string())),
             "a bound that is not the vec's length must keep the checked read"
         );
+    }
+
+    #[test]
+    fn bounds_rewrites_direct_branch_guarded_get() {
+        use gossamer_types::IntTy;
+        let mut tcx = TyCtxt::new();
+        let unit = tcx.unit();
+        let i64t = tcx.int_ty(IntTy::I64);
+        let vec_i64 = tcx.intern(gossamer_types::TyKind::Vec(i64t));
+        let boolt = tcx.bool_ty();
+        let locals = vec![
+            decl(unit),
+            decl(vec_i64), // xs
+            decl(i64t),    // len
+            decl(i64t),    // idx
+            decl(boolt),   // cmp
+            decl(i64t),    // elem
+        ];
+        let sp = span();
+        let blocks = vec![
+            BasicBlock {
+                id: BlockId(0),
+                stmts: vec![assign(
+                    Place::local(Local(3)),
+                    Rvalue::Use(Operand::Const(ConstValue::Int(0))),
+                )],
+                terminator: Terminator::Call {
+                    callee: Operand::Const(ConstValue::Str("gos_rt_vec_len".to_string())),
+                    args: vec![Operand::Copy(Place::local(Local(1)))],
+                    destination: Place::local(Local(2)),
+                    target: Some(BlockId(1)),
+                },
+                span: sp,
+            },
+            BasicBlock {
+                id: BlockId(1),
+                stmts: vec![assign(
+                    Place::local(Local(4)),
+                    Rvalue::BinaryOp {
+                        op: BinOp::Lt,
+                        lhs: Operand::Copy(Place::local(Local(3))),
+                        rhs: Operand::Copy(Place::local(Local(2))),
+                    },
+                )],
+                terminator: Terminator::SwitchInt {
+                    discriminant: Operand::Copy(Place::local(Local(4))),
+                    arms: vec![(0, BlockId(3))],
+                    default: BlockId(2),
+                },
+                span: sp,
+            },
+            BasicBlock {
+                id: BlockId(2),
+                stmts: vec![],
+                terminator: Terminator::Call {
+                    callee: Operand::Const(ConstValue::Str("gos_rt_vec_get_i64".to_string())),
+                    args: vec![
+                        Operand::Copy(Place::local(Local(1))),
+                        Operand::Copy(Place::local(Local(3))),
+                    ],
+                    destination: Place::local(Local(5)),
+                    target: Some(BlockId(3)),
+                },
+                span: sp,
+            },
+            BasicBlock {
+                id: BlockId(3),
+                stmts: vec![],
+                terminator: Terminator::Return,
+                span: sp,
+            },
+        ];
+        let mut body = Body {
+            name: "branch".into(),
+            def: None,
+            arity: 1,
+            locals,
+            blocks,
+            span: sp,
+        };
+        local_branch_bounds_check_elim(&mut body, &tcx);
+        let Terminator::Call { callee, .. } = &body.blocks[2].terminator else {
+            panic!("expected call terminator")
+        };
+        assert_eq!(
+            callee,
+            &Operand::Const(ConstValue::Str("gos_rt_vec_get_i64_unchecked".to_string()))
+        );
+    }
+
+    #[test]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "synthetic MIR fixture needs explicit block structure"
+    )]
+    fn fuse_slice_parse_ranges_rewrites_parse_only_slice() {
+        use gossamer_types::IntTy;
+        let mut tcx = TyCtxt::new();
+        let unit = tcx.unit();
+        let i64t = tcx.int_ty(IntTy::I64);
+        let string = tcx.string_ty();
+        let result = tcx.intern(gossamer_types::TyKind::Tuple(vec![i64t, i64t]));
+        let locals = vec![
+            decl(unit),   // 0 return
+            decl(string), // 1 input
+            decl(i64t),   // 2 start
+            decl(i64t),   // 3 end
+            decl(result), // 4 slice result
+            decl(i64t),   // 5 temp payload
+            decl(string), // 6 unwrapped string temp
+            decl(result), // 7 parse result
+            decl(unit),   // 8 release unit
+        ];
+        let sp = span();
+        let blocks = vec![
+            BasicBlock {
+                id: BlockId(0),
+                stmts: vec![
+                    assign(
+                        Place::local(Local(6)),
+                        Rvalue::Use(Operand::Const(ConstValue::Int(0))),
+                    ),
+                    assign(
+                        Place::local(Local(2)),
+                        Rvalue::Use(Operand::Const(ConstValue::Int(1))),
+                    ),
+                    assign(
+                        Place::local(Local(3)),
+                        Rvalue::Use(Operand::Const(ConstValue::Int(3))),
+                    ),
+                ],
+                terminator: Terminator::Call {
+                    callee: Operand::Const(ConstValue::Str("gos_rt_str_slice".to_string())),
+                    args: vec![
+                        Operand::Copy(Place::local(Local(1))),
+                        Operand::Copy(Place::local(Local(2))),
+                        Operand::Copy(Place::local(Local(3))),
+                    ],
+                    destination: Place::local(Local(4)),
+                    target: Some(BlockId(1)),
+                },
+                span: sp,
+            },
+            BasicBlock {
+                id: BlockId(1),
+                stmts: vec![
+                    assign(
+                        Place::local(Local(5)),
+                        Rvalue::CallIntrinsic {
+                            name: "gos_rt_result_payload",
+                            args: vec![Operand::Copy(Place::local(Local(4)))],
+                        },
+                    ),
+                    assign(
+                        Place::local(Local(8)),
+                        Rvalue::CallIntrinsic {
+                            name: "gos_rt_rc_release",
+                            args: vec![Operand::Copy(Place::local(Local(6)))],
+                        },
+                    ),
+                    copy(6, 5),
+                ],
+                terminator: Terminator::Call {
+                    callee: Operand::Const(ConstValue::Str("gos_rt_strconv_parse_i64".to_string())),
+                    args: vec![Operand::Copy(Place::local(Local(6)))],
+                    destination: Place::local(Local(7)),
+                    target: Some(BlockId(2)),
+                },
+                span: sp,
+            },
+            BasicBlock {
+                id: BlockId(2),
+                stmts: vec![assign(
+                    Place::local(Local(8)),
+                    Rvalue::CallIntrinsic {
+                        name: "gos_rt_rc_release",
+                        args: vec![Operand::Copy(Place::local(Local(6)))],
+                    },
+                )],
+                terminator: Terminator::Return,
+                span: sp,
+            },
+        ];
+        let mut body = Body {
+            name: "parse".into(),
+            def: None,
+            arity: 1,
+            locals,
+            blocks,
+            span: sp,
+        };
+
+        fuse_slice_parse_ranges(&mut body);
+
+        assert!(matches!(
+            body.blocks[0].terminator,
+            Terminator::Goto { target: BlockId(1) }
+        ));
+        assert!(is_nop(&body.blocks[1].stmts[2]));
+        let Terminator::Call { callee, args, .. } = &body.blocks[1].terminator else {
+            panic!("expected parse call")
+        };
+        assert_eq!(
+            callee,
+            &Operand::Const(ConstValue::Str(
+                "gos_rt_strconv_parse_i64_range".to_string()
+            ))
+        );
+        assert_eq!(
+            args,
+            &vec![
+                Operand::Copy(Place::local(Local(1))),
+                Operand::Copy(Place::local(Local(2))),
+                Operand::Copy(Place::local(Local(3))),
+            ]
+        );
+    }
+
+    #[test]
+    fn reserve_vecs_rewrites_counted_push_loop_constructor() {
+        let mut tcx = TyCtxt::new();
+        let unit = tcx.unit();
+        let i64_ty = tcx.int_ty(gossamer_types::IntTy::I64);
+        let locals = vec![
+            decl(unit),   // L0 return
+            decl(i64_ty), // L1 vec handle in this synthetic test
+            decl(i64_ty), // L2 counter
+            decl(i64_ty), // L3 bound
+            decl(i64_ty), // L4 cond
+            decl(i64_ty), // L5 value
+            decl(unit),   // L6 push result
+        ];
+        let sp = span();
+        let mut body = Body {
+            name: "reserve".into(),
+            def: None,
+            arity: 3,
+            locals,
+            blocks: vec![
+                BasicBlock {
+                    id: BlockId(0),
+                    stmts: vec![],
+                    terminator: Terminator::Call {
+                        callee: Operand::Const(ConstValue::Str("Vec::new".to_string())),
+                        args: vec![Operand::Const(ConstValue::Int(8))],
+                        destination: Place::local(Local(1)),
+                        target: Some(BlockId(1)),
+                    },
+                    span: sp,
+                },
+                BasicBlock {
+                    id: BlockId(1),
+                    stmts: vec![assign(
+                        Place::local(Local(4)),
+                        Rvalue::BinaryOp {
+                            op: BinOp::Lt,
+                            lhs: Operand::Copy(Place::local(Local(2))),
+                            rhs: Operand::Copy(Place::local(Local(3))),
+                        },
+                    )],
+                    terminator: Terminator::SwitchInt {
+                        discriminant: Operand::Copy(Place::local(Local(4))),
+                        arms: vec![(0, BlockId(4))],
+                        default: BlockId(2),
+                    },
+                    span: sp,
+                },
+                BasicBlock {
+                    id: BlockId(2),
+                    stmts: vec![],
+                    terminator: Terminator::Call {
+                        callee: Operand::Const(ConstValue::Str("gos_rt_vec_push".to_string())),
+                        args: vec![
+                            Operand::Copy(Place::local(Local(1))),
+                            Operand::Copy(Place::local(Local(5))),
+                        ],
+                        destination: Place::local(Local(6)),
+                        target: Some(BlockId(3)),
+                    },
+                    span: sp,
+                },
+                BasicBlock {
+                    id: BlockId(3),
+                    stmts: vec![assign(
+                        Place::local(Local(2)),
+                        Rvalue::BinaryOp {
+                            op: BinOp::Add,
+                            lhs: Operand::Copy(Place::local(Local(2))),
+                            rhs: Operand::Const(ConstValue::Int(1)),
+                        },
+                    )],
+                    terminator: Terminator::Goto { target: BlockId(1) },
+                    span: sp,
+                },
+                BasicBlock {
+                    id: BlockId(4),
+                    stmts: vec![],
+                    terminator: Terminator::Return,
+                    span: sp,
+                },
+            ],
+            span: sp,
+        };
+
+        reserve_vecs_for_counted_push_loops(&mut body);
+
+        let Terminator::Call { callee, args, .. } = &body.blocks[0].terminator else {
+            panic!("expected constructor call")
+        };
+        assert!(
+            matches!(callee, Operand::Const(ConstValue::Str(name)) if name == "gos_rt_vec_with_capacity")
+        );
+        assert_eq!(args.len(), 2);
+        assert!(matches!(
+            args[1],
+            Operand::Copy(Place {
+                local: Local(3),
+                projection: _
+            })
+        ));
+    }
+
+    #[test]
+    fn reserve_vecs_skips_bounds_computed_after_constructor() {
+        let mut tcx = TyCtxt::new();
+        let unit = tcx.unit();
+        let i64_ty = tcx.int_ty(gossamer_types::IntTy::I64);
+        let locals = vec![
+            decl(unit),   // L0 return
+            decl(i64_ty), // L1 vec
+            decl(i64_ty), // L2 counter
+            decl(i64_ty), // L3 bound, assigned after constructor
+            decl(i64_ty), // L4 cond
+            decl(i64_ty), // L5 value
+            decl(unit),   // L6 push result
+        ];
+        let sp = span();
+        let mut body = Body {
+            name: "reserve_skip".into(),
+            def: None,
+            arity: 0,
+            locals,
+            blocks: vec![
+                BasicBlock {
+                    id: BlockId(0),
+                    stmts: vec![],
+                    terminator: Terminator::Call {
+                        callee: Operand::Const(ConstValue::Str("Vec::new".to_string())),
+                        args: vec![Operand::Const(ConstValue::Int(8))],
+                        destination: Place::local(Local(1)),
+                        target: Some(BlockId(1)),
+                    },
+                    span: sp,
+                },
+                BasicBlock {
+                    id: BlockId(1),
+                    stmts: vec![assign(
+                        Place::local(Local(3)),
+                        Rvalue::Use(Operand::Const(ConstValue::Int(10))),
+                    )],
+                    terminator: Terminator::Goto { target: BlockId(2) },
+                    span: sp,
+                },
+                BasicBlock {
+                    id: BlockId(2),
+                    stmts: vec![assign(
+                        Place::local(Local(4)),
+                        Rvalue::BinaryOp {
+                            op: BinOp::Lt,
+                            lhs: Operand::Copy(Place::local(Local(2))),
+                            rhs: Operand::Copy(Place::local(Local(3))),
+                        },
+                    )],
+                    terminator: Terminator::SwitchInt {
+                        discriminant: Operand::Copy(Place::local(Local(4))),
+                        arms: vec![(0, BlockId(5))],
+                        default: BlockId(3),
+                    },
+                    span: sp,
+                },
+                BasicBlock {
+                    id: BlockId(3),
+                    stmts: vec![],
+                    terminator: Terminator::Call {
+                        callee: Operand::Const(ConstValue::Str("gos_rt_vec_push".to_string())),
+                        args: vec![
+                            Operand::Copy(Place::local(Local(1))),
+                            Operand::Copy(Place::local(Local(5))),
+                        ],
+                        destination: Place::local(Local(6)),
+                        target: Some(BlockId(4)),
+                    },
+                    span: sp,
+                },
+                BasicBlock {
+                    id: BlockId(4),
+                    stmts: vec![assign(
+                        Place::local(Local(2)),
+                        Rvalue::BinaryOp {
+                            op: BinOp::Add,
+                            lhs: Operand::Copy(Place::local(Local(2))),
+                            rhs: Operand::Const(ConstValue::Int(1)),
+                        },
+                    )],
+                    terminator: Terminator::Goto { target: BlockId(2) },
+                    span: sp,
+                },
+                BasicBlock {
+                    id: BlockId(5),
+                    stmts: vec![],
+                    terminator: Terminator::Return,
+                    span: sp,
+                },
+            ],
+            span: sp,
+        };
+
+        reserve_vecs_for_counted_push_loops(&mut body);
+
+        let Terminator::Call { callee, args, .. } = &body.blocks[0].terminator else {
+            panic!("expected constructor call")
+        };
+        assert!(matches!(callee, Operand::Const(ConstValue::Str(name)) if name == "Vec::new"));
+        assert_eq!(args.len(), 1);
     }
 }

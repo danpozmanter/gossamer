@@ -110,12 +110,12 @@ Names available without any import - the print macros, `min`/`max`/`clamp`, `spa
 | [`std::process`](#stdprocess) | 12 | Spawn child processes, exit the current process (Rust std::process shape). |
 | [`std::regex`](#stdregex) | 10 | Compiled regular expressions (Rust `regex` crate syntax; no backreferences or look-around). |
 | [`std::result`](#stdresult) | 10 | Data-last Result combinators for pipeline chaining: map, map_err, unwrap_or_else, etc. |
-| [`std::runtime`](#stdruntime) | 4 | Goroutine / scheduler introspection and tuning. |
+| [`std::runtime`](#stdruntime) | 5 | Goroutine / scheduler introspection and tuning. |
 | [`std::slog`](#stdslog) | 8 | Structured, levelled logging. |
 | [`std::strconv`](#stdstrconv) | 10 | Conversions between strings and primitive numeric types. |
 | [`std::strings`](#stdstrings) | 40 | Polished `String` operations. |
-| [`std::sync`](#stdsync) | 9 | Synchronisation primitives beyond channels. |
-| [`std::testing`](#stdtesting) | 4 | Assertions and sub-test harness helpers. |
+| [`std::sync`](#stdsync) | 10 | Synchronisation primitives beyond channels. |
+| [`std::testing`](#stdtesting) | 5 | Assertions and sub-test harness helpers. |
 | [`std::thread`](#stdthread) | 3 | Native OS threads. For goroutines use the `go expr` syntax. |
 | [`std::time`](#stdtime) | 13 | Wall-clock and monotonic time facilities. |
 | [`std::tls`](#stdtls) | 5 | TLS termination and TLS client dialling (rustls-backed). Wired through both http::Server::bind_and_run_tls and http::Client; mTLS / ALPN / SNI exposed. |
@@ -688,8 +688,11 @@ Filesystem reading, writing, and traversal (Rust std::fs shape).
 
 | Item | Kind | Doc |
 |------|------|-----|
+| `File` | type | Streaming file handle; supports read, read_to_string, write, flush, and close. |
+| `OpenOptions` | type | Builder for opening files with read/write/append/create/truncate flags. |
 | `canonicalize` | fn | Resolves a path to an absolute, symlink-free canonical form. |
 | `copy` | fn | Copies a file, creating parent dirs as needed. |
+| `create` | fn | Creates or truncates a file and returns a streaming file handle. |
 | `create_dir` | fn | Creates a single directory. Fails if any parent is missing. |
 | `create_dir_all` | fn | Creates a directory and any missing ancestors. |
 | `exists` | fn | Returns whether a path exists on the filesystem. |
@@ -698,6 +701,7 @@ Filesystem reading, writing, and traversal (Rust std::fs shape).
 | `is_file` | fn | Returns whether a path exists and is a regular file. |
 | `is_symlink` | fn | Returns whether a path exists and is a symbolic link. |
 | `metadata` | fn | Returns filesystem metadata for a path. |
+| `open` | fn | Opens a file for streaming reads. |
 | `read` | fn | Reads an entire file into memory as bytes. |
 | `read_dir` | fn | Returns DirInfo metadata for the immediate children of a directory. |
 | `read_to_string` | fn | Reads an entire file into memory as UTF-8 text. |
@@ -707,6 +711,8 @@ Filesystem reading, writing, and traversal (Rust std::fs shape).
 | `rename` | fn | Renames a file or directory. |
 | `walk_dir` | fn | Recursively visits every descendant entry. |
 | `write` | fn | Writes bytes to a file, creating or truncating it. |
+
+Streaming `File` handles expose `read(max)`, `read_to_string()`, `write(bytes)` / `write_all(bytes)`, `flush()`, and `close()`. `OpenOptions::new()` exposes `read`, `write`, `append`, `truncate`, `create`, `create_new`, and `open(path)` for flag-controlled opens.
 
 ## `std::hash::adler32`
 
@@ -1245,9 +1251,11 @@ TCP/UDP networking primitives.
 | Item | Kind | Doc |
 |------|------|-----|
 | `TcpListener` | type | Accepts incoming TCP connections. |
-| `TcpStream` | type | Bidirectional TCP byte stream. |
+| `TcpStream` | type | Bidirectional TCP byte stream; supports read/write, TLS upgrade, close, and read/write timeout setters. |
 | `UdpSocket` | type | Bound UDP socket for datagram I/O. |
 | `lookup` | fn | Resolves a hostname to its IP addresses. |
+
+`TcpStream` exposes `read(max)`, `read_to_string()`, `write(bytes)` / `write_all(bytes)`, `set_read_timeout_ms(ms)`, `set_write_timeout_ms(ms)`, `clear_read_timeout()`, `clear_write_timeout()`, and `close()`.
 
 ## `std::net::ip`
 
@@ -1454,6 +1462,7 @@ Goroutine / scheduler introspection and tuning.
 | `arena_pop` | fn | Closes the innermost arena region, freeing its slabs. |
 | `arena_push` | fn | Opens an arena region for bump allocation. |
 | `collect_cycles` | fn | Runs the reference-cycle collector and returns objects reclaimed. |
+| `scheduler_stats_json` | fn | Returns a compact JSON snapshot of goroutine scheduler counters. |
 | `set_panic_hook` | fn | Installs a hook invoked with the message on panic. |
 
 ## `std::slog`
@@ -1549,7 +1558,8 @@ Synchronisation primitives beyond channels.
 | `Once` | type | One-shot initialisation latch. |
 | `RwLock` | type | Reader-writer lock. |
 | `WaitGroup` | type | Counts goroutines and waits for them to finish. |
-| `channel` | fn | Creates a typed channel, returning (Sender, Receiver). |
+| `channel` | fn | Creates an unbuffered typed channel, returning (Sender, Receiver). |
+| `channel_unbounded` | fn | Creates an explicit unbounded queue channel. |
 
 ## `std::testing`
 
@@ -1561,6 +1571,7 @@ Assertions and sub-test harness helpers.
 | `check` | fn | Asserts a condition. |
 | `check_eq` | fn | Asserts equality, rendering a diff on failure. |
 | `check_ok` | fn | Asserts a Result is Ok, recording without panicking. |
+| `wait_for_scheduler_idle` | fn | Waits up to a timeout for goroutine scheduler quiescence. |
 
 ## `std::thread`
 
@@ -1717,4 +1728,3 @@ Trait-based field validation: implement Validate, collect FieldErrors into Error
 | `Errors` | type | Aggregated FieldError set, indexable by dotted path. |
 | `FieldError` | type | One field-scoped validation failure: dotted path, message, optional code. |
 | `Validate` | trait | Implement on a struct to declare field-level validation rules. |
-

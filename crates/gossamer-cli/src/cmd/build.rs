@@ -817,36 +817,25 @@ fn build_static_bindings_lib(
     cargo_target: Option<&str>,
 ) -> std::result::Result<Option<PathBuf>, gossamer_driver::binding_runner::BindingRunnerError> {
     use gossamer_driver::binding_runner::{Profile as RunnerProfile, StaticBindingsLib};
-    use gossamer_pkg::{Manifest, find_manifest};
 
-    let Ok(cwd) = std::env::current_dir() else {
-        return Ok(None);
-    };
-    let Some(manifest_path) = find_manifest(&cwd) else {
-        return Ok(None);
-    };
-    let Ok(manifest_text) = fs::read_to_string(&manifest_path) else {
-        return Ok(None);
-    };
+    let project = crate::paths::project_context();
     // Mirror `dispatch_runner_if_needed`: a malformed manifest must
     // not silently degrade to "no bindings".
-    let manifest = match Manifest::parse(&manifest_text) {
+    let Some(manifest_result) = project.manifest_result() else {
+        return Ok(None);
+    };
+    let manifest = match manifest_result {
         Ok(m) => m,
         Err(err) => {
             return Err(
-                gossamer_driver::binding_runner::BindingRunnerError::Manifest(format!(
-                    "{}: {err}",
-                    manifest_path.display()
-                )),
+                gossamer_driver::binding_runner::BindingRunnerError::Manifest(err.to_string()),
             );
         }
     };
     if manifest.rust_bindings.is_empty() {
         return Ok(None);
     }
-    let manifest_dir = manifest_path
-        .parent()
-        .map_or_else(|| PathBuf::from("."), Path::to_path_buf);
+    let manifest_dir = project.manifest_dir().unwrap_or_else(|| PathBuf::from("."));
     let Some(gossamer_root) = crate::binding_dispatch::locate_gossamer_root() else {
         return Ok(None);
     };
@@ -856,7 +845,7 @@ fn build_static_bindings_lib(
         RunnerProfile::Debug
     };
     let Some(lib) =
-        StaticBindingsLib::from_manifest(&manifest, &manifest_dir, &gossamer_root, profile)
+        StaticBindingsLib::from_manifest(manifest, &manifest_dir, &gossamer_root, profile)
             .map_err(gossamer_driver::binding_runner::BindingRunnerError::Io)?
     else {
         return Ok(None);

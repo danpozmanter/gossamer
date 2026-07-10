@@ -8,8 +8,8 @@
 use std::sync::channel
 
 fn main() {
-    let (tx1, rx1) = channel()
-    let (tx2, rx2) = channel()
+    let (tx1, rx1) = channel::unbounded()
+    let (tx2, rx2) = channel::unbounded()
 
     // 1. Nothing buffered yet: the default arm fires.
     let a = select {
@@ -19,7 +19,7 @@ fn main() {
     }
     println!("a = {}", a)
 
-    // 2. Only rx1 has a value: source-order poll picks arm 0.
+    // 2. Only rx1 has a value: the recv arm beats default.
     tx1.send(10)
     let b = select {
         v = rx1.recv() => v,
@@ -28,7 +28,7 @@ fn main() {
     }
     println!("b = {}", b)
 
-    // 3. rx1 is drained, rx2 has a value: arm 1 is the first ready.
+    // 3. rx1 is drained, rx2 has a value: that recv arm wins.
     tx2.send(20)
     let c = select {
         v = rx1.recv() => v,
@@ -38,7 +38,7 @@ fn main() {
     println!("c = {}", c)
 
     // 4. A send arm on an unbounded channel is always ready.
-    let (tx3, rx3) = channel()
+    let (tx3, rx3) = channel::unbounded()
     select {
         tx3.send(99) => println!("sent"),
         default => println!("not sent"),
@@ -65,7 +65,7 @@ mod tests {
 
     #[test]
     fn ready_recv_arm_beats_default() {
-        let (tx, rx) = channel()
+        let (tx, rx) = channel::unbounded()
         tx.send(7)
         let chosen = select {
             v = rx.recv() => v,

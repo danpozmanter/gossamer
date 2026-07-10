@@ -15,7 +15,7 @@
 #![allow(unused_unsafe)]
 #![allow(clippy::wildcard_imports)]
 
-use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::atomic::{AtomicI64, AtomicU64, AtomicUsize, Ordering};
 
 // ---------------------------------------------------------------
 // Channel runtime - bounded MPMC via parking_lot Mutex<VecDeque>
@@ -35,14 +35,14 @@ enum ChanStorage {
     /// 8-byte inline payloads. A 1M-message run with cap=100
     /// holds at most 100 * 8 = 800 B of payload here, vs ~3.2 MB
     /// of `Vec<u8>` headers + 8 B allocations under `Bytes`.
-    I64(VecDeque<i64>),
+    I64(VecDeque<(u64, i64)>),
     /// Erased byte storage for any other element size.
-    Bytes(VecDeque<Vec<u8>>),
+    Bytes(VecDeque<(u64, Vec<u8>)>),
 }
 
 pub struct GosChan {
     pub elem_bytes: u32,
-    pub cap: i64, // 0 = unbounded
+    pub cap: i64, // 0 = unbuffered, >0 = bounded, <0 = unbounded
     pub closed: PlMutex<bool>,
     buf: PlMutex<ChanStorage>,
     pub not_empty: PlCondvar,
@@ -59,6 +59,8 @@ pub struct GosChan {
     /// record a happens-before edge into the race detector. `-1`
     /// means "no sender yet observed".
     pub last_sender: AtomicI64,
+    next_send_id: AtomicU64,
+    recv_waiters: AtomicUsize,
 }
 
 #[unsafe(no_mangle)]
@@ -79,6 +81,8 @@ pub unsafe extern "C" fn gos_rt_chan_new(elem_bytes: u32, cap: i64) -> *mut GosC
             parked_recv: parking_lot::Mutex::new(std::collections::VecDeque::new()),
             parked_send: parking_lot::Mutex::new(std::collections::VecDeque::new()),
             last_sender: AtomicI64::new(-1),
+            next_send_id: AtomicU64::new(1),
+            recv_waiters: AtomicUsize::new(0),
         }))
     })
 }
@@ -91,10 +95,29 @@ pub unsafe extern "C" fn gos_rt_chan_send(c: *mut GosChan, val: *const u8) {
         }
         let chan = unsafe { &*c };
         let bytes_len = chan.elem_bytes as usize;
+        let mut queued_unbuffered = false;
+        let send_id = if chan.cap == 0 {
+            chan.next_send_id.fetch_add(1, Ordering::Relaxed).max(1)
+        } else {
+            0
+        };
         loop {
             let mut guard = chan.buf.lock();
-            if chan.cap <= 0 || (storage_len(&guard) as i64) < chan.cap {
-                push_back(&mut guard, val, bytes_len);
+            if chan.cap == 0 {
+                if !queued_unbuffered {
+                    push_back(&mut guard, send_id, val, bytes_len);
+                    queued_unbuffered = true;
+                    drop(guard);
+                    chan.last_sender
+                        .store(i64::from(crate::race::current_gid()), Ordering::Release);
+                    wake_one_recv(chan);
+                    continue;
+                }
+                if !storage_contains_id(&guard, send_id) {
+                    return;
+                }
+            } else if chan.cap < 0 || (storage_len(&guard) as i64) < chan.cap {
+                push_back(&mut guard, 0, val, bytes_len);
                 drop(guard);
                 chan.last_sender
                     .store(i64::from(crate::race::current_gid()), Ordering::Release);
@@ -159,14 +182,23 @@ pub unsafe extern "C" fn gos_rt_chan_try_send(c: *mut GosChan, val: *const u8) -
         let chan = unsafe { &*c };
         let bytes_len = chan.elem_bytes as usize;
         let mut guard = chan.buf.lock();
-        if chan.cap > 0 && storage_len(&guard) as i64 >= chan.cap {
-            return 0;
+        if chan.cap == 0 {
+            let has_receiver = chan.recv_waiters.load(Ordering::Acquire) > 0
+                || !chan.parked_recv.lock().is_empty();
+            if !has_receiver {
+                return 0;
+            }
+            push_back(&mut guard, 0, val, bytes_len);
+        } else {
+            if chan.cap > 0 && storage_len(&guard) as i64 >= chan.cap {
+                return 0;
+            }
+            push_back(&mut guard, 0, val, bytes_len);
         }
-        push_back(&mut guard, val, bytes_len);
         drop(guard);
         chan.last_sender
             .store(i64::from(crate::race::current_gid()), Ordering::Release);
-        chan.not_empty.notify_one();
+        wake_one_recv(chan);
         1
     })
 }
@@ -194,13 +226,17 @@ pub unsafe extern "C" fn gos_rt_chan_recv(c: *mut GosChan, out: *mut u8) -> i32 
             if gossamer_coro::in_goroutine() {
                 drop(guard);
                 crate::sched_global::park(crate::sched::ParkReason::Chan, |parker| {
+                    chan.recv_waiters.fetch_add(1, Ordering::AcqRel);
                     chan.parked_recv.lock().push_back(parker.gid);
                 });
+                chan.recv_waiters.fetch_sub(1, Ordering::AcqRel);
                 if let Some(gid) = crate::sched_global::current_gid() {
                     chan.parked_recv.lock().retain(|g| *g != gid);
                 }
             } else {
+                chan.recv_waiters.fetch_add(1, Ordering::AcqRel);
                 chan.not_empty.wait(&mut guard);
+                chan.recv_waiters.fetch_sub(1, Ordering::AcqRel);
                 drop(guard);
             }
         }
@@ -219,7 +255,7 @@ pub unsafe extern "C" fn gos_rt_chan_try_recv(c: *mut GosChan, out: *mut u8) -> 
         if pop_front(&mut guard, out, bytes_len) {
             drop(guard);
             record_chan_handoff(chan);
-            chan.not_full.notify_one();
+            wake_one_send(chan);
             return 1;
         }
         0
@@ -384,8 +420,10 @@ pub unsafe extern "C" fn gos_rt_chan_recv_ctx_option(
             if gossamer_coro::in_goroutine() {
                 drop(guard);
                 crate::sched_global::park(crate::sched::ParkReason::Chan, |parker| {
+                    chan.recv_waiters.fetch_add(1, Ordering::AcqRel);
                     chan.parked_recv.lock().push_back(parker.gid);
                 });
+                chan.recv_waiters.fetch_sub(1, Ordering::AcqRel);
                 if let Some(g) = crate::sched_global::current_gid() {
                     chan.parked_recv.lock().retain(|x| *x != g);
                 }
@@ -393,13 +431,10 @@ pub unsafe extern "C" fn gos_rt_chan_recv_ctx_option(
                     break (1i64, 0i64);
                 }
             } else {
-                // OS-thread path: bounded condvar wait so the
-                // cancel poll below can fire even when the channel
-                // never gets a sender. Without the timeout, an
-                // OS-thread caller would block forever on a
-                // cancelled context.
+                chan.recv_waiters.fetch_add(1, Ordering::AcqRel);
                 chan.not_empty
                     .wait_for(&mut guard, std::time::Duration::from_millis(50));
+                chan.recv_waiters.fetch_sub(1, Ordering::AcqRel);
                 drop(guard);
                 if unsafe { is_cancelled(ctx_handle) } != 0 {
                     break (1i64, 0i64);
@@ -420,7 +455,14 @@ fn storage_len(storage: &ChanStorage) -> usize {
     }
 }
 
-fn push_back(storage: &mut ChanStorage, val: *const u8, bytes_len: usize) {
+fn storage_contains_id(storage: &ChanStorage, id: u64) -> bool {
+    match storage {
+        ChanStorage::I64(d) => d.iter().any(|(msg_id, _)| *msg_id == id),
+        ChanStorage::Bytes(d) => d.iter().any(|(msg_id, _)| *msg_id == id),
+    }
+}
+
+fn push_back(storage: &mut ChanStorage, id: u64, val: *const u8, bytes_len: usize) {
     match storage {
         ChanStorage::I64(deque) => {
             // Read 8 bytes from `val` into an i64 in a way that
@@ -429,28 +471,28 @@ fn push_back(storage: &mut ChanStorage, val: *const u8, bytes_len: usize) {
             unsafe {
                 std::ptr::copy_nonoverlapping(val, tmp.as_mut_ptr(), 8);
             }
-            deque.push_back(i64::from_ne_bytes(tmp));
+            deque.push_back((id, i64::from_ne_bytes(tmp)));
         }
         ChanStorage::Bytes(deque) => {
             let mut data = vec![0u8; bytes_len];
             unsafe {
                 std::ptr::copy_nonoverlapping(val, data.as_mut_ptr(), bytes_len);
             }
-            deque.push_back(data);
+            deque.push_back((id, data));
         }
     }
 }
 
 fn pop_front(storage: &mut ChanStorage, out: *mut u8, bytes_len: usize) -> bool {
     match storage {
-        ChanStorage::I64(deque) => deque.pop_front().is_some_and(|n| {
+        ChanStorage::I64(deque) => deque.pop_front().is_some_and(|(_, n)| {
             let bytes = n.to_ne_bytes();
             unsafe {
                 std::ptr::copy_nonoverlapping(bytes.as_ptr(), out, 8);
             }
             true
         }),
-        ChanStorage::Bytes(deque) => deque.pop_front().is_some_and(|item| {
+        ChanStorage::Bytes(deque) => deque.pop_front().is_some_and(|(_, item)| {
             unsafe {
                 std::ptr::copy_nonoverlapping(item.as_ptr(), out, bytes_len);
             }
@@ -565,14 +607,33 @@ impl Drop for GosChan {
 // `gos_rt_select_free`. This sequence-of-scalar-calls shape keeps the MIR
 // lowering free of array construction while the transfer stays atomic inside
 // `wait` (no recheck-after-return TOCTOU). Semantics match the VM walker:
-// lowest-index ready arm wins (deterministic source order), a closed+drained
-// recv arm is always ready (yielding the element-type zero value, matching
-// Go), and the default arm fires only when nothing else is.
+// ready arms are polled in pseudo-random order, a closed+drained recv arm is
+// always ready (yielding the element-type zero value, matching Go), and the
+// default arm fires only when nothing else is.
 
 enum SelectArmRt {
     Recv(*mut GosChan),
     Send(*mut GosChan, i64),
     Default,
+}
+
+fn select_shuffle_indices(n: usize) -> Vec<usize> {
+    let mut order: Vec<usize> = (0..n).collect();
+    if n <= 1 {
+        return order;
+    }
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0_u64, |d| d.as_nanos() as u64);
+    let mut x = nanos ^ 0xA076_1D64_78BD_642F;
+    for i in (1..n).rev() {
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        let j = (x as usize) % (i + 1);
+        order.swap(i, j);
+    }
+    order
 }
 
 pub struct SelectBuilder {
@@ -621,7 +682,7 @@ pub unsafe extern "C" fn gos_rt_select_arm_default(b: *mut SelectBuilder) {
     });
 }
 
-/// Polls the registered arms in source order, parking the goroutine until one
+/// Polls the registered arms in pseudo-random order, parking the goroutine until one
 /// is ready when there is no default arm. Returns the chosen arm's source
 /// index (the default arm's index when nothing else is ready), or -1 on a null
 /// builder. The popped value of a chosen recv arm is stored for retrieval via
@@ -647,12 +708,13 @@ pub unsafe extern "C" fn gos_rt_select_wait(b: *mut SelectBuilder) -> i64 {
             .collect();
         let default_index = arms.iter().position(|(k, _, _)| *k == 2);
         loop {
-            for (i, (kind, c, v)) in arms.iter().enumerate() {
-                if *kind == 0 {
+            for i in select_shuffle_indices(arms.len()) {
+                let (kind, c, v) = arms[i];
+                if kind == 0 {
                     if c.is_null() {
                         continue;
                     }
-                    let chan = unsafe { &**c };
+                    let chan = unsafe { &*c };
                     let mut tmp = 0i64;
                     let mut guard = chan.buf.lock();
                     if pop_front(
@@ -676,24 +738,14 @@ pub unsafe extern "C" fn gos_rt_select_wait(b: *mut SelectBuilder) -> i64 {
                         builder.last_value = 0;
                         return i as i64;
                     }
-                } else if *kind == 1 {
+                } else if kind == 1 {
                     if c.is_null() {
                         continue;
                     }
-                    let chan = unsafe { &**c };
-                    let bytes_len = chan.elem_bytes as usize;
-                    let mut guard = chan.buf.lock();
-                    if chan.cap <= 0 || (storage_len(&guard) as i64) < chan.cap {
-                        let send_val = *v;
-                        push_back(
-                            &mut guard,
-                            std::ptr::addr_of!(send_val).cast::<u8>(),
-                            bytes_len,
-                        );
-                        drop(guard);
-                        chan.last_sender
-                            .store(i64::from(crate::race::current_gid()), Ordering::Release);
-                        wake_one_recv(chan);
+                    let send_val = v;
+                    if unsafe { gos_rt_chan_try_send(c, std::ptr::addr_of!(send_val).cast::<u8>()) }
+                        == 1
+                    {
                         return i as i64;
                     }
                 }
@@ -712,6 +764,7 @@ pub unsafe extern "C" fn gos_rt_select_wait(b: *mut SelectBuilder) -> i64 {
                         }
                         let chan = unsafe { &**c };
                         if *kind == 0 {
+                            chan.recv_waiters.fetch_add(1, Ordering::AcqRel);
                             chan.parked_recv.lock().push_back(parker.gid);
                         } else if *kind == 1 {
                             chan.parked_send.lock().push_back(parker.gid);
@@ -725,6 +778,7 @@ pub unsafe extern "C" fn gos_rt_select_wait(b: *mut SelectBuilder) -> i64 {
                         }
                         let chan = unsafe { &**c };
                         if *kind == 0 {
+                            chan.recv_waiters.fetch_sub(1, Ordering::AcqRel);
                             chan.parked_recv.lock().retain(|g| *g != gid);
                         } else if *kind == 1 {
                             chan.parked_send.lock().retain(|g| *g != gid);
@@ -776,4 +830,55 @@ pub unsafe extern "C" fn gos_rt_select_free(b: *mut SelectBuilder) {
             drop(Box::from_raw(b));
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::time::Duration;
+
+    use super::*;
+
+    #[test]
+    fn cap_zero_channel_send_waits_for_receiver() {
+        let chan = unsafe { gos_rt_chan_new(8, 0) };
+        assert!(!chan.is_null());
+        let done = Arc::new(AtomicBool::new(false));
+        let done_tx = Arc::clone(&done);
+        let addr = chan as usize;
+        let sender = std::thread::spawn(move || {
+            let value = 77_i64;
+            unsafe {
+                gos_rt_chan_send(addr as *mut GosChan, std::ptr::addr_of!(value).cast());
+            }
+            done_tx.store(true, Ordering::Release);
+        });
+        std::thread::sleep(Duration::from_millis(20));
+        assert!(
+            !done.load(Ordering::Acquire),
+            "unbuffered send returned before recv"
+        );
+        let mut out = 0_i64;
+        let ok = unsafe { gos_rt_chan_recv(chan, std::ptr::addr_of_mut!(out).cast()) };
+        assert_eq!(ok, 1);
+        assert_eq!(out, 77);
+        sender.join().expect("sender");
+        assert!(done.load(Ordering::Acquire));
+        unsafe { gos_rt_chan_drop(chan) };
+    }
+
+    #[test]
+    fn cap_negative_channel_is_explicitly_unbounded() {
+        let chan = unsafe { gos_rt_chan_new(8, -1) };
+        assert!(!chan.is_null());
+        let value = 11_i64;
+        let sent = unsafe { gos_rt_chan_try_send(chan, std::ptr::addr_of!(value).cast()) };
+        assert_eq!(sent, 1);
+        let mut out = 0_i64;
+        let got = unsafe { gos_rt_chan_try_recv(chan, std::ptr::addr_of_mut!(out).cast()) };
+        assert_eq!(got, 1);
+        assert_eq!(out, 11);
+        unsafe { gos_rt_chan_drop(chan) };
+    }
 }

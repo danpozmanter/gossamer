@@ -1395,7 +1395,7 @@ impl<'tcx> FnBuilder<'tcx> {
                 | "remove"
                 | "clear"
                 | "extend"
-                | "append"
+                | "extend_from_slice"
                 | "truncate"
                 | "sort"
                 | "sort_by"

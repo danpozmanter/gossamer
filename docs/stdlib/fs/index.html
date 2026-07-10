@@ -627,6 +627,8 @@
       
         
       
+        
+      
     
     
     
@@ -724,6 +726,34 @@
     
   
     Prelude (no imports)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../core_method_contract/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Core method contract
   
 
     
@@ -1355,6 +1385,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -1443,6 +1477,62 @@
     
   
     Runtime internals
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/memory_model/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Memory model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/goroutine_stacks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Goroutine stack model
   
 
     
@@ -1640,6 +1730,26 @@
 </thead>
 <tbody>
 <tr>
+<td><code>File</code></td>
+<td>type</td>
+<td>Streaming file handle; supports read, read_to_string, write, flush, and close.</td>
+</tr>
+<tr>
+<td><code>OpenOptions</code></td>
+<td>type</td>
+<td>Builder for opening files with read/write/append/create/truncate flags.</td>
+</tr>
+<tr>
+<td><code>open</code></td>
+<td>fn</td>
+<td>Opens a file for streaming reads.</td>
+</tr>
+<tr>
+<td><code>create</code></td>
+<td>fn</td>
+<td>Creates or truncates a file and returns a streaming file handle.</td>
+</tr>
+<tr>
 <td><code>read</code></td>
 <td>fn</td>
 <td>Reads an entire file into memory as bytes.</td>
@@ -1657,7 +1767,7 @@
 <tr>
 <td><code>read_dir</code></td>
 <td>fn</td>
-<td>Returns the immediate children of a directory.</td>
+<td>Returns DirInfo metadata for the immediate children of a directory.</td>
 </tr>
 <tr>
 <td><code>walk_dir</code></td>
@@ -1688,11 +1798,6 @@
 <td><code>remove_dir_all</code></td>
 <td>fn</td>
 <td>Recursively removes a directory and its contents.</td>
-</tr>
-<tr>
-<td><code>remove_all</code></td>
-<td>fn</td>
-<td>Deletes a file or a directory tree.</td>
 </tr>
 <tr>
 <td><code>copy</code></td>
@@ -1738,11 +1843,6 @@
 <td><code>canonicalize</code></td>
 <td>fn</td>
 <td>Resolves a path to an absolute, symlink-free canonical form.</td>
-</tr>
-<tr>
-<td><code>list_dir</code></td>
-<td>fn</td>
-<td>Returns directory entries with name/size/kind metadata.</td>
 </tr>
 </tbody>
 </table>

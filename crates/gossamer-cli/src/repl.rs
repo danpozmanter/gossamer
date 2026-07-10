@@ -4,8 +4,14 @@
 //! hard limit defined in `GUIDELINES.md`.
 
 use anyhow::{Result, anyhow};
+use gossamer_std::registry::{StdItem, StdItemKind, StdModule};
+use regex::Regex;
 
 use crate::paths::repl_history_path;
+
+const REPL_HELP_TEXT: &str = "meta-commands: %quit  %history  %bindings  %reset  %help  %dir\n\
+                         plain expressions render as Out[N]; declarations and\n\
+                         `let` bindings persist across inputs.";
 
 #[allow(
     clippy::too_many_lines,
@@ -84,7 +90,8 @@ pub(crate) fn cmd_repl() -> Result<()> {
         // Meta-commands first.
         if let Some(rest) = trimmed.strip_prefix('%') {
             let rest = rest.trim();
-            match rest {
+            let (command, arg) = split_meta_command(rest);
+            match command {
                 "quit" | "exit" => {
                     if let Some(path) = &history_path {
                         let _ = editor.save_history(path);
@@ -114,15 +121,21 @@ pub(crate) fn cmd_repl() -> Result<()> {
                     continue;
                 }
                 "help" => {
-                    println!(
-                        "meta-commands: %quit  %history  %bindings  %reset  %help\n\
-                         plain expressions render as Out[N]; declarations and\n\
-                         `let` bindings persist across inputs."
-                    );
+                    match repl_help(arg) {
+                        Ok(text) => println!("{text}"),
+                        Err(msg) => eprintln!("{msg}"),
+                    }
                     continue;
                 }
-                other => {
-                    eprintln!("unknown meta-command: %{other}");
+                "dir" => {
+                    match repl_dir(arg) {
+                        Ok(text) => println!("{text}"),
+                        Err(msg) => eprintln!("{msg}"),
+                    }
+                    continue;
+                }
+                _ => {
+                    eprintln!("unknown meta-command: %{rest}");
                     continue;
                 }
             }
@@ -225,6 +238,266 @@ pub(crate) fn cmd_repl() -> Result<()> {
             }
         }
         input_no += 1;
+    }
+}
+
+fn split_meta_command(input: &str) -> (&str, &str) {
+    input
+        .split_once(char::is_whitespace)
+        .map_or((input, ""), |(command, arg)| (command, arg.trim()))
+}
+
+fn repl_help(arg: &str) -> std::result::Result<String, String> {
+    if arg.is_empty() {
+        return Ok(REPL_HELP_TEXT.to_string());
+    }
+    if let Some(pattern) = regex_argument(arg)? {
+        return Ok(render_help_matches(&pattern));
+    }
+
+    let query = normalize_query(arg);
+    let mut out = String::new();
+    for module in matching_modules(query) {
+        push_module_help(&mut out, &module);
+    }
+    for (module, item) in matching_items(query) {
+        push_item_help(&mut out, &module, &item);
+    }
+    for feature in matching_features(query) {
+        push_feature_help(&mut out, feature);
+    }
+
+    if out.is_empty() {
+        Ok(format!("no help found for `{arg}`"))
+    } else {
+        Ok(out.trim_end().to_string())
+    }
+}
+
+fn repl_dir(arg: &str) -> std::result::Result<String, String> {
+    if arg.is_empty() {
+        return Ok(render_module_dir(gossamer_std::registry::modules()));
+    }
+    if let Some(pattern) = regex_argument(arg)? {
+        return Ok(render_dir_matches(&pattern));
+    }
+
+    let query = normalize_query(arg);
+    let modules = matching_modules(query);
+    if !modules.is_empty() {
+        return Ok(render_module_dir(&modules));
+    }
+
+    let items = matching_items(query);
+    if items.is_empty() {
+        Ok(format!("no stdlib entries found for `{arg}`"))
+    } else {
+        let mut out = String::new();
+        for (module, item) in items {
+            push_item_dir(&mut out, &module, &item);
+        }
+        Ok(out.trim_end().to_string())
+    }
+}
+
+fn regex_argument(arg: &str) -> std::result::Result<Option<Regex>, String> {
+    if !(arg.starts_with('/') && arg.ends_with('/') && arg.len() >= 2) {
+        return Ok(None);
+    }
+    Regex::new(&arg[1..arg.len() - 1])
+        .map(Some)
+        .map_err(|e| format!("invalid regex `{arg}`: {e}"))
+}
+
+fn render_help_matches(pattern: &Regex) -> String {
+    let mut out = String::new();
+    for module in gossamer_std::registry::modules() {
+        if module_matches_regex(pattern, module) {
+            push_module_help(&mut out, module);
+        }
+        for item in module.items {
+            if item_matches_regex(pattern, module, item) {
+                push_item_help(&mut out, module, item);
+            }
+        }
+    }
+    for feature in gossamer_std::manifest::feature_status::all_entries() {
+        if !is_stdlib_module_path(feature.path)
+            && (pattern.is_match(feature.path) || pattern.is_match(feature.doc))
+        {
+            push_feature_help(&mut out, feature);
+        }
+    }
+    if out.is_empty() {
+        "no help matches".to_string()
+    } else {
+        out.trim_end().to_string()
+    }
+}
+
+fn render_dir_matches(pattern: &Regex) -> String {
+    let mut out = String::new();
+    for module in gossamer_std::registry::modules() {
+        if module_matches_regex(pattern, module) {
+            push_module_dir_line(&mut out, module);
+        }
+        for item in module.items {
+            if item_matches_regex(pattern, module, item) {
+                push_item_dir(&mut out, module, item);
+            }
+        }
+    }
+    if out.is_empty() {
+        "no stdlib entries match".to_string()
+    } else {
+        out.trim_end().to_string()
+    }
+}
+
+fn render_module_dir(modules: &[StdModule]) -> String {
+    let mut out = String::new();
+    for module in modules {
+        push_module_dir_line(&mut out, module);
+        if modules.len() == 1 {
+            for item in module.items {
+                push_item_dir(&mut out, module, item);
+            }
+        }
+    }
+    out.trim_end().to_string()
+}
+
+fn push_module_help(out: &mut String, module: &StdModule) {
+    let status = gossamer_std::manifest::feature_status::lookup(module.path)
+        .map_or("shipped", |entry| entry.status.tag());
+    out.push_str(&format!("{} ({status})\n", module.path));
+    out.push_str(&format!("  {}\n", module.summary));
+    out.push_str(&format!("  items: {}\n\n", module.items.len()));
+}
+
+fn push_item_help(out: &mut String, module: &StdModule, item: &StdItem) {
+    out.push_str(&format!(
+        "{}::{} [{}]\n",
+        module.path,
+        item.name,
+        item_kind_label(item.kind)
+    ));
+    out.push_str(&format!("  {}\n\n", item.doc));
+}
+
+fn push_feature_help(out: &mut String, feature: gossamer_std::manifest::FeatureStatus) {
+    out.push_str(&format!("{} ({})\n", feature.path, feature.status.tag()));
+    out.push_str(&format!("  {}\n\n", feature.doc));
+}
+
+fn push_module_dir_line(out: &mut String, module: &StdModule) {
+    let status = gossamer_std::manifest::feature_status::lookup(module.path)
+        .map_or("shipped", |entry| entry.status.tag());
+    out.push_str(&format!(
+        "{:<32} module  {:<12} {}\n",
+        module.path, status, module.summary
+    ));
+}
+
+fn push_item_dir(out: &mut String, module: &StdModule, item: &StdItem) {
+    out.push_str(&format!(
+        "{:<32} {:<6} {}\n",
+        format!("{}::{}", module.path, item.name),
+        item_kind_label(item.kind),
+        item.doc
+    ));
+}
+
+fn matching_modules(query: &str) -> Vec<StdModule> {
+    gossamer_std::registry::modules()
+        .iter()
+        .copied()
+        .filter(|module| module_query_matches(module, query))
+        .collect()
+}
+
+fn matching_items(query: &str) -> Vec<(StdModule, StdItem)> {
+    let mut out = Vec::new();
+    for module in gossamer_std::registry::modules() {
+        for item in module.items {
+            if item_query_matches(module, item, query) {
+                out.push((*module, *item));
+            }
+        }
+    }
+    out
+}
+
+fn matching_features(query: &str) -> Vec<gossamer_std::manifest::FeatureStatus> {
+    gossamer_std::manifest::feature_status::all_entries()
+        .into_iter()
+        .filter(|entry| !is_stdlib_module_path(entry.path))
+        .filter(|entry| feature_query_matches(entry.path, query))
+        .collect()
+}
+
+fn is_stdlib_module_path(path: &str) -> bool {
+    gossamer_std::registry::module(path).is_some()
+}
+
+fn module_query_matches(module: &StdModule, query: &str) -> bool {
+    module_aliases(module.path).contains(&query)
+}
+
+fn item_query_matches(module: &StdModule, item: &StdItem, query: &str) -> bool {
+    if item.name == query {
+        return true;
+    }
+    module_aliases(module.path)
+        .iter()
+        .any(|alias| format!("{alias}::{}", item.name) == query)
+}
+
+fn feature_query_matches(path: &str, query: &str) -> bool {
+    if path == query {
+        return true;
+    }
+    let stripped = path
+        .strip_prefix("lang::")
+        .or_else(|| path.strip_prefix("std::"))
+        .unwrap_or(path);
+    stripped == query || path.rsplit("::").next().is_some_and(|last| last == query)
+}
+
+fn module_matches_regex(pattern: &Regex, module: &StdModule) -> bool {
+    pattern.is_match(module.path) || pattern.is_match(module.summary)
+}
+
+fn item_matches_regex(pattern: &Regex, module: &StdModule, item: &StdItem) -> bool {
+    pattern.is_match(&format!("{}::{}", module.path, item.name))
+        || pattern.is_match(item.name)
+        || pattern.is_match(item.doc)
+}
+
+fn module_aliases(path: &'static str) -> Vec<&'static str> {
+    let mut aliases = vec![path];
+    if let Some(stripped) = path.strip_prefix("std::") {
+        aliases.push(stripped);
+    }
+    if let Some(last) = path.rsplit("::").next()
+        && !aliases.contains(&last)
+    {
+        aliases.push(last);
+    }
+    aliases
+}
+
+fn normalize_query(arg: &str) -> &str {
+    arg.trim_matches('`').trim()
+}
+
+fn item_kind_label(kind: StdItemKind) -> &'static str {
+    match kind {
+        StdItemKind::Function => "fn",
+        StdItemKind::Type => "type",
+        StdItemKind::Trait => "trait",
+        StdItemKind::Macro => "macro",
+        StdItemKind::Const => "const",
     }
 }
 

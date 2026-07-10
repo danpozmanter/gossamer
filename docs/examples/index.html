@@ -631,6 +631,8 @@
       
         
       
+        
+      
     
     
     
@@ -728,6 +730,34 @@
     
   
     Prelude (no imports)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../core_method_contract/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Core method contract
   
 
     
@@ -1450,6 +1480,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -1538,6 +1572,62 @@
     
   
     Runtime internals
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../design/memory_model/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Memory model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../design/goroutine_stacks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Goroutine stack model
   
 
     
@@ -1787,7 +1877,7 @@ pipe form below is a stylistic choice, not the only spelling.)</p>
 <a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a><span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="n">xs</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">3</span><span class="p">,</span><span class="w"> </span><span class="mi">5</span><span class="p">,</span><span class="w"> </span><span class="mi">9</span><span class="p">,</span><span class="w"> </span><span class="mi">14</span><span class="p">,</span><span class="w"> </span><span class="mi">21</span><span class="p">]</span>
 <a id="__codelineno-0-20" name="__codelineno-0-20" href="#__codelineno-0-20"></a><span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="n">first_big</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">xs</span>
 <a id="__codelineno-0-21" name="__codelineno-0-21" href="#__codelineno-0-21"></a><span class="w">        </span><span class="o">|&gt;</span><span class="w"> </span><span class="n">iter</span>::<span class="n">find</span><span class="p">(</span><span class="o">|</span><span class="n">n</span>: <span class="kt">i64</span><span class="o">|</span><span class="w"> </span><span class="n">n</span><span class="w"> </span><span class="o">&gt;</span><span class="w"> </span><span class="mi">10</span><span class="p">)</span>
-<a id="__codelineno-0-22" name="__codelineno-0-22" href="#__codelineno-0-22"></a><span class="w">        </span><span class="o">|&gt;</span><span class="w"> </span><span class="n">option</span>::<span class="n">default</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span>
+<a id="__codelineno-0-22" name="__codelineno-0-22" href="#__codelineno-0-22"></a><span class="w">        </span><span class="o">|&gt;</span><span class="w"> </span><span class="n">option</span>::<span class="n">unwrap_or</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span>
 <a id="__codelineno-0-23" name="__codelineno-0-23" href="#__codelineno-0-23"></a><span class="w">    </span><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;first &gt; 10 (or -1): {first_big}&quot;</span><span class="p">)</span>
 <a id="__codelineno-0-24" name="__codelineno-0-24" href="#__codelineno-0-24"></a><span class="p">}</span>
 </code></pre></div>
@@ -1797,7 +1887,7 @@ pipe form below is a stylistic choice, not the only spelling.)</p>
   Runs under <code>gos run</code>.</li>
 <li><strong><code>function_piping.gos</code></strong> - tour of the <code>|&gt;</code> forward-pipe
   operator plus the <code>std::iter</code> / <code>std::option</code> combinator
-  surface (<code>filter</code>, <code>sum_by</code>, <code>find</code>, <code>option::default</code>, …).
+  surface (<code>filter</code>, <code>sum_by</code>, <code>find</code>, <code>option::unwrap_or</code>, …).
   Runs under <code>gos run</code> (bytecode VM + Cranelift JIT), <code>gos build</code>
   (LLVM <code>-O0</code>), and <code>gos build --release</code> (LLVM <code>-O3</code>); the
   tier_parity test confirms identical output across all three.</li>
@@ -1823,7 +1913,7 @@ pipe form below is a stylistic choice, not the only spelling.)</p>
   channel, producer / consumer shape. Runs under <code>gos run</code>
   (bytecode VM) and <code>gos build</code> (native), with channel operations
   lowered natively on every tier.</li>
-<li><strong><code>line_count.gos</code></strong> - walks a directory via <code>os::read_dir</code>,
+<li><strong><code>line_count.gos</code></strong> - walks a directory via <code>fs::read_dir</code>,
   counts plain-text lines per file, fans out through a channel.
   Uses goroutines and <code>select</code>.</li>
 <li><strong><code>web_server.gos</code></strong> - HTTP/1.1 echo server mirroring FastAPI's
